@@ -966,7 +966,7 @@ function annotateTraceWithAuthorizationPlan(input: {
 export function readStoredOAuthConfig(
   serverName: string | null
 ): StoredOAuthConfig {
-  if (!serverName) {
+  if (!serverName || HOSTED_MODE) {
     return {
       registryServerId: undefined,
       useRegistryOAuthProxy: false,
@@ -2985,6 +2985,9 @@ export interface StoredTokensState {
 }
 
 export function getStoredTokensState(serverName: string): StoredTokensState {
+  if (HOSTED_MODE) {
+    return { tokens: undefined, isInvalid: false };
+  }
   const tokens = localStorage.getItem(`mcp-tokens-${serverName}`);
   const clientInfo = localStorage.getItem(`mcp-client-${serverName}`);
   // TODO: Maybe we should move clientID away from the token info? Not sure if clientID is bonded to token
@@ -3018,6 +3021,9 @@ export function getStoredTokens(serverName: string): any {
  * Checks if OAuth is configured for a server by looking at multiple sources
  */
 export function hasOAuthConfig(serverName: string): boolean {
+  if (HOSTED_MODE) {
+    return false;
+  }
   const storedServerUrl = localStorage.getItem(`mcp-serverUrl-${serverName}`);
   const storedClientInfo = localStorage.getItem(`mcp-client-${serverName}`);
   const storedOAuthConfig = localStorage.getItem(

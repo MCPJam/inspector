@@ -91,7 +91,6 @@ interface LoggerLike {
 
 function isSyntheticDefaultProject(project: Project) {
   return (
-    project.id === "default" &&
     project.isDefault === true &&
     project.sharedProjectId === undefined &&
     project.organizationId === undefined &&

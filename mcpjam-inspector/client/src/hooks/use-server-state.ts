@@ -1684,6 +1684,7 @@ export function useServerState({
         hasClientSecret: nextHasClientSecret,
       };
       if (HOSTED_MODE) {
+        let syncErr: unknown;
         try {
           const serverId = await syncServerToConvex(
             formData.name,
@@ -1695,10 +1696,29 @@ export function useServerState({
             injectHostedServerMapping(formData.name, serverId);
           }
         } catch (err) {
+          syncErr = err;
           logger.warn("Sync to Convex failed (pre-connection)", {
             serverName: formData.name,
             err,
           });
+        }
+        // OAuth in hosted mode requires a Convex serverId to bind credentials
+        // to. Without it, prepareHostedProjectOAuthRedirect is a no-op and the
+        // local fallback can't persist tokens either (mcp-oauth.saveTokens is
+        // gated on !HOSTED_MODE), so the OAuth dance would complete without a
+        // durable credential. Fail loudly instead.
+        if (formData.useOAuth && !hostedServerId) {
+          const errorMessage =
+            syncErr instanceof Error
+              ? `Could not save the hosted server before starting OAuth: ${syncErr.message}`
+              : "Could not save the hosted server before starting OAuth. Please try again.";
+          dispatch({
+            type: "CONNECT_FAILURE",
+            name: formData.name,
+            error: errorMessage,
+          });
+          toast.error(errorMessage);
+          return;
         }
       } else {
         syncServerToConvex(

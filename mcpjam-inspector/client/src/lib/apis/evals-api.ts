@@ -155,12 +155,6 @@ function mergeHostedServerBatch<
   };
 }
 
-function mergeHostedEvalServerRequest<
-  T extends EvalRequestWithServers & { convexAuthToken?: string | null },
->(request: T): JsonRecord {
-  return mergeHostedServerBatch(request) as JsonRecord;
-}
-
 async function postEvalRequest<TResponse>(
   path: string,
   payload: JsonRecord,
@@ -265,7 +259,7 @@ export async function runEvalTestCase(
     hosted: () =>
       postEvalRequest(
         EVALS_API_ENDPOINTS.hosted.runTestCase,
-        mergeHostedEvalServerRequest(request),
+        mergeHostedServerBatch(request) as JsonRecord,
       ),
   });
 }
@@ -282,7 +276,7 @@ export async function generateEvalTests(
     hosted: () =>
       postEvalRequest(
         EVALS_API_ENDPOINTS.hosted.generateTests,
-        mergeHostedEvalServerRequest(request),
+        mergeHostedServerBatch(request) as JsonRecord,
       ),
   });
 }
@@ -299,7 +293,7 @@ export async function generateNegativeEvalTests(
     hosted: () =>
       postEvalRequest(
         EVALS_API_ENDPOINTS.hosted.generateNegativeTests,
-        mergeHostedEvalServerRequest(request),
+        mergeHostedServerBatch(request) as JsonRecord,
       ),
   });
 }
@@ -360,7 +354,7 @@ export async function streamEvalTestCase(
     : EVALS_API_ENDPOINTS.local.streamTestCase;
 
   const payload = isHostedMode()
-    ? mergeHostedEvalServerRequest(request)
+    ? mergeHostedServerBatch(request) as JsonRecord
     : (request as JsonRecord);
 
   const response = await authFetch(endpoint, {

@@ -1012,15 +1012,12 @@ export function useChatSession({
   const requireToolApprovalRef = useRef(requireToolApproval);
   requireToolApprovalRef.current = requireToolApproval;
   const isHostedGuest = HOSTED_MODE && !workOsUser && !isWorkOsLoading;
-  // Hosted dashboard guests now use the Convex project/server path; the old
-  // no-project direct guest request shape is intentionally disabled.
-  const directGuestMode = false;
   const sharedGuestMode =
     isHostedGuest &&
     !isAuthLoading &&
     !!hostedProjectId &&
     !!(hostedShareToken || hostedChatboxToken);
-  const guestMode = directGuestMode || sharedGuestMode;
+  const guestMode = sharedGuestMode;
   const skipNextForkDetectionRef = useRef(false);
   const hasResolvedAuthHeadersRef = useRef(false);
   const lastResolvedAuthHeadersRef = useRef<Record<string, string> | undefined>(
@@ -1298,10 +1295,9 @@ export function useChatSession({
     // Submit is blocked until hostedProjectId and selected server ids resolve.
     const buildHostedBody = () => {
       if (!hostedProjectId) {
-        return {
-          chatSessionId,
-          directVisibility,
-        };
+        throw new Error(
+          "Hosted chat context is not ready: missing projectId."
+        );
       }
       const isHostedDirectChat = !hostedShareToken && !hostedChatboxToken;
       return {
@@ -1361,7 +1357,6 @@ export function useChatSession({
     systemPrompt,
     selectedServers,
     directVisibility,
-    directGuestMode,
     hostedProjectId,
     chatSessionId,
     hostedSelectedServerIds,
@@ -1548,9 +1543,9 @@ export function useChatSession({
   }, [chatSessionId]);
 
   useSharedChatWidgetCapture({
-    enabled: HOSTED_MODE && (isAuthenticated || directGuestMode),
+    enabled: HOSTED_MODE && isAuthenticated,
     readyToPersist: status === "ready",
-    directGuestMode,
+    directGuestMode: false,
     chatSessionId,
     hostedShareToken,
     hostedChatboxToken,

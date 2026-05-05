@@ -17,20 +17,6 @@ vi.mock("@mcpjam/sdk", async () => {
   };
 });
 
-vi.mock("../../../utils/oauth-proxy.js", () => ({
-  OAuthProxyError: class OAuthProxyError extends Error {
-    constructor(
-      public readonly status: number,
-      message: string,
-    ) {
-      super(message);
-    }
-  },
-  validateUrl: vi.fn().mockResolvedValue({
-    url: new URL("https://guest.example.com/mcp"),
-  }),
-}));
-
 vi.mock("../../apps/SandboxProxyHtml.bundled.js", () => ({
   CHATGPT_APPS_SANDBOX_PROXY_HTML: "<html></html>",
   MCP_APPS_SANDBOX_PROXY_HTML: "<html></html>",
@@ -42,11 +28,6 @@ import { expectJson, postJson } from "./helpers/test-app.js";
 
 function createGuestDoctorApp(): Hono {
   const app = new Hono();
-  app.use("*", async (c, next) => {
-    (c as any).mcpClientManager = {};
-    c.set("guestId", "guest-1");
-    await next();
-  });
   app.route("/api/web/servers", serversRoutes);
   return app;
 }
