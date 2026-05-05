@@ -13,13 +13,14 @@ import {
 import {
   useViewQueries,
   useViewMutations,
-  useWorkspaceServers,
+  useProjectServers,
   type AnyView,
 } from "@/hooks/useViews";
 import { useSharedAppState } from "@/state/app-state-context";
 import { ViewsListSidebar } from "./views/ViewsListSidebar";
 import { ViewEditorPanel } from "./views/ViewEditorPanel";
 import { executeToolApi } from "@/lib/apis/mcp-tools-api";
+import type { ProjectHostContextDraft } from "@/lib/client-config";
 import {
   useCurrentDisplayContext,
   areDisplayContextsEqual,
@@ -32,6 +33,11 @@ import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-over
 import { buildPersistedExecutionReplay } from "@/components/chat-v2/thread/persisted-execution-replay";
 
 interface ViewsTabProps {
+  activeProjectId?: string | null;
+  onSaveHostContext?: (
+    projectId: string,
+    hostContext: ProjectHostContextDraft,
+  ) => Promise<void>;
   selectedServer?: string;
 }
 
@@ -49,14 +55,18 @@ function safeSerializeForCompare(value: unknown): string {
   }
 }
 
-export function ViewsTab({ selectedServer }: ViewsTabProps) {
+export function ViewsTab({
+  activeProjectId = null,
+  onSaveHostContext,
+  selectedServer,
+}: ViewsTabProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const posthog = usePostHog();
   const appState = useSharedAppState();
 
-  // Get the Convex workspace ID from the active workspace
-  const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
-  const workspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
+  // Get the Convex project ID from the active project
+  const activeProject = appState.projects[appState.activeProjectId];
+  const projectId = activeProject?.sharedProjectId ?? null;
 
   // View state
   const [selectedViewId, setSelectedViewId] = useState<string | null>(null);
@@ -146,13 +156,13 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
   // Fetch views
   const { sortedViews, isLoading: isViewsLoading } = useViewQueries({
     isAuthenticated,
-    workspaceId,
+    projectId,
   });
 
-  // Fetch workspace servers to resolve server IDs to names
-  const { serversById, serversByName } = useWorkspaceServers({
+  // Fetch project servers to resolve server IDs to names
+  const { serversById, serversByName } = useProjectServers({
     isAuthenticated,
-    workspaceId,
+    projectId,
   });
 
   // Get the server ID from the selected server name
@@ -546,7 +556,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
   // Handle duplicate
   const handleDuplicateView = useCallback(
     async (view: AnyView) => {
-      if (!workspaceId) return;
+      if (!projectId) return;
 
       setDuplicatingViewId(view._id);
       try {
@@ -614,7 +624,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
 
         if (view.protocol === "mcp-apps") {
           await createMcpView({
-            workspaceId,
+            projectId,
             serverId: view.serverId,
             name: newName,
             description: view.description,
@@ -633,7 +643,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
           });
         } else {
           await createOpenaiView({
-            workspaceId,
+            projectId,
             serverId: view.serverId,
             name: newName,
             description: view.description,
@@ -669,7 +679,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
       }
     },
     [
-      workspaceId,
+      projectId,
       filteredViews,
       createMcpView,
       createOpenaiView,
@@ -990,14 +1000,14 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
     );
   }
 
-  // No workspace
-  if (!workspaceId) {
+  // No project
+  if (!projectId) {
     return (
       <div className="p-6">
         <EmptyState
           icon={Layers}
-          title="No workspace selected"
-          description="Select a shared workspace to view and manage saved views."
+          title="No project selected"
+          description="Select a shared project to view and manage saved views."
           className="h-[calc(100vh-200px)]"
         />
       </div>
@@ -1116,8 +1126,10 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
             </div>
           ) : (
             <PlaygroundMain
+              activeProjectId={activeProjectId}
               key={selectedView._id}
               serverName={serversById.get(selectedView.serverId) || ""}
+              onSaveHostContext={onSaveHostContext}
               pendingExecution={pendingExecution}
               onExecutionInjected={handleExecutionInjected}
               isExecuting={false}

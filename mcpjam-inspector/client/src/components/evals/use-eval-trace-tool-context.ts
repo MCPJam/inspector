@@ -8,9 +8,9 @@ import {
 import { HOSTED_MODE } from "@/lib/config";
 import { CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE } from "@/lib/client-config";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
-import { useWorkspaceServers } from "@/hooks/useViews";
+import { useProjectClientConfigSyncPending } from "@/hooks/use-project-client-config-sync-pending";
+import { useProjectServers } from "@/hooks/useViews";
 import { useSharedAppState } from "@/state/app-state-context";
-import { useClientConfigStore } from "@/stores/client-config-store";
 
 const EMPTY_SERVER_NAMES: string[] = [];
 
@@ -57,7 +57,7 @@ function isTransientHostedToolContextError(error: unknown): boolean {
 
   return (
     withMessage.message === CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE ||
-    withMessage.message === "Hosted workspace is not available yet" ||
+    withMessage.message === "Hosted project is not available yet" ||
     withMessage.message.startsWith("Hosted server not found") ||
     /\b(401|403)\b|unauthorized|forbidden/i.test(withMessage.message)
   );
@@ -65,22 +65,20 @@ function isTransientHostedToolContextError(error: unknown): boolean {
 
 export function useEvalTraceToolContext({
   serverNames = EMPTY_SERVER_NAMES,
-  workspaceId,
+  projectId,
   retryKey,
 }: {
   serverNames?: string[];
-  workspaceId?: string | null;
+  projectId?: string | null;
   retryKey?: string | number | null;
 }) {
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const appState = useSharedAppState();
-  const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
-  const effectiveHostedWorkspaceId =
-    workspaceId ?? activeWorkspace?.sharedWorkspaceId ?? null;
-  const isClientConfigSyncPending = useClientConfigStore(
-    (state) =>
-      state.isAwaitingRemoteEcho &&
-      state.pendingWorkspaceId === appState.activeWorkspaceId,
+  const activeProject = appState.projects[appState.activeProjectId];
+  const effectiveHostedProjectId =
+    projectId ?? activeProject?.sharedProjectId ?? null;
+  const isClientConfigSyncPending = useProjectClientConfigSyncPending(
+    appState.activeProjectId,
   );
   const serverNamesSignature = useMemo(
     () => Array.from(new Set(serverNames.filter(Boolean))).join("\u0000"),
@@ -93,10 +91,10 @@ export function useEvalTraceToolContext({
         : EMPTY_SERVER_NAMES,
     [serverNamesSignature],
   );
-  const { serversByName, isLoading: isWorkspaceServersLoading } =
-    useWorkspaceServers({
+  const { serversByName, isLoading: isProjectServersLoading } =
+    useProjectServers({
       isAuthenticated,
-      workspaceId: effectiveHostedWorkspaceId,
+      projectId: effectiveHostedProjectId,
     });
   const hostedSelectedServerIds = useMemo(
     () =>
@@ -116,10 +114,10 @@ export function useEvalTraceToolContext({
   );
   const hostedContextReady =
     !HOSTED_MODE ||
-    (Boolean(effectiveHostedWorkspaceId) &&
+    (Boolean(effectiveHostedProjectId) &&
       !isAuthLoading &&
       isAuthenticated &&
-      !isWorkspaceServersLoading &&
+      !isProjectServersLoading &&
       !isClientConfigSyncPending &&
       hostedSelectedServerIds.length === normalizedServerNames.length);
   const [state, setState] = useState<EvalTraceToolContextState>(() =>

@@ -6,7 +6,7 @@ import {
   WebRouteError,
   mapRuntimeError,
   webError,
-  workspaceServerSchema,
+  projectServerSchema,
   guestServerInputSchema,
   withEphemeralConnection,
   handleRoute,
@@ -27,14 +27,14 @@ const servers = new Hono();
 servers.post("/validate", async (c) =>
   withEphemeralConnection(
     c,
-    workspaceServerSchema,
+    projectServerSchema,
     async (manager, body) => {
       await manager.getToolsForAiSdk([body.serverId]);
       const initInfo = manager.getInitializationInfo(body.serverId);
       return { success: true, status: "connected", initInfo: initInfo ?? null };
     },
-    { timeoutMs: WEB_CONNECT_TIMEOUT_MS },
-  ),
+    { timeoutMs: WEB_CONNECT_TIMEOUT_MS }
+  )
 );
 
 servers.post("/check-oauth", async (c) =>
@@ -44,7 +44,8 @@ servers.post("/check-oauth", async (c) =>
       !!rawBody &&
       typeof rawBody === "object" &&
       typeof (rawBody as { serverUrl?: unknown }).serverUrl === "string" &&
-      !(rawBody as { workspaceId?: unknown }).workspaceId;
+      !(rawBody as { projectId?: unknown; workspaceId?: unknown }).projectId &&
+      !(rawBody as { projectId?: unknown; workspaceId?: unknown }).workspaceId;
 
     // Direct guest sessions connect without Convex server records.
     if (isDirectGuestRequest) {
@@ -52,22 +53,27 @@ servers.post("/check-oauth", async (c) =>
     }
 
     const bearerToken = assertBearerToken(c);
-    const body = parseWithSchema(workspaceServerSchema, rawBody);
+    const body = parseWithSchema(projectServerSchema, rawBody);
     const auth = await authorizeServer(
+      c,
       bearerToken,
-      body.workspaceId,
+      body.projectId,
       body.serverId,
       {
         accessScope: body.accessScope,
+        workspaceId:
+          typeof (body as { workspaceId?: unknown }).workspaceId === "string"
+            ? (body as { workspaceId: string }).workspaceId
+            : undefined,
         shareToken: body.shareToken,
         chatboxToken: body.chatboxToken,
-      },
+      }
     );
     return {
       useOAuth: auth.serverConfig.useOAuth ?? false,
       serverUrl: auth.serverConfig.url ?? null,
     };
-  }),
+  })
 );
 
 servers.post("/doctor", async (c) => {
@@ -81,6 +87,7 @@ servers.post("/doctor", async (c) => {
       !!rawBody &&
       typeof rawBody === "object" &&
       typeof rawBody.serverUrl === "string" &&
+      !rawBody.projectId &&
       !rawBody.workspaceId;
 
     const result = isGuestRequest
@@ -96,7 +103,7 @@ servers.post("/doctor", async (c) => {
       routeError.code,
       routeError.message,
       routeError.details,
-      rpcCollector?.buildEnvelope(),
+      rpcCollector?.buildEnvelope()
     );
   }
 });
@@ -107,14 +114,14 @@ async function runGuestDoctor(
   c: any,
   rawBody: Record<string, unknown>,
   timeoutMs: number,
-  rpcLogger?: Parameters<typeof runServerDoctor>[0]["rpcLogger"],
+  rpcLogger?: Parameters<typeof runServerDoctor>[0]["rpcLogger"]
 ) {
   const guestId = c.get("guestId") as string | undefined;
   if (!guestId) {
     throw new WebRouteError(
       401,
       ErrorCode.UNAUTHORIZED,
-      "Valid guest token required. Please refresh the page to obtain a new session.",
+      "Valid guest token required. Please refresh the page to obtain a new session."
     );
   }
 
@@ -128,7 +135,7 @@ async function runGuestDoctor(
       throw new WebRouteError(
         error.status,
         ErrorCode.VALIDATION_ERROR,
-        error.message,
+        error.message
       );
     }
     throw error;
@@ -151,6 +158,7 @@ async function runGuestDoctor(
     config: {
       url: canonicalUrl,
       capabilities: guestInput.clientCapabilities,
+      clientCapabilities: guestInput.clientCapabilities,
       requestInit: { headers },
       timeout: timeoutMs,
     },
@@ -169,26 +177,31 @@ async function runHostedDoctor(
   c: any,
   rawBody: Record<string, unknown>,
   timeoutMs: number,
-  rpcLogger?: Parameters<typeof runServerDoctor>[0]["rpcLogger"],
+  rpcLogger?: Parameters<typeof runServerDoctor>[0]["rpcLogger"]
 ) {
   const bearerToken = assertBearerToken(c);
-  const body = parseWithSchema(workspaceServerSchema, rawBody);
+  const body = parseWithSchema(projectServerSchema, rawBody);
   const auth = await authorizeServer(
+    c,
     bearerToken,
-    body.workspaceId,
+    body.projectId,
     body.serverId,
     {
       accessScope: body.accessScope,
+      workspaceId:
+        typeof (body as { workspaceId?: unknown }).workspaceId === "string"
+          ? (body as { workspaceId: string }).workspaceId
+          : undefined,
       shareToken: body.shareToken,
       chatboxToken: body.chatboxToken,
-    },
+    }
   );
 
   const config = toHttpConfig(
     auth,
     timeoutMs,
     auth.oauthAccessToken ?? body.oauthAccessToken,
-    body.clientCapabilities,
+    body.clientCapabilities
   );
 
   return runServerDoctor({
@@ -196,7 +209,7 @@ async function runHostedDoctor(
     target: {
       kind: "http",
       scope: "hosted",
-      workspaceId: body.workspaceId,
+      projectId: body.projectId,
       serverId: body.serverId,
       label: body.serverName ?? body.serverId,
       ...(auth.serverConfig.url ? { url: auth.serverConfig.url } : {}),

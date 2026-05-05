@@ -37,7 +37,7 @@ vi.mock("sonner", () => ({
 function createChatbox(overrides: Partial<ChatboxSettings> = {}): ChatboxSettings {
   return {
     chatboxId: "cb-1",
-    workspaceId: "ws-1",
+    projectId: "ws-1",
     name: "My Chatbox",
     hostStyle: "chatgpt",
     systemPrompt: "",
@@ -60,9 +60,9 @@ function createChatbox(overrides: Partial<ChatboxSettings> = {}): ChatboxSetting
 }
 
 describe("ChatboxShareSection", () => {
-  it("renders the same section structure as the workspace share dialog", () => {
+  it("renders the same section structure as the project share dialog", () => {
     render(
-      <ChatboxShareSection chatbox={createChatbox()} workspaceName="Acme" />,
+      <ChatboxShareSection chatbox={createChatbox()} projectName="Acme" />,
     );
 
     expect(screen.getByText("Invite with email")).toBeInTheDocument();
@@ -79,7 +79,7 @@ describe("ChatboxShareSection", () => {
         {
           _id: "m1",
           chatboxId: "cb-1",
-          workspaceId: "ws-1",
+          projectId: "ws-1",
           email: "pending@example.com",
           role: "chat",
           invitedBy: "u1",

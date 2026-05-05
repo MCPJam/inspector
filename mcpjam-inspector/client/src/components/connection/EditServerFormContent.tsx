@@ -6,8 +6,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
+import { AdvancedConnectionSettingsSection } from "./shared/AdvancedConnectionSettingsSection";
 import { AuthenticationSection } from "./shared/AuthenticationSection";
-import { CustomHeadersSection } from "./shared/CustomHeadersSection";
 import { EnvVarsSection } from "./shared/EnvVarsSection";
 import { HostedConnectionTypeControl } from "./shared/HostedConnectionTypeControl";
 import type { useServerForm } from "./hooks/use-server-form";
@@ -16,11 +16,15 @@ import { HOSTED_MODE } from "@/lib/config";
 interface EditServerFormContentProps {
   formState: ReturnType<typeof useServerForm>;
   isDuplicateServerName: boolean;
+  projectId?: string | null;
+  hostedServerId?: string | null;
 }
 
 export function EditServerFormContent({
   formState,
   isDuplicateServerName,
+  projectId = null,
+  hostedServerId = null,
 }: EditServerFormContentProps) {
   const hostedUrlPlaceholder = "https://example.com/mcp";
 
@@ -39,7 +43,7 @@ export function EditServerFormContent({
         />
         {isDuplicateServerName && (
           <p className="text-xs text-destructive">
-            A server with this name already exists in this workspace.
+            A server with this name already exists in this project.
           </p>
         )}
       </div>
@@ -132,6 +136,7 @@ export function EditServerFormContent({
       {formState.type === "http" && (
         <div className="space-y-3 pt-2">
           <AuthenticationSection
+            serverUrl={formState.url}
             authType={formState.authType}
             onAuthTypeChange={(value) => {
               formState.setAuthType(value);
@@ -142,12 +147,21 @@ export function EditServerFormContent({
             onBearerTokenChange={formState.setBearerToken}
             oauthScopesInput={formState.oauthScopesInput}
             onOauthScopesChange={formState.setOauthScopesInput}
+            oauthProtocolMode={formState.oauthProtocolMode}
+            onOauthProtocolModeChange={formState.setOauthProtocolMode}
+            oauthRegistrationMode={formState.oauthRegistrationMode}
+            onOauthRegistrationModeChange={
+              formState.setOauthRegistrationMode
+            }
             useCustomClientId={formState.useCustomClientId}
             onUseCustomClientIdChange={(checked) => {
               formState.setUseCustomClientId(checked);
               if (!checked) {
                 formState.setClientId("");
                 formState.setClientSecret("");
+                if (formState.hasStoredClientSecret) {
+                  formState.setClearClientSecret(true);
+                }
                 formState.setClientIdError(null);
                 formState.setClientSecretError(null);
               }
@@ -161,11 +175,22 @@ export function EditServerFormContent({
             clientSecret={formState.clientSecret}
             onClientSecretChange={(value) => {
               formState.setClientSecret(value);
+              if (value.trim()) {
+                formState.setClearClientSecret(false);
+              }
               const error = formState.validateClientSecret(value);
               formState.setClientSecretError(error);
             }}
+            hasStoredClientSecret={formState.hasStoredClientSecret}
+            clearClientSecret={formState.clearClientSecret}
+            onClearClientSecret={() => formState.setClearClientSecret(true)}
+            onUndoClearClientSecret={() =>
+              formState.setClearClientSecret(false)
+            }
             clientIdError={formState.clientIdError}
             clientSecretError={formState.clientSecretError}
+            projectId={projectId}
+            hostedServerId={hostedServerId}
           />
         </div>
       )}
@@ -181,33 +206,42 @@ export function EditServerFormContent({
         />
       )}
 
-      {formState.type === "http" && (
-        <CustomHeadersSection
-          customHeaders={formState.customHeaders}
-          onAdd={formState.addCustomHeader}
-          onRemove={formState.removeCustomHeader}
-          onUpdate={formState.updateCustomHeader}
-        />
-      )}
-
-      <div className="space-y-2">
-        <label className="block text-sm font-medium text-foreground">
-          Request Timeout (ms)
-        </label>
-        <Input
-          type="number"
-          value={formState.requestTimeout}
-          onChange={(e) => formState.setRequestTimeout(e.target.value)}
-          placeholder="10000"
-          className="h-10"
-          min="1000"
-          max="600000"
-          step="1000"
-        />
-        <p className="text-xs text-muted-foreground">
-          Default 10000 (min 1000, max 600000)
-        </p>
-      </div>
+      <AdvancedConnectionSettingsSection
+        showConfiguration={formState.showConfiguration}
+        onToggle={() =>
+          formState.setShowConfiguration(!formState.showConfiguration)
+        }
+        requestTimeout={formState.requestTimeout}
+        onRequestTimeoutChange={formState.setRequestTimeout}
+        inheritedRequestTimeout={formState.inheritedRequestTimeout}
+        clientCapabilitiesOverrideEnabled={
+          formState.clientCapabilitiesOverrideEnabled
+        }
+        onClientCapabilitiesOverrideEnabledChange={(enabled) => {
+          formState.setClientCapabilitiesOverrideEnabled(enabled);
+          if (!enabled) {
+            formState.setClientCapabilitiesOverrideError(null);
+          }
+        }}
+        clientCapabilitiesOverrideText={
+          formState.clientCapabilitiesOverrideText
+        }
+        onClientCapabilitiesOverrideTextChange={
+          formState.setClientCapabilitiesOverrideText
+        }
+        clientCapabilitiesOverrideError={
+          formState.clientCapabilitiesOverrideError
+        }
+        {...(formState.type === "http"
+          ? {
+              customHeaders: formState.customHeaders,
+              onAddHeader: formState.addCustomHeader,
+              onRemoveHeader: formState.removeCustomHeader,
+              onUpdateHeader: formState.updateCustomHeader,
+              headersWarning: formState.oauthAuthorizationHeaderWarning,
+            }
+          : {})}
+      />
     </div>
   );
 }

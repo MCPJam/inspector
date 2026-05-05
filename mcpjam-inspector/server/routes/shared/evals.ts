@@ -18,6 +18,10 @@ import {
 import type { EvalStreamEvent } from "@/shared/eval-stream-events";
 import { logger } from "../../utils/logger";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
+import {
+  resolveOrgModelConfig,
+  type ResolvedOrgModelConfig,
+} from "../../utils/org-model-config";
 import { flattenServerToolSnapshotTools } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "../../services/evals/convex-sanitize.js";
 import { type PromptTurn } from "@/shared/prompt-turns";
@@ -43,7 +47,7 @@ const promptTurnSchema = z.object({
 });
 
 export const RunEvalsRequestSchema = z.object({
-  workspaceId: z.string().optional(),
+  projectId: z.string().optional(),
   suiteId: z.string().optional(),
   suiteName: z.string().optional(),
   suiteDescription: z.string().optional(),
@@ -78,6 +82,8 @@ export const RunEvalsRequestSchema = z.object({
     .array(z.string())
     .min(1, { message: "At least one server must be selected" }),
   serverNames: z.array(z.string()).optional(),
+  shareToken: z.string().optional(),
+  chatboxToken: z.string().optional(),
   storageServerIds: z.array(z.string()).optional(),
   modelApiKeys: z.record(z.string(), z.string()).optional(),
   convexAuthToken: z.string(),
@@ -90,6 +96,9 @@ export const RunEvalsRequestSchema = z.object({
 });
 
 export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
+type RunEvalsWithManagerRequest = RunEvalsRequest & {
+  orgModelConfig?: ResolvedOrgModelConfig;
+};
 
 export const RunTestCaseRequestSchema = z.object({
   testCaseId: z.string(),
@@ -100,6 +109,8 @@ export const RunTestCaseRequestSchema = z.object({
   serverIds: z
     .array(z.string())
     .min(1, { message: "At least one server must be selected" }),
+  shareToken: z.string().optional(),
+  chatboxToken: z.string().optional(),
   modelApiKeys: z.record(z.string(), z.string()).optional(),
   convexAuthToken: z.string(),
   testCaseOverrides: z
@@ -123,6 +134,9 @@ export const RunTestCaseRequestSchema = z.object({
 });
 
 export type RunTestCaseRequest = z.infer<typeof RunTestCaseRequestSchema>;
+type RunTestCaseWithManagerRequest = RunTestCaseRequest & {
+  orgModelConfig?: ResolvedOrgModelConfig;
+};
 
 export const GenerateTestsRequestSchema = z.object({
   serverIds: z
@@ -251,7 +265,7 @@ function buildPersistedSuiteEnvironment(args: {
     args.serverNames.length === args.resolvedServerIds.length
       ? args.serverNames.map((serverName, index) => ({
           serverName,
-          workspaceServerId: args.resolvedServerIds[index],
+          projectServerId: args.resolvedServerIds[index],
         }))
       : undefined;
 
@@ -263,18 +277,21 @@ function buildPersistedSuiteEnvironment(args: {
 
 export async function runEvalsWithManager(
   clientManager: MCPClientManager,
-  request: RunEvalsRequest,
+  request: RunEvalsWithManagerRequest,
 ) {
   const {
     suiteId,
-    workspaceId,
+    projectId,
     suiteName,
     suiteDescription,
     tests,
     serverIds,
     serverNames,
+    shareToken,
+    chatboxToken,
     storageServerIds,
     modelApiKeys,
+    orgModelConfig,
     convexAuthToken,
     notes,
     passCriteria,
@@ -287,11 +304,11 @@ export async function runEvalsWithManager(
       "Provide suiteId or suiteName",
     );
   }
-  if (!suiteId && !workspaceId) {
+  if (!suiteId && !projectId) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "workspaceId is required when creating a new eval suite",
+      "projectId is required when creating a new eval suite",
     );
   }
 
@@ -471,7 +488,7 @@ export async function runEvalsWithManager(
     const createdSuite = await convexClient.mutation(
       "testSuites:createTestSuite" as any,
       {
-        workspaceId,
+        projectId,
         name: suiteName!,
         description: suiteDescription,
         environment: persistedEnvironment,
@@ -531,11 +548,65 @@ export async function runEvalsWithManager(
     }
   }
 
+  // Resolve org model config: prefer client-sent keys, fall back to org config.
+  // Treat an empty client-provided map as "no keys" so org fallback still runs.
+  // For reruns, projectId may not be in the request — derive it from the
+  // suite record so org BYOK keeps working.
+  const hasClientKeys =
+    !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
+  const resolvedModelApiKeys = hasClientKeys ? modelApiKeys : undefined;
+  let resolvedOrgModelConfig = orgModelConfig;
+  if (!resolvedModelApiKeys && !resolvedOrgModelConfig) {
+    let projectIdForOrgConfig: string | undefined = projectId;
+    let legacyWorkspaceIdForOrgConfig: string | undefined;
+    if (!projectIdForOrgConfig && resolvedSuiteId) {
+      try {
+        const suite = await convexClient.query(
+          "testSuites:getTestSuite" as any,
+          { suiteId: resolvedSuiteId },
+        );
+        if (suite?.projectId) {
+          projectIdForOrgConfig = String(suite.projectId);
+        } else if (suite?.workspaceId) {
+          legacyWorkspaceIdForOrgConfig = String(suite.workspaceId);
+        }
+      } catch (error) {
+        logger.warn("[evals] Failed to load suite for projectId fallback", {
+          suiteId: resolvedSuiteId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    const orgConfigTarget = projectIdForOrgConfig
+      ? { projectId: projectIdForOrgConfig }
+      : legacyWorkspaceIdForOrgConfig
+      ? { workspaceId: legacyWorkspaceIdForOrgConfig }
+      : undefined;
+    if (orgConfigTarget) {
+      try {
+        const orgConfig = await resolveOrgModelConfig(orgConfigTarget, {
+          bearerToken: convexAuthToken,
+          shareToken,
+          chatboxToken,
+          serverIds: resolvedServerIds,
+        });
+        resolvedOrgModelConfig = orgConfig;
+      } catch (error) {
+        logger.warn("[evals] Failed to resolve org model config", {
+          projectId: projectIdForOrgConfig,
+          legacyWorkspaceId: legacyWorkspaceIdForOrgConfig,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
   await runEvalSuiteWithAiSdk({
     suiteId: resolvedSuiteId,
     runId,
     config,
-    modelApiKeys: modelApiKeys ?? undefined,
+    modelApiKeys: resolvedModelApiKeys ?? undefined,
+    orgModelConfig: resolvedOrgModelConfig,
     convexClient,
     convexHttpUrl,
     convexAuthToken,
@@ -558,7 +629,7 @@ export type RunEvalTestCaseWithManagerOptions = {
 
 export async function runEvalTestCaseWithManager(
   clientManager: MCPClientManager,
-  request: RunTestCaseRequest,
+  request: RunTestCaseWithManagerRequest,
   options?: RunEvalTestCaseWithManagerOptions,
 ) {
   const {
@@ -567,8 +638,11 @@ export async function runEvalTestCaseWithManager(
     provider,
     compareRunId,
     serverIds,
+    shareToken,
+    chatboxToken,
     skipLastMessageRunUpdate,
     modelApiKeys,
+    orgModelConfig,
     convexAuthToken,
     testCaseOverrides,
   } = request;
@@ -604,6 +678,46 @@ export async function runEvalTestCaseWithManager(
     testCaseId: testCase._id,
   };
 
+  // Resolve org model config: prefer client-sent keys, fall back to org config.
+  // Treat an empty client-provided map as "no keys".
+  const hasClientKeysForCase =
+    !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
+  const resolvedModelApiKeys = hasClientKeysForCase ? modelApiKeys : undefined;
+  let resolvedOrgModelConfig = orgModelConfig;
+  const testCaseProjectId =
+    typeof testCase.projectId === "string" ? testCase.projectId : undefined;
+  const testCaseLegacyWorkspaceId =
+    !testCaseProjectId && typeof testCase.workspaceId === "string"
+      ? testCase.workspaceId
+      : undefined;
+  const testCaseOrgConfigTarget = testCaseProjectId
+    ? { projectId: testCaseProjectId }
+    : testCaseLegacyWorkspaceId
+    ? { workspaceId: testCaseLegacyWorkspaceId }
+    : undefined;
+  if (
+    !resolvedModelApiKeys &&
+    !resolvedOrgModelConfig &&
+    testCaseOrgConfigTarget
+  ) {
+    try {
+      resolvedOrgModelConfig = await resolveOrgModelConfig(
+        testCaseOrgConfigTarget,
+        {
+          bearerToken: convexAuthToken,
+          shareToken,
+          chatboxToken,
+          serverIds: resolvedServerIds,
+        },
+      );
+    } catch (error) {
+      logger.warn("[evals] Failed to resolve org model config for test case", {
+        testCaseId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   const quickResult = await runEvalSuiteWithAiSdk({
     suiteId: testCase.evalTestSuiteId,
     runId: null,
@@ -611,7 +725,8 @@ export async function runEvalTestCaseWithManager(
       tests: [test],
       environment: { servers: resolvedServerIds },
     },
-    modelApiKeys: modelApiKeys ?? undefined,
+    modelApiKeys: resolvedModelApiKeys ?? undefined,
+    orgModelConfig: resolvedOrgModelConfig,
     convexClient,
     convexHttpUrl,
     convexAuthToken,
@@ -744,7 +859,7 @@ export async function generateNegativeEvalTestsWithManager(
 
 export async function streamEvalTestCaseWithManager(
   clientManager: MCPClientManager,
-  request: RunTestCaseRequest,
+  request: RunTestCaseWithManagerRequest,
   options?: {
     skipLastMessageRunUpdate?: boolean;
     onStreamComplete?: () => void;
@@ -756,8 +871,11 @@ export async function streamEvalTestCaseWithManager(
     provider,
     compareRunId,
     serverIds,
+    shareToken,
+    chatboxToken,
     skipLastMessageRunUpdate,
     modelApiKeys,
+    orgModelConfig,
     convexAuthToken,
     testCaseOverrides,
   } = request;
@@ -793,6 +911,51 @@ export async function streamEvalTestCaseWithManager(
     testCaseId: testCase._id,
   };
 
+  // Resolve org model config: prefer client-sent keys, fall back to org config.
+  // Treat an empty client-provided map as "no keys".
+  const hasClientStreamKeys =
+    !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
+  const resolvedStreamModelApiKeys = hasClientStreamKeys
+    ? modelApiKeys
+    : undefined;
+  let resolvedStreamOrgModelConfig = orgModelConfig;
+  const streamTestCaseProjectId =
+    typeof testCase.projectId === "string" ? testCase.projectId : undefined;
+  const streamTestCaseLegacyWorkspaceId =
+    !streamTestCaseProjectId && typeof testCase.workspaceId === "string"
+      ? testCase.workspaceId
+      : undefined;
+  const streamTestCaseOrgConfigTarget = streamTestCaseProjectId
+    ? { projectId: streamTestCaseProjectId }
+    : streamTestCaseLegacyWorkspaceId
+    ? { workspaceId: streamTestCaseLegacyWorkspaceId }
+    : undefined;
+  if (
+    !resolvedStreamModelApiKeys &&
+    !resolvedStreamOrgModelConfig &&
+    streamTestCaseOrgConfigTarget
+  ) {
+    try {
+      resolvedStreamOrgModelConfig = await resolveOrgModelConfig(
+        streamTestCaseOrgConfigTarget,
+        {
+          bearerToken: convexAuthToken,
+          shareToken,
+          chatboxToken,
+          serverIds: resolvedServerIds,
+        },
+      );
+    } catch (error) {
+      logger.warn(
+        "[evals] Failed to resolve org model config for stream test case",
+        {
+          testCaseId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
+    }
+  }
+
   const tools = (await clientManager.getToolsForAiSdk(
     resolvedServerIds,
   )) as Record<string, any>;
@@ -809,7 +972,8 @@ export async function streamEvalTestCaseWithManager(
           tools,
           mcpClientManager: clientManager,
           recorder: null,
-          modelApiKeys: modelApiKeys ?? undefined,
+          modelApiKeys: resolvedStreamModelApiKeys ?? undefined,
+          orgModelConfig: resolvedStreamOrgModelConfig,
           convexHttpUrl,
           convexAuthToken,
           convexClient,

@@ -33,7 +33,7 @@ function formatSeatLimit(
     return t("1 (just you)");
   }
   const value =
-    plan === "starter"
+    plan === "solo"
       ? (entry.includedSeats ?? entry.limits.maxMembers)
       : entry.limits.maxMembers;
   if (value == null) {
@@ -76,7 +76,7 @@ function formatDeployments(
   if (plan === "enterprise") {
     return t("Custom", true);
   }
-  const value = entry.limits.maxChatboxesPerWorkspace;
+  const value = entry.limits.maxChatboxesPerProject;
   if (value == null) {
     return t("Unlimited", plan === "team");
   }
@@ -97,9 +97,9 @@ export function buildComparePlanSectionsFromCatalog(
           return {
             ...row,
             free: formatSeatLimit("free", getEntry(planCatalog, "free")),
-            starter: formatSeatLimit(
-              "starter",
-              getEntry(planCatalog, "starter"),
+            solo: formatSeatLimit(
+              "solo",
+              getEntry(planCatalog, "solo"),
             ),
             team: formatSeatLimit("team", getEntry(planCatalog, "team")),
             enterprise: formatSeatLimit(
@@ -107,32 +107,32 @@ export function buildComparePlanSectionsFromCatalog(
               getEntry(planCatalog, "enterprise"),
             ),
           };
-        case "Workspaces":
+        case "Projects":
           return {
             ...row,
             free: formatLimitValue(
-              getEntry(planCatalog, "free").limits.maxWorkspaces,
+              getEntry(planCatalog, "free").limits.maxProjects,
             ),
-            starter: formatLimitValue(
-              getEntry(planCatalog, "starter").limits.maxWorkspaces,
+            solo: formatLimitValue(
+              getEntry(planCatalog, "solo").limits.maxProjects,
             ),
             team: formatLimitValue(
-              getEntry(planCatalog, "team").limits.maxWorkspaces,
+              getEntry(planCatalog, "team").limits.maxProjects,
               true,
             ),
             enterprise: t("Custom", true),
           };
-        case "Servers per workspace":
+        case "Servers per project":
           return {
             ...row,
             free: formatLimitValue(
-              getEntry(planCatalog, "free").limits.maxServersPerWorkspace,
+              getEntry(planCatalog, "free").limits.maxServersPerProject,
             ),
-            starter: formatLimitValue(
-              getEntry(planCatalog, "starter").limits.maxServersPerWorkspace,
+            solo: formatLimitValue(
+              getEntry(planCatalog, "solo").limits.maxServersPerProject,
             ),
             team: formatLimitValue(
-              getEntry(planCatalog, "team").limits.maxServersPerWorkspace,
+              getEntry(planCatalog, "team").limits.maxServersPerProject,
               true,
             ),
             enterprise: t("Unlimited", true),
@@ -141,9 +141,9 @@ export function buildComparePlanSectionsFromCatalog(
           return {
             ...row,
             free: formatEvalRuns("free", getEntry(planCatalog, "free")),
-            starter: formatEvalRuns(
-              "starter",
-              getEntry(planCatalog, "starter"),
+            solo: formatEvalRuns(
+              "solo",
+              getEntry(planCatalog, "solo"),
             ),
             team: formatEvalRuns("team", getEntry(planCatalog, "team")),
             enterprise: t("Custom", true),
@@ -152,9 +152,9 @@ export function buildComparePlanSectionsFromCatalog(
           return {
             ...row,
             free: formatDeployments("free", getEntry(planCatalog, "free")),
-            starter: formatDeployments(
-              "starter",
-              getEntry(planCatalog, "starter"),
+            solo: formatDeployments(
+              "solo",
+              getEntry(planCatalog, "solo"),
             ),
             team: formatDeployments("team", getEntry(planCatalog, "team")),
             enterprise: t("Custom", true),

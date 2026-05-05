@@ -49,13 +49,13 @@ describe("mcp-oauth hosted callback sessions", () => {
     const { completeHostedOAuthCallback } = await import("../mcp-oauth");
     const result = await completeHostedOAuthCallback(
       {
-        surface: "workspace",
-        workspaceId: "ws_1",
+        surface: "project",
+        projectId: "ws_1",
         serverId: "srv_asana",
         serverName: "asana",
         serverUrl: "https://mcp.asana.com/sse",
         sessionId: "hosted-session-1",
-        accessScope: "workspace_member",
+        accessScope: "project_member",
         shareToken: null,
         chatboxToken: null,
         returnHash: "#servers",
@@ -82,12 +82,13 @@ describe("mcp-oauth hosted callback sessions", () => {
     const [, requestInit] = completeCall as [string, RequestInit];
     const sentBody = JSON.parse(String(requestInit.body));
     expect(sentBody).toEqual({
-      workspaceId: "ws_1",
+      projectId: "ws_1",
       serverId: "srv_asana",
       code: "oauth-code",
+      oauthResourceUrl: "https://mcp.asana.com/sse",
       state: "oauth-state-1",
       sessionId: "hosted-session-1",
-      accessScope: "workspace_member",
+      accessScope: "project_member",
     });
   });
 
@@ -117,13 +118,13 @@ describe("mcp-oauth hosted callback sessions", () => {
     const { completeHostedOAuthCallback } = await import("../mcp-oauth");
     const result = await completeHostedOAuthCallback(
       {
-        surface: "workspace",
-        workspaceId: "ws_1",
+        surface: "project",
+        projectId: "ws_1",
         serverId: "srv_asana",
         serverName: "asana",
         serverUrl: "https://mcp.asana.com/sse",
         sessionId: "hosted-session-1",
-        accessScope: "workspace_member",
+        accessScope: "project_member",
         shareToken: null,
         chatboxToken: null,
         returnHash: "#servers",
@@ -143,11 +144,90 @@ describe("mcp-oauth hosted callback sessions", () => {
     const [, requestInit] = completeCall as [string, RequestInit];
     const sentBody = JSON.parse(String(requestInit.body));
     expect(sentBody).toEqual({
-      workspaceId: "ws_1",
+      projectId: "ws_1",
       serverId: "srv_asana",
       code: "oauth-code",
+      oauthResourceUrl: "https://mcp.asana.com/sse",
       sessionId: "hosted-session-1",
-      accessScope: "workspace_member",
+      accessScope: "project_member",
+    });
+  });
+
+  it("replays the exact resource from the stored authorization request during hosted completion", async () => {
+    authFetchMock.mockImplementation((url: string) => {
+      if (url === "https://test.convex.site/web/oauth/session/progress") {
+        return Promise.resolve(
+          new Response(JSON.stringify({ success: false, error: "not found" }), {
+            status: 404,
+            headers: { "Content-Type": "application/json" },
+          })
+        );
+      }
+
+      if (url === "https://test.convex.site/web/oauth/complete") {
+        return Promise.resolve(
+          new Response(JSON.stringify({ success: true, expiresAt: 321 }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          })
+        );
+      }
+
+      throw new Error(`Unexpected authFetch URL: ${url}`);
+    });
+
+    localStorage.setItem(
+      "mcp-oauth-flow-state-linear",
+      JSON.stringify({
+        version: 1,
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "cimd",
+        state: {
+          authorizationUrl:
+            "https://auth.linear.app/authorize?client_id=client_123&resource=https%3A%2F%2Fmcp.linear.app%2Fmcp",
+        },
+      }),
+    );
+
+    const { completeHostedOAuthCallback } = await import("../mcp-oauth");
+    const result = await completeHostedOAuthCallback(
+      {
+        surface: "project",
+        projectId: "ws_1",
+        serverId: "srv_linear",
+        serverName: "linear",
+        serverUrl: "https://mcp.linear.app",
+        sessionId: "hosted-session-1",
+        accessScope: "project_member",
+        shareToken: null,
+        chatboxToken: null,
+        returnHash: "#servers",
+        startedAt: Date.now(),
+      },
+      "oauth-code",
+      {
+        callbackState: "oauth-state-linear",
+      },
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.oauthResourceUrl).toBe("https://mcp.linear.app/mcp");
+
+    const completeCall = authFetchMock.mock.calls.find(
+      ([url]) => url === "https://test.convex.site/web/oauth/complete"
+    );
+    expect(completeCall).toBeDefined();
+
+    const [, requestInit] = completeCall as [string, RequestInit];
+    const sentBody = JSON.parse(String(requestInit.body));
+    expect(sentBody).toMatchObject({
+      projectId: "ws_1",
+      serverId: "srv_linear",
+      code: "oauth-code",
+      oauthResourceUrl: "https://mcp.linear.app/mcp",
+      sessionId: "hosted-session-1",
+      state: "oauth-state-linear",
+      accessScope: "project_member",
     });
   });
 
@@ -211,13 +291,13 @@ describe("mcp-oauth hosted callback sessions", () => {
       const { completeHostedOAuthCallback } = await import("../mcp-oauth");
       const resultPromise = completeHostedOAuthCallback(
         {
-          surface: "workspace",
-          workspaceId: "ws_1",
+          surface: "project",
+          projectId: "ws_1",
           serverId: "srv_asana",
           serverName: "asana",
           serverUrl: "https://mcp.asana.com/sse",
           sessionId: "hosted-session-1",
-          accessScope: "workspace_member",
+          accessScope: "project_member",
           shareToken: null,
           chatboxToken: null,
           returnHash: "#servers",
@@ -333,13 +413,13 @@ describe("mcp-oauth hosted callback sessions", () => {
       const { completeHostedOAuthCallback } = await import("../mcp-oauth");
       const resultPromise = completeHostedOAuthCallback(
         {
-          surface: "workspace",
-          workspaceId: "ws_1",
+          surface: "project",
+          projectId: "ws_1",
           serverId: "srv_linear",
           serverName: "linear",
           serverUrl: "https://mcp.linear.app/mcp",
           sessionId: "hosted-session-1",
-          accessScope: "workspace_member",
+          accessScope: "project_member",
           shareToken: null,
           chatboxToken: null,
           returnHash: "#servers",

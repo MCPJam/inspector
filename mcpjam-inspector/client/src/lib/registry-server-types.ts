@@ -1,5 +1,5 @@
 /**
- * Registry server documents and workspace connections (Convex / catalog variants).
+ * Registry server documents and project connections (Convex / catalog variants).
  */
 
 export interface RegistryServer {
@@ -42,7 +42,7 @@ export interface RegistryServer {
 export interface RegistryServerConnection {
   _id: string;
   registryServerId: string;
-  workspaceId: string;
+  projectId: string;
   serverId: string;
   connectedBy: string;
   connectedAt: number;

@@ -41,12 +41,17 @@ servers.get("/status/:serverId", async (c) => {
   try {
     serverId = c.req.param("serverId");
     const mcpClientManager = c.mcpClientManager;
-    const status = mcpClientManager.pingServer(serverId);
+    const connectionStatus = mcpClientManager.getConnectionStatus(serverId);
+    const ping =
+      connectionStatus === "connected"
+        ? await mcpClientManager.pingServer(serverId)
+        : null;
 
     return c.json({
       success: true,
       serverId,
-      status,
+      status: connectionStatus,
+      ping,
     });
   } catch (error) {
     logger.error("Error getting server status", error, { serverId });

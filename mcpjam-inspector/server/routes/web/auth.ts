@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { Context } from "hono";
 import { MCPClientManager } from "@mcpjam/sdk";
 import type { HttpServerConfig, RpcLogger } from "@mcpjam/sdk";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
@@ -8,6 +9,8 @@ import {
   createHostedRpcLogCollector,
 } from "./hosted-rpc-logs.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
+import { setRequestLogContext } from "../../utils/request-logger.js";
+import type { RequestLogContext } from "../../utils/log-events.js";
 import {
   ErrorCode,
   WebRouteError,
@@ -41,56 +44,56 @@ function refineHostedTokens<T extends z.ZodRawShape>(schema: z.ZodObject<T>) {
 const clientCapabilitiesSchema = z.record(z.string(), z.unknown());
 export const GUEST_SERVER_ID = "__guest__";
 
-export const workspaceServerSchema = refineHostedTokens(
+export const projectServerSchema = refineHostedTokens(
   z.object({
-    workspaceId: z.string().min(1),
+    projectId: z.string().min(1),
     serverId: z.string().min(1),
     serverName: z.string().min(1).optional(),
     clientCapabilities: clientCapabilitiesSchema.optional(),
     oauthAccessToken: z.string().optional(),
-    accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
+    accessScope: z.enum(["project_member", "chat_v2"]).optional(),
     shareToken: z.string().min(1).optional(),
     chatboxToken: z.string().min(1).optional(),
   })
 );
 
-export const toolsListSchema = workspaceServerSchema.extend({
+export const toolsListSchema = projectServerSchema.extend({
   modelId: z.string().optional(),
   cursor: z.string().optional(),
 });
 
-export const toolsExecuteSchema = workspaceServerSchema.extend({
+export const toolsExecuteSchema = projectServerSchema.extend({
   toolName: z.string().min(1),
   parameters: z.record(z.string(), z.unknown()).default({}),
   taskOptions: z.record(z.string(), z.unknown()).optional(),
 });
 
-export const resourcesListSchema = workspaceServerSchema.extend({
+export const resourcesListSchema = projectServerSchema.extend({
   cursor: z.string().optional(),
 });
 
-export const resourcesReadSchema = workspaceServerSchema.extend({
+export const resourcesReadSchema = projectServerSchema.extend({
   uri: z.string().min(1),
 });
 
-export const promptsListSchema = workspaceServerSchema.extend({
+export const promptsListSchema = projectServerSchema.extend({
   cursor: z.string().optional(),
 });
 
 export const promptsListMultiSchema = refineHostedTokens(
   z.object({
-    workspaceId: z.string().min(1),
+    projectId: z.string().min(1),
     serverIds: z.array(z.string().min(1)).min(1),
     serverNames: z.array(z.string().min(1)).optional(),
     clientCapabilities: clientCapabilitiesSchema.optional(),
     oauthTokens: z.record(z.string(), z.string()).optional(),
-    accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
+    accessScope: z.enum(["project_member", "chat_v2"]).optional(),
     shareToken: z.string().min(1).optional(),
     chatboxToken: z.string().min(1).optional(),
   })
 );
 
-export const promptsGetSchema = workspaceServerSchema.extend({
+export const promptsGetSchema = projectServerSchema.extend({
   promptName: z.string().min(1),
   arguments: z
     .record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
@@ -100,14 +103,14 @@ export const promptsGetSchema = workspaceServerSchema.extend({
 export const hostedChatSchema = refineHostedTokens(
   z
     .object({
-      workspaceId: z.string().min(1),
+      projectId: z.string().min(1),
       selectedServerIds: z.array(z.string().min(1)),
       selectedServerNames: z.array(z.string().min(1)).optional(),
       clientCapabilities: clientCapabilitiesSchema.optional(),
       chatSessionId: z.string().min(1).optional(),
       surface: z.enum(["preview", "share_link"]).optional(),
       oauthTokens: z.record(z.string(), z.string()).optional(),
-      accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
+      accessScope: z.enum(["project_member", "chat_v2"]).optional(),
       shareToken: z.string().min(1).optional(),
       chatboxToken: z.string().min(1).optional(),
     })
@@ -132,7 +135,7 @@ export function buildSingleServerOAuthTokens(serverId: string, token?: string) {
 
 function buildServerNamesById(
   serverIds: string[],
-  serverNames?: readonly string[],
+  serverNames?: readonly string[]
 ): Record<string, string> | undefined {
   if (!Array.isArray(serverNames) || serverNames.length === 0) {
     return undefined;
@@ -156,9 +159,13 @@ function buildServerNamesById(
 }
 
 export function isGuestServerRequestBody(
-  rawBody: Record<string, unknown>,
+  rawBody: Record<string, unknown>
 ): boolean {
-  return typeof rawBody.serverUrl === "string" && !rawBody.workspaceId;
+  return (
+    typeof rawBody.serverUrl === "string" &&
+    !rawBody.projectId &&
+    !rawBody.workspaceId
+  );
 }
 
 function requireGuestId(c: any): string {
@@ -167,7 +174,7 @@ function requireGuestId(c: any): string {
     throw new WebRouteError(
       401,
       ErrorCode.UNAUTHORIZED,
-      "Valid guest token required. Please refresh the page to obtain a new session.",
+      "Valid guest token required. Please refresh the page to obtain a new session."
     );
   }
   return guestId;
@@ -176,7 +183,7 @@ function requireGuestId(c: any): string {
 export async function createGuestEphemeralManager(
   c: any,
   rawBody: Record<string, unknown>,
-  options?: { timeoutMs?: number; rpcLogger?: RpcLogger },
+  options?: { timeoutMs?: number; rpcLogger?: RpcLogger }
 ): Promise<{
   manager: InstanceType<typeof MCPClientManager>;
   augmentedBody: Record<string, unknown>;
@@ -192,7 +199,7 @@ export async function createGuestEphemeralManager(
       throw new WebRouteError(
         err.status,
         ErrorCode.VALIDATION_ERROR,
-        err.message,
+        err.message
       );
     }
     throw err;
@@ -210,6 +217,7 @@ export async function createGuestEphemeralManager(
   const httpConfig: HttpServerConfig = {
     url: guestInput.serverUrl,
     capabilities: guestInput.clientCapabilities,
+    clientCapabilities: guestInput.clientCapabilities,
     requestInit: {
       headers,
     },
@@ -223,11 +231,11 @@ export async function createGuestEphemeralManager(
         defaultTimeout: timeoutMs,
         rpcLogger: options?.rpcLogger,
         retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
-      },
+      }
     ),
     augmentedBody: {
       ...rawBody,
-      workspaceId: GUEST_SERVER_ID,
+      projectId: GUEST_SERVER_ID,
       serverId: GUEST_SERVER_ID,
       serverIds: [GUEST_SERVER_ID],
     },
@@ -236,10 +244,61 @@ export async function createGuestEphemeralManager(
 
 // ── Authorization ────────────────────────────────────────────────────
 
+// Server-only logging context returned by backend. Optional during rollout.
+// When present, it must never be forwarded to the browser.
+type InternalLogContext = {
+  authType: "signedIn" | "guest";
+  userId?: string | null;
+  userExternalId?: string | null;
+  guestExternalId?: string | null;
+  emailDomain?: string | null;
+  orgId?: string | null;
+  orgPlan?: string | null;
+  orgSeatQuantity?: number | null;
+  orgCreatedBy?: string | null;
+  projectId?: string | null;
+  projectRole?:
+    | "owner"
+    | "admin"
+    | "member"
+    | "guest"
+    | "editor"
+    | "chat"
+    | null;
+  accessLevel?: "project_member" | "shared_chat" | null;
+  serverId?: string | null;
+  serverTransport?: "stdio" | "http" | null;
+  chatboxId?: string | null;
+  surface?: "preview" | "share_link" | null;
+};
+
+function mapInternalToRequestContext(
+  ctx: InternalLogContext
+): Partial<RequestLogContext> {
+  return {
+    authType: ctx.authType,
+    userId: ctx.userId ?? null,
+    userExternalId: ctx.userExternalId ?? null,
+    guestExternalId: ctx.guestExternalId ?? null,
+    emailDomain: ctx.emailDomain ?? null,
+    orgId: ctx.orgId ?? null,
+    orgPlan: ctx.orgPlan ?? null,
+    orgSeatQuantity: ctx.orgSeatQuantity ?? null,
+    orgCreatedBy: ctx.orgCreatedBy ?? null,
+    projectId: ctx.projectId ?? null,
+    projectRole: ctx.projectRole ?? null,
+    accessLevel: ctx.accessLevel ?? null,
+    serverId: ctx.serverId ?? null,
+    serverTransport: ctx.serverTransport ?? null,
+    chatboxId: ctx.chatboxId ?? null,
+    surface: ctx.surface ?? null,
+  };
+}
+
 export type ConvexAuthorizeResponse = {
   authorized: boolean;
   role: "owner" | "admin" | "member";
-  accessLevel: "workspace_member" | "shared_chat";
+  accessLevel: "project_member" | "shared_chat";
   oauthAccessToken?: string | null;
   permissions: {
     chatOnly: boolean;
@@ -250,7 +309,13 @@ export type ConvexAuthorizeResponse = {
     headers?: Record<string, string>;
     useOAuth?: boolean;
   };
+  internalLogContext?: InternalLogContext;
 };
+
+export type ClientSafeAuthorizeResponse = Omit<
+  ConvexAuthorizeResponse,
+  "internalLogContext"
+>;
 
 type AuthorizedServerConfigHolder = {
   serverConfig: ConvexAuthorizeResponse["serverConfig"];
@@ -266,12 +331,16 @@ export type ConvexBatchAuthorizeFailure = {
 export type ConvexBatchAuthorizeSuccess = {
   ok: true;
   role: "owner" | "admin" | "member";
-  accessLevel: "workspace_member" | "shared_chat";
+  accessLevel: "project_member" | "shared_chat";
   oauthAccessToken?: string | null;
   permissions: {
     chatOnly: boolean;
   };
-  serverConfig: ConvexAuthorizeResponse["serverConfig"];
+  serverConfig: Omit<
+    ConvexAuthorizeResponse,
+    "internalLogContext"
+  >["serverConfig"];
+  internalLogContext?: InternalLogContext;
 };
 
 export type ConvexBatchAuthorizeResult =
@@ -283,15 +352,17 @@ export type ConvexBatchAuthorizeResponse = {
 };
 
 export async function authorizeServer(
+  c: Context,
   bearerToken: string,
-  workspaceId: string,
+  projectId: string,
   serverId: string,
   options?: {
-    accessScope?: "workspace_member" | "chat_v2";
+    accessScope?: "project_member" | "chat_v2";
+    workspaceId?: string;
     shareToken?: string;
     chatboxToken?: string;
   }
-): Promise<ConvexAuthorizeResponse> {
+): Promise<ClientSafeAuthorizeResponse> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
     throw new WebRouteError(
@@ -318,7 +389,9 @@ export async function authorizeServer(
         Authorization: `Bearer ${bearerToken}`,
       },
       body: JSON.stringify({
-        workspaceId,
+        ...(options?.workspaceId
+          ? { workspaceId: options.workspaceId }
+          : { projectId }),
         serverId,
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
         ...(options?.shareToken ? { shareToken: options.shareToken } : {}),
@@ -360,15 +433,21 @@ export async function authorizeServer(
     );
   }
 
-  return body as ConvexAuthorizeResponse;
+  const { internalLogContext, ...clientSafe } = body as ConvexAuthorizeResponse;
+  if (internalLogContext) {
+    setRequestLogContext(c, mapInternalToRequestContext(internalLogContext));
+  }
+  return clientSafe;
 }
 
 export async function authorizeBatch(
+  c: Context,
   bearerToken: string,
-  workspaceId: string,
+  projectId: string,
   serverIds: string[],
   options?: {
-    accessScope?: "workspace_member" | "chat_v2";
+    accessScope?: "project_member" | "chat_v2";
+    workspaceId?: string;
     shareToken?: string;
     chatboxToken?: string;
   }
@@ -399,7 +478,9 @@ export async function authorizeBatch(
         Authorization: `Bearer ${bearerToken}`,
       },
       body: JSON.stringify({
-        workspaceId,
+        ...(options?.workspaceId
+          ? { workspaceId: options.workspaceId }
+          : { projectId }),
         serverIds,
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
         ...(options?.shareToken ? { shareToken: options.shareToken } : {}),
@@ -441,7 +522,46 @@ export async function authorizeBatch(
     );
   }
 
-  return body as ConvexBatchAuthorizeResponse;
+  const raw = body as ConvexBatchAuthorizeResponse;
+
+  // Project-level fields (auth/user/org/project/accessLevel/surface) are
+  // identical across batch results by construction — same Convex auth call,
+  // same project. Take them from the first successful result.
+  //
+  // Per-server fields (serverId, serverTransport, chatboxId) are only well-
+  // defined when the batch authorizes a single server. For multi-server
+  // batches they would non-deterministically attribute to whichever server
+  // iterated last, so we null them out at the request envelope; per-server
+  // attribution belongs on per-server child events.
+  const successful = Object.entries(raw.results).filter(
+    (entry): entry is [string, ConvexBatchAuthorizeSuccess] => entry[1].ok
+  );
+  // Use the first result that actually carries internalLogContext rather than
+  // strictly successful[0]; during a backend rollout the field may be present
+  // on some results and absent on others, and we'd rather log project
+  // attribution than nothing.
+  const sourceCtx = successful.find(([, r]) => r.internalLogContext)?.[1]
+    .internalLogContext;
+  if (sourceCtx) {
+    const partial = mapInternalToRequestContext(sourceCtx);
+    if (successful.length > 1) {
+      partial.serverId = null;
+      partial.serverTransport = null;
+      partial.chatboxId = null;
+    }
+    setRequestLogContext(c, partial);
+  }
+
+  const strippedResults: Record<string, ConvexBatchAuthorizeResult> = {};
+  for (const [serverId, result] of Object.entries(raw.results)) {
+    if (result.ok) {
+      const { internalLogContext: _omit, ...clientSafeResult } = result;
+      strippedResults[serverId] = clientSafeResult;
+    } else {
+      strippedResults[serverId] = result;
+    }
+  }
+  return { results: strippedResults };
 }
 
 export function toHttpConfig(
@@ -477,6 +597,7 @@ export function toHttpConfig(
   return {
     url: authResponse.serverConfig.url,
     capabilities: clientCapabilities,
+    clientCapabilities: clientCapabilities,
     requestInit: {
       headers,
     },
@@ -491,14 +612,16 @@ export interface AuthorizedManagerResult {
 }
 
 export async function createAuthorizedManager(
+  c: Context,
   bearerToken: string,
-  workspaceId: string,
+  projectId: string,
   serverIds: string[],
   timeoutMs: number,
   oauthTokens?: Record<string, string>,
   clientCapabilities?: Record<string, unknown>,
   options?: {
-    accessScope?: "workspace_member" | "chat_v2";
+    accessScope?: "project_member" | "chat_v2";
+    workspaceId?: string;
     shareToken?: string;
     chatboxToken?: string;
     rpcLogger?: RpcLogger;
@@ -523,11 +646,13 @@ export async function createAuthorizedManager(
 
   const oauthServerUrls: Record<string, string> = {};
   const batch = await authorizeBatch(
+    c,
     bearerToken,
-    workspaceId,
+    projectId,
     uniqueServerIds,
     {
       accessScope: options?.accessScope,
+      workspaceId: options?.workspaceId,
       shareToken: options?.shareToken,
       chatboxToken: options?.chatboxToken,
     }
@@ -693,7 +818,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     timeoutMs?: number;
     rpcLogs?: boolean;
     guestUnsupportedMessage?: string;
-  },
+  }
 ) {
   let rpcCollector: ReturnType<typeof createHostedRpcLogCollector> | undefined;
 
@@ -704,7 +829,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
       rpcCollector = createHostedRpcLogCollector(rawBody);
     }
 
-    // Detect guest requests by body shape: presence of serverUrl without workspaceId.
+    // Detect guest requests by body shape: presence of serverUrl without project/project legacy IDs.
     // This is more robust than relying solely on guestId from middleware, which
     // may not be set when the guest token is expired/invalid but the client still
     // sends a guest-shaped body.
@@ -727,7 +852,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
         throw new WebRouteError(
           403,
           ErrorCode.FEATURE_NOT_SUPPORTED,
-          options.guestUnsupportedMessage,
+          options.guestUnsupportedMessage
         );
       }
 
@@ -737,7 +862,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
         {
           timeoutMs: options?.timeoutMs,
           rpcLogger: rpcCollector?.rpcLogger,
-        },
+        }
       );
 
       try {
@@ -750,14 +875,14 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
       // ── Authenticated path: Convex authorization ──────────────────
       const bearerToken = assertBearerToken(c);
       const body = parseWithSchema(schema, rawBody);
-      // Cast for internal plumbing — all web schemas include workspaceId + serverId(s).
+      // Cast for internal plumbing — all web schemas include projectId + serverId(s).
       // The strongly-typed `body` is passed through to `fn` unchanged.
       const raw = body as Record<string, unknown>;
       const { serverIds, oauthTokens, serverNames } =
         resolveConnectionParams(raw);
       const timeoutMs = options?.timeoutMs ?? WEB_CALL_TIMEOUT_MS;
       const accessScope =
-        raw.accessScope === "workspace_member" || raw.accessScope === "chat_v2"
+        raw.accessScope === "project_member" || raw.accessScope === "chat_v2"
           ? raw.accessScope
           : undefined;
       const shareToken =
@@ -771,8 +896,9 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
 
       result = await withManager(
         createAuthorizedManager(
+          c,
           bearerToken,
-          raw.workspaceId as string,
+          raw.projectId as string,
           serverIds,
           timeoutMs,
           oauthTokens,
@@ -780,6 +906,8 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
             undefined,
           {
             accessScope,
+            workspaceId:
+              typeof raw.workspaceId === "string" ? raw.workspaceId : undefined,
             shareToken,
             chatboxToken,
             rpcLogger: rpcCollector?.rpcLogger,

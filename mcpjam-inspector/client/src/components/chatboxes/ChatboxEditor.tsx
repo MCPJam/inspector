@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useConvexAuth } from "convex/react";
 import {
   ArrowLeft,
   Check,
@@ -25,7 +26,7 @@ import {
   type ChatboxAccessPreset,
 } from "@/lib/chatbox-access-presets";
 import { useChatboxMutations } from "@/hooks/useChatboxes";
-import { useServerMutations } from "@/hooks/useWorkspaces";
+import { useServerMutations } from "@/hooks/useProjects";
 import { AddServerModal } from "@/components/connection/AddServerModal";
 import { ChatboxDeleteConfirmDialog } from "@/components/chatboxes/ChatboxDeleteConfirmDialog";
 import { ChatboxShareSection } from "@/components/chatboxes/ChatboxShareSection";
@@ -69,12 +70,8 @@ import { useHostedOAuthGate } from "@/hooks/hosted/use-hosted-oauth-gate";
 import { useIsMobile } from "@/hooks/use-mobile";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import { isHostedOAuthBusy } from "@/lib/hosted-oauth-resume";
-import { getStoredTokens } from "@/lib/oauth/mcp-oauth";
-import {
-  getChatboxHostLabel,
-  getChatboxHostLogo,
-  type ChatboxHostStyle,
-} from "@/lib/chatbox-host-style";
+import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
+import { DEFAULT_HOST_STYLE, listHostStyles } from "@/lib/host-styles";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import {
   CHATBOX_OAUTH_PENDING_KEY,
@@ -84,14 +81,14 @@ import {
   type ChatboxBootstrapServer,
   writePlaygroundSession,
 } from "@/lib/chatbox-session";
-import type { RemoteServer } from "@/hooks/useWorkspaces";
+import type { RemoteServer } from "@/hooks/useProjects";
 import { ServerSelectionEditor } from "./builder/setup-checklist-panel";
 import {
   bootstrapServerToHostedOAuthDescriptor,
   countRequiredServers,
 } from "./builder/chatbox-server-optional";
 
-interface WorkspaceServerOption {
+interface ProjectServerOption {
   _id: string;
   name: string;
   transportType: "stdio" | "http";
@@ -112,16 +109,15 @@ function isInsecureUrl(url: string | undefined): boolean {
 
 interface ChatboxEditorProps {
   chatbox?: ChatboxSettings | null;
-  workspaceId: string;
-  workspaceName?: string | null;
-  workspaceServers: WorkspaceServerOption[];
+  projectId: string;
+  projectName?: string | null;
+  projectServers: ProjectServerOption[];
   onBack: () => void;
   onSaved?: (chatbox: ChatboxSettings) => void;
   onDeleted?: () => void;
 }
 
 const DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant.";
-const HOST_STYLE_OPTIONS: ChatboxHostStyle[] = ["claude", "chatgpt"];
 
 function createPlaygroundId(): string {
   if (
@@ -136,13 +132,14 @@ function createPlaygroundId(): string {
 
 export function ChatboxEditor({
   chatbox,
-  workspaceId,
-  workspaceName,
-  workspaceServers,
+  projectId,
+  projectName,
+  projectServers,
   onBack,
   onSaved,
   onDeleted,
 }: ChatboxEditorProps) {
+  const { isAuthenticated } = useConvexAuth();
   const { createChatbox, updateChatbox, deleteChatbox, setChatboxMode } =
     useChatboxMutations();
   const { createServer } = useServerMutations();
@@ -152,38 +149,38 @@ export function ChatboxEditor({
   const hostedModels = useMemo(
     () =>
       SUPPORTED_MODELS.filter((model) =>
-        isMCPJamProvidedModel(String(model.id)),
+        isMCPJamProvidedModel(String(model.id))
       ),
-    [],
+    []
   );
 
   const [name, setName] = useState(chatbox?.name ?? "");
   const [description, setDescription] = useState(chatbox?.description ?? "");
   const [hostStyle, setHostStyle] = useState<ChatboxHostStyle>(
-    chatbox?.hostStyle ?? "claude",
+    chatbox?.hostStyle ?? DEFAULT_HOST_STYLE.id
   );
   const [systemPrompt, setSystemPrompt] = useState(
-    chatbox?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+    chatbox?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT
   );
   const [modelId, setModelId] = useState(
-    chatbox?.modelId ?? hostedModels[0]?.id?.toString() ?? "openai/gpt-5-mini",
+    chatbox?.modelId ?? hostedModels[0]?.id?.toString() ?? "openai/gpt-5-mini"
   );
   const [temperature, setTemperature] = useState(chatbox?.temperature ?? 0.7);
   const [requireToolApproval, setRequireToolApproval] = useState(
-    chatbox?.requireToolApproval ?? false,
+    chatbox?.requireToolApproval ?? false
   );
   const [allowGuestAccess, setAllowGuestAccess] = useState(
-    chatbox?.allowGuestAccess ?? true,
+    chatbox?.allowGuestAccess ?? true
   );
   const [mode, setMode] = useState<ChatboxMode>(
-    chatbox?.mode ?? "any_signed_in_with_link",
+    chatbox?.mode ?? "any_signed_in_with_link"
   );
   const [selectedServerIds, setSelectedServerIds] = useState<string[]>(
-    chatbox?.servers.map((s) => s.serverId) ?? [],
+    chatbox?.servers.map((s) => s.serverId) ?? []
   );
   const [optionalServerIds, setOptionalServerIds] = useState<string[]>(
     () =>
-      chatbox?.servers.filter((s) => s.optional).map((s) => s.serverId) ?? [],
+      chatbox?.servers.filter((s) => s.optional).map((s) => s.serverId) ?? []
   );
   const [isSaving, setIsSaving] = useState(false);
   const [isEditingTitle, setIsEditingTitle] = useState(isCreateMode);
@@ -194,7 +191,7 @@ export function ChatboxEditor({
   const [isDeletingChatbox, setIsDeletingChatbox] = useState(false);
   const [previewChatKey, setPreviewChatKey] = useState(0);
   const [previewPlaygroundId, setPreviewPlaygroundId] = useState(() =>
-    createPlaygroundId(),
+    createPlaygroundId()
   );
   const previewHasOpenedRef = useRef(false);
   const previewPendingRestartRef = useRef(false);
@@ -209,7 +206,7 @@ export function ChatboxEditor({
     if (!chatbox) {
       setName("");
       setDescription("");
-      setHostStyle("claude");
+      setHostStyle(DEFAULT_HOST_STYLE.id);
       setSystemPrompt(DEFAULT_SYSTEM_PROMPT);
       setModelId(hostedModels[0]?.id?.toString() ?? "openai/gpt-5-mini");
       setTemperature(0.7);
@@ -240,7 +237,7 @@ export function ChatboxEditor({
     setMode(chatbox.mode);
     setSelectedServerIds(chatbox.servers.map((s) => s.serverId));
     setOptionalServerIds(
-      chatbox.servers.filter((s) => s.optional).map((s) => s.serverId),
+      chatbox.servers.filter((s) => s.optional).map((s) => s.serverId)
     );
     setIsEditingTitle(false);
     setIsPreviewOpen(false);
@@ -262,7 +259,7 @@ export function ChatboxEditor({
     if (!chatbox?.chatboxId) return;
     try {
       const raw = sessionStorage.getItem(
-        chatboxPreviewEnabledOptionalStorageKey(chatbox.chatboxId),
+        chatboxPreviewEnabledOptionalStorageKey(chatbox.chatboxId)
       );
       if (!raw) {
         setPreviewEnabledOptionalIds((prev) => (prev.length === 0 ? prev : []));
@@ -272,7 +269,7 @@ export function ChatboxEditor({
       if (!Array.isArray(parsed)) return;
       const optionalSet = new Set(optionalServerIds);
       const next = parsed.filter(
-        (id): id is string => typeof id === "string" && optionalSet.has(id),
+        (id): id is string => typeof id === "string" && optionalSet.has(id)
       );
       setPreviewEnabledOptionalIds((prev) => {
         if (
@@ -292,7 +289,7 @@ export function ChatboxEditor({
     if (!chatbox?.chatboxId) return;
     try {
       const storageKey = chatboxPreviewEnabledOptionalStorageKey(
-        chatbox.chatboxId,
+        chatbox.chatboxId
       );
       const serialized = JSON.stringify(previewEnabledOptionalIds);
       if (sessionStorage.getItem(storageKey) === serialized) return;
@@ -303,14 +300,14 @@ export function ChatboxEditor({
   }, [chatbox?.chatboxId, previewEnabledOptionalIds]);
 
   const availableServers = useMemo(
-    () => workspaceServers.filter((s) => s.transportType === "http"),
-    [workspaceServers],
+    () => projectServers.filter((s) => s.transportType === "http"),
+    [projectServers]
   );
 
-  const workspaceAccessLabel = workspaceName?.trim() || "Workspace";
+  const projectAccessLabel = projectName?.trim() || "Project";
   const accessPreset = useMemo(
     () => chatboxAccessPresetFromSettings(mode, allowGuestAccess),
-    [mode, allowGuestAccess],
+    [mode, allowGuestAccess]
   );
 
   const applyCreateAccessPreset = (preset: ChatboxAccessPreset) => {
@@ -338,27 +335,27 @@ export function ChatboxEditor({
       requireToolApproval,
       selectedServerIds,
       temperature,
-    ],
+    ]
   );
   const selectedPreviewServers = useMemo(() => {
     const savedServersById = new Map(
-      (chatbox?.servers ?? []).map((server) => [server.serverId, server]),
+      (chatbox?.servers ?? []).map((server) => [server.serverId, server])
     );
 
     return selectedServerIds
       .map((serverId) => {
-        const workspaceServer = availableServers.find(
-          (server) => server._id === serverId,
+        const projectServer = availableServers.find(
+          (server) => server._id === serverId
         );
-        if (workspaceServer) {
+        if (projectServer) {
           return {
-            serverId: workspaceServer._id,
-            serverName: workspaceServer.name,
-            useOAuth: Boolean(workspaceServer.useOAuth),
-            serverUrl: workspaceServer.url ?? null,
-            clientId: workspaceServer.clientId ?? null,
-            oauthScopes: workspaceServer.oauthScopes ?? null,
-            optional: optionalServerIds.includes(workspaceServer._id),
+            serverId: projectServer._id,
+            serverName: projectServer.name,
+            useOAuth: Boolean(projectServer.useOAuth),
+            serverUrl: projectServer.url ?? null,
+            clientId: projectServer.clientId ?? null,
+            oauthScopes: projectServer.oauthScopes ?? null,
+            optional: optionalServerIds.includes(projectServer._id),
           } satisfies ChatboxBootstrapServer;
         }
 
@@ -395,13 +392,13 @@ export function ChatboxEditor({
 
   const requiredPreviewServers = useMemo(
     () => selectedPreviewServers.filter((s) => !s.optional),
-    [selectedPreviewServers],
+    [selectedPreviewServers]
   );
 
   const activePreviewServers = useMemo(() => {
     const enabled = new Set(previewEnabledOptionalIds);
     const optionalOn = selectedPreviewServers.filter(
-      (s) => s.optional && enabled.has(s.serverId),
+      (s) => s.optional && enabled.has(s.serverId)
     );
     return [...requiredPreviewServers, ...optionalOn];
   }, [
@@ -424,17 +421,16 @@ export function ChatboxEditor({
           retryCount: 0,
           enabled: true,
         } satisfies ServerWithName,
-      ]),
+      ])
     );
   }, [activePreviewServers]);
 
   const previewOAuthGateServers = useMemo(
     () => activePreviewServers.map(bootstrapServerToHostedOAuthDescriptor),
-    [activePreviewServers],
+    [activePreviewServers]
   );
 
   const {
-    oauthStateByServerId,
     pendingOAuthServers,
     authorizeServer,
     markOAuthRequired,
@@ -443,19 +439,10 @@ export function ChatboxEditor({
     surface: "chatbox",
     pendingKey: CHATBOX_OAUTH_PENDING_KEY,
     servers: previewOAuthGateServers,
+    projectId: chatbox?.projectId ?? projectId,
+    chatboxToken: previewToken ?? undefined,
+    isAuthenticated,
   });
-  const previewOAuthTokens = useMemo(() => {
-    const entries = activePreviewServers
-      .map((server) => {
-        const token = getStoredTokens(server.serverName)?.access_token;
-        return token ? ([server.serverId, token] as const) : null;
-      })
-      .filter((entry): entry is readonly [string, string] =>
-        Array.isArray(entry),
-      );
-
-    return entries.length > 0 ? Object.fromEntries(entries) : undefined;
-  }, [oauthStateByServerId, activePreviewServers]);
   const isFinishingPreviewOAuth =
     pendingOAuthServers.length > 0 &&
     pendingOAuthServers.every(({ state }) => isHostedOAuthBusy(state.status));
@@ -518,14 +505,14 @@ export function ChatboxEditor({
     });
     if (!checked) {
       setOptionalServerIds((current) =>
-        current.filter((id) => id !== serverId),
+        current.filter((id) => id !== serverId)
       );
     }
   };
 
-  const saveServerToWorkspace = async (formData: ServerFormData) => {
+  const saveServerToProject = async (formData: ServerFormData) => {
     const serverId = (await createServer({
-      workspaceId,
+      projectId,
       name: formData.name,
       enabled: true,
       transportType: "http",
@@ -549,7 +536,7 @@ export function ChatboxEditor({
       return;
     }
     try {
-      const serverId = await saveServerToWorkspace(formData);
+      const serverId = await saveServerToProject(formData);
       setSelectedServerIds((current) => [...current, serverId]);
       toast.success(`Server "${formData.name}" added`);
       setIsAddServerOpen(false);
@@ -598,7 +585,7 @@ export function ChatboxEditor({
 
       let result;
       if (isCreateMode) {
-        result = await createChatbox({ workspaceId, ...payload });
+        result = await createChatbox({ projectId, ...payload });
         // Backend defaults to 'invited_only', so set mode if different
         if (mode !== "invited_only") {
           result = await setChatboxMode({
@@ -662,14 +649,14 @@ export function ChatboxEditor({
     }
 
     const payload: ChatboxBootstrapPayload = {
-      workspaceId: chatbox.workspaceId,
+      projectId: chatbox.projectId,
       chatboxId: chatbox.chatboxId,
       name: previewName,
       description: description.trim() || undefined,
       hostStyle,
       mode,
       allowGuestAccess,
-      viewerIsWorkspaceMember: true,
+      viewerIsProjectMember: true,
       systemPrompt: normalizedSystemPrompt,
       modelId,
       temperature,
@@ -758,10 +745,10 @@ export function ChatboxEditor({
       buildPlaygroundChatboxLink(
         previewToken,
         previewName,
-        previewPlaygroundId,
+        previewPlaygroundId
       ),
       "_blank",
-      "noopener,noreferrer",
+      "noopener,noreferrer"
     );
   }, [previewName, previewPlaygroundId, previewToken]);
 
@@ -769,7 +756,7 @@ export function ChatboxEditor({
     (details?: HostedOAuthRequiredDetails) => {
       markOAuthRequired(details);
     },
-    [markOAuthRequired],
+    [markOAuthRequired]
   );
 
   return (
@@ -849,29 +836,25 @@ export function ChatboxEditor({
             Host style
           </Label>
           <div className="mt-1.5 grid gap-2 sm:grid-cols-2">
-            {HOST_STYLE_OPTIONS.map((option) => {
-              const isSelected = hostStyle === option;
+            {listHostStyles().map((host) => {
+              const isSelected = hostStyle === host.id;
               return (
                 <Button
-                  key={option}
+                  key={host.id}
                   type="button"
                   variant={isSelected ? "secondary" : "ghost"}
                   className="h-auto justify-start gap-3 rounded-xl border border-border/50 px-3 py-3"
-                  onClick={() => setHostStyle(option)}
+                  onClick={() => setHostStyle(host.id)}
                 >
                   <img
-                    src={getChatboxHostLogo(option)}
-                    alt={getChatboxHostLabel(option)}
+                    src={host.logoSrc}
+                    alt={host.label}
                     className="h-5 w-5 object-contain"
                   />
                   <div className="flex min-w-0 flex-col items-start">
-                    <span className="text-sm font-medium">
-                      {getChatboxHostLabel(option)}
-                    </span>
+                    <span className="text-sm font-medium">{host.label}</span>
                     <span className="text-xs text-muted-foreground">
-                      {option === "chatgpt"
-                        ? "OpenAI-style chatbox chrome"
-                        : "Claude-style chatbox chrome"}
+                      {host.pickerDescription}
                     </span>
                   </div>
                 </Button>
@@ -902,7 +885,7 @@ export function ChatboxEditor({
 
           <div>
             <ServerSelectionEditor
-              workspaceServers={workspaceServers as RemoteServer[]}
+              projectServers={projectServers as RemoteServer[]}
               selectedServerIds={selectedServerIds}
               onToggleSelection={handleToggleServer}
               onOpenAdd={() => setIsAddServerOpen(true)}
@@ -992,7 +975,7 @@ export function ChatboxEditor({
             </Label>
             <ChatboxShareSection
               chatbox={chatbox}
-              workspaceName={workspaceName}
+              projectName={projectName}
               onUpdated={onSaved}
             />
           </div>
@@ -1005,7 +988,7 @@ export function ChatboxEditor({
             <p className="text-sm font-medium">General access</p>
             <div className="mt-2 flex items-start gap-3">
               <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted">
-                {accessPreset === "workspace" ? (
+                {accessPreset === "project" ? (
                   <Users className="size-4 text-muted-foreground" />
                 ) : accessPreset === "link_guests" ? (
                   <Globe className="size-4 text-muted-foreground" />
@@ -1020,11 +1003,11 @@ export function ChatboxEditor({
                       type="button"
                       className="flex items-center gap-1 rounded-md px-1 py-0.5 text-sm font-medium hover:bg-muted/50 transition-colors"
                     >
-                      {accessPreset === "workspace"
-                        ? workspaceAccessLabel
+                      {accessPreset === "project"
+                        ? projectAccessLabel
                         : accessPreset === "link_guests"
-                          ? "Anyone with the link (guests included)"
-                          : "Invited users only"}
+                        ? "Anyone with the link (guests included)"
+                        : "Invited users only"}
                       <ChevronDown className="size-3.5 text-muted-foreground" />
                     </button>
                   </PopoverTrigger>
@@ -1032,16 +1015,16 @@ export function ChatboxEditor({
                     <button
                       type="button"
                       className="flex w-full flex-col items-start gap-0.5 rounded-md px-2 py-2 text-left text-sm hover:bg-muted/50"
-                      onClick={() => applyCreateAccessPreset("workspace")}
+                      onClick={() => applyCreateAccessPreset("project")}
                     >
                       <span className="flex w-full items-center justify-between gap-2 font-medium">
-                        {workspaceAccessLabel}
-                        {accessPreset === "workspace" ? (
+                        {projectAccessLabel}
+                        {accessPreset === "project" ? (
                           <Check className="size-3.5 shrink-0 text-muted-foreground" />
                         ) : null}
                       </span>
                       <span className="text-xs text-muted-foreground">
-                        Signed-in workspace members can use the link. Guests
+                        Signed-in project members can use the link. Guests
                         cannot.
                       </span>
                     </button>
@@ -1079,11 +1062,11 @@ export function ChatboxEditor({
                   </PopoverContent>
                 </Popover>
                 <p className="mt-0.5 px-1 text-xs text-muted-foreground">
-                  {accessPreset === "workspace"
-                    ? "Signed-in members of this workspace can open the chatbox with the link."
+                  {accessPreset === "project"
+                    ? "Signed-in members of this project can open the chatbox with the link."
                     : accessPreset === "link_guests"
-                      ? "Anyone with the link can open this chatbox, including guests."
-                      : "Only people you invite by email can open this chatbox."}
+                    ? "Anyone with the link can open this chatbox, including guests."
+                    : "Only people you invite by email can open this chatbox."}
                 </p>
               </div>
             </div>
@@ -1186,23 +1169,26 @@ export function ChatboxEditor({
                       key={previewChatKey}
                       connectedOrConnectingServerConfigs={previewServerConfigs}
                       selectedServerNames={activePreviewServers.map(
-                        (server) => server.serverName,
+                        (server) => server.serverName
                       )}
                       minimalMode
                       reasoningDisplayMode="hidden"
-                      hostedWorkspaceIdOverride={chatbox.workspaceId}
+                      hostedProjectIdOverride={chatbox.projectId}
                       hostedSelectedServerIdsOverride={activePreviewServers.map(
-                        (server) => server.serverId,
+                        (server) => server.serverId
                       )}
-                      hostedOAuthTokensOverride={previewOAuthTokens}
-                      hostedChatboxToken={previewToken}
-                      hostedChatboxSurface="preview"
-                      initialModelId={modelId}
-                      initialSystemPrompt={normalizedSystemPrompt}
-                      initialTemperature={temperature}
-                      initialRequireToolApproval={requireToolApproval}
+                      hostedContext={{
+                        chatboxToken: previewToken,
+                        chatboxSurface: "preview",
+                      }}
+                      executionConfig={{
+                        modelId,
+                        systemPrompt: normalizedSystemPrompt,
+                        temperature,
+                        requireToolApproval,
+                      }}
                       loadingIndicatorVariant={getLoadingIndicatorVariantForHostStyle(
-                        hostStyle,
+                        hostStyle
                       )}
                       onOAuthRequired={handlePreviewOAuthRequired}
                       chatboxComposerBlocked={introGate.composerBlocked}
@@ -1211,7 +1197,7 @@ export function ChatboxEditor({
                         .filter(
                           (s) =>
                             s.optional &&
-                            !previewEnabledOptionalIds.includes(s.serverId),
+                            !previewEnabledOptionalIds.includes(s.serverId)
                         )
                         .map((s) => ({
                           serverId: s.serverId,
@@ -1220,7 +1206,7 @@ export function ChatboxEditor({
                         }))}
                       onEnableChatboxOptionalServer={(id) => {
                         setPreviewEnabledOptionalIds((prev) =>
-                          prev.includes(id) ? prev : [...prev, id],
+                          prev.includes(id) ? prev : [...prev, id]
                         );
                       }}
                     />

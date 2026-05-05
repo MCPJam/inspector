@@ -37,11 +37,13 @@ npx -y @mcpjam/cli@latest --help
 |-------|---------|-------------|
 | [`server`](/cli/server-inspection) | Triage connectivity and capabilities | `probe`, `doctor`, `info`, `validate`, `ping`, `capabilities`, `export` |
 | [`oauth`](/cli/oauth-conformance) | Test OAuth flows and conformance | `conformance`, `conformance-suite`, `login`, `metadata`, `proxy` |
-| [`apps`](/cli/apps-conformance) | Validate MCP Apps tool metadata, `ui://` resources, and widgets | `conformance`, `conformance-suite`, `mcp-widget`, `chatgpt-widget` |
+| [`apps`](/cli/apps-conformance) | Validate MCP Apps metadata and resource wiring | `conformance`, `conformance-suite` |
+| [`inspector`](/cli/reference#inspector-commands) | Start, open, or stop the local Inspector from the CLI | `open`, `start`, `stop` |
 | [`tools`](/cli/tools-resources-prompts) | Exercise the tool surface | `list`, `call` |
 | [`resources`](/cli/tools-resources-prompts) | Read resources and templates | `list`, `read`, `templates` |
 | [`prompts`](/cli/tools-resources-prompts) | Fetch prompts | `list`, `get` |
 | [`protocol`](/cli/reference) | MCP protocol conformance checks | `conformance`, `conformance-suite` |
+| [`telemetry`](/cli/telemetry) | Inspect and configure anonymous CLI telemetry | `status`, `disable`, `enable` |
 
 ## Global flags
 
@@ -51,7 +53,9 @@ These flags apply to every command.
 |------|---------|-------------|
 | `--timeout <ms>` | `30000` | Request timeout in milliseconds |
 | `--rpc` | off | Include raw JSON-RPC request/response logs in JSON output under `_rpcLogs` |
-| `--format <format>` | `human` on TTY, `json` when piped | Output format (`json` or `human`; `junit-xml` is available on protocol, OAuth, and apps conformance commands) |
+| `--quiet` | off | Suppress non-result progress output on stderr |
+| `--no-telemetry` | off | Disable anonymous telemetry for this invocation |
+| `--format <format>` | `human` on TTY, `json` when piped | Raw output format (`json` or `human`) |
 | `-v, --version` | | Print the CLI version |
 
 ## Output formats
@@ -60,10 +64,17 @@ The CLI auto-detects whether stdout is a terminal:
 
 - **Interactive terminal** — defaults to `--format human`. For most commands this is pretty-printed JSON; `server doctor` and the OAuth conformance commands provide dedicated human-readable summaries.
 - **Piped or redirected** (CI, `| jq`, agent invocation) — defaults to `--format json`, the full structured result.
-- **Conformance in CI** — `protocol conformance`, `protocol conformance-suite`, `oauth conformance`, `oauth conformance-suite`, `apps conformance`, and `apps conformance-suite` also support `--format junit-xml`.
+- **Conformance in CI** — `protocol conformance`, `protocol conformance-suite`, `oauth conformance`, `oauth conformance-suite`, `apps conformance`, and `apps conformance-suite` support `--reporter junit-xml` and `--reporter json-summary`.
 - **Explicit `--format`** always wins over the auto-detected default.
 
-**For agents**: raw JSON is the source of truth. Human format is a lossy presentation layer. If you're parsing output programmatically, always pass `--format json`.
+**For agents**: raw JSON is the source of truth. Human format is a lossy presentation layer. If you're parsing output programmatically, pass `--quiet --format json`.
+
+JSON-valued flags accept inline JSON, `@path`, or `-` for stdin. `tools call` also accepts `--tool-args-stdin` as a shorthand for `--tool-args -`. Use files or stdin for large payloads to avoid shell escaping issues:
+
+```bash
+echo '{"key":"value"}' | mcpjam tools call --url $URL --access-token $TOKEN \
+  --tool-name my_tool --tool-args - --quiet --format json
+```
 
 ## Connecting to servers
 
@@ -134,10 +145,15 @@ mcpjam server doctor --url https://your-server.com/mcp --oauth-access-token $TOK
 # 4. Exercise tools directly
 mcpjam tools list --url https://your-server.com/mcp --access-token $TOKEN
 mcpjam tools call --url https://your-server.com/mcp --access-token $TOKEN \
-  --tool-name my_tool --tool-args '{"key": "value"}'
+  --tool-name my_tool --tool-args @params.json --quiet --format json
 
 # 5. If the server exposes MCP Apps, validate the ui:// surface
 mcpjam apps conformance --url https://your-server.com/mcp --access-token $TOKEN
+
+# 6. Render one UI-capable tool result in Inspector's App Builder.
+# --ui opens Inspector by default in a TTY; add --no-open if browser automation already opened it.
+mcpjam tools call --url https://your-server.com/mcp --access-token $TOKEN \
+  --tool-name my_app_tool --tool-args @params.json --ui --quiet --format json
 ```
 
 ## What's next
@@ -145,6 +161,6 @@ mcpjam apps conformance --url https://your-server.com/mcp --access-token $TOKEN
 - [Server inspection](/cli/server-inspection) — probe, doctor, and diagnostics
 - [OAuth conformance](/cli/oauth-conformance) — test your OAuth implementation
 - [OAuth login](/cli/oauth-login) — authenticate and debug OAuth flows
-- [MCP Apps conformance](/cli/apps-conformance) — validate `_meta.ui.resourceUri` and `ui://` resources
+- [MCP Apps conformance](/cli/apps-conformance) — validate `_meta.ui.resourceUri` and `ui://` resource wiring
 - [Tools, resources & prompts](/cli/tools-resources-prompts) — exercise the connected surface
 - [Full command reference](/cli/reference) — every flag for every command

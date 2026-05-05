@@ -1,5 +1,6 @@
 import { discoverOAuthProtectedResourceMetadata } from "@modelcontextprotocol/client";
 import { buildResourceMetadataUrl } from "./oauth/state-machines/shared/urls.js";
+import { resolveRegistrationStrategies } from "./oauth/authorization-plan.js";
 import {
   type RetryPolicy,
   isRetryableTransientError,
@@ -441,26 +442,6 @@ function buildSseProbeRequest(config: ProbeMcpServerConfig): ProbeHttpAttempt {
     },
     durationMs: 0,
   };
-}
-
-function resolveRegistrationStrategies(
-  protocolVersion: OAuthProtocolVersion,
-  authServerMetadata: Record<string, unknown> | undefined
-): Array<"preregistered" | "dcr" | "cimd"> {
-  const strategies: Array<"preregistered" | "dcr" | "cimd"> = ["preregistered"];
-
-  if (authServerMetadata?.registration_endpoint) {
-    strategies.push("dcr");
-  }
-
-  if (
-    protocolVersion === "2025-11-25" &&
-    authServerMetadata?.client_id_metadata_document_supported === true
-  ) {
-    strategies.push("cimd");
-  }
-
-  return strategies;
 }
 
 async function discoverOAuthDetails(

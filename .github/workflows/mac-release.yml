@@ -40,14 +40,14 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Download release patch
-        if: inputs.apply_release_patch
+        if: inputs.apply_release_patch == true
         uses: actions/download-artifact@v4
         with:
           name: release-plan
           path: .release-plan
 
       - name: Apply release patch
-        if: inputs.apply_release_patch
+        if: inputs.apply_release_patch == true
         run: git apply --binary .release-plan/release.patch
 
       - name: Setup Node.js
@@ -113,8 +113,8 @@ jobs:
           xcrun stapler staple "$DMG_PATH"
           xcrun stapler validate "$DMG_PATH"
 
-          cp "$DMG_PATH" "$GITHUB_WORKSPACE/MCPJam Inspector.dmg"
-          echo "DMG_PATH=$GITHUB_WORKSPACE/MCPJam Inspector.dmg" >> $GITHUB_ENV
+          cp "$DMG_PATH" "$GITHUB_WORKSPACE/MCPJam.Inspector.dmg"
+          echo "DMG_PATH=$GITHUB_WORKSPACE/MCPJam.Inspector.dmg" >> $GITHUB_ENV
 
       - name: Notarize ZIP
         run: |

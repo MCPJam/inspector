@@ -112,8 +112,10 @@ export const OAuthFlowTab = ({
     useState(false);
   const [isApplyingTokens, setIsApplyingTokens] = useState(false);
 
-  const httpServers = useMemo(
-    () => Object.values(serverConfigs).filter((server) => isHttpServer(server)),
+  const httpServerCount = useMemo(
+    () =>
+      Object.values(serverConfigs).filter((server) => isHttpServer(server))
+        .length,
     [serverConfigs],
   );
 
@@ -124,12 +126,6 @@ export const OAuthFlowTab = ({
   const activeServer = isHttpServer(selectedServer)
     ? selectedServer
     : undefined;
-
-  useEffect(() => {
-    if (!isHttpServer(selectedServer) && httpServers.length > 0) {
-      onSelectServer(httpServers[0].name);
-    }
-  }, [selectedServer, httpServers, onSelectServer]);
 
   useEffect(() => {
     if (
@@ -143,10 +139,10 @@ export const OAuthFlowTab = ({
   }, [pendingServerSelection, serverConfigs, onSelectServer]);
 
   useEffect(() => {
-    if (httpServers.length === 0) {
+    if (httpServerCount === 0) {
       setIsProfileModalOpen(true);
     }
-  }, [httpServers.length]);
+  }, [httpServerCount]);
 
   const profile = useMemo(
     () => deriveOAuthProfileFromServer(activeServer),

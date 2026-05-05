@@ -1,40 +1,43 @@
 import { create } from "zustand";
 import {
+  buildDefaultProjectConnectionConfig,
+  buildDefaultProjectConnectionDefaults,
+  pickProjectConnectionConfig,
   stableStringifyJson,
-  type WorkspaceClientConfig,
+  type ProjectConnectionConfigDraft,
+  type ProjectConnectionDefaults,
 } from "@/lib/client-config";
 
-type JsonSection = "clientCapabilities" | "hostContext";
+type JsonSection = "connectionDefaults" | "clientCapabilities";
 
 interface ClientConfigStoreState {
-  activeWorkspaceId: string | null;
-  defaultConfig: WorkspaceClientConfig | null;
-  savedConfig: WorkspaceClientConfig | undefined;
-  draftConfig: WorkspaceClientConfig | null;
+  activeProjectId: string | null;
+  defaultConfig: ProjectConnectionConfigDraft | null;
+  savedConfig: ProjectConnectionConfigDraft | undefined;
+  draftConfig: ProjectConnectionConfigDraft | null;
+  connectionDefaultsText: string;
   clientCapabilitiesText: string;
-  hostContextText: string;
+  connectionDefaultsError: string | null;
   clientCapabilitiesError: string | null;
-  hostContextError: string | null;
   isSaving: boolean;
   isDirty: boolean;
-  pendingWorkspaceId: string | null;
-  pendingSavedConfig: WorkspaceClientConfig | undefined;
+  pendingProjectId: string | null;
+  pendingSavedConfig: ProjectConnectionConfigDraft | undefined;
   isAwaitingRemoteEcho: boolean;
-  loadWorkspaceConfig: (input: {
-    workspaceId: string | null;
-    defaultConfig: WorkspaceClientConfig | null;
-    savedConfig?: WorkspaceClientConfig;
+  loadProjectConfig: (input: {
+    projectId: string | null;
+    defaultConfig: ProjectConnectionConfigDraft | null;
+    savedConfig?: ProjectConnectionConfigDraft;
   }) => void;
   setSectionText: (section: JsonSection, text: string) => void;
-  patchHostContext: (patch: Record<string, unknown>) => void;
   resetSectionToDefault: (section: JsonSection) => void;
   resetToBaseline: () => void;
   beginSave: (input: {
-    workspaceId: string;
-    savedConfig: WorkspaceClientConfig | undefined;
+    projectId: string;
+    savedConfig: ProjectConnectionConfigDraft | undefined;
     awaitRemoteEcho: boolean;
   }) => void;
-  markSaved: (savedConfig: WorkspaceClientConfig | undefined) => void;
+  markSaved: (savedConfig: ProjectConnectionConfigDraft | undefined) => void;
   failSave: () => void;
 }
 
@@ -44,9 +47,8 @@ function stringifyJson(value: unknown): string {
 
 function createInitialState(): Omit<
   ClientConfigStoreState,
-  | "loadWorkspaceConfig"
+  | "loadProjectConfig"
   | "setSectionText"
-  | "patchHostContext"
   | "resetSectionToDefault"
   | "resetToBaseline"
   | "beginSave"
@@ -54,17 +56,17 @@ function createInitialState(): Omit<
   | "failSave"
 > {
   return {
-    activeWorkspaceId: null,
+    activeProjectId: null,
     defaultConfig: null,
     savedConfig: undefined,
     draftConfig: null,
+    connectionDefaultsText: "{}",
     clientCapabilitiesText: "{}",
-    hostContextText: "{}",
+    connectionDefaultsError: null,
     clientCapabilitiesError: null,
-    hostContextError: null,
     isSaving: false,
     isDirty: false,
-    pendingWorkspaceId: null,
+    pendingProjectId: null,
     pendingSavedConfig: undefined,
     isAwaitingRemoteEcho: false,
   };
@@ -92,22 +94,41 @@ function computeDirtyState(
   );
 }
 
+function normalizeConfigForEditing(
+  config: ProjectConnectionConfigDraft | null | undefined,
+): ProjectConnectionConfigDraft | null | undefined {
+  if (!config) {
+    return config;
+  }
+
+  return pickProjectConnectionConfig({
+    version: 1,
+    connectionDefaults: config.connectionDefaults,
+    clientCapabilities: config.clientCapabilities,
+    hostContext: {},
+  });
+}
+
 function resetFromConfig(
-  workspaceId: string | null,
-  defaultConfig: WorkspaceClientConfig | null,
-  savedConfig?: WorkspaceClientConfig,
+  projectId: string | null,
+  defaultConfig: ProjectConnectionConfigDraft | null,
+  savedConfig?: ProjectConnectionConfigDraft,
 ) {
-  const baseline = savedConfig ?? defaultConfig;
+  const normalizedDefaultConfig = normalizeConfigForEditing(defaultConfig) ?? null;
+  const normalizedSavedConfig = normalizeConfigForEditing(savedConfig);
+  const baseline = normalizedSavedConfig ?? normalizedDefaultConfig;
   return {
-    activeWorkspaceId: workspaceId,
-    defaultConfig,
-    savedConfig,
+    activeProjectId: projectId,
+    defaultConfig: normalizedDefaultConfig,
+    savedConfig: normalizedSavedConfig,
     draftConfig: baseline,
+    connectionDefaultsText: stringifyJson(
+      baseline?.connectionDefaults ?? buildDefaultProjectConnectionDefaults(),
+    ),
     clientCapabilitiesText: stringifyJson(baseline?.clientCapabilities ?? {}),
-    hostContextText: stringifyJson(baseline?.hostContext ?? {}),
+    connectionDefaultsError: null,
     clientCapabilitiesError: null,
-    hostContextError: null,
-    pendingWorkspaceId: null,
+    pendingProjectId: null,
     pendingSavedConfig: undefined,
     isAwaitingRemoteEcho: false,
     isSaving: false,
@@ -118,14 +139,14 @@ function resetFromConfig(
 function isPendingRemoteEchoMatch(
   state: Pick<
     ClientConfigStoreState,
-    "isAwaitingRemoteEcho" | "pendingWorkspaceId" | "pendingSavedConfig"
+    "isAwaitingRemoteEcho" | "pendingProjectId" | "pendingSavedConfig"
   >,
-  workspaceId: string | null,
-  savedConfig?: WorkspaceClientConfig,
+  projectId: string | null,
+  savedConfig?: ProjectConnectionConfigDraft,
 ) {
   return (
     state.isAwaitingRemoteEcho &&
-    state.pendingWorkspaceId === workspaceId &&
+    state.pendingProjectId === projectId &&
     stableStringifyJson(state.pendingSavedConfig) ===
       stableStringifyJson(savedConfig)
   );
@@ -139,6 +160,64 @@ function parseRecordJson(text: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
+function parseConnectionDefaultsJson(text: string): ProjectConnectionDefaults {
+  const parsed = parseRecordJson(text);
+  const requestTimeout = parsed.requestTimeout;
+  const headers = parsed.headers;
+
+  if (
+    requestTimeout !== undefined &&
+    (typeof requestTimeout !== "number" ||
+      !Number.isFinite(requestTimeout) ||
+      requestTimeout <= 0)
+  ) {
+    throw new Error("connectionDefaults.requestTimeout must be a positive number");
+  }
+
+  if (headers !== undefined) {
+    if (!headers || typeof headers !== "object" || Array.isArray(headers)) {
+      throw new Error("connectionDefaults.headers must be a JSON object");
+    }
+
+    for (const [key, value] of Object.entries(headers)) {
+      if (key.toLowerCase() === "authorization") {
+        throw new Error(
+          "connectionDefaults.headers must not include Authorization",
+        );
+      }
+
+      if (typeof value !== "string") {
+        throw new Error(
+          `connectionDefaults.headers.${key} must be a string value`,
+        );
+      }
+    }
+  }
+
+  return {
+    headers: (headers as Record<string, string> | undefined) ?? {},
+    requestTimeout:
+      typeof requestTimeout === "number"
+        ? requestTimeout
+        : buildDefaultProjectConnectionDefaults().requestTimeout,
+  };
+}
+
+function getSectionFieldNames(section: JsonSection) {
+  switch (section) {
+    case "connectionDefaults":
+      return {
+        textField: "connectionDefaultsText" as const,
+        errorField: "connectionDefaultsError" as const,
+      };
+    case "clientCapabilities":
+      return {
+        textField: "clientCapabilitiesText" as const,
+        errorField: "clientCapabilitiesError" as const,
+      };
+  }
+}
+
 function setSectionValue(
   state: ClientConfigStoreState,
   section: JsonSection,
@@ -148,9 +227,12 @@ function setSectionValue(
     return state;
   }
 
-  const nextDraftConfig: WorkspaceClientConfig = {
+  const nextDraftConfig: ProjectConnectionConfigDraft = {
     ...state.draftConfig,
-    [section]: nextValue,
+    [section]:
+      section === "connectionDefaults"
+        ? (nextValue as ProjectConnectionDefaults)
+        : nextValue,
   };
 
   return {
@@ -167,31 +249,34 @@ export const useClientConfigStore = create<ClientConfigStoreState>(
   (set, get) => ({
     ...createInitialState(),
 
-    loadWorkspaceConfig: ({ workspaceId, defaultConfig, savedConfig }) => {
+    loadProjectConfig: ({ projectId, defaultConfig, savedConfig }) => {
       const state = get();
+      const normalizedDefaultConfig = normalizeConfigForEditing(defaultConfig) ?? null;
+      const normalizedSavedConfig = normalizeConfigForEditing(savedConfig);
       const shouldApplyPendingRemoteEcho = isPendingRemoteEchoMatch(
         state,
-        workspaceId,
-        savedConfig,
+        projectId,
+        normalizedSavedConfig,
       );
 
       if (
         state.isDirty &&
-        state.activeWorkspaceId === workspaceId &&
+        state.activeProjectId === projectId &&
         !shouldApplyPendingRemoteEcho
       ) {
         return;
       }
-      const sameWorkspace = state.activeWorkspaceId === workspaceId;
+
+      const sameProject = state.activeProjectId === projectId;
       const sameDefault =
         stableStringifyJson(state.defaultConfig) ===
-        stableStringifyJson(defaultConfig);
+        stableStringifyJson(normalizedDefaultConfig);
       const sameSaved =
         stableStringifyJson(state.savedConfig) ===
-        stableStringifyJson(savedConfig);
+        stableStringifyJson(normalizedSavedConfig);
 
       if (
-        sameWorkspace &&
+        sameProject &&
         sameDefault &&
         sameSaved &&
         !shouldApplyPendingRemoteEcho
@@ -199,22 +284,24 @@ export const useClientConfigStore = create<ClientConfigStoreState>(
         return;
       }
 
-      set(resetFromConfig(workspaceId, defaultConfig, savedConfig));
+      set(
+        resetFromConfig(
+          projectId,
+          normalizedDefaultConfig,
+          normalizedSavedConfig,
+        ),
+      );
     },
 
     setSectionText: (section, text) => {
       set((state) => {
-        const textField =
-          section === "clientCapabilities"
-            ? "clientCapabilitiesText"
-            : "hostContextText";
-        const errorField =
-          section === "clientCapabilities"
-            ? "clientCapabilitiesError"
-            : "hostContextError";
+        const { textField, errorField } = getSectionFieldNames(section);
 
         try {
-          const parsed = parseRecordJson(text);
+          const parsed =
+            section === "connectionDefaults"
+              ? parseConnectionDefaultsJson(text)
+              : parseRecordJson(text);
           return {
             ...setSectionValue(state, section, parsed),
             [textField]: text,
@@ -230,46 +317,17 @@ export const useClientConfigStore = create<ClientConfigStoreState>(
       });
     },
 
-    patchHostContext: (patch) => {
-      set((state) => {
-        const currentHostContext = state.draftConfig?.hostContext ?? {};
-        const nextHostContext = {
-          ...currentHostContext,
-          ...patch,
-        };
-        const nextState = setSectionValue(
-          state,
-          "hostContext",
-          nextHostContext,
-        );
-        return {
-          ...nextState,
-          hostContextText: stringifyJson(nextHostContext),
-          hostContextError: null,
-        };
-      });
-    },
-
     resetSectionToDefault: (section) => {
       set((state) => {
-        const defaultConfig = state.defaultConfig;
-        if (!defaultConfig) {
-          return {};
-        }
-
+        const defaultConfig =
+          state.defaultConfig ?? buildDefaultProjectConnectionConfig();
         const nextValue = defaultConfig[section];
         const nextState = setSectionValue(state, section, nextValue);
+        const { textField, errorField } = getSectionFieldNames(section);
         return {
           ...nextState,
-          ...(section === "clientCapabilities"
-            ? {
-                clientCapabilitiesText: stringifyJson(nextValue),
-                clientCapabilitiesError: null,
-              }
-            : {
-                hostContextText: stringifyJson(nextValue),
-                hostContextError: null,
-              }),
+          [textField]: stringifyJson(nextValue),
+          [errorField]: null,
         };
       });
     },
@@ -277,17 +335,17 @@ export const useClientConfigStore = create<ClientConfigStoreState>(
     resetToBaseline: () => {
       set((state) =>
         resetFromConfig(
-          state.activeWorkspaceId,
+          state.activeProjectId,
           state.defaultConfig,
           state.savedConfig,
         ),
       );
     },
 
-    beginSave: ({ workspaceId, savedConfig, awaitRemoteEcho }) =>
+    beginSave: ({ projectId, savedConfig, awaitRemoteEcho }) =>
       set({
         isSaving: true,
-        pendingWorkspaceId: awaitRemoteEcho ? workspaceId : null,
+        pendingProjectId: awaitRemoteEcho ? projectId : null,
         pendingSavedConfig: awaitRemoteEcho ? savedConfig : undefined,
         isAwaitingRemoteEcho: awaitRemoteEcho,
       }),
@@ -296,7 +354,7 @@ export const useClientConfigStore = create<ClientConfigStoreState>(
       set((state) => ({
         savedConfig,
         isSaving: false,
-        pendingWorkspaceId: null,
+        pendingProjectId: null,
         pendingSavedConfig: undefined,
         isAwaitingRemoteEcho: false,
         isDirty: computeDirtyState({
@@ -309,7 +367,7 @@ export const useClientConfigStore = create<ClientConfigStoreState>(
     failSave: () =>
       set({
         isSaving: false,
-        pendingWorkspaceId: null,
+        pendingProjectId: null,
         pendingSavedConfig: undefined,
         isAwaitingRemoteEcho: false,
       }),

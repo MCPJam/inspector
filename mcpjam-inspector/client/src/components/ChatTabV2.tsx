@@ -10,7 +10,7 @@ import {
 import type { UIMessage } from "ai";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
 import { useAuth } from "@workos-inc/authkit-react";
-import { useConvexAuth } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import { toast } from "sonner";
 import { ModelDefinition } from "@/shared/types";
@@ -44,7 +44,9 @@ import {
   detectPlatform,
   standardEventProps,
 } from "@/lib/PosthogUtils";
-import { ErrorBox } from "@/components/chat-v2/error";
+import { CreditTopupDialog } from "@/components/billing/CreditTopupDialog";
+import { TopupGatedErrorBox } from "@/components/billing/TopupGatedErrorBox";
+import { useCreditTopupReturnFlow } from "@/hooks/useCreditTopupReturnFlow";
 import { StickToBottom } from "use-stick-to-bottom";
 import { type MCPPromptResult } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
 import type { SkillResult } from "@/components/chat-v2/chat-input/skills/skill-types";
@@ -82,16 +84,17 @@ import {
   type ChatHistoryTurnTrace,
   type ChatHistoryWidgetSnapshot,
 } from "@/lib/apis/web/chat-history-api";
-import { useWorkspaceServers } from "@/hooks/useViews";
+import { useProjectServers } from "@/hooks/useViews";
 import { HOSTED_MODE } from "@/lib/config";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
+import type { OrgModelProvider } from "@/hooks/use-org-model-config";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
+import type { ExecutionConfig } from "@/lib/chat-execution-config";
+import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
 import { useModelSelectorLayoutLock } from "@/hooks/use-model-selector-layout-lock";
-import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
-import { LiveTraceRawEmptyState } from "@/components/evals/live-trace-raw-empty";
-import { TraceViewer } from "@/components/evals/trace-viewer";
 import { ChatTraceViewModeHeaderBar } from "@/components/evals/trace-view-mode-tabs";
+import { SingleModelTraceDiagnosticsBody } from "@/components/evals/single-model-trace-diagnostics-body";
 import {
   type BroadcastChatTurnRequest,
   MultiModelChatCard,
@@ -111,7 +114,7 @@ import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
 interface ChatTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
   selectedServerNames: string[];
-  /** All workspace servers (for the "+" dropdown server toggles). */
+  /** All project servers (for the "+" dropdown server toggles). */
   allServerConfigs?: Record<string, ServerWithName>;
   /** Toggle a server on/off for multi-select. */
   onServerToggle?: (serverName: string) => void;
@@ -123,16 +126,11 @@ interface ChatTabProps {
   onHasMessagesChange?: (hasMessages: boolean) => void;
   enableMultiModelChat?: boolean;
   minimalMode?: boolean;
-  hostedWorkspaceIdOverride?: string;
+  hostedProjectIdOverride?: string;
   hostedSelectedServerIdsOverride?: string[];
   hostedOAuthTokensOverride?: Record<string, string>;
-  hostedShareToken?: string;
-  hostedChatboxToken?: string;
-  hostedChatboxSurface?: "preview" | "share_link";
-  initialModelId?: string;
-  initialSystemPrompt?: string;
-  initialTemperature?: number;
-  initialRequireToolApproval?: boolean;
+  hostedContext?: HostedRuntimeContext;
+  executionConfig?: ExecutionConfig;
   reasoningDisplayMode?: ReasoningDisplayMode;
   loadingIndicatorVariant?: LoadingIndicatorVariant;
   showHostStyleSelector?: boolean;
@@ -167,16 +165,11 @@ export function ChatTabV2({
   onHasMessagesChange,
   enableMultiModelChat = false,
   minimalMode = false,
-  hostedWorkspaceIdOverride,
+  hostedProjectIdOverride,
   hostedSelectedServerIdsOverride,
   hostedOAuthTokensOverride,
-  hostedShareToken,
-  hostedChatboxToken,
-  hostedChatboxSurface,
-  initialModelId,
-  initialSystemPrompt,
-  initialTemperature,
-  initialRequireToolApproval,
+  hostedContext,
+  executionConfig,
   reasoningDisplayMode = "inline",
   loadingIndicatorVariant,
   showHostStyleSelector = false,
@@ -203,7 +196,7 @@ export function ChatTabV2({
   // Local state for ChatTabV2-specific features
   const [input, setInput] = useState("");
   const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
-    [],
+    []
   );
   const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
   const [skillResults, setSkillResults] = useState<SkillResult[]>([]);
@@ -220,7 +213,7 @@ export function ChatTabV2({
     }[]
   >([]);
   const [elicitationQueue, setElicitationQueue] = useState<DialogElicitation[]>(
-    [],
+    []
   );
   const [elicitationLoading, setElicitationLoading] = useState(false);
   const [, setIsWidgetFullscreen] = useState(false);
@@ -254,7 +247,7 @@ export function ChatTabV2({
     string | null
   >(null);
   const [pendingDirectVisibility, setPendingDirectVisibility] = useState<
-    "private" | "workspace"
+    "private" | "project"
   >("private");
   const historyRefreshSignal = 0;
 
@@ -295,42 +288,53 @@ export function ChatTabV2({
       selectedServerNames.filter(
         (name) =>
           connectedOrConnectingServerConfigs[name]?.connectionStatus ===
-          "connected",
+          "connected"
       ),
-    [selectedServerNames, connectedOrConnectingServerConfigs],
+    [selectedServerNames, connectedOrConnectingServerConfigs]
   );
-  const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
-  const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
-  const { serversById, serversByName } = useWorkspaceServers({
+  const activeProject = appState.projects[appState.activeProjectId];
+  const convexProjectId = activeProject?.sharedProjectId ?? null;
+  const organizationId = activeProject?.organizationId ?? null;
+  const hostedOrgModelConfig = useQuery(
+    "organizationModelProviders:getVisibleConfig" as any,
+    HOSTED_MODE && isConvexAuthenticated && organizationId
+      ? ({ organizationId } as any)
+      : "skip",
+  ) as { providers: OrgModelProvider[] } | undefined;
+  const { serversById, serversByName } = useProjectServers({
     isAuthenticated: isConvexAuthenticated,
-    workspaceId: convexWorkspaceId,
+    projectId: convexProjectId,
   });
   const hostedSelectedServerIds = useMemo(
     () =>
       selectedConnectedServerNames
         .map((serverName) => serversByName.get(serverName))
         .filter((serverId): serverId is string => !!serverId),
-    [selectedConnectedServerNames, serversByName],
+    [selectedConnectedServerNames, serversByName]
   );
   const hostedOAuthTokens = useMemo(
     () =>
       buildOAuthTokensByServerId(
         selectedConnectedServerNames,
         (name) => serversByName.get(name),
-        (name) => appState.servers[name]?.oauthTokens?.access_token,
+        (name) => appState.servers[name]?.oauthTokens?.access_token
       ),
-    [selectedConnectedServerNames, serversByName, appState.servers],
+    [selectedConnectedServerNames, serversByName, appState.servers]
   );
-  const effectiveHostedWorkspaceId =
-    hostedWorkspaceIdOverride ?? convexWorkspaceId;
+  const hostedShareToken = hostedContext?.shareToken;
+  const hostedChatboxToken = hostedContext?.chatboxToken;
+  const hostedChatboxSurface = hostedContext?.chatboxSurface;
+  const effectiveHostedProjectId =
+    hostedProjectIdOverride ?? convexProjectId;
   const effectiveHostedSelectedServerIds =
     hostedSelectedServerIdsOverride ?? hostedSelectedServerIds;
-  const effectiveHostedOAuthTokens =
-    hostedOAuthTokensOverride ?? hostedOAuthTokens;
+  const effectiveHostedOAuthTokens = hostedChatboxToken
+    ? undefined
+    : hostedOAuthTokensOverride ?? hostedOAuthTokens;
   const isHostedDirectGuest =
     HOSTED_MODE &&
     !isConvexAuthenticated &&
-    !effectiveHostedWorkspaceId &&
+    !effectiveHostedProjectId &&
     !hostedShareToken &&
     !hostedChatboxToken;
 
@@ -383,16 +387,14 @@ export function ChatTabV2({
   } = useChatSession({
     selectedServers: selectedConnectedServerNames,
     directVisibility: pendingDirectVisibility,
-    hostedWorkspaceId: effectiveHostedWorkspaceId,
-    hostedSelectedServerIds: effectiveHostedSelectedServerIds,
-    hostedOAuthTokens: effectiveHostedOAuthTokens,
-    hostedShareToken,
-    hostedChatboxToken,
-    hostedChatboxSurface,
-    initialModelId,
-    initialSystemPrompt,
-    initialTemperature,
-    initialRequireToolApproval,
+    hostedOrgModelConfig,
+    hostedContext: {
+      ...hostedContext,
+      projectId: effectiveHostedProjectId,
+      selectedServerIds: effectiveHostedSelectedServerIds,
+      oauthTokens: effectiveHostedOAuthTokens,
+    },
+    executionConfig,
     minimalMode,
     onReset: (reason?: ChatSessionResetReason) => {
       if (reason === "auth-bootstrap" || reason === "hydrate") {
@@ -424,7 +426,7 @@ export function ChatTabV2({
     widgetSnapshots: reactiveHistoryWidgetSnapshots,
   } = useDirectChatSessionSubscription({
     sessionId: activeHistorySessionId,
-    workspaceId: effectiveHostedWorkspaceId,
+    projectId: effectiveHostedProjectId,
     enabled:
       showHistoryRail &&
       isConvexAuthenticated &&
@@ -442,7 +444,7 @@ export function ChatTabV2({
   const historyRailTakesLayoutSpace =
     showHistoryRail && isHistorySidebarVisible;
   const hasConversationMessages = messages.some(
-    (msg) => msg.role === "user" || msg.role === "assistant",
+    (msg) => msg.role === "user" || msg.role === "assistant"
   );
 
   const hasUnsavedDraft =
@@ -461,21 +463,20 @@ export function ChatTabV2({
         typeof details?.serverName === "string" && details.serverName.trim()
           ? details.serverName.trim()
           : selectedConnectedServerNames.length === 1
-            ? selectedConnectedServerNames[0]
-            : null;
+          ? selectedConnectedServerNames[0]
+          : null;
 
       if (!onOAuthRequired) {
         return;
       }
 
       onOAuthRequired(
-        resolvedServerName &&
-          resolvedServerName !== details?.serverName
+        resolvedServerName && resolvedServerName !== details?.serverName
           ? { ...details, serverName: resolvedServerName }
-          : details,
+          : details
       );
     },
-    [onOAuthRequired, selectedConnectedServerNames],
+    [onOAuthRequired, selectedConnectedServerNames]
   );
 
   useEffect(() => {
@@ -508,7 +509,7 @@ export function ChatTabV2({
 
   const [discardDraftDialogOpen, setDiscardDraftDialogOpen] = useState(false);
   const discardDraftResolveRef = useRef<((allow: boolean) => void) | null>(
-    null,
+    null
   );
   const discardDraftSettledRef = useRef(false);
 
@@ -564,7 +565,7 @@ export function ChatTabV2({
       startChatWithMessages,
       syncResumedVersion,
       cancelPendingHistorySelection,
-    ],
+    ]
   );
 
   const markHistorySessionRead = useCallback(async (sessionId: string) => {
@@ -583,7 +584,7 @@ export function ChatTabV2({
         shouldRestoreComposerState?: () => boolean;
         shouldApply?: () => boolean;
         turnTraces?: ChatHistoryTurnTrace[];
-      },
+      }
     ) => {
       await loadChatSession(
         {
@@ -597,7 +598,7 @@ export function ChatTabV2({
         {
           shouldRestoreResumeConfig: options?.shouldRestoreComposerState,
           shouldApply: options?.shouldApply,
-        },
+        }
       );
       if (options?.shouldApply && !options.shouldApply()) {
         return;
@@ -606,7 +607,7 @@ export function ChatTabV2({
         options?.shouldRestoreComposerState?.() ?? true;
       if (shouldRestoreComposerState && detail.modelId) {
         const matchingModel = availableModels.find(
-          (model) => String(model.id) === detail.modelId,
+          (model) => String(model.id) === detail.modelId
         );
         if (matchingModel) {
           setSelectedModel(matchingModel);
@@ -627,7 +628,7 @@ export function ChatTabV2({
       markHistorySessionRead,
       setSelectedModel,
       syncResumedVersion,
-    ],
+    ]
   );
 
   const refreshCurrentHistorySession = useCallback(
@@ -645,7 +646,7 @@ export function ChatTabV2({
           const detail = await getChatHistoryDetail({
             sessionId: activeHistorySessionId ?? undefined,
             chatSessionId,
-            workspaceId: effectiveHostedWorkspaceId ?? undefined,
+            projectId: effectiveHostedProjectId ?? undefined,
           });
           setActiveHistorySessionId(detail.session._id);
           syncResumedVersion(detail.session.version);
@@ -673,12 +674,12 @@ export function ChatTabV2({
     [
       activeHistorySessionId,
       chatSessionId,
-      effectiveHostedWorkspaceId,
+      effectiveHostedProjectId,
       hasConversationMessages,
       markHistorySessionRead,
       showHistoryRail,
       syncResumedVersion,
-    ],
+    ]
   );
 
   const refreshHistorySessionAfterStream = useCallback(
@@ -686,7 +687,7 @@ export function ChatTabV2({
       resumedThreadSendBaseline: {
         sessionId: string;
         version: number;
-      } | null,
+      } | null
     ) => {
       const maxAttempts = resumedThreadSendBaseline
         ? RESUMED_THREAD_REFRESH_RETRIES + 1
@@ -719,7 +720,7 @@ export function ChatTabV2({
 
       return null;
     },
-    [refreshCurrentHistorySession],
+    [refreshCurrentHistorySession]
   );
 
   useEffect(() => {
@@ -733,7 +734,7 @@ export function ChatTabV2({
 
     if (reactiveHistorySession === null) {
       detachHistorySession(
-        "This chat is no longer available. Continuing locally in a new thread.",
+        "This chat is no longer available. Continuing locally in a new thread."
       );
       return;
     }
@@ -767,7 +768,7 @@ export function ChatTabV2({
         // `undefined` as "preserve existing trace state", so the live
         // trace viewer is not wiped by reactive session refreshes. Traces
         // are seeded once via the REST detail path on thread selection.
-      },
+      }
     ).catch((error) => {
       console.error("[ChatTabV2] Failed to apply reactive chat history", error);
     });
@@ -788,7 +789,7 @@ export function ChatTabV2({
     } catch (error) {
       console.error(
         "[ChatTabV2] Failed to sync chat history before send",
-        error,
+        error
       );
       toast.error("Failed to sync chat history. Try again.");
       return false;
@@ -799,7 +800,7 @@ export function ChatTabV2({
 
     if (activeHistorySessionId) {
       detachHistorySession(
-        "This chat is no longer available. Your draft stayed local, and the next send will start a new thread.",
+        "This chat is no longer available. Your draft stayed local, and the next send will start a new thread."
       );
       return false;
     }
@@ -831,7 +832,7 @@ export function ChatTabV2({
         const detail = await getChatHistoryDetail({
           sessionId: session._id,
           chatSessionId: session.chatSessionId,
-          workspaceId: effectiveHostedWorkspaceId ?? undefined,
+          projectId: effectiveHostedProjectId ?? undefined,
         });
 
         if (historySelectionRequestIdRef.current !== selectionRequestId) {
@@ -841,19 +842,19 @@ export function ChatTabV2({
         const desiredServerNames = resolveRestorableServerNames(
           detail.session.resumeConfig?.selectedServers,
           serversById,
-          Object.keys(appState.servers),
+          Object.keys(appState.servers)
         );
         const syncedServerNames =
           isHostedDirectGuest &&
           shouldPreserveGuestServerSelection(
             detail.session.resumeConfig?.selectedServers,
             desiredServerNames,
-            selectedServerNames,
+            selectedServerNames
           )
             ? [...selectedServerNames]
             : desiredServerNames;
         const hasSavedServerSelection = Array.isArray(
-          detail.session.resumeConfig?.selectedServers,
+          detail.session.resumeConfig?.selectedServers
         );
 
         await loadHistorySession(detail.session, detail.widgetSnapshots, {
@@ -888,7 +889,7 @@ export function ChatTabV2({
       appState.servers,
       clearComposerDraft,
       ensureDiscardDraftConfirmed,
-      effectiveHostedWorkspaceId,
+      effectiveHostedProjectId,
       hasUnsavedDraft,
       isHostedDirectGuest,
       isStreaming,
@@ -897,7 +898,7 @@ export function ChatTabV2({
       selectedServerNames,
       serversById,
       invalidatePendingReactiveHistoryLoad,
-    ],
+    ]
   );
 
   const handleNewChat = useCallback(
@@ -913,7 +914,7 @@ export function ChatTabV2({
       cancelPendingHistorySelection();
       syncResumedVersion(null);
       baseResetChat();
-      setPendingDirectVisibility(options?.shared ? "workspace" : "private");
+      setPendingDirectVisibility(options?.shared ? "project" : "private");
     },
     [
       baseResetChat,
@@ -923,7 +924,7 @@ export function ChatTabV2({
       hasUnsavedDraft,
       isStreaming,
       syncResumedVersion,
-    ],
+    ]
   );
 
   const handleArchiveAllComplete = useCallback(
@@ -943,7 +944,7 @@ export function ChatTabV2({
       clearComposerDraft,
       hasUnsavedDraft,
       syncResumedVersion,
-    ],
+    ]
   );
 
   const handleHistorySessionAction = useCallback(
@@ -966,7 +967,7 @@ export function ChatTabV2({
           const detail = await refreshCurrentHistorySession();
           if (!detail) {
             detachHistorySession(
-              "This chat is no longer shared with you. Continuing locally in a new thread.",
+              "This chat is no longer shared with you. Continuing locally in a new thread."
             );
           }
         } catch (error) {
@@ -974,11 +975,7 @@ export function ChatTabV2({
         }
       }
     },
-    [
-      activeHistorySessionId,
-      detachHistorySession,
-      refreshCurrentHistorySession,
-    ],
+    [activeHistorySessionId, detachHistorySession, refreshCurrentHistorySession]
   );
 
   const previousSelectedServerNamesRef = useRef(selectedServerNames);
@@ -1044,7 +1041,7 @@ export function ChatTabV2({
     const timerId = window.setTimeout(() => {
       void (async () => {
         const detail = await refreshHistorySessionAfterStream(
-          resumedThreadSendBaseline,
+          resumedThreadSendBaseline
         );
 
         if (
@@ -1054,7 +1051,7 @@ export function ChatTabV2({
             detail.version <= resumedThreadSendBaseline.version)
         ) {
           detachHistorySession(
-            "This chat changed elsewhere. This reply stayed local, and your next send will continue in a new thread.",
+            "This chat changed elsewhere. This reply stayed local, and your next send will continue in a new thread."
           );
         }
       })().catch((error) => {
@@ -1077,7 +1074,7 @@ export function ChatTabV2({
   const isThreadEmpty = !hasConversationMessages;
   const multiModelAvailableModels = useMemo(
     () => new Map(availableModels.map((model) => [String(model.id), model])),
-    [availableModels],
+    [availableModels]
   );
   const resolvedSelectedModels = useMemo(() => {
     const persistedModels = selectedModelIds
@@ -1098,7 +1095,7 @@ export function ChatTabV2({
   const canEnableMultiModel =
     enableMultiModelChat &&
     !minimalMode &&
-    !initialModelId &&
+    !executionConfig?.modelId &&
     !hostedShareToken &&
     !hostedChatboxToken &&
     !hostedChatboxSurface &&
@@ -1121,7 +1118,7 @@ export function ChatTabV2({
     (modelId: string, transcript: UIMessage[]) => {
       multiTranscriptsRef.current[modelId] = cloneUiMessages(transcript);
     },
-    [],
+    []
   );
 
   const clearMultiModelUiState = useCallback(() => {
@@ -1141,7 +1138,7 @@ export function ChatTabV2({
         const transcript = multiTranscriptsRef.current[leadId];
         const hasConversation =
           transcript?.some(
-            (m) => m.role === "user" || m.role === "assistant",
+            (m) => m.role === "user" || m.role === "assistant"
           ) ?? false;
         if (hasConversation && transcript) {
           startChatWithMessages(cloneUiMessages(transcript));
@@ -1215,7 +1212,7 @@ export function ChatTabV2({
     }
 
     const sanitizedIds = resolvedSelectedModels.map((model) =>
-      String(model.id),
+      String(model.id)
     );
     const persistedIds = selectedModelIds.slice(0, 3);
     const idsChanged =
@@ -1227,8 +1224,8 @@ export function ChatTabV2({
         sanitizedIds.length > 0 && multiModelEnabled
           ? sanitizedIds
           : selectedModel
-            ? [String(selectedModel.id)]
-            : [],
+          ? [String(selectedModel.id)]
+          : []
       );
     }
   }, [
@@ -1243,22 +1240,22 @@ export function ChatTabV2({
 
   useEffect(() => {
     const activeModelIds = new Set(
-      resolvedSelectedModels.map((model) => String(model.id)),
+      resolvedSelectedModels.map((model) => String(model.id))
     );
 
     setMultiModelSummaries((previous) =>
       Object.fromEntries(
         Object.entries(previous).filter(([modelId]) =>
-          activeModelIds.has(modelId),
-        ),
-      ),
+          activeModelIds.has(modelId)
+        )
+      )
     );
     setMultiModelHasMessages((previous) =>
       Object.fromEntries(
         Object.entries(previous).filter(([modelId]) =>
-          activeModelIds.has(modelId),
-        ),
-      ),
+          activeModelIds.has(modelId)
+        )
+      )
     );
   }, [resolvedSelectedModels]);
 
@@ -1283,7 +1280,7 @@ export function ChatTabV2({
     let matchingModel = null;
     if (evalChatHandoff.modelId) {
       matchingModel = availableModels.find(
-        (model) => String(model.id) === evalChatHandoff.modelId,
+        (model) => String(model.id) === evalChatHandoff.modelId
       );
       if (!matchingModel && availableModels.length === 0) {
         return;
@@ -1310,6 +1307,10 @@ export function ChatTabV2({
       setTemperature(evalChatHandoff.temperature);
     }
 
+    if (typeof evalChatHandoff.requireToolApproval === "boolean") {
+      setRequireToolApproval(evalChatHandoff.requireToolApproval);
+    }
+
     setInput("");
     onEvalChatHandoffConsumed?.(evalChatHandoff.id);
   }, [
@@ -1323,6 +1324,7 @@ export function ChatTabV2({
     setSelectedModelIds,
     setSystemPrompt,
     setTemperature,
+    setRequireToolApproval,
     startChatWithMessages,
   ]);
 
@@ -1348,7 +1350,7 @@ export function ChatTabV2({
             msg.role === "system" &&
             (msg as { metadata?: { source?: string } })?.metadata?.source ===
               "server-instruction"
-          ),
+          )
       );
 
       const instructionMessages = Object.entries(selectedServerInstructions)
@@ -1387,7 +1389,7 @@ export function ChatTabV2({
   const applyWidgetStateUpdates = useCallback(
     (
       prevMessages: typeof messages,
-      updates: { toolCallId: string; state: unknown }[],
+      updates: { toolCallId: string; state: unknown }[]
     ) => {
       let nextMessages = prevMessages;
 
@@ -1400,9 +1402,11 @@ export function ChatTabV2({
           continue;
         }
 
-        const stateText = `The state of widget ${toolCallId} is: ${JSON.stringify(state)}`;
+        const stateText = `The state of widget ${toolCallId} is: ${JSON.stringify(
+          state
+        )}`;
         const existingIndex = nextMessages.findIndex(
-          (msg) => msg.id === messageId,
+          (msg) => msg.id === messageId
         );
 
         if (existingIndex !== -1) {
@@ -1438,27 +1442,27 @@ export function ChatTabV2({
 
       return nextMessages;
     },
-    [],
+    []
   );
 
   const handleWidgetStateChange = useCallback(
     (toolCallId: string, state: unknown) => {
       if (status === "ready") {
         setMessages((prevMessages) =>
-          applyWidgetStateUpdates(prevMessages, [{ toolCallId, state }]),
+          applyWidgetStateUpdates(prevMessages, [{ toolCallId, state }])
         );
       } else {
         setWidgetStateQueue((prev) => [...prev, { toolCallId, state }]);
       }
     },
-    [status, setMessages, applyWidgetStateUpdates],
+    [status, setMessages, applyWidgetStateUpdates]
   );
 
   useEffect(() => {
     if (status !== "ready" || widgetStateQueue.length === 0) return;
 
     setMessages((prevMessages) =>
-      applyWidgetStateUpdates(prevMessages, widgetStateQueue),
+      applyWidgetStateUpdates(prevMessages, widgetStateQueue)
     );
     setWidgetStateQueue([]);
   }, [status, widgetStateQueue, setMessages, applyWidgetStateUpdates]);
@@ -1469,7 +1473,7 @@ export function ChatTabV2({
       context: {
         content?: ContentBlock[];
         structuredContent?: Record<string, unknown>;
-      },
+      }
     ) => {
       // Queue model context to be included in next message
       setModelContextQueue((prev) => {
@@ -1478,7 +1482,7 @@ export function ChatTabV2({
         return [...filtered, { toolCallId, context }];
       });
     },
-    [],
+    []
   );
 
   const activeElicitation = elicitationQueue[0] ?? null;
@@ -1497,7 +1501,7 @@ export function ChatTabV2({
           setElicitationQueue((previousQueue) => {
             if (
               previousQueue.some(
-                (elicitation) => elicitation.requestId === data.requestId,
+                (elicitation) => elicitation.requestId === data.requestId
               )
             ) {
               return previousQueue;
@@ -1516,8 +1520,8 @@ export function ChatTabV2({
         } else if (data?.type === "elicitation_complete") {
           setElicitationQueue((previousQueue) =>
             previousQueue.filter(
-              (elicitation) => elicitation.requestId !== data.requestId,
-            ),
+              (elicitation) => elicitation.requestId !== data.requestId
+            )
           );
         }
       } catch (error) {
@@ -1526,7 +1530,7 @@ export function ChatTabV2({
     };
     es.onerror = () => {
       console.warn(
-        "[ChatTabV2] Elicitation SSE connection error, browser will retry",
+        "[ChatTabV2] Elicitation SSE connection error, browser will retry"
       );
     };
     return () => es.close();
@@ -1534,7 +1538,7 @@ export function ChatTabV2({
 
   const handleElicitationResponse = async (
     action: "accept" | "decline" | "cancel",
-    parameters?: Record<string, unknown>,
+    parameters?: Record<string, unknown>
   ) => {
     if (!activeElicitation) return;
     setElicitationLoading(true);
@@ -1550,9 +1554,8 @@ export function ChatTabV2({
       });
       setElicitationQueue((previousQueue) =>
         previousQueue.filter(
-          (elicitation) =>
-            elicitation.requestId !== activeElicitation.requestId,
-        ),
+          (elicitation) => elicitation.requestId !== activeElicitation.requestId
+        )
       );
     } finally {
       setElicitationLoading(false);
@@ -1590,6 +1593,59 @@ export function ChatTabV2({
   const showDisabledCallout = !effectiveHasMessages && shouldShowUpsell;
 
   const errorMessage = formatErrorMessage(error);
+
+  const [isTopupDialogOpen, setIsTopupDialogOpen] = useState(false);
+  const [pendingResendMessage, setPendingResendMessage] = useState("");
+
+  // Capture the most-recent user-typed message text at the moment it's
+  // sent, not by walking `messages` later. This avoids any per-render
+  // work in the chat hot path — the value is only updated in event
+  // handlers (which run after commit), so it's safe to read in the
+  // click handler below.
+  const lastSentUserMessageRef = useRef("");
+
+  const canShowTopupCta =
+    isConvexAuthenticated &&
+    errorMessage?.canTopUp === true &&
+    errorMessage?.code === "user_rate_limit";
+
+  const handleOpenTopupDialog = useCallback(() => {
+    const text = lastSentUserMessageRef.current;
+    if (!text) {
+      // Nothing to resend — no-op rather than opening a dialog that
+      // would carry an empty message into checkout.
+      return;
+    }
+    posthog.capture("credit_topup_cta_clicked", { source: "chat_banner" });
+    setPendingResendMessage(text);
+    setIsTopupDialogOpen(true);
+  }, [posthog]);
+
+  const handleTopupDialogOpenChange = useCallback((open: boolean) => {
+    setIsTopupDialogOpen(open);
+    if (!open) {
+      // Clear the snapshot when the dialog closes so we don't keep a
+      // stale message lingering in state until the next click.
+      setPendingResendMessage("");
+    }
+  }, []);
+
+  // Concurrency-throttle retry: re-submit the user's last typed message via
+  // the same source-tracking ref the topup CTA uses. The retry button only
+  // ever surfaces on the concurrency banner (see `onRetry` gate below), so
+  // we don't risk firing this on unrelated retryable errors.
+  const handleRetryConcurrencyMessage = useCallback(() => {
+    const text = lastSentUserMessageRef.current;
+    if (!text) return;
+    sendMessage({ text });
+  }, [sendMessage]);
+
+  const isConcurrencyThrottle =
+    errorMessage?.code === "user_rate_limit" &&
+    errorMessage?.limitKind === "concurrency";
+
+  useCreditTopupReturnFlow({ chatSessionId, sendMessage });
+
   const traceViewerTrace = liveTraceEnvelope ?? {
     traceVersion: 1 as const,
     messages: [],
@@ -1611,7 +1667,7 @@ export function ChatTabV2({
       setSelectedModelIds([String(model.id)]);
       setMultiModelEnabled(false);
     },
-    [setMultiModelEnabled, setSelectedModel, setSelectedModelIds],
+    [setMultiModelEnabled, setSelectedModel, setSelectedModelIds]
   );
 
   const handleSelectedModelsChange = useCallback(
@@ -1624,18 +1680,18 @@ export function ChatTabV2({
       }
       setSelectedModelIds(
         nextSelectedModels.map((selectedModelItem) =>
-          String(selectedModelItem.id),
-        ),
+          String(selectedModelItem.id)
+        )
       );
     },
-    [selectedModel, setSelectedModel, setSelectedModelIds],
+    [selectedModel, setSelectedModel, setSelectedModelIds]
   );
 
   const handleMultiModelEnabledChange = useCallback(
     (enabled: boolean) => {
       setMultiModelEnabled(enabled);
     },
-    [setMultiModelEnabled],
+    [setMultiModelEnabled]
   );
 
   const handleRequireToolApprovalChange = useCallback(
@@ -1645,7 +1701,7 @@ export function ChatTabV2({
         handleResetAllChats();
       }
     },
-    [handleResetAllChats, isMultiModelMode, setRequireToolApproval],
+    [handleResetAllChats, isMultiModelMode, setRequireToolApproval]
   );
 
   const handleMultiModelSummaryChange = useCallback(
@@ -1655,7 +1711,7 @@ export function ChatTabV2({
         [summary.modelId]: summary,
       }));
     },
-    [],
+    []
   );
 
   const handleMultiModelHasMessagesChange = useCallback(
@@ -1665,13 +1721,13 @@ export function ChatTabV2({
         [modelId]: hasMessages,
       }));
     },
-    [],
+    []
   );
 
   const queueBroadcastRequest = useCallback(
     (
       request: Omit<BroadcastChatTurnRequest, "id">,
-      captureProps?: Record<string, unknown>,
+      captureProps?: Record<string, unknown>
     ) => {
       posthog.capture("send_message", {
         location: "chat_tab",
@@ -1697,7 +1753,7 @@ export function ChatTabV2({
       selectedModel?.id,
       selectedModel?.name,
       selectedModel?.provider,
-    ],
+    ]
   );
 
   // Detect OAuth-required errors and notify parent
@@ -1761,7 +1817,7 @@ export function ChatTabV2({
       }
       // Build messages from MCP prompts
       const promptMessages = buildMcpPromptMessages(
-        mcpPromptResults,
+        mcpPromptResults
       ) as UIMessage[];
 
       // Build messages from skills
@@ -1795,14 +1851,16 @@ export function ChatTabV2({
             parts: [
               {
                 type: "text" as const,
-                text: `Widget ${toolCallId} context: ${JSON.stringify(context)}`,
+                text: `Widget ${toolCallId} context: ${JSON.stringify(
+                  context
+                )}`,
               },
             ],
             metadata: {
               source: "widget-model-context",
               toolCallId,
             },
-          }),
+          })
         );
 
         if (contextMessages.length > 0) {
@@ -1820,6 +1878,7 @@ export function ChatTabV2({
           multi_model_count: 1,
           single_model_send: true,
         });
+        lastSentUserMessageRef.current = input;
         sendMessage({ text: input, files });
         setModelContextQueue([]);
       }
@@ -1835,7 +1894,7 @@ export function ChatTabV2({
   const handleStarterPrompt = async (prompt: string) => {
     posthog.capture(
       "chat_starter_prompt_clicked",
-      standardEventProps("chat_tab"),
+      standardEventProps("chat_tab")
     );
     if (composerDisabled || sendBlocked) {
       setInput(prompt);
@@ -1862,6 +1921,7 @@ export function ChatTabV2({
         multi_model_count: 1,
         single_model_send: true,
       });
+      lastSentUserMessageRef.current = prompt;
       sendMessage({ text: prompt });
     }
     setInput("");
@@ -1950,7 +2010,7 @@ export function ChatTabV2({
                 isAuthenticated={isConvexAuthenticated}
                 isStreaming={historyRailStreaming}
                 sharedThreadsEnabled={sharedThreadsEnabled}
-                workspaceId={effectiveHostedWorkspaceId}
+                projectId={effectiveHostedProjectId}
                 enabled={isSessionBootstrapComplete}
                 refreshSignal={historyRefreshSignal}
                 onSelectThread={handleSelectThread}
@@ -1978,10 +2038,10 @@ export function ChatTabV2({
                 ? 48
                 : 78
               : minimalMode
-                ? 100
-                : isJsonRpcPanelVisible
-                  ? 70
-                  : 100
+              ? 100
+              : isJsonRpcPanelVisible
+              ? 70
+              : 100
           }
           minSize={40}
           className="min-h-0 min-w-0 overflow-hidden"
@@ -2039,7 +2099,7 @@ export function ChatTabV2({
                     errorFooterSlot={
                       errorMessage ? (
                         <div className="max-w-4xl mx-auto px-4 pt-4">
-                          <ErrorBox
+                          <TopupGatedErrorBox
                             message={errorMessage.message}
                             errorDetails={errorMessage.details}
                             code={errorMessage.code}
@@ -2047,6 +2107,16 @@ export function ChatTabV2({
                             isRetryable={errorMessage.isRetryable}
                             isMCPJamPlatformError={
                               errorMessage.isMCPJamPlatformError
+                            }
+                            canTopUp={canShowTopupCta}
+                            onTopUp={handleOpenTopupDialog}
+                            walletLocked={errorMessage.walletLocked}
+                            limitKind={errorMessage.limitKind}
+                            retryAfterMs={errorMessage.retryAfterMs}
+                            onRetry={
+                              isConcurrencyThrottle
+                                ? handleRetryConcurrencyMessage
+                                : undefined
                             }
                             onResetChat={handleResetAllChats}
                           />
@@ -2137,7 +2207,7 @@ export function ChatTabV2({
                 <div
                   className={cn(
                     "flex flex-1 min-h-0 flex-col overflow-hidden",
-                    !effectiveHasMessages && "hidden",
+                    !effectiveHasMessages && "hidden"
                   )}
                   aria-hidden={!effectiveHasMessages}
                 >
@@ -2149,15 +2219,17 @@ export function ChatTabV2({
                         resolvedSelectedModels.length === 2 &&
                           "grid-cols-1 xl:grid-cols-2",
                         resolvedSelectedModels.length >= 3 &&
-                          "grid-cols-1 xl:grid-cols-3",
+                          "grid-cols-1 xl:grid-cols-3"
                       )}
                     >
                       {resolvedSelectedModels.map((model) => (
                         <MultiModelChatCard
-                          key={`${multiModelSessionGeneration}:${String(model.id)}`}
+                          key={`${multiModelSessionGeneration}:${String(
+                            model.id
+                          )}`}
                           model={model}
                           comparisonSummaries={Object.values(
-                            multiModelSummaries,
+                            multiModelSummaries
                           )}
                           selectedServers={selectedConnectedServerNames}
                           selectedServerInstructions={
@@ -2167,17 +2239,17 @@ export function ChatTabV2({
                           stopRequestId={stopBroadcastRequestId}
                           placeholder={placeholder}
                           reasoningDisplayMode={reasoningDisplayMode}
-                          initialSystemPrompt={systemPrompt}
-                          initialTemperature={temperature}
-                          initialRequireToolApproval={requireToolApproval}
-                          hostedWorkspaceId={effectiveHostedWorkspaceId}
-                          hostedSelectedServerIds={
-                            effectiveHostedSelectedServerIds
-                          }
-                          hostedOAuthTokens={effectiveHostedOAuthTokens}
-                          hostedShareToken={hostedShareToken}
-                          hostedChatboxToken={hostedChatboxToken}
-                          hostedChatboxSurface={hostedChatboxSurface}
+                          executionConfig={{
+                            systemPrompt,
+                            temperature,
+                            requireToolApproval,
+                          }}
+                          hostedContext={{
+                            ...hostedContext,
+                            projectId: effectiveHostedProjectId,
+                            selectedServerIds: effectiveHostedSelectedServerIds,
+                            oauthTokens: effectiveHostedOAuthTokens,
+                          }}
                           onOAuthRequired={handleOAuthRequired}
                           onSummaryChange={handleMultiModelSummaryChange}
                           onHasMessagesChange={
@@ -2227,90 +2299,45 @@ export function ChatTabV2({
                 {(showLiveTraceDiagnostics || revealedInChat) &&
                   !minimalMode && (
                     <div className="flex flex-1 min-h-0 flex-col">
-                      {activeTraceViewMode === "raw" ? (
-                        <StickToBottom
-                          className="flex flex-1 min-h-0 flex-col overflow-hidden"
-                          resize="smooth"
-                          initial="smooth"
-                        >
-                          <div className="relative flex flex-1 min-h-0 overflow-hidden">
-                            <StickToBottom.Content className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pt-4">
-                              <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col">
-                                {isThreadEmpty ? (
-                                  <LiveTraceRawEmptyState testId="chat-live-raw-pending" />
-                                ) : (
-                                  <TraceViewer
-                                    trace={traceViewerTrace}
-                                    model={selectedModel}
-                                    toolsMetadata={toolsMetadata}
-                                    toolServerMap={toolServerMap}
-                                    traceStartedAtMs={
-                                      liveTraceEnvelope?.traceStartedAtMs ??
-                                      null
-                                    }
-                                    traceEndedAtMs={
-                                      liveTraceEnvelope?.traceEndedAtMs ?? null
-                                    }
-                                    forcedViewMode={activeTraceViewMode}
-                                    hideToolbar
-                                    fillContent
-                                    onRevealNavigateToChat={() => {
-                                      setTraceViewMode("chat");
-                                      setRevealedInChat(true);
-                                    }}
-                                    onFullscreenChange={setIsWidgetFullscreen}
-                                    rawGrowWithContent
-                                    rawRequestPayloadHistory={{
-                                      entries: requestPayloadHistory,
-                                      hasUiMessages: !isThreadEmpty,
-                                    }}
-                                  />
-                                )}
-                              </div>
-                            </StickToBottom.Content>
-                            <ScrollToBottomButton />
-                          </div>
-                        </StickToBottom>
-                      ) : (
-                        <div className="flex min-h-64 flex-1 flex-col overflow-hidden px-4 py-4">
-                          <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
-                            {activeTraceViewMode === "timeline" &&
-                            !hasLiveTimelineContent ? (
-                              <LiveTraceTimelineEmptyState testId="chat-live-trace-pending" />
-                            ) : (
-                              <TraceViewer
-                                trace={traceViewerTrace}
-                                model={selectedModel}
-                                toolsMetadata={toolsMetadata}
-                                toolServerMap={toolServerMap}
-                                traceStartedAtMs={
-                                  liveTraceEnvelope?.traceStartedAtMs ?? null
-                                }
-                                traceEndedAtMs={
-                                  liveTraceEnvelope?.traceEndedAtMs ?? null
-                                }
-                                forcedViewMode={activeTraceViewMode}
-                                hideToolbar
-                                fillContent
-                                onRevealNavigateToChat={() => {
-                                  setTraceViewMode("chat");
-                                  setRevealedInChat(true);
-                                }}
-                                onFullscreenChange={setIsWidgetFullscreen}
-                                rawRequestPayloadHistory={{
-                                  entries: requestPayloadHistory,
-                                  hasUiMessages: !isThreadEmpty,
-                                }}
-                              />
-                            )}
-                          </div>
-                        </div>
-                      )}
+                      <SingleModelTraceDiagnosticsBody
+                        activeTraceViewMode={activeTraceViewMode}
+                        isThreadEmpty={isThreadEmpty}
+                        showLiveTracePending={
+                          activeTraceViewMode === "timeline" &&
+                          !hasLiveTimelineContent
+                        }
+                        trace={traceViewerTrace}
+                        model={selectedModel}
+                        toolsMetadata={toolsMetadata}
+                        toolServerMap={toolServerMap}
+                        traceStartedAtMs={
+                          liveTraceEnvelope?.traceStartedAtMs ?? null
+                        }
+                        traceEndedAtMs={
+                          liveTraceEnvelope?.traceEndedAtMs ?? null
+                        }
+                        onRevealNavigateToChat={() => {
+                          setTraceViewMode("chat");
+                          setRevealedInChat(true);
+                        }}
+                        sendFollowUpMessage={
+                          activeTraceViewMode === "chat" && revealedInChat
+                            ? handleSendFollowUp
+                            : undefined
+                        }
+                        onFullscreenChange={setIsWidgetFullscreen}
+                        rawRequestPayloadHistory={{
+                          entries: requestPayloadHistory,
+                          hasUiMessages: !isThreadEmpty,
+                        }}
+                        rawEmptyTestId="chat-live-raw-pending"
+                        timelineEmptyTestId="chat-live-trace-pending"
+                      />
 
                       <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">
                         {errorMessage && (
                           <div className="max-w-4xl mx-auto px-4 pt-4">
-                            <ErrorBox
+                            <TopupGatedErrorBox
                               message={errorMessage.message}
                               errorDetails={errorMessage.details}
                               code={errorMessage.code}
@@ -2318,6 +2345,16 @@ export function ChatTabV2({
                               isRetryable={errorMessage.isRetryable}
                               isMCPJamPlatformError={
                                 errorMessage.isMCPJamPlatformError
+                              }
+                              canTopUp={canShowTopupCta}
+                              onTopUp={handleOpenTopupDialog}
+                              walletLocked={errorMessage.walletLocked}
+                              limitKind={errorMessage.limitKind}
+                              retryAfterMs={errorMessage.retryAfterMs}
+                              onRetry={
+                                isConcurrencyThrottle
+                                  ? handleRetryConcurrencyMessage
+                                  : undefined
                               }
                               onResetChat={baseResetChat}
                             />
@@ -2348,9 +2385,10 @@ export function ChatTabV2({
                       <StickToBottom.Content className="flex flex-col min-h-0">
                         <Thread
                           messages={messages}
-                          sendFollowUpMessage={(text: string) =>
-                            sendMessage({ text })
-                          }
+                          sendFollowUpMessage={(text: string) => {
+                            lastSentUserMessageRef.current = text;
+                            sendMessage({ text });
+                          }}
                           model={selectedModel}
                           isLoading={isStreaming}
                           toolsMetadata={toolsMetadata}
@@ -2376,7 +2414,7 @@ export function ChatTabV2({
                     <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">
                       {errorMessage && (
                         <div className="max-w-4xl mx-auto px-4 pt-4">
-                          <ErrorBox
+                          <TopupGatedErrorBox
                             message={errorMessage.message}
                             errorDetails={errorMessage.details}
                             code={errorMessage.code}
@@ -2384,6 +2422,16 @@ export function ChatTabV2({
                             isRetryable={errorMessage.isRetryable}
                             isMCPJamPlatformError={
                               errorMessage.isMCPJamPlatformError
+                            }
+                            canTopUp={canShowTopupCta}
+                            onTopUp={handleOpenTopupDialog}
+                            walletLocked={errorMessage.walletLocked}
+                            limitKind={errorMessage.limitKind}
+                            retryAfterMs={errorMessage.retryAfterMs}
+                            onRetry={
+                              isConcurrencyThrottle
+                                ? handleRetryConcurrencyMessage
+                                : undefined
                             }
                             onResetChat={baseResetChat}
                           />
@@ -2599,6 +2647,15 @@ export function ChatTabV2({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {isTopupDialogOpen && (
+        <CreditTopupDialog
+          open
+          onOpenChange={handleTopupDialogOpenChange}
+          chatSessionId={chatSessionId}
+          lastUserMessage={pendingResendMessage}
+          source="chat_banner"
+        />
+      )}
     </div>
   );
 }

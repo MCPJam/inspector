@@ -24,8 +24,8 @@ export function getAnnualDiscountPercent(
   if (!planCatalog) {
     return 0;
   }
-  const monthly = planCatalog.plans.starter.prices.monthly;
-  const annual = planCatalog.plans.starter.prices.annual;
+  const monthly = planCatalog.plans.solo.prices.monthly;
+  const annual = planCatalog.plans.solo.prices.annual;
   if (monthly == null || annual == null || monthly <= 0) {
     return 0;
   }
@@ -75,29 +75,29 @@ export function isGateAccessDenied(
 }
 
 /**
- * When a workspace exists, workspace premiumness governs shell tabs; otherwise
+ * When a project exists, project premiumness governs shell tabs; otherwise
  * organization premiumness applies.
  */
 export function isPremiumnessGateDeniedForShell(params: {
   billingUiEnabled: boolean;
-  workspacePremiumness: PremiumnessState | undefined;
+  projectPremiumness: PremiumnessState | undefined;
   organizationPremiumness: PremiumnessState | undefined;
-  hasWorkspace: boolean;
+  hasProject: boolean;
   gateKey: PremiumnessGateKey | null;
 }): boolean {
   const {
     billingUiEnabled,
-    workspacePremiumness,
+    projectPremiumness,
     organizationPremiumness,
-    hasWorkspace,
+    hasProject,
     gateKey,
   } = params;
   if (!billingUiEnabled || !gateKey) {
     return false;
   }
   const premiumness =
-    hasWorkspace && workspacePremiumness
-      ? workspacePremiumness
+    hasProject && projectPremiumness
+      ? projectPremiumness
       : organizationPremiumness;
   return isGateAccessDenied(premiumness, gateKey);
 }
@@ -155,12 +155,12 @@ export function formatPremiumnessGateKey(gateKey: PremiumnessGateKey): string {
       return formatBillingFeatureName(gateKey as BillingFeatureName);
     case "maxMembers":
       return "Members";
-    case "maxWorkspaces":
-      return "Workspaces";
-    case "maxServersPerWorkspace":
-      return "Servers per workspace";
-    case "maxChatboxesPerWorkspace":
-      return "Chatboxes per workspace";
+    case "maxProjects":
+      return "Projects";
+    case "maxServersPerProject":
+      return "Servers per project";
+    case "maxChatboxesPerProject":
+      return "Chatboxes per project";
     case "maxEvalRunsPerMonth":
       return "Eval runs per month";
     default:
@@ -174,8 +174,8 @@ export function formatPlanName(
   switch (plan) {
     case "free":
       return "Free";
-    case "starter":
-      return "Starter";
+    case "solo":
+      return "Solo";
     case "team":
       return "Team";
     case "enterprise":
@@ -275,20 +275,20 @@ export function formatBillingLimitReachedMessage(
       ? `This organization has reached its monthly eval run limit (${allowedValue}). Upgrade to continue.`
       : `This organization has reached its monthly eval run limit (${allowedValue}). Ask an organization owner to upgrade.`;
   }
-  if (limitName === "maxChatboxesPerWorkspace") {
+  if (limitName === "maxChatboxesPerProject") {
     return canManageBilling
-      ? `This workspace has reached its chatbox limit (${allowedValue}). Upgrade to continue.`
-      : `This workspace has reached its chatbox limit (${allowedValue}). Ask an organization owner to upgrade.`;
+      ? `This project has reached its chatbox limit (${allowedValue}). Upgrade to continue.`
+      : `This project has reached its chatbox limit (${allowedValue}). Ask an organization owner to upgrade.`;
   }
   if (limitName === "maxMembers") {
     return canManageBilling
       ? `This organization has reached its member limit (${allowedValue}). Upgrade to add more members.`
       : `This organization has reached its member limit (${allowedValue}). Ask an organization owner to upgrade.`;
   }
-  if (limitName === "maxWorkspaces") {
+  if (limitName === "maxProjects") {
     return canManageBilling
-      ? `This organization has reached its workspace limit (${allowedValue}). Upgrade to create more workspaces.`
-      : `This organization has reached its workspace limit (${allowedValue}). Ask an organization owner to upgrade.`;
+      ? `This organization has reached its project limit (${allowedValue}). Upgrade to create more projects.`
+      : `This organization has reached its project limit (${allowedValue}). Ask an organization owner to upgrade.`;
   }
 
   return null;

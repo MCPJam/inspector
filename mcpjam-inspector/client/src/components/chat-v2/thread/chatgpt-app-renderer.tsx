@@ -39,7 +39,7 @@ import {
   loadLocalChatGptWidget,
   type WidgetCspData,
 } from "./chatgpt-widget-loaders";
-import { useClientConfigStore } from "@/stores/client-config-store";
+import { useHostContextStore } from "@/stores/host-context-store";
 import {
   extractHostDeviceCapabilities,
   extractHostLocale,
@@ -626,9 +626,7 @@ export function ChatGPTAppRenderer({
   const rootRef = useRef<HTMLDivElement>(null);
   const inlineWidthRef = useRef<number | undefined>(undefined);
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const draftHostContext = useClientConfigStore(
-    (s) => s.draftConfig?.hostContext,
-  );
+  const draftHostContext = useHostContextStore((s) => s.draftHostContext);
   // Get locale and time zone from playground store, fallback to browser settings
   const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);
   const playgroundTimeZone = useUIPlaygroundStore((s) => s.globals.timeZone);
@@ -1542,7 +1540,7 @@ export function ChatGPTAppRenderer({
       </div>
     );
   if (storeError) {
-    // In shared/minimal mode, silently hide auth-denied widget errors (workspace-member-only endpoint)
+    // In shared/minimal mode, silently hide auth-denied widget errors (project-member-only endpoint)
     if (minimalMode && /oauth|unauthorized|401/i.test(storeError)) {
       return null;
     }

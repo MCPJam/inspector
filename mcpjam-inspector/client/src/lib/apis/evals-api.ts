@@ -9,6 +9,7 @@ import {
 } from "@/lib/apis/web/context";
 import { listHostedTools } from "@/lib/apis/web/tools-api";
 import { authFetch } from "@/lib/session-token";
+import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
 import type { EvalStreamEvent } from "@/shared/eval-stream-events";
 import type { PromptTurn } from "@/shared/prompt-turns";
 
@@ -40,7 +41,7 @@ const GUEST_UNSUPPORTED_MESSAGE =
   "Not available for guests yet. Sign in to use this.";
 
 type EvalRequestWithServers = {
-  workspaceId?: string | null;
+  projectId?: string | null;
   serverIds: string[];
 };
 
@@ -155,7 +156,7 @@ function mergeHostedServerBatch<
   return {
     ...requestWithoutConvexAuthToken,
     ...hostedBatch,
-    workspaceId: request.workspaceId ?? hostedBatch.workspaceId,
+    projectId: request.projectId ?? hostedBatch.projectId,
   };
 }
 
@@ -169,7 +170,7 @@ function mergeHostedEvalServerRequest<
   const {
     convexAuthToken: _convexAuthToken,
     serverIds,
-    workspaceId: _workspaceId,
+    projectId: _projectId,
     ...requestWithoutHostedAuth
   } = request;
 
@@ -215,6 +216,17 @@ async function postEvalRequest<TResponse>(
         : typeof errorBody?.error === "string"
           ? errorBody.error
           : `Request failed (${response.status})`;
+    const limitKind = (errorBody as { limitKind?: unknown } | null | undefined)
+      ?.limitKind;
+    notifyMCPJamLimitError({
+      code: typeof errorBody?.code === "string" ? errorBody.code : undefined,
+      details: body,
+      message,
+      limitKind:
+        limitKind === "total" || limitKind === "concurrency"
+          ? limitKind
+          : undefined,
+    });
     throw new Error(message);
   }
 
@@ -387,13 +399,47 @@ export async function streamEvalTestCase(
 
   if (!response.ok) {
     let errorMessage = `Request failed (${response.status})`;
+    let errorBody: unknown = null;
+    let errorText = "";
     try {
-      const body = await response.json();
-      if (typeof body?.error === "string") errorMessage = body.error;
-      else if (typeof body?.message === "string") errorMessage = body.message;
+      errorText = await response.text();
+      errorBody = errorText ? JSON.parse(errorText) : null;
+      if (
+        errorBody &&
+        typeof errorBody === "object" &&
+        typeof (errorBody as { error?: unknown }).error === "string"
+      ) {
+        errorMessage = (errorBody as { error: string }).error;
+      } else if (
+        errorBody &&
+        typeof errorBody === "object" &&
+        typeof (errorBody as { message?: unknown }).message === "string"
+      ) {
+        errorMessage = (errorBody as { message: string }).message;
+      }
     } catch {
-      // ignore parse errors
+      if (errorText) {
+        errorBody = errorText;
+      }
     }
+    const limitKindRaw =
+      errorBody && typeof errorBody === "object"
+        ? (errorBody as { limitKind?: unknown }).limitKind
+        : undefined;
+    notifyMCPJamLimitError({
+      code:
+        errorBody &&
+        typeof errorBody === "object" &&
+        typeof (errorBody as { code?: unknown }).code === "string"
+          ? (errorBody as { code: string }).code
+          : undefined,
+      details: errorBody ?? errorText,
+      message: errorMessage,
+      limitKind:
+        limitKindRaw === "total" || limitKindRaw === "concurrency"
+          ? limitKindRaw
+          : undefined,
+    });
     throw new Error(errorMessage);
   }
 
@@ -415,6 +461,30 @@ export async function streamEvalTestCase(
     }
     try {
       const event = JSON.parse(data) as EvalStreamEvent;
+      if (event.type === "error") {
+        // Best-effort recovery of structured limitKind from JSON-shaped
+        // details so the concurrency carve-out is honored on the SSE
+        // error path. Untouched if details aren't JSON.
+        let limitKind: "total" | "concurrency" | undefined;
+        if (typeof event.details === "string") {
+          try {
+            const parsed = JSON.parse(event.details);
+            if (parsed && typeof parsed === "object") {
+              const value = (parsed as { limitKind?: unknown }).limitKind;
+              if (value === "total" || value === "concurrency") {
+                limitKind = value;
+              }
+            }
+          } catch {
+            // not JSON; ignore
+          }
+        }
+        notifyMCPJamLimitError({
+          details: event.details,
+          message: event.message,
+          limitKind,
+        });
+      }
       onEvent(event);
     } catch {
       // ignore malformed lines

@@ -48,6 +48,15 @@ export interface McpServerRpcItem {
   oauthRecovered?: boolean;
 }
 
+function isAutomaticAuthorizationDecisionMessage(
+  message: unknown,
+): message is string {
+  return (
+    typeof message === "string" &&
+    message.startsWith("Automatic resolved to ")
+  );
+}
+
 interface TrafficLogState {
   items: UiLogEvent[];
   mcpServerItems: McpServerRpcItem[];
@@ -120,6 +129,31 @@ export function ingestOAuthTraceLogs(input: {
   const store = useTrafficLogStore.getState();
   trace.steps.forEach((step) => {
     const timestamp = new Date(step.completedAt ?? step.startedAt).toISOString();
+
+    if (isAutomaticAuthorizationDecisionMessage(step.message)) {
+      store.addMcpServerLog({
+        id: `oauth:${serverId}:${trace.source}:automatic_resolution:${step.startedAt}`,
+        serverId,
+        serverName,
+        direction: "OAUTH",
+        method: "Automatic Resolution",
+        timestamp,
+        payload: {
+          source: trace.source,
+          step: "automatic_resolution",
+          title: "Automatic Resolution",
+          status: step.status,
+          message: step.message,
+          details: step.details,
+          relatedStep: step.step,
+        },
+        kind: "oauth",
+        oauthStatus: step.status,
+        oauthSource: trace.source,
+        oauthRecovered: step.recovered === true,
+      });
+    }
+
     store.addMcpServerLog({
       id: `oauth:${serverId}:${trace.source}:${step.step}:${step.startedAt}`,
       serverId,

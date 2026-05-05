@@ -10,6 +10,9 @@ const ORIGINAL_HOSTED_MODE = process.env.VITE_MCPJAM_HOSTED_MODE;
 const ORIGINAL_NON_PROD_LOCKDOWN = process.env.MCPJAM_NONPROD_LOCKDOWN;
 const ORIGINAL_FETCH = global.fetch;
 
+const SAMPLE_COOKIE =
+  "__Host-mcpjam_guest_session=cookie-set-by-convex; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=31536000";
+
 function createTestApp(): Hono {
   const app = new Hono();
   app.route("/guest-session", guestSession);
@@ -40,7 +43,10 @@ describe("POST /guest-session", () => {
         }),
         {
           status: 200,
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "Set-Cookie": SAMPLE_COOKIE,
+          },
         },
       );
     }) as typeof fetch;
@@ -108,25 +114,124 @@ describe("POST /guest-session", () => {
       const parts = data.token.split(".");
       expect(parts.length).toBe(3);
     });
+  });
 
-    it("returns expiresAt in the future", async () => {
-      const before = Date.now();
-      const res = await app.request("/guest-session", { method: "POST" });
-      const data = await res.json();
+  it("forwards Set-Cookie from Convex to the browser", async () => {
+    const res = await app.request("/guest-session", { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("set-cookie")).toContain(
+      "__Host-mcpjam_guest_session=cookie-set-by-convex",
+    );
+  });
 
-      expect(data.expiresAt).toBeGreaterThan(before);
+  it("forwards browser Cookie/User-Agent but not spoofable IP headers upstream", async () => {
+    await app.request("/guest-session", {
+      method: "POST",
+      headers: {
+        cookie: "__Host-mcpjam_guest_session=raw-cookie-id",
+        "user-agent": "BrowserAgent/1.0",
+        "x-forwarded-for": "203.0.113.7",
+        "x-real-ip": "203.0.113.7",
+      },
     });
 
-    it("returns different tokens on successive requests", async () => {
-      const res1 = await app.request("/guest-session", { method: "POST" });
-      const res2 = await app.request("/guest-session", { method: "POST" });
+    const upstreamCall = vi.mocked(global.fetch).mock.calls[0]!;
+    expect(upstreamCall[0]).toBe(
+      "https://test-deployment.convex.site/guest/session",
+    );
+    const init = upstreamCall[1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    expect(headers["Cookie"]).toBe("__Host-mcpjam_guest_session=raw-cookie-id");
+    expect(headers["User-Agent"]).toBe("BrowserAgent/1.0");
+    expect(headers["X-Forwarded-For"]).toBeUndefined();
+    expect(headers["X-Real-IP"]).toBeUndefined();
+  });
 
-      const data1 = await res1.json();
-      const data2 = await res2.json();
-
-      expect(data1.guestId).not.toBe(data2.guestId);
-      expect(data1.token).not.toBe(data2.token);
+  it("forwards only the guest-session cookie upstream, not other origin cookies", async () => {
+    await app.request("/guest-session", {
+      method: "POST",
+      headers: {
+        "x-forwarded-for": "10.0.99.1",
+        cookie:
+          "session=secret-app-session; csrf=abc123; __Host-mcpjam_guest_session=raw-cookie-id; other=keep",
+      },
     });
+
+    const upstreamCall = vi.mocked(global.fetch).mock.calls[0]!;
+    const init = upstreamCall[1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    expect(headers["Cookie"]).toBe("__Host-mcpjam_guest_session=raw-cookie-id");
+    expect(headers["Cookie"]).not.toContain("session=secret-app-session");
+    expect(headers["Cookie"]).not.toContain("csrf=abc123");
+    expect(headers["Cookie"]).not.toContain("other=keep");
+  });
+
+  it("omits Cookie header upstream when guest-session cookie is absent", async () => {
+    await app.request("/guest-session", {
+      method: "POST",
+      headers: {
+        "x-forwarded-for": "10.0.99.2",
+        cookie: "session=secret-app-session; csrf=abc123",
+      },
+    });
+
+    const upstreamCall = vi.mocked(global.fetch).mock.calls[0]!;
+    const init = upstreamCall[1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    expect(headers["Cookie"]).toBeUndefined();
+  });
+
+  it("forwards mode and legacyToken from request body to upstream", async () => {
+    await app.request("/guest-session", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        mode: "lookup_only",
+        legacyToken: "old-jwt",
+      }),
+    });
+
+    const upstreamCall = vi.mocked(global.fetch).mock.calls[0]!;
+    const init = upstreamCall[1] as RequestInit;
+    expect(init.body).toBe(
+      JSON.stringify({ mode: "lookup_only", legacyToken: "old-jwt" }),
+    );
+  });
+
+  it("returns 204 when upstream lookup_only finds no session", async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 204 })) as typeof fetch;
+
+    const res = await app.request("/guest-session", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mode: "lookup_only" }),
+    });
+    expect(res.status).toBe(204);
+  });
+
+  it("returns 403 with passthrough Set-Cookie when upstream revokes", async () => {
+    const expiredCookie =
+      "__Host-mcpjam_guest_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0";
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({ code: "FORBIDDEN", message: "Guest session revoked" }),
+        {
+          status: 403,
+          headers: {
+            "Content-Type": "application/json",
+            "Set-Cookie": expiredCookie,
+          },
+        },
+      ),
+    ) as typeof fetch;
+
+    const res = await app.request("/guest-session", { method: "POST" });
+    expect(res.status).toBe(403);
+    expect(res.headers.get("set-cookie")).toContain("Max-Age=0");
+    const data = await res.json();
+    expect(data.code).toBe("FORBIDDEN");
   });
 
   it("returns 403 when non-prod lockdown is enabled", async () => {
@@ -189,51 +294,9 @@ describe("POST /guest-session", () => {
         "https://app.mcpjam.com/api/web/guest-session",
         expect.objectContaining({
           method: "POST",
-          headers: {
+          headers: expect.objectContaining({
             "Content-Type": "application/json",
-          },
-          signal: expect.anything(),
-        }),
-      );
-    });
-
-    it("proxies the Convex guest session in hosted production", async () => {
-      process.env.NODE_ENV = "production";
-      process.env.VITE_MCPJAM_HOSTED_MODE = "true";
-      process.env.CONVEX_HTTP_URL = "https://test-deployment.convex.site";
-      process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET =
-        "test-guest-session-secret";
-      global.fetch = vi.fn().mockResolvedValue(
-        new Response(
-          JSON.stringify({
-            guestId: "guest-remote",
-            token: "remote-token",
-            expiresAt: 123456789,
           }),
-          {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          },
-        ),
-      ) as typeof fetch;
-
-      const res = await app.request("/guest-session", { method: "POST" });
-      const data = await res.json();
-
-      expect(res.status).toBe(200);
-      expect(data).toEqual({
-        guestId: "guest-remote",
-        token: "remote-token",
-        expiresAt: 123456789,
-      });
-      expect(global.fetch).toHaveBeenCalledWith(
-        "https://test-deployment.convex.site/guest/session",
-        expect.objectContaining({
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-mcpjam-guest-session-secret": "test-guest-session-secret",
-          },
           signal: expect.anything(),
         }),
       );
@@ -266,7 +329,6 @@ describe("POST /guest-session", () => {
     });
 
     it("returns 429 after 10 requests from the same IP", async () => {
-      // Exhaust the rate limit
       for (let i = 0; i < 10; i++) {
         await app.request("/guest-session", {
           method: "POST",
@@ -274,7 +336,6 @@ describe("POST /guest-session", () => {
         });
       }
 
-      // 11th request should be rate-limited
       const res = await app.request("/guest-session", {
         method: "POST",
         headers: { "x-forwarded-for": "10.0.0.2" },
@@ -283,11 +344,9 @@ describe("POST /guest-session", () => {
       expect(res.status).toBe(429);
       const data = await res.json();
       expect(data.code).toBe("RATE_LIMITED");
-      expect(data.message).toBeDefined();
     });
 
     it("rate limits are per-IP", async () => {
-      // Exhaust limit for IP1
       for (let i = 0; i < 10; i++) {
         await app.request("/guest-session", {
           method: "POST",
@@ -295,7 +354,6 @@ describe("POST /guest-session", () => {
         });
       }
 
-      // IP2 should still be allowed
       const res = await app.request("/guest-session", {
         method: "POST",
         headers: { "x-forwarded-for": "10.0.0.4" },
@@ -304,7 +362,6 @@ describe("POST /guest-session", () => {
     });
 
     it("uses first IP from x-forwarded-for when multiple present", async () => {
-      // Exhaust limit for the first IP in the chain
       for (let i = 0; i < 10; i++) {
         await app.request("/guest-session", {
           method: "POST",
@@ -312,14 +369,12 @@ describe("POST /guest-session", () => {
         });
       }
 
-      // Same first IP should be rate-limited
       const res = await app.request("/guest-session", {
         method: "POST",
         headers: { "x-forwarded-for": "10.0.0.5" },
       });
       expect(res.status).toBe(429);
 
-      // Different first IP should be allowed
       const res2 = await app.request("/guest-session", {
         method: "POST",
         headers: { "x-forwarded-for": "10.0.0.6" },
@@ -328,7 +383,6 @@ describe("POST /guest-session", () => {
     });
 
     it("falls back to x-real-ip when x-forwarded-for is absent", async () => {
-      // Exhaust limit using x-real-ip
       for (let i = 0; i < 10; i++) {
         await app.request("/guest-session", {
           method: "POST",

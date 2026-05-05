@@ -12,7 +12,10 @@ import {
   clearHostedOAuthPendingState,
   writeHostedOAuthPendingMarker,
 } from "../lib/hosted-oauth-callback";
-import { writeHostedOAuthResumeMarker } from "../lib/hosted-oauth-resume";
+import {
+  readHostedOAuthResumeMarker,
+  writeHostedOAuthResumeMarker,
+} from "../lib/hosted-oauth-resume";
 import {
   readBillingSignInReturnPath,
   readPersistedCheckoutIntent,
@@ -26,18 +29,34 @@ import {
   writeChatboxSession,
 } from "../lib/chatbox-session";
 
+const existingConvexUser = {
+  _id: "user-1",
+  externalId: "workos-user-1",
+  email: "user@example.com",
+  name: "Test User",
+  imageUrl: "",
+  plan: "free",
+  entitlements: {},
+  hasCompletedOnboarding: true,
+  createdAt: 1,
+  updatedAt: 1,
+};
+
 const {
   createAppStateMock,
   mockAppBuilderTabMounts,
   mockConvexAuthState,
   mockCompleteHostedOAuthCallback,
   mockHandleOAuthCallback,
+  mockHeader,
   mockHostedShellGateState,
   mockMCPSidebar,
+  mockOAuthFlowTabState,
   mockOrganizationsTab,
   mockPosthogCapture,
   mockPosthogState,
   mockChatboxesTab,
+  mockGetGuestBearerToken,
   mockUseAuth,
   mockUseAppState,
   mockUseConvexAuth,
@@ -53,8 +72,8 @@ const {
       selectedMultipleServers: [],
     },
     isLoading: false,
-    isLoadingRemoteWorkspaces: false,
-    workspaceServers: {},
+    isLoadingRemoteProjects: false,
+    projectServers: {},
     connectedOrConnectingServerConfigs: {},
     selectedMCPConfig: null,
     handleConnect: vi.fn(),
@@ -68,21 +87,21 @@ const {
     setSelectedServer: vi.fn(),
     toggleServerSelection: vi.fn(),
     setSelectedMultipleServersToAllServers: vi.fn(),
-    workspaces: {},
-    activeWorkspaceId: "ws_local",
-    handleSwitchWorkspace: vi.fn(),
-    handleCreateWorkspace: vi.fn(),
-    handleUpdateWorkspace: vi.fn(),
-    handleDeleteWorkspace: vi.fn(),
-    handleLeaveWorkspace: vi.fn(),
-    handleWorkspaceShared: vi.fn(),
+    projects: {},
+    activeProjectId: "ws_local",
+    handleSwitchProject: vi.fn(),
+    handleCreateProject: vi.fn(),
+    handleUpdateProject: vi.fn(),
+    handleDeleteProject: vi.fn(),
+    handleLeaveProject: vi.fn(),
+    handleProjectShared: vi.fn(),
     saveServerConfigWithoutConnecting: vi.fn(),
     handleConnectWithTokensFromOAuthFlow: vi.fn(),
     handleRefreshTokensFromOAuthFlow: vi.fn(),
     activeOrganizationId: undefined,
     setActiveOrganizationId: vi.fn(),
-    clearConvexActiveWorkspaceSelection: vi.fn(),
-    clearLocalFallbackWorkspaceSelection: vi.fn(),
+    clearConvexActiveProjectSelection: vi.fn(),
+    clearLocalFallbackProjectSelection: vi.fn(),
     isCloudSyncActive: false,
   });
 
@@ -99,10 +118,14 @@ const {
       value: "ready" as
         | "ready"
         | "auth-loading"
-        | "workspace-loading"
+        | "project-loading"
         | "logged-out",
     },
     mockMCPSidebar: vi.fn(() => <div />),
+    mockOAuthFlowTabState: {
+      shouldThrow: false,
+      error: new Error("OAuth debugger failed"),
+    },
     mockOrganizationsTab: vi.fn(() => <div />),
     mockPosthogCapture: vi.fn(),
     mockPosthogState: {
@@ -122,12 +145,14 @@ const {
         featureFlagListeners.clear();
       },
     },
+    mockGetGuestBearerToken: vi.fn(),
     mockUseAuth: vi.fn(),
     mockUseAppState: vi.fn(createAppStateMock),
     mockUseConvexAuth: vi.fn(),
     mockUseFeatureFlagEnabled: vi.fn(),
     mockUseQuery: vi.fn(() => undefined),
     mockChatboxesTab: vi.fn(() => <div>Chatboxes Tab</div>),
+    mockHeader: vi.fn((_props: unknown) => <div data-testid="app-header" />),
     mockWorkOsAuthState: {
       getAccessToken: vi.fn(),
       signIn: vi.fn(),
@@ -139,7 +164,13 @@ const {
 
 vi.mock("convex/react", () => ({
   useConvexAuth: (...args: unknown[]) => mockUseConvexAuth(...args),
-  useQuery: mockUseQuery,
+  useQuery: (ref: string, ...args: unknown[]) => {
+    const result = mockUseQuery(ref, ...args);
+    if (ref === "users:getCurrentUser" && result === undefined) {
+      return existingConvexUser;
+    }
+    return result;
+  },
   useMutation: () => vi.fn(),
   useAction: () => vi.fn(),
 }));
@@ -171,7 +202,7 @@ vi.mock("../hooks/use-app-state", () => ({
 
 vi.mock("../hooks/useViews", () => ({
   useViewQueries: () => ({ viewsByServer: new Map() }),
-  useWorkspaceServers: () => ({ serversById: new Map() }),
+  useProjectServers: () => ({ serversById: new Map() }),
 }));
 
 vi.mock("../hooks/hosted/use-hosted-api-context", () => ({
@@ -183,7 +214,7 @@ vi.mock("../hooks/useElectronOAuth", () => ({
 }));
 
 vi.mock("../hooks/useEnsureDbUser", () => ({
-  useEnsureDbUser: vi.fn(),
+  useEnsureDbUser: vi.fn(() => ({ isEnsuringUser: false })),
 }));
 
 vi.mock("../hooks/usePostHogIdentify", () => ({
@@ -205,6 +236,13 @@ vi.mock("../lib/theme-utils", () => ({
 vi.mock("../lib/oauth/mcp-oauth", () => ({
   completeHostedOAuthCallback: mockCompleteHostedOAuthCallback,
   handleOAuthCallback: mockHandleOAuthCallback,
+}));
+
+vi.mock("../lib/guest-session", () => ({
+  clearGuestSession: vi.fn(() => {
+    localStorage.removeItem("mcpjam_guest_session_v1");
+  }),
+  getGuestBearerToken: mockGetGuestBearerToken,
 }));
 
 vi.mock("../components/ServersTab", () => ({
@@ -246,8 +284,8 @@ vi.mock("../components/ChatboxesTab", () => ({
 vi.mock("../components/SettingsTab", () => ({
   SettingsTab: () => <div />,
 }));
-vi.mock("../components/client-config/WorkspaceClientConfigSync", () => ({
-  WorkspaceClientConfigSync: () => null,
+vi.mock("../components/client-config/ProjectClientConfigSync", () => ({
+  ProjectClientConfigSync: () => null,
 }));
 vi.mock("../components/TracingTab", () => ({
   TracingTab: () => <div />,
@@ -256,7 +294,12 @@ vi.mock("../components/AuthTab", () => ({
   AuthTab: () => <div />,
 }));
 vi.mock("../components/OAuthFlowTab", () => ({
-  OAuthFlowTab: () => <div />,
+  OAuthFlowTab: () => {
+    if (mockOAuthFlowTabState.shouldThrow) {
+      throw mockOAuthFlowTabState.error;
+    }
+    return <div data-testid="oauth-flow-tab" />;
+  },
 }));
 vi.mock("../components/xaa/XAAFlowTab", () => ({
   XAAFlowTab: () => <div data-testid="xaa-flow-tab">XAA Debugger Tab</div>,
@@ -330,7 +373,7 @@ vi.mock("../components/LoadingScreen", () => ({
   default: () => <div data-testid="hosted-oauth-loading" />,
 }));
 vi.mock("../components/Header", () => ({
-  Header: () => <div data-testid="app-header" />,
+  Header: (props: unknown) => mockHeader(props),
 }));
 vi.mock("../components/hosted/HostedShellGate", () => ({
   HostedShellGate: ({ children }: { children?: ReactNode }) => (
@@ -370,7 +413,7 @@ describe("App hosted OAuth callback handling", () => {
     mockUseFeatureFlagEnabled.mockReturnValue(false);
     mockUseQuery.mockReset();
     mockUseQuery.mockImplementation((ref: string) =>
-      ref === "users:getCurrentUser" ? null : undefined,
+      ref === "users:getCurrentUser" ? existingConvexUser : undefined
     );
     mockHostedShellGateState.value = "ready";
     mockConvexAuthState.isAuthenticated = true;
@@ -381,32 +424,40 @@ describe("App hosted OAuth callback handling", () => {
     mockWorkOsAuthState.isLoading = false;
     mockCompleteHostedOAuthCallback.mockReset();
     mockHandleOAuthCallback.mockReset();
+    mockGetGuestBearerToken.mockReset();
+    mockGetGuestBearerToken.mockResolvedValue("guest-bearer");
     mockOrganizationsTab.mockReset();
     mockOrganizationsTab.mockImplementation(() => <div />);
     mockChatboxesTab.mockReset();
     mockChatboxesTab.mockImplementation(() => <div>Chatboxes Tab</div>);
+    mockHeader.mockReset();
+    mockHeader.mockImplementation((_props: unknown) => (
+      <div data-testid="app-header" />
+    ));
     mockMCPSidebar.mockReset();
     mockMCPSidebar.mockImplementation(() => <div data-testid="mcp-sidebar" />);
+    mockOAuthFlowTabState.shouldThrow = false;
+    mockOAuthFlowTabState.error = new Error("OAuth debugger failed");
     mockPosthogCapture.mockReset();
     mockAppBuilderTabMounts.mockReset();
     mockCompleteHostedOAuthCallback.mockImplementation(
-      () => new Promise<never>(() => {}),
+      () => new Promise<never>(() => {})
     );
     mockHandleOAuthCallback.mockImplementation(
-      () => new Promise<never>(() => {}),
+      () => new Promise<never>(() => {})
     );
 
     writeChatboxSession({
       token: "chatbox-token",
       payload: {
-        workspaceId: "ws_1",
+        projectId: "ws_1",
         chatboxId: "sbx_1",
         name: "Asaan",
         description: "Hosted chatbox",
         hostStyle: "claude",
         mode: "invited_only",
         allowGuestAccess: false,
-        viewerIsWorkspaceMember: true,
+        viewerIsProjectMember: true,
         systemPrompt: "You are helpful.",
         modelId: "openai/gpt-5-mini",
         temperature: 0.4,
@@ -425,6 +476,11 @@ describe("App hosted OAuth callback handling", () => {
     });
     writeHostedOAuthPendingMarker({
       surface: "chatbox",
+      projectId: "ws_1",
+      serverId: "srv_asana",
+      sessionId: "hosted-session-1",
+      accessScope: "chat_v2",
+      chatboxToken: "chatbox-token",
       serverName: "asana",
       serverUrl: "https://mcp.asana.com/sse",
       returnHash: "#asaan",
@@ -442,7 +498,7 @@ describe("App hosted OAuth callback handling", () => {
 
     expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Authorize" }),
+      screen.queryByRole("button", { name: "Authorize" })
     ).not.toBeInTheDocument();
     await waitFor(() => {
       expect(mockCompleteHostedOAuthCallback).toHaveBeenCalledWith(
@@ -453,21 +509,135 @@ describe("App hosted OAuth callback handling", () => {
         "oauth-code",
         expect.objectContaining({
           onTraceUpdate: expect.any(Function),
-        }),
+        })
       );
     });
   });
 
-  it("does not keep the hosted loading screen for workspace OAuth callbacks", async () => {
+  it("captures and copies sanitized OAuth Debugger boundary errors", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    localStorage.clear();
+    sessionStorage.clear();
+    window.history.replaceState({}, "", "/#oauth-flow");
+    mockOAuthFlowTabState.shouldThrow = true;
+    mockOAuthFlowTabState.error = new Error(
+      "token exchange failed client_secret=super-secret Bearer access-token",
+    );
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", {
+      ...window.navigator,
+      clipboard: { writeText },
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("OAuth Debugger crashed")).toBeInTheDocument();
+    expect(mockPosthogCapture).toHaveBeenCalledWith(
+      "oauth_debugger_error_boundary",
+      expect.objectContaining({
+        message: expect.stringContaining("[redacted]"),
+      }),
+    );
+    expect(
+      JSON.stringify(mockPosthogCapture.mock.calls),
+    ).not.toContain("super-secret");
+
+    fireEvent.click(screen.getByRole("button", { name: /copy details/i }));
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith(
+        expect.not.stringContaining("super-secret"),
+      );
+    });
+    expect(writeText.mock.calls[0]?.[0]).toContain("[redacted]");
+  });
+
+  it("uses hosted completion for guest chatbox session callbacks", async () => {
+    mockConvexAuthState.isAuthenticated = false;
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockHandleOAuthCallback).not.toHaveBeenCalled();
+      expect(mockCompleteHostedOAuthCallback).toHaveBeenCalledWith(
+        expect.objectContaining({
+          surface: "chatbox",
+          projectId: "ws_1",
+          serverId: "srv_asana",
+          sessionId: "hosted-session-1",
+          chatboxToken: "chatbox-token",
+        }),
+        "oauth-code",
+        expect.objectContaining({
+          authorizationHeader: "Bearer guest-bearer",
+          onTraceUpdate: expect.any(Function),
+        })
+      );
+    });
+  });
+
+  it("uses hosted completion for authenticated chatbox callbacks without a hosted session id", async () => {
+    clearHostedOAuthPendingState();
+    writeHostedOAuthPendingMarker({
+      surface: "chatbox",
+      projectId: "ws_1",
+      serverId: "srv_asana",
+      accessScope: "chat_v2",
+      chatboxToken: "chatbox-token",
+      serverName: "asana",
+      serverUrl: "https://mcp.asana.com/sse",
+      returnHash: "#asaan",
+    });
+    localStorage.setItem("mcp-oauth-pending", "asana");
+    localStorage.setItem("mcp-serverUrl-asana", "https://mcp.asana.com/sse");
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockHandleOAuthCallback).not.toHaveBeenCalled();
+      expect(mockCompleteHostedOAuthCallback).toHaveBeenCalledWith(
+        expect.objectContaining({
+          surface: "chatbox",
+          projectId: "ws_1",
+          serverId: "srv_asana",
+          sessionId: null,
+          chatboxToken: "chatbox-token",
+        }),
+        "oauth-code",
+        expect.objectContaining({
+          authorizationHeader: undefined,
+          onTraceUpdate: expect.any(Function),
+        })
+      );
+    });
+  });
+
+  it("reports a clear guest session error when a chatbox callback bearer is unavailable", async () => {
+    mockConvexAuthState.isAuthenticated = false;
+    mockGetGuestBearerToken.mockResolvedValue(null);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(readHostedOAuthResumeMarker("chatbox")?.errorMessage).toBe(
+        "Your guest session expired. Reopen the chatbox link and try again."
+      );
+    });
+    expect(mockCompleteHostedOAuthCallback).not.toHaveBeenCalled();
+    expect(mockHandleOAuthCallback).not.toHaveBeenCalled();
+  });
+
+  it("does not keep the hosted loading screen for project OAuth callbacks", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     writeHostedOAuthPendingMarker({
-      surface: "workspace",
-      workspaceId: "ws_1",
+      surface: "project",
+      projectId: "ws_1",
       serverId: "srv_asana",
       serverName: "asana",
       serverUrl: "https://mcp.asana.com/sse",
-      accessScope: "workspace_member",
+      accessScope: "project_member",
       returnHash: "#servers",
     });
     localStorage.setItem("mcp-oauth-pending", "asana");
@@ -476,7 +646,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     expect(
-      screen.queryByTestId("hosted-oauth-loading"),
+      screen.queryByTestId("hosted-oauth-loading")
     ).not.toBeInTheDocument();
     expect(screen.getByText("Servers Tab")).toBeInTheDocument();
 
@@ -504,7 +674,7 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     expect(
-      screen.queryByTestId("callback-auth-timeout"),
+      screen.queryByTestId("callback-auth-timeout")
     ).not.toBeInTheDocument();
     expect(mockWorkOsAuthState.signIn).not.toHaveBeenCalled();
     expect(readChatboxSignInReturnPath()).toBe("/chatbox/asana/token-123");
@@ -534,19 +704,19 @@ describe("App hosted OAuth callback handling", () => {
           guestId: "guest_123",
           token: "guest-token",
           expiresAt: Date.now() + 60_000,
-        }),
+        })
       );
       writeHostedOAuthPendingMarker({
-        surface: "workspace",
-        workspaceId: "ws_1",
+        surface: "project",
+        projectId: "ws_1",
         serverId: "srv_asana",
         serverName: "asana",
         serverUrl: "https://mcp.asana.com/sse",
-        accessScope: "workspace_member",
+        accessScope: "project_member",
         returnHash: "#servers",
       });
       writeHostedOAuthResumeMarker({
-        surface: "workspace",
+        surface: "project",
         serverName: "asana",
         serverUrl: "https://mcp.asana.com/sse",
         errorMessage: "stale",
@@ -561,7 +731,7 @@ describe("App hosted OAuth callback handling", () => {
       expect(screen.getByTestId("callback-auth-timeout")).toBeInTheDocument();
 
       fireEvent.click(
-        screen.getByRole("button", { name: "Try sign in again" }),
+        screen.getByRole("button", { name: "Try sign in again" })
       );
 
       await act(async () => {
@@ -592,13 +762,13 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     const entitlementsCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getOrganizationEntitlements",
+      ([name]) => name === "billing:getOrganizationEntitlements"
     );
     const orgPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getOrganizationPremiumness",
+      ([name]) => name === "billing:getOrganizationPremiumness"
     );
     const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getWorkspacePremiumness",
+      ([name]) => name === "billing:getProjectPremiumness"
     );
 
     expect(entitlementsCall?.[1]).toBe("skip");
@@ -606,14 +776,14 @@ describe("App hosted OAuth callback handling", () => {
     expect(wsPremiumnessCall?.[1]).toBe("skip");
   });
 
-  it("skips billing queries while a workspace org id is still unvalidated", () => {
+  it("skips billing queries while a project org id is still unvalidated", () => {
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
-      workspaces: {
+      projects: {
         ws_local: {
           id: "ws_local",
-          name: "Shared workspace",
-          organizationId: "workspace-org",
+          name: "Shared project",
+          organizationId: "project-org",
           servers: {},
           createdAt: new Date(),
           updatedAt: new Date(),
@@ -624,13 +794,13 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     const entitlementsCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getOrganizationEntitlements",
+      ([name]) => name === "billing:getOrganizationEntitlements"
     );
     const orgPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getOrganizationPremiumness",
+      ([name]) => name === "billing:getOrganizationPremiumness"
     );
     const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getWorkspacePremiumness",
+      ([name]) => name === "billing:getProjectPremiumness"
     );
 
     expect(entitlementsCall?.[1]).toBe("skip");
@@ -638,18 +808,18 @@ describe("App hosted OAuth callback handling", () => {
     expect(wsPremiumnessCall?.[1]).toBe("skip");
   });
 
-  it("skips workspace billing and clears stale synced selection when the active workspace is missing", async () => {
-    const clearConvexActiveWorkspaceSelection = vi.fn();
+  it("skips project billing and clears stale synced selection when the active project is missing", async () => {
+    const clearConvexActiveProjectSelection = vi.fn();
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
       isCloudSyncActive: true,
       activeOrganizationId: "org-1",
-      activeWorkspaceId: "ws-missing",
-      clearConvexActiveWorkspaceSelection,
+      activeProjectId: "ws-missing",
+      clearConvexActiveProjectSelection,
     }));
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "users:getCurrentUser") {
-        return null;
+        return existingConvexUser;
       }
 
       if (name === "organizations:getMyOrganizations") {
@@ -671,27 +841,27 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getWorkspacePremiumness",
+      ([name]) => name === "billing:getProjectPremiumness"
     );
 
     expect(wsPremiumnessCall?.[1]).toBe("skip");
     await waitFor(() => {
-      expect(clearConvexActiveWorkspaceSelection).toHaveBeenCalled();
+      expect(clearConvexActiveProjectSelection).toHaveBeenCalled();
     });
   });
 
-  it("skips workspace billing and clears synced selection when the active workspace org no longer matches the current org", async () => {
-    const clearConvexActiveWorkspaceSelection = vi.fn();
+  it("skips project billing and clears synced selection when the active project org no longer matches the current org", async () => {
+    const clearConvexActiveProjectSelection = vi.fn();
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
       isCloudSyncActive: true,
       activeOrganizationId: "org-1",
-      clearConvexActiveWorkspaceSelection,
-      workspaces: {
+      clearConvexActiveProjectSelection,
+      projects: {
         ws_local: {
           id: "ws_local",
-          name: "Workspace Two",
-          sharedWorkspaceId: "shared-ws-2",
+          name: "Project Two",
+          sharedProjectId: "shared-ws-2",
           organizationId: "org-2",
           servers: {},
           createdAt: new Date(),
@@ -701,7 +871,7 @@ describe("App hosted OAuth callback handling", () => {
     }));
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "users:getCurrentUser") {
-        return null;
+        return existingConvexUser;
       }
 
       if (name === "organizations:getMyOrganizations") {
@@ -731,16 +901,16 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getWorkspacePremiumness",
+      ([name]) => name === "billing:getProjectPremiumness"
     );
 
     expect(wsPremiumnessCall?.[1]).toBe("skip");
     await waitFor(() => {
-      expect(clearConvexActiveWorkspaceSelection).toHaveBeenCalled();
+      expect(clearConvexActiveProjectSelection).toHaveBeenCalled();
     });
   });
 
-  it("passes a billing-safe workspace id to the chatboxes tab", async () => {
+  it("passes a billing-safe project id to the chatboxes tab", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/#chatboxes");
@@ -748,11 +918,11 @@ describe("App hosted OAuth callback handling", () => {
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
       isCloudSyncActive: false,
-      workspaces: {
+      projects: {
         ws_local: {
           id: "ws_local",
-          name: "Workspace One",
-          sharedWorkspaceId: "shared-ws-1",
+          name: "Project One",
+          sharedProjectId: "shared-ws-1",
           organizationId: "org-1",
           servers: {},
           createdAt: new Date(),
@@ -786,7 +956,7 @@ describe("App hosted OAuth callback handling", () => {
     const lastCall =
       mockChatboxesTab.mock.calls[mockChatboxesTab.mock.calls.length - 1];
     expect(lastCall?.[0]).toMatchObject({
-      workspaceId: null,
+      projectId: null,
       organizationId: "org-1",
       isBillingContextPending: false,
     });
@@ -832,14 +1002,14 @@ describe("App hosted OAuth callback handling", () => {
         "oauth-code",
         expect.objectContaining({
           onTraceUpdate: expect.any(Function),
-        }),
+        })
       );
     });
 
     expect(setActiveOrganizationId).not.toHaveBeenCalled();
   });
 
-  it("passes the valid organization route into app state for workspace actions", async () => {
+  it("passes the valid organization route into app state for project actions", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/#organizations/org-3");
@@ -1033,12 +1203,83 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
-  it("disables sidebar workspace creation when the routed org is free and at cap", async () => {
+  it("preserves the org models section when switching active organization", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    window.history.replaceState({}, "", "/#organizations/org-a/models");
+
+    const setActiveOrganizationIdSpy = vi.fn();
+    (mockUseAppState as any).mockImplementation(() => {
+      const [activeOrganizationId, setActiveOrganizationId] = useState<
+        string | undefined
+      >("org-a");
+
+      return {
+        ...createAppStateMock(),
+        activeOrganizationId,
+        setActiveOrganizationId: (organizationId: string | undefined) => {
+          setActiveOrganizationIdSpy(organizationId);
+          setActiveOrganizationId(organizationId);
+        },
+      };
+    });
+    (mockUseQuery as any).mockImplementation((name: string) => {
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-a",
+            name: "Org A",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+          {
+            _id: "org-b",
+            name: "Org B",
+            updatedAt: 2,
+            createdAt: 2,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+
+      return undefined;
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockMCPSidebar).toHaveBeenCalled();
+    });
+
+    const getLastSidebarProps = () => {
+      const lastCall =
+        mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1];
+      return lastCall?.[0] as unknown as {
+        activeOrganizationId?: string;
+        onSwitchActiveOrganization?: (organizationId: string) => void;
+      };
+    };
+
+    act(() => {
+      getLastSidebarProps().onSwitchActiveOrganization?.("org-b");
+    });
+
+    await waitFor(() => {
+      expect(setActiveOrganizationIdSpy).toHaveBeenCalledWith("org-b");
+      expect(getLastSidebarProps().activeOrganizationId).toBe("org-b");
+      expect(window.location.hash).toBe("#organizations/org-b/models");
+    });
+  });
+
+  it("disables sidebar project creation when the routed org is free and at cap", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/#organizations/org-3");
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui",
+      (flag: string) => flag === "billing-entitlements-ui"
     );
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
@@ -1105,12 +1346,12 @@ describe("App hosted OAuth callback handling", () => {
           decisionRequired: false,
           gates: [
             {
-              gateKey: "maxWorkspaces",
+              gateKey: "maxProjects",
               kind: "limit",
               scope: "organization",
               canAccess: false,
               shouldShowUpsell: true,
-              upgradePlan: "starter",
+              upgradePlan: "solo",
               reason: "limit_reached",
               currentValue: 1,
               allowedValue: 1,
@@ -1131,9 +1372,9 @@ describe("App hosted OAuth callback handling", () => {
     const lastCall =
       mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1];
     expect(lastCall?.[0]).toMatchObject({
-      isCreateWorkspaceDisabled: true,
-      createWorkspaceDisabledReason:
-        "This organization has reached its workspace limit (1). Upgrade to create more workspaces.",
+      isCreateProjectDisabled: true,
+      createProjectDisabledReason:
+        "This organization has reached its project limit (1). Upgrade to create more projects.",
     });
   });
 
@@ -1143,7 +1384,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState(
       {},
       "",
-      "/billing?plan=starter&interval=annual",
+      "/billing?plan=solo&interval=annual"
     );
 
     const signIn = vi.fn();
@@ -1165,7 +1406,7 @@ describe("App hosted OAuth callback handling", () => {
       expect(signIn).toHaveBeenCalled();
     });
     expect(readPersistedCheckoutIntent()).toEqual({
-      plan: "starter",
+      plan: "solo",
       interval: "annual",
     });
     expect(readBillingSignInReturnPath()).toBe("/billing");
@@ -1176,12 +1417,12 @@ describe("App hosted OAuth callback handling", () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     sessionStorage.clear();
-    persistCheckoutIntent({ plan: "starter", interval: "annual" });
+    persistCheckoutIntent({ plan: "solo", interval: "annual" });
     writeBillingSignInReturnPath("/billing");
     window.history.replaceState({}, "", "/callback?code=oauth-code");
 
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui",
+      (flag: string) => flag === "billing-entitlements-ui"
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
@@ -1233,11 +1474,11 @@ describe("App hosted OAuth callback handling", () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     sessionStorage.clear();
-    persistCheckoutIntent({ plan: "starter", interval: "annual" });
+    persistCheckoutIntent({ plan: "solo", interval: "annual" });
     window.history.replaceState({}, "", "/billing");
 
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui",
+      (flag: string) => flag === "billing-entitlements-ui"
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
@@ -1280,10 +1521,10 @@ describe("App hosted OAuth callback handling", () => {
           ).organizationId === "org-1" &&
           (props as { section?: string }).section === "billing" &&
           (props as { checkoutIntent?: { plan?: string } }).checkoutIntent
-            ?.plan === "starter" &&
+            ?.plan === "solo" &&
           (props as { checkoutIntent?: { interval?: string } }).checkoutIntent
-            ?.interval === "annual",
-      ),
+            ?.interval === "annual"
+      )
     ).toBe(true);
   });
 
@@ -1291,7 +1532,7 @@ describe("App hosted OAuth callback handling", () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     sessionStorage.clear();
-    persistCheckoutIntent({ plan: "starter", interval: "annual" });
+    persistCheckoutIntent({ plan: "solo", interval: "annual" });
     writeBillingSignInReturnPath("/billing");
     writeChatboxSignInReturnPath("/chatbox/demo/token-123");
     window.history.replaceState({}, "", "/callback?code=oauth-code");
@@ -1304,7 +1545,7 @@ describe("App hosted OAuth callback handling", () => {
       expect(replaceStateSpy).toHaveBeenCalledWith(
         {},
         "",
-        "/chatbox/demo/token-123",
+        "/chatbox/demo/token-123"
       );
     });
   });
@@ -1315,11 +1556,11 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState(
       {},
       "",
-      "/billing?plan=starter&interval=annual",
+      "/billing?plan=solo&interval=annual"
     );
 
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui",
+      (flag: string) => flag === "billing-entitlements-ui"
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
@@ -1364,10 +1605,10 @@ describe("App hosted OAuth callback handling", () => {
           ).organizationId === "org-1" &&
           (props as { section?: string }).section === "billing" &&
           (props as { checkoutIntent?: { plan?: string } }).checkoutIntent
-            ?.plan === "starter" &&
+            ?.plan === "solo" &&
           (props as { checkoutIntent?: { interval?: string } }).checkoutIntent
-            ?.interval === "annual",
-      ),
+            ?.interval === "annual"
+      )
     ).toBe(true);
   });
 
@@ -1377,11 +1618,11 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState(
       {},
       "",
-      "/billing?plan=starter&interval=annual",
+      "/billing?plan=solo&interval=annual"
     );
 
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui",
+      (flag: string) => flag === "billing-entitlements-ui"
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
@@ -1408,7 +1649,7 @@ describe("App hosted OAuth callback handling", () => {
         >
           Consume checkout intent
         </button>
-      ),
+      )
     );
 
     render(<App />);
@@ -1422,7 +1663,7 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(
-        screen.queryByTestId("billing-handoff-overlay"),
+        screen.queryByTestId("billing-handoff-overlay")
       ).not.toBeInTheDocument();
     });
   });
@@ -1433,11 +1674,11 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState(
       {},
       "",
-      "/billing?plan=starter&interval=annual",
+      "/billing?plan=solo&interval=annual"
     );
 
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui",
+      (flag: string) => flag === "billing-entitlements-ui"
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
@@ -1464,7 +1705,7 @@ describe("App hosted OAuth callback handling", () => {
         >
           Start checkout navigation
         </button>
-      ),
+      )
     );
 
     render(<App />);
@@ -1472,7 +1713,7 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(screen.getByTestId("billing-handoff-overlay")).toBeInTheDocument();
       expect(
-        screen.getByTestId("start-checkout-navigation"),
+        screen.getByTestId("start-checkout-navigation")
       ).toBeInTheDocument();
     });
 
@@ -1480,7 +1721,7 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(
-        screen.queryByTestId("billing-handoff-overlay"),
+        screen.queryByTestId("billing-handoff-overlay")
       ).not.toBeInTheDocument();
     });
     expect(readPersistedCheckoutIntent()).toBeNull();
@@ -1492,11 +1733,11 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState(
       {},
       "",
-      "/billing?plan=starter&interval=annual",
+      "/billing?plan=solo&interval=annual"
     );
 
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui",
+      (flag: string) => flag === "billing-entitlements-ui"
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
@@ -1513,10 +1754,10 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     expect(
-      screen.queryByTestId("billing-handoff-loading"),
+      screen.queryByTestId("billing-handoff-loading")
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByTestId("billing-handoff-overlay"),
+      screen.queryByTestId("billing-handoff-overlay")
     ).not.toBeInTheDocument();
     expect(mockOrganizationsTab).not.toHaveBeenCalled();
   });
@@ -1568,19 +1809,19 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/#organizations/org-deleted");
 
     const setActiveOrganizationId = vi.fn();
-    const clearConvexActiveWorkspaceSelection = vi.fn();
-    const clearLocalFallbackWorkspaceSelection = vi.fn();
+    const clearConvexActiveProjectSelection = vi.fn();
+    const clearLocalFallbackProjectSelection = vi.fn();
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
       activeOrganizationId: "org-deleted",
       setActiveOrganizationId,
-      clearConvexActiveWorkspaceSelection,
-      clearLocalFallbackWorkspaceSelection,
-      workspaces: {
+      clearConvexActiveProjectSelection,
+      clearLocalFallbackProjectSelection,
+      projects: {
         ws_local: {
           id: "ws_local",
-          name: "Deleted Workspace",
-          sharedWorkspaceId: "shared-ws-deleted",
+          name: "Deleted Project",
+          sharedProjectId: "shared-ws-deleted",
           organizationId: "org-deleted",
           servers: {},
           createdAt: new Date(),
@@ -1590,7 +1831,7 @@ describe("App hosted OAuth callback handling", () => {
     }));
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "users:getCurrentUser") {
-        return null;
+        return existingConvexUser;
       }
 
       if (name === "organizations:getMyOrganizations") {
@@ -1633,7 +1874,7 @@ describe("App hosted OAuth callback handling", () => {
         >
           Delete org
         </button>
-      ),
+      )
     );
 
     render(<App />);
@@ -1644,10 +1885,10 @@ describe("App hosted OAuth callback handling", () => {
       expect(setActiveOrganizationId).toHaveBeenLastCalledWith("org-owned");
     });
 
-    expect(clearConvexActiveWorkspaceSelection).toHaveBeenCalled();
-    expect(clearLocalFallbackWorkspaceSelection).toHaveBeenCalledWith(
+    expect(clearConvexActiveProjectSelection).toHaveBeenCalled();
+    expect(clearLocalFallbackProjectSelection).toHaveBeenCalledWith(
       "org-deleted",
-      "org-owned",
+      "org-owned"
     );
     expect(window.location.hash).toBe("#servers");
   });
@@ -1665,7 +1906,7 @@ describe("App hosted OAuth callback handling", () => {
     }));
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "users:getCurrentUser") {
-        return null;
+        return existingConvexUser;
       }
 
       if (name === "organizations:getMyOrganizations") {
@@ -1708,7 +1949,7 @@ describe("App hosted OAuth callback handling", () => {
         >
           Delete org with no owner fallback
         </button>
-      ),
+      )
     );
 
     render(<App />);
@@ -1728,19 +1969,19 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/#organizations/org-member");
 
     const setActiveOrganizationId = vi.fn();
-    const clearConvexActiveWorkspaceSelection = vi.fn();
-    const clearLocalFallbackWorkspaceSelection = vi.fn();
+    const clearConvexActiveProjectSelection = vi.fn();
+    const clearLocalFallbackProjectSelection = vi.fn();
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
       activeOrganizationId: "org-member",
       setActiveOrganizationId,
-      clearConvexActiveWorkspaceSelection,
-      clearLocalFallbackWorkspaceSelection,
-      workspaces: {
+      clearConvexActiveProjectSelection,
+      clearLocalFallbackProjectSelection,
+      projects: {
         ws_local: {
           id: "ws_local",
-          name: "Active Workspace",
-          sharedWorkspaceId: "shared-ws-active",
+          name: "Active Project",
+          sharedProjectId: "shared-ws-active",
           organizationId: "org-member",
           servers: {},
           createdAt: new Date(),
@@ -1750,7 +1991,7 @@ describe("App hosted OAuth callback handling", () => {
     }));
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "users:getCurrentUser") {
-        return null;
+        return existingConvexUser;
       }
 
       if (name === "organizations:getMyOrganizations") {
@@ -1793,7 +2034,7 @@ describe("App hosted OAuth callback handling", () => {
         >
           Delete non-current org
         </button>
-      ),
+      )
     );
 
     render(<App />);
@@ -1803,39 +2044,39 @@ describe("App hosted OAuth callback handling", () => {
     fireEvent.click(await screen.findByTestId("delete-non-current-org"));
 
     await waitFor(() => {
-      expect(clearLocalFallbackWorkspaceSelection).toHaveBeenCalledWith(
+      expect(clearLocalFallbackProjectSelection).toHaveBeenCalledWith(
         "org-deleted",
-        "org-owner",
+        "org-owner"
       );
     });
 
     const postDeleteCalls = setActiveOrganizationId.mock.calls.slice(
-      activeOrgCallsBeforeDelete,
+      activeOrgCallsBeforeDelete
     );
     expect(postDeleteCalls).not.toContainEqual(["org-owner"]);
-    expect(clearConvexActiveWorkspaceSelection).not.toHaveBeenCalled();
+    expect(clearConvexActiveProjectSelection).not.toHaveBeenCalled();
     expect(window.location.hash).toBe("#organizations/org-member");
   });
 
-  it("clears org and synced workspace selection when deleting the last org", async () => {
+  it("clears org and synced project selection when deleting the last org", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/#organizations/org-deleted");
 
     const setActiveOrganizationId = vi.fn();
-    const clearConvexActiveWorkspaceSelection = vi.fn();
-    const clearLocalFallbackWorkspaceSelection = vi.fn();
+    const clearConvexActiveProjectSelection = vi.fn();
+    const clearLocalFallbackProjectSelection = vi.fn();
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
       activeOrganizationId: "org-deleted",
       setActiveOrganizationId,
-      clearConvexActiveWorkspaceSelection,
-      clearLocalFallbackWorkspaceSelection,
-      workspaces: {
+      clearConvexActiveProjectSelection,
+      clearLocalFallbackProjectSelection,
+      projects: {
         ws_local: {
           id: "ws_local",
-          name: "Deleted Workspace",
-          sharedWorkspaceId: "shared-ws-deleted",
+          name: "Deleted Project",
+          sharedProjectId: "shared-ws-deleted",
           organizationId: "org-deleted",
           servers: {},
           createdAt: new Date(),
@@ -1845,7 +2086,7 @@ describe("App hosted OAuth callback handling", () => {
     }));
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "users:getCurrentUser") {
-        return null;
+        return existingConvexUser;
       }
 
       if (name === "organizations:getMyOrganizations") {
@@ -1872,7 +2113,7 @@ describe("App hosted OAuth callback handling", () => {
         >
           Delete last org
         </button>
-      ),
+      )
     );
 
     render(<App />);
@@ -1883,26 +2124,26 @@ describe("App hosted OAuth callback handling", () => {
       expect(setActiveOrganizationId).toHaveBeenLastCalledWith(undefined);
     });
 
-    expect(clearConvexActiveWorkspaceSelection).toHaveBeenCalled();
-    expect(clearLocalFallbackWorkspaceSelection).toHaveBeenCalledWith(
+    expect(clearConvexActiveProjectSelection).toHaveBeenCalled();
+    expect(clearLocalFallbackProjectSelection).toHaveBeenCalledWith(
       "org-deleted",
-      undefined,
+      undefined
     );
     expect(window.location.hash).toBe("#servers");
   });
 
-  it("still renders the chatboxes tab when workspace premiumness denies chatbox creation", async () => {
+  it("still renders the chatboxes tab when project premiumness denies chatbox creation", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/#chatboxes");
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
       isCloudSyncActive: true,
-      workspaces: {
+      projects: {
         ws_local: {
           id: "ws_local",
-          name: "Workspace One",
-          sharedWorkspaceId: "shared-ws-1",
+          name: "Project One",
+          sharedProjectId: "shared-ws-1",
           organizationId: "org-1",
           servers: {},
           createdAt: new Date(),
@@ -1911,7 +2152,7 @@ describe("App hosted OAuth callback handling", () => {
       },
     }));
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui",
+      (flag: string) => flag === "billing-entitlements-ui"
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
@@ -1927,7 +2168,7 @@ describe("App hosted OAuth callback handling", () => {
         ];
       }
 
-      if (name === "billing:getWorkspacePremiumness") {
+      if (name === "billing:getProjectPremiumness") {
         return {
           plan: "free",
           enforcementState: "active",
@@ -1942,7 +2183,7 @@ describe("App hosted OAuth callback handling", () => {
               scope: "organization",
               canAccess: false,
               shouldShowUpsell: true,
-              upgradePlan: "starter",
+              upgradePlan: "solo",
               reason: "feature_not_included",
             },
           ],
@@ -1955,12 +2196,12 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getWorkspacePremiumness",
+      ([name]) => name === "billing:getProjectPremiumness"
     );
 
     expect(wsPremiumnessCall?.[1]).toEqual({
       organizationId: "org-1",
-      workspaceId: "shared-ws-1",
+      projectId: "shared-ws-1",
     });
 
     // Chatboxes tab is NOT blocked at tab level — creation is gated inline
@@ -1974,6 +2215,11 @@ describe("App hosted OAuth callback handling", () => {
     clearChatboxSession();
     writeHostedOAuthPendingMarker({
       surface: "chatbox",
+      projectId: "ws_1",
+      serverId: "srv_asana",
+      sessionId: "hosted-session-chatboxes",
+      accessScope: "chat_v2",
+      chatboxToken: "chatbox-token",
       serverName: "asana",
       serverUrl: "https://mcp.asana.com/sse",
       returnHash: "#chatboxes",
@@ -2002,7 +2248,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/#app-builder");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled",
+      (flag: string) => flag === "playground-enabled"
     );
 
     render(<App />);
@@ -2032,7 +2278,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/#app-builder");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled",
+      (flag: string) => flag === "playground-enabled"
     );
 
     render(<App />);
@@ -2063,7 +2309,7 @@ describe("App hosted OAuth callback handling", () => {
     mockHandleOAuthCallback.mockReset();
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
-      workspaceServers: {
+      projectServers: {
         savedServer: {
           name: "savedServer",
           connectionStatus: "disconnected",
@@ -2128,7 +2374,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/#/evals");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled",
+      (flag: string) => flag === "playground-enabled"
     );
 
     render(<App />);
@@ -2154,7 +2400,7 @@ describe("App hosted OAuth callback handling", () => {
     mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
       flag === "evaluate-runs"
         ? evaluateRunsState.value
-        : flag === "playground-enabled",
+        : flag === "playground-enabled"
     );
 
     render(<App />);
@@ -2185,7 +2431,7 @@ describe("App hosted OAuth callback handling", () => {
 
     mockPosthogState.featureFlags.hasLoadedFlags = false;
     mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "evaluate-runs" ? undefined : flag === "playground-enabled",
+      flag === "evaluate-runs" ? undefined : flag === "playground-enabled"
     );
 
     render(<App />);
@@ -2212,7 +2458,7 @@ describe("App hosted OAuth callback handling", () => {
     mockHandleOAuthCallback.mockReset();
 
     mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "evaluate-runs" ? undefined : flag === "playground-enabled",
+      flag === "evaluate-runs" ? undefined : flag === "playground-enabled"
     );
 
     render(<App />);
@@ -2231,8 +2477,8 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/#/conformance");
     mockHandleOAuthCallback.mockReset();
 
-    mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "playground-enabled",
+    mockUseFeatureFlagEnabled.mockImplementation(
+      (flag: string) => flag === "playground-enabled"
     );
 
     render(<App />);
@@ -2264,7 +2510,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/#xaa-flow");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "xaa" ? true : false,
+      flag === "xaa" ? true : false
     );
 
     render(<App />);
@@ -2277,6 +2523,135 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
   });
 
+  it("passes OAuth-only project server selector props on the XAA Debugger tab", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    window.history.replaceState({}, "", "/#xaa-flow");
+    mockHandleOAuthCallback.mockReset();
+    mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
+      flag === "xaa" ? true : false
+    );
+    const appStateMock = createAppStateMock();
+    const currentProjectServers = {
+      "current-project-xaa-oauth": {
+        name: "current-project-xaa-oauth",
+        config: { url: "https://current-xaa.example/mcp" },
+        connectionStatus: "connected",
+        enabled: true,
+        retryCount: 0,
+        useOAuth: true,
+        lastConnectionTime: new Date("2024-01-01"),
+      },
+    };
+    appStateMock.projectServers = currentProjectServers;
+    appStateMock.appState.servers = {
+      ...currentProjectServers,
+      "other-project-xaa-oauth": {
+        name: "other-project-xaa-oauth",
+        config: { url: "https://other-xaa.example/mcp" },
+        connectionStatus: "connected",
+        enabled: true,
+        retryCount: 0,
+        useOAuth: true,
+        lastConnectionTime: new Date("2024-01-02"),
+      },
+    };
+    mockUseAppState.mockImplementation(() => appStateMock);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockHeader).toHaveBeenCalledWith(
+        expect.objectContaining({
+          activeServerSelectorProps: expect.objectContaining({
+            showOnlyOAuthServers: true,
+            autoSelectFilteredServer: false,
+          }),
+        })
+      );
+    });
+
+    const latestProps = mockHeader.mock.calls.at(-1)?.[0] as {
+      activeServerSelectorProps?: { serverConfigs?: unknown };
+    };
+    expect(latestProps.activeServerSelectorProps?.serverConfigs).toBe(
+      currentProjectServers
+    );
+  });
+
+  it("passes OAuth-only server selector props on the OAuth Debugger tab", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    window.history.replaceState({}, "", "/#oauth-flow");
+    mockHandleOAuthCallback.mockReset();
+    const appStateMock = createAppStateMock();
+    const currentProjectServers = {
+      "current-project-oauth": {
+        name: "current-project-oauth",
+        config: { url: "https://current.example/mcp" },
+        connectionStatus: "connected",
+        enabled: true,
+        retryCount: 0,
+        useOAuth: true,
+        lastConnectionTime: new Date("2024-01-01"),
+      },
+    };
+    appStateMock.projectServers = currentProjectServers;
+    appStateMock.appState.servers = {
+      ...currentProjectServers,
+      "other-project-oauth": {
+        name: "other-project-oauth",
+        config: { url: "https://other.example/mcp" },
+        connectionStatus: "connected",
+        enabled: true,
+        retryCount: 0,
+        useOAuth: true,
+        lastConnectionTime: new Date("2024-01-02"),
+      },
+    };
+    mockUseAppState.mockImplementation(() => appStateMock);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockHeader).toHaveBeenCalledWith(
+        expect.objectContaining({
+          activeServerSelectorProps: expect.objectContaining({
+            showOnlyOAuthServers: true,
+            autoSelectFilteredServer: false,
+          }),
+        })
+      );
+    });
+
+    const latestProps = mockHeader.mock.calls.at(-1)?.[0] as {
+      activeServerSelectorProps?: { serverConfigs?: unknown };
+    };
+    expect(latestProps.activeServerSelectorProps?.serverConfigs).toBe(
+      currentProjectServers
+    );
+  });
+
+  it("leaves the header server selector unfiltered outside the OAuth Debugger tab", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    window.history.replaceState({}, "", "/#tools");
+    mockHandleOAuthCallback.mockReset();
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockHeader).toHaveBeenCalledWith(
+        expect.objectContaining({
+          activeServerSelectorProps: expect.objectContaining({
+            showOnlyOAuthServers: false,
+            autoSelectFilteredServer: true,
+          }),
+        })
+      );
+    });
+  });
+
   it("still applies the CI billing redirect when evaluate-runs is enabled", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
@@ -2285,11 +2660,11 @@ describe("App hosted OAuth callback handling", () => {
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
       isCloudSyncActive: true,
-      workspaces: {
+      projects: {
         ws_local: {
           id: "ws_local",
-          name: "Workspace One",
-          sharedWorkspaceId: "shared-ws-1",
+          name: "Project One",
+          sharedProjectId: "shared-ws-1",
           organizationId: "org-1",
           servers: {},
           createdAt: new Date(),
@@ -2299,11 +2674,11 @@ describe("App hosted OAuth callback handling", () => {
     }));
     mockUseFeatureFlagEnabled.mockImplementation(
       (flag: string) =>
-        flag === "billing-entitlements-ui" || flag === "evaluate-runs",
+        flag === "billing-entitlements-ui" || flag === "evaluate-runs"
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "users:getCurrentUser") {
-        return null;
+        return existingConvexUser;
       }
 
       if (name === "organizations:getMyOrganizations") {
@@ -2319,7 +2694,7 @@ describe("App hosted OAuth callback handling", () => {
         ];
       }
 
-      if (name === "billing:getWorkspacePremiumness") {
+      if (name === "billing:getProjectPremiumness") {
         return {
           plan: "free",
           enforcementState: "active",
@@ -2334,7 +2709,7 @@ describe("App hosted OAuth callback handling", () => {
               scope: "organization",
               canAccess: false,
               shouldShowUpsell: true,
-              upgradePlan: "starter",
+              upgradePlan: "solo",
               reason: "feature_not_included",
             },
           ],
@@ -2347,12 +2722,12 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getWorkspacePremiumness",
+      ([name]) => name === "billing:getProjectPremiumness"
     );
 
     expect(wsPremiumnessCall?.[1]).toEqual({
       organizationId: "org-1",
-      workspaceId: "shared-ws-1",
+      projectId: "shared-ws-1",
     });
 
     await waitFor(() => {
@@ -2370,7 +2745,7 @@ describe("App hosted OAuth callback handling", () => {
     mockHandleOAuthCallback.mockReset();
     mockConvexAuthState.isAuthenticated = false;
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled",
+      (flag: string) => flag === "playground-enabled"
     );
 
     render(<App />);
@@ -2407,7 +2782,7 @@ describe("App hosted OAuth callback handling", () => {
     mockConvexAuthState.isAuthenticated = false;
     mockHostedShellGateState.value = "auth-loading";
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled",
+      (flag: string) => flag === "playground-enabled"
     );
 
     const { rerender } = render(<App />);

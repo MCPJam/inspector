@@ -44,11 +44,11 @@ describe("shared-server-session", () => {
     writeSharedServerSession({
       token: "t",
       payload: {
-        workspaceId: "ws_1",
+        projectId: "ws_1",
         serverId: "srv_1",
         serverName: "S",
         mode: "invited_only",
-        viewerIsWorkspaceMember: false,
+        viewerIsProjectMember: false,
         useOAuth: false,
         serverUrl: null,
         clientId: null,
@@ -61,11 +61,11 @@ describe("shared-server-session", () => {
 
   it("round-trips session storage", () => {
     const payload = {
-      workspaceId: "ws_1",
+      projectId: "ws_1",
       serverId: "srv_1",
       serverName: "Server",
       mode: "invited_only" as const,
-      viewerIsWorkspaceMember: false,
+      viewerIsProjectMember: false,
       useOAuth: false,
       serverUrl: null,
       clientId: null,
@@ -85,11 +85,11 @@ describe("shared-server-session", () => {
 
   it("round-trips session with OAuth fields", () => {
     const payload = {
-      workspaceId: "ws_2",
+      projectId: "ws_2",
       serverId: "srv_2",
       serverName: "OAuth Server",
       mode: "any_signed_in_with_link" as const,
-      viewerIsWorkspaceMember: true,
+      viewerIsProjectMember: true,
       useOAuth: true,
       serverUrl: "https://mcp.example.com",
       clientId: "client-123",
@@ -109,11 +109,11 @@ describe("shared-server-session", () => {
     const legacySession = {
       token: "legacy-token",
       payload: {
-        workspaceId: "ws_1",
+        projectId: "ws_1",
         serverId: "srv_1",
         serverName: "Server",
         mode: "invited_only",
-        viewerIsWorkspaceMember: false,
+        viewerIsProjectMember: false,
       },
     };
 

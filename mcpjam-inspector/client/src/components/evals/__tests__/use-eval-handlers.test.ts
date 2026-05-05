@@ -116,7 +116,7 @@ describe("useEvalHandlers", () => {
     selectedSuiteEntry: null,
     selectedSuiteId: null,
     selectedTestId: null,
-    workspaceId: "workspace-1",
+    projectId: "project-1",
     connectedServerNames: new Set(["server-1"]),
   };
 
@@ -328,7 +328,7 @@ describe("useEvalHandlers", () => {
     it("normalizes hosted suite server ids before auto-connect and rerun", async () => {
       mockIsHostedMode.mockReturnValue(true);
       setHostedApiContext({
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         isAuthenticated: true,
         serverIdsByName: { "server-1": "srv-1" },
       });
@@ -352,7 +352,7 @@ describe("useEvalHandlers", () => {
         await result.current.handleRerun({
           _id: "suite-123",
           name: "Hosted id-backed suite",
-          description: "Stored with workspace server ids",
+          description: "Stored with project server ids",
           environment: { servers: ["srv-1"] },
         } as any);
       });
@@ -361,7 +361,7 @@ describe("useEvalHandlers", () => {
 
       const requestBody = JSON.parse(mockAuthFetch.mock.calls[0][1].body);
       expect(requestBody).toMatchObject({
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         serverIds: ["srv-1"],
         serverNames: ["server-1"],
         storageServerIds: ["server-1"],
@@ -506,7 +506,7 @@ describe("useEvalHandlers", () => {
     it("uses the normal rerun path when live servers are connected", async () => {
       mockIsHostedMode.mockReturnValue(true);
       setHostedApiContext({
-        workspaceId: "ws-123",
+        projectId: "ws-123",
         isAuthenticated: true,
         serverIdsByName: { "server-1": "srv-1" },
       });
@@ -650,7 +650,7 @@ describe("useEvalHandlers", () => {
     it("normalizes hosted suite server ids before running a test case", async () => {
       mockIsHostedMode.mockReturnValue(true);
       setHostedApiContext({
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         isAuthenticated: true,
         serverIdsByName: { "server-1": "srv-1" },
       });
@@ -692,7 +692,7 @@ describe("useEvalHandlers", () => {
 
       const requestBody = JSON.parse(mockAuthFetch.mock.calls[0][1].body);
       expect(requestBody).toMatchObject({
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         serverIds: ["srv-1"],
         serverNames: ["server-1"],
       });
@@ -1458,7 +1458,7 @@ describe("formatEnsureServersReadyError", () => {
       [],
     );
     expect(msg).toBe(
-      "Unable to run this test case. This test depends on 2 MCP servers that are no longer in this workspace.",
+      "Unable to run this test case. This test depends on 2 MCP servers that are no longer in this project.",
     );
     expect(msg).not.toMatch(/k123/);
   });
@@ -1471,7 +1471,7 @@ describe("formatEnsureServersReadyError", () => {
         [],
       ),
     ).toBe(
-      "Unable to run this test case. This test depends on an MCP server that is no longer in this workspace.",
+      "Unable to run this test case. This test depends on an MCP server that is no longer in this project.",
     );
   });
 
@@ -1483,7 +1483,7 @@ describe("formatEnsureServersReadyError", () => {
         [],
       ),
     ).toBe(
-      "Unable to run this suite. This suite depends on an MCP server that is no longer in this workspace.",
+      "Unable to run this suite. This suite depends on an MCP server that is no longer in this project.",
     );
   });
 

@@ -10,6 +10,7 @@ import {
   useEffect,
   useCallback,
   useMemo,
+  useRef,
   useState,
   useLayoutEffect,
 } from "react";
@@ -28,9 +29,15 @@ import SaveRequestDialog from "../tools/SaveRequestDialog";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { listTools } from "@/lib/apis/mcp-tools-api";
-import { generateFormFieldsFromSchema } from "@/lib/tool-form";
+import {
+  applyParametersToFields as applyParamsToFields,
+  buildParametersFromFields,
+  generateFormFieldsFromSchema,
+} from "@/lib/tool-form";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
+import type { ProjectHostContextDraft } from "@/lib/client-config";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { waitForUiCommit } from "@/lib/wait-for-ui-commit";
 import { usePostHog } from "posthog-js/react";
 import { motion, useReducedMotion } from "framer-motion";
 
@@ -51,10 +58,21 @@ import type {
 } from "@/hooks/use-app-state";
 import { useSidebar } from "@/components/ui/sidebar";
 import { getLoadingIndicatorVariantForHostStyle } from "@/components/chat-v2/shared/loading-indicator-content";
-import { toast } from "sonner";
 import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSelector";
+import {
+  createInspectorCommandClientError,
+  registerInspectorCommandHandler,
+} from "@/lib/inspector-command-handlers";
+import type {
+  ExecuteToolInspectorCommand,
+  RenderToolResultInspectorCommand,
+  SelectToolInspectorCommand,
+  SetAppContextInspectorCommand,
+  SnapshotAppInspectorCommand,
+} from "@/shared/inspector-command.js";
 
 interface AppBuilderTabProps {
+  activeProjectId?: string | null;
   serverConfig?: MCPServerConfig;
   serverName?: string;
   servers?: Record<string, ServerWithName>;
@@ -62,12 +80,16 @@ interface AppBuilderTabProps {
   isAuthLoading?: boolean;
   /**
    * True while the currently selected server exists in runtime state but has
-   * not yet appeared in the persisted workspace servers (Convex round-trip
+   * not yet appeared in the persisted project servers (Convex round-trip
    * pending). Used to show a loading skeleton instead of the "No Server
    * Selected" empty state during the sync window.
    */
   isServerSyncing?: boolean;
   onConnect?: (formData: ServerFormData) => void;
+  onSaveHostContext?: (
+    projectId: string,
+    hostContext: ProjectHostContextDraft,
+  ) => Promise<void>;
   ensureServersReady?: (
     serverNames: string[],
   ) => Promise<EnsureServersReadyResult>;
@@ -78,17 +100,26 @@ interface AppBuilderTabProps {
 
 /**
  * Match the sync echo timeout used elsewhere (see
- * `use-workspace-state.ts`'s CLIENT_CONFIG_SYNC_ECHO_TIMEOUT_MS). If the
+ * `use-project-state.ts`'s CLIENT_CONFIG_SYNC_ECHO_TIMEOUT_MS). If the
  * Convex round-trip doesn't land within this window, fall through to an
  * explanatory empty state rather than spinning forever.
  */
 const SERVER_SYNC_TIMEOUT_MS = 10000;
+const EXECUTION_INJECTION_TIMEOUT_MS = 5000;
 
 const APP_BUILDER_FIRST_RUN_PROMPT = "Draw me an MCP architecture diagram";
 
 const SIDEBAR_EASE: [number, number, number, number] = [0.4, 0, 0.2, 1];
 
+type ExecutionInjectionWaiter = {
+  expectedToolCallId?: string;
+  reject: (error: unknown) => void;
+  resolve: (toolCallId?: string) => void;
+  timeoutId: ReturnType<typeof setTimeout>;
+};
+
 export function AppBuilderTab({
+  activeProjectId = null,
   serverConfig,
   serverName,
   servers = {},
@@ -96,6 +127,7 @@ export function AppBuilderTab({
   isAuthLoading = false,
   isServerSyncing = false,
   onConnect,
+  onSaveHostContext,
   ensureServersReady,
   onOnboardingChange,
   playgroundServerSelectorProps,
@@ -138,6 +170,8 @@ export function AppBuilderTab({
     setExecutionError,
     setWidgetState,
     setDeviceType,
+    setDisplayMode,
+    updateGlobal,
     toggleSidebar,
     setSelectedProtocol,
     reset,
@@ -164,11 +198,7 @@ export function AppBuilderTab({
     } else {
       setSidebarVisible(true);
     }
-  }, [
-    onboarding.phase,
-    onboarding.isGuidedPostConnect,
-    setSidebarVisible,
-  ]);
+  }, [onboarding.phase, onboarding.isGuidedPostConnect, setSidebarVisible]);
 
   useLayoutEffect(() => {
     return () => {
@@ -196,17 +226,113 @@ export function AppBuilderTab({
   >({});
 
   // Tool execution hook
-  const { pendingExecution, clearPendingExecution, executeTool } =
-    useToolExecution({
-      serverName,
-      selectedTool,
-      toolsMetadata,
-      formFields,
-      setIsExecuting,
-      setExecutionError,
-      setToolOutput,
-      setToolResponseMetadata,
-    });
+  const {
+    pendingExecution,
+    clearPendingExecution,
+    executeTool,
+    injectToolResult,
+  } = useToolExecution({
+    serverName,
+    selectedTool,
+    toolsMetadata,
+    formFields,
+    setIsExecuting,
+    setExecutionError,
+    setToolOutput,
+    setToolResponseMetadata,
+  });
+
+  const executionInjectionWaitersRef = useRef<ExecutionInjectionWaiter[]>([]);
+
+  const waitForExecutionInjection = useCallback(
+    (expectedToolCallId: string | undefined, timeoutMs?: number) => {
+      let waiter: ExecutionInjectionWaiter | undefined;
+      const effectiveTimeoutMs =
+        typeof timeoutMs === "number" && timeoutMs > 0
+          ? timeoutMs
+          : EXECUTION_INJECTION_TIMEOUT_MS;
+
+      const removeWaiter = () => {
+        if (!waiter) return;
+        executionInjectionWaitersRef.current =
+          executionInjectionWaitersRef.current.filter(
+            (entry) => entry !== waiter,
+          );
+      };
+
+      const promise = new Promise<string | undefined>((resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+          removeWaiter();
+          reject(
+            createInspectorCommandClientError(
+              "timeout",
+              `Tool result was not rendered in App Builder within ${effectiveTimeoutMs}ms.`,
+            ),
+          );
+        }, effectiveTimeoutMs);
+
+        waiter = {
+          ...(expectedToolCallId ? { expectedToolCallId } : {}),
+          reject,
+          resolve: (toolCallId?: string) => {
+            clearTimeout(timeoutId);
+            removeWaiter();
+            resolve(toolCallId);
+          },
+          timeoutId,
+        };
+        executionInjectionWaitersRef.current.push(waiter);
+      });
+
+      return {
+        cancel: () => {
+          if (!waiter) return;
+          clearTimeout(waiter.timeoutId);
+          removeWaiter();
+        },
+        promise,
+      };
+    },
+    [],
+  );
+
+  const handleExecutionInjected = useCallback(
+    (toolCallId?: string) => {
+      clearPendingExecution();
+      const resolvedWaiters: ExecutionInjectionWaiter[] = [];
+      const pendingWaiters: ExecutionInjectionWaiter[] = [];
+      for (const waiter of executionInjectionWaitersRef.current) {
+        if (
+          !waiter.expectedToolCallId ||
+          waiter.expectedToolCallId === toolCallId
+        ) {
+          resolvedWaiters.push(waiter);
+        } else {
+          pendingWaiters.push(waiter);
+        }
+      }
+      executionInjectionWaitersRef.current = pendingWaiters;
+      for (const waiter of resolvedWaiters) {
+        waiter.resolve(toolCallId);
+      }
+    },
+    [clearPendingExecution],
+  );
+
+  useEffect(() => {
+    return () => {
+      const waiters = executionInjectionWaitersRef.current.splice(0);
+      for (const waiter of waiters) {
+        clearTimeout(waiter.timeoutId);
+        waiter.reject(
+          createInspectorCommandClientError(
+            "unsupported_in_mode",
+            "App Builder unmounted before the tool result rendered.",
+          ),
+        );
+      }
+    };
+  }, []);
 
   // Saved requests hook
   const savedRequestsHook = useSavedRequests({
@@ -243,18 +369,143 @@ export function AppBuilderTab({
     }
   }, [serverName, reset, setTools, setExecutionError]);
 
+  const loadToolsUntilMatch = useCallback(
+    async (toolName?: string) => {
+      if (!serverName) {
+        throw createInspectorCommandClientError(
+          "disconnected_server",
+          "No server is selected in the App Builder.",
+        );
+      }
+
+      if (!toolName && Object.keys(tools).length > 0) {
+        return {
+          tools,
+          metadata: toolsMetadata,
+        };
+      }
+
+      if (toolName && tools[toolName]) {
+        return {
+          tools,
+          metadata: toolsMetadata,
+        };
+      }
+
+      setFetchingTools(true);
+      try {
+        const aggregatedTools = { ...tools };
+        const aggregatedMetadata = { ...toolsMetadata };
+        let cursor: string | undefined;
+        let pages = 0;
+        const maxPages = 25;
+
+        do {
+          const data = await listTools({ serverId: serverName, cursor });
+          const toolArray = data.tools ?? [];
+          const dictionary = Object.fromEntries(
+            toolArray.map((tool: Tool) => [tool.name, tool]),
+          );
+
+          Object.assign(aggregatedTools, dictionary);
+          Object.assign(aggregatedMetadata, data.toolsMetadata ?? {});
+          cursor = data.nextCursor;
+          pages += 1;
+
+          if (
+            toolName &&
+            !aggregatedTools[toolName] &&
+            cursor &&
+            pages >= maxPages
+          ) {
+            const message = `Stopped fetching tools after ${maxPages} pages without finding "${toolName}".`;
+            setExecutionError(message);
+            throw createInspectorCommandClientError(
+              "execution_failed",
+              message,
+            );
+          }
+
+          if (!toolName || aggregatedTools[toolName] || !cursor) {
+            break;
+          }
+        } while (true);
+
+        setTools(aggregatedTools);
+        setToolsMetadata(aggregatedMetadata);
+
+        return {
+          tools: aggregatedTools,
+          metadata: aggregatedMetadata,
+        };
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Failed to fetch tools";
+        setExecutionError(message);
+        throw createInspectorCommandClientError("execution_failed", message);
+      } finally {
+        setFetchingTools(false);
+      }
+    },
+    [serverName, setExecutionError, setTools, tools, toolsMetadata],
+  );
+
+  const buildAppBuilderSnapshot = useCallback(() => {
+    const playgroundState = useUIPlaygroundStore.getState();
+
+    return {
+      serverName: serverName ?? null,
+      selectedTool: playgroundState.selectedTool,
+      selectedProtocol: playgroundState.selectedProtocol,
+      deviceType: playgroundState.deviceType,
+      displayMode: playgroundState.displayMode,
+      globals: playgroundState.globals,
+      toolOutput: playgroundState.toolOutput,
+      toolResponseMetadata: playgroundState.toolResponseMetadata,
+      widgetUrl: playgroundState.widgetUrl,
+      widgetState: playgroundState.widgetState,
+      executionError: playgroundState.executionError,
+      isExecuting: playgroundState.isExecuting,
+    };
+  }, [serverName]);
+
   const serverConnectionStatus = serverName
     ? servers[serverName]?.connectionStatus
     : undefined;
 
+  const prevServerRef = useRef<{
+    serverName: string | null;
+    status: string | undefined;
+  }>({ serverName: null, status: undefined });
+
   useEffect(() => {
+    const prev = prevServerRef.current;
+    const serverChanged = serverName !== prev.serverName;
+    const statusChanged = serverConnectionStatus !== prev.status;
+    prevServerRef.current = {
+      serverName: serverName ?? null,
+      status: serverConnectionStatus,
+    };
+
     if (serverConfig && serverName && serverConnectionStatus === "connected") {
+      // Skip re-fetch when tools are already loaded and only the object
+      // reference changed (e.g. a SYNC_AGENT_STATUS that didn't change status).
+      if (!serverChanged && !statusChanged && Object.keys(tools).length > 0) {
+        return;
+      }
       fetchTools();
     } else {
       reset();
       setToolsMetadata({});
     }
-  }, [serverConfig, serverName, serverConnectionStatus, fetchTools, reset]);
+  }, [
+    serverConfig,
+    serverName,
+    serverConnectionStatus,
+    fetchTools,
+    reset,
+    tools,
+  ]);
 
   // Update form fields when tool is selected
   useEffect(() => {
@@ -272,6 +523,7 @@ export function AppBuilderTab({
     // If a specific tool is selected, detect its protocol
     if (selectedTool) {
       const tool = tools[selectedTool];
+      if (!tool) return;
       const uiType = detectUiTypeFromTool(tool);
       if (uiType === UIType.OPENAI_SDK_AND_MCP_APPS) {
         // Tool supports both protocols - only set default if no stored preference
@@ -288,6 +540,266 @@ export function AppBuilderTab({
     // No tool selected - keep the stored protocol preference
     // Don't reset to null here as it would clear the persisted user preference
   }, [selectedTool, tools, setSelectedProtocol, selectedProtocol]);
+
+  const selectToolForCommand = useCallback(
+    async (
+      command:
+        | SelectToolInspectorCommand
+        | ExecuteToolInspectorCommand
+        | RenderToolResultInspectorCommand,
+    ) => {
+      if (command.payload.surface !== "app-builder") {
+        throw createInspectorCommandClientError(
+          "unsupported_in_mode",
+          `AppBuilderTab cannot handle ${command.type} for ${command.payload.surface}.`,
+        );
+      }
+
+      if (
+        !serverConfig ||
+        !serverName ||
+        serverConnectionStatus !== "connected"
+      ) {
+        throw createInspectorCommandClientError(
+          "disconnected_server",
+          "The App Builder requires a connected server before tools can be selected.",
+        );
+      }
+
+      if (
+        command.payload.serverName &&
+        command.payload.serverName !== serverName
+      ) {
+        throw createInspectorCommandClientError(
+          "unknown_server",
+          `App Builder is focused on "${serverName}", not "${command.payload.serverName}".`,
+        );
+      }
+
+      const { tools: availableTools } = await loadToolsUntilMatch(
+        command.payload.toolName,
+      );
+      const tool = availableTools[command.payload.toolName];
+      if (!tool) {
+        throw createInspectorCommandClientError(
+          "unknown_tool",
+          `Unknown tool "${command.payload.toolName}" on server "${serverName}".`,
+        );
+      }
+
+      const nextFormFields = generateFormFieldsFromSchema(tool.inputSchema);
+      const currentState = useUIPlaygroundStore.getState();
+      const shouldSwitchTool =
+        currentState.selectedTool !== command.payload.toolName;
+      const resolvedParameters =
+        command.payload.parameters ??
+        (shouldSwitchTool
+          ? buildParametersFromFields(nextFormFields)
+          : buildParametersFromFields(currentState.formFields));
+
+      if (shouldSwitchTool) {
+        setSelectedTool(command.payload.toolName);
+        await waitForUiCommit();
+      } else if (currentState.formFields.length === 0) {
+        setFormFields(nextFormFields);
+        await waitForUiCommit();
+      }
+
+      if (command.payload.parameters) {
+        const latestFields = useUIPlaygroundStore.getState().formFields;
+        setFormFields(
+          applyParamsToFields(latestFields, command.payload.parameters),
+        );
+        await waitForUiCommit();
+      }
+
+      return {
+        serverName,
+        tool,
+        parameters: resolvedParameters,
+      };
+    },
+    [
+      loadToolsUntilMatch,
+      serverConfig,
+      serverConnectionStatus,
+      serverName,
+      setFormFields,
+      setSelectedTool,
+    ],
+  );
+
+  const resolveCommandProtocol = useCallback(
+    (protocol?: SetAppContextInspectorCommand["payload"]["protocol"]) => {
+      if (!protocol) {
+        return undefined;
+      }
+
+      if (protocol === UIType.MCP_APPS) {
+        return UIType.MCP_APPS;
+      }
+
+      if (protocol === UIType.OPENAI_SDK) {
+        return UIType.OPENAI_SDK;
+      }
+
+      throw createInspectorCommandClientError(
+        "invalid_request",
+        `Unsupported protocol "${protocol}".`,
+      );
+    },
+    [],
+  );
+
+  // useLayoutEffect so command handlers update synchronously during commit —
+  // before setTimeout(0)-based waitForUiCommit() resolves.  This prevents
+  // stale-closure races when sequential commands (e.g. openAppBuilder then
+  // renderToolResult) arrive faster than useEffect would re-register handlers.
+  useLayoutEffect(() => {
+    const unregisterSelectTool = registerInspectorCommandHandler(
+      "selectTool",
+      async (rawCommand) => {
+        const command = rawCommand as SelectToolInspectorCommand;
+        const selection = await selectToolForCommand(command);
+
+        return {
+          ...buildAppBuilderSnapshot(),
+          serverName: selection.serverName,
+          toolName: command.payload.toolName,
+          parameterKeys: Object.keys(selection.parameters),
+        };
+      },
+    );
+
+    const unregisterExecuteTool = registerInspectorCommandHandler(
+      "executeTool",
+      async (rawCommand) => {
+        const command = rawCommand as ExecuteToolInspectorCommand;
+        const selection = await selectToolForCommand(command);
+        const outcome = await executeTool({
+          toolName: command.payload.toolName,
+          parameters: selection.parameters,
+        });
+        await waitForUiCommit();
+
+        if (!outcome.ok) {
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            outcome.error,
+            outcome.response,
+          );
+        }
+
+        return {
+          ...buildAppBuilderSnapshot(),
+          serverName: selection.serverName,
+          toolName: outcome.toolName,
+          parameters: outcome.parameters,
+          result: outcome.result,
+        };
+      },
+    );
+
+    const unregisterRenderToolResult = registerInspectorCommandHandler(
+      "renderToolResult",
+      async (rawCommand) => {
+        const command = rawCommand as RenderToolResultInspectorCommand;
+        const selection = await selectToolForCommand(command);
+        const injection = waitForExecutionInjection(
+          command.id,
+          command.timeoutMs,
+        );
+        let outcome: Awaited<ReturnType<typeof injectToolResult>>;
+        try {
+          outcome = await injectToolResult({
+            toolName: command.payload.toolName,
+            parameters: selection.parameters,
+            result: command.payload.result,
+            toolCallId: command.id,
+          });
+          await injection.promise;
+        } finally {
+          injection.cancel();
+        }
+        await waitForUiCommit();
+
+        return {
+          ...buildAppBuilderSnapshot(),
+          serverName: selection.serverName,
+          toolName: outcome.toolName,
+          parameters: outcome.parameters,
+          result: outcome.result,
+        };
+      },
+    );
+
+    const unregisterSetAppContext = registerInspectorCommandHandler(
+      "setAppContext",
+      async (rawCommand) => {
+        const command = rawCommand as SetAppContextInspectorCommand;
+        const protocol = resolveCommandProtocol(command.payload.protocol);
+
+        if (command.payload.deviceType) {
+          setDeviceType(command.payload.deviceType);
+        }
+        if (command.payload.displayMode) {
+          setDisplayMode(command.payload.displayMode);
+        }
+        if (command.payload.locale) {
+          updateGlobal("locale", command.payload.locale);
+        }
+        if (command.payload.timeZone) {
+          updateGlobal("timeZone", command.payload.timeZone);
+        }
+        if (command.payload.theme) {
+          updateGlobal("theme", command.payload.theme);
+        }
+        if (protocol) {
+          setSelectedProtocol(protocol);
+        }
+
+        await waitForUiCommit();
+        return buildAppBuilderSnapshot();
+      },
+    );
+
+    const unregisterSnapshotApp = registerInspectorCommandHandler(
+      "snapshotApp",
+      async (rawCommand) => {
+        const command = rawCommand as SnapshotAppInspectorCommand;
+        if (
+          command.payload.surface &&
+          command.payload.surface !== "app-builder"
+        ) {
+          throw createInspectorCommandClientError(
+            "unsupported_in_mode",
+            `AppBuilderTab cannot snapshot ${command.payload.surface}.`,
+          );
+        }
+
+        return buildAppBuilderSnapshot();
+      },
+    );
+
+    return () => {
+      unregisterSelectTool();
+      unregisterExecuteTool();
+      unregisterRenderToolResult();
+      unregisterSetAppContext();
+      unregisterSnapshotApp();
+    };
+  }, [
+    buildAppBuilderSnapshot,
+    executeTool,
+    injectToolResult,
+    resolveCommandProtocol,
+    selectToolForCommand,
+    setDeviceType,
+    setDisplayMode,
+    setSelectedProtocol,
+    updateGlobal,
+    waitForExecutionInjection,
+  ]);
 
   // Get invoking message from tool metadata
   const invokingMessage = useMemo(() => {
@@ -308,10 +820,7 @@ export function AppBuilderTab({
   useEffect(() => {
     setSyncTimedOut(false);
     if (!isServerSyncing) return;
-    const id = setTimeout(
-      () => setSyncTimedOut(true),
-      SERVER_SYNC_TIMEOUT_MS,
-    );
+    const id = setTimeout(() => setSyncTimedOut(true), SERVER_SYNC_TIMEOUT_MS);
     return () => clearTimeout(id);
   }, [serverName, isServerSyncing]);
 
@@ -332,7 +841,7 @@ export function AppBuilderTab({
   }
 
   // Server is in runtime state but not yet reflected in the persisted
-  // workspace (Convex round-trip pending). Show a skeleton instead of the
+  // project (Convex round-trip pending). Show a skeleton instead of the
   // misleading "No Server Selected" empty state during the sync window.
   if (!serverConfig && isServerSyncing && !syncTimedOut) {
     return (
@@ -440,13 +949,15 @@ export function AppBuilderTab({
           className="min-h-0 min-w-0 overflow-hidden"
         >
           <PlaygroundMain
+            activeProjectId={activeProjectId}
             serverName={serverName || ""}
+            onSaveHostContext={onSaveHostContext}
             enableMultiModelChat={enableMultiModelChat}
             isExecuting={isExecuting}
             executingToolName={selectedTool}
             invokingMessage={invokingMessage}
             pendingExecution={pendingExecution}
-            onExecutionInjected={clearPendingExecution}
+            onExecutionInjected={handleExecutionInjected}
             onWidgetStateChange={(_toolCallId, state) => setWidgetState(state)}
             deviceType={deviceType}
             onDeviceTypeChange={setDeviceType}

@@ -40,7 +40,7 @@ import {
   type ChatboxSettings,
 } from "@/hooks/useChatboxes";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { useServerMutations, type RemoteServer } from "@/hooks/useWorkspaces";
+import { useServerMutations, type RemoteServer } from "@/hooks/useProjects";
 import { copyToClipboard } from "@/lib/clipboard";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { getChatboxHostStyleShortLabel } from "@/lib/chatbox-host-style";
@@ -50,7 +50,6 @@ import type { ServerWithName } from "@/hooks/use-app-state";
 import { useHostedOAuthGate } from "@/hooks/hosted/use-hosted-oauth-gate";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import { isHostedOAuthBusy } from "@/lib/hosted-oauth-resume";
-import { getStoredTokens } from "@/lib/oauth/mcp-oauth";
 import { ChatboxHostOnboardingOverlays } from "@/components/hosted/ChatboxHostOnboardingOverlays";
 import { useChatboxHostIntroGate } from "@/components/hosted/useChatboxHostIntroGate";
 import { ViewModeSelector } from "@/components/shared/view-mode-selector";
@@ -84,9 +83,9 @@ import {
 import "./chatbox-builder.css";
 
 interface ChatboxBuilderViewProps {
-  workspaceId: string;
-  workspaceName?: string | null;
-  workspaceServers: RemoteServer[];
+  projectId: string;
+  projectName?: string | null;
+  projectServers: RemoteServer[];
   chatboxId?: string | null;
   draft: ChatboxDraftConfig | null;
   initialViewMode?: "setup" | "preview" | "usage" | "insights";
@@ -102,7 +101,7 @@ const DESKTOP_SETUP_RAIL_MAX_PERCENT = 70;
 type ViewMode = "setup" | "preview" | "usage" | "insights";
 
 function normalizeInitialViewMode(
-  mode: string | undefined,
+  mode: string | undefined
 ): ViewMode | undefined {
   if (!mode) return undefined;
   if (
@@ -139,7 +138,9 @@ function ChatboxPreviewActionButtons({
 }) {
   const showCopyLink = hasSavedChatbox;
   const isSidebar = variant === "sidebar";
-  const buttonClass = isSidebar ? "w-full justify-start rounded-xl" : "rounded-xl";
+  const buttonClass = isSidebar
+    ? "w-full justify-start rounded-xl"
+    : "rounded-xl";
 
   return (
     <div
@@ -150,11 +151,7 @@ function ChatboxPreviewActionButtons({
       }
     >
       {showCopyLink ? (
-        <Button
-          variant="outline"
-          className={buttonClass}
-          onClick={onCopyLink}
-        >
+        <Button variant="outline" className={buttonClass} onClick={onCopyLink}>
           <Link2 className="mr-1.5 size-4 shrink-0" />
           Copy link
         </Button>
@@ -281,9 +278,9 @@ function ChatboxBuilderChrome({
 }
 
 export function ChatboxBuilderView({
-  workspaceId,
-  workspaceName,
-  workspaceServers,
+  projectId,
+  projectName,
+  projectServers,
   chatboxId,
   draft,
   initialViewMode,
@@ -308,7 +305,7 @@ export function ChatboxBuilderView({
           chatbox ??
             ({
               chatboxId: "",
-              workspaceId,
+              projectId,
               name: "New Chatbox",
               hostStyle: "claude",
               systemPrompt: DEFAULT_SYSTEM_PROMPT,
@@ -326,7 +323,7 @@ export function ChatboxBuilderView({
                 everyNToolCalls: 1,
                 promptHint: "",
               },
-            } as ChatboxSettings),
+            } as ChatboxSettings)
         );
       return {
         ...base,
@@ -334,7 +331,7 @@ export function ChatboxBuilderView({
       };
     });
   const [viewMode, setViewMode] = useState<ViewMode>(
-    () => normalizeInitialViewMode(initialViewMode) ?? "setup",
+    () => normalizeInitialViewMode(initialViewMode) ?? "setup"
   );
   const [chatKey, setChatKey] = useState(0);
   const [playgroundId, setPlaygroundId] = useState(() => crypto.randomUUID());
@@ -343,7 +340,7 @@ export function ChatboxBuilderView({
   const [focusedSetupSection, setFocusedSetupSection] =
     useState<SetupSectionId | null>(null);
   const [desktopSettingsPaneSize, setDesktopSettingsPaneSize] = useState(
-    DESKTOP_SETUP_RAIL_DEFAULT_PERCENT,
+    DESKTOP_SETUP_RAIL_DEFAULT_PERCENT
   );
   const [isSaving, setIsSaving] = useState(false);
   const [isAddServerOpen, setIsAddServerOpen] = useState(false);
@@ -359,12 +356,12 @@ export function ChatboxBuilderView({
   // Sync builder session to sessionStorage so it survives OAuth redirects
   useEffect(() => {
     writeBuilderSession({
-      workspaceId,
+      projectId,
       chatboxId: chatboxId ?? null,
       draft: draftChatboxConfig as unknown as Record<string, unknown>,
       viewMode,
     });
-  }, [workspaceId, chatboxId, draftChatboxConfig, viewMode]);
+  }, [projectId, chatboxId, draftChatboxConfig, viewMode]);
 
   const behaviorFingerprint = useMemo(
     () =>
@@ -382,16 +379,16 @@ export function ChatboxBuilderView({
         selectedServerIds: [...draftChatboxConfig.selectedServerIds].sort(),
         optionalServerIds: [...draftChatboxConfig.optionalServerIds].sort(),
       }),
-    [draftChatboxConfig],
+    [draftChatboxConfig]
   );
 
   const setupHasBlockingSections = useMemo(() => {
     const statuses = computeSectionStatuses(
       draftChatboxConfig,
-      workspaceServers,
+      projectServers
     );
     return Object.values(statuses).some((kind) => kind === "attention");
-  }, [draftChatboxConfig, workspaceServers]);
+  }, [draftChatboxConfig, projectServers]);
 
   // Debounced auto-restart on behavior-affecting changes
   useEffect(() => {
@@ -456,7 +453,7 @@ export function ChatboxBuilderView({
 
     const servers: ChatboxBootstrapServer[] =
       draftChatboxConfig.selectedServerIds.flatMap((id) => {
-        const server = workspaceServers.find((s) => s._id === id);
+        const server = projectServers.find((s) => s._id === id);
         if (!server) return [];
         return [
           {
@@ -472,14 +469,14 @@ export function ChatboxBuilderView({
       });
 
     const payload: ChatboxBootstrapPayload = {
-      workspaceId: chatbox.workspaceId,
+      projectId: chatbox.projectId,
       chatboxId: chatbox.chatboxId,
       name: draftChatboxConfig.name,
       description: draftChatboxConfig.description || undefined,
       hostStyle: draftChatboxConfig.hostStyle,
       mode: draftChatboxConfig.mode,
       allowGuestAccess: draftChatboxConfig.allowGuestAccess,
-      viewerIsWorkspaceMember: true,
+      viewerIsProjectMember: true,
       systemPrompt: draftChatboxConfig.systemPrompt,
       modelId: draftChatboxConfig.modelId,
       temperature: draftChatboxConfig.temperature,
@@ -495,7 +492,7 @@ export function ChatboxBuilderView({
       playgroundId,
       updatedAt: Date.now(),
     });
-  }, [draftChatboxConfig, chatbox, workspaceServers, playgroundId]);
+  }, [draftChatboxConfig, chatbox, projectServers, playgroundId]);
 
   useEffect(() => {
     if (!draft && chatbox) {
@@ -513,9 +510,9 @@ export function ChatboxBuilderView({
     () => ({
       chatbox: chatbox ?? null,
       draft: draftChatboxConfig,
-      workspaceServers,
+      projectServers,
     }),
-    [draftChatboxConfig, chatbox, workspaceServers],
+    [draftChatboxConfig, chatbox, projectServers]
   );
   const viewModel = useMemo(() => buildChatboxCanvas(context), [context]);
   const desktopRightPanelDefaultSize = desktopSettingsPaneSize;
@@ -550,7 +547,7 @@ export function ChatboxBuilderView({
           enabled: chatbox.feedbackDialog?.enabled ?? true,
           everyNToolCalls: Math.max(
             1,
-            chatbox.feedbackDialog?.everyNToolCalls ?? 1,
+            chatbox.feedbackDialog?.everyNToolCalls ?? 1
           ),
           promptHint: chatbox.feedbackDialog?.promptHint ?? "",
         }) ||
@@ -579,7 +576,7 @@ export function ChatboxBuilderView({
     if (!introChatboxId) return;
     try {
       const raw = sessionStorage.getItem(
-        chatboxPreviewEnabledOptionalStorageKey(introChatboxId),
+        chatboxPreviewEnabledOptionalStorageKey(introChatboxId)
       );
       if (!raw) {
         setPreviewEnabledOptionalIds((prev) => (prev.length === 0 ? prev : []));
@@ -589,7 +586,7 @@ export function ChatboxBuilderView({
       if (!Array.isArray(parsed)) return;
       const optionalSet = new Set(draftChatboxConfig.optionalServerIds);
       const next = parsed.filter(
-        (id): id is string => typeof id === "string" && optionalSet.has(id),
+        (id): id is string => typeof id === "string" && optionalSet.has(id)
       );
       setPreviewEnabledOptionalIds((prev) => {
         if (
@@ -620,7 +617,7 @@ export function ChatboxBuilderView({
 
   const selectedPreviewServers = useMemo((): ChatboxBootstrapServer[] => {
     return draftChatboxConfig.selectedServerIds.flatMap((id) => {
-      const server = workspaceServers.find((s) => s._id === id);
+      const server = projectServers.find((s) => s._id === id);
       if (!server) return [];
       return [
         {
@@ -637,18 +634,18 @@ export function ChatboxBuilderView({
   }, [
     draftChatboxConfig.selectedServerIds,
     draftChatboxConfig.optionalServerIds,
-    workspaceServers,
+    projectServers,
   ]);
 
   const requiredPreviewServers = useMemo(
     () => selectedPreviewServers.filter((s) => !s.optional),
-    [selectedPreviewServers],
+    [selectedPreviewServers]
   );
 
   const activePreviewServers = useMemo(() => {
     const enabled = new Set(previewEnabledOptionalIds);
     const optionalActive = selectedPreviewServers.filter(
-      (s) => s.optional && enabled.has(s.serverId),
+      (s) => s.optional && enabled.has(s.serverId)
     );
     return [...requiredPreviewServers, ...optionalActive];
   }, [
@@ -659,7 +656,7 @@ export function ChatboxBuilderView({
 
   const chatboxServerConfigs = useMemo(() => {
     const entries = activePreviewServers.flatMap((preview) => {
-      const server = workspaceServers.find((s) => s._id === preview.serverId);
+      const server = projectServers.find((s) => s._id === preview.serverId);
       if (!server) return [];
       return [
         [
@@ -676,15 +673,14 @@ export function ChatboxBuilderView({
       ];
     });
     return Object.fromEntries(entries);
-  }, [activePreviewServers, workspaceServers]);
+  }, [activePreviewServers, projectServers]);
 
   const previewOAuthGateServers = useMemo(
     () => activePreviewServers.map(bootstrapServerToHostedOAuthDescriptor),
-    [activePreviewServers],
+    [activePreviewServers]
   );
 
   const {
-    oauthStateByServerId,
     pendingOAuthServers,
     authorizeServer,
     markOAuthRequired,
@@ -693,19 +689,10 @@ export function ChatboxBuilderView({
     surface: "chatbox",
     pendingKey: CHATBOX_OAUTH_PENDING_KEY,
     servers: previewOAuthGateServers,
+    projectId: chatbox?.projectId ?? projectId,
+    chatboxToken: chatbox?.link?.token,
+    isAuthenticated,
   });
-
-  const previewOAuthTokens = useMemo(() => {
-    const entries = activePreviewServers
-      .map((server) => {
-        const token = getStoredTokens(server.serverName)?.access_token;
-        return token ? ([server.serverId, token] as const) : null;
-      })
-      .filter((entry): entry is readonly [string, string] =>
-        Array.isArray(entry),
-      );
-    return entries.length > 0 ? Object.fromEntries(entries) : undefined;
-  }, [oauthStateByServerId, activePreviewServers]);
 
   const isFinishingPreviewOAuth =
     pendingOAuthServers.length > 0 &&
@@ -728,7 +715,7 @@ export function ChatboxBuilderView({
     (details?: HostedOAuthRequiredDetails) => {
       markOAuthRequired(details);
     },
-    [markOAuthRequired],
+    [markOAuthRequired]
   );
 
   const saveChatbox = useCallback(async (): Promise<boolean> => {
@@ -744,14 +731,14 @@ export function ChatboxBuilderView({
     if (
       countRequiredServers(
         draftChatboxConfig.selectedServerIds,
-        draftChatboxConfig.optionalServerIds,
+        draftChatboxConfig.optionalServerIds
       ) < 1
     ) {
       toast.error("At least one server must be required (on by default)");
       return false;
     }
-    const selectedServers = workspaceServers.filter((server) =>
-      draftChatboxConfig.selectedServerIds.includes(server._id),
+    const selectedServers = projectServers.filter((server) =>
+      draftChatboxConfig.selectedServerIds.includes(server._id)
     );
     if (selectedServers.some((server) => isInsecureUrl(server.url))) {
       toast.error("Only HTTPS servers can be used in chatboxes");
@@ -778,7 +765,7 @@ export function ChatboxBuilderView({
 
       if (!chatbox) {
         let created = (await createChatbox({
-          workspaceId,
+          projectId,
           ...payload,
         })) as ChatboxSettings;
         if (draftChatboxConfig.mode !== "invited_only") {
@@ -812,8 +799,8 @@ export function ChatboxBuilderView({
     chatbox,
     setChatboxMode,
     updateChatbox,
-    workspaceId,
-    workspaceServers,
+    projectId,
+    projectServers,
   ]);
 
   const saveAndOpenPreview = useCallback(async () => {
@@ -844,7 +831,7 @@ export function ChatboxBuilderView({
     const link = buildPlaygroundChatboxLink(
       chatbox.link.token,
       draftChatboxConfig.name || chatbox.name,
-      playgroundId,
+      playgroundId
     );
     window.open(link, "_blank", "noopener,noreferrer");
   }, [chatbox, draftChatboxConfig.name, playgroundId]);
@@ -861,7 +848,7 @@ export function ChatboxBuilderView({
       }
       try {
         const serverId = (await createServer({
-          workspaceId,
+          projectId,
           name: formData.name,
           enabled: true,
           transportType: "http",
@@ -877,7 +864,7 @@ export function ChatboxBuilderView({
           selectedServerIds: updateSelectedServerIds(
             current.selectedServerIds,
             serverId,
-            true,
+            true
           ),
         }));
         setSelectedNodeId(`server:${serverId}`);
@@ -888,7 +875,7 @@ export function ChatboxBuilderView({
         toast.error(getBillingErrorMessage(error, "Failed to add server"));
       }
     },
-    [createServer, workspaceId],
+    [createServer, projectId]
   );
 
   const handleToggleServer = useCallback(
@@ -897,7 +884,7 @@ export function ChatboxBuilderView({
         const selectedServerIds = updateSelectedServerIds(
           current.selectedServerIds,
           serverId,
-          checked,
+          checked
         );
 
         if (selectedServerIds === current.selectedServerIds) {
@@ -923,10 +910,10 @@ export function ChatboxBuilderView({
       }
 
       setSelectedNodeId((current) =>
-        current === `server:${serverId}` ? "host" : current,
+        current === `server:${serverId}` ? "host" : current
       );
     },
-    [],
+    []
   );
 
   const previewRailConfig = useMemo(() => {
@@ -938,7 +925,7 @@ export function ChatboxBuilderView({
         feedbackOn: chatbox.feedbackDialog?.enabled ?? true,
         feedbackEvery: Math.max(
           1,
-          chatbox.feedbackDialog?.everyNToolCalls ?? 1,
+          chatbox.feedbackDialog?.everyNToolCalls ?? 1
         ),
       };
     }
@@ -960,8 +947,8 @@ export function ChatboxBuilderView({
   const setupPanelSharedProps = {
     chatboxDraft: draftChatboxConfig,
     savedChatbox: chatbox ?? null,
-    workspaceServers,
-    workspaceName,
+    projectServers,
+    projectName,
     focusedSection: focusedSetupSection,
     isUnsavedNewDraft: !chatboxId,
     onDraftChange: (updater: (d: ChatboxDraftConfig) => ChatboxDraftConfig) =>
@@ -1099,31 +1086,30 @@ export function ChatboxBuilderView({
                                     chatboxServerConfigs
                                   }
                                   selectedServerNames={Object.keys(
-                                    chatboxServerConfigs,
+                                    chatboxServerConfigs
                                   )}
                                   minimalMode
                                   reasoningDisplayMode="hidden"
-                                  hostedWorkspaceIdOverride={
-                                    chatbox!.workspaceId
+                                  hostedProjectIdOverride={
+                                    chatbox!.projectId
                                   }
                                   hostedSelectedServerIdsOverride={activePreviewServers.map(
-                                    (s) => s.serverId,
+                                    (s) => s.serverId
                                   )}
-                                  hostedOAuthTokensOverride={previewOAuthTokens}
-                                  hostedChatboxToken={chatbox.link.token}
-                                  hostedChatboxSurface="preview"
-                                  initialModelId={draftChatboxConfig.modelId}
-                                  initialSystemPrompt={
-                                    draftChatboxConfig.systemPrompt
-                                  }
-                                  initialTemperature={
-                                    draftChatboxConfig.temperature
-                                  }
-                                  initialRequireToolApproval={
-                                    draftChatboxConfig.requireToolApproval
-                                  }
+                                  hostedContext={{
+                                    chatboxToken: chatbox.link.token,
+                                    chatboxSurface: "preview",
+                                  }}
+                                  executionConfig={{
+                                    modelId: draftChatboxConfig.modelId,
+                                    systemPrompt:
+                                      draftChatboxConfig.systemPrompt,
+                                    temperature: draftChatboxConfig.temperature,
+                                    requireToolApproval:
+                                      draftChatboxConfig.requireToolApproval,
+                                  }}
                                   loadingIndicatorVariant={getLoadingIndicatorVariantForHostStyle(
-                                    draftChatboxConfig.hostStyle,
+                                    draftChatboxConfig.hostStyle
                                   )}
                                   onOAuthRequired={handlePreviewOAuthRequired}
                                   chatboxComposerBlocked={
@@ -1135,8 +1121,8 @@ export function ChatboxBuilderView({
                                       (s) =>
                                         s.optional &&
                                         !previewEnabledOptionalIds.includes(
-                                          s.serverId,
-                                        ),
+                                          s.serverId
+                                        )
                                     )
                                     .map((s) => ({
                                       serverId: s.serverId,
@@ -1145,7 +1131,7 @@ export function ChatboxBuilderView({
                                     }))}
                                   onEnableChatboxOptionalServer={(id) => {
                                     setPreviewEnabledOptionalIds((prev) =>
-                                      prev.includes(id) ? prev : [...prev, id],
+                                      prev.includes(id) ? prev : [...prev, id]
                                     );
                                   }}
                                 />
@@ -1153,7 +1139,9 @@ export function ChatboxBuilderView({
                               <ChatboxHostOnboardingOverlays
                                 showWelcome={introGate.showWelcome}
                                 onGetStarted={introGate.dismissIntro}
-                                welcomeBody={draftChatboxConfig.welcomeDialog.body}
+                                welcomeBody={
+                                  draftChatboxConfig.welcomeDialog.body
+                                }
                                 showAuthPanel={introGate.showAuthPanel}
                                 pendingOAuthServers={pendingOAuthServers}
                                 authorizeServer={authorizeServer}
@@ -1186,7 +1174,7 @@ export function ChatboxBuilderView({
                               </dt>
                               <dd>
                                 {getChatboxHostStyleShortLabel(
-                                  previewRailConfig.hostStyle,
+                                  previewRailConfig.hostStyle
                                 )}
                               </dd>
                             </div>
@@ -1238,11 +1226,11 @@ export function ChatboxBuilderView({
                             canvasViewportRefitNonce={canvasViewportRefitNonce}
                             builderModelId={draftChatboxConfig.modelId}
                             canvasServerPicker={{
-                              workspaceServers,
+                              projectServers,
                               selectedServerIds:
                                 draftChatboxConfig.selectedServerIds,
                               onToggleServer: handleToggleServer,
-                              onOpenAddWorkspaceServer: () => {
+                              onOpenAddProjectServer: () => {
                                 setFocusedSetupSection("servers");
                                 setIsSetupSheetOpen(true);
                                 setIsAddServerOpen(true);
@@ -1251,7 +1239,7 @@ export function ChatboxBuilderView({
                             onSelectNode={(nodeId) => {
                               setSelectedNodeId(nodeId);
                               setFocusedSetupSection(
-                                getSetupSectionForNode(nodeId),
+                                getSetupSectionForNode(nodeId)
                               );
                               setIsSetupSheetOpen(true);
                             }}

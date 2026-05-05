@@ -3,9 +3,9 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { useState, type ReactNode } from "react";
 import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
 import type { ServerWithName, ServerUpdateResult } from "@/hooks/use-app-state";
-import type { Workspace } from "@/state/app-types";
+import type { Project } from "@/state/app-types";
 import type { ServerFormData } from "@/shared/types.js";
-import { mergeWorkspaceClientCapabilities } from "@/lib/client-config";
+import { mergeProjectClientCapabilities } from "@/lib/client-config";
 import {
   captureServerDetailModalOAuthResume,
   writeOpenServerDetailModalState,
@@ -13,6 +13,7 @@ import {
 import { writePendingQuickConnect } from "@/lib/quick-connect-pending";
 import type { EnrichedRegistryCatalogCard } from "@/hooks/useRegistryServers";
 import { getRegistryServerName } from "@/hooks/useRegistryServers";
+import { useClientConfigStore } from "@/stores/client-config-store";
 
 function createLinearCatalogCard(): EnrichedRegistryCatalogCard {
   const server = {
@@ -122,25 +123,23 @@ function createDualTypeCatalogCard(): EnrichedRegistryCatalogCard {
 let mockIsAuthenticated = false;
 let mockCatalogCards: EnrichedRegistryCatalogCard[] = [];
 let mockRegistryLoading = false;
-let mockClientConfigFlagEnabled: boolean | undefined = false;
 let mockJsonRpcPanelVisible = false;
 const mockConnectRegistry = vi.fn();
 const mockLoggerView = vi.fn();
 const mockUseRegistryServers = vi.fn();
-const mockUseWorkspaceBillingGate = vi.fn();
+const mockUseProjectBillingGate = vi.fn();
 
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: vi.fn(),
   }),
-  useFeatureFlagEnabled: (flag: string) =>
-    flag === "client-config-enabled" ? mockClientConfigFlagEnabled : false,
+  useFeatureFlagEnabled: () => false,
 }));
 
 vi.mock("../client-config/ClientConfigTab", () => ({
-  ClientConfigTab: ({ activeWorkspaceId }: { activeWorkspaceId: string }) => (
+  ClientConfigTab: ({ activeProjectId }: { activeProjectId: string }) => (
     <div data-testid="client-config-tab-stub">
-      ClientConfigTab:{activeWorkspaceId}
+      ClientConfigTab:{activeProjectId}
     </div>
   ),
 }));
@@ -149,8 +148,8 @@ vi.mock("@/lib/billing-gates", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/billing-gates")>();
   return {
     ...actual,
-    useWorkspaceBillingGate: (...args: unknown[]) =>
-      mockUseWorkspaceBillingGate(...args),
+    useProjectBillingGate: (...args: unknown[]) =>
+      mockUseProjectBillingGate(...args),
   };
 });
 
@@ -201,20 +200,20 @@ vi.mock("@/hooks/use-json-rpc-panel", () => ({
   }),
 }));
 
-vi.mock("@/hooks/useWorkspaces", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/hooks/useWorkspaces")>();
+vi.mock("@/hooks/useProjects", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/hooks/useProjects")>();
   return {
     ...actual,
-    useWorkspaceServers: () => ({
+    useProjectServers: () => ({
       serversRecord: {},
     }),
-    useWorkspaceQueries: () => ({
-      allWorkspaces: undefined,
-      workspaces: [],
-      sortedWorkspaces: [],
+    useProjectQueries: () => ({
+      allProjects: undefined,
+      projects: [],
+      sortedProjects: [],
       isLoading: false,
-      hasWorkspaces: false,
-      hasAnyWorkspaces: false,
+      hasProjects: false,
+      hasAnyProjects: false,
     }),
   };
 });
@@ -244,7 +243,9 @@ vi.mock("../connection/ServerConnectionCard", () => ({
       <button onClick={() => void onReconnect?.(server.name)}>
         Reconnect {server.name}
       </button>
-      {needsReconnect ? <span>Needs reconnect</span> : null}
+      {needsReconnect ? (
+        <span aria-label="Connection settings changed" />
+      ) : null}
       <div data-testid={`server-card-${server.name}`}>
         {server.name}:{server.connectionStatus}
       </div>
@@ -319,16 +320,16 @@ vi.mock("../connection/JsonImportModal", () => ({
   JsonImportModal: () => null,
 }));
 
-vi.mock("../connection/WorkspaceSelector", () => ({
-  WorkspaceSelector: () => <div>Workspace Selector</div>,
+vi.mock("../connection/ProjectSelector", () => ({
+  ProjectSelector: () => <div>Project Selector</div>,
 }));
 
-vi.mock("../workspace/WorkspaceShareButton", () => ({
-  WorkspaceShareButton: () => null,
+vi.mock("../project/ProjectShareButton", () => ({
+  ProjectShareButton: () => null,
 }));
 
-vi.mock("../workspace/WorkspaceMembersFacepile", () => ({
-  WorkspaceMembersFacepile: () => null,
+vi.mock("../project/ProjectMembersFacepile", () => ({
+  ProjectMembersFacepile: () => null,
 }));
 
 vi.mock("../logger-view", () => ({
@@ -410,10 +411,10 @@ function createServer(overrides: Partial<ServerWithName> = {}): ServerWithName {
   };
 }
 
-function createWorkspace(servers: Record<string, ServerWithName>): Workspace {
+function createProject(servers: Record<string, ServerWithName>): Project {
   return {
-    id: "workspace-1",
-    name: "Workspace",
+    id: "project-1",
+    name: "Project",
     servers,
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -423,13 +424,13 @@ function createWorkspace(servers: Record<string, ServerWithName>): Workspace {
 
 describe("ServersTab shared detail modal", () => {
   const server = createServer();
-  const workspaceServers = { [server.name]: server };
-  const workspaces = {
-    "workspace-1": createWorkspace(workspaceServers),
+  const projectServers = { [server.name]: server };
+  const projects = {
+    "project-1": createProject(projectServers),
   };
 
   const defaultProps = {
-    workspaceServers,
+    projectServers,
     onConnect: vi.fn(),
     onDisconnect: vi.fn(),
     onReconnect: vi.fn().mockResolvedValue(undefined),
@@ -438,17 +439,17 @@ describe("ServersTab shared detail modal", () => {
       serverName: "test-server",
     }),
     onRemove: vi.fn(),
-    workspaces,
-    activeWorkspaceId: "workspace-1",
+    projects,
+    activeProjectId: "project-1",
     organizationId: "org-1",
     isBillingContextPending: false,
-    onSwitchWorkspace: vi.fn(),
-    onCreateWorkspace: vi.fn().mockResolvedValue("workspace-2"),
-    onUpdateWorkspace: vi.fn(),
-    onDeleteWorkspace: vi.fn(),
-    isLoadingWorkspaces: false,
-    onWorkspaceShared: vi.fn(),
-    onLeaveWorkspace: vi.fn(),
+    onSwitchProject: vi.fn(),
+    onCreateProject: vi.fn().mockResolvedValue("project-2"),
+    onUpdateProject: vi.fn(),
+    onDeleteProject: vi.fn(),
+    isLoadingProjects: false,
+    onProjectShared: vi.fn(),
+    onLeaveProject: vi.fn(),
     isRegistryEnabled: true,
     onNavigateToRegistry: vi.fn(),
     onSaveClientConfig: vi.fn().mockResolvedValue(undefined),
@@ -458,13 +459,16 @@ describe("ServersTab shared detail modal", () => {
     vi.clearAllMocks();
     localStorage.clear();
     sessionStorage.clear();
+    useClientConfigStore.setState(
+      useClientConfigStore.getInitialState(),
+      true,
+    );
     mockIsAuthenticated = false;
     mockCatalogCards = [];
     mockRegistryLoading = false;
-    mockClientConfigFlagEnabled = false;
     mockJsonRpcPanelVisible = false;
     mockLoggerView.mockReset();
-    mockUseWorkspaceBillingGate.mockImplementation(
+    mockUseProjectBillingGate.mockImplementation(
       ({
         organizationId,
         gate,
@@ -475,7 +479,7 @@ describe("ServersTab shared detail modal", () => {
         organizationId,
         gate,
         decision: null,
-        currentPlan: "starter",
+        currentPlan: "solo",
         upgradePlan: null,
         canManageBilling: true,
         isLoading: false,
@@ -518,25 +522,25 @@ describe("ServersTab shared detail modal", () => {
       screen.getByTestId("servers-billing-context-pending")
     ).toBeInTheDocument();
     expect(screen.queryByText("Add Server")).not.toBeInTheDocument();
-    expect(mockUseWorkspaceBillingGate).toHaveBeenCalledWith(
+    expect(mockUseProjectBillingGate).toHaveBeenCalledWith(
       expect.objectContaining({
-        workspaceId: null,
+        projectId: null,
         organizationId: null,
       })
     );
   });
 
-  it("shows a no-workspace state when there is no selected workspace", () => {
+  it("shows a no-project state when there is no selected project", () => {
     render(
       <ServersTab
         {...defaultProps}
-        workspaces={{}}
-        activeWorkspaceId="none"
-        workspaceServers={{}}
+        projects={{}}
+        activeProjectId="none"
+        projectServers={{}}
       />
     );
 
-    expect(screen.getByTestId("servers-no-workspace")).toBeInTheDocument();
+    expect(screen.getByTestId("servers-no-project")).toBeInTheDocument();
     expect(screen.queryByText("Add Your First Server")).not.toBeInTheDocument();
   });
 
@@ -550,9 +554,9 @@ describe("ServersTab shared detail modal", () => {
     render(
       <ServersTab
         {...defaultProps}
-        workspaceServers={{ "demo-server": pendingServer }}
-        workspaces={{
-          "workspace-1": createWorkspace({ "demo-server": pendingServer }),
+        projectServers={{ "demo-server": pendingServer }}
+        projects={{
+          "project-1": createProject({ "demo-server": pendingServer }),
         }}
         pendingDashboardOAuth={{
           serverName: "demo-server",
@@ -572,7 +576,7 @@ describe("ServersTab shared detail modal", () => {
 
     const linearServer = createServer({ name: "linear" });
     const asanaServer = createServer({ name: "asana" });
-    const workspaceServers = {
+    const projectServers = {
       linear: linearServer,
       asana: asanaServer,
     };
@@ -580,9 +584,9 @@ describe("ServersTab shared detail modal", () => {
     render(
       <ServersTab
         {...defaultProps}
-        workspaceServers={workspaceServers}
-        workspaces={{
-          "workspace-1": createWorkspace(workspaceServers),
+        projectServers={projectServers}
+        projects={{
+          "project-1": createProject(projectServers),
         }}
       />
     );
@@ -623,9 +627,9 @@ describe("ServersTab shared detail modal", () => {
     const firstRender = render(
       <ServersTab
         {...defaultProps}
-        workspaceServers={initialServers}
-        workspaces={{
-          "workspace-1": createWorkspace(initialServers),
+        projectServers={initialServers}
+        projects={{
+          "project-1": createProject(initialServers),
         }}
       />
     );
@@ -659,9 +663,9 @@ describe("ServersTab shared detail modal", () => {
     render(
       <ServersTab
         {...defaultProps}
-        workspaceServers={remountedServers}
-        workspaces={{
-          "workspace-1": createWorkspace(remountedServers),
+        projectServers={remountedServers}
+        projects={{
+          "project-1": createProject(remountedServers),
         }}
       />
     );
@@ -674,22 +678,22 @@ describe("ServersTab shared detail modal", () => {
     );
   });
 
-  it("keeps persisted logger focus until the matching hosted workspace hydrates", async () => {
+  it("keeps persisted logger focus until the matching hosted project hydrates", async () => {
     mockJsonRpcPanelVisible = true;
     const persistedSinceTimestamp = Date.now();
 
     const asanaServer = createServer({ name: "asana" });
-    const workspaceOne = createWorkspace({ asana: asanaServer });
-    const workspaceTwo = {
-      ...createWorkspace({ asana: asanaServer }),
-      id: "workspace-2",
-      name: "Hosted Workspace",
+    const projectOne = createProject({ asana: asanaServer });
+    const projectTwo = {
+      ...createProject({ asana: asanaServer }),
+      id: "project-2",
+      name: "Hosted Project",
     };
 
     sessionStorage.setItem(
       "mcp-server-logger-focus",
       JSON.stringify({
-        workspaceId: "workspace-2",
+        projectId: "project-2",
         serverName: "asana",
         sinceTimestamp: persistedSinceTimestamp,
       })
@@ -698,27 +702,27 @@ describe("ServersTab shared detail modal", () => {
     const { rerender } = render(
       <ServersTab
         {...defaultProps}
-        activeWorkspaceId="workspace-1"
-        workspaceServers={{ asana: asanaServer }}
-        workspaces={{
-          "workspace-1": workspaceOne,
-          "workspace-2": workspaceTwo,
+        activeProjectId="project-1"
+        projectServers={{ asana: asanaServer }}
+        projects={{
+          "project-1": projectOne,
+          "project-2": projectTwo,
         }}
       />
     );
 
     expect(sessionStorage.getItem("mcp-server-logger-focus")).toContain(
-      "\"workspaceId\":\"workspace-2\""
+      "\"projectId\":\"project-2\""
     );
 
     rerender(
       <ServersTab
         {...defaultProps}
-        activeWorkspaceId="workspace-2"
-        workspaceServers={{ asana: asanaServer }}
-        workspaces={{
-          "workspace-1": workspaceOne,
-          "workspace-2": workspaceTwo,
+        activeProjectId="project-2"
+        projectServers={{ asana: asanaServer }}
+        projects={{
+          "project-1": projectOne,
+          "project-2": projectTwo,
         }}
       />
     );
@@ -753,7 +757,7 @@ describe("ServersTab shared detail modal", () => {
 
   it("keeps the shared modal open with the latest connection state after save churn", async () => {
     function TestHarness() {
-      const [servers, setServers] = useState(workspaceServers);
+      const [servers, setServers] = useState(projectServers);
 
       const onUpdate = vi.fn().mockImplementation(async () => {
         setServers({
@@ -773,9 +777,9 @@ describe("ServersTab shared detail modal", () => {
       return (
         <ServersTab
           {...defaultProps}
-          workspaceServers={servers}
-          workspaces={{
-            "workspace-1": createWorkspace(servers),
+          projectServers={servers}
+          projects={{
+            "project-1": createProject(servers),
           }}
           onUpdate={onUpdate}
         />
@@ -847,7 +851,7 @@ describe("ServersTab shared detail modal", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("surfaces reconnect warnings when workspace client capabilities changed", () => {
+  it("surfaces connection settings update indicators when project client capabilities changed", () => {
     const initializedCapabilities = getDefaultClientCapabilities() as Record<
       string,
       unknown
@@ -856,15 +860,15 @@ describe("ServersTab shared detail modal", () => {
     const { rerender } = render(
       <ServersTab
         {...defaultProps}
-        workspaceServers={{
+        projectServers={{
           "test-server": createServer({
             initializationInfo: {
               clientCapabilities: initializedCapabilities,
             } as any,
           }),
         }}
-        workspaces={{
-          "workspace-1": createWorkspace({
+        projects={{
+          "project-1": createProject({
             "test-server": createServer({
               initializationInfo: {
                 clientCapabilities: initializedCapabilities,
@@ -876,20 +880,23 @@ describe("ServersTab shared detail modal", () => {
     );
 
     expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Connection settings changed")
+    ).not.toBeInTheDocument();
 
     rerender(
       <ServersTab
         {...defaultProps}
-        workspaceServers={{
+        projectServers={{
           "test-server": createServer({
             initializationInfo: {
               clientCapabilities: initializedCapabilities,
             } as any,
           }),
         }}
-        workspaces={{
-          "workspace-1": {
-            ...createWorkspace({
+        projects={{
+          "project-1": {
+            ...createProject({
               "test-server": createServer({
                 initializationInfo: {
                   clientCapabilities: initializedCapabilities,
@@ -911,16 +918,19 @@ describe("ServersTab shared detail modal", () => {
       />
     );
 
-    expect(screen.getByText("Needs reconnect")).toBeInTheDocument();
+    expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
+    expect(
+      screen.getByLabelText("Connection settings changed")
+    ).toBeInTheDocument();
   });
 
-  it("does not surface reconnect warnings when server capability overrides already match initialize payload", () => {
+  it("does not surface connection settings update indicators when server capability overrides already match initialize payload", () => {
     const serverCapabilities = {
       experimental: {
         serverOverride: { enabled: true },
       },
     };
-    const initializedCapabilities = mergeWorkspaceClientCapabilities(
+    const initializedCapabilities = mergeProjectClientCapabilities(
       getDefaultClientCapabilities() as Record<string, unknown>,
       serverCapabilities
     );
@@ -928,7 +938,7 @@ describe("ServersTab shared detail modal", () => {
     render(
       <ServersTab
         {...defaultProps}
-        workspaceServers={{
+        projectServers={{
           "test-server": createServer({
             config: {
               command: "npx",
@@ -940,8 +950,8 @@ describe("ServersTab shared detail modal", () => {
             } as any,
           }),
         }}
-        workspaces={{
-          "workspace-1": createWorkspace({
+        projects={{
+          "project-1": createProject({
             "test-server": createServer({
               config: {
                 command: "npx",
@@ -958,13 +968,16 @@ describe("ServersTab shared detail modal", () => {
     );
 
     expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Connection settings changed")
+    ).not.toBeInTheDocument();
   });
 
   it("renders Quick Connect module helper copy and Browse Registry in the section header", () => {
     mockIsAuthenticated = true;
     mockCatalogCards = [createLinearCatalogCard()];
 
-    render(<ServersTab {...defaultProps} workspaceServers={{}} />);
+    render(<ServersTab {...defaultProps} projectServers={{}} />);
 
     expect(screen.getByText("Quick Connect")).toBeInTheDocument();
     expect(
@@ -979,7 +992,7 @@ describe("ServersTab shared detail modal", () => {
     mockIsAuthenticated = true;
     mockCatalogCards = [createLinearCatalogCard()];
 
-    render(<ServersTab {...defaultProps} workspaceServers={{}} />);
+    render(<ServersTab {...defaultProps} projectServers={{}} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Connect Linear" }));
 
@@ -1016,15 +1029,15 @@ describe("ServersTab shared detail modal", () => {
     render(
       <ServersTab
         {...defaultProps}
-        workspaceServers={{
+        projectServers={{
           Linear: createServer({
             name: "Linear",
             connectionStatus: "oauth-flow",
             useOAuth: true,
           }),
         }}
-        workspaces={{
-          "workspace-1": createWorkspace({
+        projects={{
+          "project-1": createProject({
             Linear: createServer({
               name: "Linear",
               connectionStatus: "oauth-flow",
@@ -1059,15 +1072,15 @@ describe("ServersTab shared detail modal", () => {
     render(
       <ServersTab
         {...defaultProps}
-        workspaceServers={{
+        projectServers={{
           Linear: createServer({
             name: "Linear",
             connectionStatus: "connecting",
             useOAuth: true,
           }),
         }}
-        workspaces={{
-          "workspace-1": createWorkspace({
+        projects={{
+          "project-1": createProject({
             Linear: createServer({
               name: "Linear",
               connectionStatus: "connecting",
@@ -1100,15 +1113,15 @@ describe("ServersTab shared detail modal", () => {
     render(
       <ServersTab
         {...defaultProps}
-        workspaceServers={{
+        projectServers={{
           Linear: createServer({
             name: "Linear",
             connectionStatus: "connected",
             useOAuth: true,
           }),
         }}
-        workspaces={{
-          "workspace-1": createWorkspace({
+        projects={{
+          "project-1": createProject({
             Linear: createServer({
               name: "Linear",
               connectionStatus: "connected",
@@ -1138,9 +1151,9 @@ describe("ServersTab shared detail modal", () => {
     const { rerender } = render(
       <ServersTab
         {...defaultProps}
-        workspaceServers={{ a: s1 }}
-        workspaces={{
-          "workspace-1": createWorkspace({ a: s1 }),
+        projectServers={{ a: s1 }}
+        projects={{
+          "project-1": createProject({ a: s1 }),
         }}
       />
     );
@@ -1157,9 +1170,9 @@ describe("ServersTab shared detail modal", () => {
     rerender(
       <ServersTab
         {...defaultProps}
-        workspaceServers={{ a: s1, b: s2 }}
-        workspaces={{
-          "workspace-1": createWorkspace({ a: s1, b: s2 }),
+        projectServers={{ a: s1, b: s2 }}
+        projects={{
+          "project-1": createProject({ a: s1, b: s2 }),
         }}
       />
     );
@@ -1176,9 +1189,9 @@ describe("ServersTab shared detail modal", () => {
     rerender(
       <ServersTab
         {...defaultProps}
-        workspaceServers={three}
-        workspaces={{
-          "workspace-1": createWorkspace(three),
+        projectServers={three}
+        projects={{
+          "project-1": createProject(three),
         }}
       />
     );
@@ -1224,7 +1237,7 @@ describe("ServersTab shared detail modal", () => {
     render(
       <ServersTab
         {...defaultProps}
-        workspaceServers={{
+        projectServers={{
           ...three,
           Linear: createServer({
             name: "Linear",
@@ -1232,8 +1245,8 @@ describe("ServersTab shared detail modal", () => {
             useOAuth: true,
           }),
         }}
-        workspaces={{
-          "workspace-1": createWorkspace({
+        projects={{
+          "project-1": createProject({
             ...three,
             Linear: createServer({
               name: "Linear",
@@ -1257,7 +1270,7 @@ describe("ServersTab shared detail modal", () => {
     mockIsAuthenticated = true;
     mockCatalogCards = [createLinearCatalogCard()];
 
-    render(<ServersTab {...defaultProps} workspaceServers={{}} />);
+    render(<ServersTab {...defaultProps} projectServers={{}} />);
 
     expect(screen.getByText("Linear")).toBeInTheDocument();
     expect(screen.getByText("MCPJam")).toBeInTheDocument();
@@ -1275,7 +1288,7 @@ describe("ServersTab shared detail modal", () => {
     mockIsAuthenticated = true;
     mockCatalogCards = [createDualTypeCatalogCard()];
 
-    render(<ServersTab {...defaultProps} workspaceServers={{}} />);
+    render(<ServersTab {...defaultProps} projectServers={{}} />);
 
     expect(screen.getByTestId("connect-dropdown-trigger")).toBeInTheDocument();
   });
@@ -1285,7 +1298,7 @@ describe("ServersTab shared detail modal", () => {
     mockCatalogCards = [createLinearCatalogCard()];
 
     const { rerender } = render(
-      <ServersTab {...defaultProps} workspaceServers={{}} />
+      <ServersTab {...defaultProps} projectServers={{}} />
     );
     expect(
       screen.getByTestId("servers-quick-connect-section")
@@ -1299,9 +1312,9 @@ describe("ServersTab shared detail modal", () => {
     rerender(
       <ServersTab
         {...defaultProps}
-        workspaceServers={three}
-        workspaces={{
-          "workspace-1": createWorkspace(three),
+        projectServers={three}
+        projects={{
+          "project-1": createProject(three),
         }}
       />
     );
@@ -1323,7 +1336,7 @@ describe("ServersTab shared detail modal", () => {
         {...defaultProps}
         isRegistryEnabled={false}
         onNavigateToRegistry={undefined}
-        workspaceServers={{}}
+        projectServers={{}}
       />
     );
 
@@ -1340,17 +1353,17 @@ describe("ServersTab shared detail modal", () => {
     );
   });
 
-  it("passes the shared workspace id to registry queries instead of the local workspace key", () => {
+  it("passes the shared project id to registry queries instead of the local project key", () => {
     mockIsAuthenticated = true;
     mockCatalogCards = [createLinearCatalogCard()];
 
     render(
       <ServersTab
         {...defaultProps}
-        workspaces={{
-          "workspace-1": {
-            ...createWorkspace(defaultProps.workspaceServers),
-            sharedWorkspaceId: "ws_shared_123",
+        projects={{
+          "project-1": {
+            ...createProject(defaultProps.projectServers),
+            sharedProjectId: "ws_shared_123",
           },
         }}
       />
@@ -1359,20 +1372,20 @@ describe("ServersTab shared detail modal", () => {
     expect(mockUseRegistryServers).toHaveBeenCalledWith(
       expect.objectContaining({
         enabled: true,
-        workspaceId: "ws_shared_123",
+        projectId: "ws_shared_123",
       })
     );
   });
 
-  it("skips Convex workspace registry queries when the active workspace is local-only", () => {
+  it("skips Convex project registry queries when the active project is local-only", () => {
     mockIsAuthenticated = true;
     mockCatalogCards = [createLinearCatalogCard()];
 
     render(
       <ServersTab
         {...defaultProps}
-        workspaces={{
-          "workspace-1": createWorkspace(defaultProps.workspaceServers),
+        projects={{
+          "project-1": createProject(defaultProps.projectServers),
         }}
       />
     );
@@ -1380,23 +1393,23 @@ describe("ServersTab shared detail modal", () => {
     expect(mockUseRegistryServers).toHaveBeenCalledWith(
       expect.objectContaining({
         enabled: true,
-        workspaceId: null,
+        projectId: null,
       })
     );
   });
 
-  it("excludes single-variant quick connect cards when that server is already in the workspace", () => {
+  it("excludes single-variant quick connect cards when that server is already in the project", () => {
     mockIsAuthenticated = true;
     mockCatalogCards = [createLinearCatalogCard()];
 
     render(
       <ServersTab
         {...defaultProps}
-        workspaceServers={{
+        projectServers={{
           Linear: createServer({ name: "Linear" }),
         }}
-        workspaces={{
-          "workspace-1": createWorkspace({
+        projects={{
+          "project-1": createProject({
             Linear: createServer({ name: "Linear" }),
           }),
         }}
@@ -1408,22 +1421,10 @@ describe("ServersTab shared detail modal", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("hides the Client Config button when the flag is disabled", () => {
-    mockClientConfigFlagEnabled = false;
-
+  it("shows the Connection Settings button and opens the dialog", () => {
     render(<ServersTab {...defaultProps} />);
 
-    expect(
-      screen.queryByRole("button", { name: /client config/i })
-    ).not.toBeInTheDocument();
-  });
-
-  it("shows the Client Config button and opens the dialog when the flag is enabled", () => {
-    mockClientConfigFlagEnabled = true;
-
-    render(<ServersTab {...defaultProps} />);
-
-    const button = screen.getByRole("button", { name: /client config/i });
+    const button = screen.getByRole("button", { name: /connection settings/i });
     expect(button).toBeInTheDocument();
     expect(
       screen.queryByTestId("client-config-tab-stub")
@@ -1432,32 +1433,67 @@ describe("ServersTab shared detail modal", () => {
     fireEvent.click(button);
 
     expect(screen.getByTestId("client-config-tab-stub")).toHaveTextContent(
-      "ClientConfigTab:workspace-1"
+      "ClientConfigTab:project-1"
     );
   });
 
-  it("hides the Client Config button when no save handler is provided", () => {
-    mockClientConfigFlagEnabled = true;
+  it("discards unsaved connection settings when the dialog is closed", () => {
+    const defaultConfig = {
+      version: 1 as const,
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 10000,
+      },
+      clientCapabilities: getDefaultClientCapabilities() as Record<
+        string,
+        unknown
+      >,
+    };
+    useClientConfigStore.getState().loadProjectConfig({
+      projectId: "project-1",
+      defaultConfig,
+      savedConfig: undefined,
+    });
+    useClientConfigStore.getState().setSectionText(
+      "connectionDefaults",
+      '{ "headers": { "x-test": "1" }, "requestTimeout": 1234 }',
+    );
 
+    expect(useClientConfigStore.getState().isDirty).toBe(true);
+
+    render(<ServersTab {...defaultProps} />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /connection settings/i }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /close/i }));
+
+    expect(useClientConfigStore.getState().isDirty).toBe(false);
+    expect(
+      useClientConfigStore.getState().draftConfig?.connectionDefaults,
+    ).toEqual(defaultConfig.connectionDefaults);
+  });
+
+  it("hides the Connection Settings button when no save handler is provided", () => {
     render(<ServersTab {...defaultProps} onSaveClientConfig={undefined} />);
 
     expect(
-      screen.queryByRole("button", { name: /client config/i })
+      screen.queryByRole("button", { name: /connection settings/i })
     ).not.toBeInTheDocument();
   });
 
-  it("excludes a dual-type quick connect card when any variant is already in the workspace", () => {
+  it("excludes a dual-type quick connect card when any variant is already in the project", () => {
     mockIsAuthenticated = true;
     mockCatalogCards = [createDualTypeCatalogCard()];
 
     render(
       <ServersTab
         {...defaultProps}
-        workspaceServers={{
+        projectServers={{
           "DualServer (App)": createServer({ name: "DualServer (App)" }),
         }}
-        workspaces={{
-          "workspace-1": createWorkspace({
+        projects={{
+          "project-1": createProject({
             "DualServer (App)": createServer({ name: "DualServer (App)" }),
           }),
         }}

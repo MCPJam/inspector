@@ -32,7 +32,7 @@ vi.mock("@mcpjam/sdk", async () => {
   };
 });
 
-vi.mock("../../utils/chat-helpers", () => ({
+vi.mock("../../../utils/chat-helpers", () => ({
   createLlmModel: (
     modelDefinition: unknown,
     apiKey: unknown,
@@ -241,7 +241,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           serverBindings: [
             {
               serverName: "server-1",
-              workspaceServerId: "srv-1",
+              projectServerId: "srv-1",
             },
           ],
         },
@@ -281,7 +281,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           serverBindings: [
             {
               serverName: "server-1",
-              workspaceServerId: "srv-1",
+              projectServerId: "srv-1",
             },
           ],
         },
@@ -520,6 +520,158 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           content: "Done",
         }),
       ]),
+    );
+  });
+
+  it("uses full org config for custom eval models", async () => {
+    await runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: null,
+      config: {
+        tests: [
+          {
+            title: "Custom Case",
+            query: "Hello",
+            runs: 1,
+            model: "custom:acme:llama-3",
+            provider: "custom",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-1",
+          },
+        ],
+        environment: { servers: ["srv-1"] },
+      },
+      orgModelConfig: {
+        providers: [
+          {
+            providerKey: "custom:acme",
+            baseUrl: "https://models.example/v1",
+            protocol: "openai-compatible",
+            modelIds: ["llama-3"],
+          },
+        ],
+      },
+      convexClient: convexClient as any,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: mcpClientManager as any,
+      testCaseId: "case-1",
+    });
+
+    expect(createLlmModelMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "custom:acme:llama-3",
+        provider: "custom",
+        customProviderName: "acme",
+      }),
+      "",
+      undefined,
+      [
+        {
+          name: "acme",
+          protocol: "openai-compatible",
+          baseUrl: "https://models.example/v1",
+          modelIds: ["llama-3"],
+        },
+      ],
+    );
+  });
+
+  it("uses org Azure base URL when resolving eval models", async () => {
+    await runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: null,
+      config: {
+        tests: [
+          {
+            title: "Azure Case",
+            query: "Hello",
+            runs: 1,
+            model: "gpt-4o",
+            provider: "azure",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-1",
+          },
+        ],
+        environment: { servers: ["srv-1"] },
+      },
+      orgModelConfig: {
+        providers: [
+          {
+            providerKey: "azure",
+            apiKey: "az-secret",
+            baseUrl: "https://resource.openai.azure.com/openai",
+          },
+        ],
+      },
+      convexClient: convexClient as any,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: mcpClientManager as any,
+      testCaseId: "case-1",
+    });
+
+    expect(createLlmModelMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "gpt-4o",
+        provider: "azure",
+      }),
+      "az-secret",
+      { azure: "https://resource.openai.azure.com/openai" },
+      undefined,
+    );
+  });
+
+  it("runs org Ollama eval models with a base URL and no API key", async () => {
+    await runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: null,
+      config: {
+        tests: [
+          {
+            title: "Ollama Case",
+            query: "Hello",
+            runs: 1,
+            model: "llama3",
+            provider: "ollama",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-1",
+          },
+        ],
+        environment: { servers: ["srv-1"] },
+      },
+      orgModelConfig: {
+        providers: [
+          {
+            providerKey: "ollama",
+            baseUrl: "http://ollama.internal:11434",
+          },
+        ],
+      },
+      convexClient: convexClient as any,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: mcpClientManager as any,
+      testCaseId: "case-1",
+    });
+
+    expect(createLlmModelMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "llama3",
+        provider: "ollama",
+      }),
+      "",
+      { ollama: "http://ollama.internal:11434" },
+      undefined,
     );
   });
 });

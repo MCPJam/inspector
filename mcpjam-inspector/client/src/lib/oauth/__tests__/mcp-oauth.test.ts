@@ -112,6 +112,25 @@ function createLinearDiscoveryState(): any {
   };
 }
 
+function createCimdDiscoveryState(): any {
+  return {
+    authorizationServerUrl: "https://auth.example.com",
+    resourceMetadataUrl:
+      "https://example.com/.well-known/oauth-protected-resource/mcp",
+    resourceMetadata: {
+      resource: "https://example.com/mcp",
+      authorization_servers: ["https://auth.example.com"],
+    },
+    authorizationServerMetadata: {
+      issuer: "https://auth.example.com",
+      authorization_endpoint: "https://auth.example.com/authorize",
+      token_endpoint: "https://auth.example.com/token",
+      registration_endpoint: "https://auth.example.com/register",
+      client_id_metadata_document_supported: true,
+    },
+  };
+}
+
 function createJsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -130,6 +149,20 @@ function getUrlString(input: RequestInfo | URL): string {
 function createProtectedResourceMetadataUrl(serverUrl: string): string {
   const parsed = new URL(serverUrl);
   return `${parsed.origin}/.well-known/oauth-protected-resource${parsed.pathname}`;
+}
+
+function findAutomaticDecisionStep(result: {
+  oauthTrace?: {
+    steps?: Array<{
+      step: string;
+      message?: string;
+      details?: Record<string, unknown>;
+    }>;
+  };
+}) {
+  return result.oauthTrace?.steps?.find((step) =>
+    step.message?.startsWith("Automatic resolved to ")
+  );
 }
 
 function createUnauthorizedMcpResponse(serverUrl: string): Response {
@@ -401,7 +434,9 @@ describe("mcp-oauth", () => {
     serverName: string = "asana",
     serverUrl: string = "https://mcp.asana.com/v2/mcp"
   ) {
-    mockDiscoverOAuthServerInfo.mockResolvedValueOnce(discoveryState);
+    mockDiscoverOAuthServerInfo
+      .mockResolvedValueOnce(discoveryState)
+      .mockResolvedValueOnce(discoveryState);
     mockRegisterClient.mockResolvedValueOnce({
       client_id: `${serverName}-client-id`,
     });
@@ -531,17 +566,7 @@ describe("mcp-oauth", () => {
       });
 
       expect(result.success).toBe(false);
-      expect(directFetch).toHaveBeenCalledTimes(1);
-      expect(directFetch).toHaveBeenCalledWith(
-        "https://example.com/mcp",
-        expect.objectContaining({
-          method: "POST",
-          headers: expect.objectContaining({
-            "Content-Type": "application/json",
-            Accept: "application/json, text/event-stream",
-          }),
-        }),
-      );
+      expect(directFetch).not.toHaveBeenCalled();
     });
 
     it("propagates successful proxy responses correctly", async () => {
@@ -578,6 +603,51 @@ describe("mcp-oauth", () => {
         ),
         expect.objectContaining({ method: "GET" })
       );
+    });
+
+    it("forwards custom headers during automatic discovery planning", async () => {
+      const metadataResponse = new Response(
+        JSON.stringify({
+          authorization_servers: ["https://auth.example.com"],
+        }),
+        { status: 200 }
+      );
+      authFetch.mockResolvedValue(metadataResponse);
+      mockDiscoverOAuthServerInfo.mockImplementationOnce(
+        async (_serverUrl, options) => {
+          const response = await options?.fetchFn?.(
+            "https://example.com/.well-known/oauth-protected-resource/mcp"
+          );
+          if (!response) {
+            throw new Error("Missing OAuth fetch function");
+          }
+          expect(response.ok).toBe(true);
+          return createCimdDiscoveryState();
+        }
+      );
+
+      const { initiateOAuth } = await import("../mcp-oauth");
+      const result = await initiateOAuth({
+        serverName: "test-server",
+        serverUrl: "https://example.com/mcp",
+        customHeaders: {
+          "X-Tenant": "project-123",
+        },
+      });
+
+      expect(result.success).toBe(true);
+      const metadataCall = authFetch.mock.calls.find(
+        ([input]) =>
+          typeof input === "string" &&
+          input.includes("/api/mcp/oauth/metadata?url="),
+      );
+      expect(metadataCall).toBeDefined();
+      expect(metadataCall?.[1]).toMatchObject({
+        method: "GET",
+      });
+      expect(
+        new Headers(metadataCall?.[1]?.headers as HeadersInit).get("X-Tenant"),
+      ).toBe("project-123");
     });
 
     it("replays the initial MCP initialize through the proxy when browser transport fails", async () => {
@@ -631,12 +701,33 @@ describe("mcp-oauth", () => {
             authorization_endpoint: "https://learn.mcpjam.com/authorize",
             token_endpoint: "https://learn.mcpjam.com/token",
             response_types_supported: ["code"],
+            token_endpoint_auth_methods_supported: ["none"],
             code_challenge_methods_supported: ["S256"],
           });
         }
 
         throw new Error(`Unexpected authFetch call to ${url}`);
       });
+      const learnDiscoveryState = {
+        authorizationServerUrl: "https://learn.mcpjam.com",
+        resourceMetadataUrl:
+          "https://learn.mcpjam.com/.well-known/oauth-protected-resource",
+        resourceMetadata: {
+          resource: "https://learn.mcpjam.com/mcp",
+          authorization_servers: ["https://learn.mcpjam.com"],
+        },
+        authorizationServerMetadata: {
+          issuer: "https://learn.mcpjam.com",
+          authorization_endpoint: "https://learn.mcpjam.com/authorize",
+          token_endpoint: "https://learn.mcpjam.com/token",
+          response_types_supported: ["code"],
+          token_endpoint_auth_methods_supported: ["none"],
+          code_challenge_methods_supported: ["S256"],
+        },
+      };
+      mockDiscoverOAuthServerInfo
+        .mockResolvedValueOnce(learnDiscoveryState)
+        .mockResolvedValueOnce(learnDiscoveryState);
 
       const oauthModule = await import("../mcp-oauth");
       vi.spyOn(
@@ -694,6 +785,37 @@ describe("mcp-oauth", () => {
         },
         id: 1,
       });
+    });
+
+    it("does not persist hosted preregistered client secrets to localStorage", async () => {
+      vi.resetModules();
+      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+
+      const oauthModule = await import("../mcp-oauth");
+      vi.spyOn(
+        oauthModule.MCPOAuthProvider.prototype,
+        "redirectToAuthorization",
+      ).mockResolvedValue(undefined);
+
+      const result = await oauthModule.initiateOAuth({
+        serverName: "hosted",
+        serverUrl: "https://example.com/mcp",
+        clientId: "hosted-client-id",
+        clientSecret: "hosted-client-secret",
+      });
+
+      expect(result.success).toBe(true);
+      expect(localStorage.getItem("mcp-client-hosted")).toBe(
+        JSON.stringify({
+          client_id: "hosted-client-id",
+        }),
+      );
+      expect(localStorage.getItem("mcp-client-hosted")).not.toContain(
+        "client_secret",
+      );
+      expect(localStorage.getItem("mcp-client-hosted")).not.toContain(
+        "hosted-client-secret",
+      );
     });
 
     it("preserves JSON bodies for dynamic client registration requests", async () => {
@@ -765,6 +887,55 @@ describe("mcp-oauth", () => {
   });
 
   describe("persisted discovery state", () => {
+    it("explains why automatic mode resolved to DCR when CIMD support was not advertised", async () => {
+      mockDiscoverOAuthServerInfo.mockResolvedValueOnce(
+        createAsanaDiscoveryState()
+      );
+
+      const { initiateOAuth } = await import("../mcp-oauth");
+      const result = await initiateOAuth({
+        serverName: "asana",
+        serverUrl: "https://mcp.asana.com/v2/mcp",
+      });
+
+      expect(result.success).toBe(true);
+      expect(findAutomaticDecisionStep(result)).toMatchObject({
+        message:
+          "Automatic resolved to DCR for this run. The authorization server advertised registration_endpoint, and CIMD support was not advertised.",
+        details: expect.objectContaining({
+          "Automatic Decision": "DCR",
+          "Advertised Strategies": "Pre-registered, DCR",
+          Reason:
+            "The authorization server advertised registration_endpoint, and CIMD support was not advertised.",
+          "CIMD Support": "Not advertised by authorization server",
+        }),
+      });
+    });
+
+    it("explains when automatic mode resolved to CIMD after discovery", async () => {
+      mockDiscoverOAuthServerInfo.mockResolvedValueOnce(
+        createCimdDiscoveryState()
+      );
+
+      const { initiateOAuth } = await import("../mcp-oauth");
+      const result = await initiateOAuth({
+        serverName: "example",
+        serverUrl: "https://example.com/mcp",
+      });
+
+      expect(result.success).toBe(true);
+      expect(findAutomaticDecisionStep(result)).toMatchObject({
+        message:
+          "Automatic resolved to CIMD for this run. The authorization server advertised client_id_metadata_document_supported, so automatic mode preferred CIMD over DCR.",
+        details: expect.objectContaining({
+          "Automatic Decision": "CIMD",
+          "Advertised Strategies": "Pre-registered, DCR, CIMD",
+          Reason:
+            "The authorization server advertised client_id_metadata_document_supported, so automatic mode preferred CIMD over DCR.",
+        }),
+      });
+    });
+
     it("returns safe defaults when stored OAuth config is missing or malformed", async () => {
       const { readStoredOAuthConfig } = await import("../mcp-oauth");
 
@@ -810,6 +981,9 @@ describe("mcp-oauth", () => {
       expect(result.success).toBe(true);
       expect(localStorage.getItem("mcp-oauth-trace-asana")).toBeNull();
       expect(localStorage.getItem("mcp-oauth-flow-state-asana")).not.toBeNull();
+      expect(
+        sessionStorage.getItem("mcp-oauth-session-trace-asana")
+      ).not.toBeNull();
     });
 
     it("normalizes malformed persisted oauth trace history", async () => {
@@ -964,10 +1138,15 @@ describe("mcp-oauth", () => {
         "https://mcp.asana.com/sse"
       );
       await provider.saveDiscoveryState(createDiscoveryState());
+      sessionStorage.setItem(
+        "mcp-oauth-session-trace-asana",
+        JSON.stringify({ serverName: "asana" })
+      );
 
       clearOAuthData("asana");
 
       expect(localStorage.getItem("mcp-discovery-asana")).toBeNull();
+      expect(sessionStorage.getItem("mcp-oauth-session-trace-asana")).toBeNull();
       expect(provider.discoveryState()).toBeUndefined();
     });
 
@@ -1009,7 +1188,7 @@ describe("mcp-oauth", () => {
       expect(getStoredTokens("asana")?.access_token).toBe("access-token");
       expect(localStorage.getItem("mcp-discovery-asana")).not.toBeNull();
       expect(localStorage.getItem("mcp-verifier-asana")).toBeNull();
-      expect(mockDiscoverOAuthServerInfo).toHaveBeenCalledTimes(1);
+      expect(mockDiscoverOAuthServerInfo).toHaveBeenCalledTimes(2);
       expect(mockExchangeAuthorization).toHaveBeenCalledTimes(1);
     });
 
@@ -1108,7 +1287,10 @@ describe("mcp-oauth", () => {
         JSON.stringify({
           registryServerId: "registry-asana",
           useRegistryOAuthProxy: true,
+          resourceUrl: "https://mcp.asana.com/v2/mcp",
+          protocolMode: "auto",
           protocolVersion: "2025-11-25",
+          registrationMode: "preregistered",
           registrationStrategy: "preregistered",
         })
       );

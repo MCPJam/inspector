@@ -4,7 +4,7 @@ import type { ModelDefinition } from "./types";
 export interface ChatV2Request {
   messages: UIMessage[];
   chatSessionId?: string;
-  directVisibility?: "private" | "workspace";
+  directVisibility?: "private" | "project";
   surface?: "preview" | "share_link";
   serverName?: string;
   serverUrl?: string;
@@ -28,8 +28,11 @@ export interface ChatV2Request {
   selectedServers?: string[];
   selectedServerNames?: string[];
   requireToolApproval?: boolean;
-  /** Workspace ID for direct-chat history persistence */
-  workspaceId?: string;
+  /**
+   * Project ID for direct-chat history persistence and, when set, the server
+   * resolves model-provider config from the org backing this project.
+   */
+  projectId?: string;
   /** Version for optimistic concurrency on resumed threads */
   expectedVersion?: number;
 }

@@ -768,7 +768,7 @@ describe("POST /api/mcp/chat-v2", () => {
           messages: [{ role: "user", content: "Hello" }],
           model: { id: "google/gemini-2.5-flash", provider: "google" },
           chatSessionId: "chat-session-1",
-          directVisibility: "workspace",
+          directVisibility: "project",
         });
 
         expect(res.status).toBe(200);
@@ -792,7 +792,7 @@ describe("POST /api/mcp/chat-v2", () => {
           modelId: "google/gemini-2.5-flash",
           modelSource: "mcpjam",
           sourceType: "direct",
-          directVisibility: "workspace",
+          directVisibility: "project",
         });
         expect(body.sessionMessages).toEqual([
           { role: "user", content: "Hello" },
@@ -908,6 +908,65 @@ describe("POST /api/mcp/chat-v2", () => {
       }
     });
 
+    it("routes signed-in MCPJam DeepSeek hosted models through Convex instead of BYOK", async () => {
+      const { createLlmModel } = await import("../../../utils/chat-helpers");
+
+      const originalFetch = global.fetch;
+      global.fetch = vi
+        .fn()
+        .mockImplementation(async (input: RequestInfo | URL) => {
+          const url = String(input);
+          if (url === "https://test-convex.example.com/stream") {
+            return createSseResponse([
+              {
+                type: "finish",
+                finishReason: "stop",
+                messageMetadata: {
+                  inputTokens: 1,
+                  outputTokens: 1,
+                  totalTokens: 2,
+                },
+              },
+            ]);
+          }
+
+          if (url === "https://test-convex.example.com/ingest-chat") {
+            return new Response(null, { status: 200 });
+          }
+
+          throw new Error(`Unexpected fetch URL: ${url}`);
+        });
+
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: {
+            id: "deepseek/deepseek-v4-pro",
+            name: "DeepSeek V4 Pro (Free)",
+            provider: "deepseek",
+          },
+        });
+
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+
+        const streamCall = vi
+          .mocked(global.fetch)
+          .mock.calls.find(([url]) => String(url).endsWith("/stream"));
+
+        expect(streamCall).toBeDefined();
+        const [, init] = streamCall!;
+        expect(init).toMatchObject({
+          headers: expect.objectContaining({
+            authorization: "Bearer signed-in-test-token",
+          }),
+        });
+        expect(vi.mocked(createLlmModel)).not.toHaveBeenCalled();
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+
     it.each([
       { id: "openai/gpt-5.4-pro", provider: "openai" },
       { id: "anthropic/claude-opus-4.6", provider: "anthropic" },
@@ -1013,7 +1072,7 @@ describe("POST /api/mcp/chat-v2", () => {
                 {
                   type: "tool-call",
                   toolCallId: "orphaned-call-123",
-                  toolName: "asana_list_workspaces",
+                  toolName: "asana_list_projects",
                   input: {},
                 },
               ],

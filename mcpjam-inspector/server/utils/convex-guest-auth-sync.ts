@@ -4,6 +4,7 @@ import {
   initGuestTokenSecret,
 } from "../services/guest-token.js";
 import { getGuestSessionSharedSecret } from "./guest-session-secret.js";
+import { getGuestSessionHashPepper } from "./guest-session-pepper.js";
 import { logger } from "./logger.js";
 
 let provisioningPromise: Promise<void> | null = null;
@@ -109,6 +110,11 @@ export async function provisionGuestAuthConfigToConvex(): Promise<void> {
         convexEnv,
         "GUEST_SESSION_SHARED_SECRET",
         getGuestSessionSharedSecret(),
+      );
+      await setConvexEnv(
+        convexEnv,
+        "GUEST_SESSION_HASH_PEPPER",
+        getGuestSessionHashPepper(),
       );
 
       logger.info(

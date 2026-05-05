@@ -9,12 +9,14 @@ import React from "react";
 // vi.hoisted runs before imports, letting us capture bridge instances.
 const {
   mockBridge,
+  mockAppBridgeCtor,
   mockPostMessageTransport,
   triggerReady,
   stableStoreFns,
   mockSandboxPostMessage,
   sandboxedIframePropsRef,
   sandboxProxyBehaviorRef,
+  appBridgeArgsRef,
 } = vi.hoisted(() => {
   const bridge = {
     sendToolInput: vi.fn(),
@@ -40,6 +42,18 @@ const {
     onrequestdisplaymode: null as any,
     onupdatemodelcontext: null as any,
   };
+  const appBridgeArgsRef = { current: null as any };
+  const mockAppBridgeCtor = vi
+    .fn()
+    .mockImplementation((client, hostInfo, hostCapabilities, options) => {
+      appBridgeArgsRef.current = {
+        client,
+        hostInfo,
+        hostCapabilities,
+        options,
+      };
+      return bridge;
+    });
 
   // Stable function references for store selectors — prevents useEffect deps
   // from changing on every render, which would teardown/reinitialize the bridge.
@@ -56,10 +70,12 @@ const {
 
   return {
     mockBridge: bridge,
+    mockAppBridgeCtor,
     mockPostMessageTransport: vi.fn(),
     mockSandboxPostMessage: vi.fn(),
     sandboxedIframePropsRef: { current: null as any },
     sandboxProxyBehaviorRef: { current: { autoReady: true } },
+    appBridgeArgsRef,
     stableStoreFns: stableFns,
     /** Simulate the widget completing initialization. */
     triggerReady: () => {
@@ -70,19 +86,16 @@ const {
   };
 });
 
-const mockClientConfigStoreState = {
-  draftConfig: undefined as
-    | {
-        version: 1;
-        clientCapabilities: Record<string, unknown>;
-        hostContext: Record<string, unknown>;
-      }
-    | undefined,
+const mockHostContextStoreState = {
+  draftHostContext: {} as Record<string, unknown>,
 };
 
-const mockPreferencesState = {
-  themeMode: "light" as const,
-  hostStyle: "claude" as const,
+const mockPreferencesState: {
+  themeMode: "light" | "dark";
+  hostStyle: "claude" | "chatgpt";
+} = {
+  themeMode: "light",
+  hostStyle: "claude",
 };
 
 const mockPlaygroundStoreState = {
@@ -97,7 +110,7 @@ const mockPlaygroundStoreState = {
 
 // ── Module mocks ───────────────────────────────────────────────────────────
 vi.mock("@modelcontextprotocol/ext-apps/app-bridge", () => ({
-  AppBridge: vi.fn().mockImplementation(() => mockBridge),
+  AppBridge: mockAppBridgeCtor,
   PostMessageTransport: mockPostMessageTransport,
 }));
 
@@ -149,8 +162,8 @@ vi.mock("@/stores/ui-playground-store", () => ({
     selector(mockPlaygroundStoreState),
 }));
 
-vi.mock("@/stores/client-config-store", () => ({
-  useClientConfigStore: (selector: any) => selector(mockClientConfigStoreState),
+vi.mock("@/stores/host-context-store", () => ({
+  useHostContextStore: (selector: any) => selector(mockHostContextStoreState),
 }));
 
 vi.mock("@/stores/traffic-log-store", () => ({
@@ -184,6 +197,11 @@ vi.mock("../mcp-apps-renderer-helper", () => ({
 
 vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
   isVisibleToModelOnly: () => false,
+  UIType: {
+    MCP_APPS: "mcp-apps",
+    OPENAI_SDK: "openai-sdk",
+    OPENAI_SDK_AND_MCP_APPS: "openai-sdk-and-mcp-apps",
+  },
 }));
 
 vi.mock("lucide-react", () => ({
@@ -197,7 +215,10 @@ vi.mock("../mcp-apps-modal", () => ({
 // ── Import component under test (after mocks) ─────────────────────────────
 import { MCPAppsRenderer } from "../mcp-apps-renderer";
 import { authFetch } from "@/lib/session-token";
-import { ChatboxHostStyleProvider } from "@/contexts/chatbox-host-style-context";
+import {
+  ChatboxHostStyleProvider,
+  ChatboxHostThemeProvider,
+} from "@/contexts/chatbox-host-style-context";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 const baseProps = {
@@ -214,7 +235,11 @@ const baseProps = {
 describe("MCPAppsRenderer tool input streaming", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockClientConfigStoreState.draftConfig = undefined;
+    mockHostContextStoreState.draftHostContext = {};
+    Object.assign(mockPreferencesState, {
+      themeMode: "light",
+      hostStyle: "claude",
+    });
     Object.assign(mockPlaygroundStoreState, {
       isPlaygroundActive: false,
       mcpAppsCspMode: "permissive",
@@ -232,10 +257,12 @@ describe("MCPAppsRenderer tool input streaming", () => {
     mockBridge.setHostContext.mockClear();
     mockBridge.close.mockClear().mockResolvedValue(undefined);
     mockBridge.teardownResource.mockClear().mockResolvedValue({});
+    mockAppBridgeCtor.mockClear();
     mockBridge.oninitialized = null;
     mockSandboxPostMessage.mockClear();
     sandboxedIframePropsRef.current = null;
     sandboxProxyBehaviorRef.current.autoReady = true;
+    appBridgeArgsRef.current = null;
 
     vi.mocked(global.fetch).mockResolvedValue({
       ok: true,
@@ -322,16 +349,75 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
   });
 
+  it("uses the current chat host theme for host context outside the playground", async () => {
+    mockPreferencesState.themeMode = "light";
+    mockHostContextStoreState.draftHostContext = {
+      theme: "light",
+    };
+
+    render(
+      <ChatboxHostThemeProvider value="dark">
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostThemeProvider>,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+
+    expect(appBridgeArgsRef.current?.options?.hostContext?.theme).toBe("dark");
+
+    await act(async () => {
+      triggerReady();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(mockBridge.setHostContext).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          theme: "dark",
+        }),
+      );
+    });
+  });
+
+  it("keeps explicit host context theme inside the playground", async () => {
+    Object.assign(mockPlaygroundStoreState, {
+      isPlaygroundActive: true,
+    });
+    mockPreferencesState.themeMode = "dark";
+    mockHostContextStoreState.draftHostContext = {
+      theme: "light",
+    };
+
+    render(<MCPAppsRenderer {...baseProps} />);
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+
+    expect(appBridgeArgsRef.current?.options?.hostContext?.theme).toBe("light");
+
+    await act(async () => {
+      triggerReady();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(mockBridge.setHostContext).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          theme: "light",
+        }),
+      );
+    });
+  });
+
   it("clamps configured host display modes before sending host context", async () => {
-    mockClientConfigStoreState.draftConfig = {
-      version: 1,
-      clientCapabilities: {},
-      hostContext: {
-        displayMode: "fullscreen",
-        availableDisplayModes: ["inline"],
-        locale: "fr-FR",
-        timeZone: "Europe/Paris",
-      },
+    mockHostContextStoreState.draftHostContext = {
+      displayMode: "fullscreen",
+      availableDisplayModes: ["inline"],
+      locale: "fr-FR",
+      timeZone: "Europe/Paris",
     };
 
     render(<MCPAppsRenderer {...baseProps} />);
@@ -352,6 +438,47 @@ describe("MCPAppsRenderer tool input streaming", () => {
           availableDisplayModes: ["inline"],
           locale: "fr-FR",
           timeZone: "Europe/Paris",
+        }),
+      );
+    });
+  });
+
+  it("filters non-standard host style variables out of the initialize payload", async () => {
+    mockHostContextStoreState.draftHostContext = {
+      styles: {
+        variables: {
+          "--font-sans": "Custom Sans",
+          "--mcpjam-theme-preset": "soft-pop",
+          "--totally-unknown": "ignore-me",
+        },
+      },
+    };
+
+    render(<MCPAppsRenderer {...baseProps} />);
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+
+    expect(
+      appBridgeArgsRef.current?.options?.hostContext?.styles?.variables,
+    ).toEqual({
+      "--font-sans": "Custom Sans",
+    });
+
+    await act(async () => {
+      triggerReady();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(mockBridge.setHostContext).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          styles: expect.objectContaining({
+            variables: {
+              "--font-sans": "Custom Sans",
+            },
+          }),
         }),
       );
     });
@@ -404,7 +531,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(container?.className).toContain("inset-0");
   });
 
-  it("pushes updated host context when the workspace client profile changes", async () => {
+  it("pushes updated host context when the project client profile changes", async () => {
     const { rerender } = render(<MCPAppsRenderer {...baseProps} />);
 
     await vi.waitFor(() => {
@@ -425,16 +552,12 @@ describe("MCPAppsRenderer tool input streaming", () => {
       );
     });
 
-    mockClientConfigStoreState.draftConfig = {
-      version: 1,
-      clientCapabilities: {},
-      hostContext: {
-        locale: "es-ES",
-        timeZone: "Europe/Madrid",
-        deviceCapabilities: {
-          hover: false,
-          touch: true,
-        },
+    mockHostContextStoreState.draftHostContext = {
+      locale: "es-ES",
+      timeZone: "Europe/Madrid",
+      deviceCapabilities: {
+        hover: false,
+        touch: true,
       },
     };
 
@@ -636,10 +759,10 @@ describe("MCPAppsRenderer tool input streaming", () => {
       mockBridge.onsizechange?.({ width: 400, height: 300 });
     });
 
-    expect(
-      (screen.getByTestId("sandboxed-iframe") as HTMLElement).style.visibility,
-    ).toBe("hidden");
-    expect(screen.getByText("Streaming tool arguments...")).toBeTruthy();
+    const iframe = screen.getByTestId("sandboxed-iframe") as HTMLElement;
+    expect(iframe.style.opacity).toBe("0");
+    expect(iframe.style.position).toBe("absolute");
+    expect(iframe.style.pointerEvents).toBe("none");
 
     const partialInput = { elements: '[{"type":"rectangle"' };
     rerender(
@@ -657,12 +780,10 @@ describe("MCPAppsRenderer tool input streaming", () => {
       });
     });
     await vi.waitFor(() => {
-      expect(
-        (screen.getByTestId("sandboxed-iframe") as HTMLElement).style
-          .visibility,
-      ).toBe("");
+      expect(iframe.style.opacity).toBe("1");
+      expect(iframe.style.position).toBe("");
+      expect(iframe.style.pointerEvents).toBe("");
     });
-    expect(screen.queryByText("Streaming tool arguments...")).toBeNull();
   });
 
   it("streams updated partial input values while still streaming", async () => {

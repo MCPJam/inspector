@@ -145,9 +145,7 @@ function Harness() {
         stopRequestId={0}
         placeholder="Message"
         reasoningDisplayMode="inline"
-        initialSystemPrompt=""
-        initialTemperature={0.7}
-        initialRequireToolApproval={false}
+        executionConfig={{ systemPrompt: "", temperature: 0.7, requireToolApproval: false }}
         onSummaryChange={(summary) =>
           setSummaries((previous) => ({
             ...previous,
@@ -191,9 +189,7 @@ function renderCard(
       stopRequestId={0}
       placeholder="Message"
       reasoningDisplayMode="inline"
-      initialSystemPrompt=""
-      initialTemperature={0.7}
-      initialRequireToolApproval={false}
+      executionConfig={{ systemPrompt: "", temperature: 0.7, requireToolApproval: false }}
       onSummaryChange={vi.fn()}
       {...overrides}
     />,
@@ -243,9 +239,7 @@ describe("MultiModelChatCard", () => {
         stopRequestId={0}
         placeholder="Message"
         reasoningDisplayMode="inline"
-        initialSystemPrompt=""
-        initialTemperature={0.7}
-        initialRequireToolApproval={false}
+        executionConfig={{ systemPrompt: "", temperature: 0.7, requireToolApproval: false }}
         onSummaryChange={() => {}}
         compareEnterVersion={1}
         compareEnterMessages={seedMessages}
@@ -282,9 +276,7 @@ describe("MultiModelChatCard", () => {
         stopRequestId={0}
         placeholder="Message"
         reasoningDisplayMode="inline"
-        initialSystemPrompt=""
-        initialTemperature={0.7}
-        initialRequireToolApproval={false}
+        executionConfig={{ systemPrompt: "", temperature: 0.7, requireToolApproval: false }}
         onSummaryChange={() => {}}
         compareEnterVersion={1}
         compareEnterMessages={seedMessages}
@@ -313,9 +305,7 @@ describe("MultiModelChatCard", () => {
         stopRequestId={0}
         placeholder="Message"
         reasoningDisplayMode="inline"
-        initialSystemPrompt=""
-        initialTemperature={0.7}
-        initialRequireToolApproval={false}
+        executionConfig={{ systemPrompt: "", temperature: 0.7, requireToolApproval: false }}
         onSummaryChange={vi.fn()}
       />,
     );
@@ -330,9 +320,7 @@ describe("MultiModelChatCard", () => {
         stopRequestId={1}
         placeholder="Message"
         reasoningDisplayMode="inline"
-        initialSystemPrompt=""
-        initialTemperature={0.7}
-        initialRequireToolApproval={false}
+        executionConfig={{ systemPrompt: "", temperature: 0.7, requireToolApproval: false }}
         onSummaryChange={vi.fn()}
       />,
     );
@@ -353,9 +341,7 @@ describe("MultiModelChatCard", () => {
         stopRequestId={0}
         placeholder="Message"
         reasoningDisplayMode="inline"
-        initialSystemPrompt=""
-        initialTemperature={0.7}
-        initialRequireToolApproval={false}
+        executionConfig={{ systemPrompt: "", temperature: 0.7, requireToolApproval: false }}
         onSummaryChange={vi.fn()}
       />,
     );

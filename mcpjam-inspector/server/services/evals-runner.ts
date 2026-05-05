@@ -19,9 +19,17 @@ import {
   isMcpAppTool,
   type MCPClientManager,
 } from "@mcpjam/sdk";
-import { createLlmModel } from "../utils/chat-helpers";
+import {
+  createLlmModel,
+  type BaseUrls,
+  type CustomProviderConfig,
+} from "../utils/chat-helpers";
 import { logger } from "../utils/logger";
 import { injectOpenAICompat } from "../utils/widget-helpers.js";
+import {
+  buildLlmRuntimeConfigFromOrgConfig,
+  type ResolvedOrgModelConfig,
+} from "../utils/org-model-config";
 import {
   getCanonicalModelId,
   getModelById,
@@ -101,11 +109,12 @@ export type RunEvalSuiteOptions = {
       servers: string[];
       serverBindings?: Array<{
         serverName: string;
-        workspaceServerId?: string;
+        projectServerId?: string;
       }>;
     };
   };
   modelApiKeys?: Record<string, string>;
+  orgModelConfig?: ResolvedOrgModelConfig;
   convexClient: ConvexHttpClient;
   convexHttpUrl: string;
   convexAuthToken: string;
@@ -511,23 +520,23 @@ function resolveConfiguredServerIds(args: {
   const availableServerIdByLowercase = new Map(
     availableServerIds.map((serverId) => [serverId.toLowerCase(), serverId]),
   );
-  const workspaceServerIdByName = new Map<string, string>();
-  const serverNameByWorkspaceServerId = new Map<string, string>();
+  const projectServerIdByName = new Map<string, string>();
+  const serverNameByProjectServerId = new Map<string, string>();
 
   for (const binding of args.environment?.serverBindings ?? []) {
     if (typeof binding.serverName !== "string") {
       continue;
     }
     const serverName = binding.serverName.trim();
-    const workspaceServerId =
-      typeof binding.workspaceServerId === "string"
-        ? binding.workspaceServerId.trim()
+    const projectServerId =
+      typeof binding.projectServerId === "string"
+        ? binding.projectServerId.trim()
         : "";
-    if (!serverName || !workspaceServerId) {
+    if (!serverName || !projectServerId) {
       continue;
     }
-    workspaceServerIdByName.set(serverName.toLowerCase(), workspaceServerId);
-    serverNameByWorkspaceServerId.set(workspaceServerId.toLowerCase(), serverName);
+    projectServerIdByName.set(serverName.toLowerCase(), projectServerId);
+    serverNameByProjectServerId.set(projectServerId.toLowerCase(), serverName);
   }
 
   const resolvedServerIds: string[] = [];
@@ -547,19 +556,19 @@ function resolveConfiguredServerIds(args: {
         ? trimmedServerRef
         : availableServerIdByLowercase.get(trimmedServerRef.toLowerCase()) ??
           (() => {
-            const workspaceServerId = workspaceServerIdByName.get(
+            const projectServerId = projectServerIdByName.get(
               trimmedServerRef.toLowerCase(),
             );
-            if (workspaceServerId) {
+            if (projectServerId) {
               return (
-                (availableServerIdsSet.has(workspaceServerId)
-                  ? workspaceServerId
+                (availableServerIdsSet.has(projectServerId)
+                  ? projectServerId
                   : undefined) ??
-                availableServerIdByLowercase.get(workspaceServerId.toLowerCase())
+                availableServerIdByLowercase.get(projectServerId.toLowerCase())
               );
             }
 
-            const serverName = serverNameByWorkspaceServerId.get(
+            const serverName = serverNameByProjectServerId.get(
               trimmedServerRef.toLowerCase(),
             );
             if (serverName) {
@@ -994,6 +1003,7 @@ type RunIterationBaseParams = {
   testCaseId?: string;
   suiteId?: string;
   modelApiKeys?: Record<string, string>;
+  orgModelConfig?: ResolvedOrgModelConfig;
   convexClient: ConvexHttpClient;
   runId: string | null; // For cancellation checks
   abortSignal?: AbortSignal; // For aborting in-flight requests
@@ -1010,15 +1020,79 @@ type RunIterationBackendParams = RunIterationBaseParams & {
   modelId: string;
 };
 
+function parseCustomProviderName(modelId: string): string | undefined {
+  if (!modelId.startsWith("custom:")) return undefined;
+
+  const [, providerName] = modelId.split(":");
+  return providerName || undefined;
+}
+
 const buildModelDefinition = (test: EvalTestCase): ModelDefinition => {
-  return (
-    getModelById(test.model) ?? {
-      id: test.model,
-      name: test.title || String(test.model),
-      provider: test.provider as ModelProvider,
-    }
-  );
+  const supportedModel = getModelById(test.model);
+  if (
+    supportedModel &&
+    supportedModel.provider.toLowerCase() === test.provider.toLowerCase()
+  ) {
+    return supportedModel;
+  }
+
+  const provider = test.provider as ModelProvider;
+  return {
+    id: test.model,
+    name: test.title || String(test.model),
+    provider,
+    ...(provider === "custom"
+      ? { customProviderName: parseCustomProviderName(test.model) }
+      : {}),
+  };
 };
+
+function lookupProviderApiKey(
+  modelApiKeys: Record<string, string> | undefined,
+  provider: string,
+): string | undefined {
+  return modelApiKeys?.[provider] ?? modelApiKeys?.[provider.toLowerCase()];
+}
+
+function hasBaseUrls(baseUrls: BaseUrls): boolean {
+  return Boolean(baseUrls.ollama || baseUrls.azure);
+}
+
+function resolveEvalModelRuntime(args: {
+  test: EvalTestCase;
+  modelDefinition: ModelDefinition;
+  modelApiKeys?: Record<string, string>;
+  orgModelConfig?: ResolvedOrgModelConfig;
+}): {
+  apiKey: string;
+  baseUrls?: BaseUrls;
+  customProviders?: CustomProviderConfig[];
+} {
+  const orgRuntime = args.orgModelConfig
+    ? buildLlmRuntimeConfigFromOrgConfig(args.orgModelConfig)
+    : undefined;
+  const apiKey =
+    lookupProviderApiKey(args.modelApiKeys, args.test.provider) ??
+    lookupProviderApiKey(orgRuntime?.modelApiKeys, args.test.provider) ??
+    "";
+
+  const provider = args.modelDefinition.provider;
+  if (!apiKey && provider !== "ollama" && provider !== "custom") {
+    throw new Error(
+      `Missing API key for provider ${args.test.provider} (test: ${args.test.title})`,
+    );
+  }
+
+  return {
+    apiKey,
+    ...(orgRuntime?.baseUrls && hasBaseUrls(orgRuntime.baseUrls)
+      ? { baseUrls: orgRuntime.baseUrls }
+      : {}),
+    ...(orgRuntime?.customProviders.length
+      ? { customProviders: orgRuntime.customProviders }
+      : {}),
+  };
+}
 
 const runIterationWithAiSdk = async ({
   test,
@@ -1030,6 +1104,7 @@ const runIterationWithAiSdk = async ({
   suiteId,
   modelDefinition,
   modelApiKeys,
+  orgModelConfig,
   convexClient,
   runId,
   abortSignal,
@@ -1091,17 +1166,12 @@ const runIterationWithAiSdk = async ({
       : undefined;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
-  // Get API key for this model's provider
-  // Try exact match first, then lowercase
-  const apiKey =
-    modelApiKeys?.[test.provider] ??
-    modelApiKeys?.[test.provider.toLowerCase()] ??
-    "";
-  if (!apiKey) {
-    throw new Error(
-      `Missing API key for provider ${test.provider} (test: ${test.title})`,
-    );
-  }
+  const modelRuntime = resolveEvalModelRuntime({
+    test,
+    modelDefinition,
+    modelApiKeys,
+    orgModelConfig,
+  });
 
   const runStartedAt = Date.now();
   const iterationMetadataBase: Record<string, string | number | boolean> = {};
@@ -1153,7 +1223,12 @@ const runIterationWithAiSdk = async ({
     null;
 
   try {
-    const llmModel = createLlmModel(modelDefinition, apiKey);
+    const llmModel = createLlmModel(
+      modelDefinition,
+      modelRuntime.apiKey,
+      modelRuntime.baseUrls,
+      modelRuntime.customProviders,
+    );
 
     if (
       toolChoice &&
@@ -1997,6 +2072,7 @@ const runTestCase = async (params: {
   mcpClientManager: MCPClientManager;
   recorder: SuiteRunRecorder | null;
   modelApiKeys?: Record<string, string>;
+  orgModelConfig?: ResolvedOrgModelConfig;
   convexHttpUrl: string;
   convexAuthToken: string;
   convexClient: ConvexHttpClient;
@@ -2012,6 +2088,7 @@ const runTestCase = async (params: {
     mcpClientManager,
     recorder,
     modelApiKeys,
+    orgModelConfig,
     convexHttpUrl,
     convexAuthToken,
     convexClient,
@@ -2049,6 +2126,7 @@ const runTestCase = async (params: {
         modelId: resolvedModelId,
         convexClient,
         modelApiKeys,
+        orgModelConfig,
         runId,
         abortSignal,
         compareRunId,
@@ -2067,6 +2145,7 @@ const runTestCase = async (params: {
       suiteId,
       modelDefinition,
       modelApiKeys,
+      orgModelConfig,
       convexClient,
       runId,
       abortSignal,
@@ -2083,6 +2162,7 @@ export const runEvalSuiteWithAiSdk = async ({
   runId,
   config,
   modelApiKeys,
+  orgModelConfig,
   convexClient,
   convexHttpUrl,
   convexAuthToken,
@@ -2155,6 +2235,7 @@ export const runEvalSuiteWithAiSdk = async ({
         mcpClientManager,
         recorder,
         modelApiKeys,
+        orgModelConfig,
         convexHttpUrl,
         convexAuthToken,
         convexClient,
@@ -2314,6 +2395,7 @@ const streamIterationWithAiSdk = async ({
   suiteId,
   modelDefinition,
   modelApiKeys,
+  orgModelConfig,
   convexClient,
   runId,
   abortSignal,
@@ -2377,15 +2459,12 @@ const streamIterationWithAiSdk = async ({
       : undefined;
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
-  const apiKey =
-    modelApiKeys?.[test.provider] ??
-    modelApiKeys?.[test.provider.toLowerCase()] ??
-    "";
-  if (!apiKey) {
-    throw new Error(
-      `Missing API key for provider ${test.provider} (test: ${test.title})`,
-    );
-  }
+  const modelRuntime = resolveEvalModelRuntime({
+    test,
+    modelDefinition,
+    modelApiKeys,
+    orgModelConfig,
+  });
 
   const runStartedAt = Date.now();
   const iterationMetadataBase: Record<string, string | number | boolean> = {};
@@ -2437,7 +2516,12 @@ const streamIterationWithAiSdk = async ({
     null;
 
   try {
-    const llmModel = createLlmModel(modelDefinition, apiKey);
+    const llmModel = createLlmModel(
+      modelDefinition,
+      modelRuntime.apiKey,
+      modelRuntime.baseUrls,
+      modelRuntime.customProviders,
+    );
 
     if (
       toolChoice &&
@@ -3615,6 +3699,7 @@ export const streamTestCase = async (params: {
   mcpClientManager: MCPClientManager;
   recorder: SuiteRunRecorder | null;
   modelApiKeys?: Record<string, string>;
+  orgModelConfig?: ResolvedOrgModelConfig;
   convexHttpUrl: string;
   convexAuthToken: string;
   convexClient: ConvexHttpClient;
@@ -3631,6 +3716,7 @@ export const streamTestCase = async (params: {
     mcpClientManager,
     recorder,
     modelApiKeys,
+    orgModelConfig,
     convexHttpUrl,
     convexAuthToken,
     convexClient,
@@ -3669,6 +3755,7 @@ export const streamTestCase = async (params: {
         modelId: resolvedModelId,
         convexClient,
         modelApiKeys,
+        orgModelConfig,
         runId,
         abortSignal,
         emit,
@@ -3688,6 +3775,7 @@ export const streamTestCase = async (params: {
       suiteId,
       modelDefinition,
       modelApiKeys,
+      orgModelConfig,
       convexClient,
       runId,
       abortSignal,

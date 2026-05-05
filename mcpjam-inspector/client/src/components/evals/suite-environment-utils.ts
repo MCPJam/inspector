@@ -1,4 +1,4 @@
-export type WorkspaceServerRecord = {
+export type ProjectServerRecord = {
   _id: string;
   name: string;
   transportType?: "stdio" | "http";
@@ -6,9 +6,9 @@ export type WorkspaceServerRecord = {
 
 export type SuiteEnvironmentOption = {
   name: string;
-  workspaceServerId?: string;
+  projectServerId?: string;
   isConfigured: boolean;
-  isInWorkspace: boolean;
+  isInProject: boolean;
   isConnected: boolean;
 };
 
@@ -41,7 +41,7 @@ export function filterServerBindings(
   bindings:
     | Array<{
         serverName: string;
-        workspaceServerId?: string;
+        projectServerId?: string;
       }>
     | undefined,
   selectedServers: readonly string[],
@@ -53,8 +53,8 @@ export function filterServerBindings(
       ? [
           {
             serverName: binding.serverName,
-            ...(binding.workspaceServerId
-              ? { workspaceServerId: binding.workspaceServerId }
+            ...(binding.projectServerId
+              ? { projectServerId: binding.projectServerId }
               : {}),
           },
         ]
@@ -64,13 +64,13 @@ export function filterServerBindings(
 
 export function buildSuiteEnvironmentOptions(args: {
   configuredServers: readonly string[] | undefined;
-  workspaceServers: readonly WorkspaceServerRecord[] | undefined;
+  projectServers: readonly ProjectServerRecord[] | undefined;
   connectedServerNames: ReadonlySet<string>;
 }): SuiteEnvironmentOption[] {
   const configured = normalizeServerNames(args.configuredServers);
-  const workspaceServers = args.workspaceServers ?? [];
-  const workspaceServerByName = new Map(
-    workspaceServers.map((server) => [server.name.toLowerCase(), server]),
+  const projectServers = args.projectServers ?? [];
+  const projectServerByName = new Map(
+    projectServers.map((server) => [server.name.toLowerCase(), server]),
   );
 
   const options: SuiteEnvironmentOption[] = [];
@@ -82,32 +82,32 @@ export function buildSuiteEnvironmentOptions(args: {
       continue;
     }
     seen.add(key);
-    const workspaceServer = workspaceServerByName.get(key);
+    const projectServer = projectServerByName.get(key);
     options.push({
       name: serverName,
-      workspaceServerId: workspaceServer?._id,
+      projectServerId: projectServer?._id,
       isConfigured: true,
-      isInWorkspace: Boolean(workspaceServer),
+      isInProject: Boolean(projectServer),
       isConnected: args.connectedServerNames.has(serverName),
     });
   }
 
-  const remainingWorkspaceServers = [...workspaceServers].sort((left, right) =>
+  const remainingProjectServers = [...projectServers].sort((left, right) =>
     left.name.localeCompare(right.name),
   );
 
-  for (const workspaceServer of remainingWorkspaceServers) {
-    const key = workspaceServer.name.toLowerCase();
+  for (const projectServer of remainingProjectServers) {
+    const key = projectServer.name.toLowerCase();
     if (seen.has(key)) {
       continue;
     }
     seen.add(key);
     options.push({
-      name: workspaceServer.name,
-      workspaceServerId: workspaceServer._id,
+      name: projectServer.name,
+      projectServerId: projectServer._id,
       isConfigured: false,
-      isInWorkspace: true,
-      isConnected: args.connectedServerNames.has(workspaceServer.name),
+      isInProject: true,
+      isConnected: args.connectedServerNames.has(projectServer.name),
     });
   }
 

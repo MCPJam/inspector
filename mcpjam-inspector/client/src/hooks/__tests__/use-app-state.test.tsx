@@ -6,44 +6,45 @@ import { buildDisconnectedRuntimeServers, useAppState } from "../use-app-state";
 const {
   loadAppStateMock,
   saveAppStateMock,
-  useWorkspaceStateMock,
+  useProjectStateMock,
   useServerStateMock,
-  workspaceStateValue,
+  projectStateValue,
   serverStateValue,
 } = vi.hoisted(() => ({
   loadAppStateMock: vi.fn(),
   saveAppStateMock: vi.fn(),
-  useWorkspaceStateMock: vi.fn(),
+  useProjectStateMock: vi.fn(),
   useServerStateMock: vi.fn(),
-  workspaceStateValue: {
-    effectiveWorkspaces: {},
-    setConvexActiveWorkspaceId: vi.fn(),
-    clearConvexActiveWorkspaceSelection: vi.fn(),
+  projectStateValue: {
+    effectiveProjects: {},
+    setConvexActiveProjectId: vi.fn(),
+    clearConvexActiveProjectSelection: vi.fn(),
     useLocalFallback: false,
-    remoteWorkspaces: [],
-    isLoadingRemoteWorkspaces: false,
-    effectiveActiveWorkspaceId: "none",
-    isLoadingWorkspaces: false,
-    activeWorkspaceServersFlat: undefined,
-    handleCreateWorkspace: vi.fn(),
-    handleUpdateWorkspace: vi.fn(),
+    remoteProjects: [],
+    isLoadingRemoteProjects: false,
+    effectiveActiveProjectId: "none",
+    isLoadingProjects: false,
+    activeProjectServersFlat: undefined,
+    handleCreateProject: vi.fn(),
+    handleUpdateProject: vi.fn(),
     handleUpdateClientConfig: vi.fn(),
-    handleDeleteWorkspace: vi.fn(),
-    handleDuplicateWorkspace: vi.fn(),
-    handleSetDefaultWorkspace: vi.fn(),
-    handleWorkspaceShared: vi.fn(),
-    handleExportWorkspace: vi.fn(),
-    handleImportWorkspace: vi.fn(),
+    handleUpdateHostContext: vi.fn(),
+    handleDeleteProject: vi.fn(),
+    handleDuplicateProject: vi.fn(),
+    handleSetDefaultProject: vi.fn(),
+    handleProjectShared: vi.fn(),
+    handleExportProject: vi.fn(),
+    handleImportProject: vi.fn(),
   },
   serverStateValue: {
-    workspaceServers: {},
+    projectServers: {},
     connectedOrConnectingServerConfigs: {},
     selectedServerEntry: undefined,
     selectedMCPConfig: undefined,
     selectedMCPConfigs: [],
     selectedMCPConfigsMap: {},
     isMultiSelectMode: false,
-    activeWorkspace: undefined,
+    activeProject: undefined,
     handleConnect: vi.fn(),
     handleDisconnect: vi.fn(),
     handleReconnect: vi.fn(),
@@ -68,6 +69,10 @@ vi.mock("convex/react", () => ({
   }),
 }));
 
+vi.mock("@/lib/config", () => ({
+  HOSTED_MODE: false,
+}));
+
 vi.mock("../use-logger", () => ({
   useLogger: () => ({
     info: vi.fn(),
@@ -81,8 +86,8 @@ vi.mock("@/state/storage", () => ({
   saveAppState: (...args: unknown[]) => saveAppStateMock(...args),
 }));
 
-vi.mock("../use-workspace-state", () => ({
-  useWorkspaceState: (...args: unknown[]) => useWorkspaceStateMock(...args),
+vi.mock("../use-project-state", () => ({
+  useProjectState: (...args: unknown[]) => useProjectStateMock(...args),
 }));
 
 vi.mock("../use-server-state", () => ({
@@ -91,7 +96,12 @@ vi.mock("../use-server-state", () => ({
 
 function createServer(
   name: string,
-  connectionStatus: "connected" | "disconnected" | "failed" = "connected",
+  connectionStatus:
+    | "connected"
+    | "connecting"
+    | "oauth-flow"
+    | "disconnected"
+    | "failed" = "connected",
 ) {
   return {
     name,
@@ -109,10 +119,15 @@ function createServer(
 
 function createLoadedAppState(selectedServerState?: {
   name: string;
-  connectionStatus: "connected" | "disconnected" | "failed";
+  connectionStatus:
+    | "connected"
+    | "connecting"
+    | "oauth-flow"
+    | "disconnected"
+    | "failed";
 }) {
-  const baseWorkspace = {
-    ...initialAppState.workspaces.default,
+  const baseProject = {
+    ...initialAppState.projects.default,
     servers: {},
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
     updatedAt: new Date("2026-01-01T00:00:00.000Z"),
@@ -121,13 +136,13 @@ function createLoadedAppState(selectedServerState?: {
   if (!selectedServerState) {
     return {
       ...initialAppState,
-      workspaces: { default: baseWorkspace },
+      projects: { default: baseProject },
     };
   }
 
   return {
     ...initialAppState,
-    workspaces: { default: baseWorkspace },
+    projects: { default: baseProject },
     servers: {
       [selectedServerState.name]: createServer(
         selectedServerState.name,
@@ -145,14 +160,14 @@ describe("useAppState active organization recovery", () => {
     localStorage.clear();
     window.history.replaceState({}, "", "/");
     loadAppStateMock.mockReturnValue(initialAppState);
-    Object.assign(workspaceStateValue, {
-      effectiveWorkspaces: {},
+    Object.assign(projectStateValue, {
+      effectiveProjects: {},
       useLocalFallback: false,
-      remoteWorkspaces: [],
-      isLoadingRemoteWorkspaces: false,
-      effectiveActiveWorkspaceId: "none",
+      remoteProjects: [],
+      isLoadingRemoteProjects: false,
+      effectiveActiveProjectId: "none",
     });
-    useWorkspaceStateMock.mockReturnValue(workspaceStateValue);
+    useProjectStateMock.mockReturnValue(projectStateValue);
     useServerStateMock.mockReturnValue(serverStateValue);
   });
 
@@ -176,7 +191,7 @@ describe("useAppState active organization recovery", () => {
       expect(result.current.activeOrganizationId).toBe("org-owned");
     });
 
-    expect(useWorkspaceStateMock).toHaveBeenLastCalledWith(
+    expect(useProjectStateMock).toHaveBeenLastCalledWith(
       expect.objectContaining({
         activeOrganizationId: "org-owned",
         validOrganizationIds: ["org-member", "org-owned"],
@@ -203,8 +218,8 @@ describe("useAppState active organization recovery", () => {
       }),
     );
 
-    expect(useWorkspaceStateMock).toHaveBeenCalled();
-    expect(useWorkspaceStateMock.mock.calls[0]?.[0]).toEqual(
+    expect(useProjectStateMock).toHaveBeenCalled();
+    expect(useProjectStateMock.mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({
         activeOrganizationId: undefined,
       }),
@@ -255,7 +270,7 @@ describe("useAppState active organization recovery", () => {
       expect(result.current.activeOrganizationId).toBeUndefined();
     });
 
-    expect(useWorkspaceStateMock).toHaveBeenLastCalledWith(
+    expect(useProjectStateMock).toHaveBeenLastCalledWith(
       expect.objectContaining({
         activeOrganizationId: undefined,
         validOrganizationIds: [],
@@ -264,7 +279,7 @@ describe("useAppState active organization recovery", () => {
     expect(localStorage.getItem("active-organization-id:user-1")).toBeNull();
   });
 
-  it("builds disconnected runtime servers from cached workspace servers", () => {
+  it("builds disconnected runtime servers from cached project servers", () => {
     expect(
       buildDisconnectedRuntimeServers({
         champions: createServer("champions"),
@@ -289,21 +304,21 @@ describe("useAppState active organization recovery", () => {
         connectionStatus: "connected",
       }),
     );
-    Object.assign(workspaceStateValue, {
-      effectiveWorkspaces: {
+    Object.assign(projectStateValue, {
+      effectiveProjects: {
         default: {
-          ...initialAppState.workspaces.default,
+          ...initialAppState.projects.default,
           servers: {},
           createdAt: new Date("2026-01-01T00:00:00.000Z"),
           updatedAt: new Date("2026-01-01T00:00:00.000Z"),
         },
       },
-      effectiveActiveWorkspaceId: "default",
-      remoteWorkspaces: [],
+      effectiveActiveProjectId: "default",
+      remoteProjects: [],
       useLocalFallback: false,
     });
     Object.assign(serverStateValue, {
-      workspaceServers: {},
+      projectServers: {},
       selectedMCPConfig: undefined,
     });
 
@@ -331,9 +346,9 @@ describe("useAppState active organization recovery", () => {
 
     loadAppStateMock.mockReturnValue({
       ...initialAppState,
-      workspaces: {
+      projects: {
         default: {
-          ...initialAppState.workspaces.default,
+          ...initialAppState.projects.default,
           servers: {},
           createdAt: new Date("2026-01-01T00:00:00.000Z"),
           updatedAt: new Date("2026-01-01T00:00:00.000Z"),
@@ -344,21 +359,21 @@ describe("useAppState active organization recovery", () => {
       },
       selectedServer: "failed-server",
     });
-    Object.assign(workspaceStateValue, {
-      effectiveWorkspaces: {
+    Object.assign(projectStateValue, {
+      effectiveProjects: {
         default: {
-          ...initialAppState.workspaces.default,
+          ...initialAppState.projects.default,
           servers: {},
           createdAt: new Date("2026-01-01T00:00:00.000Z"),
           updatedAt: new Date("2026-01-01T00:00:00.000Z"),
         },
       },
-      effectiveActiveWorkspaceId: "default",
-      remoteWorkspaces: [],
+      effectiveActiveProjectId: "default",
+      remoteProjects: [],
       useLocalFallback: false,
     });
     Object.assign(serverStateValue, {
-      workspaceServers: {},
+      projectServers: {},
       selectedMCPConfig: undefined,
     });
 
@@ -410,10 +425,10 @@ describe("useAppState active organization recovery", () => {
       );
 
       await waitFor(() => {
-        const lastWorkspaceArgs =
-          useWorkspaceStateMock.mock.calls.at(-1)?.[0];
+        const lastProjectArgs =
+          useProjectStateMock.mock.calls.at(-1)?.[0];
         expect(
-          lastWorkspaceArgs?.appState.servers["demo-server"]
+          lastProjectArgs?.appState.servers["demo-server"]
             ?.connectionStatus,
         ).toBe("disconnected");
       });
@@ -423,9 +438,9 @@ describe("useAppState active organization recovery", () => {
   it("tracks missing dashboard OAuth callbacks without seeding a temporary server", async () => {
     loadAppStateMock.mockReturnValue({
       ...initialAppState,
-      workspaces: {
+      projects: {
         default: {
-          ...initialAppState.workspaces.default,
+          ...initialAppState.projects.default,
           servers: {},
           createdAt: new Date("2026-01-01T00:00:00.000Z"),
           updatedAt: new Date("2026-01-01T00:00:00.000Z"),
@@ -456,8 +471,8 @@ describe("useAppState active organization recovery", () => {
       );
     });
 
-    const lastWorkspaceArgs = useWorkspaceStateMock.mock.calls.at(-1)?.[0];
-    expect(lastWorkspaceArgs?.appState.servers).toEqual({});
+    const lastProjectArgs = useProjectStateMock.mock.calls.at(-1)?.[0];
+    expect(lastProjectArgs?.appState.servers).toEqual({});
   });
 
   it("clears missing dashboard OAuth UI state after the safety timeout", async () => {
@@ -466,9 +481,9 @@ describe("useAppState active organization recovery", () => {
     try {
       loadAppStateMock.mockReturnValue({
         ...initialAppState,
-        workspaces: {
+        projects: {
           default: {
-            ...initialAppState.workspaces.default,
+            ...initialAppState.projects.default,
             servers: {},
             createdAt: new Date("2026-01-01T00:00:00.000Z"),
             updatedAt: new Date("2026-01-01T00:00:00.000Z"),
@@ -509,4 +524,5 @@ describe("useAppState active organization recovery", () => {
       vi.useRealTimers();
     }
   });
+
 });

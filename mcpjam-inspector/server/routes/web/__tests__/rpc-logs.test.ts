@@ -127,7 +127,7 @@ describe("web hosted rpc logs", () => {
                 {
                   ok: true,
                   role: "member",
-                  accessLevel: "workspace_member",
+                  accessLevel: "project_member",
                   permissions: { chatOnly: false },
                   serverConfig: {
                     transportType: "http",
@@ -166,7 +166,7 @@ describe("web hosted rpc logs", () => {
       app,
       "/api/web/tools/list",
       {
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         serverId: "srv-1",
         serverName: "Notion",
       },
@@ -207,7 +207,7 @@ describe("web hosted rpc logs", () => {
       app,
       "/api/web/prompts/list-multi",
       {
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         serverIds: ["srv-1", "srv-2"],
         serverNames: ["Notion", "GitHub"],
       },
@@ -271,7 +271,7 @@ describe("web hosted rpc logs", () => {
         app,
         "/api/web/tools/list",
         {
-          workspaceId: "workspace-1",
+          projectId: "project-1",
           serverId: "srv-1",
           serverName: "Notion",
         },
@@ -285,7 +285,7 @@ describe("web hosted rpc logs", () => {
         app,
         "/api/web/tools/list",
         {
-          workspaceId: "workspace-1",
+          projectId: "project-1",
           serverId: "srv-2",
           serverName: "GitHub",
         },
@@ -310,7 +310,7 @@ describe("web hosted rpc logs", () => {
       app,
       "/api/web/testing/tools/list-no-rpc-logs",
       {
-        workspaceId: "workspace-1",
+        projectId: "project-1",
         serverId: "srv-1",
         serverName: "Notion",
       },

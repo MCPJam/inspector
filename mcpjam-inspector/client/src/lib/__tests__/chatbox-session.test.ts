@@ -43,13 +43,13 @@ describe("chatbox-session", () => {
     writeChatboxSession({
       token: "chatbox-token",
       payload: {
-        workspaceId: "ws_1",
+        projectId: "ws_1",
         chatboxId: "sbx_1",
         name: "Demo Chatbox",
         hostStyle: "claude",
         mode: "invited_only",
         allowGuestAccess: false,
-        viewerIsWorkspaceMember: true,
+        viewerIsProjectMember: true,
         systemPrompt: "You are helpful.",
         modelId: "openai/gpt-5-mini",
         temperature: 0.4,
@@ -63,14 +63,14 @@ describe("chatbox-session", () => {
 
   it("round-trips chatbox session storage", () => {
     const payload = {
-      workspaceId: "ws_1",
+      projectId: "ws_1",
       chatboxId: "sbx_1",
       name: "Chatbox",
       description: "Hosted chatbox",
       hostStyle: "chatgpt" as const,
       mode: "any_signed_in_with_link" as const,
       allowGuestAccess: true,
-      viewerIsWorkspaceMember: false,
+      viewerIsProjectMember: false,
       systemPrompt: "System prompt",
       modelId: "openai/gpt-5-mini",
       temperature: 0.7,
@@ -116,12 +116,12 @@ describe("chatbox-session", () => {
       JSON.stringify({
         token: "chatbox-token",
         payload: {
-          workspaceId: "ws_1",
+          projectId: "ws_1",
           chatboxId: "sbx_1",
           name: "Legacy Chatbox",
           mode: "invited_only",
           allowGuestAccess: false,
-          viewerIsWorkspaceMember: true,
+          viewerIsProjectMember: true,
           systemPrompt: "You are helpful.",
           modelId: "openai/gpt-5-mini",
           temperature: 0.4,
@@ -134,14 +134,14 @@ describe("chatbox-session", () => {
     expect(readChatboxSession()).toEqual({
       token: "chatbox-token",
       payload: {
-        workspaceId: "ws_1",
+        projectId: "ws_1",
         chatboxId: "sbx_1",
         name: "Legacy Chatbox",
         description: undefined,
         hostStyle: "claude",
         mode: "invited_only",
         allowGuestAccess: false,
-        viewerIsWorkspaceMember: true,
+        viewerIsProjectMember: true,
         systemPrompt: "You are helpful.",
         modelId: "openai/gpt-5-mini",
         temperature: 0.4,
@@ -152,18 +152,43 @@ describe("chatbox-session", () => {
     });
   });
 
+  it("preserves extensible hostStyle ids before a host definition is registered", () => {
+    sessionStorage.setItem(
+      "mcpjam_chatbox_session_v1",
+      JSON.stringify({
+        token: "chatbox-token",
+        payload: {
+          projectId: "ws_1",
+          chatboxId: "sbx_1",
+          name: "Codex Chatbox",
+          hostStyle: "codex",
+          mode: "invited_only",
+          allowGuestAccess: false,
+          viewerIsProjectMember: true,
+          systemPrompt: "You are helpful.",
+          modelId: "openai/gpt-5-mini",
+          temperature: 0.4,
+          requireToolApproval: true,
+          servers: [],
+        },
+      }),
+    );
+
+    expect(readChatboxSession()?.payload.hostStyle).toBe("codex");
+  });
+
   it("preserves preview surface when explicitly stored", () => {
     writeChatboxSession({
       token: "chatbox-token",
       surface: "preview",
       payload: {
-        workspaceId: "ws_1",
+        projectId: "ws_1",
         chatboxId: "sbx_1",
         name: "Playground Chatbox",
         hostStyle: "claude",
         mode: "invited_only",
         allowGuestAccess: false,
-        viewerIsWorkspaceMember: true,
+        viewerIsProjectMember: true,
         systemPrompt: "You are helpful.",
         modelId: "openai/gpt-5-mini",
         temperature: 0.4,
@@ -182,13 +207,13 @@ describe("chatbox-session", () => {
       surface: "preview",
       updatedAt: Date.now(),
       payload: {
-        workspaceId: "ws_1",
+        projectId: "ws_1",
         chatboxId: "sbx_1",
         name: "Playground Chatbox",
         hostStyle: "claude",
         mode: "invited_only",
         allowGuestAccess: false,
-        viewerIsWorkspaceMember: true,
+        viewerIsProjectMember: true,
         systemPrompt: "You are helpful.",
         modelId: "openai/gpt-5-mini",
         temperature: 0.4,
@@ -266,13 +291,13 @@ describe("chatbox-session", () => {
       surface: "preview",
       updatedAt: Date.now(),
       payload: {
-        workspaceId: "ws_1",
+        projectId: "ws_1",
         chatboxId: "sbx_1",
         name: "Chatbox",
         hostStyle: "claude",
         mode: "invited_only",
         allowGuestAccess: false,
-        viewerIsWorkspaceMember: true,
+        viewerIsProjectMember: true,
         systemPrompt: "You are helpful.",
         modelId: "openai/gpt-5-mini",
         temperature: 0.4,
@@ -292,7 +317,7 @@ describe("chatbox-session", () => {
 
     it("round-trips a builder session", () => {
       const session = {
-        workspaceId: "ws_1",
+        projectId: "ws_1",
         chatboxId: "sbx_1",
         draft: { name: "Test", hostStyle: "claude" },
         viewMode: "preview",
@@ -302,9 +327,9 @@ describe("chatbox-session", () => {
       expect(readBuilderSession("ws_1")).toEqual(session);
     });
 
-    it("returns null when workspaceId does not match", () => {
+    it("returns null when projectId does not match", () => {
       writeBuilderSession({
-        workspaceId: "ws_1",
+        projectId: "ws_1",
         chatboxId: null,
         draft: null,
         viewMode: "builder",
@@ -315,7 +340,7 @@ describe("chatbox-session", () => {
 
     it("clears the builder session", () => {
       writeBuilderSession({
-        workspaceId: "ws_1",
+        projectId: "ws_1",
         chatboxId: "sbx_1",
         draft: null,
         viewMode: "builder",

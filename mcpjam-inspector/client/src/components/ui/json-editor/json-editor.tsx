@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/lib/clipboard";
-import { ErrorBoundary } from "@/components/evals/ErrorBoundary";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { expandJsonStringsInValue, useJsonEditor } from "./use-json-editor";
 import { JsonEditorView } from "./json-editor-view";
 import { JsonEditorEdit } from "./json-editor-edit";
@@ -59,6 +59,8 @@ export function JsonEditor({
   showLineNumbers = true,
   toolbarLeftContent,
   toolbarRightContent,
+  error,
+  showValidationErrorInStatusBar = true,
 }: JsonEditorProps) {
   // Determine if we're in raw mode (string content) vs parsed mode
   const isRawMode = rawContent !== undefined;
@@ -235,6 +237,7 @@ export function JsonEditor({
             isValid={editor.isValid}
             leftContent={toolbarLeftContent}
             rightContent={toolbarRightContent}
+            error={error}
           />
         )}
 
@@ -274,9 +277,10 @@ export function JsonEditor({
         {mode === "edit" && (
           <JsonEditorStatusBar
             cursorPosition={editor.cursorPosition}
-            isValid={editor.isValid}
-            validationError={editor.validationError}
             characterCount={editor.content.length}
+            validationError={
+              showValidationErrorInStatusBar ? editor.validationError : null
+            }
           />
         )}
       </div>

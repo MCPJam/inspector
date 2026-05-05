@@ -3,12 +3,14 @@
  * These mocks provide controlled state for predictable testing.
  */
 import { vi } from "vitest";
-import type { AppState, ServerWithName, Workspace } from "@/state/app-types";
+import type { AppState, ServerWithName, Project } from "@/state/app-types";
 import type {
   HostDisplayMode,
-  WorkspaceClientConfig,
+  ProjectConnectionConfigDraft,
+  ProjectClientConfig,
+  ProjectHostContextDraft,
 } from "@/lib/client-config";
-import { createServer, createWorkspace } from "../factories";
+import { createServer, createProject } from "../factories";
 
 /**
  * Creates a minimal valid AppState for testing
@@ -16,8 +18,8 @@ import { createServer, createWorkspace } from "../factories";
 export function createMockAppState(
   overrides: Partial<AppState> = {},
 ): AppState {
-  const defaultWorkspace = createWorkspace({
-    id: "default-workspace",
+  const defaultProject = createProject({
+    id: "default-project",
     isDefault: true,
   });
 
@@ -26,8 +28,8 @@ export function createMockAppState(
     selectedServer: "none",
     selectedMultipleServers: [],
     isMultiSelectMode: false,
-    workspaces: { [defaultWorkspace.id]: defaultWorkspace },
-    activeWorkspaceId: defaultWorkspace.id,
+    projects: { [defaultProject.id]: defaultProject },
+    activeProjectId: defaultProject.id,
     ...overrides,
   };
 }
@@ -40,16 +42,16 @@ export function createMockAppStateWithServers(
   overrides: Partial<AppState> = {},
 ): AppState {
   const serversMap = Object.fromEntries(servers.map((s) => [s.name, s]));
-  const workspace = createWorkspace({
-    id: "default-workspace",
+  const project = createProject({
+    id: "default-project",
     isDefault: true,
     servers: serversMap,
   });
 
   return createMockAppState({
     servers: serversMap,
-    workspaces: { [workspace.id]: workspace },
-    activeWorkspaceId: workspace.id,
+    projects: { [project.id]: project },
+    activeProjectId: project.id,
     ...overrides,
   });
 }
@@ -61,17 +63,17 @@ export function createMockUseAppState(
   overrides: Partial<ReturnType<any>> = {},
 ) {
   const appState = createMockAppState();
-  const defaultWorkspace = Object.values(appState.workspaces)[0];
+  const defaultProject = Object.values(appState.projects)[0];
 
   return {
     // State
     appState,
     isLoading: false,
-    isLoadingRemoteWorkspaces: false,
+    isLoadingRemoteProjects: false,
     isCloudSyncActive: false,
 
     // Computed values
-    workspaceServers: appState.servers,
+    projectServers: appState.servers,
     connectedOrConnectingServerConfigs: {},
     selectedServerEntry: undefined,
     selectedMCPConfig: undefined,
@@ -79,10 +81,10 @@ export function createMockUseAppState(
     selectedMCPConfigsMap: {},
     isMultiSelectMode: false,
 
-    // Workspace-related
-    workspaces: appState.workspaces,
-    activeWorkspaceId: appState.activeWorkspaceId,
-    activeWorkspace: defaultWorkspace,
+    // Project-related
+    projects: appState.projects,
+    activeProjectId: appState.activeProjectId,
+    activeProject: defaultProject,
 
     // Actions (all mocked)
     handleConnect: vi.fn().mockResolvedValue(undefined),
@@ -103,17 +105,17 @@ export function createMockUseAppState(
     handleConnectWithTokensFromOAuthFlow: vi.fn().mockResolvedValue(undefined),
     handleRefreshTokensFromOAuthFlow: vi.fn().mockResolvedValue(undefined),
 
-    // Workspace actions
-    handleSwitchWorkspace: vi.fn().mockResolvedValue(undefined),
-    handleCreateWorkspace: vi.fn().mockResolvedValue("new-workspace-id"),
-    handleUpdateWorkspace: vi.fn().mockResolvedValue(undefined),
-    handleDeleteWorkspace: vi.fn().mockResolvedValue(undefined),
-    handleLeaveWorkspace: vi.fn().mockResolvedValue(undefined),
-    handleDuplicateWorkspace: vi.fn().mockResolvedValue(undefined),
-    handleSetDefaultWorkspace: vi.fn(),
-    handleWorkspaceShared: vi.fn(),
-    handleExportWorkspace: vi.fn(),
-    handleImportWorkspace: vi.fn().mockResolvedValue(undefined),
+    // Project actions
+    handleSwitchProject: vi.fn().mockResolvedValue(undefined),
+    handleCreateProject: vi.fn().mockResolvedValue("new-project-id"),
+    handleUpdateProject: vi.fn().mockResolvedValue(undefined),
+    handleDeleteProject: vi.fn().mockResolvedValue(undefined),
+    handleLeaveProject: vi.fn().mockResolvedValue(undefined),
+    handleDuplicateProject: vi.fn().mockResolvedValue(undefined),
+    handleSetDefaultProject: vi.fn(),
+    handleProjectShared: vi.fn(),
+    handleExportProject: vi.fn(),
+    handleImportProject: vi.fn().mockResolvedValue(undefined),
 
     ...overrides,
   };
@@ -131,39 +133,50 @@ export function createMockConvexAuth(overrides = {}) {
 }
 
 /**
- * Creates mock for workspace queries hook
+ * Creates mock for project queries hook
  */
-export function createMockWorkspaceQueries(
-  workspaces: Workspace[] = [],
+export function createMockProjectQueries(
+  projects: Project[] = [],
   overrides = {},
 ) {
   return {
-    workspaces,
+    projects,
     isLoading: false,
     ...overrides,
   };
 }
 
 /**
- * Creates mock for workspace mutations hook
+ * Creates mock for project mutations hook
  */
-export function createMockWorkspaceMutations(overrides = {}) {
+export function createMockProjectMutations(overrides = {}) {
   return {
-    createWorkspace: vi.fn().mockResolvedValue("new-workspace-id"),
-    updateWorkspace: vi.fn().mockResolvedValue(undefined),
-    deleteWorkspace: vi.fn().mockResolvedValue(undefined),
+    createProject: vi.fn().mockResolvedValue("new-project-id"),
+    updateProject: vi.fn().mockResolvedValue(undefined),
+    deleteProject: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }
 
 export type MockClientConfigStoreState = {
-  activeWorkspaceId: string | null;
-  defaultConfig: WorkspaceClientConfig | null;
-  savedConfig: WorkspaceClientConfig | undefined;
-  draftConfig: WorkspaceClientConfig | null;
+  activeProjectId: string | null;
+  defaultConfig: ProjectConnectionConfigDraft | null;
+  savedConfig: ProjectConnectionConfigDraft | undefined;
+  draftConfig: ProjectConnectionConfigDraft | null;
+  connectionDefaultsText: string;
   clientCapabilitiesText: string;
-  hostContextText: string;
+  connectionDefaultsError: string | null;
   clientCapabilitiesError: string | null;
+  isSaving: boolean;
+  isDirty: boolean;
+};
+
+export type MockHostContextStoreState = {
+  activeProjectId: string | null;
+  defaultHostContext: ProjectHostContextDraft;
+  savedHostContext: ProjectHostContextDraft | undefined;
+  draftHostContext: ProjectHostContextDraft;
+  hostContextText: string;
   hostContextError: string | null;
   isSaving: boolean;
   isDirty: boolean;
@@ -173,13 +186,26 @@ function stringifyJson(value: unknown) {
   return JSON.stringify(value, null, 2);
 }
 
-export function createMockWorkspaceClientConfig(
-  overrides: Partial<WorkspaceClientConfig> = {},
-): WorkspaceClientConfig {
+export function createMockProjectClientConfig(
+  overrides: Partial<ProjectClientConfig> = {},
+): ProjectClientConfig {
   return {
     version: 1,
+    connectionDefaults:
+      overrides.connectionDefaults ?? { headers: {}, requestTimeout: 10000 },
     clientCapabilities: overrides.clientCapabilities ?? {},
     hostContext: overrides.hostContext ?? {},
+  };
+}
+
+export function createMockProjectConnectionConfig(
+  overrides: Partial<ProjectConnectionConfigDraft> = {},
+): ProjectConnectionConfigDraft {
+  return {
+    version: 1,
+    connectionDefaults:
+      overrides.connectionDefaults ?? { headers: {}, requestTimeout: 10000 },
+    clientCapabilities: overrides.clientCapabilities ?? {},
   };
 }
 
@@ -190,15 +216,36 @@ export function createMockClientConfigStoreState(
     overrides.draftConfig === undefined ? null : overrides.draftConfig;
 
   return {
-    activeWorkspaceId: null,
+    activeProjectId: null,
     defaultConfig: null,
     savedConfig: undefined,
     draftConfig,
+    connectionDefaultsText: stringifyJson(
+      draftConfig?.connectionDefaults ?? { headers: {}, requestTimeout: 10000 },
+    ),
     clientCapabilitiesText: stringifyJson(
       draftConfig?.clientCapabilities ?? {},
     ),
-    hostContextText: stringifyJson(draftConfig?.hostContext ?? {}),
+    connectionDefaultsError: null,
     clientCapabilitiesError: null,
+    isSaving: false,
+    isDirty: false,
+    ...overrides,
+  };
+}
+
+export function createMockHostContextStoreState(
+  overrides: Partial<MockHostContextStoreState> = {},
+): MockHostContextStoreState {
+  const draftHostContext =
+    overrides.draftHostContext === undefined ? {} : overrides.draftHostContext;
+
+  return {
+    activeProjectId: null,
+    defaultHostContext: {},
+    savedHostContext: undefined,
+    draftHostContext,
+    hostContextText: stringifyJson(draftHostContext),
     hostContextError: null,
     isSaving: false,
     isDirty: false,
@@ -221,20 +268,20 @@ export const storePresets = {
       enabled: true,
     });
     const servers = { [server.name]: server };
-    const workspace = createWorkspace({
-      id: "default-workspace",
+    const project = createProject({
+      id: "default-project",
       isDefault: true,
       servers,
     });
 
     return createMockUseAppState({
       appState: createMockAppStateWithServers([server]),
-      workspaceServers: servers,
+      projectServers: servers,
       connectedOrConnectingServerConfigs: servers,
       selectedServer: server.name,
       selectedServerEntry: server,
       selectedMCPConfig: server.config,
-      activeWorkspace: workspace,
+      activeProject: project,
     });
   },
 
@@ -256,17 +303,17 @@ export const storePresets = {
         .filter((s) => s.connectionStatus === "connected")
         .map((s) => [s.name, s]),
     );
-    const workspace = createWorkspace({
-      id: "default-workspace",
+    const project = createProject({
+      id: "default-project",
       isDefault: true,
       servers: serversMap,
     });
 
     return createMockUseAppState({
       appState: createMockAppStateWithServers(servers),
-      workspaceServers: serversMap,
+      projectServers: serversMap,
       connectedOrConnectingServerConfigs: connectedMap,
-      activeWorkspace: workspace,
+      activeProject: project,
     });
   },
 
@@ -286,15 +333,13 @@ export const storePresets = {
   clientConfig: (overrides: Partial<MockClientConfigStoreState> = {}) =>
     createMockClientConfigStoreState(overrides),
 
-  /** Client config with specific host-advertised display modes */
-  clientConfigWithHostDisplayModes: (
+  /** Host context with specific host-advertised display modes */
+  hostContextWithDisplayModes: (
     availableDisplayModes: HostDisplayMode[],
-    overrides: Partial<MockClientConfigStoreState> = {},
+    overrides: Partial<MockHostContextStoreState> = {},
   ) =>
-    createMockClientConfigStoreState({
-      draftConfig: createMockWorkspaceClientConfig({
-        hostContext: { availableDisplayModes },
-      }),
+    createMockHostContextStoreState({
+      draftHostContext: { availableDisplayModes },
       ...overrides,
     }),
 };

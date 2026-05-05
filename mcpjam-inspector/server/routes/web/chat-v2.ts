@@ -5,10 +5,13 @@ import type { ChatV2Request } from "@/shared/chat-v2";
 import { isMCPAuthError, MCPClientManager } from "@mcpjam/sdk";
 import type { HttpServerConfig } from "@mcpjam/sdk";
 import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler.js";
+import { handleHostedOrgChatModel } from "../../utils/org-model-stream-handler.js";
+import { deriveOrgProviderKey as deriveOrgProviderKeyResult } from "../../utils/org-model-config.js";
 import {
   isMCPJamGuestAllowedModel,
   isMCPJamProvidedModel,
 } from "@/shared/types";
+import type { ModelDefinition } from "@/shared/types";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
 import { validateUrl, OAuthProxyError } from "../../utils/oauth-proxy.js";
@@ -34,6 +37,14 @@ import {
 } from "./hosted-rpc-logs.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 
+function deriveOrgProviderKey(modelDefinition: ModelDefinition): string {
+  const result = deriveOrgProviderKeyResult(modelDefinition);
+  if (!result.ok) {
+    throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, result.error);
+  }
+  return result.key;
+}
+
 const chatV2 = new Hono();
 
 chatV2.post("/", async (c) => {
@@ -48,9 +59,9 @@ chatV2.post("/", async (c) => {
     const rawBody = await readJsonBody<Record<string, unknown>>(c);
     rpcCollector = createHostedRpcLogCollector(rawBody);
 
-    // Detect guest request by body shape: no workspaceId means guest-direct
+    // Detect guest request by body shape: no projectId or legacy workspaceId means guest-direct
     // (matching the pattern from withEphemeralConnection in auth.ts)
-    const isGuestRequest = !rawBody.workspaceId;
+    const isGuestRequest = !rawBody.projectId && !rawBody.workspaceId;
 
     if (isGuestRequest) {
       // ── Guest path: direct connection, no Convex authorization ──
@@ -59,7 +70,7 @@ chatV2.post("/", async (c) => {
         throw new WebRouteError(
           401,
           ErrorCode.UNAUTHORIZED,
-          "Valid guest token required. Please refresh the page to obtain a new session.",
+          "Valid guest token required. Please refresh the page to obtain a new session."
         );
       }
 
@@ -82,7 +93,7 @@ chatV2.post("/", async (c) => {
         throw new WebRouteError(
           400,
           ErrorCode.VALIDATION_ERROR,
-          "messages are required",
+          "messages are required"
         );
       }
 
@@ -91,7 +102,7 @@ chatV2.post("/", async (c) => {
         throw new WebRouteError(
           400,
           ErrorCode.VALIDATION_ERROR,
-          "model is not supported",
+          "model is not supported"
         );
       }
 
@@ -100,21 +111,21 @@ chatV2.post("/", async (c) => {
           throw new WebRouteError(
             403,
             ErrorCode.FORBIDDEN,
-            "This MCPJam model is not available for guest access. Sign in to continue.",
+            "This MCPJam model is not available for guest access. Sign in to continue."
           );
         }
         if (!process.env.CONVEX_HTTP_URL) {
           throw new WebRouteError(
             500,
             ErrorCode.INTERNAL_ERROR,
-            "Server missing CONVEX_HTTP_URL configuration",
+            "Server missing CONVEX_HTTP_URL configuration"
           );
         }
       } else {
         throw new WebRouteError(
           400,
           ErrorCode.FEATURE_NOT_SUPPORTED,
-          "Only MCPJam hosted models are supported in hosted mode",
+          "Only MCPJam hosted models are supported in hosted mode"
         );
       }
 
@@ -133,7 +144,7 @@ chatV2.post("/", async (c) => {
             throw new WebRouteError(
               err.status,
               ErrorCode.VALIDATION_ERROR,
-              err.message,
+              err.message
             );
           }
           throw err;
@@ -159,7 +170,7 @@ chatV2.post("/", async (c) => {
             defaultTimeout: WEB_STREAM_TIMEOUT_MS,
             rpcLogger: rpcCollector.rpcLogger,
             retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
-          },
+          }
         );
       } else {
         // Guest without servers — empty manager for plain LLM chat
@@ -169,7 +180,7 @@ chatV2.post("/", async (c) => {
             defaultTimeout: WEB_STREAM_TIMEOUT_MS,
             rpcLogger: rpcCollector.rpcLogger,
             retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
-          },
+          }
         );
       }
 
@@ -207,6 +218,8 @@ chatV2.post("/", async (c) => {
         return handleMCPJamFreeChatModel({
           messages: scrubMessages(modelMessages as ModelMessage[]),
           modelId: String(modelDefinition.id),
+          chatSessionId: directChatSessionId,
+          sourceType: "direct",
           systemPrompt: enhancedSystemPrompt,
           temperature: resolvedTemperature,
           tools: allTools as ToolSet,
@@ -249,13 +262,17 @@ chatV2.post("/", async (c) => {
 
     // ── Authenticated path: Convex authorization ──────────────────
     const hostedBody = parseWithSchema(hostedChatSchema, rawBody);
+    const legacyWorkspaceId =
+      typeof (hostedBody as any).workspaceId === "string"
+        ? ((hostedBody as any).workspaceId as string)
+        : undefined;
     const body = rawBody as unknown as ChatV2Request & {
-      workspaceId: string;
+      projectId: string;
       selectedServerIds: string[];
       selectedServerNames?: string[];
       shareToken?: string;
       chatboxToken?: string;
-      accessScope?: "workspace_member" | "chat_v2";
+      accessScope?: "project_member" | "chat_v2";
       surface?: "preview" | "share_link";
     };
 
@@ -276,7 +293,7 @@ chatV2.post("/", async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "messages are required",
+        "messages are required"
       );
     }
 
@@ -285,13 +302,14 @@ chatV2.post("/", async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "model is not supported",
+        "model is not supported"
       );
     }
 
     const { manager, oauthServerUrls: urls } = await createAuthorizedManager(
+      c,
       bearerToken,
-      hostedBody.workspaceId,
+      hostedBody.projectId,
       selectedServerIds,
       WEB_STREAM_TIMEOUT_MS,
       hostedBody.oauthTokens,
@@ -302,7 +320,7 @@ chatV2.post("/", async (c) => {
         chatboxToken,
         rpcLogger: rpcCollector.rpcLogger,
         serverNames: selectedServerNames,
-      },
+      }
     );
     oauthServerUrls = urls;
 
@@ -327,10 +345,20 @@ chatV2.post("/", async (c) => {
         throw error;
       }
 
-      const { allTools, enhancedSystemPrompt, resolvedTemperature } = prepared;
+      const {
+        allTools,
+        enhancedSystemPrompt,
+        resolvedTemperature,
+        scrubMessages,
+      } = prepared;
       const hostedChatSessionId = body.chatSessionId;
 
-      if (modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)) {
+      const modelMessages = await convertToModelMessages(messages);
+      const isMCPJam =
+        Boolean(modelDefinition.id) &&
+        isMCPJamProvidedModel(String(modelDefinition.id));
+
+      if (!isMCPJam) {
         if (!process.env.CONVEX_HTTP_URL) {
           throw new WebRouteError(
             500,
@@ -338,24 +366,115 @@ chatV2.post("/", async (c) => {
             "Server missing CONVEX_HTTP_URL configuration",
           );
         }
-      } else {
+        if (!process.env.INSPECTOR_SERVICE_TOKEN) {
+          throw new WebRouteError(
+            500,
+            ErrorCode.INTERNAL_ERROR,
+            "Server missing INSPECTOR_SERVICE_TOKEN configuration",
+          );
+        }
+        // Hosted org BYOK: vault-resolved provider keys live in Convex; the
+        // inspector forwards messages and tool definitions to /stream/org and
+        // drives the agentic loop locally. Scrub messages for parity with
+        // the direct BYOK path in mcp/chat-v2.ts.
+        const providerKey = deriveOrgProviderKey(modelDefinition);
+        return handleHostedOrgChatModel({
+          projectId: hostedBody.projectId,
+          workspaceId: legacyWorkspaceId,
+          providerKey,
+          modelId: String(modelDefinition.id),
+          chatSessionId: hostedChatSessionId,
+          sourceType: shareToken
+            ? "serverShare"
+            : chatboxToken
+            ? "chatbox"
+            : "direct",
+          messages: scrubMessages(modelMessages as ModelMessage[]),
+          systemPrompt: enhancedSystemPrompt,
+          temperature: resolvedTemperature,
+          tools: allTools as ToolSet,
+          authHeader: c.req.header("authorization"),
+          shareToken,
+          chatboxToken,
+          mcpClientManager: manager,
+          selectedServers: selectedServerIds,
+          requireToolApproval,
+          onConversationComplete: hostedChatSessionId
+            ? async (fullHistory, turnTrace) => {
+                const isDirectChat = !shareToken && !chatboxToken;
+                await persistChatSessionToConvex({
+                  chatSessionId: hostedChatSessionId,
+                  modelId: String(modelDefinition.id),
+                  modelSource: "byok",
+                  projectId: hostedBody.projectId,
+                  workspaceId: legacyWorkspaceId,
+                  sourceType: shareToken
+                    ? "serverShare"
+                    : chatboxToken
+                    ? "chatbox"
+                    : "direct",
+                  ...(chatboxToken && surface ? { surface } : {}),
+                  shareToken,
+                  chatboxToken,
+                  ...(shareToken && selectedServerIds[0]
+                    ? { serverId: selectedServerIds[0] }
+                    : {}),
+                  authHeader: c.req.header("authorization"),
+                  sessionMessages: fullHistory,
+                  startedAt: sessionStartedAt,
+                  lastActivityAt: Date.now(),
+                  ...(isDirectChat
+                    ? {
+                        directVisibility: body.directVisibility,
+                        resumeConfig: {
+                          systemPrompt,
+                          temperature,
+                          requireToolApproval,
+                          selectedServers:
+                            Array.isArray(selectedServerNames) &&
+                            selectedServerNames.length ===
+                              selectedServerIds.length
+                              ? selectedServerNames
+                              : selectedServerIds,
+                        },
+                      }
+                    : {}),
+                  turnTrace,
+                  forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
+                });
+              }
+            : undefined,
+          onStreamComplete: () => manager.disconnectAllServers(),
+          onStreamWriterReady: (writer) =>
+            rpcCollector?.attachStreamWriter(writer),
+        });
+      }
+
+      // MCPJam-provided path also targets Convex (POST $CONVEX_HTTP_URL/stream),
+      // so it needs the same env guard as the org BYOK branch.
+      if (!process.env.CONVEX_HTTP_URL) {
         throw new WebRouteError(
-          400,
-          ErrorCode.FEATURE_NOT_SUPPORTED,
-          "Only MCPJam hosted models are supported in hosted mode",
+          500,
+          ErrorCode.INTERNAL_ERROR,
+          "Server missing CONVEX_HTTP_URL configuration",
         );
       }
 
-      const modelMessages = await convertToModelMessages(messages);
       return handleMCPJamFreeChatModel({
         messages: modelMessages as ModelMessage[],
         modelId: String(modelDefinition.id),
+        chatSessionId: hostedChatSessionId,
+        sourceType: shareToken
+          ? "serverShare"
+          : chatboxToken
+          ? "chatbox"
+          : "direct",
         systemPrompt: enhancedSystemPrompt,
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
         authHeader: c.req.header("authorization"),
         chatboxToken,
-        workspaceId: hostedBody.workspaceId,
+        projectId: hostedBody.projectId,
         mcpClientManager: manager,
         selectedServers: selectedServerIds,
         requireToolApproval,
@@ -366,12 +485,12 @@ chatV2.post("/", async (c) => {
                 chatSessionId: hostedChatSessionId,
                 modelId: String(modelDefinition.id),
                 modelSource: "mcpjam",
-                workspaceId: hostedBody.workspaceId,
+                projectId: hostedBody.projectId,
                 sourceType: shareToken
                   ? "serverShare"
                   : chatboxToken
-                    ? "chatbox"
-                    : "direct",
+                  ? "chatbox"
+                  : "direct",
                 ...(chatboxToken && surface ? { surface } : {}),
                 shareToken,
                 chatboxToken,
@@ -391,7 +510,8 @@ chatV2.post("/", async (c) => {
                         requireToolApproval,
                         selectedServers:
                           Array.isArray(selectedServerNames) &&
-                          selectedServerNames.length === selectedServerIds.length
+                          selectedServerNames.length ===
+                            selectedServerIds.length
                             ? selectedServerNames
                             : selectedServerIds,
                       },
@@ -424,7 +544,7 @@ chatV2.post("/", async (c) => {
           oauthRequired: true,
           serverUrl: firstUrl,
         },
-        rpcCollector?.buildEnvelope(),
+        rpcCollector?.buildEnvelope()
       );
     }
     const routeError = mapRuntimeError(error);
@@ -434,7 +554,7 @@ chatV2.post("/", async (c) => {
       routeError.code,
       routeError.message,
       routeError.details,
-      rpcCollector?.buildEnvelope(),
+      rpcCollector?.buildEnvelope()
     );
   }
 });

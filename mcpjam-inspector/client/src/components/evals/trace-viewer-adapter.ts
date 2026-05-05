@@ -136,6 +136,8 @@ export interface TraceEnvelope {
   messages?: TraceSourceMessage[];
   widgetSnapshots?: TraceWidgetSnapshot[];
   spans?: EvalTraceSpan[];
+  traceStartedAtMs?: number;
+  traceEndedAtMs?: number;
   [key: string]: unknown;
 }
 

@@ -27,19 +27,19 @@ export const BILLING_GATES = {
     feature: "chatboxes",
   },
   chatboxCreation: {
-    gateKey: "maxChatboxesPerWorkspace",
+    gateKey: "maxChatboxesPerProject",
     feature: null,
   },
   memberInvites: {
     gateKey: "maxMembers",
     feature: null,
   },
-  workspaceCreation: {
-    gateKey: "maxWorkspaces",
+  projectCreation: {
+    gateKey: "maxProjects",
     feature: null,
   },
   serverCreation: {
-    gateKey: "maxServersPerWorkspace",
+    gateKey: "maxServersPerProject",
     feature: null,
   },
 } as const satisfies Record<string, BillingGateDefinition>;
@@ -109,45 +109,45 @@ export function resolveBillingGateState(
   };
 }
 
-interface UseWorkspaceBillingGateParams {
-  workspaceId: string | null;
+interface UseProjectBillingGateParams {
+  projectId: string | null;
   organizationId: string | null;
   gate: BillingGateDefinition;
 }
 
-export function useWorkspaceBillingGate({
-  workspaceId,
+export function useProjectBillingGate({
+  projectId,
   organizationId,
   gate,
-}: UseWorkspaceBillingGateParams): ResolvedBillingGate {
+}: UseProjectBillingGateParams): ResolvedBillingGate {
   const { isAuthenticated } = useConvexAuth();
   const billingUiFlag = useFeatureFlagEnabled("billing-entitlements-ui");
   const billingUiEnabled = billingUiFlag === true;
   const shouldResolve =
     isAuthenticated &&
     billingUiFlag !== false &&
-    !!workspaceId &&
+    !!projectId &&
     !!organizationId;
   const resolvedOrganizationId = shouldResolve ? organizationId : null;
   const {
     billingStatus,
     organizationPremiumness,
-    workspacePremiumness,
+    projectPremiumness,
     isLoadingBilling,
     isLoadingOrganizationPremiumness,
-    isLoadingWorkspacePremiumness,
+    isLoadingProjectPremiumness,
   } = useOrganizationBilling(resolvedOrganizationId, {
-    workspaceId: shouldResolve ? workspaceId : null,
+    projectId: shouldResolve ? projectId : null,
   });
   const premiumness =
-    shouldResolve && workspacePremiumness
-      ? workspacePremiumness
+    shouldResolve && projectPremiumness
+      ? projectPremiumness
       : organizationPremiumness;
   const isLoadingGate =
     shouldResolve &&
     (billingUiFlag === undefined ||
       isLoadingBilling ||
-      isLoadingWorkspacePremiumness ||
+      isLoadingProjectPremiumness ||
       isLoadingOrganizationPremiumness);
 
   return resolveBillingGateState({
