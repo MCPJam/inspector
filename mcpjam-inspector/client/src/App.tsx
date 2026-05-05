@@ -819,12 +819,14 @@ export default function App() {
   }, []);
   const handleSignOut = useCallback<SidebarSignOut>(
     async (options) => {
-      const connectedServerNames = Object.entries(appState.servers)
-        .filter(([, server]) => server.connectionStatus === "connected")
+      const serverNamesToDisconnect = Object.entries(appState.servers)
+        .filter(([, server]) => server.connectionStatus !== "disconnected")
         .map(([serverName]) => serverName);
 
       await Promise.allSettled(
-        connectedServerNames.map((serverName) => handleDisconnect(serverName))
+        serverNamesToDisconnect.map((serverName) =>
+          handleDisconnect(serverName)
+        )
       );
 
       if (options?.navigate === false) {

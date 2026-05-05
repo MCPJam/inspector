@@ -331,10 +331,21 @@ describe("useAppState active organization recovery", () => {
 
   it("disconnects previous runtime servers when the active project changes", async () => {
     const zombieServer = createServer("zombie-server", "connected");
+    const connectingServer = createServer("connecting-server", "connecting");
+    const oauthServer = createServer("oauth-server", "oauth-flow");
+    const disconnectedServer = createServer(
+      "disconnected-server",
+      "disconnected"
+    );
     const nextServer = createServer("next-server", "disconnected");
     const projectA = createProject("p1", {
       organizationId: "org-a",
-      servers: { "zombie-server": zombieServer },
+      servers: {
+        "zombie-server": zombieServer,
+        "connecting-server": connectingServer,
+        "oauth-server": oauthServer,
+        "disconnected-server": disconnectedServer,
+      },
       isDefault: true,
     });
     const projectB = createProject("p2", {
@@ -346,7 +357,12 @@ describe("useAppState active organization recovery", () => {
       ...initialAppState,
       projects: { p1: projectA, p2: projectB },
       activeProjectId: "p1",
-      servers: { "zombie-server": zombieServer },
+      servers: {
+        "zombie-server": zombieServer,
+        "connecting-server": connectingServer,
+        "oauth-server": oauthServer,
+        "disconnected-server": disconnectedServer,
+      },
       selectedServer: "zombie-server",
     });
     Object.assign(projectStateValue, {
@@ -371,7 +387,16 @@ describe("useAppState active organization recovery", () => {
       expect(serverStateValue.handleDisconnect).toHaveBeenCalledWith(
         "zombie-server"
       );
+      expect(serverStateValue.handleDisconnect).toHaveBeenCalledWith(
+        "connecting-server"
+      );
+      expect(serverStateValue.handleDisconnect).toHaveBeenCalledWith(
+        "oauth-server"
+      );
     });
+    expect(serverStateValue.handleDisconnect).not.toHaveBeenCalledWith(
+      "disconnected-server"
+    );
   });
 
   it("does not disconnect servers when the active project id is unchanged", () => {

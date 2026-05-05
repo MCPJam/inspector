@@ -1583,6 +1583,58 @@ describe("App hosted OAuth callback handling", () => {
     expect(window.location.hash).toBe("#tools");
   });
 
+  it("disconnects in-flight servers before signing out from the sidebar", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    window.history.replaceState({}, "", "/#servers");
+
+    const signOut = vi.fn();
+    const handleDisconnect = vi.fn().mockResolvedValue(undefined);
+    mockUseAuth.mockReturnValue({
+      ...mockWorkOsAuthState,
+      signOut,
+    });
+    mockUseAppState.mockReturnValue({
+      ...createAppStateMock(),
+      appState: {
+        servers: {
+          connected: { connectionStatus: "connected" },
+          connecting: { connectionStatus: "connecting" },
+          oauth: { connectionStatus: "oauth-flow" },
+          disconnected: { connectionStatus: "disconnected" },
+        },
+        selectedServer: "none",
+        selectedMultipleServers: [],
+      },
+      handleDisconnect,
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockMCPSidebar).toHaveBeenCalled();
+    });
+
+    const lastCall =
+      mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1];
+    const sidebarProps = lastCall?.[0] as unknown as {
+      onSignOut?: (options?: { returnTo?: string }) => Promise<void>;
+    };
+
+    await act(async () => {
+      await sidebarProps.onSignOut?.({ returnTo: "https://example.test" });
+    });
+
+    expect(handleDisconnect).toHaveBeenCalledWith("connected");
+    expect(handleDisconnect).toHaveBeenCalledWith("connecting");
+    expect(handleDisconnect).toHaveBeenCalledWith("oauth");
+    expect(handleDisconnect).not.toHaveBeenCalledWith("disconnected");
+    expect(signOut).toHaveBeenCalledWith({ returnTo: "https://example.test" });
+    expect(signOut.mock.invocationCallOrder[0]).toBeGreaterThan(
+      Math.max(...handleDisconnect.mock.invocationCallOrder.slice(0, 3))
+    );
+  });
+
   it("disables sidebar project creation when the routed org is free and at cap", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
