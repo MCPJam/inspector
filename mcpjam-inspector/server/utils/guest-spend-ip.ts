@@ -7,8 +7,19 @@ const SCOPE = "guest-spend-ip";
 let cachedKeyPepper: string | null = null;
 let cachedKeyPromise: Promise<webcrypto.CryptoKey> | null = null;
 
-async function getHmacKey(): Promise<webcrypto.CryptoKey> {
-  const pepper = getGuestSessionHashPepper();
+async function getHmacKey(): Promise<webcrypto.CryptoKey | null> {
+  // The pepper helper throws in non-dev environments when the env var is
+  // unset (test, prod-without-config, ephemeral staging). Treat that as
+  // "no pepper" and return null so callers can degrade to the `_unknown`
+  // sentinel — same end state as a request with no resolvable IP. We
+  // never want a missing pepper to bubble up as a 500 from the chat /
+  // guest-session routes.
+  let pepper: string;
+  try {
+    pepper = getGuestSessionHashPepper();
+  } catch {
+    return null;
+  }
   if (cachedKeyPepper === pepper && cachedKeyPromise) {
     return cachedKeyPromise;
   }
@@ -78,11 +89,14 @@ export function canonicalizeClientIp(rawIp: string): string | null {
 
 // HMAC the canonicalized IP with the guest-session pepper under a dedicated
 // scope. Same scope/pepper used by the cookie hash path, but separate scope
-// prefix so the two hashes can't be cross-substituted.
+// prefix so the two hashes can't be cross-substituted. Returns null when
+// the IP can't be canonicalized OR the pepper is unavailable; caller falls
+// back to the `_unknown` sentinel.
 export async function hashGuestSpendIp(rawIp: string): Promise<string | null> {
   const canonical = canonicalizeClientIp(rawIp);
   if (!canonical) return null;
   const key = await getHmacKey();
+  if (!key) return null;
   const sig = await crypto.subtle.sign(
     "HMAC",
     key,
