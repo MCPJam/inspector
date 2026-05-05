@@ -50,6 +50,7 @@ export interface OrgModelHandlerOptions {
    */
   shareToken?: string;
   chatboxToken?: string;
+  clientIp?: string | null;
 }
 
 export async function handleHostedOrgChatModel(
@@ -80,6 +81,7 @@ export async function handleHostedOrgChatModel(
     onConversationComplete: options.onConversationComplete,
     onStreamComplete: options.onStreamComplete,
     onStreamWriterReady: options.onStreamWriterReady,
+    clientIp: options.clientIp,
     endpointPath: "/stream/org",
     extraHeaders: {
       "X-Inspector-Service-Token": inspectorServiceToken,

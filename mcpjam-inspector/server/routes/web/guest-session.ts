@@ -9,6 +9,7 @@ import {
   type GuestSessionFetchContext,
   type GuestSessionRequestBody,
 } from "../../utils/guest-session-source.js";
+import { getClientIp } from "../../utils/client-ip.js";
 import { ErrorCode } from "./errors.js";
 
 const guestSession = new Hono();
@@ -27,19 +28,6 @@ setInterval(() => {
     }
   }
 }, 5 * 60_000).unref();
-
-function getClientIp(c: any): string | null {
-  const forwardedFor = c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
-  if (forwardedFor) return forwardedFor;
-
-  const realIp = c.req.header("x-real-ip")?.trim();
-  if (realIp) return realIp;
-
-  const cfConnectingIp = c.req.header("cf-connecting-ip")?.trim();
-  if (cfConnectingIp) return cfConnectingIp;
-
-  return null;
-}
 
 const GUEST_SESSION_COOKIE_NAME = "__Host-mcpjam_guest_session";
 

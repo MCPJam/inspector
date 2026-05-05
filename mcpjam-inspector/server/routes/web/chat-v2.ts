@@ -36,6 +36,7 @@ import {
   createHostedRpcLogCollector,
 } from "./hosted-rpc-logs.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
+import { getClientIp } from "../../utils/client-ip.js";
 
 function deriveOrgProviderKey(modelDefinition: ModelDefinition): string {
   const result = deriveOrgProviderKeyResult(modelDefinition);
@@ -224,6 +225,7 @@ chatV2.post("/", async (c) => {
           temperature: resolvedTemperature,
           tools: allTools as ToolSet,
           authHeader: c.req.header("authorization"),
+          clientIp: getClientIp(c),
           mcpClientManager: manager,
           selectedServers,
           requireToolApproval,
@@ -398,6 +400,7 @@ chatV2.post("/", async (c) => {
           temperature: resolvedTemperature,
           tools: allTools as ToolSet,
           authHeader: c.req.header("authorization"),
+          clientIp: getClientIp(c),
           shareToken,
           chatboxToken,
           mcpClientManager: manager,
@@ -477,6 +480,7 @@ chatV2.post("/", async (c) => {
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
         authHeader: c.req.header("authorization"),
+        clientIp: getClientIp(c),
         chatboxToken,
         projectId: hostedBody.projectId,
         mcpClientManager: manager,
