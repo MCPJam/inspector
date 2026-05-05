@@ -1156,6 +1156,9 @@ function OrganizationPage({
               isStartingPlanChange={isStartingPlanChange}
               pendingPlanChangeTarget={pendingPlanChangeTarget}
               isOpeningPortal={isOpeningPortal}
+              activeMemberCount={
+                membersLoading ? undefined : activeMembers.length
+              }
               onDowngradePlan={handleDowngradePlan}
               onStartPlanChange={handlePlanChange}
               onStartAutoPlanChange={handleAutoPlanChange}
