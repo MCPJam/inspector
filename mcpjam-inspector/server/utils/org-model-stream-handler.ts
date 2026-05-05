@@ -217,21 +217,31 @@ export function handleLocalOrgChatModel(
     onStreamWriterReady,
   } = options;
 
+  if (requireToolApproval && Object.keys(tools).length > 0) {
+    const stream = createUIMessageStream({
+      onError: (error) => formatLocalStreamError(error),
+      onFinish: async () => {
+        await onStreamComplete?.();
+      },
+      execute: async ({ writer }) => {
+        onStreamWriterReady?.({ write: (chunk) => writer.write(chunk) });
+        writer.write({
+          type: "error",
+          errorText: JSON.stringify({
+            code: "tool_approval_unsupported",
+            message:
+              "Tool approval is not supported for local-runtime org providers yet. Disable tool approval or switch this provider to cloud runtime.",
+          }),
+        });
+      },
+    });
+    return createUIMessageStreamResponse({ stream });
+  }
+
   // Validate and build the AI SDK model before opening the stream so that
   // OrgProviderConfigError / model_not_allowed is thrown synchronously.
   assertOrgModelAllowed(provider, modelId);
   const llmModel = buildOrgModelFromResolvedConfig(provider, modelId);
-
-  // Tool approval pause/resume is not supported for local-runtime providers.
-  // When required, suppress tools entirely so tools don't auto-execute without
-  // user consent. Follow-up: implement interactive approval via streaming protocol.
-  const effectiveTools: ToolSet =
-    requireToolApproval && Object.keys(tools).length > 0
-      ? ({} as ToolSet)
-      : tools;
-  if (requireToolApproval && Object.keys(tools).length > 0) {
-    logger.warn("[org/local] requireToolApproval=true is not supported for local runtime; tools suppressed");
-  }
 
   const traceHistory = [...messages];
   const initialMessageHistoryLength = messages.length;
@@ -274,13 +284,13 @@ export function handleLocalOrgChatModel(
         stepIndex: 0,
         payload: buildResolvedModelRequestPayload({
           systemPrompt,
-          tools: effectiveTools,
+          tools,
           messages,
         }),
       });
 
       const tracedTools = wrapToolSetForEvalTrace(
-        effectiveTools as Record<string, unknown>,
+        tools as Record<string, unknown>,
         traceContext,
         traceTurn.promptIndex,
       ) as ToolSet;
