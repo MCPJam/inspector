@@ -1042,7 +1042,8 @@ export function readStoredOAuthConfig(
     }
 
     return config;
-  } catch {
+  } catch (e) {
+    console.warn('[mcp-oauth] Failed to parse stored OAuth config', e);
     return {
       registryServerId: undefined,
       useRegistryOAuthProxy: false,
@@ -2875,6 +2876,9 @@ export async function handleOAuthCallback(
       },
     });
     emitTrace(callbackTrace);
+    // Resource URL comes from the server's discovery document — treat it as
+    // untrusted input and validate it matches the originally configured server
+    // URL before embedding it in the authorization request.
     const resource = await selectResourceURL(
       serverUrl,
       provider,

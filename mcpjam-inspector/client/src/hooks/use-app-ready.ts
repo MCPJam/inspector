@@ -40,6 +40,12 @@ export interface AppReadyProviderProps {
    * still being provisioned/loaded.
    */
   effectiveActiveProjectId: string;
+  /**
+   * Hosted only — true while remote projects (and their servers) are still
+   * loading. Gates the ready check so the app does not report ready with a
+   * projectId before servers are available.
+   */
+  isLoadingRemoteProjects: boolean;
 }
 
 /**
@@ -76,6 +82,7 @@ export function AppReadyProvider({
   isConvexAuthLoading,
   isConvexAuthenticated,
   effectiveActiveProjectId,
+  isLoadingRemoteProjects,
 }: AppReadyProviderProps) {
   const value = useMemo<AppReadyStatus>(() => {
     if (readForceReadyOverride()) {
@@ -96,6 +103,9 @@ export function AppReadyProvider({
     if (isConvexAuthLoading || !isConvexAuthenticated) {
       return { status: "bootstrapping", reason: "resolving-auth" };
     }
+    if (isLoadingRemoteProjects) {
+      return { status: "bootstrapping", reason: "provisioning-project" };
+    }
     if (!effectiveActiveProjectId || effectiveActiveProjectId === "none") {
       return { status: "bootstrapping", reason: "provisioning-project" };
     }
@@ -105,6 +115,7 @@ export function AppReadyProvider({
     isConvexAuthLoading,
     isConvexAuthenticated,
     effectiveActiveProjectId,
+    isLoadingRemoteProjects,
   ]);
 
   // Dev diagnostic: log/expose the resolved state so a user stuck on
@@ -121,6 +132,7 @@ export function AppReadyProvider({
         isConvexAuthLoading,
         isConvexAuthenticated,
         effectiveActiveProjectId,
+        isLoadingRemoteProjects,
         HOSTED_MODE,
       },
     };
@@ -140,6 +152,7 @@ export function AppReadyProvider({
     isConvexAuthLoading,
     isConvexAuthenticated,
     effectiveActiveProjectId,
+    isLoadingRemoteProjects,
   ]);
 
   return createElement(AppReadyContext.Provider, { value }, children);

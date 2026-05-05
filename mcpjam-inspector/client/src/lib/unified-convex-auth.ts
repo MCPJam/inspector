@@ -38,7 +38,9 @@ export function useUnifiedConvexAuth() {
   const [guestToken, setGuestToken] = useState<string | null>(
     () => getCachedGuestSession()?.token ?? null,
   );
-  const [guestLoading, setGuestLoading] = useState(true);
+  const [guestLoading, setGuestLoading] = useState(
+    () => getCachedGuestSession()?.token == null,
+  );
 
   // Fetch a guest token whenever there is no signed-in WorkOS user. Reset
   // when a user does sign in so subsequent renders favor the WorkOS path.

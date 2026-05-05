@@ -242,10 +242,6 @@ export function useProjectState({
     writeStoredActiveProjectId(activeProjectActorKeyRef.current, null);
   }, []);
 
-  const clearGuestActiveProjectStorage = useCallback((actorKey: string | null) => {
-    writeStoredActiveProjectId(actorKey, null);
-  }, []);
-
   // Project id that the flat-server query should target. We can't wait for
   // the auto-set effect to copy convexActiveProjectId from remoteProjects[0]
   // — the consumer renders one frame earlier with effectiveActiveProjectId
@@ -691,6 +687,11 @@ export function useProjectState({
     }
     activeProjectActorKeyRef.current = currentActorKey;
     activeProjectActorIsGuestRef.current = isGuestActor;
+    // Clear provisioning guards so the new actor's default-project path runs clean.
+    ensureDefaultInFlightRef.current.clear();
+    ensureDefaultCompletedRef.current.clear();
+    migrationInFlightRef.current.clear();
+    migrationErrorNotifiedRef.current.clear();
     if (isGuestActor) {
       setConvexActiveProjectId(null);
     } else {
@@ -705,8 +706,8 @@ export function useProjectState({
   useEffect(() => {
     if (!isGuestActor) return;
     if (!currentActorKey) return;
-    clearGuestActiveProjectStorage(currentActorKey);
-  }, [isGuestActor, currentActorKey, clearGuestActiveProjectStorage]);
+    writeStoredActiveProjectId(currentActorKey, null);
+  }, [isGuestActor, currentActorKey]);
 
   useEffect(() => {
     if (!hasHydratedActiveProject) {
@@ -860,7 +861,8 @@ export function useProjectState({
     ensureDefaultInFlightRef.current.add(requestKey);
 
     convexEnsureDefaultProject({ organizationId })
-      .then((projectId) => {
+      .then(() => {
+        ensureDefaultInFlightRef.current.delete(requestKey);
         ensureDefaultCompletedRef.current.add(requestKey);
       })
       .catch((error) => {
@@ -902,6 +904,7 @@ export function useProjectState({
     ensureDefaultInFlightRef.current.add(requestKey);
     convexEnsureDefaultProject({})
       .then((projectId) => {
+        ensureDefaultInFlightRef.current.delete(requestKey);
         ensureDefaultCompletedRef.current.add(requestKey);
         // Stick the new project id as the active selection so the rest of
         // the app picks it up over any synthetic local-fallback project that
