@@ -877,4 +877,125 @@ describe("mcpjam-stream-handler", () => {
       },
     });
   });
+
+  describe("guest IP-hash header", () => {
+    it("forwards a hashed IP for the per-IP daily spend cap when clientIp is provided", async () => {
+      process.env.GUEST_SESSION_HASH_PEPPER = "test-pepper-for-ip-hash";
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "hi" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        clientIp: "203.0.113.10",
+      });
+
+      await lastExecution;
+
+      const headers = (global.fetch as any).mock.calls[0]?.[1]
+        ?.headers as Record<string, string>;
+      const ipHash = headers["x-mcpjam-guest-ip-hash"];
+      expect(typeof ipHash).toBe("string");
+      expect(ipHash).not.toBe("_unknown");
+      // base64url, no padding
+      expect(ipHash).toMatch(/^[A-Za-z0-9_-]+$/);
+
+      delete process.env.GUEST_SESSION_HASH_PEPPER;
+    });
+
+    it("sends the _unknown sentinel when clientIp is null", async () => {
+      process.env.GUEST_SESSION_HASH_PEPPER = "test-pepper-for-ip-hash";
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "hi" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        clientIp: null,
+      });
+
+      await lastExecution;
+
+      const headers = (global.fetch as any).mock.calls[0]?.[1]
+        ?.headers as Record<string, string>;
+      expect(headers["x-mcpjam-guest-ip-hash"]).toBe("_unknown");
+
+      delete process.env.GUEST_SESSION_HASH_PEPPER;
+    });
+
+    it("does not let extraHeaders override the computed guest IP hash", async () => {
+      process.env.GUEST_SESSION_HASH_PEPPER = "test-pepper-for-ip-hash";
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "hi" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        clientIp: "203.0.113.10",
+        extraHeaders: {
+          "x-mcpjam-guest-ip-hash": "attacker-controlled",
+        },
+      });
+
+      await lastExecution;
+
+      const headers = (global.fetch as any).mock.calls[0]?.[1]
+        ?.headers as Record<string, string>;
+      expect(headers["x-mcpjam-guest-ip-hash"]).not.toBe("attacker-controlled");
+      expect(headers["x-mcpjam-guest-ip-hash"]).toMatch(/^[A-Za-z0-9_-]+$/);
+
+      delete process.env.GUEST_SESSION_HASH_PEPPER;
+    });
+
+    it("hashes IPv4 and ::ffff:-mapped IPv6 of the same client identically", async () => {
+      process.env.GUEST_SESSION_HASH_PEPPER = "test-pepper-for-ip-hash";
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "hi" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        clientIp: "1.2.3.4",
+      });
+      await lastExecution;
+      const v4Hash = ((global.fetch as any).mock.calls[0]?.[1]?.headers ?? {})[
+        "x-mcpjam-guest-ip-hash"
+      ];
+
+      // Reset between calls
+      lastExecution = null;
+      writtenChunks = [];
+      (global.fetch as any).mockClear();
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "hi" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        clientIp: "::ffff:1.2.3.4",
+      });
+      await lastExecution;
+      const mappedHash = ((global.fetch as any).mock.calls[0]?.[1]?.headers ??
+        {})["x-mcpjam-guest-ip-hash"];
+
+      expect(mappedHash).toBe(v4Hash);
+
+      delete process.env.GUEST_SESSION_HASH_PEPPER;
+    });
+  });
 });

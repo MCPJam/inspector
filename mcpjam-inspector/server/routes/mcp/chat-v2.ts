@@ -14,6 +14,7 @@ import {
   isMCPJamProvidedModel,
 } from "@/shared/types";
 import type { ModelProvider } from "@/shared/types";
+import { getClientIp } from "../../utils/client-ip.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
 import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler";
@@ -557,6 +558,7 @@ chatV2.post("/", async (c) => {
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
         authHeader,
+        clientIp: getClientIp(c),
         mcpClientManager,
         selectedServers,
         requireToolApproval,
@@ -623,6 +625,7 @@ chatV2.post("/", async (c) => {
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
         authHeader: c.req.header("authorization"),
+        clientIp: getClientIp(c),
         mcpClientManager,
         selectedServers,
         requireToolApproval,

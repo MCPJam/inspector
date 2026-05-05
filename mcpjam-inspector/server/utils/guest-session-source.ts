@@ -18,6 +18,10 @@ export type GuestSessionFetchContext = {
   cookie?: string | null;
   userAgent?: string | null;
   body?: GuestSessionRequestBody | null;
+  // Hashed client IP so the upstream can record the IP-bucket key on the
+  // guest's session row at resolve time. Letting the display path read it
+  // from the row before any /stream call has run.
+  ipHash?: string | null;
 };
 
 export type GuestSessionRequestBody = {
@@ -93,6 +97,9 @@ function buildForwardedHeaders(
   }
   if (context?.userAgent) {
     headers["User-Agent"] = context.userAgent;
+  }
+  if (context?.ipHash !== undefined) {
+    headers["x-mcpjam-guest-ip-hash"] = context.ipHash ?? "_unknown";
   }
   return headers;
 }

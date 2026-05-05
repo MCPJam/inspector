@@ -9,6 +9,8 @@ import {
   type GuestSessionFetchContext,
   type GuestSessionRequestBody,
 } from "../../utils/guest-session-source.js";
+import { getClientIp } from "../../utils/client-ip.js";
+import { hashGuestSpendIp } from "../../utils/guest-spend-ip.js";
 import { ErrorCode } from "./errors.js";
 
 const guestSession = new Hono();
@@ -27,19 +29,6 @@ setInterval(() => {
     }
   }
 }, 5 * 60_000).unref();
-
-function getClientIp(c: any): string | null {
-  const forwardedFor = c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
-  if (forwardedFor) return forwardedFor;
-
-  const realIp = c.req.header("x-real-ip")?.trim();
-  if (realIp) return realIp;
-
-  const cfConnectingIp = c.req.header("cf-connecting-ip")?.trim();
-  if (cfConnectingIp) return cfConnectingIp;
-
-  return null;
-}
 
 const GUEST_SESSION_COOKIE_NAME = "__Host-mcpjam_guest_session";
 
@@ -160,10 +149,18 @@ guestSession.post("/", async (c) => {
     body = {};
   }
 
+  // Hash the client IP so Convex can record the IP-bucket key on the
+  // guest's session row. Lets the credit-balance display reflect the
+  // per-IP cap on the very first load after a cookie clear, before any
+  // /stream call has run.
+  const clientIp = getClientIp(c);
+  const ipHash = clientIp ? await hashGuestSpendIp(clientIp) : null;
+
   const context: GuestSessionFetchContext = {
     cookie: extractGuestSessionCookie(c.req.header("cookie")),
     userAgent: c.req.header("user-agent") ?? null,
     body,
+    ipHash,
   };
 
   const result = shouldFetchGuestSessionFromConvex()

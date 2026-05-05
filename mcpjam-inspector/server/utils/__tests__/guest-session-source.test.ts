@@ -221,6 +221,56 @@ describe("guest-session-source", () => {
     );
   });
 
+  it("forwards x-mcpjam-guest-ip-hash to Convex when ipHash is provided", async () => {
+    vi.mocked(global.fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          guestId: "g",
+          token: "t",
+          expiresAt: Date.now() + 60_000,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    const { fetchConvexGuestSession } = await import(
+      "../guest-session-source.js"
+    );
+    await fetchConvexGuestSession({
+      cookie: null,
+      userAgent: null,
+      ipHash: "abc-hash",
+    });
+
+    const init = vi.mocked(global.fetch).mock.calls[0]![1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    expect(headers["x-mcpjam-guest-ip-hash"]).toBe("abc-hash");
+  });
+
+  it("sends _unknown sentinel when ipHash is null but the field is set", async () => {
+    vi.mocked(global.fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          guestId: "g",
+          token: "t",
+          expiresAt: Date.now() + 60_000,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    const { fetchConvexGuestSession } = await import(
+      "../guest-session-source.js"
+    );
+    await fetchConvexGuestSession({
+      cookie: null,
+      userAgent: null,
+      ipHash: null,
+    });
+
+    const init = vi.mocked(global.fetch).mock.calls[0]![1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    expect(headers["x-mcpjam-guest-ip-hash"]).toBe("_unknown");
+  });
+
   it("waits for provisioning before fetching Convex JWKS", async () => {
     vi.mocked(global.fetch).mockResolvedValue(
       new Response(JSON.stringify({ keys: [] }), {
