@@ -978,8 +978,8 @@ async function processOneStep(
     headers: {
       "content-type": "application/json",
       ...(authHeader ? { authorization: authHeader } : {}),
-      [GUEST_IP_HASH_HEADER]: ipHash ?? GUEST_IP_UNKNOWN_SENTINEL,
       ...(extraHeaders ?? {}),
+      [GUEST_IP_HASH_HEADER]: ipHash ?? GUEST_IP_UNKNOWN_SENTINEL,
     },
     body: JSON.stringify({
       mode: "stream",

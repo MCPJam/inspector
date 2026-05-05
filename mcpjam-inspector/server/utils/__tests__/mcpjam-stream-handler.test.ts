@@ -929,6 +929,33 @@ describe("mcpjam-stream-handler", () => {
       delete process.env.GUEST_SESSION_HASH_PEPPER;
     });
 
+    it("does not let extraHeaders override the computed guest IP hash", async () => {
+      process.env.GUEST_SESSION_HASH_PEPPER = "test-pepper-for-ip-hash";
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "hi" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        clientIp: "203.0.113.10",
+        extraHeaders: {
+          "x-mcpjam-guest-ip-hash": "attacker-controlled",
+        },
+      });
+
+      await lastExecution;
+
+      const headers = (global.fetch as any).mock.calls[0]?.[1]
+        ?.headers as Record<string, string>;
+      expect(headers["x-mcpjam-guest-ip-hash"]).not.toBe("attacker-controlled");
+      expect(headers["x-mcpjam-guest-ip-hash"]).toMatch(/^[A-Za-z0-9_-]+$/);
+
+      delete process.env.GUEST_SESSION_HASH_PEPPER;
+    });
+
     it("hashes IPv4 and ::ffff:-mapped IPv6 of the same client identically", async () => {
       process.env.GUEST_SESSION_HASH_PEPPER = "test-pepper-for-ip-hash";
 
