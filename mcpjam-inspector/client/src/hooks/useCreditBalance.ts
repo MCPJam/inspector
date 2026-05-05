@@ -1,6 +1,7 @@
-import { useConvexAuth, useQuery } from "convex/react";
+import { useQuery } from "convex/react";
 import { useMemo } from "react";
 import { HOSTED_MODE } from "@/lib/config";
+import { useActor } from "@/hooks/useActor";
 
 export interface CreditBalanceState {
   /**
@@ -68,9 +69,10 @@ interface UseCreditBalanceOptions {
 export function useCreditBalance({
   includeGuests = false,
 }: UseCreditBalanceOptions = {}) {
-  const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  const actor = useActor();
   const shouldFetchBalance =
-    !isAuthLoading && (isAuthenticated || includeGuests || HOSTED_MODE);
+    actor.status !== "loading" &&
+    (actor.status === "user" || includeGuests || HOSTED_MODE);
   const raw = useQuery(
     "billing:getCreditBalance" as any,
     shouldFetchBalance ? ({} as any) : "skip"
@@ -82,6 +84,12 @@ export function useCreditBalance({
   const balance = useMemo(() => normalizeBalance(raw), [raw]);
   // Treat the bootstrap window as loading so the card shows a skeleton
   // instead of flashing an empty zero state before the query resolves.
-  const isLoading = isAuthLoading || (shouldFetchBalance && raw === undefined);
-  return { balance, isLoading, isAuthenticated };
+  const isLoading =
+    actor.status === "loading" || (shouldFetchBalance && raw === undefined);
+  return {
+    balance,
+    isLoading,
+    isAuthenticated: actor.status === "user",
+    actorStatus: actor.status,
+  };
 }

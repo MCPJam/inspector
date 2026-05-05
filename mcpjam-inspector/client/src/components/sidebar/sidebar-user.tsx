@@ -27,7 +27,7 @@ import {
 } from "lucide-react";
 import { useProfilePicture } from "@/hooks/useProfilePicture";
 import { HOSTED_MODE } from "@/lib/config";
-import { SidebarCreditUsage } from "@/components/sidebar/sidebar-credit-usage";
+import { SafeSidebarCreditUsage } from "@/components/sidebar/sidebar-credit-usage";
 
 export function SidebarUser() {
   const { isLoading, isAuthenticated: _isAuthenticated } = useConvexAuth();
@@ -148,7 +148,7 @@ export function SidebarUser() {
                 </div>
               </div>
             </DropdownMenuLabel>
-            <SidebarCreditUsage className="px-1 pb-1" variant="full" />
+            <SafeSidebarCreditUsage className="px-1 pb-1" variant="full" />
             <DropdownMenuSeparator />
             <DropdownMenuItem
               onClick={() => (window.location.hash = "profile")}

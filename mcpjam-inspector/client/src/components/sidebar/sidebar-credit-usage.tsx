@@ -1,5 +1,6 @@
 import { Progress } from "@mcpjam/design-system/progress";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { useCreditBalance } from "@/hooks/useCreditBalance";
 import { formatCreditResetText } from "@/lib/credit-usage";
 import { cn } from "@/lib/utils";
@@ -8,6 +9,16 @@ interface SidebarCreditUsageProps {
   className?: string;
   includeGuests?: boolean;
   variant?: "strip" | "full";
+}
+
+export function SafeSidebarCreditUsage(props: SidebarCreditUsageProps = {}) {
+  return (
+    // Keep the production sidebar resilient, while still surfacing card
+    // regressions loudly during local development.
+    <ErrorBoundary fallback={null} logErrors={import.meta.env.DEV}>
+      <SidebarCreditUsage {...props} />
+    </ErrorBoundary>
+  );
 }
 
 export function SidebarCreditUsage({

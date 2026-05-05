@@ -48,7 +48,7 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MCPIcon } from "@/components/ui/mcp-icon";
 import { SidebarUser } from "@/components/sidebar/sidebar-user";
 import { SidebarContextSwitcher } from "@/components/sidebar/sidebar-context-switcher";
-import { SidebarCreditUsage } from "@/components/sidebar/sidebar-credit-usage";
+import { SafeSidebarCreditUsage } from "@/components/sidebar/sidebar-credit-usage";
 import { ShareProjectDialog } from "@/components/project/ShareProjectDialog";
 import { useUpdateNotification } from "@/hooks/useUpdateNotification";
 import { Badge } from "@mcpjam/design-system/badge";
@@ -759,7 +759,7 @@ export function MCPSidebar({
             </SidebarMenu>
           ) : null}
           {!user ? (
-            <SidebarCreditUsage className="px-1" includeGuests />
+            <SafeSidebarCreditUsage className="px-1" includeGuests />
           ) : null}
           <SidebarUser />
         </SidebarFooter>
