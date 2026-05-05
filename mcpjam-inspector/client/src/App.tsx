@@ -11,7 +11,7 @@ import {
 import { useAuth } from "@workos-inc/authkit-react";
 import { AlertTriangle, Construction, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { GuestLimitDialog } from "./components/guest-limit-dialog";
+import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
@@ -1633,6 +1633,53 @@ export default function App() {
     [applyNavigation, setActiveOrganizationId]
   );
 
+  const handleSwitchActiveOrganization = useCallback(
+    (organizationId: string) => {
+      if (organizationId === activeOrganizationId) return;
+      // Mirror main's `handleSidebarSwitchOrganization`: only flip the active
+      // org. The auto-resolution effect in `use-project-state.ts` notices that
+      // the previous active project is no longer in the new org's filtered
+      // project list and picks a new one; we must NOT clear local/convex project
+      // selection here, otherwise the local-fallback default project (which can
+      // carry servers from earlier sessions) bleeds through during the
+      // transition.
+      setActiveOrganizationId(organizationId);
+      // If the user is currently on an org-scoped route (e.g. the org's
+      // overview or billing page), redirect to the same section under the
+      // new org so the page they're looking at actually changes.
+      if (currentHashRoute.organizationId) {
+        const section = currentHashRoute.organizationSection ?? "overview";
+        setActiveOrganizationSection(section);
+        applyNavigation(
+          section === "billing"
+            ? `organizations/${organizationId}/billing`
+            : section === "models"
+              ? `organizations/${organizationId}/models`
+              : `organizations/${organizationId}`,
+          { updateHash: true }
+        );
+        return;
+      }
+      // If the URL embeds an org-A resource id (e.g. `#evals/suite/abc`,
+      // `#chat-v2/threadId`, `#views/viewId`), strip the sub-path so the
+      // user lands on the tab's clean root view for the new org instead of
+      // a "not found" page.
+      if (currentHashRoute.normalizedParts.length > 1) {
+        applyNavigation(currentHashRoute.normalizedTab, { updateHash: true });
+      }
+    },
+    [
+      activeOrganizationId,
+      setActiveOrganizationId,
+      currentHashRoute.organizationId,
+      currentHashRoute.organizationSection,
+      currentHashRoute.normalizedParts,
+      currentHashRoute.normalizedTab,
+      setActiveOrganizationSection,
+      applyNavigation,
+    ]
+  );
+
   const handleContinueEvalInChat = useCallback(
     (handoff: Omit<EvalChatHandoff, "id">) => {
       setSelectedMCPConfigs(handoff.serverNames);
@@ -1942,6 +1989,7 @@ export default function App() {
         activeOrganizationId={activeOrganizationId}
         activeOrganizationName={activeOrganizationName}
         onSwitchOrganization={handleSidebarSwitchOrganization}
+        onSwitchActiveOrganization={handleSwitchActiveOrganization}
         onProjectShared={handleProjectShared}
         billingUiEnabled={billingUiEnabled}
         billingGateDenied={sidebarGateDenied}
@@ -2393,7 +2441,7 @@ export default function App() {
         effectiveActiveProjectId={activeProjectId}
       >
         <Toaster />
-        <GuestLimitDialog />
+        <MCPJamLimitDialog />
         <div
           aria-hidden={shouldShowBillingHandoffOverlay || undefined}
           className={

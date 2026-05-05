@@ -1,5 +1,6 @@
 import { useConvexAuth, useQuery } from "convex/react";
 import { useMemo } from "react";
+import { HOSTED_MODE } from "@/lib/config";
 
 export interface CreditBalanceState {
   /**
@@ -60,11 +61,19 @@ const normalizeBalance = (raw: unknown): CreditBalanceState | undefined => {
   };
 };
 
-export function useCreditBalance() {
+interface UseCreditBalanceOptions {
+  includeGuests?: boolean;
+}
+
+export function useCreditBalance({
+  includeGuests = false,
+}: UseCreditBalanceOptions = {}) {
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  const shouldFetchBalance =
+    !isAuthLoading && (isAuthenticated || includeGuests || HOSTED_MODE);
   const raw = useQuery(
     "billing:getCreditBalance" as any,
-    isAuthenticated ? ({} as any) : "skip",
+    shouldFetchBalance ? ({} as any) : "skip"
   ) as unknown | undefined;
   // Memoize on the raw query reference. Convex returns a stable reference
   // when the underlying data is unchanged, so the normalized object stays
@@ -73,7 +82,6 @@ export function useCreditBalance() {
   const balance = useMemo(() => normalizeBalance(raw), [raw]);
   // Treat the bootstrap window as loading so the card shows a skeleton
   // instead of flashing an empty zero state before the query resolves.
-  const isLoading =
-    isAuthLoading || (isAuthenticated && raw === undefined);
-  return { balance, isLoading };
+  const isLoading = isAuthLoading || (shouldFetchBalance && raw === undefined);
+  return { balance, isLoading, isAuthenticated };
 }

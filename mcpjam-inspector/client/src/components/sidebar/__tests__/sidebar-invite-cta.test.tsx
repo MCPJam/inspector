@@ -56,8 +56,24 @@ vi.mock("@/components/sidebar/sidebar-user", () => ({
   SidebarUser: () => <div data-testid="sidebar-user" />,
 }));
 
-vi.mock("@/components/sidebar/sidebar-project-selector", () => ({
-  SidebarProjectSelector: () => <div data-testid="project-selector" />,
+vi.mock("@/components/sidebar/sidebar-context-switcher", () => ({
+  SidebarContextSwitcher: () => <div data-testid="context-switcher" />,
+}));
+
+vi.mock("@/components/sidebar/sidebar-credit-usage", () => ({
+  SidebarCreditUsage: ({
+    className,
+    includeGuests,
+  }: {
+    className?: string;
+    includeGuests?: boolean;
+  }) => (
+    <div
+      data-testid="sidebar-credit-usage"
+      data-include-guests={String(includeGuests)}
+      className={className}
+    />
+  ),
 }));
 
 vi.mock("@/components/project/ShareProjectDialog", () => ({
@@ -208,6 +224,43 @@ describe("sidebar invite CTA", () => {
     expect(screen.getByText("Invite team members")).toHaveClass(
       "group-data-[collapsible=icon]:hidden",
     );
+  });
+
+  it("keeps signed-in footer focused on invite CTA and the profile menu", () => {
+    renderSidebar();
+
+    const inviteButton = screen.getByRole("button", {
+      name: "Invite team members",
+    });
+    const sidebarUser = screen.getByTestId("sidebar-user");
+
+    expect(screen.queryByTestId("sidebar-credit-usage")).not.toBeInTheDocument();
+    expect(
+      inviteButton.compareDocumentPosition(sidebarUser) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("pins credit usage above the account button for guests", () => {
+    mockUseConvexAuth.mockReturnValue({
+      isAuthenticated: false,
+      isLoading: false,
+    });
+    mockUseAuth.mockReturnValue({
+      user: null,
+    });
+
+    renderSidebar();
+
+    const creditUsage = screen.getByTestId("sidebar-credit-usage");
+    const sidebarUser = screen.getByTestId("sidebar-user");
+
+    expect(creditUsage).toHaveAttribute("data-include-guests", "true");
+    expect(creditUsage).toHaveClass("px-1");
+    expect(
+      creditUsage.compareDocumentPosition(sidebarUser) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("opens the share dialog for the active project", () => {

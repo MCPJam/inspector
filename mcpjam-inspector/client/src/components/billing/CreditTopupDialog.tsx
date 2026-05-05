@@ -115,12 +115,6 @@ export function CreditTopupDialog({
               })}
             </div>
           )}
-          {selectedPreset && (
-            <p className="text-xs text-muted-foreground">
-              A portion of your payment covers payment processing and platform
-              fees; the rest is added to your account balance.
-            </p>
-          )}
         </div>
         <DialogFooter>
           <Button

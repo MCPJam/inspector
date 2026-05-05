@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createFetchResponse } from "@/test";
-import { useGuestLimitDialogStore } from "@/stores/guest-limit-dialog-store";
+import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 const authFetchMock = vi.fn();
 const listHostedToolsMock = vi.fn();
@@ -69,10 +69,12 @@ describe("evals-api hosted mode", () => {
       clientCapabilities: { sampling: true },
     });
     authFetchMock.mockResolvedValue(createFetchResponse({ success: true }));
-    useGuestLimitDialogStore.setState({
+    useMCPJamLimitDialogStore.setState({
       authStatus: "guest",
       hasPendingLimit: false,
       isOpen: false,
+      intent: null,
+      pendingInput: null,
     });
   });
 
@@ -194,7 +196,7 @@ describe("evals-api hosted mode", () => {
     expect(body).not.toHaveProperty("convexAuthToken");
   });
 
-  it("opens the guest-limit dialog for hosted non-stream API limit failures", async () => {
+  it("opens the mcpjam-limit dialog for hosted non-stream API limit failures", async () => {
     authFetchMock.mockResolvedValueOnce(
       createFetchResponse(
         {
@@ -216,7 +218,41 @@ describe("evals-api hosted mode", () => {
       }),
     ).rejects.toThrow("Daily usage limit reached.");
 
-    expect(useGuestLimitDialogStore.getState().isOpen).toBe(true);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+  });
+
+  it("opens the topup-intent dialog for signed-in user_rate_limit failures", async () => {
+    useMCPJamLimitDialogStore.setState({
+      authStatus: "signedIn",
+      hasPendingLimit: false,
+      isOpen: false,
+      intent: null,
+      pendingInput: null,
+    });
+    authFetchMock.mockResolvedValueOnce(
+      createFetchResponse(
+        {
+          code: "user_rate_limit",
+          error: "Daily credit limit reached.",
+          limitKind: "total",
+        },
+        429,
+      ),
+    );
+
+    await expect(
+      runEvalTestCase({
+        projectId: "workspace-1",
+        testCaseId: "test-case-1",
+        model: "openai/gpt-5-mini",
+        provider: "openai",
+        serverIds: ["Server A"],
+        convexAuthToken: "convex-token",
+      }),
+    ).rejects.toThrow("Daily credit limit reached.");
+
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+    expect(useMCPJamLimitDialogStore.getState().intent).toBe("topup");
   });
 
   it("posts direct guest quick runs with the guest server payload", async () => {
@@ -432,7 +468,7 @@ describe("evals-api hosted mode", () => {
     expect(body).not.toHaveProperty("convexAuthToken");
   });
 
-  it("opens the guest-limit dialog for hosted stream HTTP limit failures", async () => {
+  it("opens the mcpjam-limit dialog for hosted stream HTTP limit failures", async () => {
     authFetchMock.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
@@ -460,10 +496,10 @@ describe("evals-api hosted mode", () => {
       ),
     ).rejects.toThrow("Daily usage limit reached.");
 
-    expect(useGuestLimitDialogStore.getState().isOpen).toBe(true);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
   });
 
-  it("opens the guest-limit dialog for hosted stream error events", async () => {
+  it("opens the mcpjam-limit dialog for hosted stream error events", async () => {
     const encoder = new TextEncoder();
     authFetchMock.mockResolvedValueOnce(
       new Response(
@@ -506,7 +542,7 @@ describe("evals-api hosted mode", () => {
         message: "Backend stream error: 429",
       }),
     ]);
-    expect(useGuestLimitDialogStore.getState().isOpen).toBe(true);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
   });
 
   it("uses hosted tool listing instead of /api/mcp/list-tools", async () => {

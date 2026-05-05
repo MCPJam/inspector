@@ -11,6 +11,7 @@ import {
 
 export interface HostedOAuthPendingMarker {
   surface: HostedOAuthSurface;
+  organizationId?: string | null;
   projectId?: string | null;
   serverId?: string | null;
   serverName: string;
@@ -30,13 +31,13 @@ export const HOSTED_OAUTH_PENDING_STORAGE_KEY = "mcp-hosted-oauth-pending";
 const HOSTED_OAUTH_PENDING_TTL_MS = 10 * 60 * 1000;
 
 export function normalizeHostedOAuthServerName(
-  serverName?: string | null,
+  serverName?: string | null
 ): string {
   return serverName?.trim().toLowerCase() ?? "";
 }
 
 function normalizeHostedOAuthReturnHash(
-  hashValue?: string | null,
+  hashValue?: string | null
 ): string | null {
   const trimmed = hashValue?.trim() ?? "";
   if (!trimmed) {
@@ -54,7 +55,7 @@ export function matchesHostedOAuthServerIdentity(
   right: {
     serverName?: string | null;
     serverUrl?: string | null;
-  },
+  }
 ): boolean {
   if (left.serverUrl && right.serverUrl && left.serverUrl === right.serverUrl) {
     return true;
@@ -66,13 +67,14 @@ export function matchesHostedOAuthServerIdentity(
 }
 
 export function writeHostedOAuthPendingMarker(
-  marker: Omit<HostedOAuthPendingMarker, "startedAt">,
+  marker: Omit<HostedOAuthPendingMarker, "startedAt">
 ): void {
   try {
     localStorage.setItem(
       HOSTED_OAUTH_PENDING_STORAGE_KEY,
       JSON.stringify({
         ...marker,
+        organizationId: marker.organizationId ?? null,
         projectId: marker.projectId ?? null,
         serverId: marker.serverId ?? null,
         serverUrl: marker.serverUrl ?? null,
@@ -82,7 +84,7 @@ export function writeHostedOAuthPendingMarker(
         chatboxToken: marker.chatboxToken ?? null,
         returnHash: normalizeHostedOAuthReturnHash(marker.returnHash),
         startedAt: Date.now(),
-      }),
+      })
     );
   } catch {
     // Ignore storage failures.
@@ -113,18 +115,20 @@ export function readHostedOAuthPendingMarker(): HostedOAuthPendingMarker | null 
       return null;
     }
 
-      return {
-        surface: parsed.surface,
-        projectId:
-          typeof parsed.projectId === "string" ? parsed.projectId : null,
-        serverId: typeof parsed.serverId === "string" ? parsed.serverId : null,
-        serverName: parsed.serverName,
-        serverUrl: typeof parsed.serverUrl === "string" ? parsed.serverUrl : null,
-        sessionId:
-          typeof parsed.sessionId === "string" ? parsed.sessionId : null,
-        accessScope:
-          parsed.accessScope === "project_member" ||
-          parsed.accessScope === "chat_v2"
+    return {
+      surface: parsed.surface,
+      organizationId:
+        typeof parsed.organizationId === "string"
+          ? parsed.organizationId
+          : null,
+      projectId: typeof parsed.projectId === "string" ? parsed.projectId : null,
+      serverId: typeof parsed.serverId === "string" ? parsed.serverId : null,
+      serverName: parsed.serverName,
+      serverUrl: typeof parsed.serverUrl === "string" ? parsed.serverUrl : null,
+      sessionId: typeof parsed.sessionId === "string" ? parsed.sessionId : null,
+      accessScope:
+        parsed.accessScope === "project_member" ||
+        parsed.accessScope === "chat_v2"
           ? parsed.accessScope
           : undefined,
       shareToken:
@@ -156,13 +160,13 @@ export function clearHostedOAuthPendingState(): void {
 
 function inferHostedOAuthSurfaceFromSessions(
   serverName: string,
-  serverUrl: string | null,
+  serverUrl: string | null
 ): HostedOAuthSurface | null {
   const hasChatboxLegacyPending = !!localStorage.getItem(
-    CHATBOX_OAUTH_PENDING_KEY,
+    CHATBOX_OAUTH_PENDING_KEY
   );
   const hasSharedLegacyPending = !!localStorage.getItem(
-    SHARED_OAUTH_PENDING_KEY,
+    SHARED_OAUTH_PENDING_KEY
   );
 
   if (hasChatboxLegacyPending !== hasSharedLegacyPending) {
@@ -179,8 +183,8 @@ function inferHostedOAuthSurfaceFromSessions(
           serverName: server.serverName,
           serverUrl: server.serverUrl,
         },
-        { serverName, serverUrl },
-      ),
+        { serverName, serverUrl }
+      )
     ) ?? false;
   const sharedMatch =
     sharedSession != null
@@ -189,7 +193,7 @@ function inferHostedOAuthSurfaceFromSessions(
             serverName: sharedSession.payload.serverName,
             serverUrl: sharedSession.payload.serverUrl,
           },
-          { serverName, serverUrl },
+          { serverName, serverUrl }
         )
       : false;
 
@@ -238,6 +242,7 @@ export function getHostedOAuthCallbackContext(): HostedOAuthCallbackContext | nu
 
   return {
     surface,
+    organizationId: null,
     projectId: null,
     serverId: null,
     serverName,
@@ -247,14 +252,14 @@ export function getHostedOAuthCallbackContext(): HostedOAuthCallbackContext | nu
     shareToken: null,
     chatboxToken: null,
     returnHash: normalizeHostedOAuthReturnHash(
-      localStorage.getItem("mcp-oauth-return-hash"),
+      localStorage.getItem("mcp-oauth-return-hash")
     ),
     startedAt: Date.now(),
   };
 }
 
 export function resolveHostedOAuthReturnHash(
-  context: Pick<HostedOAuthCallbackContext, "surface" | "returnHash">,
+  context: Pick<HostedOAuthCallbackContext, "surface" | "returnHash">
 ): string {
   if (context.returnHash) {
     return context.returnHash;

@@ -67,6 +67,28 @@ function hasHostedOAuthCallbackParams(): boolean {
   return params.has("code") || params.has("error");
 }
 
+// Reads the organizationId from an in-flight project-surface OAuth marker.
+// Used to keep the active org stable across the post-callback re-mount,
+// avoiding a hydration-window flip to resolveFallbackOrganizationId.
+function readPendingOAuthMarkerOrgId(): string | null {
+  if (typeof window === "undefined") return null;
+  if (!hasHostedOAuthCallbackParams()) return null;
+  try {
+    const raw = localStorage.getItem(HOSTED_OAUTH_PENDING_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as {
+      surface?: unknown;
+      organizationId?: unknown;
+    } | null;
+    if (parsed?.surface !== "project") return null;
+    return typeof parsed.organizationId === "string" && parsed.organizationId
+      ? parsed.organizationId
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function readPendingDashboardOAuthFromStorage(): PendingDashboardOAuthState | null {
   if (typeof window === "undefined") return null;
 
@@ -222,8 +244,16 @@ export function useAppState({
     !isLoadingOrganizations
       ? resolveFallbackOrganizationId(validOrganizations)
       : undefined;
+  const pendingOAuthMarkerOrgId = readPendingOAuthMarkerOrgId();
+  const isPendingOAuthMarkerOrgValid =
+    !!pendingOAuthMarkerOrgId &&
+    validOrganizations.some(
+      (organization) => organization._id === pendingOAuthMarkerOrgId
+    );
   const activeOrganizationId = isStoredActiveOrganizationValid
     ? storedActiveOrganizationId
+    : isPendingOAuthMarkerOrgValid
+    ? pendingOAuthMarkerOrgId
     : fallbackActiveOrganizationId;
   const setActiveOrganizationId = useCallback(
     (organizationId: string | undefined) => {
