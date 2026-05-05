@@ -70,7 +70,7 @@ function getPlanColumnCta(params: {
   billingConfigured: boolean;
   canManageBilling: boolean;
   isBillingActionPending: boolean;
-  activeMemberCount: number;
+  activeMemberCount: number | undefined;
   onDowngradePlan: (
     plan: OrganizationPlan,
     billingInterval: BillingInterval,
@@ -104,8 +104,12 @@ function getPlanColumnCta(params: {
   const isHigherTier = getPlanRank(plan) > getPlanRank(currentPlan);
   const isDowngrade = getPlanRank(plan) < getPlanRank(currentPlan);
   const isEnterprisePlan = plan === "enterprise";
+  // While member count is still loading, conservatively block Solo for non-current
+  // plans so a multi-member org can't briefly see an enabled Solo CTA before the
+  // count resolves.
   const soloBlockedByMemberCount =
-    plan === "solo" && activeMemberCount > 1;
+    plan === "solo" &&
+    (activeMemberCount === undefined || activeMemberCount > 1);
 
   if (isCurrentPlan) {
     return { label: "Current plan", disabled: true, variant: "outline" };
@@ -481,7 +485,7 @@ interface OrganizationBillingSectionProps {
   isStartingPlanChange: boolean;
   pendingPlanChangeTarget: "solo" | "team" | null;
   isOpeningPortal: boolean;
-  activeMemberCount: number;
+  activeMemberCount: number | undefined;
   onDowngradePlan: (
     plan: OrganizationPlan,
     billingInterval: BillingInterval,
