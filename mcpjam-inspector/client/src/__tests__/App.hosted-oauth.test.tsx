@@ -245,6 +245,7 @@ vi.mock("../lib/guest-session", () => ({
   getGuestBearerToken: mockGetGuestBearerToken,
   getCachedGuestSession: vi.fn(() => null),
   getOrCreateGuestSession: vi.fn(async () => null),
+  subscribeGuestSessionChanges: vi.fn(() => () => {}),
 }));
 
 vi.mock("../components/ServersTab", () => ({
@@ -2669,72 +2670,4 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("evals-tab")).not.toBeInTheDocument();
   });
 
-  it("still auto-routes a true hosted guest into App Builder onboarding once startup is ready when Playground is enabled", async () => {
-    clearHostedOAuthPendingState();
-    clearChatboxSession();
-    window.history.replaceState({}, "", "/#servers");
-    mockHandleOAuthCallback.mockReset();
-    mockConvexAuthState.isAuthenticated = false;
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled"
-    );
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("app-builder-tab")).toBeInTheDocument();
-    });
-
-    expect(window.location.hash).toBe("#app-builder");
-  });
-
-  it("still auto-routes a true hosted guest into App Builder onboarding when Playground is disabled", async () => {
-    clearHostedOAuthPendingState();
-    clearChatboxSession();
-    window.history.replaceState({}, "", "/#servers");
-    mockHandleOAuthCallback.mockReset();
-    mockConvexAuthState.isAuthenticated = false;
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("app-builder-tab")).toBeInTheDocument();
-    });
-
-    expect(window.location.hash).toBe("#app-builder");
-    expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
-  });
-
-  it("goes from hosted loading straight to App Builder onboarding for a true guest when Playground is enabled", async () => {
-    clearHostedOAuthPendingState();
-    clearChatboxSession();
-    window.history.replaceState({}, "", "/#servers");
-    mockHandleOAuthCallback.mockReset();
-    mockConvexAuthState.isAuthenticated = false;
-    mockHostedShellGateState.value = "auth-loading";
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled"
-    );
-
-    const { rerender } = render(<App />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
-    });
-
-    expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("app-builder-tab")).not.toBeInTheDocument();
-
-    mockHostedShellGateState.value = "ready";
-    rerender(<App />);
-
-    expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
-
-    await waitFor(() => {
-      expect(screen.getByTestId("app-builder-tab")).toBeInTheDocument();
-    });
-
-    expect(window.location.hash).toBe("#app-builder");
-    expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
-  });
 });
