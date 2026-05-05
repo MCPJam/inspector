@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import {
   getCachedGuestSession,
@@ -19,14 +19,25 @@ import {
 export function useActorKey(): string | null {
   const { user, isLoading } = useAuth();
   const [guestId, setGuestId] = useState<string | null>(
-    () => getCachedGuestSession()?.guestId ?? null,
+    () => getCachedGuestSession()?.guestId ?? null
   );
+  const previousUserIdRef = useRef<string | null>(user?.id ?? null);
 
   useEffect(() => {
     return subscribeGuestSessionChanges(() => {
       setGuestId(getCachedGuestSession()?.guestId ?? null);
     });
   }, []);
+
+  useEffect(() => {
+    if (isLoading) return;
+    const previousUserId = previousUserIdRef.current;
+    const nextUserId = user?.id ?? null;
+    if (previousUserId && !nextUserId) {
+      setGuestId(null);
+    }
+    previousUserIdRef.current = nextUserId;
+  }, [isLoading, user?.id]);
 
   useEffect(() => {
     if (isLoading || user || guestId) return;
