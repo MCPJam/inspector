@@ -23,6 +23,7 @@ export interface HostedApiContext {
   serverConfigs?: Record<string, unknown>;
 }
 
+// chat_v2 scope is required for all non-guest API requests that write to chat history.
 type HostedAccessScope = "project_member" | "chat_v2";
 
 const EMPTY_CONTEXT: HostedApiContext = {

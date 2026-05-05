@@ -2439,6 +2439,7 @@ export default function App() {
         isConvexAuthLoading={isAuthLoading}
         isConvexAuthenticated={isAuthenticated}
         effectiveActiveProjectId={activeProjectId}
+        isLoadingRemoteProjects={isLoadingRemoteProjects}
       >
         <Toaster />
         <MCPJamLimitDialog />

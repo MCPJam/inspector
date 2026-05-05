@@ -38,7 +38,9 @@ export function useUnifiedConvexAuth() {
   const [guestToken, setGuestToken] = useState<string | null>(
     () => getCachedGuestSession()?.token ?? null,
   );
-  const [guestLoading, setGuestLoading] = useState(true);
+  const [guestLoading, setGuestLoading] = useState(
+    () => getCachedGuestSession()?.token == null,
+  );
 
   // Fetch a guest token whenever there is no signed-in WorkOS user. Reset
   // when a user does sign in so subsequent renders favor the WorkOS path.
@@ -53,7 +55,12 @@ export function useUnifiedConvexAuth() {
     }
 
     let cancelled = false;
-    setGuestLoading(true);
+    // Only flip to loading if we have no cached token; if we do, the async
+    // call will resolve immediately and setting true→false would cause the
+    // very flicker the lazy initializer was designed to prevent.
+    if (!getCachedGuestSession()?.token) {
+      setGuestLoading(true);
+    }
 
     const resolveGuestSession = async () => {
       for (
