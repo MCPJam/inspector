@@ -85,7 +85,7 @@ if (isInIframe) {
       HOSTED_MODE,
     });
   }
-  if (typeof window !== "undefined") {
+  if (import.meta.env.DEV && typeof window !== "undefined") {
     (window as unknown as { __mcpjamConvex?: unknown }).__mcpjamConvex = {
       convexUrl,
       buildConvexUrl,

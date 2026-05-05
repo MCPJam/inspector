@@ -55,6 +55,7 @@ export interface AppReadyProviderProps {
  * `localStorage.setItem('mcpjamForceReady', '1')` and reload the page.
  */
 function readForceReadyOverride(): boolean {
+  if (!import.meta.env.DEV) return false;
   if (typeof window === "undefined") return false;
   if (
     (window as unknown as { __mcpjamForceReady?: boolean })
