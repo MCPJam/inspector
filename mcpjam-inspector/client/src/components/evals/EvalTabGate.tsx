@@ -48,7 +48,7 @@ export function EvalTabGate({
       return <>{children}</>;
     }
 
-    if (!isAuthenticated || !user) {
+    if (!isAuthenticated || (!user && !projectId)) {
       return (
         <div className="p-6">
           <EmptyState

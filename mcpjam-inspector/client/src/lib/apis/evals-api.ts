@@ -3,9 +3,7 @@ import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
 import { getSessionToken } from "@/lib/session-token";
 import {
   buildHostedEvalServerBatchRequest,
-  buildHostedServerRequest,
   buildHostedServerBatchRequest,
-  isGuestMode,
 } from "@/lib/apis/web/context";
 import { listHostedTools } from "@/lib/apis/web/tools-api";
 import { authFetch } from "@/lib/session-token";
@@ -37,9 +35,6 @@ export const EVALS_API_ENDPOINTS = {
 } as const;
 
 type JsonRecord = Record<string, unknown>;
-const GUEST_UNSUPPORTED_MESSAGE =
-  "Not available for guests yet. Sign in to use this.";
-
 type EvalRequestWithServers = {
   projectId?: string | null;
   serverIds: string[];
@@ -163,25 +158,7 @@ function mergeHostedServerBatch<
 function mergeHostedEvalServerRequest<
   T extends EvalRequestWithServers & { convexAuthToken?: string | null },
 >(request: T): JsonRecord {
-  if (!isGuestMode()) {
-    return mergeHostedServerBatch(request) as JsonRecord;
-  }
-
-  const {
-    convexAuthToken: _convexAuthToken,
-    serverIds,
-    projectId: _projectId,
-    ...requestWithoutHostedAuth
-  } = request;
-
-  if (serverIds.length !== 1) {
-    throw new Error("Guest eval playground supports one server at a time");
-  }
-
-  return {
-    ...requestWithoutHostedAuth,
-    ...buildHostedServerRequest(serverIds[0]!),
-  };
+  return mergeHostedServerBatch(request) as JsonRecord;
 }
 
 async function postEvalRequest<TResponse>(
@@ -268,10 +245,6 @@ export async function runEvals(request: RunEvalsRequest): Promise<any> {
     local: () =>
       postEvalRequest(EVALS_API_ENDPOINTS.local.run, request as JsonRecord),
     hosted: () => {
-      if (isGuestMode()) {
-        throw new Error(GUEST_UNSUPPORTED_MESSAGE);
-      }
-
       return postEvalRequest(EVALS_API_ENDPOINTS.hosted.run, {
         ...mergeHostedServerBatch(request),
         storageServerIds: request.storageServerIds ?? request.serverIds,

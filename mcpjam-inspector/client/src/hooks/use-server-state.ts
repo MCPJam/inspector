@@ -141,6 +141,10 @@ function mergeOAuthCallbackServerConfig(
  * This persists server URL, scopes, headers, and client credentials.
  */
 function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
+  if (HOSTED_MODE) {
+    return;
+  }
+
   if (formData.type !== "http" || !formData.useOAuth || !formData.url) {
     return;
   }
@@ -1905,7 +1909,7 @@ export function useServerState({
             useOAuth: formData.useOAuth ?? false,
           });
           const env = (mcpConfig as any).env;
-          if (env && Object.keys(env).length > 0) {
+          if (!HOSTED_MODE && env && Object.keys(env).length > 0) {
             localStorage.setItem(
               `mcp-env-${formData.name}`,
               JSON.stringify(env)
@@ -2093,12 +2097,14 @@ export function useServerState({
         token_type: tokens.tokenType || "Bearer",
         expires_in: tokens.expiresIn,
       };
-      localStorage.setItem(
-        `mcp-tokens-${serverName}`,
-        JSON.stringify(tokenData)
-      );
+      if (!HOSTED_MODE) {
+        localStorage.setItem(
+          `mcp-tokens-${serverName}`,
+          JSON.stringify(tokenData)
+        );
+      }
 
-      if (tokens.clientId) {
+      if (!HOSTED_MODE && tokens.clientId) {
         localStorage.setItem(
           `mcp-client-${serverName}`,
           JSON.stringify({
@@ -2108,7 +2114,9 @@ export function useServerState({
         );
       }
 
-      localStorage.setItem(`mcp-serverUrl-${serverName}`, serverUrl);
+      if (!HOSTED_MODE) {
+        localStorage.setItem(`mcp-serverUrl-${serverName}`, serverUrl);
+      }
 
       const serverConfig = {
         url: serverUrl,

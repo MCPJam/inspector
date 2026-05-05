@@ -1930,6 +1930,10 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 
   async saveTokens(tokens: any) {
+    if (HOSTED_MODE) {
+      return;
+    }
+
     localStorage.setItem(
       `mcp-tokens-${this.serverName}`,
       JSON.stringify(tokens)

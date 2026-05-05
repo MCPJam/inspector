@@ -232,40 +232,30 @@ describe("web servers/doctor", () => {
     );
   });
 
-  it("runs guest doctor through the shared SDK workflow", async () => {
+  it("rejects direct guest doctor bodies", async () => {
     const app = createGuestDoctorApp();
 
-    const response = await postJson(app, "/api/web/servers/doctor", {
-      serverUrl: "https://guest.example.com/mcp",
-      serverName: "Guest Server",
-      serverHeaders: {
-        "X-Guest": "yes",
+    const response = await postJson(
+      app,
+      "/api/web/servers/doctor",
+      {
+        serverUrl: "https://guest.example.com/mcp",
+        serverName: "Guest Server",
+        serverHeaders: {
+          "X-Guest": "yes",
+        },
+        oauthAccessToken: "guest-oauth-token",
       },
-      oauthAccessToken: "guest-oauth-token",
-    });
-
-    const { status, data } = await expectJson<{ status: string }>(response);
-
-    expect(status).toBe(200);
-    expect(data.status).toBe("ready");
-    expect(runServerDoctorMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        config: expect.objectContaining({
-          url: "https://guest.example.com/mcp",
-          requestInit: {
-            headers: {
-              "X-Guest": "yes",
-              Authorization: "Bearer guest-oauth-token",
-            },
-          },
-          timeout: expect.any(Number),
-        }),
-        target: expect.objectContaining({
-          scope: "guest",
-          label: "Guest Server",
-          url: "https://guest.example.com/mcp",
-        }),
-      }),
+      "guest-token",
     );
+
+    const { status, data } = await expectJson<{
+      code: string;
+      message: string;
+    }>(response);
+
+    expect(status).toBe(400);
+    expect(data.code).toBe("VALIDATION_ERROR");
+    expect(runServerDoctorMock).not.toHaveBeenCalled();
   });
 });

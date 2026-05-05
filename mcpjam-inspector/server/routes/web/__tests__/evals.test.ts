@@ -457,16 +457,7 @@ describe("web routes — evals", () => {
     );
   });
 
-  it("streams direct guest compare quick runs with the synthetic guest server", async () => {
-    const encoder = new TextEncoder();
-    streamEvalTestCaseWithManagerMock.mockResolvedValueOnce(
-      new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(encoder.encode('data: {"type":"complete"}\n\n'));
-          controller.close();
-        },
-      }),
-    );
+  it("rejects direct guest compare quick run bodies", async () => {
     const { app } = createEvalsTestApp();
     const { token } = issueGuestToken();
 
@@ -484,22 +475,14 @@ describe("web routes — evals", () => {
       token,
     );
 
-    expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toContain("text/event-stream");
-    await expect(response.text()).resolves.toContain('"type":"complete"');
-    expect(streamEvalTestCaseWithManagerMock).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        projectId: "__guest__",
-        serverIds: ["__guest__"],
-        testCaseId: "guest-case-1",
-        compareRunId: "cmp_guest",
-        convexAuthToken: token,
-      }),
-      expect.objectContaining({
-        onStreamComplete: expect.any(Function),
-      }),
-    );
+    const { status, data } = await expectJson<{
+      code: string;
+      message: string;
+    }>(response);
+
+    expect(status).toBe(400);
+    expect(data.code).toBe("VALIDATION_ERROR");
+    expect(streamEvalTestCaseWithManagerMock).not.toHaveBeenCalled();
   });
 
   it("rejects direct guest full suite eval runs", async () => {

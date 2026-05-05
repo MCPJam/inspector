@@ -9,13 +9,10 @@ interface UseHostedApiContextOptions {
   clientConfigSyncPending?: boolean;
   getAccessToken: () => Promise<string | undefined | null>;
   oauthTokensByServerId?: Record<string, string>;
-  guestOauthTokensByServerName?: Record<string, string>;
   shareToken?: string;
   chatboxToken?: string;
   isAuthenticated?: boolean;
   hasSession?: boolean;
-  /** Maps server name → MCPServerConfig for guest mode (no Convex). */
-  serverConfigs?: Record<string, unknown>;
   enabled?: boolean;
 }
 
@@ -26,12 +23,10 @@ export function useHostedApiContext({
   clientConfigSyncPending,
   getAccessToken,
   oauthTokensByServerId,
-  guestOauthTokensByServerName,
   shareToken,
   chatboxToken,
   isAuthenticated,
   hasSession,
-  serverConfigs,
   enabled = true,
 }: UseHostedApiContextOptions): void {
   // useLayoutEffect so the global hosted context is set synchronously before
@@ -56,12 +51,10 @@ export function useHostedApiContext({
       clientConfigSyncPending,
       getAccessToken,
       oauthTokensByServerId,
-      guestOauthTokensByServerName,
       shareToken,
       chatboxToken,
       isAuthenticated,
       hasSession,
-      serverConfigs,
     });
 
     return () => {
@@ -75,11 +68,9 @@ export function useHostedApiContext({
     clientConfigSyncPending,
     getAccessToken,
     oauthTokensByServerId,
-    guestOauthTokensByServerName,
     shareToken,
     chatboxToken,
     isAuthenticated,
     hasSession,
-    serverConfigs,
   ]);
 }

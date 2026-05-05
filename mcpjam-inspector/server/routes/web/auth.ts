@@ -3,7 +3,6 @@ import type { Context } from "hono";
 import { MCPClientManager } from "@mcpjam/sdk";
 import type { HttpServerConfig, RpcLogger } from "@mcpjam/sdk";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
-import { validateUrl, OAuthProxyError } from "../../utils/oauth-proxy.js";
 import {
   attachHostedRpcLogs,
   createHostedRpcLogCollector,
@@ -42,7 +41,6 @@ function refineHostedTokens<T extends z.ZodRawShape>(schema: z.ZodObject<T>) {
 }
 
 const clientCapabilitiesSchema = z.record(z.string(), z.unknown());
-export const GUEST_SERVER_ID = "__guest__";
 
 export const projectServerSchema = refineHostedTokens(
   z.object({
@@ -117,16 +115,6 @@ export const hostedChatSchema = refineHostedTokens(
     .passthrough()
 );
 
-// ── Guest Schema ─────────────────────────────────────────────────────
-
-export const guestServerInputSchema = z.object({
-  serverUrl: z.string().min(1),
-  serverName: z.string().min(1).optional(),
-  serverHeaders: z.record(z.string(), z.string()).optional(),
-  oauthAccessToken: z.string().optional(),
-  clientCapabilities: clientCapabilitiesSchema.optional(),
-});
-
 // ── Helpers ──────────────────────────────────────────────────────────
 
 export function buildSingleServerOAuthTokens(serverId: string, token?: string) {
@@ -156,90 +144,6 @@ function buildServerNamesById(
   });
 
   return entries.length > 0 ? Object.fromEntries(entries) : undefined;
-}
-
-export function isGuestServerRequestBody(
-  rawBody: Record<string, unknown>
-): boolean {
-  return (
-    typeof rawBody.serverUrl === "string" &&
-    !rawBody.projectId &&
-    !rawBody.workspaceId
-  );
-}
-
-function requireGuestId(c: any): string {
-  const guestId = c.get("guestId") as string | undefined;
-  if (!guestId) {
-    throw new WebRouteError(
-      401,
-      ErrorCode.UNAUTHORIZED,
-      "Valid guest token required. Please refresh the page to obtain a new session."
-    );
-  }
-  return guestId;
-}
-
-export async function createGuestEphemeralManager(
-  c: any,
-  rawBody: Record<string, unknown>,
-  options?: { timeoutMs?: number; rpcLogger?: RpcLogger }
-): Promise<{
-  manager: InstanceType<typeof MCPClientManager>;
-  augmentedBody: Record<string, unknown>;
-}> {
-  requireGuestId(c);
-
-  const guestInput = parseWithSchema(guestServerInputSchema, rawBody);
-
-  try {
-    await validateUrl(guestInput.serverUrl, true);
-  } catch (err) {
-    if (err instanceof OAuthProxyError) {
-      throw new WebRouteError(
-        err.status,
-        ErrorCode.VALIDATION_ERROR,
-        err.message
-      );
-    }
-    throw err;
-  }
-
-  const timeoutMs = options?.timeoutMs ?? WEB_CALL_TIMEOUT_MS;
-  const headers: Record<string, string> = {
-    ...(guestInput.serverHeaders ?? {}),
-  };
-
-  if (guestInput.oauthAccessToken) {
-    headers["Authorization"] = `Bearer ${guestInput.oauthAccessToken}`;
-  }
-
-  const httpConfig: HttpServerConfig = {
-    url: guestInput.serverUrl,
-    capabilities: guestInput.clientCapabilities,
-    clientCapabilities: guestInput.clientCapabilities,
-    requestInit: {
-      headers,
-    },
-    timeout: timeoutMs,
-  };
-
-  return {
-    manager: new MCPClientManager(
-      { [GUEST_SERVER_ID]: httpConfig },
-      {
-        defaultTimeout: timeoutMs,
-        rpcLogger: options?.rpcLogger,
-        retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
-      }
-    ),
-    augmentedBody: {
-      ...rawBody,
-      projectId: GUEST_SERVER_ID,
-      serverId: GUEST_SERVER_ID,
-      serverIds: [GUEST_SERVER_ID],
-    },
-  };
 }
 
 // ── Authorization ────────────────────────────────────────────────────
@@ -798,10 +702,8 @@ function resolveConnectionParams(body: Record<string, unknown>): {
  *   6. Disconnect all servers (finally)
  *   7. Return JSON response (or structured error)
  *
- * Guest users (identified by guestId in Hono context) bypass Convex authorization
- * entirely. They provide a `serverUrl` (+optional `serverHeaders`) directly in the
- * request body, which is validated for safety (HTTPS-only, no private IPs) before
- * creating a direct ephemeral connection.
+ * Guest users and signed-in users both flow through Convex authorization. The
+ * bearer token determines which backend actor owns the requested project.
  *
  * Not suitable for streaming routes (chat-v2) — those need manual lifecycle
  * management via `onStreamComplete` because the Response is returned before

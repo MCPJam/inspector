@@ -85,11 +85,6 @@ function extractServerNamesById(
     mapAlignedServerNames(body.selectedServerIds, body.selectedServerNames),
   );
 
-  if (typeof body.serverUrl === "string") {
-    resolved.__guest__ =
-      readOptionalString(body.serverName, "__guest__") ?? "__guest__";
-  }
-
   return resolved;
 }
 

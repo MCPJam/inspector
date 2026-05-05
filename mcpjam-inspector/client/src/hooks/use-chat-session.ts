@@ -76,7 +76,6 @@ import {
   buildToolRenderOverridesFromSnapshots,
 } from "@/components/evals/trace-viewer-adapter";
 import { useSharedChatWidgetCapture } from "@/hooks/useSharedChatWidgetCapture";
-import { buildHostedServerRequest } from "@/lib/apis/web/context";
 import { ingestHostedRpcLogs } from "@/stores/traffic-log-store";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import {
@@ -1013,8 +1012,9 @@ export function useChatSession({
   const requireToolApprovalRef = useRef(requireToolApproval);
   requireToolApprovalRef.current = requireToolApproval;
   const isHostedGuest = HOSTED_MODE && !workOsUser && !isWorkOsLoading;
-  const directGuestMode =
-    isHostedGuest && !isAuthLoading && !hostedProjectId && !hostedShareToken;
+  // Hosted dashboard guests now use the Convex project/server path; the old
+  // no-project direct guest request shape is intentionally disabled.
+  const directGuestMode = false;
   const sharedGuestMode =
     isHostedGuest &&
     !isAuthLoading &&
@@ -1294,19 +1294,10 @@ export function useChatSession({
 
     const chatApi = HOSTED_MODE ? "/api/web/chat-v2" : "/api/mcp/chat-v2";
 
-    // Build hosted body based on whether we have a project.
-    // Signed-in users are blocked from submitting until hostedProjectId loads
-    // (via hostedContextNotReady), so this branch only runs for guests.
+    // Hosted dashboard guests and signed-in users both require a project id.
+    // Submit is blocked until hostedProjectId and selected server ids resolve.
     const buildHostedBody = () => {
       if (!hostedProjectId) {
-        if (directGuestMode && selectedServers.length > 0) {
-          return {
-            chatSessionId,
-            directVisibility,
-            ...buildHostedServerRequest(selectedServers[0]),
-          };
-        }
-
         return {
           chatSessionId,
           directVisibility,
@@ -2097,9 +2088,8 @@ export function useChatSession({
   }, [messages]);
 
   // Computed state for UI
-  // Compute guest access from React state instead of the global hostedApiContext.
-  // Shared chats are guest-capable even though they are scoped to a project,
-  // while direct guests have no project at all.
+  // Compute share/chatbox guest access from React state instead of the global
+  // hostedApiContext.
   // In hosted mode: always require auth (guest JWT or WorkOS — handled by authFetch).
   // In non-hosted mode: auth is only needed for sign-in-only MCPJam models.
   const requiresAuthForChat = HOSTED_MODE
@@ -2113,10 +2103,8 @@ export function useChatSession({
     !isAuthenticated && requiresAuthForChat && !guestMode;
   const authHeadersNotReady =
     requiresAuthForChat && isAuthenticated && !authHeaders;
-  // Direct guests don't need a project; shared guests still do.
   const hostedContextNotReady =
     HOSTED_MODE &&
-    !directGuestMode &&
     (!hostedProjectId ||
       (selectedServers.length > 0 &&
         hostedSelectedServerIds.length !== selectedServers.length));

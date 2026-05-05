@@ -1,11 +1,12 @@
 import {
   AppState,
-  initialAppState,
+  createInitialAppState,
+  createLocalDefaultProject,
   ServerWithName,
   Project,
 } from "./app-types";
 import { isProjectClientConfig } from "@/lib/client-config";
-import { clearPersistedOAuthTraces } from "@/lib/oauth/oauth-trace";
+import { HOSTED_MODE } from "@/lib/config";
 
 const STORAGE_KEY = "mcp-inspector-state";
 const PROJECTS_STORAGE_KEY = "mcp-inspector-projects";
@@ -57,7 +58,10 @@ function serializeServerForStorage(server: ServerWithName) {
 
 export function loadAppState(): AppState {
   try {
-    clearPersistedOAuthTraces();
+    if (HOSTED_MODE) {
+      return createInitialAppState();
+    }
+
     const raw = localStorage.getItem(STORAGE_KEY);
     const currentProjectsRaw = localStorage.getItem(PROJECTS_STORAGE_KEY);
     const legacyWorkspacesRaw = localStorage.getItem(
@@ -67,7 +71,7 @@ export function loadAppState(): AppState {
 
     // Load projects
     let projects: Record<string, Project> = {};
-    let activeProjectId = "default";
+    let activeProjectId: string | null = null;
 
     if (projectsRaw) {
       try {
@@ -100,14 +104,14 @@ export function loadAppState(): AppState {
         activeProjectId =
           parsedProjects.activeProjectId ??
           parsedProjects.activeWorkspaceId ??
-          "default";
+          null;
       } catch (e) {
         console.error("Failed to parse projects from storage", e);
       }
     }
 
-    // If no projects exist or default is missing, create it
-    if (Object.keys(projects).length === 0 || !projects.default) {
+    // If no projects exist, create a local default project with a real id.
+    if (Object.keys(projects).length === 0) {
       // Try to migrate from old storage format
       let migratedServers: Record<string, ServerWithName> = {};
       if (raw) {
@@ -124,26 +128,27 @@ export function loadAppState(): AppState {
         }
       }
 
-      projects = {
-        default: {
-          id: "default",
-          name: "Default",
-          description: "Default project",
-          servers: migratedServers,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          isDefault: true,
-        },
-      };
-      activeProjectId = "default";
+      const project = createLocalDefaultProject({ servers: migratedServers });
+      projects = { [project.id]: project };
+      activeProjectId = project.id;
     }
 
-    const activeProject = projects[activeProjectId];
+    let resolvedActiveProjectId =
+      activeProjectId && projects[activeProjectId]
+        ? activeProjectId
+        : Object.values(projects).find((project) => project.isDefault)?.id ??
+          Object.keys(projects)[0];
+    if (!resolvedActiveProjectId) {
+      const project = createLocalDefaultProject();
+      projects = { [project.id]: project };
+      resolvedActiveProjectId = project.id;
+    }
+    const activeProject = projects[resolvedActiveProjectId];
     const parsed = raw ? JSON.parse(raw) : {};
 
     return {
       projects,
-      activeProjectId,
+      activeProjectId: resolvedActiveProjectId,
       servers: activeProject?.servers || {},
       selectedServer: parsed.selectedServer || "none",
       selectedMultipleServers: parsed.selectedMultipleServers || [],
@@ -151,12 +156,16 @@ export function loadAppState(): AppState {
     } as AppState;
   } catch (e) {
     console.error("Failed to load app state", e);
-    return initialAppState;
+    return createInitialAppState();
   }
 }
 
 export function saveAppState(state: AppState) {
   try {
+    if (HOSTED_MODE) {
+      return;
+    }
+
     // Save projects separately
     const projectsData = {
       activeProjectId: state.activeProjectId,
