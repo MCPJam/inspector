@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("@/state/app-state-context", () => ({
@@ -241,7 +241,9 @@ describe("LoggerView hosted rpc logs", () => {
 
     expect(createObjectURL).toHaveBeenCalledTimes(1);
     expect(anchorClick).toHaveBeenCalledTimes(1);
-    expect(revokeObjectURL).toHaveBeenCalledWith("blob:mock-url");
+    await waitFor(() =>
+      expect(revokeObjectURL).toHaveBeenCalledWith("blob:mock-url"),
+    );
 
     vi.restoreAllMocks();
     vi.unstubAllGlobals();

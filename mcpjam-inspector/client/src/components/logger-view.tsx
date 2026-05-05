@@ -402,7 +402,7 @@ export function LoggerView({
     a.href = url;
     a.download = `json-rpc-logs-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 0);
   };
 
   // Subscribe to the singleton SSE connection for RPC traffic
