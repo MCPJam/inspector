@@ -177,6 +177,7 @@ describe("useAppState active organization recovery", () => {
     const { result } = renderHook(() =>
       useAppState({
         currentUserId: "user-1",
+        currentActorKey: "user-1",
         routeOrganizationId: undefined,
         hasOrganizations: true,
         isLoadingOrganizations: false,
@@ -208,6 +209,7 @@ describe("useAppState active organization recovery", () => {
     const { result } = renderHook(() =>
       useAppState({
         currentUserId: "user-1",
+        currentActorKey: "user-1",
         routeOrganizationId: undefined,
         hasOrganizations: true,
         isLoadingOrganizations: false,
@@ -236,6 +238,7 @@ describe("useAppState active organization recovery", () => {
     const { result } = renderHook(() =>
       useAppState({
         currentUserId: "user-1",
+        currentActorKey: "user-1",
         routeOrganizationId: "org-b",
         hasOrganizations: true,
         isLoadingOrganizations: false,
@@ -259,6 +262,7 @@ describe("useAppState active organization recovery", () => {
     const { result } = renderHook(() =>
       useAppState({
         currentUserId: "user-1",
+        currentActorKey: "user-1",
         routeOrganizationId: undefined,
         hasOrganizations: false,
         isLoadingOrganizations: false,
@@ -325,6 +329,7 @@ describe("useAppState active organization recovery", () => {
     const { result } = renderHook(() =>
       useAppState({
         currentUserId: "user-1",
+        currentActorKey: "user-1",
         routeOrganizationId: undefined,
         hasOrganizations: false,
         isLoadingOrganizations: false,
@@ -380,6 +385,7 @@ describe("useAppState active organization recovery", () => {
     const { result } = renderHook(() =>
       useAppState({
         currentUserId: "user-1",
+        currentActorKey: "user-1",
         routeOrganizationId: undefined,
         hasOrganizations: false,
         isLoadingOrganizations: false,
@@ -417,6 +423,7 @@ describe("useAppState active organization recovery", () => {
       renderHook(() =>
         useAppState({
           currentUserId: "user-1",
+          currentActorKey: "user-1",
           routeOrganizationId: undefined,
           hasOrganizations: false,
           isLoadingOrganizations: false,
@@ -455,6 +462,7 @@ describe("useAppState active organization recovery", () => {
     const { result } = renderHook(() =>
       useAppState({
         currentUserId: "user-1",
+        currentActorKey: "user-1",
         routeOrganizationId: undefined,
         hasOrganizations: false,
         isLoadingOrganizations: false,
@@ -501,6 +509,7 @@ describe("useAppState active organization recovery", () => {
       const { result } = renderHook(() =>
         useAppState({
           currentUserId: "user-1",
+          currentActorKey: "user-1",
           routeOrganizationId: undefined,
           hasOrganizations: false,
           isLoadingOrganizations: false,

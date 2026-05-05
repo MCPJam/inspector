@@ -43,6 +43,7 @@ import {
   createHostedRpcLogCollector,
 } from "./hosted-rpc-logs.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
+import { getClientIp } from "../../utils/client-ip.js";
 
 function deriveOrgProviderKey(modelDefinition: ModelDefinition): string {
   const result = deriveOrgProviderKeyResult(modelDefinition);
@@ -231,6 +232,7 @@ chatV2.post("/", async (c) => {
           temperature: resolvedTemperature,
           tools: allTools as ToolSet,
           authHeader: c.req.header("authorization"),
+          clientIp: getClientIp(c),
           mcpClientManager: manager,
           selectedServers,
           requireToolApproval,
@@ -313,6 +315,10 @@ chatV2.post("/", async (c) => {
       );
     }
 
+    // Membership chat (no share/chatbox token) is the default — the backend
+    // authorizes via project ownership for both guest and authed users.
+    // accessScope is only set when a token is in play (shared chat / chatbox)
+    // since that's an orthogonal access path keyed on the token, not the actor.
     const { manager, oauthServerUrls: urls } = await createAuthorizedManager(
       c,
       bearerToken,
@@ -322,7 +328,7 @@ chatV2.post("/", async (c) => {
       hostedBody.oauthTokens,
       hostedBody.clientCapabilities,
       {
-        accessScope: "chat_v2",
+        ...(shareToken || chatboxToken ? { accessScope: "chat_v2" } : {}),
         shareToken,
         chatboxToken,
         rpcLogger: rpcCollector.rpcLogger,
@@ -481,6 +487,7 @@ chatV2.post("/", async (c) => {
           temperature: resolvedTemperature,
           tools: allTools as ToolSet,
           authHeader: c.req.header("authorization"),
+          clientIp: getClientIp(c),
           shareToken,
           chatboxToken,
           mcpClientManager: manager,
@@ -516,6 +523,7 @@ chatV2.post("/", async (c) => {
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
         authHeader: c.req.header("authorization"),
+        clientIp: getClientIp(c),
         chatboxToken,
         projectId: hostedBody.projectId,
         mcpClientManager: manager,

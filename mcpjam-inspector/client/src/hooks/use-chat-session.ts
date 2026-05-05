@@ -64,9 +64,9 @@ import {
   getAuthHeaders as getSessionAuthHeaders,
 } from "@/lib/session-token";
 import {
-  notifyGuestLimitError,
-  notifyGuestLimitErrorFromResponse,
-} from "@/lib/guest-limit";
+  notifyMCPJamLimitError,
+  notifyMCPJamLimitErrorFromResponse,
+} from "@/lib/mcpjam-limit";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
 import { transcriptToUIMessages } from "@/lib/transcript-to-ui-messages";
@@ -946,7 +946,11 @@ export function useChatSession({
   const initialTemperature = executionConfig?.temperature ?? 0.7;
   const initialRequireToolApproval =
     executionConfig?.requireToolApproval ?? false;
-  const { getAccessToken } = useAuth();
+  const {
+    getAccessToken,
+    user: workOsUser,
+    isLoading: isWorkOsLoading,
+  } = useAuth();
 
   // Store onReset in a ref to avoid triggering effects when the callback changes identity
   const onResetRef = useRef(onReset);
@@ -1008,15 +1012,11 @@ export function useChatSession({
   );
   const requireToolApprovalRef = useRef(requireToolApproval);
   requireToolApprovalRef.current = requireToolApproval;
+  const isHostedGuest = HOSTED_MODE && !workOsUser && !isWorkOsLoading;
   const directGuestMode =
-    HOSTED_MODE &&
-    !isAuthenticated &&
-    !isAuthLoading &&
-    !hostedProjectId &&
-    !hostedShareToken;
+    isHostedGuest && !isAuthLoading && !hostedProjectId && !hostedShareToken;
   const sharedGuestMode =
-    HOSTED_MODE &&
-    !isAuthenticated &&
+    isHostedGuest &&
     !isAuthLoading &&
     !!hostedProjectId &&
     !!(hostedShareToken || hostedChatboxToken);
@@ -1233,7 +1233,7 @@ export function useChatSession({
         ? await authFetch(input, init)
         : await fetch(input, init);
       if (!response.ok) {
-        await notifyGuestLimitErrorFromResponse(response);
+        await notifyMCPJamLimitErrorFromResponse(response);
         if (HOSTED_MODE) {
           await ingestHostedRpcLogsFromResponse(response);
         }
@@ -1244,7 +1244,25 @@ export function useChatSession({
   );
 
   const handleChatError = useCallback((chatError: Error) => {
-    notifyGuestLimitError({ message: chatError.message });
+    // Try to recover a structured limitKind from a JSON-shaped error message
+    // so the concurrency carve-out is honored on the SSE error path. Best
+    // effort: untouched if the message isn't JSON.
+    let limitKind: "total" | "concurrency" | undefined;
+    const jsonStart = chatError.message.indexOf("{");
+    if (jsonStart >= 0) {
+      try {
+        const parsed = JSON.parse(chatError.message.slice(jsonStart));
+        if (parsed && typeof parsed === "object") {
+          const value = (parsed as { limitKind?: unknown }).limitKind;
+          if (value === "total" || value === "concurrency") {
+            limitKind = value;
+          }
+        }
+      } catch {
+        // not JSON; ignore
+      }
+    }
+    notifyMCPJamLimitError({ message: chatError.message, limitKind });
   }, []);
 
   // Create transport
@@ -1818,9 +1836,8 @@ export function useChatSession({
       } else if (
         !resolved &&
         active &&
-        !isAuthenticated &&
         HOSTED_MODE &&
-        (!hostedProjectId || !!hostedShareToken || !!hostedChatboxToken)
+        isHostedGuest
       ) {
         const guestToken = await getGuestBearerToken();
         if (!active) return;
@@ -1887,6 +1904,8 @@ export function useChatSession({
     hostedChatboxToken,
     hostedProjectId,
     isAuthenticated,
+    isHostedGuest,
+    workOsUser,
     clearPendingSessionHydration,
     setMessages,
     syncResumedVersion,

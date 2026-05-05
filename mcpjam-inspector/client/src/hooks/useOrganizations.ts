@@ -13,7 +13,10 @@ export interface Organization {
   createdAt: number;
   updatedAt: number;
   myRole?: string;
+  isCreator?: boolean;
 }
+
+export const ORGANIZATION_CREATION_LIMIT = 2;
 
 export interface OrganizationMember {
   _id: string;
@@ -57,9 +60,24 @@ export function useOrganizationQueries({
     return [...organizations].sort((a, b) => b.updatedAt - a.updatedAt);
   }, [organizations]);
 
+  const createdCount = useMemo(
+    () =>
+      organizations
+        ? organizations.filter((org) => org.isCreator).length
+        : 0,
+    [organizations],
+  );
+
+  const canCreateOrganization =
+    !isAuthenticated ||
+    organizations === undefined ||
+    createdCount < ORGANIZATION_CREATION_LIMIT;
+
   return {
     sortedOrganizations,
     isLoading,
+    createdCount,
+    canCreateOrganization,
   };
 }
 

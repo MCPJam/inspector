@@ -154,7 +154,7 @@ describe("useAppState hosted OAuth browser back", () => {
         serverUrl: "https://example.com/mcp",
         returnHash: "#servers",
         startedAt: Date.now(),
-      }),
+      })
     );
     localStorage.setItem("mcp-oauth-pending", "demo-server");
     localStorage.setItem("mcp-oauth-return-hash", "#servers");
@@ -168,11 +168,12 @@ describe("useAppState hosted OAuth browser back", () => {
     renderHook(() =>
       useAppState({
         currentUserId: "user-1",
+        currentActorKey: "user-1",
         routeOrganizationId: undefined,
         hasOrganizations: false,
         isLoadingOrganizations: false,
         validOrganizations: [],
-      }),
+      })
     );
 
     await waitFor(() => {
@@ -189,12 +190,124 @@ describe("useAppState hosted OAuth browser back", () => {
     await waitFor(() => {
       const lastProjectArgs = useProjectStateMock.mock.calls.at(-1)?.[0];
       expect(
-        lastProjectArgs?.appState.servers["demo-server"]?.connectionStatus,
+        lastProjectArgs?.appState.servers["demo-server"]?.connectionStatus
       ).toBe("failed");
     });
     expect(localStorage.getItem("mcp-hosted-oauth-pending")).toBeNull();
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
     expect(localStorage.getItem("mcp-oauth-return-hash")).toBeNull();
     expect(localStorage.getItem("mcp-quick-connect-pending")).toBeNull();
+  });
+});
+
+describe("useAppState pending OAuth marker org preference", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    window.history.replaceState({}, "", "/callback?code=xyz");
+    loadAppStateMock.mockReturnValue(createLoadedAppState());
+    saveAppStateMock.mockResolvedValue(undefined);
+    useProjectStateMock.mockImplementation(({ appState }) => ({
+      ...projectStateValue,
+      effectiveProjects: appState.projects,
+      effectiveActiveProjectId: appState.activeProjectId,
+    }));
+    useServerStateMock.mockImplementation(({ appState }) => ({
+      ...serverStateValue,
+      projectServers: appState.servers,
+    }));
+  });
+
+  function writePendingMarker(organizationId: string | null) {
+    localStorage.setItem(
+      "mcp-hosted-oauth-pending",
+      JSON.stringify({
+        surface: "project",
+        organizationId,
+        projectId: "proj-1",
+        serverId: "srv-1",
+        serverName: "demo-server",
+        serverUrl: "https://example.com/mcp",
+        returnHash: "#servers",
+        startedAt: Date.now(),
+      })
+    );
+  }
+
+  it("falls through to fallback when the marker org is no longer in validOrganizations (stale-org guard, #1)", async () => {
+    // User was kicked out of org-stale during the OAuth round-trip.
+    writePendingMarker("org-stale");
+
+    const { result } = renderHook(() =>
+      useAppState({
+        currentUserId: "user-1",
+        routeOrganizationId: undefined,
+        hasOrganizations: true,
+        isLoadingOrganizations: false,
+        // org-stale is intentionally absent.
+        validOrganizations: [{ _id: "org-current", myRole: "owner" }],
+      })
+    );
+
+    await waitFor(() => {
+      expect(useProjectStateMock).toHaveBeenCalled();
+    });
+
+    // Stale marker org id was rejected by the validOrganizations intersection;
+    // resolution falls through to the fallback (first valid org).
+    expect(result.current.activeOrganizationId).toBe("org-current");
+  });
+
+  it("prefers the marker org when it IS still in validOrganizations (race-fix happy path)", async () => {
+    writePendingMarker("org-from-marker");
+
+    const { result } = renderHook(() =>
+      useAppState({
+        currentUserId: "user-1",
+        routeOrganizationId: undefined,
+        hasOrganizations: true,
+        isLoadingOrganizations: false,
+        validOrganizations: [
+          // Owner of two orgs — fallback would pick the first owned one
+          // (org-other) without the marker preference.
+          { _id: "org-other", myRole: "owner" },
+          { _id: "org-from-marker", myRole: "owner" },
+        ],
+      })
+    );
+
+    await waitFor(() => {
+      expect(useProjectStateMock).toHaveBeenCalled();
+    });
+
+    expect(result.current.activeOrganizationId).toBe("org-from-marker");
+  });
+
+  it("ignores the marker when the URL has no callback params (post-finalize / connection-failure path, #2)", async () => {
+    // Simulate the post-callback state: URL has been cleaned by
+    // finalizeHostedOAuth, even if the marker somehow survived.
+    window.history.replaceState({}, "", "/");
+    writePendingMarker("org-from-marker");
+
+    const { result } = renderHook(() =>
+      useAppState({
+        currentUserId: "user-1",
+        routeOrganizationId: undefined,
+        hasOrganizations: true,
+        isLoadingOrganizations: false,
+        validOrganizations: [
+          { _id: "org-other", myRole: "owner" },
+          { _id: "org-from-marker", myRole: "owner" },
+        ],
+      })
+    );
+
+    await waitFor(() => {
+      expect(useProjectStateMock).toHaveBeenCalled();
+    });
+
+    // Without ?code/?error in the URL, the marker is inert; resolution falls
+    // back to the first owned org rather than restoring the marker's choice.
+    expect(result.current.activeOrganizationId).toBe("org-other");
   });
 });

@@ -79,6 +79,8 @@ async function resolveHostedHttpConfig(
 
   // Project: authorize via Convex
   const wsBody = parseWithSchema(projectServerSchema, body);
+  const workspaceId =
+    typeof body.workspaceId === "string" ? body.workspaceId : undefined;
   const auth = await authorizeServer(
     c,
     bearerToken,
@@ -86,12 +88,9 @@ async function resolveHostedHttpConfig(
     wsBody.serverId,
     {
       accessScope: wsBody.accessScope,
-      workspaceId:
-        typeof (wsBody as { workspaceId?: unknown }).workspaceId === "string"
-          ? (wsBody as { workspaceId: string }).workspaceId
-          : undefined,
+      workspaceId,
       shareToken: wsBody.shareToken,
-      sandboxToken: wsBody.sandboxToken,
+      chatboxToken: wsBody.chatboxToken,
     }
   );
 
@@ -168,6 +167,8 @@ async function resolveHostedServerConfig(
 
   // Project: authorize via Convex
   const wsBody = parseWithSchema(projectServerSchema, body);
+  const workspaceId =
+    typeof body.workspaceId === "string" ? body.workspaceId : undefined;
   const auth = await authorizeServer(
     c,
     bearerToken,
@@ -175,12 +176,9 @@ async function resolveHostedServerConfig(
     wsBody.serverId,
     {
       accessScope: wsBody.accessScope,
-      workspaceId:
-        typeof (wsBody as { workspaceId?: unknown }).workspaceId === "string"
-          ? (wsBody as { workspaceId: string }).workspaceId
-          : undefined,
+      workspaceId,
       shareToken: wsBody.shareToken,
-      sandboxToken: wsBody.sandboxToken,
+      chatboxToken: wsBody.chatboxToken,
     }
   );
 

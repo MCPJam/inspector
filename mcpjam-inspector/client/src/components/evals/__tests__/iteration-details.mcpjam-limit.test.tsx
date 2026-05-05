@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "@testing-library/react";
 import { IterationDetails } from "../iteration-details";
 import type { EvalIteration } from "../types";
-import { useGuestLimitDialogStore } from "@/stores/guest-limit-dialog-store";
+import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 vi.mock("convex/react", () => ({
   useAction: () => vi.fn(),
@@ -39,15 +39,17 @@ const makeIteration = (
 });
 
 beforeEach(() => {
-  useGuestLimitDialogStore.setState({
+  useMCPJamLimitDialogStore.setState({
     authStatus: "loading",
     hasPendingLimit: false,
     isOpen: false,
+    intent: null,
+    pendingInput: null,
   });
 });
 
 describe("IterationDetails guest daily-limit handling", () => {
-  it("does not open the guest-limit dialog when rendering historical error details", () => {
+  it("does not open the mcpjam-limit dialog when rendering historical error details", () => {
     render(
       <IterationDetails
         iteration={makeIteration({
@@ -61,6 +63,6 @@ describe("IterationDetails guest daily-limit handling", () => {
       />,
     );
 
-    expect(useGuestLimitDialogStore.getState().isOpen).toBe(false);
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
   });
 });

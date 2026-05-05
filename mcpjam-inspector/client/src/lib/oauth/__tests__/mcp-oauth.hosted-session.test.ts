@@ -231,6 +231,51 @@ describe("mcp-oauth hosted callback sessions", () => {
     });
   });
 
+  it("rejects cross-origin resources from the stored hosted authorization request", async () => {
+    localStorage.setItem(
+      "mcp-oauth-flow-state-linear",
+      JSON.stringify({
+        version: 1,
+        protocolVersion: "2025-11-25",
+        registrationStrategy: "cimd",
+        state: {
+          authorizationUrl:
+            "https://auth.linear.app/authorize?client_id=client_123&resource=https%3A%2F%2Fevil.example%2Fmcp",
+        },
+      }),
+    );
+
+    const { completeHostedOAuthCallback } = await import("../mcp-oauth");
+    const result = await completeHostedOAuthCallback(
+      {
+        surface: "project",
+        projectId: "ws_1",
+        serverId: "srv_linear",
+        serverName: "linear",
+        serverUrl: "https://mcp.linear.app",
+        sessionId: "hosted-session-1",
+        accessScope: "project_member",
+        shareToken: null,
+        chatboxToken: null,
+        returnHash: "#servers",
+        startedAt: Date.now(),
+      },
+      "oauth-code",
+      {
+        callbackState: "oauth-state-linear",
+      },
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain(
+      "Rejected cross-origin OAuth resource indicator"
+    );
+    expect(authFetchMock).not.toHaveBeenCalledWith(
+      "https://test.convex.site/web/oauth/complete",
+      expect.any(Object),
+    );
+  });
+
   it("polls hosted session progress and emits live trace updates while the callback completes", async () => {
     vi.useFakeTimers();
     try {

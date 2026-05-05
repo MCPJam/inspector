@@ -18,6 +18,7 @@ const {
   updateProjectMock,
   deleteProjectMock,
   projectQueryState,
+  projectServersState,
   organizationBillingStatusState,
   useOrganizationBillingStatusMock,
   serializeServersForSharingMock,
@@ -31,6 +32,10 @@ const {
     allProjects: undefined as any,
     projects: undefined as any,
     isLoading: false,
+  },
+  projectServersState: {
+    servers: undefined as any,
+    isLoading: false as boolean,
   },
   organizationBillingStatusState: {
     value: undefined as
@@ -60,10 +65,7 @@ vi.mock("../useProjects", () => ({
     updateClientConfig: updateClientConfigMock,
     deleteProject: deleteProjectMock,
   }),
-  useProjectServers: () => ({
-    servers: undefined,
-    isLoading: false,
-  }),
+  useProjectServers: () => projectServersState,
 }));
 
 vi.mock("../useOrganizationBilling", () => ({
@@ -122,6 +124,8 @@ function renderUseProjectState({
   hasOrganizations = true,
   isLoadingOrganizations = false,
   validOrganizationIds,
+  hasSignedInUser = true,
+  currentActorKey = "test-actor",
 }: {
   appState: AppState;
   activeOrganizationId?: string;
@@ -130,6 +134,8 @@ function renderUseProjectState({
   hasOrganizations?: boolean;
   isLoadingOrganizations?: boolean;
   validOrganizationIds?: string[];
+  hasSignedInUser?: boolean;
+  currentActorKey?: string | null;
 }) {
   const dispatch = vi.fn<(action: AppAction) => void>();
   const logger = {
@@ -171,6 +177,8 @@ function renderUseProjectState({
           ),
         activeOrganizationId: organizationId,
         routeOrganizationId: routeOrganizationIdOverride ?? routeOrganizationId,
+        currentActorKey,
+        hasSignedInUser,
         logger,
       }),
     {
@@ -208,6 +216,8 @@ describe("useProjectState automatic project creation", () => {
     projectQueryState.allProjects = [];
     projectQueryState.projects = [];
     projectQueryState.isLoading = false;
+    projectServersState.servers = undefined;
+    projectServersState.isLoading = false;
     organizationBillingStatusState.value = undefined;
     useOrganizationBillingStatusMock.mockImplementation(
       () => organizationBillingStatusState.value,
@@ -1817,5 +1827,260 @@ describe("useProjectState automatic project creation", () => {
       expect(useClientConfigStore.getState().isAwaitingRemoteEcho).toBe(false);
       expect(useClientConfigStore.getState().isSaving).toBe(false);
     });
+  });
+});
+
+describe("useProjectState guest active project handling", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    projectQueryState.allProjects = [];
+    projectQueryState.projects = [];
+    projectQueryState.isLoading = false;
+    projectServersState.servers = undefined;
+    projectServersState.isLoading = false;
+    ensureDefaultProjectMock.mockResolvedValue("guest-project-id");
+    organizationBillingStatusState.value = undefined;
+    useOrganizationBillingStatusMock.mockImplementation(
+      () => organizationBillingStatusState.value,
+    );
+  });
+
+  it("ignores any pre-existing per-actor stored project id for guests", async () => {
+    localStorage.setItem(
+      "convex-active-project-id:guest-abc",
+      "stale-orphan-project",
+    );
+    projectQueryState.allProjects = [
+      {
+        _id: "guest-project",
+        name: "Guest Default",
+        servers: {},
+        ownerId: "guest-user",
+        organizationId: undefined as any,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    projectQueryState.projects = projectQueryState.allProjects;
+    projectServersState.servers = [];
+
+    const appState = createAppState({});
+    const { result } = renderUseProjectState({
+      appState,
+      hasOrganizations: false,
+      hasSignedInUser: false,
+      currentActorKey: "guest-abc",
+    });
+
+    await waitFor(() => {
+      expect(result.current.effectiveActiveProjectId).toBe("guest-project");
+    });
+
+    expect(
+      localStorage.getItem("convex-active-project-id:guest-abc"),
+    ).toBeNull();
+  });
+
+  it("does not persist active project selection for guests", async () => {
+    projectQueryState.allProjects = [
+      {
+        _id: "guest-project",
+        name: "Guest Default",
+        servers: {},
+        ownerId: "guest-user",
+        organizationId: undefined as any,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    projectQueryState.projects = projectQueryState.allProjects;
+    projectServersState.servers = [];
+
+    const appState = createAppState({});
+    const { result } = renderUseProjectState({
+      appState,
+      hasOrganizations: false,
+      hasSignedInUser: false,
+      currentActorKey: "guest-abc",
+    });
+
+    await waitFor(() => {
+      expect(result.current.effectiveActiveProjectId).toBe("guest-project");
+    });
+
+    expect(
+      localStorage.getItem("convex-active-project-id:guest-abc"),
+    ).toBeNull();
+  });
+
+  it("populates servers for guest's active project once flat servers query resolves", async () => {
+    projectQueryState.allProjects = [
+      {
+        _id: "guest-project",
+        name: "Guest Default",
+        servers: {},
+        ownerId: "guest-user",
+        organizationId: undefined as any,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    projectQueryState.projects = projectQueryState.allProjects;
+    projectServersState.servers = [
+      {
+        _id: "server-1",
+        projectId: "guest-project",
+        name: "excalidraw",
+        enabled: true,
+        transportType: "http",
+        url: "https://mcp.excalidraw.com/",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+
+    const appState = createAppState({});
+    const { result } = renderUseProjectState({
+      appState,
+      hasOrganizations: false,
+      hasSignedInUser: false,
+      currentActorKey: "guest-abc",
+    });
+
+    await waitFor(() => {
+      expect(result.current.effectiveActiveProjectId).toBe("guest-project");
+    });
+
+    await waitFor(() => {
+      const project =
+        result.current.effectiveProjects[result.current.effectiveActiveProjectId];
+      expect(project?.servers).toBeDefined();
+      // The deserializeServersFromConvex mock is a pass-through so the array
+      // becomes index-keyed; what matters here is that the merge populated the
+      // active project's servers from the flat list rather than leaving {}.
+      expect(Object.keys(project?.servers ?? {}).length).toBe(1);
+    });
+  });
+});
+
+describe("useProjectState first-paint server visibility", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    projectQueryState.allProjects = [];
+    projectQueryState.projects = [];
+    projectQueryState.isLoading = false;
+    projectServersState.servers = undefined;
+    projectServersState.isLoading = false;
+    organizationBillingStatusState.value = undefined;
+    useOrganizationBillingStatusMock.mockImplementation(
+      () => organizationBillingStatusState.value,
+    );
+  });
+
+  it("renders the active project's flat servers without waiting for the auto-set effect to copy convexActiveProjectId", async () => {
+    // Reproduces the cmd+R bug: for a guest, convexActiveProjectId starts at
+    // null. The auto-set effect copies remoteProjects[0]._id into it, but
+    // useProjectServers must fire for the right id on the *same* frame the
+    // user sees, or the project briefly renders as "no servers connected".
+    projectQueryState.allProjects = [
+      {
+        _id: "guest-project",
+        name: "Default",
+        servers: {},
+        ownerId: "guest-user",
+        organizationId: undefined as any,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    projectQueryState.projects = projectQueryState.allProjects;
+    projectServersState.servers = [
+      {
+        _id: "server-1",
+        projectId: "guest-project",
+        name: "excalidraw",
+        enabled: true,
+        transportType: "http",
+        url: "https://mcp.excalidraw.com/",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+
+    const appState = createAppState({});
+    const { result } = renderUseProjectState({
+      appState,
+      hasOrganizations: false,
+      hasSignedInUser: false,
+      currentActorKey: "guest-abc",
+    });
+
+    // The merge must populate servers from the flat list even before
+    // convexActiveProjectId catches up to remoteProjects[0]._id.
+    await waitFor(() => {
+      const project = result.current.effectiveProjects["guest-project"];
+      expect(Object.keys(project?.servers ?? {}).length).toBe(1);
+    });
+  });
+});
+
+describe("useProjectState convexProjects merge under loading", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    projectQueryState.allProjects = [];
+    projectQueryState.projects = [];
+    projectQueryState.isLoading = false;
+    projectServersState.servers = undefined;
+    projectServersState.isLoading = false;
+    organizationBillingStatusState.value = undefined;
+    useOrganizationBillingStatusMock.mockImplementation(
+      () => organizationBillingStatusState.value,
+    );
+  });
+
+  it("does not fall through to embedded servers map for the active project while flat servers load", async () => {
+    // Simulate the bug: a guest project doc has servers: {} (vestigial empty
+    // map) but the flat servers table is the real source. While the flat
+    // query is in flight, the active project must not render an empty list
+    // that consumers could mistake for "no servers."
+    projectQueryState.allProjects = [
+      {
+        _id: "guest-project",
+        name: "Guest Default",
+        servers: {},
+        ownerId: "guest-user",
+        organizationId: undefined as any,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    projectQueryState.projects = projectQueryState.allProjects;
+    projectServersState.servers = undefined; // loading
+    projectServersState.isLoading = true;
+
+    const appState = createAppState({});
+    const { result } = renderUseProjectState({
+      appState,
+      hasOrganizations: false,
+      hasSignedInUser: false,
+      currentActorKey: "guest-abc",
+    });
+
+    await waitFor(() => {
+      expect(result.current.effectiveActiveProjectId).toBe("guest-project");
+    });
+
+    // While loading, isLoadingRemoteProjects is the contract for "we don't
+    // know yet." We just need to make sure the empty embedded map didn't
+    // sneak through as authoritative.
+    expect(result.current.isLoadingRemoteProjects).toBe(true);
+    // The active project's servers are empty (loading), not falsely
+    // populated from the embedded rw.servers map.
+    expect(
+      result.current.effectiveProjects["guest-project"]?.servers,
+    ).toEqual({});
   });
 });

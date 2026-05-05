@@ -67,6 +67,28 @@ function hasHostedOAuthCallbackParams(): boolean {
   return params.has("code") || params.has("error");
 }
 
+// Reads the organizationId from an in-flight project-surface OAuth marker.
+// Used to keep the active org stable across the post-callback re-mount,
+// avoiding a hydration-window flip to resolveFallbackOrganizationId.
+function readPendingOAuthMarkerOrgId(): string | null {
+  if (typeof window === "undefined") return null;
+  if (!hasHostedOAuthCallbackParams()) return null;
+  try {
+    const raw = localStorage.getItem(HOSTED_OAUTH_PENDING_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as {
+      surface?: unknown;
+      organizationId?: unknown;
+    } | null;
+    if (parsed?.surface !== "project") return null;
+    return typeof parsed.organizationId === "string" && parsed.organizationId
+      ? parsed.organizationId
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function readPendingDashboardOAuthFromStorage(): PendingDashboardOAuthState | null {
   if (typeof window === "undefined") return null;
 
@@ -165,12 +187,20 @@ export function buildDisconnectedRuntimeServers(
 
 export function useAppState({
   currentUserId,
+  currentActorKey,
   routeOrganizationId,
   hasOrganizations,
   isLoadingOrganizations,
   validOrganizations,
 }: {
   currentUserId: string | null;
+  /**
+   * Stable identifier for the active actor — `currentUserId` for signed-in
+   * users, the guest cookie's `guestId` for guests. Used to scope per-actor
+   * local storage (e.g. active project id) so selections don't bleed across
+   * actors. May be `null` while the actor is still resolving.
+   */
+  currentActorKey: string | null;
   routeOrganizationId?: string;
   hasOrganizations: boolean;
   isLoadingOrganizations: boolean;
@@ -214,8 +244,16 @@ export function useAppState({
     !isLoadingOrganizations
       ? resolveFallbackOrganizationId(validOrganizations)
       : undefined;
+  const pendingOAuthMarkerOrgId = readPendingOAuthMarkerOrgId();
+  const isPendingOAuthMarkerOrgValid =
+    !!pendingOAuthMarkerOrgId &&
+    validOrganizations.some(
+      (organization) => organization._id === pendingOAuthMarkerOrgId
+    );
   const activeOrganizationId = isStoredActiveOrganizationValid
     ? storedActiveOrganizationId
+    : isPendingOAuthMarkerOrgValid
+    ? pendingOAuthMarkerOrgId
     : fallbackActiveOrganizationId;
   const setActiveOrganizationId = useCallback(
     (organizationId: string | undefined) => {
@@ -436,6 +474,8 @@ export function useAppState({
     ),
     activeOrganizationId,
     routeOrganizationId,
+    currentActorKey,
+    hasSignedInUser: currentUserId != null,
     logger,
   });
 

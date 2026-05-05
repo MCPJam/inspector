@@ -238,29 +238,6 @@ describe("web hosted rpc logs", () => {
     );
   });
 
-  it("uses the provided guest server name instead of __guest__ in rpc logs", async () => {
-    const app = createRpcLogsTestApp();
-
-    const response = await postJson(app, "/api/web/tools/list", {
-      serverUrl: "https://guest.example.com/mcp",
-      serverName: "Excalidraw (App)",
-    });
-
-    const { status, data } = await expectJson<{
-      _rpcLogs: Array<{ serverId: string; serverName: string }>;
-    }>(response);
-
-    expect(status).toBe(200);
-    expect(data._rpcLogs).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          serverId: "__guest__",
-          serverName: "Excalidraw (App)",
-        }),
-      ])
-    );
-  });
-
   it("keeps hosted rpc logs request-scoped with no cross-request carryover", async () => {
     const app = createRpcLogsTestApp();
 

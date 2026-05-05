@@ -379,7 +379,8 @@ describe("ChatboxChatPage", () => {
         projectId: null,
         serverIdsByName: {},
         chatboxToken: "token-workos",
-        isAuthenticated: false,
+        isAuthenticated: true,
+        hasSession: true,
       })
     );
 
