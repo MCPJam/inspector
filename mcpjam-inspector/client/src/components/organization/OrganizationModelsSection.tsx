@@ -433,7 +433,6 @@ function ProviderRow({
   configured,
   isAdmin,
   isCustom,
-  unsupportedReason,
   onConfigure,
   onRemove,
 }: {
@@ -442,8 +441,7 @@ function ProviderRow({
   configured: boolean;
   isAdmin: boolean;
   isCustom?: boolean;
-  unsupportedReason?: string;
-  onConfigure?: () => void;
+  onConfigure: () => void;
   onRemove: () => void;
 }) {
   return (
@@ -473,14 +471,7 @@ function ProviderRow({
       </div>
 
       <div className="flex items-center gap-2">
-        {unsupportedReason ? (
-          <Badge
-            variant="outline"
-            className="gap-1 text-xs text-amber-600 dark:text-amber-400"
-          >
-            {unsupportedReason}
-          </Badge>
-        ) : configured ? (
+        {configured ? (
           <Badge
             variant="secondary"
             className="gap-1 text-xs text-emerald-600 dark:text-emerald-400"
@@ -500,18 +491,16 @@ function ProviderRow({
 
         {isAdmin ? (
           <>
-            {onConfigure ? (
-              <Button variant="ghost" size="sm" onClick={onConfigure}>
-                {configured ? (
-                  <Pencil className="size-3.5" />
-                ) : (
-                  <>
-                    <Settings2 className="mr-1.5 size-3.5" />
-                    Configure
-                  </>
-                )}
-              </Button>
-            ) : null}
+            <Button variant="ghost" size="sm" onClick={onConfigure}>
+              {configured ? (
+                <Pencil className="size-3.5" />
+              ) : (
+                <>
+                  <Settings2 className="mr-1.5 size-3.5" />
+                  Configure
+                </>
+              )}
+            </Button>
             {configured ? (
               <Button
                 variant="ghost"
