@@ -8,6 +8,7 @@ import {
 
 const PROJECT_ID = "proj_test";
 const SERVER_ID = "srv_test";
+const SERVER_NAME = "test-server";
 
 function authHeaders() {
   return {
@@ -63,11 +64,27 @@ describe("POST /api/mcp/connect", () => {
       expect(data.error).toBe("serverId is required");
     });
 
+    it("returns 400 when resolver-path body is missing serverName", async () => {
+      const res = await app.request("/api/mcp/connect", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ projectId: PROJECT_ID, serverId: SERVER_ID }),
+      });
+
+      expect(res.status).toBe(400);
+      const data = (await res.json()) as { error?: string };
+      expect(data.error).toBe("serverName is required with projectId");
+    });
+
     it("returns 401 when projectId set but Authorization bearer is missing", async () => {
       const res = await app.request("/api/mcp/connect", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: PROJECT_ID, serverId: SERVER_ID }),
+        body: JSON.stringify({
+          projectId: PROJECT_ID,
+          serverId: SERVER_ID,
+          serverName: SERVER_NAME,
+        }),
       });
 
       expect(res.status).toBe(401);
@@ -152,7 +169,11 @@ describe("POST /api/mcp/connect", () => {
       const res = await app.request("/api/mcp/connect", {
         method: "POST",
         headers: authHeaders(),
-        body: JSON.stringify({ projectId: PROJECT_ID, serverId: SERVER_ID }),
+        body: JSON.stringify({
+          projectId: PROJECT_ID,
+          serverId: SERVER_ID,
+          serverName: SERVER_NAME,
+        }),
       });
 
       expect(res.status).toBe(200);
@@ -160,9 +181,14 @@ describe("POST /api/mcp/connect", () => {
       expect(data.success).toBe(true);
       expect(data.status).toBe("connected");
 
-      expect(mcpClientManager.disconnectServer).toHaveBeenCalledWith(SERVER_ID);
+      // Manager is keyed by display name, not the Convex serverId — the rest
+      // of the local API surface (tools list/execute, status) passes display
+      // names from the UI.
+      expect(mcpClientManager.disconnectServer).toHaveBeenCalledWith(
+        SERVER_NAME
+      );
       const callArgs = mcpClientManager.connectToServer.mock.calls[0];
-      expect(callArgs[0]).toBe(SERVER_ID);
+      expect(callArgs[0]).toBe(SERVER_NAME);
       expect(callArgs[1]).toMatchObject({
         command: "node",
         args: ["server.js"],
@@ -194,11 +220,16 @@ describe("POST /api/mcp/connect", () => {
       const res = await app.request("/api/mcp/connect", {
         method: "POST",
         headers: authHeaders(),
-        body: JSON.stringify({ projectId: PROJECT_ID, serverId: SERVER_ID }),
+        body: JSON.stringify({
+          projectId: PROJECT_ID,
+          serverId: SERVER_ID,
+          serverName: SERVER_NAME,
+        }),
       });
 
       expect(res.status).toBe(200);
       const callArgs = mcpClientManager.connectToServer.mock.calls[0];
+      expect(callArgs[0]).toBe(SERVER_NAME);
       expect(callArgs[1]).toMatchObject({
         url: "http://localhost:3000/mcp",
       });
@@ -231,7 +262,7 @@ describe("POST /api/mcp/connect", () => {
       const res = await app.request("/api/mcp/connect", {
         method: "POST",
         headers: authHeaders(),
-        body: JSON.stringify({ projectId: PROJECT_ID, serverId: SERVER_ID }),
+        body: JSON.stringify({ projectId: PROJECT_ID, serverId: SERVER_ID, serverName: SERVER_NAME }),
       });
 
       expect(res.status).toBe(401);
@@ -256,7 +287,7 @@ describe("POST /api/mcp/connect", () => {
       const res = await app.request("/api/mcp/connect", {
         method: "POST",
         headers: authHeaders(),
-        body: JSON.stringify({ projectId: PROJECT_ID, serverId: SERVER_ID }),
+        body: JSON.stringify({ projectId: PROJECT_ID, serverId: SERVER_ID, serverName: SERVER_NAME }),
       });
 
       expect(res.status).toBe(403);
@@ -273,7 +304,7 @@ describe("POST /api/mcp/connect", () => {
       const res = await app.request("/api/mcp/connect", {
         method: "POST",
         headers: authHeaders(),
-        body: JSON.stringify({ projectId: PROJECT_ID, serverId: SERVER_ID }),
+        body: JSON.stringify({ projectId: PROJECT_ID, serverId: SERVER_ID, serverName: SERVER_NAME }),
       });
 
       expect(res.status).toBe(502);
@@ -305,7 +336,7 @@ describe("POST /api/mcp/connect", () => {
       const res = await app.request("/api/mcp/connect", {
         method: "POST",
         headers: authHeaders(),
-        body: JSON.stringify({ projectId: PROJECT_ID, serverId: SERVER_ID }),
+        body: JSON.stringify({ projectId: PROJECT_ID, serverId: SERVER_ID, serverName: SERVER_NAME }),
       });
 
       expect(res.status).toBe(500);
@@ -313,9 +344,11 @@ describe("POST /api/mcp/connect", () => {
         error?: string;
         details?: string;
       };
-      expect(data.error).toContain(`Connection failed for server ${SERVER_ID}`);
+      expect(data.error).toContain(
+        `Connection failed for server ${SERVER_NAME}`
+      );
       expect(data.details).toBe("Connection refused");
-      expect(mcpClientManager.removeServer).toHaveBeenCalledWith(SERVER_ID);
+      expect(mcpClientManager.removeServer).toHaveBeenCalledWith(SERVER_NAME);
     });
 
     it("disconnects existing connection before reconnecting", async () => {
@@ -339,7 +372,7 @@ describe("POST /api/mcp/connect", () => {
       const res = await app.request("/api/mcp/connect", {
         method: "POST",
         headers: authHeaders(),
-        body: JSON.stringify({ projectId: PROJECT_ID, serverId: SERVER_ID }),
+        body: JSON.stringify({ projectId: PROJECT_ID, serverId: SERVER_ID, serverName: SERVER_NAME }),
       });
 
       expect(res.status).toBe(200);

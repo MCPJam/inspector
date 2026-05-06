@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import "../../types/hono"; // Type extensions
+import { HOSTED_MODE } from "../../config";
 import { rpcLogBus, type RpcLogEvent } from "../../services/rpc-log-bus";
 import { logger } from "../../utils/logger";
 import {
@@ -175,10 +176,20 @@ servers.post("/reconnect", async (c) => {
   const mcpClientManager = c.mcpClientManager;
 
   let normalizedConfig: import("@mcpjam/sdk").MCPServerConfig | null = null;
+  // The MCP client manager is keyed by display name. In the resolver path
+  // `serverId` carries the Convex document id (used only for the lookup);
+  // in the legacy path it already is the display name.
+  let managerKey = serverId;
 
   if (useResolverPath) {
     const serverDisplayName =
-      typeof body?.serverName === "string" ? body.serverName.trim() : undefined;
+      typeof body?.serverName === "string" ? body.serverName.trim() : "";
+    if (!serverDisplayName) {
+      return c.json(
+        { success: false, error: "serverName is required with projectId" },
+        400,
+      );
+    }
     const bearer = readLocalApiBearer(c);
     if (!bearer) {
       return c.json(
@@ -203,6 +214,7 @@ servers.post("/reconnect", async (c) => {
         },
       );
       normalizedConfig = resolved.config;
+      managerKey = serverDisplayName;
     } catch (error) {
       if (error instanceof WebRouteError) {
         return c.json(
@@ -251,32 +263,58 @@ servers.post("/reconnect", async (c) => {
         cfg.url = new URL((urlValue as { href: string }).href).toString();
       }
     }
+
+    // Defense-in-depth: mirror the connect.ts legacy guards. The /api/mcp/*
+    // middleware in app.ts blocks hosted traffic to this endpoint with 410,
+    // but keep these checks aligned across the two routes so a future
+    // middleware change can't open a hole on one and not the other.
+    if (HOSTED_MODE && cfg.command) {
+      return c.json(
+        { success: false, error: "STDIO transport is disabled in the web app" },
+        403,
+      );
+    }
+    if (HOSTED_MODE && cfg.url) {
+      const urlForCheck =
+        cfg.url instanceof URL ? cfg.url : new URL(String(cfg.url));
+      if (urlForCheck.protocol !== "https:") {
+        return c.json(
+          {
+            success: false,
+            error:
+              "HTTPS is required in the web app. Please use an https:// URL.",
+          },
+          400,
+        );
+      }
+    }
+
     normalizedConfig = cfg;
   }
 
   try {
-    await mcpClientManager.disconnectServer(serverId);
+    await mcpClientManager.disconnectServer(managerKey);
     await mcpClientManager.connectToServer(
-      serverId,
+      managerKey,
       normalizedConfig as import("@mcpjam/sdk").MCPServerConfig,
     );
 
-    const status = mcpClientManager.getConnectionStatus(serverId);
+    const status = mcpClientManager.getConnectionStatus(managerKey);
     const message =
       status === "connected"
-        ? `Reconnected to server: ${serverId}`
-        : `Server ${serverId} reconnected with status '${status}'`;
+        ? `Reconnected to server: ${managerKey}`
+        : `Server ${managerKey} reconnected with status '${status}'`;
     const success = status === "connected";
 
     return c.json({
       success,
-      serverId,
+      serverId: managerKey,
       status,
       message,
       ...(success ? {} : { error: message }),
     });
   } catch (error) {
-    logger.error("Error reconnecting server", error, { serverId });
+    logger.error("Error reconnecting server", error, { serverId: managerKey });
     return c.json(
       {
         success: false,

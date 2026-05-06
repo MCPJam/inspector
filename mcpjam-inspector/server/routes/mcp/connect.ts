@@ -42,8 +42,18 @@ connect.post("/", async (c) => {
   const mcpClientManager = c.mcpClientManager;
 
   if (useResolverPath) {
+    // The MCP client manager is keyed by display name across the local API
+    // surface (tools list/execute, status, etc. all pass display names from
+    // the UI). The Convex `serverId` is used only as the lookup key into
+    // /web/authorize-batch-local and is never used as a manager key.
     const serverDisplayName =
-      typeof body?.serverName === "string" ? body.serverName.trim() : undefined;
+      typeof body?.serverName === "string" ? body.serverName.trim() : "";
+    if (!serverDisplayName) {
+      return c.json(
+        { success: false, error: "serverName is required with projectId" },
+        400,
+      );
+    }
     const bearer = readLocalApiBearer(c);
     if (!bearer) {
       return c.json(
@@ -90,22 +100,22 @@ connect.post("/", async (c) => {
     }
 
     try {
-      await mcpClientManager.disconnectServer(serverId);
-      await mcpClientManager.connectToServer(serverId, resolved.config);
+      await mcpClientManager.disconnectServer(serverDisplayName);
+      await mcpClientManager.connectToServer(serverDisplayName, resolved.config);
       return c.json({ success: true, status: "connected" });
     } catch (error) {
       try {
-        await mcpClientManager.removeServer(serverId);
+        await mcpClientManager.removeServer(serverDisplayName);
       } catch (cleanupError) {
         console.debug(
-          `Failed to remove MCP server ${serverId} after connection failure`,
+          `Failed to remove MCP server ${serverDisplayName} after connection failure`,
           cleanupError,
         );
       }
       return c.json(
         {
           success: false,
-          error: `Connection failed for server ${serverId}: ${error instanceof Error ? error.message : "Unknown error"}`,
+          error: `Connection failed for server ${serverDisplayName}: ${error instanceof Error ? error.message : "Unknown error"}`,
           details: error instanceof Error ? error.message : "Unknown error",
         },
         500,

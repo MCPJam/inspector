@@ -95,9 +95,15 @@ export function setHostedApiContext(next: HostedApiContext | null): void {
 }
 
 /**
- * Eagerly inject a server-name → server-ID mapping into the hosted context,
+ * Eagerly inject a server-name → server-ID mapping into the API context,
  * bridging the gap between when a Convex mutation completes and when the
  * reactive subscription propagates the update through React.
+ *
+ * Applies to both hosted and local: post unification, local mode also drives
+ * connect/reconnect through the resolver path when a Convex serverId is known,
+ * so it benefits from the same eager injection. Without this, the immediate
+ * post-save connect would fall back to the legacy `{serverConfig, serverId}`
+ * shape for one tick.
  *
  * The next `setHostedApiContext` call from the subscription will overwrite
  * this with identical data, so there is no risk of stale entries.
@@ -106,7 +112,6 @@ export function injectHostedServerMapping(
   serverName: string,
   serverId: string,
 ): void {
-  if (!HOSTED_MODE) return;
   hostedApiContext = {
     ...hostedApiContext,
     serverIdsByName: {

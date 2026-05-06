@@ -268,7 +268,8 @@ describe("POST /api/mcp/servers/reconnect", () => {
   let app: Hono;
   const originalConvexUrl = process.env.CONVEX_HTTP_URL;
   const RECONNECT_PROJECT_ID = "proj_reconnect";
-  const RECONNECT_SERVER_ID = "server-1";
+  const RECONNECT_SERVER_ID = "srv_doc_id";
+  const RECONNECT_SERVER_NAME = "server-1";
 
   function reconnectAuthHeaders() {
     return {
@@ -314,6 +315,21 @@ describe("POST /api/mcp/servers/reconnect", () => {
       expect(res.status).toBe(400);
     });
 
+    it("returns 400 when resolver-path body is missing serverName", async () => {
+      const res = await app.request("/api/mcp/servers/reconnect", {
+        method: "POST",
+        headers: reconnectAuthHeaders(),
+        body: JSON.stringify({
+          projectId: RECONNECT_PROJECT_ID,
+          serverId: RECONNECT_SERVER_ID,
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      const data = (await res.json()) as { error?: string };
+      expect(data.error).toBe("serverName is required with projectId");
+    });
+
     it("returns 401 when projectId set but Authorization bearer is missing", async () => {
       const res = await app.request("/api/mcp/servers/reconnect", {
         method: "POST",
@@ -321,6 +337,7 @@ describe("POST /api/mcp/servers/reconnect", () => {
         body: JSON.stringify({
           projectId: RECONNECT_PROJECT_ID,
           serverId: RECONNECT_SERVER_ID,
+          serverName: RECONNECT_SERVER_NAME,
         }),
       });
 
@@ -385,6 +402,7 @@ describe("POST /api/mcp/servers/reconnect", () => {
         body: JSON.stringify({
           projectId: RECONNECT_PROJECT_ID,
           serverId: RECONNECT_SERVER_ID,
+          serverName: RECONNECT_SERVER_NAME,
         }),
       });
 
@@ -396,15 +414,17 @@ describe("POST /api/mcp/servers/reconnect", () => {
         message: string;
       };
       expect(data.success).toBe(true);
-      expect(data.serverId).toBe(RECONNECT_SERVER_ID);
+      // Response echoes the display name — that's what the rest of the local
+      // API surface uses as the manager key.
+      expect(data.serverId).toBe(RECONNECT_SERVER_NAME);
       expect(data.status).toBe("connected");
       expect(data.message).toContain("Reconnected to server");
 
       expect(mcpClientManager.disconnectServer).toHaveBeenCalledWith(
-        RECONNECT_SERVER_ID
+        RECONNECT_SERVER_NAME
       );
       const callArgs = mcpClientManager.connectToServer.mock.calls[0];
-      expect(callArgs[0]).toBe(RECONNECT_SERVER_ID);
+      expect(callArgs[0]).toBe(RECONNECT_SERVER_NAME);
       expect(callArgs[1]).toMatchObject({
         command: "node",
         args: ["server.js"],
@@ -434,12 +454,14 @@ describe("POST /api/mcp/servers/reconnect", () => {
         body: JSON.stringify({
           projectId: RECONNECT_PROJECT_ID,
           serverId: "http-server",
+          serverName: "http-server-display",
         }),
       });
 
       expect(res.status).toBe(200);
-      const callArgs = mcpClientManager.connectToServer.mock.calls[0][1];
-      expect(callArgs.url).toBe("http://localhost:3000/mcp");
+      const callArgs = mcpClientManager.connectToServer.mock.calls[0];
+      expect(callArgs[0]).toBe("http-server-display");
+      expect(callArgs[1].url).toBe("http://localhost:3000/mcp");
     });
   });
 
@@ -469,6 +491,7 @@ describe("POST /api/mcp/servers/reconnect", () => {
         body: JSON.stringify({
           projectId: RECONNECT_PROJECT_ID,
           serverId: RECONNECT_SERVER_ID,
+          serverName: RECONNECT_SERVER_NAME,
         }),
       });
 
@@ -510,6 +533,7 @@ describe("POST /api/mcp/servers/reconnect", () => {
         body: JSON.stringify({
           projectId: RECONNECT_PROJECT_ID,
           serverId: RECONNECT_SERVER_ID,
+          serverName: RECONNECT_SERVER_NAME,
         }),
       });
 
