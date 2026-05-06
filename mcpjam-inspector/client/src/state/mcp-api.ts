@@ -196,13 +196,19 @@ export async function testConnection(
   // travels with the request.
   const useResolver =
     !!options?.projectId && !hasLocalOAuthBearer(serverConfig);
+  // The legacy server-side path uses `serverId` as the mcpClientManager key.
+  // When the caller resolved a Convex `_id` for the resolver path but we end
+  // up taking the legacy fallback (local OAuth bearer present), prefer the
+  // display name so the manager doesn't end up with a duplicate entry keyed
+  // by the Convex `_id` alongside the existing display-name entry.
+  const legacyServerId = options?.serverName ?? serverId;
   const body: Record<string, unknown> = useResolver
     ? buildResolverBody(serverId, {
         projectId: options!.projectId!,
         serverName: options?.serverName,
         connectionDefaults: options?.connectionDefaults,
       })
-    : { serverConfig, serverId };
+    : { serverConfig, serverId: legacyServerId };
 
   const res = await authFetchWithTimeout(
     "/api/mcp/connect",
@@ -255,13 +261,16 @@ export async function reconnectServer(
 
   const useResolver =
     !!options?.projectId && !hasLocalOAuthBearer(serverConfig);
+  // See testConnection: prefer the display name for the legacy body so we
+  // don't create a phantom mcpClientManager entry keyed by the Convex `_id`.
+  const legacyServerId = options?.serverName ?? serverId;
   const body: Record<string, unknown> = useResolver
     ? buildResolverBody(serverId, {
         projectId: options!.projectId!,
         serverName: options?.serverName,
         connectionDefaults: options?.connectionDefaults,
       })
-    : { serverId, serverConfig };
+    : { serverId: legacyServerId, serverConfig };
 
   const res = await authFetchWithTimeout(
     "/api/mcp/servers/reconnect",
