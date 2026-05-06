@@ -114,6 +114,28 @@ describe("authFetch hosted 401 retry", () => {
     expect(posthog.capture).not.toHaveBeenCalled();
   });
 
+  it("does not retry when 401 is flagged X-MCP-Auth-Required: oauth", async () => {
+    // Resolver throws 401 when an OAuth-required server has no stored token.
+    // That's the upstream MCP server demanding the user complete its OAuth
+    // flow — refreshing the guest session would just hit the same 401.
+    vi.mocked(getHostedAuthorizationHeader).mockResolvedValueOnce(
+      "Bearer fine-token"
+    );
+
+    vi.mocked(global.fetch).mockResolvedValueOnce({
+      status: 401,
+      ok: false,
+      headers: new Headers({ "X-MCP-Auth-Required": "oauth" }),
+    } as unknown as Response);
+
+    const response = await authFetch("/api/mcp/connect", { method: "POST" });
+
+    expect(response.status).toBe(401);
+    expect(resetTokenCache).not.toHaveBeenCalled();
+    expect(forceRefreshGuestSession).not.toHaveBeenCalled();
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("does not retry on non-401 errors", async () => {
     vi.mocked(getHostedAuthorizationHeader).mockResolvedValue(
       "Bearer some-token"

@@ -10,11 +10,10 @@ type SerializeOptions = {
    * keys / DB credentials, and HTTP `Authorization` carries bearers.
    * Persistence payloads (the legacy localStorage → Convex migration)
    * MUST preserve these — without them, a migrated STDIO server is
-   * non-functional and the user has to re-enter every credential.
-   *
-   * The HTTP `Authorization` strip is unconditional — it's always a
-   * runtime-injected header, never user config — so this flag only
-   * gates the STDIO `env` field.
+   * non-functional and the user has to re-enter every credential, and
+   * an HTTP server configured with a static `Authorization` header
+   * (self-hosted MCP with a long-lived bearer, etc.) silently fails
+   * to reconnect after migration clears the legacy localStorage copy.
    */
   redactSecrets: boolean;
 };
@@ -59,9 +58,13 @@ function serializeServersInternal(
           for (const [key, value] of Object.entries(
             (server.config as any).requestInit.headers,
           )) {
-            if (key.toLowerCase() !== "authorization") {
-              headers[key] = value as string;
+            if (
+              options.redactSecrets &&
+              key.toLowerCase() === "authorization"
+            ) {
+              continue;
             }
+            headers[key] = value as string;
           }
           requestInit.headers = headers;
         }

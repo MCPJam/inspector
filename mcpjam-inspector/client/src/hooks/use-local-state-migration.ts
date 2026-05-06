@@ -130,24 +130,28 @@ export function useLocalStateMigration({
   const [retryTick, setRetryTick] = useState(0);
   const createProject = useMutation("projects:createProject" as any);
 
-  const scheduleRetry = (): void => {
-    if (retryTimerRef.current !== null) return;
-    if (retryCountRef.current >= MAX_RETRY_ATTEMPTS) {
-      logger.warn(
-        "Local state migration retry limit reached; will not retry until reload",
-        { attempts: retryCountRef.current },
-      );
-      doneRef.current = true;
-      return;
-    }
-    retryCountRef.current += 1;
-    retryTimerRef.current = setTimeout(() => {
-      retryTimerRef.current = null;
-      setRetryTick((t) => t + 1);
-    }, RETRY_DELAY_MS);
-  };
-
   useEffect(() => {
+    // Defined inside the effect so it closes over the same `logger` reference
+    // the effect itself uses. Hoisting it to the component body would let the
+    // async .then/.catch callbacks reach a stale `logger` if `useLogger`
+    // returns a new object on a subsequent render.
+    const scheduleRetry = (): void => {
+      if (retryTimerRef.current !== null) return;
+      if (retryCountRef.current >= MAX_RETRY_ATTEMPTS) {
+        logger.warn(
+          "Local state migration retry limit reached; will not retry until reload",
+          { attempts: retryCountRef.current },
+        );
+        doneRef.current = true;
+        return;
+      }
+      retryCountRef.current += 1;
+      retryTimerRef.current = setTimeout(() => {
+        retryTimerRef.current = null;
+        setRetryTick((t) => t + 1);
+      }, RETRY_DELAY_MS);
+    };
+
     if (HOSTED_MODE) return;
     if (!isAuthenticated) return;
     if (isUserBootstrapping) return;

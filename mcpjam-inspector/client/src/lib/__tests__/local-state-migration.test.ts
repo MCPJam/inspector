@@ -240,6 +240,61 @@ describe("local-state-migration", () => {
       expect(hasMigrationCompleted()).toBe(true);
     });
 
+    it("preserves user-configured HTTP Authorization header through persistence", async () => {
+      // A self-hosted MCP server authenticated with a static bearer the user
+      // typed into the headers form. The persistence path must keep the
+      // Authorization entry, otherwise the migrated Convex project lacks the
+      // credential and reconnects fail after legacy localStorage is cleared.
+      // Sharing payloads still strip Authorization — covered separately by
+      // the share/clone flow.
+      localStorage.setItem(
+        "mcp-inspector-projects",
+        JSON.stringify({
+          activeProjectId: "proj-a",
+          projects: {
+            "proj-a": {
+              id: "proj-a",
+              name: "Default",
+              createdAt: 1700000000000,
+              updatedAt: 1700000000000,
+              servers: {
+                http_static_auth: {
+                  name: "http_static_auth",
+                  enabled: true,
+                  useOAuth: false,
+                  config: {
+                    url: "http://localhost:3000/mcp",
+                    requestInit: {
+                      headers: {
+                        Authorization: "Bearer user-static-token",
+                        "X-Other": "keep",
+                      },
+                    },
+                  },
+                  connectionStatus: "disconnected",
+                  retryCount: 0,
+                  lastConnectionTime: 1700000000000,
+                },
+              },
+            },
+          },
+        })
+      );
+
+      const createProject = vi.fn().mockResolvedValue("convex-id");
+      const result = await runLocalStateMigration({
+        createProject: createProject as any,
+      });
+      expect(result.ok).toBe(true);
+
+      const args = createProject.mock.calls[0][0];
+      const http = args.servers.http_static_auth;
+      expect(http.config.requestInit?.headers).toEqual({
+        Authorization: "Bearer user-static-token",
+        "X-Other": "keep",
+      });
+    });
+
     it("does NOT clear legacy keys on partial failure", async () => {
       seedLegacyProjects();
       const createProject = vi

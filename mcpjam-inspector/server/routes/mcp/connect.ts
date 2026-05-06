@@ -83,6 +83,13 @@ connect.post("/", async (c) => {
       );
     } catch (error) {
       if (error instanceof WebRouteError) {
+        // OAuth-required 401s aren't a session-auth failure — the actor is
+        // signed in, the server just needs the user to complete its OAuth
+        // flow. Tag the response so authFetch doesn't waste a guest-session
+        // refresh round-trip that would inevitably hit the same 401.
+        if (error.details?.oauthRequired === true) {
+          c.header("X-MCP-Auth-Required", "oauth");
+        }
         return c.json(
           {
             success: false,

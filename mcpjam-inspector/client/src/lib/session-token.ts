@@ -295,6 +295,17 @@ function isHostedAuthAllowedOrigin(parsed: URL): boolean {
   return false;
 }
 
+function pathMatchesHostedPrefix(pathname: string): boolean {
+  return HOSTED_AUTH_PATH_PREFIXES.some((prefix) => {
+    if (prefix.endsWith("/")) return pathname.startsWith(prefix);
+    // Non-trailing-slash entries match the literal path AND any sub-path
+    // (`/api/mcp/connect`, `/api/mcp/connect/`, `/api/mcp/connect/foo`) so a
+    // browser/proxy normalization or future sub-route doesn't silently drop
+    // the bearer. `/api/mcp/connecting` still won't match — boundary is `/`.
+    return pathname === prefix || pathname.startsWith(`${prefix}/`);
+  });
+}
+
 function shouldAttachHostedAuthorization(input: RequestInfo | URL): boolean {
   const parsed = resolveRequestUrl(input);
   // Relative paths starting with "/" resolve same-origin via resolveRequestUrl
@@ -303,17 +314,11 @@ function shouldAttachHostedAuthorization(input: RequestInfo | URL): boolean {
   // since an unparseable absolute URL shouldn't get credentials.
   if (parsed) {
     if (!isHostedAuthAllowedOrigin(parsed)) return false;
-    return HOSTED_AUTH_PATH_PREFIXES.some((prefix) =>
-      prefix.endsWith("/")
-        ? parsed.pathname.startsWith(prefix)
-        : parsed.pathname === prefix
-    );
+    return pathMatchesHostedPrefix(parsed.pathname);
   }
   if (typeof input !== "string" || !input.startsWith("/")) return false;
   const pathname = input.split("?")[0];
-  return HOSTED_AUTH_PATH_PREFIXES.some((prefix) =>
-    prefix.endsWith("/") ? pathname.startsWith(prefix) : pathname === prefix
-  );
+  return pathMatchesHostedPrefix(pathname);
 }
 
 /**
@@ -384,11 +389,15 @@ export async function authFetch(
 
   // Retry on 401 only for paths we actually attached a hosted bearer to —
   // a 401 from `/api/health` shouldn't trigger a guest-session refresh.
+  // Also skip when the server flagged the 401 as OAuth-required: that's the
+  // upstream MCP server demanding the user complete its OAuth flow, not a
+  // session-auth failure, and a guest refresh would just hit the same 401.
   if (
     response.status !== 401 ||
     !hostedAuthEligible ||
     !shouldRetryHostedAuth401() ||
-    callerProvidedAuthorization
+    callerProvidedAuthorization ||
+    response.headers?.get("X-MCP-Auth-Required") === "oauth"
   ) {
     return response;
   }

@@ -219,6 +219,12 @@ servers.post("/reconnect", async (c) => {
       managerKey = serverDisplayName;
     } catch (error) {
       if (error instanceof WebRouteError) {
+        // See connect.ts — same rationale: an OAuth-required 401 means the
+        // server demands the user complete its OAuth flow, not that the
+        // session bearer is invalid. Skip the guest-refresh retry.
+        if (error.details?.oauthRequired === true) {
+          c.header("X-MCP-Auth-Required", "oauth");
+        }
         return c.json(
           {
             success: false,
