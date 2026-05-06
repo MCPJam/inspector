@@ -1545,7 +1545,6 @@ export function useChatSession({
   useSharedChatWidgetCapture({
     enabled: HOSTED_MODE && isAuthenticated,
     readyToPersist: status === "ready",
-    directGuestMode: false,
     chatSessionId,
     hostedShareToken,
     hostedChatboxToken,

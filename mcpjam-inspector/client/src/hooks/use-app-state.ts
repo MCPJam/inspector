@@ -617,6 +617,14 @@ export function useAppState({
       const nextActiveProjectId =
         nextActiveProject?.id ?? Object.keys(nextProjects)[0];
       if (!nextActiveProjectId) {
+        logger.warn(
+          "clearLocalFallbackProjectSelection: no active project resolved",
+          {
+            deletedOrganizationId,
+            fallbackOrganizationId,
+            projectCount: Object.keys(nextProjects).length,
+          }
+        );
         return;
       }
       const nextServers = buildDisconnectedRuntimeServers(

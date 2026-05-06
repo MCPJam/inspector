@@ -7,6 +7,7 @@ import {
 } from "./app-types";
 import { isProjectClientConfig } from "@/lib/client-config";
 import { HOSTED_MODE } from "@/lib/config";
+import { clearPersistedOAuthTraces } from "@/lib/oauth/oauth-trace";
 
 const STORAGE_KEY = "mcp-inspector-state";
 const PROJECTS_STORAGE_KEY = "mcp-inspector-projects";
@@ -58,6 +59,8 @@ function serializeServerForStorage(server: ServerWithName) {
 
 export function loadAppState(): AppState {
   try {
+    clearPersistedOAuthTraces();
+
     if (HOSTED_MODE) {
       return createInitialAppState();
     }

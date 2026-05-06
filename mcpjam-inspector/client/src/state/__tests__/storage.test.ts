@@ -70,7 +70,7 @@ describe("storage", () => {
     ).toBeUndefined();
   });
 
-  it("drops persisted oauth traces from app state without clearing trace storage", () => {
+  it("drops persisted oauth traces on load and clears legacy trace storage", () => {
     localStorage.setItem(
       "mcp-oauth-trace-asana",
       JSON.stringify({
@@ -109,6 +109,6 @@ describe("storage", () => {
 
     expect(state.activeProjectId).not.toBe("default");
     expect(state.servers.asana.lastOAuthTrace).toBeUndefined();
-    expect(localStorage.getItem("mcp-oauth-trace-asana")).not.toBeNull();
+    expect(localStorage.getItem("mcp-oauth-trace-asana")).toBeNull();
   });
 });
