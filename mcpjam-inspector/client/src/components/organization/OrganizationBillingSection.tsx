@@ -182,6 +182,28 @@ function formatCurrency(
   }).format(amount);
 }
 
+function formatBillingDate(timestampMs: number): string {
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(timestampMs));
+}
+
+function getDeferredTrialBillingCopy(
+  billingStatus: OrganizationBillingStatus | undefined,
+): string | null {
+  const deferredTrialBillingStartsAt =
+    billingStatus?.deferredTrialBillingStartsAt;
+  if (typeof deferredTrialBillingStartsAt !== "number") {
+    return null;
+  }
+
+  return `$0 today. First bill charged in advance on ${formatBillingDate(
+    deferredTrialBillingStartsAt,
+  )}.`;
+}
+
 /** Price line for the compare table; Solo uses flat `/mo` (3-seat cap), Team uses `/seat/mo`. */
 function formatPlanPriceLabel(
   plan: OrganizationPlan,
@@ -645,6 +667,7 @@ export function OrganizationBillingSection({
   const compareSections = planCatalog
     ? buildComparePlanSectionsFromCatalog(planCatalog)
     : null;
+  const deferredTrialBillingCopy = getDeferredTrialBillingCopy(billingStatus);
 
   return (
     <div className="space-y-5">
@@ -886,6 +909,12 @@ export function OrganizationBillingSection({
                           (plan === "solo" || plan === "team");
                         const showCtaSpinner = showPlanChangeSpinner;
                         const isPopular = plan === POPULAR_PLAN;
+                        const showDeferredTrialBillingCopy =
+                          deferredTrialBillingCopy != null &&
+                          cta.label === "Upgrade" &&
+                          !cta.disabled &&
+                          !cta.tooltip &&
+                          (plan === "solo" || plan === "team");
                         return (
                           <TableHead
                             key={plan}
@@ -915,6 +944,11 @@ export function OrganizationBillingSection({
                                   {entry.seatMinimum ? (
                                     <p className="text-xs leading-snug text-muted-foreground">
                                       {entry.seatMinimum} seat minimum
+                                    </p>
+                                  ) : null}
+                                  {showDeferredTrialBillingCopy ? (
+                                    <p className="text-[11px] font-medium leading-tight text-muted-foreground">
+                                      {deferredTrialBillingCopy}
                                     </p>
                                   ) : null}
                                 </div>
