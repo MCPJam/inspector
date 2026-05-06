@@ -11,7 +11,9 @@ import {
 } from "../../utils/org-model-stream-handler.js";
 import {
   deriveOrgProviderKey as deriveOrgProviderKeyResult,
+  isLocalRuntimeEligible,
   resolveOrgProviderRuntime,
+  type OrgProviderRuntime,
 } from "../../utils/org-model-config.js";
 import {
   isMCPJamGuestAllowedModel,
@@ -398,17 +400,25 @@ chatV2.post("/", async (c) => {
           ? "chatbox"
           : "direct";
 
-        const runtime = await resolveOrgProviderRuntime(
-          hostedBody.projectId,
-          providerKey,
-          modelId,
-          {
-            authHeader: c.req.header("authorization"),
-            shareToken,
-            chatboxToken,
-            serverIds: selectedServerIds,
-          },
-        );
+        // Cloud-only providers (everything that isn't on the local-runtime
+        // allowlist) skip the /stream/org/resolve round-trip entirely. The
+        // answer is always "cloud" for those, so calling resolve would just
+        // add latency and a new failure point on the cloud path — which
+        // regressed BYOK chat for cloud-only providers like OpenAI/Anthropic
+        // when resolve was made unconditional.
+        const runtime: OrgProviderRuntime = isLocalRuntimeEligible(providerKey)
+          ? await resolveOrgProviderRuntime(
+              hostedBody.projectId,
+              providerKey,
+              modelId,
+              {
+                authHeader: c.req.header("authorization"),
+                shareToken,
+                chatboxToken,
+                serverIds: selectedServerIds,
+              },
+            )
+          : { runtimeLocation: "cloud", providerKey };
 
         const onConversationComplete = hostedChatSessionId
           ? async (fullHistory: ModelMessage[], turnTrace: PersistedTurnTrace) => {

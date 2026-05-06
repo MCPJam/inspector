@@ -36,6 +36,22 @@ export type ResolveOrgModelConfigAuth = {
 };
 
 // ---------------------------------------------------------------------------
+// Local-runtime eligibility
+//
+// Mirrors LOCAL_RUNTIME_PROVIDERS in convex/organizationModelProviders.ts.
+// Used by the chat-v2 route to skip the /stream/org/resolve round-trip for
+// providers that can never run locally — those always go through the cloud
+// path, so paying for a runtime-resolution call (and inheriting its failure
+// modes) on every turn is pure overhead and a regression for the cloud path.
+// ---------------------------------------------------------------------------
+
+const LOCAL_RUNTIME_ELIGIBLE_PROVIDERS = new Set(["ollama"]);
+
+export function isLocalRuntimeEligible(providerKey: string): boolean {
+  return LOCAL_RUNTIME_ELIGIBLE_PROVIDERS.has(providerKey);
+}
+
+// ---------------------------------------------------------------------------
 // Resolution — call the Convex HTTP endpoint
 // ---------------------------------------------------------------------------
 

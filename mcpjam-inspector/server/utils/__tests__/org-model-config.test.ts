@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  isLocalRuntimeEligible,
   isUnsafeHostedOutboundUrl,
   resolveOrgModelConfig,
 } from "../org-model-config";
@@ -138,5 +139,20 @@ describe("isUnsafeHostedOutboundUrl", () => {
   it("treats malformed URLs as unsafe (fail closed)", () => {
     expect(isUnsafeHostedOutboundUrl("not a url")).toBe(true);
     expect(isUnsafeHostedOutboundUrl("")).toBe(true);
+  });
+});
+
+describe("isLocalRuntimeEligible", () => {
+  it("returns true only for ollama", () => {
+    expect(isLocalRuntimeEligible("ollama")).toBe(true);
+  });
+
+  it("returns false for cloud-only providers (so chat-v2 skips the resolve round-trip)", () => {
+    expect(isLocalRuntimeEligible("openai")).toBe(false);
+    expect(isLocalRuntimeEligible("anthropic")).toBe(false);
+    expect(isLocalRuntimeEligible("azure")).toBe(false);
+    expect(isLocalRuntimeEligible("google")).toBe(false);
+    expect(isLocalRuntimeEligible("openrouter")).toBe(false);
+    expect(isLocalRuntimeEligible("custom:my-llm")).toBe(false);
   });
 });
