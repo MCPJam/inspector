@@ -101,6 +101,7 @@ import {
   getChatboxPathTokenFromLocation,
 } from "./components/hosted/ChatboxChatPage";
 import { useHostedApiContext } from "./hooks/hosted/use-hosted-api-context";
+import { useLocalStateMigration } from "./hooks/use-local-state-migration";
 import { AppReadyProvider } from "./hooks/use-app-ready";
 import { useInspectorCommandBus } from "./hooks/use-inspector-command-bus";
 import { HOSTED_MODE, NON_PROD_LOCKDOWN } from "./lib/config";
@@ -802,6 +803,13 @@ export default function App() {
       : undefined,
   });
   useInspectorCommandBus();
+  // One-time migration from legacy localStorage state to Convex. No-op in
+  // hosted mode and after the first successful run; safe to keep in the tree.
+  useLocalStateMigration({
+    isAuthenticated,
+    isUserBootstrapping: isEnsuringUser,
+    organizationId: activeOrganizationId,
+  });
   const oauthDebuggerServersRef = useRef(appState.servers);
   oauthDebuggerServersRef.current = appState.servers;
   const projectServersRef = useRef(projectServers);

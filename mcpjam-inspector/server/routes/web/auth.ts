@@ -9,7 +9,10 @@ import {
 } from "./hosted-rpc-logs.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { setRequestLogContext } from "../../utils/request-logger.js";
-import type { RequestLogContext } from "../../utils/log-events.js";
+import {
+  type InternalLogContext,
+  mapInternalToRequestContext,
+} from "../../utils/internal-log-context.js";
 import {
   ErrorCode,
   WebRouteError,
@@ -148,57 +151,6 @@ function buildServerNamesById(
 
 // ── Authorization ────────────────────────────────────────────────────
 
-// Server-only logging context returned by backend. Optional during rollout.
-// When present, it must never be forwarded to the browser.
-type InternalLogContext = {
-  authType: "signedIn" | "guest";
-  userId?: string | null;
-  userExternalId?: string | null;
-  guestExternalId?: string | null;
-  emailDomain?: string | null;
-  orgId?: string | null;
-  orgPlan?: string | null;
-  orgSeatQuantity?: number | null;
-  orgCreatedBy?: string | null;
-  projectId?: string | null;
-  projectRole?:
-    | "owner"
-    | "admin"
-    | "member"
-    | "guest"
-    | "editor"
-    | "chat"
-    | null;
-  accessLevel?: "project_member" | "shared_chat" | null;
-  serverId?: string | null;
-  serverTransport?: "stdio" | "http" | null;
-  chatboxId?: string | null;
-  surface?: "preview" | "share_link" | null;
-};
-
-function mapInternalToRequestContext(
-  ctx: InternalLogContext
-): Partial<RequestLogContext> {
-  return {
-    authType: ctx.authType,
-    userId: ctx.userId ?? null,
-    userExternalId: ctx.userExternalId ?? null,
-    guestExternalId: ctx.guestExternalId ?? null,
-    emailDomain: ctx.emailDomain ?? null,
-    orgId: ctx.orgId ?? null,
-    orgPlan: ctx.orgPlan ?? null,
-    orgSeatQuantity: ctx.orgSeatQuantity ?? null,
-    orgCreatedBy: ctx.orgCreatedBy ?? null,
-    projectId: ctx.projectId ?? null,
-    projectRole: ctx.projectRole ?? null,
-    accessLevel: ctx.accessLevel ?? null,
-    serverId: ctx.serverId ?? null,
-    serverTransport: ctx.serverTransport ?? null,
-    chatboxId: ctx.chatboxId ?? null,
-    surface: ctx.surface ?? null,
-  };
-}
-
 export type ConvexAuthorizeResponse = {
   authorized: boolean;
   role: "owner" | "admin" | "member";
@@ -254,6 +206,30 @@ export type ConvexBatchAuthorizeResult =
 export type ConvexBatchAuthorizeResponse = {
   results: Record<string, ConvexBatchAuthorizeResult>;
 };
+
+// Defense-in-depth: hosted /web/authorize-batch is contractually meant to
+// return an HTTP-only `serverConfig` — Convex strips command/args/env via
+// `normalizeAuthorizeResult`. If a backend regression ever lets those fields
+// through, we drop them here so they can never reach the hosted client or be
+// fed into a transport. Local mode uses /web/authorize-batch-local instead,
+// which is allowed to carry STDIO fields and goes through a different code
+// path (`local-server-resolver.ts`).
+const STDIO_ONLY_FIELDS = ["command", "args", "env"] as const;
+function stripStdioFieldsFromHostedConfig<
+  T extends { serverConfig?: Record<string, unknown> },
+>(holder: T): T {
+  const cfg = holder.serverConfig;
+  if (!cfg || typeof cfg !== "object") return holder;
+  let cleaned: Record<string, unknown> | undefined;
+  for (const field of STDIO_ONLY_FIELDS) {
+    if (field in cfg) {
+      if (!cleaned) cleaned = { ...cfg };
+      delete cleaned[field];
+    }
+  }
+  if (!cleaned) return holder;
+  return { ...holder, serverConfig: cleaned };
+}
 
 export async function authorizeServer(
   c: Context,
@@ -341,7 +317,7 @@ export async function authorizeServer(
   if (internalLogContext) {
     setRequestLogContext(c, mapInternalToRequestContext(internalLogContext));
   }
-  return clientSafe;
+  return stripStdioFieldsFromHostedConfig(clientSafe) as ClientSafeAuthorizeResponse;
 }
 
 export async function authorizeBatch(
@@ -460,7 +436,9 @@ export async function authorizeBatch(
   for (const [serverId, result] of Object.entries(raw.results)) {
     if (result.ok) {
       const { internalLogContext: _omit, ...clientSafeResult } = result;
-      strippedResults[serverId] = clientSafeResult;
+      strippedResults[serverId] = stripStdioFieldsFromHostedConfig(
+        clientSafeResult,
+      ) as ConvexBatchAuthorizeSuccess;
     } else {
       strippedResults[serverId] = result;
     }

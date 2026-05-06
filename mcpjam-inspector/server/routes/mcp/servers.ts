@@ -1,9 +1,14 @@
 import { Hono } from "hono";
-import type { MCPServerConfig } from "@mcpjam/sdk";
 import "../../types/hono"; // Type extensions
+import { HOSTED_MODE } from "../../config";
 import { rpcLogBus, type RpcLogEvent } from "../../services/rpc-log-bus";
 import { logger } from "../../utils/logger";
-import { HOSTED_MODE } from "../../config";
+import {
+  parseConnectionDefaults,
+  readLocalApiBearer,
+  resolveLocalServerForConnect,
+} from "../../utils/local-server-resolver.js";
+import { WebRouteError } from "../web/errors.js";
 
 const servers = new Hono();
 
@@ -114,10 +119,10 @@ servers.delete("/:serverId", async (c) => {
       }
     } catch (error) {
       // Ignore disconnect errors for already disconnected servers
-      console.debug(
-        `Failed to disconnect MCP server ${serverId} during removal`,
-        error,
-      );
+      logger.debug("Failed to disconnect MCP server during removal", {
+        serverId,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
 
     mcpClientManager.removeServer(serverId);
@@ -138,39 +143,123 @@ servers.delete("/:serverId", async (c) => {
   }
 });
 
-// Reconnect to a server
+// Reconnect to a server. New shape sends {projectId, serverId}; the local
+// Hono server resolves the config from Convex. Legacy {serverConfig} bodies
+// remain accepted during the Phase 5–7 client migration so existing inspector
+// builds keep working.
 servers.post("/reconnect", async (c) => {
-  let serverId: string | undefined;
+  let body: any;
   try {
-    const body = (await c.req.json()) as {
-      serverId?: string;
-      serverConfig?: MCPServerConfig;
-    };
+    body = await c.req.json();
+  } catch (error) {
+    return c.json(
+      {
+        success: false,
+        error: "Failed to parse request body",
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
+      400,
+    );
+  }
 
-    serverId = body.serverId;
-    const serverConfig = body.serverConfig;
+  const serverId =
+    typeof body?.serverId === "string" ? body.serverId.trim() : "";
+  if (!serverId) {
+    return c.json(
+      { success: false, error: "serverId is required" },
+      400,
+    );
+  }
 
-    if (!serverId || !serverConfig) {
+  const projectId =
+    typeof body?.projectId === "string" ? body.projectId.trim() : "";
+  const useResolverPath = projectId.length > 0;
+  const mcpClientManager = c.mcpClientManager;
+
+  let normalizedConfig: import("@mcpjam/sdk").MCPServerConfig | null = null;
+  // The MCP client manager is keyed by display name. In the resolver path
+  // `serverId` carries the Convex document id (used only for the lookup);
+  // in the legacy path it already is the display name.
+  let managerKey = serverId;
+
+  if (useResolverPath) {
+    const serverDisplayName =
+      typeof body?.serverName === "string" ? body.serverName.trim() : "";
+    if (!serverDisplayName) {
+      return c.json(
+        { success: false, error: "serverName is required with projectId" },
+        400,
+      );
+    }
+    const bearer = readLocalApiBearer(c);
+    if (!bearer) {
+      return c.json(
+        { success: false, error: "Authorization bearer token is required" },
+        401,
+      );
+    }
+
+    try {
+      const resolved = await resolveLocalServerForConnect(
+        c,
+        bearer,
+        projectId,
+        serverId,
+        {
+          serverDisplayName,
+          clientCapabilities:
+            typeof body?.clientCapabilities === "object" &&
+            body.clientCapabilities !== null
+              ? body.clientCapabilities
+              : undefined,
+          defaults: parseConnectionDefaults(body?.connectionDefaults),
+        },
+      );
+      normalizedConfig = resolved.config;
+      managerKey = serverDisplayName;
+    } catch (error) {
+      if (error instanceof WebRouteError) {
+        // See connect.ts — same rationale: an OAuth-required 401 means the
+        // server demands the user complete its OAuth flow, not that the
+        // session bearer is invalid. Skip the guest-refresh retry.
+        if (error.details?.oauthRequired === true) {
+          c.header("X-MCP-Auth-Required", "oauth");
+        }
+        return c.json(
+          {
+            success: false,
+            error: error.message,
+            ...(error.details ?? {}),
+          },
+          error.status as any,
+        );
+      }
+      logger.error("Error resolving server config for reconnect", error, {
+        serverId,
+      });
       return c.json(
         {
           success: false,
-          error: "serverId and serverConfig are required",
+          error: error instanceof Error ? error.message : "Unknown error",
         },
+        500,
+      );
+    }
+  } else {
+    // Legacy path during transition.
+    const serverConfig = body?.serverConfig;
+    if (!serverConfig) {
+      return c.json(
+        { success: false, error: "serverId and serverConfig are required" },
         400,
       );
     }
 
-    const mcpClientManager = c.mcpClientManager;
-
-    const normalizedConfig: MCPServerConfig = { ...serverConfig };
-    if (
-      "url" in normalizedConfig &&
-      normalizedConfig.url !== undefined &&
-      normalizedConfig.url !== null
-    ) {
-      const urlValue = normalizedConfig.url as unknown;
+    const cfg: any = { ...serverConfig };
+    if ("url" in cfg && cfg.url !== undefined && cfg.url !== null) {
+      const urlValue = cfg.url as unknown;
       if (typeof urlValue === "string") {
-        normalizedConfig.url = urlValue;
+        cfg.url = urlValue;
       } else if (urlValue instanceof URL) {
         // already normalized
       } else if (
@@ -179,26 +268,32 @@ servers.post("/reconnect", async (c) => {
         "href" in (urlValue as Record<string, unknown>) &&
         typeof (urlValue as { href?: unknown }).href === "string"
       ) {
-        normalizedConfig.url = new URL(
-          (urlValue as { href: string }).href,
-        ).toString();
+        cfg.url = new URL((urlValue as { href: string }).href).toString();
       }
     }
 
-    // Block STDIO connections in hosted mode
-    if (HOSTED_MODE && normalizedConfig.command) {
+    // Defense-in-depth: mirror the connect.ts legacy guards. The /api/mcp/*
+    // middleware in app.ts blocks hosted traffic to this endpoint with 410,
+    // but keep these checks aligned across the two routes so a future
+    // middleware change can't open a hole on one and not the other.
+    if (HOSTED_MODE && cfg.command) {
       return c.json(
-        {
-          success: false,
-          error: "STDIO transport is disabled in the web app",
-        },
+        { success: false, error: "STDIO transport is disabled in the web app" },
         403,
       );
     }
-
-    // Enforce HTTPS in hosted mode
-    if (HOSTED_MODE && normalizedConfig.url) {
-      if (new URL(normalizedConfig.url).protocol !== "https:") {
+    if (HOSTED_MODE && cfg.url) {
+      let urlForCheck: URL;
+      try {
+        urlForCheck =
+          cfg.url instanceof URL ? cfg.url : new URL(String(cfg.url));
+      } catch {
+        return c.json(
+          { success: false, error: "Invalid server URL" },
+          400,
+        );
+      }
+      if (urlForCheck.protocol !== "https:") {
         return c.json(
           {
             success: false,
@@ -210,25 +305,44 @@ servers.post("/reconnect", async (c) => {
       }
     }
 
-    await mcpClientManager.disconnectServer(serverId);
-    await mcpClientManager.connectToServer(serverId, normalizedConfig);
+    normalizedConfig = cfg;
+  }
 
-    const status = mcpClientManager.getConnectionStatus(serverId);
+  try {
+    // A stale or already-disconnected entry shouldn't fail reconnect; the
+    // DELETE handler in this file uses the same tolerance.
+    try {
+      await mcpClientManager.disconnectServer(managerKey);
+    } catch (disconnectError) {
+      logger.debug("Failed to disconnect MCP server before reconnect", {
+        serverId: managerKey,
+        error:
+          disconnectError instanceof Error
+            ? disconnectError.message
+            : String(disconnectError),
+      });
+    }
+    await mcpClientManager.connectToServer(
+      managerKey,
+      normalizedConfig as import("@mcpjam/sdk").MCPServerConfig,
+    );
+
+    const status = mcpClientManager.getConnectionStatus(managerKey);
     const message =
       status === "connected"
-        ? `Reconnected to server: ${serverId}`
-        : `Server ${serverId} reconnected with status '${status}'`;
+        ? `Reconnected to server: ${managerKey}`
+        : `Server ${managerKey} reconnected with status '${status}'`;
     const success = status === "connected";
 
     return c.json({
       success,
-      serverId,
+      serverId: managerKey,
       status,
       message,
       ...(success ? {} : { error: message }),
     });
   } catch (error) {
-    logger.error("Error reconnecting server", error, { serverId });
+    logger.error("Error reconnecting server", error, { serverId: managerKey });
     return c.json(
       {
         success: false,
