@@ -118,10 +118,47 @@ async function withTimeout<T>(
   });
 }
 
+/**
+ * Connection defaults that the client computed via
+ * `withProjectConnectionDefaults` — project-level header overlays, request
+ * timeout, and client capabilities. Forwarded through the resolver path so
+ * the server can reproduce the same MCPServerConfig the legacy
+ * `{serverConfig}` body would have produced. Without this, project-level
+ * defaults applied client-side are lost when the resolver fetches config
+ * from Convex.
+ */
+export type ResolverConnectionDefaults = {
+  headers?: Record<string, string>;
+  timeoutMs?: number;
+  clientCapabilities?: Record<string, unknown>;
+};
+
+function buildResolverBody(
+  serverId: string,
+  options: {
+    projectId: string;
+    serverName?: string;
+    connectionDefaults?: ResolverConnectionDefaults;
+  },
+): Record<string, unknown> {
+  return {
+    projectId: options.projectId,
+    serverId,
+    ...(options.serverName ? { serverName: options.serverName } : {}),
+    ...(options.connectionDefaults
+      ? { connectionDefaults: options.connectionDefaults }
+      : {}),
+  };
+}
+
 export async function testConnection(
   serverConfig: MCPServerConfig,
   serverId: string,
-  options?: { projectId?: string; serverName?: string },
+  options?: {
+    projectId?: string;
+    serverName?: string;
+    connectionDefaults?: ResolverConnectionDefaults;
+  },
 ) {
   if (HOSTED_MODE) {
     return safeValidateHostedServer(serverId, serverConfig);
@@ -131,11 +168,11 @@ export async function testConnection(
   // Convex via /web/authorize-batch-local. Without it, fall back to the
   // legacy {serverConfig, serverId} body during the Phase 5–7 migration.
   const body: Record<string, unknown> = options?.projectId
-    ? {
+    ? buildResolverBody(serverId, {
         projectId: options.projectId,
-        serverId,
-        ...(options.serverName ? { serverName: options.serverName } : {}),
-      }
+        serverName: options.serverName,
+        connectionDefaults: options.connectionDefaults,
+      })
     : { serverConfig, serverId };
 
   const res = await authFetchWithTimeout(
@@ -177,18 +214,22 @@ export async function listServers() {
 export async function reconnectServer(
   serverId: string,
   serverConfig: MCPServerConfig,
-  options?: { projectId?: string; serverName?: string },
+  options?: {
+    projectId?: string;
+    serverName?: string;
+    connectionDefaults?: ResolverConnectionDefaults;
+  },
 ) {
   if (HOSTED_MODE) {
     return safeValidateHostedServer(serverId, serverConfig);
   }
 
   const body: Record<string, unknown> = options?.projectId
-    ? {
+    ? buildResolverBody(serverId, {
         projectId: options.projectId,
-        serverId,
-        ...(options.serverName ? { serverName: options.serverName } : {}),
-      }
+        serverName: options.serverName,
+        connectionDefaults: options.connectionDefaults,
+      })
     : { serverId, serverConfig };
 
   const res = await authFetchWithTimeout(

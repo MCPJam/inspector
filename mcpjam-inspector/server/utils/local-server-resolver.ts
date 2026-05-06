@@ -239,6 +239,59 @@ export async function authorizeServerLocal(
 }
 
 /**
+ * Project-level runtime overrides that the inspector client applies in
+ * `withProjectConnectionDefaults` before issuing a connect/reconnect request.
+ * They live in the client's runtime view of the active project (header
+ * defaults, request timeout, client capabilities) and are passed through the
+ * resolver so the server-side resolved config carries the same values that
+ * the legacy `{serverConfig}` body would have.
+ *
+ * Header precedence (lowest → highest): Convex-stored server headers,
+ * project default headers from `defaults.headers`, OAuth `Authorization` (if
+ * the server uses OAuth), so OAuth always wins.
+ */
+export type ProjectConnectionDefaults = {
+  headers?: Record<string, string>;
+  timeoutMs?: number;
+  clientCapabilities?: Record<string, unknown>;
+};
+
+/**
+ * Validate `connectionDefaults` from an /api/mcp/* request body. Returns
+ * `undefined` for missing/non-object input so the caller can fall back to
+ * Convex-stored values. Drops any fields that aren't of the expected shape
+ * rather than rejecting the whole request — defaults are advisory.
+ */
+export function parseConnectionDefaults(
+  raw: unknown
+): ProjectConnectionDefaults | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const input = raw as Record<string, unknown>;
+  const out: ProjectConnectionDefaults = {};
+
+  if (input.headers && typeof input.headers === "object") {
+    const headers: Record<string, string> = {};
+    for (const [k, v] of Object.entries(input.headers as Record<string, unknown>)) {
+      if (typeof v === "string") headers[k] = v;
+    }
+    if (Object.keys(headers).length > 0) out.headers = headers;
+  }
+
+  if (typeof input.timeoutMs === "number" && Number.isFinite(input.timeoutMs)) {
+    out.timeoutMs = input.timeoutMs;
+  }
+
+  if (
+    input.clientCapabilities &&
+    typeof input.clientCapabilities === "object"
+  ) {
+    out.clientCapabilities = input.clientCapabilities as Record<string, unknown>;
+  }
+
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
  * Build an `MCPServerConfig` (the SDK's union of stdio + http configs) from a
  * local authorize result. Distinct from hosted's `toHttpConfig` which strips
  * STDIO and rejects non-HTTPS — this is the unstripped local-mode equivalent.
@@ -249,6 +302,7 @@ export function toMCPServerConfig(
     timeoutMs?: number;
     oauthAccessToken?: string;
     clientCapabilities?: Record<string, unknown>;
+    defaultHeaders?: Record<string, string>;
   }
 ): MCPServerConfig {
   const { serverConfig } = authResult;
@@ -271,8 +325,14 @@ export function toMCPServerConfig(
     return stdio as MCPServerConfig;
   }
 
+  // Header precedence for HTTP servers: Convex-stored server headers form the
+  // base, project-default headers from the runtime `defaultHeaders` overlay
+  // them (so org/project policy can add headers without touching individual
+  // server records), and a bearer for OAuth-using servers always wins because
+  // it carries the actor identity.
   const headers: Record<string, string> = {
     ...(serverConfig.headers ?? {}),
+    ...(options?.defaultHeaders ?? {}),
   };
   const oauthToken = options?.oauthAccessToken ?? authResult.oauthAccessToken;
   if (oauthToken) {
@@ -305,6 +365,15 @@ export async function resolveLocalServerForConnect(
     timeoutMs?: number;
     clientCapabilities?: Record<string, unknown>;
     serverDisplayName?: string;
+    /**
+     * Runtime defaults the inspector client computed via
+     * `withProjectConnectionDefaults` and forwarded explicitly so the
+     * resolver can reproduce the same MCPServerConfig the legacy
+     * `{serverConfig}` body would have produced. Without this, project-level
+     * header/timeout/capability defaults applied client-side are lost on the
+     * resolver path.
+     */
+    defaults?: ProjectConnectionDefaults;
   }
 ): Promise<{ config: MCPServerConfig; authorizeResult: LocalAuthorizeBatchSuccess }> {
   const result = await authorizeServerLocal(c, bearerToken, projectId, serverId);
@@ -331,8 +400,10 @@ export async function resolveLocalServerForConnect(
   }
 
   const config = toMCPServerConfig(result, {
-    timeoutMs: options?.timeoutMs,
-    clientCapabilities: options?.clientCapabilities,
+    timeoutMs: options?.timeoutMs ?? options?.defaults?.timeoutMs,
+    clientCapabilities:
+      options?.clientCapabilities ?? options?.defaults?.clientCapabilities,
+    defaultHeaders: options?.defaults?.headers,
   });
   return { config, authorizeResult: result };
 }

@@ -111,6 +111,78 @@ describe("local-state-migration", () => {
       expect(payload!.envByName.stdio_one).toBeUndefined();
       expect(payload!.projects).toHaveLength(1);
     });
+
+    it("falls back to mcp-inspector-state when no projects/workspaces present", () => {
+      // Pre-projects format: servers live at the top level of `mcp-inspector-state`.
+      // Without this fallback, users on this format would have the migration
+      // mark itself complete with nothing pushed to Convex, then later have
+      // their state cleared.
+      localStorage.setItem(
+        "mcp-inspector-state",
+        JSON.stringify({
+          servers: {
+            legacy_stdio: {
+              name: "legacy_stdio",
+              enabled: true,
+              useOAuth: false,
+              config: {
+                command: "python",
+                args: ["-m", "server"],
+              },
+              connectionStatus: "disconnected",
+              retryCount: 0,
+              lastConnectionTime: 1700000000000,
+            },
+          },
+        })
+      );
+      const payload = readLegacyMigrationPayload();
+      expect(payload).not.toBeNull();
+      expect(payload!.projects).toHaveLength(1);
+      expect(payload!.projects[0].isDefault).toBe(true);
+      expect(Object.keys(payload!.projects[0].servers)).toContain("legacy_stdio");
+    });
+
+    it("ignores mcp-inspector-state when projects already exist", () => {
+      seedLegacyProjects();
+      localStorage.setItem(
+        "mcp-inspector-state",
+        JSON.stringify({ servers: { stale: { name: "stale", config: {} } } })
+      );
+      const payload = readLegacyMigrationPayload();
+      // Projects-format wins; STATE servers are not lifted.
+      expect(payload!.projects).toHaveLength(1);
+      expect(Object.keys(payload!.projects[0].servers)).not.toContain("stale");
+    });
+
+    it("returns null when STATE has no servers field", () => {
+      localStorage.setItem(
+        "mcp-inspector-state",
+        JSON.stringify({ selectedServer: "none" })
+      );
+      expect(readLegacyMigrationPayload()).toBeNull();
+    });
+  });
+
+  describe("OAuth key cleanup", () => {
+    it("clears mcp-discovery-* keys (current OAuth code) on success", async () => {
+      seedLegacyProjects();
+      localStorage.setItem(
+        "mcp-discovery-stdio_one",
+        JSON.stringify({ resource: "https://example.com" })
+      );
+      localStorage.setItem(
+        "mcp-oauth-flow-state-stdio_one",
+        JSON.stringify({ state: "abc" })
+      );
+      const createProject = vi.fn().mockResolvedValue("convex-id");
+      const result = await runLocalStateMigration({
+        createProject: createProject as any,
+      });
+      expect(result.ok).toBe(true);
+      expect(localStorage.getItem("mcp-discovery-stdio_one")).toBeNull();
+      expect(localStorage.getItem("mcp-oauth-flow-state-stdio_one")).toBeNull();
+    });
   });
 
   describe("runLocalStateMigration", () => {

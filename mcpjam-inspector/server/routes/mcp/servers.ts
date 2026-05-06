@@ -4,6 +4,7 @@ import { HOSTED_MODE } from "../../config";
 import { rpcLogBus, type RpcLogEvent } from "../../services/rpc-log-bus";
 import { logger } from "../../utils/logger";
 import {
+  parseConnectionDefaults,
   readLocalApiBearer,
   resolveLocalServerForConnect,
 } from "../../utils/local-server-resolver.js";
@@ -211,6 +212,7 @@ servers.post("/reconnect", async (c) => {
             body.clientCapabilities !== null
               ? body.clientCapabilities
               : undefined,
+          defaults: parseConnectionDefaults(body?.connectionDefaults),
         },
       );
       normalizedConfig = resolved.config;

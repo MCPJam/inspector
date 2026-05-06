@@ -255,6 +255,30 @@ export type ConvexBatchAuthorizeResponse = {
   results: Record<string, ConvexBatchAuthorizeResult>;
 };
 
+// Defense-in-depth: hosted /web/authorize-batch is contractually meant to
+// return an HTTP-only `serverConfig` — Convex strips command/args/env via
+// `normalizeAuthorizeResult`. If a backend regression ever lets those fields
+// through, we drop them here so they can never reach the hosted client or be
+// fed into a transport. Local mode uses /web/authorize-batch-local instead,
+// which is allowed to carry STDIO fields and goes through a different code
+// path (`local-server-resolver.ts`).
+const STDIO_ONLY_FIELDS = ["command", "args", "env"] as const;
+function stripStdioFieldsFromHostedConfig<
+  T extends { serverConfig?: Record<string, unknown> },
+>(holder: T): T {
+  const cfg = holder.serverConfig;
+  if (!cfg || typeof cfg !== "object") return holder;
+  let cleaned: Record<string, unknown> | undefined;
+  for (const field of STDIO_ONLY_FIELDS) {
+    if (field in cfg) {
+      if (!cleaned) cleaned = { ...cfg };
+      delete cleaned[field];
+    }
+  }
+  if (!cleaned) return holder;
+  return { ...holder, serverConfig: cleaned };
+}
+
 export async function authorizeServer(
   c: Context,
   bearerToken: string,
@@ -341,7 +365,7 @@ export async function authorizeServer(
   if (internalLogContext) {
     setRequestLogContext(c, mapInternalToRequestContext(internalLogContext));
   }
-  return clientSafe;
+  return stripStdioFieldsFromHostedConfig(clientSafe) as ClientSafeAuthorizeResponse;
 }
 
 export async function authorizeBatch(
@@ -460,7 +484,9 @@ export async function authorizeBatch(
   for (const [serverId, result] of Object.entries(raw.results)) {
     if (result.ok) {
       const { internalLogContext: _omit, ...clientSafeResult } = result;
-      strippedResults[serverId] = clientSafeResult;
+      strippedResults[serverId] = stripStdioFieldsFromHostedConfig(
+        clientSafeResult,
+      ) as ConvexBatchAuthorizeSuccess;
     } else {
       strippedResults[serverId] = result;
     }

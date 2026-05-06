@@ -109,9 +109,10 @@ function buildAuthFetchInit(
   const sessionHeaders = shouldAttachSessionHeaders(input)
     ? getAuthHeaders()
     : undefined;
-  const hostedHeaders = hostedAuthorizationHeader
-    ? ({ Authorization: hostedAuthorizationHeader } as HeadersInit)
-    : undefined;
+  const hostedHeaders =
+    hostedAuthorizationHeader && shouldAttachHostedAuthorization(input)
+      ? ({ Authorization: hostedAuthorizationHeader } as HeadersInit)
+      : undefined;
 
   return {
     ...init,
@@ -214,6 +215,20 @@ function isLoopbackHostname(hostname: string): boolean {
   );
 }
 
+function resolveRequestUrl(input: RequestInfo | URL): URL | null {
+  const baseOrigin =
+    typeof window !== "undefined" ? window.location.origin : "http://localhost";
+  try {
+    return input instanceof URL
+      ? input
+      : typeof Request !== "undefined" && input instanceof Request
+      ? new URL(input.url, baseOrigin)
+      : new URL(String(input), baseOrigin);
+  } catch {
+    return null;
+  }
+}
+
 // The session token is a single-process secret for the local CLI/Inspector
 // build; only attach it to loopback `/api/*` calls. Non-hosted Inspector is
 // not supported behind a public origin — relaxing this would expose the token
@@ -223,21 +238,36 @@ function shouldAttachSessionHeaders(input: RequestInfo | URL): boolean {
     return false;
   }
 
-  const baseOrigin =
-    typeof window !== "undefined" ? window.location.origin : "http://localhost";
-
-  try {
-    const parsed =
-      input instanceof URL
-        ? input
-        : typeof Request !== "undefined" && input instanceof Request
-          ? new URL(input.url, baseOrigin)
-          : new URL(String(input), baseOrigin);
-
+  const parsed = resolveRequestUrl(input);
+  if (parsed) {
     return isLoopbackHostname(parsed.hostname) && parsed.pathname.startsWith("/api/");
-  } catch {
-    return typeof input === "string" && input.startsWith("/api/");
   }
+  return typeof input === "string" && input.startsWith("/api/");
+}
+
+// Paths that need the hosted (Convex) Authorization bearer attached. In
+// hosted mode every `/api/web/*` route is Convex-backed; in local mode the
+// inspector forwards the bearer for routes that re-call Convex
+// (`/web/authorize-batch-local`, OAuth bookkeeping). Anything not listed
+// here — `/api/session-token`, `/api/health`, the local-only MCP read paths
+// — does NOT participate in Convex auth, so we don't want to mint or refresh
+// a guest session for those calls.
+const HOSTED_AUTH_PATH_PREFIXES = [
+  "/api/web/",
+  // Local resolver path that calls Convex /web/authorize-batch-local.
+  "/api/mcp/connect",
+  "/api/mcp/servers/reconnect",
+];
+
+function shouldAttachHostedAuthorization(input: RequestInfo | URL): boolean {
+  const parsed = resolveRequestUrl(input);
+  const pathname =
+    parsed?.pathname ??
+    (typeof input === "string" && input.startsWith("/") ? input.split("?")[0] : null);
+  if (!pathname) return false;
+  return HOSTED_AUTH_PATH_PREFIXES.some((prefix) =>
+    prefix.endsWith("/") ? pathname.startsWith(prefix) : pathname === prefix
+  );
 }
 
 /**
@@ -293,15 +323,24 @@ export async function authFetch(
   init?: RequestInit
 ): Promise<Response> {
   const surface = resolveAuthFetchSurface(input);
-  const hostedAuthHeader = await getHostedAuthorizationHeader();
   const callerProvidedAuthorization = hasAuthorizationHeader(init?.headers);
+  // Only resolve the hosted bearer for paths that actually call Convex on
+  // the user's behalf. Skipping this for unrelated local paths
+  // (`/api/session-token`, `/api/health`, local-only MCP read paths) means
+  // those calls don't block on minting a guest session at cold boot and
+  // don't trigger guest refresh on unrelated 401s.
+  const hostedAuthEligible = shouldAttachHostedAuthorization(input);
+  const hostedAuthHeader = hostedAuthEligible
+    ? await getHostedAuthorizationHeader()
+    : null;
   const mergedInit = buildAuthFetchInit(input, init, hostedAuthHeader);
   const response = await fetch(input, mergedInit);
 
-  // Retry on 401 in both modes — the bearer resolution path is unified, so
-  // local CLI's stale guest bearers refresh the same way hosted ones do.
+  // Retry on 401 only for paths we actually attached a hosted bearer to —
+  // a 401 from `/api/health` shouldn't trigger a guest-session refresh.
   if (
     response.status !== 401 ||
+    !hostedAuthEligible ||
     !shouldRetryHostedAuth401() ||
     callerProvidedAuthorization
   ) {

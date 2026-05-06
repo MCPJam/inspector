@@ -731,6 +731,39 @@ export function useServerState({
     return true;
   }, [isClientConfigSyncPending]);
 
+  // Extract runtime overlay applied by `withProjectConnectionDefaults` so the
+  // resolver path can reproduce them server-side. Without this, the resolver
+  // sees only the Convex-stored per-server config and loses project-level
+  // header overlays / timeout / capabilities. HTTP servers' Authorization is
+  // omitted here — OAuth bearer is reattached server-side from the Convex
+  // token store.
+  const buildResolverConnectionDefaults = useCallback(
+    (serverConfig: MCPServerConfig) => {
+      const defaults: {
+        headers?: Record<string, string>;
+        timeoutMs?: number;
+        clientCapabilities?: Record<string, unknown>;
+      } = {};
+      if ("url" in serverConfig) {
+        const headers = omitAuthorizationHeader(
+          extractRequestHeaders(serverConfig.requestInit)
+        );
+        if (headers && Object.keys(headers).length > 0) {
+          defaults.headers = headers;
+        }
+      }
+      if (typeof serverConfig.timeout === "number") {
+        defaults.timeoutMs = serverConfig.timeout;
+      }
+      const caps = serverConfig.clientCapabilities as
+        | Record<string, unknown>
+        | undefined;
+      if (caps && typeof caps === "object") defaults.clientCapabilities = caps;
+      return Object.keys(defaults).length > 0 ? defaults : undefined;
+    },
+    []
+  );
+
   const guardedTestConnection = useCallback(
     async (serverConfig: MCPServerConfig, serverName: string) => {
       assertClientConfigSynced();
@@ -744,11 +777,12 @@ export function useServerState({
         return testConnection(serverConfig, resolved.serverId, {
           projectId: resolved.projectId,
           serverName,
+          connectionDefaults: buildResolverConnectionDefaults(serverConfig),
         });
       }
       return testConnection(serverConfig, serverName);
     },
-    [assertClientConfigSynced]
+    [assertClientConfigSynced, buildResolverConnectionDefaults]
   );
 
   const guardedReconnectServer = useCallback(
@@ -759,11 +793,12 @@ export function useServerState({
         return reconnectServer(resolved.serverId, serverConfig, {
           projectId: resolved.projectId,
           serverName,
+          connectionDefaults: buildResolverConnectionDefaults(serverConfig),
         });
       }
       return reconnectServer(serverName, serverConfig);
     },
-    [assertClientConfigSynced]
+    [assertClientConfigSynced, buildResolverConnectionDefaults]
   );
 
   const validateForm = (formData: ServerFormData): string | null => {

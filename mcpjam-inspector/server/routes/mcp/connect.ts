@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import "../../types/hono"; // Type extensions
 import { HOSTED_MODE } from "../../config";
 import {
+  parseConnectionDefaults,
   readLocalApiBearer,
   resolveLocalServerForConnect,
 } from "../../utils/local-server-resolver.js";
@@ -76,6 +77,7 @@ connect.post("/", async (c) => {
             body.clientCapabilities !== null
               ? body.clientCapabilities
               : undefined,
+          defaults: parseConnectionDefaults(body?.connectionDefaults),
         },
       );
     } catch (error) {

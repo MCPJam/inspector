@@ -1,10 +1,12 @@
 /**
  * One-time migration shim from legacy localStorage state to Convex.
  *
- * Reads `mcp-inspector-projects` (and the older `mcp-inspector-workspaces`
- * fallback), pushes each project + its servers to Convex via
- * `projects:createProject` (which materializes the flat `servers` rows via
- * `syncProjectServers`), and clears the legacy keys.
+ * Reads, in priority order: `mcp-inspector-projects`, the older
+ * `mcp-inspector-workspaces`, and the still-older `mcp-inspector-state`
+ * (pre-projects format whose servers live at the top level). For each, pushes
+ * the resulting project(s) + servers to Convex via `projects:createProject`
+ * (which materializes the flat `servers` rows via `syncProjectServers`), then
+ * clears the legacy keys.
  *
  * **OAuth tokens are NOT migrated.** Hosted Convex stores tokens via the
  * vault-backed `hostedOAuthCredentials` table and there is no bulk-import
@@ -16,7 +18,11 @@
  * Runs once per install. Gated by `mcp-inspector-migrated-to-convex` flag.
  */
 import { serializeServersForSharing } from "@/lib/project-serialization";
-import type { Project, ServerWithName } from "@/state/app-types";
+import {
+  createLocalDefaultProject,
+  type Project,
+  type ServerWithName,
+} from "@/state/app-types";
 import { isProjectClientConfig } from "@/lib/client-config";
 
 export const MIGRATION_FLAG_KEY = "mcp-inspector-migrated-to-convex";
@@ -34,6 +40,9 @@ const LEGACY_STATE_KEY = "mcp-inspector-state";
 // Per-server OAuth keys are name-scoped. Migration scans the full localStorage
 // for these prefixes rather than enumerating known names — handles partial
 // migrations from older inspector versions that may have used different keys.
+// Keep `mcp-oauth-flow-state-` and `mcp-discovery-` in sync with the live keys
+// in `client/src/lib/oauth/mcp-oauth.ts`; the legacy `mcp-oauth-discovery-`
+// prefix is retained for installs that ran an older inspector build.
 const LEGACY_OAUTH_PREFIXES = [
   "mcp-tokens-",
   "mcp-client-",
@@ -41,6 +50,8 @@ const LEGACY_OAUTH_PREFIXES = [
   "mcp-serverUrl-",
   "mcp-oauth-config-",
   "mcp-oauth-discovery-",
+  "mcp-discovery-",
+  "mcp-oauth-flow-state-",
   "mcp-env-",
 ];
 
@@ -86,27 +97,26 @@ function reviveServer(name: string, raw: any): ServerWithName | null {
   } as ServerWithName;
 }
 
-export function readLegacyMigrationPayload(): LegacyMigrationPayload | null {
-  if (typeof window === "undefined") return null;
+function readProjectsFromLegacyStorage(): Project[] {
   let raw: string | null;
   try {
     raw =
       localStorage.getItem(LEGACY_PROJECTS_KEY) ??
       localStorage.getItem(LEGACY_WORKSPACES_KEY);
   } catch {
-    return null;
+    return [];
   }
-  if (!raw) return null;
+  if (!raw) return [];
 
   let parsed: any;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return null;
+    return [];
   }
 
   const rawProjects = parsed?.projects ?? parsed?.workspaces;
-  if (!rawProjects || typeof rawProjects !== "object") return null;
+  if (!rawProjects || typeof rawProjects !== "object") return [];
 
   const projects: Project[] = [];
   for (const [id, projectRaw] of Object.entries(rawProjects)) {
@@ -137,6 +147,51 @@ export function readLegacyMigrationPayload(): LegacyMigrationPayload | null {
         typeof p.organizationId === "string" ? p.organizationId : undefined,
       visibility: p.visibility,
     });
+  }
+  return projects;
+}
+
+// Pre-projects format: `mcp-inspector-state` stored servers at the top level.
+// Mirrors the in-process lift in `state/storage.ts` so users on this format
+// don't end up with the migration-complete flag set + nothing in Convex.
+function readProjectFromLegacyStateOnly(): Project | null {
+  let raw: string | null;
+  try {
+    raw = localStorage.getItem(LEGACY_STATE_KEY);
+  } catch {
+    return null;
+  }
+  if (!raw) return null;
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+
+  const rawServers = parsed?.servers;
+  if (!rawServers || typeof rawServers !== "object") return null;
+
+  const servers: Record<string, ServerWithName> = {};
+  for (const [name, serverRaw] of Object.entries(rawServers)) {
+    const revived = reviveServer(name, serverRaw);
+    if (revived) servers[name] = revived;
+  }
+  if (Object.keys(servers).length === 0) return null;
+
+  return createLocalDefaultProject({ servers });
+}
+
+export function readLegacyMigrationPayload(): LegacyMigrationPayload | null {
+  if (typeof window === "undefined") return null;
+
+  let projects = readProjectsFromLegacyStorage();
+  if (projects.length === 0) {
+    const stateProject = readProjectFromLegacyStateOnly();
+    if (stateProject) {
+      projects = [stateProject];
+    }
   }
 
   // Pull mcp-env-${name} into a side map so the migration can merge env into

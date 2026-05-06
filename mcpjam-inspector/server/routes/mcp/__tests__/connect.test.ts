@@ -240,6 +240,57 @@ describe("POST /api/mcp/connect", () => {
       });
     });
 
+    it("merges connectionDefaults (project headers, timeout, capabilities) onto resolved config", async () => {
+      mockBatchAuthorizeFetch({
+        results: {
+          [SERVER_ID]: {
+            ok: true,
+            role: "owner",
+            accessLevel: "project_member",
+            permissions: { chatOnly: false },
+            serverConfig: {
+              transportType: "http",
+              url: "http://localhost:3000/mcp",
+              headers: { "X-Server-Default": "from-convex" },
+              useOAuth: false,
+            },
+          },
+        },
+      });
+
+      const res = await app.request("/api/mcp/connect", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({
+          projectId: PROJECT_ID,
+          serverId: SERVER_ID,
+          serverName: SERVER_NAME,
+          connectionDefaults: {
+            headers: {
+              "X-Project-Default": "from-runtime",
+              "X-Server-Default": "overridden-by-runtime",
+            },
+            timeoutMs: 12345,
+            clientCapabilities: { sampling: { strategy: "auto" } },
+          },
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const callArgs = mcpClientManager.connectToServer.mock.calls[0];
+      const cfg = callArgs[1];
+      // Project-default headers overlay Convex-stored server headers; the
+      // server-default value is overridden by the runtime overlay.
+      expect(cfg.requestInit.headers).toMatchObject({
+        "X-Project-Default": "from-runtime",
+        "X-Server-Default": "overridden-by-runtime",
+      });
+      expect(cfg.timeout).toBe(12345);
+      expect(cfg.clientCapabilities).toEqual({
+        sampling: { strategy: "auto" },
+      });
+    });
+
     it("returns 401 when server requires OAuth but no token resolved", async () => {
       mockBatchAuthorizeFetch({
         results: {
