@@ -553,6 +553,198 @@ describe("local-state-migration", () => {
       expect(importTokens).not.toHaveBeenCalled();
     });
 
+    it("default-project (isDefault: true) routes through ensureDefaultProject + merge, NOT createProject", async () => {
+      // Free-plan orgs get one auto-provisioned default project at
+      // `users:ensureUser` time. The migration's `createProject` call would
+      // trip `enforceOrganizationProjectLimit` (cap=1, slot already filled).
+      // When deps supply ensureDefaultProject + mergeServersIntoExistingProject,
+      // the migration must merge into the existing default instead.
+      seedLegacyProjects();
+      const createProject = vi.fn();
+      const ensureDefaultProject = vi
+        .fn()
+        .mockResolvedValue("convex-default-id");
+      const mergeServersIntoExistingProject = vi
+        .fn()
+        .mockResolvedValue(undefined);
+
+      const result = await runLocalStateMigration({
+        createProject: createProject as any,
+        ensureDefaultProject,
+        mergeServersIntoExistingProject,
+        organizationId: "org_xyz",
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.projectsMigrated).toBe(1);
+      expect(createProject).not.toHaveBeenCalled();
+      expect(ensureDefaultProject).toHaveBeenCalledTimes(1);
+      expect(ensureDefaultProject).toHaveBeenCalledWith({
+        organizationId: "org_xyz",
+      });
+      expect(mergeServersIntoExistingProject).toHaveBeenCalledTimes(1);
+      const mergeArgs = mergeServersIntoExistingProject.mock.calls[0][0];
+      expect(mergeArgs.projectId).toBe("convex-default-id");
+      expect(Object.keys(mergeArgs.servers)).toEqual(
+        expect.arrayContaining(["stdio_one", "http_one"]),
+      );
+      // Legacy keys cleared on success.
+      expect(localStorage.getItem("mcp-inspector-projects")).toBeNull();
+      expect(hasMigrationCompleted()).toBe(true);
+    });
+
+    it("non-default project still routes through createProject even when merge deps supplied", async () => {
+      // Mixed-shape protection: a user with both a default project AND a
+      // user-created non-default project must take BOTH paths — merge for the
+      // default, createProject for the rest. Don't blanket-route everything
+      // to ensureDefaultProject.
+      localStorage.setItem(
+        "mcp-inspector-projects",
+        JSON.stringify({
+          activeProjectId: "proj-default",
+          projects: {
+            "proj-default": {
+              id: "proj-default",
+              name: "Default",
+              isDefault: true,
+              createdAt: 1700000000000,
+              updatedAt: 1700000000000,
+              servers: {},
+            },
+            "proj-custom": {
+              id: "proj-custom",
+              name: "My Custom Project",
+              isDefault: false,
+              createdAt: 1700000000000,
+              updatedAt: 1700000000000,
+              servers: {},
+            },
+          },
+        }),
+      );
+
+      const createProject = vi.fn().mockResolvedValue("convex-custom-id");
+      const ensureDefaultProject = vi
+        .fn()
+        .mockResolvedValue("convex-default-id");
+      const mergeServersIntoExistingProject = vi
+        .fn()
+        .mockResolvedValue(undefined);
+
+      const result = await runLocalStateMigration({
+        createProject: createProject as any,
+        ensureDefaultProject,
+        mergeServersIntoExistingProject,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(ensureDefaultProject).toHaveBeenCalledTimes(1);
+      expect(mergeServersIntoExistingProject).toHaveBeenCalledTimes(1);
+      expect(createProject).toHaveBeenCalledTimes(1);
+      expect(createProject.mock.calls[0][0].name).toBe("My Custom Project");
+    });
+
+    it("does not retry merge after success on subsequent boot (idempotency via progress map)", async () => {
+      // First boot: merge succeeds. Second boot: progress map records the
+      // convex projectId, so the merge call is NOT repeated. Backend write
+      // is idempotent but the round-trip is wasteful; the progress map
+      // already gates re-creation, and the merge path must respect it the
+      // same way createProject does.
+      seedLegacyProjects();
+      const ensureDefaultProject = vi
+        .fn()
+        .mockResolvedValue("convex-default-id");
+      const mergeServersIntoExistingProject = vi
+        .fn()
+        .mockResolvedValue(undefined);
+
+      const firstResult = await runLocalStateMigration({
+        createProject: vi.fn() as any,
+        ensureDefaultProject,
+        mergeServersIntoExistingProject,
+      });
+      expect(firstResult.ok).toBe(true);
+      expect(mergeServersIntoExistingProject).toHaveBeenCalledTimes(1);
+      // Successful migration clears legacy keys → second run is a no-op.
+      // Re-seed legacy state to simulate a partial-state scenario where
+      // legacy keys somehow persisted (e.g. OAuth import added them back).
+      seedLegacyProjects();
+      // But progress map remembers proj-a was created.
+      localStorage.setItem(
+        MIGRATION_PROGRESS_KEY,
+        JSON.stringify({
+          "proj-a": {
+            convexProjectId: "convex-default-id",
+            tokensByServerName: {},
+          },
+        }),
+      );
+
+      const ensureSecond = vi.fn();
+      const mergeSecond = vi.fn();
+      const secondResult = await runLocalStateMigration({
+        createProject: vi.fn() as any,
+        ensureDefaultProject: ensureSecond,
+        mergeServersIntoExistingProject: mergeSecond,
+      });
+      expect(secondResult.ok).toBe(true);
+      expect(ensureSecond).not.toHaveBeenCalled();
+      expect(mergeSecond).not.toHaveBeenCalled();
+    });
+
+    it("preserves legacy keys when merge fails and allows retry", async () => {
+      seedLegacyProjects();
+      const ensureDefaultProject = vi
+        .fn()
+        .mockResolvedValue("convex-default-id");
+      const mergeServersFail = vi
+        .fn()
+        .mockRejectedValue(new Error("Convex unreachable"));
+
+      const firstResult = await runLocalStateMigration({
+        createProject: vi.fn() as any,
+        ensureDefaultProject,
+        mergeServersIntoExistingProject: mergeServersFail,
+      });
+      expect(firstResult.ok).toBe(false);
+      expect(firstResult.errors[0].projectName).toBe("Default");
+      // Legacy keys preserved for retry.
+      expect(localStorage.getItem("mcp-inspector-projects")).not.toBeNull();
+      expect(hasMigrationCompleted()).toBe(false);
+
+      // Retry — merge succeeds this time.
+      const mergeServersSuccess = vi.fn().mockResolvedValue(undefined);
+      const retryResult = await runLocalStateMigration({
+        createProject: vi.fn() as any,
+        ensureDefaultProject,
+        mergeServersIntoExistingProject: mergeServersSuccess,
+      });
+      expect(retryResult.ok).toBe(true);
+      expect(mergeServersSuccess).toHaveBeenCalledTimes(1);
+      expect(localStorage.getItem("mcp-inspector-projects")).toBeNull();
+      expect(hasMigrationCompleted()).toBe(true);
+    });
+
+    it("falls back to createProject when only one of the merge deps is supplied", async () => {
+      // Both ensureDefaultProject AND mergeServersIntoExistingProject must
+      // be present to take the merge path. If a future caller supplies only
+      // one, fall back to the legacy createProject path rather than
+      // half-executing.
+      seedLegacyProjects();
+      const createProject = vi.fn().mockResolvedValue("convex-id");
+      const ensureDefaultProject = vi.fn();
+
+      const result = await runLocalStateMigration({
+        createProject: createProject as any,
+        ensureDefaultProject,
+        // mergeServersIntoExistingProject intentionally omitted.
+      });
+
+      expect(result.ok).toBe(true);
+      expect(createProject).toHaveBeenCalledTimes(1);
+      expect(ensureDefaultProject).not.toHaveBeenCalled();
+    });
+
     it("skips servers whose legacy state lacks clientId", async () => {
       seedLegacyProjects();
       // Tokens present but no `mcp-client-${name}` entry.

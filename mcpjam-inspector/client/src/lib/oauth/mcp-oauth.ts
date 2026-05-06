@@ -2123,11 +2123,79 @@ export class MCPOAuthProvider implements OAuthClientProvider {
 }
 
 /**
+ * Persisted Convex binding so `handleOAuthCallback` can recover the
+ * projectId/serverId mapping after the OAuth redirect, when the in-memory
+ * `apiContext.serverIdsByName` hasn't been repopulated yet (the Convex
+ * `getProjectServers` query is still inflight on the post-redirect mount).
+ *
+ * Without this persisted copy `saveTokens` skips the Convex
+ * `hostedOAuthCredentials` write and the next `/api/mcp/connect` 401s with
+ * "Server requires OAuth authentication" because `authorize-batch-local`
+ * can't find the credential row. Cleared with the rest of the per-server
+ * OAuth state in `clearOAuthData`.
+ */
+function getOAuthBindingStorageKey(serverName: string): string {
+  return `mcp-oauth-binding-${serverName}`;
+}
+
+function readPersistedConvexBindingForServer(
+  serverName: string
+): MCPOAuthProviderConvexBinding | undefined {
+  if (typeof window === "undefined") return undefined;
+  try {
+    const raw = localStorage.getItem(getOAuthBindingStorageKey(serverName));
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as Partial<MCPOAuthProviderConvexBinding>;
+    if (
+      typeof parsed?.projectId !== "string" ||
+      typeof parsed?.serverId !== "string"
+    ) {
+      return undefined;
+    }
+    if (parsed.kind !== "generic" && parsed.kind !== "registry") {
+      return undefined;
+    }
+    return parsed as MCPOAuthProviderConvexBinding;
+  } catch {
+    return undefined;
+  }
+}
+
+function writePersistedConvexBindingForServer(
+  serverName: string,
+  binding: MCPOAuthProviderConvexBinding
+): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(
+      getOAuthBindingStorageKey(serverName),
+      JSON.stringify(binding)
+    );
+  } catch {
+    // best-effort — saveTokens still writes to localStorage; the only
+    // downside of a missed persist is that the post-redirect callback
+    // can't import to Convex and the user re-OAuths after expiry.
+  }
+}
+
+function clearPersistedConvexBindingForServer(serverName: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem(getOAuthBindingStorageKey(serverName));
+  } catch {
+    // best-effort
+  }
+}
+
+/**
  * Build the Convex binding to thread into `MCPOAuthProvider` so that
  * `saveTokens` mirrors the issued tokens to the Convex `hostedOAuthCredentials`
- * store. Returns null when the server hasn't been synced to Convex yet — in
- * that case `saveTokens` falls back to localStorage-only and the resolver
- * path uses the legacy fallback for connect.
+ * store. Tries in-memory `apiContext` first (the populated common case at
+ * `initiateOAuth` time); falls back to the localStorage-persisted binding
+ * written at initiation so post-redirect callbacks can still resolve the
+ * mapping while `getProjectServers` is still loading. Returns undefined
+ * only when both lookups fail (server not yet synced to Convex), in which
+ * case `saveTokens` falls back to localStorage-only.
  */
 function buildConvexBindingForServer(input: {
   serverName: string;
@@ -2137,23 +2205,29 @@ function buildConvexBindingForServer(input: {
 }): MCPOAuthProviderConvexBinding | undefined {
   if (HOSTED_MODE) return undefined;
   const resolved = tryResolveProjectServer(input.serverName);
-  if (!resolved) return undefined;
-  const isRegistry =
-    !!input.registryServerId && input.useRegistryOAuthProxy === true;
-  return {
-    projectId: resolved.projectId,
-    serverId: resolved.serverId,
-    ...(input.oauthResourceUrl
-      ? { oauthResourceUrl: input.oauthResourceUrl }
-      : {}),
-    kind: isRegistry ? "registry" : "generic",
-    ...(isRegistry
-      ? {
-          registryServerId: input.registryServerId,
-          useRegistryOAuthProxy: true,
-        }
-      : {}),
-  };
+  if (resolved) {
+    const isRegistry =
+      !!input.registryServerId && input.useRegistryOAuthProxy === true;
+    const binding: MCPOAuthProviderConvexBinding = {
+      projectId: resolved.projectId,
+      serverId: resolved.serverId,
+      ...(input.oauthResourceUrl
+        ? { oauthResourceUrl: input.oauthResourceUrl }
+        : {}),
+      kind: isRegistry ? "registry" : "generic",
+      ...(isRegistry
+        ? {
+            registryServerId: input.registryServerId,
+            useRegistryOAuthProxy: true,
+          }
+        : {}),
+    };
+    // Persist so the post-redirect callback can recover this mapping even
+    // if apiContext.serverIdsByName hasn't repopulated yet.
+    writePersistedConvexBindingForServer(input.serverName, binding);
+    return binding;
+  }
+  return readPersistedConvexBindingForServer(input.serverName);
 }
 
 function readStoredClientInformation(
@@ -3353,6 +3427,7 @@ export function clearOAuthData(serverName: string): void {
   localStorage.removeItem(`mcp-verifier-${serverName}`);
   localStorage.removeItem(`mcp-serverUrl-${serverName}`);
   localStorage.removeItem(`mcp-oauth-config-${serverName}`);
+  clearPersistedConvexBindingForServer(serverName);
   clearStoredDiscoveryState(serverName);
   clearOAuthFlowSession(serverName);
   clearOAuthTrace(serverName);
