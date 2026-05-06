@@ -173,37 +173,25 @@ oauthWeb.get("/metadata", async (c) => {
   }
 });
 
-oauthWeb.post("/session", async (c) => {
-  try {
-    return await proxyConvexOAuthPost(c, "/web/oauth/session");
-  } catch (error) {
-    return webErrorCompat(c, toRouteError(error));
-  }
-});
+// Pure pass-through proxies to the matching Convex /web/oauth/* endpoints.
+// Each handler is identical apart from the path, so register them in a loop
+// rather than copy-pasting the try/catch shell four times.
+const CONVEX_OAUTH_PROXY_PATHS = [
+  "session",
+  "tokens",
+  "import-tokens",
+  "client-secret",
+] as const;
 
-oauthWeb.post("/tokens", async (c) => {
-  try {
-    return await proxyConvexOAuthPost(c, "/web/oauth/tokens");
-  } catch (error) {
-    return webErrorCompat(c, toRouteError(error));
-  }
-});
-
-oauthWeb.post("/import-tokens", async (c) => {
-  try {
-    return await proxyConvexOAuthPost(c, "/web/oauth/import-tokens");
-  } catch (error) {
-    return webErrorCompat(c, toRouteError(error));
-  }
-});
-
-oauthWeb.post("/client-secret", async (c) => {
-  try {
-    return await proxyConvexOAuthPost(c, "/web/oauth/client-secret");
-  } catch (error) {
-    return webErrorCompat(c, toRouteError(error));
-  }
-});
+for (const path of CONVEX_OAUTH_PROXY_PATHS) {
+  oauthWeb.post(`/${path}`, async (c) => {
+    try {
+      return await proxyConvexOAuthPost(c, `/web/oauth/${path}`);
+    } catch (error) {
+      return webErrorCompat(c, toRouteError(error));
+    }
+  });
+}
 
 /**
  * Debug proxy for OAuth flow visualization (hosted mode).
