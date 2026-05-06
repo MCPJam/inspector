@@ -7,7 +7,12 @@ import {
   type Dispatch,
 } from "react";
 import { toast } from "sonner";
-import type { AppAction, AppState, Project } from "@/state/app-types";
+import {
+  createLocalProjectId,
+  type AppAction,
+  type AppState,
+  type Project,
+} from "@/state/app-types";
 import {
   useProjectMutations,
   useProjectQueries,
@@ -42,10 +47,6 @@ function stringifyProjectClientConfig(
   clientConfig: ProjectClientConfig | undefined,
 ) {
   return stableStringifyJson(clientConfig ?? null);
-}
-
-function buildLocalProjectId() {
-  return `project_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
 interface PendingClientConfigSync {
@@ -90,7 +91,6 @@ interface LoggerLike {
 
 function isSyntheticDefaultProject(project: Project) {
   return (
-    project.id === "default" &&
     project.isDefault === true &&
     project.sharedProjectId === undefined &&
     project.organizationId === undefined &&
@@ -978,7 +978,7 @@ export function useProjectState({
       }
 
       const newProject: Project = {
-        id: buildLocalProjectId(),
+        id: createLocalProjectId(),
         name,
         servers: {},
         createdAt: new Date(),
@@ -1486,7 +1486,7 @@ export function useProjectState({
 
         const duplicatedProject: Project = {
           ...sourceProject,
-          id: buildLocalProjectId(),
+          id: createLocalProjectId(),
           name: newName,
           createdAt: new Date(),
           updatedAt: new Date(),
@@ -1627,7 +1627,7 @@ export function useProjectState({
         }
         const importedProject: Project = {
           ...projectData,
-          id: buildLocalProjectId(),
+          id: createLocalProjectId(),
           createdAt: new Date(),
           updatedAt: new Date(),
           isDefault: false,

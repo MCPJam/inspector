@@ -19,7 +19,7 @@ function createServer(
 
 function createState(server: ServerWithName): AppState {
   const project: Project = {
-    id: "default",
+    id: "local-test-project",
     name: "Default",
     servers: { [server.name]: server },
     createdAt: new Date("2026-04-10T12:00:00.000Z"),
@@ -28,8 +28,8 @@ function createState(server: ServerWithName): AppState {
   };
 
   return {
-    projects: { default: project },
-    activeProjectId: "default",
+    projects: { [project.id]: project },
+    activeProjectId: project.id,
     servers: { [server.name]: server },
     selectedServer: server.name,
     selectedMultipleServers: [],
@@ -65,7 +65,8 @@ describe("storage", () => {
 
     expect(persistedState.servers.asana.lastOAuthTrace).toBeUndefined();
     expect(
-      persistedProjects.projects.default.servers.asana.lastOAuthTrace,
+      persistedProjects.projects["local-test-project"].servers.asana
+        .lastOAuthTrace,
     ).toBeUndefined();
   });
 
@@ -106,6 +107,7 @@ describe("storage", () => {
 
     const state = loadAppState();
 
+    expect(state.activeProjectId).not.toBe("default");
     expect(state.servers.asana.lastOAuthTrace).toBeUndefined();
     expect(localStorage.getItem("mcp-oauth-trace-asana")).toBeNull();
   });

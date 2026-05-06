@@ -12,9 +12,7 @@ import { getGuestBearerToken } from "@/lib/guest-session";
 import {
   getHostedAuthorizationHeader,
   setHostedApiContext,
-  isGuestMode,
   buildHostedServerRequest,
-  buildGuestServerRequest,
 } from "../context";
 
 describe("getHostedAuthorizationHeader guest fallback", () => {
@@ -184,7 +182,7 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
   });
 });
 
-describe("isGuestMode and buildHostedServerRequest consistency", () => {
+describe("guest-owned project request building", () => {
   beforeEach(() => {
     setHostedApiContext(null);
   });
@@ -193,46 +191,12 @@ describe("isGuestMode and buildHostedServerRequest consistency", () => {
     setHostedApiContext(null);
   });
 
-  it("isGuestMode returns true for direct guests (no project, not authenticated)", () => {
-    setHostedApiContext({
-      projectId: null,
-      isAuthenticated: false,
-      serverIdsByName: {},
-    });
-
-    expect(isGuestMode()).toBe(true);
-  });
-
-  it("isGuestMode returns false for shared guests (has project + shareToken)", () => {
-    setHostedApiContext({
-      projectId: "ws-shared",
-      isAuthenticated: false,
-      shareToken: "share_tok_123",
-      serverIdsByName: { bench: "srv-1" },
-    });
-
-    expect(isGuestMode()).toBe(false);
-  });
-
-  it("isGuestMode returns false for authenticated users", () => {
-    setHostedApiContext({
-      projectId: "ws-1",
-      isAuthenticated: true,
-      serverIdsByName: {},
-    });
-
-    expect(isGuestMode()).toBe(false);
-  });
-
   it("buildHostedServerRequest throws BootstrapNotReadyError when projectId is missing", async () => {
     setHostedApiContext({
       projectId: null,
       isAuthenticated: false,
       hasSession: true,
       serverIdsByName: {},
-      serverConfigs: {
-        "my-server": { url: "https://my-mcp.example.com/sse" },
-      },
     });
 
     const { BootstrapNotReadyError } = await import("@/lib/app-ready");
@@ -274,29 +238,6 @@ describe("isGuestMode and buildHostedServerRequest consistency", () => {
       serverId: "srv-1",
       serverName: "my-server",
       chatboxToken: "chatbox_tok_123",
-    });
-  });
-
-  it("buildGuestServerRequest forwards explicit clientCapabilities overrides", () => {
-    expect(
-      buildGuestServerRequest(
-        {
-          url: "https://example.com/mcp",
-        },
-        undefined,
-        {
-          elicitation: {},
-          experimental: { inspectorProfile: true },
-        },
-        "example-server",
-      ),
-    ).toEqual({
-      serverUrl: "https://example.com/mcp",
-      serverName: "example-server",
-      clientCapabilities: {
-        elicitation: {},
-        experimental: { inspectorProfile: true },
-      },
     });
   });
 });

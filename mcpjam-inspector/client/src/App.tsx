@@ -1158,26 +1158,6 @@ export default function App() {
       ),
     [hostedServerIdsByName, appState.servers]
   );
-  // Extract MCPServerConfig objects for guest mode (keyed by server name)
-  const guestServerConfigs = useMemo(
-    () =>
-      Object.fromEntries(
-        Object.entries<ServerWithName>(appState.servers).map(
-          ([name, server]) => [name, server.config]
-        )
-      ),
-    [appState.servers]
-  );
-  const guestOauthTokensByServerName = useMemo(
-    () =>
-      Object.fromEntries(
-        Object.entries<ServerWithName>(appState.servers)
-          .filter(([, server]) => !!server.oauthTokens?.access_token)
-          .map(([name, server]) => [name, server.oauthTokens!.access_token])
-      ),
-    [appState.servers]
-  );
-
   useHostedApiContext({
     projectId: convexProjectId,
     serverIdsByName: hostedServerIdsByName,
@@ -1185,7 +1165,6 @@ export default function App() {
     clientConfigSyncPending: isClientConfigSyncPending,
     getAccessToken,
     oauthTokensByServerId,
-    guestOauthTokensByServerName,
     // `HostedApiContext.isAuthenticated` means "WorkOS user is signed in",
     // not "Convex is authenticated". Convex reports authenticated for guest
     // sessions too (because `useUnifiedConvexAuth` returns a placeholder user
@@ -1195,7 +1174,6 @@ export default function App() {
     // correct signal.
     isAuthenticated: !!workOsUser,
     hasSession: !!workOsUser || isWorkOsLoading,
-    serverConfigs: guestServerConfigs,
     enabled: !isHostedChatRoute,
   });
 

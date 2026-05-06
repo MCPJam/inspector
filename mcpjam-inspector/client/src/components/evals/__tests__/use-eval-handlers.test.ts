@@ -15,8 +15,19 @@ import { API_ENDPOINTS } from "../constants";
 import { createFetchResponse, createDeferred } from "@/test";
 import { setHostedApiContext } from "@/lib/apis/web/context";
 
+const { hostedModeRef } = vi.hoisted(() => ({
+  hostedModeRef: { value: false },
+}));
 vi.mock("@/lib/config", () => ({
-  HOSTED_MODE: true,
+  get HOSTED_MODE() {
+    return hostedModeRef.value;
+  },
+}));
+vi.mock("@/lib/apis/mode-client", () => ({
+  isHostedMode: () => hostedModeRef.value,
+  ensureLocalMode: vi.fn(),
+  runByMode: (handlers: { local: () => unknown; hosted: () => unknown }) =>
+    hostedModeRef.value ? handlers.hosted() : handlers.local(),
 }));
 
 // Mock authFetch
@@ -87,13 +98,11 @@ vi.mock("@/lib/ci-evals-router", () => ({
     mockNavigateToCiEvalsRoute(...args),
 }));
 
-const mockIsHostedMode = vi.fn(() => false);
-vi.mock("@/lib/apis/mode-client", () => ({
-  isHostedMode: () => mockIsHostedMode(),
-  ensureLocalMode: vi.fn(),
-  runByMode: (handlers: { local: () => unknown; hosted: () => unknown }) =>
-    mockIsHostedMode() ? handlers.hosted() : handlers.local(),
-}));
+const mockIsHostedMode = {
+  mockReturnValue(next: boolean) {
+    hostedModeRef.value = next;
+  },
+};
 
 // Mock isMCPJamProvidedModel
 vi.mock("@/shared/types", () => ({

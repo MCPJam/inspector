@@ -13,14 +13,11 @@ export interface HostedApiContext {
   clientConfigSyncPending?: boolean;
   getAccessToken?: GetAccessTokenFn;
   oauthTokensByServerId?: Record<string, string>;
-  guestOauthTokensByServerName?: Record<string, string>;
   shareToken?: string;
   chatboxToken?: string;
   isAuthenticated?: boolean;
   /** True when a WorkOS session exists (user signed in), even if token hasn't resolved yet. */
   hasSession?: boolean;
-  /** Maps server name → MCPServerConfig for guest mode (no Convex). */
-  serverConfigs?: Record<string, unknown>;
 }
 
 // chat_v2 scope is required for all non-guest API requests that write to chat history.
@@ -54,34 +51,15 @@ function assertHostedClientConfigSynced() {
   throw new Error(CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE);
 }
 
-/**
- * True when running in hosted mode as a direct guest connection.
- * Direct guests store server configs in localStorage and connect directly
- * without Convex authorization.
- */
-export function isGuestMode(): boolean {
-  if (!HOSTED_MODE) return false;
-  return (
-    !hostedApiContext.projectId &&
-    !hostedApiContext.isAuthenticated &&
-    !hostedApiContext.hasSession
-  );
-}
-
 export function shouldRetryHostedAuth401(): boolean {
   if (!HOSTED_MODE) return false;
   return !hostedApiContext.isAuthenticated && !hostedApiContext.hasSession;
 }
 
 /**
- * Hosted guest access now comes in 3 shapes:
- * - direct guest: no project, direct serverUrl requests
- * - hosted shared/chatbox guest: project-scoped share or chatbox token,
- *   Convex-backed requests
- * - guest-owned project: an unauthenticated visitor whose Convex project is
- *   keyed by their guest external id (the "guests are users" model).
- *   Requests carry `projectId` without share/chatbox tokens; the backend
- *   authorizes via the guest JWT in the Authorization header.
+ * Hosted guest access uses the same Convex-backed project/server request shape
+ * as signed-in users. Unauthenticated hosted actors still authenticate with the
+ * guest JWT; they no longer send direct serverUrl request bodies.
  *
  * The gate is `!isAuthenticated && !hasSession`. The previous design treated a
  * set `projectId` as proof of an authenticated session; that assumption no
@@ -96,58 +74,8 @@ function hasHostedGuestAccess(): boolean {
   return true;
 }
 
-/**
- * Prefer the guest bearer for both direct guests and shared guests.
- * Shared guests still use Convex-backed requests; they only differ in how the
- * bearer is obtained.
- */
 function shouldPreferGuestBearer(): boolean {
   return hasHostedGuestAccess();
-}
-
-export function buildGuestServerRequest(
-  config: unknown,
-  oauthAccessToken?: string,
-  clientCapabilities?: Record<string, unknown>,
-  serverName?: string,
-): Record<string, unknown> {
-  const httpConfig = config as {
-    url?: string | URL;
-    requestInit?: { headers?: Record<string, string> };
-  };
-  if (!httpConfig.url) {
-    throw new Error("Guest server config must have a URL");
-  }
-  const urlStr =
-    typeof httpConfig.url === "string"
-      ? httpConfig.url
-      : httpConfig.url.toString();
-  const headers = httpConfig.requestInit?.headers;
-  return {
-    serverUrl: urlStr,
-    ...(serverName ? { serverName } : {}),
-    ...(headers && Object.keys(headers).length > 0
-      ? { serverHeaders: headers }
-      : {}),
-    ...(oauthAccessToken ? { oauthAccessToken } : {}),
-    ...(clientCapabilities ? { clientCapabilities } : {}),
-  };
-}
-
-function getGuestOAuthToken(serverName: string): string | undefined {
-  try {
-    const raw = localStorage.getItem(`mcp-tokens-${serverName}`);
-    if (raw) {
-      const parsed = JSON.parse(raw) as { access_token?: unknown };
-      if (typeof parsed.access_token === "string" && parsed.access_token) {
-        return parsed.access_token;
-      }
-    }
-  } catch {
-    // Ignore malformed local tokens and fall back to context-provided tokens.
-  }
-
-  return hostedApiContext.guestOauthTokensByServerName?.[serverName];
 }
 
 export function setHostedApiContext(next: HostedApiContext | null): void {
@@ -358,19 +286,6 @@ function getHostedAccessScope(): HostedAccessScope | undefined {
 export function buildHostedServerRequest(
   serverNameOrId: string,
 ): Record<string, unknown> {
-  if (isGuestMode()) {
-    const config = hostedApiContext.serverConfigs?.[serverNameOrId];
-    if (!config) {
-      throw new Error(`No guest server config found for "${serverNameOrId}"`);
-    }
-    return buildGuestServerRequest(
-      config,
-      getGuestOAuthToken(serverNameOrId),
-      hostedApiContext.clientCapabilities,
-      serverNameOrId,
-    );
-  }
-
   // Single hosted path: every request — guest or authed — carries
   // {projectId, serverId}. UI surfaces gate on `useAppReady()` so this
   // builder is never invoked before bootstrap completes; if it is invoked
@@ -415,6 +330,7 @@ export function buildHostedServerBatchRequest(serverNamesOrIds: string[]): {
   chatboxToken?: string;
 } {
   assertHostedClientConfigSynced();
+  const projectId = getHostedProjectId();
   const serverEntries = resolveHostedServerEntries(serverNamesOrIds);
   const serverIds = serverEntries.map((entry) => entry.serverId);
   const serverNames = serverEntries.map((entry) => entry.serverName);
@@ -423,7 +339,7 @@ export function buildHostedServerBatchRequest(serverNamesOrIds: string[]): {
   const chatboxToken = getHostedChatboxToken();
   const accessScope = getHostedAccessScope();
   return {
-    projectId: getHostedProjectId(),
+    projectId,
     serverIds,
     serverNames,
     ...(hostedApiContext.clientCapabilities
@@ -447,6 +363,7 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
   chatboxToken?: string;
 } {
   assertHostedClientConfigSynced();
+  const projectId = getHostedProjectId();
   const serverEntries = resolveHostedServerEntries(serverNamesOrIds);
   const serverIds = serverEntries.map((entry) => entry.serverId);
   const serverNames = serverEntries.map((entry) => entry.serverName);
@@ -456,7 +373,7 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
   const accessScope = getHostedAccessScope();
 
   return {
-    projectId: getHostedProjectId(),
+    projectId,
     serverIds,
     serverNames,
     ...(hostedApiContext.clientCapabilities

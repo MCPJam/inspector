@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { useConvexAuth } from "convex/react";
 import { useLogger } from "./use-logger";
 import {
+  createLocalDefaultProject,
   initialAppState,
   type AppState,
   type ServerWithName,
@@ -54,11 +55,7 @@ function resolveFallbackOrganizationId(
 }
 
 function createDefaultProject() {
-  return {
-    ...initialAppState.projects.default,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  };
+  return createLocalDefaultProject();
 }
 
 function hasHostedOAuthCallbackParams(): boolean {
@@ -603,7 +600,10 @@ export function useAppState({
       const nextProjects =
         remainingEntries.length > 0
           ? Object.fromEntries(remainingEntries)
-          : { default: createDefaultProject() };
+          : (() => {
+              const project = createDefaultProject();
+              return { [project.id]: project };
+            })();
       const preferredProjectForFallbackOrg = fallbackOrganizationId
         ? Object.values(nextProjects).find(
             (project) => project.organizationId === fallbackOrganizationId
@@ -612,9 +612,21 @@ export function useAppState({
       const nextActiveProject =
         preferredProjectForFallbackOrg ??
         nextProjects[appState.activeProjectId] ??
-        nextProjects.default ??
+        Object.values(nextProjects).find((project) => project.isDefault) ??
         Object.values(nextProjects)[0];
-      const nextActiveProjectId = nextActiveProject?.id ?? "default";
+      const nextActiveProjectId =
+        nextActiveProject?.id ?? Object.keys(nextProjects)[0];
+      if (!nextActiveProjectId) {
+        logger.warn(
+          "clearLocalFallbackProjectSelection: no active project resolved",
+          {
+            deletedOrganizationId,
+            fallbackOrganizationId,
+            projectCount: Object.keys(nextProjects).length,
+          }
+        );
+        return;
+      }
       const nextServers = buildDisconnectedRuntimeServers(
         nextActiveProject?.servers
       );

@@ -75,80 +75,25 @@ describe("hosted web context", () => {
     });
   });
 
-  it("builds guest request from serverConfigs when in guest mode", () => {
+  it("throws BootstrapNotReadyError when projectId is missing", () => {
     setHostedApiContext({
       projectId: null,
       isAuthenticated: false,
       serverIdsByName: {},
-      serverConfigs: {
-        myServer: {
-          url: "https://example.com/mcp",
-          requestInit: { headers: { "X-Api-Key": "key123" } },
-        },
-      },
-    });
-
-    expect(buildHostedServerRequest("myServer")).toEqual({
-      serverUrl: "https://example.com/mcp",
-      serverName: "myServer",
-      serverHeaders: { "X-Api-Key": "key123" },
-      clientCapabilities: defaultClientCapabilities,
-    });
-  });
-
-  it("does not use direct guest requests while AuthKit still reports a session", () => {
-    setHostedApiContext({
-      projectId: null,
-      hasSession: true,
-      isAuthenticated: false,
-      serverIdsByName: {},
-      serverConfigs: {
-        myServer: {
-          url: "https://example.com/mcp",
-          requestInit: { headers: { "X-Api-Key": "key123" } },
-        },
-      },
     });
 
     expect(() => buildHostedServerRequest("myServer")).toThrow(
       "hosted projectId is not in the API context yet",
     );
+    expect(() => buildHostedServerBatchRequest(["myServer"])).toThrow(
+      "hosted projectId is not in the API context yet",
+    );
+    expect(() => buildHostedEvalServerBatchRequest(["myServer"])).toThrow(
+      "hosted projectId is not in the API context yet",
+    );
   });
 
-  it("includes the latest guest OAuth token separately from server headers", () => {
-    setHostedApiContext({
-      projectId: null,
-      isAuthenticated: false,
-      serverIdsByName: {},
-      guestOauthTokensByServerName: {
-        myServer: "fresh-access-token",
-      },
-      serverConfigs: {
-        myServer: {
-          url: "https://example.com/mcp",
-          requestInit: {
-            headers: {
-              Authorization: "Bearer stale-access-token",
-              "X-Api-Key": "key123",
-            },
-          },
-        },
-      },
-    });
-
-    expect(buildHostedServerRequest("myServer")).toEqual({
-      serverUrl: "https://example.com/mcp",
-      serverName: "myServer",
-      serverHeaders: {
-        Authorization: "Bearer stale-access-token",
-        "X-Api-Key": "key123",
-      },
-      clientCapabilities: defaultClientCapabilities,
-      oauthAccessToken: "fresh-access-token",
-    });
-  });
-
-  it("prefers persisted guest OAuth token from localStorage when available", () => {
+  it("ignores persisted guest OAuth token from localStorage", () => {
     localStorage.setItem(
       "mcp-tokens-myServer",
       JSON.stringify({
@@ -157,50 +102,14 @@ describe("hosted web context", () => {
     );
 
     setHostedApiContext({
-      projectId: null,
+      projectId: "ws_regular",
       isAuthenticated: false,
-      serverIdsByName: {},
-      guestOauthTokensByServerName: {
-        myServer: "context-access-token",
-      },
-      serverConfigs: {
-        myServer: {
-          url: "https://example.com/mcp",
-          requestInit: {
-            headers: {
-              "X-Api-Key": "key123",
-            },
-          },
-        },
-      },
+      serverIdsByName: { myServer: "srv_myServer" },
     });
 
     expect(buildHostedServerRequest("myServer")).toEqual({
-      serverUrl: "https://example.com/mcp",
-      serverName: "myServer",
-      serverHeaders: {
-        "X-Api-Key": "key123",
-      },
-      clientCapabilities: defaultClientCapabilities,
-      oauthAccessToken: "storage-access-token",
-    });
-  });
-
-  it("handles URL objects in guest server configs", () => {
-    setHostedApiContext({
-      projectId: null,
-      isAuthenticated: false,
-      serverIdsByName: {},
-      serverConfigs: {
-        myServer: {
-          url: new URL("https://example.com/mcp"),
-          requestInit: { headers: {} },
-        },
-      },
-    });
-
-    expect(buildHostedServerRequest("myServer")).toEqual({
-      serverUrl: "https://example.com/mcp",
+      projectId: "ws_regular",
+      serverId: "srv_myServer",
       serverName: "myServer",
       clientCapabilities: defaultClientCapabilities,
     });
@@ -243,39 +152,6 @@ describe("hosted web context", () => {
     );
     expect(() => buildHostedEvalServerBatchRequest(["bench"])).toThrow(
       CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
-    );
-  });
-
-  it("keeps direct guest requests working while sync-pending gating is enabled elsewhere", () => {
-    setHostedApiContext({
-      projectId: null,
-      isAuthenticated: false,
-      clientConfigSyncPending: true,
-      serverIdsByName: {},
-      serverConfigs: {
-        myServer: {
-          url: "https://example.com/mcp",
-        },
-      },
-    });
-
-    expect(buildHostedServerRequest("myServer")).toEqual({
-      serverUrl: "https://example.com/mcp",
-      serverName: "myServer",
-      clientCapabilities: defaultClientCapabilities,
-    });
-  });
-
-  it("throws when guest server config is not found", () => {
-    setHostedApiContext({
-      projectId: null,
-      isAuthenticated: false,
-      serverIdsByName: {},
-      serverConfigs: {},
-    });
-
-    expect(() => buildHostedServerRequest("unknown")).toThrow(
-      'No guest server config found for "unknown"',
     );
   });
 

@@ -22,7 +22,6 @@ vi.mock("@/lib/apis/web/context", () => ({
     projectId: "ws-1",
     serverId: "srv-1",
   })),
-  isGuestMode: vi.fn(() => false),
 }));
 
 vi.mock("@/lib/apis/web/base", () => ({
