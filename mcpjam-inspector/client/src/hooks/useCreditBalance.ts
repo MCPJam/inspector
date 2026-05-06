@@ -68,8 +68,7 @@ export function useCreditBalance({
   includeGuests = false,
 }: UseCreditBalanceOptions = {}) {
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
-  const shouldFetchBalance =
-    !isAuthLoading && (isAuthenticated || includeGuests);
+  const shouldFetchBalance = !isAuthLoading && isAuthenticated;
   const raw = useQuery(
     "billing:getCreditBalance" as any,
     shouldFetchBalance ? ({} as any) : "skip"
