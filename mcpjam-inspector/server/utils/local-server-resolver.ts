@@ -10,6 +10,7 @@ import {
   type InternalLogContext,
   mapInternalToRequestContext,
 } from "./internal-log-context.js";
+import type { ConnectionDefaults } from "../../shared/connection-defaults.js";
 
 type LocalAuthorizeServerConfig =
   | {
@@ -219,23 +220,10 @@ export async function authorizeServerLocal(
   return result;
 }
 
-/**
- * Project-level runtime overrides that the inspector client applies in
- * `withProjectConnectionDefaults` before issuing a connect/reconnect request.
- * They live in the client's runtime view of the active project (header
- * defaults, request timeout, client capabilities) and are passed through the
- * resolver so the server-side resolved config carries the same values that
- * the legacy `{serverConfig}` body would have.
- *
- * Header precedence (lowest → highest): Convex-stored server headers,
- * project default headers from `defaults.headers`, OAuth `Authorization` (if
- * the server uses OAuth), so OAuth always wins.
- */
-export type ProjectConnectionDefaults = {
-  headers?: Record<string, string>;
-  timeoutMs?: number;
-  clientCapabilities?: Record<string, unknown>;
-};
+// Header precedence (lowest → highest) when the resolver merges these
+// onto Convex-stored server config: Convex-stored server headers, project
+// default headers from `defaults.headers`, OAuth `Authorization` (if the
+// server uses OAuth), so OAuth always wins.
 
 /**
  * Validate `connectionDefaults` from an /api/mcp/* request body. Returns
@@ -245,10 +233,10 @@ export type ProjectConnectionDefaults = {
  */
 export function parseConnectionDefaults(
   raw: unknown
-): ProjectConnectionDefaults | undefined {
+): ConnectionDefaults | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const input = raw as Record<string, unknown>;
-  const out: ProjectConnectionDefaults = {};
+  const out: ConnectionDefaults = {};
 
   if (input.headers && typeof input.headers === "object") {
     const headers: Record<string, string> = {};
@@ -371,7 +359,7 @@ export async function resolveLocalServerForConnect(
      * header/timeout/capability defaults applied client-side are lost on the
      * resolver path.
      */
-    defaults?: ProjectConnectionDefaults;
+    defaults?: ConnectionDefaults;
   }
 ): Promise<{ config: MCPServerConfig; authorizeResult: LocalAuthorizeBatchSuccess }> {
   const result = await authorizeServerLocal(c, bearerToken, projectId, serverId);

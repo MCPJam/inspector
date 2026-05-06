@@ -7,6 +7,7 @@ import {
   type HostedServerValidateResponse,
 } from "@/lib/apis/web/servers-api";
 import { BootstrapNotReadyError } from "@/lib/app-ready";
+import type { ConnectionDefaults } from "@/shared/connection-defaults";
 
 const HOSTED_VALIDATE_TIMEOUT_MS = 20_000;
 
@@ -118,27 +119,13 @@ async function withTimeout<T>(
   });
 }
 
-/**
- * Connection defaults that the client computed via
- * `withProjectConnectionDefaults` — project-level header overlays, request
- * timeout, and client capabilities. Forwarded through the resolver path so
- * the server can reproduce the same MCPServerConfig the legacy
- * `{serverConfig}` body would have produced. Without this, project-level
- * defaults applied client-side are lost when the resolver fetches config
- * from Convex.
- */
-export type ResolverConnectionDefaults = {
-  headers?: Record<string, string>;
-  timeoutMs?: number;
-  clientCapabilities?: Record<string, unknown>;
-};
 
 function buildResolverBody(
   serverId: string,
   options: {
     projectId: string;
     serverName?: string;
-    connectionDefaults?: ResolverConnectionDefaults;
+    connectionDefaults?: ConnectionDefaults;
   },
 ): Record<string, unknown> {
   return {
@@ -182,7 +169,7 @@ export async function testConnection(
   options?: {
     projectId?: string;
     serverName?: string;
-    connectionDefaults?: ResolverConnectionDefaults;
+    connectionDefaults?: ConnectionDefaults;
   },
 ) {
   if (HOSTED_MODE) {
@@ -252,7 +239,7 @@ export async function reconnectServer(
   options?: {
     projectId?: string;
     serverName?: string;
-    connectionDefaults?: ResolverConnectionDefaults;
+    connectionDefaults?: ConnectionDefaults;
   },
 ) {
   if (HOSTED_MODE) {

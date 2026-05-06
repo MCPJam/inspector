@@ -131,11 +131,21 @@ export function useLocalStateMigration({
   const createProject = useMutation("projects:createProject" as any);
 
   useEffect(() => {
+    // Per-effect-run cancel flag. The migration is async — the component can
+    // unmount (or the effect can re-run on dep change) while the promise is
+    // still in flight. Without this flag, the trailing `.then/.catch/.finally`
+    // would call `scheduleRetry()` after unmount, scheduling a `setTimeout`
+    // that the cleanup function has already had its chance to clear. Result:
+    // an orphaned 30s timer that fires after the component is gone and calls
+    // `setRetryTick` on a dead instance.
+    let cancelled = false;
+
     // Defined inside the effect so it closes over the same `logger` reference
     // the effect itself uses. Hoisting it to the component body would let the
     // async .then/.catch callbacks reach a stale `logger` if `useLogger`
     // returns a new object on a subsequent render.
     const scheduleRetry = (): void => {
+      if (cancelled) return;
       if (retryTimerRef.current !== null) return;
       if (retryCountRef.current >= MAX_RETRY_ATTEMPTS) {
         logger.warn(
@@ -167,7 +177,9 @@ export function useLocalStateMigration({
         retryDelayMs: RETRY_DELAY_MS,
       });
       scheduleRetry();
-      return;
+      return () => {
+        cancelled = true;
+      };
     }
 
     inFlightRef.current = true;
@@ -177,6 +189,7 @@ export function useLocalStateMigration({
       logger,
     })
       .then((result) => {
+        if (cancelled) return;
         if (result.ok) {
           doneRef.current = true;
           if (result.projectsMigrated > 0) {
@@ -211,6 +224,7 @@ export function useLocalStateMigration({
         scheduleRetry();
       })
       .catch((error) => {
+        if (cancelled) return;
         const message = error instanceof Error ? error.message : String(error);
         if (looksPermanent(message)) {
           logger.error(
@@ -231,6 +245,18 @@ export function useLocalStateMigration({
         inFlightRef.current = false;
         releaseMigrationLease();
       });
+
+    return () => {
+      // Block any trailing async resolutions from scheduling new work, and
+      // clear the retry timer if one was already scheduled. The other refs
+      // (`inFlightRef`, `doneRef`) intentionally persist so a re-mount or a
+      // dep-change re-run picks up where we left off.
+      cancelled = true;
+      if (retryTimerRef.current !== null) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
+    };
   }, [
     isAuthenticated,
     isUserBootstrapping,
@@ -239,13 +265,4 @@ export function useLocalStateMigration({
     logger,
     retryTick,
   ]);
-
-  useEffect(() => {
-    return () => {
-      if (retryTimerRef.current !== null) {
-        clearTimeout(retryTimerRef.current);
-        retryTimerRef.current = null;
-      }
-    };
-  }, []);
 }
