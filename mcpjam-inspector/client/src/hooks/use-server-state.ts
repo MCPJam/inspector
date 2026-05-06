@@ -39,6 +39,7 @@ import { HOSTED_MODE } from "@/lib/config";
 import {
   injectHostedServerMapping,
   tryGetHostedServerDisplayName,
+  tryResolveProjectServer,
 } from "@/lib/apis/web/context";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import { authFetch } from "@/lib/session-token";
@@ -733,6 +734,18 @@ export function useServerState({
   const guardedTestConnection = useCallback(
     async (serverConfig: MCPServerConfig, serverName: string) => {
       assertClientConfigSynced();
+      // Opt into the resolver path when both projectId and a Convex serverId
+      // are populated in the API context; otherwise fall back to legacy
+      // {serverConfig, serverId} so brand-new servers (not yet synced to
+      // Convex) keep working. The 2-arg call signature is preserved when no
+      // resolver context is available so existing test mocks keep matching.
+      const resolved = tryResolveProjectServer(serverName);
+      if (resolved) {
+        return testConnection(serverConfig, resolved.serverId, {
+          projectId: resolved.projectId,
+          serverName,
+        });
+      }
       return testConnection(serverConfig, serverName);
     },
     [assertClientConfigSynced]
@@ -741,6 +754,13 @@ export function useServerState({
   const guardedReconnectServer = useCallback(
     async (serverName: string, serverConfig: MCPServerConfig) => {
       assertClientConfigSynced();
+      const resolved = tryResolveProjectServer(serverName);
+      if (resolved) {
+        return reconnectServer(resolved.serverId, serverConfig, {
+          projectId: resolved.projectId,
+          serverName,
+        });
+      }
       return reconnectServer(serverName, serverConfig);
     },
     [assertClientConfigSynced]
@@ -1683,54 +1703,45 @@ export function useServerState({
         oauthFlowProfile: formOAuthProfile,
         hasClientSecret: nextHasClientSecret,
       };
-      if (HOSTED_MODE) {
-        let syncErr: unknown;
-        try {
-          const serverId = await syncServerToConvex(
-            formData.name,
-            serverEntryForSave,
-            clientSecretSyncOptions
-          );
-          if (serverId) {
-            hostedServerId = serverId;
-            injectHostedServerMapping(formData.name, serverId);
-          }
-        } catch (err) {
-          syncErr = err;
-          logger.warn("Sync to Convex failed (pre-connection)", {
-            serverName: formData.name,
-            err,
-          });
-        }
-        // OAuth in hosted mode requires a Convex serverId to bind credentials
-        // to. Without it, prepareHostedProjectOAuthRedirect is a no-op and the
-        // local fallback can't persist tokens either (mcp-oauth.saveTokens is
-        // gated on !HOSTED_MODE), so the OAuth dance would complete without a
-        // durable credential. Fail loudly instead.
-        if (formData.useOAuth && !hostedServerId) {
-          const errorMessage =
-            syncErr instanceof Error
-              ? `Could not save the hosted server before starting OAuth: ${syncErr.message}`
-              : "Could not save the hosted server before starting OAuth. Please try again.";
-          dispatch({
-            type: "CONNECT_FAILURE",
-            name: formData.name,
-            error: errorMessage,
-          });
-          toast.error(errorMessage);
-          return;
-        }
-      } else {
-        syncServerToConvex(
+      // Both modes: await Convex sync so the returned serverId is available
+      // for OAuth binding (hosted) and for the new {projectId, serverId}
+      // request shape (local mode resolver path). Failure is non-fatal in
+      // local mode — the legacy {serverConfig, serverId: name} body still
+      // works as a fallback.
+      let syncErr: unknown;
+      try {
+        const serverId = await syncServerToConvex(
           formData.name,
           serverEntryForSave,
           clientSecretSyncOptions
-        ).catch((err) =>
-          logger.warn("Background sync to Convex failed (pre-connection)", {
-            serverName: formData.name,
-            err,
-          })
         );
+        if (serverId) {
+          hostedServerId = serverId;
+          injectHostedServerMapping(formData.name, serverId);
+        }
+      } catch (err) {
+        syncErr = err;
+        logger.warn("Sync to Convex failed (pre-connection)", {
+          serverName: formData.name,
+          err,
+        });
+      }
+      if (HOSTED_MODE && formData.useOAuth && !hostedServerId) {
+        // OAuth in hosted mode requires a Convex serverId to bind credentials
+        // to; without it the OAuth dance would complete without a durable
+        // credential. Local-mode OAuth follows the same constraint post-
+        // unification but the legacy localStorage fallback still catches it.
+        const errorMessage =
+          syncErr instanceof Error
+            ? `Could not save the hosted server before starting OAuth: ${syncErr.message}`
+            : "Could not save the hosted server before starting OAuth. Please try again.";
+        dispatch({
+          type: "CONNECT_FAILURE",
+          name: formData.name,
+          error: errorMessage,
+        });
+        toast.error(errorMessage);
+        return;
       }
       if (!isAuthenticated) {
         const project = appState.projects[appState.activeProjectId];

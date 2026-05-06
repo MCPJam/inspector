@@ -121,17 +121,29 @@ async function withTimeout<T>(
 export async function testConnection(
   serverConfig: MCPServerConfig,
   serverId: string,
+  options?: { projectId?: string; serverName?: string },
 ) {
   if (HOSTED_MODE) {
     return safeValidateHostedServer(serverId, serverConfig);
   }
+
+  // When projectId is provided, the server resolves config + tokens from
+  // Convex via /web/authorize-batch-local. Without it, fall back to the
+  // legacy {serverConfig, serverId} body during the Phase 5–7 migration.
+  const body: Record<string, unknown> = options?.projectId
+    ? {
+        projectId: options.projectId,
+        serverId,
+        ...(options.serverName ? { serverName: options.serverName } : {}),
+      }
+    : { serverConfig, serverId };
 
   const res = await authFetchWithTimeout(
     "/api/mcp/connect",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ serverConfig, serverId }),
+      body: JSON.stringify(body),
     },
     20000, // 20 second timeout
   );
@@ -165,17 +177,26 @@ export async function listServers() {
 export async function reconnectServer(
   serverId: string,
   serverConfig: MCPServerConfig,
+  options?: { projectId?: string; serverName?: string },
 ) {
   if (HOSTED_MODE) {
     return safeValidateHostedServer(serverId, serverConfig);
   }
+
+  const body: Record<string, unknown> = options?.projectId
+    ? {
+        projectId: options.projectId,
+        serverId,
+        ...(options.serverName ? { serverName: options.serverName } : {}),
+      }
+    : { serverId, serverConfig };
 
   const res = await authFetchWithTimeout(
     "/api/mcp/servers/reconnect",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ serverId, serverConfig }),
+      body: JSON.stringify(body),
     },
     20000, // 20 second timeout
   );

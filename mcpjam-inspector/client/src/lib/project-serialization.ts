@@ -25,6 +25,8 @@ export function serializeServersForSharing(
         config.command = (server.config as any).command;
       if ((server.config as any).args)
         config.args = (server.config as any).args;
+      if ((server.config as any).env)
+        config.env = (server.config as any).env;
       if ((server.config as any).timeout)
         config.timeout = (server.config as any).timeout;
       if ((server.config as any).clientCapabilities)

@@ -1,0 +1,338 @@
+import type { Context } from "hono";
+import type { MCPServerConfig } from "@mcpjam/sdk";
+import {
+  ErrorCode,
+  WebRouteError,
+  parseErrorMessage,
+} from "../routes/web/errors.js";
+import { setRequestLogContext } from "./request-logger.js";
+
+// Server-only logging context returned by Convex. Mirrors hosted's
+// InternalLogContext (in routes/web/auth.ts) — duplicated here so this
+// module has no import cycle into the hosted route surface.
+type InternalLogContext = {
+  authType?: "signedIn" | "guest";
+  userId?: string | null;
+  userExternalId?: string | null;
+  guestExternalId?: string | null;
+  emailDomain?: string | null;
+  orgId?: string | null;
+  orgPlan?: string | null;
+  orgSeatQuantity?: number | null;
+  orgCreatedBy?: string | null;
+  projectId?: string | null;
+  projectRole?: string | null;
+  accessLevel?: "project_member" | "shared_chat" | null;
+  serverId?: string | null;
+  serverTransport?: "stdio" | "http" | null;
+  chatboxId?: string | null;
+  surface?: "preview" | "share_link" | null;
+};
+
+type LocalAuthorizeServerConfig =
+  | {
+      transportType: "http";
+      url: string;
+      headers: Record<string, string>;
+      timeout?: number;
+      clientCapabilities?: unknown;
+      useOAuth?: boolean;
+      oauthScopes?: string[];
+      clientId?: string;
+      oauthResourceUrl?: string;
+    }
+  | {
+      transportType: "stdio";
+      command: string;
+      args: string[];
+      env: Record<string, string>;
+      timeout?: number;
+      clientCapabilities?: unknown;
+    };
+
+type LocalAuthorizeBatchSuccess = {
+  ok: true;
+  role: string;
+  accessLevel: string;
+  permissions: { chatOnly: boolean };
+  serverConfig: LocalAuthorizeServerConfig;
+  oauthAccessToken?: string | null;
+  internalLogContext?: InternalLogContext;
+};
+
+type LocalAuthorizeBatchFailure = {
+  ok: false;
+  status: number;
+  code: string;
+  message: string;
+};
+
+export type LocalAuthorizeBatchResult =
+  | LocalAuthorizeBatchSuccess
+  | LocalAuthorizeBatchFailure;
+
+export type LocalAuthorizeBatchResponse = {
+  results: Record<string, LocalAuthorizeBatchResult>;
+};
+
+/**
+ * Read the WorkOS or guest bearer the client attached to a /api/mcp/* request.
+ * Local mode runs both `X-MCP-Session-Auth` (loopback secret, checked by
+ * sessionAuthMiddleware) AND `Authorization: Bearer ...` (Convex actor identity).
+ * The session token alone gates access to the local API process; Convex itself
+ * still enforces project ownership via the bearer.
+ */
+export function readLocalApiBearer(c: Context): string | null {
+  const raw = c.req.header("Authorization") ?? c.req.header("authorization");
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed.toLowerCase().startsWith("bearer ")) return null;
+  const token = trimmed.slice(7).trim();
+  return token.length > 0 ? token : null;
+}
+
+function mapInternalToRequestContext(
+  ctx: InternalLogContext
+): Record<string, unknown> {
+  return {
+    authType: ctx.authType ?? null,
+    userId: ctx.userId ?? null,
+    userExternalId: ctx.userExternalId ?? null,
+    guestExternalId: ctx.guestExternalId ?? null,
+    emailDomain: ctx.emailDomain ?? null,
+    orgId: ctx.orgId ?? null,
+    orgPlan: ctx.orgPlan ?? null,
+    orgSeatQuantity: ctx.orgSeatQuantity ?? null,
+    orgCreatedBy: ctx.orgCreatedBy ?? null,
+    projectId: ctx.projectId ?? null,
+    projectRole: ctx.projectRole ?? null,
+    accessLevel: ctx.accessLevel ?? null,
+    serverId: ctx.serverId ?? null,
+    serverTransport: ctx.serverTransport ?? null,
+    chatboxId: ctx.chatboxId ?? null,
+    surface: ctx.surface ?? null,
+  };
+}
+
+/**
+ * Call Convex `/web/authorize-batch-local` with the user's bearer.
+ * Returns the full server config for each requested serverId, including
+ * STDIO command/args/env. Hosted-only fields (share/chatbox tokens) are not
+ * accepted by this endpoint by design.
+ */
+export async function authorizeBatchLocal(
+  c: Context,
+  bearerToken: string,
+  projectId: string,
+  serverIds: string[]
+): Promise<LocalAuthorizeBatchResponse> {
+  const convexUrl = process.env.CONVEX_HTTP_URL;
+  if (!convexUrl) {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Server missing CONVEX_HTTP_URL configuration"
+    );
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${convexUrl}/web/authorize-batch-local`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${bearerToken}`,
+      },
+      body: JSON.stringify({ projectId, serverIds }),
+    });
+  } catch (error) {
+    throw new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      `Failed to reach authorization service: ${parseErrorMessage(error)}`
+    );
+  }
+
+  let body: any = null;
+  try {
+    body = await response.json();
+  } catch {
+    // ignored
+  }
+
+  if (!response.ok) {
+    const code =
+      typeof body?.code === "string" ? body.code : ErrorCode.INTERNAL_ERROR;
+    const message =
+      typeof body?.message === "string"
+        ? body.message
+        : `Authorization failed (${response.status})`;
+    throw new WebRouteError(response.status, code as ErrorCode, message);
+  }
+
+  if (!body?.results || typeof body.results !== "object") {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Authorization response is missing batch results"
+    );
+  }
+
+  const raw = body as LocalAuthorizeBatchResponse;
+  const successful = Object.entries(raw.results).filter(
+    (entry): entry is [string, LocalAuthorizeBatchSuccess] => entry[1].ok
+  );
+  const sourceCtx = successful.find(([, r]) => r.internalLogContext)?.[1]
+    .internalLogContext;
+  if (sourceCtx) {
+    const partial = mapInternalToRequestContext(sourceCtx);
+    if (successful.length > 1) {
+      partial.serverId = null;
+      partial.serverTransport = null;
+      partial.chatboxId = null;
+    }
+    setRequestLogContext(c, partial as any);
+  }
+
+  // Strip internalLogContext from results so it never leaks downstream.
+  const stripped: Record<string, LocalAuthorizeBatchResult> = {};
+  for (const [serverId, result] of Object.entries(raw.results)) {
+    if (result.ok) {
+      const { internalLogContext: _omit, ...clean } = result;
+      stripped[serverId] = clean;
+    } else {
+      stripped[serverId] = result;
+    }
+  }
+  return { results: stripped };
+}
+
+/**
+ * Convenience wrapper: authorize a single server and return the {success: true}
+ * payload directly. Throws WebRouteError for any non-ok result.
+ */
+export async function authorizeServerLocal(
+  c: Context,
+  bearerToken: string,
+  projectId: string,
+  serverId: string
+): Promise<LocalAuthorizeBatchSuccess> {
+  const batch = await authorizeBatchLocal(c, bearerToken, projectId, [
+    serverId,
+  ]);
+  const result = batch.results[serverId];
+  if (!result) {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      `Authorization response is missing result for server "${serverId}"`
+    );
+  }
+  if (!result.ok) {
+    throw new WebRouteError(
+      result.status,
+      result.code as ErrorCode,
+      result.message
+    );
+  }
+  return result;
+}
+
+/**
+ * Build an `MCPServerConfig` (the SDK's union of stdio + http configs) from a
+ * local authorize result. Distinct from hosted's `toHttpConfig` which strips
+ * STDIO and rejects non-HTTPS — this is the unstripped local-mode equivalent.
+ */
+export function toMCPServerConfig(
+  authResult: LocalAuthorizeBatchSuccess,
+  options?: {
+    timeoutMs?: number;
+    oauthAccessToken?: string;
+    clientCapabilities?: Record<string, unknown>;
+  }
+): MCPServerConfig {
+  const { serverConfig } = authResult;
+  const timeout = options?.timeoutMs ?? serverConfig.timeout;
+  const clientCapabilities =
+    options?.clientCapabilities ??
+    (serverConfig.clientCapabilities as Record<string, unknown> | undefined);
+
+  if (serverConfig.transportType === "stdio") {
+    const stdio: any = {
+      command: serverConfig.command,
+      args: serverConfig.args ?? [],
+      env: serverConfig.env ?? {},
+    };
+    if (typeof timeout === "number") stdio.timeout = timeout;
+    if (clientCapabilities) {
+      stdio.capabilities = clientCapabilities;
+      stdio.clientCapabilities = clientCapabilities;
+    }
+    return stdio as MCPServerConfig;
+  }
+
+  const headers: Record<string, string> = {
+    ...(serverConfig.headers ?? {}),
+  };
+  const oauthToken = options?.oauthAccessToken ?? authResult.oauthAccessToken;
+  if (oauthToken) {
+    headers["Authorization"] = `Bearer ${oauthToken}`;
+  }
+
+  const http: any = {
+    url: serverConfig.url,
+    requestInit: { headers },
+  };
+  if (typeof timeout === "number") http.timeout = timeout;
+  if (clientCapabilities) {
+    http.capabilities = clientCapabilities;
+    http.clientCapabilities = clientCapabilities;
+  }
+  return http as MCPServerConfig;
+}
+
+/**
+ * Single-call convenience: authorize a serverId and return both the raw
+ * response (for OAuth token plumbing) and a ready-to-pass MCPServerConfig.
+ * Throws WebRouteError for unauthorized / not found / OAuth-required cases.
+ */
+export async function resolveLocalServerForConnect(
+  c: Context,
+  bearerToken: string,
+  projectId: string,
+  serverId: string,
+  options?: {
+    timeoutMs?: number;
+    clientCapabilities?: Record<string, unknown>;
+    serverDisplayName?: string;
+  }
+): Promise<{ config: MCPServerConfig; authorizeResult: LocalAuthorizeBatchSuccess }> {
+  const result = await authorizeServerLocal(c, bearerToken, projectId, serverId);
+
+  const useOAuth =
+    result.serverConfig.transportType === "http" &&
+    result.serverConfig.useOAuth === true;
+  if (useOAuth && !result.oauthAccessToken) {
+    const displayName = options?.serverDisplayName ?? serverId;
+    throw new WebRouteError(
+      401,
+      ErrorCode.UNAUTHORIZED,
+      `Server "${displayName}" requires OAuth authentication. Please complete the OAuth flow first.`,
+      {
+        oauthRequired: true,
+        serverId,
+        serverName: options?.serverDisplayName ?? null,
+        serverUrl:
+          result.serverConfig.transportType === "http"
+            ? result.serverConfig.url
+            : undefined,
+      }
+    );
+  }
+
+  const config = toMCPServerConfig(result, {
+    timeoutMs: options?.timeoutMs,
+    clientCapabilities: options?.clientCapabilities,
+  });
+  return { config, authorizeResult: result };
+}

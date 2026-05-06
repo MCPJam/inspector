@@ -1,5 +1,4 @@
 import { useLayoutEffect } from "react";
-import { HOSTED_MODE } from "@/lib/config";
 import { setHostedApiContext } from "@/lib/apis/web/context";
 
 interface UseHostedApiContextOptions {
@@ -35,11 +34,6 @@ export function useHostedApiContext({
   // between this effect's cleanup (which nulls the context) and its setup,
   // causing "Hosted server not found" errors for shared-chat OAuth servers.
   useLayoutEffect(() => {
-    if (!HOSTED_MODE) {
-      setHostedApiContext(null);
-      return;
-    }
-
     if (!enabled) {
       return;
     }

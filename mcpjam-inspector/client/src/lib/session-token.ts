@@ -298,9 +298,10 @@ export async function authFetch(
   const mergedInit = buildAuthFetchInit(input, init, hostedAuthHeader);
   const response = await fetch(input, mergedInit);
 
+  // Retry on 401 in both modes — the bearer resolution path is unified, so
+  // local CLI's stale guest bearers refresh the same way hosted ones do.
   if (
     response.status !== 401 ||
-    !HOSTED_MODE ||
     !shouldRetryHostedAuth401() ||
     callerProvidedAuthorization
   ) {

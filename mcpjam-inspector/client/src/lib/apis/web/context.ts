@@ -52,7 +52,9 @@ function assertHostedClientConfigSynced() {
 }
 
 export function shouldRetryHostedAuth401(): boolean {
-  if (!HOSTED_MODE) return false;
+  // Retry the auth bootstrap on 401 whenever the actor isn't yet authenticated
+  // and no session is in flight — applies to both hosted guests and local CLI
+  // users post unification.
   return !hostedApiContext.isAuthenticated && !hostedApiContext.hasSession;
 }
 
@@ -68,7 +70,9 @@ export function shouldRetryHostedAuth401(): boolean {
  * session is still resolving.
  */
 function hasHostedGuestAccess(): boolean {
-  if (!HOSTED_MODE) return false;
+  // Now applies to both hosted and local: any actor without a WorkOS session
+  // gets guest access. The local CLI mints its own guest bearer via the same
+  // /api/web/guest-session endpoint hosted uses.
   if (hostedApiContext.isAuthenticated) return false;
   if (hostedApiContext.hasSession) return false;
   return true;
@@ -124,6 +128,30 @@ export function getHostedProjectId(): string {
   }
 
   return projectId;
+}
+
+/**
+ * Mode-agnostic project + server resolution used by code paths that need to
+ * opt into the new `{projectId, serverId}` shape when context is populated,
+ * but fall back to legacy when it isn't (e.g., during the post-migration
+ * window or when a brand-new server hasn't been pushed to Convex yet).
+ *
+ * Returns null when either projectId is missing or the server name doesn't
+ * resolve to a Convex Id. Callers handle null by using the legacy shape.
+ */
+export function tryResolveProjectServer(
+  serverNameOrId: string,
+): { projectId: string; serverId: string } | null {
+  const projectId = hostedApiContext.projectId;
+  if (!projectId) return null;
+  const direct = hostedApiContext.serverIdsByName[serverNameOrId];
+  if (direct) return { projectId, serverId: direct };
+  if (
+    Object.values(hostedApiContext.serverIdsByName).includes(serverNameOrId)
+  ) {
+    return { projectId, serverId: serverNameOrId };
+  }
+  return null;
 }
 
 /**
@@ -398,8 +426,9 @@ export function buildHostedOAuthTokensMap(
 }
 
 export async function getHostedAuthorizationHeader(): Promise<string | null> {
-  if (!HOSTED_MODE) return null;
-
+  // Single bearer-resolution path for hosted and local. authFetch decides
+  // whether to attach the result based on the request's loopback/origin and
+  // whether a token is available; this function never short-circuits on mode.
   const now = Date.now();
   if (cachedBearerToken && cachedBearerToken.expiresAt > now) {
     return `Bearer ${cachedBearerToken.token}`;
