@@ -26,6 +26,34 @@ const MIGRATION_LEASE_TTL_MS = 5 * 60 * 1000;
  */
 const RETRY_DELAY_MS = 30 * 1000;
 
+/**
+ * Hard cap on retry attempts so a permanent error (billing limit reached,
+ * forbidden, validation) doesn't spam the console every 30s forever. After
+ * this many retries the hook stops scheduling new ones; the user can still
+ * trigger a fresh attempt by reloading the tab.
+ */
+const MAX_RETRY_ATTEMPTS = 3;
+
+/**
+ * Convex error codes that the migration cannot recover from by retrying.
+ * If any per-project failure carries one of these codes, the hook treats
+ * the whole batch as terminal — no retry, no log spam. The user reloads
+ * (or fixes the underlying account state) to try again.
+ */
+const PERMANENT_ERROR_CODES = new Set([
+  "billing_limit_reached",
+  "FORBIDDEN",
+  "UNAUTHORIZED",
+  "VALIDATION_ERROR",
+]);
+
+function looksPermanent(errorMessage: string): boolean {
+  for (const code of PERMANENT_ERROR_CODES) {
+    if (errorMessage.includes(code)) return true;
+  }
+  return false;
+}
+
 interface UseLocalStateMigrationOptions {
   /** True when Convex auth has resolved (signed-in user OR guest). */
   isAuthenticated: boolean;
@@ -98,11 +126,21 @@ export function useLocalStateMigration({
   const inFlightRef = useRef(false);
   const doneRef = useRef(false);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryCountRef = useRef(0);
   const [retryTick, setRetryTick] = useState(0);
   const createProject = useMutation("projects:createProject" as any);
 
   const scheduleRetry = (): void => {
     if (retryTimerRef.current !== null) return;
+    if (retryCountRef.current >= MAX_RETRY_ATTEMPTS) {
+      logger.warn(
+        "Local state migration retry limit reached; will not retry until reload",
+        { attempts: retryCountRef.current },
+      );
+      doneRef.current = true;
+      return;
+    }
+    retryCountRef.current += 1;
     retryTimerRef.current = setTimeout(() => {
       retryTimerRef.current = null;
       setRetryTick((t) => t + 1);
@@ -142,18 +180,46 @@ export function useLocalStateMigration({
               projectsMigrated: result.projectsMigrated,
             });
           }
-        } else {
-          logger.warn(
-            "Local state migration partially failed; scheduling retry",
-            { errors: result.errors, retryDelayMs: RETRY_DELAY_MS },
-          );
-          scheduleRetry();
+          return;
         }
+        // Permanent backend errors (billing limit, forbidden, validation)
+        // won't recover by retrying. Mark done so the user can fix the
+        // account state and reload, instead of retrying every 30s.
+        const hasPermanentError = result.errors.some((e) =>
+          looksPermanent(e.error),
+        );
+        if (hasPermanentError) {
+          logger.error(
+            "Local state migration hit a permanent error; not retrying",
+            { errors: result.errors },
+          );
+          doneRef.current = true;
+          return;
+        }
+        logger.warn(
+          "Local state migration partially failed; scheduling retry",
+          {
+            errors: result.errors,
+            retryDelayMs: RETRY_DELAY_MS,
+            attempt: retryCountRef.current + 1,
+          },
+        );
+        scheduleRetry();
       })
       .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        if (looksPermanent(message)) {
+          logger.error(
+            "Local state migration threw a permanent error; not retrying",
+            { error: message },
+          );
+          doneRef.current = true;
+          return;
+        }
         logger.error("Local state migration threw; scheduling retry", {
-          error: error instanceof Error ? error.message : String(error),
+          error: message,
           retryDelayMs: RETRY_DELAY_MS,
+          attempt: retryCountRef.current + 1,
         });
         scheduleRetry();
       })
