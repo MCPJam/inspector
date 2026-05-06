@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { ModelDefinition } from "@/shared/types";
 import type { OrgProviderResolvedConfig } from "@mcpjam/sdk/model-factory";
 import type { BaseUrls, CustomProviderConfig } from "./chat-helpers";
+import { HOSTED_MODE } from "../config.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -267,6 +268,99 @@ export function buildLlmRuntimeConfigFromOrgConfig(
 }
 
 // ---------------------------------------------------------------------------
+// Outbound URL safety
+//
+// Local-runtime providers return a baseUrl that the inspector then dials
+// directly. In hosted mode the inspector backend sits on a shared/cloud
+// network, so an org admin who points a custom provider at, e.g.,
+// http://169.254.169.254/ or an internal hostname turns the inspector into
+// an SSRF proxy against itself. Reject those baseUrls here, before the URL
+// is cached or handed to the AI SDK provider builder.
+//
+// In local-inspector mode (CLI/desktop) localhost and private IPs are the
+// whole point of e.g. Ollama, so this check is gated by HOSTED_MODE.
+// ---------------------------------------------------------------------------
+
+export function isUnsafeHostedOutboundUrl(rawUrl: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    // Fail closed: an unparseable baseUrl can't be used safely.
+    return true;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return true;
+  }
+  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (!host) return true;
+
+  if (
+    host === "localhost" ||
+    host === "ip6-localhost" ||
+    host === "ip6-loopback" ||
+    host.endsWith(".localhost")
+  ) {
+    return true;
+  }
+  // Cloud metadata service hostnames.
+  if (host === "metadata" || host === "metadata.google.internal") {
+    return true;
+  }
+
+  const v4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (v4) {
+    const octets = v4.slice(1).map((n) => Number(n));
+    if (octets.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return true;
+    const [a, b] = octets;
+    if (a === 0) return true; // 0.0.0.0/8
+    if (a === 10) return true; // 10/8
+    if (a === 127) return true; // loopback
+    if (a === 169 && b === 254) return true; // link-local + AWS/Azure metadata
+    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16/12
+    if (a === 192 && b === 168) return true; // 192.168/16
+    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64/10
+    if (a >= 224) return true; // multicast + reserved
+    return false;
+  }
+
+  if (host.includes(":")) {
+    const lower = host;
+    if (lower === "::" || lower === "::1") return true;
+    if (lower.startsWith("fe80:") || lower.startsWith("fe9") || lower.startsWith("fea") || lower.startsWith("feb")) {
+      return true; // fe80::/10 link-local
+    }
+    if (/^f[cd][0-9a-f]{2}:/.test(lower)) return true; // fc00::/7 unique local
+    // IPv4-mapped IPv6: ::ffff:a.b.c.d (rare in practice — most parsers
+    // canonicalize to ::ffff:HHHH:HHHH).
+    const dotted = lower.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+    if (dotted) return isUnsafeHostedOutboundUrl(`http://${dotted[1]}`);
+    const hex = lower.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+    if (hex) {
+      const high = parseInt(hex[1], 16);
+      const low = parseInt(hex[2], 16);
+      if (
+        Number.isFinite(high) &&
+        Number.isFinite(low) &&
+        high >= 0 &&
+        high <= 0xffff &&
+        low >= 0 &&
+        low <= 0xffff
+      ) {
+        const a = (high >> 8) & 0xff;
+        const b = high & 0xff;
+        const c = (low >> 8) & 0xff;
+        const d = low & 0xff;
+        return isUnsafeHostedOutboundUrl(`http://${a}.${b}.${c}.${d}`);
+      }
+    }
+    return false;
+  }
+
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // Runtime resolver — calls /stream/org/resolve to determine whether the
 // provider should execute in Convex (cloud) or directly in the inspector (local).
 // ---------------------------------------------------------------------------
@@ -405,6 +499,19 @@ export async function resolveOrgProviderRuntime(
       const rawProvider = data.provider;
       if (!rawProvider || typeof rawProvider.providerKey !== "string" || rawProvider.providerKey.length === 0) {
         throw new Error("Org runtime resolve returned invalid local provider config");
+      }
+      // SSRF guard: in hosted mode reject baseUrls that resolve to private,
+      // loopback, link-local, or cloud-metadata addresses. In local-inspector
+      // mode (CLI/desktop) those are legitimate (e.g. Ollama on localhost).
+      if (
+        HOSTED_MODE &&
+        typeof rawProvider.baseUrl === "string" &&
+        rawProvider.baseUrl.length > 0 &&
+        isUnsafeHostedOutboundUrl(rawProvider.baseUrl)
+      ) {
+        throw new Error(
+          `Org provider "${rawProvider.providerKey}" base URL resolves to a private or internal address and cannot be used in hosted mode`,
+        );
       }
       result = {
         runtimeLocation: "local",
