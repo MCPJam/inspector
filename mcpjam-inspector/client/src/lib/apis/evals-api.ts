@@ -151,7 +151,6 @@ function mergeHostedServerBatch<
   return {
     ...requestWithoutConvexAuthToken,
     ...hostedBatch,
-    projectId: request.projectId ?? hostedBatch.projectId,
   };
 }
 

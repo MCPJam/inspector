@@ -117,7 +117,6 @@ export function CiEvalsTab({
 
   const queries = useEvalQueries({
     isAuthenticated: isAuthenticated && Boolean(convexProjectId),
-    user: convexProjectId ? user : null,
     selectedSuiteId,
     deletingSuiteId,
     projectId: convexProjectId,

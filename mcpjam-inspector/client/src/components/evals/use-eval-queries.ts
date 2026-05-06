@@ -12,7 +12,6 @@ import { getIterationRecencyTimestamp } from "./helpers";
  */
 export function useEvalQueries({
   isAuthenticated,
-  user,
   selectedSuiteId,
   deletingSuiteId,
   projectId,
@@ -20,14 +19,16 @@ export function useEvalQueries({
   isDirectGuest = false,
 }: {
   isAuthenticated: boolean;
-  user: any;
   selectedSuiteId: string | null;
   deletingSuiteId: string | null;
   projectId: string | null;
   organizationId: string | null;
   isDirectGuest?: boolean;
 }) {
-  const hasActorAccess = isDirectGuest || (isAuthenticated && !!user);
+  // Convex's `isAuthenticated` already covers hosted guests — they hold a
+  // guest token via the unified auth provider — so a separate WorkOS `user`
+  // check would wrongly skip queries for guests with a project.
+  const hasActorAccess = isDirectGuest || isAuthenticated;
 
   const suiteOverviewArgs = useMemo(() => {
     if (projectId) {
