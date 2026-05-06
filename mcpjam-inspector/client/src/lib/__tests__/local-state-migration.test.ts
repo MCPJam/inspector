@@ -155,6 +155,48 @@ describe("local-state-migration", () => {
       expect(Object.keys(payload!.projects[0].servers)).not.toContain("stale");
     });
 
+    it("treats unreadable projects store as terminal even when STATE is valid", async () => {
+      // If `mcp-inspector-projects` is corrupt but `mcp-inspector-state` has
+      // a valid pre-projects payload, we must NOT silently migrate the STATE
+      // data and then clear all legacy keys — that would delete the corrupt
+      // projects store along with the rest, losing data a future parser fix
+      // could have recovered. Surface as unreadable so the runner records
+      // the failure and leaves every legacy key in place.
+      localStorage.setItem("mcp-inspector-projects", "{not valid json");
+      localStorage.setItem(
+        "mcp-inspector-state",
+        JSON.stringify({
+          servers: {
+            legacy_stdio: {
+              name: "legacy_stdio",
+              enabled: true,
+              useOAuth: false,
+              config: { command: "python", args: ["-m", "server"] },
+              connectionStatus: "disconnected",
+              retryCount: 0,
+              lastConnectionTime: 1700000000000,
+            },
+          },
+        })
+      );
+
+      // The convenience wrapper coerces unreadable to null.
+      expect(readLegacyMigrationPayload()).toBeNull();
+
+      const createProject = vi.fn().mockResolvedValue("convex-id");
+      const result = await runLocalStateMigration({
+        createProject: createProject as any,
+      });
+      expect(result.ok).toBe(false);
+      expect(createProject).not.toHaveBeenCalled();
+      // All legacy keys preserved for a future retry / parser fix.
+      expect(localStorage.getItem("mcp-inspector-projects")).toBe(
+        "{not valid json"
+      );
+      expect(localStorage.getItem("mcp-inspector-state")).not.toBeNull();
+      expect(hasMigrationCompleted()).toBe(false);
+    });
+
     it("returns null when STATE has no servers field", () => {
       localStorage.setItem(
         "mcp-inspector-state",

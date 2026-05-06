@@ -219,17 +219,27 @@ export function readLegacyMigrationPayloadResult(): LegacyReadResult {
   if (typeof window === "undefined") return { kind: "empty" };
 
   const projectsRead = readProjectsFromLegacyStorage();
-  let projects: Project[] = projectsRead ?? [];
-  let unreadable: string | null = null;
 
+  // If the newer projects/workspaces store is present but unparseable, stop
+  // here. Falling back to `mcp-inspector-state` and migrating that successfully
+  // would let `clearLegacyKeys()` delete the unreadable newer store along
+  // with the rest, losing data that a future parser fix or manual recovery
+  // could have salvaged. Surface as `unreadable` so the runner records the
+  // failure, leaves every legacy key in place, and retries later.
   if (projectsRead === null) {
-    unreadable = "legacy projects/workspaces store is unreadable";
+    return {
+      kind: "unreadable",
+      reason: "legacy projects/workspaces store is unreadable",
+    };
   }
+
+  let projects: Project[] = projectsRead;
+  let unreadable: string | null = null;
 
   if (projects.length === 0) {
     const stateResult = readProjectFromLegacyStateOnly();
     if (stateResult === "unreadable") {
-      unreadable = unreadable ?? "legacy state store is unreadable";
+      unreadable = "legacy state store is unreadable";
     } else if (stateResult) {
       projects = [stateResult];
     }
