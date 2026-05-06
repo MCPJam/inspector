@@ -187,13 +187,13 @@ describe("useAppState hosted OAuth browser back", () => {
       window.dispatchEvent(pageShow);
     });
 
+    // The legacy `patchStateForPendingOAuth` flow that mirrored the pending
+    // OAuth into a "connecting"/"failed" runtime server is gone post-Slice 5
+    // (Convex is the source of truth). Browser-back still has to clear the
+    // pending markers so the next attempt isn't gated by a stale flag.
     await waitFor(() => {
-      const lastProjectArgs = useProjectStateMock.mock.calls.at(-1)?.[0];
-      expect(
-        lastProjectArgs?.appState.servers["demo-server"]?.connectionStatus
-      ).toBe("failed");
+      expect(localStorage.getItem("mcp-hosted-oauth-pending")).toBeNull();
     });
-    expect(localStorage.getItem("mcp-hosted-oauth-pending")).toBeNull();
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
     expect(localStorage.getItem("mcp-oauth-return-hash")).toBeNull();
     expect(localStorage.getItem("mcp-quick-connect-pending")).toBeNull();

@@ -1784,4 +1784,148 @@ describe("mcp-oauth", () => {
       );
     });
   });
+
+  describe("MCPOAuthProvider.saveTokens convex binding", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+      vi.unstubAllEnvs();
+    });
+
+    it("imports tokens to Convex when a binding is provided in local mode", async () => {
+      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "false");
+      const importApi = await import(
+        "@/lib/apis/hosted-oauth-import-tokens-api"
+      );
+      const importSpy = vi
+        .spyOn(importApi, "importHostedOAuthTokens")
+        .mockResolvedValue({ expiresAt: null, kind: "generic" });
+
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+        "client-from-arg",
+        undefined,
+        {
+          projectId: "proj_xyz",
+          serverId: "srv_abc",
+          oauthResourceUrl: "https://mcp.asana.com",
+          kind: "generic",
+        },
+      );
+
+      await provider.saveTokens({
+        access_token: "freshly-issued",
+        refresh_token: "refresh-1",
+        token_type: "Bearer",
+      });
+
+      // localStorage still gets the write (still needed for tokens() refresh).
+      expect(localStorage.getItem("mcp-tokens-asana")).toContain("freshly-issued");
+      expect(importSpy).toHaveBeenCalledTimes(1);
+      expect(importSpy.mock.calls[0][0]).toMatchObject({
+        projectId: "proj_xyz",
+        serverId: "srv_abc",
+        serverUrl: "https://mcp.asana.com/sse",
+        oauthResourceUrl: "https://mcp.asana.com",
+        kind: "generic",
+        clientInformation: { clientId: "client-from-arg" },
+        tokens: {
+          access_token: "freshly-issued",
+          refresh_token: "refresh-1",
+          token_type: "Bearer",
+        },
+      });
+    });
+
+    it("falls back to localStorage-only when no binding is provided", async () => {
+      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "false");
+      const importApi = await import(
+        "@/lib/apis/hosted-oauth-import-tokens-api"
+      );
+      const importSpy = vi.spyOn(importApi, "importHostedOAuthTokens");
+
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+        "client-from-arg",
+      );
+
+      await provider.saveTokens({
+        access_token: "no-binding",
+        token_type: "Bearer",
+      });
+
+      expect(localStorage.getItem("mcp-tokens-asana")).toContain("no-binding");
+      expect(importSpy).not.toHaveBeenCalled();
+    });
+
+    it("HOSTED_MODE no-op stays defensive — saveTokens never imports", async () => {
+      vi.resetModules();
+      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+      const importApi = await import(
+        "@/lib/apis/hosted-oauth-import-tokens-api"
+      );
+      const importSpy = vi.spyOn(importApi, "importHostedOAuthTokens");
+
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+        "client-from-arg",
+        undefined,
+        {
+          projectId: "proj_xyz",
+          serverId: "srv_abc",
+          kind: "generic",
+        },
+      );
+
+      await provider.saveTokens({
+        access_token: "should-be-ignored",
+        token_type: "Bearer",
+      });
+
+      expect(localStorage.getItem("mcp-tokens-asana")).toBeNull();
+      expect(importSpy).not.toHaveBeenCalled();
+    });
+
+    it("threads registry kind through when both registryServerId and useRegistryOAuthProxy are set", async () => {
+      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "false");
+      const importApi = await import(
+        "@/lib/apis/hosted-oauth-import-tokens-api"
+      );
+      const importSpy = vi
+        .spyOn(importApi, "importHostedOAuthTokens")
+        .mockResolvedValue({ expiresAt: null, kind: "registry" });
+
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider(
+        "registry-srv",
+        "https://registry.example.com/sse",
+        "client-id",
+        undefined,
+        {
+          projectId: "proj_r",
+          serverId: "srv_r",
+          kind: "registry",
+          registryServerId: "reg_123",
+          useRegistryOAuthProxy: true,
+        },
+      );
+
+      await provider.saveTokens({
+        access_token: "registry-token",
+        token_type: "Bearer",
+      });
+
+      expect(importSpy).toHaveBeenCalledTimes(1);
+      expect(importSpy.mock.calls[0][0]).toMatchObject({
+        kind: "registry",
+        registryServerId: "reg_123",
+        useRegistryOAuthProxy: true,
+      });
+    });
+  });
 });

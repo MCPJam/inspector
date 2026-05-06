@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import "../../types/hono"; // Type extensions
-import { HOSTED_MODE } from "../../config";
 import { rpcLogBus, type RpcLogEvent } from "../../services/rpc-log-bus";
 import { logger } from "../../utils/logger";
 import {
@@ -143,10 +142,9 @@ servers.delete("/:serverId", async (c) => {
   }
 });
 
-// Reconnect to a server. New shape sends {projectId, serverId}; the local
-// Hono server resolves the config from Convex. Legacy {serverConfig} bodies
-// remain accepted during the Phase 5–7 client migration so existing inspector
-// builds keep working.
+// Reconnect to a server. Body shape: {projectId, serverId, serverName}; the
+// local Hono server resolves the config (and any OAuth tokens) from Convex
+// via /web/authorize-batch-local.
 servers.post("/reconnect", async (c) => {
   let body: any;
   try {
@@ -173,139 +171,79 @@ servers.post("/reconnect", async (c) => {
 
   const projectId =
     typeof body?.projectId === "string" ? body.projectId.trim() : "";
-  const useResolverPath = projectId.length > 0;
+  if (!projectId) {
+    return c.json(
+      { success: false, error: "projectId is required" },
+      400,
+    );
+  }
   const mcpClientManager = c.mcpClientManager;
 
-  let normalizedConfig: import("@mcpjam/sdk").MCPServerConfig | null = null;
-  // The MCP client manager is keyed by display name. In the resolver path
-  // `serverId` carries the Convex document id (used only for the lookup);
-  // in the legacy path it already is the display name.
-  let managerKey = serverId;
+  // The MCP client manager is keyed by display name; serverId is the Convex
+  // document id used only for the resolver lookup.
+  const serverDisplayName =
+    typeof body?.serverName === "string" ? body.serverName.trim() : "";
+  if (!serverDisplayName) {
+    return c.json(
+      { success: false, error: "serverName is required with projectId" },
+      400,
+    );
+  }
+  const bearer = readLocalApiBearer(c);
+  if (!bearer) {
+    return c.json(
+      { success: false, error: "Authorization bearer token is required" },
+      401,
+    );
+  }
 
-  if (useResolverPath) {
-    const serverDisplayName =
-      typeof body?.serverName === "string" ? body.serverName.trim() : "";
-    if (!serverDisplayName) {
-      return c.json(
-        { success: false, error: "serverName is required with projectId" },
-        400,
-      );
-    }
-    const bearer = readLocalApiBearer(c);
-    if (!bearer) {
-      return c.json(
-        { success: false, error: "Authorization bearer token is required" },
-        401,
-      );
-    }
+  let normalizedConfig: import("@mcpjam/sdk").MCPServerConfig;
+  const managerKey = serverDisplayName;
 
-    try {
-      const resolved = await resolveLocalServerForConnect(
-        c,
-        bearer,
-        projectId,
-        serverId,
-        {
-          serverDisplayName,
-          clientCapabilities:
-            typeof body?.clientCapabilities === "object" &&
-            body.clientCapabilities !== null
-              ? body.clientCapabilities
-              : undefined,
-          defaults: parseConnectionDefaults(body?.connectionDefaults),
-        },
-      );
-      normalizedConfig = resolved.config;
-      managerKey = serverDisplayName;
-    } catch (error) {
-      if (error instanceof WebRouteError) {
-        // See connect.ts — same rationale: an OAuth-required 401 means the
-        // server demands the user complete its OAuth flow, not that the
-        // session bearer is invalid. Skip the guest-refresh retry.
-        if (error.details?.oauthRequired === true) {
-          c.header("X-MCP-Auth-Required", "oauth");
-        }
-        return c.json(
-          {
-            success: false,
-            error: error.message,
-            ...(error.details ?? {}),
-          },
-          error.status as any,
-        );
+  try {
+    const resolved = await resolveLocalServerForConnect(
+      c,
+      bearer,
+      projectId,
+      serverId,
+      {
+        serverDisplayName,
+        clientCapabilities:
+          typeof body?.clientCapabilities === "object" &&
+          body.clientCapabilities !== null
+            ? body.clientCapabilities
+            : undefined,
+        defaults: parseConnectionDefaults(body?.connectionDefaults),
+      },
+    );
+    normalizedConfig = resolved.config;
+  } catch (error) {
+    if (error instanceof WebRouteError) {
+      // See connect.ts — same rationale: an OAuth-required 401 means the
+      // server demands the user complete its OAuth flow, not that the
+      // session bearer is invalid. Skip the guest-refresh retry.
+      if (error.details?.oauthRequired === true) {
+        c.header("X-MCP-Auth-Required", "oauth");
       }
-      logger.error("Error resolving server config for reconnect", error, {
-        serverId,
-      });
       return c.json(
         {
           success: false,
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: error.message,
+          ...(error.details ?? {}),
         },
-        500,
+        error.status as any,
       );
     }
-  } else {
-    // Legacy path during transition.
-    const serverConfig = body?.serverConfig;
-    if (!serverConfig) {
-      return c.json(
-        { success: false, error: "serverId and serverConfig are required" },
-        400,
-      );
-    }
-
-    const cfg: any = { ...serverConfig };
-    if ("url" in cfg && cfg.url !== undefined && cfg.url !== null) {
-      const urlValue = cfg.url as unknown;
-      if (typeof urlValue === "string") {
-        cfg.url = urlValue;
-      } else if (urlValue instanceof URL) {
-        // already normalized
-      } else if (
-        typeof urlValue === "object" &&
-        urlValue !== null &&
-        "href" in (urlValue as Record<string, unknown>) &&
-        typeof (urlValue as { href?: unknown }).href === "string"
-      ) {
-        cfg.url = new URL((urlValue as { href: string }).href).toString();
-      }
-    }
-
-    // Defense-in-depth: mirror the connect.ts legacy guards. The /api/mcp/*
-    // middleware in app.ts blocks hosted traffic to this endpoint with 410,
-    // but keep these checks aligned across the two routes so a future
-    // middleware change can't open a hole on one and not the other.
-    if (HOSTED_MODE && cfg.command) {
-      return c.json(
-        { success: false, error: "STDIO transport is disabled in the web app" },
-        403,
-      );
-    }
-    if (HOSTED_MODE && cfg.url) {
-      let urlForCheck: URL;
-      try {
-        urlForCheck =
-          cfg.url instanceof URL ? cfg.url : new URL(String(cfg.url));
-      } catch {
-        return c.json(
-          { success: false, error: "Invalid server URL" },
-          400,
-        );
-      }
-      if (urlForCheck.protocol !== "https:") {
-        return c.json(
-          {
-            success: false,
-            error:
-              "HTTPS is required in the web app. Please use an https:// URL.",
-          },
-          400,
-        );
-      }
-    }
-
-    normalizedConfig = cfg;
+    logger.error("Error resolving server config for reconnect", error, {
+      serverId,
+    });
+    return c.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
+      500,
+    );
   }
 
   try {

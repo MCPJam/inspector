@@ -90,16 +90,21 @@ describe("POST /api/mcp/connect", () => {
       expect(res.status).toBe(401);
     });
 
-    it("returns 400 when neither projectId nor serverConfig is provided", async () => {
+    it("returns 400 when projectId is missing (legacy body shape rejected)", async () => {
       const res = await app.request("/api/mcp/connect", {
         method: "POST",
         headers: authHeaders(),
-        body: JSON.stringify({ serverId: SERVER_ID }),
+        body: JSON.stringify({
+          serverId: SERVER_ID,
+          serverConfig: { command: "node", args: ["server.js"] },
+        }),
       });
 
       expect(res.status).toBe(400);
       const data = (await res.json()) as { error?: string };
-      expect(data.error).toBe("serverConfig is required");
+      expect(data.error).toBe("projectId is required");
+      // Legacy {serverConfig, serverId} body must NOT reach the manager.
+      expect(mcpClientManager.connectToServer).not.toHaveBeenCalled();
     });
 
     it("returns 400 when request body is invalid JSON", async () => {
@@ -110,40 +115,6 @@ describe("POST /api/mcp/connect", () => {
       });
 
       expect(res.status).toBe(400);
-    });
-  });
-
-  describe("legacy {serverConfig, serverId} body shape (transitional)", () => {
-    it("connects with legacy STDIO serverConfig", async () => {
-      const res = await app.request("/api/mcp/connect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          serverId: SERVER_ID,
-          serverConfig: { command: "node", args: ["server.js"] },
-        }),
-      });
-
-      expect(res.status).toBe(200);
-      expect(mcpClientManager.connectToServer).toHaveBeenCalledWith(
-        SERVER_ID,
-        { command: "node", args: ["server.js"] }
-      );
-    });
-
-    it("connects with legacy HTTP serverConfig (URL string)", async () => {
-      const res = await app.request("/api/mcp/connect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          serverId: SERVER_ID,
-          serverConfig: { url: "http://localhost:3000/mcp" },
-        }),
-      });
-
-      expect(res.status).toBe(200);
-      const callArgs = mcpClientManager.connectToServer.mock.calls[0][1];
-      expect(callArgs.url.href).toBe("http://localhost:3000/mcp");
     });
   });
 

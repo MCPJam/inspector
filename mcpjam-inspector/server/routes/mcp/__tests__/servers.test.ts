@@ -344,21 +344,7 @@ describe("POST /api/mcp/servers/reconnect", () => {
       expect(res.status).toBe(401);
     });
 
-    it("returns 400 when neither projectId nor serverConfig is provided", async () => {
-      const res = await app.request("/api/mcp/servers/reconnect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ serverId: RECONNECT_SERVER_ID }),
-      });
-
-      expect(res.status).toBe(400);
-      const data = (await res.json()) as { error?: string };
-      expect(data.error).toBe("serverId and serverConfig are required");
-    });
-  });
-
-  describe("legacy {serverConfig} body shape (transitional)", () => {
-    it("reconnects with legacy STDIO serverConfig", async () => {
+    it("returns 400 when projectId is missing (legacy body shape rejected)", async () => {
       const res = await app.request("/api/mcp/servers/reconnect", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -368,12 +354,11 @@ describe("POST /api/mcp/servers/reconnect", () => {
         }),
       });
 
-      expect(res.status).toBe(200);
-      const callArgs = mcpClientManager.connectToServer.mock.calls[0];
-      expect(callArgs[1]).toMatchObject({
-        command: "node",
-        args: ["server.js"],
-      });
+      expect(res.status).toBe(400);
+      const data = (await res.json()) as { error?: string };
+      expect(data.error).toBe("projectId is required");
+      // Legacy {serverConfig} body must NOT reach the manager.
+      expect(mcpClientManager.connectToServer).not.toHaveBeenCalled();
     });
   });
 

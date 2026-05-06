@@ -2085,7 +2085,7 @@ export function useChatSession({
 
   // Computed state for UI
   // Compute share/chatbox guest access from React state instead of the global
-  // hostedApiContext.
+  // apiContext.
   // In hosted mode: always require auth (guest JWT or WorkOS — handled by authFetch).
   // In non-hosted mode: auth is only needed for sign-in-only MCPJam models.
   const requiresAuthForChat = HOSTED_MODE

@@ -407,4 +407,176 @@ describe("local-state-migration", () => {
       expect(hasMigrationCompleted()).toBe(true);
     });
   });
+
+  describe("OAuth token import during migration", () => {
+    function seedOAuthLegacy() {
+      seedLegacyProjects();
+      // http_one has full legacy OAuth state — should be imported.
+      localStorage.setItem(
+        "mcp-tokens-http_one",
+        JSON.stringify({
+          access_token: "legacy-access",
+          refresh_token: "legacy-refresh",
+          token_type: "bearer",
+        }),
+      );
+      localStorage.setItem(
+        "mcp-client-http_one",
+        JSON.stringify({
+          client_id: "legacy_client_id",
+          client_secret: "legacy_client_secret",
+        }),
+      );
+      localStorage.setItem(
+        "mcp-oauth-config-http_one",
+        JSON.stringify({
+          resourceUrl: "https://api.example.com",
+        }),
+      );
+    }
+
+    it("imports legacy OAuth tokens with renamed fields and clears legacy keys on success", async () => {
+      seedOAuthLegacy();
+      const createProject = vi.fn().mockResolvedValue("convex-proj-id");
+      const listProjectServers = vi.fn().mockResolvedValue([
+        { _id: "convex-server-http_one", name: "http_one" },
+        { _id: "convex-server-stdio_one", name: "stdio_one" },
+      ]);
+      const importTokens = vi.fn().mockResolvedValue(undefined);
+
+      const result = await runLocalStateMigration({
+        createProject: createProject as any,
+        listProjectServers,
+        importTokens,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(importTokens).toHaveBeenCalledTimes(1);
+      const importPayload = importTokens.mock.calls[0][0];
+      // Field renames: legacy `client_id`/`client_secret` → `clientId`/`clientSecret`,
+      // legacy `resourceUrl` → `oauthResourceUrl`.
+      expect(importPayload).toMatchObject({
+        projectId: "convex-proj-id",
+        serverId: "convex-server-http_one",
+        kind: "generic",
+        oauthResourceUrl: "https://api.example.com",
+        clientInformation: {
+          clientId: "legacy_client_id",
+          clientSecret: "legacy_client_secret",
+        },
+        tokens: {
+          access_token: "legacy-access",
+          refresh_token: "legacy-refresh",
+          token_type: "bearer",
+        },
+      });
+      // Legacy OAuth keys cleared on success.
+      expect(localStorage.getItem("mcp-tokens-http_one")).toBeNull();
+      expect(localStorage.getItem("mcp-client-http_one")).toBeNull();
+      expect(localStorage.getItem("mcp-oauth-config-http_one")).toBeNull();
+    });
+
+    it("preserves legacy OAuth keys when import fails and allows retry without recreating project", async () => {
+      seedOAuthLegacy();
+      const createProjectFirst = vi.fn().mockResolvedValue("convex-proj-id");
+      const listProjectServersFirst = vi.fn().mockResolvedValue([
+        { _id: "convex-server-http_one", name: "http_one" },
+      ]);
+      const importTokensFail = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("Convex unreachable"));
+
+      const firstResult = await runLocalStateMigration({
+        createProject: createProjectFirst as any,
+        listProjectServers: listProjectServersFirst,
+        importTokens: importTokensFail,
+      });
+      expect(firstResult.ok).toBe(false);
+      expect(firstResult.errors[0].error).toContain(
+        'OAuth import for server "http_one" failed',
+      );
+      // Legacy OAuth keys preserved for retry.
+      expect(localStorage.getItem("mcp-tokens-http_one")).not.toBeNull();
+      // Project create was successful — must not run again on retry.
+      expect(createProjectFirst).toHaveBeenCalledTimes(1);
+
+      const createProjectRetry = vi.fn();
+      const listProjectServersRetry = vi.fn().mockResolvedValue([
+        { _id: "convex-server-http_one", name: "http_one" },
+      ]);
+      const importTokensSuccess = vi.fn().mockResolvedValue(undefined);
+      const retryResult = await runLocalStateMigration({
+        createProject: createProjectRetry as any,
+        listProjectServers: listProjectServersRetry,
+        importTokens: importTokensSuccess,
+      });
+
+      expect(retryResult.ok).toBe(true);
+      // createProject NOT called again — progress map remembered the
+      // convexProjectId.
+      expect(createProjectRetry).not.toHaveBeenCalled();
+      // importTokens called this time, succeeds.
+      expect(importTokensSuccess).toHaveBeenCalledTimes(1);
+      // Now legacy keys are cleared.
+      expect(localStorage.getItem("mcp-tokens-http_one")).toBeNull();
+      expect(hasMigrationCompleted()).toBe(true);
+    });
+
+    it("skips already-imported servers on retry", async () => {
+      seedOAuthLegacy();
+      // Pre-populate progress map: project already created and tokens
+      // imported for http_one — retry should be a no-op for both.
+      localStorage.setItem(
+        MIGRATION_PROGRESS_KEY,
+        JSON.stringify({
+          "proj-a": {
+            convexProjectId: "convex-proj-id",
+            tokensByServerName: { http_one: "imported" },
+          },
+        }),
+      );
+
+      const createProject = vi.fn();
+      const listProjectServers = vi.fn().mockResolvedValue([
+        { _id: "convex-server-http_one", name: "http_one" },
+      ]);
+      const importTokens = vi.fn();
+
+      const result = await runLocalStateMigration({
+        createProject: createProject as any,
+        listProjectServers,
+        importTokens,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(createProject).not.toHaveBeenCalled();
+      expect(importTokens).not.toHaveBeenCalled();
+    });
+
+    it("skips servers whose legacy state lacks clientId", async () => {
+      seedLegacyProjects();
+      // Tokens present but no `mcp-client-${name}` entry.
+      localStorage.setItem(
+        "mcp-tokens-http_one",
+        JSON.stringify({
+          access_token: "x",
+          token_type: "bearer",
+        }),
+      );
+
+      const createProject = vi.fn().mockResolvedValue("convex-id");
+      const listProjectServers = vi.fn().mockResolvedValue([
+        { _id: "id1", name: "http_one" },
+      ]);
+      const importTokens = vi.fn();
+
+      const result = await runLocalStateMigration({
+        createProject: createProject as any,
+        listProjectServers,
+        importTokens,
+      });
+      expect(result.ok).toBe(true);
+      expect(importTokens).not.toHaveBeenCalled();
+    });
+  });
 });

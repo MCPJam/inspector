@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { ChatTabV2 } from "@/components/ChatTabV2";
 import type { ServerWithName } from "@/hooks/use-app-state";
-import { useHostedApiContext } from "@/hooks/hosted/use-hosted-api-context";
+import { useApiContext } from "@/hooks/hosted/use-hosted-api-context";
 import { useHostedOAuthGate } from "@/hooks/hosted/use-hosted-oauth-gate";
 import { checkHostedServerOAuthRequirement } from "@/lib/apis/web/servers-api";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
@@ -159,7 +159,7 @@ export function SharedServerChatPage({
     return { [serverId]: tokens.access_token };
   }, [session, oauthStateByServerId]);
 
-  useHostedApiContext({
+  useApiContext({
     projectId: session?.payload.projectId ?? null,
     serverIdsByName: hostedServerIdsByName,
     getAccessToken,

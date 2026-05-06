@@ -189,6 +189,14 @@ oauthWeb.post("/tokens", async (c) => {
   }
 });
 
+oauthWeb.post("/import-tokens", async (c) => {
+  try {
+    return await proxyConvexOAuthPost(c, "/web/oauth/import-tokens");
+  } catch (error) {
+    return webErrorCompat(c, toRouteError(error));
+  }
+});
+
 oauthWeb.post("/client-secret", async (c) => {
   try {
     return await proxyConvexOAuthPost(c, "/web/oauth/client-secret");
