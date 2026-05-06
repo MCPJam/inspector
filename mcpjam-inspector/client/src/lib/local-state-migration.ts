@@ -21,6 +21,12 @@ import { isProjectClientConfig } from "@/lib/client-config";
 
 export const MIGRATION_FLAG_KEY = "mcp-inspector-migrated-to-convex";
 
+// Tracks IDs of projects that have already been pushed to Convex within the
+// current migration attempt. Used so a partial failure can be retried without
+// re-creating the projects that already succeeded (which would duplicate them
+// in Convex on the next boot).
+export const MIGRATION_PROGRESS_KEY = "mcp-inspector-migration-progress";
+
 const LEGACY_PROJECTS_KEY = "mcp-inspector-projects";
 const LEGACY_WORKSPACES_KEY = "mcp-inspector-workspaces";
 const LEGACY_STATE_KEY = "mcp-inspector-state";
@@ -196,6 +202,44 @@ export function markMigrationComplete(): void {
   }
 }
 
+function readMigratedProjectIds(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = localStorage.getItem(MIGRATION_PROGRESS_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return new Set(parsed.filter((v): v is string => typeof v === "string"));
+    }
+  } catch {
+    // ignore — treat as empty set; worst case we re-attempt a project
+  }
+  return new Set();
+}
+
+function recordMigratedProjectId(id: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    const current = readMigratedProjectIds();
+    current.add(id);
+    localStorage.setItem(
+      MIGRATION_PROGRESS_KEY,
+      JSON.stringify(Array.from(current)),
+    );
+  } catch {
+    // best-effort
+  }
+}
+
+function clearMigrationProgress(): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem(MIGRATION_PROGRESS_KEY);
+  } catch {
+    // best-effort
+  }
+}
+
 export interface MigrationDeps {
   createProject: (args: {
     name: string;
@@ -238,21 +282,32 @@ export interface MigrationResult {
  *  - On overall success, clears legacy keys and sets the flag.
  *  - On partial success (some projects failed), leaves legacy keys in place
  *    so a subsequent boot can retry — a partial migration shouldn't drop
- *    user data.
+ *    user data. Successful projects are recorded under
+ *    `MIGRATION_PROGRESS_KEY` so the retry skips them and we don't duplicate
+ *    them in Convex.
  */
 export async function runLocalStateMigration(
   deps: MigrationDeps
 ): Promise<MigrationResult> {
   const payload = readLegacyMigrationPayload();
   if (!payload) {
+    clearMigrationProgress();
     markMigrationComplete();
     return { ok: true, projectsMigrated: 0, errors: [] };
   }
 
   const errors: MigrationResult["errors"] = [];
   let projectsMigrated = 0;
+  const alreadyMigrated = readMigratedProjectIds();
 
   for (const project of payload.projects) {
+    if (alreadyMigrated.has(project.id)) {
+      deps.logger?.info("Skipping already-migrated project", {
+        name: project.name,
+        id: project.id,
+      });
+      continue;
+    }
     // Merge mcp-env-${name} into per-server config so syncProjectServers picks
     // it up. STDIO servers may have env in either place; the merge is
     // last-write-wins favoring the localStorage env entry (which is what the
@@ -283,6 +338,7 @@ export async function runLocalStateMigration(
         servers: serializedServers,
         organizationId: deps.organizationId,
       });
+      recordMigratedProjectId(project.id);
       projectsMigrated++;
       deps.logger?.info("Migrated local project to Convex", {
         name: project.name,
@@ -300,10 +356,13 @@ export async function runLocalStateMigration(
 
   if (errors.length === 0) {
     clearLegacyKeys();
+    clearMigrationProgress();
     markMigrationComplete();
     return { ok: true, projectsMigrated, errors };
   }
 
-  // Partial success — keep legacy keys so we can retry.
+  // Partial success — keep legacy keys so we can retry. The
+  // MIGRATION_PROGRESS_KEY records which projects already succeeded so the
+  // next boot doesn't recreate them in Convex.
   return { ok: false, projectsMigrated, errors };
 }

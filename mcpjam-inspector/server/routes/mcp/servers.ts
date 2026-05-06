@@ -275,8 +275,16 @@ servers.post("/reconnect", async (c) => {
       );
     }
     if (HOSTED_MODE && cfg.url) {
-      const urlForCheck =
-        cfg.url instanceof URL ? cfg.url : new URL(String(cfg.url));
+      let urlForCheck: URL;
+      try {
+        urlForCheck =
+          cfg.url instanceof URL ? cfg.url : new URL(String(cfg.url));
+      } catch {
+        return c.json(
+          { success: false, error: "Invalid server URL" },
+          400,
+        );
+      }
       if (urlForCheck.protocol !== "https:") {
         return c.json(
           {
@@ -293,7 +301,16 @@ servers.post("/reconnect", async (c) => {
   }
 
   try {
-    await mcpClientManager.disconnectServer(managerKey);
+    // A stale or already-disconnected entry shouldn't fail reconnect; the
+    // DELETE handler in this file uses the same tolerance.
+    try {
+      await mcpClientManager.disconnectServer(managerKey);
+    } catch (disconnectError) {
+      console.debug(
+        `Failed to disconnect MCP server ${managerKey} before reconnect`,
+        disconnectError,
+      );
+    }
     await mcpClientManager.connectToServer(
       managerKey,
       normalizedConfig as import("@mcpjam/sdk").MCPServerConfig,

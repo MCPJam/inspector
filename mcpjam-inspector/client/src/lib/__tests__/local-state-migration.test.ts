@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MIGRATION_FLAG_KEY,
+  MIGRATION_PROGRESS_KEY,
   hasMigrationCompleted,
   readLegacyMigrationPayload,
   runLocalStateMigration,
@@ -182,6 +183,59 @@ describe("local-state-migration", () => {
       // Legacy data still there for retry
       expect(localStorage.getItem("mcp-inspector-projects")).not.toBeNull();
       expect(hasMigrationCompleted()).toBe(false);
+    });
+
+    it("skips already-migrated projects on retry after partial failure", async () => {
+      // Seed two projects. First attempt: proj-a succeeds, proj-b fails.
+      localStorage.setItem(
+        "mcp-inspector-projects",
+        JSON.stringify({
+          activeProjectId: "proj-a",
+          projects: {
+            "proj-a": {
+              id: "proj-a",
+              name: "Alpha",
+              createdAt: 1700000000000,
+              updatedAt: 1700000000000,
+              servers: {},
+            },
+            "proj-b": {
+              id: "proj-b",
+              name: "Beta",
+              createdAt: 1700000000000,
+              updatedAt: 1700000000000,
+              servers: {},
+            },
+          },
+        })
+      );
+
+      const createProjectFirst = vi
+        .fn()
+        .mockResolvedValueOnce("convex-a")
+        .mockRejectedValueOnce(new Error("Convex unreachable"));
+      const firstResult = await runLocalStateMigration({
+        createProject: createProjectFirst as any,
+      });
+      expect(firstResult.ok).toBe(false);
+      expect(firstResult.projectsMigrated).toBe(1);
+      expect(createProjectFirst).toHaveBeenCalledTimes(2);
+      // Progress recorded for the project that succeeded.
+      expect(localStorage.getItem(MIGRATION_PROGRESS_KEY)).toContain("proj-a");
+
+      // Retry: only the failed project should be re-attempted.
+      const createProjectRetry = vi.fn().mockResolvedValue("convex-b");
+      const retryResult = await runLocalStateMigration({
+        createProject: createProjectRetry as any,
+      });
+      expect(retryResult.ok).toBe(true);
+      expect(retryResult.projectsMigrated).toBe(1);
+      expect(createProjectRetry).toHaveBeenCalledTimes(1);
+      expect(createProjectRetry.mock.calls[0][0].name).toBe("Beta");
+      // Successful retry clears legacy + progress keys.
+      expect(localStorage.getItem("mcp-inspector-projects")).toBeNull();
+      expect(localStorage.getItem(MIGRATION_PROGRESS_KEY)).toBeNull();
+      expect(hasMigrationCompleted()).toBe(true);
     });
   });
 });

@@ -136,13 +136,20 @@ connect.post("/", async (c) => {
   }
 
   if (serverConfig.url) {
-    if (typeof serverConfig.url === "string") {
-      serverConfig.url = new URL(serverConfig.url);
-    } else if (
-      typeof serverConfig.url === "object" &&
-      serverConfig.url.href
-    ) {
-      serverConfig.url = new URL(serverConfig.url.href);
+    try {
+      if (typeof serverConfig.url === "string") {
+        serverConfig.url = new URL(serverConfig.url);
+      } else if (
+        typeof serverConfig.url === "object" &&
+        serverConfig.url.href
+      ) {
+        serverConfig.url = new URL(serverConfig.url.href);
+      }
+    } catch {
+      return c.json(
+        { success: false, error: "Invalid server URL" },
+        400,
+      );
     }
   }
 
