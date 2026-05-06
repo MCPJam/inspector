@@ -51,6 +51,7 @@ import {
   type OrgModelUsageSummary,
   type OrgModelProvider,
 } from "@/hooks/use-org-model-config";
+import { HOSTED_MODE } from "@/lib/config";
 
 // ---------------------------------------------------------------------------
 // Provider catalog -- defines known providers and their configuration fields
@@ -273,6 +274,9 @@ export function OrganizationModelsSection({
           ) : (
             <>
               {PROVIDER_CATALOG.map((entry) => {
+                // Ollama can't run in hosted mode: hosted chat routes
+                // through Convex, which can't reach a user's localhost.
+                if (HOSTED_MODE && entry.key === "ollama") return null;
                 const provider = providerMap.get(entry.key);
                 const configured = !!provider?.hasSecret || !!provider?.baseUrl;
                 return (
@@ -429,6 +433,7 @@ function ProviderRow({
   configured,
   isAdmin,
   isCustom,
+  unsupportedReason,
   onConfigure,
   onRemove,
 }: {
@@ -437,7 +442,8 @@ function ProviderRow({
   configured: boolean;
   isAdmin: boolean;
   isCustom?: boolean;
-  onConfigure: () => void;
+  unsupportedReason?: string;
+  onConfigure?: () => void;
   onRemove: () => void;
 }) {
   return (
@@ -467,7 +473,14 @@ function ProviderRow({
       </div>
 
       <div className="flex items-center gap-2">
-        {configured ? (
+        {unsupportedReason ? (
+          <Badge
+            variant="outline"
+            className="gap-1 text-xs text-amber-600 dark:text-amber-400"
+          >
+            {unsupportedReason}
+          </Badge>
+        ) : configured ? (
           <Badge
             variant="secondary"
             className="gap-1 text-xs text-emerald-600 dark:text-emerald-400"
@@ -487,16 +500,18 @@ function ProviderRow({
 
         {isAdmin ? (
           <>
-            <Button variant="ghost" size="sm" onClick={onConfigure}>
-              {configured ? (
-                <Pencil className="size-3.5" />
-              ) : (
-                <>
-                  <Settings2 className="mr-1.5 size-3.5" />
-                  Configure
-                </>
-              )}
-            </Button>
+            {onConfigure ? (
+              <Button variant="ghost" size="sm" onClick={onConfigure}>
+                {configured ? (
+                  <Pencil className="size-3.5" />
+                ) : (
+                  <>
+                    <Settings2 className="mr-1.5 size-3.5" />
+                    Configure
+                  </>
+                )}
+              </Button>
+            ) : null}
             {configured ? (
               <Button
                 variant="ghost"
