@@ -1898,7 +1898,9 @@ export function useChatSession({
     syncRestoredToolRenderOverrides,
   ]);
 
-  // Ollama model detection
+  // Ollama model detection — local mode only. Hosted mode never surfaces
+  // Ollama: the browser may be able to reach localhost, but Convex (which
+  // owns the chat path in hosted mode) cannot.
   useEffect(() => {
     if (HOSTED_MODE) {
       setIsOllamaRunning(false);

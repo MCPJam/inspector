@@ -4,8 +4,16 @@ import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { isMCPAuthError } from "@mcpjam/sdk";
 import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler.js";
-import { handleHostedOrgChatModel } from "../../utils/org-model-stream-handler.js";
-import { deriveOrgProviderKey as deriveOrgProviderKeyResult } from "../../utils/org-model-config.js";
+import {
+  handleHostedOrgChatModel,
+  handleLocalOrgChatModel,
+} from "../../utils/org-model-stream-handler.js";
+import {
+  deriveOrgProviderKey as deriveOrgProviderKeyResult,
+  isLocalRuntimeEligible,
+  resolveOrgProviderRuntime,
+  type OrgProviderRuntime,
+} from "../../utils/org-model-config.js";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import type { ModelDefinition } from "@/shared/types";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
@@ -13,6 +21,7 @@ import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
 import {
   persistChatSessionToConvex,
   pickEnrichmentHeaders,
+  type PersistedTurnTrace,
 } from "../../utils/chat-ingestion.js";
 import {
   hostedChatSchema,
@@ -29,6 +38,7 @@ import {
   attachHostedRpcLogs,
   createHostedRpcLogCollector,
 } from "./hosted-rpc-logs.js";
+import { getClientIp } from "../../utils/client-ip.js";
 
 function deriveOrgProviderKey(modelDefinition: ModelDefinition): string {
   const result = deriveOrgProviderKeyResult(modelDefinition);
@@ -169,77 +179,122 @@ chatV2.post("/", async (c) => {
             "Server missing INSPECTOR_SERVICE_TOKEN configuration",
           );
         }
-        // Hosted org BYOK: vault-resolved provider keys live in Convex; the
-        // inspector forwards messages and tool definitions to /stream/org and
-        // drives the agentic loop locally. Scrub messages for parity with
-        // the direct BYOK path in mcp/chat-v2.ts.
+        // Hosted org BYOK: resolve runtime location first.
+        // Cloud → LLM executes in Convex (/stream/org), keys never leave Convex.
+        // Local → LLM executes in the inspector using the decrypted API key.
         const providerKey = deriveOrgProviderKey(modelDefinition);
+        const modelId = String(modelDefinition.id);
+        const scrubbedMessages = scrubMessages(modelMessages as ModelMessage[]);
+        const sourceType = shareToken
+          ? "serverShare"
+          : chatboxToken
+          ? "chatbox"
+          : "direct";
+
+        // Cloud-only providers (everything that isn't on the local-runtime
+        // allowlist) skip the /stream/org/resolve round-trip entirely. The
+        // answer is always "cloud" for those, so calling resolve would just
+        // add latency and a new failure point on the cloud path — which
+        // regressed BYOK chat for cloud-only providers like OpenAI/Anthropic
+        // when resolve was made unconditional.
+        const runtime: OrgProviderRuntime = isLocalRuntimeEligible(providerKey)
+          ? await resolveOrgProviderRuntime(
+              hostedBody.projectId,
+              providerKey,
+              modelId,
+              {
+                authHeader: c.req.header("authorization"),
+                shareToken,
+                chatboxToken,
+                serverIds: selectedServerIds,
+              },
+            )
+          : { runtimeLocation: "cloud", providerKey };
+
+        const onConversationComplete = hostedChatSessionId
+          ? async (fullHistory: ModelMessage[], turnTrace: PersistedTurnTrace) => {
+              const isDirectChat = !shareToken && !chatboxToken;
+              await persistChatSessionToConvex({
+                chatSessionId: hostedChatSessionId,
+                modelId,
+                modelSource:
+                  runtime.runtimeLocation === "local" ? "local_byok" : "byok",
+                projectId: hostedBody.projectId,
+                sourceType,
+                ...(chatboxToken && surface ? { surface } : {}),
+                shareToken,
+                chatboxToken,
+                ...(shareToken && selectedServerIds[0]
+                  ? { serverId: selectedServerIds[0] }
+                  : {}),
+                authHeader: c.req.header("authorization"),
+                sessionMessages: fullHistory,
+                startedAt: sessionStartedAt,
+                lastActivityAt: Date.now(),
+                ...(isDirectChat
+                  ? {
+                      directVisibility: body.directVisibility,
+                      resumeConfig: {
+                        systemPrompt,
+                        temperature,
+                        requireToolApproval,
+                        selectedServers:
+                          Array.isArray(selectedServerNames) &&
+                          selectedServerNames.length === selectedServerIds.length
+                            ? selectedServerNames
+                            : selectedServerIds,
+                      },
+                    }
+                  : {}),
+                turnTrace,
+                forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
+              });
+            }
+          : undefined;
+
+        if (runtime.runtimeLocation === "local") {
+          return handleLocalOrgChatModel({
+            provider: runtime.provider,
+            projectId: hostedBody.projectId,
+            workspaceId: legacyWorkspaceId,
+            modelId,
+            chatSessionId: hostedChatSessionId,
+            sourceType,
+            messages: scrubbedMessages,
+            systemPrompt: enhancedSystemPrompt,
+            temperature: resolvedTemperature,
+            tools: allTools as ToolSet,
+            authHeader: c.req.header("authorization"),
+            shareToken,
+            chatboxToken,
+            selectedServers: selectedServerIds,
+            requireToolApproval,
+            onConversationComplete,
+            onStreamComplete: () => manager.disconnectAllServers(),
+            onStreamWriterReady: (writer) =>
+              rpcCollector?.attachStreamWriter(writer),
+          });
+        }
+
         return handleHostedOrgChatModel({
           projectId: hostedBody.projectId,
           workspaceId: legacyWorkspaceId,
-          providerKey,
-          modelId: String(modelDefinition.id),
+          providerKey: runtime.providerKey,
+          modelId,
           chatSessionId: hostedChatSessionId,
-          sourceType: shareToken
-            ? "serverShare"
-            : chatboxToken
-            ? "chatbox"
-            : "direct",
-          messages: scrubMessages(modelMessages as ModelMessage[]),
+          sourceType,
+          messages: scrubbedMessages,
           systemPrompt: enhancedSystemPrompt,
           temperature: resolvedTemperature,
           tools: allTools as ToolSet,
           authHeader: c.req.header("authorization"),
+          clientIp: getClientIp(c),
           shareToken,
           chatboxToken,
           mcpClientManager: manager,
           selectedServers: selectedServerIds,
           requireToolApproval,
-          onConversationComplete: hostedChatSessionId
-            ? async (fullHistory, turnTrace) => {
-                const isDirectChat = !shareToken && !chatboxToken;
-                await persistChatSessionToConvex({
-                  chatSessionId: hostedChatSessionId,
-                  modelId: String(modelDefinition.id),
-                  modelSource: "byok",
-                  projectId: hostedBody.projectId,
-                  workspaceId: legacyWorkspaceId,
-                  sourceType: shareToken
-                    ? "serverShare"
-                    : chatboxToken
-                    ? "chatbox"
-                    : "direct",
-                  ...(chatboxToken && surface ? { surface } : {}),
-                  shareToken,
-                  chatboxToken,
-                  ...(shareToken && selectedServerIds[0]
-                    ? { serverId: selectedServerIds[0] }
-                    : {}),
-                  authHeader: c.req.header("authorization"),
-                  sessionMessages: fullHistory,
-                  startedAt: sessionStartedAt,
-                  lastActivityAt: Date.now(),
-                  ...(isDirectChat
-                    ? {
-                        directVisibility: body.directVisibility,
-                        resumeConfig: {
-                          systemPrompt,
-                          temperature,
-                          requireToolApproval,
-                          selectedServers:
-                            Array.isArray(selectedServerNames) &&
-                            selectedServerNames.length ===
-                              selectedServerIds.length
-                              ? selectedServerNames
-                              : selectedServerIds,
-                        },
-                      }
-                    : {}),
-                  turnTrace,
-                  forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
-                });
-              }
-            : undefined,
+          onConversationComplete,
           onStreamComplete: () => manager.disconnectAllServers(),
           onStreamWriterReady: (writer) =>
             rpcCollector?.attachStreamWriter(writer),
@@ -269,6 +324,7 @@ chatV2.post("/", async (c) => {
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
         authHeader: c.req.header("authorization"),
+        clientIp: getClientIp(c),
         chatboxToken,
         projectId: hostedBody.projectId,
         mcpClientManager: manager,

@@ -66,8 +66,11 @@ import {
   writeTraceEvent,
 } from "./live-chat-trace-stream";
 import { buildResolvedModelRequestPayload } from "./model-request-payload";
+import { hashGuestSpendIp } from "./guest-spend-ip.js";
 
 const MAX_STEPS = 20;
+const GUEST_IP_HASH_HEADER = "x-mcpjam-guest-ip-hash";
+const GUEST_IP_UNKNOWN_SENTINEL = "_unknown";
 const streamChunkSchema = zodSchema(z.unknown());
 
 export interface MCPJamHandlerOptions {
@@ -109,6 +112,14 @@ export interface MCPJamHandlerOptions {
    * BYOK chat to send the providerKey alongside the model id.
    */
   extraBodyFields?: Record<string, unknown>;
+  /**
+   * Originating client IP from the inbound request. Hashed and forwarded as
+   * `x-mcpjam-guest-ip-hash` so Convex can apply the per-IP daily spend cap
+   * for guests in addition to the per-cookie cap. Null when no IP is
+   * available (dev / missing forwarded-for) — caller header is sent as the
+   * `_unknown` sentinel so all keyless callers share one bucket.
+   */
+  clientIp?: string | null;
 }
 
 interface StepContext {
@@ -135,6 +146,7 @@ interface StepContext {
   endpointPath: string;
   extraHeaders?: Record<string, string>;
   extraBodyFields?: Record<string, unknown>;
+  clientIp?: string | null;
 }
 
 type PersistedAssistantPart = TextPart | ToolCallPart | ReasoningUIPart;
@@ -954,13 +966,20 @@ async function processOneStep(
     extraBodyFields,
     chatSessionId,
     sourceType,
+    clientIp,
   } = ctx;
+  // Hash the originating IP for the per-IP daily spend cap. Hashing here
+  // (server-side) keeps the raw IP off the wire to Convex. Always send a
+  // value — `_unknown` funnels keyless callers into one shared bucket
+  // rather than letting them bypass by stripping the header.
+  const ipHash = clientIp ? await hashGuestSpendIp(clientIp) : null;
   const res = await fetch(`${process.env.CONVEX_HTTP_URL}${endpointPath}`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       ...(authHeader ? { authorization: authHeader } : {}),
       ...(extraHeaders ?? {}),
+      [GUEST_IP_HASH_HEADER]: ipHash ?? GUEST_IP_UNKNOWN_SENTINEL,
     },
     body: JSON.stringify({
       mode: "stream",
@@ -1297,6 +1316,7 @@ export async function handleMCPJamFreeChatModel(
     extraBodyFields,
     chatSessionId,
     sourceType,
+    clientIp,
   } = options;
   const resolvedEndpointPath = endpointPath ?? "/stream";
 
@@ -1371,6 +1391,7 @@ export async function handleMCPJamFreeChatModel(
             endpointPath: resolvedEndpointPath,
             extraHeaders,
             extraBodyFields,
+            clientIp,
           });
 
           steps++;
