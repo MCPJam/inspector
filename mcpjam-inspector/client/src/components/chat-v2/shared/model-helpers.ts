@@ -113,9 +113,9 @@ export function isOrgProviderAvailable(
  * Build the list of available models from an organization's provider config.
  * Used in org-backed projects where the server resolves API keys.
  *
- * Ollama is intentionally excluded: hosted mode always routes chat through
- * Convex, and Convex can't reach a user's localhost. Ollama is only surfaced
- * in local (HOSTED_MODE=false) mode, where buildAvailableModels handles it.
+ * For Ollama, static SUPPORTED_MODELS entries are absent (models are
+ * org/user-specific), but org-configured modelIds are added directly below
+ * so hosted local-runtime Ollama providers appear in the model picker.
  */
 export function buildAvailableModelsFromOrgConfig(
   orgConfig: OrgVisibleConfig | undefined,
