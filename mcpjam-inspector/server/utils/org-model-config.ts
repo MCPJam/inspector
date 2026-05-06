@@ -328,7 +328,9 @@ export function isUnsafeHostedOutboundUrl(rawUrl: string): boolean {
   if (host.includes(":")) {
     const lower = host;
     if (lower === "::" || lower === "::1") return true;
-    if (lower.startsWith("fe80:") || lower.startsWith("fe9") || lower.startsWith("fea") || lower.startsWith("feb")) {
+    // fe80::/10 = fe80:: – febf:ffff:... (top 10 bits 1111 1110 10)
+    // covers fe8x, fe9x, feax, febx — note fe80: alone misses fe81:–fe8f:
+    if (lower.startsWith("fe8") || lower.startsWith("fe9") || lower.startsWith("fea") || lower.startsWith("feb")) {
       return true; // fe80::/10 link-local
     }
     if (/^f[cd][0-9a-f]{2}:/.test(lower)) return true; // fc00::/7 unique local
