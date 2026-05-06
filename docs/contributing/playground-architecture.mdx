@@ -237,6 +237,66 @@ Used when the user selects MCPJam-provided models (identified by `isMCPJamProvid
 
 ---
 
+### 3. Local Org BYOK Execution (Org-configured providers running in the inspector)
+
+Used in hosted mode when an organization has configured a provider (currently Ollama) that is designated as a **local runtime** provider. The inspector resolves the runtime location before streaming begins, then executes the full agentic loop locally rather than forwarding to Convex.
+
+**When it applies**:
+
+- The user is in a hosted org project and selects a model from an org-configured provider.
+- The provider is on the local-runtime allowlist (`isLocalRuntimeEligible` — currently only `ollama`).
+- Convex's `/stream/org/resolve` endpoint returns `runtimeLocation: "local"` for this provider/model.
+
+**Flow**:
+
+```
+1. chat-v2.ts receives the request with an org model selection.
+
+2. Runtime resolution (server/utils/org-model-config.ts):
+   a. isLocalRuntimeEligible(providerKey) — cloud-only providers (OpenAI,
+      Anthropic, etc.) skip this step entirely to avoid latency.
+   b. resolveOrgProviderRuntime() calls POST /stream/org/resolve on Convex
+      with projectId, providerKey, model, and auth context.
+   c. Result is cached for 60 s per (project, provider, model, auth) tuple.
+   d. If runtimeLocation === "local", Convex returns the full provider config
+      including the decrypted apiKey (for this request only).
+
+3. SSRF guard (hosted mode only):
+   a. isUnsafeHostedOutboundUrl() rejects private/loopback/metadata IPs
+      synchronously.
+   b. assertSafeHostedOutboundUrl() also resolves the hostname via DNS and
+      rejects any IP that maps to a private range (DNS rebinding protection).
+
+4. handleLocalOrgChatModel() (server/utils/org-model-stream-handler.ts):
+   a. assertOrgModelAllowed() validates the model against the org's allowlist
+      (selectedModels for OpenRouter, modelIds for custom providers).
+   b. buildOrgModelFromResolvedConfig() (sdk/src/model-factory.ts) constructs
+      the AI SDK LanguageModel from the resolved provider config.
+   c. streamText() runs the full agentic loop in the inspector with the same
+      live-trace callbacks (turn_start, text_delta, tool_call, tool_result,
+      turn_finish) as the cloud path.
+   d. After the stream completes, usage is posted to /stream/org/local-usage
+      on Convex (best-effort, non-blocking) so token counts are recorded.
+   e. onConversationComplete() persists the session with modelSource: "local_byok".
+```
+
+**Key files**:
+
+- `server/routes/web/chat-v2.ts` — runtime resolution and routing
+- `server/utils/org-model-config.ts` — `resolveOrgProviderRuntime`, `isLocalRuntimeEligible`, `isUnsafeHostedOutboundUrl`
+- `server/utils/org-model-stream-handler.ts` — `handleLocalOrgChatModel`
+- `sdk/src/model-factory.ts` — `buildOrgModelFromResolvedConfig`, `assertOrgModelAllowed`, `OrgProviderConfigError`
+
+**Runtime resolution cache**:
+
+Results are cached in-process for 60 seconds keyed by `(projectId, providerKey, model, authHash)`. This avoids a round-trip to Convex on every step of a multi-step agentic loop while ensuring key rotations propagate within a minute. The cache is bounded to 1,000 entries; expired entries are evicted on each access.
+
+**Ollama in hosted mode**:
+
+Browser-based Ollama detection (`isOllamaRunning`) is suppressed in hosted mode — the browser may reach `localhost`, but Convex cannot. Org-configured Ollama providers appear in the model picker only when the org has set `baseUrl` and `modelIds` in their provider config; those model IDs are injected directly into the model list by `buildAvailableModelsFromOrgConfig`.
+
+---
+
 ## Free Chat: MCPJamBackend Integration
 
 MCPJam Inspector offers **free chat** powered by MCPJamBackend at `CONVEX_HTTP_URL`.
