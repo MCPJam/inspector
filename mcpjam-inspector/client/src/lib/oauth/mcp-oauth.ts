@@ -37,6 +37,7 @@ import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE, SANITIZE_OAUTH_TRACES } from "@/lib/config";
 import {
   importHostedOAuthTokens,
+  normalizeImportHostedOAuthTokens,
   type ImportHostedOAuthTokensRequest,
 } from "@/lib/apis/hosted-oauth-import-tokens-api";
 import { tryResolveProjectServer } from "@/lib/apis/web/context";
@@ -1974,7 +1975,8 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     // either 401 on the resolver path or fall through to the legacy
     // {serverConfig} body. localStorage stays the source for in-memory
     // refresh until Slice 2b purges it.
-    if (this.convexBinding && tokens && typeof tokens.access_token === "string") {
+    const normalizedTokens = normalizeImportHostedOAuthTokens(tokens);
+    if (this.convexBinding && normalizedTokens) {
       const stored = this.clientInformation();
       const clientId = (stored?.client_id as string | undefined) ?? this.customClientId;
       if (!clientId) {
@@ -2005,22 +2007,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
           clientId,
           ...(clientSecret ? { clientSecret } : {}),
         },
-        tokens: {
-          access_token: tokens.access_token,
-          ...(typeof tokens.refresh_token === "string"
-            ? { refresh_token: tokens.refresh_token }
-            : {}),
-          ...(typeof tokens.expires_in === "number"
-            ? { expires_in: tokens.expires_in }
-            : {}),
-          ...(typeof tokens.token_type === "string"
-            ? { token_type: tokens.token_type }
-            : {}),
-          ...(typeof tokens.scope === "string" ? { scope: tokens.scope } : {}),
-          ...(typeof tokens.id_token === "string"
-            ? { id_token: tokens.id_token }
-            : {}),
-        },
+        tokens: normalizedTokens,
       };
       await importHostedOAuthTokens(importPayload);
     }
@@ -2134,58 +2121,52 @@ export class MCPOAuthProvider implements OAuthClientProvider {
  * can't find the credential row. Cleared with the rest of the per-server
  * OAuth state in `clearOAuthData`.
  */
-function getOAuthBindingStorageKey(serverName: string): string {
-  return `mcp-oauth-binding-${serverName}`;
-}
-
-function readPersistedConvexBindingForServer(
-  serverName: string
-): MCPOAuthProviderConvexBinding | undefined {
-  if (typeof window === "undefined") return undefined;
-  try {
-    const raw = localStorage.getItem(getOAuthBindingStorageKey(serverName));
-    if (!raw) return undefined;
-    const parsed = JSON.parse(raw) as Partial<MCPOAuthProviderConvexBinding>;
-    if (
-      typeof parsed?.projectId !== "string" ||
-      typeof parsed?.serverId !== "string"
-    ) {
+const oauthBindingStorage = {
+  storageKey(serverName: string): string {
+    return `mcp-oauth-binding-${serverName}`;
+  },
+  get(serverName: string): MCPOAuthProviderConvexBinding | undefined {
+    if (typeof window === "undefined") return undefined;
+    try {
+      const raw = localStorage.getItem(this.storageKey(serverName));
+      if (!raw) return undefined;
+      const parsed = JSON.parse(raw) as Partial<MCPOAuthProviderConvexBinding>;
+      if (
+        typeof parsed?.projectId !== "string" ||
+        typeof parsed?.serverId !== "string"
+      ) {
+        return undefined;
+      }
+      if (parsed.kind !== "generic" && parsed.kind !== "registry") {
+        return undefined;
+      }
+      return parsed as MCPOAuthProviderConvexBinding;
+    } catch {
       return undefined;
     }
-    if (parsed.kind !== "generic" && parsed.kind !== "registry") {
-      return undefined;
+  },
+  set(serverName: string, binding: MCPOAuthProviderConvexBinding): void {
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.setItem(
+        this.storageKey(serverName),
+        JSON.stringify(binding)
+      );
+    } catch {
+      // best-effort — saveTokens still writes to localStorage; the only
+      // downside of a missed persist is that the post-redirect callback
+      // can't import to Convex and the user re-OAuths after expiry.
     }
-    return parsed as MCPOAuthProviderConvexBinding;
-  } catch {
-    return undefined;
-  }
-}
-
-function writePersistedConvexBindingForServer(
-  serverName: string,
-  binding: MCPOAuthProviderConvexBinding
-): void {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(
-      getOAuthBindingStorageKey(serverName),
-      JSON.stringify(binding)
-    );
-  } catch {
-    // best-effort — saveTokens still writes to localStorage; the only
-    // downside of a missed persist is that the post-redirect callback
-    // can't import to Convex and the user re-OAuths after expiry.
-  }
-}
-
-function clearPersistedConvexBindingForServer(serverName: string): void {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.removeItem(getOAuthBindingStorageKey(serverName));
-  } catch {
-    // best-effort
-  }
-}
+  },
+  clear(serverName: string): void {
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.removeItem(this.storageKey(serverName));
+    } catch {
+      // best-effort
+    }
+  },
+};
 
 /**
  * Build the Convex binding to thread into `MCPOAuthProvider` so that
@@ -2224,10 +2205,42 @@ function buildConvexBindingForServer(input: {
     };
     // Persist so the post-redirect callback can recover this mapping even
     // if apiContext.serverIdsByName hasn't repopulated yet.
-    writePersistedConvexBindingForServer(input.serverName, binding);
+    oauthBindingStorage.set(input.serverName, binding);
     return binding;
   }
-  return readPersistedConvexBindingForServer(input.serverName);
+  return oauthBindingStorage.get(input.serverName);
+}
+
+/**
+ * Constructs an `MCPOAuthProvider` with its Convex binding pre-resolved.
+ * The three OAuth flow entry points (`initiateOAuth`, `handleOAuthCallback`,
+ * `refreshOAuthTokens`) all need an identical instance shape; this factory
+ * keeps that wiring in one place so adding a constructor argument doesn't
+ * require touching three call sites.
+ */
+function createMCPOAuthProvider(input: {
+  serverName: string;
+  serverUrl: string;
+  clientId?: string;
+  clientSecret?: string;
+  oauthConfig: {
+    resourceUrl?: string;
+    registryServerId?: string;
+    useRegistryOAuthProxy?: boolean;
+  };
+}): MCPOAuthProvider {
+  return new MCPOAuthProvider(
+    input.serverName,
+    input.serverUrl,
+    input.clientId,
+    input.clientSecret,
+    buildConvexBindingForServer({
+      serverName: input.serverName,
+      oauthResourceUrl: input.oauthConfig.resourceUrl,
+      registryServerId: input.oauthConfig.registryServerId,
+      useRegistryOAuthProxy: input.oauthConfig.useRegistryOAuthProxy,
+    })
+  );
 }
 
 function readStoredClientInformation(
@@ -2300,18 +2313,17 @@ export async function initiateOAuth(
     );
 
   try {
-    const provider = new MCPOAuthProvider(
-      options.serverName,
-      options.serverUrl,
-      options.clientId,
-      options.clientSecret,
-      buildConvexBindingForServer({
-        serverName: options.serverName,
-        oauthResourceUrl: options.resourceUrl,
+    const provider = createMCPOAuthProvider({
+      serverName: options.serverName,
+      serverUrl: options.serverUrl,
+      clientId: options.clientId,
+      clientSecret: options.clientSecret,
+      oauthConfig: {
+        resourceUrl: options.resourceUrl,
         registryServerId: options.registryServerId,
         useRegistryOAuthProxy: options.useRegistryOAuthProxy,
-      })
-    );
+      },
+    });
     const fetchFn = createOAuthFetchInterceptor(
       {
         registryServerId: options.registryServerId,
@@ -2919,18 +2931,13 @@ export async function handleOAuthCallback(
       ? JSON.parse(storedClientInfo).client_secret
       : undefined;
 
-    const provider = new MCPOAuthProvider(
+    const provider = createMCPOAuthProvider({
       serverName,
       serverUrl,
-      customClientId,
-      customClientSecret,
-      buildConvexBindingForServer({
-        serverName,
-        oauthResourceUrl: oauthConfig.resourceUrl,
-        registryServerId: oauthConfig.registryServerId,
-        useRegistryOAuthProxy: oauthConfig.useRegistryOAuthProxy,
-      })
-    );
+      clientId: customClientId,
+      clientSecret: customClientSecret,
+      oauthConfig,
+    });
     const fetchFn = createOAuthFetchInterceptor(oauthConfig, undefined);
     const requestExecutor = createOAuthRequestExecutor(fetchFn, serverUrl);
     const storedSession = loadOAuthFlowSession(serverName);
@@ -3302,18 +3309,13 @@ export async function refreshOAuthTokens(
       };
     }
 
-    const provider = new MCPOAuthProvider(
+    const provider = createMCPOAuthProvider({
       serverName,
       serverUrl,
-      customClientId,
-      customClientSecret,
-      buildConvexBindingForServer({
-        serverName,
-        oauthResourceUrl: oauthConfig.resourceUrl,
-        registryServerId: oauthConfig.registryServerId,
-        useRegistryOAuthProxy: oauthConfig.useRegistryOAuthProxy,
-      })
-    );
+      clientId: customClientId,
+      clientSecret: customClientSecret,
+      oauthConfig,
+    });
     const existingTokens = provider.tokens();
 
     if (!existingTokens?.refresh_token) {
@@ -3427,7 +3429,7 @@ export function clearOAuthData(serverName: string): void {
   localStorage.removeItem(`mcp-verifier-${serverName}`);
   localStorage.removeItem(`mcp-serverUrl-${serverName}`);
   localStorage.removeItem(`mcp-oauth-config-${serverName}`);
-  clearPersistedConvexBindingForServer(serverName);
+  oauthBindingStorage.clear(serverName);
   clearStoredDiscoveryState(serverName);
   clearOAuthFlowSession(serverName);
   clearOAuthTrace(serverName);

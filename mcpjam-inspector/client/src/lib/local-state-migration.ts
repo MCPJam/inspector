@@ -19,7 +19,10 @@
  * Runs once per install. Gated by `mcp-inspector-migrated-to-convex` flag.
  */
 import { serializeServersForPersistence } from "@/lib/project-serialization";
-import type { ImportHostedOAuthTokensRequest } from "@/lib/apis/hosted-oauth-import-tokens-api";
+import {
+  normalizeImportHostedOAuthTokens,
+  type ImportHostedOAuthTokensRequest,
+} from "@/lib/apis/hosted-oauth-import-tokens-api";
 import {
   createLocalDefaultProject,
   type Project,
@@ -462,13 +465,14 @@ function readLegacyOAuthForServer(name: string): {
     return null;
   }
   if (!tokensRaw) return null;
-  let parsedTokens: any;
+  let parsedTokens: unknown;
   try {
     parsedTokens = JSON.parse(tokensRaw);
   } catch {
     return null;
   }
-  if (!parsedTokens || typeof parsedTokens.access_token !== "string") {
+  const normalizedTokens = normalizeImportHostedOAuthTokens(parsedTokens);
+  if (!normalizedTokens) {
     return null;
   }
 
@@ -518,24 +522,7 @@ function readLegacyOAuthForServer(name: string): {
   }
 
   return {
-    tokens: {
-      access_token: parsedTokens.access_token,
-      ...(typeof parsedTokens.refresh_token === "string"
-        ? { refresh_token: parsedTokens.refresh_token }
-        : {}),
-      ...(typeof parsedTokens.expires_in === "number"
-        ? { expires_in: parsedTokens.expires_in }
-        : {}),
-      ...(typeof parsedTokens.token_type === "string"
-        ? { token_type: parsedTokens.token_type }
-        : {}),
-      ...(typeof parsedTokens.scope === "string"
-        ? { scope: parsedTokens.scope }
-        : {}),
-      ...(typeof parsedTokens.id_token === "string"
-        ? { id_token: parsedTokens.id_token }
-        : {}),
-    },
+    tokens: normalizedTokens,
     clientInformation: {
       clientId,
       ...(clientSecret ? { clientSecret } : {}),
