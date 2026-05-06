@@ -393,7 +393,9 @@ async function assertSafeHostedOutboundUrl(rawUrl: string): Promise<void> {
     );
   }
   for (const ip of resolvedIps) {
-    if (isUnsafeHostedOutboundUrl(`http://${ip}`)) {
+    // IPv6 addresses need brackets in URLs: http://[::1] not http://::1
+    const testUrl = ip.includes(":") ? `http://[${ip}]` : `http://${ip}`;
+    if (isUnsafeHostedOutboundUrl(testUrl)) {
       throw new Error(
         `Provider base URL is blocked: hostname "${host}" resolves to a private or internal address`,
       );
