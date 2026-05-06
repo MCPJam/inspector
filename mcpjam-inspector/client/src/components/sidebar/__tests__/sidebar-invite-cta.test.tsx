@@ -10,6 +10,7 @@ const mockFeatureFlags: Record<string, boolean | undefined> = {};
 
 vi.mock("convex/react", () => ({
   useConvexAuth: (...args: unknown[]) => mockUseConvexAuth(...args),
+  useQuery: () => undefined,
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
