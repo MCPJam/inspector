@@ -18,6 +18,7 @@ import {
   resetTokenCache,
   shouldRetryHostedAuth401,
 } from "@/lib/apis/web/context";
+import { getConvexSiteUrl } from "@/lib/convex-site-url";
 import { forceRefreshGuestSession } from "@/lib/guest-session";
 import posthog from "posthog-js";
 
@@ -252,19 +253,64 @@ function shouldAttachSessionHeaders(input: RequestInfo | URL): boolean {
 // here — `/api/session-token`, `/api/health`, the local-only MCP read paths
 // — does NOT participate in Convex auth, so we don't want to mint or refresh
 // a guest session for those calls.
+//
+// `/api/web/*` paths are same-origin (proxied by the inspector's own Hono
+// server). The `/web/oauth/` paths cover absolute Convex HTTP-action URLs
+// (`https://*.convex.site/web/oauth/...`) that the OAuth flow hits directly
+// — gated by the same-origin/Convex-host check below so the bearer never
+// crosses to a foreign origin.
 const HOSTED_AUTH_PATH_PREFIXES = [
   "/api/web/",
   // Local resolver path that calls Convex /web/authorize-batch-local.
   "/api/mcp/connect",
   "/api/mcp/servers/reconnect",
+  // Convex HTTP actions called via absolute URL (OAuth completion, etc.).
+  "/web/oauth/",
 ];
+
+/**
+ * Returns true when `parsed` is safe to receive a hosted Authorization
+ * header — same origin as the app, a loopback host, or the configured
+ * Convex `*.convex.site` hostname. Without this, an absolute foreign URL
+ * matching one of the path prefixes would receive the bearer (credential
+ * exfiltration risk).
+ */
+function isHostedAuthAllowedOrigin(parsed: URL): boolean {
+  if (
+    typeof window !== "undefined" &&
+    parsed.origin === window.location.origin
+  ) {
+    return true;
+  }
+  if (isLoopbackHostname(parsed.hostname)) return true;
+  const convexSite = getConvexSiteUrl();
+  if (convexSite) {
+    try {
+      const convexHost = new URL(convexSite).hostname;
+      if (parsed.hostname === convexHost) return true;
+    } catch {
+      // Malformed configured URL — fall through to deny.
+    }
+  }
+  return false;
+}
 
 function shouldAttachHostedAuthorization(input: RequestInfo | URL): boolean {
   const parsed = resolveRequestUrl(input);
-  const pathname =
-    parsed?.pathname ??
-    (typeof input === "string" && input.startsWith("/") ? input.split("?")[0] : null);
-  if (!pathname) return false;
+  // Relative paths starting with "/" resolve same-origin via resolveRequestUrl
+  // (which uses window.location.origin). For odd inputs that don't parse,
+  // fall back to a literal pathname match — but only for relative paths,
+  // since an unparseable absolute URL shouldn't get credentials.
+  if (parsed) {
+    if (!isHostedAuthAllowedOrigin(parsed)) return false;
+    return HOSTED_AUTH_PATH_PREFIXES.some((prefix) =>
+      prefix.endsWith("/")
+        ? parsed.pathname.startsWith(prefix)
+        : parsed.pathname === prefix
+    );
+  }
+  if (typeof input !== "string" || !input.startsWith("/")) return false;
+  const pathname = input.split("?")[0];
   return HOSTED_AUTH_PATH_PREFIXES.some((prefix) =>
     prefix.endsWith("/") ? pathname.startsWith(prefix) : pathname === prefix
   );

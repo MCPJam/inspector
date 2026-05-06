@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import "../../types/hono"; // Type extensions
 import { HOSTED_MODE } from "../../config";
+import { logger } from "../../utils/logger";
 import {
   parseConnectionDefaults,
   readLocalApiBearer,
@@ -102,17 +103,33 @@ connect.post("/", async (c) => {
     }
 
     try {
-      await mcpClientManager.disconnectServer(serverDisplayName);
+      // First connect can have nothing to disconnect; treat that as non-fatal
+      // so the path doesn't 500 before connectToServer runs. Mirrors the
+      // /servers/reconnect handler's tolerance.
+      try {
+        await mcpClientManager.disconnectServer(serverDisplayName);
+      } catch (disconnectError) {
+        logger.debug("Failed to disconnect MCP server before connect", {
+          serverId: serverDisplayName,
+          error:
+            disconnectError instanceof Error
+              ? disconnectError.message
+              : String(disconnectError),
+        });
+      }
       await mcpClientManager.connectToServer(serverDisplayName, resolved.config);
       return c.json({ success: true, status: "connected" });
     } catch (error) {
       try {
         await mcpClientManager.removeServer(serverDisplayName);
       } catch (cleanupError) {
-        console.debug(
-          `Failed to remove MCP server ${serverDisplayName} after connection failure`,
-          cleanupError,
-        );
+        logger.debug("Failed to remove MCP server after connection failure", {
+          serverId: serverDisplayName,
+          error:
+            cleanupError instanceof Error
+              ? cleanupError.message
+              : String(cleanupError),
+        });
       }
       return c.json(
         {
@@ -178,17 +195,30 @@ connect.post("/", async (c) => {
   }
 
   try {
-    await mcpClientManager.disconnectServer(serverId);
+    try {
+      await mcpClientManager.disconnectServer(serverId);
+    } catch (disconnectError) {
+      logger.debug("Failed to disconnect MCP server before connect", {
+        serverId,
+        error:
+          disconnectError instanceof Error
+            ? disconnectError.message
+            : String(disconnectError),
+      });
+    }
     await mcpClientManager.connectToServer(serverId, serverConfig);
     return c.json({ success: true, status: "connected" });
   } catch (error) {
     try {
       await mcpClientManager.removeServer(serverId);
     } catch (cleanupError) {
-      console.debug(
-        `Failed to remove MCP server ${serverId} after connection failure`,
-        cleanupError,
-      );
+      logger.debug("Failed to remove MCP server after connection failure", {
+        serverId,
+        error:
+          cleanupError instanceof Error
+            ? cleanupError.message
+            : String(cleanupError),
+      });
     }
     return c.json(
       {

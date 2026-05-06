@@ -151,6 +151,31 @@ function buildResolverBody(
   };
 }
 
+/**
+ * Local OAuth tokens currently live in localStorage (the local OAuth provider
+ * has not been moved to Convex), but the resolver path expects Convex to
+ * supply `oauthAccessToken` and rejects `useOAuth` servers without one. To
+ * avoid breaking synced local OAuth servers, fall back to the legacy
+ * `{serverConfig, serverId}` body whenever the runtime config carries a local
+ * `Authorization: Bearer …` header. The legacy path forwards the header
+ * straight through to the spawned client.
+ */
+function hasLocalOAuthBearer(serverConfig: MCPServerConfig): boolean {
+  const headers = (serverConfig as { requestInit?: { headers?: unknown } })
+    ?.requestInit?.headers;
+  if (!headers || typeof headers !== "object") return false;
+  for (const [key, value] of Object.entries(headers as Record<string, unknown>)) {
+    if (
+      key.toLowerCase() === "authorization" &&
+      typeof value === "string" &&
+      value.toLowerCase().startsWith("bearer ")
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export async function testConnection(
   serverConfig: MCPServerConfig,
   serverId: string,
@@ -165,13 +190,17 @@ export async function testConnection(
   }
 
   // When projectId is provided, the server resolves config + tokens from
-  // Convex via /web/authorize-batch-local. Without it, fall back to the
-  // legacy {serverConfig, serverId} body during the Phase 5–7 migration.
-  const body: Record<string, unknown> = options?.projectId
+  // Convex via /web/authorize-batch-local. Without it (or when the runtime
+  // serverConfig carries a local OAuth bearer that Convex doesn't yet hold),
+  // fall back to the legacy {serverConfig, serverId} body so the local token
+  // travels with the request.
+  const useResolver =
+    !!options?.projectId && !hasLocalOAuthBearer(serverConfig);
+  const body: Record<string, unknown> = useResolver
     ? buildResolverBody(serverId, {
-        projectId: options.projectId,
-        serverName: options.serverName,
-        connectionDefaults: options.connectionDefaults,
+        projectId: options!.projectId!,
+        serverName: options?.serverName,
+        connectionDefaults: options?.connectionDefaults,
       })
     : { serverConfig, serverId };
 
@@ -224,11 +253,13 @@ export async function reconnectServer(
     return safeValidateHostedServer(serverId, serverConfig);
   }
 
-  const body: Record<string, unknown> = options?.projectId
+  const useResolver =
+    !!options?.projectId && !hasLocalOAuthBearer(serverConfig);
+  const body: Record<string, unknown> = useResolver
     ? buildResolverBody(serverId, {
-        projectId: options.projectId,
-        serverName: options.serverName,
-        connectionDefaults: options.connectionDefaults,
+        projectId: options!.projectId!,
+        serverName: options?.serverName,
+        connectionDefaults: options?.connectionDefaults,
       })
     : { serverId, serverConfig };
 

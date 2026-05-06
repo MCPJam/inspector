@@ -17,7 +17,7 @@
  *
  * Runs once per install. Gated by `mcp-inspector-migrated-to-convex` flag.
  */
-import { serializeServersForSharing } from "@/lib/project-serialization";
+import { serializeServersForPersistence } from "@/lib/project-serialization";
 import {
   createLocalDefaultProject,
   type Project,
@@ -73,6 +73,19 @@ interface LegacyMigrationPayload {
   envByName: Record<string, Record<string, string>>;
 }
 
+/**
+ * Distinguishes "no legacy data to migrate" from "legacy data exists but we
+ * couldn't parse it." The migration runner needs to mark itself complete in
+ * the first case (so we don't keep re-reading on every boot) but must NOT
+ * mark complete in the second case (so a fix to the parsing path or a manual
+ * recovery can still pick the data up later).
+ */
+export type LegacyReadResult =
+  | { kind: "empty" }
+  | { kind: "unreadable"; reason: string }
+  | { kind: "payload"; payload: LegacyMigrationPayload };
+
+
 function reviveServer(name: string, raw: any): ServerWithName | null {
   if (!raw || typeof raw !== "object") return null;
   const cfg: any = raw.config;
@@ -97,14 +110,19 @@ function reviveServer(name: string, raw: any): ServerWithName | null {
   } as ServerWithName;
 }
 
-function readProjectsFromLegacyStorage(): Project[] {
+/**
+ * Returns the parsed projects, or `null` when the legacy keys exist but
+ * couldn't be parsed (so the caller can surface "unreadable" instead of
+ * silently treating it as empty), or `[]` when neither key is present at all.
+ */
+function readProjectsFromLegacyStorage(): Project[] | null {
   let raw: string | null;
   try {
     raw =
       localStorage.getItem(LEGACY_PROJECTS_KEY) ??
       localStorage.getItem(LEGACY_WORKSPACES_KEY);
   } catch {
-    return [];
+    return null;
   }
   if (!raw) return [];
 
@@ -112,11 +130,11 @@ function readProjectsFromLegacyStorage(): Project[] {
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return [];
+    return null;
   }
 
   const rawProjects = parsed?.projects ?? parsed?.workspaces;
-  if (!rawProjects || typeof rawProjects !== "object") return [];
+  if (!rawProjects || typeof rawProjects !== "object") return null;
 
   const projects: Project[] = [];
   for (const [id, projectRaw] of Object.entries(rawProjects)) {
@@ -154,12 +172,20 @@ function readProjectsFromLegacyStorage(): Project[] {
 // Pre-projects format: `mcp-inspector-state` stored servers at the top level.
 // Mirrors the in-process lift in `state/storage.ts` so users on this format
 // don't end up with the migration-complete flag set + nothing in Convex.
-function readProjectFromLegacyStateOnly(): Project | null {
+//
+// Returns:
+//  - `Project` when STATE was readable and contained at least one server.
+//  - `null` when the STATE key wasn't present at all OR contained no servers.
+//  - the literal string "unreadable" when the key was present but unparseable.
+function readProjectFromLegacyStateOnly():
+  | Project
+  | null
+  | "unreadable" {
   let raw: string | null;
   try {
     raw = localStorage.getItem(LEGACY_STATE_KEY);
   } catch {
-    return null;
+    return "unreadable";
   }
   if (!raw) return null;
 
@@ -167,7 +193,7 @@ function readProjectFromLegacyStateOnly(): Project | null {
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return null;
+    return "unreadable";
   }
 
   const rawServers = parsed?.servers;
@@ -183,14 +209,29 @@ function readProjectFromLegacyStateOnly(): Project | null {
   return createLocalDefaultProject({ servers });
 }
 
-export function readLegacyMigrationPayload(): LegacyMigrationPayload | null {
-  if (typeof window === "undefined") return null;
+/**
+ * Tri-state: distinguishes "no legacy data to migrate" (callers should mark
+ * complete so we stop retrying) from "legacy data exists but we can't read
+ * it" (callers must NOT mark complete — a parser fix or recovery should
+ * still be able to pick the data up later).
+ */
+export function readLegacyMigrationPayloadResult(): LegacyReadResult {
+  if (typeof window === "undefined") return { kind: "empty" };
 
-  let projects = readProjectsFromLegacyStorage();
+  const projectsRead = readProjectsFromLegacyStorage();
+  let projects: Project[] = projectsRead ?? [];
+  let unreadable: string | null = null;
+
+  if (projectsRead === null) {
+    unreadable = "legacy projects/workspaces store is unreadable";
+  }
+
   if (projects.length === 0) {
-    const stateProject = readProjectFromLegacyStateOnly();
-    if (stateProject) {
-      projects = [stateProject];
+    const stateResult = readProjectFromLegacyStateOnly();
+    if (stateResult === "unreadable") {
+      unreadable = unreadable ?? "legacy state store is unreadable";
+    } else if (stateResult) {
+      projects = [stateResult];
     }
   }
 
@@ -217,8 +258,27 @@ export function readLegacyMigrationPayload(): LegacyMigrationPayload | null {
     // localStorage blocked
   }
 
-  if (projects.length === 0) return null;
-  return { projects, envByName };
+  if (projects.length > 0) {
+    return { kind: "payload", payload: { projects, envByName } };
+  }
+  if (unreadable) {
+    return { kind: "unreadable", reason: unreadable };
+  }
+  // No projects, no STATE servers, no parse failures — and we already returned
+  // early on no-window. If a legacy key file was present but contained an
+  // empty `projects: {}` map, treat it as truly empty so we can mark complete.
+  return { kind: "empty" };
+}
+
+/**
+ * Convenience wrapper preserved for tests and any caller that doesn't care
+ * about the absent-vs-unreadable distinction. New callers should prefer
+ * `readLegacyMigrationPayloadResult` so they can decide whether to mark
+ * the migration complete.
+ */
+export function readLegacyMigrationPayload(): LegacyMigrationPayload | null {
+  const result = readLegacyMigrationPayloadResult();
+  return result.kind === "payload" ? result.payload : null;
 }
 
 export function clearLegacyKeys(): void {
@@ -344,12 +404,29 @@ export interface MigrationResult {
 export async function runLocalStateMigration(
   deps: MigrationDeps
 ): Promise<MigrationResult> {
-  const payload = readLegacyMigrationPayload();
-  if (!payload) {
+  const result = readLegacyMigrationPayloadResult();
+  if (result.kind === "empty") {
     clearMigrationProgress();
     markMigrationComplete();
     return { ok: true, projectsMigrated: 0, errors: [] };
   }
+  if (result.kind === "unreadable") {
+    // Legacy data exists but we can't parse it. Don't mark complete — a
+    // future build with a fixed parser (or a manual recovery) should still
+    // be able to migrate this user. Surface as a one-element error list so
+    // the runner reports `ok: false` and the caller logs/retries.
+    deps.logger?.warn("Legacy migration payload unreadable", {
+      reason: result.reason,
+    });
+    return {
+      ok: false,
+      projectsMigrated: 0,
+      errors: [
+        { projectName: "(unreadable legacy state)", error: result.reason },
+      ],
+    };
+  }
+  const payload = result.payload;
 
   const errors: MigrationResult["errors"] = [];
   let projectsMigrated = 0;
@@ -383,7 +460,7 @@ export async function runLocalStateMigration(
       }
     }
 
-    const serializedServers = serializeServersForSharing(projectServers);
+    const serializedServers = serializeServersForPersistence(projectServers);
     try {
       await deps.createProject({
         name: project.name,
@@ -392,6 +469,7 @@ export async function runLocalStateMigration(
         clientConfig: project.clientConfig,
         servers: serializedServers,
         organizationId: deps.organizationId,
+        visibility: project.visibility,
       });
       recordMigratedProjectId(project.id);
       projectsMigrated++;

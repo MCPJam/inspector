@@ -807,6 +807,7 @@ export default function App() {
   // hosted mode and after the first successful run; safe to keep in the tree.
   useLocalStateMigration({
     isAuthenticated,
+    isUserBootstrapping: isEnsuringUser,
     organizationId: activeOrganizationId,
   });
   const oauthDebuggerServersRef = useRef(appState.servers);

@@ -119,10 +119,10 @@ servers.delete("/:serverId", async (c) => {
       }
     } catch (error) {
       // Ignore disconnect errors for already disconnected servers
-      console.debug(
-        `Failed to disconnect MCP server ${serverId} during removal`,
-        error,
-      );
+      logger.debug("Failed to disconnect MCP server during removal", {
+        serverId,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
 
     mcpClientManager.removeServer(serverId);
@@ -308,10 +308,13 @@ servers.post("/reconnect", async (c) => {
     try {
       await mcpClientManager.disconnectServer(managerKey);
     } catch (disconnectError) {
-      console.debug(
-        `Failed to disconnect MCP server ${managerKey} before reconnect`,
-        disconnectError,
-      );
+      logger.debug("Failed to disconnect MCP server before reconnect", {
+        serverId: managerKey,
+        error:
+          disconnectError instanceof Error
+            ? disconnectError.message
+            : String(disconnectError),
+      });
     }
     await mcpClientManager.connectToServer(
       managerKey,

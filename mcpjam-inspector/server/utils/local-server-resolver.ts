@@ -135,6 +135,17 @@ export async function authorizeBatchLocal(
     );
   }
 
+  // Cap the call so a hung Convex instance can't tie up the inspector worker
+  // for the inbound /api/mcp/connect or /api/mcp/servers/reconnect request.
+  // 10s is well above the 99p of the underlying authorize* query and below
+  // most browser/proxy idle timeouts.
+  const AUTHORIZE_BATCH_LOCAL_TIMEOUT_MS = 10_000;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    AUTHORIZE_BATCH_LOCAL_TIMEOUT_MS,
+  );
+
   let response: Response;
   try {
     response = await fetch(`${convexUrl}/web/authorize-batch-local`, {
@@ -144,13 +155,21 @@ export async function authorizeBatchLocal(
         Authorization: `Bearer ${bearerToken}`,
       },
       body: JSON.stringify({ projectId, serverIds }),
+      signal: controller.signal,
     });
   } catch (error) {
+    const isAbort =
+      error instanceof Error &&
+      (error.name === "AbortError" || (error as { code?: string }).code === "ABORT_ERR");
     throw new WebRouteError(
-      502,
+      isAbort ? 504 : 502,
       ErrorCode.SERVER_UNREACHABLE,
-      `Failed to reach authorization service: ${parseErrorMessage(error)}`
+      isAbort
+        ? `Authorization service timed out after ${AUTHORIZE_BATCH_LOCAL_TIMEOUT_MS}ms`
+        : `Failed to reach authorization service: ${parseErrorMessage(error)}`
     );
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   let body: any = null;
