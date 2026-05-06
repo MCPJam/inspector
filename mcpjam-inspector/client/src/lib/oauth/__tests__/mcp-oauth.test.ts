@@ -1836,6 +1836,18 @@ describe("mcp-oauth", () => {
           token_type: "Bearer",
         },
       });
+      // Parity: saveTokens' `tokens` block must match the exported normalizer's
+      // output for the same input. Locks the saveTokens ↔ migration ↔
+      // normalizer three-way parity together with the matching assertion in
+      // local-state-migration.test.ts.
+      const { normalizeImportHostedOAuthTokens } = importApi;
+      expect(importSpy.mock.calls[0][0].tokens).toEqual(
+        normalizeImportHostedOAuthTokens({
+          access_token: "freshly-issued",
+          refresh_token: "refresh-1",
+          token_type: "Bearer",
+        }),
+      );
     });
 
     it("falls back to localStorage-only when no binding is provided", async () => {

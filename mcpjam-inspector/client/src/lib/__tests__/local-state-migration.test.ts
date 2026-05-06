@@ -6,6 +6,7 @@ import {
   readLegacyMigrationPayload,
   runLocalStateMigration,
 } from "../local-state-migration";
+import { normalizeImportHostedOAuthTokens } from "@/lib/apis/hosted-oauth-import-tokens-api";
 
 function seedLegacyProjects() {
   localStorage.setItem(
@@ -470,6 +471,16 @@ describe("local-state-migration", () => {
           token_type: "bearer",
         },
       });
+      // Parity: the migration's `tokens` block must match the exported
+      // normalizer's output for the same input. If saveTokens (live OAuth
+      // completion) and the migration ever drift, this fails.
+      expect(importPayload.tokens).toEqual(
+        normalizeImportHostedOAuthTokens({
+          access_token: "legacy-access",
+          refresh_token: "legacy-refresh",
+          token_type: "bearer",
+        }),
+      );
       // Legacy OAuth keys cleared on success.
       expect(localStorage.getItem("mcp-tokens-http_one")).toBeNull();
       expect(localStorage.getItem("mcp-client-http_one")).toBeNull();
