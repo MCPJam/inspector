@@ -155,6 +155,22 @@ export function buildAvailableModelsFromOrgConfig(
     models.push(...openRouterModels);
   }
 
+  // Ollama: include configured modelIds so org-managed Ollama providers appear
+  // in the model picker (SUPPORTED_MODELS has no static ollama entries since
+  // models are dynamic and org-specific).
+  for (const p of orgConfig.providers) {
+    if (p.providerKey !== "ollama") continue;
+    if (!p.enabled || !p.baseUrl || !p.modelIds || p.modelIds.length === 0)
+      continue;
+    for (const modelId of p.modelIds) {
+      models.push({
+        id: modelId,
+        name: modelId,
+        provider: "ollama" as const,
+      });
+    }
+  }
+
   // Custom providers (providerKey starts with "custom:")
   for (const p of orgConfig.providers) {
     if (!p.providerKey.startsWith("custom:")) continue;

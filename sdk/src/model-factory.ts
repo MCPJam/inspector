@@ -416,35 +416,40 @@ export function buildOrgModelFromResolvedConfig(
   modelId: string
 ): LanguageModel {
   const { providerKey } = config;
+  // Strip the "providerKey/" prefix that UI model IDs include for built-in
+  // providers (e.g. "openai/gpt-5-mini" → "gpt-5-mini" for the OpenAI SDK).
+  const builtinPfx = `${providerKey}/`;
+  const m =
+    !providerKey.startsWith("custom:") && modelId.startsWith(builtinPfx)
+      ? modelId.slice(builtinPfx.length)
+      : modelId;
 
   if (providerKey === "openai") {
-    return createOpenAI({ apiKey: requireOrgSecret(config, "OpenAI") })(
-      modelId
-    );
+    return createOpenAI({ apiKey: requireOrgSecret(config, "OpenAI") })(m);
   }
   if (providerKey === "anthropic") {
     return createAnthropic({
       apiKey: requireOrgSecret(config, "Anthropic"),
-    })(modelId) as unknown as LanguageModel;
+    })(m) as unknown as LanguageModel;
   }
   if (providerKey === "google") {
     return createGoogleGenerativeAI({
       apiKey: requireOrgSecret(config, "Google"),
-    })(modelId) as unknown as LanguageModel;
+    })(m) as unknown as LanguageModel;
   }
   if (providerKey === "deepseek") {
     return createDeepSeek({
       apiKey: requireOrgSecret(config, "DeepSeek"),
-    })(modelId) as unknown as LanguageModel;
+    })(m) as unknown as LanguageModel;
   }
   if (providerKey === "mistral") {
     return createMistral({
       apiKey: requireOrgSecret(config, "Mistral"),
-    })(modelId) as unknown as LanguageModel;
+    })(m) as unknown as LanguageModel;
   }
   if (providerKey === "xai") {
     return createXai({ apiKey: requireOrgSecret(config, "xAI") })(
-      modelId
+      m
     ) as unknown as LanguageModel;
   }
   if (providerKey === "azure") {
@@ -457,7 +462,7 @@ export function buildOrgModelFromResolvedConfig(
     return createAzure({
       apiKey,
       ...(resourceName ? { resourceName } : { baseURL: baseUrl }),
-    })(modelId) as unknown as LanguageModel;
+    })(m) as unknown as LanguageModel;
   }
   if (providerKey === "openrouter") {
     return createOpenRouter({
@@ -466,7 +471,7 @@ export function buildOrgModelFromResolvedConfig(
         "HTTP-Referer": "https://www.mcpjam.com/",
         "X-Title": "MCPJam",
       },
-    })(modelId) as unknown as LanguageModel;
+    })(m) as unknown as LanguageModel;
   }
   if (providerKey === "ollama") {
     const raw = requireOrgBaseUrl(config, "Ollama");
@@ -475,7 +480,7 @@ export function buildOrgModelFromResolvedConfig(
       : `${raw.replace(/\/+$/, "")}/api`;
     return createOllama({
       baseURL: normalized,
-    })(modelId) as unknown as LanguageModel;
+    })(m) as unknown as LanguageModel;
   }
   if (providerKey.startsWith("custom:")) {
     const baseUrl = requireOrgBaseUrl(config, providerKey);

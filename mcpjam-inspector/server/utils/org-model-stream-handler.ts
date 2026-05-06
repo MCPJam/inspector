@@ -239,10 +239,29 @@ export function handleLocalOrgChatModel(
     return createUIMessageStreamResponse({ stream });
   }
 
-  // Validate and build the AI SDK model before opening the stream so that
-  // OrgProviderConfigError / model_not_allowed is thrown synchronously.
-  assertOrgModelAllowed(provider, modelId);
-  const llmModel = buildOrgModelFromResolvedConfig(provider, modelId);
+  // Validate and build the AI SDK model before opening the stream.
+  // If config/allowlist checks fail, return a formatted error stream rather
+  // than letting the exception propagate as a 500.
+  let llmModel: ReturnType<typeof buildOrgModelFromResolvedConfig>;
+  try {
+    assertOrgModelAllowed(provider, modelId);
+    llmModel = buildOrgModelFromResolvedConfig(provider, modelId);
+  } catch (configErr) {
+    const stream = createUIMessageStream({
+      onError: (error) => formatLocalStreamError(error),
+      onFinish: async () => {
+        await onStreamComplete?.();
+      },
+      execute: async ({ writer }) => {
+        onStreamWriterReady?.({ write: (chunk) => writer.write(chunk) });
+        writer.write({
+          type: "error",
+          errorText: formatLocalStreamError(configErr),
+        });
+      },
+    });
+    return createUIMessageStreamResponse({ stream });
+  }
 
   const traceHistory = [...messages];
   const initialMessageHistoryLength = messages.length;
