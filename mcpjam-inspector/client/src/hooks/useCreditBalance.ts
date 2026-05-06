@@ -73,12 +73,12 @@ export function useCreditBalance({
     isLoading: isConvexAuthLoading,
   } = useConvexAuth();
   const { user, isLoading: isWorkOsLoading } = useAuth();
-  const isAuthenticated = !!user;
+  const hasWorkOsUser = !!user;
   const isAuthLoading = isConvexAuthLoading || isWorkOsLoading;
   const shouldFetchBalance =
     !isAuthLoading &&
     hasConvexIdentity &&
-    (isAuthenticated || includeGuests);
+    (hasWorkOsUser || includeGuests);
   const raw = useQuery(
     "billing:getCreditBalance" as any,
     shouldFetchBalance ? ({} as any) : "skip"
@@ -91,5 +91,10 @@ export function useCreditBalance({
   // Treat the bootstrap window as loading so the card shows a skeleton
   // instead of flashing an empty zero state before the query resolves.
   const isLoading = isAuthLoading || (shouldFetchBalance && raw === undefined);
-  return { balance, isLoading, isAuthenticated };
+  return {
+    balance,
+    isLoading,
+    isAuthenticated: hasConvexIdentity,
+    hasWorkOsUser,
+  };
 }

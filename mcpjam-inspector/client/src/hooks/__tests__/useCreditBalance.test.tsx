@@ -53,7 +53,8 @@ describe("useCreditBalance", () => {
     );
     expect(result.current.balance).toBeUndefined();
     expect(result.current.isLoading).toBe(false);
-    expect(result.current.isAuthenticated).toBe(false);
+    expect(result.current.isAuthenticated).toBe(true);
+    expect(result.current.hasWorkOsUser).toBe(false);
   });
 
   it("fetches guest balances when includeGuests is enabled", () => {
@@ -71,7 +72,8 @@ describe("useCreditBalance", () => {
       freeDailyResetAt: 1_777_777_777_000,
     });
     expect(result.current.isLoading).toBe(false);
-    expect(result.current.isAuthenticated).toBe(false);
+    expect(result.current.isAuthenticated).toBe(true);
+    expect(result.current.hasWorkOsUser).toBe(false);
   });
 
   it("fetches signed-in balances without includeGuests", () => {
@@ -83,5 +85,6 @@ describe("useCreditBalance", () => {
     expect(mocks.useQuery).toHaveBeenCalledWith("billing:getCreditBalance", {});
     expect(result.current.balance?.freeDailyPercentUsed).toBe(65);
     expect(result.current.isAuthenticated).toBe(true);
+    expect(result.current.hasWorkOsUser).toBe(true);
   });
 });
