@@ -274,9 +274,6 @@ export function OrganizationModelsSection({
           ) : (
             <>
               {PROVIDER_CATALOG.map((entry) => {
-                // Ollama can't run in hosted mode: hosted chat routes
-                // through Convex, which can't reach a user's localhost.
-                if (HOSTED_MODE && entry.key === "ollama") return null;
                 const provider = providerMap.get(entry.key);
                 const configured = !!provider?.hasSecret || !!provider?.baseUrl;
                 return (

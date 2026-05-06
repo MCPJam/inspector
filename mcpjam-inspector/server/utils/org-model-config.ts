@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import dns from "node:dns/promises";
 import type { ModelDefinition } from "@/shared/types";
 import type { OrgProviderResolvedConfig } from "@mcpjam/sdk/model-factory";
 import type { BaseUrls, CustomProviderConfig } from "./chat-helpers";
@@ -343,7 +344,9 @@ export function isUnsafeHostedOutboundUrl(rawUrl: string): boolean {
   if (host.includes(":")) {
     const lower = host;
     if (lower === "::" || lower === "::1") return true;
-    if (lower.startsWith("fe80:") || lower.startsWith("fe9") || lower.startsWith("fea") || lower.startsWith("feb")) {
+    // fe80::/10 = fe80:: – febf:ffff:... (top 10 bits 1111 1110 10)
+    // covers fe8x, fe9x, feax, febx — note fe80: alone misses fe81:–fe8f:
+    if (lower.startsWith("fe8") || lower.startsWith("fe9") || lower.startsWith("fea") || lower.startsWith("feb")) {
       return true; // fe80::/10 link-local
     }
     if (/^f[cd][0-9a-f]{2}:/.test(lower)) return true; // fc00::/7 unique local
@@ -374,6 +377,48 @@ export function isUnsafeHostedOutboundUrl(rawUrl: string): boolean {
   }
 
   return false;
+}
+
+/**
+ * Async SSRF guard that also checks DNS resolution.
+ *
+ * `isUnsafeHostedOutboundUrl` only inspects the literal hostname; a public
+ * hostname that resolves to a private/loopback/metadata IP bypasses it.
+ * This function adds a DNS preflight so that any resolved IP is also checked.
+ *
+ * For IP-literal hosts the sync check is sufficient; DNS lookup is only
+ * performed for hostnames, accepting a small TOCTOU window that would require
+ * an attacker to control both the DNS record and its TTL.
+ */
+async function assertSafeHostedOutboundUrl(rawUrl: string): Promise<void> {
+  if (isUnsafeHostedOutboundUrl(rawUrl)) {
+    throw new Error(
+      `Provider base URL is blocked: points to a private or internal address`,
+    );
+  }
+  // For non-IP-literal hostnames, also validate the DNS-resolved IPs.
+  const parsed = new URL(rawUrl);
+  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  const isIpLiteral = /^[\d.]+$/.test(host) || /^[0-9a-f:]+$/i.test(host);
+  if (isIpLiteral) return;
+
+  const resolvedIps: string[] = [];
+  try { resolvedIps.push(...await dns.resolve4(host)); } catch { /* NXDOMAIN etc */ }
+  try { resolvedIps.push(...await dns.resolve6(host)); } catch {}
+  if (resolvedIps.length === 0) {
+    throw new Error(
+      `Provider base URL is blocked: hostname "${host}" could not be resolved`,
+    );
+  }
+  for (const ip of resolvedIps) {
+    // IPv6 addresses need brackets in URLs: http://[::1] not http://::1
+    const testUrl = ip.includes(":") ? `http://[${ip}]` : `http://${ip}`;
+    if (isUnsafeHostedOutboundUrl(testUrl)) {
+      throw new Error(
+        `Provider base URL is blocked: hostname "${host}" resolves to a private or internal address`,
+      );
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -516,18 +561,16 @@ export async function resolveOrgProviderRuntime(
       if (!rawProvider || typeof rawProvider.providerKey !== "string" || rawProvider.providerKey.length === 0) {
         throw new Error("Org runtime resolve returned invalid local provider config");
       }
-      // SSRF guard: in hosted mode reject baseUrls that resolve to private,
-      // loopback, link-local, or cloud-metadata addresses. In local-inspector
-      // mode (CLI/desktop) those are legitimate (e.g. Ollama on localhost).
+      // SSRF guard: in hosted mode reject baseUrls that point to private,
+      // loopback, link-local, or cloud-metadata addresses — including
+      // public hostnames that DNS-resolve to such IPs (DNS rebinding).
+      // In local-inspector mode (CLI/desktop) private IPs are legitimate.
       if (
         HOSTED_MODE &&
         typeof rawProvider.baseUrl === "string" &&
-        rawProvider.baseUrl.length > 0 &&
-        isUnsafeHostedOutboundUrl(rawProvider.baseUrl)
+        rawProvider.baseUrl.length > 0
       ) {
-        throw new Error(
-          `Org provider "${rawProvider.providerKey}" base URL resolves to a private or internal address and cannot be used in hosted mode`,
-        );
+        await assertSafeHostedOutboundUrl(rawProvider.baseUrl);
       }
       result = {
         runtimeLocation: "local",
