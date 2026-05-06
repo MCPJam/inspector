@@ -230,9 +230,10 @@ describe("POST /api/mcp/connect", () => {
       expect(res.status).toBe(200);
       const callArgs = mcpClientManager.connectToServer.mock.calls[0];
       expect(callArgs[0]).toBe(SERVER_NAME);
-      expect(callArgs[1]).toMatchObject({
-        url: "http://localhost:3000/mcp",
-      });
+      // Resolver wraps the URL string in a URL object to match the legacy
+      // connect path's shape (`new URL(...)`), so assert against `.href`.
+      expect(callArgs[1].url).toBeInstanceOf(URL);
+      expect(callArgs[1].url.href).toBe("http://localhost:3000/mcp");
       // OAuth bearer merged into requestInit.headers
       expect(callArgs[1].requestInit.headers).toMatchObject({
         "X-Foo": "bar",

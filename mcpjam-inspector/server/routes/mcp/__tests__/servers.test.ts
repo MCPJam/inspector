@@ -461,7 +461,10 @@ describe("POST /api/mcp/servers/reconnect", () => {
       expect(res.status).toBe(200);
       const callArgs = mcpClientManager.connectToServer.mock.calls[0];
       expect(callArgs[0]).toBe("http-server-display");
-      expect(callArgs[1].url).toBe("http://localhost:3000/mcp");
+      // Resolver wraps the URL string in a URL object to match the legacy
+      // connect path's shape (`new URL(...)`), so assert against `.href`.
+      expect(callArgs[1].url).toBeInstanceOf(URL);
+      expect(callArgs[1].url.href).toBe("http://localhost:3000/mcp");
     });
   });
 

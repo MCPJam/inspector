@@ -9,7 +9,10 @@ import {
 } from "./hosted-rpc-logs.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { setRequestLogContext } from "../../utils/request-logger.js";
-import type { RequestLogContext } from "../../utils/log-events.js";
+import {
+  type InternalLogContext,
+  mapInternalToRequestContext,
+} from "../../utils/internal-log-context.js";
 import {
   ErrorCode,
   WebRouteError,
@@ -147,57 +150,6 @@ function buildServerNamesById(
 }
 
 // ── Authorization ────────────────────────────────────────────────────
-
-// Server-only logging context returned by backend. Optional during rollout.
-// When present, it must never be forwarded to the browser.
-type InternalLogContext = {
-  authType: "signedIn" | "guest";
-  userId?: string | null;
-  userExternalId?: string | null;
-  guestExternalId?: string | null;
-  emailDomain?: string | null;
-  orgId?: string | null;
-  orgPlan?: string | null;
-  orgSeatQuantity?: number | null;
-  orgCreatedBy?: string | null;
-  projectId?: string | null;
-  projectRole?:
-    | "owner"
-    | "admin"
-    | "member"
-    | "guest"
-    | "editor"
-    | "chat"
-    | null;
-  accessLevel?: "project_member" | "shared_chat" | null;
-  serverId?: string | null;
-  serverTransport?: "stdio" | "http" | null;
-  chatboxId?: string | null;
-  surface?: "preview" | "share_link" | null;
-};
-
-function mapInternalToRequestContext(
-  ctx: InternalLogContext
-): Partial<RequestLogContext> {
-  return {
-    authType: ctx.authType,
-    userId: ctx.userId ?? null,
-    userExternalId: ctx.userExternalId ?? null,
-    guestExternalId: ctx.guestExternalId ?? null,
-    emailDomain: ctx.emailDomain ?? null,
-    orgId: ctx.orgId ?? null,
-    orgPlan: ctx.orgPlan ?? null,
-    orgSeatQuantity: ctx.orgSeatQuantity ?? null,
-    orgCreatedBy: ctx.orgCreatedBy ?? null,
-    projectId: ctx.projectId ?? null,
-    projectRole: ctx.projectRole ?? null,
-    accessLevel: ctx.accessLevel ?? null,
-    serverId: ctx.serverId ?? null,
-    serverTransport: ctx.serverTransport ?? null,
-    chatboxId: ctx.chatboxId ?? null,
-    surface: ctx.surface ?? null,
-  };
-}
 
 export type ConvexAuthorizeResponse = {
   authorized: boolean;

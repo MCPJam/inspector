@@ -6,28 +6,10 @@ import {
   parseErrorMessage,
 } from "../routes/web/errors.js";
 import { setRequestLogContext } from "./request-logger.js";
-
-// Server-only logging context returned by Convex. Mirrors hosted's
-// InternalLogContext (in routes/web/auth.ts) — duplicated here so this
-// module has no import cycle into the hosted route surface.
-type InternalLogContext = {
-  authType?: "signedIn" | "guest";
-  userId?: string | null;
-  userExternalId?: string | null;
-  guestExternalId?: string | null;
-  emailDomain?: string | null;
-  orgId?: string | null;
-  orgPlan?: string | null;
-  orgSeatQuantity?: number | null;
-  orgCreatedBy?: string | null;
-  projectId?: string | null;
-  projectRole?: string | null;
-  accessLevel?: "project_member" | "shared_chat" | null;
-  serverId?: string | null;
-  serverTransport?: "stdio" | "http" | null;
-  chatboxId?: string | null;
-  surface?: "preview" | "share_link" | null;
-};
+import {
+  type InternalLogContext,
+  mapInternalToRequestContext,
+} from "./internal-log-context.js";
 
 type LocalAuthorizeServerConfig =
   | {
@@ -89,29 +71,6 @@ export function readLocalApiBearer(c: Context): string | null {
   if (!trimmed.toLowerCase().startsWith("bearer ")) return null;
   const token = trimmed.slice(7).trim();
   return token.length > 0 ? token : null;
-}
-
-function mapInternalToRequestContext(
-  ctx: InternalLogContext
-): Record<string, unknown> {
-  return {
-    authType: ctx.authType ?? null,
-    userId: ctx.userId ?? null,
-    userExternalId: ctx.userExternalId ?? null,
-    guestExternalId: ctx.guestExternalId ?? null,
-    emailDomain: ctx.emailDomain ?? null,
-    orgId: ctx.orgId ?? null,
-    orgPlan: ctx.orgPlan ?? null,
-    orgSeatQuantity: ctx.orgSeatQuantity ?? null,
-    orgCreatedBy: ctx.orgCreatedBy ?? null,
-    projectId: ctx.projectId ?? null,
-    projectRole: ctx.projectRole ?? null,
-    accessLevel: ctx.accessLevel ?? null,
-    serverId: ctx.serverId ?? null,
-    serverTransport: ctx.serverTransport ?? null,
-    chatboxId: ctx.chatboxId ?? null,
-    surface: ctx.surface ?? null,
-  };
 }
 
 /**
@@ -206,11 +165,14 @@ export async function authorizeBatchLocal(
   if (sourceCtx) {
     const partial = mapInternalToRequestContext(sourceCtx);
     if (successful.length > 1) {
+      // Multi-server batch: a single per-server identifier on the request log
+      // line would be misleading. Null them out so the line aggregates over
+      // the batch instead.
       partial.serverId = null;
       partial.serverTransport = null;
       partial.chatboxId = null;
     }
-    setRequestLogContext(c, partial as any);
+    setRequestLogContext(c, partial);
   }
 
   // Strip internalLogContext from results so it never leaks downstream.
@@ -358,8 +320,25 @@ export function toMCPServerConfig(
     headers["Authorization"] = `Bearer ${oauthToken}`;
   }
 
+  // Match the legacy connect-path shape: legacy `connect.ts` upgrades the
+  // URL string to a `URL` object before calling `connectToServer`, and any
+  // downstream code (HOSTED_MODE protocol checks, future SDK / middleware
+  // logic that does `instanceof URL` or accesses `.protocol`/`.hostname`)
+  // has been validated against that shape. Passing a string here would be
+  // silent drift between the two paths.
+  let url: URL;
+  try {
+    url = new URL(serverConfig.url);
+  } catch {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `Server config has an invalid URL: ${serverConfig.url}`,
+    );
+  }
+
   const http: any = {
-    url: serverConfig.url,
+    url,
     requestInit: { headers },
   };
   if (typeof timeout === "number") http.timeout = timeout;
