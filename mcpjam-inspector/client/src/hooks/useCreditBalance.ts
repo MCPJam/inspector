@@ -1,3 +1,4 @@
+import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
 import { useMemo } from "react";
 
@@ -67,8 +68,17 @@ interface UseCreditBalanceOptions {
 export function useCreditBalance({
   includeGuests = false,
 }: UseCreditBalanceOptions = {}) {
-  const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
-  const shouldFetchBalance = !isAuthLoading && isAuthenticated;
+  const {
+    isAuthenticated: hasConvexIdentity,
+    isLoading: isConvexAuthLoading,
+  } = useConvexAuth();
+  const { user, isLoading: isWorkOsLoading } = useAuth();
+  const isAuthenticated = !!user;
+  const isAuthLoading = isConvexAuthLoading || isWorkOsLoading;
+  const shouldFetchBalance =
+    !isAuthLoading &&
+    hasConvexIdentity &&
+    (isAuthenticated || includeGuests);
   const raw = useQuery(
     "billing:getCreditBalance" as any,
     shouldFetchBalance ? ({} as any) : "skip"
