@@ -6,6 +6,7 @@ import {
   readLegacyMigrationPayload,
   runLocalStateMigration,
 } from "../local-state-migration";
+import { normalizeImportHostedOAuthTokens } from "@/lib/apis/hosted-oauth-import-tokens-api";
 
 function seedLegacyProjects() {
   localStorage.setItem(
@@ -405,6 +406,380 @@ describe("local-state-migration", () => {
       expect(localStorage.getItem("mcp-inspector-projects")).toBeNull();
       expect(localStorage.getItem(MIGRATION_PROGRESS_KEY)).toBeNull();
       expect(hasMigrationCompleted()).toBe(true);
+    });
+  });
+
+  describe("OAuth token import during migration", () => {
+    function seedOAuthLegacy() {
+      seedLegacyProjects();
+      // http_one has full legacy OAuth state — should be imported.
+      localStorage.setItem(
+        "mcp-tokens-http_one",
+        JSON.stringify({
+          access_token: "legacy-access",
+          refresh_token: "legacy-refresh",
+          token_type: "bearer",
+        }),
+      );
+      localStorage.setItem(
+        "mcp-client-http_one",
+        JSON.stringify({
+          client_id: "legacy_client_id",
+          client_secret: "legacy_client_secret",
+        }),
+      );
+      localStorage.setItem(
+        "mcp-oauth-config-http_one",
+        JSON.stringify({
+          resourceUrl: "https://api.example.com",
+        }),
+      );
+    }
+
+    it("imports legacy OAuth tokens with renamed fields and clears legacy keys on success", async () => {
+      seedOAuthLegacy();
+      const createProject = vi.fn().mockResolvedValue("convex-proj-id");
+      const listProjectServers = vi.fn().mockResolvedValue([
+        { _id: "convex-server-http_one", name: "http_one" },
+        { _id: "convex-server-stdio_one", name: "stdio_one" },
+      ]);
+      const importTokens = vi.fn().mockResolvedValue(undefined);
+
+      const result = await runLocalStateMigration({
+        createProject: createProject as any,
+        listProjectServers,
+        importTokens,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(importTokens).toHaveBeenCalledTimes(1);
+      const importPayload = importTokens.mock.calls[0][0];
+      // Field renames: legacy `client_id`/`client_secret` → `clientId`/`clientSecret`,
+      // legacy `resourceUrl` → `oauthResourceUrl`.
+      expect(importPayload).toMatchObject({
+        projectId: "convex-proj-id",
+        serverId: "convex-server-http_one",
+        kind: "generic",
+        oauthResourceUrl: "https://api.example.com",
+        clientInformation: {
+          clientId: "legacy_client_id",
+          clientSecret: "legacy_client_secret",
+        },
+        tokens: {
+          access_token: "legacy-access",
+          refresh_token: "legacy-refresh",
+          token_type: "bearer",
+        },
+      });
+      // Parity: the migration's `tokens` block must match the exported
+      // normalizer's output for the same input. If saveTokens (live OAuth
+      // completion) and the migration ever drift, this fails.
+      expect(importPayload.tokens).toEqual(
+        normalizeImportHostedOAuthTokens({
+          access_token: "legacy-access",
+          refresh_token: "legacy-refresh",
+          token_type: "bearer",
+        }),
+      );
+      // Legacy OAuth keys cleared on success.
+      expect(localStorage.getItem("mcp-tokens-http_one")).toBeNull();
+      expect(localStorage.getItem("mcp-client-http_one")).toBeNull();
+      expect(localStorage.getItem("mcp-oauth-config-http_one")).toBeNull();
+    });
+
+    it("preserves legacy OAuth keys when import fails and allows retry without recreating project", async () => {
+      seedOAuthLegacy();
+      const createProjectFirst = vi.fn().mockResolvedValue("convex-proj-id");
+      const listProjectServersFirst = vi.fn().mockResolvedValue([
+        { _id: "convex-server-http_one", name: "http_one" },
+      ]);
+      const importTokensFail = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("Convex unreachable"));
+
+      const firstResult = await runLocalStateMigration({
+        createProject: createProjectFirst as any,
+        listProjectServers: listProjectServersFirst,
+        importTokens: importTokensFail,
+      });
+      expect(firstResult.ok).toBe(false);
+      expect(firstResult.errors[0].error).toContain(
+        'OAuth import for server "http_one" failed',
+      );
+      // Legacy OAuth keys preserved for retry.
+      expect(localStorage.getItem("mcp-tokens-http_one")).not.toBeNull();
+      // Project create was successful — must not run again on retry.
+      expect(createProjectFirst).toHaveBeenCalledTimes(1);
+
+      const createProjectRetry = vi.fn();
+      const listProjectServersRetry = vi.fn().mockResolvedValue([
+        { _id: "convex-server-http_one", name: "http_one" },
+      ]);
+      const importTokensSuccess = vi.fn().mockResolvedValue(undefined);
+      const retryResult = await runLocalStateMigration({
+        createProject: createProjectRetry as any,
+        listProjectServers: listProjectServersRetry,
+        importTokens: importTokensSuccess,
+      });
+
+      expect(retryResult.ok).toBe(true);
+      // createProject NOT called again — progress map remembered the
+      // convexProjectId.
+      expect(createProjectRetry).not.toHaveBeenCalled();
+      // importTokens called this time, succeeds.
+      expect(importTokensSuccess).toHaveBeenCalledTimes(1);
+      // Now legacy keys are cleared.
+      expect(localStorage.getItem("mcp-tokens-http_one")).toBeNull();
+      expect(hasMigrationCompleted()).toBe(true);
+    });
+
+    it("skips already-imported servers on retry", async () => {
+      seedOAuthLegacy();
+      // Pre-populate progress map: project already created and tokens
+      // imported for http_one — retry should be a no-op for both.
+      localStorage.setItem(
+        MIGRATION_PROGRESS_KEY,
+        JSON.stringify({
+          "proj-a": {
+            convexProjectId: "convex-proj-id",
+            tokensByServerName: { http_one: "imported" },
+          },
+        }),
+      );
+
+      const createProject = vi.fn();
+      const listProjectServers = vi.fn().mockResolvedValue([
+        { _id: "convex-server-http_one", name: "http_one" },
+      ]);
+      const importTokens = vi.fn();
+
+      const result = await runLocalStateMigration({
+        createProject: createProject as any,
+        listProjectServers,
+        importTokens,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(createProject).not.toHaveBeenCalled();
+      expect(importTokens).not.toHaveBeenCalled();
+    });
+
+    it("default-project (isDefault: true) routes through ensureDefaultProject + merge, NOT createProject", async () => {
+      // Free-plan orgs get one auto-provisioned default project at
+      // `users:ensureUser` time. The migration's `createProject` call would
+      // trip `enforceOrganizationProjectLimit` (cap=1, slot already filled).
+      // When deps supply ensureDefaultProject + mergeServersIntoExistingProject,
+      // the migration must merge into the existing default instead.
+      seedLegacyProjects();
+      const createProject = vi.fn();
+      const ensureDefaultProject = vi
+        .fn()
+        .mockResolvedValue("convex-default-id");
+      const mergeServersIntoExistingProject = vi
+        .fn()
+        .mockResolvedValue(undefined);
+
+      const result = await runLocalStateMigration({
+        createProject: createProject as any,
+        ensureDefaultProject,
+        mergeServersIntoExistingProject,
+        organizationId: "org_xyz",
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.projectsMigrated).toBe(1);
+      expect(createProject).not.toHaveBeenCalled();
+      expect(ensureDefaultProject).toHaveBeenCalledTimes(1);
+      expect(ensureDefaultProject).toHaveBeenCalledWith({
+        organizationId: "org_xyz",
+      });
+      expect(mergeServersIntoExistingProject).toHaveBeenCalledTimes(1);
+      const mergeArgs = mergeServersIntoExistingProject.mock.calls[0][0];
+      expect(mergeArgs.projectId).toBe("convex-default-id");
+      expect(Object.keys(mergeArgs.servers)).toEqual(
+        expect.arrayContaining(["stdio_one", "http_one"]),
+      );
+      // Legacy keys cleared on success.
+      expect(localStorage.getItem("mcp-inspector-projects")).toBeNull();
+      expect(hasMigrationCompleted()).toBe(true);
+    });
+
+    it("non-default project still routes through createProject even when merge deps supplied", async () => {
+      // Mixed-shape protection: a user with both a default project AND a
+      // user-created non-default project must take BOTH paths — merge for the
+      // default, createProject for the rest. Don't blanket-route everything
+      // to ensureDefaultProject.
+      localStorage.setItem(
+        "mcp-inspector-projects",
+        JSON.stringify({
+          activeProjectId: "proj-default",
+          projects: {
+            "proj-default": {
+              id: "proj-default",
+              name: "Default",
+              isDefault: true,
+              createdAt: 1700000000000,
+              updatedAt: 1700000000000,
+              servers: {},
+            },
+            "proj-custom": {
+              id: "proj-custom",
+              name: "My Custom Project",
+              isDefault: false,
+              createdAt: 1700000000000,
+              updatedAt: 1700000000000,
+              servers: {},
+            },
+          },
+        }),
+      );
+
+      const createProject = vi.fn().mockResolvedValue("convex-custom-id");
+      const ensureDefaultProject = vi
+        .fn()
+        .mockResolvedValue("convex-default-id");
+      const mergeServersIntoExistingProject = vi
+        .fn()
+        .mockResolvedValue(undefined);
+
+      const result = await runLocalStateMigration({
+        createProject: createProject as any,
+        ensureDefaultProject,
+        mergeServersIntoExistingProject,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(ensureDefaultProject).toHaveBeenCalledTimes(1);
+      expect(mergeServersIntoExistingProject).toHaveBeenCalledTimes(1);
+      expect(createProject).toHaveBeenCalledTimes(1);
+      expect(createProject.mock.calls[0][0].name).toBe("My Custom Project");
+    });
+
+    it("does not retry merge after success on subsequent boot (idempotency via progress map)", async () => {
+      // First boot: merge succeeds. Second boot: progress map records the
+      // convex projectId, so the merge call is NOT repeated. Backend write
+      // is idempotent but the round-trip is wasteful; the progress map
+      // already gates re-creation, and the merge path must respect it the
+      // same way createProject does.
+      seedLegacyProjects();
+      const ensureDefaultProject = vi
+        .fn()
+        .mockResolvedValue("convex-default-id");
+      const mergeServersIntoExistingProject = vi
+        .fn()
+        .mockResolvedValue(undefined);
+
+      const firstResult = await runLocalStateMigration({
+        createProject: vi.fn() as any,
+        ensureDefaultProject,
+        mergeServersIntoExistingProject,
+      });
+      expect(firstResult.ok).toBe(true);
+      expect(mergeServersIntoExistingProject).toHaveBeenCalledTimes(1);
+      // Successful migration clears legacy keys → second run is a no-op.
+      // Re-seed legacy state to simulate a partial-state scenario where
+      // legacy keys somehow persisted (e.g. OAuth import added them back).
+      seedLegacyProjects();
+      // But progress map remembers proj-a was created.
+      localStorage.setItem(
+        MIGRATION_PROGRESS_KEY,
+        JSON.stringify({
+          "proj-a": {
+            convexProjectId: "convex-default-id",
+            tokensByServerName: {},
+          },
+        }),
+      );
+
+      const ensureSecond = vi.fn();
+      const mergeSecond = vi.fn();
+      const secondResult = await runLocalStateMigration({
+        createProject: vi.fn() as any,
+        ensureDefaultProject: ensureSecond,
+        mergeServersIntoExistingProject: mergeSecond,
+      });
+      expect(secondResult.ok).toBe(true);
+      expect(ensureSecond).not.toHaveBeenCalled();
+      expect(mergeSecond).not.toHaveBeenCalled();
+    });
+
+    it("preserves legacy keys when merge fails and allows retry", async () => {
+      seedLegacyProjects();
+      const ensureDefaultProject = vi
+        .fn()
+        .mockResolvedValue("convex-default-id");
+      const mergeServersFail = vi
+        .fn()
+        .mockRejectedValue(new Error("Convex unreachable"));
+
+      const firstResult = await runLocalStateMigration({
+        createProject: vi.fn() as any,
+        ensureDefaultProject,
+        mergeServersIntoExistingProject: mergeServersFail,
+      });
+      expect(firstResult.ok).toBe(false);
+      expect(firstResult.errors[0].projectName).toBe("Default");
+      // Legacy keys preserved for retry.
+      expect(localStorage.getItem("mcp-inspector-projects")).not.toBeNull();
+      expect(hasMigrationCompleted()).toBe(false);
+
+      // Retry — merge succeeds this time.
+      const mergeServersSuccess = vi.fn().mockResolvedValue(undefined);
+      const retryResult = await runLocalStateMigration({
+        createProject: vi.fn() as any,
+        ensureDefaultProject,
+        mergeServersIntoExistingProject: mergeServersSuccess,
+      });
+      expect(retryResult.ok).toBe(true);
+      expect(mergeServersSuccess).toHaveBeenCalledTimes(1);
+      expect(localStorage.getItem("mcp-inspector-projects")).toBeNull();
+      expect(hasMigrationCompleted()).toBe(true);
+    });
+
+    it("falls back to createProject when only one of the merge deps is supplied", async () => {
+      // Both ensureDefaultProject AND mergeServersIntoExistingProject must
+      // be present to take the merge path. If a future caller supplies only
+      // one, fall back to the legacy createProject path rather than
+      // half-executing.
+      seedLegacyProjects();
+      const createProject = vi.fn().mockResolvedValue("convex-id");
+      const ensureDefaultProject = vi.fn();
+
+      const result = await runLocalStateMigration({
+        createProject: createProject as any,
+        ensureDefaultProject,
+        // mergeServersIntoExistingProject intentionally omitted.
+      });
+
+      expect(result.ok).toBe(true);
+      expect(createProject).toHaveBeenCalledTimes(1);
+      expect(ensureDefaultProject).not.toHaveBeenCalled();
+    });
+
+    it("skips servers whose legacy state lacks clientId", async () => {
+      seedLegacyProjects();
+      // Tokens present but no `mcp-client-${name}` entry.
+      localStorage.setItem(
+        "mcp-tokens-http_one",
+        JSON.stringify({
+          access_token: "x",
+          token_type: "bearer",
+        }),
+      );
+
+      const createProject = vi.fn().mockResolvedValue("convex-id");
+      const listProjectServers = vi.fn().mockResolvedValue([
+        { _id: "id1", name: "http_one" },
+      ]);
+      const importTokens = vi.fn();
+
+      const result = await runLocalStateMigration({
+        createProject: createProject as any,
+        listProjectServers,
+        importTokens,
+      });
+      expect(result.ok).toBe(true);
+      expect(importTokens).not.toHaveBeenCalled();
     });
   });
 });

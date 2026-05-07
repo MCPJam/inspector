@@ -1,7 +1,7 @@
 import { useLayoutEffect } from "react";
-import { setHostedApiContext } from "@/lib/apis/web/context";
+import { setApiContext } from "@/lib/apis/web/context";
 
-interface UseHostedApiContextOptions {
+interface UseApiContextOptions {
   projectId: string | null;
   serverIdsByName: Record<string, string>;
   clientCapabilities?: Record<string, unknown>;
@@ -15,7 +15,7 @@ interface UseHostedApiContextOptions {
   enabled?: boolean;
 }
 
-export function useHostedApiContext({
+export function useApiContext({
   projectId,
   serverIdsByName,
   clientCapabilities,
@@ -27,7 +27,7 @@ export function useHostedApiContext({
   isAuthenticated,
   hasSession,
   enabled = true,
-}: UseHostedApiContextOptions): void {
+}: UseApiContextOptions): void {
   // useLayoutEffect so the global hosted context is set synchronously before
   // any child useEffect hooks fire (e.g. fetchToolsMetadata in useChatSession).
   // With useEffect, React's bottom-up ordering means child passive effects run
@@ -38,7 +38,7 @@ export function useHostedApiContext({
       return;
     }
 
-    setHostedApiContext({
+    setApiContext({
       projectId,
       serverIdsByName,
       clientCapabilities,
@@ -52,7 +52,7 @@ export function useHostedApiContext({
     });
 
     return () => {
-      setHostedApiContext(null);
+      setApiContext(null);
     };
   }, [
     enabled,

@@ -13,7 +13,7 @@ import { toast } from "sonner";
 import { formatEnsureServersReadyError, useEvalHandlers } from "../use-eval-handlers";
 import { API_ENDPOINTS } from "../constants";
 import { createFetchResponse, createDeferred } from "@/test";
-import { setHostedApiContext } from "@/lib/apis/web/context";
+import { setApiContext } from "@/lib/apis/web/context";
 
 const { hostedModeRef } = vi.hoisted(() => ({
   hostedModeRef: { value: false },
@@ -156,7 +156,7 @@ describe("useEvalHandlers", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
-    setHostedApiContext(null);
+    setApiContext(null);
   });
 
   describe("handleRerun", () => {
@@ -336,7 +336,7 @@ describe("useEvalHandlers", () => {
 
     it("normalizes hosted suite server ids before auto-connect and rerun", async () => {
       mockIsHostedMode.mockReturnValue(true);
-      setHostedApiContext({
+      setApiContext({
         projectId: "project-1",
         isAuthenticated: true,
         serverIdsByName: { "server-1": "srv-1" },
@@ -514,7 +514,7 @@ describe("useEvalHandlers", () => {
 
     it("uses the normal rerun path when live servers are connected", async () => {
       mockIsHostedMode.mockReturnValue(true);
-      setHostedApiContext({
+      setApiContext({
         projectId: "ws-123",
         isAuthenticated: true,
         serverIdsByName: { "server-1": "srv-1" },
@@ -658,7 +658,7 @@ describe("useEvalHandlers", () => {
 
     it("normalizes hosted suite server ids before running a test case", async () => {
       mockIsHostedMode.mockReturnValue(true);
-      setHostedApiContext({
+      setApiContext({
         projectId: "project-1",
         isAuthenticated: true,
         serverIdsByName: { "server-1": "srv-1" },

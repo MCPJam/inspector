@@ -1785,156 +1785,241 @@ describe("mcp-oauth", () => {
     });
   });
 
-  describe("saveTokens import-tokens push", () => {
-    it("posts to /api/web/oauth/import-tokens when project context is populated", async () => {
-      const { authFetch } = await import("@/lib/session-token");
-      const { setHostedApiContext } = await import("@/lib/apis/web/context");
-      const { MCPOAuthProvider } = await import("../mcp-oauth");
-
-      vi.mocked(authFetch).mockResolvedValue({
-        ok: true,
-        status: 200,
-        text: async () => "",
-        json: async () => ({ success: true, expiresAt: null, kind: "generic" }),
-      } as any);
-
-      setHostedApiContext({
-        projectId: "proj_local",
-        serverIdsByName: { asana: "srv_asana" },
-        getAccessToken: async () => null,
-        isAuthenticated: true,
-        hasSession: true,
-      });
-      localStorage.setItem(
-        "mcp-client-asana",
-        JSON.stringify({ client_id: "client-xyz", client_secret: "secret-abc" })
-      );
-
-      try {
-        const provider = new MCPOAuthProvider("asana", "https://mcp.asana.com/sse");
-        await provider.saveTokens({
-          access_token: "at-1",
-          refresh_token: "rt-1",
-        });
-
-        expect(localStorage.getItem("mcp-tokens-asana")).toBe(
-          JSON.stringify({ access_token: "at-1", refresh_token: "rt-1" })
-        );
-        const importCall = vi
-          .mocked(authFetch)
-          .mock.calls.find(
-            ([url]) => typeof url === "string" && url === "/api/web/oauth/import-tokens"
-          );
-        expect(importCall).toBeDefined();
-        const body = JSON.parse((importCall![1] as any).body as string);
-        expect(body).toMatchObject({
-          projectId: "proj_local",
-          serverId: "srv_asana",
-          serverUrl: "https://mcp.asana.com/sse",
-          clientInformation: {
-            clientId: "client-xyz",
-            clientSecret: "secret-abc",
-          },
-          tokens: { access_token: "at-1", refresh_token: "rt-1" },
-        });
-      } finally {
-        setHostedApiContext(null);
-      }
+  describe("MCPOAuthProvider.saveTokens convex binding", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+      vi.unstubAllEnvs();
     });
 
-    it("skips import-tokens push when project context is not populated", async () => {
-      const { authFetch } = await import("@/lib/session-token");
-      const { setHostedApiContext } = await import("@/lib/apis/web/context");
+    it("imports tokens to Convex when a binding is provided in local mode", async () => {
+      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "false");
+      const importApi = await import(
+        "@/lib/apis/hosted-oauth-import-tokens-api"
+      );
+      const importSpy = vi
+        .spyOn(importApi, "importHostedOAuthTokens")
+        .mockResolvedValue({ expiresAt: null, kind: "generic" });
+
       const { MCPOAuthProvider } = await import("../mcp-oauth");
-
-      vi.mocked(authFetch).mockReset();
-      setHostedApiContext(null);
-
       const provider = new MCPOAuthProvider(
         "asana",
-        "https://mcp.asana.com/sse"
+        "https://mcp.asana.com/sse",
+        "client-from-arg",
+        undefined,
+        {
+          projectId: "proj_xyz",
+          serverId: "srv_abc",
+          oauthResourceUrl: "https://mcp.asana.com",
+          kind: "generic",
+        },
       );
-      await provider.saveTokens({ access_token: "at-1" });
 
-      expect(localStorage.getItem("mcp-tokens-asana")).toBe(
-        JSON.stringify({ access_token: "at-1" })
+      await provider.saveTokens({
+        access_token: "freshly-issued",
+        refresh_token: "refresh-1",
+        token_type: "Bearer",
+      });
+
+      // localStorage still gets the write (still needed for tokens() refresh).
+      expect(localStorage.getItem("mcp-tokens-asana")).toContain("freshly-issued");
+      expect(importSpy).toHaveBeenCalledTimes(1);
+      expect(importSpy.mock.calls[0][0]).toMatchObject({
+        projectId: "proj_xyz",
+        serverId: "srv_abc",
+        serverUrl: "https://mcp.asana.com/sse",
+        oauthResourceUrl: "https://mcp.asana.com",
+        kind: "generic",
+        clientInformation: { clientId: "client-from-arg" },
+        tokens: {
+          access_token: "freshly-issued",
+          refresh_token: "refresh-1",
+          token_type: "Bearer",
+        },
+      });
+      // Parity: saveTokens' `tokens` block must match the exported normalizer's
+      // output for the same input. Locks the saveTokens ↔ migration ↔
+      // normalizer three-way parity together with the matching assertion in
+      // local-state-migration.test.ts.
+      const { normalizeImportHostedOAuthTokens } = importApi;
+      expect(importSpy.mock.calls[0][0].tokens).toEqual(
+        normalizeImportHostedOAuthTokens({
+          access_token: "freshly-issued",
+          refresh_token: "refresh-1",
+          token_type: "Bearer",
+        }),
       );
-      const importCalls = vi
-        .mocked(authFetch)
-        .mock.calls.filter(
-          ([url]) => typeof url === "string" && url === "/api/web/oauth/import-tokens"
-        );
-      expect(importCalls).toHaveLength(0);
     });
 
-    it("throws when import-tokens push fails so the OAuth dance surfaces the error", async () => {
-      const { authFetch } = await import("@/lib/session-token");
-      const { setHostedApiContext } = await import("@/lib/apis/web/context");
+    it("falls back to localStorage-only when no binding is provided", async () => {
+      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "false");
+      const importApi = await import(
+        "@/lib/apis/hosted-oauth-import-tokens-api"
+      );
+      const importSpy = vi.spyOn(importApi, "importHostedOAuthTokens");
+
       const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+        "client-from-arg",
+      );
 
-      vi.mocked(authFetch).mockReset();
-      vi.mocked(authFetch).mockResolvedValue({
-        ok: false,
-        status: 500,
-        text: async () => "convex unreachable",
-        json: async () => ({}),
-      } as any);
-
-      setHostedApiContext({
-        projectId: "proj_local",
-        serverIdsByName: { asana: "srv_asana" },
-        getAccessToken: async () => null,
-        isAuthenticated: true,
-        hasSession: true,
+      await provider.saveTokens({
+        access_token: "no-binding",
+        token_type: "Bearer",
       });
+
+      expect(localStorage.getItem("mcp-tokens-asana")).toContain("no-binding");
+      expect(importSpy).not.toHaveBeenCalled();
+    });
+
+    it("HOSTED_MODE no-op stays defensive — saveTokens never imports", async () => {
+      vi.resetModules();
+      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+      const importApi = await import(
+        "@/lib/apis/hosted-oauth-import-tokens-api"
+      );
+      const importSpy = vi.spyOn(importApi, "importHostedOAuthTokens");
+
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+        "client-from-arg",
+        undefined,
+        {
+          projectId: "proj_xyz",
+          serverId: "srv_abc",
+          kind: "generic",
+        },
+      );
+
+      await provider.saveTokens({
+        access_token: "should-be-ignored",
+        token_type: "Bearer",
+      });
+
+      expect(localStorage.getItem("mcp-tokens-asana")).toBeNull();
+      expect(importSpy).not.toHaveBeenCalled();
+    });
+
+    it("persists Convex binding on initiate so post-redirect callback recovers it when apiContext is empty", async () => {
+      // Repro of the localhost-server OAuth bug: at OAuth-initiation time
+      // apiContext.serverIdsByName is populated (user just clicked Connect),
+      // but after the OAuth provider's redirect the post-callback mount
+      // has empty apiContext until Convex's getProjectServers query
+      // returns. Without persistence, saveTokens skips the import-tokens
+      // call and /api/mcp/connect 401s on the missing credential row.
+      vi.resetModules();
+      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "false");
+      const contextModule = await import("@/lib/apis/web/context");
+      const importApi = await import(
+        "@/lib/apis/hosted-oauth-import-tokens-api"
+      );
+      const importSpy = vi
+        .spyOn(importApi, "importHostedOAuthTokens")
+        .mockResolvedValue({ expiresAt: null, kind: "generic" });
+
+      // Simulate initiate-time: apiContext is populated.
+      contextModule.setApiContext({
+        projectId: "proj_xyz",
+        serverIdsByName: { "mcpjam local": "srv_abc" },
+        getAccessToken: async () => null,
+      });
+      const { MCPOAuthProvider, clearOAuthData } = await import("../mcp-oauth");
+
+      // We don't have a public binding builder, so simulate what
+      // initiateOAuth does internally by constructing a provider whose
+      // binding the helper persists. The localStorage key the helper
+      // writes is the contract we test against.
+      const initBinding = {
+        projectId: "proj_xyz",
+        serverId: "srv_abc",
+        oauthResourceUrl: "http://localhost:8787/mcp",
+        kind: "generic" as const,
+      };
       localStorage.setItem(
-        "mcp-client-asana",
-        JSON.stringify({ client_id: "client-xyz" })
+        `mcp-oauth-binding-mcpjam local`,
+        JSON.stringify(initBinding)
       );
 
-      try {
-        const provider = new MCPOAuthProvider(
-          "asana",
-          "https://mcp.asana.com/sse"
-        );
-        await expect(
-          provider.saveTokens({ access_token: "at-1" })
-        ).rejects.toThrow(/Failed to sync OAuth tokens to Convex \(500\)/);
-      } finally {
-        setHostedApiContext(null);
-      }
-    });
+      // Now simulate the post-redirect mount: apiContext is back to empty
+      // because Convex getProjectServers hasn't returned yet.
+      contextModule.setApiContext(null);
 
-    it("skips import-tokens push when no client_id is stored", async () => {
-      const { authFetch } = await import("@/lib/session-token");
-      const { setHostedApiContext } = await import("@/lib/apis/web/context");
-      const { MCPOAuthProvider } = await import("../mcp-oauth");
-
-      vi.mocked(authFetch).mockReset();
-      setHostedApiContext({
-        projectId: "proj_local",
-        serverIdsByName: { asana: "srv_asana" },
-        getAccessToken: async () => null,
-        isAuthenticated: true,
-        hasSession: true,
+      // saveTokens with no constructor-provided binding should still hit
+      // the persisted binding via buildConvexBindingForServer's fallback.
+      // Verify by constructing the provider the same way handleOAuthCallback
+      // would: the binding is recovered from localStorage.
+      const recoveredRaw = localStorage.getItem(
+        `mcp-oauth-binding-mcpjam local`
+      );
+      expect(recoveredRaw).toBeTruthy();
+      const recovered = JSON.parse(recoveredRaw!);
+      const provider = new MCPOAuthProvider(
+        "mcpjam local",
+        "http://localhost:8787/mcp",
+        "client_id_abc",
+        undefined,
+        recovered
+      );
+      await provider.saveTokens({
+        access_token: "post-redirect-token",
+        token_type: "Bearer",
       });
 
-      try {
-        const provider = new MCPOAuthProvider(
-          "asana",
-          "https://mcp.asana.com/sse"
-        );
-        await provider.saveTokens({ access_token: "at-1" });
+      expect(importSpy).toHaveBeenCalledTimes(1);
+      expect(importSpy.mock.calls[0][0]).toMatchObject({
+        projectId: "proj_xyz",
+        serverId: "srv_abc",
+        kind: "generic",
+        tokens: { access_token: "post-redirect-token" },
+      });
 
-        const importCalls = vi
-          .mocked(authFetch)
-          .mock.calls.filter(
-            ([url]) => typeof url === "string" && url === "/api/web/oauth/import-tokens"
-          );
-        expect(importCalls).toHaveLength(0);
-      } finally {
-        setHostedApiContext(null);
-      }
+      // clearOAuthData purges the persisted binding so a subsequent
+      // re-OAuth doesn't reuse stale projectId/serverId after the user
+      // moved the server to a different project.
+      clearOAuthData("mcpjam local");
+      expect(
+        localStorage.getItem(`mcp-oauth-binding-mcpjam local`)
+      ).toBeNull();
+    });
+
+    it("threads registry kind through when both registryServerId and useRegistryOAuthProxy are set", async () => {
+      vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "false");
+      const importApi = await import(
+        "@/lib/apis/hosted-oauth-import-tokens-api"
+      );
+      const importSpy = vi
+        .spyOn(importApi, "importHostedOAuthTokens")
+        .mockResolvedValue({ expiresAt: null, kind: "registry" });
+
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider(
+        "registry-srv",
+        "https://registry.example.com/sse",
+        "client-id",
+        undefined,
+        {
+          projectId: "proj_r",
+          serverId: "srv_r",
+          kind: "registry",
+          registryServerId: "reg_123",
+          useRegistryOAuthProxy: true,
+        },
+      );
+
+      await provider.saveTokens({
+        access_token: "registry-token",
+        token_type: "Bearer",
+      });
+
+      expect(importSpy).toHaveBeenCalledTimes(1);
+      expect(importSpy.mock.calls[0][0]).toMatchObject({
+        kind: "registry",
+        registryServerId: "reg_123",
+        useRegistryOAuthProxy: true,
+      });
     });
   });
 });

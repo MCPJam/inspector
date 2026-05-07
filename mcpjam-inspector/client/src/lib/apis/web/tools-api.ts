@@ -1,12 +1,12 @@
 import { webPost } from "./base";
-import { buildHostedServerRequest } from "./context";
+import { buildServerRequest } from "./context";
 
 export async function listHostedTools(request: {
   serverNameOrId: string;
   modelId?: string;
   cursor?: string;
 }): Promise<any> {
-  const serverRequest = buildHostedServerRequest(request.serverNameOrId);
+  const serverRequest = buildServerRequest(request.serverNameOrId);
   return webPost("/api/web/tools/list", {
     ...serverRequest,
     modelId: request.modelId,
@@ -20,7 +20,7 @@ export async function executeHostedTool(request: {
   parameters: Record<string, unknown>;
   taskOptions?: Record<string, unknown>;
 }): Promise<any> {
-  const serverRequest = buildHostedServerRequest(request.serverNameOrId);
+  const serverRequest = buildServerRequest(request.serverNameOrId);
   return webPost("/api/web/tools/execute", {
     ...serverRequest,
     toolName: request.toolName,

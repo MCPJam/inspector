@@ -225,12 +225,6 @@ export function useProjectState({
   const ensureDefaultInFlightRef = useRef(new Set<string>());
   const ensureDefaultCompletedRef = useRef(new Set<string>());
   const migrationErrorNotifiedRef = useRef(new Set<string>());
-  // localFallback is gone — Convex is the only source of truth in both modes.
-  // The `useLocalFallback`/`shouldUseLocalFallback` constants stay as `false`
-  // so dependent code keeps compiling; the dead branches read clearly enough
-  // and will be cleaned up alongside loadAppState/saveAppState in Slice 4.
-  const useLocalFallback = false;
-  const shouldUseLocalFallback = false;
   const pendingClientConfigSyncRef = useRef<
     Map<string, PendingClientConfigSync>
   >(new Map());
@@ -238,6 +232,16 @@ export function useProjectState({
   const pendingClientConfigSyncByProjectRef = useRef<Map<string, string>>(
     new Map(),
   );
+  // Convex is the single source of truth for projects post-unification. The
+  // legacy `useLocalFallback` flow that hydrated from localStorage when
+  // Convex was slow has been removed (tradeoff: local CLI now requires
+  // Convex connectivity). When Convex hasn't resolved, the existing
+  // loading-skeleton path (`isLoadingProjects`/`isLoadingRemoteProjects`)
+  // already renders — no separate "unreachable" banner is added; the user
+  // sees the same skeleton they'd see during a normal cold start. The
+  // constant below is kept inline so the dead-code branches that still
+  // reference `shouldUseLocalFallback` collapse cleanly without renames.
+  const shouldUseLocalFallback = false as const;
 
   const clearConvexActiveProjectSelection = useCallback(() => {
     setConvexActiveProjectId(null);
@@ -298,11 +302,10 @@ export function useProjectState({
     }
   }, [clearPendingClientConfigSync]);
 
-  // The pre-Slice-3 timer that flipped useLocalFallback to true after a 10s
-  // Convex stall is gone. CLI now requires Convex connectivity; offline state
-  // surfaces as a Convex query never resolving, which UI surfaces handle via
-  // the unreachable banner (added below).
-
+  // No fallback timer: when Convex hasn't resolved, `isLoadingProjects`/
+  // `isLoadingRemoteProjects` are already true and the existing loading
+  // skeleton on the servers page renders. We don't surface a separate
+  // "unreachable" banner — the loading skeleton is the failure mode.
 
   useEffect(() => {
     if (
@@ -424,13 +427,10 @@ export function useProjectState({
     );
   }, [appState.projects, shouldScopeLocalFallbackByOrganization, projectOrganizationId]);
 
-  const localFallbackProjects = useMemo((): Record<string, Project> => {
-    if (!useLocalFallback) {
-      return appState.projects;
-    }
-
-    return scopedLocalProjects;
-  }, [useLocalFallback, appState.projects, scopedLocalProjects]);
+  // Legacy fallback memo. Convex is the only source of truth post-unification;
+  // `useLocalFallback` is permanently false. Kept as a stable empty/identity
+  // reference so the dead-code branches below collapse without renames.
+  const localFallbackProjects: Record<string, Project> = appState.projects;
 
   const authenticatedMergedProjects = useMemo((): Record<string, Project> => {
     // Guests don't see local-fallback projects — Convex is the only source
@@ -862,8 +862,8 @@ export function useProjectState({
         // the app picks it up over any synthetic local-fallback project that
         // appState may have hydrated from storage. UI surfaces gate on
         // useAppReady() — which goes ready once this projectId reaches
-        // useHostedApiContext via the normal React render — so no eager
-        // hostedApiContext inject is needed here.
+        // useApiContext via the normal React render — so no eager
+        // apiContext inject is needed here.
         if (typeof projectId === "string") {
           setConvexActiveProjectId(projectId);
         }
@@ -1607,6 +1607,10 @@ export function useProjectState({
     remoteProjects,
     isLoadingProjects,
     activeProjectServersFlat,
+    // Always false — kept on the return shape so existing consumers
+    // (tests, App.tsx) don't break in this PR. Convex-unreachable now
+    // surfaces through the existing loading-skeleton path; no separate
+    // signal needed.
     useLocalFallback: shouldUseLocalFallback,
     setConvexActiveProjectId,
     clearConvexActiveProjectSelection,

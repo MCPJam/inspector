@@ -48,10 +48,9 @@ import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { useServerMutations, type RemoteServer } from "./useProjects";
 import {
   CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
-  getEffectiveServerClientCapabilities,
   getEffectiveProjectConnectionDefaults,
   mergeProjectConnectionHeaders,
-  normalizeProjectClientCapabilities,
+  resolveEffectiveServerClientCapabilities,
 } from "@/lib/client-config";
 import { EXCALIDRAW_SERVER_NAME } from "@/lib/excalidraw-quick-connect";
 import { readOnboardingState } from "@/lib/onboarding-state";
@@ -592,10 +591,8 @@ export function useServerState({
     const serversWithRuntime: Record<string, ServerWithName> = {};
     for (const [name, server] of Object.entries(project.servers)) {
       const runtimeState = appState.servers[name];
-
-      // Slice 5: STDIO env now lives on the Convex `servers` doc and flows
-      // through `effectiveProjects` via the resolver. The legacy
-      // `mcp-env-${name}` localStorage scratchpad is gone.
+      // Env now lives on the Convex server doc and is returned by the
+      // resolver inside `server.config.env`; no localStorage read needed.
       serversWithRuntime[name] = {
         ...server,
         config: server.config,
@@ -648,17 +645,11 @@ export function useServerState({
 
   const withProjectConnectionDefaults = useCallback(
     (serverConfig: MCPServerConfig): MCPServerConfig => {
-      const explicitClientCapabilities = serverConfig.clientCapabilities as
-        | Record<string, unknown>
-        | undefined;
-      const effectiveClientCapabilities = explicitClientCapabilities
-        ? normalizeProjectClientCapabilities(explicitClientCapabilities)
-        : getEffectiveServerClientCapabilities({
-            projectClientConfig: activeProject?.clientConfig,
-            serverCapabilities: serverConfig.capabilities as
-              | Record<string, unknown>
-              | undefined,
-          });
+      const effectiveClientCapabilities =
+        resolveEffectiveServerClientCapabilities({
+          serverConfig,
+          projectClientConfig: activeProject?.clientConfig,
+        });
 
       let nextRequestInit = serverConfig.requestInit;
       if ("url" in serverConfig) {
@@ -1960,8 +1951,9 @@ export function useServerState({
             config: mcpConfig,
             useOAuth: formData.useOAuth ?? false,
           });
-          // Slice 5: env is persisted to Convex by `syncServerToConvex`; the
-          // legacy `mcp-env-${name}` localStorage write is gone.
+          // Env now persists on the Convex server doc via syncServerToConvex;
+          // no localStorage write needed. The resolver returns env in the
+          // resolved config on subsequent connects.
           logger.info("Connection successful", { serverName: formData.name });
           if (
             !shouldSuppressExcalidrawConnectToastForOnboarding(formData.name)
@@ -2441,6 +2433,8 @@ export function useServerState({
     // scratchpad remains and is cleaned up here. Once Slice 2's OAuth purge
     // collapses the localStorage cache fully, this can drop too.
     clearOAuthData(serverName);
+    // Env now lives on the Convex server doc; removal happens via the
+    // server-delete mutation. No localStorage cleanup needed.
   }, []);
 
   const removeServerFromStateAndCloud = useCallback(

@@ -151,22 +151,17 @@ export async function testConnection(
     return safeValidateHostedServer(serverId, serverConfig);
   }
 
-  // When projectId is provided, the server resolves config + tokens from
-  // Convex via /web/authorize-batch-local (including OAuth tokens pushed
-  // through `MCPOAuthProvider.saveTokens` → `/api/web/oauth/import-tokens`).
-  // Without it, fall back to the legacy {serverConfig, serverId} body — this
-  // path is being phased out and remains only so brand-new servers (not yet
-  // synced to Convex) keep working until the add-server flow always awaits
-  // the sync.
-  const useResolver = !!options?.projectId;
-  const legacyServerId = options?.serverName ?? serverId;
-  const body: Record<string, unknown> = useResolver
-    ? buildResolverBody(serverId, {
-        projectId: options!.projectId!,
-        serverName: options?.serverName,
-        connectionDefaults: options?.connectionDefaults,
-      })
-    : { serverConfig, serverId: legacyServerId };
+  if (!options?.projectId) {
+    throw new Error(
+      "projectId is required for testConnection in local mode (server must be synced to Convex first)",
+    );
+  }
+
+  const body = buildResolverBody(serverId, {
+    projectId: options.projectId,
+    serverName: options.serverName,
+    connectionDefaults: options.connectionDefaults,
+  });
 
   const res = await authFetchWithTimeout(
     "/api/mcp/connect",
@@ -217,15 +212,17 @@ export async function reconnectServer(
     return safeValidateHostedServer(serverId, serverConfig);
   }
 
-  const useResolver = !!options?.projectId;
-  const legacyServerId = options?.serverName ?? serverId;
-  const body: Record<string, unknown> = useResolver
-    ? buildResolverBody(serverId, {
-        projectId: options!.projectId!,
-        serverName: options?.serverName,
-        connectionDefaults: options?.connectionDefaults,
-      })
-    : { serverId: legacyServerId, serverConfig };
+  if (!options?.projectId) {
+    throw new Error(
+      "projectId is required for reconnectServer in local mode (server must be synced to Convex first)",
+    );
+  }
+
+  const body = buildResolverBody(serverId, {
+    projectId: options.projectId,
+    serverName: options.serverName,
+    connectionDefaults: options.connectionDefaults,
+  });
 
   const res = await authFetchWithTimeout(
     "/api/mcp/servers/reconnect",
