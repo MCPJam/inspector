@@ -8,7 +8,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
-import { Avatar, AvatarFallback, AvatarImage } from "@mcpjam/design-system/avatar";
+import {
+  Avatar,
+  AvatarFallback,
+  AvatarImage,
+} from "@mcpjam/design-system/avatar";
 import {
   SidebarMenu,
   SidebarMenuButton,
@@ -29,7 +33,25 @@ import { useProfilePicture } from "@/hooks/useProfilePicture";
 import { HOSTED_MODE } from "@/lib/config";
 import { SidebarCreditUsage } from "@/components/sidebar/sidebar-credit-usage";
 
-export function SidebarUser() {
+export type SidebarSignOutOptions =
+  | {
+      returnTo?: string;
+      navigate?: true;
+    }
+  | {
+      returnTo?: string;
+      navigate: false;
+    };
+
+export type SidebarSignOut = (
+  options?: SidebarSignOutOptions
+) => void | Promise<void>;
+
+interface SidebarUserProps {
+  onSignOut?: SidebarSignOut;
+}
+
+export function SidebarUser({ onSignOut }: SidebarUserProps = {}) {
   const { isLoading, isAuthenticated: _isAuthenticated } = useConvexAuth();
   const { user, signIn, signOut } = useAuth();
   const { profilePictureUrl } = useProfilePicture();
@@ -49,6 +71,10 @@ export function SidebarUser() {
       isElectron && import.meta.env.DEV
         ? "http://localhost:8080/callback"
         : window.location.origin;
+    if (onSignOut) {
+      void onSignOut({ returnTo });
+      return;
+    }
     signOut({ returnTo });
   };
 
@@ -139,9 +165,7 @@ export function SidebarUser() {
                   </AvatarFallback>
                 </Avatar>
                 <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-semibold">
-                    {displayName}
-                  </span>
+                  <span className="truncate font-semibold">{displayName}</span>
                   <span className="truncate text-xs text-muted-foreground">
                     {email}
                   </span>

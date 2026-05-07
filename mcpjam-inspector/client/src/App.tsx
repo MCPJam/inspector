@@ -43,6 +43,7 @@ import { SupportTab } from "./components/SupportTab";
 import { RegistryTab } from "./components/RegistryTab";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { MCPSidebar } from "./components/mcp-sidebar";
+import type { SidebarSignOut } from "./components/sidebar/sidebar-user";
 import { SidebarInset, SidebarProvider } from "./components/ui/sidebar";
 import {
   Alert,
@@ -252,7 +253,7 @@ function sanitizeOAuthDebuggerText(value: string | null | undefined): string {
         const separator = typeof args[2] === "string" ? args[2] : undefined;
         return key && separator ? `${key}${separator}[redacted]` : "[redacted]";
       }),
-    value,
+    value
   );
 }
 
@@ -827,6 +828,27 @@ export default function App() {
     const server = runtimeServer ?? projectServer;
     return server ? { runtimeServer, projectServer, server } : null;
   }, []);
+  const handleSignOut = useCallback<SidebarSignOut>(
+    async (options) => {
+      const serverNamesToDisconnect = Object.entries(appState.servers)
+        .filter(([, server]) => server.connectionStatus !== "disconnected")
+        .map(([serverName]) => serverName);
+
+      await Promise.allSettled(
+        serverNamesToDisconnect.map((serverName) =>
+          handleDisconnect(serverName)
+        )
+      );
+
+      if (options?.navigate === false) {
+        await signOut(options);
+        return;
+      }
+
+      signOut(options);
+    },
+    [appState.servers, handleDisconnect, signOut]
+  );
   useEffect(() => {
     return subscribeToOAuthDebuggerRequests(({ serverName }) => {
       const matchedServerName = Object.entries(
@@ -1288,6 +1310,21 @@ export default function App() {
       setSelectedMultipleServersToAllServers,
     ]
   );
+  const previousActiveProjectIdRef = useRef(activeProjectId);
+
+  useEffect(() => {
+    const previousActiveProjectId = previousActiveProjectIdRef.current;
+    previousActiveProjectIdRef.current = activeProjectId;
+
+    if (
+      previousActiveProjectId === activeProjectId ||
+      previousActiveProjectId === "none"
+    ) {
+      return;
+    }
+
+    applyNavigation("servers", { updateHash: true });
+  }, [activeProjectId, applyNavigation]);
 
   useLayoutEffect(() => {
     if (HOSTED_MODE) {
@@ -1640,8 +1677,8 @@ export default function App() {
           section === "billing"
             ? `organizations/${organizationId}/billing`
             : section === "models"
-              ? `organizations/${organizationId}/models`
-              : `organizations/${organizationId}`,
+            ? `organizations/${organizationId}/models`
+            : `organizations/${organizationId}`,
           { updateHash: true }
         );
         return;
@@ -1976,6 +2013,7 @@ export default function App() {
         activeOrganizationName={activeOrganizationName}
         onSwitchOrganization={handleSidebarSwitchOrganization}
         onSwitchActiveOrganization={handleSwitchActiveOrganization}
+        onSignOut={handleSignOut}
         onProjectShared={handleProjectShared}
         billingUiEnabled={billingUiEnabled}
         billingGateDenied={sidebarGateDenied}
@@ -2211,7 +2249,7 @@ export default function App() {
                     ?.writeText(details)
                     .then(() => toast.success("Copied OAuth debugger error"))
                     .catch(() =>
-                      toast.error("Could not copy OAuth debugger error"),
+                      toast.error("Could not copy OAuth debugger error")
                     );
                 };
 
@@ -2246,7 +2284,7 @@ export default function App() {
                   message: sanitizedError.message,
                   stack: sanitizedError.stack,
                   componentStack: sanitizeOAuthDebuggerText(
-                    errorInfo.componentStack,
+                    errorInfo.componentStack
                   ),
                 });
               }}
@@ -2329,11 +2367,11 @@ export default function App() {
             />
           )}
           {activeTab === "settings" && (
-              <SettingsTab
-                activeOrganizationId={activeOrganizationId}
-                onNavigate={handleNavigate}
-              />
-            )}
+            <SettingsTab
+              activeOrganizationId={activeOrganizationId}
+              onNavigate={handleNavigate}
+            />
+          )}
           {activeTab === "support" && <SupportTab />}
           {activeTab === "profile" && <ProfileTab />}
           {activeTab === "organizations" && (
@@ -2455,7 +2493,7 @@ export default function App() {
               signIn();
             }}
             onSignOut={() => {
-              void signOut();
+              void handleSignOut();
             }}
           >
             {isSharedChatRoute ? (

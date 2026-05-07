@@ -502,6 +502,38 @@ export function useAppState({
   } = projectState;
   const { handleDisconnect } = serverState;
 
+  const previousActiveProjectIdRef = useRef(effectiveActiveProjectId);
+  const previousServersRef = useRef(appState.servers);
+
+  useEffect(() => {
+    const previousActiveProjectId = previousActiveProjectIdRef.current;
+    previousActiveProjectIdRef.current = effectiveActiveProjectId;
+
+    if (
+      previousActiveProjectId === effectiveActiveProjectId ||
+      previousActiveProjectId === "none"
+    ) {
+      return;
+    }
+
+    for (const [serverName, server] of Object.entries(
+      previousServersRef.current
+    )) {
+      if (server.connectionStatus !== "disconnected") {
+        logger.info("Disconnecting server on project change", {
+          serverName,
+          from: previousActiveProjectId,
+          to: effectiveActiveProjectId,
+        });
+        void handleDisconnect(serverName);
+      }
+    }
+  }, [effectiveActiveProjectId, handleDisconnect, logger]);
+
+  useEffect(() => {
+    previousServersRef.current = appState.servers;
+  }, [appState.servers]);
+
   const handleSwitchProject = useCallback(
     async (projectId: string) => {
       const newProject = effectiveProjects[projectId];
@@ -518,7 +550,7 @@ export function useAppState({
       const currentServers = Object.keys(appState.servers);
       for (const serverName of currentServers) {
         const server = appState.servers[serverName];
-        if (server.connectionStatus === "connected") {
+        if (server.connectionStatus !== "disconnected") {
           logger.info("Disconnecting server before project switch", {
             serverName,
           });
@@ -569,7 +601,10 @@ export function useAppState({
       const projectServers = Object.keys(project.servers || {});
       for (const serverName of projectServers) {
         const runtimeServer = appState.servers[serverName];
-        if (runtimeServer?.connectionStatus === "connected") {
+        if (
+          runtimeServer &&
+          runtimeServer.connectionStatus !== "disconnected"
+        ) {
           await handleDisconnect(serverName);
         }
       }
