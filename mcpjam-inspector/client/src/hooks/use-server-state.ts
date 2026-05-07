@@ -593,26 +593,12 @@ export function useServerState({
     for (const [name, server] of Object.entries(project.servers)) {
       const runtimeState = appState.servers[name];
 
-      let envFromStorage: Record<string, string> | undefined;
-      try {
-        const stored = localStorage.getItem(`mcp-env-${name}`);
-        if (stored) envFromStorage = JSON.parse(stored);
-      } catch {
-        // Ignore parse errors
-      }
-
-      let configWithEnv: MCPServerConfig = server.config;
-      if (
-        envFromStorage &&
-        "command" in server.config &&
-        typeof server.config.command === "string"
-      ) {
-        configWithEnv = { ...server.config, env: envFromStorage };
-      }
-
+      // Slice 5: STDIO env now lives on the Convex `servers` doc and flows
+      // through `effectiveProjects` via the resolver. The legacy
+      // `mcp-env-${name}` localStorage scratchpad is gone.
       serversWithRuntime[name] = {
         ...server,
-        config: configWithEnv,
+        config: server.config,
         connectionStatus: runtimeState?.connectionStatus || "disconnected",
         oauthTokens: runtimeState?.oauthTokens,
         initializationInfo: runtimeState?.initializationInfo,
@@ -1974,13 +1960,8 @@ export function useServerState({
             config: mcpConfig,
             useOAuth: formData.useOAuth ?? false,
           });
-          const env = (mcpConfig as any).env;
-          if (!HOSTED_MODE && env && Object.keys(env).length > 0) {
-            localStorage.setItem(
-              `mcp-env-${formData.name}`,
-              JSON.stringify(env)
-            );
-          }
+          // Slice 5: env is persisted to Convex by `syncServerToConvex`; the
+          // legacy `mcp-env-${name}` localStorage write is gone.
           logger.info("Connection successful", { serverName: formData.name });
           if (
             !shouldSuppressExcalidrawConnectToastForOnboarding(formData.name)
@@ -2456,8 +2437,10 @@ export function useServerState({
   );
 
   const cleanupServerLocalArtifacts = useCallback((serverName: string) => {
+    // Slice 5: env removal handled by Convex deleteServer; only OAuth local
+    // scratchpad remains and is cleaned up here. Once Slice 2's OAuth purge
+    // collapses the localStorage cache fully, this can drop too.
     clearOAuthData(serverName);
-    localStorage.removeItem(`mcp-env-${serverName}`);
   }, []);
 
   const removeServerFromStateAndCloud = useCallback(

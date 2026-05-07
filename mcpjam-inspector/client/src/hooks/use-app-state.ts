@@ -9,7 +9,8 @@ import {
   type ServerWithName,
 } from "@/state/app-types";
 import { appReducer } from "@/state/app-reducer";
-import { loadAppState, saveAppState } from "@/state/storage";
+// Slice 4: loadAppState/saveAppState are no-ops (Convex is the source of
+// truth). Imports removed; file kept for legacy callers via `state/storage.ts`.
 import { useProjectState } from "./use-project-state";
 import { useServerState } from "./use-server-state";
 import {
@@ -362,8 +363,12 @@ export function useAppState({
     if (hasHydratedAppStateRef.current) return;
     hasHydratedAppStateRef.current = true;
 
+    // State now hydrates from Convex queries via useProjectState + the flat
+    // servers query; the legacy localStorage `loadAppState` is gone. We still
+    // need to detect a pending dashboard OAuth callback so the dashboard can
+    // surface the in-flight connect, and we need to flip isLoading off so
+    // dependent gates resolve.
     try {
-      const loaded = loadAppState();
       const pendingOAuth = readPendingDashboardOAuth();
       setPendingDashboardOAuth((current) => {
         if (
@@ -374,22 +379,20 @@ export function useAppState({
         }
         return pendingOAuth;
       });
-      const hydratedState = pendingOAuth
-        ? patchStateForPendingOAuth(loaded, pendingOAuth)
-        : loaded;
-      dispatch({ type: "HYDRATE_STATE", payload: hydratedState });
+      if (pendingOAuth) {
+        dispatch({
+          type: "HYDRATE_STATE",
+          payload: patchStateForPendingOAuth(initialAppState, pendingOAuth),
+        });
+      }
     } catch (error) {
-      logger.error("Failed to load saved state", {
+      logger.error("Failed to read pending dashboard OAuth state", {
         error: error instanceof Error ? error.message : "Unknown error",
       });
     } finally {
       setIsLoading(false);
     }
   }, [logger]);
-
-  useEffect(() => {
-    if (!isLoading) saveAppState(appState);
-  }, [appState, isLoading]);
 
   useEffect(() => {
     if (!pendingDashboardOAuth) return;

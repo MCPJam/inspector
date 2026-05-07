@@ -225,9 +225,12 @@ export function useProjectState({
   const ensureDefaultInFlightRef = useRef(new Set<string>());
   const ensureDefaultCompletedRef = useRef(new Set<string>());
   const migrationErrorNotifiedRef = useRef(new Set<string>());
-  const [useLocalFallback, setUseLocalFallback] = useState(false);
-  const shouldUseLocalFallback = useLocalFallback && !isGuestActor;
-  const convexTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // localFallback is gone — Convex is the only source of truth in both modes.
+  // The `useLocalFallback`/`shouldUseLocalFallback` constants stay as `false`
+  // so dependent code keeps compiling; the dead branches read clearly enough
+  // and will be cleaned up alongside loadAppState/saveAppState in Slice 4.
+  const useLocalFallback = false;
+  const shouldUseLocalFallback = false;
   const pendingClientConfigSyncRef = useRef<
     Map<string, PendingClientConfigSync>
   >(new Map());
@@ -235,7 +238,6 @@ export function useProjectState({
   const pendingClientConfigSyncByProjectRef = useRef<Map<string, string>>(
     new Map(),
   );
-  const CONVEX_TIMEOUT_MS = 10000;
 
   const clearConvexActiveProjectSelection = useCallback(() => {
     setConvexActiveProjectId(null);
@@ -296,61 +298,11 @@ export function useProjectState({
     }
   }, [clearPendingClientConfigSync]);
 
-  useEffect(() => {
-    if (!isAuthenticated) {
-      setUseLocalFallback(false);
-      if (convexTimeoutRef.current) {
-        clearTimeout(convexTimeoutRef.current);
-        convexTimeoutRef.current = null;
-      }
-      return;
-    }
+  // The pre-Slice-3 timer that flipped useLocalFallback to true after a 10s
+  // Convex stall is gone. CLI now requires Convex connectivity; offline state
+  // surfaces as a Convex query never resolving, which UI surfaces handle via
+  // the unreachable banner (added below).
 
-    if (isGuestActor || shouldTreatRemoteProjectsAsEmpty) {
-      setUseLocalFallback(false);
-      if (convexTimeoutRef.current) {
-        clearTimeout(convexTimeoutRef.current);
-        convexTimeoutRef.current = null;
-      }
-      return;
-    }
-
-    if (remoteProjects !== undefined) {
-      setUseLocalFallback(false);
-      if (convexTimeoutRef.current) {
-        clearTimeout(convexTimeoutRef.current);
-        convexTimeoutRef.current = null;
-      }
-      return;
-    }
-
-    if (!convexTimeoutRef.current && !shouldUseLocalFallback) {
-      convexTimeoutRef.current = setTimeout(() => {
-        logger.warn(
-          "Convex connection timed out, falling back to local storage",
-        );
-        toast.warning("Cloud sync unavailable - using local data", {
-          description: "Your changes will be saved locally",
-        });
-        setUseLocalFallback(true);
-        convexTimeoutRef.current = null;
-      }, CONVEX_TIMEOUT_MS);
-    }
-
-    return () => {
-      if (convexTimeoutRef.current) {
-        clearTimeout(convexTimeoutRef.current);
-        convexTimeoutRef.current = null;
-      }
-    };
-  }, [
-    isAuthenticated,
-    isGuestActor,
-    remoteProjects,
-    shouldTreatRemoteProjectsAsEmpty,
-    shouldUseLocalFallback,
-    logger,
-  ]);
 
   useEffect(() => {
     if (

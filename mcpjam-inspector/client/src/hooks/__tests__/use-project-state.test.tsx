@@ -1065,7 +1065,11 @@ describe("useProjectState automatic project creation", () => {
     expect(ensureDefaultProjectMock).not.toHaveBeenCalled();
   });
 
-  it("keeps zero-org recovery empty even after local fallback activated while org loading was still pending", async () => {
+  // Skipped: post-Slice-3, useLocalFallback is constant `false`. Tests below
+  // that assert the 10s fallback flip / fallback-mode CRUD semantics no
+  // longer apply. Future cleanup should rewrite them against the
+  // "Convex unreachable" UI surface.
+  it.skip("keeps zero-org recovery empty even after local fallback activated while org loading was still pending", async () => {
     vi.useFakeTimers();
     projectQueryState.allProjects = [
       {
@@ -1117,7 +1121,7 @@ describe("useProjectState automatic project creation", () => {
     expect(ensureDefaultProjectMock).not.toHaveBeenCalled();
   });
 
-  it("still uses local fallback when a valid org exists and cloud sync times out", async () => {
+  it.skip("still uses local fallback when a valid org exists and cloud sync times out", async () => {
     vi.useFakeTimers();
     projectQueryState.allProjects = undefined;
     projectQueryState.projects = undefined;
@@ -1146,7 +1150,7 @@ describe("useProjectState automatic project creation", () => {
     );
   });
 
-  it("scopes local fallback projects to the current org and ignores an active project from another org", async () => {
+  it.skip("scopes local fallback projects to the current org and ignores an active project from another org", async () => {
     vi.useFakeTimers();
     projectQueryState.allProjects = undefined;
     projectQueryState.projects = undefined;
@@ -1182,7 +1186,7 @@ describe("useProjectState automatic project creation", () => {
     expect(result.current.effectiveActiveProjectId).toBe("local-org-a");
   });
 
-  it("hides unscoped and wrong-org local fallback projects when the current org has no local matches", async () => {
+  it.skip("hides unscoped and wrong-org local fallback projects when the current org has no local matches", async () => {
     vi.useFakeTimers();
     projectQueryState.allProjects = undefined;
     projectQueryState.projects = undefined;
@@ -1234,7 +1238,7 @@ describe("useProjectState automatic project creation", () => {
     );
   });
 
-  it("stamps the current org id on local fallback create, duplicate, and import actions", async () => {
+  it.skip("stamps the current org id on local fallback create, duplicate, and import actions", async () => {
     vi.useFakeTimers();
     projectQueryState.allProjects = undefined;
     projectQueryState.projects = undefined;
@@ -1307,7 +1311,7 @@ describe("useProjectState automatic project creation", () => {
     });
   });
 
-  it("updates projects locally in authenticated fallback mode", async () => {
+  it.skip("updates projects locally in authenticated fallback mode", async () => {
     vi.useFakeTimers();
     projectQueryState.allProjects = undefined;
     projectQueryState.projects = undefined;
@@ -1349,7 +1353,7 @@ describe("useProjectState automatic project creation", () => {
     });
   });
 
-  it("deletes active projects locally in authenticated fallback mode", async () => {
+  it.skip("deletes active projects locally in authenticated fallback mode", async () => {
     vi.useFakeTimers();
     projectQueryState.allProjects = undefined;
     projectQueryState.projects = undefined;
@@ -1642,7 +1646,7 @@ describe("useProjectState automatic project creation", () => {
     });
   });
 
-  it("keeps a non-shared active local project selected after remote projects return", async () => {
+  it.skip("keeps a non-shared active local project selected after remote projects return", async () => {
     vi.useFakeTimers();
     projectQueryState.allProjects = undefined;
     projectQueryState.projects = undefined;
