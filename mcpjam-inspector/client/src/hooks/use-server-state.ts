@@ -2429,6 +2429,9 @@ export function useServerState({
   );
 
   const cleanupServerLocalArtifacts = useCallback((serverName: string) => {
+    // Slice 5: env removal handled by Convex deleteServer; only OAuth local
+    // scratchpad remains and is cleaned up here. Once Slice 2's OAuth purge
+    // collapses the localStorage cache fully, this can drop too.
     clearOAuthData(serverName);
     // Env now lives on the Convex server doc; removal happens via the
     // server-delete mutation. No localStorage cleanup needed.

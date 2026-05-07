@@ -1,29 +1,25 @@
-/**
- * Convex is now the single source of truth for projects/servers/state.
- * `loadAppState` and `saveAppState` are no-ops post-unification: state
- * hydrates from Convex queries, and the migration shim
- * (`lib/local-state-migration.ts`) lifts any legacy localStorage state on
- * first boot. The legacy keys (`mcp-inspector-state`,
- * `mcp-inspector-projects`, `mcp-inspector-workspaces`) live just long
- * enough for the migration to read them — `clearLegacyKeys()` removes them
- * after a successful migration.
- *
- * Persisted OAuth-trace cleanup still runs because that's a UI-only artifact
- * unrelated to project state.
- */
 import { AppState, createInitialAppState } from "./app-types";
 import { clearPersistedOAuthTraces } from "@/lib/oauth/oauth-trace";
 
+/**
+ * Storage layer for legacy localStorage-backed AppState.
+ *
+ * Slice 4: collapsed to no-ops. Convex is the only source of truth for
+ * projects/servers in both modes. Legacy localStorage state is migrated to
+ * Convex once on first boot by `lib/local-state-migration.ts`; subsequent
+ * state lives in Convex and is read via `useProjectQueries` /
+ * `useProjectServers`. The `loadAppState` / `saveAppState` exports remain so
+ * existing call sites keep compiling, but they no longer touch localStorage.
+ *
+ * Persisted OAuth traces in `sessionStorage` are still cleared on first read
+ * — the trace pruning is a UI concern, not state persistence.
+ */
+
 export function loadAppState(): AppState {
-  try {
-    clearPersistedOAuthTraces();
-  } catch {
-    // best-effort
-  }
+  clearPersistedOAuthTraces();
   return createInitialAppState();
 }
 
-export function saveAppState(_state: AppState) {
-  // Intentionally empty. Convex is the source of truth; localStorage is no
-  // longer written for project/server state.
+export function saveAppState(_state: AppState): void {
+  // no-op
 }

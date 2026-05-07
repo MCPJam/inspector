@@ -338,6 +338,11 @@ export function useAppState({
     if (hasHydratedAppStateRef.current) return;
     hasHydratedAppStateRef.current = true;
 
+    // State now hydrates from Convex queries via useProjectState + the flat
+    // servers query; the legacy localStorage `loadAppState` is gone. We still
+    // need to detect a pending dashboard OAuth callback so the dashboard can
+    // surface the in-flight connect, and we need to flip isLoading off so
+    // dependent gates resolve.
     try {
       // Convex is now the source of truth for projects/servers/state, but
       // pendingDashboardOAuth is a callback-resume marker for the OAuth
