@@ -1784,4 +1784,157 @@ describe("mcp-oauth", () => {
       );
     });
   });
+
+  describe("saveTokens import-tokens push", () => {
+    it("posts to /api/web/oauth/import-tokens when project context is populated", async () => {
+      const { authFetch } = await import("@/lib/session-token");
+      const { setHostedApiContext } = await import("@/lib/apis/web/context");
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+
+      vi.mocked(authFetch).mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: async () => "",
+        json: async () => ({ success: true, expiresAt: null, kind: "generic" }),
+      } as any);
+
+      setHostedApiContext({
+        projectId: "proj_local",
+        serverIdsByName: { asana: "srv_asana" },
+        getAccessToken: async () => null,
+        isAuthenticated: true,
+        hasSession: true,
+      });
+      localStorage.setItem(
+        "mcp-client-asana",
+        JSON.stringify({ client_id: "client-xyz", client_secret: "secret-abc" })
+      );
+
+      try {
+        const provider = new MCPOAuthProvider("asana", "https://mcp.asana.com/sse");
+        await provider.saveTokens({
+          access_token: "at-1",
+          refresh_token: "rt-1",
+        });
+
+        expect(localStorage.getItem("mcp-tokens-asana")).toBe(
+          JSON.stringify({ access_token: "at-1", refresh_token: "rt-1" })
+        );
+        const importCall = vi
+          .mocked(authFetch)
+          .mock.calls.find(
+            ([url]) => typeof url === "string" && url === "/api/web/oauth/import-tokens"
+          );
+        expect(importCall).toBeDefined();
+        const body = JSON.parse((importCall![1] as any).body as string);
+        expect(body).toMatchObject({
+          projectId: "proj_local",
+          serverId: "srv_asana",
+          serverUrl: "https://mcp.asana.com/sse",
+          clientInformation: {
+            clientId: "client-xyz",
+            clientSecret: "secret-abc",
+          },
+          tokens: { access_token: "at-1", refresh_token: "rt-1" },
+        });
+      } finally {
+        setHostedApiContext(null);
+      }
+    });
+
+    it("skips import-tokens push when project context is not populated", async () => {
+      const { authFetch } = await import("@/lib/session-token");
+      const { setHostedApiContext } = await import("@/lib/apis/web/context");
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+
+      vi.mocked(authFetch).mockReset();
+      setHostedApiContext(null);
+
+      const provider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse"
+      );
+      await provider.saveTokens({ access_token: "at-1" });
+
+      expect(localStorage.getItem("mcp-tokens-asana")).toBe(
+        JSON.stringify({ access_token: "at-1" })
+      );
+      const importCalls = vi
+        .mocked(authFetch)
+        .mock.calls.filter(
+          ([url]) => typeof url === "string" && url === "/api/web/oauth/import-tokens"
+        );
+      expect(importCalls).toHaveLength(0);
+    });
+
+    it("throws when import-tokens push fails so the OAuth dance surfaces the error", async () => {
+      const { authFetch } = await import("@/lib/session-token");
+      const { setHostedApiContext } = await import("@/lib/apis/web/context");
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+
+      vi.mocked(authFetch).mockReset();
+      vi.mocked(authFetch).mockResolvedValue({
+        ok: false,
+        status: 500,
+        text: async () => "convex unreachable",
+        json: async () => ({}),
+      } as any);
+
+      setHostedApiContext({
+        projectId: "proj_local",
+        serverIdsByName: { asana: "srv_asana" },
+        getAccessToken: async () => null,
+        isAuthenticated: true,
+        hasSession: true,
+      });
+      localStorage.setItem(
+        "mcp-client-asana",
+        JSON.stringify({ client_id: "client-xyz" })
+      );
+
+      try {
+        const provider = new MCPOAuthProvider(
+          "asana",
+          "https://mcp.asana.com/sse"
+        );
+        await expect(
+          provider.saveTokens({ access_token: "at-1" })
+        ).rejects.toThrow(/Failed to sync OAuth tokens to Convex \(500\)/);
+      } finally {
+        setHostedApiContext(null);
+      }
+    });
+
+    it("skips import-tokens push when no client_id is stored", async () => {
+      const { authFetch } = await import("@/lib/session-token");
+      const { setHostedApiContext } = await import("@/lib/apis/web/context");
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+
+      vi.mocked(authFetch).mockReset();
+      setHostedApiContext({
+        projectId: "proj_local",
+        serverIdsByName: { asana: "srv_asana" },
+        getAccessToken: async () => null,
+        isAuthenticated: true,
+        hasSession: true,
+      });
+
+      try {
+        const provider = new MCPOAuthProvider(
+          "asana",
+          "https://mcp.asana.com/sse"
+        );
+        await provider.saveTokens({ access_token: "at-1" });
+
+        const importCalls = vi
+          .mocked(authFetch)
+          .mock.calls.filter(
+            ([url]) => typeof url === "string" && url === "/api/web/oauth/import-tokens"
+          );
+        expect(importCalls).toHaveLength(0);
+      } finally {
+        setHostedApiContext(null);
+      }
+    });
+  });
 });

@@ -197,6 +197,17 @@ oauthWeb.post("/client-secret", async (c) => {
   }
 });
 
+// Local-mode token import — see backend `/web/oauth/import-tokens` for shape.
+// The local CLI's `MCPOAuthProvider` uses this to push browser-side
+// PKCE-exchanged tokens into Convex so the resolver can read them.
+oauthWeb.post("/import-tokens", async (c) => {
+  try {
+    return await proxyConvexOAuthPost(c, "/web/oauth/import-tokens");
+  } catch (error) {
+    return webErrorCompat(c, toRouteError(error));
+  }
+});
+
 /**
  * Debug proxy for OAuth flow visualization (hosted mode).
  * POST /api/web/oauth/debug/proxy

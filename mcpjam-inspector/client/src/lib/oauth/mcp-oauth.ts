@@ -35,6 +35,7 @@ import type { HttpServerConfig } from "@mcpjam/sdk/browser";
 import { generateRandomString } from "./pkce";
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE, SANITIZE_OAUTH_TRACES } from "@/lib/config";
+import { tryResolveProjectServer } from "@/lib/apis/web/context";
 import { captureServerDetailModalOAuthResume } from "@/lib/server-detail-modal-resume";
 import {
   matchesHostedOAuthServerIdentity,
@@ -1938,6 +1939,58 @@ export class MCPOAuthProvider implements OAuthClientProvider {
       `mcp-tokens-${this.serverName}`,
       JSON.stringify(tokens)
     );
+
+    // Push to Convex via /api/web/oauth/import-tokens so the local resolver
+    // (`local-server-resolver.ts`) can find these tokens on subsequent
+    // /api/mcp/connect calls. Post-Slice-2 the resolver path is unconditional
+    // when projectId is set — there is no bearer-header fallback — so a
+    // missing Convex write would leave the user "authenticated locally but
+    // disconnected from the resolver". Surface push failures to the OAuth
+    // dance rather than swallowing them.
+    //
+    // The skip cases (no project context, no client_id) are still silent:
+    // they fire in tests and in the very-early-boot OAuth callback before
+    // hostedApiContext is populated, where the legacy {serverConfig,
+    // serverId} path covers brand-new servers.
+    const resolved = tryResolveProjectServer(this.serverName);
+    if (!resolved) {
+      return;
+    }
+    const clientInfo = this.clientInformation();
+    const clientId =
+      clientInfo && typeof (clientInfo as any).client_id === "string"
+        ? (clientInfo as any).client_id
+        : undefined;
+    const clientSecret =
+      clientInfo && typeof (clientInfo as any).client_secret === "string"
+        ? (clientInfo as any).client_secret
+        : undefined;
+    if (!clientId) {
+      return;
+    }
+    const storedConfig = readStoredOAuthConfig(this.serverName);
+    const oauthResourceUrl = storedConfig.resourceUrl;
+    const response = await authFetch("/api/web/oauth/import-tokens", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId: resolved.projectId,
+        serverId: resolved.serverId,
+        serverUrl: this.serverUrl,
+        ...(oauthResourceUrl ? { oauthResourceUrl } : {}),
+        clientInformation: {
+          clientId,
+          ...(clientSecret ? { clientSecret } : {}),
+        },
+        tokens,
+      }),
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new Error(
+        `Failed to sync OAuth tokens to Convex (${response.status}): ${text || "unknown error"}`
+      );
+    }
   }
 
   prepareTokenRequest() {

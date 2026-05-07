@@ -19,7 +19,14 @@ function readBody(): Record<string, unknown> {
   return JSON.parse(String(init?.body ?? "{}"));
 }
 
-describe("mcp-api local-mode legacy fallback (OAuth bearer present)", () => {
+// Post-Slice-2 (`MCPOAuthProvider.saveTokens` pushes through
+// `/api/web/oauth/import-tokens`), Convex always has the OAuth tokens by the
+// time `testConnection`/`reconnectServer` fires, so the resolver path no
+// longer needs to bypass itself when the runtime config carries a local
+// bearer header. These tests pin that the resolver is always used when
+// projectId is provided, regardless of an Authorization header on the
+// runtime config.
+describe("mcp-api local-mode resolver vs legacy paths", () => {
   beforeEach(() => {
     authFetchMock.mockReset();
     authFetchMock.mockResolvedValue(
@@ -27,7 +34,7 @@ describe("mcp-api local-mode legacy fallback (OAuth bearer present)", () => {
     );
   });
 
-  it("testConnection sends the display name as serverId when falling back to legacy because of a local OAuth bearer", async () => {
+  it("testConnection takes the resolver path when projectId is set, even with a local OAuth bearer in serverConfig", async () => {
     const config = {
       url: "http://localhost:8787/mcp",
       requestInit: {
@@ -43,16 +50,13 @@ describe("mcp-api local-mode legacy fallback (OAuth bearer present)", () => {
     });
 
     const body = readBody();
-    // Resolver path is suppressed — the runtime config carries a local
-    // bearer that Convex doesn't yet hold.
-    expect(body.projectId).toBeUndefined();
-    expect(body.serverConfig).toBeDefined();
-    // The legacy server-side path uses serverId as the mcpClientManager key;
-    // it must be the display name, not the resolved Convex `_id`.
-    expect(body.serverId).toBe("mcpjam local");
+    expect(body.projectId).toBe("project_xyz");
+    expect(body.serverId).toBe("convex_id_abc123");
+    expect(body.serverName).toBe("mcpjam local");
+    expect(body.serverConfig).toBeUndefined();
   });
 
-  it("reconnectServer sends the display name as serverId when falling back to legacy because of a local OAuth bearer", async () => {
+  it("reconnectServer takes the resolver path when projectId is set, even with a local OAuth bearer in serverConfig", async () => {
     const config = {
       url: "http://localhost:8787/mcp",
       requestInit: {
@@ -68,12 +72,13 @@ describe("mcp-api local-mode legacy fallback (OAuth bearer present)", () => {
     });
 
     const body = readBody();
-    expect(body.projectId).toBeUndefined();
-    expect(body.serverConfig).toBeDefined();
-    expect(body.serverId).toBe("mcpjam local");
+    expect(body.projectId).toBe("project_xyz");
+    expect(body.serverId).toBe("convex_id_abc123");
+    expect(body.serverName).toBe("mcpjam local");
+    expect(body.serverConfig).toBeUndefined();
   });
 
-  it("testConnection still uses the resolver body when no local OAuth bearer is present", async () => {
+  it("testConnection takes the resolver path when projectId is set and config carries no local bearer", async () => {
     const config = {
       url: "http://localhost:8787/mcp",
     } as unknown as MCPServerConfig;
