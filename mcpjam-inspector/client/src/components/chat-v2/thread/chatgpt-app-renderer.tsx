@@ -1725,7 +1725,7 @@ export function ChatGPTAppRenderer({
           height: iframeHeight,
           width: !isFullscreen && !isPip ? contentWidth : undefined,
           backgroundColor: "transparent",
-          colorScheme: resolvedTheme,
+          colorScheme: resolvedTheme === "dark" ? "dark" : "light",
           maxHeight:
             effectiveDisplayMode === "pip" && !isMobilePlaygroundMode
               ? "90vh"
@@ -1770,7 +1770,7 @@ export function ChatGPTAppRenderer({
                 className="min-w-full h-full border-0 rounded-md bg-transparent overflow-hidden"
                 style={{
                   backgroundColor: "transparent",
-                  colorScheme: resolvedTheme,
+                  colorScheme: resolvedTheme === "dark" ? "dark" : "light",
                 }}
               />
             )}

@@ -1503,7 +1503,7 @@ export function MCPAppsRenderer({
     width: "100%",
     maxWidth: "100%",
     backgroundColor: "transparent",
-    colorScheme: resolvedTheme,
+    colorScheme: resolvedTheme === "dark" ? "dark" : "light",
     opacity: showWidget ? 1 : 0,
     transition: [
       "opacity 150ms ease-in",
@@ -1616,7 +1616,7 @@ export function MCPAppsRenderer({
         toolInputRef={toolInputRef}
         toolOutputRef={toolOutputRef}
         themeModeRef={themeModeRef}
-        colorScheme={resolvedTheme}
+        colorScheme={resolvedTheme === "dark" ? "dark" : "light"}
         addUiLog={(log) =>
           logUiEvent({
             ...log,
