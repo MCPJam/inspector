@@ -44,7 +44,6 @@ export interface McpAppsModalProps {
   toolInputRef: React.RefObject<Record<string, unknown> | undefined>;
   toolOutputRef: React.RefObject<unknown>;
   themeModeRef: React.RefObject<string>;
-  colorScheme: "light" | "dark";
   addUiLog: (log: {
     widgetId: string;
     serverId: string;
@@ -75,7 +74,6 @@ export function McpAppsModal({
   toolInputRef,
   toolOutputRef,
   themeModeRef,
-  colorScheme,
   addUiLog,
   onCspViolation,
 }: McpAppsModalProps) {
@@ -274,7 +272,6 @@ export function McpAppsModal({
                 height: "100%",
                 minHeight: "400px",
                 backgroundColor: "transparent",
-                colorScheme,
               }}
             />
           )}

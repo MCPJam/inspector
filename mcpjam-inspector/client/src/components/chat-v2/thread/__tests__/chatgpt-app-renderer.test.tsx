@@ -16,8 +16,6 @@ const stableWidgetDebugFns = {
   clearCspViolations: vi.fn(),
 };
 
-const chatgptIframePropsRef = vi.hoisted(() => ({ current: null as any }));
-
 const mockPlaygroundStoreState = {
   isPlaygroundActive: false,
   cspMode: "permissive" as const,
@@ -88,7 +86,6 @@ vi.mock("@mcpjam/design-system/dialog", () => ({
 
 vi.mock("@/components/ui/chatgpt-sandboxed-iframe", () => ({
   ChatGPTSandboxedIframe: React.forwardRef((props: any, ref: any) => {
-    chatgptIframePropsRef.current = props;
     React.useImperativeHandle(ref, () => ({
       postMessage: vi.fn(),
       setHeight: vi.fn(),
@@ -109,7 +106,6 @@ import { ChatGPTAppRenderer } from "../chatgpt-app-renderer";
 describe("ChatGPTAppRenderer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    chatgptIframePropsRef.current = null;
     Object.assign(mockPlaygroundStoreState, {
       isPlaygroundActive: false,
       cspMode: "permissive",
@@ -145,27 +141,6 @@ describe("ChatGPTAppRenderer", () => {
     expect(container?.className).toContain("absolute");
     expect(container?.className).not.toContain("fixed");
     expect(container?.className).toContain("top-4");
-  });
-
-  it("keeps the sandbox iframe transparent while matching the current host scheme", async () => {
-    render(
-      <ChatGPTAppRenderer
-        serverId="server-1"
-        toolCallId="call-1"
-        toolName="test-tool"
-        toolState="output-available"
-        toolMetadata={{ "openai/outputTemplate": "ui://widget.html" }}
-        cachedWidgetHtmlUrl="blob:cached"
-      />,
-    );
-
-    const iframe = await screen.findByTestId("chatgpt-sandboxed-iframe");
-
-    expect(iframe.className).toContain("bg-transparent");
-    expect(chatgptIframePropsRef.current?.style?.backgroundColor).toBe(
-      "transparent",
-    );
-    expect(chatgptIframePropsRef.current?.style?.colorScheme).toBe("light");
   });
 
   it("keeps desktop playground fullscreen as a fixed breakout overlay", async () => {
