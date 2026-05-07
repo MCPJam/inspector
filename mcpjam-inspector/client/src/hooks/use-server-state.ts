@@ -48,10 +48,9 @@ import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { useServerMutations, type RemoteServer } from "./useProjects";
 import {
   CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
-  getEffectiveServerClientCapabilities,
   getEffectiveProjectConnectionDefaults,
   mergeProjectConnectionHeaders,
-  normalizeProjectClientCapabilities,
+  resolveEffectiveServerClientCapabilities,
 } from "@/lib/client-config";
 import { EXCALIDRAW_SERVER_NAME } from "@/lib/excalidraw-quick-connect";
 import { readOnboardingState } from "@/lib/onboarding-state";
@@ -646,17 +645,11 @@ export function useServerState({
 
   const withProjectConnectionDefaults = useCallback(
     (serverConfig: MCPServerConfig): MCPServerConfig => {
-      const explicitClientCapabilities = serverConfig.clientCapabilities as
-        | Record<string, unknown>
-        | undefined;
-      const effectiveClientCapabilities = explicitClientCapabilities
-        ? normalizeProjectClientCapabilities(explicitClientCapabilities)
-        : getEffectiveServerClientCapabilities({
-            projectClientConfig: activeProject?.clientConfig,
-            serverCapabilities: serverConfig.capabilities as
-              | Record<string, unknown>
-              | undefined,
-          });
+      const effectiveClientCapabilities =
+        resolveEffectiveServerClientCapabilities({
+          serverConfig,
+          projectClientConfig: activeProject?.clientConfig,
+        });
 
       let nextRequestInit = serverConfig.requestInit;
       if ("url" in serverConfig) {

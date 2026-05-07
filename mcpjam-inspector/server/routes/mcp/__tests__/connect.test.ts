@@ -148,9 +148,20 @@ describe("POST /api/mcp/connect", () => {
       });
 
       expect(res.status).toBe(200);
-      const data = (await res.json()) as { success: boolean; status: string };
+      const data = (await res.json()) as {
+        success: boolean;
+        status: string;
+        initInfo: unknown;
+      };
       expect(data.success).toBe(true);
       expect(data.status).toBe("connected");
+      // Regression: the response now includes initInfo inline, matching the
+      // hosted /api/web/servers/validate envelope. Without this, the
+      // inspector client falls back to a fire-and-forget /init-info round
+      // trip and the reconnect-warning indicator races against it on every
+      // fresh connect (and shows permanently for servers that were
+      // connected in a prior browser session).
+      expect("initInfo" in data).toBe(true);
 
       // Manager is keyed by display name, not the Convex serverId — the rest
       // of the local API surface (tools list/execute, status) passes display
