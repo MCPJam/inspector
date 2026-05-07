@@ -1714,7 +1714,7 @@ export function ChatGPTAppRenderer({
           setLoadError(null);
         }}
         title={`ChatGPT App Widget: ${toolName || "tool"}`}
-        className={`w-full bg-background ${
+        className={`w-full bg-transparent ${
           isFullscreen
             ? "flex-1 border-0 rounded-none"
             : isPip
@@ -1724,6 +1724,8 @@ export function ChatGPTAppRenderer({
         style={{
           height: iframeHeight,
           width: !isFullscreen && !isPip ? contentWidth : undefined,
+          backgroundColor: "transparent",
+          colorScheme: resolvedTheme,
           maxHeight:
             effectiveDisplayMode === "pip" && !isMobilePlaygroundMode
               ? "90vh"
@@ -1765,7 +1767,11 @@ export function ChatGPTAppRenderer({
                 onMessage={handleModalSandboxMessage}
                 onReady={handleModalReady}
                 title={`ChatGPT App Modal: ${modalTitle}`}
-                className="min-w-full h-full border-0 rounded-md bg-background overflow-hidden"
+                className="min-w-full h-full border-0 rounded-md bg-transparent overflow-hidden"
+                style={{
+                  backgroundColor: "transparent",
+                  colorScheme: resolvedTheme,
+                }}
               />
             )}
           </div>

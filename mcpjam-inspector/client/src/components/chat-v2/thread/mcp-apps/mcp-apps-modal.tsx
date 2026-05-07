@@ -44,6 +44,7 @@ export interface McpAppsModalProps {
   toolInputRef: React.RefObject<Record<string, unknown> | undefined>;
   toolOutputRef: React.RefObject<unknown>;
   themeModeRef: React.RefObject<string>;
+  colorScheme: "light" | "dark";
   addUiLog: (log: {
     widgetId: string;
     serverId: string;
@@ -74,6 +75,7 @@ export function McpAppsModal({
   toolInputRef,
   toolOutputRef,
   themeModeRef,
+  colorScheme,
   addUiLog,
   onCspViolation,
 }: McpAppsModalProps) {
@@ -267,8 +269,13 @@ export function McpAppsModal({
               permissive={widgetPermissive}
               onMessage={handleModalMessage}
               title={`MCP App Modal: ${title}`}
-              className="min-w-full border-0 rounded-md bg-background overflow-hidden"
-              style={{ height: "100%", minHeight: "400px" }}
+              className="min-w-full border-0 rounded-md bg-transparent overflow-hidden"
+              style={{
+                height: "100%",
+                minHeight: "400px",
+                backgroundColor: "transparent",
+                colorScheme,
+              }}
             />
           )}
         </div>

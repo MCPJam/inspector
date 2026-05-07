@@ -484,6 +484,18 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
   });
 
+  it("keeps the sandbox iframe transparent while matching the current host scheme", async () => {
+    render(<MCPAppsRenderer {...baseProps} />);
+
+    const iframe = await screen.findByTestId("sandboxed-iframe");
+
+    expect(iframe.className).toContain("bg-transparent");
+    expect(sandboxedIframePropsRef.current?.style?.backgroundColor).toBe(
+      "transparent",
+    );
+    expect(sandboxedIframePropsRef.current?.style?.colorScheme).toBe("light");
+  });
+
   it("anchors desktop playground PiP to the playground shell instead of the viewport", async () => {
     Object.assign(mockPlaygroundStoreState, {
       isPlaygroundActive: true,

@@ -1502,6 +1502,8 @@ export function MCPAppsRenderer({
         : lastInlineHeightRef.current,
     width: "100%",
     maxWidth: "100%",
+    backgroundColor: "transparent",
+    colorScheme: resolvedTheme,
     opacity: showWidget ? 1 : 0,
     transition: [
       "opacity 150ms ease-in",
@@ -1586,7 +1588,7 @@ export function MCPAppsRenderer({
         }}
         onMessage={handleSandboxMessage}
         title={`MCP App: ${toolName}`}
-        className={`bg-background overflow-hidden ${
+        className={`bg-transparent overflow-hidden ${
           isFullscreen
             ? "flex-1 border-0 rounded-none"
             : `rounded-md ${prefersBorder ? "border border-border/40" : ""}`
@@ -1614,6 +1616,7 @@ export function MCPAppsRenderer({
         toolInputRef={toolInputRef}
         toolOutputRef={toolOutputRef}
         themeModeRef={themeModeRef}
+        colorScheme={resolvedTheme}
         addUiLog={(log) =>
           logUiEvent({
             ...log,
