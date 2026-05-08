@@ -793,6 +793,10 @@ export function MCPAppsRenderer({
     () => hostStyleDefinition.resolveStyleVariables(resolvedTheme),
     [resolvedTheme, hostStyleDefinition],
   );
+  const hostChatBackground = useMemo(
+    () => hostStyleDefinition.resolveChatBackground(resolvedTheme),
+    [hostStyleDefinition, resolvedTheme],
+  );
   const defaultFontCss = hostStyleDefinition.fontCss;
   const configuredStyles =
     baseHostContext.styles &&
@@ -810,10 +814,11 @@ export function MCPAppsRenderer({
   );
   const mergedStyleVariables = useMemo(() => {
     return {
+      ...styleVariables,
       ...(configuredStyleVariables &&
       Object.keys(configuredStyleVariables).length > 0
         ? configuredStyleVariables
-        : styleVariables),
+        : {}),
     };
   }, [configuredStyleVariables, styleVariables]);
   const mergedStyles = useMemo<McpUiHostContext["styles"]>(
@@ -1502,6 +1507,10 @@ export function MCPAppsRenderer({
         : lastInlineHeightRef.current,
     width: "100%",
     maxWidth: "100%",
+    backgroundColor:
+      !isFullscreen && prefersBorder
+        ? mergedStyleVariables["--color-background-primary"]
+        : (hostChatBackground ?? "transparent"),
     opacity: showWidget ? 1 : 0,
     transition: [
       "opacity 150ms ease-in",
@@ -1514,6 +1523,38 @@ export function MCPAppsRenderer({
       ? { position: "absolute" as const, pointerEvents: "none" as const }
       : {}),
   };
+  const hostChromeStyle: CSSProperties | undefined =
+    !isFullscreen && prefersBorder
+      ? {
+          backgroundColor: mergedStyleVariables["--color-background-primary"],
+        }
+      : undefined;
+  const iframe = (
+    <SandboxedIframe
+      ref={sandboxRef}
+      html={bridgeTransportReady ? widgetHtml : null}
+      sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+      csp={widgetCsp}
+      permissions={widgetPermissions}
+      permissive={widgetPermissive}
+      colorScheme={resolvedTheme}
+      onProxyReady={() => {
+        setSandboxProxyReady(true);
+        logWidgetDebug("ui-to-host", "debug/sandbox-proxy-ready", {
+          bridgeTransportReady,
+          hasWidgetHtml,
+        });
+      }}
+      onMessage={handleSandboxMessage}
+      title={`MCP App: ${toolName}`}
+      className={`bg-transparent overflow-hidden ${
+        isFullscreen
+          ? "flex-1 border-0 rounded-none"
+          : `rounded-md ${prefersBorder ? "border border-border/40" : ""}`
+      }`}
+      style={iframeStyle}
+    />
+  );
 
   return (
     <div className={containerClassName}>
@@ -1570,30 +1611,17 @@ export function MCPAppsRenderer({
         </button>
       )}
       {/* Uses SandboxedIframe for DRY double-iframe architecture */}
-      <SandboxedIframe
-        ref={sandboxRef}
-        html={bridgeTransportReady ? widgetHtml : null}
-        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
-        csp={widgetCsp}
-        permissions={widgetPermissions}
-        permissive={widgetPermissive}
-        onProxyReady={() => {
-          setSandboxProxyReady(true);
-          logWidgetDebug("ui-to-host", "debug/sandbox-proxy-ready", {
-            bridgeTransportReady,
-            hasWidgetHtml,
-          });
-        }}
-        onMessage={handleSandboxMessage}
-        title={`MCP App: ${toolName}`}
-        className={`bg-background overflow-hidden ${
-          isFullscreen
-            ? "flex-1 border-0 rounded-none"
-            : `rounded-md ${prefersBorder ? "border border-border/40" : ""}`
-        }`}
-        style={iframeStyle}
-      />
-
+      {!isFullscreen && prefersBorder ? (
+        <div
+          data-testid="mcp-app-host-chrome"
+          className="rounded-md"
+          style={hostChromeStyle}
+        >
+          {iframe}
+        </div>
+      ) : (
+        iframe
+      )}
 
       <McpAppsModal
         open={modalOpen}
