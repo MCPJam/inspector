@@ -10,7 +10,7 @@ const mockState = vi.hoisted(() => ({
   setMessages: vi.fn(),
   addToolApprovalResponse: vi.fn(),
   authFetch: vi.fn(),
-  buildHostedServerRequest: vi.fn(),
+  buildServerRequest: vi.fn(),
   getAccessToken: vi.fn(async () => "access-token"),
   getGuestBearerToken: vi.fn(async () => "guest-token"),
   hasToken: vi.fn(() => false),
@@ -161,7 +161,7 @@ vi.mock("@/lib/guest-session", () => ({
 }));
 
 vi.mock("@/lib/apis/web/context", () => ({
-  buildHostedServerRequest: mockState.buildHostedServerRequest,
+  buildServerRequest: mockState.buildServerRequest,
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -271,7 +271,7 @@ describe("useChatSession hosted mode", () => {
     mockState.authFetch.mockReset();
     mockState.authFetch.mockResolvedValue(new Response(null, { status: 200 }));
     mockState.setMessages.mockReset();
-    mockState.buildHostedServerRequest.mockReset();
+    mockState.buildServerRequest.mockReset();
     mockState.getAccessToken.mockReset();
     mockState.getAccessToken.mockResolvedValue("access-token");
     mockState.getGuestBearerToken.mockReset();

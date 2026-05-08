@@ -1,6 +1,6 @@
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
-import { buildHostedServerRequest } from "@/lib/apis/web/context";
+import { buildServerRequest } from "@/lib/apis/web/context";
 import type { CspMode } from "@/stores/ui-playground-store";
 import type {
   McpUiResourceCsp,
@@ -39,7 +39,7 @@ export async function fetchMcpAppsWidgetContent(
     : "/api/apps/mcp-apps/widget-content";
 
   const payload = HOSTED_MODE
-    ? { ...buildHostedServerRequest(request.serverId) }
+    ? { ...buildServerRequest(request.serverId) }
     : { serverId: request.serverId };
 
   const response = await authFetch(endpoint, {

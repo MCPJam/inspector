@@ -5,19 +5,24 @@
  * `mcp-inspector-workspaces`, and the still-older `mcp-inspector-state`
  * (pre-projects format whose servers live at the top level). For each, pushes
  * the resulting project(s) + servers to Convex via `projects:createProject`
- * (which materializes the flat `servers` rows via `syncProjectServers`), then
- * clears the legacy keys.
+ * (which materializes the flat `servers` rows via `syncProjectServers`).
  *
- * **OAuth tokens are NOT migrated.** Hosted Convex stores tokens via the
- * vault-backed `hostedOAuthCredentials` table and there is no bulk-import
- * endpoint; the legacy `mcp-tokens-${name}` etc. localStorage tokens are
- * cleared during migration and users re-authenticate OAuth-enabled servers
- * on first connect post-migration. One-time UX cost vs. the cost of a new
- * import endpoint + vault encryption path.
+ * **OAuth tokens are imported.** After each `createProject`, the migration
+ * resolves the new server IDs by name (`projects:getProjectServers`) and
+ * POSTs legacy `mcp-tokens-${name}` + `mcp-client-${name}` +
+ * `mcp-oauth-config-${name}` to `/api/web/oauth/import-tokens` so users do
+ * NOT need to re-authenticate previously-authorized servers. On import
+ * failure, legacy OAuth keys are preserved and the per-server progress map
+ * allows a clean retry on the next boot. The backend write
+ * (`rotateStoredCredential`) is idempotent, so retries are safe.
  *
  * Runs once per install. Gated by `mcp-inspector-migrated-to-convex` flag.
  */
 import { serializeServersForPersistence } from "@/lib/project-serialization";
+import {
+  normalizeImportHostedOAuthTokens,
+  type ImportHostedOAuthTokensRequest,
+} from "@/lib/apis/hosted-oauth-import-tokens-api";
 import {
   createLocalDefaultProject,
   type Project,
@@ -327,33 +332,208 @@ export function markMigrationComplete(): void {
   }
 }
 
-function readMigratedProjectIds(): Set<string> {
-  if (typeof window === "undefined") return new Set();
+/**
+ * Per-project migration progress, keyed by the LEGACY project id. Tracks the
+ * Convex projectId allocated for the project plus which server names have
+ * been successfully token-imported, so a partial failure can resume at the
+ * next boot without re-creating projects or re-importing tokens that already
+ * landed.
+ *
+ * Backwards compat: an older (`string[]`) shape is migrated in-place to the
+ * new shape on read. The Convex project id is `null` for entries from the
+ * old shape; OAuth import retries for those won't have a server-id mapping
+ * and will be skipped (one-time UX cost vs. unbounded retries against an
+ * unknown projectId).
+ */
+type MigrationProgressEntry = {
+  convexProjectId: string | null;
+  tokensByServerName: Record<string, "imported">;
+};
+type MigrationProgress = Record<string, MigrationProgressEntry>;
+
+function readMigrationProgress(): MigrationProgress {
+  if (typeof window === "undefined") return {};
   try {
     const raw = localStorage.getItem(MIGRATION_PROGRESS_KEY);
-    if (!raw) return new Set();
+    if (!raw) return {};
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      return new Set(parsed.filter((v): v is string => typeof v === "string"));
+      // Legacy shape: lift to new shape with no convex project id.
+      const out: MigrationProgress = {};
+      for (const id of parsed) {
+        if (typeof id === "string") {
+          out[id] = { convexProjectId: null, tokensByServerName: {} };
+        }
+      }
+      return out;
+    }
+    if (parsed && typeof parsed === "object") {
+      const out: MigrationProgress = {};
+      for (const [id, entryRaw] of Object.entries(
+        parsed as Record<string, unknown>,
+      )) {
+        const entry = entryRaw as Partial<MigrationProgressEntry> | undefined;
+        out[id] = {
+          convexProjectId:
+            typeof entry?.convexProjectId === "string"
+              ? entry.convexProjectId
+              : null,
+          tokensByServerName:
+            entry?.tokensByServerName &&
+            typeof entry.tokensByServerName === "object"
+              ? Object.fromEntries(
+                  Object.entries(entry.tokensByServerName).filter(
+                    ([, v]) => v === "imported",
+                  ),
+                )
+              : {},
+        };
+      }
+      return out;
     }
   } catch {
-    // ignore — treat as empty set; worst case we re-attempt a project
+    // ignore — treat as empty progress; worst case we re-attempt a project
   }
-  return new Set();
+  return {};
 }
 
-function recordMigratedProjectId(id: string): void {
+function writeMigrationProgress(progress: MigrationProgress): void {
   if (typeof window === "undefined") return;
   try {
-    const current = readMigratedProjectIds();
-    current.add(id);
-    localStorage.setItem(
-      MIGRATION_PROGRESS_KEY,
-      JSON.stringify(Array.from(current)),
-    );
+    localStorage.setItem(MIGRATION_PROGRESS_KEY, JSON.stringify(progress));
   } catch {
     // best-effort
   }
+}
+
+function recordProjectCreated(
+  legacyProjectId: string,
+  convexProjectId: string,
+): void {
+  const progress = readMigrationProgress();
+  const existing = progress[legacyProjectId] ?? {
+    convexProjectId: null,
+    tokensByServerName: {},
+  };
+  progress[legacyProjectId] = {
+    ...existing,
+    convexProjectId,
+  };
+  writeMigrationProgress(progress);
+}
+
+function recordTokensImported(
+  legacyProjectId: string,
+  serverName: string,
+): void {
+  const progress = readMigrationProgress();
+  const existing = progress[legacyProjectId] ?? {
+    convexProjectId: null,
+    tokensByServerName: {},
+  };
+  progress[legacyProjectId] = {
+    ...existing,
+    tokensByServerName: {
+      ...existing.tokensByServerName,
+      [serverName]: "imported",
+    },
+  };
+  writeMigrationProgress(progress);
+}
+
+/**
+ * Read legacy OAuth state for a single server name. Returns `null` when the
+ * server has no legacy tokens (nothing to import). Field renames are
+ * intentional: legacy storage uses OAuth-cased `client_id`/`client_secret`
+ * and `resourceUrl`, while the import payload uses camelCase `clientId`/
+ * `clientSecret` and `oauthResourceUrl`. Do not spread legacy values
+ * directly — always rename through this helper.
+ */
+function readLegacyOAuthForServer(name: string): {
+  tokens: ImportHostedOAuthTokensRequest["tokens"];
+  clientInformation: ImportHostedOAuthTokensRequest["clientInformation"];
+  oauthResourceUrl?: string;
+  registryServerId?: string;
+  useRegistryOAuthProxy?: boolean;
+  serverUrl?: string;
+} | null {
+  if (typeof window === "undefined") return null;
+  let tokensRaw: string | null;
+  try {
+    tokensRaw = localStorage.getItem(`mcp-tokens-${name}`);
+  } catch {
+    return null;
+  }
+  if (!tokensRaw) return null;
+  let parsedTokens: unknown;
+  try {
+    parsedTokens = JSON.parse(tokensRaw);
+  } catch {
+    return null;
+  }
+  const normalizedTokens = normalizeImportHostedOAuthTokens(parsedTokens);
+  if (!normalizedTokens) {
+    return null;
+  }
+
+  let clientId: string | undefined;
+  let clientSecret: string | undefined;
+  try {
+    const raw = localStorage.getItem(`mcp-client-${name}`);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        if (typeof parsed.client_id === "string") clientId = parsed.client_id;
+        if (typeof parsed.client_secret === "string")
+          clientSecret = parsed.client_secret;
+      }
+    }
+  } catch {
+    // ignore unparseable client info — bail on missing clientId below
+  }
+  if (!clientId) return null; // import requires clientId for generic kind
+
+  let oauthResourceUrl: string | undefined;
+  let registryServerId: string | undefined;
+  let useRegistryOAuthProxy: boolean | undefined;
+  try {
+    const raw = localStorage.getItem(`mcp-oauth-config-${name}`);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        if (typeof parsed.resourceUrl === "string")
+          oauthResourceUrl = parsed.resourceUrl;
+        if (typeof parsed.registryServerId === "string")
+          registryServerId = parsed.registryServerId;
+        if (typeof parsed.useRegistryOAuthProxy === "boolean")
+          useRegistryOAuthProxy = parsed.useRegistryOAuthProxy;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  let serverUrl: string | undefined;
+  try {
+    const raw = localStorage.getItem(`mcp-serverUrl-${name}`);
+    if (raw) serverUrl = raw;
+  } catch {
+    // ignore
+  }
+
+  return {
+    tokens: normalizedTokens,
+    clientInformation: {
+      clientId,
+      ...(clientSecret ? { clientSecret } : {}),
+    },
+    ...(oauthResourceUrl ? { oauthResourceUrl } : {}),
+    ...(registryServerId ? { registryServerId } : {}),
+    ...(useRegistryOAuthProxy
+      ? { useRegistryOAuthProxy }
+      : {}),
+    ...(serverUrl ? { serverUrl } : {}),
+  };
 }
 
 function clearMigrationProgress(): void {
@@ -375,6 +555,48 @@ export interface MigrationDeps {
     organizationId?: string;
     visibility?: "public" | "private";
   }) => Promise<unknown>;
+  /**
+   * Returns the actor's default Convex project id, creating one if none
+   * exists. Used for the legacy default-project (`isDefault: true`) branch
+   * to merge into the auto-provisioned Convex default instead of calling
+   * `createProject`, which would trip `enforceOrganizationProjectLimit` on
+   * free-plan orgs (cap=1) where the auto-default already fills the slot.
+   *
+   * Optional: when omitted (or paired with no `mergeServersIntoExistingProject`),
+   * the migration falls back to `createProject` for default projects too,
+   * preserving the pre-fix behaviour for tests.
+   */
+  ensureDefaultProject?: (args: {
+    organizationId?: string;
+  }) => Promise<string>;
+  /**
+   * Idempotent merge: pushes the local project's servers into an existing
+   * Convex project without deleting servers that aren't in the incoming map.
+   * Paired with `ensureDefaultProject`; both must be supplied to take the
+   * default-project merge path.
+   */
+  mergeServersIntoExistingProject?: (args: {
+    projectId: string;
+    servers: Record<string, unknown>;
+  }) => Promise<unknown>;
+  /**
+   * Resolves the Convex server IDs created by `createProject`, keyed by
+   * server name. Used to map legacy name-scoped OAuth state to new
+   * `(projectId, serverId)` pairs for `/api/web/oauth/import-tokens`.
+   * Optional: when omitted, OAuth-token migration is skipped (legacy
+   * behaviour). The real hook in `use-local-state-migration` always
+   * supplies it.
+   */
+  listProjectServers?: (
+    projectId: string,
+  ) => Promise<Array<{ _id: string; name: string }>>;
+  /**
+   * Posts pre-exchanged tokens to the inspector's
+   * `/api/web/oauth/import-tokens` proxy. Backend write is idempotent so
+   * retries on failure are safe. Optional: paired with
+   * `listProjectServers` — both must be provided to import tokens.
+   */
+  importTokens?: (payload: ImportHostedOAuthTokensRequest) => Promise<unknown>;
   /**
    * Org id to migrate into. Pass `undefined` to let Convex pick the actor's
    * default org (works for both guests and signed-in users without an
@@ -440,16 +662,9 @@ export async function runLocalStateMigration(
 
   const errors: MigrationResult["errors"] = [];
   let projectsMigrated = 0;
-  const alreadyMigrated = readMigratedProjectIds();
+  const progress = readMigrationProgress();
 
   for (const project of payload.projects) {
-    if (alreadyMigrated.has(project.id)) {
-      deps.logger?.info("Skipping already-migrated project", {
-        name: project.name,
-        id: project.id,
-      });
-      continue;
-    }
     // Merge mcp-env-${name} into per-server config so syncProjectServers picks
     // it up. STDIO servers may have env in either place; the merge is
     // last-write-wins favoring the localStorage env entry (which is what the
@@ -470,30 +685,189 @@ export async function runLocalStateMigration(
       }
     }
 
-    const serializedServers = serializeServersForPersistence(projectServers);
+    const existingEntry = progress[project.id];
+    let convexProjectId: string | null = existingEntry?.convexProjectId ?? null;
+
+    if (!convexProjectId) {
+      // Either first attempt for this project, or an older `string[]`
+      // progress entry without a stored convex id.
+      const serializedServers = serializeServersForPersistence(projectServers);
+
+      // Default-project branch: the actor already has an auto-provisioned
+      // Convex default (created by `users:ensureUser`). Calling
+      // `createProject` here would trip `maxWorkspaces` on free-plan orgs
+      // (cap=1, slot already filled). Resolve the existing default and
+      // merge servers into it instead. Idempotent on retry.
+      const useDefaultMergePath =
+        project.isDefault === true &&
+        typeof deps.ensureDefaultProject === "function" &&
+        typeof deps.mergeServersIntoExistingProject === "function";
+
+      if (useDefaultMergePath) {
+        try {
+          const ensured = await deps.ensureDefaultProject!({
+            organizationId: deps.organizationId,
+          });
+          if (typeof ensured !== "string" || !ensured) {
+            throw new Error(
+              "ensureDefaultProject returned no project id"
+            );
+          }
+          await deps.mergeServersIntoExistingProject!({
+            projectId: ensured,
+            servers: serializedServers,
+          });
+          convexProjectId = ensured;
+          recordProjectCreated(project.id, convexProjectId);
+          projectsMigrated++;
+          deps.logger?.info(
+            "Merged local default project into existing Convex default",
+            {
+              name: project.name,
+              convexProjectId,
+              serverCount: Object.keys(projectServers).length,
+            },
+          );
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          errors.push({ projectName: project.name, error: message });
+          deps.logger?.error(
+            "Failed to merge local default project into Convex default",
+            { name: project.name, error: message },
+          );
+          continue;
+        }
+      } else {
+        try {
+          const created = await deps.createProject({
+            name: project.name,
+            description: project.description,
+            icon: project.icon,
+            clientConfig: project.clientConfig,
+            servers: serializedServers,
+            organizationId: deps.organizationId,
+            visibility: project.visibility,
+          });
+          convexProjectId = typeof created === "string" ? created : null;
+          if (convexProjectId) {
+            recordProjectCreated(project.id, convexProjectId);
+          }
+          projectsMigrated++;
+          deps.logger?.info("Migrated local project to Convex", {
+            name: project.name,
+            serverCount: Object.keys(projectServers).length,
+          });
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          errors.push({ projectName: project.name, error: message });
+          deps.logger?.error("Failed to migrate local project", {
+            name: project.name,
+            error: message,
+          });
+          continue;
+        }
+      }
+    } else {
+      deps.logger?.info("Resuming OAuth import for migrated project", {
+        name: project.name,
+        convexProjectId,
+      });
+    }
+
+    if (!convexProjectId) continue;
+    if (!deps.listProjectServers || !deps.importTokens) continue;
+
+    // Servers with already-imported tokens skip the round-trip entirely;
+    // backend write is idempotent so re-importing on retry is safe but
+    // wastes a request and produces noise.
+    const alreadyImported =
+      progress[project.id]?.tokensByServerName ??
+      existingEntry?.tokensByServerName ??
+      {};
+
+    const listProjectServers = deps.listProjectServers;
+    const importTokens = deps.importTokens;
+    let serversByName: Record<string, string> = {};
+    let projectImportFailed = false;
     try {
-      await deps.createProject({
-        name: project.name,
-        description: project.description,
-        icon: project.icon,
-        clientConfig: project.clientConfig,
-        servers: serializedServers,
-        organizationId: deps.organizationId,
-        visibility: project.visibility,
-      });
-      recordMigratedProjectId(project.id);
-      projectsMigrated++;
-      deps.logger?.info("Migrated local project to Convex", {
-        name: project.name,
-        serverCount: Object.keys(projectServers).length,
-      });
+      const list = await listProjectServers(convexProjectId);
+      for (const entry of list) {
+        if (entry?.name) serversByName[entry.name] = entry._id;
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      errors.push({ projectName: project.name, error: message });
-      deps.logger?.error("Failed to migrate local project", {
+      errors.push({
+        projectName: project.name,
+        error: `Failed to resolve server IDs: ${message}`,
+      });
+      projectImportFailed = true;
+      deps.logger?.error("Failed to list project servers post-migration", {
         name: project.name,
         error: message,
       });
+    }
+
+    if (!projectImportFailed) {
+      for (const serverName of Object.keys(projectServers)) {
+        if (alreadyImported[serverName] === "imported") continue;
+        const legacy = readLegacyOAuthForServer(serverName);
+        if (!legacy) continue;
+        const serverId = serversByName[serverName];
+        if (!serverId) {
+          // Server didn't materialize under the new project (e.g.,
+          // syncProjectServers filtered it out). Nothing to attach tokens
+          // to — skip without failing the project.
+          continue;
+        }
+        const serverConfig = projectServers[serverName].config as any;
+        const serverUrl =
+          legacy.serverUrl ??
+          (typeof serverConfig?.url === "string"
+            ? serverConfig.url
+            : serverConfig?.url?.href ?? undefined);
+        if (!serverUrl) continue;
+        const isRegistry =
+          !!legacy.registryServerId &&
+          legacy.useRegistryOAuthProxy === true;
+        try {
+          await importTokens({
+            projectId: convexProjectId,
+            serverId,
+            serverUrl,
+            ...(legacy.oauthResourceUrl
+              ? { oauthResourceUrl: legacy.oauthResourceUrl }
+              : {}),
+            kind: isRegistry ? "registry" : "generic",
+            ...(isRegistry
+              ? {
+                  registryServerId: legacy.registryServerId,
+                  useRegistryOAuthProxy: true,
+                }
+              : {}),
+            clientInformation: legacy.clientInformation,
+            tokens: legacy.tokens,
+          });
+          recordTokensImported(project.id, serverName);
+          deps.logger?.info("Imported legacy OAuth tokens", {
+            projectName: project.name,
+            serverName,
+          });
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          projectImportFailed = true;
+          errors.push({
+            projectName: project.name,
+            error: `OAuth import for server "${serverName}" failed: ${message}`,
+          });
+          deps.logger?.warn(
+            "Failed to import legacy OAuth tokens; will retry on next boot",
+            { projectName: project.name, serverName, error: message },
+          );
+        }
+      }
     }
   }
 

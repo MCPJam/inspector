@@ -10,31 +10,31 @@ vi.mock("@/lib/guest-session", () => ({
 
 import { getGuestBearerToken } from "@/lib/guest-session";
 import {
-  getHostedAuthorizationHeader,
-  setHostedApiContext,
-  buildHostedServerRequest,
+  getApiAuthorizationHeader,
+  setApiContext,
+  buildServerRequest,
 } from "../context";
 
-describe("getHostedAuthorizationHeader guest fallback", () => {
+describe("getApiAuthorizationHeader guest fallback", () => {
   beforeEach(() => {
-    setHostedApiContext(null);
+    setApiContext(null);
     vi.mocked(getGuestBearerToken).mockReset();
   });
 
   afterEach(() => {
-    setHostedApiContext(null);
+    setApiContext(null);
     vi.restoreAllMocks();
   });
 
   it("returns WorkOS token when getAccessToken succeeds", async () => {
-    setHostedApiContext({
+    setApiContext({
       projectId: "ws-1",
       serverIdsByName: {},
       getAccessToken: () => Promise.resolve("workos-token-abc"),
       isAuthenticated: true,
     });
 
-    const result = await getHostedAuthorizationHeader();
+    const result = await getApiAuthorizationHeader();
 
     expect(result).toBe("Bearer workos-token-abc");
     expect(getGuestBearerToken).not.toHaveBeenCalled();
@@ -44,7 +44,7 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
     const getAccessToken = vi
       .fn()
       .mockResolvedValue("workos-token-should-skip");
-    setHostedApiContext({
+    setApiContext({
       projectId: null,
       isAuthenticated: false,
       serverIdsByName: {},
@@ -53,7 +53,7 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
 
     vi.mocked(getGuestBearerToken).mockResolvedValue("guest-direct");
 
-    const result = await getHostedAuthorizationHeader();
+    const result = await getApiAuthorizationHeader();
 
     expect(result).toBe("Bearer guest-direct");
     expect(getAccessToken).not.toHaveBeenCalled();
@@ -63,7 +63,7 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
     const getAccessToken = vi
       .fn()
       .mockResolvedValue("workos-token-should-skip");
-    setHostedApiContext({
+    setApiContext({
       projectId: "ws-shared",
       isAuthenticated: false,
       serverIdsByName: { bench: "srv-1" },
@@ -73,7 +73,7 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
 
     vi.mocked(getGuestBearerToken).mockResolvedValue("guest-shared");
 
-    const result = await getHostedAuthorizationHeader();
+    const result = await getApiAuthorizationHeader();
 
     expect(result).toBe("Bearer guest-shared");
     expect(getAccessToken).not.toHaveBeenCalled();
@@ -83,7 +83,7 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
     const getAccessToken = vi
       .fn()
       .mockResolvedValue("workos-token-should-skip");
-    setHostedApiContext({
+    setApiContext({
       projectId: "ws-chatbox",
       isAuthenticated: false,
       serverIdsByName: { bench: "srv-1" },
@@ -93,7 +93,7 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
 
     vi.mocked(getGuestBearerToken).mockResolvedValue("guest-chatbox");
 
-    const result = await getHostedAuthorizationHeader();
+    const result = await getApiAuthorizationHeader();
 
     expect(result).toBe("Bearer guest-chatbox");
     expect(getAccessToken).not.toHaveBeenCalled();
@@ -101,7 +101,7 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
 
   it("does not fall back to a guest token while an AuthKit session is resolving", async () => {
     const getAccessToken = vi.fn().mockResolvedValue(null);
-    setHostedApiContext({
+    setApiContext({
       projectId: null,
       isAuthenticated: false,
       hasSession: true,
@@ -111,7 +111,7 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
 
     vi.mocked(getGuestBearerToken).mockResolvedValue("guest-despite-session");
 
-    const result = await getHostedAuthorizationHeader();
+    const result = await getApiAuthorizationHeader();
 
     expect(result).toBeNull();
     expect(getAccessToken).toHaveBeenCalledTimes(1);
@@ -125,7 +125,7 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
     const getAccessToken = vi
       .fn()
       .mockResolvedValue("workos-token-should-skip");
-    setHostedApiContext({
+    setApiContext({
       projectId: "ws-guest-owned",
       isAuthenticated: false,
       serverIdsByName: { bench: "srv-1" },
@@ -134,7 +134,7 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
 
     vi.mocked(getGuestBearerToken).mockResolvedValue("guest-owns-project");
 
-    const result = await getHostedAuthorizationHeader();
+    const result = await getApiAuthorizationHeader();
 
     expect(result).toBe("Bearer guest-owns-project");
     expect(getAccessToken).not.toHaveBeenCalled();
@@ -142,15 +142,15 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
 
   it("caches WorkOS token and does not call guest on subsequent calls", async () => {
     const getAccessToken = vi.fn().mockResolvedValue("cached-workos");
-    setHostedApiContext({
+    setApiContext({
       projectId: "ws-1",
       serverIdsByName: {},
       getAccessToken,
       isAuthenticated: true,
     });
 
-    const result1 = await getHostedAuthorizationHeader();
-    const result2 = await getHostedAuthorizationHeader();
+    const result1 = await getApiAuthorizationHeader();
+    const result2 = await getApiAuthorizationHeader();
 
     expect(result1).toBe("Bearer cached-workos");
     expect(result2).toBe("Bearer cached-workos");
@@ -161,7 +161,7 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
   it("re-evaluates guest token after cache expiry", async () => {
     vi.useFakeTimers();
 
-    setHostedApiContext({
+    setApiContext({
       projectId: null,
       isAuthenticated: false,
       serverIdsByName: {},
@@ -170,12 +170,12 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
     vi.mocked(getGuestBearerToken).mockResolvedValueOnce("guest-1");
     vi.mocked(getGuestBearerToken).mockResolvedValueOnce("guest-2");
 
-    const result1 = await getHostedAuthorizationHeader();
+    const result1 = await getApiAuthorizationHeader();
     expect(result1).toBe("Bearer guest-1");
 
     vi.advanceTimersByTime(30_001);
 
-    const result2 = await getHostedAuthorizationHeader();
+    const result2 = await getApiAuthorizationHeader();
     expect(result2).toBe("Bearer guest-2");
 
     vi.useRealTimers();
@@ -184,15 +184,15 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
 
 describe("guest-owned project request building", () => {
   beforeEach(() => {
-    setHostedApiContext(null);
+    setApiContext(null);
   });
 
   afterEach(() => {
-    setHostedApiContext(null);
+    setApiContext(null);
   });
 
-  it("buildHostedServerRequest throws BootstrapNotReadyError when projectId is missing", async () => {
-    setHostedApiContext({
+  it("buildServerRequest throws BootstrapNotReadyError when projectId is missing", async () => {
+    setApiContext({
       projectId: null,
       isAuthenticated: false,
       hasSession: true,
@@ -200,20 +200,20 @@ describe("guest-owned project request building", () => {
     });
 
     const { BootstrapNotReadyError } = await import("@/lib/app-ready");
-    expect(() => buildHostedServerRequest("my-server")).toThrow(
+    expect(() => buildServerRequest("my-server")).toThrow(
       BootstrapNotReadyError,
     );
   });
 
-  it("buildHostedServerRequest uses project path for shared guests", () => {
-    setHostedApiContext({
+  it("buildServerRequest uses project path for shared guests", () => {
+    setApiContext({
       projectId: "ws-shared",
       isAuthenticated: false,
       shareToken: "share_tok_123",
       serverIdsByName: { "my-server": "srv-1" },
     });
 
-    const result = buildHostedServerRequest("my-server");
+    const result = buildServerRequest("my-server");
 
     expect(result).toMatchObject({
       projectId: "ws-shared",
@@ -223,15 +223,15 @@ describe("guest-owned project request building", () => {
     });
   });
 
-  it("buildHostedServerRequest uses project path for chatbox guests", () => {
-    setHostedApiContext({
+  it("buildServerRequest uses project path for chatbox guests", () => {
+    setApiContext({
       projectId: "ws-chatbox",
       isAuthenticated: false,
       chatboxToken: "chatbox_tok_123",
       serverIdsByName: { "my-server": "srv-1" },
     });
 
-    const result = buildHostedServerRequest("my-server");
+    const result = buildServerRequest("my-server");
 
     expect(result).toMatchObject({
       projectId: "ws-chatbox",

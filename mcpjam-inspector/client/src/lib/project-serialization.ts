@@ -75,12 +75,22 @@ function serializeServersInternal(
     }
 
     if (server.useOAuth && server.oauthFlowProfile) {
+      // OAuthTestProfile.scopes is a UI-shaped string ("read,write" or
+      // "read write"); the Convex `servers.oauthScopes` field is
+      // v.array(v.string()). Split here so syncProjectServers can pass the
+      // value straight through without tripping schema validation.
+      const rawScopes = server.oauthFlowProfile.scopes;
+      const scopesArray = Array.isArray(rawScopes)
+        ? (rawScopes as string[])
+        : typeof rawScopes === "string"
+          ? rawScopes.split(/[\s,]+/).filter(Boolean)
+          : [];
       serializedServer.oauthFlowProfile = {
         serverUrl: server.oauthFlowProfile.serverUrl,
         resourceUrl: server.oauthFlowProfile.resourceUrl,
         protocolVersion: server.oauthFlowProfile.protocolVersion,
         registrationStrategy: server.oauthFlowProfile.registrationStrategy,
-        scopes: server.oauthFlowProfile.scopes,
+        scopes: scopesArray,
         clientId: server.oauthFlowProfile.clientId,
       };
     }

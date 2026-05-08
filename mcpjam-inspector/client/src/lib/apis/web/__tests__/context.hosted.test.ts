@@ -6,7 +6,7 @@ vi.mock("@/lib/config", () => ({
 }));
 
 import {
-  setHostedApiContext,
+  setApiContext,
   injectHostedServerMapping,
   normalizeHostedServerNames,
   resolveHostedServerId,
@@ -15,7 +15,7 @@ import {
 
 describe("injectHostedServerMapping", () => {
   beforeEach(() => {
-    setHostedApiContext({
+    setApiContext({
       projectId: "project-1",
       isAuthenticated: true,
       serverIdsByName: {
@@ -53,12 +53,12 @@ describe("injectHostedServerMapping", () => {
     expect(resolveHostedServerId("new-server")).toBe("id-new");
   });
 
-  it("is overwritten by setHostedApiContext with same data", () => {
+  it("is overwritten by setApiContext with same data", () => {
     injectHostedServerMapping("new-server", "id-new");
     expect(resolveHostedServerId("new-server")).toBe("id-new");
 
-    // Simulate the subscription catching up and calling setHostedApiContext
-    setHostedApiContext({
+    // Simulate the subscription catching up and calling setApiContext
+    setApiContext({
       projectId: "project-1",
       isAuthenticated: true,
       serverIdsByName: {
@@ -72,12 +72,12 @@ describe("injectHostedServerMapping", () => {
     expect(resolveHostedServerId("existing-server")).toBe("id-existing");
   });
 
-  it("injected mapping is lost if setHostedApiContext fires before subscription catches up", () => {
+  it("injected mapping is lost if setApiContext fires before subscription catches up", () => {
     injectHostedServerMapping("new-server", "id-new");
 
-    // If setHostedApiContext fires with stale data (without the new server),
+    // If setApiContext fires with stale data (without the new server),
     // the injected mapping is lost — this is the edge case the await prevents
-    setHostedApiContext({
+    setApiContext({
       projectId: "project-1",
       isAuthenticated: true,
       serverIdsByName: {
@@ -91,7 +91,7 @@ describe("injectHostedServerMapping", () => {
   });
 
   it("normalizes hosted server ids back to stable server names", () => {
-    setHostedApiContext({
+    setApiContext({
       projectId: "project-1",
       isAuthenticated: true,
       serverIdsByName: {
@@ -111,7 +111,7 @@ describe("injectHostedServerMapping", () => {
   });
 
   it("resolves a display name for both server name and server id", () => {
-    setHostedApiContext({
+    setApiContext({
       projectId: "project-1",
       isAuthenticated: true,
       serverIdsByName: {

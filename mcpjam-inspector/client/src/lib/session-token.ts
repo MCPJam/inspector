@@ -14,9 +14,9 @@
 
 import { HOSTED_MODE } from "@/lib/config";
 import {
-  getHostedAuthorizationHeader,
+  getApiAuthorizationHeader,
   resetTokenCache,
-  shouldRetryHostedAuth401,
+  shouldRetryApiAuth401,
 } from "@/lib/apis/web/context";
 import { getConvexSiteUrl } from "@/lib/convex-site-url";
 import { forceRefreshGuestSession } from "@/lib/guest-session";
@@ -382,7 +382,7 @@ export async function authFetch(
   // don't trigger guest refresh on unrelated 401s.
   const hostedAuthEligible = shouldAttachHostedAuthorization(input);
   const hostedAuthHeader = hostedAuthEligible
-    ? await getHostedAuthorizationHeader()
+    ? await getApiAuthorizationHeader()
     : null;
   const mergedInit = buildAuthFetchInit(input, init, hostedAuthHeader);
   const response = await fetch(input, mergedInit);
@@ -395,7 +395,7 @@ export async function authFetch(
   if (
     response.status !== 401 ||
     !hostedAuthEligible ||
-    !shouldRetryHostedAuth401() ||
+    !shouldRetryApiAuth401() ||
     callerProvidedAuthorization ||
     response.headers?.get("X-MCP-Auth-Required") === "oauth"
   ) {

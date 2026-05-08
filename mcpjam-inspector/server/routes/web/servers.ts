@@ -17,6 +17,7 @@ import {
   attachHostedRpcLogs,
   createHostedRpcLogCollector,
 } from "./hosted-rpc-logs.js";
+import { buildConnectSuccessEnvelope } from "../../utils/local-server-resolver.js";
 
 const servers = new Hono();
 
@@ -26,8 +27,10 @@ servers.post("/validate", async (c) =>
     projectServerSchema,
     async (manager, body) => {
       await manager.getToolsForAiSdk([body.serverId]);
-      const initInfo = manager.getInitializationInfo(body.serverId);
-      return { success: true, status: "connected", initInfo: initInfo ?? null };
+      // Same success envelope as the local /api/mcp/connect path so the
+      // inspector client's `storeInitInfo` takes one code path on both
+      // surfaces and we don't drift on the success shape.
+      return buildConnectSuccessEnvelope(manager, body.serverId);
     },
     { timeoutMs: WEB_CONNECT_TIMEOUT_MS }
   )

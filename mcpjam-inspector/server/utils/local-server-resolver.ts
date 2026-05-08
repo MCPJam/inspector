@@ -1,10 +1,11 @@
 import type { Context } from "hono";
-import type { MCPServerConfig } from "@mcpjam/sdk";
+import type { MCPClientManager, MCPServerConfig } from "@mcpjam/sdk";
 import {
   ErrorCode,
   WebRouteError,
   parseErrorMessage,
 } from "../routes/web/errors.js";
+import { logger } from "./logger.js";
 import { setRequestLogContext } from "./request-logger.js";
 import {
   type InternalLogContext,
@@ -392,4 +393,256 @@ export async function resolveLocalServerForConnect(
     defaultHeaders: options?.defaults?.headers,
   });
   return { config, authorizeResult: result };
+}
+
+// ---------------------------------------------------------------------------
+// Connect-flow plumbing shared by /api/mcp/connect + /api/mcp/servers/reconnect
+// ---------------------------------------------------------------------------
+//
+// The two local connect endpoints used to inline ~120 lines each of body
+// parsing + WebRouteError translation + tolerant disconnect/connect, with
+// drift accumulating between them (different success envelopes, neither
+// returning `initInfo` — see the reconnect-warning false-positive bug).
+// These helpers consolidate that flow and bring the success envelope shape
+// in line with hosted `/api/web/servers/validate`.
+
+/**
+ * Parsed + validated body for the local connect/reconnect endpoints. Strict
+ * about the resolver-path fields because both endpoints now require them
+ * (the legacy `{serverConfig}` body was removed in the local-mode purge).
+ */
+export interface LocalConnectRequestParams {
+  serverId: string;
+  projectId: string;
+  serverDisplayName: string;
+  bearer: string;
+  clientCapabilities?: Record<string, unknown>;
+  defaults?: ConnectionDefaults;
+}
+
+/**
+ * Validate a JSON body posted to the local connect/reconnect endpoints.
+ * Returns parsed params on success, or a `WebRouteError` whose status the
+ * caller passes straight to `c.json` — no other branching needed.
+ *
+ * Doesn't throw on validation issues so callers don't have to differentiate
+ * between auth/format errors and config-resolve errors (which DO throw via
+ * `resolveLocalServerForConnect`).
+ */
+export function parseLocalConnectRequestBody(
+  c: Context,
+  body: unknown,
+):
+  | { ok: true; params: LocalConnectRequestParams }
+  | { ok: false; error: WebRouteError } {
+  const raw = (body ?? {}) as Record<string, unknown>;
+
+  const serverId =
+    typeof raw.serverId === "string" ? raw.serverId.trim() : "";
+  if (!serverId) {
+    return {
+      ok: false,
+      error: new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "serverId is required",
+      ),
+    };
+  }
+
+  const projectId =
+    typeof raw.projectId === "string" ? raw.projectId.trim() : "";
+  if (!projectId) {
+    return {
+      ok: false,
+      error: new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "projectId is required",
+      ),
+    };
+  }
+
+  const serverDisplayName =
+    typeof raw.serverName === "string" ? raw.serverName.trim() : "";
+  if (!serverDisplayName) {
+    return {
+      ok: false,
+      error: new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "serverName is required with projectId",
+      ),
+    };
+  }
+
+  const bearer = readLocalApiBearer(c);
+  if (!bearer) {
+    return {
+      ok: false,
+      error: new WebRouteError(
+        401,
+        ErrorCode.UNAUTHORIZED,
+        "Authorization bearer token is required",
+      ),
+    };
+  }
+
+  const clientCapabilities =
+    typeof raw.clientCapabilities === "object" && raw.clientCapabilities !== null
+      ? (raw.clientCapabilities as Record<string, unknown>)
+      : undefined;
+
+  return {
+    ok: true,
+    params: {
+      serverId,
+      projectId,
+      serverDisplayName,
+      bearer,
+      clientCapabilities,
+      defaults: parseConnectionDefaults(raw.connectionDefaults),
+    },
+  };
+}
+
+/**
+ * Translate a `WebRouteError` into the error envelope local-mode handlers
+ * have always returned (`{success: false, error, ...details}`), and tag
+ * OAuth-required 401s with the `X-MCP-Auth-Required` header so the client's
+ * `authFetch` doesn't waste a guest-session refresh round-trip on a failure
+ * the next attempt would inevitably repeat.
+ *
+ * Distinct from `webError` (used by the hosted routes): hosted returns a
+ * `{code, message, details}` shape; local has historically used
+ * `{success: false, error, ...details}` and clients depend on that.
+ */
+export function respondWithLocalRouteError(c: Context, error: WebRouteError) {
+  if (error.details?.oauthRequired === true) {
+    c.header("X-MCP-Auth-Required", "oauth");
+  }
+  return c.json(
+    {
+      success: false,
+      error: error.message,
+      ...(error.details ?? {}),
+    },
+    error.status as any,
+  );
+}
+
+/**
+ * Standard success envelope for local connect/reconnect responses. Mirrors
+ * the hosted `/api/web/servers/validate` shape so the inspector client's
+ * `storeInitInfo(name, result.initInfo)` takes the synchronous-dispatch
+ * path on both surfaces — no second `/api/mcp/servers/init-info` round-trip
+ * for the warning indicator to race against.
+ *
+ * `initInfo` is `null` (not omitted) when the manager has no live state
+ * yet, so the client can distinguish "server connected but init data not
+ * available" from "field missing because old server forgot to include it."
+ */
+export function buildConnectSuccessEnvelope(
+  manager: Pick<MCPClientManager, "getInitializationInfo">,
+  managerKey: string,
+): { success: true; status: "connected"; initInfo: unknown } {
+  return {
+    success: true,
+    status: "connected",
+    initInfo: manager.getInitializationInfo(managerKey) ?? null,
+  };
+}
+
+/**
+ * Tolerant disconnect-then-connect plus init-info pickup, shared by both
+ * local connect endpoints. `removeOnFailure` cleans up the manager entry
+ * after a failed connect (used by /api/mcp/connect for first-time connects
+ * so a doomed entry doesn't pollute subsequent listServers calls);
+ * /reconnect leaves the entry around since the caller intends to retry.
+ *
+ * Throws via the supplied `c.json` machinery — callers `return` the result.
+ * Tests assert a specific success envelope shape; if you change it here,
+ * sync the inspector client's `storeInitInfo` callsites and the connect/
+ * reconnect tests in `server/routes/mcp/__tests__`.
+ */
+export async function executeLocalServerConnect(
+  c: Context,
+  params: LocalConnectRequestParams,
+  options: { removeOnFailure: boolean },
+) {
+  const { serverId, projectId, serverDisplayName, bearer } = params;
+  const mcpClientManager = c.mcpClientManager;
+
+  let resolved: Awaited<ReturnType<typeof resolveLocalServerForConnect>>;
+  try {
+    resolved = await resolveLocalServerForConnect(
+      c,
+      bearer,
+      projectId,
+      serverId,
+      {
+        serverDisplayName,
+        clientCapabilities: params.clientCapabilities,
+        defaults: params.defaults,
+      },
+    );
+  } catch (error) {
+    if (error instanceof WebRouteError) {
+      return respondWithLocalRouteError(c, error);
+    }
+    logger.error("Error resolving server config", error, { serverId });
+    return c.json(
+      {
+        success: false,
+        error: "Failed to resolve server config",
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
+      500,
+    );
+  }
+
+  // Tolerate "nothing to disconnect" — first-time connects have nothing in
+  // the manager yet, and stale-or-already-disconnected entries on reconnect
+  // shouldn't fail the call. Same tolerance as the legacy DELETE handler.
+  try {
+    await mcpClientManager.disconnectServer(serverDisplayName);
+  } catch (disconnectError) {
+    logger.debug("Failed to disconnect MCP server before connect", {
+      serverId: serverDisplayName,
+      error:
+        disconnectError instanceof Error
+          ? disconnectError.message
+          : String(disconnectError),
+    });
+  }
+
+  try {
+    await mcpClientManager.connectToServer(serverDisplayName, resolved.config);
+  } catch (error) {
+    if (options.removeOnFailure) {
+      try {
+        await mcpClientManager.removeServer(serverDisplayName);
+      } catch (cleanupError) {
+        logger.debug("Failed to remove MCP server after connection failure", {
+          serverId: serverDisplayName,
+          error:
+            cleanupError instanceof Error
+              ? cleanupError.message
+              : String(cleanupError),
+        });
+      }
+    }
+    return c.json(
+      {
+        success: false,
+        error: `Connection failed for server ${serverDisplayName}: ${error instanceof Error ? error.message : "Unknown error"}`,
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
+      500,
+    );
+  }
+
+  return c.json(
+    buildConnectSuccessEnvelope(mcpClientManager, serverDisplayName),
+  );
 }

@@ -22,7 +22,7 @@ const {
   mockInitiateOAuth,
   mockValidateHostedServer,
   mockChatTabV2,
-  mockUseHostedApiContext,
+  mockUseApiContext,
   mockAuthFetch,
   mockPosthogCapture,
 } = vi.hoisted(() => ({
@@ -40,7 +40,7 @@ const {
   mockInitiateOAuth: vi.fn(async () => ({ success: false })),
   mockValidateHostedServer: vi.fn(),
   mockChatTabV2: vi.fn(),
-  mockUseHostedApiContext: vi.fn(),
+  mockUseApiContext: vi.fn(),
   mockAuthFetch: vi.fn(),
   mockPosthogCapture: vi.fn(),
 }));
@@ -59,7 +59,7 @@ vi.mock("@workos-inc/authkit-react", () => ({
 }));
 
 vi.mock("@/hooks/hosted/use-hosted-api-context", () => ({
-  useHostedApiContext: mockUseHostedApiContext,
+  useApiContext: mockUseApiContext,
 }));
 
 vi.mock("@/lib/session-token", () => ({
@@ -169,7 +169,7 @@ describe("ChatboxChatPage", () => {
     mockInitiateOAuth.mockReset();
     mockValidateHostedServer.mockReset();
     mockChatTabV2.mockReset();
-    mockUseHostedApiContext.mockReset();
+    mockUseApiContext.mockReset();
     mockAuthFetch.mockReset();
     mockPosthogCapture.mockReset();
 
@@ -374,7 +374,7 @@ describe("ChatboxChatPage", () => {
         name: "Sign in",
       })
     ).not.toBeInTheDocument();
-    expect(mockUseHostedApiContext).toHaveBeenCalledWith(
+    expect(mockUseApiContext).toHaveBeenCalledWith(
       expect.objectContaining({
         projectId: null,
         serverIdsByName: {},
