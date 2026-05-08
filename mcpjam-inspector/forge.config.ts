@@ -101,8 +101,18 @@ const config: ForgeConfig = {
         }
         const dest = join(buildPath, ".vite", "build", "node_modules", "@ngrok");
         mkdirSync(dest, { recursive: true });
-        console.log(`[forge] Copying @ngrok to ${dest} (before signing)`);
-        cpSync(ngrokSrc, dest, { recursive: true });
+
+        // Copy only the JS wrapper and the platform-matched native package to avoid
+        // bundling redundant fat/universal binaries (~19MB saved on arm64-only builds).
+        const platformPkg = `ngrok-${_platform}-${_arch}`;
+        const pkgsToCopy = ["ngrok", platformPkg];
+        for (const pkg of pkgsToCopy) {
+          const src = join(ngrokSrc, pkg);
+          if (existsSync(src)) {
+            console.log(`[forge] Copying @ngrok/${pkg} to ${dest}`);
+            cpSync(src, join(dest, pkg), { recursive: true });
+          }
+        }
         callback();
       },
     ],
