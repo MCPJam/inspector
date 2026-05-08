@@ -210,6 +210,14 @@ const config: ForgeConfig = {
           renameSync(asarPath, `${asarPath}.bak`);
           // @electron/asar calls minimatch(absPath, pattern, { matchBase: true }) so
           // patterns without a "/" match on basename only — "*.node" is correct here.
+          //
+          // NOTE: rebuilding app.asar here invalidates the ElectronAsarIntegrity hash
+          // that electron-packager wrote to Info.plist before this postPackage hook ran.
+          // EnableEmbeddedAsarIntegrityValidation (see FusesPlugin below) only enforces
+          // this hash for code-signed builds — unsigned/ad-hoc builds are unaffected.
+          // For distribution builds with packagerConfig.asarIntegrity / osxSign, the
+          // app.asar and Info.plist hash must be reconciled after this rebuild (e.g. by
+          // re-running codesign). The signing concern is already noted in the PR.
           await asar.createPackageWithOptions(tmpDir, asarPath, {
             unpack: "*.node",
           });
