@@ -173,8 +173,8 @@ const config: ForgeConfig = {
     // This hook rebuilds the asar after packaging, promoting *.node files to app.asar.unpacked
     // so Electron can dlopen them (native addons cannot be loaded from inside an asar body).
     postPackage: async (_config, { outputPaths }) => {
-      const os = await import("os");
-      const { readdirSync } = await import("fs");
+      const { tmpdir } = await import("os");
+      const { readdirSync, renameSync, unlinkSync, rmSync } = await import("fs");
       for (const outputPath of outputPaths) {
         // outputPaths is the outer directory (e.g. out/App-darwin-arm64/);
         // find the .app bundle inside it
@@ -189,12 +189,11 @@ const config: ForgeConfig = {
         const asarPath = join(resourcesPath, "app.asar");
         if (!existsSync(asarPath)) continue;
 
-        const tmpDir = join(os.tmpdir(), `asar-rebuild-${Date.now()}`);
+        const tmpDir = join(tmpdir(), `asar-rebuild-${Date.now()}`);
         mkdirSync(tmpDir, { recursive: true });
         console.log(`[forge] Rebuilding asar to unpack *.node: ${asarPath}`);
 
         await asar.extractAll(asarPath, tmpDir);
-        const { renameSync, unlinkSync } = await import("fs");
         renameSync(asarPath, `${asarPath}.bak`);
 
         // @electron/asar calls minimatch(absPath, pattern, { matchBase: true }) so
@@ -204,7 +203,6 @@ const config: ForgeConfig = {
         });
 
         unlinkSync(`${asarPath}.bak`);
-        const { rmSync } = await import("fs");
         rmSync(tmpDir, { recursive: true, force: true });
       }
     },
