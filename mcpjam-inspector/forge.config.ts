@@ -7,8 +7,9 @@ import { MakerDMG } from "@electron-forge/maker-dmg";
 import { VitePlugin } from "@electron-forge/plugin-vite";
 import { FusesPlugin } from "@electron-forge/plugin-fuses";
 import { FuseV1Options, FuseVersion } from "@electron/fuses";
-import { resolve, join } from "path";
-import { cpSync, existsSync } from "fs";
+import { resolve, join, dirname } from "path";
+import { cpSync, existsSync, mkdirSync } from "fs";
+import * as asar from "@electron/asar";
 
 const enableMacSigning = process.platform === "darwin";
 const macSignIdentity = process.env.MAC_CODESIGN_IDENTITY?.trim();
@@ -65,7 +66,7 @@ const config: ForgeConfig = {
     asar: {
       // Unpack native modules so they can be properly signed
       // This prevents the "different Team IDs" error on macOS
-      unpack: "**/*.node",
+      unpack: "*.node",
     },
     appBundleId: "com.mcpjam.inspector",
     appCategoryType: "public.app-category.developer-tools",
@@ -78,16 +79,28 @@ const config: ForgeConfig = {
     ],
     osxSign: osxSignOptions,
     osxNotarize: osxNotarizeOptions,
-    // Copy @ngrok native module before signing (afterCopy runs before osxSign)
+    // Copy @ngrok native module into .vite/build/node_modules before signing.
+    // The VitePlugin only packs .vite/build/ into the asar (no top-level node_modules),
+    // so the module must live alongside main.cjs for require('@ngrok/ngrok') to resolve.
     afterCopy: [
       (buildPath, _electronVersion, _platform, _arch, callback) => {
-        const ngrokSrc = resolve(__dirname, "node_modules", "@ngrok");
+        // Resolve @ngrok scope dir via require.resolve so npm workspace hoisting is handled
+        let ngrokSrc: string;
+        try {
+          const ngrokPkg = require.resolve("@ngrok/ngrok/package.json", {
+            paths: [__dirname],
+          });
+          ngrokSrc = dirname(dirname(ngrokPkg)); // …/@ngrok/ngrok/package.json -> …/@ngrok
+        } catch {
+          ngrokSrc = resolve(__dirname, "node_modules", "@ngrok");
+        }
         if (!existsSync(ngrokSrc)) {
           console.warn("[forge] @ngrok not found, skipping copy");
           callback();
           return;
         }
-        const dest = join(buildPath, "node_modules", "@ngrok");
+        const dest = join(buildPath, ".vite", "build", "node_modules", "@ngrok");
+        mkdirSync(dest, { recursive: true });
         console.log(`[forge] Copying @ngrok to ${dest} (before signing)`);
         cpSync(ngrokSrc, dest, { recursive: true });
         callback();
@@ -144,6 +157,46 @@ const config: ForgeConfig = {
       },
     }),
   ],
+  hooks: {
+    // The asar.unpack pattern only applies to files present at the start of packaging;
+    // files added by afterCopy arrive too late to be marked as unpack in the asar header.
+    // This hook rebuilds the asar after packaging, promoting *.node files to app.asar.unpacked
+    // so Electron can dlopen them (native addons cannot be loaded from inside an asar body).
+    postPackage: async (_config, { outputPaths }) => {
+      const os = await import("os");
+      const { readdirSync } = await import("fs");
+      for (const outputPath of outputPaths) {
+        // outputPaths is the outer directory (e.g. out/App-darwin-arm64/);
+        // find the .app bundle inside it
+        let appPath = outputPath;
+        if (!outputPath.endsWith(".app")) {
+          const entries = readdirSync(outputPath);
+          const appBundle = entries.find((e) => e.endsWith(".app"));
+          if (!appBundle) continue;
+          appPath = join(outputPath, appBundle);
+        }
+        const resourcesPath = join(appPath, "Contents", "Resources");
+        const asarPath = join(resourcesPath, "app.asar");
+        if (!existsSync(asarPath)) continue;
+
+        const tmpDir = join(os.tmpdir(), `asar-rebuild-${Date.now()}`);
+        mkdirSync(tmpDir, { recursive: true });
+        console.log(`[forge] Rebuilding asar to unpack *.node: ${asarPath}`);
+
+        await asar.extractAll(asarPath, tmpDir);
+        const { renameSync, unlinkSync } = await import("fs");
+        renameSync(asarPath, `${asarPath}.bak`);
+
+        // @electron/asar calls minimatch(absPath, pattern, { matchBase: true }) so
+        // patterns without a "/" match on basename only — "*.node" is correct here.
+        await asar.createPackageWithOptions(tmpDir, asarPath, {
+          unpack: "*.node",
+        });
+
+        unlinkSync(`${asarPath}.bak`);
+      }
+    },
+  },
   plugins: [
     new VitePlugin({
       // `build` can specify multiple entry builds, which can be Main process, Preload scripts, Worker process, etc.
