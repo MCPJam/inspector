@@ -628,6 +628,18 @@ export function useServerState({
   const effectiveServers = useMemo(() => {
     return activeProject?.servers || {};
   }, [activeProject]);
+
+  const connectedOrConnectingServerConfigs = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(effectiveServers).filter(
+          ([, server]) =>
+            server.connectionStatus === "connected" ||
+            server.connectionStatus === "connecting"
+        )
+      ),
+    [effectiveServers]
+  );
   const latestEffectiveServersRef = useRef(effectiveServers);
 
   useEffect(() => {
@@ -3390,13 +3402,7 @@ export function useServerState({
     activeProject,
     effectiveServers,
     projectServers: effectiveServers,
-    connectedOrConnectingServerConfigs: Object.fromEntries(
-      Object.entries(effectiveServers).filter(
-        ([, server]) =>
-          server.connectionStatus === "connected" ||
-          server.connectionStatus === "connecting"
-      )
-    ),
+    connectedOrConnectingServerConfigs,
     selectedServerEntry: effectiveServers[appState.selectedServer],
     selectedMCPConfig: effectiveServers[appState.selectedServer]?.config,
     selectedMCPConfigs: appState.selectedMultipleServers
