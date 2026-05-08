@@ -112,6 +112,10 @@ const config: ForgeConfig = {
             if (existsSync(src)) {
               console.log(`[forge] Copying @ngrok/${pkg} to ${dest}`);
               cpSync(src, join(dest, pkg), { recursive: true });
+            } else if (pkg === platformPkg) {
+              console.warn(
+                `[forge] @ngrok/${pkg} not found at ${src} — ngrok tunnels will fail at runtime`,
+              );
             }
           }
         } catch (err) {
