@@ -9,7 +9,6 @@ import {
   type ServerWithName,
 } from "@/state/app-types";
 import { appReducer } from "@/state/app-reducer";
-import { loadAppState, saveAppState } from "@/state/storage";
 import { useProjectState } from "./use-project-state";
 import { useServerState } from "./use-server-state";
 import {
@@ -143,29 +142,6 @@ function isHistoryRestore(event: PageTransitionEvent): boolean {
     | PerformanceNavigationTiming
     | undefined;
   return navigationEntry?.type === "back_forward";
-}
-
-// Patches only existing server state. Missing servers are represented by
-// pendingDashboardOAuth UI state instead of fake temporary server objects.
-function patchStateForPendingOAuth(
-  state: AppState,
-  pendingOAuth: PendingDashboardOAuthState
-): AppState {
-  const existing = state.servers[pendingOAuth.serverName];
-  if (!existing) {
-    return state;
-  }
-
-  return {
-    ...state,
-    servers: {
-      ...state.servers,
-      [pendingOAuth.serverName]: {
-        ...existing,
-        connectionStatus: "connecting",
-      },
-    },
-  };
 }
 
 export function buildDisconnectedRuntimeServers(
@@ -362,8 +338,16 @@ export function useAppState({
     if (hasHydratedAppStateRef.current) return;
     hasHydratedAppStateRef.current = true;
 
+    // State now hydrates from Convex queries via useProjectState + the flat
+    // servers query; the legacy localStorage `loadAppState` is gone. We still
+    // need to detect a pending dashboard OAuth callback so the dashboard can
+    // surface the in-flight connect, and we need to flip isLoading off so
+    // dependent gates resolve.
     try {
-      const loaded = loadAppState();
+      // Convex is now the source of truth for projects/servers/state, but
+      // pendingDashboardOAuth is a callback-resume marker for the OAuth
+      // flow that still lives in localStorage (deferred to Slice 2b). Read
+      // it on first paint so a fresh window can resume the in-flight OAuth.
       const pendingOAuth = readPendingDashboardOAuth();
       setPendingDashboardOAuth((current) => {
         if (
@@ -374,12 +358,11 @@ export function useAppState({
         }
         return pendingOAuth;
       });
-      const hydratedState = pendingOAuth
-        ? patchStateForPendingOAuth(loaded, pendingOAuth)
-        : loaded;
-      dispatch({ type: "HYDRATE_STATE", payload: hydratedState });
+      // No `loadAppState` — Convex queries hydrate state. The migration shim
+      // (`local-state-migration`) lifts any legacy localStorage projects on
+      // first boot and clears them.
     } catch (error) {
-      logger.error("Failed to load saved state", {
+      logger.error("Failed to read pending OAuth marker", {
         error: error instanceof Error ? error.message : "Unknown error",
       });
     } finally {
@@ -387,9 +370,9 @@ export function useAppState({
     }
   }, [logger]);
 
-  useEffect(() => {
-    if (!isLoading) saveAppState(appState);
-  }, [appState, isLoading]);
+  // No `saveAppState` — Convex mutations persist server/project state; UI
+  // selection state (selectedServer, multi-select) is intentionally
+  // ephemeral.
 
   useEffect(() => {
     if (!pendingDashboardOAuth) return;

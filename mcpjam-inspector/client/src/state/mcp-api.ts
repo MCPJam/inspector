@@ -138,31 +138,6 @@ function buildResolverBody(
   };
 }
 
-/**
- * Local OAuth tokens currently live in localStorage (the local OAuth provider
- * has not been moved to Convex), but the resolver path expects Convex to
- * supply `oauthAccessToken` and rejects `useOAuth` servers without one. To
- * avoid breaking synced local OAuth servers, fall back to the legacy
- * `{serverConfig, serverId}` body whenever the runtime config carries a local
- * `Authorization: Bearer …` header. The legacy path forwards the header
- * straight through to the spawned client.
- */
-function hasLocalOAuthBearer(serverConfig: MCPServerConfig): boolean {
-  const headers = (serverConfig as { requestInit?: { headers?: unknown } })
-    ?.requestInit?.headers;
-  if (!headers || typeof headers !== "object") return false;
-  for (const [key, value] of Object.entries(headers as Record<string, unknown>)) {
-    if (
-      key.toLowerCase() === "authorization" &&
-      typeof value === "string" &&
-      value.toLowerCase().startsWith("bearer ")
-    ) {
-      return true;
-    }
-  }
-  return false;
-}
-
 export async function testConnection(
   serverConfig: MCPServerConfig,
   serverId: string,
@@ -176,26 +151,17 @@ export async function testConnection(
     return safeValidateHostedServer(serverId, serverConfig);
   }
 
-  // When projectId is provided, the server resolves config + tokens from
-  // Convex via /web/authorize-batch-local. Without it (or when the runtime
-  // serverConfig carries a local OAuth bearer that Convex doesn't yet hold),
-  // fall back to the legacy {serverConfig, serverId} body so the local token
-  // travels with the request.
-  const useResolver =
-    !!options?.projectId && !hasLocalOAuthBearer(serverConfig);
-  // The legacy server-side path uses `serverId` as the mcpClientManager key.
-  // When the caller resolved a Convex `_id` for the resolver path but we end
-  // up taking the legacy fallback (local OAuth bearer present), prefer the
-  // display name so the manager doesn't end up with a duplicate entry keyed
-  // by the Convex `_id` alongside the existing display-name entry.
-  const legacyServerId = options?.serverName ?? serverId;
-  const body: Record<string, unknown> = useResolver
-    ? buildResolverBody(serverId, {
-        projectId: options!.projectId!,
-        serverName: options?.serverName,
-        connectionDefaults: options?.connectionDefaults,
-      })
-    : { serverConfig, serverId: legacyServerId };
+  if (!options?.projectId) {
+    throw new Error(
+      "projectId is required for testConnection in local mode (server must be synced to Convex first)",
+    );
+  }
+
+  const body = buildResolverBody(serverId, {
+    projectId: options.projectId,
+    serverName: options.serverName,
+    connectionDefaults: options.connectionDefaults,
+  });
 
   const res = await authFetchWithTimeout(
     "/api/mcp/connect",
@@ -246,18 +212,17 @@ export async function reconnectServer(
     return safeValidateHostedServer(serverId, serverConfig);
   }
 
-  const useResolver =
-    !!options?.projectId && !hasLocalOAuthBearer(serverConfig);
-  // See testConnection: prefer the display name for the legacy body so we
-  // don't create a phantom mcpClientManager entry keyed by the Convex `_id`.
-  const legacyServerId = options?.serverName ?? serverId;
-  const body: Record<string, unknown> = useResolver
-    ? buildResolverBody(serverId, {
-        projectId: options!.projectId!,
-        serverName: options?.serverName,
-        connectionDefaults: options?.connectionDefaults,
-      })
-    : { serverId: legacyServerId, serverConfig };
+  if (!options?.projectId) {
+    throw new Error(
+      "projectId is required for reconnectServer in local mode (server must be synced to Convex first)",
+    );
+  }
+
+  const body = buildResolverBody(serverId, {
+    projectId: options.projectId,
+    serverName: options.serverName,
+    connectionDefaults: options.connectionDefaults,
+  });
 
   const res = await authFetchWithTimeout(
     "/api/mcp/servers/reconnect",

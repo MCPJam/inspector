@@ -4,7 +4,7 @@ import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 const authFetchMock = vi.fn();
 const listHostedToolsMock = vi.fn();
-const buildHostedServerBatchRequestMock = vi.fn();
+const buildServerBatchRequestMock = vi.fn();
 
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: true,
@@ -19,8 +19,8 @@ vi.mock("@/lib/apis/web/tools-api", () => ({
 }));
 
 vi.mock("@/lib/apis/web/context", () => ({
-  buildHostedServerBatchRequest: (...args: unknown[]) =>
-    buildHostedServerBatchRequestMock(...args),
+  buildServerBatchRequest: (...args: unknown[]) =>
+    buildServerBatchRequestMock(...args),
 }));
 
 import {
@@ -35,7 +35,7 @@ import {
 describe("evals-api hosted mode", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    buildHostedServerBatchRequestMock.mockImplementation(
+    buildServerBatchRequestMock.mockImplementation(
       (serverNames: string[]) => {
         const serverIds = serverNames.map((serverName) =>
           serverName === "Server A"
@@ -74,7 +74,7 @@ describe("evals-api hosted mode", () => {
       convexAuthToken: "convex-token",
     });
 
-    expect(buildHostedServerBatchRequestMock).toHaveBeenCalledWith([
+    expect(buildServerBatchRequestMock).toHaveBeenCalledWith([
       "Server A",
       "Server B",
     ]);
@@ -103,7 +103,7 @@ describe("evals-api hosted mode", () => {
       convexAuthToken: "guest-convex-token",
     });
 
-    expect(buildHostedServerBatchRequestMock).toHaveBeenCalledWith([
+    expect(buildServerBatchRequestMock).toHaveBeenCalledWith([
       "Guest Server",
     ]);
     expect(authFetchMock).toHaveBeenCalledWith(
@@ -265,7 +265,7 @@ describe("evals-api hosted mode", () => {
       convexAuthToken: "guest-convex-token",
     });
 
-    expect(buildHostedServerBatchRequestMock).toHaveBeenCalledWith([
+    expect(buildServerBatchRequestMock).toHaveBeenCalledWith([
       "Guest Server",
     ]);
 

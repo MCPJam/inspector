@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { useMutation } from "convex/react";
+import { useConvex, useMutation } from "convex/react";
 import {
   hasMigrationCompleted,
   runLocalStateMigration,
 } from "@/lib/local-state-migration";
 import { HOSTED_MODE } from "@/lib/config";
+import { importHostedOAuthTokens } from "@/lib/apis/hosted-oauth-import-tokens-api";
 import { useLogger } from "./use-logger";
 
 /**
@@ -52,6 +53,60 @@ function looksPermanent(errorMessage: string): boolean {
     if (errorMessage.includes(code)) return true;
   }
   return false;
+}
+
+/**
+ * Forbidden legacy keys after migration completes. These are the keys the
+ * migration shim (`local-state-migration.ts`) clears on success — if any
+ * remain, something silently re-wrote one and the unification stack has
+ * a leak. Catches the most likely regression: a hook hydrating from
+ * localStorage and re-creating the legacy entry.
+ *
+ * Intentionally NOT audited yet (deferred to Slice 2b once OAuth localStorage
+ * is purged from `MCPOAuthProvider`):
+ *   `mcp-tokens-*`, `mcp-client-*`, `mcp-verifier-*`, `mcp-serverUrl-*`,
+ *   `mcp-oauth-*`, `mcp-discovery-*`, `mcp-oauth-flow-state-*`
+ *
+ * The OAuth provider still writes these for in-memory token refresh; they're
+ * cleared by `clearOAuthData` and `invalidateCredentials`, but the steady
+ * state during an OAuth-connected session has them present. Auditing them
+ * here would fire by design.
+ */
+const FORBIDDEN_LEGACY_EXACT_KEYS = [
+  "mcp-inspector-projects",
+  "mcp-inspector-workspaces",
+  "mcp-inspector-state",
+];
+const FORBIDDEN_LEGACY_PREFIXES = ["mcp-env-"];
+
+function assertForbiddenLegacyKeysAbsent(logger: {
+  warn: (message: string, meta?: Record<string, unknown>) => void;
+}): void {
+  if (typeof window === "undefined") return;
+  try {
+    const offenders: string[] = [];
+    for (const key of FORBIDDEN_LEGACY_EXACT_KEYS) {
+      if (localStorage.getItem(key) !== null) {
+        offenders.push(key);
+      }
+    }
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key) continue;
+      if (FORBIDDEN_LEGACY_PREFIXES.some((prefix) => key.startsWith(prefix))) {
+        offenders.push(key);
+      }
+    }
+    if (offenders.length > 0) {
+      const message =
+        "Forbidden legacy localStorage keys remain after migration completed";
+      logger.warn(message, { offenders });
+      // eslint-disable-next-line no-console
+      console.warn(`[mcpjam] ${message}:`, offenders);
+    }
+  } catch {
+    // localStorage blocked — nothing we can or should do.
+  }
 }
 
 interface UseLocalStateMigrationOptions {
@@ -129,6 +184,13 @@ export function useLocalStateMigration({
   const retryCountRef = useRef(0);
   const [retryTick, setRetryTick] = useState(0);
   const createProject = useMutation("projects:createProject" as any);
+  const ensureDefaultProject = useMutation(
+    "projects:ensureDefaultProject" as any,
+  );
+  const mergeServersIntoExistingProject = useMutation(
+    "projects:mergeServersIntoExistingProject" as any,
+  );
+  const convex = useConvex();
 
   useEffect(() => {
     // Per-effect-run cancel flag. The migration is async — the component can
@@ -185,6 +247,41 @@ export function useLocalStateMigration({
     inFlightRef.current = true;
     runLocalStateMigration({
       createProject: createProject as any,
+      ensureDefaultProject: async ({ organizationId: orgId }) => {
+        const result = await (ensureDefaultProject as any)({
+          ...(orgId ? { organizationId: orgId } : {}),
+        });
+        if (typeof result !== "string") {
+          throw new Error(
+            "projects:ensureDefaultProject returned a non-string id",
+          );
+        }
+        return result;
+      },
+      mergeServersIntoExistingProject: async ({ projectId, servers }) => {
+        return await (mergeServersIntoExistingProject as any)({
+          projectId,
+          servers,
+        });
+      },
+      listProjectServers: async (projectId: string) => {
+        const result = await convex.query(
+          "servers:getProjectServers" as any,
+          { projectId },
+        );
+        if (!Array.isArray(result)) return [];
+        return result
+          .filter(
+            (entry: any) =>
+              entry &&
+              typeof entry._id === "string" &&
+              typeof entry.name === "string",
+          )
+          .map((entry: any) => ({ _id: entry._id, name: entry.name }));
+      },
+      importTokens: async (payload) => {
+        await importHostedOAuthTokens(payload);
+      },
       organizationId,
       logger,
     })
@@ -196,6 +293,15 @@ export function useLocalStateMigration({
             logger.info("Local state migration completed", {
               projectsMigrated: result.projectsMigrated,
             });
+          }
+          // Dev-only forbidden-key audit. After migration completes, none of
+          // the project/state/STDIO-env legacy keys should remain. OAuth
+          // keys (`mcp-tokens-*`, `mcp-client-*`, `mcp-verifier-*`,
+          // `mcp-serverUrl-*`, `mcp-oauth-*`) are intentionally NOT audited
+          // here — Slice 2b will purge those; the audit will expand at that
+          // point. Production builds skip the audit (no log noise).
+          if (import.meta.env?.DEV) {
+            assertForbiddenLegacyKeysAbsent(logger);
           }
           return;
         }
@@ -262,6 +368,9 @@ export function useLocalStateMigration({
     isUserBootstrapping,
     organizationId,
     createProject,
+    ensureDefaultProject,
+    mergeServersIntoExistingProject,
+    convex,
     logger,
     retryTick,
   ]);

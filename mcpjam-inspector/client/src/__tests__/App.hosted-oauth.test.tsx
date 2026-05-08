@@ -173,6 +173,10 @@ vi.mock("convex/react", () => ({
   },
   useMutation: () => vi.fn(),
   useAction: () => vi.fn(),
+  // Local-state-migration hook calls useConvex().query for the post-migration
+  // OAuth-token import path; the App test never reaches that path (HOSTED_MODE
+  // gate exits early), but the hook still calls useConvex() unconditionally.
+  useConvex: () => ({ query: vi.fn() }),
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -206,7 +210,7 @@ vi.mock("../hooks/useViews", () => ({
 }));
 
 vi.mock("../hooks/hosted/use-hosted-api-context", () => ({
-  useHostedApiContext: vi.fn(),
+  useApiContext: vi.fn(),
 }));
 
 vi.mock("../hooks/useElectronOAuth", () => ({

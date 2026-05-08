@@ -19,7 +19,7 @@ function readBody(): Record<string, unknown> {
   return JSON.parse(String(init?.body ?? "{}"));
 }
 
-describe("mcp-api local-mode legacy fallback (OAuth bearer present)", () => {
+describe("mcp-api local-mode resolver-only path", () => {
   beforeEach(() => {
     authFetchMock.mockReset();
     authFetchMock.mockResolvedValue(
@@ -27,53 +27,7 @@ describe("mcp-api local-mode legacy fallback (OAuth bearer present)", () => {
     );
   });
 
-  it("testConnection sends the display name as serverId when falling back to legacy because of a local OAuth bearer", async () => {
-    const config = {
-      url: "http://localhost:8787/mcp",
-      requestInit: {
-        headers: {
-          Authorization: "Bearer local-access-token",
-        },
-      },
-    } as unknown as MCPServerConfig;
-
-    await testConnection(config, "convex_id_abc123", {
-      projectId: "project_xyz",
-      serverName: "mcpjam local",
-    });
-
-    const body = readBody();
-    // Resolver path is suppressed — the runtime config carries a local
-    // bearer that Convex doesn't yet hold.
-    expect(body.projectId).toBeUndefined();
-    expect(body.serverConfig).toBeDefined();
-    // The legacy server-side path uses serverId as the mcpClientManager key;
-    // it must be the display name, not the resolved Convex `_id`.
-    expect(body.serverId).toBe("mcpjam local");
-  });
-
-  it("reconnectServer sends the display name as serverId when falling back to legacy because of a local OAuth bearer", async () => {
-    const config = {
-      url: "http://localhost:8787/mcp",
-      requestInit: {
-        headers: {
-          Authorization: "Bearer local-access-token",
-        },
-      },
-    } as unknown as MCPServerConfig;
-
-    await reconnectServer("convex_id_abc123", config, {
-      projectId: "project_xyz",
-      serverName: "mcpjam local",
-    });
-
-    const body = readBody();
-    expect(body.projectId).toBeUndefined();
-    expect(body.serverConfig).toBeDefined();
-    expect(body.serverId).toBe("mcpjam local");
-  });
-
-  it("testConnection still uses the resolver body when no local OAuth bearer is present", async () => {
+  it("testConnection always sends the resolver body in local mode", async () => {
     const config = {
       url: "http://localhost:8787/mcp",
     } as unknown as MCPServerConfig;
@@ -90,16 +44,42 @@ describe("mcp-api local-mode legacy fallback (OAuth bearer present)", () => {
     expect(body.serverConfig).toBeUndefined();
   });
 
-  it("testConnection without options preserves the legacy 2-arg shape (serverId == display name)", async () => {
+  it("reconnectServer always sends the resolver body in local mode", async () => {
     const config = {
       url: "http://localhost:8787/mcp",
     } as unknown as MCPServerConfig;
 
-    await testConnection(config, "mcpjam local");
+    await reconnectServer("convex_id_abc123", config, {
+      projectId: "project_xyz",
+      serverName: "mcpjam local",
+    });
 
     const body = readBody();
-    expect(body.serverId).toBe("mcpjam local");
-    expect(body.serverConfig).toBeDefined();
-    expect(body.projectId).toBeUndefined();
+    expect(body.projectId).toBe("project_xyz");
+    expect(body.serverId).toBe("convex_id_abc123");
+    expect(body.serverName).toBe("mcpjam local");
+    expect(body.serverConfig).toBeUndefined();
+  });
+
+  it("testConnection without projectId throws — legacy fallback is gone", async () => {
+    const config = {
+      url: "http://localhost:8787/mcp",
+    } as unknown as MCPServerConfig;
+
+    await expect(
+      testConnection(config, "mcpjam local"),
+    ).rejects.toThrow(/projectId is required/);
+    expect(authFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("reconnectServer without projectId throws — legacy fallback is gone", async () => {
+    const config = {
+      url: "http://localhost:8787/mcp",
+    } as unknown as MCPServerConfig;
+
+    await expect(
+      reconnectServer("mcpjam local", config),
+    ).rejects.toThrow(/projectId is required/);
+    expect(authFetchMock).not.toHaveBeenCalled();
   });
 });
