@@ -187,6 +187,7 @@ function billingStatusFixture(
     trialPlan: null,
     trialStartedAt: null,
     trialEndsAt: null,
+    deferredTrialBillingStartsAt: null,
     trialDaysRemaining: null,
     decisionRequired: false,
     trialDecision: null,
@@ -459,6 +460,30 @@ describe("OrganizationsTab billing", () => {
     expect(
       screen.queryByRole("button", { name: "Change to annual" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows 'First charge' copy while the subscription is trialing", () => {
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          billingInterval: "monthly",
+          subscriptionStatus: "trialing",
+          source: "subscription",
+          hasCustomer: true,
+          stripeCurrentPeriodEnd: Date.parse("2026-05-19T12:00:00.000Z"),
+          stripePriceId: "price_team_monthly",
+        }),
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" />);
+
+    expect(screen.getByTestId("current-plan-renewal")).toHaveTextContent(
+      "First charge May 19, 2026",
+    );
+    expect(screen.queryByText(/Renews /)).not.toBeInTheDocument();
   });
 
   it("does not show stale billing-updating copy once plan and interval are resolved", () => {
@@ -1102,6 +1127,92 @@ describe("OrganizationsTab billing", () => {
     expect(screen.getByText(/\$20/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^Monthly$/ }));
     expect(screen.getByText(/\$25/)).toBeInTheDocument();
+  });
+
+  it("shows deferred billing copy for active trials with enough time remaining", () => {
+    const now = Date.now();
+    const trialEndsAt = now + 10 * 24 * 60 * 60 * 1000;
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "free",
+          effectivePlan: "team",
+          source: "trial",
+          trialStatus: "active",
+          trialPlan: "team",
+          trialStartedAt: now - 24 * 60 * 60 * 1000,
+          trialEndsAt,
+          deferredTrialBillingStartsAt: trialEndsAt,
+          trialDaysRemaining: 10,
+        }),
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+    expect(
+      screen.getAllByText(/\$0 today\. First bill charged in advance on /),
+    ).toHaveLength(2);
+  });
+
+  it("hides deferred billing copy when the backend does not return deferred billing eligibility", () => {
+    const now = Date.now();
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "free",
+          effectivePlan: "team",
+          source: "trial",
+          trialStatus: "active",
+          trialPlan: "team",
+          trialStartedAt: now - 24 * 60 * 60 * 1000,
+          trialEndsAt: now + 36 * 60 * 60 * 1000,
+          trialDaysRemaining: 2,
+        }),
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+    expect(screen.queryByText(/\$0 today/)).not.toBeInTheDocument();
+  });
+
+  it("hides deferred billing copy when upgrade actions are disabled", () => {
+    const now = Date.now();
+    const trialEndsAt = now + 10 * 24 * 60 * 60 * 1000;
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "free",
+          effectivePlan: "team",
+          source: "trial",
+          trialStatus: "active",
+          trialPlan: "team",
+          trialStartedAt: now - 24 * 60 * 60 * 1000,
+          trialEndsAt,
+          deferredTrialBillingStartsAt: trialEndsAt,
+          trialDaysRemaining: 10,
+          canManageBilling: false,
+          isOwner: false,
+        }),
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+    expect(screen.queryByText(/\$0 today/)).not.toBeInTheDocument();
+  });
+
+  it("hides deferred billing copy when there is no active trial", () => {
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture(),
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+    expect(screen.queryByText(/\$0 today/)).not.toBeInTheDocument();
   });
 
   it("starts checkout for Solo from the billing subview", async () => {
