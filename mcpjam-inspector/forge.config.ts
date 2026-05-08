@@ -9,7 +9,6 @@ import { FusesPlugin } from "@electron-forge/plugin-fuses";
 import { FuseV1Options, FuseVersion } from "@electron/fuses";
 import { resolve, join, dirname } from "path";
 import { cpSync, existsSync, mkdirSync } from "fs";
-import * as asar from "@electron/asar";
 
 const enableMacSigning = process.platform === "darwin";
 const macSignIdentity = process.env.MAC_CODESIGN_IDENTITY?.trim();
@@ -177,61 +176,6 @@ const config: ForgeConfig = {
       },
     }),
   ],
-  hooks: {
-    // The asar.unpack pattern only applies to files present at the start of packaging;
-    // files added by afterCopy arrive too late to be marked as unpack in the asar header.
-    // This hook rebuilds the asar after packaging, promoting *.node files to app.asar.unpacked
-    // so Electron can dlopen them (native addons cannot be loaded from inside an asar body).
-    postPackage: async (_config, { outputPaths }) => {
-      const { tmpdir } = await import("os");
-      const { readdirSync, renameSync, unlinkSync, rmSync } = await import("fs");
-      for (const outputPath of outputPaths) {
-        // outputPaths is the outer directory (e.g. out/App-darwin-arm64/);
-        // find the .app bundle inside it
-        let appPath = outputPath;
-        if (!outputPath.endsWith(".app")) {
-          const entries = readdirSync(outputPath);
-          const appBundle = entries.find((e) => e.endsWith(".app"));
-          if (!appBundle) continue;
-          appPath = join(outputPath, appBundle);
-        }
-        const resourcesPath = join(appPath, "Contents", "Resources");
-        const asarPath = join(resourcesPath, "app.asar");
-        if (!existsSync(asarPath)) continue;
-
-        const tmpDir = join(tmpdir(), `asar-rebuild-${Date.now()}`);
-        mkdirSync(tmpDir, { recursive: true });
-        console.log(`[forge] Rebuilding asar to unpack *.node: ${asarPath}`);
-
-        await asar.extractAll(asarPath, tmpDir);
-
-        let succeeded = false;
-        try {
-          renameSync(asarPath, `${asarPath}.bak`);
-          // @electron/asar calls minimatch(absPath, pattern, { matchBase: true }) so
-          // patterns without a "/" match on basename only — "*.node" is correct here.
-          //
-          // NOTE: rebuilding app.asar here invalidates the ElectronAsarIntegrity hash
-          // that electron-packager wrote to Info.plist before this postPackage hook ran.
-          // EnableEmbeddedAsarIntegrityValidation (see FusesPlugin below) only enforces
-          // this hash for code-signed builds — unsigned/ad-hoc builds are unaffected.
-          // For distribution builds with packagerConfig.asarIntegrity / osxSign, the
-          // app.asar and Info.plist hash must be reconciled after this rebuild (e.g. by
-          // re-running codesign). The signing concern is already noted in the PR.
-          await asar.createPackageWithOptions(tmpDir, asarPath, {
-            unpack: "*.node",
-          });
-          succeeded = true;
-          unlinkSync(`${asarPath}.bak`);
-        } finally {
-          if (!succeeded && existsSync(`${asarPath}.bak`)) {
-            renameSync(`${asarPath}.bak`, asarPath);
-          }
-          rmSync(tmpDir, { recursive: true, force: true });
-        }
-      }
-    },
-  },
   plugins: [
     new VitePlugin({
       // `build` can specify multiple entry builds, which can be Main process, Preload scripts, Worker process, etc.
