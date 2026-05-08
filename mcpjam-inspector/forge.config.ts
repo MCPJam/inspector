@@ -106,12 +106,18 @@ const config: ForgeConfig = {
         // bundling redundant fat/universal binaries (~19MB saved on arm64-only builds).
         const platformPkg = `ngrok-${_platform}-${_arch}`;
         const pkgsToCopy = ["ngrok", platformPkg];
-        for (const pkg of pkgsToCopy) {
-          const src = join(ngrokSrc, pkg);
-          if (existsSync(src)) {
-            console.log(`[forge] Copying @ngrok/${pkg} to ${dest}`);
-            cpSync(src, join(dest, pkg), { recursive: true });
+        try {
+          for (const pkg of pkgsToCopy) {
+            const src = join(ngrokSrc, pkg);
+            if (existsSync(src)) {
+              console.log(`[forge] Copying @ngrok/${pkg} to ${dest}`);
+              cpSync(src, join(dest, pkg), { recursive: true });
+            }
           }
+        } catch (err) {
+          console.error(`[forge] Failed to copy @ngrok to ${dest}:`, err);
+          callback(err as Error);
+          return;
         }
         callback();
       },
