@@ -793,6 +793,10 @@ export function MCPAppsRenderer({
     () => hostStyleDefinition.resolveStyleVariables(resolvedTheme),
     [resolvedTheme, hostStyleDefinition],
   );
+  const hostChatBackground = useMemo(
+    () => hostStyleDefinition.resolveChatBackground(resolvedTheme),
+    [hostStyleDefinition, resolvedTheme],
+  );
   const defaultFontCss = hostStyleDefinition.fontCss;
   const configuredStyles =
     baseHostContext.styles &&
@@ -1503,7 +1507,10 @@ export function MCPAppsRenderer({
         : lastInlineHeightRef.current,
     width: "100%",
     maxWidth: "100%",
-    backgroundColor: "transparent",
+    backgroundColor:
+      !isFullscreen && prefersBorder
+        ? mergedStyleVariables["--color-background-primary"]
+        : (hostChatBackground ?? "transparent"),
     opacity: showWidget ? 1 : 0,
     transition: [
       "opacity 150ms ease-in",
@@ -1530,6 +1537,7 @@ export function MCPAppsRenderer({
       csp={widgetCsp}
       permissions={widgetPermissions}
       permissive={widgetPermissive}
+      colorScheme={resolvedTheme}
       onProxyReady={() => {
         setSandboxProxyReady(true);
         logWidgetDebug("ui-to-host", "debug/sandbox-proxy-ready", {

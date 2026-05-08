@@ -536,7 +536,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
   });
 
-  it("keeps the sandbox iframe transparent while providing host chrome", async () => {
+  it("aligns the sandbox iframe with the host surface while providing host chrome", async () => {
     render(<MCPAppsRenderer {...baseProps} />);
 
     const iframe = await screen.findByTestId("sandboxed-iframe");
@@ -544,9 +544,11 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
     expect(iframe.className).toContain("bg-transparent");
     expect(sandboxedIframePropsRef.current?.style?.backgroundColor).toBe(
-      "transparent",
+      CLAUDE_HOST_STYLE.resolveStyleVariables("light")[
+        "--color-background-primary"
+      ],
     );
-    expect(sandboxedIframePropsRef.current?.style?.colorScheme).toBeUndefined();
+    expect(sandboxedIframePropsRef.current?.colorScheme).toBe("light");
     expect(hostChrome).toHaveStyle({
       backgroundColor:
         CLAUDE_HOST_STYLE.resolveStyleVariables("light")[
@@ -579,8 +581,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(iframe.className).toContain("bg-transparent");
     expect(iframe.className).not.toContain("border border-border/40");
     expect(sandboxedIframePropsRef.current?.style?.backgroundColor).toBe(
-      "transparent",
+      CLAUDE_HOST_STYLE.resolveChatBackground("light"),
     );
+    expect(sandboxedIframePropsRef.current?.colorScheme).toBe("light");
   });
 
   it("anchors desktop playground PiP to the playground shell instead of the viewport", async () => {
