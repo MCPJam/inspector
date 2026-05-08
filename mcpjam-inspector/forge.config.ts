@@ -78,12 +78,9 @@ const config: ForgeConfig = {
     ],
     osxSign: osxSignOptions,
     osxNotarize: osxNotarizeOptions,
-    // Copy @ngrok native module into .vite/build/node_modules before signing.
-    // The VitePlugin only packs .vite/build/ into the asar (no top-level node_modules),
-    // so the module must live alongside main.cjs for require('@ngrok/ngrok') to resolve.
+    // VitePlugin only packs .vite/build/ into the asar; copy native externals here so require() resolves them.
     afterCopy: [
       (buildPath, _electronVersion, _platform, _arch, callback) => {
-        // Resolve @ngrok scope dir via require.resolve so npm workspace hoisting is handled
         let ngrokSrc: string;
         try {
           const ngrokPkg = require.resolve("@ngrok/ngrok/package.json", {
@@ -101,8 +98,7 @@ const config: ForgeConfig = {
         const dest = join(buildPath, ".vite", "build", "node_modules", "@ngrok");
         mkdirSync(dest, { recursive: true });
 
-        // Copy only the JS wrapper and the platform-matched native package to avoid
-        // bundling redundant fat/universal binaries (~19MB saved on arm64-only builds).
+        // Copy only the platform-matched native package to avoid bundling redundant binaries.
         const platformPkg = `ngrok-${_platform}-${_arch}`;
         const pkgsToCopy = ["ngrok", platformPkg];
         try {
