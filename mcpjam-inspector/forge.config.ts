@@ -204,6 +204,8 @@ const config: ForgeConfig = {
         });
 
         unlinkSync(`${asarPath}.bak`);
+        const { rmSync } = await import("fs");
+        rmSync(tmpDir, { recursive: true, force: true });
       }
     },
   },
