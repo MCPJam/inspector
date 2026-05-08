@@ -204,16 +204,23 @@ const config: ForgeConfig = {
         console.log(`[forge] Rebuilding asar to unpack *.node: ${asarPath}`);
 
         await asar.extractAll(asarPath, tmpDir);
-        renameSync(asarPath, `${asarPath}.bak`);
 
-        // @electron/asar calls minimatch(absPath, pattern, { matchBase: true }) so
-        // patterns without a "/" match on basename only — "*.node" is correct here.
-        await asar.createPackageWithOptions(tmpDir, asarPath, {
-          unpack: "*.node",
-        });
-
-        unlinkSync(`${asarPath}.bak`);
-        rmSync(tmpDir, { recursive: true, force: true });
+        let succeeded = false;
+        try {
+          renameSync(asarPath, `${asarPath}.bak`);
+          // @electron/asar calls minimatch(absPath, pattern, { matchBase: true }) so
+          // patterns without a "/" match on basename only — "*.node" is correct here.
+          await asar.createPackageWithOptions(tmpDir, asarPath, {
+            unpack: "*.node",
+          });
+          succeeded = true;
+          unlinkSync(`${asarPath}.bak`);
+        } finally {
+          if (!succeeded && existsSync(`${asarPath}.bak`)) {
+            renameSync(`${asarPath}.bak`, asarPath);
+          }
+          rmSync(tmpDir, { recursive: true, force: true });
+        }
       }
     },
   },
