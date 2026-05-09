@@ -15,20 +15,25 @@ const SERVERS = [
 function renderEditor(initial: Partial<HostConfigInputV2>) {
   const onChange = vi.fn();
   let current = emptyHostConfigInputV2(initial);
+  // Stable handler so subsequent rerenders pass the same wrapper that
+  // updates `current` and triggers another rerender — not the bare mock.
+  // Reading `current` from the closure (rather than capturing `next`)
+  // also keeps the controlled value in sync across multiple interactions.
+  const handleChange = (next: HostConfigInputV2) => {
+    current = next;
+    onChange(next);
+    utils.rerender(
+      <HostConfigEditor
+        value={current}
+        onChange={handleChange}
+        availableServers={SERVERS}
+      />,
+    );
+  };
   const utils = render(
     <HostConfigEditor
       value={current}
-      onChange={(next) => {
-        current = next;
-        onChange(next);
-        utils.rerender(
-          <HostConfigEditor
-            value={next}
-            onChange={onChange}
-            availableServers={SERVERS}
-          />,
-        );
-      }}
+      onChange={handleChange}
       availableServers={SERVERS}
     />,
   );

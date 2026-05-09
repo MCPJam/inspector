@@ -19,7 +19,14 @@
  * fully editable end-to-end.
  */
 
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Label } from "@mcpjam/design-system/label";
 import { Input } from "@mcpjam/design-system/input";
 import { Textarea } from "@mcpjam/design-system/textarea";
@@ -422,6 +429,16 @@ function JsonRecordEditor({
   const stringified = useMemo(() => JSON.stringify(value, null, 2), [value]);
   const [raw, setRaw] = useState(stringified);
   const [error, setErrorState] = useState<string | null>(null);
+  // Tracks the stringified form we most recently emitted up via
+  // onChange. After the parent re-renders with the new value, the
+  // resync effect compares `stringified` against this; if they match,
+  // we leave the user's textarea text alone instead of overwriting it
+  // with prettified JSON on every valid keystroke (which would also
+  // wipe the cursor position). Coercion paths like
+  // coerceHeadersToStringRecord can change the parent's stringified
+  // form even on a valid edit, so we capture the parent's serialized
+  // shape inside the tryParse onChange callback.
+  const lastEmittedRef = useRef(stringified);
 
   const setError = useCallback(
     (next: string | null) => {
@@ -431,12 +448,17 @@ function JsonRecordEditor({
     [onErrorChange],
   );
 
-  // Re-sync local text whenever the parent's serialized form changes (e.g.
-  // a different config gets loaded). We avoid clobbering mid-edit drafts
-  // by only re-syncing when the stringified parent value changes.
+  // Re-sync local text only when the parent's serialized form differs
+  // from the value this component last emitted (i.e. a genuinely
+  // external change such as a different config getting loaded). This
+  // avoids round-trip resyncs that would clobber the user's mid-edit
+  // textarea contents.
   useEffect(() => {
-    setRaw(stringified);
-    setError(null);
+    if (stringified !== lastEmittedRef.current) {
+      setRaw(stringified);
+      lastEmittedRef.current = stringified;
+      setError(null);
+    }
   }, [stringified, setError]);
 
   // Parse on every keystroke so errors clear as soon as the user fixes
@@ -456,6 +478,14 @@ function JsonRecordEditor({
           return;
         }
         setError(null);
+        // Compute the post-onChange canonical form (what the parent
+        // will serialize) and capture it so the resync effect treats
+        // the upcoming re-render as a self-edit.
+        lastEmittedRef.current = JSON.stringify(
+          parsed as Record<string, unknown>,
+          null,
+          2,
+        );
         onChange(parsed as Record<string, unknown>);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Invalid JSON");
