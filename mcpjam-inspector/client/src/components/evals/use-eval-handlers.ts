@@ -579,6 +579,10 @@ export function useEvalHandlers({
             minimumPassRate: minimumPassRate,
           },
           notes: criteriaNote,
+          // Cases are already persisted; tell the server to skip the
+          // per-case upsert so suite-default-derived wire fields don't
+          // get baked into per-case overrides.
+          suiteRerun: true,
         });
 
         // Track suite run started

@@ -144,6 +144,7 @@ export function SuiteExecutionConfigEditor({
               setProvider(nextProvider);
               setModelId(nextId);
             }}
+            disabled={isSaving || isClearing}
           >
             <SelectTrigger className="mt-1.5 border-0 bg-muted/50 transition-colors hover:bg-muted">
               <SelectValue placeholder="Select a model" />
@@ -174,6 +175,7 @@ export function SuiteExecutionConfigEditor({
             onChange={(e) => setSystemPrompt(e.target.value)}
             placeholder="You are a helpful assistant…"
             className="min-h-[80px] resize-y border-0 bg-muted/50 text-sm"
+            disabled={isSaving || isClearing}
           />
         </div>
 
@@ -196,6 +198,7 @@ export function SuiteExecutionConfigEditor({
               setTemperature(values[0] ?? DEFAULT_TEMPERATURE)
             }
             className="mt-3"
+            disabled={isSaving || isClearing}
           />
         </div>
       </div>
