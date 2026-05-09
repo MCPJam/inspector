@@ -149,4 +149,53 @@ describe("hostConfigDtoToInput", () => {
     expect(dto.clientCapabilities).toEqual({ c: 1 });
     expect(dto.hostContext).toEqual({ h: 2 });
   });
+
+  it("deep-clones nested clientCapabilities and hostContext", () => {
+    const dto: HostConfigDtoV2 = {
+      id: "host-2",
+      schemaVersion: 2,
+      hostStyle: "claude",
+      modelId: "x",
+      systemPrompt: "",
+      temperature: 0.7,
+      requireToolApproval: false,
+      serverIds: [],
+      optionalServerIds: [],
+      connectionDefaults: { headers: {}, requestTimeout: 10000 },
+      clientCapabilities: {
+        extensions: { mimeTypes: ["a", "b"] },
+      } as Record<string, unknown>,
+      hostContext: {
+        nested: { deep: { value: 1 } },
+      } as Record<string, unknown>,
+    };
+    const input = hostConfigDtoToInput(dto);
+
+    // Mutate inside the nested trees and confirm the source DTO is
+    // unaffected — proves the clone descends into nested structures.
+    (
+      (input.clientCapabilities.extensions as Record<string, unknown>)
+        .mimeTypes as string[]
+    ).push("c");
+    (
+      (
+        (input.hostContext.nested as Record<string, unknown>).deep as Record<
+          string,
+          unknown
+        >
+      ) as { value: number }
+    ).value = 999;
+
+    expect(
+      (dto.clientCapabilities.extensions as Record<string, unknown>).mimeTypes,
+    ).toEqual(["a", "b"]);
+    expect(
+      (
+        (dto.hostContext.nested as Record<string, unknown>).deep as Record<
+          string,
+          unknown
+        >
+      ),
+    ).toEqual({ value: 1 });
+  });
 });

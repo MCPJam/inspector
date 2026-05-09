@@ -123,16 +123,31 @@ export function emptyHostConfigInputV2(
     // ProjectClientConfig path also seeds from getDefaultClientCapabilities;
     // an empty {} here would silently drop MCP Apps support until the
     // user manually edited the capability JSON.
+    //
+    // Deep-clone — clientCapabilities and hostContext can be nested
+    // (e.g. extensions.mimeTypes arrays). A shallow spread would alias
+    // the inner trees with the partial/source, allowing later mutations
+    // to leak through.
     clientCapabilities: partial.clientCapabilities
-      ? { ...partial.clientCapabilities }
-      : (getDefaultClientCapabilities() as Record<string, unknown>),
-    hostContext: partial.hostContext ? { ...partial.hostContext } : {},
+      ? deepCloneJsonRecord(partial.clientCapabilities)
+      : deepCloneJsonRecord(
+          getDefaultClientCapabilities() as Record<string, unknown>,
+        ),
+    hostContext: partial.hostContext
+      ? deepCloneJsonRecord(partial.hostContext)
+      : {},
   };
 }
 
 export function hostConfigDtoToInput(
   dto: HostConfigDtoV2,
 ): HostConfigInputV2 {
+  // Deep-clone the JSON record fields. clientCapabilities and
+  // hostContext can be nested (e.g. the SDK's default capabilities
+  // include an `extensions` object with arrays). A shallow spread
+  // would leave the inner trees aliased to the source DTO; any nested
+  // edit through the returned input would silently mutate the
+  // baseline used for resets and dirty comparisons.
   return {
     hostStyle: dto.hostStyle,
     modelId: dto.modelId,
@@ -145,9 +160,29 @@ export function hostConfigDtoToInput(
       headers: { ...dto.connectionDefaults.headers },
       requestTimeout: dto.connectionDefaults.requestTimeout,
     },
-    clientCapabilities: { ...dto.clientCapabilities },
-    hostContext: { ...dto.hostContext },
+    clientCapabilities: deepCloneJsonRecord(dto.clientCapabilities),
+    hostContext: deepCloneJsonRecord(dto.hostContext),
   };
+}
+
+function deepCloneJsonRecord(
+  value: Record<string, unknown>,
+): Record<string, unknown> {
+  return deepCloneJsonValue(value) as Record<string, unknown>;
+}
+
+function deepCloneJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(deepCloneJsonValue);
+  }
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = deepCloneJsonValue(v);
+    }
+    return out;
+  }
+  return value;
 }
 
 /**
