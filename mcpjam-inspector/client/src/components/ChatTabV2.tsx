@@ -387,6 +387,14 @@ export function ChatTabV2({
       oauthTokens: effectiveHostedOAuthTokens,
     },
     executionConfig,
+    // Phase 3: forward the resolved chat-tab host style so direct
+    // chat traces persist with `claude`/`chatgpt` rather than
+    // defaulting to `'claude'` regardless of user choice. Backend
+    // ingestion ignores it for chatbox flows (those resolve from the
+    // chatbox row), so it's safe to forward unconditionally.
+    hostStyle: hostStyle === "claude" || hostStyle === "chatgpt"
+      ? hostStyle
+      : undefined,
     minimalMode,
     onReset: (reason?: ChatSessionResetReason) => {
       if (reason === "auth-bootstrap" || reason === "hydrate") {

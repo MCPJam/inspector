@@ -857,27 +857,6 @@ export function SuiteIterationsView({
             <SuiteExecutionConfigEditor
               suite={suite}
               availableModels={availableModels}
-              onSave={async (defaultConfig) => {
-                try {
-                  await updateSuite({
-                    suiteId: suite._id,
-                    defaultConfig,
-                  });
-                  toast.success("Suite execution config updated");
-                } catch (error) {
-                  toast.error(
-                    getBillingErrorMessage(
-                      error,
-                      "Failed to update suite execution config",
-                    ),
-                  );
-                  console.error(
-                    "Failed to update suite execution config:",
-                    error,
-                  );
-                  throw error;
-                }
-              }}
               onClear={async () => {
                 try {
                   await updateSuite({

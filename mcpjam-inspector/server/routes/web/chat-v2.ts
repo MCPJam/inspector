@@ -235,6 +235,11 @@ chatV2.post("/", async (c) => {
                       },
                       hostConfig: buildDirectHostConfig({
                         modelId,
+                        // Phase 3: real host style flows from the
+                        // chat tab; old inspector builds omit it and
+                        // the backend defaults to 'claude' (no more
+                        // legacy 'direct' hostStyle in new traces).
+                        hostStyle: body.hostStyle,
                         systemPrompt,
                         requestedTemperature: temperature,
                         resolvedTemperature,
@@ -352,6 +357,13 @@ chatV2.post("/", async (c) => {
                       },
                       hostConfig: buildDirectHostConfig({
                         modelId: String(modelDefinition.id),
+                        // Phase 3: forward the chat tab's resolved
+                        // host style (parity with the org-BYOK and
+                        // mcp/chat-v2 call sites). Without this, the
+                        // MCPJam-free path always persisted as
+                        // 'claude' regardless of the user's actual
+                        // hostStyle.
+                        hostStyle: body.hostStyle,
                         systemPrompt,
                         requestedTemperature: temperature,
                         resolvedTemperature,
