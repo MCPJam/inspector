@@ -1,4 +1,5 @@
 import type { ProviderTokens } from "@/hooks/use-ai-provider-keys";
+import { HOSTED_MODE } from "@/lib/config";
 import { isMCPJamProvidedModel, type ModelDefinition } from "@/shared/types";
 import type { EvalCase, EvalSuite } from "./types";
 import type { PromptTurn } from "@/shared/prompt-turns";
@@ -181,6 +182,8 @@ export async function prepareSingleTestCaseRun({
     }
   }
 
+  const convexAuthToken = HOSTED_MODE ? null : await getAccessToken();
+
   return {
     modelValue,
     request: {
@@ -191,7 +194,7 @@ export async function prepareSingleTestCaseRun({
       serverIds: suite.environment?.servers || [],
       modelApiKeys:
         Object.keys(modelApiKeys).length > 0 ? modelApiKeys : undefined,
-      convexAuthToken: await getAccessToken(),
+      convexAuthToken,
       testCaseOverrides,
     },
   };

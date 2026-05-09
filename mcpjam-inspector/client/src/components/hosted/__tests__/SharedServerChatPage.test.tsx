@@ -50,7 +50,7 @@ vi.mock("@workos-inc/authkit-react", () => ({
 }));
 
 vi.mock("@/hooks/hosted/use-hosted-api-context", () => ({
-  useHostedApiContext: vi.fn(),
+  useApiContext: vi.fn(),
 }));
 
 vi.mock("@/components/ChatTabV2", () => ({

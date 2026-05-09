@@ -1,9 +1,12 @@
 import { Hono } from "hono";
-import type { MCPServerConfig } from "@mcpjam/sdk";
 import "../../types/hono"; // Type extensions
 import { rpcLogBus, type RpcLogEvent } from "../../services/rpc-log-bus";
 import { logger } from "../../utils/logger";
-import { HOSTED_MODE } from "../../config";
+import {
+  executeLocalServerConnect,
+  parseLocalConnectRequestBody,
+  respondWithLocalRouteError,
+} from "../../utils/local-server-resolver.js";
 
 const servers = new Hono();
 
@@ -114,10 +117,10 @@ servers.delete("/:serverId", async (c) => {
       }
     } catch (error) {
       // Ignore disconnect errors for already disconnected servers
-      console.debug(
-        `Failed to disconnect MCP server ${serverId} during removal`,
-        error,
-      );
+      logger.debug("Failed to disconnect MCP server during removal", {
+        serverId,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
 
     mcpClientManager.removeServer(serverId);
@@ -138,105 +141,35 @@ servers.delete("/:serverId", async (c) => {
   }
 });
 
-// Reconnect to a server
+// Reconnect to a server. Body shape: {projectId, serverId, serverName}; the
+// local Hono server resolves the config (and any OAuth tokens) from Convex
+// via /web/authorize-batch-local.
 servers.post("/reconnect", async (c) => {
-  let serverId: string | undefined;
+  let body: unknown;
   try {
-    const body = (await c.req.json()) as {
-      serverId?: string;
-      serverConfig?: MCPServerConfig;
-    };
-
-    serverId = body.serverId;
-    const serverConfig = body.serverConfig;
-
-    if (!serverId || !serverConfig) {
-      return c.json(
-        {
-          success: false,
-          error: "serverId and serverConfig are required",
-        },
-        400,
-      );
-    }
-
-    const mcpClientManager = c.mcpClientManager;
-
-    const normalizedConfig: MCPServerConfig = { ...serverConfig };
-    if (
-      "url" in normalizedConfig &&
-      normalizedConfig.url !== undefined &&
-      normalizedConfig.url !== null
-    ) {
-      const urlValue = normalizedConfig.url as unknown;
-      if (typeof urlValue === "string") {
-        normalizedConfig.url = urlValue;
-      } else if (urlValue instanceof URL) {
-        // already normalized
-      } else if (
-        typeof urlValue === "object" &&
-        urlValue !== null &&
-        "href" in (urlValue as Record<string, unknown>) &&
-        typeof (urlValue as { href?: unknown }).href === "string"
-      ) {
-        normalizedConfig.url = new URL(
-          (urlValue as { href: string }).href,
-        ).toString();
-      }
-    }
-
-    // Block STDIO connections in hosted mode
-    if (HOSTED_MODE && normalizedConfig.command) {
-      return c.json(
-        {
-          success: false,
-          error: "STDIO transport is disabled in the web app",
-        },
-        403,
-      );
-    }
-
-    // Enforce HTTPS in hosted mode
-    if (HOSTED_MODE && normalizedConfig.url) {
-      if (new URL(normalizedConfig.url).protocol !== "https:") {
-        return c.json(
-          {
-            success: false,
-            error:
-              "HTTPS is required in the web app. Please use an https:// URL.",
-          },
-          400,
-        );
-      }
-    }
-
-    await mcpClientManager.disconnectServer(serverId);
-    await mcpClientManager.connectToServer(serverId, normalizedConfig);
-
-    const status = mcpClientManager.getConnectionStatus(serverId);
-    const message =
-      status === "connected"
-        ? `Reconnected to server: ${serverId}`
-        : `Server ${serverId} reconnected with status '${status}'`;
-    const success = status === "connected";
-
-    return c.json({
-      success,
-      serverId,
-      status,
-      message,
-      ...(success ? {} : { error: message }),
-    });
+    body = await c.req.json();
   } catch (error) {
-    logger.error("Error reconnecting server", error, { serverId });
     return c.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: "Failed to parse request body",
+        details: error instanceof Error ? error.message : "Unknown error",
       },
-      500,
+      400,
     );
   }
+
+  const parsed = parseLocalConnectRequestBody(c, body);
+  if (!parsed.ok) {
+    return respondWithLocalRouteError(c, parsed.error);
+  }
+
+  // Reconnect leaves the manager entry in place on failure — the caller
+  // intends to retry, and removing it would also drop any in-flight
+  // streams (tools/RPC) that pointed at this name.
+  return executeLocalServerConnect(c, parsed.params, {
+    removeOnFailure: false,
+  });
 });
 
 // Stream JSON-RPC messages over SSE for all servers.

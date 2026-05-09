@@ -1,5 +1,5 @@
 import { authFetch } from "@/lib/session-token";
-import { buildHostedServerRequest } from "@/lib/apis/web/context";
+import { buildServerRequest } from "@/lib/apis/web/context";
 import type { CspMode } from "@/stores/ui-playground-store";
 
 export interface WidgetCspData {
@@ -52,7 +52,7 @@ export interface LocalChatGptWidgetLoadResult {
 export async function loadHostedChatGptWidget(
   options: BaseWidgetLoaderOptions,
 ): Promise<HostedChatGptWidgetLoadResult> {
-  const hostedServerRequest = buildHostedServerRequest(options.serverId);
+  const hostedServerRequest = buildServerRequest(options.serverId);
   const hostedResponse = await authFetch(
     "/api/web/apps/chatgpt-apps/widget-content",
     {

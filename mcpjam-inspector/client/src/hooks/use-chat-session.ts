@@ -34,7 +34,6 @@ import { useConvexAuth } from "convex/react";
 import {
   ModelDefinition,
   type ModelProvider,
-  isGPT5Model,
 } from "@/shared/types";
 import {
   ProviderTokens,
@@ -76,7 +75,6 @@ import {
   buildToolRenderOverridesFromSnapshots,
 } from "@/components/evals/trace-viewer-adapter";
 import { useSharedChatWidgetCapture } from "@/hooks/useSharedChatWidgetCapture";
-import { buildHostedServerRequest } from "@/lib/apis/web/context";
 import { ingestHostedRpcLogs } from "@/stores/traffic-log-store";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import {
@@ -1013,14 +1011,12 @@ export function useChatSession({
   const requireToolApprovalRef = useRef(requireToolApproval);
   requireToolApprovalRef.current = requireToolApproval;
   const isHostedGuest = HOSTED_MODE && !workOsUser && !isWorkOsLoading;
-  const directGuestMode =
-    isHostedGuest && !isAuthLoading && !hostedProjectId && !hostedShareToken;
   const sharedGuestMode =
     isHostedGuest &&
     !isAuthLoading &&
     !!hostedProjectId &&
     !!(hostedShareToken || hostedChatboxToken);
-  const guestMode = directGuestMode || sharedGuestMode;
+  const guestMode = sharedGuestMode;
   const skipNextForkDetectionRef = useRef(false);
   const hasResolvedAuthHeadersRef = useRef(false);
   const lastResolvedAuthHeadersRef = useRef<Record<string, string> | undefined>(
@@ -1278,7 +1274,6 @@ export function useChatSession({
     } else {
       apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
     }
-    const isGpt5 = isGPT5Model(selectedModel.id);
 
     // Merge session auth headers with workos auth headers
     const sessionHeaders = getSessionAuthHeaders();
@@ -1294,23 +1289,13 @@ export function useChatSession({
 
     const chatApi = HOSTED_MODE ? "/api/web/chat-v2" : "/api/mcp/chat-v2";
 
-    // Build hosted body based on whether we have a project.
-    // Signed-in users are blocked from submitting until hostedProjectId loads
-    // (via hostedContextNotReady), so this branch only runs for guests.
+    // Hosted dashboard guests and signed-in users both require a project id.
+    // Submit is blocked until hostedProjectId and selected server ids resolve.
     const buildHostedBody = () => {
       if (!hostedProjectId) {
-        if (directGuestMode && selectedServers.length > 0) {
-          return {
-            chatSessionId,
-            directVisibility,
-            ...buildHostedServerRequest(selectedServers[0]),
-          };
-        }
-
-        return {
-          chatSessionId,
-          directVisibility,
-        };
+        throw new Error(
+          "Hosted chat context is not ready: missing projectId."
+        );
       }
       const isHostedDirectChat = !hostedShareToken && !hostedChatboxToken;
       return {
@@ -1339,7 +1324,13 @@ export function useChatSession({
       body: () => ({
         model: selectedModel,
         ...(HOSTED_MODE ? {} : { apiKey }),
-        ...(isGpt5 ? {} : { temperature }),
+        // Always send the user's slider value. The server's `prepareChatV2`
+        // already drops temperature for GPT-5 before the LLM call (its API
+        // rejects the field), so what lands here is purely the user's
+        // intended config — and ingestion's hostConfig dedupes on it. If we
+        // stripped for GPT-5, every GPT-5 direct chat would dedupe to the
+        // helper's 0.7 fallback regardless of the slider.
+        temperature,
         systemPrompt,
         ...(HOSTED_MODE
           ? buildHostedBody()
@@ -1349,6 +1340,15 @@ export function useChatSession({
               directVisibility,
               // Pass projectId for BYOK direct-chat history persistence
               ...(hostedProjectId ? { projectId: hostedProjectId } : {}),
+              // Convex server Ids parallel to `selectedServers`. Only sent
+              // when every name resolved to an Id — a partial mapping would
+              // hash to a different hostConfig than intended. Without this,
+              // the MCP route can't safely emit `hostConfig` because local
+              // server *names* aren't valid Convex Ids and the backend
+              // validator would reject the whole ingest call.
+              ...(hostedSelectedServerIds.length === selectedServers.length
+                ? { selectedServerIds: hostedSelectedServerIds }
+                : {}),
             }),
         requireToolApproval: requireToolApprovalRef.current,
         ...(!HOSTED_MODE && customProviders.length > 0
@@ -1370,7 +1370,6 @@ export function useChatSession({
     systemPrompt,
     selectedServers,
     directVisibility,
-    directGuestMode,
     hostedProjectId,
     chatSessionId,
     hostedSelectedServerIds,
@@ -1557,9 +1556,8 @@ export function useChatSession({
   }, [chatSessionId]);
 
   useSharedChatWidgetCapture({
-    enabled: HOSTED_MODE && (isAuthenticated || directGuestMode),
+    enabled: HOSTED_MODE && isAuthenticated,
     readyToPersist: status === "ready",
-    directGuestMode,
     chatSessionId,
     hostedShareToken,
     hostedChatboxToken,
@@ -1912,7 +1910,9 @@ export function useChatSession({
     syncRestoredToolRenderOverrides,
   ]);
 
-  // Ollama model detection
+  // Ollama model detection — local mode only. Hosted mode never surfaces
+  // Ollama: the browser may be able to reach localhost, but Convex (which
+  // owns the chat path in hosted mode) cannot.
   useEffect(() => {
     if (HOSTED_MODE) {
       setIsOllamaRunning(false);
@@ -2097,9 +2097,8 @@ export function useChatSession({
   }, [messages]);
 
   // Computed state for UI
-  // Compute guest access from React state instead of the global hostedApiContext.
-  // Shared chats are guest-capable even though they are scoped to a project,
-  // while direct guests have no project at all.
+  // Compute share/chatbox guest access from React state instead of the global
+  // apiContext.
   // In hosted mode: always require auth (guest JWT or WorkOS — handled by authFetch).
   // In non-hosted mode: auth is only needed for sign-in-only MCPJam models.
   const requiresAuthForChat = HOSTED_MODE
@@ -2113,10 +2112,8 @@ export function useChatSession({
     !isAuthenticated && requiresAuthForChat && !guestMode;
   const authHeadersNotReady =
     requiresAuthForChat && isAuthenticated && !authHeaders;
-  // Direct guests don't need a project; shared guests still do.
   const hostedContextNotReady =
     HOSTED_MODE &&
-    !directGuestMode &&
     (!hostedProjectId ||
       (selectedServers.length > 0 &&
         hostedSelectedServerIds.length !== selectedServers.length));

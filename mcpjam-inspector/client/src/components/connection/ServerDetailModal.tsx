@@ -26,7 +26,6 @@ import {
   isOpenAIApp,
   isOpenAIAppAndMCPApp,
 } from "@/lib/mcp-ui/mcp-apps-utils";
-import { HOSTED_MODE } from "@/lib/config";
 import { getConnectionStatusMeta } from "./server-card-utils";
 import { useServerForm } from "./hooks/use-server-form";
 import { ServerInfoContent } from "./ServerInfoContent";
@@ -219,9 +218,7 @@ export function ServerDetailModal({
 
   const getSwitchReconnectOptions = () => {
     if (server.useOAuth === true && !server.oauthTokens) {
-      return HOSTED_MODE
-        ? { allowInteractiveOAuthFlow: true }
-        : { forceOAuthFlow: true };
+      return { allowInteractiveOAuthFlow: true };
     }
 
     return { allowInteractiveOAuthFlow: false };

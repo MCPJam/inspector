@@ -109,7 +109,6 @@ export function EvalsTab({
 
   const overviewQueries = useEvalQueries({
     isAuthenticated: isAuthenticated && Boolean(projectId),
-    user: projectId ? user : null,
     selectedSuiteId: null,
     deletingSuiteId: null,
     projectId: projectId ?? null,
@@ -170,7 +169,6 @@ export function EvalsTab({
 
   const queries = useEvalQueries({
     isAuthenticated: isAuthenticated && Boolean(projectId),
-    user: projectId ? user : null,
     selectedSuiteId,
     deletingSuiteId,
     projectId: projectId ?? null,

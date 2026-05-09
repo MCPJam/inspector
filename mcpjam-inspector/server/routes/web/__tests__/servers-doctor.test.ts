@@ -17,20 +17,6 @@ vi.mock("@mcpjam/sdk", async () => {
   };
 });
 
-vi.mock("../../../utils/oauth-proxy.js", () => ({
-  OAuthProxyError: class OAuthProxyError extends Error {
-    constructor(
-      public readonly status: number,
-      message: string,
-    ) {
-      super(message);
-    }
-  },
-  validateUrl: vi.fn().mockResolvedValue({
-    url: new URL("https://guest.example.com/mcp"),
-  }),
-}));
-
 vi.mock("../../apps/SandboxProxyHtml.bundled.js", () => ({
   CHATGPT_APPS_SANDBOX_PROXY_HTML: "<html></html>",
   MCP_APPS_SANDBOX_PROXY_HTML: "<html></html>",
@@ -42,11 +28,6 @@ import { expectJson, postJson } from "./helpers/test-app.js";
 
 function createGuestDoctorApp(): Hono {
   const app = new Hono();
-  app.use("*", async (c, next) => {
-    (c as any).mcpClientManager = {};
-    c.set("guestId", "guest-1");
-    await next();
-  });
   app.route("/api/web/servers", serversRoutes);
   return app;
 }
@@ -232,40 +213,30 @@ describe("web servers/doctor", () => {
     );
   });
 
-  it("runs guest doctor through the shared SDK workflow", async () => {
+  it("rejects direct guest doctor bodies", async () => {
     const app = createGuestDoctorApp();
 
-    const response = await postJson(app, "/api/web/servers/doctor", {
-      serverUrl: "https://guest.example.com/mcp",
-      serverName: "Guest Server",
-      serverHeaders: {
-        "X-Guest": "yes",
+    const response = await postJson(
+      app,
+      "/api/web/servers/doctor",
+      {
+        serverUrl: "https://guest.example.com/mcp",
+        serverName: "Guest Server",
+        serverHeaders: {
+          "X-Guest": "yes",
+        },
+        oauthAccessToken: "guest-oauth-token",
       },
-      oauthAccessToken: "guest-oauth-token",
-    });
-
-    const { status, data } = await expectJson<{ status: string }>(response);
-
-    expect(status).toBe(200);
-    expect(data.status).toBe("ready");
-    expect(runServerDoctorMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        config: expect.objectContaining({
-          url: "https://guest.example.com/mcp",
-          requestInit: {
-            headers: {
-              "X-Guest": "yes",
-              Authorization: "Bearer guest-oauth-token",
-            },
-          },
-          timeout: expect.any(Number),
-        }),
-        target: expect.objectContaining({
-          scope: "guest",
-          label: "Guest Server",
-          url: "https://guest.example.com/mcp",
-        }),
-      }),
+      "guest-token",
     );
+
+    const { status, data } = await expectJson<{
+      code: string;
+      message: string;
+    }>(response);
+
+    expect(status).toBe(400);
+    expect(data.code).toBe("VALIDATION_ERROR");
+    expect(runServerDoctorMock).not.toHaveBeenCalled();
   });
 });

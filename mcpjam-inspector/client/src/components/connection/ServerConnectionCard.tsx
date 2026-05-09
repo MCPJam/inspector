@@ -248,9 +248,7 @@ export function ServerConnectionCard({
 
   const getSwitchReconnectOptions = () => {
     if (server.useOAuth === true && !server.oauthTokens) {
-      return HOSTED_MODE
-        ? { allowInteractiveOAuthFlow: true }
-        : { forceOAuthFlow: true };
+      return { allowInteractiveOAuthFlow: true };
     }
 
     return { allowInteractiveOAuthFlow: false };

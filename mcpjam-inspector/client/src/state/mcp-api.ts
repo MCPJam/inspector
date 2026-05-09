@@ -7,6 +7,7 @@ import {
   type HostedServerValidateResponse,
 } from "@/lib/apis/web/servers-api";
 import { BootstrapNotReadyError } from "@/lib/app-ready";
+import type { ConnectionDefaults } from "@/shared/connection-defaults";
 
 const HOSTED_VALIDATE_TIMEOUT_MS = 20_000;
 
@@ -118,20 +119,56 @@ async function withTimeout<T>(
   });
 }
 
+
+function buildResolverBody(
+  serverId: string,
+  options: {
+    projectId: string;
+    serverName?: string;
+    connectionDefaults?: ConnectionDefaults;
+  },
+): Record<string, unknown> {
+  return {
+    projectId: options.projectId,
+    serverId,
+    ...(options.serverName ? { serverName: options.serverName } : {}),
+    ...(options.connectionDefaults
+      ? { connectionDefaults: options.connectionDefaults }
+      : {}),
+  };
+}
+
 export async function testConnection(
   serverConfig: MCPServerConfig,
   serverId: string,
+  options?: {
+    projectId?: string;
+    serverName?: string;
+    connectionDefaults?: ConnectionDefaults;
+  },
 ) {
   if (HOSTED_MODE) {
     return safeValidateHostedServer(serverId, serverConfig);
   }
+
+  if (!options?.projectId) {
+    throw new Error(
+      "projectId is required for testConnection in local mode (server must be synced to Convex first)",
+    );
+  }
+
+  const body = buildResolverBody(serverId, {
+    projectId: options.projectId,
+    serverName: options.serverName,
+    connectionDefaults: options.connectionDefaults,
+  });
 
   const res = await authFetchWithTimeout(
     "/api/mcp/connect",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ serverConfig, serverId }),
+      body: JSON.stringify(body),
     },
     20000, // 20 second timeout
   );
@@ -165,17 +202,34 @@ export async function listServers() {
 export async function reconnectServer(
   serverId: string,
   serverConfig: MCPServerConfig,
+  options?: {
+    projectId?: string;
+    serverName?: string;
+    connectionDefaults?: ConnectionDefaults;
+  },
 ) {
   if (HOSTED_MODE) {
     return safeValidateHostedServer(serverId, serverConfig);
   }
+
+  if (!options?.projectId) {
+    throw new Error(
+      "projectId is required for reconnectServer in local mode (server must be synced to Convex first)",
+    );
+  }
+
+  const body = buildResolverBody(serverId, {
+    projectId: options.projectId,
+    serverName: options.serverName,
+    connectionDefaults: options.connectionDefaults,
+  });
 
   const res = await authFetchWithTimeout(
     "/api/mcp/servers/reconnect",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ serverId, serverConfig }),
+      body: JSON.stringify(body),
     },
     20000, // 20 second timeout
   );

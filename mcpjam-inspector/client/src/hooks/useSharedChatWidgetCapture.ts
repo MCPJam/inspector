@@ -11,15 +11,10 @@ import {
   useWidgetDebugStore,
   type WidgetDebugInfo,
 } from "@/stores/widget-debug-store";
-import {
-  createChatHistoryWidgetSnapshot,
-  generateWidgetSnapshotUploadUrl,
-} from "@/lib/apis/web/chat-history-api";
 
 interface UseSharedChatWidgetCaptureOptions {
   enabled: boolean;
   readyToPersist?: boolean;
-  directGuestMode?: boolean;
   chatSessionId: string;
   hostedShareToken?: string;
   hostedChatboxToken?: string;
@@ -173,7 +168,6 @@ function shouldRetryPendingSnapshot(result: unknown, error: unknown): boolean {
 export function useSharedChatWidgetCapture({
   enabled,
   readyToPersist = true,
-  directGuestMode = false,
   chatSessionId,
   hostedShareToken,
   hostedChatboxToken,
@@ -259,8 +253,6 @@ export function useSharedChatWidgetCapture({
   uploadAttemptRef.current = async (toolCallId: string) => {
     const shareToken = shareTokenRef.current;
     const chatboxToken = chatboxTokenRef.current;
-    const shouldUseWebHistoryApi =
-      directGuestMode && !shareToken && !chatboxToken;
     if (!enabled || !readyToPersist || inFlightRef.current.has(toolCallId)) {
       return;
     }
@@ -274,10 +266,7 @@ export function useSharedChatWidgetCapture({
     if (persistedSnapshotToolCallIdsRef.current.has(toolCallId)) {
       return;
     }
-    // serverId is required by the snapshot schema for all modes.
-    // "__guest__" is a synthetic sentinel used for direct-guest connections
-    // and is not a valid Convex document ID.
-    if (!toolSource.serverId || toolSource.serverId === "__guest__") {
+    if (!toolSource.serverId) {
       return;
     }
 
@@ -292,19 +281,13 @@ export function useSharedChatWidgetCapture({
       content: BlobPart,
       contentType: string,
     ): Promise<string> => {
-      const uploadUrl = shouldUseWebHistoryApi
-        ? (
-            await generateWidgetSnapshotUploadUrl({
-              chatSessionId: sessionIdRef.current,
-            })
-          ).uploadUrl
-        : await generateSnapshotUploadUrl({
-            ...(shareToken ? { shareToken } : {}),
-            ...(chatboxToken ? { chatboxToken } : {}),
-            ...(!shareToken && !chatboxToken
-              ? { chatSessionId: sessionIdRef.current }
-              : {}),
-          });
+      const uploadUrl = await generateSnapshotUploadUrl({
+        ...(shareToken ? { shareToken } : {}),
+        ...(chatboxToken ? { chatboxToken } : {}),
+        ...(!shareToken && !chatboxToken
+          ? { chatSessionId: sessionIdRef.current }
+          : {}),
+      });
       const response = await fetch(uploadUrl, {
         method: "POST",
         body: new Blob([content], { type: contentType }),
@@ -365,26 +348,7 @@ export function useSharedChatWidgetCapture({
         prefersBorder: widget.prefersBorder,
         displayContext: toDisplayContext(widget.globals),
       };
-      const snapshotResult = shouldUseWebHistoryApi
-        ? (
-            await createChatHistoryWidgetSnapshot({
-              chatSessionId: snapshotPayload.chatSessionId,
-              serverId: snapshotPayload.serverId,
-              toolCallId: snapshotPayload.toolCallId,
-              toolName: snapshotPayload.toolName,
-              widgetHtmlBlobId: snapshotPayload.widgetHtmlBlobId,
-              uiType: snapshotPayload.uiType,
-              resourceUri: snapshotPayload.resourceUri,
-              toolInputBlobId: snapshotPayload.toolInputBlobId,
-              toolOutputBlobId: snapshotPayload.toolOutputBlobId,
-              widgetCsp: snapshotPayload.widgetCsp,
-              widgetPermissions: snapshotPayload.widgetPermissions,
-              widgetPermissive: snapshotPayload.widgetPermissive,
-              prefersBorder: snapshotPayload.prefersBorder,
-              displayContext: snapshotPayload.displayContext,
-            })
-          ).snapshotId
-        : await createWidgetSnapshot(snapshotPayload);
+      const snapshotResult = await createWidgetSnapshot(snapshotPayload);
 
       if (shouldRetryPendingSnapshot(snapshotResult, null)) {
         throw new Error("Session not found for chat session");

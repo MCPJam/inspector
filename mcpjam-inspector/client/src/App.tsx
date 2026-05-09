@@ -100,7 +100,8 @@ import {
   ChatboxChatPage,
   getChatboxPathTokenFromLocation,
 } from "./components/hosted/ChatboxChatPage";
-import { useHostedApiContext } from "./hooks/hosted/use-hosted-api-context";
+import { useApiContext } from "./hooks/hosted/use-hosted-api-context";
+import { useLocalStateMigration } from "./hooks/use-local-state-migration";
 import { AppReadyProvider } from "./hooks/use-app-ready";
 import { useInspectorCommandBus } from "./hooks/use-inspector-command-bus";
 import { HOSTED_MODE, NON_PROD_LOCKDOWN } from "./lib/config";
@@ -802,6 +803,13 @@ export default function App() {
       : undefined,
   });
   useInspectorCommandBus();
+  // One-time migration from legacy localStorage state to Convex. No-op in
+  // hosted mode and after the first successful run; safe to keep in the tree.
+  useLocalStateMigration({
+    isAuthenticated,
+    isUserBootstrapping: isEnsuringUser,
+    organizationId: activeOrganizationId,
+  });
   const oauthDebuggerServersRef = useRef(appState.servers);
   oauthDebuggerServersRef.current = appState.servers;
   const projectServersRef = useRef(projectServers);
@@ -1160,44 +1168,22 @@ export default function App() {
       ),
     [hostedServerIdsByName, appState.servers]
   );
-  // Extract MCPServerConfig objects for guest mode (keyed by server name)
-  const guestServerConfigs = useMemo(
-    () =>
-      Object.fromEntries(
-        Object.entries<ServerWithName>(appState.servers).map(
-          ([name, server]) => [name, server.config]
-        )
-      ),
-    [appState.servers]
-  );
-  const guestOauthTokensByServerName = useMemo(
-    () =>
-      Object.fromEntries(
-        Object.entries<ServerWithName>(appState.servers)
-          .filter(([, server]) => !!server.oauthTokens?.access_token)
-          .map(([name, server]) => [name, server.oauthTokens!.access_token])
-      ),
-    [appState.servers]
-  );
-
-  useHostedApiContext({
+  useApiContext({
     projectId: convexProjectId,
     serverIdsByName: hostedServerIdsByName,
     clientCapabilities: hostedClientCapabilities,
     clientConfigSyncPending: isClientConfigSyncPending,
     getAccessToken,
     oauthTokensByServerId,
-    guestOauthTokensByServerName,
-    // `HostedApiContext.isAuthenticated` means "WorkOS user is signed in",
+    // `ApiContext.isAuthenticated` means "WorkOS user is signed in",
     // not "Convex is authenticated". Convex reports authenticated for guest
     // sessions too (because `useUnifiedConvexAuth` returns a placeholder user
     // to satisfy the provider), so passing the Convex flag here makes the
-    // guest-bearer fallback in `getHostedAuthorizationHeader` think a real
+    // guest-bearer fallback in `getApiAuthorizationHeader` think a real
     // user is signed in and return null. The WorkOS user object is the
     // correct signal.
     isAuthenticated: !!workOsUser,
     hasSession: !!workOsUser || isWorkOsLoading,
-    serverConfigs: guestServerConfigs,
     enabled: !isHostedChatRoute,
   });
 

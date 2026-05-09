@@ -2,12 +2,9 @@ import { Hono } from "hono";
 import { runServerDoctor } from "@mcpjam/sdk";
 import { WEB_CONNECT_TIMEOUT_MS } from "../../config.js";
 import {
-  ErrorCode,
-  WebRouteError,
   mapRuntimeError,
   webError,
   projectServerSchema,
-  guestServerInputSchema,
   withEphemeralConnection,
   handleRoute,
   authorizeServer,
@@ -20,7 +17,7 @@ import {
   attachHostedRpcLogs,
   createHostedRpcLogCollector,
 } from "./hosted-rpc-logs.js";
-import { OAuthProxyError, validateUrl } from "../../utils/oauth-proxy.js";
+import { buildConnectSuccessEnvelope } from "../../utils/local-server-resolver.js";
 
 const servers = new Hono();
 
@@ -30,8 +27,10 @@ servers.post("/validate", async (c) =>
     projectServerSchema,
     async (manager, body) => {
       await manager.getToolsForAiSdk([body.serverId]);
-      const initInfo = manager.getInitializationInfo(body.serverId);
-      return { success: true, status: "connected", initInfo: initInfo ?? null };
+      // Same success envelope as the local /api/mcp/connect path so the
+      // inspector client's `storeInitInfo` takes one code path on both
+      // surfaces and we don't drift on the success shape.
+      return buildConnectSuccessEnvelope(manager, body.serverId);
     },
     { timeoutMs: WEB_CONNECT_TIMEOUT_MS }
   )
@@ -40,18 +39,6 @@ servers.post("/validate", async (c) =>
 servers.post("/check-oauth", async (c) =>
   handleRoute(c, async () => {
     const rawBody = await readJsonBody<unknown>(c);
-    const isDirectGuestRequest =
-      !!rawBody &&
-      typeof rawBody === "object" &&
-      typeof (rawBody as { serverUrl?: unknown }).serverUrl === "string" &&
-      !(rawBody as { projectId?: unknown; workspaceId?: unknown }).projectId &&
-      !(rawBody as { projectId?: unknown; workspaceId?: unknown }).workspaceId;
-
-    // Direct guest sessions connect without Convex server records.
-    if (isDirectGuestRequest) {
-      return { useOAuth: false, serverUrl: null };
-    }
-
     const bearerToken = assertBearerToken(c);
     const body = parseWithSchema(projectServerSchema, rawBody);
     const auth = await authorizeServer(
@@ -83,16 +70,12 @@ servers.post("/doctor", async (c) => {
     const rawBody = await readJsonBody<Record<string, unknown>>(c);
     rpcCollector = createHostedRpcLogCollector(rawBody);
     const timeoutMs = WEB_CONNECT_TIMEOUT_MS;
-    const isGuestRequest =
-      !!rawBody &&
-      typeof rawBody === "object" &&
-      typeof rawBody.serverUrl === "string" &&
-      !rawBody.projectId &&
-      !rawBody.workspaceId;
-
-    const result = isGuestRequest
-      ? await runGuestDoctor(c, rawBody, timeoutMs, rpcCollector?.rpcLogger)
-      : await runHostedDoctor(c, rawBody, timeoutMs, rpcCollector?.rpcLogger);
+    const result = await runHostedDoctor(
+      c,
+      rawBody,
+      timeoutMs,
+      rpcCollector?.rpcLogger
+    );
 
     return c.json(attachHostedRpcLogs(result, rpcCollector), 200);
   } catch (error) {
@@ -109,69 +92,6 @@ servers.post("/doctor", async (c) => {
 });
 
 export default servers;
-
-async function runGuestDoctor(
-  c: any,
-  rawBody: Record<string, unknown>,
-  timeoutMs: number,
-  rpcLogger?: Parameters<typeof runServerDoctor>[0]["rpcLogger"]
-) {
-  const guestId = c.get("guestId") as string | undefined;
-  if (!guestId) {
-    throw new WebRouteError(
-      401,
-      ErrorCode.UNAUTHORIZED,
-      "Valid guest token required. Please refresh the page to obtain a new session."
-    );
-  }
-
-  const guestInput = parseWithSchema(guestServerInputSchema, rawBody);
-
-  let validatedUrl: URL;
-  try {
-    ({ url: validatedUrl } = await validateUrl(guestInput.serverUrl, true));
-  } catch (error) {
-    if (error instanceof OAuthProxyError) {
-      throw new WebRouteError(
-        error.status,
-        ErrorCode.VALIDATION_ERROR,
-        error.message
-      );
-    }
-    throw error;
-  }
-
-  const canonicalUrl = validatedUrl.toString();
-  const headers: Record<string, string> = {
-    ...(guestInput.serverHeaders ?? {}),
-  };
-  const oauthAccessToken =
-    typeof rawBody.oauthAccessToken === "string"
-      ? rawBody.oauthAccessToken
-      : undefined;
-
-  if (oauthAccessToken) {
-    headers["Authorization"] = `Bearer ${oauthAccessToken}`;
-  }
-
-  return runServerDoctor({
-    config: {
-      url: canonicalUrl,
-      capabilities: guestInput.clientCapabilities,
-      clientCapabilities: guestInput.clientCapabilities,
-      requestInit: { headers },
-      timeout: timeoutMs,
-    },
-    target: {
-      kind: "http",
-      scope: "guest",
-      label: guestInput.serverName ?? canonicalUrl,
-      url: canonicalUrl,
-    },
-    timeout: timeoutMs,
-    rpcLogger,
-  });
-}
 
 async function runHostedDoctor(
   c: any,

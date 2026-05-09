@@ -183,6 +183,68 @@ describe("authorizeBatch — request log context attribution", () => {
     });
   });
 
+  it("strips command/args/env from hosted serverConfig even if backend regresses", async () => {
+    // Defense-in-depth for hosted: the Convex /web/authorize-batch endpoint
+    // is contractually HTTP-only (normalizeAuthorizeResult drops STDIO
+    // fields). If a backend regression ever lets command/args/env through,
+    // the wrapper must drop them before they can reach the hosted client.
+    // Local mode uses /web/authorize-batch-local instead, which is allowed
+    // to carry STDIO fields and goes through local-server-resolver.ts.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        mockBatchResponse({
+          results: {
+            "srv-stdio-leak": {
+              ok: true,
+              role: "member",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              serverConfig: {
+                transportType: "stdio",
+                command: "node",
+                args: ["server.js"],
+                env: { OPENAI_API_KEY: "sk-secret" },
+              },
+              internalLogContext: { ...projectCtx, serverId: "srv-stdio-leak" },
+            },
+            "srv-http-with-leak": {
+              ok: true,
+              role: "member",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              serverConfig: {
+                transportType: "http",
+                url: "https://example.com/mcp",
+                command: "should-not-be-here",
+                env: { LEAKED: "1" },
+              },
+              internalLogContext: { ...projectCtx, serverId: "srv-http-with-leak" },
+            },
+          },
+        }),
+      ),
+    );
+
+    const { c } = makeContext();
+    const result = await authorizeBatch(c, "bearer", "ws-1", [
+      "srv-stdio-leak",
+      "srv-http-with-leak",
+    ]);
+
+    for (const entry of Object.values(result.results)) {
+      if (!entry.ok) continue;
+      const cfg = entry.serverConfig as Record<string, unknown>;
+      expect(cfg.command).toBeUndefined();
+      expect(cfg.args).toBeUndefined();
+      expect(cfg.env).toBeUndefined();
+    }
+    // Sanity: HTTP fields that *are* allowed survive the strip.
+    const httpEntry = result.results["srv-http-with-leak"];
+    if (!httpEntry.ok) throw new Error("expected ok result");
+    expect(httpEntry.serverConfig.url).toBe("https://example.com/mcp");
+  });
+
   it("strips internalLogContext from every successful result returned to caller", async () => {
     vi.stubGlobal(
       "fetch",

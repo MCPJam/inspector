@@ -35,6 +35,12 @@ import type { HttpServerConfig } from "@mcpjam/sdk/browser";
 import { generateRandomString } from "./pkce";
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE, SANITIZE_OAUTH_TRACES } from "@/lib/config";
+import {
+  importHostedOAuthTokens,
+  normalizeImportHostedOAuthTokens,
+  type ImportHostedOAuthTokensRequest,
+} from "@/lib/apis/hosted-oauth-import-tokens-api";
+import { tryResolveProjectServer } from "@/lib/apis/web/context";
 import { captureServerDetailModalOAuthResume } from "@/lib/server-detail-modal-resume";
 import {
   matchesHostedOAuthServerIdentity,
@@ -966,7 +972,7 @@ function annotateTraceWithAuthorizationPlan(input: {
 export function readStoredOAuthConfig(
   serverName: string | null
 ): StoredOAuthConfig {
-  if (!serverName) {
+  if (!serverName || HOSTED_MODE) {
     return {
       registryServerId: undefined,
       useRegistryOAuthProxy: false,
@@ -1830,24 +1836,48 @@ async function readHostedOAuthSessionProgress(input: {
 /**
  * Simple localStorage-based OAuth provider for MCP
  */
+/**
+ * Optional Convex binding threaded through to `saveTokens` so that — in local
+ * mode — pre-exchanged OAuth tokens get imported into the Convex
+ * `hostedOAuthCredentials` store via `/api/web/oauth/import-tokens`. Without
+ * a binding, `saveTokens` falls back to localStorage-only (legacy behaviour),
+ * which is the right path for brand-new servers that haven't been synced to
+ * Convex yet — the resolver path also falls back in that case.
+ *
+ * `kind` is `"registry"` iff BOTH `registryServerId` AND `useRegistryOAuthProxy`
+ * are set on the originating flow; a stored `registryServerId` alone does not
+ * imply registry-managed tokens.
+ */
+export interface MCPOAuthProviderConvexBinding {
+  projectId: string;
+  serverId: string;
+  oauthResourceUrl?: string;
+  kind: "generic" | "registry";
+  registryServerId?: string;
+  useRegistryOAuthProxy?: boolean;
+}
+
 export class MCPOAuthProvider implements OAuthClientProvider {
   private serverName: string;
   private serverUrl: string;
   private redirectUri: string;
   private customClientId?: string;
   private customClientSecret?: string;
+  private convexBinding?: MCPOAuthProviderConvexBinding;
 
   constructor(
     serverName: string,
     serverUrl: string,
     customClientId?: string,
-    customClientSecret?: string
+    customClientSecret?: string,
+    convexBinding?: MCPOAuthProviderConvexBinding
   ) {
     this.serverName = serverName;
     this.serverUrl = serverUrl;
     this.redirectUri = getRedirectUri();
     this.customClientId = customClientId;
     this.customClientSecret = customClientSecret;
+    this.convexBinding = convexBinding;
   }
 
   state(): string {
@@ -1930,10 +1960,57 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 
   async saveTokens(tokens: any) {
+    if (HOSTED_MODE) {
+      return;
+    }
+
     localStorage.setItem(
       `mcp-tokens-${this.serverName}`,
       JSON.stringify(tokens)
     );
+
+    // Local mode: also persist tokens into Convex `hostedOAuthCredentials` so
+    // that the resolver path (/web/authorize-batch-local) can serve them on
+    // subsequent /api/mcp/connect calls. Without this, OAuth-protected servers
+    // either 401 on the resolver path or fall through to the legacy
+    // {serverConfig} body. localStorage stays the source for in-memory
+    // refresh until Slice 2b purges it.
+    const normalizedTokens = normalizeImportHostedOAuthTokens(tokens);
+    if (this.convexBinding && normalizedTokens) {
+      const stored = this.clientInformation();
+      const clientId = (stored?.client_id as string | undefined) ?? this.customClientId;
+      if (!clientId) {
+        // No clientId means we can't write a usable record; bail loudly so
+        // the OAuth-completion error surfaces in the UI rather than 401ing
+        // silently on the next connect.
+        throw new Error(
+          "OAuth client information missing client_id; cannot import tokens to Convex"
+        );
+      }
+      const clientSecret =
+        (stored?.client_secret as string | undefined) ?? this.customClientSecret;
+      const importPayload: ImportHostedOAuthTokensRequest = {
+        projectId: this.convexBinding.projectId,
+        serverId: this.convexBinding.serverId,
+        serverUrl: this.serverUrl,
+        ...(this.convexBinding.oauthResourceUrl
+          ? { oauthResourceUrl: this.convexBinding.oauthResourceUrl }
+          : {}),
+        kind: this.convexBinding.kind,
+        ...(this.convexBinding.registryServerId
+          ? { registryServerId: this.convexBinding.registryServerId }
+          : {}),
+        ...(this.convexBinding.useRegistryOAuthProxy
+          ? { useRegistryOAuthProxy: this.convexBinding.useRegistryOAuthProxy }
+          : {}),
+        clientInformation: {
+          clientId,
+          ...(clientSecret ? { clientSecret } : {}),
+        },
+        tokens: normalizedTokens,
+      };
+      await importHostedOAuthTokens(importPayload);
+    }
   }
 
   prepareTokenRequest() {
@@ -2032,6 +2109,140 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 }
 
+/**
+ * Persisted Convex binding so `handleOAuthCallback` can recover the
+ * projectId/serverId mapping after the OAuth redirect, when the in-memory
+ * `apiContext.serverIdsByName` hasn't been repopulated yet (the Convex
+ * `getProjectServers` query is still inflight on the post-redirect mount).
+ *
+ * Without this persisted copy `saveTokens` skips the Convex
+ * `hostedOAuthCredentials` write and the next `/api/mcp/connect` 401s with
+ * "Server requires OAuth authentication" because `authorize-batch-local`
+ * can't find the credential row. Cleared with the rest of the per-server
+ * OAuth state in `clearOAuthData`.
+ */
+const oauthBindingStorage = {
+  storageKey(serverName: string): string {
+    return `mcp-oauth-binding-${serverName}`;
+  },
+  get(serverName: string): MCPOAuthProviderConvexBinding | undefined {
+    if (typeof window === "undefined") return undefined;
+    try {
+      const raw = localStorage.getItem(this.storageKey(serverName));
+      if (!raw) return undefined;
+      const parsed = JSON.parse(raw) as Partial<MCPOAuthProviderConvexBinding>;
+      if (
+        typeof parsed?.projectId !== "string" ||
+        typeof parsed?.serverId !== "string"
+      ) {
+        return undefined;
+      }
+      if (parsed.kind !== "generic" && parsed.kind !== "registry") {
+        return undefined;
+      }
+      return parsed as MCPOAuthProviderConvexBinding;
+    } catch {
+      return undefined;
+    }
+  },
+  set(serverName: string, binding: MCPOAuthProviderConvexBinding): void {
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.setItem(
+        this.storageKey(serverName),
+        JSON.stringify(binding)
+      );
+    } catch {
+      // best-effort — saveTokens still writes to localStorage; the only
+      // downside of a missed persist is that the post-redirect callback
+      // can't import to Convex and the user re-OAuths after expiry.
+    }
+  },
+  clear(serverName: string): void {
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.removeItem(this.storageKey(serverName));
+    } catch {
+      // best-effort
+    }
+  },
+};
+
+/**
+ * Build the Convex binding to thread into `MCPOAuthProvider` so that
+ * `saveTokens` mirrors the issued tokens to the Convex `hostedOAuthCredentials`
+ * store. Tries in-memory `apiContext` first (the populated common case at
+ * `initiateOAuth` time); falls back to the localStorage-persisted binding
+ * written at initiation so post-redirect callbacks can still resolve the
+ * mapping while `getProjectServers` is still loading. Returns undefined
+ * only when both lookups fail (server not yet synced to Convex), in which
+ * case `saveTokens` falls back to localStorage-only.
+ */
+function buildConvexBindingForServer(input: {
+  serverName: string;
+  oauthResourceUrl?: string;
+  registryServerId?: string;
+  useRegistryOAuthProxy?: boolean;
+}): MCPOAuthProviderConvexBinding | undefined {
+  if (HOSTED_MODE) return undefined;
+  const resolved = tryResolveProjectServer(input.serverName);
+  if (resolved) {
+    const isRegistry =
+      !!input.registryServerId && input.useRegistryOAuthProxy === true;
+    const binding: MCPOAuthProviderConvexBinding = {
+      projectId: resolved.projectId,
+      serverId: resolved.serverId,
+      ...(input.oauthResourceUrl
+        ? { oauthResourceUrl: input.oauthResourceUrl }
+        : {}),
+      kind: isRegistry ? "registry" : "generic",
+      ...(isRegistry
+        ? {
+            registryServerId: input.registryServerId,
+            useRegistryOAuthProxy: true,
+          }
+        : {}),
+    };
+    // Persist so the post-redirect callback can recover this mapping even
+    // if apiContext.serverIdsByName hasn't repopulated yet.
+    oauthBindingStorage.set(input.serverName, binding);
+    return binding;
+  }
+  return oauthBindingStorage.get(input.serverName);
+}
+
+/**
+ * Constructs an `MCPOAuthProvider` with its Convex binding pre-resolved.
+ * The three OAuth flow entry points (`initiateOAuth`, `handleOAuthCallback`,
+ * `refreshOAuthTokens`) all need an identical instance shape; this factory
+ * keeps that wiring in one place so adding a constructor argument doesn't
+ * require touching three call sites.
+ */
+function createMCPOAuthProvider(input: {
+  serverName: string;
+  serverUrl: string;
+  clientId?: string;
+  clientSecret?: string;
+  oauthConfig: {
+    resourceUrl?: string;
+    registryServerId?: string;
+    useRegistryOAuthProxy?: boolean;
+  };
+}): MCPOAuthProvider {
+  return new MCPOAuthProvider(
+    input.serverName,
+    input.serverUrl,
+    input.clientId,
+    input.clientSecret,
+    buildConvexBindingForServer({
+      serverName: input.serverName,
+      oauthResourceUrl: input.oauthConfig.resourceUrl,
+      registryServerId: input.oauthConfig.registryServerId,
+      useRegistryOAuthProxy: input.oauthConfig.useRegistryOAuthProxy,
+    })
+  );
+}
+
 function readStoredClientInformation(
   serverName: string
 ): StoredOAuthClientInformation {
@@ -2102,12 +2313,17 @@ export async function initiateOAuth(
     );
 
   try {
-    const provider = new MCPOAuthProvider(
-      options.serverName,
-      options.serverUrl,
-      options.clientId,
-      options.clientSecret
-    );
+    const provider = createMCPOAuthProvider({
+      serverName: options.serverName,
+      serverUrl: options.serverUrl,
+      clientId: options.clientId,
+      clientSecret: options.clientSecret,
+      oauthConfig: {
+        resourceUrl: options.resourceUrl,
+        registryServerId: options.registryServerId,
+        useRegistryOAuthProxy: options.useRegistryOAuthProxy,
+      },
+    });
     const fetchFn = createOAuthFetchInterceptor(
       {
         registryServerId: options.registryServerId,
@@ -2715,12 +2931,13 @@ export async function handleOAuthCallback(
       ? JSON.parse(storedClientInfo).client_secret
       : undefined;
 
-    const provider = new MCPOAuthProvider(
+    const provider = createMCPOAuthProvider({
       serverName,
       serverUrl,
-      customClientId,
-      customClientSecret
-    );
+      clientId: customClientId,
+      clientSecret: customClientSecret,
+      oauthConfig,
+    });
     const fetchFn = createOAuthFetchInterceptor(oauthConfig, undefined);
     const requestExecutor = createOAuthRequestExecutor(fetchFn, serverUrl);
     const storedSession = loadOAuthFlowSession(serverName);
@@ -2981,6 +3198,9 @@ export interface StoredTokensState {
 }
 
 export function getStoredTokensState(serverName: string): StoredTokensState {
+  if (HOSTED_MODE) {
+    return { tokens: undefined, isInvalid: false };
+  }
   const tokens = localStorage.getItem(`mcp-tokens-${serverName}`);
   const clientInfo = localStorage.getItem(`mcp-client-${serverName}`);
   // TODO: Maybe we should move clientID away from the token info? Not sure if clientID is bonded to token
@@ -3014,6 +3234,9 @@ export function getStoredTokens(serverName: string): any {
  * Checks if OAuth is configured for a server by looking at multiple sources
  */
 export function hasOAuthConfig(serverName: string): boolean {
+  if (HOSTED_MODE) {
+    return false;
+  }
   const storedServerUrl = localStorage.getItem(`mcp-serverUrl-${serverName}`);
   const storedClientInfo = localStorage.getItem(`mcp-client-${serverName}`);
   const storedOAuthConfig = localStorage.getItem(
@@ -3086,12 +3309,13 @@ export async function refreshOAuthTokens(
       };
     }
 
-    const provider = new MCPOAuthProvider(
+    const provider = createMCPOAuthProvider({
       serverName,
       serverUrl,
-      customClientId,
-      customClientSecret
-    );
+      clientId: customClientId,
+      clientSecret: customClientSecret,
+      oauthConfig,
+    });
     const existingTokens = provider.tokens();
 
     if (!existingTokens?.refresh_token) {
@@ -3205,6 +3429,7 @@ export function clearOAuthData(serverName: string): void {
   localStorage.removeItem(`mcp-verifier-${serverName}`);
   localStorage.removeItem(`mcp-serverUrl-${serverName}`);
   localStorage.removeItem(`mcp-oauth-config-${serverName}`);
+  oauthBindingStorage.clear(serverName);
   clearStoredDiscoveryState(serverName);
   clearOAuthFlowSession(serverName);
   clearOAuthTrace(serverName);
