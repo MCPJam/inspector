@@ -743,13 +743,13 @@ export function ChatboxChatPage({
           loadingIndicatorVariant={getLoadingIndicatorVariantForHostStyle(
             hostStyle
           )}
-          hostedProjectIdOverride={session.payload.projectId}
-          hostedSelectedServerIdsOverride={sessionServersActive.map(
-            (server) => server.serverId
-          )}
           hostedContext={{
             chatboxToken: session.token,
             chatboxSurface: session.surface ?? "share_link",
+            projectId: session.payload.projectId,
+            selectedServerIds: sessionServersActive.map(
+              (server) => server.serverId
+            ),
           }}
           executionConfig={{
             modelId: session.payload.modelId,

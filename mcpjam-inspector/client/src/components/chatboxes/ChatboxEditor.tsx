@@ -1173,13 +1173,13 @@ export function ChatboxEditor({
                       )}
                       minimalMode
                       reasoningDisplayMode="hidden"
-                      hostedProjectIdOverride={chatbox.projectId}
-                      hostedSelectedServerIdsOverride={activePreviewServers.map(
-                        (server) => server.serverId
-                      )}
                       hostedContext={{
                         chatboxToken: previewToken,
                         chatboxSurface: "preview",
+                        projectId: chatbox.projectId,
+                        selectedServerIds: activePreviewServers.map(
+                          (server) => server.serverId
+                        ),
                       }}
                       executionConfig={{
                         modelId,

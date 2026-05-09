@@ -488,10 +488,12 @@ export function SharedServerChatPage({
           connectedOrConnectingServerConfigs={sharedServerConfigs}
           selectedServerNames={[selectedServerName]}
           minimalMode
-          hostedProjectIdOverride={session.payload.projectId}
-          hostedSelectedServerIdsOverride={[session.payload.serverId]}
-          hostedOAuthTokensOverride={oauthTokensForChat}
-          hostedContext={{ shareToken: session.token }}
+          hostedContext={{
+            shareToken: session.token,
+            projectId: session.payload.projectId,
+            selectedServerIds: [session.payload.serverId],
+            oauthTokens: oauthTokensForChat,
+          }}
           onOAuthRequired={handleOAuthRequired}
         />
       </div>
