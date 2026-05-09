@@ -213,14 +213,19 @@ export function HostConfigEditor({
           <input
             id={`${reactId}-timeout`}
             type="number"
-            min={0}
+            min={1}
             className="w-full rounded border px-3 py-2 text-sm"
             value={value.connectionDefaults.requestTimeout}
-            onChange={(e) =>
-              updateConnection({
-                requestTimeout: Number(e.target.value) || 0,
-              })
-            }
+            onChange={(e) => {
+              // Preserve the positive-timeout invariant. The legacy
+              // connection-settings parser rejects non-positive values and
+              // a 0 here would persist an immediate-timeout config. Keep
+              // the prior value when the field is cleared or non-positive.
+              const parsed = Number(e.target.value);
+              if (Number.isFinite(parsed) && parsed > 0) {
+                updateConnection({ requestTimeout: parsed });
+              }
+            }}
           />
         </div>
 
