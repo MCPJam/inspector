@@ -650,16 +650,19 @@ export default function App() {
 
   usePostHogIdentify();
 
+  const lastLaunchedActorRef = useRef<string | null>(null);
   useEffect(() => {
-    if (isAuthLoading) return;
+    if (!actorKey) return;
+    if (lastLaunchedActorRef.current === actorKey) return;
+    lastLaunchedActorRef.current = actorKey;
     posthog.capture("app_launched", {
       platform: detectPlatform(),
       environment: detectEnvironment(),
       user_agent: navigator.userAgent,
       version: __APP_VERSION__,
-      is_authenticated: isAuthenticated,
+      is_authenticated: Boolean(workOsUser),
     });
-  }, [isAuthLoading, isAuthenticated]);
+  }, [actorKey, workOsUser, posthog]);
 
   // Set the initial theme mode and preset on page load
   const initialThemeMode = getInitialThemeMode();
