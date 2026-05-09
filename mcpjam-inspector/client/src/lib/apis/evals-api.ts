@@ -60,7 +60,6 @@ type RunEvalsRequest = EvalRequestWithServers & {
   suiteDescription?: string;
   tests: Array<Record<string, unknown>>;
   storageServerIds?: string[];
-  modelApiKeys?: Record<string, string>;
   convexAuthToken?: string | null;
   notes?: string;
   passCriteria?: {
@@ -74,7 +73,6 @@ type RunTestCaseRequest = EvalRequestWithServers & {
   provider: string;
   compareRunId?: string;
   skipLastMessageRunUpdate?: boolean;
-  modelApiKeys?: Record<string, string>;
   convexAuthToken?: string | null;
   testCaseOverrides?: {
     query?: string;
@@ -336,7 +334,6 @@ export type StartTraceRepairParams =
       scope: "suite";
       suiteId: string;
       sourceRunId: string;
-      modelApiKeys?: Record<string, string>;
     }
   | {
       scope: "case";
@@ -344,7 +341,6 @@ export type StartTraceRepairParams =
       sourceRunId: string;
       sourceIterationId: string;
       testCaseId: string;
-      modelApiKeys?: Record<string, string>;
     };
 
 export async function startTraceRepair(

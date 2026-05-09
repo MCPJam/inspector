@@ -1,5 +1,4 @@
-import type { ProviderTokens } from "@/hooks/use-ai-provider-keys";
-import { isMCPJamProvidedModel, type ModelDefinition } from "@/shared/types";
+import type { ModelDefinition } from "@/shared/types";
 import type { EvalCase, EvalSuite } from "./types";
 import type { PromptTurn } from "@/shared/prompt-turns";
 
@@ -21,8 +20,6 @@ interface PrepareSingleTestCaseRunParams {
   suite: Pick<EvalSuite, "environment">;
   testCase: Pick<EvalCase, "_id" | "models">;
   getAccessToken: () => Promise<string | null>;
-  getToken: (provider: keyof ProviderTokens) => string | null | undefined;
-  hasToken: (provider: keyof ProviderTokens) => boolean;
   selectedModel?: string | null;
   testCaseOverrides?: TestCaseRunOverridesWithTurns;
 }
@@ -146,8 +143,6 @@ export async function prepareSingleTestCaseRun({
   suite,
   testCase,
   getAccessToken,
-  getToken,
-  hasToken,
   selectedModel,
   testCaseOverrides,
 }: PrepareSingleTestCaseRunParams) {
@@ -165,22 +160,6 @@ export async function prepareSingleTestCaseRun({
     throw new Error("Invalid model selection");
   }
 
-  const modelApiKeys: Record<string, string> = {};
-
-  if (!isMCPJamProvidedModel(model, provider)) {
-    const tokenKey = provider.toLowerCase() as keyof ProviderTokens;
-    if (!hasToken(tokenKey)) {
-      throw new Error(
-        `Please add your ${provider} API key in Settings before running this test`,
-      );
-    }
-
-    const key = getToken(tokenKey);
-    if (key) {
-      modelApiKeys[provider] = key;
-    }
-  }
-
   return {
     modelValue,
     request: {
@@ -189,8 +168,6 @@ export async function prepareSingleTestCaseRun({
       model,
       provider,
       serverIds: suite.environment?.servers || [],
-      modelApiKeys:
-        Object.keys(modelApiKeys).length > 0 ? modelApiKeys : undefined,
       convexAuthToken: await getAccessToken(),
       testCaseOverrides,
     },

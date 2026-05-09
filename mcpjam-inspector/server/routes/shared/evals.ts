@@ -552,10 +552,10 @@ export async function runEvalsWithManager(
   // Treat an empty client-provided map as "no keys" so org fallback still runs.
   // For reruns, projectId may not be in the request — derive it from the
   // suite record so org BYOK keeps working.
-  const hasClientKeys =
-    !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
+  const hasClientKeys = !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
   const resolvedModelApiKeys = hasClientKeys ? modelApiKeys : undefined;
   let resolvedOrgModelConfig = orgModelConfig;
+  let orgRuntimeProjectId: string | undefined = projectId;
   if (!resolvedModelApiKeys && !resolvedOrgModelConfig) {
     let projectIdForOrgConfig: string | undefined = projectId;
     let legacyWorkspaceIdForOrgConfig: string | undefined;
@@ -567,6 +567,7 @@ export async function runEvalsWithManager(
         );
         if (suite?.projectId) {
           projectIdForOrgConfig = String(suite.projectId);
+          orgRuntimeProjectId = projectIdForOrgConfig;
         } else if (suite?.workspaceId) {
           legacyWorkspaceIdForOrgConfig = String(suite.workspaceId);
         }
@@ -580,8 +581,8 @@ export async function runEvalsWithManager(
     const orgConfigTarget = projectIdForOrgConfig
       ? { projectId: projectIdForOrgConfig }
       : legacyWorkspaceIdForOrgConfig
-      ? { workspaceId: legacyWorkspaceIdForOrgConfig }
-      : undefined;
+        ? { workspaceId: legacyWorkspaceIdForOrgConfig }
+        : undefined;
     if (orgConfigTarget) {
       try {
         const orgConfig = await resolveOrgModelConfig(orgConfigTarget, {
@@ -607,6 +608,7 @@ export async function runEvalsWithManager(
     config,
     modelApiKeys: resolvedModelApiKeys ?? undefined,
     orgModelConfig: resolvedOrgModelConfig,
+    orgRuntimeProjectId,
     convexClient,
     convexHttpUrl,
     convexAuthToken,
@@ -693,8 +695,8 @@ export async function runEvalTestCaseWithManager(
   const testCaseOrgConfigTarget = testCaseProjectId
     ? { projectId: testCaseProjectId }
     : testCaseLegacyWorkspaceId
-    ? { workspaceId: testCaseLegacyWorkspaceId }
-    : undefined;
+      ? { workspaceId: testCaseLegacyWorkspaceId }
+      : undefined;
   if (
     !resolvedModelApiKeys &&
     !resolvedOrgModelConfig &&
@@ -727,6 +729,7 @@ export async function runEvalTestCaseWithManager(
     },
     modelApiKeys: resolvedModelApiKeys ?? undefined,
     orgModelConfig: resolvedOrgModelConfig,
+    orgRuntimeProjectId: testCaseProjectId,
     convexClient,
     convexHttpUrl,
     convexAuthToken,
@@ -928,8 +931,8 @@ export async function streamEvalTestCaseWithManager(
   const streamTestCaseOrgConfigTarget = streamTestCaseProjectId
     ? { projectId: streamTestCaseProjectId }
     : streamTestCaseLegacyWorkspaceId
-    ? { workspaceId: streamTestCaseLegacyWorkspaceId }
-    : undefined;
+      ? { workspaceId: streamTestCaseLegacyWorkspaceId }
+      : undefined;
   if (
     !resolvedStreamModelApiKeys &&
     !resolvedStreamOrgModelConfig &&
@@ -974,6 +977,7 @@ export async function streamEvalTestCaseWithManager(
           recorder: null,
           modelApiKeys: resolvedStreamModelApiKeys ?? undefined,
           orgModelConfig: resolvedStreamOrgModelConfig,
+          orgRuntimeProjectId: streamTestCaseProjectId,
           convexHttpUrl,
           convexAuthToken,
           convexClient,

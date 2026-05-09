@@ -42,7 +42,7 @@ describe("single-test-case-runner", () => {
           provider: "openai",
         },
       ],
-      testCase,
+      testCase
     );
 
     expect(modelOptions.map((option) => option.label)).toEqual([
@@ -66,23 +66,23 @@ describe("single-test-case-runner", () => {
           provider: "openai",
         },
       ],
-      testCase,
+      testCase
     );
 
     setPersistedTestCaseModelValue(
       "case-1",
-      "anthropic/anthropic/claude-haiku-4.5",
+      "anthropic/anthropic/claude-haiku-4.5"
     );
 
     expect(getPersistedTestCaseModelValue("case-1")).toBe(
-      "anthropic/anthropic/claude-haiku-4.5",
+      "anthropic/anthropic/claude-haiku-4.5"
     );
     expect(
       resolveSelectedTestCaseModelValue({
         testCaseId: "case-1",
         testCase,
         modelOptions,
-      }),
+      })
     ).toBe("anthropic/anthropic/claude-haiku-4.5");
   });
 
@@ -92,8 +92,6 @@ describe("single-test-case-runner", () => {
       suite,
       testCase,
       getAccessToken: vi.fn().mockResolvedValue("token-123"),
-      getToken: vi.fn().mockReturnValue("openai-key"),
-      hasToken: vi.fn().mockReturnValue(true),
     });
 
     expect(prepared).toEqual({
@@ -104,9 +102,6 @@ describe("single-test-case-runner", () => {
         model: "gpt-4o",
         provider: "openai",
         serverIds: ["asana"],
-        modelApiKeys: {
-          openai: "openai-key",
-        },
         convexAuthToken: "token-123",
         testCaseOverrides: undefined,
       },
@@ -179,7 +174,7 @@ describe("single-test-case-runner", () => {
         getAccessToken: vi.fn().mockResolvedValue("token-123"),
         getToken: vi.fn().mockReturnValue("openai-key"),
         hasToken: vi.fn().mockReturnValue(true),
-      }),
+      })
     ).rejects.toThrow("Add a model first");
   });
 });

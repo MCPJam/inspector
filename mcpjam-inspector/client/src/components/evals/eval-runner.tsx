@@ -12,12 +12,8 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@mcpjam/design-system/dialog";
-import {
-  useAiProviderKeys,
-  type ProviderTokens,
-} from "@/hooks/use-ai-provider-keys";
 import { cn } from "@/lib/utils";
-import { ModelDefinition, isMCPJamProvidedModel } from "@/shared/types";
+import { ModelDefinition } from "@/shared/types";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import posthog from "posthog-js";
 import {
@@ -168,7 +164,6 @@ export function EvalRunner({
   const { isAuthenticated } = useConvexAuth();
   const { getAccessToken } = useAuth();
   const appState = useSharedAppState();
-  const { getToken, hasToken } = useAiProviderKeys();
 
   // Initialize with preselected server if provided
   const [selectedServers, setSelectedServers] = useState<string[]>(() => {
@@ -327,12 +322,6 @@ export function EvalRunner({
   );
 
   const stepCompletion = useMemo(() => {
-    // Check that all selected models have credentials
-    const allModelsHaveCredentials = selectedModels.every((model) => {
-      const isJam = isMCPJamProvidedModel(model.id);
-      return isJam || hasToken(model.provider as keyof ProviderTokens);
-    });
-
     // Check if all valid test templates are properly configured
     // Positive tests need valid expected tool calls
     // Negative tests need scenario and query
@@ -350,10 +339,10 @@ export function EvalRunner({
 
     return {
       servers: selectedServers.length > 0,
-      model: selectedModels.length > 0 && allModelsHaveCredentials,
+      model: selectedModels.length > 0,
       tests: validTestTemplates.length > 0 && allTestsAreValid,
     };
-  }, [selectedServers, selectedModels, validTestTemplates, hasToken]);
+  }, [selectedServers, selectedModels, validTestTemplates]);
 
   const highestAvailableStep = useMemo(() => {
     if (!stepCompletion.servers) return 0;
@@ -582,22 +571,6 @@ export function EvalRunner({
       return;
     }
 
-    // Collect API keys for all selected models
-    const modelApiKeys: Record<string, string> = {};
-    for (const model of selectedModels) {
-      if (!isMCPJamProvidedModel(model.id)) {
-        const key = getToken(model.provider as keyof ProviderTokens);
-        if (!key) {
-          toast.error(
-            `Please configure your ${model.provider} API key in Settings`,
-          );
-          setCurrentStep(1);
-          return;
-        }
-        modelApiKeys[model.provider] = key;
-      }
-    }
-
     if (validTestTemplates.length === 0) {
       toast.error("Please add at least one test template with a query");
       setCurrentStep(2);
@@ -656,7 +629,6 @@ export function EvalRunner({
         suiteDescription: suiteDescription.trim() || undefined,
         tests: expandedTests,
         serverIds: selectedServers,
-        modelApiKeys,
         convexAuthToken: accessToken,
         passCriteria: {
           minimumPassRate: minimumPassRate,
@@ -708,7 +680,6 @@ export function EvalRunner({
             modelTab={modelTab}
             onModelTabChange={setModelTab}
             onToggleModel={handleToggleModel}
-            hasProviderToken={hasToken}
           />
         );
       case "tests":

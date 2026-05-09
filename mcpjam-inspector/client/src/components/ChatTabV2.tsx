@@ -196,7 +196,7 @@ export function ChatTabV2({
   // Local state for ChatTabV2-specific features
   const [input, setInput] = useState("");
   const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
-    []
+    [],
   );
   const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
   const [skillResults, setSkillResults] = useState<SkillResult[]>([]);
@@ -213,7 +213,7 @@ export function ChatTabV2({
     }[]
   >([]);
   const [elicitationQueue, setElicitationQueue] = useState<DialogElicitation[]>(
-    []
+    [],
   );
   const [elicitationLoading, setElicitationLoading] = useState(false);
   const [, setIsWidgetFullscreen] = useState(false);
@@ -288,9 +288,9 @@ export function ChatTabV2({
       selectedServerNames.filter(
         (name) =>
           connectedOrConnectingServerConfigs[name]?.connectionStatus ===
-          "connected"
+          "connected",
       ),
-    [selectedServerNames, connectedOrConnectingServerConfigs]
+    [selectedServerNames, connectedOrConnectingServerConfigs],
   );
   const activeProject = appState.projects[appState.activeProjectId];
   const convexProjectId =
@@ -299,7 +299,7 @@ export function ChatTabV2({
   const organizationId = activeProject?.organizationId ?? null;
   const hostedOrgModelConfig = useQuery(
     "organizationModelProviders:getVisibleConfig" as any,
-    HOSTED_MODE && isConvexAuthenticated && organizationId
+    isConvexAuthenticated && organizationId
       ? ({ organizationId } as any)
       : "skip",
   ) as { providers: OrgModelProvider[] } | undefined;
@@ -312,27 +312,26 @@ export function ChatTabV2({
       selectedConnectedServerNames
         .map((serverName) => serversByName.get(serverName))
         .filter((serverId): serverId is string => !!serverId),
-    [selectedConnectedServerNames, serversByName]
+    [selectedConnectedServerNames, serversByName],
   );
   const hostedOAuthTokens = useMemo(
     () =>
       buildOAuthTokensByServerId(
         selectedConnectedServerNames,
         (name) => serversByName.get(name),
-        (name) => appState.servers[name]?.oauthTokens?.access_token
+        (name) => appState.servers[name]?.oauthTokens?.access_token,
       ),
-    [selectedConnectedServerNames, serversByName, appState.servers]
+    [selectedConnectedServerNames, serversByName, appState.servers],
   );
   const hostedShareToken = hostedContext?.shareToken;
   const hostedChatboxToken = hostedContext?.chatboxToken;
   const hostedChatboxSurface = hostedContext?.chatboxSurface;
-  const effectiveHostedProjectId =
-    hostedProjectIdOverride ?? convexProjectId;
+  const effectiveHostedProjectId = hostedProjectIdOverride ?? convexProjectId;
   const effectiveHostedSelectedServerIds =
     hostedSelectedServerIdsOverride ?? hostedSelectedServerIds;
   const effectiveHostedOAuthTokens = hostedChatboxToken
     ? undefined
-    : hostedOAuthTokensOverride ?? hostedOAuthTokens;
+    : (hostedOAuthTokensOverride ?? hostedOAuthTokens);
   const isHostedDirectGuest =
     HOSTED_MODE &&
     !isConvexAuthenticated &&
@@ -446,7 +445,7 @@ export function ChatTabV2({
   const historyRailTakesLayoutSpace =
     showHistoryRail && isHistorySidebarVisible;
   const hasConversationMessages = messages.some(
-    (msg) => msg.role === "user" || msg.role === "assistant"
+    (msg) => msg.role === "user" || msg.role === "assistant",
   );
 
   const hasUnsavedDraft =
@@ -465,8 +464,8 @@ export function ChatTabV2({
         typeof details?.serverName === "string" && details.serverName.trim()
           ? details.serverName.trim()
           : selectedConnectedServerNames.length === 1
-          ? selectedConnectedServerNames[0]
-          : null;
+            ? selectedConnectedServerNames[0]
+            : null;
 
       if (!onOAuthRequired) {
         return;
@@ -475,10 +474,10 @@ export function ChatTabV2({
       onOAuthRequired(
         resolvedServerName && resolvedServerName !== details?.serverName
           ? { ...details, serverName: resolvedServerName }
-          : details
+          : details,
       );
     },
-    [onOAuthRequired, selectedConnectedServerNames]
+    [onOAuthRequired, selectedConnectedServerNames],
   );
 
   useEffect(() => {
@@ -511,7 +510,7 @@ export function ChatTabV2({
 
   const [discardDraftDialogOpen, setDiscardDraftDialogOpen] = useState(false);
   const discardDraftResolveRef = useRef<((allow: boolean) => void) | null>(
-    null
+    null,
   );
   const discardDraftSettledRef = useRef(false);
 
@@ -567,7 +566,7 @@ export function ChatTabV2({
       startChatWithMessages,
       syncResumedVersion,
       cancelPendingHistorySelection,
-    ]
+    ],
   );
 
   const markHistorySessionRead = useCallback(async (sessionId: string) => {
@@ -586,7 +585,7 @@ export function ChatTabV2({
         shouldRestoreComposerState?: () => boolean;
         shouldApply?: () => boolean;
         turnTraces?: ChatHistoryTurnTrace[];
-      }
+      },
     ) => {
       await loadChatSession(
         {
@@ -600,7 +599,7 @@ export function ChatTabV2({
         {
           shouldRestoreResumeConfig: options?.shouldRestoreComposerState,
           shouldApply: options?.shouldApply,
-        }
+        },
       );
       if (options?.shouldApply && !options.shouldApply()) {
         return;
@@ -609,7 +608,7 @@ export function ChatTabV2({
         options?.shouldRestoreComposerState?.() ?? true;
       if (shouldRestoreComposerState && detail.modelId) {
         const matchingModel = availableModels.find(
-          (model) => String(model.id) === detail.modelId
+          (model) => String(model.id) === detail.modelId,
         );
         if (matchingModel) {
           setSelectedModel(matchingModel);
@@ -630,7 +629,7 @@ export function ChatTabV2({
       markHistorySessionRead,
       setSelectedModel,
       syncResumedVersion,
-    ]
+    ],
   );
 
   const refreshCurrentHistorySession = useCallback(
@@ -681,7 +680,7 @@ export function ChatTabV2({
       markHistorySessionRead,
       showHistoryRail,
       syncResumedVersion,
-    ]
+    ],
   );
 
   const refreshHistorySessionAfterStream = useCallback(
@@ -689,7 +688,7 @@ export function ChatTabV2({
       resumedThreadSendBaseline: {
         sessionId: string;
         version: number;
-      } | null
+      } | null,
     ) => {
       const maxAttempts = resumedThreadSendBaseline
         ? RESUMED_THREAD_REFRESH_RETRIES + 1
@@ -722,7 +721,7 @@ export function ChatTabV2({
 
       return null;
     },
-    [refreshCurrentHistorySession]
+    [refreshCurrentHistorySession],
   );
 
   useEffect(() => {
@@ -736,7 +735,7 @@ export function ChatTabV2({
 
     if (reactiveHistorySession === null) {
       detachHistorySession(
-        "This chat is no longer available. Continuing locally in a new thread."
+        "This chat is no longer available. Continuing locally in a new thread.",
       );
       return;
     }
@@ -770,7 +769,7 @@ export function ChatTabV2({
         // `undefined` as "preserve existing trace state", so the live
         // trace viewer is not wiped by reactive session refreshes. Traces
         // are seeded once via the REST detail path on thread selection.
-      }
+      },
     ).catch((error) => {
       console.error("[ChatTabV2] Failed to apply reactive chat history", error);
     });
@@ -791,7 +790,7 @@ export function ChatTabV2({
     } catch (error) {
       console.error(
         "[ChatTabV2] Failed to sync chat history before send",
-        error
+        error,
       );
       toast.error("Failed to sync chat history. Try again.");
       return false;
@@ -802,7 +801,7 @@ export function ChatTabV2({
 
     if (activeHistorySessionId) {
       detachHistorySession(
-        "This chat is no longer available. Your draft stayed local, and the next send will start a new thread."
+        "This chat is no longer available. Your draft stayed local, and the next send will start a new thread.",
       );
       return false;
     }
@@ -844,19 +843,19 @@ export function ChatTabV2({
         const desiredServerNames = resolveRestorableServerNames(
           detail.session.resumeConfig?.selectedServers,
           serversById,
-          Object.keys(appState.servers)
+          Object.keys(appState.servers),
         );
         const syncedServerNames =
           isHostedDirectGuest &&
           shouldPreserveGuestServerSelection(
             detail.session.resumeConfig?.selectedServers,
             desiredServerNames,
-            selectedServerNames
+            selectedServerNames,
           )
             ? [...selectedServerNames]
             : desiredServerNames;
         const hasSavedServerSelection = Array.isArray(
-          detail.session.resumeConfig?.selectedServers
+          detail.session.resumeConfig?.selectedServers,
         );
 
         await loadHistorySession(detail.session, detail.widgetSnapshots, {
@@ -900,7 +899,7 @@ export function ChatTabV2({
       selectedServerNames,
       serversById,
       invalidatePendingReactiveHistoryLoad,
-    ]
+    ],
   );
 
   const handleNewChat = useCallback(
@@ -926,7 +925,7 @@ export function ChatTabV2({
       hasUnsavedDraft,
       isStreaming,
       syncResumedVersion,
-    ]
+    ],
   );
 
   const handleArchiveAllComplete = useCallback(
@@ -946,7 +945,7 @@ export function ChatTabV2({
       clearComposerDraft,
       hasUnsavedDraft,
       syncResumedVersion,
-    ]
+    ],
   );
 
   const handleHistorySessionAction = useCallback(
@@ -969,7 +968,7 @@ export function ChatTabV2({
           const detail = await refreshCurrentHistorySession();
           if (!detail) {
             detachHistorySession(
-              "This chat is no longer shared with you. Continuing locally in a new thread."
+              "This chat is no longer shared with you. Continuing locally in a new thread.",
             );
           }
         } catch (error) {
@@ -977,7 +976,11 @@ export function ChatTabV2({
         }
       }
     },
-    [activeHistorySessionId, detachHistorySession, refreshCurrentHistorySession]
+    [
+      activeHistorySessionId,
+      detachHistorySession,
+      refreshCurrentHistorySession,
+    ],
   );
 
   const previousSelectedServerNamesRef = useRef(selectedServerNames);
@@ -1043,7 +1046,7 @@ export function ChatTabV2({
     const timerId = window.setTimeout(() => {
       void (async () => {
         const detail = await refreshHistorySessionAfterStream(
-          resumedThreadSendBaseline
+          resumedThreadSendBaseline,
         );
 
         if (
@@ -1053,7 +1056,7 @@ export function ChatTabV2({
             detail.version <= resumedThreadSendBaseline.version)
         ) {
           detachHistorySession(
-            "This chat changed elsewhere. This reply stayed local, and your next send will continue in a new thread."
+            "This chat changed elsewhere. This reply stayed local, and your next send will continue in a new thread.",
           );
         }
       })().catch((error) => {
@@ -1076,7 +1079,7 @@ export function ChatTabV2({
   const isThreadEmpty = !hasConversationMessages;
   const multiModelAvailableModels = useMemo(
     () => new Map(availableModels.map((model) => [String(model.id), model])),
-    [availableModels]
+    [availableModels],
   );
   const resolvedSelectedModels = useMemo(() => {
     const persistedModels = selectedModelIds
@@ -1120,7 +1123,7 @@ export function ChatTabV2({
     (modelId: string, transcript: UIMessage[]) => {
       multiTranscriptsRef.current[modelId] = cloneUiMessages(transcript);
     },
-    []
+    [],
   );
 
   const clearMultiModelUiState = useCallback(() => {
@@ -1140,7 +1143,7 @@ export function ChatTabV2({
         const transcript = multiTranscriptsRef.current[leadId];
         const hasConversation =
           transcript?.some(
-            (m) => m.role === "user" || m.role === "assistant"
+            (m) => m.role === "user" || m.role === "assistant",
           ) ?? false;
         if (hasConversation && transcript) {
           startChatWithMessages(cloneUiMessages(transcript));
@@ -1214,7 +1217,7 @@ export function ChatTabV2({
     }
 
     const sanitizedIds = resolvedSelectedModels.map((model) =>
-      String(model.id)
+      String(model.id),
     );
     const persistedIds = selectedModelIds.slice(0, 3);
     const idsChanged =
@@ -1226,8 +1229,8 @@ export function ChatTabV2({
         sanitizedIds.length > 0 && multiModelEnabled
           ? sanitizedIds
           : selectedModel
-          ? [String(selectedModel.id)]
-          : []
+            ? [String(selectedModel.id)]
+            : [],
       );
     }
   }, [
@@ -1242,22 +1245,22 @@ export function ChatTabV2({
 
   useEffect(() => {
     const activeModelIds = new Set(
-      resolvedSelectedModels.map((model) => String(model.id))
+      resolvedSelectedModels.map((model) => String(model.id)),
     );
 
     setMultiModelSummaries((previous) =>
       Object.fromEntries(
         Object.entries(previous).filter(([modelId]) =>
-          activeModelIds.has(modelId)
-        )
-      )
+          activeModelIds.has(modelId),
+        ),
+      ),
     );
     setMultiModelHasMessages((previous) =>
       Object.fromEntries(
         Object.entries(previous).filter(([modelId]) =>
-          activeModelIds.has(modelId)
-        )
-      )
+          activeModelIds.has(modelId),
+        ),
+      ),
     );
   }, [resolvedSelectedModels]);
 
@@ -1282,7 +1285,7 @@ export function ChatTabV2({
     let matchingModel = null;
     if (evalChatHandoff.modelId) {
       matchingModel = availableModels.find(
-        (model) => String(model.id) === evalChatHandoff.modelId
+        (model) => String(model.id) === evalChatHandoff.modelId,
       );
       if (!matchingModel && availableModels.length === 0) {
         return;
@@ -1352,7 +1355,7 @@ export function ChatTabV2({
             msg.role === "system" &&
             (msg as { metadata?: { source?: string } })?.metadata?.source ===
               "server-instruction"
-          )
+          ),
       );
 
       const instructionMessages = Object.entries(selectedServerInstructions)
@@ -1391,7 +1394,7 @@ export function ChatTabV2({
   const applyWidgetStateUpdates = useCallback(
     (
       prevMessages: typeof messages,
-      updates: { toolCallId: string; state: unknown }[]
+      updates: { toolCallId: string; state: unknown }[],
     ) => {
       let nextMessages = prevMessages;
 
@@ -1405,10 +1408,10 @@ export function ChatTabV2({
         }
 
         const stateText = `The state of widget ${toolCallId} is: ${JSON.stringify(
-          state
+          state,
         )}`;
         const existingIndex = nextMessages.findIndex(
-          (msg) => msg.id === messageId
+          (msg) => msg.id === messageId,
         );
 
         if (existingIndex !== -1) {
@@ -1444,27 +1447,27 @@ export function ChatTabV2({
 
       return nextMessages;
     },
-    []
+    [],
   );
 
   const handleWidgetStateChange = useCallback(
     (toolCallId: string, state: unknown) => {
       if (status === "ready") {
         setMessages((prevMessages) =>
-          applyWidgetStateUpdates(prevMessages, [{ toolCallId, state }])
+          applyWidgetStateUpdates(prevMessages, [{ toolCallId, state }]),
         );
       } else {
         setWidgetStateQueue((prev) => [...prev, { toolCallId, state }]);
       }
     },
-    [status, setMessages, applyWidgetStateUpdates]
+    [status, setMessages, applyWidgetStateUpdates],
   );
 
   useEffect(() => {
     if (status !== "ready" || widgetStateQueue.length === 0) return;
 
     setMessages((prevMessages) =>
-      applyWidgetStateUpdates(prevMessages, widgetStateQueue)
+      applyWidgetStateUpdates(prevMessages, widgetStateQueue),
     );
     setWidgetStateQueue([]);
   }, [status, widgetStateQueue, setMessages, applyWidgetStateUpdates]);
@@ -1475,7 +1478,7 @@ export function ChatTabV2({
       context: {
         content?: ContentBlock[];
         structuredContent?: Record<string, unknown>;
-      }
+      },
     ) => {
       // Queue model context to be included in next message
       setModelContextQueue((prev) => {
@@ -1484,7 +1487,7 @@ export function ChatTabV2({
         return [...filtered, { toolCallId, context }];
       });
     },
-    []
+    [],
   );
 
   const activeElicitation = elicitationQueue[0] ?? null;
@@ -1503,7 +1506,7 @@ export function ChatTabV2({
           setElicitationQueue((previousQueue) => {
             if (
               previousQueue.some(
-                (elicitation) => elicitation.requestId === data.requestId
+                (elicitation) => elicitation.requestId === data.requestId,
               )
             ) {
               return previousQueue;
@@ -1522,8 +1525,8 @@ export function ChatTabV2({
         } else if (data?.type === "elicitation_complete") {
           setElicitationQueue((previousQueue) =>
             previousQueue.filter(
-              (elicitation) => elicitation.requestId !== data.requestId
-            )
+              (elicitation) => elicitation.requestId !== data.requestId,
+            ),
           );
         }
       } catch (error) {
@@ -1532,7 +1535,7 @@ export function ChatTabV2({
     };
     es.onerror = () => {
       console.warn(
-        "[ChatTabV2] Elicitation SSE connection error, browser will retry"
+        "[ChatTabV2] Elicitation SSE connection error, browser will retry",
       );
     };
     return () => es.close();
@@ -1540,7 +1543,7 @@ export function ChatTabV2({
 
   const handleElicitationResponse = async (
     action: "accept" | "decline" | "cancel",
-    parameters?: Record<string, unknown>
+    parameters?: Record<string, unknown>,
   ) => {
     if (!activeElicitation) return;
     setElicitationLoading(true);
@@ -1556,8 +1559,9 @@ export function ChatTabV2({
       });
       setElicitationQueue((previousQueue) =>
         previousQueue.filter(
-          (elicitation) => elicitation.requestId !== activeElicitation.requestId
-        )
+          (elicitation) =>
+            elicitation.requestId !== activeElicitation.requestId,
+        ),
       );
     } finally {
       setElicitationLoading(false);
@@ -1669,7 +1673,7 @@ export function ChatTabV2({
       setSelectedModelIds([String(model.id)]);
       setMultiModelEnabled(false);
     },
-    [setMultiModelEnabled, setSelectedModel, setSelectedModelIds]
+    [setMultiModelEnabled, setSelectedModel, setSelectedModelIds],
   );
 
   const handleSelectedModelsChange = useCallback(
@@ -1682,18 +1686,18 @@ export function ChatTabV2({
       }
       setSelectedModelIds(
         nextSelectedModels.map((selectedModelItem) =>
-          String(selectedModelItem.id)
-        )
+          String(selectedModelItem.id),
+        ),
       );
     },
-    [selectedModel, setSelectedModel, setSelectedModelIds]
+    [selectedModel, setSelectedModel, setSelectedModelIds],
   );
 
   const handleMultiModelEnabledChange = useCallback(
     (enabled: boolean) => {
       setMultiModelEnabled(enabled);
     },
-    [setMultiModelEnabled]
+    [setMultiModelEnabled],
   );
 
   const handleRequireToolApprovalChange = useCallback(
@@ -1703,7 +1707,7 @@ export function ChatTabV2({
         handleResetAllChats();
       }
     },
-    [handleResetAllChats, isMultiModelMode, setRequireToolApproval]
+    [handleResetAllChats, isMultiModelMode, setRequireToolApproval],
   );
 
   const handleMultiModelSummaryChange = useCallback(
@@ -1713,7 +1717,7 @@ export function ChatTabV2({
         [summary.modelId]: summary,
       }));
     },
-    []
+    [],
   );
 
   const handleMultiModelHasMessagesChange = useCallback(
@@ -1723,13 +1727,13 @@ export function ChatTabV2({
         [modelId]: hasMessages,
       }));
     },
-    []
+    [],
   );
 
   const queueBroadcastRequest = useCallback(
     (
       request: Omit<BroadcastChatTurnRequest, "id">,
-      captureProps?: Record<string, unknown>
+      captureProps?: Record<string, unknown>,
     ) => {
       posthog.capture("send_message", {
         location: "chat_tab",
@@ -1755,7 +1759,7 @@ export function ChatTabV2({
       selectedModel?.id,
       selectedModel?.name,
       selectedModel?.provider,
-    ]
+    ],
   );
 
   // Detect OAuth-required errors and notify parent
@@ -1819,7 +1823,7 @@ export function ChatTabV2({
       }
       // Build messages from MCP prompts
       const promptMessages = buildMcpPromptMessages(
-        mcpPromptResults
+        mcpPromptResults,
       ) as UIMessage[];
 
       // Build messages from skills
@@ -1854,7 +1858,7 @@ export function ChatTabV2({
               {
                 type: "text" as const,
                 text: `Widget ${toolCallId} context: ${JSON.stringify(
-                  context
+                  context,
                 )}`,
               },
             ],
@@ -1862,7 +1866,7 @@ export function ChatTabV2({
               source: "widget-model-context",
               toolCallId,
             },
-          })
+          }),
         );
 
         if (contextMessages.length > 0) {
@@ -1896,7 +1900,7 @@ export function ChatTabV2({
   const handleStarterPrompt = async (prompt: string) => {
     posthog.capture(
       "chat_starter_prompt_clicked",
-      standardEventProps("chat_tab")
+      standardEventProps("chat_tab"),
     );
     if (composerDisabled || sendBlocked) {
       setInput(prompt);
@@ -2040,10 +2044,10 @@ export function ChatTabV2({
                 ? 48
                 : 78
               : minimalMode
-              ? 100
-              : isJsonRpcPanelVisible
-              ? 70
-              : 100
+                ? 100
+                : isJsonRpcPanelVisible
+                  ? 70
+                  : 100
           }
           minSize={40}
           className="min-h-0 min-w-0 overflow-hidden"
@@ -2209,7 +2213,7 @@ export function ChatTabV2({
                 <div
                   className={cn(
                     "flex flex-1 min-h-0 flex-col overflow-hidden",
-                    !effectiveHasMessages && "hidden"
+                    !effectiveHasMessages && "hidden",
                   )}
                   aria-hidden={!effectiveHasMessages}
                 >
@@ -2221,17 +2225,17 @@ export function ChatTabV2({
                         resolvedSelectedModels.length === 2 &&
                           "grid-cols-1 xl:grid-cols-2",
                         resolvedSelectedModels.length >= 3 &&
-                          "grid-cols-1 xl:grid-cols-3"
+                          "grid-cols-1 xl:grid-cols-3",
                       )}
                     >
                       {resolvedSelectedModels.map((model) => (
                         <MultiModelChatCard
                           key={`${multiModelSessionGeneration}:${String(
-                            model.id
+                            model.id,
                           )}`}
                           model={model}
                           comparisonSummaries={Object.values(
-                            multiModelSummaries
+                            multiModelSummaries,
                           )}
                           selectedServers={selectedConnectedServerNames}
                           selectedServerInstructions={

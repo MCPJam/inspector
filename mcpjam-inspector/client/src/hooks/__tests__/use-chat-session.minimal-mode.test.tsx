@@ -50,6 +50,11 @@ const guestAllowedMcpJamModel = {
   name: "Claude Haiku 4.5",
   provider: "anthropic" as const,
 };
+const ollamaModel = {
+  id: "llama3.2",
+  name: "Llama 3.2",
+  provider: "ollama" as const,
+};
 const mockModelState = {
   availableModels: [baseModel],
   selectedModelId: "gpt-4",
@@ -89,7 +94,9 @@ vi.mock("@/lib/config", () => ({
 }));
 
 vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
-  buildAvailableModels: vi.fn(() => mockModelState.availableModels),
+  buildAvailableModelsFromOrgConfig: vi.fn(
+    () => mockModelState.availableModels
+  ),
   getDefaultModel: vi.fn(() => baseModel),
 }));
 
@@ -208,7 +215,7 @@ vi.mock("@ai-sdk/react", async () => {
           setMessages: mockSetMessages,
           addToolApprovalResponse: mockAddToolApprovalResponse,
         };
-      },
+      }
     ),
   };
 });
@@ -288,7 +295,7 @@ describe("useChatSession minimal mode parity", () => {
         executionConfig: {
           systemPrompt: "You are a helpful assistant.",
         },
-      }),
+      })
     );
 
     await waitFor(() => {
@@ -296,7 +303,7 @@ describe("useChatSession minimal mode parity", () => {
     });
     expect(mockGetToolsMetadata).toHaveBeenCalledWith(
       ["server-1"],
-      "openai/gpt-4",
+      "openai/gpt-4"
     );
   });
 
@@ -309,13 +316,13 @@ describe("useChatSession minimal mode parity", () => {
         executionConfig: {
           systemPrompt: "Custom prompt",
         },
-      }),
+      })
     );
 
     await waitFor(() => {
       expect(mockCountTextTokens).toHaveBeenCalledWith(
         "Custom prompt",
-        "openai/gpt-4",
+        "openai/gpt-4"
       );
     });
   });
@@ -338,7 +345,7 @@ describe("useChatSession minimal mode parity", () => {
         executionConfig: {
           systemPrompt: "Prompt",
         },
-      }),
+      })
     );
 
     await waitFor(() => {
@@ -364,7 +371,7 @@ describe("useChatSession minimal mode parity", () => {
         executionConfig: {
           systemPrompt: "Prompt",
         },
-      }),
+      })
     );
 
     await waitFor(() => {
@@ -372,7 +379,7 @@ describe("useChatSession minimal mode parity", () => {
     });
 
     const latestTransport = mockTransportInstances.at(-1)!;
-    expect(latestTransport.options.api).toBe("/api/mcp/chat-v2");
+    expect(latestTransport.options.api).toBe("/api/web/chat-v2");
     expect(latestTransport.options.fetch).toEqual(expect.any(Function));
     expect(await resolveConfig(latestTransport.options.headers)).toEqual({
       Authorization: "Bearer guest-token",
@@ -385,17 +392,17 @@ describe("useChatSession minimal mode parity", () => {
     await waitFor(() => {
       expect(
         mockTransportInstances.some(
-          (instance) => instance.sendMessages.mock.calls.length === 1,
-        ),
+          (instance) => instance.sendMessages.mock.calls.length === 1
+        )
       ).toBe(true);
     });
-    expect(getUsedTransport().options.api).toBe("/api/mcp/chat-v2");
+    expect(getUsedTransport().options.api).toBe("/api/web/chat-v2");
     expect(mockWindowFetch).toHaveBeenCalledWith(
-      "/api/mcp/chat-v2",
+      "/api/web/chat-v2",
       expect.objectContaining({
         method: "POST",
         headers: { Authorization: "Bearer guest-token" },
-      }),
+      })
     );
     expect(mockAuthFetch).not.toHaveBeenCalled();
   });
@@ -415,8 +422,8 @@ describe("useChatSession minimal mode parity", () => {
         {
           status: 429,
           headers: { "Content-Type": "application/json" },
-        },
-      ),
+        }
+      )
     );
 
     const { result } = renderHook(() =>
@@ -426,7 +433,7 @@ describe("useChatSession minimal mode parity", () => {
         executionConfig: {
           systemPrompt: "Prompt",
         },
-      }),
+      })
     );
 
     await waitFor(() => {
@@ -451,7 +458,7 @@ describe("useChatSession minimal mode parity", () => {
         executionConfig: {
           systemPrompt: "Prompt",
         },
-      }),
+      })
     );
 
     await waitFor(() => {
@@ -461,8 +468,8 @@ describe("useChatSession minimal mode parity", () => {
     act(() => {
       mockUseChatErrorHandlers.at(-1)?.(
         new Error(
-          "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
-        ),
+          "Daily MCPJam model limit reached. Use BYOK or try again tomorrow."
+        )
       );
     });
 
@@ -488,8 +495,8 @@ describe("useChatSession minimal mode parity", () => {
         {
           status: 429,
           headers: { "Content-Type": "application/json" },
-        },
-      ),
+        }
+      )
     );
 
     const { result } = renderHook(() =>
@@ -499,7 +506,7 @@ describe("useChatSession minimal mode parity", () => {
         executionConfig: {
           systemPrompt: "Prompt",
         },
-      }),
+      })
     );
 
     await waitFor(() => {
@@ -535,8 +542,8 @@ describe("useChatSession minimal mode parity", () => {
         {
           status: 429,
           headers: { "Content-Type": "application/json" },
-        },
-      ),
+        }
+      )
     );
 
     const { result } = renderHook(() =>
@@ -546,7 +553,7 @@ describe("useChatSession minimal mode parity", () => {
         executionConfig: {
           systemPrompt: "Prompt",
         },
-      }),
+      })
     );
 
     await waitFor(() => {
@@ -584,7 +591,7 @@ describe("useChatSession minimal mode parity", () => {
         executionConfig: {
           systemPrompt: "Prompt",
         },
-      }),
+      })
     );
 
     await waitFor(() => {
@@ -592,7 +599,7 @@ describe("useChatSession minimal mode parity", () => {
     });
 
     const latestTransport = mockTransportInstances.at(-1)!;
-    expect(latestTransport.options.api).toBe("/api/mcp/chat-v2");
+    expect(latestTransport.options.api).toBe("/api/web/chat-v2");
     expect(await resolveConfig(latestTransport.options.headers)).toEqual({
       Authorization: "Bearer guest-token",
     });
@@ -605,25 +612,25 @@ describe("useChatSession minimal mode parity", () => {
     ]);
     expect(
       result.current.availableModels.find((model) => model.id === "gpt-4")
-        ?.disabled,
+        ?.disabled
     ).toBeUndefined();
     expect(
       result.current.availableModels.find(
-        (model) => model.id === "openai/gpt-5.4-pro",
-      ),
+        (model) => model.id === "openai/gpt-5.4-pro"
+      )
     ).toMatchObject({
       disabled: true,
       disabledReason: "Sign in to use MCPJam provided models",
     });
     expect(
       result.current.availableModels.find(
-        (model) => model.id === "openai/gpt-5-mini",
-      )?.disabled,
+        (model) => model.id === "openai/gpt-5-mini"
+      )?.disabled
     ).toBeUndefined();
     expect(
       result.current.availableModels.find(
-        (model) => model.id === "anthropic/claude-haiku-4.5",
-      )?.disabled,
+        (model) => model.id === "anthropic/claude-haiku-4.5"
+      )?.disabled
     ).toBeUndefined();
     expect(result.current.selectedModel.id).toBe("openai/gpt-5-mini");
     expect(mockAuthFetch).not.toHaveBeenCalled();
@@ -648,7 +655,7 @@ describe("useChatSession minimal mode parity", () => {
           systemPrompt: "Prompt",
           modelId: gatedMcpJamModel.id,
         },
-      }),
+      })
     );
 
     await waitFor(() => {
@@ -682,7 +689,7 @@ describe("useChatSession minimal mode parity", () => {
           systemPrompt: "Prompt",
           modelId: gatedMcpJamModel.id,
         },
-      }),
+      })
     );
 
     await waitFor(() => {
@@ -701,6 +708,9 @@ describe("useChatSession minimal mode parity", () => {
   });
 
   it("uses the latest selectedServers on the next non-hosted send without changing chatSessionId", async () => {
+    mockModelState.availableModels = [ollamaModel];
+    mockModelState.selectedModelId = ollamaModel.id;
+
     const { result, rerender } = renderHook(
       ({ selectedServers }: { selectedServers: string[] }) =>
         useChatSession({
@@ -714,7 +724,7 @@ describe("useChatSession minimal mode parity", () => {
         initialProps: {
           selectedServers: ["server-1"],
         },
-      },
+      }
     );
 
     await waitFor(() => {

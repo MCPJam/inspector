@@ -1,7 +1,6 @@
 import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isMCPJamProvidedModel, type ModelDefinition } from "@/shared/types";
-import type { ProviderTokens } from "@/hooks/use-ai-provider-keys";
 
 interface ModelStepProps {
   availableModels: ModelDefinition[];
@@ -9,7 +8,6 @@ interface ModelStepProps {
   modelTab: "mcpjam" | "yours";
   onModelTabChange: (tab: "mcpjam" | "yours") => void;
   onToggleModel: (model: ModelDefinition) => void;
-  hasProviderToken: (provider: keyof ProviderTokens) => boolean;
 }
 
 export function ModelStep({
@@ -18,7 +16,6 @@ export function ModelStep({
   modelTab,
   onModelTabChange,
   onToggleModel,
-  hasProviderToken,
 }: ModelStepProps) {
   return (
     <div className="space-y-4">
@@ -66,10 +63,6 @@ export function ModelStep({
           )
           .map((model) => {
             const isSelected = selectedModels.some((m) => m.id === model.id);
-            const isJam = isMCPJamProvidedModel(model.id);
-            const needsApiKey =
-              !isJam &&
-              !hasProviderToken(model.provider as keyof ProviderTokens);
 
             return (
               <button
@@ -81,7 +74,6 @@ export function ModelStep({
                   isSelected
                     ? "border-primary bg-primary/5"
                     : "hover:border-primary/40",
-                  needsApiKey && "opacity-60",
                 )}
               >
                 <div className="flex items-start justify-between gap-3">
@@ -95,11 +87,6 @@ export function ModelStep({
                     <p className="text-xs text-muted-foreground mt-1">
                       by {model.provider}
                     </p>
-                    {needsApiKey && (
-                      <p className="text-xs text-destructive mt-2">
-                        Missing API key
-                      </p>
-                    )}
                   </div>
                 </div>
               </button>

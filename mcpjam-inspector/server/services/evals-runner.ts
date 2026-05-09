@@ -28,8 +28,16 @@ import { logger } from "../utils/logger";
 import { injectOpenAICompat } from "../utils/widget-helpers.js";
 import {
   buildLlmRuntimeConfigFromOrgConfig,
+  deriveOrgProviderKey,
+  resolveOrgProviderRuntime,
+  type OrgProviderRuntime,
   type ResolvedOrgModelConfig,
 } from "../utils/org-model-config";
+import {
+  assertOrgModelAllowed,
+  buildOrgModelFromResolvedConfig,
+  type OrgProviderResolvedConfig,
+} from "@mcpjam/sdk/model-factory";
 import {
   getCanonicalModelId,
   getModelById,
@@ -118,6 +126,7 @@ export type RunEvalSuiteOptions = {
   convexClient: ConvexHttpClient;
   convexHttpUrl: string;
   convexAuthToken: string;
+  orgRuntimeProjectId?: string;
   mcpClientManager: MCPClientManager;
   recorder?: SuiteRunRecorder | null;
   testCaseId?: string; // For quick runs, associate iterations with a specific test case
@@ -222,16 +231,24 @@ function normalizeWidgetCsp(value: unknown): Record<string, unknown> | null {
 
   const normalized: Record<string, unknown> = {};
   const connectDomains = Array.isArray(value.connectDomains)
-    ? value.connectDomains.filter((entry): entry is string => typeof entry === "string")
+    ? value.connectDomains.filter(
+        (entry): entry is string => typeof entry === "string",
+      )
     : undefined;
   const resourceDomains = Array.isArray(value.resourceDomains)
-    ? value.resourceDomains.filter((entry): entry is string => typeof entry === "string")
+    ? value.resourceDomains.filter(
+        (entry): entry is string => typeof entry === "string",
+      )
     : undefined;
   const frameDomains = Array.isArray(value.frameDomains)
-    ? value.frameDomains.filter((entry): entry is string => typeof entry === "string")
+    ? value.frameDomains.filter(
+        (entry): entry is string => typeof entry === "string",
+      )
     : undefined;
   const baseUriDomains = Array.isArray(value.baseUriDomains)
-    ? value.baseUriDomains.filter((entry): entry is string => typeof entry === "string")
+    ? value.baseUriDomains.filter(
+        (entry): entry is string => typeof entry === "string",
+      )
     : undefined;
 
   if (connectDomains && connectDomains.length > 0) {
@@ -256,7 +273,9 @@ function normalizeWidgetPermissions(
   return isRecord(value) ? value : null;
 }
 
-function collectToolSnapshotSources(messages: ModelMessage[]): ToolSnapshotSource[] {
+function collectToolSnapshotSources(
+  messages: ModelMessage[],
+): ToolSnapshotSource[] {
   const toolInputsByCallId = new Map<
     string,
     { toolName: string; toolInput: Record<string, unknown> }
@@ -333,7 +352,8 @@ function collectToolSnapshotSources(messages: ModelMessage[]): ToolSnapshotSourc
 
       const toolOutput = unwrapToolResultPayload(part);
       const serverId =
-        readRecordString(part, "serverId") ?? readServerIdFromToolOutput(toolOutput);
+        readRecordString(part, "serverId") ??
+        readServerIdFromToolOutput(toolOutput);
       const sourceFromCall = toolInputsByCallId.get(toolCallId);
       const toolName =
         readRecordString(part, "toolName") ??
@@ -380,9 +400,9 @@ async function uploadEvalWidgetHtmlBlob(
     throw new Error(`Failed to upload widget HTML (${response.status})`);
   }
 
-  const body = (await response.json().catch(() => null)) as
-    | { storageId?: string }
-    | null;
+  const body = (await response.json().catch(() => null)) as {
+    storageId?: string;
+  } | null;
   return typeof body?.storageId === "string" ? body.storageId : undefined;
 }
 
@@ -399,10 +419,9 @@ async function captureEvalTraceWidgetSnapshots(params: {
   const snapshots = await Promise.all(
     sources.map(async (source) => {
       try {
-        const toolMetadata =
-          params.mcpClientManager.getAllToolsMetadata(source.serverId)?.[
-            source.toolName
-          ];
+        const toolMetadata = params.mcpClientManager.getAllToolsMetadata(
+          source.serverId,
+        )?.[source.toolName];
         if (!isRecord(toolMetadata) || !isMcpAppTool(toolMetadata)) {
           return null;
         }
@@ -551,36 +570,37 @@ function resolveConfiguredServerIds(args: {
       continue;
     }
 
-    const normalizedServerId =
-      availableServerIdsSet.has(trimmedServerRef)
-        ? trimmedServerRef
-        : availableServerIdByLowercase.get(trimmedServerRef.toLowerCase()) ??
-          (() => {
-            const projectServerId = projectServerIdByName.get(
-              trimmedServerRef.toLowerCase(),
+    const normalizedServerId = availableServerIdsSet.has(trimmedServerRef)
+      ? trimmedServerRef
+      : (availableServerIdByLowercase.get(trimmedServerRef.toLowerCase()) ??
+        (() => {
+          const projectServerId = projectServerIdByName.get(
+            trimmedServerRef.toLowerCase(),
+          );
+          if (projectServerId) {
+            return (
+              (availableServerIdsSet.has(projectServerId)
+                ? projectServerId
+                : undefined) ??
+              availableServerIdByLowercase.get(projectServerId.toLowerCase())
             );
-            if (projectServerId) {
-              return (
-                (availableServerIdsSet.has(projectServerId)
-                  ? projectServerId
-                  : undefined) ??
-                availableServerIdByLowercase.get(projectServerId.toLowerCase())
-              );
-            }
+          }
 
-            const serverName = serverNameByProjectServerId.get(
-              trimmedServerRef.toLowerCase(),
+          const serverName = serverNameByProjectServerId.get(
+            trimmedServerRef.toLowerCase(),
+          );
+          if (serverName) {
+            return (
+              (availableServerIdsSet.has(serverName)
+                ? serverName
+                : undefined) ??
+              availableServerIdByLowercase.get(serverName.toLowerCase())
             );
-            if (serverName) {
-              return (
-                (availableServerIdsSet.has(serverName) ? serverName : undefined) ??
-                availableServerIdByLowercase.get(serverName.toLowerCase())
-              );
-            }
+          }
 
-            return undefined;
-          })() ??
-          trimmedServerRef;
+          return undefined;
+        })() ??
+        trimmedServerRef);
 
     if (seen.has(normalizedServerId)) {
       continue;
@@ -965,9 +985,7 @@ async function finishIterationDirectly(
         : {}),
       ...(params.widgetSnapshots?.length
         ? {
-            widgetSnapshots: sanitizeForConvexTransport(
-              params.widgetSnapshots,
-            ),
+            widgetSnapshots: sanitizeForConvexTransport(params.widgetSnapshots),
           }
         : {}),
       error: params.error,
@@ -1004,6 +1022,7 @@ type RunIterationBaseParams = {
   suiteId?: string;
   modelApiKeys?: Record<string, string>;
   orgModelConfig?: ResolvedOrgModelConfig;
+  orgResolvedProvider?: OrgProviderResolvedConfig;
   convexClient: ConvexHttpClient;
   runId: string | null; // For cancellation checks
   abortSignal?: AbortSignal; // For aborting in-flight requests
@@ -1018,6 +1037,9 @@ type RunIterationBackendParams = RunIterationBaseParams & {
   convexHttpUrl: string;
   convexAuthToken: string;
   modelId: string;
+  endpointPath?: "/stream" | "/stream/org";
+  providerKey?: string;
+  projectId?: string;
 };
 
 function parseCustomProviderName(modelId: string): string | undefined {
@@ -1063,11 +1085,24 @@ function resolveEvalModelRuntime(args: {
   modelDefinition: ModelDefinition;
   modelApiKeys?: Record<string, string>;
   orgModelConfig?: ResolvedOrgModelConfig;
+  orgResolvedProvider?: OrgProviderResolvedConfig;
 }): {
   apiKey: string;
+  llmModel?: ReturnType<typeof createLlmModel>;
   baseUrls?: BaseUrls;
   customProviders?: CustomProviderConfig[];
 } {
+  if (args.orgResolvedProvider) {
+    assertOrgModelAllowed(args.orgResolvedProvider, args.test.model);
+    return {
+      apiKey: args.orgResolvedProvider.apiKey ?? "",
+      llmModel: buildOrgModelFromResolvedConfig(
+        args.orgResolvedProvider,
+        args.test.model,
+      ) as ReturnType<typeof createLlmModel>,
+    };
+  }
+
   const orgRuntime = args.orgModelConfig
     ? buildLlmRuntimeConfigFromOrgConfig(args.orgModelConfig)
     : undefined;
@@ -1094,6 +1129,28 @@ function resolveEvalModelRuntime(args: {
   };
 }
 
+async function resolveEvalOrgRuntime(args: {
+  orgRuntimeProjectId?: string;
+  modelDefinition: ModelDefinition;
+  modelId: string;
+  convexAuthToken: string;
+  modelApiKeys?: Record<string, string>;
+}): Promise<OrgProviderRuntime | undefined> {
+  if (!args.orgRuntimeProjectId || args.modelApiKeys) {
+    return undefined;
+  }
+  const providerKey = deriveOrgProviderKey(args.modelDefinition);
+  if (!providerKey.ok) {
+    throw new Error(providerKey.error);
+  }
+  return resolveOrgProviderRuntime(
+    args.orgRuntimeProjectId,
+    providerKey.key,
+    args.modelId,
+    { bearerToken: args.convexAuthToken },
+  );
+}
+
 const runIterationWithAiSdk = async ({
   test,
   runIndex,
@@ -1105,6 +1162,7 @@ const runIterationWithAiSdk = async ({
   modelDefinition,
   modelApiKeys,
   orgModelConfig,
+  orgResolvedProvider,
   convexClient,
   runId,
   abortSignal,
@@ -1171,6 +1229,7 @@ const runIterationWithAiSdk = async ({
     modelDefinition,
     modelApiKeys,
     orgModelConfig,
+    orgResolvedProvider,
   });
 
   const runStartedAt = Date.now();
@@ -1223,12 +1282,14 @@ const runIterationWithAiSdk = async ({
     null;
 
   try {
-    const llmModel = createLlmModel(
-      modelDefinition,
-      modelRuntime.apiKey,
-      modelRuntime.baseUrls,
-      modelRuntime.customProviders,
-    );
+    const llmModel =
+      modelRuntime.llmModel ??
+      createLlmModel(
+        modelDefinition,
+        modelRuntime.apiKey,
+        modelRuntime.baseUrls,
+        modelRuntime.customProviders,
+      );
 
     if (
       toolChoice &&
@@ -1548,6 +1609,9 @@ const runIterationViaBackend = async ({
   convexHttpUrl,
   convexAuthToken,
   modelId,
+  endpointPath = "/stream",
+  providerKey,
+  projectId,
   convexClient,
   runId,
   abortSignal,
@@ -1708,16 +1772,24 @@ const runIterationViaBackend = async ({
       const llmStartAbs = stepStartAbs;
       const stepMessageStartIndex = messageHistory.length;
       try {
-        const res = await fetch(`${convexHttpUrl}/stream`, {
+        const res = await fetch(`${convexHttpUrl}${endpointPath}`, {
           method: "POST",
           headers: {
             "content-type": "application/json",
             ...(authHeader ? { ...authHeader } : {}),
+            ...(endpointPath === "/stream/org"
+              ? {
+                  "X-Inspector-Service-Token":
+                    process.env.INSPECTOR_SERVICE_TOKEN ?? "",
+                }
+              : {}),
           },
           body: JSON.stringify({
             mode: "step",
             messages: JSON.stringify(messageHistory),
             model: modelId,
+            ...(providerKey ? { providerKey } : {}),
+            ...(projectId ? { projectId } : {}),
             ...(systemPrompt ? { systemPrompt } : {}),
             ...(temperature == null ? {} : { temperature }),
             ...(toolChoice ? { toolChoice } : {}),
@@ -2073,6 +2145,7 @@ const runTestCase = async (params: {
   recorder: SuiteRunRecorder | null;
   modelApiKeys?: Record<string, string>;
   orgModelConfig?: ResolvedOrgModelConfig;
+  orgRuntimeProjectId?: string;
   convexHttpUrl: string;
   convexAuthToken: string;
   convexClient: ConvexHttpClient;
@@ -2089,6 +2162,7 @@ const runTestCase = async (params: {
     recorder,
     modelApiKeys,
     orgModelConfig,
+    orgRuntimeProjectId,
     convexHttpUrl,
     convexAuthToken,
     convexClient,
@@ -2108,11 +2182,20 @@ const runTestCase = async (params: {
     resolvedModelId,
     modelDefinition.provider,
   );
+  const orgRuntime = isJamModel
+    ? undefined
+    : await resolveEvalOrgRuntime({
+        orgRuntimeProjectId,
+        modelDefinition,
+        modelId: resolvedModelId,
+        convexAuthToken,
+        modelApiKeys,
+      });
 
   const outcomes: EvalIterationOutcome[] = [];
 
   for (let runIndex = 0; runIndex < test.runs; runIndex++) {
-    if (isJamModel) {
+    if (isJamModel || orgRuntime?.runtimeLocation === "cloud") {
       const iterationOutcome = await runIterationViaBackend({
         test,
         runIndex,
@@ -2124,6 +2207,16 @@ const runTestCase = async (params: {
         convexHttpUrl,
         convexAuthToken,
         modelId: resolvedModelId,
+        endpointPath:
+          orgRuntime?.runtimeLocation === "cloud" ? "/stream/org" : "/stream",
+        providerKey:
+          orgRuntime?.runtimeLocation === "cloud"
+            ? orgRuntime.providerKey
+            : undefined,
+        projectId:
+          orgRuntime?.runtimeLocation === "cloud"
+            ? orgRuntimeProjectId
+            : undefined,
         convexClient,
         modelApiKeys,
         orgModelConfig,
@@ -2146,6 +2239,10 @@ const runTestCase = async (params: {
       modelDefinition,
       modelApiKeys,
       orgModelConfig,
+      orgResolvedProvider:
+        orgRuntime?.runtimeLocation === "local"
+          ? orgRuntime.provider
+          : undefined,
       convexClient,
       runId,
       abortSignal,
@@ -2163,6 +2260,7 @@ export const runEvalSuiteWithAiSdk = async ({
   config,
   modelApiKeys,
   orgModelConfig,
+  orgRuntimeProjectId,
   convexClient,
   convexHttpUrl,
   convexAuthToken,
@@ -2236,6 +2334,7 @@ export const runEvalSuiteWithAiSdk = async ({
         recorder,
         modelApiKeys,
         orgModelConfig,
+        orgRuntimeProjectId,
         convexHttpUrl,
         convexAuthToken,
         convexClient,
@@ -2396,6 +2495,7 @@ const streamIterationWithAiSdk = async ({
   modelDefinition,
   modelApiKeys,
   orgModelConfig,
+  orgResolvedProvider,
   convexClient,
   runId,
   abortSignal,
@@ -2464,6 +2564,7 @@ const streamIterationWithAiSdk = async ({
     modelDefinition,
     modelApiKeys,
     orgModelConfig,
+    orgResolvedProvider,
   });
 
   const runStartedAt = Date.now();
@@ -2516,12 +2617,14 @@ const streamIterationWithAiSdk = async ({
     null;
 
   try {
-    const llmModel = createLlmModel(
-      modelDefinition,
-      modelRuntime.apiKey,
-      modelRuntime.baseUrls,
-      modelRuntime.customProviders,
-    );
+    const llmModel =
+      modelRuntime.llmModel ??
+      createLlmModel(
+        modelDefinition,
+        modelRuntime.apiKey,
+        modelRuntime.baseUrls,
+        modelRuntime.customProviders,
+      );
 
     if (
       toolChoice &&
@@ -2944,6 +3047,9 @@ const streamIterationViaBackend = async ({
   convexHttpUrl,
   convexAuthToken,
   modelId,
+  endpointPath = "/stream",
+  providerKey,
+  projectId,
   convexClient,
   runId,
   abortSignal,
@@ -3112,16 +3218,24 @@ const streamIterationViaBackend = async ({
       const llmStartAbs = stepStartAbs;
       const stepMessageStartIndex = messageHistory.length;
       try {
-        const res = await fetch(`${convexHttpUrl}/stream`, {
+        const res = await fetch(`${convexHttpUrl}${endpointPath}`, {
           method: "POST",
           headers: {
             "content-type": "application/json",
             ...(authHeader ? { ...authHeader } : {}),
+            ...(endpointPath === "/stream/org"
+              ? {
+                  "X-Inspector-Service-Token":
+                    process.env.INSPECTOR_SERVICE_TOKEN ?? "",
+                }
+              : {}),
           },
           body: JSON.stringify({
             skipChatIngestion: true,
             messages: JSON.stringify(messageHistory),
             model: modelId,
+            ...(providerKey ? { providerKey } : {}),
+            ...(projectId ? { projectId } : {}),
             ...(systemPrompt ? { systemPrompt } : {}),
             ...(temperature == null ? {} : { temperature }),
             ...(toolChoice ? { toolChoice } : {}),
@@ -3305,14 +3419,11 @@ const streamIterationViaBackend = async ({
 
         // Update accumulated usage from stream metadata
         accumulatedUsage.inputTokens =
-          (accumulatedUsage.inputTokens || 0) +
-          (stepUsage.inputTokens || 0);
+          (accumulatedUsage.inputTokens || 0) + (stepUsage.inputTokens || 0);
         accumulatedUsage.outputTokens =
-          (accumulatedUsage.outputTokens || 0) +
-          (stepUsage.outputTokens || 0);
+          (accumulatedUsage.outputTokens || 0) + (stepUsage.outputTokens || 0);
         accumulatedUsage.totalTokens =
-          (accumulatedUsage.totalTokens || 0) +
-          (stepUsage.totalTokens || 0);
+          (accumulatedUsage.totalTokens || 0) + (stepUsage.totalTokens || 0);
 
         // Reconstruct assistant message from stream chunks
         const assistantContent: unknown[] = [];
@@ -3700,6 +3811,7 @@ export const streamTestCase = async (params: {
   recorder: SuiteRunRecorder | null;
   modelApiKeys?: Record<string, string>;
   orgModelConfig?: ResolvedOrgModelConfig;
+  orgRuntimeProjectId?: string;
   convexHttpUrl: string;
   convexAuthToken: string;
   convexClient: ConvexHttpClient;
@@ -3717,6 +3829,7 @@ export const streamTestCase = async (params: {
     recorder,
     modelApiKeys,
     orgModelConfig,
+    orgRuntimeProjectId,
     convexHttpUrl,
     convexAuthToken,
     convexClient,
@@ -3737,11 +3850,20 @@ export const streamTestCase = async (params: {
     resolvedModelId,
     modelDefinition.provider,
   );
+  const orgRuntime = isJamModel
+    ? undefined
+    : await resolveEvalOrgRuntime({
+        orgRuntimeProjectId,
+        modelDefinition,
+        modelId: resolvedModelId,
+        convexAuthToken,
+        modelApiKeys,
+      });
 
   const outcomes: EvalIterationOutcome[] = [];
 
   for (let runIndex = 0; runIndex < test.runs; runIndex++) {
-    if (isJamModel) {
+    if (isJamModel || orgRuntime?.runtimeLocation === "cloud") {
       const iterationOutcome = await streamIterationViaBackend({
         test,
         runIndex,
@@ -3753,6 +3875,16 @@ export const streamTestCase = async (params: {
         convexHttpUrl,
         convexAuthToken,
         modelId: resolvedModelId,
+        endpointPath:
+          orgRuntime?.runtimeLocation === "cloud" ? "/stream/org" : "/stream",
+        providerKey:
+          orgRuntime?.runtimeLocation === "cloud"
+            ? orgRuntime.providerKey
+            : undefined,
+        projectId:
+          orgRuntime?.runtimeLocation === "cloud"
+            ? orgRuntimeProjectId
+            : undefined,
         convexClient,
         modelApiKeys,
         orgModelConfig,
@@ -3776,6 +3908,10 @@ export const streamTestCase = async (params: {
       modelDefinition,
       modelApiKeys,
       orgModelConfig,
+      orgResolvedProvider:
+        orgRuntime?.runtimeLocation === "local"
+          ? orgRuntime.provider
+          : undefined,
       convexClient,
       runId,
       abortSignal,

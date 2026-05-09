@@ -1,21 +1,28 @@
 import { useEffect, useMemo, useState } from "react";
+import { useConvexAuth, useQuery } from "convex/react";
 import type { ModelDefinition } from "@/shared/types";
-import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
-import { useCustomProviders } from "@/hooks/use-custom-providers";
+import { useSharedAppState } from "@/state/app-state-context";
+import { useOllamaConfig } from "@/hooks/use-ollama-config";
 import {
   detectOllamaModels,
   detectOllamaToolCapableModels,
 } from "@/lib/ollama-utils";
-import { buildAvailableModels } from "@/components/chat-v2/shared/model-helpers";
+import {
+  buildAvailableModelsFromOrgConfig,
+  type OrgVisibleConfig,
+} from "@/components/chat-v2/shared/model-helpers";
+import type { OrgModelProvider } from "@/hooks/use-org-model-config";
 
 export function useAvailableEvalModels() {
-  const {
-    hasToken,
-    getOpenRouterSelectedModels,
-    getOllamaBaseUrl,
-    getAzureBaseUrl,
-  } = useAiProviderKeys();
-  const { customProviders } = useCustomProviders();
+  const { isAuthenticated } = useConvexAuth();
+  const appState = useSharedAppState();
+  const activeProject = appState.projects[appState.activeProjectId];
+  const organizationId = activeProject?.organizationId ?? null;
+  const orgModelConfig = useQuery(
+    "organizationModelProviders:getVisibleConfig" as any,
+    isAuthenticated && organizationId ? ({ organizationId } as any) : "skip",
+  ) as { providers: OrgModelProvider[] } | undefined;
+  const { getOllamaBaseUrl } = useOllamaConfig();
   const [ollamaModels, setOllamaModels] = useState<ModelDefinition[]>([]);
   const [isOllamaRunning, setIsOllamaRunning] = useState(false);
 
@@ -67,25 +74,22 @@ export function useAvailableEvalModels() {
     };
   }, [getOllamaBaseUrl]);
 
-  const availableModels = useMemo(
-    () =>
-      buildAvailableModels({
-        hasToken,
-        getOpenRouterSelectedModels,
-        isOllamaRunning,
-        ollamaModels,
-        getAzureBaseUrl,
-        customProviders,
-      }),
-    [
-      hasToken,
-      getOpenRouterSelectedModels,
-      isOllamaRunning,
-      ollamaModels,
-      getAzureBaseUrl,
-      customProviders,
-    ],
-  );
+  const availableModels = useMemo(() => {
+    const orgModels = buildAvailableModelsFromOrgConfig(
+      orgModelConfig as OrgVisibleConfig | undefined,
+    );
+    if (!isOllamaRunning || ollamaModels.length === 0) {
+      return orgModels;
+    }
+    return orgModels.concat(
+      ollamaModels.filter(
+        (ollamaModel) =>
+          !orgModels.some(
+            (model) => String(model.id) === String(ollamaModel.id),
+          ),
+      ),
+    );
+  }, [orgModelConfig, isOllamaRunning, ollamaModels]);
 
   return { availableModels };
 }

@@ -36,14 +36,9 @@ import {
   type ModelProvider,
   isGPT5Model,
 } from "@/shared/types";
-import {
-  ProviderTokens,
-  useAiProviderKeys,
-} from "@/hooks/use-ai-provider-keys";
-import { useCustomProviders } from "@/hooks/use-custom-providers";
+import { useOllamaConfig } from "@/hooks/use-ollama-config";
 import { usePersistedModel } from "@/hooks/use-persisted-model";
 import {
-  buildAvailableModels,
   buildAvailableModelsFromOrgConfig,
   getDefaultModel,
   type OrgVisibleConfig,
@@ -59,10 +54,7 @@ import {
 import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
 import { getToolsMetadata, ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { countTextTokens } from "@/lib/apis/mcp-tokenizer-api";
-import {
-  authFetch,
-  getAuthHeaders as getSessionAuthHeaders,
-} from "@/lib/session-token";
+import { getAuthHeaders as getSessionAuthHeaders } from "@/lib/session-token";
 import {
   notifyMCPJamLimitError,
   notifyMCPJamLimitErrorFromResponse,
@@ -104,7 +96,7 @@ export interface UseChatSessionOptions {
   selectedServers: string[];
   /** Visibility to apply when persisting a new direct chat */
   directVisibility?: "private" | "project";
-  /** Sanitized organization provider config for hosted org-backed projects */
+  /** Sanitized organization provider config for org-backed projects */
   hostedOrgModelConfig?: OrgVisibleConfig;
   /** Hosted runtime context (project, server IDs, OAuth tokens, share/chatbox scope) */
   hostedContext?: HostedRuntimeContext;
@@ -197,7 +189,7 @@ export interface UseChatSessionReturn {
     options?: {
       resetReason?: ChatSessionResetReason;
       toolRenderOverrides?: Record<string, ToolRenderOverride>;
-    }
+    },
   ) => void;
   loadChatSession: (
     session: {
@@ -237,7 +229,7 @@ export interface UseChatSessionReturn {
     options?: {
       shouldRestoreResumeConfig?: () => boolean;
       shouldApply?: () => boolean;
-    }
+    },
   ) => Promise<void>;
   syncResumedVersion: (version: number | null) => void;
 
@@ -398,7 +390,7 @@ async function resolveHydratedTurnTraces(
         spansBlobUrl?: string | null;
         modelId?: string;
       }>
-    | undefined
+    | undefined,
 ): Promise<HydratedTurnTrace[] | undefined> {
   // Preserve the `undefined` sentinel so `queueSessionHydration` can tell
   // "caller didn't provide traces — leave existing state alone" apart from
@@ -429,7 +421,7 @@ async function resolveHydratedTurnTraces(
           // numbers in the trace viewer.
           console.warn(
             `[useChatSession] Failed to fetch spans for turn ${trace.turnId}:`,
-            err
+            err,
           );
         }
       }
@@ -443,13 +435,13 @@ async function resolveHydratedTurnTraces(
         spans,
         modelId: trace.modelId,
       };
-    })
+    }),
   );
   return results;
 }
 
 async function resolveHydratedWidgetSnapshots(
-  raw: PersistedWidgetSnapshot[] | undefined
+  raw: PersistedWidgetSnapshot[] | undefined,
 ): Promise<PersistedWidgetSnapshot[] | undefined> {
   if (raw === undefined) {
     return undefined;
@@ -477,23 +469,23 @@ async function resolveHydratedWidgetSnapshots(
       } catch (err) {
         console.warn(
           `[useChatSession] Failed to fetch tool output for snapshot ${snapshot.toolCallId}:`,
-          err
+          err,
         );
         return snapshot;
       }
-    })
+    }),
   );
 }
 
 function buildLiveTraceStateFromTurnTraces(
-  traces: HydratedTurnTrace[]
+  traces: HydratedTurnTrace[],
 ): LiveTraceAccumulatorState {
   if (traces.length === 0) {
     return createEmptyLiveTraceState();
   }
 
   const ordered = [...traces].sort(
-    (left, right) => left.promptIndex - right.promptIndex
+    (left, right) => left.promptIndex - right.promptIndex,
   );
   const turnOrder: string[] = [];
   const turns: Record<string, LiveTraceTurnState> = {};
@@ -525,7 +517,7 @@ function buildLiveTraceStateFromTurnTraces(
 }
 
 function isTraceEventDataPart(
-  value: unknown
+  value: unknown,
 ): value is { type: "data-trace-event"; data: LiveChatTraceEvent } {
   if (!value || typeof value !== "object") {
     return false;
@@ -536,7 +528,7 @@ function isTraceEventDataPart(
 }
 
 function dedupeTraceToolCalls(
-  toolCalls: LiveChatTraceToolCall[] | null | undefined
+  toolCalls: LiveChatTraceToolCall[] | null | undefined,
 ): LiveChatTraceToolCall[] {
   if (!Array.isArray(toolCalls) || toolCalls.length === 0) {
     return [];
@@ -568,12 +560,12 @@ function dedupeTraceToolCalls(
 
 function upsertRequestPayloadEntry(
   entries: LiveChatTraceRequestPayloadEntry[],
-  nextEntry: LiveChatTraceRequestPayloadEntry
+  nextEntry: LiveChatTraceRequestPayloadEntry,
 ): LiveChatTraceRequestPayloadEntry[] {
   const existingIndex = entries.findIndex(
     (entry) =>
       entry.turnId === nextEntry.turnId &&
-      entry.stepIndex === nextEntry.stepIndex
+      entry.stepIndex === nextEntry.stepIndex,
   );
 
   if (existingIndex < 0) {
@@ -581,13 +573,13 @@ function upsertRequestPayloadEntry(
   }
 
   return entries.map((entry, index) =>
-    index === existingIndex ? nextEntry : entry
+    index === existingIndex ? nextEntry : entry,
   );
 }
 
 function applyLiveTraceEvent(
   state: LiveTraceAccumulatorState,
-  event: LiveChatTraceEvent
+  event: LiveChatTraceEvent,
 ): LiveTraceAccumulatorState {
   const nextEvents = [...state.events, event];
   const baseState: LiveTraceAccumulatorState = {
@@ -600,7 +592,7 @@ function applyLiveTraceEvent(
 
   const ensureTurnState = (
     turnId: string,
-    promptIndex: number
+    promptIndex: number,
   ): LiveTraceTurnState =>
     baseState.turns[turnId] ?? {
       turnId,
@@ -655,14 +647,14 @@ function applyLiveTraceEvent(
             promptIndex: event.promptIndex,
             stepIndex: event.stepIndex,
             payload: event.payload,
-          }
+          },
         ),
       };
     }
     case "trace_snapshot": {
       const turnState = ensureTurnState(
         event.turnId,
-        event.snapshot.promptIndex
+        event.snapshot.promptIndex,
       );
       const turnExists = baseState.turnOrder.includes(event.turnId);
       return {
@@ -680,7 +672,7 @@ function applyLiveTraceEvent(
               : [],
             usage: event.snapshot.usage,
             actualToolCalls: dedupeTraceToolCalls(
-              event.snapshot.actualToolCalls
+              event.snapshot.actualToolCalls,
             ),
           },
         },
@@ -728,7 +720,7 @@ function applyLiveTraceEvent(
 }
 
 function buildLiveTraceEnvelope(
-  state: LiveTraceAccumulatorState
+  state: LiveTraceAccumulatorState,
 ): LiveChatTraceEnvelope | null {
   if (state.events.length === 0 && !state.anySnapshotSeen) {
     return null;
@@ -812,7 +804,7 @@ function mergePreviewSpansIntoLiveEnvelope(
   envelope: LiveChatTraceEnvelope,
   state: LiveTraceAccumulatorState,
   previewWallElapsedMs: number | undefined,
-  transcriptFromUi: ModelMessage[] | null
+  transcriptFromUi: ModelMessage[] | null,
 ): LiveChatTraceEnvelope {
   if (!state.activeTurnId || state.activeTurnHasSnapshot) {
     return envelope;
@@ -833,7 +825,7 @@ function mergePreviewSpansIntoLiveEnvelope(
   });
   const previewIndexed = applyPreviewSpansUserMessageIndices(
     preview,
-    transcript
+    transcript,
   );
 
   const existing = envelope.spans ?? [];
@@ -870,7 +862,7 @@ function isTransientMessage(message: UIMessage): boolean {
 
 function shouldForkChatSession(
   previousMessages: UIMessage[],
-  nextMessages: UIMessage[]
+  nextMessages: UIMessage[],
 ): boolean {
   const previousPersistentIds = previousMessages
     .filter((message) => !isTransientMessage(message))
@@ -884,13 +876,13 @@ function shouldForkChatSession(
   }
 
   return nextPersistentIds.every(
-    (messageId, index) => messageId === previousPersistentIds[index]
+    (messageId, index) => messageId === previousPersistentIds[index],
   );
 }
 
 function areAuthHeadersEqual(
   a: Record<string, string> | undefined,
-  b: Record<string, string> | undefined
+  b: Record<string, string> | undefined,
 ): boolean {
   if (a === b) return true;
   if (!a || !b) return !a && !b;
@@ -908,7 +900,7 @@ type HostedSessionScope = {
 
 function areHostedSessionScopesEqual(
   a: HostedSessionScope,
-  b: HostedSessionScope
+  b: HostedSessionScope,
 ): boolean {
   return (
     a.projectId === b.projectId &&
@@ -958,14 +950,7 @@ export function useChatSession({
     onResetRef.current = onReset;
   }, [onReset]);
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
-  const {
-    hasToken,
-    getToken,
-    getOpenRouterSelectedModels,
-    getOllamaBaseUrl,
-    getAzureBaseUrl,
-  } = useAiProviderKeys();
-  const { customProviders, getCustomProviderByName } = useCustomProviders();
+  const { getOllamaBaseUrl } = useOllamaConfig();
 
   // Local state
   const [ollamaModels, setOllamaModels] = useState<ModelDefinition[]>([]);
@@ -1008,7 +993,7 @@ export function useChatSession({
   const [systemPromptTokenCountLoading, setSystemPromptTokenCountLoading] =
     useState(false);
   const [requireToolApproval, setRequireToolApproval] = useState(
-    initialRequireToolApproval
+    initialRequireToolApproval,
   );
   const requireToolApprovalRef = useRef(requireToolApproval);
   requireToolApprovalRef.current = requireToolApproval;
@@ -1024,7 +1009,7 @@ export function useChatSession({
   const skipNextForkDetectionRef = useRef(false);
   const hasResolvedAuthHeadersRef = useRef(false);
   const lastResolvedAuthHeadersRef = useRef<Record<string, string> | undefined>(
-    undefined
+    undefined,
   );
   const lastResolvedHostedScopeRef = useRef<HostedSessionScope>({
     projectId: undefined,
@@ -1032,18 +1017,18 @@ export function useChatSession({
     chatboxToken: undefined,
   });
   const pendingSessionHydrationRef = useRef<PendingSessionHydration | null>(
-    null
+    null,
   );
   const pendingLiveTraceStateRef = useRef<LiveTraceAccumulatorState | null>(
-    null
+    null,
   );
   const selectedServersSignature = useMemo(
     () => selectedServers.join("\u0000"),
-    [selectedServers]
+    [selectedServers],
   );
   const liveTraceEnvelopeBase = useMemo(
     () => buildLiveTraceEnvelope(liveTraceState),
-    [liveTraceState]
+    [liveTraceState],
   );
   const hasTraceSnapshot = liveTraceState.activeTurnId
     ? liveTraceState.activeTurnHasSnapshot
@@ -1081,7 +1066,7 @@ export function useChatSession({
       restoredToolRenderOverridesRef.current = overrides;
       setRestoredToolRenderOverrides(overrides);
     },
-    []
+    [],
   );
   const clearPendingSessionHydration = useCallback(() => {
     // Drop any queued trace state so a subsequent resetChat / fork does not
@@ -1099,16 +1084,20 @@ export function useChatSession({
 
   // Build available models
   const availableModels = useMemo(() => {
-    const models = buildAvailableModels({
-      hasToken,
-      getOpenRouterSelectedModels,
-      isOllamaRunning,
-      ollamaModels,
-      getAzureBaseUrl,
-      customProviders,
-    });
+    const models = buildAvailableModelsFromOrgConfig(hostedOrgModelConfig);
+    const modelsWithLocalOllama =
+      isOllamaRunning && ollamaModels.length > 0
+        ? models.concat(
+            ollamaModels.filter(
+              (ollamaModel) =>
+                !models.some(
+                  (model) => String(model.id) === String(ollamaModel.id),
+                ),
+            ),
+          )
+        : models;
     const visibleModels = !isAuthenticated
-      ? models.map((model) => {
+      ? modelsWithLocalOllama.map((model) => {
           const modelId = String(model.id);
           if (
             !isMCPJamProvidedModel(modelId) ||
@@ -1123,44 +1112,9 @@ export function useChatSession({
             disabledReason: GUEST_LOCKED_MODEL_REASON,
           };
         })
-      : models;
-    if (HOSTED_MODE) {
-      if (hostedOrgModelConfig) {
-        const orgModels =
-          buildAvailableModelsFromOrgConfig(hostedOrgModelConfig);
-        return !isAuthenticated
-          ? orgModels.map((model) => {
-              const modelId = String(model.id);
-              if (
-                !isMCPJamProvidedModel(modelId) ||
-                isMCPJamGuestAllowedModel(modelId)
-              ) {
-                return model;
-              }
-
-              return {
-                ...model,
-                disabled: true,
-                disabledReason: GUEST_LOCKED_MODEL_REASON,
-              };
-            })
-          : orgModels;
-      }
-      return visibleModels.filter((model) =>
-        isMCPJamProvidedModel(String(model.id))
-      );
-    }
+      : modelsWithLocalOllama;
     return visibleModels;
-  }, [
-    hasToken,
-    getOpenRouterSelectedModels,
-    isOllamaRunning,
-    ollamaModels,
-    getAzureBaseUrl,
-    isAuthenticated,
-    customProviders,
-    hostedOrgModelConfig,
-  ]);
+  }, [isOllamaRunning, ollamaModels, isAuthenticated, hostedOrgModelConfig]);
 
   // Model selection with persistence
   const {
@@ -1173,11 +1127,11 @@ export function useChatSession({
   } = usePersistedModel();
   const selectableModels = useMemo(
     () => availableModels.filter((model) => !model.disabled),
-    [availableModels]
+    [availableModels],
   );
   const selectedModel = useMemo<ModelDefinition>(() => {
     const fallback = getDefaultModel(
-      selectableModels.length > 0 ? selectableModels : availableModels
+      selectableModels.length > 0 ? selectableModels : availableModels,
     );
     const resolveAvailableModel = (modelId?: string | null) => {
       if (!modelId) {
@@ -1195,7 +1149,7 @@ export function useChatSession({
 
       return (
         availableModels.find(
-          (model) => String(model.id) === modelId && !model.disabled
+          (model) => String(model.id) === modelId && !model.disabled,
         ) ?? null
       );
     };
@@ -1217,7 +1171,7 @@ export function useChatSession({
       }
       setSelectedModelId(String(model.id));
     },
-    [initialModelId, setSelectedModelId]
+    [initialModelId, setSelectedModelId],
   );
 
   const isMcpJamModel = useMemo(() => {
@@ -1229,18 +1183,16 @@ export function useChatSession({
 
   const chatFetch = useCallback(
     async (input: RequestInfo | URL, init?: RequestInit) => {
-      const response = HOSTED_MODE
-        ? await authFetch(input, init)
-        : await fetch(input, init);
+      const response = await fetch(input, init);
       if (!response.ok) {
         await notifyMCPJamLimitErrorFromResponse(response);
-        if (HOSTED_MODE) {
+        if (String(input).includes("/api/web/")) {
           await ingestHostedRpcLogsFromResponse(response);
         }
       }
       return response;
     },
-    []
+    [],
   );
 
   const handleChatError = useCallback((chatError: Error) => {
@@ -1267,18 +1219,8 @@ export function useChatSession({
 
   // Create transport
   const transport = useMemo(() => {
-    let apiKey: string;
-    if (
-      selectedModel.provider === "custom" &&
-      selectedModel.customProviderName
-    ) {
-      // For custom providers, the API key is embedded in the provider config
-      const cp = getCustomProviderByName(selectedModel.customProviderName);
-      apiKey = cp?.apiKey || "";
-    } else {
-      apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
-    }
     const isGpt5 = isGPT5Model(selectedModel.id);
+    const isOllamaModel = selectedModel.provider === "ollama";
 
     // Merge session auth headers with workos auth headers
     const sessionHeaders = getSessionAuthHeaders();
@@ -1286,13 +1228,10 @@ export function useChatSession({
       string,
       string
     >;
-    const transportHeaders = HOSTED_MODE
-      ? undefined
-      : Object.keys(mergedHeaders).length > 0
-      ? mergedHeaders
-      : undefined;
+    const transportHeaders =
+      Object.keys(mergedHeaders).length > 0 ? mergedHeaders : undefined;
 
-    const chatApi = HOSTED_MODE ? "/api/web/chat-v2" : "/api/mcp/chat-v2";
+    const chatApi = isOllamaModel ? "/api/mcp/chat-v2" : "/api/web/chat-v2";
 
     // Build hosted body based on whether we have a project.
     // Signed-in users are blocked from submitting until hostedProjectId loads
@@ -1338,22 +1277,18 @@ export function useChatSession({
       fetch: chatFetch,
       body: () => ({
         model: selectedModel,
-        ...(HOSTED_MODE ? {} : { apiKey }),
         ...(isGpt5 ? {} : { temperature }),
         systemPrompt,
-        ...(HOSTED_MODE
-          ? buildHostedBody()
-          : {
+        ...(isOllamaModel
+          ? {
               selectedServers,
               chatSessionId,
               directVisibility,
-              // Pass projectId for BYOK direct-chat history persistence
+              ollamaBaseUrl: getOllamaBaseUrl(),
               ...(hostedProjectId ? { projectId: hostedProjectId } : {}),
-            }),
+            }
+          : buildHostedBody()),
         requireToolApproval: requireToolApprovalRef.current,
-        ...(!HOSTED_MODE && customProviders.length > 0
-          ? { customProviders }
-          : {}),
         ...(resumedVersionRef.current !== null
           ? { expectedVersion: resumedVersionRef.current }
           : {}),
@@ -1362,9 +1297,6 @@ export function useChatSession({
     });
   }, [
     selectedModel,
-    getToken,
-    getCustomProviderByName,
-    customProviders,
     authHeaders,
     temperature,
     systemPrompt,
@@ -1378,6 +1310,7 @@ export function useChatSession({
     hostedShareToken,
     hostedChatboxToken,
     hostedChatboxSurface,
+    getOllamaBaseUrl,
     chatFetch,
     // requireToolApproval read from ref at request time
   ]);
@@ -1393,7 +1326,7 @@ export function useChatSession({
       reconnectToStream: (options) =>
         latestTransportRef.current.reconnectToStream(options),
     }),
-    []
+    [],
   );
 
   // useChat hook
@@ -1439,7 +1372,7 @@ export function useChatSession({
         syncResumedVersion(hydration.resumedVersion);
         syncRestoredToolRenderOverrides(hydration.toolRenderOverrides ?? {});
         setPersistedSnapshotToolCallIds(
-          hydration.persistedSnapshotToolCallIds ?? []
+          hydration.persistedSnapshotToolCallIds ?? [],
         );
         if (hydratedTraceState !== null) {
           setLiveTraceState(hydratedTraceState);
@@ -1458,7 +1391,7 @@ export function useChatSession({
         setChatSessionId(hydration.sessionId);
       });
     },
-    [clearPendingSessionHydration, baseSetMessages, syncResumedVersion]
+    [clearPendingSessionHydration, baseSetMessages, syncResumedVersion],
   );
 
   const [traceTranscriptFromUi, setTraceTranscriptFromUi] = useState<
@@ -1467,7 +1400,7 @@ export function useChatSession({
 
   useEffect(() => {
     const persistent = messages.filter(
-      (message) => !isTransientMessage(message)
+      (message) => !isTransientMessage(message),
     );
     if (persistent.length === 0) {
       setTraceTranscriptFromUi(null);
@@ -1478,7 +1411,7 @@ export function useChatSession({
       persistent.map(({ id: _omitId, ...rest }) => rest) as Parameters<
         typeof convertToModelMessages
       >[0],
-      { ignoreIncompleteToolCalls: true }
+      { ignoreIncompleteToolCalls: true },
     ).then((modelMessages) => {
       if (!cancelled) {
         setTraceTranscriptFromUi(modelMessages);
@@ -1500,7 +1433,7 @@ export function useChatSession({
     }
     const id = window.setInterval(
       () => setPreviewWallTick((previous) => previous + 1),
-      400
+      400,
     );
     return () => clearInterval(id);
   }, [
@@ -1535,7 +1468,7 @@ export function useChatSession({
       liveTraceEnvelopeBase,
       liveTraceState,
       previewWallElapsedMs,
-      traceTranscriptFromUi
+      traceTranscriptFromUi,
     );
   }, [
     liveTraceEnvelopeBase,
@@ -1601,7 +1534,7 @@ export function useChatSession({
         return nextMessages;
       });
     },
-    [baseSetMessages]
+    [baseSetMessages],
   );
 
   useLayoutEffect(() => {
@@ -1616,7 +1549,7 @@ export function useChatSession({
     syncResumedVersion(pendingHydration.resumedVersion);
     syncRestoredToolRenderOverrides(pendingHydration.toolRenderOverrides ?? {});
     setPersistedSnapshotToolCallIds(
-      pendingHydration.persistedSnapshotToolCallIds ?? []
+      pendingHydration.persistedSnapshotToolCallIds ?? [],
     );
     // Force a React state update so that useSyncExternalStore re-reads the
     // messages snapshot that was just written to the Chat store above.
@@ -1651,7 +1584,7 @@ export function useChatSession({
         baseSendMessage({ text });
       }
     },
-    [baseSendMessage]
+    [baseSendMessage],
   );
 
   // Reset chat
@@ -1677,7 +1610,7 @@ export function useChatSession({
       options?: {
         resetReason?: ChatSessionResetReason;
         toolRenderOverrides?: Record<string, ToolRenderOverride>;
-      }
+      },
     ) => {
       skipNextForkDetectionRef.current = true;
       void queueSessionHydration({
@@ -1689,7 +1622,7 @@ export function useChatSession({
       });
       onResetRef.current?.(options?.resetReason ?? "fork");
     },
-    [queueSessionHydration]
+    [queueSessionHydration],
   );
 
   const loadChatSession = useCallback(
@@ -1719,7 +1652,7 @@ export function useChatSession({
       options?: {
         shouldRestoreResumeConfig?: () => boolean;
         shouldApply?: () => boolean;
-      }
+      },
     ) => {
       let uiMessages: UIMessage[] = [];
 
@@ -1727,7 +1660,7 @@ export function useChatSession({
         const response = await fetch(session.messagesBlobUrl);
         if (!response.ok) {
           throw new Error(
-            `Failed to fetch chat transcript (${response.status})`
+            `Failed to fetch chat transcript (${response.status})`,
           );
         }
         const transcript = await response.json();
@@ -1737,19 +1670,19 @@ export function useChatSession({
       // Build toolRenderOverrides from widget snapshots if available
       let overrides: Record<string, ToolRenderOverride> = {};
       const hydratedWidgetSnapshots = await resolveHydratedWidgetSnapshots(
-        session.widgetSnapshots
+        session.widgetSnapshots,
       );
       const persistedSnapshotToolCallIds =
         hydratedWidgetSnapshots?.map((snapshot) => snapshot.toolCallId) ?? [];
       if (hydratedWidgetSnapshots && hydratedWidgetSnapshots.length > 0) {
         const traceSnapshots = snapshotsToTraceWidgetSnapshots(
-          hydratedWidgetSnapshots
+          hydratedWidgetSnapshots,
         );
         overrides = buildToolRenderOverridesFromSnapshots(traceSnapshots);
       }
 
       const hydratedTurnTraces = await resolveHydratedTurnTraces(
-        session.turnTraces
+        session.turnTraces,
       );
 
       if (options?.shouldApply && !options.shouldApply()) {
@@ -1783,7 +1716,7 @@ export function useChatSession({
       });
       onResetRef.current?.("hydrate");
     },
-    [queueSessionHydration]
+    [queueSessionHydration],
   );
 
   useEffect(() => {
@@ -1833,12 +1766,7 @@ export function useChatSession({
           resolvedAuthHeaders = undefined;
           setAuthHeaders(undefined);
         }
-      } else if (
-        !resolved &&
-        active &&
-        HOSTED_MODE &&
-        isHostedGuest
-      ) {
+      } else if (!resolved && active && HOSTED_MODE && isHostedGuest) {
         const guestToken = await getGuestBearerToken();
         if (!active) return;
         if (guestToken) {
@@ -1912,7 +1840,9 @@ export function useChatSession({
     syncRestoredToolRenderOverrides,
   ]);
 
-  // Ollama model detection
+  // Ollama model detection — local mode only. Hosted mode never surfaces
+  // Ollama: the browser may be able to reach localhost, but Convex (which
+  // owns the chat path in hosted mode) cannot.
   useEffect(() => {
     if (HOSTED_MODE) {
       setIsOllamaRunning(false);
@@ -1921,9 +1851,8 @@ export function useChatSession({
     }
 
     const checkOllama = async () => {
-      const { isRunning, availableModels } = await detectOllamaModels(
-        getOllamaBaseUrl()
-      );
+      const { isRunning, availableModels } =
+        await detectOllamaModels(getOllamaBaseUrl());
       setIsOllamaRunning(isRunning);
 
       const toolCapable = isRunning
@@ -1939,7 +1868,7 @@ export function useChatSession({
           disabledReason: toolCapableSet.has(modelName)
             ? undefined
             : "Model does not support tool calling",
-        })
+        }),
       );
       setOllamaModels(ollamaDefs);
     };
@@ -1953,16 +1882,16 @@ export function useChatSession({
     const fetchToolsMetadata = async () => {
       if (selectedServers.length === 0) {
         setToolsMetadata((previous) =>
-          Object.keys(previous).length > 0 ? {} : previous
+          Object.keys(previous).length > 0 ? {} : previous,
         );
         setToolServerMap((previous) =>
-          Object.keys(previous).length > 0 ? {} : previous
+          Object.keys(previous).length > 0 ? {} : previous,
         );
         setMcpToolsTokenCount((previous) =>
-          previous !== null ? null : previous
+          previous !== null ? null : previous,
         );
         setMcpToolsTokenCountLoading((previous) =>
-          previous ? false : previous
+          previous ? false : previous,
         );
         return;
       }
@@ -1979,14 +1908,14 @@ export function useChatSession({
       try {
         const { metadata, toolServerMap, tokenCounts } = await getToolsMetadata(
           selectedServers,
-          modelIdForTokens
+          modelIdForTokens,
         );
         setToolsMetadata(metadata);
         setToolServerMap(toolServerMap);
         setMcpToolsTokenCount(
           tokenCounts && Object.keys(tokenCounts).length > 0
             ? tokenCounts
-            : null
+            : null,
         );
       } catch (error) {
         if (
@@ -1997,7 +1926,7 @@ export function useChatSession({
         ) {
           console.warn(
             "[useChatSession] Failed to fetch tools metadata:",
-            error
+            error,
           );
         }
         setToolsMetadata({});
@@ -2041,7 +1970,7 @@ export function useChatSession({
         ) {
           console.warn(
             "[useChatSession] Failed to count system prompt tokens:",
-            error
+            error,
           );
         }
         setSystemPromptTokenCount(null);
