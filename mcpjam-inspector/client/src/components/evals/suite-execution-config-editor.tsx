@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Loader2, RotateCcw, Save, Settings2, Trash2 } from "lucide-react";
 import { useMutation, useQuery } from "convex/react";
+import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { HostConfigEditor } from "@/components/host-config/HostConfigEditor";
 import {
@@ -10,6 +11,7 @@ import {
   type HostConfigDtoV2,
   type HostConfigInputV2,
 } from "@/lib/host-config-v2";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import type { EvalSuite } from "./types";
 import type { ModelDefinition } from "@/shared/types";
 
@@ -65,6 +67,15 @@ export function SuiteExecutionConfigEditor({
   const [isSaving, setIsSaving] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
 
+  // Track the scalar fields the legacy fallback reads so the editor
+  // re-seeds when the parent clears `suite.defaultConfig` via
+  // `onClear` without replacing the suite (suite._id is stable, but
+  // `defaultConfig` flips from object to undefined). Without these
+  // deps, the editor keeps showing the cleared values until the user
+  // navigates away and back.
+  const legacyModelId = suite.defaultConfig?.modelId;
+  const legacySystemPrompt = suite.defaultConfig?.systemPrompt;
+  const legacyTemperature = suite.defaultConfig?.temperature;
   useEffect(() => {
     if (dto === undefined) return; // still loading
     const next = dto
@@ -74,9 +85,9 @@ export function SuiteExecutionConfigEditor({
           // temperature} when the v2 row hasn't been written yet — so a
           // first-time save through HostConfigEditor doesn't blow away
           // a legacy-only suite config.
-          modelId: suite.defaultConfig?.modelId,
-          systemPrompt: suite.defaultConfig?.systemPrompt,
-          temperature: suite.defaultConfig?.temperature,
+          modelId: legacyModelId,
+          systemPrompt: legacySystemPrompt,
+          temperature: legacyTemperature,
         });
     setBaseline(next);
     setValue((current) => {
@@ -85,8 +96,12 @@ export function SuiteExecutionConfigEditor({
       }
       return next;
     });
+    // baseline is intentionally excluded — including it would re-run
+    // every save (we setBaseline above), causing an instant value
+    // overwrite on save success. The dep set covers every external
+    // input the seed depends on.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dto, suite._id]);
+  }, [dto, suite._id, legacyModelId, legacySystemPrompt, legacyTemperature]);
 
   const isDirty = useMemo(
     () =>
@@ -132,8 +147,20 @@ export function SuiteExecutionConfigEditor({
       await setSuiteConfig({ suiteId: suite._id, input: stripped });
       setBaseline(stripped);
       setValue(stripped);
+      toast.success("Suite execution config updated");
     } catch (err) {
-      throw err;
+      // Surface the failure to the user; do NOT rethrow. The button's
+      // onClick wraps this in `() => void handleSave()`, so a thrown
+      // error becomes an unhandled promise rejection with no UI
+      // feedback. Mirrors the parent-provided onSave handler the
+      // pre-Phase-3 component used.
+      toast.error(
+        getBillingErrorMessage(
+          err,
+          "Failed to update suite execution config",
+        ),
+      );
+      console.error("Failed to update suite execution config:", err);
     } finally {
       setIsSaving(false);
     }
