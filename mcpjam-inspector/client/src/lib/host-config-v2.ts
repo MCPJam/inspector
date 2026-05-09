@@ -64,35 +64,6 @@ export type HostConfigDtoV2 = {
 export const DEFAULT_HOST_STYLE_V2: HostStyleId = "claude";
 export const DEFAULT_TEMPERATURE_V2 = 0.7;
 
-/**
- * Builds a fresh `HostConfigConnectionDefaults` value. Returns a new
- * object on every call so callers can mutate the result without
- * corrupting a module-level reference. Use this instead of a shared
- * constant — the v1 buildDefaultProjectConnectionDefaults() helper has
- * the same shape for the same reason.
- */
-export function buildDefaultConnectionDefaults(): HostConfigConnectionDefaults {
-  return {
-    headers: {},
-    // Source from the existing project connection defaults so a brand-
-    // new v2 host config matches the legacy ProjectClientConfig
-    // timeout (10s). Introducing a second default here would silently
-    // change the established timeout to whatever the v2 helper used.
-    requestTimeout: DEFAULT_REQUEST_TIMEOUT_MS,
-  };
-}
-
-/**
- * @deprecated Reading this constant is fine, but never spread or pass
- * `headers` by reference — use `buildDefaultConnectionDefaults()` to get
- * a fresh value. Kept for backward compatibility within the v2 module.
- */
-export const DEFAULT_CONNECTION_DEFAULTS: HostConfigConnectionDefaults =
-  Object.freeze({
-    headers: Object.freeze({}) as Record<string, string>,
-    requestTimeout: DEFAULT_REQUEST_TIMEOUT_MS,
-  }) as HostConfigConnectionDefaults;
-
 export function emptyHostConfigInputV2(
   partial: Partial<HostConfigInputV2> = {},
 ): HostConfigInputV2 {
