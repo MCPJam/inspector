@@ -971,6 +971,8 @@ Potential areas for contribution:
 | **RunRecorder**      | Interface for persisting eval results to database                |
 | **MCPClientManager** | Manager for MCP server connections and tool execution            |
 | **AI SDK**           | Vercel's AI SDK for LLM interactions and tool calling            |
+| **defaultConfig**    | Suite-level default model, system prompt, and temperature; overridden by per-case `advancedConfig` |
+| **suiteRerun**       | Flag on `RunEvalsRequest` that skips per-case upserts during reruns to preserve suite-default semantics |
 
 ---
 
