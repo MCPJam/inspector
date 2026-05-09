@@ -13,7 +13,6 @@ export interface ApiContext {
   clientConfigSyncPending?: boolean;
   getAccessToken?: GetAccessTokenFn;
   oauthTokensByServerId?: Record<string, string>;
-  guestOauthTokensByServerName?: Record<string, string>;
   chatboxToken?: string;
   isAuthenticated?: boolean;
   /** True when a WorkOS session exists (user signed in), even if token hasn't resolved yet. */
