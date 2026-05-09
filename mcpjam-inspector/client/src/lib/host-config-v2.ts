@@ -96,17 +96,20 @@ export const DEFAULT_CONNECTION_DEFAULTS: HostConfigConnectionDefaults =
 export function emptyHostConfigInputV2(
   partial: Partial<HostConfigInputV2> = {},
 ): HostConfigInputV2 {
+  // Clone every caller-provided array/record so the returned config can
+  // be mutated freely without aliasing the input. Matches the cloning
+  // behavior of hostConfigDtoToInput.
   return {
     hostStyle: partial.hostStyle ?? DEFAULT_HOST_STYLE_V2,
     modelId: partial.modelId ?? "",
     systemPrompt: partial.systemPrompt ?? "",
     temperature: partial.temperature ?? DEFAULT_TEMPERATURE_V2,
     requireToolApproval: partial.requireToolApproval ?? false,
-    serverIds: partial.serverIds ?? [],
-    optionalServerIds: partial.optionalServerIds ?? [],
+    serverIds: partial.serverIds ? [...partial.serverIds] : [],
+    optionalServerIds: partial.optionalServerIds
+      ? [...partial.optionalServerIds]
+      : [],
     connectionDefaults: {
-      // Build fresh objects so callers can mutate without corrupting
-      // module-level state.
       headers: partial.connectionDefaults?.headers
         ? { ...partial.connectionDefaults.headers }
         : {},
@@ -120,10 +123,10 @@ export function emptyHostConfigInputV2(
     // ProjectClientConfig path also seeds from getDefaultClientCapabilities;
     // an empty {} here would silently drop MCP Apps support until the
     // user manually edited the capability JSON.
-    clientCapabilities:
-      partial.clientCapabilities ??
-      (getDefaultClientCapabilities() as Record<string, unknown>),
-    hostContext: partial.hostContext ?? {},
+    clientCapabilities: partial.clientCapabilities
+      ? { ...partial.clientCapabilities }
+      : (getDefaultClientCapabilities() as Record<string, unknown>),
+    hostContext: partial.hostContext ? { ...partial.hostContext } : {},
   };
 }
 
