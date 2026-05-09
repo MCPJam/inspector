@@ -32,6 +32,7 @@ export function SuiteExecutionConfigEditor({
   onClear,
 }: SuiteExecutionConfigEditorProps) {
   const [modelId, setModelId] = useState(suite.defaultConfig?.modelId ?? "");
+  const [provider, setProvider] = useState(suite.defaultConfig?.provider ?? "");
   const [systemPrompt, setSystemPrompt] = useState(
     suite.defaultConfig?.systemPrompt ?? ""
   );
@@ -43,22 +44,26 @@ export function SuiteExecutionConfigEditor({
 
   useEffect(() => {
     setModelId(suite.defaultConfig?.modelId ?? "");
+    setProvider(suite.defaultConfig?.provider ?? "");
     setSystemPrompt(suite.defaultConfig?.systemPrompt ?? "");
     setTemperature(suite.defaultConfig?.temperature ?? DEFAULT_TEMPERATURE);
   }, [suite.defaultConfig]);
 
   const savedModelId = suite.defaultConfig?.modelId ?? "";
+  const savedProvider = suite.defaultConfig?.provider ?? "";
   const savedSystemPrompt = suite.defaultConfig?.systemPrompt ?? "";
   const savedTemperature =
     suite.defaultConfig?.temperature ?? DEFAULT_TEMPERATURE;
 
   const isDirty =
     modelId !== savedModelId ||
+    provider !== savedProvider ||
     systemPrompt !== savedSystemPrompt ||
     temperature !== savedTemperature;
 
   const handleReset = () => {
     setModelId(savedModelId);
+    setProvider(savedProvider);
     setSystemPrompt(savedSystemPrompt);
     setTemperature(savedTemperature);
   };
@@ -67,7 +72,7 @@ export function SuiteExecutionConfigEditor({
     if (!modelId) return;
     setIsSaving(true);
     try {
-      await onSave({ modelId, systemPrompt, temperature });
+      await onSave({ modelId, provider: provider || undefined, systemPrompt, temperature });
     } finally {
       setIsSaving(false);
     }
@@ -104,7 +109,14 @@ export function SuiteExecutionConfigEditor({
           <Label className="text-xs font-medium text-muted-foreground">
             Model
           </Label>
-          <Select value={modelId} onValueChange={setModelId}>
+          <Select
+            value={modelId}
+            onValueChange={(id) => {
+              setModelId(id);
+              const def = availableModels.find((m) => String(m.id) === id);
+              setProvider(def?.provider ?? "");
+            }}
+          >
             <SelectTrigger className="mt-1.5 border-0 bg-muted/50 transition-colors hover:bg-muted">
               <SelectValue placeholder="Select a model" />
             </SelectTrigger>

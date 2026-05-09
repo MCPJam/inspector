@@ -47,6 +47,7 @@ export type EvalSuite = {
   tags?: string[];
   defaultConfig?: {
     modelId: string;
+    provider?: string;
     systemPrompt: string;
     temperature: number;
   };

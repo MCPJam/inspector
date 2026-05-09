@@ -285,9 +285,14 @@ export function useEvalHandlers({
         : {};
 
       // Resolve the fallback model definition for cases with no per-case models.
+      // Disambiguate by provider when stored, so OpenRouter gpt-4o doesn't
+      // resolve to the native OpenAI gpt-4o if their ids collide.
       const suiteDefaultModelDef = suite.defaultConfig?.modelId
         ? (availableModels ?? []).find(
-            (m) => String(m.id) === suite.defaultConfig!.modelId
+            (m) =>
+              String(m.id) === suite.defaultConfig!.modelId &&
+              (!suite.defaultConfig!.provider ||
+                m.provider === suite.defaultConfig!.provider)
           )
         : undefined;
 
