@@ -878,6 +878,27 @@ export function SuiteIterationsView({
                   throw error;
                 }
               }}
+              onClear={async () => {
+                try {
+                  await updateSuite({
+                    suiteId: suite._id,
+                    defaultConfig: null,
+                  });
+                  toast.success("Suite execution config removed");
+                } catch (error) {
+                  toast.error(
+                    getBillingErrorMessage(
+                      error,
+                      "Failed to remove suite execution config",
+                    ),
+                  );
+                  console.error(
+                    "Failed to remove suite execution config:",
+                    error,
+                  );
+                  throw error;
+                }
+              }}
             />
 
             {/* Suite Description Section */}

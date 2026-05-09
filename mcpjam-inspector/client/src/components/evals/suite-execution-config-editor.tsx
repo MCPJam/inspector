@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Loader2, Settings2 } from "lucide-react";
+import { Loader2, Settings2, Trash2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Label } from "@mcpjam/design-system/label";
 import {
@@ -20,6 +20,7 @@ type SuiteExecutionConfigEditorProps = {
   onSave: (
     defaultConfig: NonNullable<EvalSuite["defaultConfig"]>
   ) => Promise<void>;
+  onClear?: () => Promise<void>;
 };
 
 const DEFAULT_TEMPERATURE = 0.7;
@@ -28,6 +29,7 @@ export function SuiteExecutionConfigEditor({
   suite,
   availableModels,
   onSave,
+  onClear,
 }: SuiteExecutionConfigEditorProps) {
   const [modelId, setModelId] = useState(suite.defaultConfig?.modelId ?? "");
   const [systemPrompt, setSystemPrompt] = useState(
@@ -37,6 +39,7 @@ export function SuiteExecutionConfigEditor({
     suite.defaultConfig?.temperature ?? DEFAULT_TEMPERATURE
   );
   const [isSaving, setIsSaving] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
 
   useEffect(() => {
     setModelId(suite.defaultConfig?.modelId ?? "");
@@ -67,6 +70,16 @@ export function SuiteExecutionConfigEditor({
       await onSave({ modelId, systemPrompt, temperature });
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleClear = async () => {
+    if (!onClear) return;
+    setIsClearing(true);
+    try {
+      await onClear();
+    } finally {
+      setIsClearing(false);
     }
   };
 
@@ -154,12 +167,29 @@ export function SuiteExecutionConfigEditor({
           </span>
         </div>
         <div className="flex items-center gap-2">
+          {onClear && suite.defaultConfig ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => void handleClear()}
+              disabled={isClearing || isSaving}
+              className="text-destructive hover:text-destructive"
+            >
+              {isClearing ? (
+                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Trash2 className="mr-1 h-3.5 w-3.5" />
+              )}
+              Remove
+            </Button>
+          ) : null}
           <Button
             type="button"
             variant="ghost"
             size="sm"
             onClick={handleReset}
-            disabled={!isDirty || isSaving}
+            disabled={!isDirty || isSaving || isClearing}
           >
             Reset
           </Button>
@@ -167,7 +197,7 @@ export function SuiteExecutionConfigEditor({
             type="button"
             size="sm"
             onClick={() => void handleSave()}
-            disabled={!isDirty || isSaving || !modelId}
+            disabled={!isDirty || isSaving || isClearing || !modelId}
           >
             {isSaving ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
