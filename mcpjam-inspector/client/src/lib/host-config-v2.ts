@@ -109,8 +109,13 @@ export function hostConfigDtoToInput(
 }
 
 /**
- * Shallow equality on the canonical fields (ignoring `id` and any extra
+ * Equality on the canonical fields (ignoring `id` and any extra
  * metadata). Used by editors to detect "no changes" before submitting.
+ *
+ * Headers/clientCapabilities/hostContext are compared as JSON-serialized
+ * deep trees (key order normalized via sorting). This is intentional: they
+ * may legitimately be nested objects, and reference equality would always
+ * be false after `hostConfigDtoToInput` clones them.
  */
 export function hostConfigInputsEqual(
   a: HostConfigInputV2,
@@ -128,10 +133,10 @@ export function hostConfigInputsEqual(
     b.connectionDefaults.requestTimeout
   )
     return false;
-  if (!recordEq(a.connectionDefaults.headers, b.connectionDefaults.headers))
+  if (!jsonRecordEq(a.connectionDefaults.headers, b.connectionDefaults.headers))
     return false;
-  if (!recordEq(a.clientCapabilities, b.clientCapabilities)) return false;
-  if (!recordEq(a.hostContext, b.hostContext)) return false;
+  if (!jsonRecordEq(a.clientCapabilities, b.clientCapabilities)) return false;
+  if (!jsonRecordEq(a.hostContext, b.hostContext)) return false;
   return true;
 }
 
@@ -145,7 +150,7 @@ function stringArrayEq(a: string[], b: string[]): boolean {
   return true;
 }
 
-function recordEq(
+function jsonRecordEq(
   a: Record<string, unknown>,
   b: Record<string, unknown>,
 ): boolean {

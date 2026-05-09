@@ -230,7 +230,7 @@ export function HostConfigEditor({
             value={value.connectionDefaults.headers}
             onChange={(headers) =>
               updateConnection({
-                headers: headers as Record<string, string>,
+                headers: coerceHeadersToStringRecord(headers),
               })
             }
             placeholder='{"X-Header":"value"}'
@@ -248,17 +248,37 @@ export function HostConfigEditor({
           />
         </div>
 
-        <div className="grid gap-2">
-          <Label>Host context (JSON)</Label>
-          <JsonRecordEditor
-            value={value.hostContext}
-            onChange={(hostContext) => update({ hostContext })}
-            placeholder="{}"
-          />
-        </div>
+        {owner !== "connection-only" ? (
+          <div className="grid gap-2">
+            <Label>Host context (JSON)</Label>
+            <JsonRecordEditor
+              value={value.hostContext}
+              onChange={(hostContext) => update({ hostContext })}
+              placeholder="{}"
+            />
+          </div>
+        ) : null}
       </section>
     </div>
   );
+}
+
+/**
+ * Coerce a parsed JSON object into a `Record<string, string>` suitable for
+ * HTTP headers. Non-string values are converted via `String(...)`; nested
+ * objects/arrays/null are dropped. The JsonRecordEditor only validates the
+ * outer shape (non-array object), so values can be anything.
+ */
+function coerceHeadersToStringRecord(
+  raw: Record<string, unknown>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, val] of Object.entries(raw)) {
+    if (val == null) continue;
+    if (typeof val === "object") continue;
+    out[k] = String(val);
+  }
+  return out;
 }
 
 function ServerCheckboxList({
