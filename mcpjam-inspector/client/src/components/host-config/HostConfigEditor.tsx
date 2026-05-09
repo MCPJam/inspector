@@ -273,12 +273,19 @@ export function HostConfigEditor({
  * HTTP headers. Non-string values are converted via `String(...)`; nested
  * objects/arrays/null are dropped. The JsonRecordEditor only validates the
  * outer shape (non-array object), so values can be anything.
+ *
+ * Filters out any `Authorization` key (case-insensitive) to keep the
+ * existing project-default invariant: the legacy connection-settings
+ * parser rejects this key and the project-default normalizer strips it,
+ * so accepting it here would either fail later validation or persist a
+ * credential-bearing default that other code paths silently ignore.
  */
 function coerceHeadersToStringRecord(
   raw: Record<string, unknown>,
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, val] of Object.entries(raw)) {
+    if (k.toLowerCase() === "authorization") continue;
     if (val == null) continue;
     if (typeof val === "object") continue;
     out[k] = String(val);

@@ -13,6 +13,7 @@
 
 import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
 import { stableStringifyJson } from "@/lib/client-config";
+import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
 
 export type HostStyleId = ChatboxHostStyle;
 
@@ -84,7 +85,15 @@ export function emptyHostConfigInputV2(
         partial.connectionDefaults?.requestTimeout ??
         DEFAULT_CONNECTION_DEFAULTS.requestTimeout,
     },
-    clientCapabilities: partial.clientCapabilities ?? {},
+    // Seed with the SDK's default capabilities (which include the MCP UI
+    // extension and any other built-ins) so a brand-new project/chatbox/
+    // eval host config keeps advertising them. The legacy
+    // ProjectClientConfig path also seeds from getDefaultClientCapabilities;
+    // an empty {} here would silently drop MCP Apps support until the
+    // user manually edited the capability JSON.
+    clientCapabilities:
+      partial.clientCapabilities ??
+      (getDefaultClientCapabilities() as Record<string, unknown>),
     hostContext: partial.hostContext ?? {},
   };
 }
