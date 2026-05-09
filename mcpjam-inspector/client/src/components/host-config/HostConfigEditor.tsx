@@ -430,15 +430,18 @@ function JsonRecordEditor({
   const [raw, setRaw] = useState(stringified);
   const [error, setErrorState] = useState<string | null>(null);
   // Tracks the stringified form we most recently emitted up via
-  // onChange. After the parent re-renders with the new value, the
-  // resync effect compares `stringified` against this; if they match,
-  // we leave the user's textarea text alone instead of overwriting it
-  // with prettified JSON on every valid keystroke (which would also
-  // wipe the cursor position). Coercion paths like
-  // coerceHeadersToStringRecord can change the parent's stringified
-  // form even on a valid edit, so we capture the parent's serialized
-  // shape inside the tryParse onChange callback.
+  // onChange. The resync effect compares `stringified` against this;
+  // matches mean the re-render is a self-edit echo and we leave the
+  // textarea alone (avoids prettifying the user's input mid-keystroke
+  // and wiping cursor position).
   const lastEmittedRef = useRef(stringified);
+  // Tracks the most recent parent `value` reference we observed, so we
+  // can detect a controlled reset (a new parent reference whose
+  // serialized form happens to match the last emitted one). Without
+  // this we'd miss the case where the user typed invalid JSON, the
+  // parent then resets/loads a config that serializes identically to
+  // the last valid value, and our textarea+error stay stuck.
+  const lastValueRef = useRef(value);
 
   const setError = useCallback(
     (next: string | null) => {
@@ -448,18 +451,23 @@ function JsonRecordEditor({
     [onErrorChange],
   );
 
-  // Re-sync local text only when the parent's serialized form differs
-  // from the value this component last emitted (i.e. a genuinely
-  // external change such as a different config getting loaded). This
-  // avoids round-trip resyncs that would clobber the user's mid-edit
-  // textarea contents.
+  // Re-sync local text whenever:
+  //  - the parent's serialized form differs from our last emit
+  //    (genuine external change), OR
+  //  - the parent passed a new `value` reference while we are showing
+  //    a parse error (controlled reset path: invalid drafts must clear
+  //    even when the new value happens to canonicalize to the same
+  //    string we last emitted).
   useEffect(() => {
-    if (stringified !== lastEmittedRef.current) {
+    const referenceChanged = value !== lastValueRef.current;
+    const stringifiedChanged = stringified !== lastEmittedRef.current;
+    if (stringifiedChanged || (referenceChanged && error != null)) {
       setRaw(stringified);
       lastEmittedRef.current = stringified;
       setError(null);
     }
-  }, [stringified, setError]);
+    lastValueRef.current = value;
+  }, [value, stringified, error, setError]);
 
   // Parse on every keystroke so errors clear as soon as the user fixes
   // them and the parent's `onChange`/`onErrorChange` signals stay live.
