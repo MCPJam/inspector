@@ -994,7 +994,9 @@ export default function App() {
   const hostedClientCapabilities = getEffectiveProjectClientCapabilities(
     activeProject?.clientConfig
   ) as Record<string, unknown>;
-  const convexProjectId = activeProject?.sharedProjectId ?? null;
+  const convexProjectId =
+    activeProject?.sharedProjectId ??
+    (activeProject?.organizationId ? activeProjectId : null);
   const routeScopedOrganizationId = hasRouteOrganization
     ? currentHashRoute.organizationId ?? null
     : null;

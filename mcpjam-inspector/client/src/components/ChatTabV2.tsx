@@ -293,7 +293,9 @@ export function ChatTabV2({
     [selectedServerNames, connectedOrConnectingServerConfigs]
   );
   const activeProject = appState.projects[appState.activeProjectId];
-  const convexProjectId = activeProject?.sharedProjectId ?? null;
+  const convexProjectId =
+    activeProject?.sharedProjectId ??
+    (activeProject?.organizationId ? appState.activeProjectId : null);
   const organizationId = activeProject?.organizationId ?? null;
   const hostedOrgModelConfig = useQuery(
     "organizationModelProviders:getVisibleConfig" as any,

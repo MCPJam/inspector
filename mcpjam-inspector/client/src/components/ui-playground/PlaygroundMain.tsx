@@ -351,7 +351,9 @@ export function PlaygroundMain({
 
   // Hosted mode context (projectId, serverIds, OAuth tokens)
   const activeProject = appState.projects[appState.activeProjectId];
-  const convexProjectId = activeProject?.sharedProjectId ?? null;
+  const convexProjectId =
+    activeProject?.sharedProjectId ??
+    (activeProject?.organizationId ? appState.activeProjectId : null);
   const { serversByName } = useProjectServers({
     isAuthenticated: isConvexAuthenticated,
     projectId: convexProjectId,
