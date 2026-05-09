@@ -467,9 +467,13 @@ chatV2.post("/", async (c) => {
     // backend's `hostConfigPayloadValidator` requires `v.array(v.id('servers'))`,
     // so emitting hostConfig with names would 400 the entire ingest call and
     // drop the transcript. The client only supplies `selectedServerIds` when
-    // every selected server resolved to an Id — treat any other case as
-    // "no real Ids available" and skip hostConfig (backend persists transcript
-    // with hostConfigId=null, same as pre-rollout behavior).
+    // every selected name resolved to an Id (length-matched), or when no
+    // servers were selected at all (both arrays empty — still a valid
+    // hostConfig the backend can dedupe on). Any other shape — array missing,
+    // shorter than the names array, or names present without ids — falls
+    // through to "no real Ids available" and skips hostConfig (backend
+    // persists transcript with hostConfigId=null, same as pre-rollout
+    // behavior).
     const hostConfigServerIds: string[] | undefined =
       Array.isArray(bodySelectedServerIds) &&
       bodySelectedServerIds.length === (selectedServers?.length ?? 0)
@@ -530,6 +534,20 @@ chatV2.post("/", async (c) => {
       resolvedTemperature,
       scrubMessages,
     } = prepared;
+
+    // Shared across all three persist call sites below. All three paths are
+    // hardcoded `sourceType: "direct"` and pass the same model/temperature/
+    // server config, so the payload is identical — compute it once.
+    const directHostConfig = hostConfigServerIds
+      ? buildDirectHostConfig({
+          modelId: String(modelDefinition.id),
+          systemPrompt,
+          requestedTemperature: temperature,
+          resolvedTemperature,
+          requireToolApproval,
+          selectedServerIds: hostConfigServerIds,
+        })
+      : undefined;
 
     // MCPJam-provided models: delegate to stream handler
     if (modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)) {
@@ -596,17 +614,8 @@ chatV2.post("/", async (c) => {
                   requireToolApproval,
                   selectedServers,
                 },
-                ...(hostConfigServerIds
-                  ? {
-                      hostConfig: buildDirectHostConfig({
-                        modelId: String(modelDefinition.id),
-                        systemPrompt,
-                        requestedTemperature: temperature,
-                        resolvedTemperature,
-                        requireToolApproval,
-                        selectedServerIds: hostConfigServerIds,
-                      }),
-                    }
+                ...(directHostConfig
+                  ? { hostConfig: directHostConfig }
                   : {}),
                 expectedVersion: body.expectedVersion,
                 turnTrace,
@@ -675,17 +684,8 @@ chatV2.post("/", async (c) => {
                   requireToolApproval,
                   selectedServers,
                 },
-                ...(hostConfigServerIds
-                  ? {
-                      hostConfig: buildDirectHostConfig({
-                        modelId: String(modelDefinition.id),
-                        systemPrompt,
-                        requestedTemperature: temperature,
-                        resolvedTemperature,
-                        requireToolApproval,
-                        selectedServerIds: hostConfigServerIds,
-                      }),
-                    }
+                ...(directHostConfig
+                  ? { hostConfig: directHostConfig }
                   : {}),
                 expectedVersion: body.expectedVersion,
                 turnTrace,
@@ -760,17 +760,8 @@ chatV2.post("/", async (c) => {
                 requireToolApproval,
                 selectedServers,
               },
-              ...(hostConfigServerIds
-                ? {
-                    hostConfig: buildDirectHostConfig({
-                      modelId: String(modelDefinition.id),
-                      systemPrompt,
-                      requestedTemperature: temperature,
-                      resolvedTemperature,
-                      requireToolApproval,
-                      selectedServerIds: hostConfigServerIds,
-                    }),
-                  }
+              ...(directHostConfig
+                ? { hostConfig: directHostConfig }
                 : {}),
               expectedVersion: body.expectedVersion,
               turnTrace,
