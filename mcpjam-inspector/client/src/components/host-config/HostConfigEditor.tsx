@@ -469,6 +469,19 @@ function JsonRecordEditor({
     lastValueRef.current = value;
   }, [value, stringified, error, setError]);
 
+  // Clear the error signal when this editor unmounts (e.g. owner
+  // switched to a mode that hides this section). Without this, the
+  // parent's aggregated hasError signal would stay stuck on a stale
+  // error from a section the user can no longer see, keeping Save
+  // disabled with no visible cause to fix.
+  useEffect(() => {
+    return () => {
+      onErrorChange?.(null);
+    };
+    // We intentionally don't depend on onErrorChange — only fire on unmount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Parse on every keystroke so errors clear as soon as the user fixes
   // them and the parent's `onChange`/`onErrorChange` signals stay live.
   // We still only call `onChange` (committing the parsed value) on
