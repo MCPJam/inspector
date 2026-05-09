@@ -266,10 +266,27 @@ export function useEvalHandlers({
       const tests: any[] = [];
       const providersNeeded = new Set<string>();
 
+      // Build a baseline advancedConfig from suite.defaultConfig so the runner
+      // inherits system prompt and temperature even when testCase.advancedConfig
+      // is empty. Per-case advancedConfig fields take precedence.
+      const suiteDefaultAdvancedConfig = suite.defaultConfig
+        ? {
+            ...(suite.defaultConfig.systemPrompt
+              ? { system: suite.defaultConfig.systemPrompt }
+              : {}),
+            temperature: suite.defaultConfig.temperature,
+          }
+        : {};
+
       for (const testCase of testCases) {
         if (!testCase.models || testCase.models.length === 0) {
           continue;
         }
+
+        const mergedAdvancedConfig =
+          Object.keys(suiteDefaultAdvancedConfig).length > 0
+            ? { ...suiteDefaultAdvancedConfig, ...testCase.advancedConfig }
+            : testCase.advancedConfig;
 
         for (const modelConfig of testCase.models) {
           tests.push({
@@ -283,7 +300,7 @@ export function useEvalHandlers({
             scenario: testCase.scenario,
             expectedOutput: testCase.expectedOutput,
             promptTurns: testCase.promptTurns,
-            advancedConfig: testCase.advancedConfig,
+            advancedConfig: mergedAdvancedConfig,
             testCaseId: testCase._id,
           });
 
