@@ -12,6 +12,7 @@
  */
 
 import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
+import { stableStringifyJson } from "@/lib/client-config";
 
 export type HostStyleId = ChatboxHostStyle;
 
@@ -154,12 +155,10 @@ function jsonRecordEq(
   a: Record<string, unknown>,
   b: Record<string, unknown>,
 ): boolean {
-  const ka = Object.keys(a).sort();
-  const kb = Object.keys(b).sort();
-  if (ka.length !== kb.length) return false;
-  for (let i = 0; i < ka.length; i++) {
-    if (ka[i] !== kb[i]) return false;
-    if (JSON.stringify(a[ka[i]]) !== JSON.stringify(b[kb[i]])) return false;
-  }
-  return true;
+  // Use the shared canonicalizer so nested object key order doesn't make
+  // semantically equal records compare unequal — e.g.
+  // { capabilities: { a: 1, b: 2 } } vs { capabilities: { b: 2, a: 1 } }.
+  // Top-level-only sorting (the previous implementation) reported these
+  // as different and produced spurious dirty state in editors.
+  return stableStringifyJson(a) === stableStringifyJson(b);
 }
