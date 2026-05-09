@@ -1,9 +1,32 @@
-import { getShareableAppOrigin, slugify } from "@/lib/shared-server-session";
 import {
   normalizeChatboxHostStyleId,
   type ChatboxHostStyle,
 } from "@/lib/chatbox-host-style";
 import { DEFAULT_HOST_STYLE } from "@/lib/host-styles";
+
+const MCPJAM_APP_ORIGIN = "https://app.mcpjam.com";
+
+export function slugify(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s-]/g, "")
+    .replace(/[\s_]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return slug || "server";
+}
+
+export function getShareableAppOrigin(): string {
+  if (typeof window === "undefined") {
+    return MCPJAM_APP_ORIGIN;
+  }
+
+  return window.location.protocol === "http:" ||
+    window.location.protocol === "https:"
+    ? window.location.origin
+    : MCPJAM_APP_ORIGIN;
+}
 
 export type ChatboxShareMode = "any_signed_in_with_link" | "invited_only";
 

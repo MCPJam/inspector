@@ -1,6 +1,6 @@
 import { useQuery } from "convex/react";
 
-export type SharedChatSourceType = "serverShare" | "chatbox";
+export type SharedChatSourceType = "chatbox";
 
 export interface SharedChatThread {
   _id: string;
@@ -53,28 +53,19 @@ export interface SharedChatWidgetSnapshot {
 }
 
 export function useSharedChatThreadList({
-  sourceType,
   sourceId,
 }: {
-  sourceType: SharedChatSourceType;
+  sourceType?: SharedChatSourceType;
   sourceId: string | null;
 }) {
-  const queryName =
-    sourceType === "chatbox"
-      ? "chatSessions:listByChatbox"
-      : "chatSessions:listByShare";
-  const queryArgs =
-    sourceType === "chatbox"
-      ? sourceId
-        ? ({ chatboxId: sourceId, limit: 50, includeInternal: true } as any)
-        : "skip"
-      : sourceId
-        ? ({ shareId: sourceId, limit: 50 } as any)
-        : "skip";
+  const queryArgs = sourceId
+    ? ({ chatboxId: sourceId, limit: 50, includeInternal: true } as any)
+    : "skip";
 
-  const threads = useQuery(queryName as any, queryArgs) as
-    | SharedChatThread[]
-    | undefined;
+  const threads = useQuery(
+    "chatSessions:listByChatbox" as any,
+    queryArgs,
+  ) as SharedChatThread[] | undefined;
 
   return { threads };
 }
