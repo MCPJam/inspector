@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, RotateCcw, Save, Settings2, Trash2 } from "lucide-react";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
@@ -76,8 +76,16 @@ export function SuiteExecutionConfigEditor({
   const legacyModelId = suite.defaultConfig?.modelId;
   const legacySystemPrompt = suite.defaultConfig?.systemPrompt;
   const legacyTemperature = suite.defaultConfig?.temperature;
+  // Track the previous suite id so a suite switch ALWAYS resets
+  // state — including unsaved edits. Without this, the dirty-check
+  // below sees the OLD suite's baseline (stale closure: baseline is
+  // intentionally excluded from deps) and decides "user has unsaved
+  // edits, preserve them", leaking suite A's edits into suite B.
+  const prevSuiteIdRef = useRef<typeof suite._id | null>(null);
   useEffect(() => {
     if (dto === undefined) return; // still loading
+    const isSuiteSwitch = prevSuiteIdRef.current !== suite._id;
+    prevSuiteIdRef.current = suite._id;
     const next = dto
       ? hostConfigDtoToInput(dto)
       : emptyHostConfigInputV2({
@@ -91,15 +99,21 @@ export function SuiteExecutionConfigEditor({
         });
     setBaseline(next);
     setValue((current) => {
+      // Suite switch: hard reset — never preserve previous suite's
+      // edits. The dirty check below would compare suite A's edits
+      // against suite A's stale baseline (closure capture) and
+      // wrongly preserve them under suite B.
+      if (isSuiteSwitch) return next;
       if (current && baseline && !hostConfigInputsEqual(current, baseline)) {
-        return current; // preserve unsaved edits
+        return current; // preserve unsaved edits within the same suite
       }
       return next;
     });
     // baseline is intentionally excluded — including it would re-run
     // every save (we setBaseline above), causing an instant value
     // overwrite on save success. The dep set covers every external
-    // input the seed depends on.
+    // input the seed depends on, and the prevSuiteIdRef guards the
+    // cross-suite stale-closure case.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dto, suite._id, legacyModelId, legacySystemPrompt, legacyTemperature]);
 

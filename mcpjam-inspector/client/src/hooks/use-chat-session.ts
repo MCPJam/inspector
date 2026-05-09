@@ -110,6 +110,14 @@ export interface UseChatSessionOptions {
   minimalMode?: boolean;
   /** Execution configuration (model, system prompt, temperature, tool approval) */
   executionConfig?: ExecutionConfig;
+  /**
+   * Phase 3: real host style for direct chat traces. Forwarded into
+   * the request body so the backend persists the v2 hostConfig with
+   * the user's actual host style (`claude` / `chatgpt`) rather than
+   * defaulting to `'claude'`. Omitted for chatbox flows — the
+   * backend resolves chatbox host style from the chatbox row.
+   */
+  hostStyle?: "claude" | "chatgpt";
   /** Callback when chat is reset */
   onReset?: (reason?: ChatSessionResetReason) => void;
 }
@@ -927,6 +935,7 @@ export function useChatSession({
   hostedContext,
   minimalMode: _minimalMode = false,
   executionConfig,
+  hostStyle,
   onReset,
 }: UseChatSessionOptions): UseChatSessionReturn {
   const hostedProjectId = hostedContext?.projectId;
@@ -1345,6 +1354,11 @@ export function useChatSession({
                 : {}),
             }),
         requireToolApproval: requireToolApprovalRef.current,
+        // Phase 3: forward the chat tab's resolved host style so
+        // direct chat traces persist with a real `claude`/`chatgpt`
+        // hostStyle (no more legacy `'direct'`). Omitted body falls
+        // back to the backend default of `'claude'`.
+        ...(hostStyle ? { hostStyle } : {}),
         ...(!HOSTED_MODE && customProviders.length > 0
           ? { customProviders }
           : {}),
@@ -1370,6 +1384,7 @@ export function useChatSession({
     hostedOAuthTokens,
     hostedChatboxToken,
     hostedChatboxSurface,
+    hostStyle,
     chatFetch,
     // requireToolApproval read from ref at request time
   ]);
