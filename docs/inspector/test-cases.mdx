@@ -156,6 +156,17 @@ For failed tests, expand the iteration to view:
   If tests are consistently failing, check that your expected tool calls match your tool definitions. The LLM may be calling tools with slightly different argument formats.
 </Tip>
 
+## Suite execution config
+
+Each eval suite has a **Default Execution Config** section that controls the model, system prompt, temperature, tool approval, connection settings, capabilities, and host context used when running the suite.
+
+- **Model and prompt** — Set the default model ID, system prompt, and temperature for all runs in the suite.
+- **Tool approval** — Toggle `requireToolApproval` to pause before each tool call during a run.
+- **Server selection** — Servers are not configured here. They come from the suite's environment. The server picker is intentionally hidden in this editor.
+- **Save / Reset** — Click **Save config** to persist changes. Click **Reset** to revert to the last saved state. Unsaved edits are preserved if the page refreshes the config from the server, but are discarded when you switch to a different suite.
+
+Changes to the suite execution config apply to future runs only. Existing run snapshots are not affected.
+
 ## Best Practices
 
 ### Writing Effective Test Cases
