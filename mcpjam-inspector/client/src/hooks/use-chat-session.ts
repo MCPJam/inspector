@@ -1336,6 +1336,15 @@ export function useChatSession({
               directVisibility,
               // Pass projectId for BYOK direct-chat history persistence
               ...(hostedProjectId ? { projectId: hostedProjectId } : {}),
+              // Convex server Ids parallel to `selectedServers`. Only sent
+              // when every name resolved to an Id — a partial mapping would
+              // hash to a different hostConfig than intended. Without this,
+              // the MCP route can't safely emit `hostConfig` because local
+              // server *names* aren't valid Convex Ids and the backend
+              // validator would reject the whole ingest call.
+              ...(hostedSelectedServerIds.length === selectedServers.length
+                ? { selectedServerIds: hostedSelectedServerIds }
+                : {}),
             }),
         requireToolApproval: requireToolApprovalRef.current,
         ...(!HOSTED_MODE && customProviders.length > 0

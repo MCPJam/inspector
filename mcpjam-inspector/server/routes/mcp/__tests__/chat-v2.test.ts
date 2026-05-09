@@ -769,7 +769,11 @@ describe("POST /api/mcp/chat-v2", () => {
           model: { id: "google/gemini-2.5-flash", provider: "google" },
           chatSessionId: "chat-session-1",
           directVisibility: "project",
-          selectedServers: ["server-a", "server-b"],
+          selectedServers: ["Asana", "GitHub"],
+          // Real Convex server Ids parallel to `selectedServers`. Without
+          // these the route must NOT emit hostConfig — the backend's
+          // v.id('servers') validator would reject names like "Asana".
+          selectedServerIds: ["abc123serverid", "def456serverid"],
           systemPrompt: "you are a helpful assistant",
           temperature: 0.4,
           requireToolApproval: true,
@@ -807,8 +811,114 @@ describe("POST /api/mcp/chat-v2", () => {
           modelId: "google/gemini-2.5-flash",
           temperature: 0.4,
           requireToolApproval: true,
-          selectedServerIds: ["server-a", "server-b"],
+          selectedServerIds: ["abc123serverid", "def456serverid"],
         });
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+
+    it("omits hostConfig when client did not send selectedServerIds (legacy local-mode body)", async () => {
+      const originalFetch = global.fetch;
+      global.fetch = vi
+        .fn()
+        .mockImplementation(async (input: RequestInfo | URL) => {
+          const url = String(input);
+          if (url === "https://test-convex.example.com/stream") {
+            return createSseResponse([
+              {
+                type: "finish",
+                finishReason: "stop",
+                messageMetadata: {
+                  inputTokens: 1,
+                  outputTokens: 1,
+                  totalTokens: 2,
+                },
+              },
+            ]);
+          }
+          if (url === "https://test-convex.example.com/ingest-chat") {
+            return new Response(null, { status: 200 });
+          }
+          throw new Error(`Unexpected fetch URL: ${url}`);
+        });
+
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: { id: "google/gemini-2.5-flash", provider: "google" },
+          chatSessionId: "chat-session-no-ids",
+          // Local-mode names with no parallel ID array — older inspector
+          // builds, or signed-out users whose servers aren't in Convex.
+          selectedServers: ["Asana"],
+        });
+
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+
+        const ingestCall = vi
+          .mocked(global.fetch)
+          .mock.calls.find(([url]) => String(url).endsWith("/ingest-chat"));
+        const [, init] = ingestCall!;
+        const body = JSON.parse(String((init as RequestInit).body ?? "{}"));
+
+        // Transcript still persists; backend logs `missing_field` and leaves
+        // hostConfigId null. This is preferable to sending names which would
+        // fail the v.id('servers') validator and 400 the entire ingest call.
+        expect(body.chatSessionId).toBe("chat-session-no-ids");
+        expect("hostConfig" in body).toBe(false);
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+
+    it("omits hostConfig when selectedServerIds length doesn't match selectedServers", async () => {
+      const originalFetch = global.fetch;
+      global.fetch = vi
+        .fn()
+        .mockImplementation(async (input: RequestInfo | URL) => {
+          const url = String(input);
+          if (url === "https://test-convex.example.com/stream") {
+            return createSseResponse([
+              {
+                type: "finish",
+                finishReason: "stop",
+                messageMetadata: {
+                  inputTokens: 1,
+                  outputTokens: 1,
+                  totalTokens: 2,
+                },
+              },
+            ]);
+          }
+          if (url === "https://test-convex.example.com/ingest-chat") {
+            return new Response(null, { status: 200 });
+          }
+          throw new Error(`Unexpected fetch URL: ${url}`);
+        });
+
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: { id: "google/gemini-2.5-flash", provider: "google" },
+          chatSessionId: "chat-session-partial-ids",
+          // Two selected names but only one resolved Id — partial mappings
+          // would dedupe to a different hostConfig than intended, so the
+          // route must drop the field entirely.
+          selectedServers: ["Asana", "GitHub"],
+          selectedServerIds: ["abc123serverid"],
+        });
+
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+
+        const ingestCall = vi
+          .mocked(global.fetch)
+          .mock.calls.find(([url]) => String(url).endsWith("/ingest-chat"));
+        const [, init] = ingestCall!;
+        const body = JSON.parse(String((init as RequestInit).body ?? "{}"));
+
+        expect("hostConfig" in body).toBe(false);
       } finally {
         global.fetch = originalFetch;
       }
@@ -848,6 +958,9 @@ describe("POST /api/mcp/chat-v2", () => {
           model: { id: "openai/gpt-5-mini", provider: "openai" },
           chatSessionId: "chat-session-gpt5",
           temperature: 0.3,
+          // Empty server selection still requires the matching Ids array
+          // (length === 0) for hostConfig to be emitted at all.
+          selectedServerIds: [],
         });
 
         expect(res.status).toBe(200);

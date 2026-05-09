@@ -459,8 +459,22 @@ chatV2.post("/", async (c) => {
       systemPrompt,
       temperature,
       selectedServers,
+      selectedServerIds: bodySelectedServerIds,
       requireToolApproval,
     } = body;
+
+    // Local-mode `selectedServers` is server *names*, not Convex Ids. The
+    // backend's `hostConfigPayloadValidator` requires `v.array(v.id('servers'))`,
+    // so emitting hostConfig with names would 400 the entire ingest call and
+    // drop the transcript. The client only supplies `selectedServerIds` when
+    // every selected server resolved to an Id — treat any other case as
+    // "no real Ids available" and skip hostConfig (backend persists transcript
+    // with hostConfigId=null, same as pre-rollout behavior).
+    const hostConfigServerIds: string[] | undefined =
+      Array.isArray(bodySelectedServerIds) &&
+      bodySelectedServerIds.length === (selectedServers?.length ?? 0)
+        ? bodySelectedServerIds
+        : undefined;
 
     // Validation
     if (!Array.isArray(messages) || messages.length === 0) {
@@ -582,14 +596,18 @@ chatV2.post("/", async (c) => {
                   requireToolApproval,
                   selectedServers,
                 },
-                hostConfig: buildDirectHostConfig({
-                  modelId: String(modelDefinition.id),
-                  systemPrompt,
-                  requestedTemperature: temperature,
-                  resolvedTemperature,
-                  requireToolApproval,
-                  selectedServerIds: selectedServers,
-                }),
+                ...(hostConfigServerIds
+                  ? {
+                      hostConfig: buildDirectHostConfig({
+                        modelId: String(modelDefinition.id),
+                        systemPrompt,
+                        requestedTemperature: temperature,
+                        resolvedTemperature,
+                        requireToolApproval,
+                        selectedServerIds: hostConfigServerIds,
+                      }),
+                    }
+                  : {}),
                 expectedVersion: body.expectedVersion,
                 turnTrace,
                 forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
@@ -657,14 +675,18 @@ chatV2.post("/", async (c) => {
                   requireToolApproval,
                   selectedServers,
                 },
-                hostConfig: buildDirectHostConfig({
-                  modelId: String(modelDefinition.id),
-                  systemPrompt,
-                  requestedTemperature: temperature,
-                  resolvedTemperature,
-                  requireToolApproval,
-                  selectedServerIds: selectedServers,
-                }),
+                ...(hostConfigServerIds
+                  ? {
+                      hostConfig: buildDirectHostConfig({
+                        modelId: String(modelDefinition.id),
+                        systemPrompt,
+                        requestedTemperature: temperature,
+                        resolvedTemperature,
+                        requireToolApproval,
+                        selectedServerIds: hostConfigServerIds,
+                      }),
+                    }
+                  : {}),
                 expectedVersion: body.expectedVersion,
                 turnTrace,
                 forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
@@ -738,14 +760,18 @@ chatV2.post("/", async (c) => {
                 requireToolApproval,
                 selectedServers,
               },
-              hostConfig: buildDirectHostConfig({
-                modelId: String(modelDefinition.id),
-                systemPrompt,
-                requestedTemperature: temperature,
-                resolvedTemperature,
-                requireToolApproval,
-                selectedServerIds: selectedServers,
-              }),
+              ...(hostConfigServerIds
+                ? {
+                    hostConfig: buildDirectHostConfig({
+                      modelId: String(modelDefinition.id),
+                      systemPrompt,
+                      requestedTemperature: temperature,
+                      resolvedTemperature,
+                      requireToolApproval,
+                      selectedServerIds: hostConfigServerIds,
+                    }),
+                  }
+                : {}),
               expectedVersion: body.expectedVersion,
               turnTrace,
               forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
