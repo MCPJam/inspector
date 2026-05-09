@@ -44,13 +44,16 @@ export function SuiteExecutionConfigEditor({
 
   // Depend on scalar values, not the object reference: a parent re-render
   // that produces a fresh `suite.defaultConfig` with identical values would
-  // otherwise stomp in-progress edits.
+  // otherwise stomp in-progress edits. `suite._id` is also a dep so drafts
+  // can't leak across suites when the editor stays mounted (parent doesn't
+  // key it by suite id) and two suites happen to share the same scalars.
   useEffect(() => {
     setModelId(suite.defaultConfig?.modelId ?? "");
     setProvider(suite.defaultConfig?.provider ?? "");
     setSystemPrompt(suite.defaultConfig?.systemPrompt ?? "");
     setTemperature(suite.defaultConfig?.temperature ?? DEFAULT_TEMPERATURE);
   }, [
+    suite._id,
     suite.defaultConfig?.modelId,
     suite.defaultConfig?.provider,
     suite.defaultConfig?.systemPrompt,
