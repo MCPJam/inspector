@@ -193,13 +193,40 @@ export function HostConfigEditor({
               label="Required servers"
               selected={value.serverIds}
               available={availableServers ?? []}
-              onChange={(serverIds) => update({ serverIds })}
+              onChange={(serverIds) => {
+                // Maintain the invariant the chatbox save path relies on:
+                // optionalServerIds is a subset of serverIds. When a
+                // server is unchecked from the required list, it must
+                // also leave the optional list — otherwise the saved
+                // config would describe an "optional server" that isn't
+                // even selected.
+                const requiredSet = new Set(serverIds);
+                update({
+                  serverIds,
+                  optionalServerIds: value.optionalServerIds.filter((id) =>
+                    requiredSet.has(id),
+                  ),
+                });
+              }}
             />
             <ServerCheckboxList
               label="Optional servers"
               selected={value.optionalServerIds}
-              available={availableServers ?? []}
-              onChange={(optionalServerIds) => update({ optionalServerIds })}
+              available={(availableServers ?? []).filter((srv) =>
+                value.serverIds.includes(srv.id),
+              )}
+              onChange={(optionalServerIds) => {
+                // Editing the optional list should never add a server
+                // that isn't in serverIds. The available pool above
+                // already filters to selected required servers, but
+                // belt-and-suspenders: re-clamp here too.
+                const requiredSet = new Set(value.serverIds);
+                update({
+                  optionalServerIds: optionalServerIds.filter((id) =>
+                    requiredSet.has(id),
+                  ),
+                });
+              }}
             />
           </section>
 
