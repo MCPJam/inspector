@@ -61,6 +61,13 @@ type RunEvalsRequest = EvalRequestWithServers & {
   passCriteria?: {
     minimumPassRate: number;
   };
+  /**
+   * True for suite reruns of already-persisted cases. Tells the server to
+   * skip the per-case upsert path so suite-default-derived wire fields
+   * (substituted models, merged advancedConfig) don't get baked into
+   * per-case overrides.
+   */
+  suiteRerun?: boolean;
 };
 
 type RunTestCaseRequest = EvalRequestWithServers & {

@@ -18,6 +18,7 @@ import { TestCaseDetailView } from "./test-case-detail-view";
 import { SuiteDashboard } from "./suite-dashboard";
 import { EvalExportModal } from "./eval-export-modal";
 import { SuiteEnvironmentEditor } from "./suite-environment-editor";
+import { SuiteExecutionConfigEditor } from "./suite-execution-config-editor";
 import { useSuiteData, useRunDetailData } from "./use-suite-data";
 import type {
   EvalCase,
@@ -852,6 +853,53 @@ export function SuiteIterationsView({
                 }}
               />
             ) : null}
+
+            <SuiteExecutionConfigEditor
+              suite={suite}
+              availableModels={availableModels}
+              onSave={async (defaultConfig) => {
+                try {
+                  await updateSuite({
+                    suiteId: suite._id,
+                    defaultConfig,
+                  });
+                  toast.success("Suite execution config updated");
+                } catch (error) {
+                  toast.error(
+                    getBillingErrorMessage(
+                      error,
+                      "Failed to update suite execution config",
+                    ),
+                  );
+                  console.error(
+                    "Failed to update suite execution config:",
+                    error,
+                  );
+                  throw error;
+                }
+              }}
+              onClear={async () => {
+                try {
+                  await updateSuite({
+                    suiteId: suite._id,
+                    defaultConfig: null,
+                  });
+                  toast.success("Suite execution config removed");
+                } catch (error) {
+                  toast.error(
+                    getBillingErrorMessage(
+                      error,
+                      "Failed to remove suite execution config",
+                    ),
+                  );
+                  console.error(
+                    "Failed to remove suite execution config:",
+                    error,
+                  );
+                  throw error;
+                }
+              }}
+            />
 
             {/* Suite Description Section */}
             <div className="space-y-3">

@@ -93,6 +93,14 @@ export const RunEvalsRequestSchema = z.object({
       minimumPassRate: z.number(),
     })
     .optional(),
+  /**
+   * When true, the request is a rerun of an already-persisted suite — skip
+   * the per-test-case upsert. Without this, derived wire fields (suite
+   * default model substituted in for model-less cases, merged advancedConfig)
+   * get baked into per-case overrides on first rerun, breaking later edits
+   * to the suite default.
+   */
+  suiteRerun: z.boolean().optional(),
 });
 
 export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
@@ -295,6 +303,7 @@ export async function runEvalsWithManager(
     convexAuthToken,
     notes,
     passCriteria,
+    suiteRerun,
   } = request;
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
@@ -381,6 +390,14 @@ export async function runEvalsWithManager(
       environment: persistedEnvironment,
     });
 
+    // On a suite rerun, do NOT upsert per-case fields. The wire payload
+    // contains values derived from suite.defaultConfig (model substituted in
+    // for model-less cases, etc.); writing them back would bake the current
+    // suite default into per-case overrides and stop later default changes
+    // from propagating. Cases are already persisted; rerun just runs them.
+    if (suiteRerun) {
+      // skip upsert
+    } else {
     const existingTestCases = await convexClient.query(
       "testSuites:listTestCases" as any,
       { suiteId: resolvedSuiteId },
@@ -483,6 +500,7 @@ export async function runEvalsWithManager(
           ),
         });
       }
+    }
     }
   } else {
     const createdSuite = await convexClient.mutation(
