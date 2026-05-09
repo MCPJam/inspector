@@ -22,6 +22,7 @@ import { handleHostedOrgChatModel } from "../../utils/org-model-stream-handler.j
 import { deriveOrgProviderKey } from "../../utils/org-model-config.js";
 import { HOSTED_MODE } from "../../config";
 import {
+  buildDirectHostConfig,
   persistChatSessionToConvex,
   pickEnrichmentHeaders,
   type PersistedTurnTrace,
@@ -581,6 +582,14 @@ chatV2.post("/", async (c) => {
                   requireToolApproval,
                   selectedServers,
                 },
+                hostConfig: buildDirectHostConfig({
+                  modelId: String(modelDefinition.id),
+                  systemPrompt,
+                  requestedTemperature: temperature,
+                  resolvedTemperature,
+                  requireToolApproval,
+                  selectedServerIds: selectedServers,
+                }),
                 expectedVersion: body.expectedVersion,
                 turnTrace,
                 forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
@@ -648,6 +657,14 @@ chatV2.post("/", async (c) => {
                   requireToolApproval,
                   selectedServers,
                 },
+                hostConfig: buildDirectHostConfig({
+                  modelId: String(modelDefinition.id),
+                  systemPrompt,
+                  requestedTemperature: temperature,
+                  resolvedTemperature,
+                  requireToolApproval,
+                  selectedServerIds: selectedServers,
+                }),
                 expectedVersion: body.expectedVersion,
                 turnTrace,
                 forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
@@ -721,6 +738,14 @@ chatV2.post("/", async (c) => {
                 requireToolApproval,
                 selectedServers,
               },
+              hostConfig: buildDirectHostConfig({
+                modelId: String(modelDefinition.id),
+                systemPrompt,
+                requestedTemperature: temperature,
+                resolvedTemperature,
+                requireToolApproval,
+                selectedServerIds: selectedServers,
+              }),
               expectedVersion: body.expectedVersion,
               turnTrace,
               forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),

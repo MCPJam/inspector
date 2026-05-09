@@ -769,6 +769,10 @@ describe("POST /api/mcp/chat-v2", () => {
           model: { id: "google/gemini-2.5-flash", provider: "google" },
           chatSessionId: "chat-session-1",
           directVisibility: "project",
+          selectedServers: ["server-a", "server-b"],
+          systemPrompt: "you are a helpful assistant",
+          temperature: 0.4,
+          requireToolApproval: true,
         });
 
         expect(res.status).toBe(200);
@@ -797,6 +801,71 @@ describe("POST /api/mcp/chat-v2", () => {
         expect(body.sessionMessages).toEqual([
           { role: "user", content: "Hello" },
         ]);
+        expect(body.hostConfig).toEqual({
+          hostStyle: "direct",
+          systemPrompt: "you are a helpful assistant",
+          modelId: "google/gemini-2.5-flash",
+          temperature: 0.4,
+          requireToolApproval: true,
+          selectedServerIds: ["server-a", "server-b"],
+        });
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+
+    it("attaches a numeric hostConfig.temperature for GPT-5 (resolvedTemperature: undefined)", async () => {
+      const { isGPT5Model } = await import("@/shared/types");
+      vi.mocked(isGPT5Model).mockReturnValueOnce(true);
+
+      const originalFetch = global.fetch;
+      global.fetch = vi
+        .fn()
+        .mockImplementation(async (input: RequestInfo | URL) => {
+          const url = String(input);
+          if (url === "https://test-convex.example.com/stream") {
+            return createSseResponse([
+              {
+                type: "finish",
+                finishReason: "stop",
+                messageMetadata: {
+                  inputTokens: 1,
+                  outputTokens: 1,
+                  totalTokens: 2,
+                },
+              },
+            ]);
+          }
+          if (url === "https://test-convex.example.com/ingest-chat") {
+            return new Response(null, { status: 200 });
+          }
+          throw new Error(`Unexpected fetch URL: ${url}`);
+        });
+
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: { id: "openai/gpt-5-mini", provider: "openai" },
+          chatSessionId: "chat-session-gpt5",
+          temperature: 0.3,
+        });
+
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+
+        const ingestCall = vi
+          .mocked(global.fetch)
+          .mock.calls.find(([url]) => String(url).endsWith("/ingest-chat"));
+
+        expect(ingestCall).toBeDefined();
+        const [, init] = ingestCall!;
+        const body = JSON.parse(String((init as RequestInit).body ?? "{}"));
+
+        // resolvedTemperature is undefined on GPT-5; helper must coerce to a
+        // numeric value (here, the requested temperature) so the backend's
+        // HostConfigPayload guard accepts the field.
+        expect(typeof body.hostConfig.temperature).toBe("number");
+        expect(body.hostConfig.temperature).toBe(0.3);
       } finally {
         global.fetch = originalFetch;
       }
