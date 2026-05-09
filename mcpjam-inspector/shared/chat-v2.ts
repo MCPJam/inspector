@@ -37,6 +37,16 @@ export interface ChatV2Request {
   selectedServerIds?: string[];
   requireToolApproval?: boolean;
   /**
+   * Phase 3 read switch: real host style for direct chat traces. When
+   * unset, the backend's chatIngestion path defaults to `'claude'` —
+   * so existing call sites that don't yet thread this through still
+   * produce a v2 hostConfig with a real (non-`'direct'`) hostStyle.
+   * Old inspector builds will keep emitting nothing or `'direct'`;
+   * the backend accepts both and normalizes with a
+   * `legacy_direct_style` warn.
+   */
+  hostStyle?: "claude" | "chatgpt";
+  /**
    * Project ID for direct-chat history persistence and, when set, the server
    * resolves model-provider config from the org backing this project.
    */

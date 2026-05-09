@@ -46,9 +46,17 @@ interface ResumeConfig {
  * can dedupe per-turn config into `hostConfigs`. Mirrors the `HostConfigPayload`
  * shape accepted by the Convex `/ingest-chat` route. Only emitted for direct
  * chats (serverShare and chatbox flows skip it).
+ *
+ * Phase 3 read switch: `hostStyle` carries the real host style
+ * (`claude` / `chatgpt`). The legacy literal `"direct"` is kept in
+ * the union for one deploy so an old backend (still expecting
+ * `'direct'`) keeps working until its roll lands; the new backend
+ * accepts both and normalizes legacy `'direct'` to the project
+ * default's real style with a `legacy_direct_style` warn.
  */
+export type DirectChatHostStyle = "claude" | "chatgpt" | "direct";
 export interface DirectHostConfig {
-  hostStyle: "direct";
+  hostStyle: DirectChatHostStyle;
   systemPrompt: string;
   modelId: string;
   temperature: number;
@@ -63,9 +71,15 @@ export interface DirectHostConfig {
  * `isHostConfigPayload` guard requires — without this, paths like GPT-5 (where
  * `resolvedTemperature` is undefined) would fail the guard and skip with
  * `missing_field`.
+ *
+ * `hostStyle` defaults to `"claude"` when the caller doesn't supply one.
+ * Old call sites that used to hardcode `"direct"` should pass the
+ * resolved chat-tab host style instead — see ChatTabV2's hydration
+ * from project default for the source of truth.
  */
 export function buildDirectHostConfig(input: {
   modelId: string;
+  hostStyle?: DirectChatHostStyle;
   systemPrompt?: string;
   requestedTemperature?: number;
   resolvedTemperature?: number;
@@ -74,6 +88,7 @@ export function buildDirectHostConfig(input: {
 }): DirectHostConfig {
   const {
     modelId,
+    hostStyle,
     systemPrompt,
     requestedTemperature,
     resolvedTemperature,
@@ -81,7 +96,7 @@ export function buildDirectHostConfig(input: {
     selectedServerIds,
   } = input;
   return {
-    hostStyle: "direct",
+    hostStyle: hostStyle ?? "claude",
     systemPrompt: systemPrompt ?? "",
     modelId,
     temperature:

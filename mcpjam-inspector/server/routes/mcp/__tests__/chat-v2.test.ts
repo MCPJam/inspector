@@ -805,8 +805,10 @@ describe("POST /api/mcp/chat-v2", () => {
         expect(body.sessionMessages).toEqual([
           { role: "user", content: "Hello" },
         ]);
+        // Phase 3: hostStyle defaults to 'claude' when the client
+        // doesn't supply one (no more legacy 'direct' on the wire).
         expect(body.hostConfig).toEqual({
-          hostStyle: "direct",
+          hostStyle: "claude",
           systemPrompt: "you are a helpful assistant",
           modelId: "google/gemini-2.5-flash",
           temperature: 0.4,

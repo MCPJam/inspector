@@ -235,6 +235,11 @@ chatV2.post("/", async (c) => {
                       },
                       hostConfig: buildDirectHostConfig({
                         modelId,
+                        // Phase 3: real host style flows from the
+                        // chat tab; old inspector builds omit it and
+                        // the backend defaults to 'claude' (no more
+                        // legacy 'direct' hostStyle in new traces).
+                        hostStyle: body.hostStyle,
                         systemPrompt,
                         requestedTemperature: temperature,
                         resolvedTemperature,

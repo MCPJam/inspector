@@ -1,104 +1,139 @@
-import { useEffect, useState } from "react";
-import { Loader2, Settings2, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Loader2, RotateCcw, Save, Settings2, Trash2 } from "lucide-react";
+import { useMutation, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
-import { Label } from "@mcpjam/design-system/label";
+import { HostConfigEditor } from "@/components/host-config/HostConfigEditor";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@mcpjam/design-system/select";
-import { Slider } from "@mcpjam/design-system/slider";
-import { Textarea } from "@mcpjam/design-system/textarea";
+  emptyHostConfigInputV2,
+  hostConfigDtoToInput,
+  hostConfigInputsEqual,
+  type HostConfigDtoV2,
+  type HostConfigInputV2,
+} from "@/lib/host-config-v2";
 import type { EvalSuite } from "./types";
 import type { ModelDefinition } from "@/shared/types";
 
 type SuiteExecutionConfigEditorProps = {
   suite: Pick<EvalSuite, "_id" | "defaultConfig">;
   availableModels: ModelDefinition[];
-  onSave: (
-    defaultConfig: NonNullable<EvalSuite["defaultConfig"]>
-  ) => Promise<void>;
+  /**
+   * Optional clear callback — surfaces "Remove" affordance when the
+   * suite has a saved defaultConfig. The legacy mirror is cleared via
+   * the wider `updateTestSuite({ defaultConfig: null })` mutation
+   * which the parent owns, so we keep this as a callback rather than
+   * hardcoding the v1 path here.
+   */
   onClear?: () => Promise<void>;
 };
 
-const DEFAULT_TEMPERATURE = 0.7;
-
+/**
+ * Eval suite execution config editor.
+ *
+ * Phase 3 read switch: the editor now reads + writes through the v2
+ * `hostConfigsV2.{getSuiteConfig,setSuiteConfig}` API. Server selection
+ * is hidden (servers come from `suite.environment`; the backend rejects
+ * non-empty serverIds), but model / system prompt / temperature /
+ * tool-approval / connection-defaults / capabilities / hostContext are
+ * all editable through the shared HostConfigEditor.
+ *
+ * `setSuiteConfig` mirrors `{ modelId, systemPrompt, temperature }`
+ * back to `suite.defaultConfig` for legacy readers (run snapshot,
+ * inspector eval UI display labels) until Phase 5 drops the column.
+ */
 export function SuiteExecutionConfigEditor({
   suite,
   availableModels,
-  onSave,
   onClear,
 }: SuiteExecutionConfigEditorProps) {
-  const [modelId, setModelId] = useState(suite.defaultConfig?.modelId ?? "");
-  const [provider, setProvider] = useState(suite.defaultConfig?.provider ?? "");
-  const [systemPrompt, setSystemPrompt] = useState(
-    suite.defaultConfig?.systemPrompt ?? ""
-  );
-  const [temperature, setTemperature] = useState(
-    suite.defaultConfig?.temperature ?? DEFAULT_TEMPERATURE
-  );
+  void availableModels; // currently unused; HostConfigEditor uses a free-text modelId.
+
+  const dto = useQuery(
+    "hostConfigsV2:getSuiteConfig" as any,
+    { suiteId: suite._id } as any,
+  ) as HostConfigDtoV2 | null | undefined;
+
+  const setSuiteConfig = useMutation(
+    "hostConfigsV2:setSuiteConfig" as any,
+  ) as unknown as (args: {
+    suiteId: string;
+    input: HostConfigInputV2;
+  }) => Promise<string>;
+
+  const [value, setValue] = useState<HostConfigInputV2 | null>(null);
+  const [baseline, setBaseline] = useState<HostConfigInputV2 | null>(null);
+  const [hasJsonError, setHasJsonError] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
 
-  // Depend on scalar values, not the object reference: a parent re-render
-  // that produces a fresh `suite.defaultConfig` with identical values would
-  // otherwise stomp in-progress edits. `suite._id` is also a dep so drafts
-  // can't leak across suites when the editor stays mounted (parent doesn't
-  // key it by suite id) and two suites happen to share the same scalars.
   useEffect(() => {
-    setModelId(suite.defaultConfig?.modelId ?? "");
-    setProvider(suite.defaultConfig?.provider ?? "");
-    setSystemPrompt(suite.defaultConfig?.systemPrompt ?? "");
-    setTemperature(suite.defaultConfig?.temperature ?? DEFAULT_TEMPERATURE);
-  }, [
-    suite._id,
-    suite.defaultConfig?.modelId,
-    suite.defaultConfig?.provider,
-    suite.defaultConfig?.systemPrompt,
-    suite.defaultConfig?.temperature,
-  ]);
+    if (dto === undefined) return; // still loading
+    const next = dto
+      ? hostConfigDtoToInput(dto)
+      : emptyHostConfigInputV2({
+          // Seed empty editor with suite.defaultConfig.{modelId,systemPrompt,
+          // temperature} when the v2 row hasn't been written yet — so a
+          // first-time save through HostConfigEditor doesn't blow away
+          // a legacy-only suite config.
+          modelId: suite.defaultConfig?.modelId,
+          systemPrompt: suite.defaultConfig?.systemPrompt,
+          temperature: suite.defaultConfig?.temperature,
+        });
+    setBaseline(next);
+    setValue((current) => {
+      if (current && baseline && !hostConfigInputsEqual(current, baseline)) {
+        return current; // preserve unsaved edits
+      }
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dto, suite._id]);
 
-  // For suites saved before provider was tracked, fall back to the first
-  // matching model so the Select still renders the saved choice. Computed at
-  // render time so we don't have to add availableModels as an effect dep
-  // (which would risk stomping in-progress edits on parent re-renders).
-  const displayProvider =
-    provider ||
-    (modelId
-      ? availableModels.find((m) => String(m.id) === modelId)?.provider ?? ""
-      : "");
+  const isDirty = useMemo(
+    () =>
+      value && baseline ? !hostConfigInputsEqual(value, baseline) : !!value,
+    [value, baseline],
+  );
 
-  const savedModelId = suite.defaultConfig?.modelId ?? "";
-  const savedProvider = suite.defaultConfig?.provider ?? "";
-  const savedSystemPrompt = suite.defaultConfig?.systemPrompt ?? "";
-  const savedTemperature =
-    suite.defaultConfig?.temperature ?? DEFAULT_TEMPERATURE;
+  if (!value) {
+    return (
+      <section className="space-y-3">
+        <div>
+          <h2 className="text-base font-semibold text-foreground">
+            Default Execution Config
+          </h2>
+        </div>
+        <div className="flex items-center gap-2 rounded-xl border bg-card/60 p-4 text-xs text-muted-foreground">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Loading suite config…
+        </div>
+      </section>
+    );
+  }
 
-  const isDirty =
-    modelId !== savedModelId ||
-    provider !== savedProvider ||
-    systemPrompt !== savedSystemPrompt ||
-    temperature !== savedTemperature;
+  // setSuiteConfig refuses non-empty serverIds; if a stale v2 row
+  // somehow carried any, force them empty before saving so the
+  // backend's validator doesn't reject the otherwise-valid edit.
+  // Server selection lives on `suite.environment`.
+  const stripped: HostConfigInputV2 = {
+    ...value,
+    serverIds: [],
+    optionalServerIds: [],
+  };
+  const canSave = isDirty && !hasJsonError && !isSaving && !isClearing;
 
   const handleReset = () => {
-    setModelId(savedModelId);
-    setProvider(savedProvider);
-    setSystemPrompt(savedSystemPrompt);
-    setTemperature(savedTemperature);
+    if (baseline) setValue(baseline);
   };
 
   const handleSave = async () => {
-    if (!modelId) return;
+    if (!canSave) return;
     setIsSaving(true);
     try {
-      await onSave({
-        modelId,
-        provider: provider || displayProvider || undefined,
-        systemPrompt,
-        temperature,
-      });
+      await setSuiteConfig({ suiteId: suite._id, input: stripped });
+      setBaseline(stripped);
+      setValue(stripped);
+    } catch (err) {
+      throw err;
     } finally {
       setIsSaving(false);
     }
@@ -125,93 +160,26 @@ export function SuiteExecutionConfigEditor({
           <code className="rounded bg-muted px-1 py-0.5 text-[10px]">
             advancedConfig
           </code>{" "}
-          overrides take precedence.
+          overrides take precedence. Server selection lives in the suite
+          environment, not here.
         </p>
       </div>
 
-      <div className="space-y-4 rounded-xl border bg-card/60 p-4">
-        {/* Model */}
-        <div>
-          <Label className="text-xs font-medium text-muted-foreground">
-            Model
-          </Label>
-          {/* Encode provider into the Select value so colliding model ids
-              across providers (e.g. native OpenAI gpt-4o vs OpenRouter
-              gpt-4o) are saved with the correct provider. */}
-          <Select
-            value={modelId ? `${displayProvider}:${modelId}` : ""}
-            onValueChange={(value) => {
-              const sep = value.indexOf(":");
-              const nextProvider = sep >= 0 ? value.slice(0, sep) : "";
-              const nextId = sep >= 0 ? value.slice(sep + 1) : value;
-              setProvider(nextProvider);
-              setModelId(nextId);
-            }}
-            disabled={isSaving || isClearing}
-          >
-            <SelectTrigger className="mt-1.5 border-0 bg-muted/50 transition-colors hover:bg-muted">
-              <SelectValue placeholder="Select a model" />
-            </SelectTrigger>
-            <SelectContent>
-              {availableModels.map((model) => {
-                const value = `${model.provider}:${String(model.id)}`;
-                return (
-                  <SelectItem key={value} value={value}>
-                    {model.name}
-                  </SelectItem>
-                );
-              })}
-            </SelectContent>
-          </Select>
-        </div>
-
-        {/* System prompt */}
-        <div>
-          <Label className="text-xs font-medium text-muted-foreground">
-            System prompt
-          </Label>
-          <p className="mb-1.5 mt-0.5 text-[10px] text-muted-foreground">
-            Instructions given to the model at the start of each run.
-          </p>
-          <Textarea
-            value={systemPrompt}
-            onChange={(e) => setSystemPrompt(e.target.value)}
-            placeholder="You are a helpful assistant…"
-            className="min-h-[80px] resize-y border-0 bg-muted/50 text-sm"
-            disabled={isSaving || isClearing}
-          />
-        </div>
-
-        {/* Temperature */}
-        <div>
-          <div className="flex items-center justify-between">
-            <Label className="text-xs font-medium text-muted-foreground">
-              Temperature
-            </Label>
-            <span className="text-xs text-muted-foreground">
-              {temperature.toFixed(2)}
-            </span>
-          </div>
-          <Slider
-            min={0}
-            max={2}
-            step={0.05}
-            value={[temperature]}
-            onValueChange={(values) =>
-              setTemperature(values[0] ?? DEFAULT_TEMPERATURE)
-            }
-            className="mt-3"
-            disabled={isSaving || isClearing}
-          />
-        </div>
+      <div className="rounded-xl border bg-card/60 p-4">
+        <HostConfigEditor
+          value={value}
+          onChange={setValue}
+          owner="eval-suite"
+          onValidityChange={setHasJsonError}
+        />
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
         <div className="flex items-center gap-2">
           <Settings2 className="h-3.5 w-3.5" />
           <span>
-            {modelId
-              ? `Default: ${modelId}`
+            {value.modelId
+              ? `Default: ${value.modelId}`
               : "No default model configured"}
           </span>
         </div>
@@ -240,17 +208,20 @@ export function SuiteExecutionConfigEditor({
             onClick={handleReset}
             disabled={!isDirty || isSaving || isClearing}
           >
+            <RotateCcw className="mr-1 h-3.5 w-3.5" />
             Reset
           </Button>
           <Button
             type="button"
             size="sm"
             onClick={() => void handleSave()}
-            disabled={!isDirty || isSaving || isClearing || !modelId}
+            disabled={!canSave}
           >
             {isSaving ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : null}
+            ) : (
+              <Save className="mr-2 h-4 w-4" />
+            )}
             Save config
           </Button>
         </div>

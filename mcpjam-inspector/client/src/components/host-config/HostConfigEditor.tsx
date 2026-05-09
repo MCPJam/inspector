@@ -118,7 +118,14 @@ export function HostConfigEditor({
   );
 
   const showExecutionSection = owner !== "connection-only";
-  const showServersSection = owner !== "connection-only";
+  // Eval suites own server selection through `suite.environment` —
+  // `setSuiteConfig` rejects non-empty serverIds, and the iteration
+  // materializer pulls server ids from the suite environment. The
+  // editor surface for owner="eval-suite" therefore hides the server
+  // picker entirely (and ignores `availableServers`) so users can't
+  // type changes the backend would reject.
+  const showServersSection =
+    owner !== "connection-only" && owner !== "eval-suite";
 
   const hostStyleOptions = useMemo(() => listHostStyles(), []);
 
