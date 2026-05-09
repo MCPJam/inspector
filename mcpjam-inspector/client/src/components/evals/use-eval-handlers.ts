@@ -25,6 +25,7 @@ import { getSuiteReplayEligibility } from "./replay-eligibility";
 import type { useEvalMutations } from "./use-eval-mutations";
 import { authFetch } from "@/lib/session-token";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import type { ModelDefinition } from "@/shared/types";
 import {
   buildEvalConvexAuthPayload,
   getEvalApiEndpoints,
@@ -169,6 +170,8 @@ interface UseEvalHandlersProps {
   projectServers?: RemoteServer[];
   /** When true, this uses the direct-guest eval playground flow. */
   isDirectGuest?: boolean;
+  /** Available models; used to resolve provider when falling back to suite.defaultConfig.modelId. */
+  availableModels?: ModelDefinition[];
 }
 
 /**
@@ -186,6 +189,7 @@ export function useEvalHandlers({
   evalsNavigationContext = "evals",
   projectServers,
   isDirectGuest = false,
+  availableModels,
 }: UseEvalHandlersProps) {
   const convex = useConvex();
   const { getAccessToken } = useAuth();
@@ -278,8 +282,16 @@ export function useEvalHandlers({
           }
         : {};
 
+      // Resolve the fallback model definition for cases with no per-case models.
+      const suiteDefaultModelDef = suite.defaultConfig?.modelId
+        ? (availableModels ?? []).find(
+            (m) => String(m.id) === suite.defaultConfig!.modelId
+          )
+        : undefined;
+
       for (const testCase of testCases) {
-        if (!testCase.models || testCase.models.length === 0) {
+        const hasModels = testCase.models && testCase.models.length > 0;
+        if (!hasModels && !suiteDefaultModelDef) {
           continue;
         }
 
@@ -288,7 +300,18 @@ export function useEvalHandlers({
             ? { ...suiteDefaultAdvancedConfig, ...testCase.advancedConfig }
             : testCase.advancedConfig;
 
-        for (const modelConfig of testCase.models) {
+        // Use per-case models when present; fall back to suite default model.
+        const modelConfigs: Array<{ model: string; provider: string }> =
+          hasModels
+            ? testCase.models
+            : [
+                {
+                  model: suiteDefaultModelDef!.id as string,
+                  provider: suiteDefaultModelDef!.provider,
+                },
+              ];
+
+        for (const modelConfig of modelConfigs) {
           tests.push({
             title: testCase.title,
             query: testCase.query,
@@ -338,7 +361,7 @@ export function useEvalHandlers({
         providersNeeded,
       };
     },
-    [getTestCasesForRerun, getToken, hasToken]
+    [getTestCasesForRerun, getToken, hasToken, availableModels]
   );
 
   const handleReplayRun = useCallback(
