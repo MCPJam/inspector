@@ -190,6 +190,12 @@ HTTP API endpoints for eval execution and test generation.
   serverIds: string[]
   modelApiKey?: string | null
   convexAuthToken: string
+  /**
+   * Set to true for reruns of already-persisted suites. Skips the per-case
+   * upsert so suite-default-derived fields (substituted model, merged
+   * advancedConfig) are not baked into per-case overrides.
+   */
+  suiteRerun?: boolean
 }
 ```
 
