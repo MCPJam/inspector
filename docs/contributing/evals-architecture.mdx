@@ -517,6 +517,13 @@ type EvalSuite = {
     };
   };
   _creationTime: number;
+  /** Suite-wide default model/prompt/temperature. Per-case advancedConfig takes precedence. */
+  defaultConfig?: {
+    modelId: string;
+    provider?: string;
+    systemPrompt: string;
+    temperature: number;
+  };
 };
 
 // Individual test case
