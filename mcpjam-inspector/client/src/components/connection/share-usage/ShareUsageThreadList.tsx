@@ -16,7 +16,7 @@ import {
 
 interface ShareUsageThreadListProps {
   /** Optional: when `threads` is provided (chatbox Usage panel) these are unused. */
-  sourceType?: "chatbox" | "serverShare";
+  sourceType?: "chatbox";
   sourceId?: string;
   selectedThreadId: string | null;
   onSelectThread: (threadId: string) => void;

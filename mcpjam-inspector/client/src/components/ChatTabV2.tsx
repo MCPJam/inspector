@@ -321,7 +321,6 @@ export function ChatTabV2({
       ),
     [selectedConnectedServerNames, serversByName, appState.servers]
   );
-  const hostedShareToken = hostedContext?.shareToken;
   const hostedChatboxToken = hostedContext?.chatboxToken;
   const hostedChatboxSurface = hostedContext?.chatboxSurface;
   const effectiveHostedProjectId =
@@ -335,7 +334,6 @@ export function ChatTabV2({
     HOSTED_MODE &&
     !isConvexAuthenticated &&
     !effectiveHostedProjectId &&
-    !hostedShareToken &&
     !hostedChatboxToken;
 
   // Use shared chat session hook
@@ -418,7 +416,6 @@ export function ChatTabV2({
   const showHistoryRail =
     HOSTED_MODE &&
     !minimalMode &&
-    !hostedShareToken &&
     !hostedChatboxToken &&
     chatHistoryRailEnabled;
   const {
@@ -1096,7 +1093,6 @@ export function ChatTabV2({
     enableMultiModelChat &&
     !minimalMode &&
     !executionConfig?.modelId &&
-    !hostedShareToken &&
     !hostedChatboxToken &&
     !hostedChatboxSurface &&
     availableModels.length > 1;

@@ -88,10 +88,8 @@ async function resolveHostedHttpConfig(
       accessScope: wsBody.accessScope,
       workspaceId:
         typeof (wsBody as { workspaceId?: unknown }).workspaceId === "string"
-          ? (wsBody as { workspaceId: string }).workspaceId
+          ? (wsBody as unknown as { workspaceId: string }).workspaceId
           : undefined,
-      shareToken: wsBody.shareToken,
-      sandboxToken: wsBody.sandboxToken,
     }
   );
 
@@ -177,10 +175,8 @@ async function resolveHostedServerConfig(
       accessScope: wsBody.accessScope,
       workspaceId:
         typeof (wsBody as { workspaceId?: unknown }).workspaceId === "string"
-          ? (wsBody as { workspaceId: string }).workspaceId
+          ? (wsBody as unknown as { workspaceId: string }).workspaceId
           : undefined,
-      shareToken: wsBody.shareToken,
-      sandboxToken: wsBody.sandboxToken,
     }
   );
 

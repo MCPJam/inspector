@@ -79,7 +79,7 @@ describe("useSharedChatWidgetCapture", () => {
       useSharedChatWidgetCapture({
         enabled: true,
         chatSessionId: "chat-session-1",
-        hostedShareToken: "share-token",
+        hostedChatboxToken: "chatbox-token",
         messages: [
           {
             id: "assistant-1",
@@ -149,7 +149,7 @@ describe("useSharedChatWidgetCapture", () => {
     expect(mockGenerateSnapshotUploadUrl).toHaveBeenCalledTimes(3);
     expect(global.fetch).toHaveBeenCalledTimes(3);
     expect(mockCreateWidgetSnapshot).toHaveBeenCalledWith({
-      shareToken: "share-token",
+      chatboxToken: "chatbox-token",
       chatSessionId: "chat-session-1",
       serverId: "server-1",
       toolCallId: "call-1",
@@ -194,7 +194,7 @@ describe("useSharedChatWidgetCapture", () => {
           enabled: true,
           readyToPersist,
           chatSessionId: "chat-session-1",
-          hostedShareToken: "share-token",
+          hostedChatboxToken: "chatbox-token",
           messages: [
             {
               id: "assistant-1",
@@ -273,7 +273,7 @@ describe("useSharedChatWidgetCapture", () => {
         useSharedChatWidgetCapture({
           enabled: true,
           chatSessionId: "chat-session-1",
-          hostedShareToken: "share-token",
+          hostedChatboxToken: "chatbox-token",
           messages: [
             {
               id: "assistant-1",
@@ -380,7 +380,7 @@ describe("useSharedChatWidgetCapture", () => {
         useSharedChatWidgetCapture({
           enabled: true,
           chatSessionId: "chat-session-pending",
-          hostedShareToken: "share-token",
+          hostedChatboxToken: "chatbox-token",
           messages: [
             {
               id: "assistant-1",

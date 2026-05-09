@@ -61,26 +61,6 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
     expect(getAccessToken).not.toHaveBeenCalled();
   });
 
-  it("prefers guest token for shared guests without calling WorkOS", async () => {
-    const getAccessToken = vi
-      .fn()
-      .mockResolvedValue("workos-token-should-skip");
-    setHostedApiContext({
-      projectId: "ws-shared",
-      isAuthenticated: false,
-      serverIdsByName: { bench: "srv-1" },
-      getAccessToken,
-      shareToken: "share_tok_123",
-    });
-
-    vi.mocked(getGuestBearerToken).mockResolvedValue("guest-shared");
-
-    const result = await getHostedAuthorizationHeader();
-
-    expect(result).toBe("Bearer guest-shared");
-    expect(getAccessToken).not.toHaveBeenCalled();
-  });
-
   it("prefers guest token for chatbox guests without calling WorkOS", async () => {
     const getAccessToken = vi
       .fn()
@@ -200,11 +180,11 @@ describe("isGuestMode and buildHostedServerRequest consistency", () => {
     expect(isGuestMode()).toBe(true);
   });
 
-  it("isGuestMode returns false for shared guests (has project + shareToken)", () => {
+  it("isGuestMode returns false for chatbox guests (has project + chatboxToken)", () => {
     setHostedApiContext({
       projectId: "ws-shared",
       isAuthenticated: false,
-      shareToken: "share_tok_123",
+      chatboxToken: "chatbox_tok_123",
       serverIdsByName: { bench: "srv-1" },
     });
 
@@ -245,7 +225,7 @@ describe("isGuestMode and buildHostedServerRequest consistency", () => {
     setHostedApiContext({
       projectId: "ws-shared",
       isAuthenticated: false,
-      shareToken: "share_tok_123",
+      
       serverIdsByName: { "my-server": "srv-1" },
     });
 
@@ -255,7 +235,7 @@ describe("isGuestMode and buildHostedServerRequest consistency", () => {
       projectId: "ws-shared",
       serverId: "srv-1",
       serverName: "my-server",
-      shareToken: "share_tok_123",
+      
     });
   });
 

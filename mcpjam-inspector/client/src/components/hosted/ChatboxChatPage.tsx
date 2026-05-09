@@ -21,6 +21,7 @@ import {
   readChatboxSession,
   CHATBOX_OAUTH_PENDING_KEY,
   chatboxEnabledOptionalStorageKey,
+  slugify,
   type ChatboxSession,
   writeChatboxSession,
   writeChatboxSignInReturnPath,
@@ -28,7 +29,6 @@ import {
 import { bootstrapServerToHostedOAuthDescriptor } from "@/components/chatboxes/builder/chatbox-server-optional";
 import { isHostedOAuthBusy } from "@/lib/hosted-oauth-resume";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
-import { slugify } from "@/lib/shared-server-session";
 import { ChatboxHostStyleProvider } from "@/contexts/chatbox-host-style-context";
 import { ChatboxHostOnboardingOverlays } from "@/components/hosted/ChatboxHostOnboardingOverlays";
 import { useChatboxHostIntroGate } from "@/components/hosted/useChatboxHostIntroGate";

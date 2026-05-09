@@ -1650,9 +1650,6 @@ async function createHostedOAuthSessionIfNeeded(input: {
       ...(pendingMarker.accessScope
         ? { accessScope: pendingMarker.accessScope }
         : {}),
-      ...(pendingMarker.shareToken
-        ? { shareToken: pendingMarker.shareToken }
-        : {}),
       ...(pendingMarker.chatboxToken
         ? { chatboxToken: pendingMarker.chatboxToken }
         : {}),
@@ -1713,9 +1710,6 @@ async function readHostedOAuthSessionProgress(input: {
         sessionId: input.context.sessionId,
         ...(input.context.accessScope
           ? { accessScope: input.context.accessScope }
-          : {}),
-        ...(input.context.shareToken
-          ? { shareToken: input.context.shareToken }
           : {}),
         ...(input.context.chatboxToken
           ? { chatboxToken: input.context.chatboxToken }
@@ -2453,7 +2447,6 @@ export async function completeHostedOAuthCallback(
                 },
               }),
           ...(context.accessScope ? { accessScope: context.accessScope } : {}),
-          ...(context.shareToken ? { shareToken: context.shareToken } : {}),
           ...(context.chatboxToken
             ? { chatboxToken: context.chatboxToken }
             : {}),

@@ -12,11 +12,9 @@ import { useConvexAuth } from "convex/react";
  */
 export function useIsDirectGuest({
   projectId,
-  shareToken,
   sandboxToken,
 }: {
   projectId?: string | null;
-  shareToken?: string | null;
   sandboxToken?: string | null;
 } = {}): boolean {
   const { isAuthenticated, isLoading } = useConvexAuth();
@@ -25,6 +23,6 @@ export function useIsDirectGuest({
   if (isLoading) return false;
   if (isAuthenticated || user) return false;
   if (projectId) return false;
-  if (shareToken || sandboxToken) return false;
+  if (sandboxToken) return false;
   return true;
 }

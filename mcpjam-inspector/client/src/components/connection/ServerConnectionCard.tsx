@@ -34,7 +34,6 @@ import {
   Cable,
   Trash2,
   AlertCircle,
-  Share2,
   FileText,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
@@ -62,7 +61,6 @@ import {
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { HOSTED_MODE } from "@/lib/config";
-import { ShareServerDialog } from "./ShareServerDialog";
 import { useExploreCasesPrefetchOnConnect } from "@/hooks/use-explore-cases-prefetch-on-connect";
 import { getOAuthTraceFailureStep } from "@/lib/oauth/oauth-trace";
 
@@ -78,8 +76,6 @@ function isHostedInsecureHttpServer(server: ServerWithName): boolean {
   }
 }
 
-// Temporary hide while chatbox sharing replaces server sharing in the main UI.
-const SERVER_SHARE_UI_ENABLED = false;
 const SERVER_CARD_CONTEXT_MENU_EXEMPT_SELECTOR =
   "[data-server-card-context-menu-exempt]";
 
@@ -139,7 +135,6 @@ export function ServerConnectionCard({
   const [isCreatingTunnel, setIsCreatingTunnel] = useState(false);
   const [isClosingTunnel, setIsClosingTunnel] = useState(false);
   const [showTunnelExplanation, setShowTunnelExplanation] = useState(false);
-  const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
   const [isActionsMenuOpen, setIsActionsMenuOpen] = useState(false);
 
   const {
@@ -169,25 +164,6 @@ export function ServerConnectionCard({
     server.connectionStatus === "connecting" ||
     server.connectionStatus === "oauth-flow";
   const isReconnectMenuDisabled = isReconnecting || isPendingConnection;
-  const isStdioServer = "command" in server.config;
-  const isInsecureHttpServer =
-    "url" in server.config &&
-    !!server.config.url &&
-    (() => {
-      try {
-        return new URL(server.config.url.toString()).protocol === "http:";
-      } catch {
-        return false;
-      }
-    })();
-  const canShareServer =
-    SERVER_SHARE_UI_ENABLED &&
-    HOSTED_MODE &&
-    !!hostedServerId &&
-    isAuthenticated &&
-    !isStdioServer &&
-    !isInsecureHttpServer;
-
   useEffect(() => {
     if (serverTunnelUrl !== undefined) {
       setTunnelUrl(serverTunnelUrl);
@@ -699,23 +675,6 @@ export function ServerConnectionCard({
               className="flex flex-wrap items-center justify-end gap-2"
               onClick={(e) => e.stopPropagation()}
             >
-              {canShareServer && (
-                <button
-                  data-server-card-context-menu-exempt
-                  onClick={() => {
-                    posthog.capture("share_server_clicked", {
-                      location: "server_connection_card",
-                      platform: detectPlatform(),
-                      environment: detectEnvironment(),
-                    });
-                    setIsShareDialogOpen(true);
-                  }}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/30 px-2 py-0.5 text-[11px] text-foreground transition-colors hover:bg-accent/60 cursor-pointer"
-                >
-                  <Share2 className="h-3 w-3" />
-                  <span>Share</span>
-                </button>
-              )}
               {showTunnelActions && (
                 <>
                   {hasTunnel ? (
@@ -838,14 +797,6 @@ export function ServerConnectionCard({
         onConfirm={handleConfirmCreateTunnel}
         isCreating={isCreatingTunnel}
       />
-      {canShareServer && hostedServerId && (
-        <ShareServerDialog
-          isOpen={isShareDialogOpen}
-          onClose={() => setIsShareDialogOpen(false)}
-          serverId={hostedServerId}
-          serverName={server.name}
-        />
-      )}
     </>
   );
 }

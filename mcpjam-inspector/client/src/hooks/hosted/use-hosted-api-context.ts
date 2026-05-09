@@ -10,7 +10,6 @@ interface UseHostedApiContextOptions {
   getAccessToken: () => Promise<string | undefined | null>;
   oauthTokensByServerId?: Record<string, string>;
   guestOauthTokensByServerName?: Record<string, string>;
-  shareToken?: string;
   chatboxToken?: string;
   isAuthenticated?: boolean;
   /** Maps server name → MCPServerConfig for guest mode (no Convex). */
@@ -26,7 +25,6 @@ export function useHostedApiContext({
   getAccessToken,
   oauthTokensByServerId,
   guestOauthTokensByServerName,
-  shareToken,
   chatboxToken,
   isAuthenticated,
   serverConfigs,
@@ -55,7 +53,6 @@ export function useHostedApiContext({
       getAccessToken,
       oauthTokensByServerId,
       guestOauthTokensByServerName,
-      shareToken,
       chatboxToken,
       isAuthenticated,
       serverConfigs,
@@ -73,7 +70,6 @@ export function useHostedApiContext({
     getAccessToken,
     oauthTokensByServerId,
     guestOauthTokensByServerName,
-    shareToken,
     chatboxToken,
     isAuthenticated,
     serverConfigs,

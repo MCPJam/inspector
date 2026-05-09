@@ -383,10 +383,6 @@ vi.mock("../components/hosted/HostedShellGate", () => ({
 vi.mock("../components/hosted/hosted-shell-gate-state", () => ({
   resolveHostedShellGateState: () => mockHostedShellGateState.value,
 }));
-vi.mock("../components/hosted/SharedServerChatPage", () => ({
-  SharedServerChatPage: () => <button type="button">Authorize</button>,
-  getSharedPathTokenFromLocation: () => null,
-}));
 vi.mock("../components/hosted/ChatboxChatPage", () => ({
   ChatboxChatPage: () => <button type="button">Authorize</button>,
   getChatboxPathTokenFromLocation: () => null,

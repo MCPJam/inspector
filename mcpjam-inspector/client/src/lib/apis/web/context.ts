@@ -13,7 +13,6 @@ export interface HostedApiContext {
   getAccessToken?: GetAccessTokenFn;
   oauthTokensByServerId?: Record<string, string>;
   guestOauthTokensByServerName?: Record<string, string>;
-  shareToken?: string;
   chatboxToken?: string;
   isAuthenticated?: boolean;
   /** True when a WorkOS session exists (user signed in), even if token hasn't resolved yet. */
@@ -100,9 +99,7 @@ function hasHostedGuestAccess(): boolean {
   if (!HOSTED_MODE) return false;
   if (hostedApiContext.isAuthenticated) return false;
   return (
-    !hostedApiContext.projectId ||
-    !!hostedApiContext.shareToken ||
-    !!hostedApiContext.chatboxToken
+    !hostedApiContext.projectId || !!hostedApiContext.chatboxToken
   );
 }
 
@@ -332,18 +329,12 @@ export function getHostedOAuthToken(serverId: string): string | undefined {
   return hostedApiContext.oauthTokensByServerId?.[serverId];
 }
 
-export function getHostedShareToken(): string | undefined {
-  return hostedApiContext.shareToken;
-}
-
 export function getHostedChatboxToken(): string | undefined {
   return hostedApiContext.chatboxToken;
 }
 
 function getHostedAccessScope(): HostedAccessScope | undefined {
-  return getHostedShareToken() || getHostedChatboxToken()
-    ? "chat_v2"
-    : undefined;
+  return getHostedChatboxToken() ? "chat_v2" : undefined;
 }
 
 export function buildHostedServerRequest(
@@ -376,7 +367,6 @@ export function buildHostedServerRequest(
   assertHostedClientConfigSynced();
   const serverId = resolveHostedServerId(serverNameOrId);
   const oauthToken = getHostedOAuthToken(serverId);
-  const shareToken = getHostedShareToken();
   const chatboxToken = getHostedChatboxToken();
   const accessScope = getHostedAccessScope();
   return {
@@ -391,7 +381,6 @@ export function buildHostedServerRequest(
       ? { clientCapabilities: hostedApiContext.clientCapabilities }
       : {}),
     ...(accessScope ? { accessScope } : {}),
-    ...(shareToken ? { shareToken } : {}),
     ...(chatboxToken ? { chatboxToken } : {}),
   };
 }
@@ -403,7 +392,6 @@ export function buildHostedServerBatchRequest(serverNamesOrIds: string[]): {
   clientCapabilities?: Record<string, unknown>;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
-  shareToken?: string;
   chatboxToken?: string;
 } {
   assertHostedClientConfigSynced();
@@ -411,7 +399,6 @@ export function buildHostedServerBatchRequest(serverNamesOrIds: string[]): {
   const serverIds = serverEntries.map((entry) => entry.serverId);
   const serverNames = serverEntries.map((entry) => entry.serverName);
   const oauthTokens = buildHostedOAuthTokensMap(serverIds);
-  const shareToken = getHostedShareToken();
   const chatboxToken = getHostedChatboxToken();
   const accessScope = getHostedAccessScope();
   return {
@@ -423,7 +410,6 @@ export function buildHostedServerBatchRequest(serverNamesOrIds: string[]): {
       : {}),
     ...(oauthTokens ? { oauthTokens } : {}),
     ...(accessScope ? { accessScope } : {}),
-    ...(shareToken ? { shareToken } : {}),
     ...(chatboxToken ? { chatboxToken } : {}),
   };
 }
@@ -435,7 +421,6 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
   clientCapabilities?: Record<string, unknown>;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
-  shareToken?: string;
   chatboxToken?: string;
 } {
   assertHostedClientConfigSynced();
@@ -443,7 +428,6 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
   const serverIds = serverEntries.map((entry) => entry.serverId);
   const serverNames = serverEntries.map((entry) => entry.serverName);
   const oauthTokens = buildHostedOAuthTokensMap(serverIds);
-  const shareToken = getHostedShareToken();
   const chatboxToken = getHostedChatboxToken();
   const accessScope = getHostedAccessScope();
 
@@ -456,7 +440,6 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
       : {}),
     ...(oauthTokens ? { oauthTokens } : {}),
     ...(accessScope ? { accessScope } : {}),
-    ...(shareToken ? { shareToken } : {}),
     ...(chatboxToken ? { chatboxToken } : {}),
   };
 }

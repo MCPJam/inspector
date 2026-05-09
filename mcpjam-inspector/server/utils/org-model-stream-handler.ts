@@ -44,11 +44,10 @@ export interface OrgModelHandlerOptions {
    */
   authHeader?: string;
   /**
-   * Hosted share/chatbox tokens for guest chat sessions. Forwarded to
-   * /stream/org so Convex can authorize the guest against the project via
-   * the existing authorizeGuestServerAccessBatch query.
+   * Hosted chatbox token for guest chat sessions. Forwarded to /stream/org
+   * so Convex can authorize the guest against the project via the existing
+   * authorizeGuestServerAccessBatch query.
    */
-  shareToken?: string;
   chatboxToken?: string;
 }
 
@@ -87,7 +86,6 @@ export async function handleHostedOrgChatModel(
     extraBodyFields: {
       providerKey: options.providerKey,
       ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
-      ...(options.shareToken ? { shareToken: options.shareToken } : {}),
       // chatboxToken is set on the body by handleMCPJamFreeChatModel itself.
       ...(options.selectedServers && options.selectedServers.length > 0
         ? { serverIds: options.selectedServers }

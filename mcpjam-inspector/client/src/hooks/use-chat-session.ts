@@ -901,8 +901,7 @@ function areAuthHeadersEqual(
 }
 
 type HostedSessionScope = {
-  projectId?: string;
-  shareToken?: string;
+  projectId?: string | null;
   chatboxToken?: string;
 };
 
@@ -911,9 +910,7 @@ function areHostedSessionScopesEqual(
   b: HostedSessionScope
 ): boolean {
   return (
-    a.projectId === b.projectId &&
-    a.shareToken === b.shareToken &&
-    a.chatboxToken === b.chatboxToken
+    a.projectId === b.projectId && a.chatboxToken === b.chatboxToken
   );
 }
 
@@ -937,7 +934,6 @@ export function useChatSession({
   const hostedProjectId = hostedContext?.projectId;
   const hostedSelectedServerIds = hostedContext?.selectedServerIds ?? [];
   const hostedOAuthTokens = hostedContext?.oauthTokens;
-  const hostedShareToken = hostedContext?.shareToken;
   const hostedChatboxToken = hostedContext?.chatboxToken;
   const hostedChatboxSurface = hostedContext?.chatboxSurface;
   const initialModelId = executionConfig?.modelId;
@@ -1012,14 +1008,13 @@ export function useChatSession({
     HOSTED_MODE &&
     !isAuthenticated &&
     !isAuthLoading &&
-    !hostedProjectId &&
-    !hostedShareToken;
+    !hostedProjectId;
   const sharedGuestMode =
     HOSTED_MODE &&
     !isAuthenticated &&
     !isAuthLoading &&
     !!hostedProjectId &&
-    !!(hostedShareToken || hostedChatboxToken);
+    !!hostedChatboxToken;
   const guestMode = directGuestMode || sharedGuestMode;
   const skipNextForkDetectionRef = useRef(false);
   const hasResolvedAuthHeadersRef = useRef(false);
@@ -1028,7 +1023,6 @@ export function useChatSession({
   );
   const lastResolvedHostedScopeRef = useRef<HostedSessionScope>({
     projectId: undefined,
-    shareToken: undefined,
     chatboxToken: undefined,
   });
   const pendingSessionHydrationRef = useRef<PendingSessionHydration | null>(
@@ -1294,7 +1288,7 @@ export function useChatSession({
           directVisibility,
         };
       }
-      const isHostedDirectChat = !hostedShareToken && !hostedChatboxToken;
+      const isHostedDirectChat = !hostedChatboxToken;
       return {
         projectId: hostedProjectId,
         chatSessionId,
@@ -1302,7 +1296,6 @@ export function useChatSession({
         selectedServerNames: selectedServers,
         accessScope: "chat_v2" as const,
         ...(isHostedDirectChat ? { directVisibility } : {}),
-        ...(hostedShareToken ? { shareToken: hostedShareToken } : {}),
         ...(hostedChatboxToken ? { chatboxToken: hostedChatboxToken } : {}),
         ...(hostedChatboxToken && hostedChatboxSurface
           ? { surface: hostedChatboxSurface }
@@ -1357,7 +1350,6 @@ export function useChatSession({
     chatSessionId,
     hostedSelectedServerIds,
     hostedOAuthTokens,
-    hostedShareToken,
     hostedChatboxToken,
     hostedChatboxSurface,
     chatFetch,
@@ -1543,7 +1535,6 @@ export function useChatSession({
     readyToPersist: status === "ready",
     directGuestMode,
     chatSessionId,
-    hostedShareToken,
     hostedChatboxToken,
     persistedSnapshotToolCallIds,
     messages,
@@ -1820,7 +1811,7 @@ export function useChatSession({
         active &&
         !isAuthenticated &&
         HOSTED_MODE &&
-        (!hostedProjectId || !!hostedShareToken || !!hostedChatboxToken)
+        (!hostedProjectId || !!hostedChatboxToken)
       ) {
         const guestToken = await getGuestBearerToken();
         if (!active) return;
@@ -1850,7 +1841,6 @@ export function useChatSession({
         const previousHostedScope = lastResolvedHostedScopeRef.current;
         const currentHostedScope = {
           projectId: hostedProjectId,
-          shareToken: hostedShareToken,
           chatboxToken: hostedChatboxToken,
         };
         const hasResolvedBefore = hasResolvedAuthHeadersRef.current;
@@ -1883,7 +1873,6 @@ export function useChatSession({
     };
   }, [
     getAccessToken,
-    hostedShareToken,
     hostedChatboxToken,
     hostedProjectId,
     isAuthenticated,
@@ -1971,10 +1960,7 @@ export function useChatSession({
         );
       } catch (error) {
         if (
-          !(
-            (hostedShareToken || hostedChatboxToken) &&
-            isAuthDeniedError(error)
-          )
+          !(hostedChatboxToken && isAuthDeniedError(error))
         ) {
           console.warn(
             "[useChatSession] Failed to fetch tools metadata:",
@@ -1990,12 +1976,7 @@ export function useChatSession({
     };
 
     fetchToolsMetadata();
-  }, [
-    selectedServersSignature,
-    selectedModel,
-    hostedShareToken,
-    hostedChatboxToken,
-  ]);
+  }, [selectedServersSignature, selectedModel, hostedChatboxToken]);
 
   // System prompt token count
   useEffect(() => {
@@ -2015,10 +1996,7 @@ export function useChatSession({
         setSystemPromptTokenCount(count > 0 ? count : null);
       } catch (error) {
         if (
-          !(
-            (hostedShareToken || hostedChatboxToken) &&
-            isAuthDeniedError(error)
-          )
+          !(hostedChatboxToken && isAuthDeniedError(error))
         ) {
           console.warn(
             "[useChatSession] Failed to count system prompt tokens:",
@@ -2032,7 +2010,7 @@ export function useChatSession({
     };
 
     fetchSystemPromptTokenCount();
-  }, [systemPrompt, selectedModel, hostedShareToken, hostedChatboxToken]);
+  }, [systemPrompt, selectedModel, hostedChatboxToken]);
 
   const previousSelectedServersRef = useRef<string[]>(selectedServers);
   useEffect(() => {

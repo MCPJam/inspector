@@ -6,7 +6,6 @@ export type HostedServerValidateContext = {
   serverId: string;
   serverName?: string;
   accessScope?: "project_member" | "chat_v2";
-  shareToken?: string;
   chatboxToken?: string;
 };
 
@@ -46,9 +45,6 @@ export async function validateHostedServer(
           : {}),
         ...(hostedContext.accessScope
           ? { accessScope: hostedContext.accessScope }
-          : {}),
-        ...(hostedContext.shareToken
-          ? { shareToken: hostedContext.shareToken }
           : {}),
         ...(hostedContext.chatboxToken
           ? { chatboxToken: hostedContext.chatboxToken }

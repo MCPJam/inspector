@@ -82,7 +82,6 @@ export const RunEvalsRequestSchema = z.object({
     .array(z.string())
     .min(1, { message: "At least one server must be selected" }),
   serverNames: z.array(z.string()).optional(),
-  shareToken: z.string().optional(),
   chatboxToken: z.string().optional(),
   storageServerIds: z.array(z.string()).optional(),
   modelApiKeys: z.record(z.string(), z.string()).optional(),
@@ -109,7 +108,6 @@ export const RunTestCaseRequestSchema = z.object({
   serverIds: z
     .array(z.string())
     .min(1, { message: "At least one server must be selected" }),
-  shareToken: z.string().optional(),
   chatboxToken: z.string().optional(),
   modelApiKeys: z.record(z.string(), z.string()).optional(),
   convexAuthToken: z.string(),
@@ -287,7 +285,6 @@ export async function runEvalsWithManager(
     tests,
     serverIds,
     serverNames,
-    shareToken,
     chatboxToken,
     storageServerIds,
     modelApiKeys,
@@ -586,7 +583,6 @@ export async function runEvalsWithManager(
       try {
         const orgConfig = await resolveOrgModelConfig(orgConfigTarget, {
           bearerToken: convexAuthToken,
-          shareToken,
           chatboxToken,
           serverIds: resolvedServerIds,
         });
@@ -638,7 +634,6 @@ export async function runEvalTestCaseWithManager(
     provider,
     compareRunId,
     serverIds,
-    shareToken,
     chatboxToken,
     skipLastMessageRunUpdate,
     modelApiKeys,
@@ -705,7 +700,6 @@ export async function runEvalTestCaseWithManager(
         testCaseOrgConfigTarget,
         {
           bearerToken: convexAuthToken,
-          shareToken,
           chatboxToken,
           serverIds: resolvedServerIds,
         },
@@ -871,7 +865,6 @@ export async function streamEvalTestCaseWithManager(
     provider,
     compareRunId,
     serverIds,
-    shareToken,
     chatboxToken,
     skipLastMessageRunUpdate,
     modelApiKeys,
@@ -940,7 +933,6 @@ export async function streamEvalTestCaseWithManager(
         streamTestCaseOrgConfigTarget,
         {
           bearerToken: convexAuthToken,
-          shareToken,
           chatboxToken,
           serverIds: resolvedServerIds,
         },

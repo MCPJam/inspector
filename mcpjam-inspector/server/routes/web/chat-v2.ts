@@ -270,7 +270,6 @@ chatV2.post("/", async (c) => {
       projectId: string;
       selectedServerIds: string[];
       selectedServerNames?: string[];
-      shareToken?: string;
       chatboxToken?: string;
       accessScope?: "project_member" | "chat_v2";
       surface?: "preview" | "share_link";
@@ -284,7 +283,6 @@ chatV2.post("/", async (c) => {
       requireToolApproval,
       selectedServerIds,
       selectedServerNames,
-      shareToken,
       chatboxToken,
       surface,
     } = body;
@@ -316,7 +314,6 @@ chatV2.post("/", async (c) => {
       hostedBody.clientCapabilities,
       {
         accessScope: "chat_v2",
-        shareToken,
         chatboxToken,
         rpcLogger: rpcCollector.rpcLogger,
         serverNames: selectedServerNames,
@@ -384,41 +381,28 @@ chatV2.post("/", async (c) => {
           providerKey,
           modelId: String(modelDefinition.id),
           chatSessionId: hostedChatSessionId,
-          sourceType: shareToken
-            ? "serverShare"
-            : chatboxToken
-            ? "chatbox"
-            : "direct",
+          sourceType: chatboxToken ? "chatbox" : "direct",
           messages: scrubMessages(modelMessages as ModelMessage[]),
           systemPrompt: enhancedSystemPrompt,
           temperature: resolvedTemperature,
           tools: allTools as ToolSet,
           authHeader: c.req.header("authorization"),
-          shareToken,
           chatboxToken,
           mcpClientManager: manager,
           selectedServers: selectedServerIds,
           requireToolApproval,
           onConversationComplete: hostedChatSessionId
             ? async (fullHistory, turnTrace) => {
-                const isDirectChat = !shareToken && !chatboxToken;
+                const isDirectChat = !chatboxToken;
                 await persistChatSessionToConvex({
                   chatSessionId: hostedChatSessionId,
                   modelId: String(modelDefinition.id),
                   modelSource: "byok",
                   projectId: hostedBody.projectId,
                   workspaceId: legacyWorkspaceId,
-                  sourceType: shareToken
-                    ? "serverShare"
-                    : chatboxToken
-                    ? "chatbox"
-                    : "direct",
+                  sourceType: chatboxToken ? "chatbox" : "direct",
                   ...(chatboxToken && surface ? { surface } : {}),
-                  shareToken,
                   chatboxToken,
-                  ...(shareToken && selectedServerIds[0]
-                    ? { serverId: selectedServerIds[0] }
-                    : {}),
                   authHeader: c.req.header("authorization"),
                   sessionMessages: fullHistory,
                   startedAt: sessionStartedAt,
@@ -464,11 +448,7 @@ chatV2.post("/", async (c) => {
         messages: modelMessages as ModelMessage[],
         modelId: String(modelDefinition.id),
         chatSessionId: hostedChatSessionId,
-        sourceType: shareToken
-          ? "serverShare"
-          : chatboxToken
-          ? "chatbox"
-          : "direct",
+        sourceType: chatboxToken ? "chatbox" : "direct",
         systemPrompt: enhancedSystemPrompt,
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
@@ -480,23 +460,15 @@ chatV2.post("/", async (c) => {
         requireToolApproval,
         onConversationComplete: hostedChatSessionId
           ? async (fullHistory, turnTrace) => {
-              const isDirectChat = !shareToken && !chatboxToken;
+              const isDirectChat = !chatboxToken;
               await persistChatSessionToConvex({
                 chatSessionId: hostedChatSessionId,
                 modelId: String(modelDefinition.id),
                 modelSource: "mcpjam",
                 projectId: hostedBody.projectId,
-                sourceType: shareToken
-                  ? "serverShare"
-                  : chatboxToken
-                  ? "chatbox"
-                  : "direct",
+                sourceType: chatboxToken ? "chatbox" : "direct",
                 ...(chatboxToken && surface ? { surface } : {}),
-                shareToken,
                 chatboxToken,
-                ...(shareToken && selectedServerIds[0]
-                  ? { serverId: selectedServerIds[0] }
-                  : {}),
                 authHeader: c.req.header("authorization"),
                 sessionMessages: fullHistory,
                 startedAt: sessionStartedAt,

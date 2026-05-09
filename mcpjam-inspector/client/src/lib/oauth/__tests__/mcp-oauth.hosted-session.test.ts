@@ -56,7 +56,7 @@ describe("mcp-oauth hosted callback sessions", () => {
         serverUrl: "https://mcp.asana.com/sse",
         sessionId: "hosted-session-1",
         accessScope: "project_member",
-        shareToken: null,
+        
         chatboxToken: null,
         returnHash: "#servers",
         startedAt: Date.now(),
@@ -125,7 +125,7 @@ describe("mcp-oauth hosted callback sessions", () => {
         serverUrl: "https://mcp.asana.com/sse",
         sessionId: "hosted-session-1",
         accessScope: "project_member",
-        shareToken: null,
+        
         chatboxToken: null,
         returnHash: "#servers",
         startedAt: Date.now(),
@@ -199,7 +199,7 @@ describe("mcp-oauth hosted callback sessions", () => {
         serverUrl: "https://mcp.linear.app",
         sessionId: "hosted-session-1",
         accessScope: "project_member",
-        shareToken: null,
+        
         chatboxToken: null,
         returnHash: "#servers",
         startedAt: Date.now(),
@@ -298,7 +298,7 @@ describe("mcp-oauth hosted callback sessions", () => {
           serverUrl: "https://mcp.asana.com/sse",
           sessionId: "hosted-session-1",
           accessScope: "project_member",
-          shareToken: null,
+          
           chatboxToken: null,
           returnHash: "#servers",
           startedAt: Date.now(),
@@ -420,7 +420,7 @@ describe("mcp-oauth hosted callback sessions", () => {
           serverUrl: "https://mcp.linear.app/mcp",
           sessionId: "hosted-session-1",
           accessScope: "project_member",
-          shareToken: null,
+          
           chatboxToken: null,
           returnHash: "#servers",
           startedAt: Date.now(),

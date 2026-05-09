@@ -5,7 +5,7 @@ import type {
 } from "@/hooks/chatbox-usage-filters";
 import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
 
-export type InsightsSourceType = "chatbox" | "serverShare";
+export type InsightsSourceType = "chatbox";
 
 export type FeedbackBucketCount = {
   segment: string;

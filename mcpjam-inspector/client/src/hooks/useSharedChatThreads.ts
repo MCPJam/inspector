@@ -1,6 +1,6 @@
 import { useQuery } from "convex/react";
 
-export type SharedChatSourceType = "serverShare" | "chatbox";
+export type SharedChatSourceType = "chatbox";
 
 export interface SharedChatThread {
   _id: string;
