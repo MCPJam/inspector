@@ -21,6 +21,7 @@
 
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { Label } from "@mcpjam/design-system/label";
+import { Input } from "@mcpjam/design-system/input";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import { Switch } from "@mcpjam/design-system/switch";
 import { Slider } from "@mcpjam/design-system/slider";
@@ -63,6 +64,12 @@ export interface HostConfigEditorProps {
   caption?: string;
   /** Optional className for the outer wrapper. */
   className?: string;
+  /**
+   * Aggregated validity signal. Called with `true` whenever any
+   * subsection (currently the JSON record editors) is in an error
+   * state. Parent forms should disable Save while invalid.
+   */
+  onValidityChange?: (hasError: boolean) => void;
 }
 
 export function HostConfigEditor({
@@ -72,8 +79,19 @@ export function HostConfigEditor({
   availableServers,
   caption,
   className,
+  onValidityChange,
 }: HostConfigEditorProps) {
   const reactId = useId();
+
+  // Track per-section JSON parse errors. Aggregate into a single boolean
+  // and notify the parent whenever it changes so the form can gate Save.
+  const [headersError, setHeadersError] = useState<string | null>(null);
+  const [capsError, setCapsError] = useState<string | null>(null);
+  const [hostCtxError, setHostCtxError] = useState<string | null>(null);
+  const hasError = headersError != null || capsError != null || hostCtxError != null;
+  useEffect(() => {
+    onValidityChange?.(hasError);
+  }, [hasError, onValidityChange]);
 
   const update = useCallback(
     (patch: Partial<HostConfigInputV2>) => {
@@ -108,9 +126,8 @@ export function HostConfigEditor({
           <section className="space-y-4">
             <div className="grid gap-2">
               <Label htmlFor={`${reactId}-modelId`}>Model</Label>
-              <input
+              <Input
                 id={`${reactId}-modelId`}
-                className="w-full rounded border px-3 py-2 text-sm"
                 value={value.modelId}
                 onChange={(e) => update({ modelId: e.target.value })}
                 placeholder="claude-sonnet-4-5"
@@ -237,11 +254,10 @@ export function HostConfigEditor({
       <section className="space-y-4">
         <div className="grid gap-2">
           <Label htmlFor={`${reactId}-timeout`}>Request timeout (ms)</Label>
-          <input
+          <Input
             id={`${reactId}-timeout`}
             type="number"
             min={1}
-            className="w-full rounded border px-3 py-2 text-sm"
             value={value.connectionDefaults.requestTimeout}
             onChange={(e) => {
               // Preserve the positive-timeout invariant. The legacy
@@ -265,6 +281,7 @@ export function HostConfigEditor({
                 headers: coerceHeadersToStringRecord(headers),
               })
             }
+            onErrorChange={setHeadersError}
             placeholder='{"X-Header":"value"}'
           />
         </div>
@@ -276,6 +293,7 @@ export function HostConfigEditor({
             onChange={(clientCapabilities) =>
               update({ clientCapabilities })
             }
+            onErrorChange={setCapsError}
             placeholder="{}"
           />
         </div>
@@ -286,6 +304,7 @@ export function HostConfigEditor({
             <JsonRecordEditor
               value={value.hostContext}
               onChange={(hostContext) => update({ hostContext })}
+              onErrorChange={setHostCtxError}
               placeholder="{}"
             />
           </div>
@@ -380,19 +399,33 @@ function ServerCheckboxList({
  * Phase 1 uses this to keep the editor self-contained. Real builders for
  * client capabilities (already exists in the codebase) replace this in
  * later phases.
+ *
+ * Exposes parse errors via `onErrorChange` so the parent form can disable
+ * its Save button while any field is invalid. Errors are cleared as soon
+ * as the user enters valid JSON or the parent value changes.
  */
 function JsonRecordEditor({
   value,
   onChange,
+  onErrorChange,
   placeholder,
 }: {
   value: Record<string, unknown>;
   onChange: (next: Record<string, unknown>) => void;
+  onErrorChange?: (error: string | null) => void;
   placeholder?: string;
 }) {
   const stringified = useMemo(() => JSON.stringify(value, null, 2), [value]);
   const [raw, setRaw] = useState(stringified);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setErrorState] = useState<string | null>(null);
+
+  const setError = useCallback(
+    (next: string | null) => {
+      setErrorState(next);
+      onErrorChange?.(next);
+    },
+    [onErrorChange],
+  );
 
   // Re-sync local text whenever the parent's serialized form changes (e.g.
   // a different config gets loaded). We avoid clobbering mid-edit drafts
@@ -400,32 +433,42 @@ function JsonRecordEditor({
   useEffect(() => {
     setRaw(stringified);
     setError(null);
-  }, [stringified]);
+  }, [stringified, setError]);
+
+  // Parse on every keystroke so errors clear as soon as the user fixes
+  // them and the parent's `onChange`/`onErrorChange` signals stay live.
+  // We still only call `onChange` (committing the parsed value) on
+  // successful parses; partial drafts don't propagate.
+  const tryParse = useCallback(
+    (next: string) => {
+      try {
+        const parsed = JSON.parse(next || "{}");
+        if (
+          !parsed ||
+          typeof parsed !== "object" ||
+          Array.isArray(parsed)
+        ) {
+          setError("Must be a JSON object");
+          return;
+        }
+        setError(null);
+        onChange(parsed as Record<string, unknown>);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Invalid JSON");
+      }
+    },
+    [onChange, setError],
+  );
 
   return (
     <div className="grid gap-1">
       <Textarea
         rows={4}
         value={raw}
-        onChange={(e) => setRaw(e.target.value)}
-        onBlur={() => {
-          try {
-            const parsed = JSON.parse(raw || "{}");
-            if (
-              !parsed ||
-              typeof parsed !== "object" ||
-              Array.isArray(parsed)
-            ) {
-              setError("Must be a JSON object");
-              return;
-            }
-            setError(null);
-            onChange(parsed as Record<string, unknown>);
-          } catch (err) {
-            setError(
-              err instanceof Error ? err.message : "Invalid JSON",
-            );
-          }
+        onChange={(e) => {
+          const next = e.target.value;
+          setRaw(next);
+          tryParse(next);
         }}
         placeholder={placeholder}
       />
