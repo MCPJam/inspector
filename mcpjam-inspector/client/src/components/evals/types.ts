@@ -45,6 +45,11 @@ export type EvalSuite = {
   };
   _creationTime?: number; // Convex auto field
   tags?: string[];
+  defaultConfig?: {
+    modelId: string;
+    systemPrompt: string;
+    temperature: number;
+  };
 };
 
 export type EvalCase = {
