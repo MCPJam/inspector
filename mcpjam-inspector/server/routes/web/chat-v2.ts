@@ -19,6 +19,7 @@ import type { ModelDefinition } from "@/shared/types";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
 import {
+  buildDirectHostConfig,
   persistChatSessionToConvex,
   pickEnrichmentHeaders,
   type PersistedTurnTrace,
@@ -244,6 +245,14 @@ chatV2.post("/", async (c) => {
                             ? selectedServerNames
                             : selectedServerIds,
                       },
+                      hostConfig: buildDirectHostConfig({
+                        modelId,
+                        systemPrompt,
+                        requestedTemperature: temperature,
+                        resolvedTemperature,
+                        requireToolApproval,
+                        selectedServerIds,
+                      }),
                     }
                   : {}),
                 turnTrace,
@@ -367,6 +376,14 @@ chatV2.post("/", async (c) => {
                             ? selectedServerNames
                             : selectedServerIds,
                       },
+                      hostConfig: buildDirectHostConfig({
+                        modelId: String(modelDefinition.id),
+                        systemPrompt,
+                        requestedTemperature: temperature,
+                        resolvedTemperature,
+                        requireToolApproval,
+                        selectedServerIds,
+                      }),
                     }
                   : {}),
                 turnTrace,

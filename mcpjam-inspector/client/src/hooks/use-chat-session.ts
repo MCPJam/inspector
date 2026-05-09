@@ -34,7 +34,6 @@ import { useConvexAuth } from "convex/react";
 import {
   ModelDefinition,
   type ModelProvider,
-  isGPT5Model,
 } from "@/shared/types";
 import {
   ProviderTokens,
@@ -1275,7 +1274,6 @@ export function useChatSession({
     } else {
       apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
     }
-    const isGpt5 = isGPT5Model(selectedModel.id);
 
     // Merge session auth headers with workos auth headers
     const sessionHeaders = getSessionAuthHeaders();
@@ -1326,7 +1324,13 @@ export function useChatSession({
       body: () => ({
         model: selectedModel,
         ...(HOSTED_MODE ? {} : { apiKey }),
-        ...(isGpt5 ? {} : { temperature }),
+        // Always send the user's slider value. The server's `prepareChatV2`
+        // already drops temperature for GPT-5 before the LLM call (its API
+        // rejects the field), so what lands here is purely the user's
+        // intended config — and ingestion's hostConfig dedupes on it. If we
+        // stripped for GPT-5, every GPT-5 direct chat would dedupe to the
+        // helper's 0.7 fallback regardless of the slider.
+        temperature,
         systemPrompt,
         ...(HOSTED_MODE
           ? buildHostedBody()
@@ -1336,6 +1340,15 @@ export function useChatSession({
               directVisibility,
               // Pass projectId for BYOK direct-chat history persistence
               ...(hostedProjectId ? { projectId: hostedProjectId } : {}),
+              // Convex server Ids parallel to `selectedServers`. Only sent
+              // when every name resolved to an Id — a partial mapping would
+              // hash to a different hostConfig than intended. Without this,
+              // the MCP route can't safely emit `hostConfig` because local
+              // server *names* aren't valid Convex Ids and the backend
+              // validator would reject the whole ingest call.
+              ...(hostedSelectedServerIds.length === selectedServers.length
+                ? { selectedServerIds: hostedSelectedServerIds }
+                : {}),
             }),
         requireToolApproval: requireToolApprovalRef.current,
         ...(!HOSTED_MODE && customProviders.length > 0
