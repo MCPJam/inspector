@@ -70,12 +70,30 @@ Use the sidebar to manage your test cases:
 - **Duplicate tests** - Use the dropdown menu on any test to create a copy
 - **Delete tests** - Remove tests you no longer need
 
+## Suite default execution config
+
+You can set a suite-wide default model, system prompt, and temperature that all test cases in the suite inherit. This saves you from configuring the same model on every individual test case.
+
+To configure the default execution config:
+
+1. Open a suite and enter edit mode
+2. Scroll to the **Default Execution Config** card (below the Servers section)
+3. Select a model, optionally set a system prompt and temperature, then click **Save config**
+
+<Note>
+  Per-case `advancedConfig` overrides take precedence over the suite default. If a test case has its own model configured, that model is used instead.
+</Note>
+
+The status bar at the bottom of the card shows the currently saved default model, or "No default model configured" if none is set. Use the **Remove** button to clear the default entirely, or **Reset** to discard unsaved changes.
+
 ## Running Tests
 
 You can run tests in two ways:
 
 - **Run a single test** - Choose which of your configured models to use and click Run
 - **Run all tests** - Click Results & Runs, configure your models, then click the Run button
+
+When a suite has a default model configured, the run wizard pre-selects that model. You can still change the model before starting the run.
 
 <Note>
   Running tests requires connected MCP servers. If the Run button is disabled, check that your servers are connected in the Servers tab.
