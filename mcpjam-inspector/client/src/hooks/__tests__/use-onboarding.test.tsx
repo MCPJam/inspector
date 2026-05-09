@@ -44,7 +44,7 @@ vi.mock("sonner", () => ({
 
 function createServer(
   name: string,
-  connectionStatus: ServerWithName["connectionStatus"],
+  connectionStatus: ServerWithName["connectionStatus"]
 ): ServerWithName {
   return {
     name,
@@ -72,9 +72,9 @@ describe("useOnboarding", () => {
       useOnboarding({
         servers: {},
         onConnect,
-        isAuthenticated: false,
-        isAuthLoading: false,
-      }),
+        isSignedInWithWorkOs: false,
+        isWorkOsAuthLoading: false,
+      })
     );
 
     expect(result.current.phase).toBe("connecting_excalidraw");
@@ -90,9 +90,9 @@ describe("useOnboarding", () => {
       useOnboarding({
         servers: {},
         onConnect: vi.fn(),
-        isAuthenticated: false,
-        isAuthLoading: true,
-      }),
+        isSignedInWithWorkOs: false,
+        isWorkOsAuthLoading: true,
+      })
     );
 
     expect(result.current.isResolvingRemoteCompletion).toBe(true);
@@ -101,23 +101,23 @@ describe("useOnboarding", () => {
   it("re-derives the guest first-run phase once auth settles", async () => {
     const onConnect = vi.fn();
     const { result, rerender } = renderHook(
-      ({ isAuthLoading }: { isAuthLoading: boolean }) =>
+      ({ isWorkOsAuthLoading }: { isWorkOsAuthLoading: boolean }) =>
         useOnboarding({
           servers: {},
           onConnect,
-          isAuthenticated: false,
-          isAuthLoading,
+          isSignedInWithWorkOs: false,
+          isWorkOsAuthLoading,
         }),
       {
         initialProps: {
-          isAuthLoading: true,
+          isWorkOsAuthLoading: true,
         },
-      },
+      }
     );
 
     expect(result.current.phase).toBe("dismissed");
 
-    rerender({ isAuthLoading: false });
+    rerender({ isWorkOsAuthLoading: false });
 
     await waitFor(() => {
       expect(result.current.phase).toBe("connecting_excalidraw");
@@ -133,9 +133,9 @@ describe("useOnboarding", () => {
       useOnboarding({
         servers: {},
         onConnect: vi.fn(),
-        isAuthenticated: true,
-        isAuthLoading: false,
-      }),
+        isSignedInWithWorkOs: true,
+        isWorkOsAuthLoading: false,
+      })
     );
 
     await waitFor(() => {
@@ -151,20 +151,20 @@ describe("useOnboarding", () => {
       useOnboarding({
         servers: {},
         onConnect: vi.fn(),
-        isAuthenticated: true,
-        isAuthLoading: false,
-      }),
+        isSignedInWithWorkOs: true,
+        isWorkOsAuthLoading: false,
+      })
     );
 
     expect(result.current.isResolvingRemoteCompletion).toBe(false);
   });
 
-  it("keeps Excalidraw users in guided mode after connect without persisting completion, and does not resume guided mode on remount", async () => {
+  it("keeps Excalidraw users in guided mode after connect and resumes until NUX is shown", async () => {
     const onConnect = vi.fn();
     const connectedServers = {
       [EXCALIDRAW_SERVER_NAME]: createServer(
         EXCALIDRAW_SERVER_NAME,
-        "connected",
+        "connected"
       ),
     };
 
@@ -173,14 +173,14 @@ describe("useOnboarding", () => {
         useOnboarding({
           servers,
           onConnect,
-          isAuthenticated: false,
-          isAuthLoading: false,
+          isSignedInWithWorkOs: false,
+          isWorkOsAuthLoading: false,
         }),
       {
         initialProps: {
           servers: {},
         },
-      },
+      }
     );
 
     expect(result.current.phase).toBe("connecting_excalidraw");
@@ -199,8 +199,8 @@ describe("useOnboarding", () => {
 
     expect(readOnboardingState()).toEqual(
       expect.objectContaining({
-        status: "seen",
-      }),
+        status: "started",
+      })
     );
 
     unmount();
@@ -209,20 +209,175 @@ describe("useOnboarding", () => {
       useOnboarding({
         servers: connectedServers,
         onConnect,
-        isAuthenticated: false,
-        isAuthLoading: false,
-      }),
+        isSignedInWithWorkOs: false,
+        isWorkOsAuthLoading: false,
+      })
     );
 
-    expect(resumed.result.current.phase).toBe("dismissed");
-    expect(resumed.result.current.isGuidedPostConnect).toBe(false);
+    expect(resumed.result.current.phase).toBe("connected_guided");
+    expect(resumed.result.current.isGuidedPostConnect).toBe(true);
   });
 
-  it("resumes auto-connect on refresh when status is 'seen' but no servers exist yet", async () => {
-    // Simulate a refresh mid-bootstrap: "seen" was written but Excalidraw hasn't been registered
+  it("does not resume guided mode after the NUX was shown", () => {
     localStorage.setItem(
       "mcp-onboarding-state",
-      JSON.stringify({ status: "seen" }),
+      JSON.stringify({ status: "seen", shownAt: Date.now() })
+    );
+    const connectedServers = {
+      [EXCALIDRAW_SERVER_NAME]: createServer(
+        EXCALIDRAW_SERVER_NAME,
+        "connected"
+      ),
+    };
+
+    const { result } = renderHook(() =>
+      useOnboarding({
+        servers: connectedServers,
+        onConnect: vi.fn(),
+        isSignedInWithWorkOs: false,
+        isWorkOsAuthLoading: false,
+      })
+    );
+
+    expect(result.current.phase).toBe("dismissed");
+    expect(result.current.isGuidedPostConnect).toBe(false);
+  });
+
+  it("uses the guest user row over localStorage when deciding first-run eligibility", async () => {
+    localStorage.setItem(
+      "mcp-onboarding-state",
+      JSON.stringify({ status: "seen", shownAt: Date.now() })
+    );
+    const onConnect = vi.fn();
+
+    const { result } = renderHook(() =>
+      useOnboarding({
+        servers: {},
+        onConnect,
+        isSignedInWithWorkOs: false,
+        isWorkOsAuthLoading: false,
+        hasRemoteOnboardingState: true,
+        hasCompletedOnboarding: false,
+      })
+    );
+
+    expect(result.current.phase).toBe("connecting_excalidraw");
+    await waitFor(() => {
+      expect(onConnect).toHaveBeenCalledWith(EXCALIDRAW_SERVER_CONFIG);
+    });
+  });
+
+  it("retries first-run auto-connect when the only saved server is an incomplete Excalidraw row", async () => {
+    const onConnect = vi.fn();
+    const servers = {
+      [EXCALIDRAW_SERVER_NAME]: createServer(
+        EXCALIDRAW_SERVER_NAME,
+        "disconnected"
+      ),
+    };
+
+    const { result } = renderHook(() =>
+      useOnboarding({
+        servers,
+        onConnect,
+        isSignedInWithWorkOs: false,
+        isWorkOsAuthLoading: false,
+        hasRemoteOnboardingState: true,
+        hasCompletedOnboarding: false,
+      })
+    );
+
+    expect(result.current.phase).toBe("connecting_excalidraw");
+    expect(result.current.isBootstrappingFirstRunConnection).toBe(false);
+    await waitFor(() => {
+      expect(onConnect).toHaveBeenCalledWith(EXCALIDRAW_SERVER_CONFIG);
+    });
+  });
+
+  it("does not auto-connect first-run Excalidraw when another saved server exists", () => {
+    const onConnect = vi.fn();
+    const servers = {
+      [EXCALIDRAW_SERVER_NAME]: createServer(
+        EXCALIDRAW_SERVER_NAME,
+        "disconnected"
+      ),
+      "existing-server": createServer("existing-server", "connected"),
+    };
+
+    const { result } = renderHook(() =>
+      useOnboarding({
+        servers,
+        onConnect,
+        isSignedInWithWorkOs: false,
+        isWorkOsAuthLoading: false,
+        hasRemoteOnboardingState: true,
+        hasCompletedOnboarding: false,
+      })
+    );
+
+    expect(result.current.phase).toBe("dismissed");
+    expect(onConnect).not.toHaveBeenCalled();
+  });
+
+  it("skips guest first-run onboarding when the guest user row was already marked shown", () => {
+    const onConnect = vi.fn();
+
+    const { result } = renderHook(() =>
+      useOnboarding({
+        servers: {},
+        onConnect,
+        isSignedInWithWorkOs: false,
+        isWorkOsAuthLoading: false,
+        hasRemoteOnboardingState: true,
+        hasCompletedOnboarding: true,
+      })
+    );
+
+    expect(result.current.phase).toBe("completed");
+    expect(onConnect).not.toHaveBeenCalled();
+  });
+
+  it("marks remote onboarding as shown without ending the current guided flow", async () => {
+    const connectedServers = {
+      [EXCALIDRAW_SERVER_NAME]: createServer(
+        EXCALIDRAW_SERVER_NAME,
+        "connected"
+      ),
+    };
+
+    const { result } = renderHook(() =>
+      useOnboarding({
+        servers: connectedServers,
+        onConnect: vi.fn(),
+        isSignedInWithWorkOs: false,
+        isWorkOsAuthLoading: false,
+        hasRemoteOnboardingState: true,
+        hasCompletedOnboarding: false,
+        canPersistRemoteOnboarding: true,
+      })
+    );
+
+    expect(result.current.phase).toBe("connected_guided");
+
+    act(() => {
+      result.current.markOnboardingShown();
+    });
+
+    await waitFor(() => {
+      expect(mockState.completeOnboardingMutation).toHaveBeenCalledTimes(1);
+    });
+    expect(result.current.phase).toBe("connected_guided");
+    expect(readOnboardingState()).toEqual(
+      expect.objectContaining({
+        status: "seen",
+      })
+    );
+  });
+
+  it("retries auto-connect when App Builder is mounted with legacy seen state but no servers", async () => {
+    localStorage.setItem(
+      "mcp-onboarding-state",
+      JSON.stringify({ status: "seen" })
     );
 
     const onConnect = vi.fn();
@@ -230,9 +385,9 @@ describe("useOnboarding", () => {
       useOnboarding({
         servers: {},
         onConnect,
-        isAuthenticated: false,
-        isAuthLoading: false,
-      }),
+        isSignedInWithWorkOs: false,
+        isWorkOsAuthLoading: false,
+      })
     );
 
     expect(result.current.phase).toBe("connecting_excalidraw");
@@ -246,7 +401,7 @@ describe("useOnboarding", () => {
     const connectedServers = {
       [EXCALIDRAW_SERVER_NAME]: createServer(
         EXCALIDRAW_SERVER_NAME,
-        "connected",
+        "connected"
       ),
     };
 
@@ -255,14 +410,14 @@ describe("useOnboarding", () => {
         useOnboarding({
           servers,
           onConnect,
-          isAuthenticated: false,
-          isAuthLoading: false,
+          isSignedInWithWorkOs: false,
+          isWorkOsAuthLoading: false,
         }),
       {
         initialProps: {
           servers: {},
         },
-      },
+      }
     );
 
     await waitFor(() => {
@@ -283,9 +438,10 @@ describe("useOnboarding", () => {
       useOnboarding({
         servers: {},
         onConnect: vi.fn(),
-        isAuthenticated: true,
-        isAuthLoading: false,
-      }),
+        isSignedInWithWorkOs: true,
+        isWorkOsAuthLoading: false,
+        canPersistRemoteOnboarding: true,
+      })
     );
 
     act(() => {
@@ -299,7 +455,7 @@ describe("useOnboarding", () => {
     expect(readOnboardingState()).toEqual(
       expect.objectContaining({
         status: "completed",
-      }),
+      })
     );
     expect(mockState.completeOnboardingMutation).toHaveBeenCalledTimes(1);
   });
