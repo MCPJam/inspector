@@ -278,7 +278,9 @@ export function useEvalHandlers({
             ...(suite.defaultConfig.systemPrompt
               ? { system: suite.defaultConfig.systemPrompt }
               : {}),
-            temperature: suite.defaultConfig.temperature,
+            ...(typeof suite.defaultConfig.temperature === "number"
+              ? { temperature: suite.defaultConfig.temperature }
+              : {}),
           }
         : {};
 
