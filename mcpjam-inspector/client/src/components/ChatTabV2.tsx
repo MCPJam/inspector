@@ -126,9 +126,6 @@ interface ChatTabProps {
   onHasMessagesChange?: (hasMessages: boolean) => void;
   enableMultiModelChat?: boolean;
   minimalMode?: boolean;
-  hostedProjectIdOverride?: string;
-  hostedSelectedServerIdsOverride?: string[];
-  hostedOAuthTokensOverride?: Record<string, string>;
   hostedContext?: HostedRuntimeContext;
   executionConfig?: ExecutionConfig;
   reasoningDisplayMode?: ReasoningDisplayMode;
@@ -165,9 +162,6 @@ export function ChatTabV2({
   onHasMessagesChange,
   enableMultiModelChat = false,
   minimalMode = false,
-  hostedProjectIdOverride,
-  hostedSelectedServerIdsOverride,
-  hostedOAuthTokensOverride,
   hostedContext,
   executionConfig,
   reasoningDisplayMode = "inline",
@@ -324,12 +318,12 @@ export function ChatTabV2({
   const hostedChatboxToken = hostedContext?.chatboxToken;
   const hostedChatboxSurface = hostedContext?.chatboxSurface;
   const effectiveHostedProjectId =
-    hostedProjectIdOverride ?? convexProjectId;
+    hostedContext?.projectId ?? convexProjectId;
   const effectiveHostedSelectedServerIds =
-    hostedSelectedServerIdsOverride ?? hostedSelectedServerIds;
+    hostedContext?.selectedServerIds ?? hostedSelectedServerIds;
   const effectiveHostedOAuthTokens = hostedChatboxToken
     ? undefined
-    : hostedOAuthTokensOverride ?? hostedOAuthTokens;
+    : hostedContext?.oauthTokens ?? hostedOAuthTokens;
   const isHostedDirectGuest =
     HOSTED_MODE &&
     !isConvexAuthenticated &&
@@ -1273,10 +1267,11 @@ export function ChatTabV2({
       return;
     }
 
+    const { executionConfig: handoffExec } = evalChatHandoff;
     let matchingModel = null;
-    if (evalChatHandoff.modelId) {
+    if (handoffExec.modelId) {
       matchingModel = availableModels.find(
-        (model) => String(model.id) === evalChatHandoff.modelId
+        (model) => String(model.id) === handoffExec.modelId
       );
       if (!matchingModel && availableModels.length === 0) {
         return;
@@ -1295,16 +1290,16 @@ export function ChatTabV2({
     startChatWithMessages(evalChatHandoff.messages);
     appliedEvalChatHandoffIdRef.current = evalChatHandoff.id;
 
-    if (typeof evalChatHandoff.systemPrompt === "string") {
-      setSystemPrompt(evalChatHandoff.systemPrompt);
+    if (typeof handoffExec.systemPrompt === "string") {
+      setSystemPrompt(handoffExec.systemPrompt);
     }
 
-    if (typeof evalChatHandoff.temperature === "number") {
-      setTemperature(evalChatHandoff.temperature);
+    if (typeof handoffExec.temperature === "number") {
+      setTemperature(handoffExec.temperature);
     }
 
-    if (typeof evalChatHandoff.requireToolApproval === "boolean") {
-      setRequireToolApproval(evalChatHandoff.requireToolApproval);
+    if (typeof handoffExec.requireToolApproval === "boolean") {
+      setRequireToolApproval(handoffExec.requireToolApproval);
     }
 
     setInput("");

@@ -6,7 +6,7 @@ import {
   formatMcpConnectServerPrompt,
   isUnresolvableMcpServerRef,
 } from "../mcp-server-display-name";
-import { setHostedApiContext } from "../apis/web/context";
+import { setApiContext } from "../apis/web/context";
 
 vi.mock("@/lib/config", () => ({
   get HOSTED_MODE() {
@@ -19,7 +19,7 @@ let mockHosted = false;
 describe("getMcpServerDisplayName", () => {
   beforeEach(() => {
     mockHosted = false;
-    setHostedApiContext({
+    setApiContext({
       projectId: "ws-1",
       isAuthenticated: true,
       serverIdsByName: { asana: "id-asana" },

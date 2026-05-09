@@ -3,14 +3,16 @@ import type { Context } from "hono";
 import { MCPClientManager } from "@mcpjam/sdk";
 import type { HttpServerConfig, RpcLogger } from "@mcpjam/sdk";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
-import { validateUrl, OAuthProxyError } from "../../utils/oauth-proxy.js";
 import {
   attachHostedRpcLogs,
   createHostedRpcLogCollector,
 } from "./hosted-rpc-logs.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { setRequestLogContext } from "../../utils/request-logger.js";
-import type { RequestLogContext } from "../../utils/log-events.js";
+import {
+  type InternalLogContext,
+  mapInternalToRequestContext,
+} from "../../utils/internal-log-context.js";
 import {
   ErrorCode,
   WebRouteError,
@@ -25,10 +27,13 @@ import {
 // ── Zod Schemas ──────────────────────────────────────────────────────
 
 const clientCapabilitiesSchema = z.record(z.string(), z.unknown());
-export const GUEST_SERVER_ID = "__guest__";
 
 export const projectServerSchema = z.object({
   projectId: z.string().min(1),
+  // Optional but declared so zod doesn't strip it. Downstream callers in
+  // servers.ts and conformance.ts read this when present to scope authorize
+  // calls to a workspace mirror instead of a project.
+  workspaceId: z.string().min(1).optional(),
   serverId: z.string().min(1),
   serverName: z.string().min(1).optional(),
   clientCapabilities: clientCapabilitiesSchema.optional(),
@@ -91,16 +96,6 @@ export const hostedChatSchema = z
   })
   .passthrough();
 
-// ── Guest Schema ─────────────────────────────────────────────────────
-
-export const guestServerInputSchema = z.object({
-  serverUrl: z.string().min(1),
-  serverName: z.string().min(1).optional(),
-  serverHeaders: z.record(z.string(), z.string()).optional(),
-  oauthAccessToken: z.string().optional(),
-  clientCapabilities: clientCapabilitiesSchema.optional(),
-});
-
 // ── Helpers ──────────────────────────────────────────────────────────
 
 export function buildSingleServerOAuthTokens(serverId: string, token?: string) {
@@ -132,142 +127,7 @@ function buildServerNamesById(
   return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
-export function isGuestServerRequestBody(
-  rawBody: Record<string, unknown>
-): boolean {
-  return (
-    typeof rawBody.serverUrl === "string" &&
-    !rawBody.projectId &&
-    !rawBody.workspaceId
-  );
-}
-
-function requireGuestId(c: any): string {
-  const guestId = c.get("guestId") as string | undefined;
-  if (!guestId) {
-    throw new WebRouteError(
-      401,
-      ErrorCode.UNAUTHORIZED,
-      "Valid guest token required. Please refresh the page to obtain a new session."
-    );
-  }
-  return guestId;
-}
-
-export async function createGuestEphemeralManager(
-  c: any,
-  rawBody: Record<string, unknown>,
-  options?: { timeoutMs?: number; rpcLogger?: RpcLogger }
-): Promise<{
-  manager: InstanceType<typeof MCPClientManager>;
-  augmentedBody: Record<string, unknown>;
-}> {
-  requireGuestId(c);
-
-  const guestInput = parseWithSchema(guestServerInputSchema, rawBody);
-
-  try {
-    await validateUrl(guestInput.serverUrl, true);
-  } catch (err) {
-    if (err instanceof OAuthProxyError) {
-      throw new WebRouteError(
-        err.status,
-        ErrorCode.VALIDATION_ERROR,
-        err.message
-      );
-    }
-    throw err;
-  }
-
-  const timeoutMs = options?.timeoutMs ?? WEB_CALL_TIMEOUT_MS;
-  const headers: Record<string, string> = {
-    ...(guestInput.serverHeaders ?? {}),
-  };
-
-  if (guestInput.oauthAccessToken) {
-    headers["Authorization"] = `Bearer ${guestInput.oauthAccessToken}`;
-  }
-
-  const httpConfig: HttpServerConfig = {
-    url: guestInput.serverUrl,
-    capabilities: guestInput.clientCapabilities,
-    clientCapabilities: guestInput.clientCapabilities,
-    requestInit: {
-      headers,
-    },
-    timeout: timeoutMs,
-  };
-
-  return {
-    manager: new MCPClientManager(
-      { [GUEST_SERVER_ID]: httpConfig },
-      {
-        defaultTimeout: timeoutMs,
-        rpcLogger: options?.rpcLogger,
-        retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
-      }
-    ),
-    augmentedBody: {
-      ...rawBody,
-      projectId: GUEST_SERVER_ID,
-      serverId: GUEST_SERVER_ID,
-      serverIds: [GUEST_SERVER_ID],
-    },
-  };
-}
-
 // ── Authorization ────────────────────────────────────────────────────
-
-// Server-only logging context returned by backend. Optional during rollout.
-// When present, it must never be forwarded to the browser.
-type InternalLogContext = {
-  authType: "signedIn" | "guest";
-  userId?: string | null;
-  userExternalId?: string | null;
-  guestExternalId?: string | null;
-  emailDomain?: string | null;
-  orgId?: string | null;
-  orgPlan?: string | null;
-  orgSeatQuantity?: number | null;
-  orgCreatedBy?: string | null;
-  projectId?: string | null;
-  projectRole?:
-    | "owner"
-    | "admin"
-    | "member"
-    | "guest"
-    | "editor"
-    | "chat"
-    | null;
-  accessLevel?: "project_member" | "shared_chat" | null;
-  serverId?: string | null;
-  serverTransport?: "stdio" | "http" | null;
-  chatboxId?: string | null;
-  surface?: "preview" | "share_link" | null;
-};
-
-function mapInternalToRequestContext(
-  ctx: InternalLogContext
-): Partial<RequestLogContext> {
-  return {
-    authType: ctx.authType,
-    userId: ctx.userId ?? null,
-    userExternalId: ctx.userExternalId ?? null,
-    guestExternalId: ctx.guestExternalId ?? null,
-    emailDomain: ctx.emailDomain ?? null,
-    orgId: ctx.orgId ?? null,
-    orgPlan: ctx.orgPlan ?? null,
-    orgSeatQuantity: ctx.orgSeatQuantity ?? null,
-    orgCreatedBy: ctx.orgCreatedBy ?? null,
-    projectId: ctx.projectId ?? null,
-    projectRole: ctx.projectRole ?? null,
-    accessLevel: ctx.accessLevel ?? null,
-    serverId: ctx.serverId ?? null,
-    serverTransport: ctx.serverTransport ?? null,
-    chatboxId: ctx.chatboxId ?? null,
-    surface: ctx.surface ?? null,
-  };
-}
 
 export type ConvexAuthorizeResponse = {
   authorized: boolean;
@@ -324,6 +184,30 @@ export type ConvexBatchAuthorizeResult =
 export type ConvexBatchAuthorizeResponse = {
   results: Record<string, ConvexBatchAuthorizeResult>;
 };
+
+// Defense-in-depth: hosted /web/authorize-batch is contractually meant to
+// return an HTTP-only `serverConfig` — Convex strips command/args/env via
+// `normalizeAuthorizeResult`. If a backend regression ever lets those fields
+// through, we drop them here so they can never reach the hosted client or be
+// fed into a transport. Local mode uses /web/authorize-batch-local instead,
+// which is allowed to carry STDIO fields and goes through a different code
+// path (`local-server-resolver.ts`).
+const STDIO_ONLY_FIELDS = ["command", "args", "env"] as const;
+function stripStdioFieldsFromHostedConfig<
+  T extends { serverConfig?: Record<string, unknown> },
+>(holder: T): T {
+  const cfg = holder.serverConfig;
+  if (!cfg || typeof cfg !== "object") return holder;
+  let cleaned: Record<string, unknown> | undefined;
+  for (const field of STDIO_ONLY_FIELDS) {
+    if (field in cfg) {
+      if (!cleaned) cleaned = { ...cfg };
+      delete cleaned[field];
+    }
+  }
+  if (!cleaned) return holder;
+  return { ...holder, serverConfig: cleaned };
+}
 
 export async function authorizeServer(
   c: Context,
@@ -401,7 +285,7 @@ export async function authorizeServer(
   if (internalLogContext) {
     setRequestLogContext(c, mapInternalToRequestContext(internalLogContext));
   }
-  return clientSafe;
+  return stripStdioFieldsFromHostedConfig(clientSafe) as ClientSafeAuthorizeResponse;
 }
 
 export async function authorizeBatch(
@@ -510,7 +394,9 @@ export async function authorizeBatch(
   for (const [serverId, result] of Object.entries(raw.results)) {
     if (result.ok) {
       const { internalLogContext: _omit, ...clientSafeResult } = result;
-      strippedResults[serverId] = clientSafeResult;
+      strippedResults[serverId] = stripStdioFieldsFromHostedConfig(
+        clientSafeResult,
+      ) as ConvexBatchAuthorizeSuccess;
     } else {
       strippedResults[serverId] = result;
     }
@@ -750,10 +636,8 @@ function resolveConnectionParams(body: Record<string, unknown>): {
  *   6. Disconnect all servers (finally)
  *   7. Return JSON response (or structured error)
  *
- * Guest users (identified by guestId in Hono context) bypass Convex authorization
- * entirely. They provide a `serverUrl` (+optional `serverHeaders`) directly in the
- * request body, which is validated for safety (HTTPS-only, no private IPs) before
- * creating a direct ephemeral connection.
+ * Guest users and signed-in users both flow through Convex authorization. The
+ * bearer token determines which backend actor owns the requested project.
  *
  * Not suitable for streaming routes (chat-v2) — those need manual lifecycle
  * management via `onStreamComplete` because the Response is returned before
@@ -781,89 +665,57 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
       rpcCollector = createHostedRpcLogCollector(rawBody);
     }
 
-    // Detect guest requests by body shape: presence of serverUrl without project/project legacy IDs.
-    // This is more robust than relying solely on guestId from middleware, which
-    // may not be set when the guest token is expired/invalid but the client still
-    // sends a guest-shaped body.
-    const isGuestRequest = isGuestServerRequestBody(rawBody);
-
-    let result: T;
-
-    if (isGuestRequest) {
-      // ── Guest path: direct connection, no Convex ────────────────
-      const guestId = c.get("guestId") as string | undefined;
-      if (!guestId) {
-        throw new WebRouteError(
-          401,
-          ErrorCode.UNAUTHORIZED,
-          "Valid guest token required. Please refresh the page to obtain a new session."
-        );
-      }
-
-      if (options?.guestUnsupportedMessage) {
-        throw new WebRouteError(
-          403,
-          ErrorCode.FEATURE_NOT_SUPPORTED,
-          options.guestUnsupportedMessage
-        );
-      }
-
-      const { manager, augmentedBody } = await createGuestEphemeralManager(
-        c,
-        rawBody,
-        {
-          timeoutMs: options?.timeoutMs,
-          rpcLogger: rpcCollector?.rpcLogger,
-        }
-      );
-
-      try {
-        const body = parseWithSchema(schema, augmentedBody);
-        result = await fn(manager, body as z.infer<S>);
-      } finally {
-        await manager.disconnectAllServers();
-      }
-    } else {
-      // ── Authenticated path: Convex authorization ──────────────────
-      const bearerToken = assertBearerToken(c);
-      const body = parseWithSchema(schema, rawBody);
-      // Cast for internal plumbing — all web schemas include projectId + serverId(s).
-      // The strongly-typed `body` is passed through to `fn` unchanged.
-      const raw = body as Record<string, unknown>;
-      const { serverIds, oauthTokens, serverNames } =
-        resolveConnectionParams(raw);
-      const timeoutMs = options?.timeoutMs ?? WEB_CALL_TIMEOUT_MS;
-      const accessScope =
-        raw.accessScope === "project_member" || raw.accessScope === "chat_v2"
-          ? raw.accessScope
-          : undefined;
-      const chatboxToken =
-        typeof raw.chatboxToken === "string" && raw.chatboxToken.trim()
-          ? raw.chatboxToken
-          : undefined;
-
-      result = await withManager(
-        createAuthorizedManager(
-          c,
-          bearerToken,
-          raw.projectId as string,
-          serverIds,
-          timeoutMs,
-          oauthTokens,
-          (raw.clientCapabilities as Record<string, unknown> | undefined) ??
-            undefined,
-          {
-            accessScope,
-            workspaceId:
-              typeof raw.workspaceId === "string" ? raw.workspaceId : undefined,
-            chatboxToken,
-            rpcLogger: rpcCollector?.rpcLogger,
-            serverNames,
-          }
-        ),
-        (manager) => fn(manager, body as z.infer<S>)
+    // Both guest and signed-in actors flow through the same Convex
+    // authorization path: the bearer token (guest JWT or WorkOS bearer) is
+    // forwarded to /web/authorize-batch, which dispatches to the right
+    // authorize* query based on the JWT issuer. Routes that legitimately
+    // gate guests out (e.g. evals) opt in via `guestUnsupportedMessage`.
+    if (options?.guestUnsupportedMessage && c.get("guestId")) {
+      throw new WebRouteError(
+        403,
+        ErrorCode.FEATURE_NOT_SUPPORTED,
+        options.guestUnsupportedMessage
       );
     }
+
+    const bearerToken = assertBearerToken(c);
+    const body = parseWithSchema(schema, rawBody);
+    // Cast for internal plumbing — all web schemas include projectId + serverId(s).
+    // The strongly-typed `body` is passed through to `fn` unchanged.
+    const raw = body as Record<string, unknown>;
+    const { serverIds, oauthTokens, serverNames } =
+      resolveConnectionParams(raw);
+    const timeoutMs = options?.timeoutMs ?? WEB_CALL_TIMEOUT_MS;
+    const accessScope =
+      raw.accessScope === "project_member" || raw.accessScope === "chat_v2"
+        ? raw.accessScope
+        : undefined;
+    const chatboxToken =
+      typeof raw.chatboxToken === "string" && raw.chatboxToken.trim()
+        ? raw.chatboxToken
+        : undefined;
+
+    const result = await withManager(
+      createAuthorizedManager(
+        c,
+        bearerToken,
+        raw.projectId as string,
+        serverIds,
+        timeoutMs,
+        oauthTokens,
+        (raw.clientCapabilities as Record<string, unknown> | undefined) ??
+          undefined,
+        {
+          accessScope,
+          workspaceId:
+            typeof raw.workspaceId === "string" ? raw.workspaceId : undefined,
+          chatboxToken,
+          rpcLogger: rpcCollector?.rpcLogger,
+          serverNames,
+        }
+      ),
+      (manager) => fn(manager, body as z.infer<S>)
+    );
 
     return c.json(attachHostedRpcLogs(result, rpcCollector), 200);
   } catch (error) {

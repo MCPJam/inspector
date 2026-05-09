@@ -457,103 +457,7 @@ describe("web routes — evals", () => {
     );
   });
 
-  it("runs direct guest quick evals with the synthetic guest server", async () => {
-    runEvalTestCaseWithManagerMock.mockResolvedValueOnce({
-      success: true,
-      iteration: { _id: "guest-iter-1" },
-    });
-    const { app } = createEvalsTestApp();
-    const { token } = issueGuestToken();
-
-    const response = await postJson(
-      app,
-      "/api/web/evals/run-test-case",
-      {
-        serverUrl: "https://guest.example.com/mcp",
-        serverName: "Guest Server",
-        serverHeaders: { "X-Guest": "yes" },
-        oauthAccessToken: "fresh-oauth-token",
-        testCaseId: "guest-case-1",
-        model: "openai/gpt-5-mini",
-        provider: "openai",
-      },
-      token,
-    );
-
-    const { status, data } = await expectJson(response);
-
-    expect(status).toBe(200);
-    expect(data).toEqual({
-      success: true,
-      iteration: { _id: "guest-iter-1" },
-    });
-    expect(runEvalTestCaseWithManagerMock).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        projectId: "__guest__",
-        serverIds: ["__guest__"],
-        testCaseId: "guest-case-1",
-        convexAuthToken: token,
-      }),
-    );
-    expect(managerConfigsMock).toHaveBeenCalledWith({
-      __guest__: expect.objectContaining({
-        url: "https://guest.example.com/mcp",
-        requestInit: {
-          headers: {
-            "X-Guest": "yes",
-            Authorization: "Bearer fresh-oauth-token",
-          },
-        },
-      }),
-    });
-  });
-
-  it("generates direct guest eval tests with the synthetic guest server", async () => {
-    generateEvalTestsWithManagerMock.mockResolvedValueOnce({
-      success: true,
-      tests: [{ title: "Generated guest test" }],
-    });
-    const { app } = createEvalsTestApp();
-    const { token } = issueGuestToken();
-
-    const response = await postJson(
-      app,
-      "/api/web/evals/generate-tests",
-      {
-        serverUrl: "https://guest.example.com/mcp",
-        serverName: "Guest Server",
-      },
-      token,
-    );
-
-    const { status, data } = await expectJson(response);
-
-    expect(status).toBe(200);
-    expect(data).toEqual({
-      success: true,
-      tests: [{ title: "Generated guest test" }],
-    });
-    expect(generateEvalTestsWithManagerMock).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        projectId: "__guest__",
-        serverIds: ["__guest__"],
-        convexAuthToken: token,
-      }),
-    );
-  });
-
-  it("streams direct guest compare quick runs with the synthetic guest server", async () => {
-    const encoder = new TextEncoder();
-    streamEvalTestCaseWithManagerMock.mockResolvedValueOnce(
-      new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(encoder.encode('data: {"type":"complete"}\n\n'));
-          controller.close();
-        },
-      }),
-    );
+  it("rejects direct guest compare quick run bodies", async () => {
     const { app } = createEvalsTestApp();
     const { token } = issueGuestToken();
 
@@ -571,22 +475,14 @@ describe("web routes — evals", () => {
       token,
     );
 
-    expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toContain("text/event-stream");
-    await expect(response.text()).resolves.toContain('"type":"complete"');
-    expect(streamEvalTestCaseWithManagerMock).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        projectId: "__guest__",
-        serverIds: ["__guest__"],
-        testCaseId: "guest-case-1",
-        compareRunId: "cmp_guest",
-        convexAuthToken: token,
-      }),
-      expect.objectContaining({
-        onStreamComplete: expect.any(Function),
-      }),
-    );
+    const { status, data } = await expectJson<{
+      code: string;
+      message: string;
+    }>(response);
+
+    expect(status).toBe(400);
+    expect(data.code).toBe("VALIDATION_ERROR");
+    expect(streamEvalTestCaseWithManagerMock).not.toHaveBeenCalled();
   });
 
   it("rejects direct guest full suite eval runs", async () => {

@@ -8,7 +8,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { ChatTabV2 } from "@/components/ChatTabV2";
 import { getLoadingIndicatorVariantForHostStyle } from "@/components/chat-v2/shared/loading-indicator-content";
 import type { ServerWithName } from "@/hooks/use-app-state";
-import { useHostedApiContext } from "@/hooks/hosted/use-hosted-api-context";
+import { useApiContext } from "@/hooks/hosted/use-hosted-api-context";
 import { useHostedOAuthGate } from "@/hooks/hosted/use-hosted-oauth-gate";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { authFetch } from "@/lib/session-token";
@@ -420,12 +420,13 @@ export function ChatboxChatPage({
     );
   }, [session, sessionServersActive]);
 
-  useHostedApiContext({
+  useApiContext({
     projectId: session?.payload.projectId ?? null,
     serverIdsByName: session ? hostedServerIdsByName : {},
     getAccessToken,
     chatboxToken: tokenFromPath ?? session?.token,
-    isAuthenticated,
+    isAuthenticated: !!workOsUser,
+    hasSession: !!workOsUser || isWorkOsLoading,
   });
 
   useEffect(() => {
@@ -742,13 +743,13 @@ export function ChatboxChatPage({
           loadingIndicatorVariant={getLoadingIndicatorVariantForHostStyle(
             hostStyle
           )}
-          hostedProjectIdOverride={session.payload.projectId}
-          hostedSelectedServerIdsOverride={sessionServersActive.map(
-            (server) => server.serverId
-          )}
           hostedContext={{
             chatboxToken: session.token,
             chatboxSurface: session.surface ?? "share_link",
+            projectId: session.payload.projectId,
+            selectedServerIds: sessionServersActive.map(
+              (server) => server.serverId
+            ),
           }}
           executionConfig={{
             modelId: session.payload.modelId,

@@ -1,5 +1,5 @@
 import { webPost } from "./base";
-import { buildHostedServerRequest } from "./context";
+import { buildServerRequest } from "./context";
 
 export async function fetchHostedMcpAppWidgetContent(request: {
   serverNameOrId: string;
@@ -14,7 +14,7 @@ export async function fetchHostedMcpAppWidgetContent(request: {
   viewMode?: string;
   viewParams?: Record<string, unknown>;
 }): Promise<any> {
-  const serverRequest = buildHostedServerRequest(request.serverNameOrId);
+  const serverRequest = buildServerRequest(request.serverNameOrId);
   return webPost("/api/web/apps/mcp-apps/widget-content", {
     ...serverRequest,
     resourceUri: request.resourceUri,
@@ -43,7 +43,7 @@ export async function fetchHostedChatGptAppWidgetContent(request: {
   locale?: string;
   deviceType?: "mobile" | "tablet" | "desktop";
 }): Promise<any> {
-  const serverRequest = buildHostedServerRequest(request.serverNameOrId);
+  const serverRequest = buildServerRequest(request.serverNameOrId);
   return webPost("/api/web/apps/chatgpt-apps/widget-content", {
     ...serverRequest,
     uri: request.uri,

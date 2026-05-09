@@ -1,0 +1,25 @@
+{
+  "changesets": [
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "Finish local-mode dedup (sync local OAuth tokens to Convex via import-tokens, collapse legacy localStorage state to no-ops), charge users after trial if paid during trial, make renderer transparent.",
+      "id": "inspector-local-mode-dedup-and-billing"
+    }
+  ],
+  "releases": [
+    {
+      "name": "@mcpjam/inspector",
+      "type": "patch",
+      "oldVersion": "2.4.4",
+      "changesets": [
+        "inspector-local-mode-dedup-and-billing"
+      ],
+      "newVersion": "2.4.5"
+    }
+  ]
+}

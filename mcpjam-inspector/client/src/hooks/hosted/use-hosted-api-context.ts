@@ -1,8 +1,7 @@
 import { useLayoutEffect } from "react";
-import { HOSTED_MODE } from "@/lib/config";
-import { setHostedApiContext } from "@/lib/apis/web/context";
+import { setApiContext } from "@/lib/apis/web/context";
 
-interface UseHostedApiContextOptions {
+interface UseApiContextOptions {
   projectId: string | null;
   serverIdsByName: Record<string, string>;
   clientCapabilities?: Record<string, unknown>;
@@ -12,12 +11,11 @@ interface UseHostedApiContextOptions {
   guestOauthTokensByServerName?: Record<string, string>;
   chatboxToken?: string;
   isAuthenticated?: boolean;
-  /** Maps server name → MCPServerConfig for guest mode (no Convex). */
-  serverConfigs?: Record<string, unknown>;
+  hasSession?: boolean;
   enabled?: boolean;
 }
 
-export function useHostedApiContext({
+export function useApiContext({
   projectId,
   serverIdsByName,
   clientCapabilities,
@@ -27,25 +25,20 @@ export function useHostedApiContext({
   guestOauthTokensByServerName,
   chatboxToken,
   isAuthenticated,
-  serverConfigs,
+  hasSession,
   enabled = true,
-}: UseHostedApiContextOptions): void {
+}: UseApiContextOptions): void {
   // useLayoutEffect so the global hosted context is set synchronously before
   // any child useEffect hooks fire (e.g. fetchToolsMetadata in useChatSession).
   // With useEffect, React's bottom-up ordering means child passive effects run
   // between this effect's cleanup (which nulls the context) and its setup,
   // causing "Hosted server not found" errors for shared-chat OAuth servers.
   useLayoutEffect(() => {
-    if (!HOSTED_MODE) {
-      setHostedApiContext(null);
-      return;
-    }
-
     if (!enabled) {
       return;
     }
 
-    setHostedApiContext({
+    setApiContext({
       projectId,
       serverIdsByName,
       clientCapabilities,
@@ -55,11 +48,11 @@ export function useHostedApiContext({
       guestOauthTokensByServerName,
       chatboxToken,
       isAuthenticated,
-      serverConfigs,
+      hasSession,
     });
 
     return () => {
-      setHostedApiContext(null);
+      setApiContext(null);
     };
   }, [
     enabled,
@@ -72,6 +65,6 @@ export function useHostedApiContext({
     guestOauthTokensByServerName,
     chatboxToken,
     isAuthenticated,
-    serverConfigs,
+    hasSession,
   ]);
 }

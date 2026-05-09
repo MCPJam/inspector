@@ -60,6 +60,9 @@ function getPlanRank(plan: OrganizationPlan): number {
   return PLAN_ORDER.indexOf(plan);
 }
 
+const SOLO_PLAN_MEMBER_LIMIT_TOOLTIP =
+  "Solo plan is only available to organizations with 1 member.";
+
 function getPlanColumnCta(params: {
   plan: OrganizationPlan;
   currentPlan: OrganizationPlan;
@@ -67,6 +70,7 @@ function getPlanColumnCta(params: {
   billingConfigured: boolean;
   canManageBilling: boolean;
   isBillingActionPending: boolean;
+  activeMemberCount: number | undefined;
   onDowngradePlan: (
     plan: OrganizationPlan,
     billingInterval: BillingInterval,
@@ -81,6 +85,7 @@ function getPlanColumnCta(params: {
   disabled: boolean;
   variant: "default" | "outline" | "secondary";
   onClick?: () => void;
+  tooltip?: string;
 } {
   const {
     plan,
@@ -89,6 +94,7 @@ function getPlanColumnCta(params: {
     billingConfigured,
     canManageBilling,
     isBillingActionPending,
+    activeMemberCount,
     onDowngradePlan,
     onStartPlanChange,
     billingInterval,
@@ -98,6 +104,12 @@ function getPlanColumnCta(params: {
   const isHigherTier = getPlanRank(plan) > getPlanRank(currentPlan);
   const isDowngrade = getPlanRank(plan) < getPlanRank(currentPlan);
   const isEnterprisePlan = plan === "enterprise";
+  // While member count is still loading, conservatively block Solo for non-current
+  // plans so a multi-member org can't briefly see an enabled Solo CTA before the
+  // count resolves.
+  const soloBlockedByMemberCount =
+    plan === "solo" &&
+    (activeMemberCount === undefined || activeMemberCount > 1);
 
   if (isCurrentPlan) {
     return { label: "Current plan", disabled: true, variant: "outline" };
@@ -116,6 +128,14 @@ function getPlanColumnCta(params: {
   }
 
   if (isDowngrade) {
+    if (soloBlockedByMemberCount) {
+      return {
+        label: "Downgrade",
+        disabled: true,
+        variant: "outline",
+        tooltip: SOLO_PLAN_MEMBER_LIMIT_TOOLTIP,
+      };
+    }
     return {
       label: "Downgrade",
       disabled:
@@ -128,6 +148,14 @@ function getPlanColumnCta(params: {
   if (isHigherTier && entry.isSelfServe) {
     if (plan !== "solo" && plan !== "team") {
       return { label: "Unavailable", disabled: true, variant: "outline" };
+    }
+    if (soloBlockedByMemberCount) {
+      return {
+        label: "Upgrade",
+        disabled: true,
+        variant: "outline",
+        tooltip: SOLO_PLAN_MEMBER_LIMIT_TOOLTIP,
+      };
     }
     return {
       label: "Upgrade",
@@ -152,6 +180,28 @@ function formatCurrency(
     minimumFractionDigits: 0,
     maximumFractionDigits,
   }).format(amount);
+}
+
+function formatBillingDate(timestampMs: number): string {
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(timestampMs));
+}
+
+function getDeferredTrialBillingCopy(
+  billingStatus: OrganizationBillingStatus | undefined,
+): string | null {
+  const deferredTrialBillingStartsAt =
+    billingStatus?.deferredTrialBillingStartsAt;
+  if (typeof deferredTrialBillingStartsAt !== "number") {
+    return null;
+  }
+
+  return `$0 today. First bill charged in advance on ${formatBillingDate(
+    deferredTrialBillingStartsAt,
+  )}.`;
 }
 
 /** Price line for the compare table; Solo uses flat `/mo` (3-seat cap), Team uses `/seat/mo`. */
@@ -457,6 +507,7 @@ interface OrganizationBillingSectionProps {
   isStartingPlanChange: boolean;
   pendingPlanChangeTarget: "solo" | "team" | null;
   isOpeningPortal: boolean;
+  activeMemberCount: number | undefined;
   onDowngradePlan: (
     plan: OrganizationPlan,
     billingInterval: BillingInterval,
@@ -482,6 +533,7 @@ export function OrganizationBillingSection({
   isStartingPlanChange,
   pendingPlanChangeTarget,
   isOpeningPortal,
+  activeMemberCount,
   onDowngradePlan,
   onStartPlanChange,
   onStartAutoPlanChange,
@@ -615,6 +667,7 @@ export function OrganizationBillingSection({
   const compareSections = planCatalog
     ? buildComparePlanSectionsFromCatalog(planCatalog)
     : null;
+  const deferredTrialBillingCopy = getDeferredTrialBillingCopy(billingStatus);
 
   return (
     <div className="space-y-5">
@@ -837,6 +890,7 @@ export function OrganizationBillingSection({
                           billingConfigured,
                           canManageBilling,
                           isBillingActionPending,
+                          activeMemberCount,
                           onDowngradePlan: (
                             targetPlan,
                             targetBillingInterval,
@@ -855,6 +909,12 @@ export function OrganizationBillingSection({
                           (plan === "solo" || plan === "team");
                         const showCtaSpinner = showPlanChangeSpinner;
                         const isPopular = plan === POPULAR_PLAN;
+                        const showDeferredTrialBillingCopy =
+                          deferredTrialBillingCopy != null &&
+                          cta.label === "Upgrade" &&
+                          !cta.disabled &&
+                          !cta.tooltip &&
+                          (plan === "solo" || plan === "team");
                         return (
                           <TableHead
                             key={plan}
@@ -886,24 +946,59 @@ export function OrganizationBillingSection({
                                       {entry.seatMinimum} seat minimum
                                     </p>
                                   ) : null}
+                                  {showDeferredTrialBillingCopy ? (
+                                    <p className="text-[11px] font-medium leading-tight text-muted-foreground">
+                                      {deferredTrialBillingCopy}
+                                    </p>
+                                  ) : null}
                                 </div>
                               </div>
-                              <Button
-                                className="w-full shrink-0 rounded-lg"
-                                size="sm"
-                                variant={cta.variant}
-                                disabled={cta.disabled}
-                                onClick={cta.onClick}
-                              >
-                                {showCtaSpinner ? (
-                                  <>
-                                    <Loader2 className="size-4 animate-spin" />
-                                    Loading...
-                                  </>
-                                ) : (
-                                  cta.label
-                                )}
-                              </Button>
+                              {cta.tooltip ? (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      className="w-full shrink-0 rounded-lg"
+                                      size="sm"
+                                      variant={cta.variant}
+                                      aria-disabled={true}
+                                      tabIndex={0}
+                                      onClick={undefined}
+                                    >
+                                      {showCtaSpinner ? (
+                                        <>
+                                          <Loader2 className="size-4 animate-spin" />
+                                          Loading...
+                                        </>
+                                      ) : (
+                                        cta.label
+                                      )}
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent
+                                    side="top"
+                                    className="max-w-[14rem] text-center"
+                                  >
+                                    {cta.tooltip}
+                                  </TooltipContent>
+                                </Tooltip>
+                              ) : (
+                                <Button
+                                  className="w-full shrink-0 rounded-lg"
+                                  size="sm"
+                                  variant={cta.variant}
+                                  disabled={cta.disabled}
+                                  onClick={cta.onClick}
+                                >
+                                  {showCtaSpinner ? (
+                                    <>
+                                      <Loader2 className="size-4 animate-spin" />
+                                      Loading...
+                                    </>
+                                  ) : (
+                                    cta.label
+                                  )}
+                                </Button>
+                              )}
                             </div>
                           </TableHead>
                         );

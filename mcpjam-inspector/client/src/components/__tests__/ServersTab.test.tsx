@@ -136,6 +136,11 @@ vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => false,
 }));
 
+vi.mock("@/hooks/use-app-ready", () => ({
+  useAppReady: () => ({ status: "ready", projectId: "ws_local" }),
+  useAppReadyMessage: () => null,
+}));
+
 vi.mock("../client-config/ClientConfigTab", () => ({
   ClientConfigTab: ({ activeProjectId }: { activeProjectId: string }) => (
     <div data-testid="client-config-tab-stub">
@@ -963,6 +968,65 @@ describe("ServersTab shared detail modal", () => {
               } as any,
             }),
           }),
+        }}
+      />
+    );
+
+    expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Connection settings changed")
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not surface connection settings update indicators when a per-server clientCapabilities override matches initialize payload", () => {
+    // Regression: the warning previously recomputed "desired" from the
+    // project config + `server.config.capabilities` only, ignoring the
+    // per-server `clientCapabilities` override that the connect path
+    // actually ships to the SDK. Result: any server with an explicit
+    // override lit up the icon on every render, even though nothing
+    // had changed.
+    const overrideCapabilities = {
+      experimental: { perServerOverride: true },
+    } as Record<string, unknown>;
+
+    render(
+      <ServersTab
+        {...defaultProps}
+        projectServers={{
+          "test-server": createServer({
+            config: {
+              command: "npx",
+              args: ["-y", "@modelcontextprotocol/server-test"],
+              clientCapabilities: overrideCapabilities,
+            },
+            initializationInfo: {
+              clientCapabilities: overrideCapabilities,
+            } as any,
+          }),
+        }}
+        projects={{
+          "project-1": {
+            ...createProject({
+              "test-server": createServer({
+                config: {
+                  command: "npx",
+                  args: ["-y", "@modelcontextprotocol/server-test"],
+                  clientCapabilities: overrideCapabilities,
+                },
+                initializationInfo: {
+                  clientCapabilities: overrideCapabilities,
+                } as any,
+              }),
+            }),
+            clientConfig: {
+              version: 1,
+              clientCapabilities: {
+                elicitation: {},
+                experimental: { projectLevel: true },
+              },
+              hostContext: {},
+            },
+          },
         }}
       />
     );

@@ -1,7 +1,26 @@
 import type { ServerWithName, ConnectionStatus } from "@/state/app-types";
 
-export function serializeServersForSharing(
+type SerializeOptions = {
+  /**
+   * When true, drop secret-bearing fields (STDIO `env`, HTTP
+   * `Authorization` headers) from the output. When false, keep them
+   * verbatim.
+   *
+   * Sharing payloads MUST redact: STDIO `env` commonly carries API
+   * keys / DB credentials, and HTTP `Authorization` carries bearers.
+   * Persistence payloads (the legacy localStorage → Convex migration)
+   * MUST preserve these — without them, a migrated STDIO server is
+   * non-functional and the user has to re-enter every credential, and
+   * an HTTP server configured with a static `Authorization` header
+   * (self-hosted MCP with a long-lived bearer, etc.) silently fails
+   * to reconnect after migration clears the legacy localStorage copy.
+   */
+  redactSecrets: boolean;
+};
+
+function serializeServersInternal(
   servers: Record<string, ServerWithName>,
+  options: SerializeOptions,
 ): Record<string, unknown> {
   const result: Record<string, unknown> = {};
 
@@ -25,6 +44,8 @@ export function serializeServersForSharing(
         config.command = (server.config as any).command;
       if ((server.config as any).args)
         config.args = (server.config as any).args;
+      if (!options.redactSecrets && (server.config as any).env)
+        config.env = (server.config as any).env;
       if ((server.config as any).timeout)
         config.timeout = (server.config as any).timeout;
       if ((server.config as any).clientCapabilities)
@@ -37,9 +58,13 @@ export function serializeServersForSharing(
           for (const [key, value] of Object.entries(
             (server.config as any).requestInit.headers,
           )) {
-            if (key.toLowerCase() !== "authorization") {
-              headers[key] = value as string;
+            if (
+              options.redactSecrets &&
+              key.toLowerCase() === "authorization"
+            ) {
+              continue;
             }
+            headers[key] = value as string;
           }
           requestInit.headers = headers;
         }
@@ -50,12 +75,22 @@ export function serializeServersForSharing(
     }
 
     if (server.useOAuth && server.oauthFlowProfile) {
+      // OAuthTestProfile.scopes is a UI-shaped string ("read,write" or
+      // "read write"); the Convex `servers.oauthScopes` field is
+      // v.array(v.string()). Split here so syncProjectServers can pass the
+      // value straight through without tripping schema validation.
+      const rawScopes = server.oauthFlowProfile.scopes;
+      const scopesArray = Array.isArray(rawScopes)
+        ? (rawScopes as string[])
+        : typeof rawScopes === "string"
+          ? rawScopes.split(/[\s,]+/).filter(Boolean)
+          : [];
       serializedServer.oauthFlowProfile = {
         serverUrl: server.oauthFlowProfile.serverUrl,
         resourceUrl: server.oauthFlowProfile.resourceUrl,
         protocolVersion: server.oauthFlowProfile.protocolVersion,
         registrationStrategy: server.oauthFlowProfile.registrationStrategy,
-        scopes: server.oauthFlowProfile.scopes,
+        scopes: scopesArray,
         clientId: server.oauthFlowProfile.clientId,
       };
     }
@@ -64,6 +99,34 @@ export function serializeServersForSharing(
   }
 
   return result;
+}
+
+/**
+ * Serialize servers for an outbound share/invite payload (`ShareProjectDialog`,
+ * `use-project-state` clone-to-org / fork flows). Drops STDIO `env` so secrets
+ * stay on the local machine.
+ */
+export function serializeServersForSharing(
+  servers: Record<string, ServerWithName>,
+): Record<string, unknown> {
+  return serializeServersInternal(servers, { redactSecrets: true });
+}
+
+/**
+ * Serialize servers for in-account persistence — currently only the
+ * legacy-localStorage → Convex migration. Preserves STDIO `env` because the
+ * migration target is the same actor's own Convex project (not a share
+ * recipient), and dropping env would leave migrated STDIO servers
+ * non-functional.
+ *
+ * Do NOT use this for any share/export/invite payload. If a future feature
+ * needs to copy a project across actors, route it through
+ * `serializeServersForSharing`.
+ */
+export function serializeServersForPersistence(
+  servers: Record<string, ServerWithName>,
+): Record<string, unknown> {
+  return serializeServersInternal(servers, { redactSecrets: false });
 }
 
 export function deserializeServersFromConvex(

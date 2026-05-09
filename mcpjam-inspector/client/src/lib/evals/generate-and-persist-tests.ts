@@ -3,6 +3,7 @@ import {
   generateEvalTests,
   type GeneratedEvalTestCase,
 } from "@/lib/apis/evals-api";
+import { HOSTED_MODE } from "@/lib/config";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import type { PromptTurn } from "@/shared/prompt-turns";
 
@@ -180,10 +181,12 @@ export async function generateAndPersistEvalTests(
     modelsToUse = defaultEvalModels();
   }
 
-  const accessToken = isDirectGuest
-    ? await getGuestBearerToken()
-    : await getAccessToken();
-  if (!accessToken) {
+  const accessToken = HOSTED_MODE
+    ? null
+    : isDirectGuest
+      ? await getGuestBearerToken()
+      : await getAccessToken();
+  if (!HOSTED_MODE && !accessToken) {
     throw new Error("Not authenticated");
   }
 

@@ -173,6 +173,10 @@ vi.mock("convex/react", () => ({
   },
   useMutation: () => vi.fn(),
   useAction: () => vi.fn(),
+  // Local-state-migration hook calls useConvex().query for the post-migration
+  // OAuth-token import path; the App test never reaches that path (HOSTED_MODE
+  // gate exits early), but the hook still calls useConvex() unconditionally.
+  useConvex: () => ({ query: vi.fn() }),
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -206,7 +210,7 @@ vi.mock("../hooks/useViews", () => ({
 }));
 
 vi.mock("../hooks/hosted/use-hosted-api-context", () => ({
-  useHostedApiContext: vi.fn(),
+  useApiContext: vi.fn(),
 }));
 
 vi.mock("../hooks/useElectronOAuth", () => ({
@@ -243,6 +247,9 @@ vi.mock("../lib/guest-session", () => ({
     localStorage.removeItem("mcpjam_guest_session_v1");
   }),
   getGuestBearerToken: mockGetGuestBearerToken,
+  getCachedGuestSession: vi.fn(() => null),
+  getOrCreateGuestSession: vi.fn(async () => null),
+  subscribeGuestSessionChanges: vi.fn(() => () => {}),
 }));
 
 vi.mock("../components/ServersTab", () => ({
@@ -1196,6 +1203,77 @@ describe("App hosted OAuth callback handling", () => {
       expect(setActiveOrganizationIdSpy).toHaveBeenCalledWith("org-b");
       expect(getLastSidebarProps().activeOrganizationId).toBe("org-b");
       expect(window.location.hash).toBe("#servers");
+    });
+  });
+
+  it("preserves the org models section when switching active organization", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    window.history.replaceState({}, "", "/#organizations/org-a/models");
+
+    const setActiveOrganizationIdSpy = vi.fn();
+    (mockUseAppState as any).mockImplementation(() => {
+      const [activeOrganizationId, setActiveOrganizationId] = useState<
+        string | undefined
+      >("org-a");
+
+      return {
+        ...createAppStateMock(),
+        activeOrganizationId,
+        setActiveOrganizationId: (organizationId: string | undefined) => {
+          setActiveOrganizationIdSpy(organizationId);
+          setActiveOrganizationId(organizationId);
+        },
+      };
+    });
+    (mockUseQuery as any).mockImplementation((name: string) => {
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-a",
+            name: "Org A",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+          {
+            _id: "org-b",
+            name: "Org B",
+            updatedAt: 2,
+            createdAt: 2,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+
+      return undefined;
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockMCPSidebar).toHaveBeenCalled();
+    });
+
+    const getLastSidebarProps = () => {
+      const lastCall =
+        mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1];
+      return lastCall?.[0] as unknown as {
+        activeOrganizationId?: string;
+        onSwitchActiveOrganization?: (organizationId: string) => void;
+      };
+    };
+
+    act(() => {
+      getLastSidebarProps().onSwitchActiveOrganization?.("org-b");
+    });
+
+    await waitFor(() => {
+      expect(setActiveOrganizationIdSpy).toHaveBeenCalledWith("org-b");
+      expect(getLastSidebarProps().activeOrganizationId).toBe("org-b");
+      expect(window.location.hash).toBe("#organizations/org-b/models");
     });
   });
 
@@ -2663,72 +2741,4 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("evals-tab")).not.toBeInTheDocument();
   });
 
-  it("still auto-routes a true hosted guest into App Builder onboarding once startup is ready when Playground is enabled", async () => {
-    clearHostedOAuthPendingState();
-    clearChatboxSession();
-    window.history.replaceState({}, "", "/#servers");
-    mockHandleOAuthCallback.mockReset();
-    mockConvexAuthState.isAuthenticated = false;
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled"
-    );
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("app-builder-tab")).toBeInTheDocument();
-    });
-
-    expect(window.location.hash).toBe("#app-builder");
-  });
-
-  it("still auto-routes a true hosted guest into App Builder onboarding when Playground is disabled", async () => {
-    clearHostedOAuthPendingState();
-    clearChatboxSession();
-    window.history.replaceState({}, "", "/#servers");
-    mockHandleOAuthCallback.mockReset();
-    mockConvexAuthState.isAuthenticated = false;
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("app-builder-tab")).toBeInTheDocument();
-    });
-
-    expect(window.location.hash).toBe("#app-builder");
-    expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
-  });
-
-  it("goes from hosted loading straight to App Builder onboarding for a true guest when Playground is enabled", async () => {
-    clearHostedOAuthPendingState();
-    clearChatboxSession();
-    window.history.replaceState({}, "", "/#servers");
-    mockHandleOAuthCallback.mockReset();
-    mockConvexAuthState.isAuthenticated = false;
-    mockHostedShellGateState.value = "auth-loading";
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled"
-    );
-
-    const { rerender } = render(<App />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
-    });
-
-    expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("app-builder-tab")).not.toBeInTheDocument();
-
-    mockHostedShellGateState.value = "ready";
-    rerender(<App />);
-
-    expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
-
-    await waitFor(() => {
-      expect(screen.getByTestId("app-builder-tab")).toBeInTheDocument();
-    });
-
-    expect(window.location.hash).toBe("#app-builder");
-    expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
-  });
 });

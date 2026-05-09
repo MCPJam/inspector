@@ -3,12 +3,12 @@ import { toast } from "sonner";
 import { useConvexAuth } from "convex/react";
 import { useLogger } from "./use-logger";
 import {
+  createLocalDefaultProject,
   initialAppState,
   type AppState,
   type ServerWithName,
 } from "@/state/app-types";
 import { appReducer } from "@/state/app-reducer";
-import { loadAppState, saveAppState } from "@/state/storage";
 import { useProjectState } from "./use-project-state";
 import { useServerState } from "./use-server-state";
 import {
@@ -54,17 +54,35 @@ function resolveFallbackOrganizationId(
 }
 
 function createDefaultProject() {
-  return {
-    ...initialAppState.projects.default,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  };
+  return createLocalDefaultProject();
 }
 
 function hasHostedOAuthCallbackParams(): boolean {
   if (typeof window === "undefined") return false;
   const params = new URLSearchParams(window.location.search);
   return params.has("code") || params.has("error");
+}
+
+// Reads the organizationId from an in-flight project-surface OAuth marker.
+// Used to keep the active org stable across the post-callback re-mount,
+// avoiding a hydration-window flip to resolveFallbackOrganizationId.
+function readPendingOAuthMarkerOrgId(): string | null {
+  if (typeof window === "undefined") return null;
+  if (!hasHostedOAuthCallbackParams()) return null;
+  try {
+    const raw = localStorage.getItem(HOSTED_OAUTH_PENDING_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as {
+      surface?: unknown;
+      organizationId?: unknown;
+    } | null;
+    if (parsed?.surface !== "project") return null;
+    return typeof parsed.organizationId === "string" && parsed.organizationId
+      ? parsed.organizationId
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function readPendingDashboardOAuthFromStorage(): PendingDashboardOAuthState | null {
@@ -126,29 +144,6 @@ function isHistoryRestore(event: PageTransitionEvent): boolean {
   return navigationEntry?.type === "back_forward";
 }
 
-// Patches only existing server state. Missing servers are represented by
-// pendingDashboardOAuth UI state instead of fake temporary server objects.
-function patchStateForPendingOAuth(
-  state: AppState,
-  pendingOAuth: PendingDashboardOAuthState
-): AppState {
-  const existing = state.servers[pendingOAuth.serverName];
-  if (!existing) {
-    return state;
-  }
-
-  return {
-    ...state,
-    servers: {
-      ...state.servers,
-      [pendingOAuth.serverName]: {
-        ...existing,
-        connectionStatus: "connecting",
-      },
-    },
-  };
-}
-
 export function buildDisconnectedRuntimeServers(
   servers: Record<string, ServerWithName> | undefined
 ): Record<string, ServerWithName> {
@@ -165,12 +160,20 @@ export function buildDisconnectedRuntimeServers(
 
 export function useAppState({
   currentUserId,
+  currentActorKey,
   routeOrganizationId,
   hasOrganizations,
   isLoadingOrganizations,
   validOrganizations,
 }: {
   currentUserId: string | null;
+  /**
+   * Stable identifier for the active actor — `currentUserId` for signed-in
+   * users, the guest cookie's `guestId` for guests. Used to scope per-actor
+   * local storage (e.g. active project id) so selections don't bleed across
+   * actors. May be `null` while the actor is still resolving.
+   */
+  currentActorKey: string | null;
   routeOrganizationId?: string;
   hasOrganizations: boolean;
   isLoadingOrganizations: boolean;
@@ -214,8 +217,16 @@ export function useAppState({
     !isLoadingOrganizations
       ? resolveFallbackOrganizationId(validOrganizations)
       : undefined;
+  const pendingOAuthMarkerOrgId = readPendingOAuthMarkerOrgId();
+  const isPendingOAuthMarkerOrgValid =
+    !!pendingOAuthMarkerOrgId &&
+    validOrganizations.some(
+      (organization) => organization._id === pendingOAuthMarkerOrgId
+    );
   const activeOrganizationId = isStoredActiveOrganizationValid
     ? storedActiveOrganizationId
+    : isPendingOAuthMarkerOrgValid
+    ? pendingOAuthMarkerOrgId
     : fallbackActiveOrganizationId;
   const setActiveOrganizationId = useCallback(
     (organizationId: string | undefined) => {
@@ -327,8 +338,16 @@ export function useAppState({
     if (hasHydratedAppStateRef.current) return;
     hasHydratedAppStateRef.current = true;
 
+    // State now hydrates from Convex queries via useProjectState + the flat
+    // servers query; the legacy localStorage `loadAppState` is gone. We still
+    // need to detect a pending dashboard OAuth callback so the dashboard can
+    // surface the in-flight connect, and we need to flip isLoading off so
+    // dependent gates resolve.
     try {
-      const loaded = loadAppState();
+      // Convex is now the source of truth for projects/servers/state, but
+      // pendingDashboardOAuth is a callback-resume marker for the OAuth
+      // flow that still lives in localStorage (deferred to Slice 2b). Read
+      // it on first paint so a fresh window can resume the in-flight OAuth.
       const pendingOAuth = readPendingDashboardOAuth();
       setPendingDashboardOAuth((current) => {
         if (
@@ -339,12 +358,11 @@ export function useAppState({
         }
         return pendingOAuth;
       });
-      const hydratedState = pendingOAuth
-        ? patchStateForPendingOAuth(loaded, pendingOAuth)
-        : loaded;
-      dispatch({ type: "HYDRATE_STATE", payload: hydratedState });
+      // No `loadAppState` — Convex queries hydrate state. The migration shim
+      // (`local-state-migration`) lifts any legacy localStorage projects on
+      // first boot and clears them.
     } catch (error) {
-      logger.error("Failed to load saved state", {
+      logger.error("Failed to read pending OAuth marker", {
         error: error instanceof Error ? error.message : "Unknown error",
       });
     } finally {
@@ -352,9 +370,9 @@ export function useAppState({
     }
   }, [logger]);
 
-  useEffect(() => {
-    if (!isLoading) saveAppState(appState);
-  }, [appState, isLoading]);
+  // No `saveAppState` — Convex mutations persist server/project state; UI
+  // selection state (selectedServer, multi-select) is intentionally
+  // ephemeral.
 
   useEffect(() => {
     if (!pendingDashboardOAuth) return;
@@ -436,6 +454,8 @@ export function useAppState({
     ),
     activeOrganizationId,
     routeOrganizationId,
+    currentActorKey,
+    hasSignedInUser: currentUserId != null,
     logger,
   });
 
@@ -563,7 +583,10 @@ export function useAppState({
       const nextProjects =
         remainingEntries.length > 0
           ? Object.fromEntries(remainingEntries)
-          : { default: createDefaultProject() };
+          : (() => {
+              const project = createDefaultProject();
+              return { [project.id]: project };
+            })();
       const preferredProjectForFallbackOrg = fallbackOrganizationId
         ? Object.values(nextProjects).find(
             (project) => project.organizationId === fallbackOrganizationId
@@ -572,9 +595,21 @@ export function useAppState({
       const nextActiveProject =
         preferredProjectForFallbackOrg ??
         nextProjects[appState.activeProjectId] ??
-        nextProjects.default ??
+        Object.values(nextProjects).find((project) => project.isDefault) ??
         Object.values(nextProjects)[0];
-      const nextActiveProjectId = nextActiveProject?.id ?? "default";
+      const nextActiveProjectId =
+        nextActiveProject?.id ?? Object.keys(nextProjects)[0];
+      if (!nextActiveProjectId) {
+        logger.warn(
+          "clearLocalFallbackProjectSelection: no active project resolved",
+          {
+            deletedOrganizationId,
+            fallbackOrganizationId,
+            projectCount: Object.keys(nextProjects).length,
+          }
+        );
+        return;
+      }
       const nextServers = buildDisconnectedRuntimeServers(
         nextActiveProject?.servers
       );

@@ -2,9 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 
 const validateHostedServerMock = vi.fn();
-const webPostMock = vi.fn();
-const buildGuestServerRequestMock = vi.fn();
-const isGuestModeMock = vi.fn(() => false);
 
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: true,
@@ -15,35 +12,22 @@ vi.mock("@/lib/apis/web/servers-api", () => ({
     validateHostedServerMock(...args),
 }));
 
-vi.mock("@/lib/apis/web/base", () => ({
-  webPost: (...args: unknown[]) => webPostMock(...args),
-}));
-
 vi.mock("@/lib/session-token", () => ({
   authFetch: vi.fn(),
 }));
 
-vi.mock("@/lib/apis/web/context", () => ({
-  buildGuestServerRequest: (...args: unknown[]) =>
-    buildGuestServerRequestMock(...args),
-  isGuestMode: () => isGuestModeMock(),
-}));
-
+import { BootstrapNotReadyError } from "@/lib/app-ready";
 import { reconnectServer, testConnection } from "../mcp-api";
 
 describe("mcp-api hosted-mode reconnect hardening", () => {
   beforeEach(() => {
     vi.useRealTimers();
     validateHostedServerMock.mockReset();
-    webPostMock.mockReset();
-    buildGuestServerRequestMock.mockReset();
-    isGuestModeMock.mockReset();
-    isGuestModeMock.mockReturnValue(false);
   });
 
   it("normalizes hosted project timing errors for testConnection", async () => {
     validateHostedServerMock.mockRejectedValueOnce(
-      new Error("Hosted project is not available yet"),
+      new BootstrapNotReadyError("provisioning-project"),
     );
 
     const result = await testConnection({} as MCPServerConfig, "server-1");
@@ -117,12 +101,8 @@ describe("mcp-api hosted-mode reconnect hardening", () => {
     expect(result).toEqual({ success: true, status: "ok" });
   });
 
-  it("validates direct guests using the provided server config instead of hosted context lookup", async () => {
-    isGuestModeMock.mockReturnValue(true);
-    buildGuestServerRequestMock.mockReturnValue({
-      serverUrl: "https://mcp.excalidraw.com/mcp",
-    });
-    webPostMock.mockResolvedValueOnce({
+  it("routes direct guests through the unified hosted validate path (no body-shape fork)", async () => {
+    validateHostedServerMock.mockResolvedValueOnce({
       success: true,
       status: "ok",
     });
@@ -134,16 +114,15 @@ describe("mcp-api hosted-mode reconnect hardening", () => {
 
     const result = await testConnection(config, "Excalidraw (App)");
 
-    expect(buildGuestServerRequestMock).toHaveBeenCalledWith(
-      config,
+    // With actor-owned-projects + AppReady gating, every hosted request —
+    // guest or authed — goes through validateHostedServer with the
+    // {projectId, serverId} body shape. The legacy guest body-shape fork
+    // has been removed.
+    expect(validateHostedServerMock).toHaveBeenCalledWith(
+      "Excalidraw (App)",
       undefined,
       { roots: { listChanged: true } },
-      "Excalidraw (App)",
     );
-    expect(webPostMock).toHaveBeenCalledWith("/api/web/servers/validate", {
-      serverUrl: "https://mcp.excalidraw.com/mcp",
-    });
-    expect(validateHostedServerMock).not.toHaveBeenCalled();
     expect(result).toEqual({ success: true, status: "ok" });
   });
 });

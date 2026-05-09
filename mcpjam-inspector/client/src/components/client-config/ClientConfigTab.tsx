@@ -5,8 +5,8 @@ import { Button } from "@mcpjam/design-system/button";
 import { JsonEditor } from "@/components/ui/json-editor";
 import type { Project } from "@/state/app-types";
 import {
-  getEffectiveServerClientCapabilities,
   projectClientCapabilitiesNeedReconnect,
+  resolveEffectiveServerClientCapabilities,
   type ProjectConnectionConfigDraft,
 } from "@/lib/client-config";
 import { useProjectClientConfigSyncPending } from "@/hooks/use-project-client-config-sync-pending";
@@ -113,12 +113,11 @@ export function ClientConfigTab({
       }
 
       return projectClientCapabilitiesNeedReconnect({
-        desiredCapabilities: getEffectiveServerClientCapabilities({
+        // Same precedence the connect path uses — see ServersTab.tsx.
+        desiredCapabilities: resolveEffectiveServerClientCapabilities({
+          serverConfig: server.config,
           projectClientConfig: project.clientConfig,
-          serverCapabilities: server.config.capabilities as
-            | Record<string, unknown>
-            | undefined,
-        }),
+        }) as Record<string, unknown>,
         initializedCapabilities: server.initializationInfo
           ?.clientCapabilities as Record<string, unknown> | undefined,
       });

@@ -10,7 +10,7 @@ const mockState = vi.hoisted(() => ({
   setMessages: vi.fn(),
   addToolApprovalResponse: vi.fn(),
   authFetch: vi.fn(),
-  buildHostedServerRequest: vi.fn(),
+  buildServerRequest: vi.fn(),
   getAccessToken: vi.fn(async () => "access-token"),
   getGuestBearerToken: vi.fn(async () => "guest-token"),
   hasToken: vi.fn(() => false),
@@ -161,7 +161,7 @@ vi.mock("@/lib/guest-session", () => ({
 }));
 
 vi.mock("@/lib/apis/web/context", () => ({
-  buildHostedServerRequest: mockState.buildHostedServerRequest,
+  buildServerRequest: mockState.buildServerRequest,
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -271,7 +271,7 @@ describe("useChatSession hosted mode", () => {
     mockState.authFetch.mockReset();
     mockState.authFetch.mockResolvedValue(new Response(null, { status: 200 }));
     mockState.setMessages.mockReset();
-    mockState.buildHostedServerRequest.mockReset();
+    mockState.buildServerRequest.mockReset();
     mockState.getAccessToken.mockReset();
     mockState.getAccessToken.mockResolvedValue("access-token");
     mockState.getGuestBearerToken.mockReset();
@@ -475,39 +475,6 @@ describe("useChatSession hosted mode", () => {
     });
   });
 
-  it("includes the selected direct-guest server in hosted chat bodies", async () => {
-    mockState.convexAuth.isAuthenticated = false;
-    mockState.buildHostedServerRequest.mockReturnValue({
-      serverName: "Excalidraw (App)",
-      serverUrl: "https://mcp.excalidraw.com/mcp",
-      serverHeaders: { "X-Api-Key": "guest-key" },
-      oauthAccessToken: "guest-oauth-token",
-      clientCapabilities: { roots: { listChanged: true } },
-    });
-
-    const { result, unmount } = renderHook(() =>
-      useChatSession({
-        selectedServers: ["Excalidraw (App)"],
-      })
-    );
-
-    const body = lastTransportOptions.body();
-
-    expect(result.current.chatSessionId).toBe("chat-session-id");
-    expect(mockState.buildHostedServerRequest).toHaveBeenCalledWith(
-      "Excalidraw (App)"
-    );
-    expect(body).toMatchObject({
-      chatSessionId: "chat-session-id",
-      serverName: "Excalidraw (App)",
-      serverUrl: "https://mcp.excalidraw.com/mcp",
-      serverHeaders: { "X-Api-Key": "guest-key" },
-      oauthAccessToken: "guest-oauth-token",
-      clientCapabilities: { roots: { listChanged: true } },
-    });
-    unmount();
-  });
-
   it("uses the latest hosted selectedServerIds on the next send without changing chatSessionId", async () => {
     const { result, rerender } = renderHook(
       ({
@@ -591,123 +558,6 @@ describe("useChatSession hosted mode", () => {
       chatSessionId: initialChatSessionId,
       selectedServerIds: ["server-id-2"],
     });
-  });
-
-  it("uses the latest direct-guest server request on the next send without changing chatSessionId", async () => {
-    mockState.convexAuth.isAuthenticated = false;
-    mockState.buildHostedServerRequest.mockImplementation(
-      (serverName: string) =>
-        serverName === "Excalidraw (App)"
-          ? {
-              serverName: "Excalidraw (App)",
-              serverUrl: "https://mcp.excalidraw.com/mcp",
-              serverHeaders: { "X-Api-Key": "guest-key-1" },
-              oauthAccessToken: "guest-oauth-token-1",
-            }
-          : {
-              serverName: "Learn (App)",
-              serverUrl: "https://mcp.learn.com/mcp",
-              serverHeaders: { "X-Api-Key": "guest-key-2" },
-              oauthAccessToken: "guest-oauth-token-2",
-            }
-    );
-
-    const { result, rerender } = renderHook(
-      ({ selectedServers }: { selectedServers: string[] }) =>
-        useChatSession({
-          selectedServers,
-        }),
-      {
-        initialProps: {
-          selectedServers: ["Excalidraw (App)"],
-        },
-      }
-    );
-
-    await waitFor(() => {
-      expect(result.current.isSessionBootstrapComplete).toBe(true);
-    });
-
-    const initialChatSessionId = result.current.chatSessionId;
-    mockState.authFetch.mockClear();
-
-    act(() => {
-      result.current.sendMessage({ text: "first" });
-    });
-
-    await waitFor(() => {
-      expect(mockState.authFetch).toHaveBeenCalledTimes(1);
-    });
-
-    expect(
-      JSON.parse(
-        String(
-          (
-            mockState.authFetch.mock.calls.at(-1)?.[1] as
-              | RequestInit
-              | undefined
-          )?.body ?? "{}"
-        )
-      )
-    ).toMatchObject({
-      chatSessionId: initialChatSessionId,
-      serverName: "Excalidraw (App)",
-      serverUrl: "https://mcp.excalidraw.com/mcp",
-      serverHeaders: { "X-Api-Key": "guest-key-1" },
-      oauthAccessToken: "guest-oauth-token-1",
-    });
-
-    rerender({
-      selectedServers: ["Learn (App)"],
-    });
-
-    expect(result.current.chatSessionId).toBe(initialChatSessionId);
-
-    act(() => {
-      result.current.sendMessage({ text: "second" });
-    });
-
-    await waitFor(() => {
-      expect(mockState.authFetch).toHaveBeenCalledTimes(2);
-    });
-
-    expect(
-      JSON.parse(
-        String(
-          (
-            mockState.authFetch.mock.calls.at(-1)?.[1] as
-              | RequestInit
-              | undefined
-          )?.body ?? "{}"
-        )
-      )
-    ).toMatchObject({
-      chatSessionId: initialChatSessionId,
-      serverName: "Learn (App)",
-      serverUrl: "https://mcp.learn.com/mcp",
-      serverHeaders: { "X-Api-Key": "guest-key-2" },
-      oauthAccessToken: "guest-oauth-token-2",
-    });
-  });
-
-  it("keeps plain hosted guest chat bodies when no server is selected", async () => {
-    mockState.convexAuth.isAuthenticated = false;
-
-    const { result, unmount } = renderHook(() =>
-      useChatSession({
-        selectedServers: [],
-      })
-    );
-
-    const body = lastTransportOptions.body();
-
-    expect(result.current.chatSessionId).toBe("chat-session-id");
-    expect(mockState.buildHostedServerRequest).not.toHaveBeenCalled();
-    expect(body).toMatchObject({
-      chatSessionId: "chat-session-id",
-    });
-    expect(body.serverUrl).toBeUndefined();
-    unmount();
   });
 
   it("ingests hosted rpc logs from chat error responses", async () => {

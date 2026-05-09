@@ -18,6 +18,7 @@ const {
   updateProjectMock,
   deleteProjectMock,
   projectQueryState,
+  projectServersState,
   organizationBillingStatusState,
   useOrganizationBillingStatusMock,
   serializeServersForSharingMock,
@@ -31,6 +32,10 @@ const {
     allProjects: undefined as any,
     projects: undefined as any,
     isLoading: false,
+  },
+  projectServersState: {
+    servers: undefined as any,
+    isLoading: false as boolean,
   },
   organizationBillingStatusState: {
     value: undefined as
@@ -60,10 +65,7 @@ vi.mock("../useProjects", () => ({
     updateClientConfig: updateClientConfigMock,
     deleteProject: deleteProjectMock,
   }),
-  useProjectServers: () => ({
-    servers: undefined,
-    isLoading: false,
-  }),
+  useProjectServers: () => projectServersState,
 }));
 
 vi.mock("../useOrganizationBilling", () => ({
@@ -122,6 +124,8 @@ function renderUseProjectState({
   hasOrganizations = true,
   isLoadingOrganizations = false,
   validOrganizationIds,
+  hasSignedInUser = true,
+  currentActorKey = "test-actor",
 }: {
   appState: AppState;
   activeOrganizationId?: string;
@@ -130,6 +134,8 @@ function renderUseProjectState({
   hasOrganizations?: boolean;
   isLoadingOrganizations?: boolean;
   validOrganizationIds?: string[];
+  hasSignedInUser?: boolean;
+  currentActorKey?: string | null;
 }) {
   const dispatch = vi.fn<(action: AppAction) => void>();
   const logger = {
@@ -171,6 +177,8 @@ function renderUseProjectState({
           ),
         activeOrganizationId: organizationId,
         routeOrganizationId: routeOrganizationIdOverride ?? routeOrganizationId,
+        currentActorKey,
+        hasSignedInUser,
         logger,
       }),
     {
@@ -208,6 +216,8 @@ describe("useProjectState automatic project creation", () => {
     projectQueryState.allProjects = [];
     projectQueryState.projects = [];
     projectQueryState.isLoading = false;
+    projectServersState.servers = undefined;
+    projectServersState.isLoading = false;
     organizationBillingStatusState.value = undefined;
     useOrganizationBillingStatusMock.mockImplementation(
       () => organizationBillingStatusState.value,
@@ -1055,152 +1065,6 @@ describe("useProjectState automatic project creation", () => {
     expect(ensureDefaultProjectMock).not.toHaveBeenCalled();
   });
 
-  it("keeps zero-org recovery empty even after local fallback activated while org loading was still pending", async () => {
-    vi.useFakeTimers();
-    projectQueryState.allProjects = [
-      {
-        _id: "remote-1",
-        name: "Deleted org project",
-        servers: {},
-        ownerId: "user-1",
-        organizationId: "deleted-org",
-        createdAt: 1,
-        updatedAt: 1,
-      },
-    ];
-    projectQueryState.projects = undefined;
-    localStorage.setItem("convex-active-project-id", "remote-1");
-
-    const appState = createAppState({
-      "local-1": createLocalProject("local-1", {
-        organizationId: "org-live",
-      }),
-    });
-    const { result, rerender } = renderUseProjectState({
-      appState,
-      activeOrganizationId: undefined,
-      hasOrganizations: false,
-      isLoadingOrganizations: true,
-      validOrganizationIds: [],
-    });
-
-    act(() => {
-      vi.advanceTimersByTime(10001);
-    });
-
-    expect(result.current.useLocalFallback).toBe(true);
-    expect(result.current.effectiveProjects).toEqual(appState.projects);
-
-    rerender({
-      organizationId: undefined,
-      hasOrganizationsOverride: false,
-      isLoadingOrganizationsOverride: false,
-      routeOrganizationIdOverride: undefined,
-      validOrganizationIdsOverride: [],
-    });
-
-    expect(result.current.effectiveProjects).toEqual({});
-    expect(result.current.effectiveActiveProjectId).toBe("none");
-
-    await act(async () => {});
-    expect(localStorage.getItem("convex-active-project-id")).toBeNull();
-    expect(ensureDefaultProjectMock).not.toHaveBeenCalled();
-  });
-
-  it("still uses local fallback when a valid org exists and cloud sync times out", async () => {
-    vi.useFakeTimers();
-    projectQueryState.allProjects = undefined;
-    projectQueryState.projects = undefined;
-
-    const appState = createAppState({
-      "local-1": createLocalProject("local-1", {
-        organizationId: "org-live",
-      }),
-    });
-    const { result } = renderUseProjectState({
-      appState,
-      activeOrganizationId: "org-live",
-      hasOrganizations: true,
-      isLoadingOrganizations: false,
-      validOrganizationIds: ["org-live"],
-    });
-
-    act(() => {
-      vi.advanceTimersByTime(10001);
-    });
-
-    expect(result.current.useLocalFallback).toBe(true);
-    expect(result.current.effectiveProjects).toEqual(appState.projects);
-    expect(result.current.effectiveActiveProjectId).toBe(
-      appState.activeProjectId,
-    );
-  });
-
-  it("scopes local fallback projects to the current org and ignores an active project from another org", async () => {
-    vi.useFakeTimers();
-    projectQueryState.allProjects = undefined;
-    projectQueryState.projects = undefined;
-
-    const appState = {
-      ...createAppState({
-        "local-org-a": createLocalProject("local-org-a", {
-          organizationId: "org-a",
-        }),
-        "local-org-b": createLocalProject("local-org-b", {
-          organizationId: "org-b",
-        }),
-      }),
-      activeProjectId: "local-org-b",
-    };
-
-    const { result } = renderUseProjectState({
-      appState,
-      activeOrganizationId: "org-a",
-      hasOrganizations: true,
-      isLoadingOrganizations: false,
-      validOrganizationIds: ["org-a"],
-    });
-
-    act(() => {
-      vi.advanceTimersByTime(10001);
-    });
-
-    expect(result.current.useLocalFallback).toBe(true);
-    expect(result.current.effectiveProjects).toEqual({
-      "local-org-a": appState.projects["local-org-a"],
-    });
-    expect(result.current.effectiveActiveProjectId).toBe("local-org-a");
-  });
-
-  it("hides unscoped and wrong-org local fallback projects when the current org has no local matches", async () => {
-    vi.useFakeTimers();
-    projectQueryState.allProjects = undefined;
-    projectQueryState.projects = undefined;
-
-    const appState = createAppState({
-      "local-unscoped": createLocalProject("local-unscoped"),
-      "local-org-b": createLocalProject("local-org-b", {
-        organizationId: "org-b",
-      }),
-    });
-
-    const { result } = renderUseProjectState({
-      appState,
-      activeOrganizationId: "org-a",
-      hasOrganizations: true,
-      isLoadingOrganizations: false,
-      validOrganizationIds: ["org-a"],
-    });
-
-    act(() => {
-      vi.advanceTimersByTime(10001);
-    });
-
-    expect(result.current.useLocalFallback).toBe(true);
-    expect(result.current.effectiveProjects).toEqual({});
-    expect(result.current.effectiveActiveProjectId).toBe("none");
-  });
-
   it("keeps unauthenticated local projects visible without org scoping", () => {
     const appState = createAppState({
       "local-unscoped": createLocalProject("local-unscoped"),
@@ -1222,169 +1086,6 @@ describe("useProjectState automatic project creation", () => {
     expect(result.current.effectiveActiveProjectId).toBe(
       appState.activeProjectId,
     );
-  });
-
-  it("stamps the current org id on local fallback create, duplicate, and import actions", async () => {
-    vi.useFakeTimers();
-    projectQueryState.allProjects = undefined;
-    projectQueryState.projects = undefined;
-
-    const appState = createAppState({
-      "local-org-a": createLocalProject("local-org-a", {
-        name: "Project A",
-        organizationId: "org-a",
-      }),
-    });
-
-    const { result, dispatch } = renderUseProjectState({
-      appState,
-      activeOrganizationId: "org-a",
-      hasOrganizations: true,
-      isLoadingOrganizations: false,
-      validOrganizationIds: ["org-a"],
-    });
-
-    act(() => {
-      vi.advanceTimersByTime(10001);
-    });
-
-    await act(async () => {
-      await result.current.handleCreateProject("Created locally");
-    });
-
-    expect(createProjectMock).not.toHaveBeenCalled();
-    expect(dispatch).toHaveBeenCalledWith({
-      type: "CREATE_PROJECT",
-      project: expect.objectContaining({
-        name: "Created locally",
-        organizationId: "org-a",
-      }),
-    });
-
-    dispatch.mockClear();
-
-    await act(async () => {
-      await result.current.handleDuplicateProject(
-        "local-org-a",
-        "Duplicated locally",
-      );
-    });
-
-    expect(dispatch).toHaveBeenCalledWith({
-      type: "CREATE_PROJECT",
-      project: expect.objectContaining({
-        name: "Duplicated locally",
-        organizationId: "org-a",
-      }),
-    });
-
-    dispatch.mockClear();
-
-    await act(async () => {
-      await result.current.handleImportProject(
-        createLocalProject("import-me", {
-          name: "Imported locally",
-        }),
-      );
-    });
-
-    expect(dispatch).toHaveBeenCalledWith({
-      type: "IMPORT_PROJECT",
-      project: expect.objectContaining({
-        name: "Imported locally",
-        organizationId: "org-a",
-      }),
-    });
-  });
-
-  it("updates projects locally in authenticated fallback mode", async () => {
-    vi.useFakeTimers();
-    projectQueryState.allProjects = undefined;
-    projectQueryState.projects = undefined;
-
-    const appState = createAppState({
-      "local-org-a": createLocalProject("local-org-a", {
-        name: "Project A",
-        organizationId: "org-a",
-      }),
-    });
-
-    const { result, dispatch } = renderUseProjectState({
-      appState,
-      activeOrganizationId: "org-a",
-      hasOrganizations: true,
-      isLoadingOrganizations: false,
-      validOrganizationIds: ["org-a"],
-    });
-
-    act(() => {
-      vi.advanceTimersByTime(10001);
-    });
-
-    dispatch.mockClear();
-
-    await act(async () => {
-      await result.current.handleUpdateProject("local-org-a", {
-        name: "Project A Renamed",
-      });
-    });
-
-    expect(updateProjectMock).not.toHaveBeenCalled();
-    expect(dispatch).toHaveBeenCalledWith({
-      type: "UPDATE_PROJECT",
-      projectId: "local-org-a",
-      updates: {
-        name: "Project A Renamed",
-      },
-    });
-  });
-
-  it("deletes active projects locally in authenticated fallback mode", async () => {
-    vi.useFakeTimers();
-    projectQueryState.allProjects = undefined;
-    projectQueryState.projects = undefined;
-
-    const appState = {
-      ...createAppState({
-        "local-org-a-1": createLocalProject("local-org-a-1", {
-          name: "Project A1",
-          organizationId: "org-a",
-        }),
-        "local-org-a-2": createLocalProject("local-org-a-2", {
-          name: "Project A2",
-          organizationId: "org-a",
-        }),
-      }),
-      activeProjectId: "local-org-a-1",
-    };
-
-    const { result, dispatch } = renderUseProjectState({
-      appState,
-      activeOrganizationId: "org-a",
-      hasOrganizations: true,
-      isLoadingOrganizations: false,
-      validOrganizationIds: ["org-a"],
-    });
-
-    act(() => {
-      vi.advanceTimersByTime(10001);
-    });
-
-    dispatch.mockClear();
-
-    await act(async () => {
-      await result.current.handleDeleteProject("local-org-a-1");
-    });
-
-    expect(deleteProjectMock).not.toHaveBeenCalled();
-    expect(dispatch).toHaveBeenNthCalledWith(1, {
-      type: "SWITCH_PROJECT",
-      projectId: "local-org-a-2",
-    });
-    expect(dispatch).toHaveBeenNthCalledWith(2, {
-      type: "DELETE_PROJECT",
-      projectId: "local-org-a-1",
-    });
   });
 
   it("does not migrate local projects from another org into the current organization", async () => {
@@ -1632,67 +1333,6 @@ describe("useProjectState automatic project creation", () => {
     });
   });
 
-  it("keeps a non-shared active local project selected after remote projects return", async () => {
-    vi.useFakeTimers();
-    projectQueryState.allProjects = undefined;
-    projectQueryState.projects = undefined;
-
-    const appState = {
-      ...createAppState({
-        "project-a": createLocalProject("project-a", {
-          name: "Project A",
-          organizationId: "org-owner",
-        }),
-        "project-b": createLocalProject("project-b", {
-          name: "Project B",
-          organizationId: "org-owner",
-          sharedProjectId: "convex-project-b",
-        }),
-      }),
-      activeProjectId: "project-a",
-    };
-
-    const { result, rerender } = renderUseProjectState({
-      appState,
-      activeOrganizationId: "org-owner",
-    });
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(10_000);
-    });
-
-    expect(result.current.useLocalFallback).toBe(true);
-
-    projectQueryState.allProjects = [
-      {
-        _id: "convex-project-b",
-        name: "Project B",
-        servers: {},
-        ownerId: "user-1",
-        organizationId: "org-owner",
-        createdAt: 1,
-        updatedAt: 1,
-      },
-    ];
-    projectQueryState.projects = [...projectQueryState.allProjects];
-
-    await act(async () => {
-      rerender({
-        organizationId: "org-owner",
-        hasOrganizationsOverride: true,
-        isLoadingOrganizationsOverride: false,
-        routeOrganizationIdOverride: undefined,
-        validOrganizationIdsOverride: ["org-owner"],
-      });
-    });
-
-    expect(result.current.useLocalFallback).toBe(false);
-    expect(result.current.effectiveActiveProjectId).toBe("project-a");
-    expect(result.current.effectiveProjects["project-a"]).toBeDefined();
-    expect(result.current.effectiveProjects["convex-project-b"]).toBeDefined();
-    expect(result.current.effectiveProjects["project-b"]).toBeUndefined();
-  });
-
   it("uses the active project as the source when legacy share callers omit it", async () => {
     vi.useFakeTimers();
     projectQueryState.allProjects = undefined;
@@ -1817,5 +1457,260 @@ describe("useProjectState automatic project creation", () => {
       expect(useClientConfigStore.getState().isAwaitingRemoteEcho).toBe(false);
       expect(useClientConfigStore.getState().isSaving).toBe(false);
     });
+  });
+});
+
+describe("useProjectState guest active project handling", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    projectQueryState.allProjects = [];
+    projectQueryState.projects = [];
+    projectQueryState.isLoading = false;
+    projectServersState.servers = undefined;
+    projectServersState.isLoading = false;
+    ensureDefaultProjectMock.mockResolvedValue("guest-project-id");
+    organizationBillingStatusState.value = undefined;
+    useOrganizationBillingStatusMock.mockImplementation(
+      () => organizationBillingStatusState.value,
+    );
+  });
+
+  it("ignores any pre-existing per-actor stored project id for guests", async () => {
+    localStorage.setItem(
+      "convex-active-project-id:guest-abc",
+      "stale-orphan-project",
+    );
+    projectQueryState.allProjects = [
+      {
+        _id: "guest-project",
+        name: "Guest Default",
+        servers: {},
+        ownerId: "guest-user",
+        organizationId: undefined as any,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    projectQueryState.projects = projectQueryState.allProjects;
+    projectServersState.servers = [];
+
+    const appState = createAppState({});
+    const { result } = renderUseProjectState({
+      appState,
+      hasOrganizations: false,
+      hasSignedInUser: false,
+      currentActorKey: "guest-abc",
+    });
+
+    await waitFor(() => {
+      expect(result.current.effectiveActiveProjectId).toBe("guest-project");
+    });
+
+    expect(
+      localStorage.getItem("convex-active-project-id:guest-abc"),
+    ).toBeNull();
+  });
+
+  it("does not persist active project selection for guests", async () => {
+    projectQueryState.allProjects = [
+      {
+        _id: "guest-project",
+        name: "Guest Default",
+        servers: {},
+        ownerId: "guest-user",
+        organizationId: undefined as any,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    projectQueryState.projects = projectQueryState.allProjects;
+    projectServersState.servers = [];
+
+    const appState = createAppState({});
+    const { result } = renderUseProjectState({
+      appState,
+      hasOrganizations: false,
+      hasSignedInUser: false,
+      currentActorKey: "guest-abc",
+    });
+
+    await waitFor(() => {
+      expect(result.current.effectiveActiveProjectId).toBe("guest-project");
+    });
+
+    expect(
+      localStorage.getItem("convex-active-project-id:guest-abc"),
+    ).toBeNull();
+  });
+
+  it("populates servers for guest's active project once flat servers query resolves", async () => {
+    projectQueryState.allProjects = [
+      {
+        _id: "guest-project",
+        name: "Guest Default",
+        servers: {},
+        ownerId: "guest-user",
+        organizationId: undefined as any,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    projectQueryState.projects = projectQueryState.allProjects;
+    projectServersState.servers = [
+      {
+        _id: "server-1",
+        projectId: "guest-project",
+        name: "excalidraw",
+        enabled: true,
+        transportType: "http",
+        url: "https://mcp.excalidraw.com/",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+
+    const appState = createAppState({});
+    const { result } = renderUseProjectState({
+      appState,
+      hasOrganizations: false,
+      hasSignedInUser: false,
+      currentActorKey: "guest-abc",
+    });
+
+    await waitFor(() => {
+      expect(result.current.effectiveActiveProjectId).toBe("guest-project");
+    });
+
+    await waitFor(() => {
+      const project =
+        result.current.effectiveProjects[result.current.effectiveActiveProjectId];
+      expect(project?.servers).toBeDefined();
+      // The deserializeServersFromConvex mock is a pass-through so the array
+      // becomes index-keyed; what matters here is that the merge populated the
+      // active project's servers from the flat list rather than leaving {}.
+      expect(Object.keys(project?.servers ?? {}).length).toBe(1);
+    });
+  });
+});
+
+describe("useProjectState first-paint server visibility", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    projectQueryState.allProjects = [];
+    projectQueryState.projects = [];
+    projectQueryState.isLoading = false;
+    projectServersState.servers = undefined;
+    projectServersState.isLoading = false;
+    organizationBillingStatusState.value = undefined;
+    useOrganizationBillingStatusMock.mockImplementation(
+      () => organizationBillingStatusState.value,
+    );
+  });
+
+  it("renders the active project's flat servers without waiting for the auto-set effect to copy convexActiveProjectId", async () => {
+    // Reproduces the cmd+R bug: for a guest, convexActiveProjectId starts at
+    // null. The auto-set effect copies remoteProjects[0]._id into it, but
+    // useProjectServers must fire for the right id on the *same* frame the
+    // user sees, or the project briefly renders as "no servers connected".
+    projectQueryState.allProjects = [
+      {
+        _id: "guest-project",
+        name: "Default",
+        servers: {},
+        ownerId: "guest-user",
+        organizationId: undefined as any,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    projectQueryState.projects = projectQueryState.allProjects;
+    projectServersState.servers = [
+      {
+        _id: "server-1",
+        projectId: "guest-project",
+        name: "excalidraw",
+        enabled: true,
+        transportType: "http",
+        url: "https://mcp.excalidraw.com/",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+
+    const appState = createAppState({});
+    const { result } = renderUseProjectState({
+      appState,
+      hasOrganizations: false,
+      hasSignedInUser: false,
+      currentActorKey: "guest-abc",
+    });
+
+    // The merge must populate servers from the flat list even before
+    // convexActiveProjectId catches up to remoteProjects[0]._id.
+    await waitFor(() => {
+      const project = result.current.effectiveProjects["guest-project"];
+      expect(Object.keys(project?.servers ?? {}).length).toBe(1);
+    });
+  });
+});
+
+describe("useProjectState convexProjects merge under loading", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    projectQueryState.allProjects = [];
+    projectQueryState.projects = [];
+    projectQueryState.isLoading = false;
+    projectServersState.servers = undefined;
+    projectServersState.isLoading = false;
+    organizationBillingStatusState.value = undefined;
+    useOrganizationBillingStatusMock.mockImplementation(
+      () => organizationBillingStatusState.value,
+    );
+  });
+
+  it("does not fall through to embedded servers map for the active project while flat servers load", async () => {
+    // Simulate the bug: a guest project doc has servers: {} (vestigial empty
+    // map) but the flat servers table is the real source. While the flat
+    // query is in flight, the active project must not render an empty list
+    // that consumers could mistake for "no servers."
+    projectQueryState.allProjects = [
+      {
+        _id: "guest-project",
+        name: "Guest Default",
+        servers: {},
+        ownerId: "guest-user",
+        organizationId: undefined as any,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    projectQueryState.projects = projectQueryState.allProjects;
+    projectServersState.servers = undefined; // loading
+    projectServersState.isLoading = true;
+
+    const appState = createAppState({});
+    const { result } = renderUseProjectState({
+      appState,
+      hasOrganizations: false,
+      hasSignedInUser: false,
+      currentActorKey: "guest-abc",
+    });
+
+    await waitFor(() => {
+      expect(result.current.effectiveActiveProjectId).toBe("guest-project");
+    });
+
+    // While loading, isLoadingRemoteProjects is the contract for "we don't
+    // know yet." We just need to make sure the empty embedded map didn't
+    // sneak through as authoritative.
+    expect(result.current.isLoadingRemoteProjects).toBe(true);
+    // The active project's servers are empty (loading), not falsely
+    // populated from the embedded rw.servers map.
+    expect(
+      result.current.effectiveProjects["guest-project"]?.servers,
+    ).toEqual({});
   });
 });

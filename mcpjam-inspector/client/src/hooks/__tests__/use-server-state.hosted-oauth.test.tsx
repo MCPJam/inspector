@@ -63,6 +63,8 @@ vi.mock("@/lib/oauth/mcp-oauth", () => ({
 
 vi.mock("@/lib/apis/web/context", () => ({
   injectHostedServerMapping: vi.fn(),
+  tryGetHostedServerDisplayName: vi.fn(),
+  tryResolveProjectServer: vi.fn(() => null),
 }));
 
 vi.mock("@/lib/session-token", () => ({

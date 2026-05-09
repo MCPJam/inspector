@@ -14,6 +14,7 @@ import {
   isMCPJamProvidedModel,
 } from "@/shared/types";
 import type { ModelProvider } from "@/shared/types";
+import { getClientIp } from "../../utils/client-ip.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
 import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler";
@@ -21,6 +22,7 @@ import { handleHostedOrgChatModel } from "../../utils/org-model-stream-handler.j
 import { deriveOrgProviderKey } from "../../utils/org-model-config.js";
 import { HOSTED_MODE } from "../../config";
 import {
+  buildDirectHostConfig,
   persistChatSessionToConvex,
   pickEnrichmentHeaders,
   type PersistedTurnTrace,
@@ -457,8 +459,26 @@ chatV2.post("/", async (c) => {
       systemPrompt,
       temperature,
       selectedServers,
+      selectedServerIds: bodySelectedServerIds,
       requireToolApproval,
     } = body;
+
+    // Local-mode `selectedServers` is server *names*, not Convex Ids. The
+    // backend's `hostConfigPayloadValidator` requires `v.array(v.id('servers'))`,
+    // so emitting hostConfig with names would 400 the entire ingest call and
+    // drop the transcript. The client only supplies `selectedServerIds` when
+    // every selected name resolved to an Id (length-matched), or when no
+    // servers were selected at all (both arrays empty — still a valid
+    // hostConfig the backend can dedupe on). Any other shape — array missing,
+    // shorter than the names array, or names present without ids — falls
+    // through to "no real Ids available" and skips hostConfig (backend
+    // persists transcript with hostConfigId=null, same as pre-rollout
+    // behavior).
+    const hostConfigServerIds: string[] | undefined =
+      Array.isArray(bodySelectedServerIds) &&
+      bodySelectedServerIds.length === (selectedServers?.length ?? 0)
+        ? bodySelectedServerIds
+        : undefined;
 
     // Validation
     if (!Array.isArray(messages) || messages.length === 0) {
@@ -515,6 +535,20 @@ chatV2.post("/", async (c) => {
       scrubMessages,
     } = prepared;
 
+    // Shared across all three persist call sites below. All three paths are
+    // hardcoded `sourceType: "direct"` and pass the same model/temperature/
+    // server config, so the payload is identical — compute it once.
+    const directHostConfig = hostConfigServerIds
+      ? buildDirectHostConfig({
+          modelId: String(modelDefinition.id),
+          systemPrompt,
+          requestedTemperature: temperature,
+          resolvedTemperature,
+          requireToolApproval,
+          selectedServerIds: hostConfigServerIds,
+        })
+      : undefined;
+
     // MCPJam-provided models: delegate to stream handler
     if (modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)) {
       let authHeader = requestAuthHeader;
@@ -557,6 +591,7 @@ chatV2.post("/", async (c) => {
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
         authHeader,
+        clientIp: getClientIp(c),
         mcpClientManager,
         selectedServers,
         requireToolApproval,
@@ -579,6 +614,9 @@ chatV2.post("/", async (c) => {
                   requireToolApproval,
                   selectedServers,
                 },
+                ...(directHostConfig
+                  ? { hostConfig: directHostConfig }
+                  : {}),
                 expectedVersion: body.expectedVersion,
                 turnTrace,
                 forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
@@ -623,6 +661,7 @@ chatV2.post("/", async (c) => {
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
         authHeader: c.req.header("authorization"),
+        clientIp: getClientIp(c),
         mcpClientManager,
         selectedServers,
         requireToolApproval,
@@ -645,6 +684,9 @@ chatV2.post("/", async (c) => {
                   requireToolApproval,
                   selectedServers,
                 },
+                ...(directHostConfig
+                  ? { hostConfig: directHostConfig }
+                  : {}),
                 expectedVersion: body.expectedVersion,
                 turnTrace,
                 forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
@@ -718,6 +760,9 @@ chatV2.post("/", async (c) => {
                 requireToolApproval,
                 selectedServers,
               },
+              ...(directHostConfig
+                ? { hostConfig: directHostConfig }
+                : {}),
               expectedVersion: body.expectedVersion,
               turnTrace,
               forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),

@@ -12,9 +12,8 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@mcpjam/design-system/collapsible";
-import { useAuth } from "@workos-inc/authkit-react";
 import { JsonEditor } from "@/components/ui/json-editor";
-import { isMCPJamModelLimitError } from "@/lib/guest-limit";
+import { isMCPJamModelLimitError } from "@/lib/mcpjam-limit";
 import { cn } from "@/lib/utils";
 
 interface ErrorBoxProps {
@@ -67,8 +66,6 @@ export function ErrorBox({
   const [isErrorDetailsOpen, setIsErrorDetailsOpen] = useState(false);
   const errorDetailsJson = parseErrorDetails(errorDetails);
 
-  const { user, isLoading } = useAuth();
-
   // Three priority states for the rate-limit-adjacent variants. Order
   // matters: walletLocked is the highest-priority terminal state (no
   // self-serve recovery), then the concurrency throttle (transient,
@@ -83,18 +80,18 @@ export function ErrorBox({
   const isMCPJamModelLimit =
     !isWalletLocked &&
     !isConcurrencyThrottle &&
-    (code === "user_rate_limit" ||
-      isMCPJamModelLimitError({
-        code,
-        details: errorDetails,
-        message,
-      }));
+    isMCPJamModelLimitError({
+      code,
+      details: errorDetails,
+      message,
+      limitKind,
+    });
 
-  // Guests hitting the daily model limit see the global GuestLimitDialog
-  // instead of an inline banner. Wallet/concurrency states fall through
-  // to their dedicated banners above; signed-in users keep the inline UI.
-  const isGuest = !isLoading && !user;
-  if (isMCPJamModelLimit && isGuest) {
+  // Guests and signed-in users alike see the global MCPJamLimitDialog for
+  // daily-limit errors; the inline banner stays out of their way. The
+  // concurrency carve-out is already handled above via its dedicated
+  // transient banner.
+  if (isMCPJamModelLimit) {
     return null;
   }
 

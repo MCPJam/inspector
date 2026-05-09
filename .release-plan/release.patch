@@ -1,0 +1,37 @@
+diff --git a/.changeset/inspector-local-mode-dedup-and-billing.md b/.changeset/inspector-local-mode-dedup-and-billing.md
+deleted file mode 100644
+index dc1c09e62..000000000
+--- a/.changeset/inspector-local-mode-dedup-and-billing.md
++++ /dev/null
+@@ -1,5 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Finish local-mode dedup (sync local OAuth tokens to Convex via import-tokens, collapse legacy localStorage state to no-ops), charge users after trial if paid during trial, make renderer transparent.
+diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
+index 25452cebe..e1170dbf5 100644
+--- a/mcpjam-inspector/package.json
++++ b/mcpjam-inspector/package.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "@mcpjam/inspector",
+   "productName": "MCPJam Inspector",
+-  "version": "2.4.4",
++  "version": "2.4.5",
+   "type": "module",
+   "engines": {
+     "node": ">=22.0.0"
+diff --git a/package-lock.json b/package-lock.json
+index a77c1d626..d2bfee7d6 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -288,7 +288,7 @@
+     },
+     "mcpjam-inspector": {
+       "name": "@mcpjam/inspector",
+-      "version": "2.4.4",
++      "version": "2.4.5",
+       "license": "Apache-2.0",
+       "dependencies": {
+         "@ai-sdk/anthropic": "^3.0.36",

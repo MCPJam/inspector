@@ -7,7 +7,6 @@ import {
 import {
   handleRoute,
   projectServerSchema,
-  guestServerInputSchema,
 } from "./auth.js";
 import {
   ErrorCode,
@@ -16,7 +15,6 @@ import {
   readJsonBody,
   parseWithSchema,
 } from "./errors.js";
-import { validateUrl, OAuthProxyError } from "../../utils/oauth-proxy.js";
 import {
   OAuthConformanceSessionFailedError,
   OAuthConformanceSessionNotFoundError,
@@ -34,13 +32,6 @@ const conformanceWeb = new Hono();
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-/** Detect guest vs project request by body shape. */
-function isGuestRequest(body: Record<string, unknown>): boolean {
-  return (
-    typeof body.serverUrl === "string" && !body.projectId && !body.workspaceId
-  );
-}
-
 /** Resolve HTTP server URL and headers for conformance from authorized config. */
 async function resolveHostedHttpConfig(
   c: any,
@@ -51,34 +42,9 @@ async function resolveHostedHttpConfig(
   accessToken?: string;
   customHeaders?: Record<string, string>;
 }> {
-  if (isGuestRequest(body)) {
-    // Guest: direct server URL
-    const guestInput = parseWithSchema(guestServerInputSchema, body);
-    try {
-      await validateUrl(guestInput.serverUrl, true);
-    } catch (err) {
-      if (err instanceof OAuthProxyError) {
-        throw new WebRouteError(
-          err.status,
-          ErrorCode.VALIDATION_ERROR,
-          err.message
-        );
-      }
-      throw err;
-    }
-    const oauthToken =
-      typeof body.oauthAccessToken === "string"
-        ? body.oauthAccessToken
-        : undefined;
-    return {
-      serverUrl: guestInput.serverUrl,
-      accessToken: oauthToken,
-      customHeaders: guestInput.serverHeaders,
-    };
-  }
-
-  // Project: authorize via Convex
   const wsBody = parseWithSchema(projectServerSchema, body);
+  const workspaceId =
+    typeof body.workspaceId === "string" ? body.workspaceId : undefined;
   const auth = await authorizeServer(
     c,
     bearerToken,
@@ -86,10 +52,8 @@ async function resolveHostedHttpConfig(
     wsBody.serverId,
     {
       accessScope: wsBody.accessScope,
-      workspaceId:
-        typeof (wsBody as { workspaceId?: unknown }).workspaceId === "string"
-          ? (wsBody as unknown as { workspaceId: string }).workspaceId
-          : undefined,
+      workspaceId,
+      chatboxToken: wsBody.chatboxToken,
     }
   );
 
@@ -133,39 +97,9 @@ async function resolveHostedServerConfig(
   bearerToken: string,
   body: Record<string, unknown>
 ): Promise<MCPAppsConformanceConfig> {
-  if (isGuestRequest(body)) {
-    const guestInput = parseWithSchema(guestServerInputSchema, body);
-    try {
-      await validateUrl(guestInput.serverUrl, true);
-    } catch (err) {
-      if (err instanceof OAuthProxyError) {
-        throw new WebRouteError(
-          err.status,
-          ErrorCode.VALIDATION_ERROR,
-          err.message
-        );
-      }
-      throw err;
-    }
-    const oauthToken =
-      typeof body.oauthAccessToken === "string"
-        ? body.oauthAccessToken
-        : undefined;
-    const headers: Record<string, string> = {
-      ...(guestInput.serverHeaders ?? {}),
-    };
-    if (oauthToken) {
-      headers["Authorization"] = `Bearer ${oauthToken}`;
-    }
-    return {
-      url: guestInput.serverUrl,
-      requestInit: Object.keys(headers).length > 0 ? { headers } : undefined,
-      timeout: WEB_CALL_TIMEOUT_MS,
-    } as MCPAppsConformanceConfig;
-  }
-
-  // Project: authorize via Convex
   const wsBody = parseWithSchema(projectServerSchema, body);
+  const workspaceId =
+    typeof body.workspaceId === "string" ? body.workspaceId : undefined;
   const auth = await authorizeServer(
     c,
     bearerToken,
@@ -173,10 +107,8 @@ async function resolveHostedServerConfig(
     wsBody.serverId,
     {
       accessScope: wsBody.accessScope,
-      workspaceId:
-        typeof (wsBody as { workspaceId?: unknown }).workspaceId === "string"
-          ? (wsBody as unknown as { workspaceId: string }).workspaceId
-          : undefined,
+      workspaceId,
+      chatboxToken: wsBody.chatboxToken,
     }
   );
 

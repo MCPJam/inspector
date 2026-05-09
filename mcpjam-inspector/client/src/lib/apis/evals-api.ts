@@ -3,13 +3,11 @@ import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
 import { getSessionToken } from "@/lib/session-token";
 import {
   buildHostedEvalServerBatchRequest,
-  buildHostedServerRequest,
-  buildHostedServerBatchRequest,
-  isGuestMode,
+  buildServerBatchRequest,
 } from "@/lib/apis/web/context";
 import { listHostedTools } from "@/lib/apis/web/tools-api";
 import { authFetch } from "@/lib/session-token";
-import { notifyGuestLimitError } from "@/lib/guest-limit";
+import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
 import type { EvalStreamEvent } from "@/shared/eval-stream-events";
 import type { PromptTurn } from "@/shared/prompt-turns";
 
@@ -37,9 +35,6 @@ export const EVALS_API_ENDPOINTS = {
 } as const;
 
 type JsonRecord = Record<string, unknown>;
-const GUEST_UNSUPPORTED_MESSAGE =
-  "Not available for guests yet. Sign in to use this.";
-
 type EvalRequestWithServers = {
   projectId?: string | null;
   serverIds: string[];
@@ -66,6 +61,13 @@ type RunEvalsRequest = EvalRequestWithServers & {
   passCriteria?: {
     minimumPassRate: number;
   };
+  /**
+   * True for suite reruns of already-persisted cases. Tells the server to
+   * skip the per-case upsert path so suite-default-derived wire fields
+   * (substituted models, merged advancedConfig) don't get baked into
+   * per-case overrides.
+   */
+  suiteRerun?: boolean;
 };
 
 type RunTestCaseRequest = EvalRequestWithServers & {
@@ -145,8 +147,8 @@ function mergeHostedServerBatch<
 >(
   request: T,
 ): Omit<T, "serverIds" | "convexAuthToken"> &
-  ReturnType<typeof buildHostedServerBatchRequest> {
-  const hostedBatch = buildHostedServerBatchRequest(request.serverIds);
+  ReturnType<typeof buildServerBatchRequest> {
+  const hostedBatch = buildServerBatchRequest(request.serverIds);
   const {
     convexAuthToken: _convexAuthToken,
     serverIds: _serverIds,
@@ -156,31 +158,6 @@ function mergeHostedServerBatch<
   return {
     ...requestWithoutConvexAuthToken,
     ...hostedBatch,
-    projectId: request.projectId ?? hostedBatch.projectId,
-  };
-}
-
-function mergeHostedEvalServerRequest<
-  T extends EvalRequestWithServers & { convexAuthToken?: string | null },
->(request: T): JsonRecord {
-  if (!isGuestMode()) {
-    return mergeHostedServerBatch(request) as JsonRecord;
-  }
-
-  const {
-    convexAuthToken: _convexAuthToken,
-    serverIds,
-    projectId: _projectId,
-    ...requestWithoutHostedAuth
-  } = request;
-
-  if (serverIds.length !== 1) {
-    throw new Error("Guest eval playground supports one server at a time");
-  }
-
-  return {
-    ...requestWithoutHostedAuth,
-    ...buildHostedServerRequest(serverIds[0]!),
   };
 }
 
@@ -216,10 +193,16 @@ async function postEvalRequest<TResponse>(
         : typeof errorBody?.error === "string"
           ? errorBody.error
           : `Request failed (${response.status})`;
-    notifyGuestLimitError({
+    const limitKind = (errorBody as { limitKind?: unknown } | null | undefined)
+      ?.limitKind;
+    notifyMCPJamLimitError({
       code: typeof errorBody?.code === "string" ? errorBody.code : undefined,
       details: body,
       message,
+      limitKind:
+        limitKind === "total" || limitKind === "concurrency"
+          ? limitKind
+          : undefined,
     });
     throw new Error(message);
   }
@@ -262,10 +245,6 @@ export async function runEvals(request: RunEvalsRequest): Promise<any> {
     local: () =>
       postEvalRequest(EVALS_API_ENDPOINTS.local.run, request as JsonRecord),
     hosted: () => {
-      if (isGuestMode()) {
-        throw new Error(GUEST_UNSUPPORTED_MESSAGE);
-      }
-
       return postEvalRequest(EVALS_API_ENDPOINTS.hosted.run, {
         ...mergeHostedServerBatch(request),
         storageServerIds: request.storageServerIds ?? request.serverIds,
@@ -286,7 +265,7 @@ export async function runEvalTestCase(
     hosted: () =>
       postEvalRequest(
         EVALS_API_ENDPOINTS.hosted.runTestCase,
-        mergeHostedEvalServerRequest(request),
+        mergeHostedServerBatch(request) as JsonRecord,
       ),
   });
 }
@@ -303,7 +282,7 @@ export async function generateEvalTests(
     hosted: () =>
       postEvalRequest(
         EVALS_API_ENDPOINTS.hosted.generateTests,
-        mergeHostedEvalServerRequest(request),
+        mergeHostedServerBatch(request) as JsonRecord,
       ),
   });
 }
@@ -320,7 +299,7 @@ export async function generateNegativeEvalTests(
     hosted: () =>
       postEvalRequest(
         EVALS_API_ENDPOINTS.hosted.generateNegativeTests,
-        mergeHostedEvalServerRequest(request),
+        mergeHostedServerBatch(request) as JsonRecord,
       ),
   });
 }
@@ -381,7 +360,7 @@ export async function streamEvalTestCase(
     : EVALS_API_ENDPOINTS.local.streamTestCase;
 
   const payload = isHostedMode()
-    ? mergeHostedEvalServerRequest(request)
+    ? mergeHostedServerBatch(request) as JsonRecord
     : (request as JsonRecord);
 
   const response = await authFetch(endpoint, {
@@ -416,7 +395,11 @@ export async function streamEvalTestCase(
         errorBody = errorText;
       }
     }
-    notifyGuestLimitError({
+    const limitKindRaw =
+      errorBody && typeof errorBody === "object"
+        ? (errorBody as { limitKind?: unknown }).limitKind
+        : undefined;
+    notifyMCPJamLimitError({
       code:
         errorBody &&
         typeof errorBody === "object" &&
@@ -425,6 +408,10 @@ export async function streamEvalTestCase(
           : undefined,
       details: errorBody ?? errorText,
       message: errorMessage,
+      limitKind:
+        limitKindRaw === "total" || limitKindRaw === "concurrency"
+          ? limitKindRaw
+          : undefined,
     });
     throw new Error(errorMessage);
   }
@@ -448,9 +435,27 @@ export async function streamEvalTestCase(
     try {
       const event = JSON.parse(data) as EvalStreamEvent;
       if (event.type === "error") {
-        notifyGuestLimitError({
+        // Best-effort recovery of structured limitKind from JSON-shaped
+        // details so the concurrency carve-out is honored on the SSE
+        // error path. Untouched if details aren't JSON.
+        let limitKind: "total" | "concurrency" | undefined;
+        if (typeof event.details === "string") {
+          try {
+            const parsed = JSON.parse(event.details);
+            if (parsed && typeof parsed === "object") {
+              const value = (parsed as { limitKind?: unknown }).limitKind;
+              if (value === "total" || value === "concurrency") {
+                limitKind = value;
+              }
+            }
+          } catch {
+            // not JSON; ignore
+          }
+        }
+        notifyMCPJamLimitError({
           details: event.details,
           message: event.message,
+          limitKind,
         });
       }
       onEvent(event);

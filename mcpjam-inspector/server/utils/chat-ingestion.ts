@@ -42,6 +42,60 @@ interface ResumeConfig {
 }
 
 /**
+ * Direct-chat host configuration sent alongside the transcript so the backend
+ * can dedupe per-turn config into `hostConfigs`. Mirrors the `HostConfigPayload`
+ * shape accepted by the Convex `/ingest-chat` route. Only emitted for direct
+ * chats (serverShare and chatbox flows skip it).
+ */
+export interface DirectHostConfig {
+  hostStyle: "direct";
+  systemPrompt: string;
+  modelId: string;
+  temperature: number;
+  requireToolApproval: boolean;
+  selectedServerIds: string[];
+}
+
+/**
+ * Build a contract-safe direct `hostConfig` payload from the inspector's
+ * loose runtime values. Coerces undefined `systemPrompt` / `temperature` /
+ * `requireToolApproval` / `selectedServerIds` into the types the backend's
+ * `isHostConfigPayload` guard requires — without this, paths like GPT-5 (where
+ * `resolvedTemperature` is undefined) would fail the guard and skip with
+ * `missing_field`.
+ */
+export function buildDirectHostConfig(input: {
+  modelId: string;
+  systemPrompt?: string;
+  requestedTemperature?: number;
+  resolvedTemperature?: number;
+  requireToolApproval?: boolean;
+  selectedServerIds?: string[];
+}): DirectHostConfig {
+  const {
+    modelId,
+    systemPrompt,
+    requestedTemperature,
+    resolvedTemperature,
+    requireToolApproval,
+    selectedServerIds,
+  } = input;
+  return {
+    hostStyle: "direct",
+    systemPrompt: systemPrompt ?? "",
+    modelId,
+    temperature:
+      typeof resolvedTemperature === "number"
+        ? resolvedTemperature
+        : typeof requestedTemperature === "number"
+          ? requestedTemperature
+          : 0.7,
+    requireToolApproval: requireToolApproval === true,
+    selectedServerIds: selectedServerIds ?? [],
+  };
+}
+
+/**
  * Shape of a single completed chat turn's trace as it flows from the stream
  * producers (`streamDirectChatWithLiveTrace`, `handleMCPJamFreeChatModel`)
  * through `persistChatSessionToConvex` to the Convex `/ingest-chat` handler.
@@ -61,7 +115,7 @@ export interface PersistedTurnTrace {
 interface PersistChatSessionOptions {
   chatSessionId: string;
   modelId: string;
-  modelSource: "mcpjam" | "byok";
+  modelSource: "mcpjam" | "byok" | "local_byok";
   authHeader?: string;
   projectId?: string;
   sourceType?: "chatbox" | "direct";
@@ -85,6 +139,7 @@ interface PersistChatSessionOptions {
   resumeConfig?: ResumeConfig;
   expectedVersion?: number;
   turnTrace?: PersistedTurnTrace;
+  hostConfig?: DirectHostConfig;
   /** Headers from the original browser request to forward for usage enrichment (user-agent, accept-language, geo headers). */
   forwardHeaders?: Record<string, string>;
 }
@@ -184,6 +239,7 @@ export async function persistChatSessionToConvex(
           ? { expectedVersion: options.expectedVersion }
           : {}),
         ...(options.turnTrace ? { turnTrace: options.turnTrace } : {}),
+        ...(options.hostConfig ? { hostConfig: options.hostConfig } : {}),
       }),
     });
 

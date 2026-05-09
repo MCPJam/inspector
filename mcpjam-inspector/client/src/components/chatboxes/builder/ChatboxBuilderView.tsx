@@ -1090,15 +1090,13 @@ export function ChatboxBuilderView({
                                   )}
                                   minimalMode
                                   reasoningDisplayMode="hidden"
-                                  hostedProjectIdOverride={
-                                    chatbox!.projectId
-                                  }
-                                  hostedSelectedServerIdsOverride={activePreviewServers.map(
-                                    (s) => s.serverId
-                                  )}
                                   hostedContext={{
                                     chatboxToken: chatbox.link.token,
                                     chatboxSurface: "preview",
+                                    projectId: chatbox!.projectId,
+                                    selectedServerIds: activePreviewServers.map(
+                                      (s) => s.serverId
+                                    ),
                                   }}
                                   executionConfig={{
                                     modelId: draftChatboxConfig.modelId,

@@ -6,8 +6,8 @@ import {
   validateHostedServer,
   type HostedServerValidateResponse,
 } from "@/lib/apis/web/servers-api";
-import { webPost } from "@/lib/apis/web/base";
-import { buildGuestServerRequest, isGuestMode } from "@/lib/apis/web/context";
+import { BootstrapNotReadyError } from "@/lib/app-ready";
+import type { ConnectionDefaults } from "@/shared/connection-defaults";
 
 const HOSTED_VALIDATE_TIMEOUT_MS = 20_000;
 
@@ -27,10 +27,7 @@ function extractOAuthToken(serverConfig: MCPServerConfig): string | undefined {
 }
 
 function normalizeHostedValidationError(error: unknown): string {
-  if (
-    error instanceof Error &&
-    error.message === "Hosted project is not available yet"
-  ) {
+  if (error instanceof BootstrapNotReadyError) {
     return "Hosted project is still loading. Please try again in a moment.";
   }
 
@@ -53,23 +50,6 @@ async function safeValidateHostedServer(
   serverConfig: MCPServerConfig,
 ): Promise<HostedServerValidateResponse & { error?: string }> {
   try {
-    if (isGuestMode()) {
-      const request = buildGuestServerRequest(
-        serverConfig,
-        extractOAuthToken(serverConfig),
-        serverConfig.capabilities as Record<string, unknown> | undefined,
-        serverId,
-      );
-
-      return await withTimeout(
-        webPost<typeof request, HostedServerValidateResponse>(
-          "/api/web/servers/validate",
-          request,
-        ),
-        HOSTED_VALIDATE_TIMEOUT_MS,
-      );
-    }
-
     return await withTimeout(
       validateHostedServer(
         serverId,
@@ -139,20 +119,56 @@ async function withTimeout<T>(
   });
 }
 
+
+function buildResolverBody(
+  serverId: string,
+  options: {
+    projectId: string;
+    serverName?: string;
+    connectionDefaults?: ConnectionDefaults;
+  },
+): Record<string, unknown> {
+  return {
+    projectId: options.projectId,
+    serverId,
+    ...(options.serverName ? { serverName: options.serverName } : {}),
+    ...(options.connectionDefaults
+      ? { connectionDefaults: options.connectionDefaults }
+      : {}),
+  };
+}
+
 export async function testConnection(
   serverConfig: MCPServerConfig,
   serverId: string,
+  options?: {
+    projectId?: string;
+    serverName?: string;
+    connectionDefaults?: ConnectionDefaults;
+  },
 ) {
   if (HOSTED_MODE) {
     return safeValidateHostedServer(serverId, serverConfig);
   }
+
+  if (!options?.projectId) {
+    throw new Error(
+      "projectId is required for testConnection in local mode (server must be synced to Convex first)",
+    );
+  }
+
+  const body = buildResolverBody(serverId, {
+    projectId: options.projectId,
+    serverName: options.serverName,
+    connectionDefaults: options.connectionDefaults,
+  });
 
   const res = await authFetchWithTimeout(
     "/api/mcp/connect",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ serverConfig, serverId }),
+      body: JSON.stringify(body),
     },
     20000, // 20 second timeout
   );
@@ -186,17 +202,34 @@ export async function listServers() {
 export async function reconnectServer(
   serverId: string,
   serverConfig: MCPServerConfig,
+  options?: {
+    projectId?: string;
+    serverName?: string;
+    connectionDefaults?: ConnectionDefaults;
+  },
 ) {
   if (HOSTED_MODE) {
     return safeValidateHostedServer(serverId, serverConfig);
   }
+
+  if (!options?.projectId) {
+    throw new Error(
+      "projectId is required for reconnectServer in local mode (server must be synced to Convex first)",
+    );
+  }
+
+  const body = buildResolverBody(serverId, {
+    projectId: options.projectId,
+    serverName: options.serverName,
+    connectionDefaults: options.connectionDefaults,
+  });
 
   const res = await authFetchWithTimeout(
     "/api/mcp/servers/reconnect",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ serverId, serverConfig }),
+      body: JSON.stringify(body),
     },
     20000, // 20 second timeout
   );

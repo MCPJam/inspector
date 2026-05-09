@@ -112,6 +112,10 @@ export function isOrgProviderAvailable(
 /**
  * Build the list of available models from an organization's provider config.
  * Used in org-backed projects where the server resolves API keys.
+ *
+ * For Ollama, static SUPPORTED_MODELS entries are absent (models are
+ * org/user-specific), but org-configured modelIds are added directly below
+ * so hosted local-runtime Ollama providers appear in the model picker.
  */
 export function buildAvailableModelsFromOrgConfig(
   orgConfig: OrgVisibleConfig | undefined,
@@ -121,16 +125,13 @@ export function buildAvailableModelsFromOrgConfig(
     return SUPPORTED_MODELS.filter((m) => isMCPJamProvidedModel(String(m.id)));
   }
 
-  // Determine which provider keys are available
+  // Determine which provider keys are available. Ollama is skipped — it never
+  // belongs in the hosted model list.
   const availableProviderKeys = new Set<string>();
   for (const p of orgConfig.providers) {
     if (!p.enabled) continue;
-    // Ollama only needs baseUrl; all others need hasSecret
-    if (p.providerKey === "ollama") {
-      if (p.baseUrl) availableProviderKeys.add(p.providerKey);
-    } else {
-      if (p.hasSecret) availableProviderKeys.add(p.providerKey);
-    }
+    if (p.providerKey === "ollama") continue;
+    if (p.hasSecret) availableProviderKeys.add(p.providerKey);
   }
 
   // Always include MCPJam-provided models
@@ -152,6 +153,22 @@ export function buildAvailableModelsFromOrgConfig(
       }),
     );
     models.push(...openRouterModels);
+  }
+
+  // Ollama: include configured modelIds so org-managed Ollama providers appear
+  // in the model picker (SUPPORTED_MODELS has no static ollama entries since
+  // models are dynamic and org-specific).
+  for (const p of orgConfig.providers) {
+    if (p.providerKey !== "ollama") continue;
+    if (!p.enabled || !p.baseUrl || !p.modelIds || p.modelIds.length === 0)
+      continue;
+    for (const modelId of p.modelIds) {
+      models.push({
+        id: modelId,
+        name: modelId,
+        provider: "ollama" as const,
+      });
+    }
   }
 
   // Custom providers (providerKey starts with "custom:")

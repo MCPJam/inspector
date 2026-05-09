@@ -286,7 +286,7 @@ describe("ServerConnectionCard", () => {
       });
     });
 
-    it("forces a fresh OAuth flow when toggling on an OAuth server without tokens", () => {
+    it("allows interactive OAuth fallback when toggling on an OAuth server without tokens", () => {
       const server = createServer({
         connectionStatus: "disconnected",
         useOAuth: true,
@@ -304,7 +304,7 @@ describe("ServerConnectionCard", () => {
       fireEvent.click(screen.getByRole("switch"));
 
       expect(onReconnect).toHaveBeenCalledWith("test-server", {
-        forceOAuthFlow: true,
+        allowInteractiveOAuthFlow: true,
       });
     });
 
