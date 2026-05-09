@@ -270,20 +270,6 @@ export function useEvalHandlers({
       const tests: any[] = [];
       const providersNeeded = new Set<string>();
 
-      // Build a baseline advancedConfig from suite.defaultConfig so the runner
-      // inherits system prompt and temperature even when testCase.advancedConfig
-      // is empty. Per-case advancedConfig fields take precedence.
-      const suiteDefaultAdvancedConfig = suite.defaultConfig
-        ? {
-            ...(suite.defaultConfig.systemPrompt
-              ? { system: suite.defaultConfig.systemPrompt }
-              : {}),
-            ...(typeof suite.defaultConfig.temperature === "number"
-              ? { temperature: suite.defaultConfig.temperature }
-              : {}),
-          }
-        : {};
-
       // Resolve the fallback model definition for cases with no per-case models.
       // Disambiguate by provider when stored, so OpenRouter gpt-4o doesn't
       // resolve to the native OpenAI gpt-4o if their ids collide.
@@ -295,17 +281,24 @@ export function useEvalHandlers({
                 m.provider === suite.defaultConfig!.provider)
           )
         : undefined;
+      // Distinguish "no default set" from "default set but unresolvable"
+      // (e.g. model removed, availableModels still loading) so we can show a
+      // more useful toast than "add models to your test cases".
+      const suiteDefaultUnresolved =
+        !!suite.defaultConfig?.modelId && !suiteDefaultModelDef;
+
+      // Note: suite.defaultConfig.systemPrompt / temperature are NOT merged
+      // into per-case advancedConfig here. The wire field flows through the
+      // server's testCase upsert path and would bake the suite default into
+      // every per-case advancedConfig, breaking later edits to the suite
+      // default. Runtime application of suite defaults happens server-side
+      // (Convex testSuiteRun hostConfigId snapshot).
 
       for (const testCase of testCases) {
         const hasModels = testCase.models && testCase.models.length > 0;
         if (!hasModels && !suiteDefaultModelDef) {
           continue;
         }
-
-        const mergedAdvancedConfig =
-          Object.keys(suiteDefaultAdvancedConfig).length > 0
-            ? { ...suiteDefaultAdvancedConfig, ...testCase.advancedConfig }
-            : testCase.advancedConfig;
 
         // Use per-case models when present; fall back to suite default model.
         const modelConfigs: Array<{ model: string; provider: string }> =
@@ -330,7 +323,7 @@ export function useEvalHandlers({
             scenario: testCase.scenario,
             expectedOutput: testCase.expectedOutput,
             promptTurns: testCase.promptTurns,
-            advancedConfig: mergedAdvancedConfig,
+            advancedConfig: testCase.advancedConfig,
             testCaseId: testCase._id,
           });
 
@@ -341,7 +334,16 @@ export function useEvalHandlers({
       }
 
       if (tests.length === 0) {
-        toast.error("No tests to run. Please add models to your test cases.");
+        if (suiteDefaultUnresolved) {
+          const label = suite.defaultConfig?.provider
+            ? `${suite.defaultConfig.modelId} (${suite.defaultConfig.provider})`
+            : suite.defaultConfig?.modelId;
+          toast.error(
+            `Suite default model ${label} is not available. Re-select it in the suite's default execution config, or add per-case models.`
+          );
+        } else {
+          toast.error("No tests to run. Please add models to your test cases.");
+        }
         return null;
       }
 

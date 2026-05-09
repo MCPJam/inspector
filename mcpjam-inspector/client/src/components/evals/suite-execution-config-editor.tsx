@@ -42,12 +42,30 @@ export function SuiteExecutionConfigEditor({
   const [isSaving, setIsSaving] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
 
+  // Depend on scalar values, not the object reference: a parent re-render
+  // that produces a fresh `suite.defaultConfig` with identical values would
+  // otherwise stomp in-progress edits.
   useEffect(() => {
     setModelId(suite.defaultConfig?.modelId ?? "");
     setProvider(suite.defaultConfig?.provider ?? "");
     setSystemPrompt(suite.defaultConfig?.systemPrompt ?? "");
     setTemperature(suite.defaultConfig?.temperature ?? DEFAULT_TEMPERATURE);
-  }, [suite.defaultConfig]);
+  }, [
+    suite.defaultConfig?.modelId,
+    suite.defaultConfig?.provider,
+    suite.defaultConfig?.systemPrompt,
+    suite.defaultConfig?.temperature,
+  ]);
+
+  // For suites saved before provider was tracked, fall back to the first
+  // matching model so the Select still renders the saved choice. Computed at
+  // render time so we don't have to add availableModels as an effect dep
+  // (which would risk stomping in-progress edits on parent re-renders).
+  const displayProvider =
+    provider ||
+    (modelId
+      ? availableModels.find((m) => String(m.id) === modelId)?.provider ?? ""
+      : "");
 
   const savedModelId = suite.defaultConfig?.modelId ?? "";
   const savedProvider = suite.defaultConfig?.provider ?? "";
@@ -72,7 +90,12 @@ export function SuiteExecutionConfigEditor({
     if (!modelId) return;
     setIsSaving(true);
     try {
-      await onSave({ modelId, provider: provider || undefined, systemPrompt, temperature });
+      await onSave({
+        modelId,
+        provider: provider || displayProvider || undefined,
+        systemPrompt,
+        temperature,
+      });
     } finally {
       setIsSaving(false);
     }
@@ -109,23 +132,31 @@ export function SuiteExecutionConfigEditor({
           <Label className="text-xs font-medium text-muted-foreground">
             Model
           </Label>
+          {/* Encode provider into the Select value so colliding model ids
+              across providers (e.g. native OpenAI gpt-4o vs OpenRouter
+              gpt-4o) are saved with the correct provider. */}
           <Select
-            value={modelId}
-            onValueChange={(id) => {
-              setModelId(id);
-              const def = availableModels.find((m) => String(m.id) === id);
-              setProvider(def?.provider ?? "");
+            value={modelId ? `${displayProvider}:${modelId}` : ""}
+            onValueChange={(value) => {
+              const sep = value.indexOf(":");
+              const nextProvider = sep >= 0 ? value.slice(0, sep) : "";
+              const nextId = sep >= 0 ? value.slice(sep + 1) : value;
+              setProvider(nextProvider);
+              setModelId(nextId);
             }}
           >
             <SelectTrigger className="mt-1.5 border-0 bg-muted/50 transition-colors hover:bg-muted">
               <SelectValue placeholder="Select a model" />
             </SelectTrigger>
             <SelectContent>
-              {availableModels.map((model) => (
-                <SelectItem key={String(model.id)} value={String(model.id)}>
-                  {model.name}
-                </SelectItem>
-              ))}
+              {availableModels.map((model) => {
+                const value = `${model.provider}:${String(model.id)}`;
+                return (
+                  <SelectItem key={value} value={value}>
+                    {model.name}
+                  </SelectItem>
+                );
+              })}
             </SelectContent>
           </Select>
         </div>
