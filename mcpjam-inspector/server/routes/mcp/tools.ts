@@ -149,6 +149,14 @@ tools.post("/list", async (c) => {
       }
     }
 
+    // If the (normalized) id still isn't a live, registered server, return an
+    // empty result instead of letting the SDK throw "Unknown MCP server" /
+    // "is not connected". Stale chatbox serverIds shouldn't 500 the metadata
+    // fetch — the chatbox preview just shows zero tools for that server.
+    if (!availableServers.includes(normalizedServerId)) {
+      return c.json({ tools: [], toolsMetadata: {}, tokenCount: undefined });
+    }
+
     return c.json(
       await listToolsShared(c.mcpClientManager, {
         serverId: normalizedServerId,
