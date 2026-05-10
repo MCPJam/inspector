@@ -122,6 +122,11 @@ export interface ChatboxPlaygroundSession extends ChatboxSession {
 function normalizeChatboxShareMode(mode: unknown): ChatboxShareMode {
   if (mode === "project_members") return "project_members";
   if (mode === "anyone_with_link") return "anyone_with_link";
+  // Legacy alias from before the chatbox auth refactor renamed the
+  // any-signed-in-with-link mode. Editor/builder surfaces still write
+  // it; map to the semantic equivalent so persisted sessions don't
+  // silently downgrade to invited-only when read back.
+  if (mode === "any_signed_in_with_link") return "anyone_with_link";
   return "invited_only";
 }
 
