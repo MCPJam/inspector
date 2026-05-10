@@ -36,6 +36,8 @@ import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
 import { ErrorBoundary } from "./components/ui/error-boundary";
 import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
 import { EmptyState } from "./components/ui/empty-state";
+import { EXCALIDRAW_SERVER_NAME } from "./lib/excalidraw-quick-connect";
+import { isFirstRunEligible } from "./lib/onboarding-state";
 import { ProfileTab } from "./components/ProfileTab";
 import { BillingUpsellGate } from "./components/billing/BillingUpsellGate";
 import { OrganizationsTab } from "./components/OrganizationsTab";
@@ -841,6 +843,15 @@ export default function App() {
   const pendingDashboardOAuthMessage = pendingDashboardOAuth
     ? `Finishing OAuth sign-in for ${pendingDashboardOAuth.serverName}...`
     : undefined;
+  const hasAnyFirstRunBlockingProjectServers = Object.keys(
+    projectServers
+  ).some((serverName) => serverName !== EXCALIDRAW_SERVER_NAME);
+  const remoteFirstRunOnboardingShown =
+    currentUser == null
+      ? undefined
+      : currentUser.hasSeenOnboarding === true ||
+        currentUser.hasCompletedOnboarding === true;
+  const hasSeenFirstRunOnboarding = remoteFirstRunOnboardingShown === true;
   const isHostedDefaultRoute = currentHashRoute.normalizedTab === "servers";
   const shouldHoldHostedDefaultRouteForAuth =
     HOSTED_MODE &&
@@ -1325,6 +1336,64 @@ export default function App() {
     window.addEventListener("hashchange", applyHash);
     return () => window.removeEventListener("hashchange", applyHash);
   }, [applyNavigation, isHostedChatRoute]);
+
+  useLayoutEffect(() => {
+    if (isHostedChatRoute) {
+      return;
+    }
+
+    if (isWorkOsLoading) {
+      return;
+    }
+
+    if (effectiveHostedShellGateState !== "ready") {
+      return;
+    }
+
+    if (isAuthenticated && currentUser === undefined) {
+      return;
+    }
+
+    if (hasSeenFirstRunOnboarding) {
+      return;
+    }
+
+    // Hosted guests need Convex auth and their actor-owned project before App
+    // Builder can auto-connect Excalidraw against the right project.
+    if (
+      HOSTED_MODE &&
+      (!isAuthenticated ||
+        isLoadingRemoteProjects ||
+        !activeProjectId ||
+        activeProjectId === "none")
+    ) {
+      return;
+    }
+
+    if (
+      isFirstRunEligible(
+        hasAnyFirstRunBlockingProjectServers,
+        window.location.hash,
+        !!workOsUser,
+        remoteFirstRunOnboardingShown
+      )
+    ) {
+      applyNavigation("app-builder", { updateHash: true });
+    }
+  }, [
+    activeProjectId,
+    applyNavigation,
+    currentUser,
+    effectiveHostedShellGateState,
+    hasSeenFirstRunOnboarding,
+    hasAnyFirstRunBlockingProjectServers,
+    isAuthenticated,
+    isHostedChatRoute,
+    isLoadingRemoteProjects,
+    isWorkOsLoading,
+    remoteFirstRunOnboardingShown,
+    workOsUser,
+  ]);
 
   const consumeCheckoutIntent = useCallback(() => {
     clearPersistedCheckoutIntent();
@@ -1825,7 +1894,9 @@ export default function App() {
 
   if (
     !isHostedChatRoute &&
+    !!workOsUser &&
     isAuthenticated &&
+    currentUser?.isAnonymous !== true &&
     typeof currentUser?.createdAt === "number" &&
     currentUser.createdAt >= OCCUPATION_GATE_ROLLOUT_MS &&
     !currentUser?.occupation?.trim()
@@ -2216,8 +2287,10 @@ export default function App() {
               serverName={appState.selectedServer}
               servers={projectServers}
               activeProjectId={activeProjectId}
-              isAuthenticated={isAuthenticated}
-              isAuthLoading={isAuthLoading}
+              isSignedInWithWorkOs={!!workOsUser}
+              isWorkOsAuthLoading={isWorkOsLoading}
+              isConvexAuthenticated={isAuthenticated}
+              hasSeenFirstRunOnboarding={remoteFirstRunOnboardingShown}
               isServerSyncing={isSelectedServerSyncing}
               onConnect={handleConnect}
               onSaveHostContext={handleUpdateHostContext}

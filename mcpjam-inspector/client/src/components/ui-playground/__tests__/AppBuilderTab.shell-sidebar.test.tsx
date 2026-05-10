@@ -42,6 +42,7 @@ const mockOnboarding = {
   isResolvingRemoteCompletion: false,
   isBootstrappingFirstRunConnection: false,
   connectExcalidraw: vi.fn(),
+  markOnboardingShown: vi.fn(),
   completeOnboarding: vi.fn(),
   connectError: null as string | null,
   retryConnect: vi.fn(),
@@ -219,6 +220,7 @@ describe("AppBuilderTab shell sidebar", () => {
       isResolvingRemoteCompletion: false,
       isBootstrappingFirstRunConnection: false,
       connectError: null,
+      markOnboardingShown: vi.fn(),
     });
   });
 
