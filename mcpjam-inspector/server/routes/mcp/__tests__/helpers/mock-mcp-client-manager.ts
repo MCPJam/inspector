@@ -19,7 +19,7 @@ const defaultMocks = {
   disconnectServer: vi.fn().mockResolvedValue(undefined),
   removeServer: vi.fn(),
   getClient: vi.fn().mockReturnValue({}),
-  hasServer: vi.fn().mockReturnValue(false),
+  hasServer: vi.fn().mockReturnValue(true),
   listServers: vi.fn().mockReturnValue([]),
   getServerSummaries: vi.fn().mockReturnValue([]),
   getConnectionStatus: vi.fn().mockReturnValue("connected"),
