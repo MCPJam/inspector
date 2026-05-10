@@ -450,7 +450,16 @@ const chatV2 = new Hono();
 
 chatV2.post("/", async (c) => {
   try {
-    const body = (await c.req.json()) as ChatV2Request;
+    const body = (await c.req.json()) as ChatV2Request & {
+      // Phase F: when the local inspector serves an owner-preview of a
+      // chatbox (the share-link surface running in /mcp), the client
+      // passes the resolved chatbox identity so persistence reads
+      // `sourceType: "chatbox"` + the right surface telemetry instead
+      // of being filed as a direct chat.
+      chatboxId?: string;
+      accessVersion?: number;
+      surface?: "preview" | "share_link";
+    };
     const mcpClientManager = c.mcpClientManager;
     const {
       messages,
@@ -461,7 +470,16 @@ chatV2.post("/", async (c) => {
       selectedServers,
       selectedServerIds: bodySelectedServerIds,
       requireToolApproval,
+      chatboxId: bodyChatboxId,
+      accessVersion: bodyAccessVersion,
+      surface: bodySurface,
     } = body;
+    const isChatboxSession = Boolean(bodyChatboxId);
+    const chatSessionSourceType: "chatbox" | "direct" = isChatboxSession
+      ? "chatbox"
+      : "direct";
+    const chatSessionSurface: "preview" | "share_link" | undefined =
+      isChatboxSession ? bodySurface ?? "preview" : undefined;
 
     // Local-mode `selectedServers` is server *names*, not Convex Ids. The
     // backend's `hostConfigPayloadValidator` requires `v.array(v.id('servers'))`,
@@ -606,22 +624,31 @@ chatV2.post("/", async (c) => {
                 chatSessionId,
                 modelId: String(modelDefinition.id),
                 modelSource: "mcpjam",
-                sourceType: "direct",
-                directVisibility: body.directVisibility,
+                sourceType: chatSessionSourceType,
+                ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
+                ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
+                ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)
+                  ? { accessVersion: bodyAccessVersion }
+                  : {}),
                 authHeader,
                 sessionMessages: fullHistory,
                 startedAt: sessionStartedAt,
                 lastActivityAt: Date.now(),
                 ...(body.projectId ? { projectId: body.projectId } : {}),
-                resumeConfig: {
-                  systemPrompt,
-                  temperature,
-                  requireToolApproval,
-                  selectedServers,
-                },
-                ...(directHostConfig
-                  ? { hostConfig: directHostConfig }
-                  : {}),
+                ...(isChatboxSession
+                  ? {}
+                  : {
+                      directVisibility: body.directVisibility,
+                      resumeConfig: {
+                        systemPrompt,
+                        temperature,
+                        requireToolApproval,
+                        selectedServers,
+                      },
+                      ...(directHostConfig
+                        ? { hostConfig: directHostConfig }
+                        : {}),
+                    }),
                 expectedVersion: body.expectedVersion,
                 turnTrace,
                 forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
@@ -676,22 +703,31 @@ chatV2.post("/", async (c) => {
                 chatSessionId,
                 modelId: String(modelDefinition.id),
                 modelSource: "byok",
-                sourceType: "direct",
-                directVisibility: body.directVisibility,
+                sourceType: chatSessionSourceType,
+                ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
+                ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
+                ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)
+                  ? { accessVersion: bodyAccessVersion }
+                  : {}),
                 authHeader: c.req.header("authorization"),
                 sessionMessages: fullHistory,
                 startedAt: sessionStartedAt,
                 lastActivityAt: Date.now(),
                 projectId: body.projectId,
-                resumeConfig: {
-                  systemPrompt,
-                  temperature,
-                  requireToolApproval,
-                  selectedServers,
-                },
-                ...(directHostConfig
-                  ? { hostConfig: directHostConfig }
-                  : {}),
+                ...(isChatboxSession
+                  ? {}
+                  : {
+                      directVisibility: body.directVisibility,
+                      resumeConfig: {
+                        systemPrompt,
+                        temperature,
+                        requireToolApproval,
+                        selectedServers,
+                      },
+                      ...(directHostConfig
+                        ? { hostConfig: directHostConfig }
+                        : {}),
+                    }),
                 expectedVersion: body.expectedVersion,
                 turnTrace,
                 forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
@@ -745,8 +781,12 @@ chatV2.post("/", async (c) => {
               chatSessionId,
               modelId: String(modelDefinition.id),
               modelSource: "byok",
-              sourceType: "direct",
-              directVisibility: body.directVisibility,
+              sourceType: chatSessionSourceType,
+              ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
+              ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
+              ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)
+                ? { accessVersion: bodyAccessVersion }
+                : {}),
               messages: modelMessages as ModelMessage[],
               systemPrompt: enhancedSystemPrompt,
               ...(responseMessages.length > 0 ? { responseMessages } : {}),
@@ -759,15 +799,20 @@ chatV2.post("/", async (c) => {
               startedAt: streamStartedAt,
               lastActivityAt: Date.now(),
               ...(body.projectId ? { projectId: body.projectId } : {}),
-              resumeConfig: {
-                systemPrompt,
-                temperature,
-                requireToolApproval,
-                selectedServers,
-              },
-              ...(directHostConfig
-                ? { hostConfig: directHostConfig }
-                : {}),
+              ...(isChatboxSession
+                ? {}
+                : {
+                    directVisibility: body.directVisibility,
+                    resumeConfig: {
+                      systemPrompt,
+                      temperature,
+                      requireToolApproval,
+                      selectedServers,
+                    },
+                    ...(directHostConfig
+                      ? { hostConfig: directHostConfig }
+                      : {}),
+                  }),
               expectedVersion: body.expectedVersion,
               turnTrace,
               forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),

@@ -46,7 +46,12 @@ export const projectServerSchema = z.object({
   clientCapabilities: clientCapabilitiesSchema.optional(),
   oauthAccessToken: z.string().optional(),
   accessScope: z.enum(["project_member", "chat_v2"]).optional(),
-  chatboxToken: z.string().min(1).optional(),
+  // Callers identify chatboxes by `chatboxId` (resolved via
+  // /web/chatbox/redeem) plus the backend-owned `accessVersion`. The
+  // link token is consumed only at redemption; no read-path callsite
+  // accepts it.
+  chatboxId: z.string().min(1).optional(),
+  accessVersion: z.number().int().nonnegative().optional(),
 });
 
 export const toolsListSchema = projectServerSchema.extend({
@@ -79,7 +84,9 @@ export const promptsListMultiSchema = z.object({
   clientCapabilities: clientCapabilitiesSchema.optional(),
   oauthTokens: z.record(z.string(), z.string()).optional(),
   accessScope: z.enum(["project_member", "chat_v2"]).optional(),
-  chatboxToken: z.string().min(1).optional(),
+  // See projectServerSchema — chatbox identity is `chatboxId` + `accessVersion`.
+  chatboxId: z.string().min(1).optional(),
+  accessVersion: z.number().int().nonnegative().optional(),
 });
 
 export const promptsGetSchema = projectServerSchema.extend({
@@ -99,7 +106,9 @@ export const hostedChatSchema = z
     surface: z.enum(["preview", "share_link"]).optional(),
     oauthTokens: z.record(z.string(), z.string()).optional(),
     accessScope: z.enum(["project_member", "chat_v2"]).optional(),
-    chatboxToken: z.string().min(1).optional(),
+    // See projectServerSchema — chatbox identity is `chatboxId` + `accessVersion`.
+    chatboxId: z.string().min(1).optional(),
+    accessVersion: z.number().int().nonnegative().optional(),
   })
   .passthrough();
 
@@ -224,7 +233,8 @@ export async function authorizeServer(
   options?: {
     accessScope?: "project_member" | "chat_v2";
     workspaceId?: string;
-    chatboxToken?: string;
+    chatboxId?: string;
+    accessVersion?: number;
   }
 ): Promise<ClientSafeAuthorizeResponse> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
@@ -250,8 +260,9 @@ export async function authorizeServer(
           : { projectId }),
         serverId,
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
-        ...(options?.chatboxToken
-          ? { chatboxToken: options.chatboxToken }
+        ...(options?.chatboxId ? { chatboxId: options.chatboxId } : {}),
+        ...(typeof options?.accessVersion === "number"
+          ? { accessVersion: options.accessVersion }
           : {}),
       }),
     });
@@ -303,7 +314,8 @@ export async function authorizeBatch(
   options?: {
     accessScope?: "project_member" | "chat_v2";
     workspaceId?: string;
-    chatboxToken?: string;
+    chatboxId?: string;
+    accessVersion?: number;
   }
 ): Promise<ConvexBatchAuthorizeResponse> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
@@ -329,8 +341,9 @@ export async function authorizeBatch(
           : { projectId }),
         serverIds,
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
-        ...(options?.chatboxToken
-          ? { chatboxToken: options.chatboxToken }
+        ...(options?.chatboxId ? { chatboxId: options.chatboxId } : {}),
+        ...(typeof options?.accessVersion === "number"
+          ? { accessVersion: options.accessVersion }
           : {}),
       }),
     });
@@ -471,7 +484,8 @@ export async function createAuthorizedManager(
   options?: {
     accessScope?: "project_member" | "chat_v2";
     workspaceId?: string;
-    chatboxToken?: string;
+    chatboxId?: string;
+    accessVersion?: number;
     rpcLogger?: RpcLogger;
     serverNames?: string[];
   }
@@ -501,7 +515,8 @@ export async function createAuthorizedManager(
     {
       accessScope: options?.accessScope,
       workspaceId: options?.workspaceId,
-      chatboxToken: options?.chatboxToken,
+      chatboxId: options?.chatboxId,
+      accessVersion: options?.accessVersion,
     }
   );
 
@@ -534,8 +549,9 @@ export async function createAuthorizedManager(
             serverName: displayServerName,
             accessScope: options?.accessScope,
             workspaceId: options?.workspaceId,
-            shareToken: options?.shareToken,
-            chatboxToken: options?.chatboxToken,
+            shareToken: (options as { shareToken?: string })?.shareToken,
+            chatboxId: options?.chatboxId,
+            accessVersion: options?.accessVersion,
           })
         : undefined;
 
@@ -718,9 +734,13 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
       raw.accessScope === "project_member" || raw.accessScope === "chat_v2"
         ? raw.accessScope
         : undefined;
-    const chatboxToken =
-      typeof raw.chatboxToken === "string" && raw.chatboxToken.trim()
-        ? raw.chatboxToken
+    const chatboxId =
+      typeof raw.chatboxId === "string" && raw.chatboxId.trim()
+        ? raw.chatboxId
+        : undefined;
+    const accessVersion =
+      typeof raw.accessVersion === "number" && Number.isFinite(raw.accessVersion)
+        ? raw.accessVersion
         : undefined;
 
     const result = await withManager(
@@ -737,7 +757,8 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
           accessScope,
           workspaceId:
             typeof raw.workspaceId === "string" ? raw.workspaceId : undefined,
-          chatboxToken,
+          chatboxId,
+          accessVersion,
           rpcLogger: rpcCollector?.rpcLogger,
           serverNames,
         }

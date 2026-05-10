@@ -9,7 +9,13 @@ export type HostedOAuthRefreshOptions = {
   accessScope?: "project_member" | "chat_v2";
   workspaceId?: string;
   shareToken?: string;
-  chatboxToken?: string;
+  /**
+   * Resolved chatbox identity (post-redeem). The backend scopes OAuth
+   * credentials by `(userId, chatbox.projectId, serverId)` from this; no
+   * link token is forwarded on refresh.
+   */
+  chatboxId?: string;
+  accessVersion?: number;
   serverName?: string;
 };
 
@@ -53,8 +59,9 @@ export async function forceRefreshHostedOAuthAccessToken(
         serverId,
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
         ...(options?.shareToken ? { shareToken: options.shareToken } : {}),
-        ...(options?.chatboxToken
-          ? { chatboxToken: options.chatboxToken }
+        ...(options?.chatboxId ? { chatboxId: options.chatboxId } : {}),
+        ...(options?.chatboxId && Number.isFinite(options?.accessVersion)
+          ? { accessVersion: options.accessVersion }
           : {}),
       }),
     });
@@ -117,7 +124,8 @@ export type HostedOAuthUnauthorizedHandlerArgs = {
   accessScope?: "project_member" | "chat_v2";
   workspaceId?: string;
   shareToken?: string;
-  chatboxToken?: string;
+  chatboxId?: string;
+  accessVersion?: number;
 };
 
 /**
@@ -138,7 +146,8 @@ export function buildHostedOAuthUnauthorizedHandler(
         accessScope: args.accessScope,
         workspaceId: args.workspaceId,
         shareToken: args.shareToken,
-        chatboxToken: args.chatboxToken,
+        chatboxId: args.chatboxId,
+        accessVersion: args.accessVersion,
         serverName: args.serverName,
       }
     ),

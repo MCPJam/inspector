@@ -73,7 +73,12 @@ chatV2.post("/", async (c) => {
       projectId: string;
       selectedServerIds: string[];
       selectedServerNames?: string[];
-      chatboxToken?: string;
+      // Clients call /api/web/chatboxes/redeem on mount and pass the
+      // resolved `chatboxId` + `accessVersion` on every chatbox-aware
+      // request thereafter. The link token is never forwarded on the
+      // read path.
+      chatboxId?: string;
+      accessVersion?: number;
       accessScope?: "project_member" | "chat_v2";
       surface?: "preview" | "share_link";
     };
@@ -86,9 +91,13 @@ chatV2.post("/", async (c) => {
       requireToolApproval,
       selectedServerIds,
       selectedServerNames,
-      chatboxToken,
+      chatboxId,
+      accessVersion,
       surface,
     } = body;
+    // True when this turn flows through a chatbox surface. sourceType +
+    // accessScope decisions hinge on this.
+    const isChatboxSession = Boolean(chatboxId);
 
     if (!Array.isArray(messages) || messages.length === 0) {
       throw new WebRouteError(
@@ -120,8 +129,9 @@ chatV2.post("/", async (c) => {
       hostedBody.oauthTokens,
       hostedBody.clientCapabilities,
       {
-        ...(chatboxToken ? { accessScope: "chat_v2" } : {}),
-        chatboxToken,
+        ...(isChatboxSession ? { accessScope: "chat_v2" } : {}),
+        chatboxId,
+        accessVersion,
         rpcLogger: rpcCollector.rpcLogger,
         serverNames: selectedServerNames,
       }
@@ -183,7 +193,7 @@ chatV2.post("/", async (c) => {
         const providerKey = deriveOrgProviderKey(modelDefinition);
         const modelId = String(modelDefinition.id);
         const scrubbedMessages = scrubMessages(modelMessages as ModelMessage[]);
-        const sourceType = chatboxToken ? "chatbox" : "direct";
+        const sourceType = isChatboxSession ? "chatbox" : "direct";
 
         // Cloud-only providers (everything that isn't on the local-runtime
         // allowlist) skip the /stream/org/resolve round-trip entirely. The
@@ -198,7 +208,8 @@ chatV2.post("/", async (c) => {
               modelId,
               {
                 authHeader: c.req.header("authorization"),
-                chatboxToken,
+                chatboxId,
+                accessVersion,
                 serverIds: selectedServerIds,
               },
             )
@@ -206,7 +217,7 @@ chatV2.post("/", async (c) => {
 
         const onConversationComplete = hostedChatSessionId
           ? async (fullHistory: ModelMessage[], turnTrace: PersistedTurnTrace) => {
-              const isDirectChat = !chatboxToken;
+              const isDirectChat = !isChatboxSession;
               await persistChatSessionToConvex({
                 chatSessionId: hostedChatSessionId,
                 modelId,
@@ -214,8 +225,9 @@ chatV2.post("/", async (c) => {
                   runtime.runtimeLocation === "local" ? "local_byok" : "byok",
                 projectId: hostedBody.projectId,
                 sourceType,
-                ...(chatboxToken && surface ? { surface } : {}),
-                chatboxToken,
+                ...(isChatboxSession && surface ? { surface } : {}),
+                chatboxId,
+                accessVersion,
                 authHeader: c.req.header("authorization"),
                 sessionMessages: fullHistory,
                 startedAt: sessionStartedAt,
@@ -267,7 +279,8 @@ chatV2.post("/", async (c) => {
             temperature: resolvedTemperature,
             tools: allTools as ToolSet,
             authHeader: c.req.header("authorization"),
-            chatboxToken,
+            chatboxId,
+            accessVersion,
             selectedServers: selectedServerIds,
             requireToolApproval,
             onConversationComplete,
@@ -290,7 +303,8 @@ chatV2.post("/", async (c) => {
           tools: allTools as ToolSet,
           authHeader: c.req.header("authorization"),
           clientIp: getClientIp(c),
-          chatboxToken,
+          chatboxId,
+          accessVersion,
           mcpClientManager: manager,
           selectedServers: selectedServerIds,
           requireToolApproval,
@@ -315,28 +329,30 @@ chatV2.post("/", async (c) => {
         messages: modelMessages as ModelMessage[],
         modelId: String(modelDefinition.id),
         chatSessionId: hostedChatSessionId,
-        sourceType: chatboxToken ? "chatbox" : "direct",
+        sourceType: isChatboxSession ? "chatbox" : "direct",
         systemPrompt: enhancedSystemPrompt,
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
         authHeader: c.req.header("authorization"),
         clientIp: getClientIp(c),
-        chatboxToken,
+        chatboxId,
+        accessVersion,
         projectId: hostedBody.projectId,
         mcpClientManager: manager,
         selectedServers: selectedServerIds,
         requireToolApproval,
         onConversationComplete: hostedChatSessionId
           ? async (fullHistory, turnTrace) => {
-              const isDirectChat = !chatboxToken;
+              const isDirectChat = !isChatboxSession;
               await persistChatSessionToConvex({
                 chatSessionId: hostedChatSessionId,
                 modelId: String(modelDefinition.id),
                 modelSource: "mcpjam",
                 projectId: hostedBody.projectId,
-                sourceType: chatboxToken ? "chatbox" : "direct",
-                ...(chatboxToken && surface ? { surface } : {}),
-                chatboxToken,
+                sourceType: isChatboxSession ? "chatbox" : "direct",
+                ...(isChatboxSession && surface ? { surface } : {}),
+                chatboxId,
+                accessVersion,
                 authHeader: c.req.header("authorization"),
                 sessionMessages: fullHistory,
                 startedAt: sessionStartedAt,

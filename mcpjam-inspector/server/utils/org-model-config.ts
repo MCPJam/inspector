@@ -31,7 +31,14 @@ export type ResolveOrgModelConfigTarget =
 export type ResolveOrgModelConfigAuth = {
   authHeader?: string;
   bearerToken?: string;
-  chatboxToken?: string;
+  /**
+   * Chatbox identity is `chatboxId` + `accessVersion`. The cache key hashes
+   * these so a link-token rotation does not invalidate model-config cache
+   * entries, while an `accessVersion` bump (mode change, revoke, allowlist
+   * edit) does.
+   */
+  chatboxId?: string;
+  accessVersion?: number;
   serverIds?: string[];
 };
 
@@ -101,11 +108,19 @@ function buildCacheKey(
     : "workspaceId" in params
     ? `legacy-workspace:${params.workspaceId}`
     : `org:${params.organizationId}`;
+  // Cache key hashes (chatboxId, accessVersion) so a link-token rotation
+  // doesn't invalidate cache entries while an accessVersion bump (mode
+  // change, revoke, allowlist edit) does.
   const authHash = createHash("sha256")
     .update(
       JSON.stringify({
         authorization: normalizeAuthHeader(auth) ?? "",
-        chatboxToken: auth?.chatboxToken?.trim() ?? "",
+        chatboxId: auth?.chatboxId?.trim() ?? "",
+        accessVersion:
+          auth?.chatboxId && auth.chatboxId.trim() &&
+          Number.isFinite(auth?.accessVersion)
+            ? auth.accessVersion
+            : null,
         serverIds: normalizeServerIds(auth?.serverIds),
       }),
     )
@@ -149,8 +164,11 @@ export async function resolveOrgModelConfig(
       },
       body: JSON.stringify({
         ...params,
-        ...(auth?.chatboxToken?.trim()
-          ? { chatboxToken: auth.chatboxToken.trim() }
+        ...(auth?.chatboxId?.trim()
+          ? { chatboxId: auth.chatboxId.trim() }
+          : {}),
+        ...(auth?.chatboxId?.trim() && Number.isFinite(auth?.accessVersion)
+          ? { accessVersion: auth.accessVersion }
           : {}),
         ...(serverIds.length > 0 ? { serverIds } : {}),
       }),
@@ -467,7 +485,12 @@ function buildRuntimeCacheKey(
     .update(
       JSON.stringify({
         authorization: normalizeAuthHeader(auth) ?? "",
-        chatboxToken: auth?.chatboxToken?.trim() ?? "",
+        chatboxId: auth?.chatboxId?.trim() ?? "",
+        accessVersion:
+          auth?.chatboxId && auth.chatboxId.trim() &&
+          Number.isFinite(auth?.accessVersion)
+            ? auth.accessVersion
+            : null,
         serverIds: normalizeServerIds(auth?.serverIds),
       }),
     )
@@ -526,7 +549,12 @@ export async function resolveOrgProviderRuntime(
         projectId,
         providerKey,
         model,
-        ...(auth?.chatboxToken?.trim() ? { chatboxToken: auth.chatboxToken.trim() } : {}),
+        ...(auth?.chatboxId?.trim()
+          ? { chatboxId: auth.chatboxId.trim() }
+          : {}),
+        ...(auth?.chatboxId?.trim() && Number.isFinite(auth?.accessVersion)
+          ? { accessVersion: auth.accessVersion }
+          : {}),
         ...(serverIds.length > 0 ? { serverIds } : {}),
       }),
       signal: controller.signal,

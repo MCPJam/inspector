@@ -52,7 +52,8 @@ servers.post("/check-oauth", async (c) =>
           typeof (body as { workspaceId?: unknown }).workspaceId === "string"
             ? (body as unknown as { workspaceId: string }).workspaceId
             : undefined,
-        chatboxToken: body.chatboxToken,
+        chatboxId: body.chatboxId,
+        accessVersion: body.accessVersion,
       }
     );
     return {
@@ -111,7 +112,8 @@ async function runHostedDoctor(
         typeof (body as { workspaceId?: unknown }).workspaceId === "string"
           ? (body as unknown as { workspaceId: string }).workspaceId
           : undefined,
-      chatboxToken: body.chatboxToken,
+      chatboxId: body.chatboxId,
+      accessVersion: body.accessVersion,
     }
   );
 
