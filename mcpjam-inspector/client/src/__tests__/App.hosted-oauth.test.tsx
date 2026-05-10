@@ -37,7 +37,7 @@ const existingConvexUser = {
   imageUrl: "",
   plan: "free",
   entitlements: {},
-  hasCompletedOnboarding: true,
+  hasSeenOnboarding: true,
   createdAt: 1,
   updatedAt: 1,
 };
@@ -174,7 +174,7 @@ function mockFreshGuestUser() {
           email: "guest@example.com",
           isAnonymous: true,
           // Fresh guest cookie/user rows have not seen first-run NUX yet.
-          hasCompletedOnboarding: false,
+          hasSeenOnboarding: false,
         }
       : undefined
   );
@@ -189,7 +189,7 @@ function mockSeenGuestUser() {
           externalId: "guest-seen-1",
           email: "guest-seen@example.com",
           isAnonymous: true,
-          hasCompletedOnboarding: true,
+          hasSeenOnboarding: true,
         }
       : undefined
   );
@@ -354,7 +354,7 @@ vi.mock("../components/ui-playground/AppBuilderTab", () => ({
     isSignedInWithWorkOs?: boolean;
     isWorkOsAuthLoading?: boolean;
     isConvexAuthenticated?: boolean;
-    hasCompletedFirstRunOnboarding?: boolean;
+    hasSeenFirstRunOnboarding?: boolean;
   }) => {
     mockAppBuilderTabProps(props);
     const { onOnboardingChange } = props;
@@ -2358,7 +2358,7 @@ describe("App hosted OAuth callback handling", () => {
         isSignedInWithWorkOs: false,
         isWorkOsAuthLoading: false,
         isConvexAuthenticated: true,
-        hasCompletedFirstRunOnboarding: false,
+        hasSeenFirstRunOnboarding: false,
       })
     );
   });

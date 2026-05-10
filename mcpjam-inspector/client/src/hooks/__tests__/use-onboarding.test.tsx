@@ -13,17 +13,20 @@ const mockState = vi.hoisted(() => ({
     capture: vi.fn(),
   },
   convexUser: undefined as
-    | { _id: string; hasCompletedOnboarding?: boolean | undefined }
+    | {
+        _id: string;
+        hasSeenOnboarding?: boolean | undefined;
+      }
     | null
     | undefined,
-  completeOnboardingMutation: vi.fn().mockResolvedValue(undefined),
+  markOnboardingShownMutation: vi.fn().mockResolvedValue(undefined),
   detectEnvironment: vi.fn(() => "test"),
   detectPlatform: vi.fn(() => "web"),
 }));
 
 vi.mock("convex/react", () => ({
   useQuery: () => mockState.convexUser,
-  useMutation: () => mockState.completeOnboardingMutation,
+  useMutation: () => mockState.markOnboardingShownMutation,
 }));
 
 vi.mock("posthog-js/react", () => ({
@@ -257,7 +260,7 @@ describe("useOnboarding", () => {
         isSignedInWithWorkOs: false,
         isWorkOsAuthLoading: false,
         hasRemoteOnboardingState: true,
-        hasCompletedOnboarding: false,
+        hasSeenOnboarding: false,
       })
     );
 
@@ -283,7 +286,7 @@ describe("useOnboarding", () => {
         isSignedInWithWorkOs: false,
         isWorkOsAuthLoading: false,
         hasRemoteOnboardingState: true,
-        hasCompletedOnboarding: false,
+        hasSeenOnboarding: false,
       })
     );
 
@@ -311,7 +314,7 @@ describe("useOnboarding", () => {
         isSignedInWithWorkOs: false,
         isWorkOsAuthLoading: false,
         hasRemoteOnboardingState: true,
-        hasCompletedOnboarding: false,
+        hasSeenOnboarding: false,
       })
     );
 
@@ -329,11 +332,11 @@ describe("useOnboarding", () => {
         isSignedInWithWorkOs: false,
         isWorkOsAuthLoading: false,
         hasRemoteOnboardingState: true,
-        hasCompletedOnboarding: true,
+        hasSeenOnboarding: true,
       })
     );
 
-    expect(result.current.phase).toBe("completed");
+    expect(result.current.phase).toBe("dismissed");
     expect(onConnect).not.toHaveBeenCalled();
   });
 
@@ -352,7 +355,7 @@ describe("useOnboarding", () => {
         isSignedInWithWorkOs: false,
         isWorkOsAuthLoading: false,
         hasRemoteOnboardingState: true,
-        hasCompletedOnboarding: false,
+        hasSeenOnboarding: false,
         canPersistRemoteOnboarding: true,
       })
     );
@@ -364,7 +367,7 @@ describe("useOnboarding", () => {
     });
 
     await waitFor(() => {
-      expect(mockState.completeOnboardingMutation).toHaveBeenCalledTimes(1);
+      expect(mockState.markOnboardingShownMutation).toHaveBeenCalledTimes(1);
     });
     expect(result.current.phase).toBe("connected_guided");
     expect(readOnboardingState()).toEqual(
@@ -396,7 +399,7 @@ describe("useOnboarding", () => {
     });
   });
 
-  it("does not call the Convex completion mutation when Excalidraw connects", async () => {
+  it("does not call the Convex shown mutation when Excalidraw connects", async () => {
     const onConnect = vi.fn();
     const connectedServers = {
       [EXCALIDRAW_SERVER_NAME]: createServer(
@@ -430,10 +433,10 @@ describe("useOnboarding", () => {
       expect(result.current.phase).toBe("connected_guided");
     });
 
-    expect(mockState.completeOnboardingMutation).not.toHaveBeenCalled();
+    expect(mockState.markOnboardingShownMutation).not.toHaveBeenCalled();
   });
 
-  it("persists onboarding completion only when completeOnboarding is called", async () => {
+  it("keeps completion local when completeOnboarding is called", async () => {
     const { result } = renderHook(() =>
       useOnboarding({
         servers: {},
@@ -457,6 +460,6 @@ describe("useOnboarding", () => {
         status: "completed",
       })
     );
-    expect(mockState.completeOnboardingMutation).toHaveBeenCalledTimes(1);
+    expect(mockState.markOnboardingShownMutation).not.toHaveBeenCalled();
   });
 });

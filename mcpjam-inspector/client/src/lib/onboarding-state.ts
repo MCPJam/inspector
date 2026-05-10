@@ -86,7 +86,7 @@ export function isFirstRunEligible(
   hasAnyBlockingServers: boolean,
   currentHash: string,
   isSignedInWithWorkOs = false,
-  hasCompletedRemoteOnboarding?: boolean
+  hasSeenRemoteOnboarding?: boolean,
 ): boolean {
   if (hasAnyBlockingServers) return false;
   if (isSignedInWithWorkOs) return false;
@@ -94,8 +94,8 @@ export function isFirstRunEligible(
   const hash = currentHash.replace(/^#\/?/, "");
   if (hash && hash !== "servers") return false;
 
-  if (hasCompletedRemoteOnboarding !== undefined) {
-    return hasCompletedRemoteOnboarding !== true;
+  if (hasSeenRemoteOnboarding !== undefined) {
+    return hasSeenRemoteOnboarding !== true;
   }
 
   const persisted = readOnboardingState();
