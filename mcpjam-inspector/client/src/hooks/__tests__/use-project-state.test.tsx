@@ -2067,7 +2067,21 @@ describe("useProjectState bulk-server query (PR-I1)", () => {
   });
 
   it("does not emit telemetry once the bulk query has resolved for a project", async () => {
+    // The telemetry path skips the active project unconditionally, so a
+    // single-project setup would pass even if the bulk-resolved short-circuit
+    // were removed. The `active-spacer` project owns the active slot so `p1`
+    // is forced through the non-active path and the bulk-resolved check is
+    // what we're actually exercising.
     projectQueryState.allProjects = [
+      {
+        _id: "active-spacer",
+        name: "Active",
+        servers: {},
+        ownerId: "u1",
+        organizationId: "org-a",
+        createdAt: 0,
+        updatedAt: 0,
+      },
       {
         _id: "p1",
         name: "P1",
