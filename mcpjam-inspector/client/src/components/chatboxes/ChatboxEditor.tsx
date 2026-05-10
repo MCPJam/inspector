@@ -163,13 +163,14 @@ export function ChatboxEditor({
       : "skip"
   ) as HostConfigDtoV2 | null | undefined;
 
-  // Create-mode seed: the project default supplies the connection
-  // portion for new chatboxes.
+  // Project default seeds the connection portion for new chatboxes
+  // and is the fallback for legacy edit-mode rows that resolve null
+  // from getChatboxConfig — without it, draftToHostConfigInputV2 would
+  // fall back to v2 empty shape and silently drop the project's
+  // configured headers / capabilities / hostContext on next save.
   const projectDefaultHostConfig = useQuery(
     "hostConfigsV2:getProjectDefault" as any,
-    isAuthenticated && isCreateMode && projectId
-      ? ({ projectId } as any)
-      : "skip"
+    isAuthenticated && projectId ? ({ projectId } as any) : "skip"
   ) as HostConfigDtoV2 | null | undefined;
   const isMobile = useIsMobile();
 
@@ -596,10 +597,15 @@ export function ChatboxEditor({
     }
 
     // The backend's v2 hostConfig path persists connection fields
-    // verbatim. Block save until the seed query has resolved so we
-    // don't ship empty connectionDefaults / clientCapabilities /
-    // hostContext and clobber the existing values.
-    const seedDto = isCreateMode ? projectDefaultHostConfig : chatboxHostConfig;
+    // verbatim. Block save until a seed has resolved so we don't ship
+    // empty connectionDefaults / clientCapabilities / hostContext and
+    // clobber the existing values. For edit-mode chatboxes prefer the
+    // chatbox's own config; fall back to the project default for
+    // legacy rows that resolve null. For create mode, use the project
+    // default directly.
+    const seedDto = isCreateMode
+      ? projectDefaultHostConfig
+      : (chatboxHostConfig ?? projectDefaultHostConfig);
     if (seedDto === undefined) {
       toast.error("Loading chatbox config — try again in a moment");
       return;
