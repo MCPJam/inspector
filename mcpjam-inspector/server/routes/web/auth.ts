@@ -27,6 +27,9 @@ import {
   readJsonBody,
   parseWithSchema,
 } from "./errors.js";
+import {
+  buildHostedOAuthUnauthorizedHandler,
+} from "../../utils/hosted-oauth-refresh.js";
 
 // ── Zod Schemas ──────────────────────────────────────────────────────
 
@@ -493,98 +496,6 @@ export function toHttpConfig(
   };
 }
 
-async function forceRefreshHostedOAuthAccessToken(
-  bearerToken: string,
-  projectId: string,
-  serverId: string,
-  options?: {
-    accessScope?: "project_member" | "chat_v2";
-    workspaceId?: string;
-    shareToken?: string;
-    chatboxToken?: string;
-    serverName?: string;
-  }
-): Promise<string> {
-  const convexUrl = process.env.CONVEX_HTTP_URL;
-  if (!convexUrl) {
-    throw new WebRouteError(
-      500,
-      ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_HTTP_URL configuration"
-    );
-  }
-
-  let response: Response;
-  try {
-    response = await fetch(`${convexUrl}/web/oauth/force-refresh`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${bearerToken}`,
-      },
-      body: JSON.stringify({
-        ...(options?.workspaceId
-          ? { workspaceId: options.workspaceId }
-          : { projectId }),
-        serverId,
-        ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
-        ...(options?.shareToken ? { shareToken: options.shareToken } : {}),
-        ...(options?.chatboxToken
-          ? { chatboxToken: options.chatboxToken }
-          : {}),
-      }),
-    });
-  } catch (error) {
-    throw new WebRouteError(
-      502,
-      ErrorCode.SERVER_UNREACHABLE,
-      `Failed to reach OAuth refresh service: ${parseErrorMessage(error)}`
-    );
-  }
-
-  let body: any = null;
-  try {
-    body = await response.json();
-  } catch {
-    // ignored
-  }
-
-  if (!response.ok) {
-    const code =
-      typeof body?.code === "string" ? body.code : ErrorCode.INTERNAL_ERROR;
-    const message =
-      typeof body?.message === "string"
-        ? body.message
-        : `OAuth refresh failed (${response.status})`;
-    const isReconnectRequired = code === "refresh_token_invalid";
-    throw new WebRouteError(
-      response.status,
-      isReconnectRequired ? ErrorCode.UNAUTHORIZED : (code as ErrorCode),
-      message,
-      isReconnectRequired
-        ? {
-            oauthRequired: true,
-            refreshTokenInvalid: true,
-            serverId,
-            serverName: options?.serverName ?? null,
-          }
-        : undefined
-    );
-  }
-
-  const accessToken =
-    typeof body?.accessToken === "string" ? body.accessToken.trim() : "";
-  if (!accessToken) {
-    throw new WebRouteError(
-      502,
-      ErrorCode.SERVER_UNREACHABLE,
-      "OAuth refresh service returned an invalid access token"
-    );
-  }
-
-  return accessToken;
-}
-
 export interface AuthorizedManagerResult {
   manager: MCPClientManager;
   /** Maps serverId → serverUrl for servers that have useOAuth enabled */
@@ -660,19 +571,15 @@ export async function createAuthorizedManager(
     const displayServerName = serverNamesById?.[serverId] ?? serverId;
     const onUnauthorized =
       auth.serverConfig.useOAuth && auth.oauthAccessToken
-        ? async () => ({
-            accessToken: await forceRefreshHostedOAuthAccessToken(
-              bearerToken,
-              projectId,
-              serverId,
-              {
-                accessScope: options?.accessScope,
-                workspaceId: options?.workspaceId,
-                shareToken: options?.shareToken,
-                chatboxToken: options?.chatboxToken,
-                serverName: displayServerName,
-              }
-            ),
+        ? buildHostedOAuthUnauthorizedHandler({
+            bearerToken,
+            projectId,
+            serverId,
+            serverName: displayServerName,
+            accessScope: options?.accessScope,
+            workspaceId: options?.workspaceId,
+            shareToken: options?.shareToken,
+            chatboxToken: options?.chatboxToken,
           })
         : undefined;
 
