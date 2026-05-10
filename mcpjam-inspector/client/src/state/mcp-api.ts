@@ -8,7 +8,8 @@ import {
   type HostedServerValidateResponse,
 } from "@/lib/apis/web/servers-api";
 import {
-  getHostedChatboxToken,
+  getHostedChatboxAccessVersion,
+  getHostedChatboxId,
   getHostedOAuthToken,
 } from "@/lib/apis/web/context";
 import { BootstrapNotReadyError } from "@/lib/app-ready";
@@ -59,13 +60,14 @@ function buildHostedValidationContext(
 ): HostedServerValidateContext | undefined {
   if (!options?.projectId) return undefined;
 
-  const chatboxToken = getHostedChatboxToken();
+  const chatboxId = getHostedChatboxId();
   return {
     projectId: options.projectId,
     serverId,
     ...(options.serverName ? { serverName: options.serverName } : {}),
-    ...(chatboxToken ? { accessScope: "chat_v2" } : {}),
-    ...(chatboxToken ? { chatboxToken } : {}),
+    ...(chatboxId ? { accessScope: "chat_v2" } : {}),
+    ...(chatboxId ? { chatboxId } : {}),
+    ...(chatboxId ? { accessVersion: getHostedChatboxAccessVersion() } : {}),
   };
 }
 
