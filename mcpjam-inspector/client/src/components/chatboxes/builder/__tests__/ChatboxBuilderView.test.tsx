@@ -15,6 +15,7 @@ vi.mock("sonner", () => ({
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
+  useQuery: () => null,
 }));
 
 vi.mock("@/hooks/useChatboxes", () => ({

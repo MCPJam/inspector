@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useConvexAuth } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import {
   ArrowLeft,
   Check,
@@ -87,6 +87,12 @@ import {
   bootstrapServerToHostedOAuthDescriptor,
   countRequiredServers,
 } from "./builder/chatbox-server-optional";
+import { draftToHostConfigInputV2 } from "./builder/drafts";
+import type { ChatboxDraftConfig } from "./builder/types";
+import {
+  hostConfigDtoToInput,
+  type HostConfigDtoV2,
+} from "@/lib/host-config-v2";
 
 interface ProjectServerOption {
   _id: string;
@@ -144,6 +150,28 @@ export function ChatboxEditor({
     useChatboxMutations();
   const { createServer } = useServerMutations();
   const isCreateMode = !chatbox;
+
+  // Round-trip the chatbox's own hostConfig (edit mode) so the v2 save
+  // path preserves the connection portion (connectionDefaults /
+  // clientCapabilities / hostContext) the editor UI doesn't surface.
+  // mintV2ChatboxHostConfigFromV2Input persists those fields verbatim,
+  // so we MUST feed them or they get clobbered.
+  const chatboxHostConfig = useQuery(
+    "hostConfigsV2:getChatboxConfig" as any,
+    isAuthenticated && chatbox?.chatboxId
+      ? ({ chatboxId: chatbox.chatboxId } as any)
+      : "skip"
+  ) as HostConfigDtoV2 | null | undefined;
+
+  // Project default seeds the connection portion for new chatboxes
+  // and is the fallback for legacy edit-mode rows that resolve null
+  // from getChatboxConfig — without it, draftToHostConfigInputV2 would
+  // fall back to v2 empty shape and silently drop the project's
+  // configured headers / capabilities / hostContext on next save.
+  const projectDefaultHostConfig = useQuery(
+    "hostConfigsV2:getProjectDefault" as any,
+    isAuthenticated && projectId ? ({ projectId } as any) : "skip"
+  ) as HostConfigDtoV2 | null | undefined;
   const isMobile = useIsMobile();
 
   const hostedModels = useMemo(
@@ -568,28 +596,57 @@ export function ChatboxEditor({
       return;
     }
 
+    // The backend's v2 hostConfig path persists connection fields
+    // verbatim. Block save until a seed has resolved so we don't ship
+    // empty connectionDefaults / clientCapabilities / hostContext and
+    // clobber the existing values. For edit-mode chatboxes prefer the
+    // chatbox's own config; only fall back to the project default
+    // when the chatbox config has *resolved* null (legacy rows) — not
+    // while it's still undefined (loading), which would let the
+    // project default overwrite an existing chatbox's own connection
+    // fields if the project query resolves first. For create mode,
+    // use the project default directly.
+    const chatboxSeed =
+      chatboxHostConfig === null
+        ? projectDefaultHostConfig
+        : chatboxHostConfig;
+    const seedDto = isCreateMode ? projectDefaultHostConfig : chatboxSeed;
+    if (seedDto === undefined) {
+      toast.error("Loading chatbox config — try again in a moment");
+      return;
+    }
+    const seedInput = seedDto ? hostConfigDtoToInput(seedDto) : null;
+    const synthDraft: ChatboxDraftConfig = {
+      name: trimmedName,
+      description: description.trim(),
+      hostStyle,
+      systemPrompt: systemPrompt.trim() || DEFAULT_SYSTEM_PROMPT,
+      modelId,
+      temperature,
+      requireToolApproval,
+      allowGuestAccess,
+      mode,
+      selectedServerIds,
+      optionalServerIds,
+      welcomeDialog: {
+        enabled: chatbox?.welcomeDialog?.enabled ?? true,
+        body: chatbox?.welcomeDialog?.body ?? "",
+      },
+      feedbackDialog: {
+        enabled: chatbox?.feedbackDialog?.enabled ?? true,
+        everyNToolCalls: chatbox?.feedbackDialog?.everyNToolCalls ?? 1,
+        promptHint: chatbox?.feedbackDialog?.promptHint ?? "",
+      },
+    };
+    const hostConfigInput = draftToHostConfigInputV2(synthDraft, seedInput);
+
     setIsSaving(true);
     try {
-      // Phase 4: the backend createChatbox/updateChatbox accept either
-      // a v2 `hostConfig` arg or these legacy flat fields. The flat
-      // path lets the backend seed connection settings (headers /
-      // requestTimeout / clientCapabilities / hostContext) from the
-      // project's v2 default, which the editor UI doesn't surface.
-      // Sending an explicit v2 hostConfig here with empty connection
-      // settings would clobber project defaults — so we keep the flat
-      // path until the editor learns to read the project default
-      // and round-trip its connection portion.
       const payload = {
         name: trimmedName,
         description: description.trim() || undefined,
-        hostStyle,
-        systemPrompt: systemPrompt.trim() || DEFAULT_SYSTEM_PROMPT,
-        modelId,
-        temperature,
-        requireToolApproval,
         allowGuestAccess,
-        serverIds: selectedServerIds,
-        optionalServerIds,
+        hostConfig: hostConfigInput,
       };
 
       let result;

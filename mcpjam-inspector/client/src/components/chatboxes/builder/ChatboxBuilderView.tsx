@@ -16,7 +16,7 @@ import {
   Save,
 } from "lucide-react";
 import { ReactFlowProvider } from "@xyflow/react";
-import { useConvexAuth } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Card } from "@mcpjam/design-system/card";
 import {
@@ -67,7 +67,15 @@ import { ChatboxHostStyleProvider } from "@/contexts/chatbox-host-style-context"
 import type { ServerFormData } from "@/shared/types";
 import { buildChatboxCanvas } from "./chatboxCanvasBuilder";
 import { ChatboxCanvas } from "./ChatboxCanvas";
-import { DEFAULT_SYSTEM_PROMPT, toDraftConfig } from "./drafts";
+import {
+  DEFAULT_SYSTEM_PROMPT,
+  draftToHostConfigInputV2,
+  toDraftConfig,
+} from "./drafts";
+import {
+  hostConfigDtoToInput,
+  type HostConfigDtoV2,
+} from "@/lib/host-config-v2";
 import {
   computeSectionStatuses,
   SetupChecklistPanel,
@@ -296,6 +304,26 @@ export function ChatboxBuilderView({
   const { createChatbox, updateChatbox, setChatboxMode, upsertChatboxMember } =
     useChatboxMutations();
   const { createServer } = useServerMutations();
+
+  // Round-trip the chatbox's own hostConfig (edit mode). The save path
+  // sends a complete HostConfigInputV2 to the backend; the backend's
+  // mintV2ChatboxHostConfigFromV2Input persists the connection portion
+  // (connectionDefaults / clientCapabilities / hostContext) verbatim,
+  // so we MUST feed it the existing values or they'll be clobbered.
+  const chatboxHostConfig = useQuery(
+    "hostConfigsV2:getChatboxConfig" as any,
+    isAuthenticated && chatboxId ? ({ chatboxId } as any) : "skip"
+  ) as HostConfigDtoV2 | null | undefined;
+
+  // Project default seeds the connection portion for new chatboxes and
+  // is also the fallback for legacy edit-mode rows that resolve null
+  // from getChatboxConfig — without it, draftToHostConfigInputV2 would
+  // fall back to v2 empty shape and silently drop the project's
+  // configured headers / capabilities / hostContext on next save.
+  const projectDefaultHostConfig = useQuery(
+    "hostConfigsV2:getProjectDefault" as any,
+    isAuthenticated && projectId ? ({ projectId } as any) : "skip"
+  ) as HostConfigDtoV2 | null | undefined;
 
   const [draftChatboxConfig, setDraftChatboxConfig] =
     useState<ChatboxDraftConfig>(() => {
@@ -745,25 +773,58 @@ export function ChatboxBuilderView({
       return false;
     }
 
+    // On an edit route chatboxId is set before useChatbox() resolves;
+    // branching the create-vs-update decision below on `chatbox` (the
+    // reactive load) would let an early click fall into createChatbox
+    // and duplicate the row. Block save until the chatbox record is
+    // available, then key the branch off chatboxId.
+    if (chatboxId && !chatbox) {
+      toast.error("Loading chatbox — try again in a moment");
+      return false;
+    }
+
+    // The backend's v2 hostConfig path persists connection fields
+    // verbatim. Block save until a seed has resolved so we don't ship
+    // empty connectionDefaults / clientCapabilities / hostContext and
+    // clobber the existing values. For edit-mode chatboxes prefer the
+    // chatbox's own config; only fall back to the project default
+    // when the chatbox config has *resolved* null (legacy rows) — not
+    // while it's still undefined (loading), which would let the
+    // project default overwrite an existing chatbox's own connection
+    // fields if the project query resolves first. For create mode,
+    // use the project default directly.
+    const chatboxSeed =
+      chatboxHostConfig === null
+        ? projectDefaultHostConfig
+        : chatboxHostConfig;
+    const seedDto = chatboxId ? chatboxSeed : projectDefaultHostConfig;
+    if (seedDto === undefined) {
+      toast.error("Loading chatbox config — try again in a moment");
+      return false;
+    }
+    const seedInput = seedDto ? hostConfigDtoToInput(seedDto) : null;
+    const draftWithTrimmedSystemPrompt: ChatboxDraftConfig = {
+      ...draftChatboxConfig,
+      systemPrompt:
+        draftChatboxConfig.systemPrompt.trim() || DEFAULT_SYSTEM_PROMPT,
+    };
+    const hostConfigInput = draftToHostConfigInputV2(
+      draftWithTrimmedSystemPrompt,
+      seedInput
+    );
+
     setIsSaving(true);
     try {
       const payload = {
         name: trimmedName,
         description: draftChatboxConfig.description.trim() || undefined,
-        hostStyle: draftChatboxConfig.hostStyle,
-        systemPrompt:
-          draftChatboxConfig.systemPrompt.trim() || DEFAULT_SYSTEM_PROMPT,
-        modelId: draftChatboxConfig.modelId,
-        temperature: draftChatboxConfig.temperature,
-        requireToolApproval: draftChatboxConfig.requireToolApproval,
-        serverIds: draftChatboxConfig.selectedServerIds,
-        optionalServerIds: draftChatboxConfig.optionalServerIds,
         allowGuestAccess: draftChatboxConfig.allowGuestAccess,
         welcomeDialog: draftChatboxConfig.welcomeDialog,
         feedbackDialog: draftChatboxConfig.feedbackDialog,
+        hostConfig: hostConfigInput,
       };
 
-      if (!chatbox) {
+      if (!chatboxId) {
         let created = (await createChatbox({
           projectId,
           ...payload,
@@ -781,7 +842,7 @@ export function ChatboxBuilderView({
       }
 
       await updateChatbox({
-        chatboxId: chatbox.chatboxId,
+        chatboxId,
         ...payload,
       });
       toast.success("Chatbox updated");
@@ -797,6 +858,9 @@ export function ChatboxBuilderView({
     draftChatboxConfig,
     onSavedDraft,
     chatbox,
+    chatboxId,
+    chatboxHostConfig,
+    projectDefaultHostConfig,
     setChatboxMode,
     updateChatbox,
     projectId,
