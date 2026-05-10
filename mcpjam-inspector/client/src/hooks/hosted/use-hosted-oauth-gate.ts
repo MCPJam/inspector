@@ -191,7 +191,8 @@ export interface UseHostedOAuthGateOptions {
   pendingKey: string;
   servers: HostedOAuthServerDescriptor[];
   projectId?: string | null;
-  chatboxToken?: string;
+  chatboxId?: string;
+  accessVersion?: number;
   isAuthenticated?: boolean;
 }
 
@@ -211,14 +212,15 @@ export function useHostedOAuthGate({
   pendingKey,
   servers,
   projectId,
-  chatboxToken,
+  chatboxId,
+  accessVersion,
   isAuthenticated = false,
 }: UseHostedOAuthGateOptions): UseHostedOAuthGateResult {
   const oauthServers = useMemo(
     () => servers.filter((server) => server.useOAuth),
     [servers]
   );
-  const isVaultBacked = isAuthenticated || !!chatboxToken;
+  const isVaultBacked = isAuthenticated || !!chatboxId;
   const verifyVaultCredentialOnLoad = isAuthenticated;
   const [oauthStateByServerId, setOAuthStateByServerId] = useState<
     Record<string, HostedOAuthState>
@@ -318,13 +320,14 @@ export function useHostedOAuthGate({
         const validation = await validateWithRetry(
           server.serverId,
           accessToken ?? undefined,
-          chatboxToken && projectId
+          chatboxId && projectId
             ? {
                 projectId,
                 serverId: server.serverId,
                 serverName: server.serverName,
                 accessScope: "chat_v2",
-                chatboxToken,
+                chatboxId,
+                ...(Number.isFinite(accessVersion) ? { accessVersion } : {}),
               }
             : undefined
         );
@@ -384,7 +387,8 @@ export function useHostedOAuthGate({
     oauthStateByServerId,
     surface,
     isVaultBacked,
-    chatboxToken,
+    chatboxId,
+    accessVersion,
     projectId,
   ]);
 
@@ -423,12 +427,13 @@ export function useHostedOAuthGate({
         serverId: server.serverId,
         serverName: server.serverName,
         serverUrl: server.serverUrl,
-        accessScope: chatboxToken
+        accessScope: chatboxId
           ? "chat_v2"
           : isAuthenticated
           ? "project_member"
           : undefined,
-        chatboxToken,
+        chatboxId,
+        accessVersion: Number.isFinite(accessVersion) ? accessVersion : null,
         returnHash,
       });
       localStorage.setItem(pendingKey, "true");
@@ -496,7 +501,8 @@ export function useHostedOAuthGate({
       isAuthenticated,
       isVaultBacked,
       pendingKey,
-      chatboxToken,
+      chatboxId,
+      accessVersion,
       surface,
       projectId,
     ]

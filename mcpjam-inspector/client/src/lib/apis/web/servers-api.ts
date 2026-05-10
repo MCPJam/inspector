@@ -6,7 +6,8 @@ export type HostedServerValidateContext = {
   serverId: string;
   serverName?: string;
   accessScope?: "project_member" | "chat_v2";
-  chatboxToken?: string;
+  chatboxId?: string;
+  accessVersion?: number;
 };
 
 export interface HostedServerValidateResponse {
@@ -46,8 +47,12 @@ export async function validateHostedServer(
         ...(hostedContext.accessScope
           ? { accessScope: hostedContext.accessScope }
           : {}),
-        ...(hostedContext.chatboxToken
-          ? { chatboxToken: hostedContext.chatboxToken }
+        ...(hostedContext.chatboxId
+          ? { chatboxId: hostedContext.chatboxId }
+          : {}),
+        ...(hostedContext.chatboxId &&
+        Number.isFinite(hostedContext.accessVersion)
+          ? { accessVersion: hostedContext.accessVersion }
           : {}),
       }
     : buildServerRequest(serverNameOrId);

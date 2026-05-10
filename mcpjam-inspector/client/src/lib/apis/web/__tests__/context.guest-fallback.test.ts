@@ -68,7 +68,8 @@ describe("getApiAuthorizationHeader guest fallback", () => {
       isAuthenticated: false,
       serverIdsByName: { bench: "srv-1" },
       getAccessToken,
-      chatboxToken: "chatbox_tok_123",
+      chatboxId: "cbx_123",
+      accessVersion: 1,
     });
 
     vi.mocked(getGuestBearerToken).mockResolvedValue("guest-chatbox");
@@ -189,7 +190,8 @@ describe("guest-owned project request building", () => {
     setApiContext({
       projectId: "ws-chatbox",
       isAuthenticated: false,
-      chatboxToken: "chatbox_tok_123",
+      chatboxId: "cbx_123",
+      accessVersion: 1,
       serverIdsByName: { "my-server": "srv-1" },
     });
 
@@ -199,7 +201,8 @@ describe("guest-owned project request building", () => {
       projectId: "ws-chatbox",
       serverId: "srv-1",
       serverName: "my-server",
-      chatboxToken: "chatbox_tok_123",
+      chatboxId: "cbx_123",
+      accessVersion: 1,
     });
   });
 });

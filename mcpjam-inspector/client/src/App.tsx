@@ -543,7 +543,7 @@ export default function App() {
       !!callbackContext.projectId && !!callbackContext.serverId;
     const isGuestChatboxSessionCallback =
       !isAuthenticated &&
-      !!callbackContext.chatboxToken &&
+      !!callbackContext.chatboxId &&
       !!callbackContext.sessionId;
     const shouldUseHostedCompletion =
       hasHostedServerContext &&

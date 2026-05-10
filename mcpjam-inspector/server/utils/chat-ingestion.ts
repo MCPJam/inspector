@@ -136,10 +136,8 @@ interface PersistChatSessionOptions {
   sourceType?: "chatbox" | "direct";
   directVisibility?: "private" | "project";
   surface?: "preview" | "share_link";
-  // Post-refactor: prefer chatboxId. chatboxToken kept for transitional callers.
   chatboxId?: string;
   accessVersion?: number;
-  chatboxToken?: string;
   serverId?: string;
   visitorDisplayName?: string;
   sessionMessages?: unknown[];
@@ -229,11 +227,8 @@ export async function persistChatSessionToConvex(
           : {}),
         ...(options.surface ? { surface: options.surface } : {}),
         ...(options.chatboxId ? { chatboxId: options.chatboxId } : {}),
-        ...(typeof options.accessVersion === "number"
+        ...(options.chatboxId && Number.isFinite(options.accessVersion)
           ? { accessVersion: options.accessVersion }
-          : {}),
-        ...(options.chatboxToken && !options.chatboxId
-          ? { chatboxToken: options.chatboxToken }
           : {}),
         ...(options.serverId ? { serverId: options.serverId } : {}),
         ...(options.visitorDisplayName

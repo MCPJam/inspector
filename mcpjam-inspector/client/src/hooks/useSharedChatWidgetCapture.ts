@@ -16,11 +16,10 @@ interface UseSharedChatWidgetCaptureOptions {
   enabled: boolean;
   readyToPersist?: boolean;
   chatSessionId: string;
-  // Post-refactor: prefer chatboxId + accessVersion. chatboxToken stays for
-  // legacy callers; mutations resolve via Convex helpers that accept both.
+  // Resolved chatbox identity (post-redeem). Snapshot mutations key on
+  // these — never on the link token.
   hostedChatboxId?: string;
   hostedAccessVersion?: number;
-  hostedChatboxToken?: string;
   persistedSnapshotToolCallIds?: string[];
   messages: UIMessage[];
 }
@@ -174,7 +173,6 @@ export function useSharedChatWidgetCapture({
   chatSessionId,
   hostedChatboxId,
   hostedAccessVersion,
-  hostedChatboxToken,
   persistedSnapshotToolCallIds = [],
   messages,
 }: UseSharedChatWidgetCaptureOptions): void {
@@ -208,7 +206,6 @@ export function useSharedChatWidgetCapture({
   const sessionIdRef = useRef(chatSessionId);
   const chatboxIdRef = useRef(hostedChatboxId);
   const accessVersionRef = useRef(hostedAccessVersion);
-  const chatboxTokenRef = useRef(hostedChatboxToken);
   const persistedSnapshotToolCallIdsRef = useRef(
     new Set(persistedSnapshotToolCallIds),
   );
@@ -234,7 +231,6 @@ export function useSharedChatWidgetCapture({
     sessionIdRef.current = chatSessionId;
     chatboxIdRef.current = hostedChatboxId;
     accessVersionRef.current = hostedAccessVersion;
-    chatboxTokenRef.current = hostedChatboxToken;
     uploadedHashesRef.current.clear();
     cachedBlobsRef.current.clear();
     retryCountRef.current.clear();
@@ -244,7 +240,7 @@ export function useSharedChatWidgetCapture({
     }
     pendingTimersRef.current.clear();
     inFlightRef.current.clear();
-  }, [chatSessionId, hostedChatboxId, hostedAccessVersion, hostedChatboxToken]);
+  }, [chatSessionId, hostedChatboxId, hostedAccessVersion]);
 
   useEffect(() => {
     return () => {
@@ -259,7 +255,6 @@ export function useSharedChatWidgetCapture({
   uploadAttemptRef.current = async (toolCallId: string) => {
     const chatboxId = chatboxIdRef.current;
     const accessVersion = accessVersionRef.current;
-    const chatboxToken = chatboxTokenRef.current;
     if (!enabled || !readyToPersist || inFlightRef.current.has(toolCallId)) {
       return;
     }
@@ -288,11 +283,12 @@ export function useSharedChatWidgetCapture({
       content: BlobPart,
       contentType: string,
     ): Promise<string> => {
-      const isChatboxSession = Boolean(chatboxId || chatboxToken);
+      const isChatboxSession = Boolean(chatboxId);
       const uploadUrl = await generateSnapshotUploadUrl({
         ...(chatboxId ? { chatboxId } : {}),
-        ...(typeof accessVersion === "number" ? { accessVersion } : {}),
-        ...(chatboxToken && !chatboxId ? { chatboxToken } : {}),
+        ...(chatboxId && Number.isFinite(accessVersion)
+          ? { accessVersion }
+          : {}),
         ...(!isChatboxSession
           ? { chatSessionId: sessionIdRef.current }
           : {}),
@@ -341,8 +337,9 @@ export function useSharedChatWidgetCapture({
 
       const snapshotPayload = {
         ...(chatboxId ? { chatboxId } : {}),
-        ...(typeof accessVersion === "number" ? { accessVersion } : {}),
-        ...(chatboxToken && !chatboxId ? { chatboxToken } : {}),
+        ...(chatboxId && Number.isFinite(accessVersion)
+          ? { accessVersion }
+          : {}),
         chatSessionId: sessionIdRef.current,
         ...(toolSource.serverId ? { serverId: toolSource.serverId } : {}),
         toolCallId,
@@ -449,7 +446,7 @@ export function useSharedChatWidgetCapture({
   }, [
     enabled,
     readyToPersist,
-    hostedChatboxToken,
+    hostedChatboxId,
     persistedSnapshotToolCallIds,
     widgets,
     messages,

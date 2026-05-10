@@ -82,7 +82,6 @@ export interface MCPJamHandlerOptions {
   authHeader?: string;
   chatboxId?: string;
   accessVersion?: number;
-  chatboxToken?: string;
   projectId?: string;
   chatSessionId?: string;
   sourceType?: string;
@@ -134,7 +133,6 @@ interface StepContext {
   authHeader?: string;
   chatboxId?: string;
   accessVersion?: number;
-  chatboxToken?: string;
   projectId?: string;
   chatSessionId?: string;
   sourceType?: string;
@@ -922,7 +920,6 @@ async function processOneStep(
     authHeader,
     chatboxId,
     accessVersion,
-    chatboxToken,
     projectId,
     modelId,
     systemPrompt,
@@ -998,8 +995,9 @@ async function processOneStep(
       ...(temperature !== undefined ? { temperature } : {}),
       tools: toolDefs,
       ...(chatboxId ? { chatboxId } : {}),
-      ...(typeof accessVersion === "number" ? { accessVersion } : {}),
-      ...(chatboxToken && !chatboxId ? { chatboxToken } : {}),
+      ...(chatboxId && Number.isFinite(accessVersion)
+        ? { accessVersion }
+        : {}),
       ...(projectId ? { projectId } : {}),
       ...(chatSessionId ? { chatSessionId } : {}),
       ...(sourceType ? { sourceType } : {}),
@@ -1313,7 +1311,6 @@ export async function handleMCPJamFreeChatModel(
     authHeader,
     chatboxId,
     accessVersion,
-    chatboxToken,
     projectId,
     mcpClientManager,
     selectedServers,
@@ -1387,7 +1384,6 @@ export async function handleMCPJamFreeChatModel(
             authHeader,
             chatboxId,
             accessVersion,
-            chatboxToken,
             projectId,
             chatSessionId,
             sourceType,

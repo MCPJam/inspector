@@ -1,39 +1,15 @@
 /**
- * Chatbox token redemption (Phase E scaffolding).
+ * Chatbox token redemption.
  *
  * Calls `/web/chatbox/redeem` on the Convex HTTP layer to exchange a
  * chatbox link token for a `chatboxId` + `chatboxAccess` grant. Once
  * redeemed, the inspector forwards the `chatboxId` (NOT the token) on
  * every subsequent hot-path request.
  *
- * Usage from a route handler:
- *
- *   const result = await redeemChatboxToken({
- *     chatboxToken,
- *     bearer: req.headers.get("authorization") ?? "",
- *   });
- *   if (!result.ok) return c.json({ error: result.error }, result.status);
- *   // result.chatboxId, result.role, result.mode, result.projectId,
- *   // result.accessVersion, result.bootstrap
- *
  * The bearer is required: WorkOS bearer for signed-in viewers, or a
  * guest JWT obtained via `/guest/session` for anonymous viewers in
  * `anyone_with_link` mode. Anonymous redemption is rejected by the
  * backend with 401.
- *
- * TODO(chatbox-followup): wire this into:
- *   - server/routes/web/chat-v2.ts (replace `chatboxToken` plumbing
- *     with `chatboxId`; redeem first if frontend has only a token)
- *   - server/routes/web/auth.ts `fetchAuthorizeBatch` /
- *     `createAuthorizedManager` (drop `chatboxToken` arg)
- *   - server/routes/mcp/chat-v2.ts (owner-preview parity)
- *   - server/utils/hosted-oauth-refresh.ts (`forceRefreshHostedOAuthAccessToken`,
- *     `buildHostedOAuthUnauthorizedHandler` re-keyed by `chatboxId`)
- *   - server/utils/org-model-config.ts (cache key:
- *     `(chatboxId, projectId, userId, serverIds, accessVersion)`)
- *   - client/src/lib/chatbox-session.ts and the chatbox-link landing
- *     page (call this helper on mount, store
- *     `{ chatboxId, accessVersion, bootstrap }` in session state).
  */
 
 import { logger } from "./logger.js";
@@ -125,12 +101,15 @@ export async function redeemChatboxToken(args: {
   } catch {
     return {
       ok: false,
-      status: response.status,
+      // If the upstream returned 2xx but no parseable JSON, that's an
+      // upstream contract violation — surface it as 502 so callers don't
+      // treat the missing body as success.
+      status: response.ok ? 502 : response.status,
       error: `Chatbox redeem returned ${response.status} with non-JSON body`,
     };
   }
 
-  if (!response.ok || payload?.ok !== true) {
+  if (!response.ok) {
     return {
       ok: false,
       status: response.status,
@@ -138,6 +117,19 @@ export async function redeemChatboxToken(args: {
         typeof payload?.error === "string"
           ? payload.error
           : `Chatbox redeem failed (${response.status})`,
+    };
+  }
+
+  if (payload?.ok !== true) {
+    // 2xx with `ok: false` (or missing) is also an upstream contract
+    // violation — coerce to 502 so callers don't bubble a misleading 200.
+    return {
+      ok: false,
+      status: 502,
+      error:
+        typeof payload?.error === "string"
+          ? payload.error
+          : "Chatbox redeem response was missing ok=true",
     };
   }
 

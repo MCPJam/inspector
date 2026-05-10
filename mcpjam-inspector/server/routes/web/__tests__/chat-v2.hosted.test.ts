@@ -160,7 +160,8 @@ describe("web routes — chat-v2 hosted mode", () => {
       {
         projectId: "project-1",
         selectedServerIds: ["server-1"],
-        chatboxToken: "chatbox-token",
+        chatboxId: "cbx_1",
+        accessVersion: 1,
         surface: "preview",
         chatSessionId: "chat-session-1",
         messages: [{ role: "user", content: "preview request" }],
@@ -185,7 +186,8 @@ describe("web routes — chat-v2 hosted mode", () => {
         chatSessionId: "chat-session-1",
         projectId: "project-1",
         sourceType: "chatbox",
-        chatboxToken: "chatbox-token",
+        chatboxId: "cbx_1",
+        accessVersion: 1,
         surface: "preview",
         modelId: "openai/gpt-5-mini",
         modelSource: "mcpjam",
@@ -206,7 +208,8 @@ describe("web routes — chat-v2 hosted mode", () => {
       {
         projectId: "project-1",
         selectedServerIds: ["server-1"],
-        chatboxToken: "chatbox-shared-token",
+        chatboxId: "cbx_shared",
+        accessVersion: 2,
         surface: "share_link",
         chatSessionId: "chat-session-shared",
         messages: [{ role: "user", content: "hello from guest" }],
@@ -222,7 +225,8 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(response.status).toBe(200);
     expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        chatboxToken: "chatbox-shared-token",
+        chatboxId: "cbx_shared",
+        accessVersion: 2,
         projectId: "project-1",
       })
     );

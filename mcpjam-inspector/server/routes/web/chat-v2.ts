@@ -73,12 +73,12 @@ chatV2.post("/", async (c) => {
       projectId: string;
       selectedServerIds: string[];
       selectedServerNames?: string[];
-      // Post-refactor: clients pass `chatboxId` (+ optional accessVersion)
-      // after calling /web/chatbox/redeem. `chatboxToken` is accepted
-      // transitionally; the backend will redeem it server-side.
+      // Clients call /api/web/chatboxes/redeem on mount and pass the
+      // resolved `chatboxId` + `accessVersion` on every chatbox-aware
+      // request thereafter. The link token is never forwarded on the
+      // read path.
       chatboxId?: string;
       accessVersion?: number;
-      chatboxToken?: string;
       accessScope?: "project_member" | "chat_v2";
       surface?: "preview" | "share_link";
     };
@@ -93,14 +93,11 @@ chatV2.post("/", async (c) => {
       selectedServerNames,
       chatboxId,
       accessVersion,
-      chatboxToken,
       surface,
     } = body;
-    // True when this turn flows through a chatbox surface (either keyed by
-    // chatboxId for already-redeemed sessions or chatboxToken for legacy
-    // callers that haven't migrated). sourceType + accessScope decisions
-    // hinge on this.
-    const isChatboxSession = Boolean(chatboxId || chatboxToken);
+    // True when this turn flows through a chatbox surface. sourceType +
+    // accessScope decisions hinge on this.
+    const isChatboxSession = Boolean(chatboxId);
 
     if (!Array.isArray(messages) || messages.length === 0) {
       throw new WebRouteError(
@@ -135,7 +132,6 @@ chatV2.post("/", async (c) => {
         ...(isChatboxSession ? { accessScope: "chat_v2" } : {}),
         chatboxId,
         accessVersion,
-        chatboxToken,
         rpcLogger: rpcCollector.rpcLogger,
         serverNames: selectedServerNames,
       }
@@ -214,7 +210,6 @@ chatV2.post("/", async (c) => {
                 authHeader: c.req.header("authorization"),
                 chatboxId,
                 accessVersion,
-                chatboxToken,
                 serverIds: selectedServerIds,
               },
             )
@@ -233,7 +228,6 @@ chatV2.post("/", async (c) => {
                 ...(isChatboxSession && surface ? { surface } : {}),
                 chatboxId,
                 accessVersion,
-                chatboxToken,
                 authHeader: c.req.header("authorization"),
                 sessionMessages: fullHistory,
                 startedAt: sessionStartedAt,
@@ -287,7 +281,6 @@ chatV2.post("/", async (c) => {
             authHeader: c.req.header("authorization"),
             chatboxId,
             accessVersion,
-            chatboxToken,
             selectedServers: selectedServerIds,
             requireToolApproval,
             onConversationComplete,
@@ -312,7 +305,6 @@ chatV2.post("/", async (c) => {
           clientIp: getClientIp(c),
           chatboxId,
           accessVersion,
-          chatboxToken,
           mcpClientManager: manager,
           selectedServers: selectedServerIds,
           requireToolApproval,
@@ -345,7 +337,6 @@ chatV2.post("/", async (c) => {
         clientIp: getClientIp(c),
         chatboxId,
         accessVersion,
-        chatboxToken,
         projectId: hostedBody.projectId,
         mcpClientManager: manager,
         selectedServers: selectedServerIds,
@@ -362,7 +353,6 @@ chatV2.post("/", async (c) => {
                 ...(isChatboxSession && surface ? { surface } : {}),
                 chatboxId,
                 accessVersion,
-                chatboxToken,
                 authHeader: c.req.header("authorization"),
                 sessionMessages: fullHistory,
                 startedAt: sessionStartedAt,

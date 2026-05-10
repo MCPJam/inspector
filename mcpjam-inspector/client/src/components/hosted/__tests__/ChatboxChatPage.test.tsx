@@ -183,19 +183,23 @@ describe("ChatboxChatPage", () => {
     });
     mockAuthFetch.mockResolvedValue(
       createFetchResponse({
-        projectId: "ws_1",
         chatboxId: "sbx_1",
-        name: "Resolved Chatbox",
-        description: "Hosted chatbox",
-        hostStyle: "claude",
-        mode: "invited_only",
-        allowGuestAccess: false,
-        viewerIsProjectMember: true,
-        systemPrompt: "You are helpful.",
-        modelId: "openai/gpt-5-mini",
-        temperature: 0.4,
-        requireToolApproval: true,
-        servers: [],
+        accessVersion: 1,
+        bootstrap: {
+          projectId: "ws_1",
+          chatboxId: "sbx_1",
+          name: "Resolved Chatbox",
+          description: "Hosted chatbox",
+          hostStyle: "claude",
+          mode: "invited_only",
+          allowGuestAccess: false,
+          viewerIsProjectMember: true,
+          systemPrompt: "You are helpful.",
+          modelId: "openai/gpt-5-mini",
+          temperature: 0.4,
+          requireToolApproval: true,
+          servers: [],
+        },
       })
     );
   });
@@ -208,7 +212,8 @@ describe("ChatboxChatPage", () => {
 
   it("applies chatbox host style data attributes while keeping MCPJam branding", async () => {
     writeChatboxSession({
-      token: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 1,
       payload: {
         projectId: "ws_1",
         chatboxId: "sbx_1",
@@ -243,7 +248,8 @@ describe("ChatboxChatPage", () => {
 
   it("uses the Claude loading indicator variant for Claude-style hosted chatboxes", async () => {
     writeChatboxSession({
-      token: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 1,
       payload: {
         projectId: "ws_1",
         chatboxId: "sbx_1",
@@ -280,7 +286,8 @@ describe("ChatboxChatPage", () => {
 
     writePlaygroundSession({
       playgroundId: "pg_123",
-      token: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 1,
       surface: "preview",
       updatedAt: Date.now(),
       payload: {
@@ -378,7 +385,8 @@ describe("ChatboxChatPage", () => {
       expect.objectContaining({
         projectId: null,
         serverIdsByName: {},
-        chatboxToken: "token-workos",
+        chatboxId: undefined,
+        accessVersion: undefined,
         isAuthenticated: true,
         hasSession: true,
       })
@@ -392,9 +400,9 @@ describe("ChatboxChatPage", () => {
     expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
     expect(mockAuthFetch).toHaveBeenCalledTimes(1);
     expect(mockAuthFetch).toHaveBeenCalledWith(
-      "/api/web/chatboxes/bootstrap",
+      "/api/web/chatboxes/redeem",
       expect.objectContaining({
-        body: JSON.stringify({ token: "token-workos" }),
+        body: JSON.stringify({ chatboxToken: "token-workos" }),
       })
     );
     expect(mockPosthogCapture).toHaveBeenCalledWith(
@@ -429,9 +437,9 @@ describe("ChatboxChatPage", () => {
       await screen.findByRole("heading", { name: "Access Denied" })
     ).toBeInTheDocument();
     expect(mockAuthFetch).toHaveBeenCalledWith(
-      "/api/web/chatboxes/bootstrap",
+      "/api/web/chatboxes/redeem",
       expect.objectContaining({
-        body: JSON.stringify({ token: "token-stalled-convex" }),
+        body: JSON.stringify({ chatboxToken: "token-stalled-convex" }),
       })
     );
   });
@@ -586,7 +594,8 @@ describe("ChatboxChatPage", () => {
     );
 
     writeChatboxSession({
-      token: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 1,
       payload: {
         projectId: "ws_1",
         chatboxId: "sbx_1",
@@ -637,13 +646,13 @@ describe("ChatboxChatPage", () => {
       "srv_asana",
       undefined,
       undefined,
-      {
+      expect.objectContaining({
         projectId: "ws_1",
         serverId: "srv_asana",
         serverName: "asana",
         accessScope: "chat_v2",
-        chatboxToken: "chatbox-token",
-      }
+        chatboxId: "sbx_1",
+      }),
     );
     expect(mockValidateHostedServer).toHaveBeenCalledTimes(1);
   });
@@ -651,7 +660,8 @@ describe("ChatboxChatPage", () => {
   it("keeps guest chatbox OAuth in first-consent welcome before callback completion", async () => {
     mockConvexAuthState.isAuthenticated = false;
     writeChatboxSession({
-      token: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 1,
       payload: {
         projectId: "ws_1",
         chatboxId: "sbx_1",
@@ -714,7 +724,8 @@ describe("ChatboxChatPage", () => {
     );
 
     writeChatboxSession({
-      token: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 1,
       payload: {
         projectId: "ws_1",
         chatboxId: "sbx_1",
@@ -778,7 +789,8 @@ describe("ChatboxChatPage", () => {
     mockGetStoredTokens.mockReturnValue({ access_token: "chatbox-token" });
 
     writeChatboxSession({
-      token: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 1,
       payload: {
         projectId: "ws_1",
         chatboxId: "sbx_1",
@@ -836,7 +848,8 @@ describe("ChatboxChatPage", () => {
     });
 
     writeChatboxSession({
-      token: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 1,
       payload: {
         projectId: "ws_1",
         chatboxId: "sbx_1",
@@ -903,7 +916,8 @@ describe("ChatboxChatPage", () => {
 
     it("shows welcome dialog when welcomeDialog is enabled and has content", async () => {
       writeChatboxSession({
-        token: "chatbox-token",
+        chatboxId: "sbx_1",
+        accessVersion: 1,
         payload: {
           projectId: "ws_1",
           chatboxId: "sbx_welcome",
@@ -941,7 +955,8 @@ describe("ChatboxChatPage", () => {
 
     it("dismisses welcome and shows chat when Get Started is clicked", async () => {
       writeChatboxSession({
-        token: "chatbox-token",
+        chatboxId: "sbx_1",
+        accessVersion: 1,
         payload: {
           projectId: "ws_1",
           chatboxId: "sbx_dismiss",
@@ -977,7 +992,8 @@ describe("ChatboxChatPage", () => {
 
     it("skips welcome and goes straight to chat when welcomeDialog.enabled is false", async () => {
       writeChatboxSession({
-        token: "chatbox-token",
+        chatboxId: "sbx_1",
+        accessVersion: 1,
         payload: {
           projectId: "ws_1",
           chatboxId: "sbx_disabled",
@@ -1012,7 +1028,8 @@ describe("ChatboxChatPage", () => {
 
     it("skips welcome and goes straight to chat when welcomeDialog body is empty", async () => {
       writeChatboxSession({
-        token: "chatbox-token",
+        chatboxId: "sbx_1",
+        accessVersion: 1,
         payload: {
           projectId: "ws_1",
           chatboxId: "sbx_emptybody",

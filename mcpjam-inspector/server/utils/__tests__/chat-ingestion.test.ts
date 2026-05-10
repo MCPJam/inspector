@@ -65,7 +65,8 @@ describe("chat-ingestion", () => {
       modelId: "openai/gpt-oss-120b",
       modelSource: "mcpjam",
       authHeader: "Bearer bearer-token",
-      chatboxToken: "chatbox-token",
+      chatboxId: "cbx_test",
+      accessVersion: 1,
       sourceType: "chatbox",
       surface: "share_link",
       sessionMessages: [

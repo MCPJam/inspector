@@ -300,10 +300,10 @@ export function ChatboxChatPage({
   >([]);
 
   useEffect(() => {
-    if (!session?.token) return;
+    if (!session?.chatboxId) return;
     try {
       const raw = sessionStorage.getItem(
-        chatboxEnabledOptionalStorageKey(session.token)
+        chatboxEnabledOptionalStorageKey(session.chatboxId)
       );
       if (!raw) {
         setEnabledOptionalServerIds((prev) => (prev.length === 0 ? prev : []));
@@ -329,21 +329,21 @@ export function ChatboxChatPage({
     } catch {
       setEnabledOptionalServerIds((prev) => (prev.length === 0 ? prev : []));
     }
-    // Intentionally only re-hydrate when the share token changes — not when
+    // Intentionally only re-hydrate when the chatbox id changes — not when
     // `payload.servers` gets a new array identity on each render.
-  }, [session?.token]);
+  }, [session?.chatboxId]);
 
   useEffect(() => {
-    if (!session?.token) return;
+    if (!session?.chatboxId) return;
     try {
-      const key = chatboxEnabledOptionalStorageKey(session.token);
+      const key = chatboxEnabledOptionalStorageKey(session.chatboxId);
       const serialized = JSON.stringify(enabledOptionalServerIds);
       if (sessionStorage.getItem(key) === serialized) return;
       sessionStorage.setItem(key, serialized);
     } catch {
       // ignore
     }
-  }, [session?.token, enabledOptionalServerIds]);
+  }, [session?.chatboxId, enabledOptionalServerIds]);
 
   const sessionServersActive = useMemo(() => {
     if (!session) return [];
@@ -385,7 +385,8 @@ export function ChatboxChatPage({
     pendingKey: CHATBOX_OAUTH_PENDING_KEY,
     servers: oauthServers,
     projectId: session?.payload.projectId ?? null,
-    chatboxToken: session?.token,
+    chatboxId: session?.chatboxId,
+    accessVersion: session?.accessVersion,
     isAuthenticated,
   });
 
@@ -424,13 +425,11 @@ export function ChatboxChatPage({
     projectId: session?.payload.projectId ?? null,
     serverIdsByName: session ? hostedServerIdsByName : {},
     getAccessToken,
-    // Post-refactor: prefer (chatboxId, accessVersion) from the redeemed
-    // session over the raw URL token. The session writer stores the
-    // chatboxId on payload.chatboxId and the version on the top-level
-    // accessVersion field; both are populated by /api/web/chatboxes/redeem.
-    chatboxId: session?.payload.chatboxId,
+    // Resolved chatbox identity from /api/web/chatboxes/redeem. Both
+    // fields live at the top level of the session — the URL token is
+    // never threaded onto the read path.
+    chatboxId: session?.chatboxId,
     accessVersion: session?.accessVersion,
-    chatboxToken: tokenFromPath ?? session?.token,
     isAuthenticated: !!workOsUser,
     hasSession: !!workOsUser || isWorkOsLoading,
   });
@@ -471,11 +470,10 @@ export function ChatboxChatPage({
           status: "started",
         });
         try {
-          // Phase E: prefer the new /redeem endpoint, which both mints a
-          // chatboxAccess grant on the backend AND returns the bootstrap
-          // payload. Fall back to the legacy /bootstrap endpoint if redeem
-          // is unavailable (older backend deployments) so this still works
-          // through the rollout.
+          // /redeem exchanges the URL link token for a `chatboxId` +
+          // `accessVersion` grant plus the bootstrap payload, in one round
+          // trip. Every chatbox-aware backend call then keys on the resolved
+          // identity — the URL token is not threaded onto the read path.
           const redeemResponse = await authFetch(
             "/api/web/chatboxes/redeem",
             {
@@ -485,41 +483,22 @@ export function ChatboxChatPage({
             },
           );
 
-          let payload: ChatboxSession["payload"];
-          let accessVersionFromRedeem: number | undefined;
-
-          if (redeemResponse.ok) {
-            const redeemed = (await redeemResponse.json()) as {
-              chatboxId: string;
-              accessVersion: number;
-              bootstrap: ChatboxSession["payload"];
-            };
-            payload = redeemed.bootstrap;
-            accessVersionFromRedeem = redeemed.accessVersion;
-          } else if (redeemResponse.status === 404) {
-            // Redeem endpoint not deployed yet — use legacy bootstrap.
-            const response = await authFetch(
-              "/api/web/chatboxes/bootstrap",
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ token: tokenFromPath }),
-              },
-            );
-            if (!response.ok) throw await readRouteError(response);
-            payload = (await response.json()) as ChatboxSession["payload"];
-          } else {
+          if (!redeemResponse.ok) {
             throw await readRouteError(redeemResponse);
           }
+
+          const redeemed = (await redeemResponse.json()) as {
+            chatboxId: string;
+            accessVersion: number;
+            bootstrap: ChatboxSession["payload"];
+          };
           if (cancelled) return;
 
           const nextSession: ChatboxSession = {
-            token: tokenFromPath,
-            payload,
+            chatboxId: redeemed.chatboxId,
+            accessVersion: redeemed.accessVersion,
+            payload: redeemed.bootstrap,
             surface: readChatboxSurfaceFromUrl(window.location.search),
-            ...(typeof accessVersionFromRedeem === "number"
-              ? { accessVersion: accessVersionFromRedeem }
-              : {}),
           };
           writeCurrentSession(nextSession);
           setSession(nextSession);
@@ -664,7 +643,11 @@ export function ChatboxChatPage({
   }, [session]);
 
   const handleCopyLink = useCallback(async () => {
-    const token = session?.token?.trim();
+    // The share URL is what the viewer is currently on — `tokenFromPath`
+    // is the canonical source. The session itself no longer carries the
+    // link token after the redeem refactor; persisting it on the read
+    // path would re-introduce the very token plumbing we removed.
+    const token = tokenFromPath?.trim();
     if (!session || !token) {
       toast.error("Chatbox link unavailable");
       return;
@@ -683,7 +666,7 @@ export function ChatboxChatPage({
     } catch {
       toast.error("Failed to copy chatbox link");
     }
-  }, [session]);
+  }, [session, tokenFromPath]);
 
   const handleOpenMcpJam = useCallback(() => {
     clearChatboxSession();
@@ -780,7 +763,8 @@ export function ChatboxChatPage({
             hostStyle
           )}
           hostedContext={{
-            chatboxToken: session.token,
+            chatboxId: session.chatboxId,
+            accessVersion: session.accessVersion,
             chatboxSurface: session.surface ?? "share_link",
             projectId: session.payload.projectId,
             selectedServerIds: sessionServersActive.map(

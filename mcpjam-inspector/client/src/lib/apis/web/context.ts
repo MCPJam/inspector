@@ -14,14 +14,13 @@ export interface ApiContext {
   getAccessToken?: GetAccessTokenFn;
   oauthTokensByServerId?: Record<string, string>;
   /**
-   * Post-refactor chatbox auth keys. After /web/chatbox/redeem resolves,
-   * the host clones these onto every chatbox-aware API call. `chatboxToken`
-   * stays for legacy callsites until they migrate; the server now prefers
-   * `chatboxId` when both are present.
+   * Resolved chatbox identity. After /api/web/chatboxes/redeem resolves,
+   * the host clones these onto every chatbox-aware API call. The URL link
+   * token is consumed only at redemption time and never threaded onto the
+   * read path.
    */
   chatboxId?: string;
   accessVersion?: number;
-  chatboxToken?: string;
   isAuthenticated?: boolean;
   /** True when a WorkOS session exists (user signed in), even if token hasn't resolved yet. */
   hasSession?: boolean;
@@ -309,10 +308,6 @@ export function getHostedOAuthToken(serverId: string): string | undefined {
   return apiContext.oauthTokensByServerId?.[serverId];
 }
 
-export function getHostedChatboxToken(): string | undefined {
-  return apiContext.chatboxToken;
-}
-
 export function getHostedChatboxId(): string | undefined {
   return apiContext.chatboxId;
 }
@@ -322,9 +317,7 @@ export function getHostedChatboxAccessVersion(): number | undefined {
 }
 
 function getHostedAccessScope(): HostedAccessScope | undefined {
-  return getHostedChatboxToken() || getHostedChatboxId()
-    ? "chat_v2"
-    : undefined;
+  return getHostedChatboxId() ? "chat_v2" : undefined;
 }
 
 export function buildServerRequest(
@@ -345,7 +338,6 @@ export function buildServerRequest(
   const oauthToken = getHostedOAuthToken(serverId);
   const chatboxId = getHostedChatboxId();
   const accessVersion = getHostedChatboxAccessVersion();
-  const chatboxToken = getHostedChatboxToken();
   const accessScope = getHostedAccessScope();
   return {
     projectId,
@@ -360,8 +352,9 @@ export function buildServerRequest(
       : {}),
     ...(accessScope ? { accessScope } : {}),
     ...(chatboxId ? { chatboxId } : {}),
-    ...(typeof accessVersion === "number" ? { accessVersion } : {}),
-    ...(chatboxToken && !chatboxId ? { chatboxToken } : {}),
+    ...(chatboxId && Number.isFinite(accessVersion)
+      ? { accessVersion }
+      : {}),
   };
 }
 
@@ -374,7 +367,6 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
   accessScope?: HostedAccessScope;
   chatboxId?: string;
   accessVersion?: number;
-  chatboxToken?: string;
 } {
   assertClientConfigSynced();
   const projectId = getHostedProjectId();
@@ -384,7 +376,6 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
   const oauthTokens = buildHostedOAuthTokensMap(serverIds);
   const chatboxId = getHostedChatboxId();
   const accessVersion = getHostedChatboxAccessVersion();
-  const chatboxToken = getHostedChatboxToken();
   const accessScope = getHostedAccessScope();
   return {
     projectId,
@@ -396,8 +387,9 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
     ...(oauthTokens ? { oauthTokens } : {}),
     ...(accessScope ? { accessScope } : {}),
     ...(chatboxId ? { chatboxId } : {}),
-    ...(typeof accessVersion === "number" ? { accessVersion } : {}),
-    ...(chatboxToken && !chatboxId ? { chatboxToken } : {}),
+    ...(chatboxId && Number.isFinite(accessVersion)
+      ? { accessVersion }
+      : {}),
   };
 }
 
@@ -410,7 +402,6 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
   accessScope?: HostedAccessScope;
   chatboxId?: string;
   accessVersion?: number;
-  chatboxToken?: string;
 } {
   assertClientConfigSynced();
   const projectId = getHostedProjectId();
@@ -420,7 +411,6 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
   const oauthTokens = buildHostedOAuthTokensMap(serverIds);
   const chatboxId = getHostedChatboxId();
   const accessVersion = getHostedChatboxAccessVersion();
-  const chatboxToken = getHostedChatboxToken();
   const accessScope = getHostedAccessScope();
 
   return {
@@ -433,8 +423,9 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
     ...(oauthTokens ? { oauthTokens } : {}),
     ...(accessScope ? { accessScope } : {}),
     ...(chatboxId ? { chatboxId } : {}),
-    ...(typeof accessVersion === "number" ? { accessVersion } : {}),
-    ...(chatboxToken && !chatboxId ? { chatboxToken } : {}),
+    ...(chatboxId && Number.isFinite(accessVersion)
+      ? { accessVersion }
+      : {}),
   };
 }
 

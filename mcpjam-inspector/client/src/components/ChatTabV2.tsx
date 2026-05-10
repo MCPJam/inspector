@@ -315,20 +315,20 @@ export function ChatTabV2({
       ),
     [selectedConnectedServerNames, serversByName, appState.servers]
   );
-  const hostedChatboxToken = hostedContext?.chatboxToken;
+  const hostedChatboxId = hostedContext?.chatboxId;
   const hostedChatboxSurface = hostedContext?.chatboxSurface;
   const effectiveHostedProjectId =
     hostedContext?.projectId ?? convexProjectId;
   const effectiveHostedSelectedServerIds =
     hostedContext?.selectedServerIds ?? hostedSelectedServerIds;
-  const effectiveHostedOAuthTokens = hostedChatboxToken
+  const effectiveHostedOAuthTokens = hostedChatboxId
     ? undefined
     : hostedContext?.oauthTokens ?? hostedOAuthTokens;
   const isHostedDirectGuest =
     HOSTED_MODE &&
     !isConvexAuthenticated &&
     !effectiveHostedProjectId &&
-    !hostedChatboxToken;
+    !hostedChatboxId;
 
   // Use shared chat session hook
   const {
@@ -418,7 +418,7 @@ export function ChatTabV2({
   const showHistoryRail =
     HOSTED_MODE &&
     !minimalMode &&
-    !hostedChatboxToken &&
+    !hostedChatboxId &&
     chatHistoryRailEnabled;
   const {
     session: reactiveHistorySession,
@@ -1095,7 +1095,7 @@ export function ChatTabV2({
     enableMultiModelChat &&
     !minimalMode &&
     !executionConfig?.modelId &&
-    !hostedChatboxToken &&
+    !hostedChatboxId &&
     !hostedChatboxSurface &&
     availableModels.length > 1;
   // When viewing a history session, fall back to single-model rendering so

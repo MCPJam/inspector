@@ -29,19 +29,12 @@ export function getShareableAppOrigin(): string {
 }
 
 /**
- * Chatbox access modes. The post-refactor model exposes all three.
- * `any_signed_in_with_link` is the legacy display label retained so
- * existing UI strings keep working; new code should prefer the
- * post-refactor names. The normalizer below maps the legacy/aliased
- * values to the new identifiers.
+ * Chatbox access modes. Mirrors the backend `chatboxModeValidator`.
  */
 export type ChatboxShareMode =
   | "project_members"
   | "invited_only"
-  | "anyone_with_link"
-  // Legacy alias retained for sessions persisted by older inspector
-  // builds. TODO(chatbox-followup): remove after sessions expire.
-  | "any_signed_in_with_link";
+  | "anyone_with_link";
 
 export interface ChatboxBootstrapServer {
   serverId: string;
@@ -79,37 +72,37 @@ export interface ChatboxBootstrapPayload {
 
 export interface ChatboxSession {
   /**
-   * Chatbox handshake token from the URL. Retained on the session for
-   * legacy callsites that still pass `chatboxToken` to the backend.
-   * Post-refactor: clients should call /web/chatbox/redeem on session
-   * mount, store the resulting `payload.chatboxId` + `accessVersion`,
-   * and stop forwarding `token` downstream.
-   *
-   * TODO(chatbox-followup): drop this field once every client surface
-   * has migrated to chatboxId.
+   * Resolved chatbox identity. Returned by /api/web/chatboxes/redeem and
+   * stored at the top level so callers don't have to dig through
+   * `payload`. Every chatbox-aware backend call keys on this; the URL
+   * link token is consumed only at redemption time and is not persisted.
    */
-  token: string;
-  payload: ChatboxBootstrapPayload;
-  surface?: "preview" | "share_link";
+  chatboxId: string;
   /**
    * Backend-owned monotonic counter returned by /web/chatbox/redeem.
    * Bumps whenever access changes (mode, revoke-all, allowlist edits,
    * invite removal). Threaded into every chatbox-aware server call so
    * inspector caches invalidate cleanly.
    */
-  accessVersion?: number;
+  accessVersion: number;
+  payload: ChatboxBootstrapPayload;
+  surface?: "preview" | "share_link";
 }
 
-export const CHATBOX_SESSION_STORAGE_KEY = "mcpjam_chatbox_session_v1";
+// Bumped from v1 → v2: ChatboxSession dropped the URL token and added
+// required top-level `chatboxId` + `accessVersion`. Reading a v1 row would
+// produce a malformed session; rev the key so the v1 row is ignored and
+// the next landing-page mount re-redeems cleanly.
+export const CHATBOX_SESSION_STORAGE_KEY = "mcpjam_chatbox_session_v2";
 export const CHATBOX_OAUTH_PENDING_KEY = "mcp-oauth-chatbox-pending";
 export const CHATBOX_SIGN_IN_RETURN_PATH_STORAGE_KEY =
   "mcpjam_chatbox_signin_return_path_v1";
 export const CHATBOX_PLAYGROUND_KEY_PREFIX =
   "mcpjam_chatbox_playground_session_v1:";
 
-/** sessionStorage: optional servers the tester enabled for this share-link session. */
-export function chatboxEnabledOptionalStorageKey(chatboxToken: string): string {
-  return `chatbox-enabled-optional:${chatboxToken}`;
+/** sessionStorage: optional servers the tester enabled for this chatbox session. */
+export function chatboxEnabledOptionalStorageKey(chatboxId: string): string {
+  return `chatbox-enabled-optional:${chatboxId}`;
 }
 
 /** sessionStorage: optional servers enabled in builder preview for a chatbox id. */
@@ -128,11 +121,7 @@ export interface ChatboxPlaygroundSession extends ChatboxSession {
 
 function normalizeChatboxShareMode(mode: unknown): ChatboxShareMode {
   if (mode === "project_members") return "project_members";
-  if (mode === "anyone_with_link" || mode === "any_signed_in_with_link") {
-    return "anyone_with_link";
-  }
-  // Legacy backend alias.
-  if (mode === "project_with_link") return "anyone_with_link";
+  if (mode === "anyone_with_link") return "anyone_with_link";
   return "invited_only";
 }
 
@@ -157,14 +146,21 @@ function normalizeChatboxSession(
     return null;
   }
 
-  const token = typeof parsed.token === "string" ? parsed.token.trim() : "";
+  const chatboxId =
+    typeof parsed.chatboxId === "string" ? parsed.chatboxId.trim() : "";
+  const accessVersion =
+    typeof parsed.accessVersion === "number" &&
+    Number.isFinite(parsed.accessVersion)
+      ? parsed.accessVersion
+      : null;
   const payload = parsed.payload;
   const hostStyle =
     normalizeChatboxHostStyleId(payload?.hostStyle) ??
     (payload?.hostStyle == null ? DEFAULT_HOST_STYLE.id : null);
 
   if (
-    !token ||
+    !chatboxId ||
+    accessVersion === null ||
     !payload ||
     typeof payload.projectId !== "string" ||
     typeof payload.chatboxId !== "string" ||
@@ -182,9 +178,8 @@ function normalizeChatboxSession(
   }
 
   return {
-    token,
-    accessVersion:
-      typeof parsed.accessVersion === "number" ? parsed.accessVersion : undefined,
+    chatboxId,
+    accessVersion,
     payload: {
       projectId: payload.projectId,
       chatboxId: payload.chatboxId,

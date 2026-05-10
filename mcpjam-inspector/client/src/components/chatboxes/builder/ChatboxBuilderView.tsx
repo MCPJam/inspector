@@ -718,7 +718,7 @@ export function ChatboxBuilderView({
     pendingKey: CHATBOX_OAUTH_PENDING_KEY,
     servers: previewOAuthGateServers,
     projectId: chatbox?.projectId ?? projectId,
-    chatboxToken: chatbox?.link?.token,
+    chatboxId: chatbox?.chatboxId,
     isAuthenticated,
   });
 
@@ -1155,7 +1155,7 @@ export function ChatboxBuilderView({
                                   minimalMode
                                   reasoningDisplayMode="hidden"
                                   hostedContext={{
-                                    chatboxToken: chatbox.link.token,
+                                    chatboxId: chatbox.chatboxId,
                                     chatboxSurface: "preview",
                                     projectId: chatbox!.projectId,
                                     selectedServerIds: activePreviewServers.map(

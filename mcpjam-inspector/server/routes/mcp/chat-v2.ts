@@ -458,7 +458,6 @@ chatV2.post("/", async (c) => {
       // of being filed as a direct chat.
       chatboxId?: string;
       accessVersion?: number;
-      chatboxToken?: string;
       surface?: "preview" | "share_link";
     };
     const mcpClientManager = c.mcpClientManager;
@@ -473,10 +472,9 @@ chatV2.post("/", async (c) => {
       requireToolApproval,
       chatboxId: bodyChatboxId,
       accessVersion: bodyAccessVersion,
-      chatboxToken: bodyChatboxToken,
       surface: bodySurface,
     } = body;
-    const isChatboxSession = Boolean(bodyChatboxId || bodyChatboxToken);
+    const isChatboxSession = Boolean(bodyChatboxId);
     const chatSessionSourceType: "chatbox" | "direct" = isChatboxSession
       ? "chatbox"
       : "direct";
@@ -629,29 +627,28 @@ chatV2.post("/", async (c) => {
                 sourceType: chatSessionSourceType,
                 ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
                 ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
-                ...(typeof bodyAccessVersion === "number"
+                ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)
                   ? { accessVersion: bodyAccessVersion }
                   : {}),
-                ...(bodyChatboxToken && !bodyChatboxId
-                  ? { chatboxToken: bodyChatboxToken }
-                  : {}),
-                ...(isChatboxSession
-                  ? {}
-                  : { directVisibility: body.directVisibility }),
                 authHeader,
                 sessionMessages: fullHistory,
                 startedAt: sessionStartedAt,
                 lastActivityAt: Date.now(),
                 ...(body.projectId ? { projectId: body.projectId } : {}),
-                resumeConfig: {
-                  systemPrompt,
-                  temperature,
-                  requireToolApproval,
-                  selectedServers,
-                },
-                ...(directHostConfig
-                  ? { hostConfig: directHostConfig }
-                  : {}),
+                ...(isChatboxSession
+                  ? {}
+                  : {
+                      directVisibility: body.directVisibility,
+                      resumeConfig: {
+                        systemPrompt,
+                        temperature,
+                        requireToolApproval,
+                        selectedServers,
+                      },
+                      ...(directHostConfig
+                        ? { hostConfig: directHostConfig }
+                        : {}),
+                    }),
                 expectedVersion: body.expectedVersion,
                 turnTrace,
                 forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
@@ -709,29 +706,28 @@ chatV2.post("/", async (c) => {
                 sourceType: chatSessionSourceType,
                 ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
                 ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
-                ...(typeof bodyAccessVersion === "number"
+                ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)
                   ? { accessVersion: bodyAccessVersion }
                   : {}),
-                ...(bodyChatboxToken && !bodyChatboxId
-                  ? { chatboxToken: bodyChatboxToken }
-                  : {}),
-                ...(isChatboxSession
-                  ? {}
-                  : { directVisibility: body.directVisibility }),
                 authHeader: c.req.header("authorization"),
                 sessionMessages: fullHistory,
                 startedAt: sessionStartedAt,
                 lastActivityAt: Date.now(),
                 projectId: body.projectId,
-                resumeConfig: {
-                  systemPrompt,
-                  temperature,
-                  requireToolApproval,
-                  selectedServers,
-                },
-                ...(directHostConfig
-                  ? { hostConfig: directHostConfig }
-                  : {}),
+                ...(isChatboxSession
+                  ? {}
+                  : {
+                      directVisibility: body.directVisibility,
+                      resumeConfig: {
+                        systemPrompt,
+                        temperature,
+                        requireToolApproval,
+                        selectedServers,
+                      },
+                      ...(directHostConfig
+                        ? { hostConfig: directHostConfig }
+                        : {}),
+                    }),
                 expectedVersion: body.expectedVersion,
                 turnTrace,
                 forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
@@ -788,15 +784,9 @@ chatV2.post("/", async (c) => {
               sourceType: chatSessionSourceType,
               ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
               ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
-              ...(typeof bodyAccessVersion === "number"
+              ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)
                 ? { accessVersion: bodyAccessVersion }
                 : {}),
-              ...(bodyChatboxToken && !bodyChatboxId
-                ? { chatboxToken: bodyChatboxToken }
-                : {}),
-              ...(isChatboxSession
-                ? {}
-                : { directVisibility: body.directVisibility }),
               messages: modelMessages as ModelMessage[],
               systemPrompt: enhancedSystemPrompt,
               ...(responseMessages.length > 0 ? { responseMessages } : {}),
@@ -809,15 +799,20 @@ chatV2.post("/", async (c) => {
               startedAt: streamStartedAt,
               lastActivityAt: Date.now(),
               ...(body.projectId ? { projectId: body.projectId } : {}),
-              resumeConfig: {
-                systemPrompt,
-                temperature,
-                requireToolApproval,
-                selectedServers,
-              },
-              ...(directHostConfig
-                ? { hostConfig: directHostConfig }
-                : {}),
+              ...(isChatboxSession
+                ? {}
+                : {
+                    directVisibility: body.directVisibility,
+                    resumeConfig: {
+                      systemPrompt,
+                      temperature,
+                      requireToolApproval,
+                      selectedServers,
+                    },
+                    ...(directHostConfig
+                      ? { hostConfig: directHostConfig }
+                      : {}),
+                  }),
               expectedVersion: body.expectedVersion,
               turnTrace,
               forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),

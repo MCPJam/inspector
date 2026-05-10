@@ -46,14 +46,12 @@ export const projectServerSchema = z.object({
   clientCapabilities: clientCapabilitiesSchema.optional(),
   oauthAccessToken: z.string().optional(),
   accessScope: z.enum(["project_member", "chat_v2"]).optional(),
-  // Post-refactor: callers identify chatboxes by `chatboxId` (resolved via
-  // /web/chatbox/redeem). `chatboxToken` is kept transitionally so untouched
-  // legacy callsites still work; the backend's authorize-batch will redeem
-  // it server-side. TODO(chatbox-followup): drop `chatboxToken` once every
-  // client surface migrates.
+  // Callers identify chatboxes by `chatboxId` (resolved via
+  // /web/chatbox/redeem) plus the backend-owned `accessVersion`. The
+  // link token is consumed only at redemption; no read-path callsite
+  // accepts it.
   chatboxId: z.string().min(1).optional(),
   accessVersion: z.number().int().nonnegative().optional(),
-  chatboxToken: z.string().min(1).optional(),
 });
 
 export const toolsListSchema = projectServerSchema.extend({
@@ -86,14 +84,9 @@ export const promptsListMultiSchema = z.object({
   clientCapabilities: clientCapabilitiesSchema.optional(),
   oauthTokens: z.record(z.string(), z.string()).optional(),
   accessScope: z.enum(["project_member", "chat_v2"]).optional(),
-  // Post-refactor: callers identify chatboxes by `chatboxId` (resolved via
-  // /web/chatbox/redeem). `chatboxToken` is kept transitionally so untouched
-  // legacy callsites still work; the backend's authorize-batch will redeem
-  // it server-side. TODO(chatbox-followup): drop `chatboxToken` once every
-  // client surface migrates.
+  // See projectServerSchema — chatbox identity is `chatboxId` + `accessVersion`.
   chatboxId: z.string().min(1).optional(),
   accessVersion: z.number().int().nonnegative().optional(),
-  chatboxToken: z.string().min(1).optional(),
 });
 
 export const promptsGetSchema = projectServerSchema.extend({
@@ -113,10 +106,9 @@ export const hostedChatSchema = z
     surface: z.enum(["preview", "share_link"]).optional(),
     oauthTokens: z.record(z.string(), z.string()).optional(),
     accessScope: z.enum(["project_member", "chat_v2"]).optional(),
-    // See projectServerSchema for the chatboxId migration note.
+    // See projectServerSchema — chatbox identity is `chatboxId` + `accessVersion`.
     chatboxId: z.string().min(1).optional(),
     accessVersion: z.number().int().nonnegative().optional(),
-    chatboxToken: z.string().min(1).optional(),
   })
   .passthrough();
 
@@ -241,13 +233,8 @@ export async function authorizeServer(
   options?: {
     accessScope?: "project_member" | "chat_v2";
     workspaceId?: string;
-    // Post-refactor preferred path: `chatboxId` (+ optional `accessVersion`
-    // for cache-version stamping). `chatboxToken` is accepted as a fallback
-    // so legacy callsites that haven't migrated yet still work; the backend
-    // will redeem it server-side.
     chatboxId?: string;
     accessVersion?: number;
-    chatboxToken?: string;
   }
 ): Promise<ClientSafeAuthorizeResponse> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
@@ -276,9 +263,6 @@ export async function authorizeServer(
         ...(options?.chatboxId ? { chatboxId: options.chatboxId } : {}),
         ...(typeof options?.accessVersion === "number"
           ? { accessVersion: options.accessVersion }
-          : {}),
-        ...(options?.chatboxToken && !options?.chatboxId
-          ? { chatboxToken: options.chatboxToken }
           : {}),
       }),
     });
@@ -332,7 +316,6 @@ export async function authorizeBatch(
     workspaceId?: string;
     chatboxId?: string;
     accessVersion?: number;
-    chatboxToken?: string;
   }
 ): Promise<ConvexBatchAuthorizeResponse> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
@@ -361,9 +344,6 @@ export async function authorizeBatch(
         ...(options?.chatboxId ? { chatboxId: options.chatboxId } : {}),
         ...(typeof options?.accessVersion === "number"
           ? { accessVersion: options.accessVersion }
-          : {}),
-        ...(options?.chatboxToken && !options?.chatboxId
-          ? { chatboxToken: options.chatboxToken }
           : {}),
       }),
     });
@@ -506,7 +486,6 @@ export async function createAuthorizedManager(
     workspaceId?: string;
     chatboxId?: string;
     accessVersion?: number;
-    chatboxToken?: string;
     rpcLogger?: RpcLogger;
     serverNames?: string[];
   }
@@ -538,7 +517,6 @@ export async function createAuthorizedManager(
       workspaceId: options?.workspaceId,
       chatboxId: options?.chatboxId,
       accessVersion: options?.accessVersion,
-      chatboxToken: options?.chatboxToken,
     }
   );
 
@@ -571,10 +549,9 @@ export async function createAuthorizedManager(
             serverName: displayServerName,
             accessScope: options?.accessScope,
             workspaceId: options?.workspaceId,
-            shareToken: options?.shareToken,
+            shareToken: (options as { shareToken?: string })?.shareToken,
             chatboxId: options?.chatboxId,
             accessVersion: options?.accessVersion,
-            chatboxToken: options?.chatboxToken,
           })
         : undefined;
 
@@ -762,10 +739,8 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
         ? raw.chatboxId
         : undefined;
     const accessVersion =
-      typeof raw.accessVersion === "number" ? raw.accessVersion : undefined;
-    const chatboxToken =
-      typeof raw.chatboxToken === "string" && raw.chatboxToken.trim()
-        ? raw.chatboxToken
+      typeof raw.accessVersion === "number" && Number.isFinite(raw.accessVersion)
+        ? raw.accessVersion
         : undefined;
 
     const result = await withManager(
@@ -784,7 +759,6 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
             typeof raw.workspaceId === "string" ? raw.workspaceId : undefined,
           chatboxId,
           accessVersion,
-          chatboxToken,
           rpcLogger: rpcCollector?.rpcLogger,
           serverNames,
         }

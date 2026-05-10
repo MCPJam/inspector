@@ -82,7 +82,8 @@ export const RunEvalsRequestSchema = z.object({
     .array(z.string())
     .min(1, { message: "At least one server must be selected" }),
   serverNames: z.array(z.string()).optional(),
-  chatboxToken: z.string().optional(),
+  chatboxId: z.string().optional(),
+  accessVersion: z.number().int().nonnegative().optional(),
   storageServerIds: z.array(z.string()).optional(),
   modelApiKeys: z.record(z.string(), z.string()).optional(),
   convexAuthToken: z.string(),
@@ -116,7 +117,8 @@ export const RunTestCaseRequestSchema = z.object({
   serverIds: z
     .array(z.string())
     .min(1, { message: "At least one server must be selected" }),
-  chatboxToken: z.string().optional(),
+  chatboxId: z.string().optional(),
+  accessVersion: z.number().int().nonnegative().optional(),
   modelApiKeys: z.record(z.string(), z.string()).optional(),
   convexAuthToken: z.string(),
   testCaseOverrides: z
@@ -293,7 +295,8 @@ export async function runEvalsWithManager(
     tests,
     serverIds,
     serverNames,
-    chatboxToken,
+    chatboxId,
+    accessVersion,
     storageServerIds,
     modelApiKeys,
     orgModelConfig,
@@ -601,7 +604,8 @@ export async function runEvalsWithManager(
       try {
         const orgConfig = await resolveOrgModelConfig(orgConfigTarget, {
           bearerToken: convexAuthToken,
-          chatboxToken,
+          chatboxId,
+          accessVersion,
           serverIds: resolvedServerIds,
         });
         resolvedOrgModelConfig = orgConfig;
@@ -652,7 +656,8 @@ export async function runEvalTestCaseWithManager(
     provider,
     compareRunId,
     serverIds,
-    chatboxToken,
+    chatboxId,
+    accessVersion,
     skipLastMessageRunUpdate,
     modelApiKeys,
     orgModelConfig,
@@ -718,7 +723,8 @@ export async function runEvalTestCaseWithManager(
         testCaseOrgConfigTarget,
         {
           bearerToken: convexAuthToken,
-          chatboxToken,
+          chatboxId,
+          accessVersion,
           serverIds: resolvedServerIds,
         },
       );
@@ -883,7 +889,8 @@ export async function streamEvalTestCaseWithManager(
     provider,
     compareRunId,
     serverIds,
-    chatboxToken,
+    chatboxId,
+    accessVersion,
     skipLastMessageRunUpdate,
     modelApiKeys,
     orgModelConfig,
@@ -951,7 +958,8 @@ export async function streamEvalTestCaseWithManager(
         streamTestCaseOrgConfigTarget,
         {
           bearerToken: convexAuthToken,
-          chatboxToken,
+          chatboxId,
+          accessVersion,
           serverIds: resolvedServerIds,
         },
       );

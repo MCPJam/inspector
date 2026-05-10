@@ -89,17 +89,11 @@ export interface OrgModelHandlerOptions {
    */
   authHeader?: string;
   /**
-   * Hosted chatbox token for guest chat sessions. Forwarded to /stream/org
-   * so Convex can authorize the guest against the project via the existing
-   * authorizeGuestServerAccessBatch query.
-   *
-   * Post-refactor: prefer `chatboxId` (+ optional `accessVersion`); the
-   * backend will redeem `chatboxToken` server-side for transitional callers
-   * that still pass the token.
+   * Resolved chatbox identity (post-redeem). Forwarded to /stream/org so
+   * Convex can authorize the actor against the chatbox + project.
    */
   chatboxId?: string;
   accessVersion?: number;
-  chatboxToken?: string;
   clientIp?: string | null;
 }
 
@@ -190,7 +184,6 @@ export interface OrgLocalModelHandlerOptions {
   authHeader?: string;
   chatboxId?: string;
   accessVersion?: number;
-  chatboxToken?: string;
   onConversationComplete?: (
     fullHistory: ModelMessage[],
     turnTrace: PersistedTurnTrace
@@ -219,7 +212,6 @@ export function handleLocalOrgChatModel(
     authHeader,
     chatboxId,
     accessVersion,
-    chatboxToken,
     onConversationComplete,
     onStreamComplete,
     onStreamWriterReady,
@@ -476,7 +468,6 @@ export function handleLocalOrgChatModel(
             authHeader,
             chatboxId,
             accessVersion,
-            chatboxToken,
             selectedServers: options.selectedServers,
           }).catch((err) => {
             logger.warn("[org/local] Failed to post local usage", {
@@ -539,7 +530,6 @@ async function postLocalUsage(params: {
   authHeader?: string;
   chatboxId?: string;
   accessVersion?: number;
-  chatboxToken?: string;
   selectedServers?: string[];
 }): Promise<void> {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
@@ -571,11 +561,8 @@ async function postLocalUsage(params: {
           ? { promptIndex: params.promptIndex }
           : {}),
         ...(params.chatboxId ? { chatboxId: params.chatboxId } : {}),
-        ...(typeof params.accessVersion === "number"
+        ...(params.chatboxId && Number.isFinite(params.accessVersion)
           ? { accessVersion: params.accessVersion }
-          : {}),
-        ...(params.chatboxToken && !params.chatboxId
-          ? { chatboxToken: params.chatboxToken }
           : {}),
         ...(params.selectedServers && params.selectedServers.length > 0
           ? { serverIds: params.selectedServers }
@@ -622,7 +609,6 @@ export async function handleHostedOrgChatModel(
     authHeader: options.authHeader,
     chatboxId: options.chatboxId,
     accessVersion: options.accessVersion,
-    chatboxToken: options.chatboxToken,
     mcpClientManager: options.mcpClientManager,
     selectedServers: options.selectedServers,
     requireToolApproval: options.requireToolApproval,
@@ -637,7 +623,8 @@ export async function handleHostedOrgChatModel(
     extraBodyFields: {
       providerKey: options.providerKey,
       ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
-      // chatboxToken is set on the body by handleMCPJamFreeChatModel itself.
+      // chatboxId / accessVersion are set on the body by
+      // handleMCPJamFreeChatModel itself.
       ...(options.selectedServers && options.selectedServers.length > 0
         ? { serverIds: options.selectedServers }
         : {}),
