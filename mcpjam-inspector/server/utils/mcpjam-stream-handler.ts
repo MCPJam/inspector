@@ -80,6 +80,8 @@ export interface MCPJamHandlerOptions {
   temperature?: number;
   tools: ToolSet;
   authHeader?: string;
+  chatboxId?: string;
+  accessVersion?: number;
   chatboxToken?: string;
   projectId?: string;
   chatSessionId?: string;
@@ -130,6 +132,8 @@ interface StepContext {
   toolDefs: ToolDefinition[];
   tools: ToolSet;
   authHeader?: string;
+  chatboxId?: string;
+  accessVersion?: number;
   chatboxToken?: string;
   projectId?: string;
   chatSessionId?: string;
@@ -916,6 +920,8 @@ async function processOneStep(
     toolDefs,
     tools,
     authHeader,
+    chatboxId,
+    accessVersion,
     chatboxToken,
     projectId,
     modelId,
@@ -991,7 +997,9 @@ async function processOneStep(
       systemPrompt,
       ...(temperature !== undefined ? { temperature } : {}),
       tools: toolDefs,
-      ...(chatboxToken ? { chatboxToken } : {}),
+      ...(chatboxId ? { chatboxId } : {}),
+      ...(typeof accessVersion === "number" ? { accessVersion } : {}),
+      ...(chatboxToken && !chatboxId ? { chatboxToken } : {}),
       ...(projectId ? { projectId } : {}),
       ...(chatSessionId ? { chatSessionId } : {}),
       ...(sourceType ? { sourceType } : {}),
@@ -1303,6 +1311,8 @@ export async function handleMCPJamFreeChatModel(
     temperature,
     tools,
     authHeader,
+    chatboxId,
+    accessVersion,
     chatboxToken,
     projectId,
     mcpClientManager,
@@ -1375,6 +1385,8 @@ export async function handleMCPJamFreeChatModel(
             toolDefs,
             tools,
             authHeader,
+            chatboxId,
+            accessVersion,
             chatboxToken,
             projectId,
             chatSessionId,

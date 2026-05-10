@@ -92,7 +92,13 @@ export interface OrgModelHandlerOptions {
    * Hosted chatbox token for guest chat sessions. Forwarded to /stream/org
    * so Convex can authorize the guest against the project via the existing
    * authorizeGuestServerAccessBatch query.
+   *
+   * Post-refactor: prefer `chatboxId` (+ optional `accessVersion`); the
+   * backend will redeem `chatboxToken` server-side for transitional callers
+   * that still pass the token.
    */
+  chatboxId?: string;
+  accessVersion?: number;
   chatboxToken?: string;
   clientIp?: string | null;
 }
@@ -182,6 +188,8 @@ export interface OrgLocalModelHandlerOptions {
   requireToolApproval?: boolean;
   /** Forwarded to /stream/org/local-usage for identity resolution. */
   authHeader?: string;
+  chatboxId?: string;
+  accessVersion?: number;
   chatboxToken?: string;
   onConversationComplete?: (
     fullHistory: ModelMessage[],
@@ -209,6 +217,8 @@ export function handleLocalOrgChatModel(
     tools,
     requireToolApproval,
     authHeader,
+    chatboxId,
+    accessVersion,
     chatboxToken,
     onConversationComplete,
     onStreamComplete,
@@ -464,6 +474,8 @@ export function handleLocalOrgChatModel(
             turnId: traceTurn.turnId,
             promptIndex: traceTurn.promptIndex,
             authHeader,
+            chatboxId,
+            accessVersion,
             chatboxToken,
             selectedServers: options.selectedServers,
           }).catch((err) => {
@@ -525,6 +537,8 @@ async function postLocalUsage(params: {
   turnId?: string;
   promptIndex?: number;
   authHeader?: string;
+  chatboxId?: string;
+  accessVersion?: number;
   chatboxToken?: string;
   selectedServers?: string[];
 }): Promise<void> {
@@ -556,7 +570,13 @@ async function postLocalUsage(params: {
         ...(typeof params.promptIndex === "number"
           ? { promptIndex: params.promptIndex }
           : {}),
-        ...(params.chatboxToken ? { chatboxToken: params.chatboxToken } : {}),
+        ...(params.chatboxId ? { chatboxId: params.chatboxId } : {}),
+        ...(typeof params.accessVersion === "number"
+          ? { accessVersion: params.accessVersion }
+          : {}),
+        ...(params.chatboxToken && !params.chatboxId
+          ? { chatboxToken: params.chatboxToken }
+          : {}),
         ...(params.selectedServers && params.selectedServers.length > 0
           ? { serverIds: params.selectedServers }
           : {}),
@@ -600,6 +620,8 @@ export async function handleHostedOrgChatModel(
     tools: options.tools,
     projectId: options.workspaceId ? undefined : options.projectId,
     authHeader: options.authHeader,
+    chatboxId: options.chatboxId,
+    accessVersion: options.accessVersion,
     chatboxToken: options.chatboxToken,
     mcpClientManager: options.mcpClientManager,
     selectedServers: options.selectedServers,

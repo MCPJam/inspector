@@ -46,6 +46,13 @@ export const projectServerSchema = z.object({
   clientCapabilities: clientCapabilitiesSchema.optional(),
   oauthAccessToken: z.string().optional(),
   accessScope: z.enum(["project_member", "chat_v2"]).optional(),
+  // Post-refactor: callers identify chatboxes by `chatboxId` (resolved via
+  // /web/chatbox/redeem). `chatboxToken` is kept transitionally so untouched
+  // legacy callsites still work; the backend's authorize-batch will redeem
+  // it server-side. TODO(chatbox-followup): drop `chatboxToken` once every
+  // client surface migrates.
+  chatboxId: z.string().min(1).optional(),
+  accessVersion: z.number().int().nonnegative().optional(),
   chatboxToken: z.string().min(1).optional(),
 });
 
@@ -79,6 +86,13 @@ export const promptsListMultiSchema = z.object({
   clientCapabilities: clientCapabilitiesSchema.optional(),
   oauthTokens: z.record(z.string(), z.string()).optional(),
   accessScope: z.enum(["project_member", "chat_v2"]).optional(),
+  // Post-refactor: callers identify chatboxes by `chatboxId` (resolved via
+  // /web/chatbox/redeem). `chatboxToken` is kept transitionally so untouched
+  // legacy callsites still work; the backend's authorize-batch will redeem
+  // it server-side. TODO(chatbox-followup): drop `chatboxToken` once every
+  // client surface migrates.
+  chatboxId: z.string().min(1).optional(),
+  accessVersion: z.number().int().nonnegative().optional(),
   chatboxToken: z.string().min(1).optional(),
 });
 
@@ -99,6 +113,9 @@ export const hostedChatSchema = z
     surface: z.enum(["preview", "share_link"]).optional(),
     oauthTokens: z.record(z.string(), z.string()).optional(),
     accessScope: z.enum(["project_member", "chat_v2"]).optional(),
+    // See projectServerSchema for the chatboxId migration note.
+    chatboxId: z.string().min(1).optional(),
+    accessVersion: z.number().int().nonnegative().optional(),
     chatboxToken: z.string().min(1).optional(),
   })
   .passthrough();
@@ -224,6 +241,12 @@ export async function authorizeServer(
   options?: {
     accessScope?: "project_member" | "chat_v2";
     workspaceId?: string;
+    // Post-refactor preferred path: `chatboxId` (+ optional `accessVersion`
+    // for cache-version stamping). `chatboxToken` is accepted as a fallback
+    // so legacy callsites that haven't migrated yet still work; the backend
+    // will redeem it server-side.
+    chatboxId?: string;
+    accessVersion?: number;
     chatboxToken?: string;
   }
 ): Promise<ClientSafeAuthorizeResponse> {
@@ -250,7 +273,11 @@ export async function authorizeServer(
           : { projectId }),
         serverId,
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
-        ...(options?.chatboxToken
+        ...(options?.chatboxId ? { chatboxId: options.chatboxId } : {}),
+        ...(typeof options?.accessVersion === "number"
+          ? { accessVersion: options.accessVersion }
+          : {}),
+        ...(options?.chatboxToken && !options?.chatboxId
           ? { chatboxToken: options.chatboxToken }
           : {}),
       }),
@@ -303,6 +330,8 @@ export async function authorizeBatch(
   options?: {
     accessScope?: "project_member" | "chat_v2";
     workspaceId?: string;
+    chatboxId?: string;
+    accessVersion?: number;
     chatboxToken?: string;
   }
 ): Promise<ConvexBatchAuthorizeResponse> {
@@ -329,7 +358,11 @@ export async function authorizeBatch(
           : { projectId }),
         serverIds,
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
-        ...(options?.chatboxToken
+        ...(options?.chatboxId ? { chatboxId: options.chatboxId } : {}),
+        ...(typeof options?.accessVersion === "number"
+          ? { accessVersion: options.accessVersion }
+          : {}),
+        ...(options?.chatboxToken && !options?.chatboxId
           ? { chatboxToken: options.chatboxToken }
           : {}),
       }),
@@ -471,6 +504,8 @@ export async function createAuthorizedManager(
   options?: {
     accessScope?: "project_member" | "chat_v2";
     workspaceId?: string;
+    chatboxId?: string;
+    accessVersion?: number;
     chatboxToken?: string;
     rpcLogger?: RpcLogger;
     serverNames?: string[];
@@ -501,6 +536,8 @@ export async function createAuthorizedManager(
     {
       accessScope: options?.accessScope,
       workspaceId: options?.workspaceId,
+      chatboxId: options?.chatboxId,
+      accessVersion: options?.accessVersion,
       chatboxToken: options?.chatboxToken,
     }
   );
@@ -535,6 +572,8 @@ export async function createAuthorizedManager(
             accessScope: options?.accessScope,
             workspaceId: options?.workspaceId,
             shareToken: options?.shareToken,
+            chatboxId: options?.chatboxId,
+            accessVersion: options?.accessVersion,
             chatboxToken: options?.chatboxToken,
           })
         : undefined;
@@ -718,6 +757,12 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
       raw.accessScope === "project_member" || raw.accessScope === "chat_v2"
         ? raw.accessScope
         : undefined;
+    const chatboxId =
+      typeof raw.chatboxId === "string" && raw.chatboxId.trim()
+        ? raw.chatboxId
+        : undefined;
+    const accessVersion =
+      typeof raw.accessVersion === "number" ? raw.accessVersion : undefined;
     const chatboxToken =
       typeof raw.chatboxToken === "string" && raw.chatboxToken.trim()
         ? raw.chatboxToken
@@ -737,6 +782,8 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
           accessScope,
           workspaceId:
             typeof raw.workspaceId === "string" ? raw.workspaceId : undefined,
+          chatboxId,
+          accessVersion,
           chatboxToken,
           rpcLogger: rpcCollector?.rpcLogger,
           serverNames,

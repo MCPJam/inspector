@@ -9,6 +9,15 @@ export type HostedOAuthRefreshOptions = {
   accessScope?: "project_member" | "chat_v2";
   workspaceId?: string;
   shareToken?: string;
+  /**
+   * Post-refactor preferred path: pass the resolved `chatboxId` (and
+   * `accessVersion`) so the backend can scope OAuth credentials by
+   * `(userId, chatbox.projectId, serverId)` without needing to re-redeem
+   * the token on a refresh. Falls back to `chatboxToken` for transitional
+   * callers.
+   */
+  chatboxId?: string;
+  accessVersion?: number;
   chatboxToken?: string;
   serverName?: string;
 };
@@ -53,7 +62,11 @@ export async function forceRefreshHostedOAuthAccessToken(
         serverId,
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
         ...(options?.shareToken ? { shareToken: options.shareToken } : {}),
-        ...(options?.chatboxToken
+        ...(options?.chatboxId ? { chatboxId: options.chatboxId } : {}),
+        ...(typeof options?.accessVersion === "number"
+          ? { accessVersion: options.accessVersion }
+          : {}),
+        ...(options?.chatboxToken && !options?.chatboxId
           ? { chatboxToken: options.chatboxToken }
           : {}),
       }),
@@ -117,6 +130,8 @@ export type HostedOAuthUnauthorizedHandlerArgs = {
   accessScope?: "project_member" | "chat_v2";
   workspaceId?: string;
   shareToken?: string;
+  chatboxId?: string;
+  accessVersion?: number;
   chatboxToken?: string;
 };
 
@@ -138,6 +153,8 @@ export function buildHostedOAuthUnauthorizedHandler(
         accessScope: args.accessScope,
         workspaceId: args.workspaceId,
         shareToken: args.shareToken,
+        chatboxId: args.chatboxId,
+        accessVersion: args.accessVersion,
         chatboxToken: args.chatboxToken,
         serverName: args.serverName,
       }
