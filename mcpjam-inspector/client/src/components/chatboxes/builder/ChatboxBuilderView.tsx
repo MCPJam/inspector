@@ -772,6 +772,16 @@ export function ChatboxBuilderView({
       return false;
     }
 
+    // On an edit route chatboxId is set before useChatbox() resolves;
+    // branching the create-vs-update decision below on `chatbox` (the
+    // reactive load) would let an early click fall into createChatbox
+    // and duplicate the row. Block save until the chatbox record is
+    // available, then key the branch off chatboxId.
+    if (chatboxId && !chatbox) {
+      toast.error("Loading chatbox — try again in a moment");
+      return false;
+    }
+
     // The backend's v2 hostConfig path persists connection fields
     // verbatim. Block save until the seed query has resolved so we
     // don't ship empty connectionDefaults / clientCapabilities /
@@ -803,7 +813,7 @@ export function ChatboxBuilderView({
         hostConfig: hostConfigInput,
       };
 
-      if (!chatbox) {
+      if (!chatboxId) {
         let created = (await createChatbox({
           projectId,
           ...payload,
@@ -821,7 +831,7 @@ export function ChatboxBuilderView({
       }
 
       await updateChatbox({
-        chatboxId: chatbox.chatboxId,
+        chatboxId,
         ...payload,
       });
       toast.success("Chatbox updated");
