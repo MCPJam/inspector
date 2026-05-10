@@ -96,12 +96,26 @@ vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
     allowedOpenAiModel,
     guestModel,
   ]),
-  buildAvailableModelsFromOrgConfig: vi.fn(() => [
-    orgOpenAiModel,
-    allowedHostedModel,
-    allowedOpenAiModel,
-    guestModel,
-  ]),
+  buildAvailableModelsFromOrgConfig: vi.fn((orgConfig) =>
+    orgConfig
+      ? [
+          gatedAnthropicModel,
+          gatedGoogleModel,
+          gatedOpenAiModel,
+          orgOpenAiModel,
+          allowedHostedModel,
+          allowedOpenAiModel,
+          guestModel,
+        ]
+      : [
+          gatedAnthropicModel,
+          gatedGoogleModel,
+          gatedOpenAiModel,
+          allowedHostedModel,
+          allowedOpenAiModel,
+          guestModel,
+        ],
+  ),
   getDefaultModel: vi.fn((models: Array<typeof guestModel>) => models[0]),
 }));
 
@@ -290,7 +304,7 @@ describe("useChatSession hosted mode", () => {
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          shareToken: "share-token",
+          chatboxToken: "chatbox-token",
         },
       })
     );
@@ -302,7 +316,7 @@ describe("useChatSession hosted mode", () => {
       chatSessionId: "chat-session-id",
       selectedServerIds: ["server-id-1"],
       selectedServerNames: ["server-1"],
-      shareToken: "share-token",
+      chatboxToken: "chatbox-token",
       accessScope: "chat_v2",
     });
     unmount();
@@ -403,7 +417,7 @@ describe("useChatSession hosted mode", () => {
         hostedContext: {
           projectId: string;
           selectedServerIds: string[];
-          shareToken: string;
+          chatboxToken: string;
         };
       }) =>
         useChatSession({
@@ -416,7 +430,7 @@ describe("useChatSession hosted mode", () => {
           hostedContext: {
             projectId: "project-1",
             selectedServerIds: ["server-id-1"],
-            shareToken: "share-token-1",
+            chatboxToken: "chatbox-token-1",
           },
         },
       }
@@ -435,7 +449,7 @@ describe("useChatSession hosted mode", () => {
       hostedContext: {
         projectId: "project-2",
         selectedServerIds: ["server-id-2"],
-        shareToken: "share-token-2",
+        chatboxToken: "chatbox-token-2",
       },
     });
 
@@ -668,7 +682,7 @@ describe("useChatSession hosted mode", () => {
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          shareToken: "share-token",
+          chatboxToken: "chatbox-token",
         },
       })
     );
@@ -738,7 +752,7 @@ describe("useChatSession hosted mode", () => {
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          shareToken: "share-token",
+          chatboxToken: "chatbox-token",
         },
       })
     );
@@ -760,7 +774,7 @@ describe("useChatSession hosted mode", () => {
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          shareToken: "share-token",
+          chatboxToken: "chatbox-token",
         },
       })
     );
@@ -895,7 +909,7 @@ describe("useChatSession hosted mode", () => {
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          shareToken: "share-token",
+          chatboxToken: "chatbox-token",
         },
       })
     );

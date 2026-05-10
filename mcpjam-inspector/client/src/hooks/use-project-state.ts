@@ -23,12 +23,13 @@ import {
   serializeServersForSharing,
 } from "@/lib/project-serialization";
 import {
-  composeProjectClientConfig,
+  DEFAULT_REQUEST_TIMEOUT_MS,
   pickProjectConnectionConfig,
   pickProjectHostContext,
   stableStringifyJson,
   type ProjectClientConfig,
   type ProjectConnectionConfigDraft,
+  type ProjectConnectionDefaults,
   type ProjectHostContextDraft,
 } from "@/lib/client-config";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
@@ -187,7 +188,7 @@ export function useProjectState({
     createProject: convexCreateProject,
     ensureDefaultProject: convexEnsureDefaultProject,
     updateProject: convexUpdateProject,
-    updateClientConfig: convexUpdateClientConfig,
+    patchProjectDefaultConnection: convexPatchProjectDefaultConnection,
     deleteProject: convexDeleteProject,
   } = useProjectMutations();
   const billingStatus = useOrganizationBillingStatus(
@@ -1002,104 +1003,186 @@ export function useProjectState({
   const persistProjectClientConfig = useCallback(
     async <T,>({
       projectId,
-      clientConfig,
+      slice,
       savedSlice,
       controller,
     }: {
       projectId: string;
-      clientConfig: ProjectClientConfig | undefined;
+      // The slice the user actually edited. Only this section is sent
+      // to the backend (the helper preserves the others) and only this
+      // section is updated optimistically — passing the full clientConfig
+      // would let a slow connection save clobber a newer host-context
+      // save and vice versa (P2). `connectionConfig: undefined` means
+      // "reset to default" for the connection slice.
+      slice:
+        | {
+            kind: "connection";
+            connectionConfig: ProjectConnectionConfigDraft | undefined;
+          }
+        | {
+            kind: "hostContext";
+            hostContext: ProjectHostContextDraft;
+          };
       savedSlice: T | undefined;
       controller: ClientConfigSaveController<T>;
     }): Promise<void> => {
-      const awaitRemoteEcho = isAuthenticated && !shouldUseLocalFallback;
+      // Phase 4: writes go through `hostConfigsV2.patchProjectDefaultConnection`.
+      // The legacy project-doc echo wait is gone (v2 is the canonical
+      // target), but we still need a sync-pending window during the
+      // mutation in-flight period. `useProjectClientConfigSyncPending`
+      // (and the `assertClientConfigSynced` /
+      // `notifyIfClientConfigSyncPending` guards in use-server-state)
+      // gate connect / reconnect / test / resolver paths so a user who
+      // saves and immediately reconnects can't be served the still-stale
+      // `activeProject.clientConfig` (the optimistic slice-merge dispatch
+      // only runs after the await resolves). beginSave with
+      // awaitRemoteEcho:true sets that pending state; markSaved /
+      // failSave with awaitRemoteEcho:false skip the controller's
+      // pending-data gate so we clear immediately on mutation completion.
+      const useV2Write = isAuthenticated && !shouldUseLocalFallback;
 
       controller.beginSave({
         projectId,
         savedConfig: savedSlice,
-        awaitRemoteEcho,
+        awaitRemoteEcho: useV2Write,
       });
 
-      if (awaitRemoteEcho) {
-        const pendingSyncId = `project-client-config-sync-${pendingClientConfigSyncIdRef.current++}`;
-        const remoteEchoPromise = new Promise<void>((resolve, reject) => {
-          const supersededPendingId =
-            pendingClientConfigSyncByProjectRef.current.get(projectId);
-          if (supersededPendingId) {
-            clearPendingClientConfigSync(
-              supersededPendingId,
-              new Error(PROJECT_CLIENT_CONFIG_SYNC_SUPERSEDED_ERROR_MESSAGE),
-            );
+      // Resolve the connection slice into both the v2 wire payload and
+      // the local optimistic state. Reset (`connectionConfig ===
+      // undefined`) explicitly sends `{ headers: {}, requestTimeout:
+      // DEFAULT_REQUEST_TIMEOUT_MS }` — sending headers-only would let
+      // the backend's helper preserve the user's previous timeout while
+      // the optimistic local state shows defaults, drifting back to the
+      // old timeout on the next refetch.
+      let resolvedConnectionDefaults:
+        | ProjectConnectionDefaults
+        | undefined;
+      if (slice.kind === "connection") {
+        const { connectionConfig } = slice;
+        if (connectionConfig === undefined) {
+          resolvedConnectionDefaults = {
+            headers: {},
+            requestTimeout: DEFAULT_REQUEST_TIMEOUT_MS,
+          };
+        } else {
+          const cd = connectionConfig.connectionDefaults;
+          if (cd === undefined) {
+            resolvedConnectionDefaults = {
+              headers: {},
+              requestTimeout: DEFAULT_REQUEST_TIMEOUT_MS,
+            };
+          } else {
+            const requestTimeout =
+              cd.requestTimeout !== undefined &&
+              Number.isFinite(cd.requestTimeout)
+                ? cd.requestTimeout
+                : DEFAULT_REQUEST_TIMEOUT_MS;
+            resolvedConnectionDefaults = {
+              headers: cd.headers ?? {},
+              requestTimeout,
+            };
           }
+        }
+      }
+      const resolvedClientCapabilities =
+        slice.kind === "connection"
+          ? slice.connectionConfig === undefined
+            ? {}
+            : slice.connectionConfig.clientCapabilities
+          : undefined;
 
-          const timeoutId = setTimeout(() => {
-            pendingClientConfigSyncRef.current.delete(pendingSyncId);
-            if (
-              pendingClientConfigSyncByProjectRef.current.get(projectId) ===
-              pendingSyncId
-            ) {
-              pendingClientConfigSyncByProjectRef.current.delete(projectId);
-            }
-            reject(new Error(PROJECT_CLIENT_CONFIG_SYNC_TIMEOUT_ERROR_MESSAGE));
-          }, CLIENT_CONFIG_SYNC_ECHO_TIMEOUT_MS);
-
-          pendingClientConfigSyncByProjectRef.current.set(
-            projectId,
-            pendingSyncId,
-          );
-          pendingClientConfigSyncRef.current.set(pendingSyncId, {
-            id: pendingSyncId,
-            projectId,
-            expectedSerializedConfig:
-              stringifyProjectClientConfig(clientConfig),
-            resolve,
-            reject,
-            timeoutId,
-          });
-        });
-
+      if (useV2Write) {
         try {
-          await convexUpdateClientConfig({
-            projectId,
-            clientConfig,
-          });
-          await remoteEchoPromise;
+          if (slice.kind === "connection") {
+            await convexPatchProjectDefaultConnection({
+              projectId,
+              connectionDefaults: resolvedConnectionDefaults,
+              clientCapabilities: resolvedClientCapabilities,
+              // Leave hostContext untouched on the backend — passing
+              // undefined preserves the existing value (P2).
+              hostContext: undefined,
+            });
+          } else {
+            await convexPatchProjectDefaultConnection({
+              projectId,
+              // Leave connection portions untouched on the backend.
+              connectionDefaults: undefined,
+              clientCapabilities: undefined,
+              hostContext: slice.hostContext,
+            });
+          }
         } catch (error) {
-          clearPendingClientConfigSync(pendingSyncId);
           controller.failSave({
             projectId,
             savedConfig: savedSlice,
-            awaitRemoteEcho,
+            awaitRemoteEcho: false,
           });
           const errorMessage =
             error instanceof Error ? error.message : "Unknown error";
-          if (!isSupersededClientConfigSyncError(error)) {
-            logger.error("Failed to update project client config", {
-              error: errorMessage,
-              projectId,
-            });
-            toast.error(errorMessage);
-          }
+          logger.error("Failed to update project client config", {
+            error: errorMessage,
+            projectId,
+          });
+          toast.error(errorMessage);
           throw error instanceof Error ? error : new Error(errorMessage);
         }
+        // Optimistically update only the slice the user edited. Using
+        // the slice-merge action (rather than dispatching a recomposed
+        // full clientConfig) keeps the sibling slice authoritative
+        // even when two saves race. The reactive project query will
+        // catch up on its next refetch.
+        if (slice.kind === "connection") {
+          dispatch({
+            type: "UPDATE_PROJECT_CLIENT_CONFIG_SLICE",
+            projectId,
+            slice: {
+              kind: "connection",
+              connectionDefaults: resolvedConnectionDefaults,
+              clientCapabilities: resolvedClientCapabilities ?? {},
+            },
+          });
+        } else {
+          dispatch({
+            type: "UPDATE_PROJECT_CLIENT_CONFIG_SLICE",
+            projectId,
+            slice: { kind: "hostContext", hostContext: slice.hostContext },
+          });
+        }
+        controller.markSaved({
+          projectId,
+          savedConfig: savedSlice,
+          awaitRemoteEcho: false,
+        });
         return;
       }
 
-      dispatch({
-        type: "UPDATE_PROJECT",
-        projectId,
-        updates: { clientConfig },
-      });
+      if (slice.kind === "connection") {
+        dispatch({
+          type: "UPDATE_PROJECT_CLIENT_CONFIG_SLICE",
+          projectId,
+          slice: {
+            kind: "connection",
+            connectionDefaults: resolvedConnectionDefaults,
+            clientCapabilities: resolvedClientCapabilities ?? {},
+          },
+        });
+      } else {
+        dispatch({
+          type: "UPDATE_PROJECT_CLIENT_CONFIG_SLICE",
+          projectId,
+          slice: { kind: "hostContext", hostContext: slice.hostContext },
+        });
+      }
       controller.markSaved({
         projectId,
         savedConfig: savedSlice,
-        awaitRemoteEcho,
+        awaitRemoteEcho: false,
       });
     },
     [
       isAuthenticated,
       shouldUseLocalFallback,
-      clearPendingClientConfigSync,
-      convexUpdateClientConfig,
+      convexPatchProjectDefaultConnection,
       logger,
       dispatch,
     ],
@@ -1247,7 +1330,6 @@ export function useProjectState({
       connectionConfig: ProjectConnectionConfigDraft | undefined,
     ): Promise<void> => {
       const clientConfigStore = useClientConfigStore.getState();
-      const projectClientConfig = effectiveProjects[projectId]?.clientConfig;
       const scopedDraftConfig = doesStoreSliceBelongToProject(
         clientConfigStore.activeProjectId,
         projectId,
@@ -1258,25 +1340,21 @@ export function useProjectState({
         connectionConfig ??
         scopedDraftConfig ??
         resolvePersistedConnectionConfig(projectId);
-      const clientConfig = composeProjectClientConfig({
-        connectionConfig: connectionConfigToPersist,
-        hostContext: resolvePersistedHostContext(projectId),
-        fallback: projectClientConfig ?? null,
-      });
 
       await persistProjectClientConfig({
         projectId,
-        clientConfig,
+        slice: {
+          kind: "connection",
+          connectionConfig: connectionConfigToPersist,
+        },
         savedSlice: connectionConfigToPersist,
         controller: connectionConfigSaveController,
       });
     },
     [
-      effectiveProjects,
       connectionConfigSaveController,
       persistProjectClientConfig,
       resolvePersistedConnectionConfig,
-      resolvePersistedHostContext,
     ],
   );
 
@@ -1286,7 +1364,6 @@ export function useProjectState({
       hostContext: ProjectHostContextDraft | undefined,
     ): Promise<void> => {
       const hostContextStore = useHostContextStore.getState();
-      const projectClientConfig = effectiveProjects[projectId]?.clientConfig;
       const scopedDraftHostContext = doesStoreSliceBelongToProject(
         hostContextStore.activeProjectId,
         projectId,
@@ -1297,24 +1374,17 @@ export function useProjectState({
         hostContext ??
         scopedDraftHostContext ??
         resolvePersistedHostContext(projectId);
-      const clientConfig = composeProjectClientConfig({
-        connectionConfig: resolvePersistedConnectionConfig(projectId),
-        hostContext: hostContextToPersist,
-        fallback: projectClientConfig ?? null,
-      });
 
       await persistProjectClientConfig({
         projectId,
-        clientConfig,
+        slice: { kind: "hostContext", hostContext: hostContextToPersist },
         savedSlice: hostContextToPersist,
         controller: hostContextSaveController,
       });
     },
     [
-      effectiveProjects,
       hostContextSaveController,
       persistProjectClientConfig,
-      resolvePersistedConnectionConfig,
       resolvePersistedHostContext,
     ],
   );

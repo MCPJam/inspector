@@ -1,7 +1,10 @@
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import { OauthTokens } from "@/shared/types.js";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
-import type { ProjectClientConfig } from "@/lib/client-config";
+import type {
+  ProjectClientConfig,
+  ProjectConnectionDefaults,
+} from "@/lib/client-config";
 import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
 
 export type ConnectionStatus =
@@ -130,6 +133,27 @@ export type AppAction =
       type: "UPDATE_PROJECT";
       projectId: string;
       updates: Partial<Project>;
+    }
+  | {
+      // Merge one section of `clientConfig` into the project's current
+      // value, reading the current value from reducer state at the time
+      // the action is processed. Necessary so concurrent connection +
+      // host-context saves don't clobber each other locally — a full
+      // `UPDATE_PROJECT` with a composed clientConfig captures the
+      // sibling section at save-start, so a slow save can overwrite a
+      // newer sibling. This action only touches the named slice.
+      type: "UPDATE_PROJECT_CLIENT_CONFIG_SLICE";
+      projectId: string;
+      slice:
+        | {
+            kind: "connection";
+            connectionDefaults: ProjectConnectionDefaults | undefined;
+            clientCapabilities: Record<string, unknown>;
+          }
+        | {
+            kind: "hostContext";
+            hostContext: Record<string, unknown>;
+          };
     }
   | { type: "DELETE_PROJECT"; projectId: string }
   | { type: "SWITCH_PROJECT"; projectId: string }

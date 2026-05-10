@@ -465,9 +465,11 @@ describe("ChatTabV2 history sync", () => {
     render(
       <ChatTabV2
         {...defaultProps}
-        hostedProjectIdOverride="project-1"
-        hostedSelectedServerIdsOverride={["server-1"]}
-        hostedContext={{ chatboxToken: "chatbox-token" }}
+        hostedContext={{
+          chatboxToken: "chatbox-token",
+          projectId: "project-1",
+          selectedServerIds: ["server-1"],
+        }}
       />
     );
 

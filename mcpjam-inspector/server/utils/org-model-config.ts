@@ -31,7 +31,6 @@ export type ResolveOrgModelConfigTarget =
 export type ResolveOrgModelConfigAuth = {
   authHeader?: string;
   bearerToken?: string;
-  shareToken?: string;
   chatboxToken?: string;
   serverIds?: string[];
 };
@@ -105,7 +104,6 @@ function buildCacheKey(
     .update(
       JSON.stringify({
         authorization: normalizeAuthHeader(auth) ?? "",
-        shareToken: auth?.shareToken?.trim() ?? "",
         chatboxToken: auth?.chatboxToken?.trim() ?? "",
         serverIds: normalizeServerIds(auth?.serverIds),
       }),
@@ -150,9 +148,6 @@ export async function resolveOrgModelConfig(
       },
       body: JSON.stringify({
         ...params,
-        ...(auth?.shareToken?.trim()
-          ? { shareToken: auth.shareToken.trim() }
-          : {}),
         ...(auth?.chatboxToken?.trim()
           ? { chatboxToken: auth.chatboxToken.trim() }
           : {}),
@@ -484,7 +479,6 @@ function buildRuntimeCacheKey(
     .update(
       JSON.stringify({
         authorization: normalizeAuthHeader(auth) ?? "",
-        shareToken: auth?.shareToken?.trim() ?? "",
         chatboxToken: auth?.chatboxToken?.trim() ?? "",
         serverIds: normalizeServerIds(auth?.serverIds),
       }),
@@ -545,9 +539,6 @@ export async function resolveOrgProviderRuntime(
         projectId,
         providerKey,
         model,
-        ...(auth?.shareToken?.trim()
-          ? { shareToken: auth.shareToken.trim() }
-          : {}),
         ...(auth?.chatboxToken?.trim()
           ? { chatboxToken: auth.chatboxToken.trim() }
           : {}),

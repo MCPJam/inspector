@@ -537,6 +537,11 @@ chatV2.post("/", async (c) => {
     const directHostConfig = hostConfigServerIds
       ? buildDirectHostConfig({
           modelId: String(modelDefinition.id),
+          // Phase 3: forward the chat tab's resolved host style so the
+          // backend writes a v2 hostConfig with a real (non-`'direct'`)
+          // hostStyle. Defaults to `'claude'` when omitted by the
+          // caller — see DirectChatHostStyle docs.
+          hostStyle: body.hostStyle,
           systemPrompt,
           requestedTemperature: temperature,
           resolvedTemperature,

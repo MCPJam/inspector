@@ -340,7 +340,7 @@ describe("useChatSession minimal mode parity", () => {
         selectedServers,
         minimalMode: true,
         hostedContext: {
-          shareToken: "share-token",
+          chatboxToken: "chatbox-token",
         },
         executionConfig: {
           systemPrompt: "Prompt",

@@ -134,19 +134,27 @@ tools.post("/list", async (c) => {
       return c.json({ error: "serverId is required" }, 400);
     }
 
-    // Normalize serverId - try to find a case-insensitive match if exact match fails
+    // Normalize serverId - try to find a case-insensitive match if exact match
+    // fails. Match against all registered servers (not just live-clients) so
+    // a server that's still mid-connect can still be resolved.
     let normalizedServerId = serverId;
-    const availableServers = c.mcpClientManager
-      .listServers()
-      .filter((id: string) => Boolean(c.mcpClientManager.getClient(id)));
+    const registeredServers = c.mcpClientManager.listServers();
 
-    if (!availableServers.includes(serverId)) {
-      const match = availableServers.find(
+    if (!registeredServers.includes(serverId)) {
+      const match = registeredServers.find(
         (name: string) => name.toLowerCase() === serverId.toLowerCase(),
       );
       if (match) {
         normalizedServerId = match;
       }
+    }
+
+    // Only bail out for truly unknown ids (e.g. stale chatbox refs) so we
+    // don't 500 the metadata fetch. Registered-but-still-connecting ids fall
+    // through to the SDK path, which awaits the in-flight connectPromise and
+    // returns the real tools.
+    if (!registeredServers.includes(normalizedServerId)) {
+      return c.json({ tools: [], toolsMetadata: {}, tokenCount: undefined });
     }
 
     return c.json(

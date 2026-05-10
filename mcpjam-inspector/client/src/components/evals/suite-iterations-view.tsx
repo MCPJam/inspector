@@ -15,6 +15,7 @@ import { TestCaseDetailView } from "./test-case-detail-view";
 import { SuiteDashboard } from "./suite-dashboard";
 import { EvalExportModal } from "./eval-export-modal";
 import { SuiteEnvironmentEditor } from "./suite-environment-editor";
+import { SuiteExecutionConfigEditor } from "./suite-execution-config-editor";
 import { useSuiteData, useRunDetailData } from "./use-suite-data";
 import type {
   EvalCase,
@@ -819,6 +820,12 @@ export function SuiteIterationsView({
                 }}
               />
             ) : null}
+
+            <SuiteExecutionConfigEditor
+              suite={suite}
+              availableModels={availableModels}
+              projectId={projectId}
+            />
 
             {/* Suite Description Section */}
             <div className="space-y-3">

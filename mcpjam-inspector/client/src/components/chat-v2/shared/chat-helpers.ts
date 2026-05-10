@@ -167,6 +167,7 @@ export interface FormattedError {
   message: string;
   details?: string;
   code?: string;
+  providerKey?: string;
   statusCode?: number;
   isRetryable?: boolean;
   isMCPJamPlatformError?: boolean;
@@ -207,6 +208,45 @@ const MCPJAM_PLATFORM_CODES = [
   "mcpjam_api_error",
   "mcpjam_config_error",
 ];
+export const BYOK_PROVIDER_MISSING_CODE = "byok_provider_missing";
+export const BYOK_PROVIDER_DISABLED_CODE = "byok_provider_disabled";
+export const BYOK_INVALID_KEY_CODE = "byok_invalid_key";
+export const BYOK_PROVIDER_MISCONFIGURED_CODE = "byok_provider_misconfigured";
+export const PROVIDER_NOT_CONFIGURED_CODE = "provider_not_configured";
+export const PROVIDER_AUTH_ERROR_CODE = "provider_auth_error";
+export const MODEL_NOT_ALLOWED_CODE = "model_not_allowed";
+export const LOCAL_RUNTIME_REQUIRED_CODE = "local_runtime_required";
+export const LOCAL_RUNTIME_NOT_ALLOWED_CODE = "local_runtime_not_allowed";
+
+export const BYOK_ERROR_CODES = new Set<string>([
+  BYOK_PROVIDER_MISSING_CODE,
+  BYOK_PROVIDER_DISABLED_CODE,
+  BYOK_INVALID_KEY_CODE,
+  BYOK_PROVIDER_MISCONFIGURED_CODE,
+  PROVIDER_NOT_CONFIGURED_CODE,
+  PROVIDER_AUTH_ERROR_CODE,
+  MODEL_NOT_ALLOWED_CODE,
+  LOCAL_RUNTIME_REQUIRED_CODE,
+  LOCAL_RUNTIME_NOT_ALLOWED_CODE,
+]);
+
+export function isByokErrorCode(code: unknown): boolean {
+  return typeof code === "string" && BYOK_ERROR_CODES.has(code);
+}
+
+export function isOrgScopedAuthError(
+  code: unknown,
+  message: unknown,
+): boolean {
+  return (
+    code === "auth_error" &&
+    typeof message === "string" &&
+    /\b(?:org|organization)(?:anization)?(?:'s)?\b.*\b(?:provider|model|LLM|settings)\b/i.test(
+      message,
+    )
+  );
+}
+
 const MCPJAM_MODEL_LIMIT_PATTERN = /mcpjam[\w\s-]*model limit/i;
 const MINUTES_PER_HOUR = 60;
 const MINUTES_PER_DAY = 24 * MINUTES_PER_HOUR;
@@ -415,6 +455,10 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
       const code = parsed.code;
       const message = parsed.error || parsed.message || "An error occurred";
       const details = normalizeDetails(parsed.details);
+      const providerKey =
+        typeof parsed.providerKey === "string" && parsed.providerKey.trim()
+          ? parsed.providerKey.trim()
+          : undefined;
       const canTopUp =
         typeof parsed.canTopUp === "boolean" ? parsed.canTopUp : undefined;
       const walletLocked =
@@ -460,6 +504,7 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
         isMCPJamPlatformError: code
           ? MCPJAM_PLATFORM_CODES.includes(code)
           : false,
+        ...(providerKey !== undefined ? { providerKey } : {}),
         ...(canTopUp !== undefined ? { canTopUp } : {}),
         ...(walletLocked !== undefined ? { walletLocked } : {}),
         ...(limitKind !== undefined ? { limitKind } : {}),

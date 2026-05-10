@@ -49,6 +49,59 @@ function hasNumericCode(error: unknown): error is Error & { code: number } {
   );
 }
 
+function getNumericStatus(error: unknown): number | undefined {
+  if (!error || typeof error !== "object") {
+    return undefined;
+  }
+
+  const statusCode =
+    "statusCode" in error && typeof error.statusCode === "number"
+      ? error.statusCode
+      : undefined;
+  if (statusCode !== undefined) {
+    return statusCode;
+  }
+
+  const status =
+    "status" in error && typeof error.status === "number"
+      ? error.status
+      : undefined;
+  if (status !== undefined) {
+    return status;
+  }
+
+  const code =
+    "code" in error && typeof error.code === "number"
+      ? error.code
+      : undefined;
+  return code;
+}
+
+/**
+ * Strictly detects HTTP 401 authorization failures.
+ *
+ * Unlike isAuthError, this intentionally does not treat 403 or generic
+ * auth-looking messages as refreshable. OAuth refresh can repair an expired or
+ * rejected access token; it cannot repair insufficient scope.
+ */
+export function isUnauthorized401(error: unknown): boolean {
+  const numericStatus = getNumericStatus(error);
+  if (numericStatus !== undefined) {
+    return numericStatus === 401;
+  }
+
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  if (error.name === "UnauthorizedError") {
+    return true;
+  }
+
+  const message = error.message.toLowerCase();
+  return /\b(?:http|status)[:\s-]*401\b/i.test(message);
+}
+
 /**
  * Checks if an error is an authentication-related error.
  * Detects auth errors by:

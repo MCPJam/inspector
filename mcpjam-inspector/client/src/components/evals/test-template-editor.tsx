@@ -2572,27 +2572,25 @@ function RunColumn({
     const advancedConfig =
       record.iteration?.testCaseSnapshot?.advancedConfig ??
       testCase?.advancedConfig;
-    const systemPrompt =
-      typeof advancedConfig?.system === "string"
-        ? advancedConfig.system
-        : undefined;
-    const temperature =
-      typeof advancedConfig?.temperature === "number"
-        ? advancedConfig.temperature
-        : undefined;
-
-    const requireToolApproval =
-      typeof advancedConfig?.requireToolApproval === "boolean"
-        ? advancedConfig.requireToolApproval
-        : undefined;
 
     return {
       messages: adaptedTrace.messages,
       serverNames,
-      modelId: record.model,
-      systemPrompt,
-      temperature,
-      requireToolApproval,
+      executionConfig: {
+        modelId: record.model,
+        systemPrompt:
+          typeof advancedConfig?.system === "string"
+            ? advancedConfig.system
+            : undefined,
+        temperature:
+          typeof advancedConfig?.temperature === "number"
+            ? advancedConfig.temperature
+            : undefined,
+        requireToolApproval:
+          typeof advancedConfig?.requireToolApproval === "boolean"
+            ? advancedConfig.requireToolApproval
+            : undefined,
+      },
     } satisfies Omit<EvalChatHandoff, "id">;
   }, [
     connectedServerIds,

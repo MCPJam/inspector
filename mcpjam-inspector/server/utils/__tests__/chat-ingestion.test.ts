@@ -65,8 +65,8 @@ describe("chat-ingestion", () => {
       modelId: "openai/gpt-oss-120b",
       modelSource: "mcpjam",
       authHeader: "Bearer bearer-token",
-      shareToken: "share-token",
-      sourceType: "serverShare",
+      chatboxToken: "chatbox-token",
+      sourceType: "chatbox",
       surface: "share_link",
       sessionMessages: [
         {
@@ -467,7 +467,12 @@ describe("buildDirectHostConfig", () => {
     expect(undef.requireToolApproval).toBe(false);
   });
 
-  it("emits hostStyle 'direct' and the provided modelId", () => {
+  it("defaults hostStyle to 'claude' when omitted (Phase 3 read switch)", () => {
+    // Phase 3: legacy `'direct'` is no longer the default. Callers
+    // that used to omit hostStyle now get 'claude' so new direct chat
+    // traces produce v2 hostConfigs with a real host style. Backend
+    // accepts the legacy literal `'direct'` for one deploy and
+    // normalizes with a `legacy_direct_style` warn.
     const config = buildDirectHostConfig({
       modelId: "anthropic/claude-haiku-4.5",
       systemPrompt: "p",
@@ -477,12 +482,24 @@ describe("buildDirectHostConfig", () => {
     });
 
     expect(config).toEqual({
-      hostStyle: "direct",
+      hostStyle: "claude",
       systemPrompt: "p",
       modelId: "anthropic/claude-haiku-4.5",
       temperature: 0.2,
       requireToolApproval: true,
       selectedServerIds: ["x", "y"],
     });
+  });
+
+  it("forwards an explicit hostStyle (e.g. 'chatgpt') from the chat tab", () => {
+    const config = buildDirectHostConfig({
+      modelId: "openai/gpt-5-mini",
+      hostStyle: "chatgpt",
+      systemPrompt: "",
+      resolvedTemperature: 0.7,
+      selectedServerIds: [],
+      requireToolApproval: false,
+    });
+    expect(config.hostStyle).toBe("chatgpt");
   });
 });

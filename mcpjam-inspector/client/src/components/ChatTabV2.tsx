@@ -88,6 +88,7 @@ import { useProjectServers } from "@/hooks/useViews";
 import { HOSTED_MODE } from "@/lib/config";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import type { OrgModelProvider } from "@/hooks/use-org-model-config";
+import { useOpenOrgModels } from "@/hooks/use-open-org-models";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
@@ -126,9 +127,6 @@ interface ChatTabProps {
   onHasMessagesChange?: (hasMessages: boolean) => void;
   enableMultiModelChat?: boolean;
   minimalMode?: boolean;
-  hostedProjectIdOverride?: string;
-  hostedSelectedServerIdsOverride?: string[];
-  hostedOAuthTokensOverride?: Record<string, string>;
   hostedContext?: HostedRuntimeContext;
   executionConfig?: ExecutionConfig;
   reasoningDisplayMode?: ReasoningDisplayMode;
@@ -165,9 +163,6 @@ export function ChatTabV2({
   onHasMessagesChange,
   enableMultiModelChat = false,
   minimalMode = false,
-  hostedProjectIdOverride,
-  hostedSelectedServerIdsOverride,
-  hostedOAuthTokensOverride,
   hostedContext,
   executionConfig,
   reasoningDisplayMode = "inline",
@@ -323,20 +318,23 @@ export function ChatTabV2({
       ),
     [selectedConnectedServerNames, serversByName, appState.servers],
   );
-  const hostedShareToken = hostedContext?.shareToken;
   const hostedChatboxToken = hostedContext?.chatboxToken;
   const hostedChatboxSurface = hostedContext?.chatboxSurface;
-  const effectiveHostedProjectId = hostedProjectIdOverride ?? convexProjectId;
+  const effectiveHostedProjectId =
+    hostedProjectIdOverride ?? hostedContext?.projectId ?? convexProjectId;
   const effectiveHostedSelectedServerIds =
-    hostedSelectedServerIdsOverride ?? hostedSelectedServerIds;
+    hostedSelectedServerIdsOverride ??
+    hostedContext?.selectedServerIds ??
+    hostedSelectedServerIds;
   const effectiveHostedOAuthTokens = hostedChatboxToken
     ? undefined
-    : (hostedOAuthTokensOverride ?? hostedOAuthTokens);
+    : (hostedOAuthTokensOverride ??
+      hostedContext?.oauthTokens ??
+      hostedOAuthTokens);
   const isHostedDirectGuest =
     HOSTED_MODE &&
     !isConvexAuthenticated &&
     !effectiveHostedProjectId &&
-    !hostedShareToken &&
     !hostedChatboxToken;
 
   // Use shared chat session hook
@@ -396,6 +394,14 @@ export function ChatTabV2({
       oauthTokens: effectiveHostedOAuthTokens,
     },
     executionConfig,
+    // Phase 3: forward the resolved chat-tab host style so direct
+    // chat traces persist with `claude`/`chatgpt` rather than
+    // defaulting to `'claude'` regardless of user choice. Backend
+    // ingestion ignores it for chatbox flows (those resolve from the
+    // chatbox row), so it's safe to forward unconditionally.
+    hostStyle: hostStyle === "claude" || hostStyle === "chatgpt"
+      ? hostStyle
+      : undefined,
     minimalMode,
     onReset: (reason?: ChatSessionResetReason) => {
       if (reason === "auth-bootstrap" || reason === "hydrate") {
@@ -419,7 +425,6 @@ export function ChatTabV2({
   const showHistoryRail =
     HOSTED_MODE &&
     !minimalMode &&
-    !hostedShareToken &&
     !hostedChatboxToken &&
     chatHistoryRailEnabled;
   const {
@@ -1101,7 +1106,6 @@ export function ChatTabV2({
     enableMultiModelChat &&
     !minimalMode &&
     !executionConfig?.modelId &&
-    !hostedShareToken &&
     !hostedChatboxToken &&
     !hostedChatboxSurface &&
     availableModels.length > 1;
@@ -1282,10 +1286,11 @@ export function ChatTabV2({
       return;
     }
 
+    const { executionConfig: handoffExec } = evalChatHandoff;
     let matchingModel = null;
-    if (evalChatHandoff.modelId) {
+    if (handoffExec.modelId) {
       matchingModel = availableModels.find(
-        (model) => String(model.id) === evalChatHandoff.modelId,
+        (model) => String(model.id) === handoffExec.modelId,
       );
       if (!matchingModel && availableModels.length === 0) {
         return;
@@ -1304,16 +1309,16 @@ export function ChatTabV2({
     startChatWithMessages(evalChatHandoff.messages);
     appliedEvalChatHandoffIdRef.current = evalChatHandoff.id;
 
-    if (typeof evalChatHandoff.systemPrompt === "string") {
-      setSystemPrompt(evalChatHandoff.systemPrompt);
+    if (typeof handoffExec.systemPrompt === "string") {
+      setSystemPrompt(handoffExec.systemPrompt);
     }
 
-    if (typeof evalChatHandoff.temperature === "number") {
-      setTemperature(evalChatHandoff.temperature);
+    if (typeof handoffExec.temperature === "number") {
+      setTemperature(handoffExec.temperature);
     }
 
-    if (typeof evalChatHandoff.requireToolApproval === "boolean") {
-      setRequireToolApproval(evalChatHandoff.requireToolApproval);
+    if (typeof handoffExec.requireToolApproval === "boolean") {
+      setRequireToolApproval(handoffExec.requireToolApproval);
     }
 
     setInput("");
@@ -1599,6 +1604,7 @@ export function ChatTabV2({
   const showDisabledCallout = !effectiveHasMessages && shouldShowUpsell;
 
   const errorMessage = formatErrorMessage(error);
+  const { openOrgModels } = useOpenOrgModels();
 
   const [isTopupDialogOpen, setIsTopupDialogOpen] = useState(false);
   const [pendingResendMessage, setPendingResendMessage] = useState("");
@@ -2116,6 +2122,7 @@ export function ChatTabV2({
                             }
                             canTopUp={canShowTopupCta}
                             onTopUp={handleOpenTopupDialog}
+                            onOpenOrgModels={openOrgModels}
                             walletLocked={errorMessage.walletLocked}
                             limitKind={errorMessage.limitKind}
                             retryAfterMs={errorMessage.retryAfterMs}
@@ -2354,6 +2361,7 @@ export function ChatTabV2({
                               }
                               canTopUp={canShowTopupCta}
                               onTopUp={handleOpenTopupDialog}
+                              onOpenOrgModels={openOrgModels}
                               walletLocked={errorMessage.walletLocked}
                               limitKind={errorMessage.limitKind}
                               retryAfterMs={errorMessage.retryAfterMs}
@@ -2431,6 +2439,7 @@ export function ChatTabV2({
                             }
                             canTopUp={canShowTopupCta}
                             onTopUp={handleOpenTopupDialog}
+                            onOpenOrgModels={openOrgModels}
                             walletLocked={errorMessage.walletLocked}
                             limitKind={errorMessage.limitKind}
                             retryAfterMs={errorMessage.retryAfterMs}
