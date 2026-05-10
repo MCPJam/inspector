@@ -63,6 +63,7 @@ For remote MCP servers via SSE or Streamable HTTP.
 | `refreshToken` | `string` | No | Refresh token used for non-interactive OAuth token exchange and automatic token refresh |
 | `clientId` | `string` | No | OAuth client ID. Required when `refreshToken` is set |
 | `clientSecret` | `string` | No | OAuth client secret for confidential clients |
+| `onUnauthorized` | `UnauthorizedRefreshHandler` | No | 401 recovery hook. Called once when an operation fails with HTTP 401; return a new `accessToken` and the SDK rebuilds the transport and retries. Not invoked for 403 or when `refreshToken`/`authProvider` is set. |
 | `reconnectionOptions` | `StreamableHTTPClientTransportOptions["reconnectionOptions"]` | No | Streamable HTTP reconnection behavior |
 | `sessionId` | `string` | No | Existing Streamable HTTP session ID |
 | `preferSSE` | `boolean` | No | Forces SSE instead of Streamable HTTP |
