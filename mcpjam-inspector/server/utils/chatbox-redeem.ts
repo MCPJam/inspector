@@ -20,13 +20,29 @@ export type ChatboxRedeemBootstrapServer = {
   useOAuth: boolean;
   serverUrl: string | null;
   clientId: string | null;
+  oauthScopes: string[] | null;
+  optional: boolean;
 };
 
+/**
+ * Full bootstrap payload returned by `/web/chatbox/redeem`. Mirrors the
+ * shape inspector clients previously fetched from `/chatbox/bootstrap`,
+ * so the landing page can validate this directly against
+ * `ChatboxBootstrapPayload` before persisting the session.
+ */
 export type ChatboxRedeemBootstrap = {
+  projectId: string | null;
   chatboxId: string;
   name: string;
   description: string | null;
+  hostStyle: "claude" | "chatgpt" | string;
   mode: "project_members" | "invited_only" | "anyone_with_link";
+  allowGuestAccess: boolean;
+  viewerIsProjectMember: boolean;
+  systemPrompt: string;
+  modelId: string;
+  temperature: number;
+  requireToolApproval: boolean;
   welcomeDialog: unknown | null;
   feedbackDialog: unknown | null;
   servers: ChatboxRedeemBootstrapServer[];

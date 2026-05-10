@@ -18,6 +18,11 @@ const chatboxes = new Hono();
 // subsequent calls do NOT need the token — every read-path route accepts
 // `chatboxId` directly.
 //
+// `bootstrap` is the same payload shape callers previously fetched from
+// `/chatbox/bootstrap` (projectId, hostStyle, modelId, systemPrompt,
+// servers, …). Inspector clients validate the whole shape before storing
+// the session — see `ChatboxBootstrapPayload` in `chatbox-session.ts`.
+//
 // Thin forward to the Convex /web/chatbox/redeem endpoint; the backend
 // handles rate limits, audit, and access-grant writes. The fetch/parse
 // logic lives in utils/chatbox-redeem.ts so non-route callers can reuse

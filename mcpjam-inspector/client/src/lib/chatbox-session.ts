@@ -139,7 +139,7 @@ export function hasActiveChatboxSession(): boolean {
   return readChatboxSession() !== null;
 }
 
-function normalizeChatboxSession(
+export function normalizeChatboxSession(
   parsed: Partial<ChatboxSession> | null,
 ): ChatboxSession | null {
   if (!parsed || typeof parsed !== "object") {

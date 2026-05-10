@@ -1348,7 +1348,12 @@ export function useChatSession({
           : {
               selectedServers,
               chatSessionId,
-              directVisibility,
+              // `directVisibility` only applies to direct chat. The
+              // /mcp/chat-v2 route gates it off when chatboxId is present
+              // (owner-preview persists as `sourceType: "chatbox"`), but
+              // omitting it client-side keeps the body honest about the
+              // session kind.
+              ...(hostedChatboxId ? {} : { directVisibility }),
               // Pass projectId for BYOK direct-chat history persistence
               ...(hostedProjectId ? { projectId: hostedProjectId } : {}),
               // Convex server Ids parallel to `selectedServers`. Only sent
@@ -1359,6 +1364,18 @@ export function useChatSession({
               // validator would reject the whole ingest call.
               ...(hostedSelectedServerIds.length === selectedServers.length
                 ? { selectedServerIds: hostedSelectedServerIds }
+                : {}),
+              // Phase F: owner-preview / local chatbox sessions persist as
+              // `sourceType: "chatbox"`. Without forwarding the resolved
+              // chatbox identity here, /mcp/chat-v2 derives sourceType
+              // from absent fields and the chat is filed as a direct chat
+              // instead of a chatbox session.
+              ...(hostedChatboxId ? { chatboxId: hostedChatboxId } : {}),
+              ...(hostedChatboxId && Number.isFinite(hostedAccessVersion)
+                ? { accessVersion: hostedAccessVersion }
+                : {}),
+              ...(hostedChatboxId && hostedChatboxSurface
+                ? { surface: hostedChatboxSurface }
                 : {}),
             }),
         requireToolApproval: requireToolApprovalRef.current,

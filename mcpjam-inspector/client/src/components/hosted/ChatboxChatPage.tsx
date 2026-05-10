@@ -16,6 +16,7 @@ import {
   buildChatboxLink,
   clearChatboxSession,
   extractChatboxTokenFromPath,
+  normalizeChatboxSession,
   readPlaygroundSession,
   readChatboxSurfaceFromUrl,
   readChatboxSession,
@@ -488,18 +489,36 @@ export function ChatboxChatPage({
           }
 
           const redeemed = (await redeemResponse.json()) as {
-            chatboxId: string;
-            accessVersion: number;
-            bootstrap: ChatboxSession["payload"];
+            chatboxId?: unknown;
+            accessVersion?: unknown;
+            bootstrap?: unknown;
           };
           if (cancelled) return;
 
-          const nextSession: ChatboxSession = {
-            chatboxId: redeemed.chatboxId,
-            accessVersion: redeemed.accessVersion,
-            payload: redeemed.bootstrap,
+          // The redeem response is treated as untrusted shape until validated
+          // — `normalizeChatboxSession` enforces every field
+          // `ChatboxBootstrapPayload` requires. Without this, a partial
+          // bootstrap (missing projectId/modelId/etc.) would be persisted
+          // and the API context downstream would initialize with `null`s.
+          const nextSession = normalizeChatboxSession({
+            chatboxId:
+              typeof redeemed.chatboxId === "string"
+                ? redeemed.chatboxId
+                : undefined,
+            accessVersion:
+              typeof redeemed.accessVersion === "number"
+                ? redeemed.accessVersion
+                : undefined,
+            payload: redeemed.bootstrap as ChatboxSession["payload"] | undefined,
             surface: readChatboxSurfaceFromUrl(window.location.search),
-          };
+          });
+          if (!nextSession) {
+            throw createChatboxRouteError(
+              502,
+              "Chatbox redeem returned an incomplete bootstrap payload.",
+            );
+          }
+
           writeCurrentSession(nextSession);
           setSession(nextSession);
           setRouteError(null);
