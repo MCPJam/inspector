@@ -908,6 +908,8 @@ function areAuthHeadersEqual(
 
 type HostedSessionScope = {
   projectId?: string | null;
+  chatboxId?: string;
+  accessVersion?: number;
   chatboxToken?: string;
 };
 
@@ -916,7 +918,10 @@ function areHostedSessionScopesEqual(
   b: HostedSessionScope
 ): boolean {
   return (
-    a.projectId === b.projectId && a.chatboxToken === b.chatboxToken
+    a.projectId === b.projectId &&
+    a.chatboxId === b.chatboxId &&
+    a.accessVersion === b.accessVersion &&
+    a.chatboxToken === b.chatboxToken
   );
 }
 
@@ -941,6 +946,8 @@ export function useChatSession({
   const hostedProjectId = hostedContext?.projectId;
   const hostedSelectedServerIds = hostedContext?.selectedServerIds ?? [];
   const hostedOAuthTokens = hostedContext?.oauthTokens;
+  const hostedChatboxId = hostedContext?.chatboxId;
+  const hostedAccessVersion = hostedContext?.accessVersion;
   const hostedChatboxToken = hostedContext?.chatboxToken;
   const hostedChatboxSurface = hostedContext?.chatboxSurface;
   const initialModelId = executionConfig?.modelId;
@@ -1029,6 +1036,8 @@ export function useChatSession({
   );
   const lastResolvedHostedScopeRef = useRef<HostedSessionScope>({
     projectId: undefined,
+    chatboxId: undefined,
+    accessVersion: undefined,
     chatboxToken: undefined,
   });
   const pendingSessionHydrationRef = useRef<PendingSessionHydration | null>(
@@ -1301,7 +1310,7 @@ export function useChatSession({
           "Hosted chat context is not ready: missing projectId."
         );
       }
-      const isHostedDirectChat = !hostedChatboxToken;
+      const isHostedDirectChat = !(hostedChatboxId || hostedChatboxToken);
       return {
         projectId: hostedProjectId,
         chatSessionId,
@@ -1309,7 +1318,13 @@ export function useChatSession({
         selectedServerNames: selectedServers,
         accessScope: "chat_v2" as const,
         ...(isHostedDirectChat ? { directVisibility } : {}),
-        ...(hostedChatboxToken ? { chatboxToken: hostedChatboxToken } : {}),
+        ...(hostedChatboxId ? { chatboxId: hostedChatboxId } : {}),
+        ...(typeof hostedAccessVersion === "number"
+          ? { accessVersion: hostedAccessVersion }
+          : {}),
+        ...(hostedChatboxToken && !hostedChatboxId
+          ? { chatboxToken: hostedChatboxToken }
+          : {}),
         ...(hostedChatboxToken && hostedChatboxSurface
           ? { surface: hostedChatboxSurface }
           : {}),
@@ -1567,6 +1582,8 @@ export function useChatSession({
     enabled: HOSTED_MODE && isAuthenticated,
     readyToPersist: status === "ready",
     chatSessionId,
+    hostedChatboxId,
+    hostedAccessVersion,
     hostedChatboxToken,
     persistedSnapshotToolCallIds,
     messages,
@@ -1872,6 +1889,8 @@ export function useChatSession({
         const previousHostedScope = lastResolvedHostedScopeRef.current;
         const currentHostedScope = {
           projectId: hostedProjectId,
+          chatboxId: hostedChatboxId,
+          accessVersion: hostedAccessVersion,
           chatboxToken: hostedChatboxToken,
         };
         const hasResolvedBefore = hasResolvedAuthHeadersRef.current;

@@ -450,7 +450,17 @@ const chatV2 = new Hono();
 
 chatV2.post("/", async (c) => {
   try {
-    const body = (await c.req.json()) as ChatV2Request;
+    const body = (await c.req.json()) as ChatV2Request & {
+      // Phase F: when the local inspector serves an owner-preview of a
+      // chatbox (the share-link surface running in /mcp), the client
+      // passes the resolved chatbox identity so persistence reads
+      // `sourceType: "chatbox"` + the right surface telemetry instead
+      // of being filed as a direct chat.
+      chatboxId?: string;
+      accessVersion?: number;
+      chatboxToken?: string;
+      surface?: "preview" | "share_link";
+    };
     const mcpClientManager = c.mcpClientManager;
     const {
       messages,
@@ -461,7 +471,17 @@ chatV2.post("/", async (c) => {
       selectedServers,
       selectedServerIds: bodySelectedServerIds,
       requireToolApproval,
+      chatboxId: bodyChatboxId,
+      accessVersion: bodyAccessVersion,
+      chatboxToken: bodyChatboxToken,
+      surface: bodySurface,
     } = body;
+    const isChatboxSession = Boolean(bodyChatboxId || bodyChatboxToken);
+    const chatSessionSourceType: "chatbox" | "direct" = isChatboxSession
+      ? "chatbox"
+      : "direct";
+    const chatSessionSurface: "preview" | "share_link" | undefined =
+      isChatboxSession ? bodySurface ?? "preview" : undefined;
 
     // Local-mode `selectedServers` is server *names*, not Convex Ids. The
     // backend's `hostConfigPayloadValidator` requires `v.array(v.id('servers'))`,
@@ -606,8 +626,18 @@ chatV2.post("/", async (c) => {
                 chatSessionId,
                 modelId: String(modelDefinition.id),
                 modelSource: "mcpjam",
-                sourceType: "direct",
-                directVisibility: body.directVisibility,
+                sourceType: chatSessionSourceType,
+                ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
+                ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
+                ...(typeof bodyAccessVersion === "number"
+                  ? { accessVersion: bodyAccessVersion }
+                  : {}),
+                ...(bodyChatboxToken && !bodyChatboxId
+                  ? { chatboxToken: bodyChatboxToken }
+                  : {}),
+                ...(isChatboxSession
+                  ? {}
+                  : { directVisibility: body.directVisibility }),
                 authHeader,
                 sessionMessages: fullHistory,
                 startedAt: sessionStartedAt,
@@ -676,8 +706,18 @@ chatV2.post("/", async (c) => {
                 chatSessionId,
                 modelId: String(modelDefinition.id),
                 modelSource: "byok",
-                sourceType: "direct",
-                directVisibility: body.directVisibility,
+                sourceType: chatSessionSourceType,
+                ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
+                ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
+                ...(typeof bodyAccessVersion === "number"
+                  ? { accessVersion: bodyAccessVersion }
+                  : {}),
+                ...(bodyChatboxToken && !bodyChatboxId
+                  ? { chatboxToken: bodyChatboxToken }
+                  : {}),
+                ...(isChatboxSession
+                  ? {}
+                  : { directVisibility: body.directVisibility }),
                 authHeader: c.req.header("authorization"),
                 sessionMessages: fullHistory,
                 startedAt: sessionStartedAt,
@@ -745,8 +785,18 @@ chatV2.post("/", async (c) => {
               chatSessionId,
               modelId: String(modelDefinition.id),
               modelSource: "byok",
-              sourceType: "direct",
-              directVisibility: body.directVisibility,
+              sourceType: chatSessionSourceType,
+              ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
+              ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
+              ...(typeof bodyAccessVersion === "number"
+                ? { accessVersion: bodyAccessVersion }
+                : {}),
+              ...(bodyChatboxToken && !bodyChatboxId
+                ? { chatboxToken: bodyChatboxToken }
+                : {}),
+              ...(isChatboxSession
+                ? {}
+                : { directVisibility: body.directVisibility }),
               messages: modelMessages as ModelMessage[],
               systemPrompt: enhancedSystemPrompt,
               ...(responseMessages.length > 0 ? { responseMessages } : {}),
