@@ -67,11 +67,12 @@ const manager = new MCPClientManager({
 
 ### HTTP Authentication Options
 
-For HTTP servers, `MCPClientManager` supports three auth patterns:
+For HTTP servers, `MCPClientManager` supports four auth patterns:
 
 - `accessToken` for a static bearer token
 - `refreshToken` + `clientId` for non-interactive OAuth token exchange with automatic refresh
 - `authProvider` when you need to provide a custom MCP SDK OAuth provider
+- `onUnauthorized` for custom 401 recovery when you manage tokens externally
 
 If you already have a refresh token, you can let the SDK handle access token exchange and refresh for you:
 
