@@ -52,6 +52,12 @@ export function isOrgProviderAvailable(
  * Local-only model discovery (for example a user's in-process Ollama daemon)
  * is intentionally appended by callers, because those models depend on the
  * machine running the inspector rather than organization config alone.
+ *
+ * Callers that append local-discovered Ollama models MUST dedupe by `id`:
+ * org-configured `modelIds` may already include matching names, and the
+ * returned list keys models on `id` alone (provider is fixed to "ollama"
+ * for both sources). See `use-chat-session.ts` and
+ * `use-available-eval-models.ts` for the canonical filter pattern.
  */
 export function buildAvailableModelsFromOrgConfig(
   orgConfig: OrgVisibleConfig | undefined,

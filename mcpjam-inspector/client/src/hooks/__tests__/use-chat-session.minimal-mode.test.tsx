@@ -371,7 +371,8 @@ describe("useChatSession minimal mode parity", () => {
         executionConfig: {
           systemPrompt: "Prompt",
         },
-      })
+        hostedContext: { projectId: "proj-1" },
+      } as any)
     );
 
     await waitFor(() => {
@@ -433,7 +434,8 @@ describe("useChatSession minimal mode parity", () => {
         executionConfig: {
           systemPrompt: "Prompt",
         },
-      })
+        hostedContext: { projectId: "proj-1" },
+      } as any)
     );
 
     await waitFor(() => {
@@ -506,7 +508,8 @@ describe("useChatSession minimal mode parity", () => {
         executionConfig: {
           systemPrompt: "Prompt",
         },
-      })
+        hostedContext: { projectId: "proj-1" },
+      } as any)
     );
 
     await waitFor(() => {
@@ -553,7 +556,8 @@ describe("useChatSession minimal mode parity", () => {
         executionConfig: {
           systemPrompt: "Prompt",
         },
-      })
+        hostedContext: { projectId: "proj-1" },
+      } as any)
     );
 
     await waitFor(() => {
@@ -769,5 +773,91 @@ describe("useChatSession minimal mode parity", () => {
       selectedServers: ["server-2"],
       chatSessionId: initialChatSessionId,
     });
+  });
+
+  it("routes local Ollama (no org config entry) through /api/mcp/chat-v2 with ollamaBaseUrl", async () => {
+    mockModelState.availableModels = [ollamaModel];
+    mockModelState.selectedModelId = "llama3.2";
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        minimalMode: true,
+        executionConfig: { systemPrompt: "Prompt" },
+      })
+    );
+
+    await waitFor(() => {
+      expect(mockTransportInstances.length).toBeGreaterThan(0);
+    });
+
+    expect(mockTransportInstances.at(-1)!.options.api).toBe(
+      "/api/mcp/chat-v2"
+    );
+
+    act(() => {
+      result.current.sendMessage({ text: "hi" });
+    });
+
+    await waitFor(() => {
+      expect(getTransportRequests().length).toBeGreaterThan(0);
+    });
+
+    const localOllamaRequest = getTransportRequests().at(-1) as Record<
+      string,
+      unknown
+    >;
+    expect(typeof localOllamaRequest.ollamaBaseUrl).toBe("string");
+    expect(localOllamaRequest.ollamaBaseUrl).toContain("127.0.0.1:11434");
+  });
+
+  it("routes org-managed Ollama through /api/web/chat-v2 without ollamaBaseUrl", async () => {
+    mockModelState.availableModels = [
+      { ...ollamaModel, id: "org-llama" },
+    ];
+    mockModelState.selectedModelId = "org-llama";
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        minimalMode: true,
+        executionConfig: { systemPrompt: "Prompt" },
+        hostedContext: { projectId: "proj-1" },
+        hostedOrgModelConfig: {
+          providers: [
+            {
+              providerKey: "ollama",
+              enabled: true,
+              hasSecret: false,
+              baseUrl: "https://ollama.example.com",
+              modelIds: ["org-llama"],
+            },
+          ],
+        },
+      } as any)
+    );
+
+    await waitFor(() => {
+      expect(mockTransportInstances.length).toBeGreaterThan(0);
+    });
+
+    expect(mockTransportInstances.at(-1)!.options.api).toBe(
+      "/api/web/chat-v2"
+    );
+
+    act(() => {
+      result.current.sendMessage({ text: "hi" });
+    });
+
+    await waitFor(() => {
+      expect(getTransportRequests().length).toBeGreaterThan(0);
+    });
+
+    const lastRequest = getTransportRequests().at(-1) as Record<
+      string,
+      unknown
+    >;
+    expect(lastRequest).not.toHaveProperty("ollamaBaseUrl");
+    expect(lastRequest).toMatchObject({ projectId: "proj-1" });
   });
 });

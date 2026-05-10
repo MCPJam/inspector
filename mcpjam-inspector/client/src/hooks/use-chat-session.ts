@@ -1215,7 +1215,25 @@ export function useChatSession({
 
   // Create transport
   const transport = useMemo(() => {
-    const isOllamaModel = selectedModel.provider === "ollama";
+    const isOllamaProvider = selectedModel.provider === "ollama";
+    // An Ollama model is "org-managed" when the active org config exposes it
+    // via an enabled Ollama provider. Org-managed Ollama runs against the
+    // org's configured baseUrl (potentially a remote/VPN gateway), so it must
+    // route through `/api/web/chat-v2` and let the server's
+    // `resolveOrgProviderRuntime` pick the local runtime + org credentials.
+    // Local Ollama (no org config entry) keeps the legacy `/api/mcp/chat-v2`
+    // path that consumes the user's `ollamaBaseUrl`.
+    const orgManagedOllamaModelIds = new Set<string>();
+    const ollamaProvider = hostedOrgModelConfig?.providers?.find(
+      (p) => p.providerKey === "ollama" && p.enabled,
+    );
+    for (const id of ollamaProvider?.modelIds ?? []) {
+      orgManagedOllamaModelIds.add(id);
+    }
+    const isOrgManagedOllama =
+      isOllamaProvider &&
+      orgManagedOllamaModelIds.has(String(selectedModel.id));
+    const isLocalOllama = isOllamaProvider && !isOrgManagedOllama;
 
     // Merge session auth headers with workos auth headers
     const sessionHeaders = getSessionAuthHeaders();
@@ -1226,7 +1244,7 @@ export function useChatSession({
     const transportHeaders =
       Object.keys(mergedHeaders).length > 0 ? mergedHeaders : undefined;
 
-    const chatApi = isOllamaModel ? "/api/mcp/chat-v2" : "/api/web/chat-v2";
+    const chatApi = isLocalOllama ? "/api/mcp/chat-v2" : "/api/web/chat-v2";
 
     // Hosted dashboard guests and signed-in users both require a project id.
     // Submit is blocked until hostedProjectId and selected server ids resolve.
@@ -1270,7 +1288,7 @@ export function useChatSession({
         // helper's 0.7 fallback regardless of the slider.
         temperature,
         systemPrompt,
-        ...(isOllamaModel
+        ...(isLocalOllama
           ? {
               selectedServers,
               chatSessionId,
@@ -1309,6 +1327,7 @@ export function useChatSession({
     hostedShareToken,
     hostedChatboxToken,
     hostedChatboxSurface,
+    hostedOrgModelConfig,
     getOllamaBaseUrl,
     chatFetch,
     // requireToolApproval read from ref at request time
