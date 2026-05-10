@@ -23,11 +23,13 @@ import {
   serializeServersForSharing,
 } from "@/lib/project-serialization";
 import {
+  DEFAULT_REQUEST_TIMEOUT_MS,
   pickProjectConnectionConfig,
   pickProjectHostContext,
   stableStringifyJson,
   type ProjectClientConfig,
   type ProjectConnectionConfigDraft,
+  type ProjectConnectionDefaults,
   type ProjectHostContextDraft,
 } from "@/lib/client-config";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
@@ -1025,63 +1027,77 @@ export function useProjectState({
       controller: ClientConfigSaveController<T>;
     }): Promise<void> => {
       // Phase 4: writes go through `hostConfigsV2.patchProjectDefaultConnection`.
-      // The mutation is awaited; once it resolves the v2 row is durable so we
-      // mark saved immediately. The legacy round-trip echo (which watched
-      // `projects.clientConfig` for an updated value before resolving) is
-      // no longer needed — v2 is the canonical write target. The local
-      // store no longer needs to wait for a project-doc reactive update.
+      // The legacy project-doc echo wait is gone (v2 is the canonical
+      // target), but we still need a sync-pending window during the
+      // mutation in-flight period. `useProjectClientConfigSyncPending`
+      // (and the `assertClientConfigSynced` /
+      // `notifyIfClientConfigSyncPending` guards in use-server-state)
+      // gate connect / reconnect / test / resolver paths so a user who
+      // saves and immediately reconnects can't be served the still-stale
+      // `activeProject.clientConfig` (the optimistic slice-merge dispatch
+      // only runs after the await resolves). beginSave with
+      // awaitRemoteEcho:true sets that pending state; markSaved /
+      // failSave with awaitRemoteEcho:false skip the controller's
+      // pending-data gate so we clear immediately on mutation completion.
       const useV2Write = isAuthenticated && !shouldUseLocalFallback;
 
       controller.beginSave({
         projectId,
         savedConfig: savedSlice,
-        awaitRemoteEcho: false,
+        awaitRemoteEcho: useV2Write,
       });
+
+      // Resolve the connection slice into both the v2 wire payload and
+      // the local optimistic state. Reset (`connectionConfig ===
+      // undefined`) explicitly sends `{ headers: {}, requestTimeout:
+      // DEFAULT_REQUEST_TIMEOUT_MS }` — sending headers-only would let
+      // the backend's helper preserve the user's previous timeout while
+      // the optimistic local state shows defaults, drifting back to the
+      // old timeout on the next refetch.
+      let resolvedConnectionDefaults:
+        | ProjectConnectionDefaults
+        | undefined;
+      if (slice.kind === "connection") {
+        const { connectionConfig } = slice;
+        if (connectionConfig === undefined) {
+          resolvedConnectionDefaults = {
+            headers: {},
+            requestTimeout: DEFAULT_REQUEST_TIMEOUT_MS,
+          };
+        } else {
+          const cd = connectionConfig.connectionDefaults;
+          if (cd === undefined) {
+            resolvedConnectionDefaults = {
+              headers: {},
+              requestTimeout: DEFAULT_REQUEST_TIMEOUT_MS,
+            };
+          } else {
+            const requestTimeout =
+              cd.requestTimeout !== undefined &&
+              Number.isFinite(cd.requestTimeout)
+                ? cd.requestTimeout
+                : DEFAULT_REQUEST_TIMEOUT_MS;
+            resolvedConnectionDefaults = {
+              headers: cd.headers ?? {},
+              requestTimeout,
+            };
+          }
+        }
+      }
+      const resolvedClientCapabilities =
+        slice.kind === "connection"
+          ? slice.connectionConfig === undefined
+            ? {}
+            : slice.connectionConfig.clientCapabilities
+          : undefined;
 
       if (useV2Write) {
         try {
           if (slice.kind === "connection") {
-            const { connectionConfig } = slice;
-            // Map the legacy ProjectClientConfig blob onto the v2 patcher
-            // args. `connectionConfig === undefined` (Reset) maps to a
-            // clear: empty headers + default timeout, empty capabilities
-            // — preserving model/prompt/temperature/host style/server
-            // selection on the v2 default. This matches the backend compat
-            // wrapper's clear semantics.
-            const cd = connectionConfig?.connectionDefaults as
-              | { headers?: Record<string, string>; requestTimeout?: number }
-              | undefined
-              | null;
-            const partialConnectionDefaults: {
-              headers?: Record<string, string>;
-              requestTimeout?: number;
-            } = {};
-            if (connectionConfig === undefined || cd === undefined) {
-              partialConnectionDefaults.headers = {};
-              // Backend's partial validator now accepts headers-only;
-              // it merges the existing requestTimeout when omitted.
-            } else {
-              if (cd?.headers !== undefined) {
-                partialConnectionDefaults.headers =
-                  (cd.headers as Record<string, string> | undefined) ?? {};
-              }
-              if (
-                cd?.requestTimeout !== undefined &&
-                Number.isFinite(cd.requestTimeout)
-              ) {
-                partialConnectionDefaults.requestTimeout = cd.requestTimeout;
-              }
-            }
             await convexPatchProjectDefaultConnection({
               projectId,
-              connectionDefaults:
-                Object.keys(partialConnectionDefaults).length > 0
-                  ? partialConnectionDefaults
-                  : undefined,
-              clientCapabilities:
-                connectionConfig === undefined
-                  ? {}
-                  : connectionConfig.clientCapabilities,
+              connectionDefaults: resolvedConnectionDefaults,
+              clientCapabilities: resolvedClientCapabilities,
               // Leave hostContext untouched on the backend — passing
               // undefined preserves the existing value (P2).
               hostContext: undefined,
@@ -1116,14 +1132,13 @@ export function useProjectState({
         // even when two saves race. The reactive project query will
         // catch up on its next refetch.
         if (slice.kind === "connection") {
-          const cc = slice.connectionConfig;
           dispatch({
             type: "UPDATE_PROJECT_CLIENT_CONFIG_SLICE",
             projectId,
             slice: {
               kind: "connection",
-              connectionDefaults: cc?.connectionDefaults,
-              clientCapabilities: cc?.clientCapabilities ?? {},
+              connectionDefaults: resolvedConnectionDefaults,
+              clientCapabilities: resolvedClientCapabilities ?? {},
             },
           });
         } else {
@@ -1142,14 +1157,13 @@ export function useProjectState({
       }
 
       if (slice.kind === "connection") {
-        const cc = slice.connectionConfig;
         dispatch({
           type: "UPDATE_PROJECT_CLIENT_CONFIG_SLICE",
           projectId,
           slice: {
             kind: "connection",
-            connectionDefaults: cc?.connectionDefaults,
-            clientCapabilities: cc?.clientCapabilities ?? {},
+            connectionDefaults: resolvedConnectionDefaults,
+            clientCapabilities: resolvedClientCapabilities ?? {},
           },
         });
       } else {

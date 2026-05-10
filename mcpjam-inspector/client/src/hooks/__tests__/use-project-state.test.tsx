@@ -1226,6 +1226,150 @@ describe("useProjectState automatic project creation", () => {
     expect(fullClientConfigDispatches).toHaveLength(0);
   });
 
+  it("connection saves with undefined connectionDefaults send explicit defaults so the backend doesn't preserve the old timeout", async () => {
+    // CodeRabbit Major: previously the reset branch sent only
+    // `headers: {}`. The backend's partial validator merges missing
+    // requestTimeout from the existing default, so a draft with
+    // `connectionDefaults: undefined` would have the user's old
+    // timeout stick remotely while the optimistic local state showed
+    // the default — drifting back on the next refetch.
+    //
+    // ProjectConnectionConfigDraft.connectionDefaults is optional, so
+    // a draft can legally have it absent; the wire payload (and
+    // optimistic dispatch) must in that case carry an explicit
+    // { headers: {}, requestTimeout: DEFAULT_REQUEST_TIMEOUT_MS }
+    // rather than letting the backend preserve a stale value.
+    projectQueryState.allProjects = [
+      {
+        _id: "remote-1",
+        name: "Remote project",
+        servers: {},
+        ownerId: "user-1",
+        createdAt: 1,
+        updatedAt: 1,
+        clientConfig: {
+          version: 1,
+          connectionDefaults: {
+            headers: { "x-custom": "yes" },
+            requestTimeout: 99_999,
+          },
+          clientCapabilities: { customCap: true },
+          hostContext: {},
+        },
+      },
+    ];
+    projectQueryState.projects = [...projectQueryState.allProjects];
+    localStorage.setItem("convex-active-project-id", "remote-1");
+
+    const appState = createAppState({
+      default: createSyntheticDefaultProject(),
+    });
+    const { result, dispatch } = renderUseProjectState({ appState });
+
+    const draftWithoutConnectionDefaults: ProjectConnectionConfigDraft = {
+      version: 1,
+      clientCapabilities: { newCap: true },
+    };
+    await result.current.handleUpdateClientConfig(
+      "remote-1",
+      draftWithoutConnectionDefaults,
+    );
+
+    // Wire payload carries explicit defaults — the backend's
+    // preserve-when-undefined merge can't fall back to 99_999.
+    expect(patchProjectDefaultConnectionMock).toHaveBeenCalledWith({
+      projectId: "remote-1",
+      connectionDefaults: { headers: {}, requestTimeout: 10000 },
+      clientCapabilities: { newCap: true },
+      hostContext: undefined,
+    });
+
+    // Optimistic dispatch matches the wire payload — local state
+    // doesn't drift between save and the next refetch.
+    const sliceDispatch = dispatch.mock.calls
+      .map(([action]) => action)
+      .find(
+        (
+          action,
+        ): action is Extract<
+          AppAction,
+          { type: "UPDATE_PROJECT_CLIENT_CONFIG_SLICE" }
+        > => action.type === "UPDATE_PROJECT_CLIENT_CONFIG_SLICE",
+      );
+    expect(sliceDispatch).toMatchObject({
+      projectId: "remote-1",
+      slice: {
+        kind: "connection",
+        connectionDefaults: { headers: {}, requestTimeout: 10000 },
+        clientCapabilities: { newCap: true },
+      },
+    });
+  });
+
+  it("gates connect / reconnect paths via isAwaitingRemoteEcho while the v2 mutation is in flight", async () => {
+    // Codex P2: setting awaitRemoteEcho:false on beginSave previously
+    // left useProjectClientConfigSyncPending() returning false during
+    // the network round-trip, so assertClientConfigSynced /
+    // notifyIfClientConfigSyncPending in use-server-state would not
+    // gate connect/test/resolver paths and a reconnect could read the
+    // stale activeProject.clientConfig (the optimistic dispatch only
+    // fires after the await resolves).
+    const savedConfig: ProjectConnectionConfigDraft = {
+      version: 1,
+      connectionDefaults: { headers: {}, requestTimeout: 5_000 },
+      clientCapabilities: {},
+    };
+
+    projectQueryState.allProjects = [
+      {
+        _id: "remote-1",
+        name: "Remote project",
+        servers: {},
+        ownerId: "user-1",
+        createdAt: 1,
+        updatedAt: 1,
+        clientConfig: undefined,
+      },
+    ];
+    projectQueryState.projects = [...projectQueryState.allProjects];
+    localStorage.setItem("convex-active-project-id", "remote-1");
+
+    let resolveSave!: () => void;
+    patchProjectDefaultConnectionMock.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+
+    const appState = createAppState({
+      default: createSyntheticDefaultProject(),
+    });
+    const { result } = renderUseProjectState({ appState });
+
+    const inFlight = result.current.handleUpdateClientConfig(
+      "remote-1",
+      savedConfig,
+    );
+
+    // While the v2 mutation is in flight, the sync-pending guard is
+    // active for the target project. assertClientConfigSynced /
+    // notifyIfClientConfigSyncPending in use-server-state read off
+    // exactly this state.
+    expect(useClientConfigStore.getState().isAwaitingRemoteEcho).toBe(true);
+    expect(useClientConfigStore.getState().pendingProjectId).toBe("remote-1");
+    expect(useClientConfigStore.getState().isSaving).toBe(true);
+
+    resolveSave();
+    await inFlight;
+
+    // Once the mutation resolves we mark saved immediately — no
+    // project-doc echo wait — so the gate releases.
+    expect(useClientConfigStore.getState().isAwaitingRemoteEcho).toBe(false);
+    expect(useClientConfigStore.getState().pendingProjectId).toBeNull();
+    expect(useClientConfigStore.getState().isSaving).toBe(false);
+  });
+
   it("formats project create billing errors for organization owners", async () => {
     projectQueryState.allProjects = [
       {
