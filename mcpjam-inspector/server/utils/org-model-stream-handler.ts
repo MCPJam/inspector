@@ -89,11 +89,11 @@ export interface OrgModelHandlerOptions {
    */
   authHeader?: string;
   /**
-   * Hosted chatbox token for guest chat sessions. Forwarded to /stream/org
-   * so Convex can authorize the guest against the project via the existing
-   * authorizeGuestServerAccessBatch query.
+   * Resolved chatbox identity (post-redeem). Forwarded to /stream/org so
+   * Convex can authorize the actor against the chatbox + project.
    */
-  chatboxToken?: string;
+  chatboxId?: string;
+  accessVersion?: number;
   clientIp?: string | null;
 }
 
@@ -182,7 +182,8 @@ export interface OrgLocalModelHandlerOptions {
   requireToolApproval?: boolean;
   /** Forwarded to /stream/org/local-usage for identity resolution. */
   authHeader?: string;
-  chatboxToken?: string;
+  chatboxId?: string;
+  accessVersion?: number;
   onConversationComplete?: (
     fullHistory: ModelMessage[],
     turnTrace: PersistedTurnTrace
@@ -209,7 +210,8 @@ export function handleLocalOrgChatModel(
     tools,
     requireToolApproval,
     authHeader,
-    chatboxToken,
+    chatboxId,
+    accessVersion,
     onConversationComplete,
     onStreamComplete,
     onStreamWriterReady,
@@ -464,7 +466,8 @@ export function handleLocalOrgChatModel(
             turnId: traceTurn.turnId,
             promptIndex: traceTurn.promptIndex,
             authHeader,
-            chatboxToken,
+            chatboxId,
+            accessVersion,
             selectedServers: options.selectedServers,
           }).catch((err) => {
             logger.warn("[org/local] Failed to post local usage", {
@@ -525,7 +528,8 @@ async function postLocalUsage(params: {
   turnId?: string;
   promptIndex?: number;
   authHeader?: string;
-  chatboxToken?: string;
+  chatboxId?: string;
+  accessVersion?: number;
   selectedServers?: string[];
 }): Promise<void> {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
@@ -556,7 +560,10 @@ async function postLocalUsage(params: {
         ...(typeof params.promptIndex === "number"
           ? { promptIndex: params.promptIndex }
           : {}),
-        ...(params.chatboxToken ? { chatboxToken: params.chatboxToken } : {}),
+        ...(params.chatboxId ? { chatboxId: params.chatboxId } : {}),
+        ...(params.chatboxId && Number.isFinite(params.accessVersion)
+          ? { accessVersion: params.accessVersion }
+          : {}),
         ...(params.selectedServers && params.selectedServers.length > 0
           ? { serverIds: params.selectedServers }
           : {}),
@@ -600,7 +607,8 @@ export async function handleHostedOrgChatModel(
     tools: options.tools,
     projectId: options.workspaceId ? undefined : options.projectId,
     authHeader: options.authHeader,
-    chatboxToken: options.chatboxToken,
+    chatboxId: options.chatboxId,
+    accessVersion: options.accessVersion,
     mcpClientManager: options.mcpClientManager,
     selectedServers: options.selectedServers,
     requireToolApproval: options.requireToolApproval,
@@ -615,7 +623,8 @@ export async function handleHostedOrgChatModel(
     extraBodyFields: {
       providerKey: options.providerKey,
       ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
-      // chatboxToken is set on the body by handleMCPJamFreeChatModel itself.
+      // chatboxId / accessVersion are set on the body by
+      // handleMCPJamFreeChatModel itself.
       ...(options.selectedServers && options.selectedServers.length > 0
         ? { serverIds: options.selectedServers }
         : {}),

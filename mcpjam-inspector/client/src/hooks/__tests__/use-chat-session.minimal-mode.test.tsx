@@ -333,7 +333,7 @@ describe("useChatSession minimal mode parity", () => {
         selectedServers,
         minimalMode: true,
         hostedContext: {
-          chatboxToken: "chatbox-token",
+          chatboxId: "cbx_test", accessVersion: 1,
         },
         executionConfig: {
           systemPrompt: "Prompt",

@@ -14,7 +14,8 @@ export interface HostedOAuthPendingMarker {
   serverUrl: string | null;
   sessionId?: string | null;
   accessScope?: "project_member" | "chat_v2";
-  chatboxToken?: string | null;
+  chatboxId?: string | null;
+  accessVersion?: number | null;
   returnHash: string | null;
   startedAt: number;
 }
@@ -75,7 +76,8 @@ export function writeHostedOAuthPendingMarker(
         serverUrl: marker.serverUrl ?? null,
         sessionId: marker.sessionId ?? null,
         accessScope: marker.accessScope ?? null,
-        chatboxToken: marker.chatboxToken ?? null,
+        chatboxId: marker.chatboxId ?? null,
+        accessVersion: marker.accessVersion ?? null,
         returnHash: normalizeHostedOAuthReturnHash(marker.returnHash),
         startedAt: Date.now(),
       })
@@ -124,8 +126,13 @@ export function readHostedOAuthPendingMarker(): HostedOAuthPendingMarker | null 
         parsed.accessScope === "chat_v2"
           ? parsed.accessScope
           : undefined,
-      chatboxToken:
-        typeof parsed.chatboxToken === "string" ? parsed.chatboxToken : null,
+      chatboxId:
+        typeof parsed.chatboxId === "string" ? parsed.chatboxId : null,
+      accessVersion:
+        typeof parsed.accessVersion === "number" &&
+        Number.isFinite(parsed.accessVersion)
+          ? parsed.accessVersion
+          : null,
       returnHash: normalizeHostedOAuthReturnHash(parsed.returnHash),
       startedAt: parsed.startedAt,
     };
@@ -212,7 +219,8 @@ export function getHostedOAuthCallbackContext(): HostedOAuthCallbackContext | nu
     serverUrl,
     sessionId: null,
     accessScope: undefined,
-    chatboxToken: null,
+    chatboxId: null,
+    accessVersion: null,
     returnHash: normalizeHostedOAuthReturnHash(
       localStorage.getItem("mcp-oauth-return-hash")
     ),

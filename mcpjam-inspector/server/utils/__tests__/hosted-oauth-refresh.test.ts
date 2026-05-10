@@ -57,7 +57,8 @@ describe("forceRefreshHostedOAuthAccessToken", () => {
         workspaceId: "ws-1",
         serverId: "server-1",
         accessScope: "chat_v2",
-        chatboxToken: "chat-tok",
+        chatboxId: "cbx_1",
+        accessVersion: 3,
       });
       return new Response(
         JSON.stringify({ accessToken: "fresh-token" }),
@@ -74,7 +75,8 @@ describe("forceRefreshHostedOAuthAccessToken", () => {
         {
           accessScope: "chat_v2",
           workspaceId: "ws-1",
-          chatboxToken: "chat-tok",
+          chatboxId: "cbx_1",
+          accessVersion: 3,
         }
       )
     ).resolves.toBe("fresh-token");

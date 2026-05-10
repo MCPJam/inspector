@@ -8,7 +8,10 @@ interface UseApiContextOptions {
   clientConfigSyncPending?: boolean;
   getAccessToken: () => Promise<string | undefined | null>;
   oauthTokensByServerId?: Record<string, string>;
-  chatboxToken?: string;
+  // Resolved chatbox identity (post-redeem) — drives chatbox-aware request
+  // shaping inside the API context.
+  chatboxId?: string;
+  accessVersion?: number;
   isAuthenticated?: boolean;
   hasSession?: boolean;
   enabled?: boolean;
@@ -21,7 +24,8 @@ export function useApiContext({
   clientConfigSyncPending,
   getAccessToken,
   oauthTokensByServerId,
-  chatboxToken,
+  chatboxId,
+  accessVersion,
   isAuthenticated,
   hasSession,
   enabled = true,
@@ -43,7 +47,8 @@ export function useApiContext({
       clientConfigSyncPending,
       getAccessToken,
       oauthTokensByServerId,
-      chatboxToken,
+      chatboxId,
+      accessVersion,
       isAuthenticated,
       hasSession,
     });
@@ -59,7 +64,8 @@ export function useApiContext({
     clientConfigSyncPending,
     getAccessToken,
     oauthTokensByServerId,
-    chatboxToken,
+    chatboxId,
+    accessVersion,
     isAuthenticated,
     hasSession,
   ]);

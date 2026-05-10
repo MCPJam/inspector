@@ -468,7 +468,7 @@ export function ChatboxEditor({
     pendingKey: CHATBOX_OAUTH_PENDING_KEY,
     servers: previewOAuthGateServers,
     projectId: chatbox?.projectId ?? projectId,
-    chatboxToken: previewToken ?? undefined,
+    chatboxId: chatbox?.chatboxId,
     isAuthenticated,
   });
   const isFinishingPreviewOAuth =
@@ -735,7 +735,8 @@ export function ChatboxEditor({
     };
 
     writePlaygroundSession({
-      token: previewToken,
+      chatboxId: chatbox.chatboxId,
+      accessVersion: 0,
       payload,
       surface: "preview",
       playgroundId: previewPlaygroundId,
@@ -1240,7 +1241,7 @@ export function ChatboxEditor({
                       minimalMode
                       reasoningDisplayMode="hidden"
                       hostedContext={{
-                        chatboxToken: previewToken,
+                        chatboxId: chatbox.chatboxId,
                         chatboxSurface: "preview",
                         projectId: chatbox.projectId,
                         selectedServerIds: activePreviewServers.map(

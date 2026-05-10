@@ -136,7 +136,8 @@ interface PersistChatSessionOptions {
   sourceType?: "chatbox" | "direct";
   directVisibility?: "private" | "project";
   surface?: "preview" | "share_link";
-  chatboxToken?: string;
+  chatboxId?: string;
+  accessVersion?: number;
   serverId?: string;
   visitorDisplayName?: string;
   sessionMessages?: unknown[];
@@ -225,7 +226,10 @@ export async function persistChatSessionToConvex(
           ? { directVisibility: options.directVisibility }
           : {}),
         ...(options.surface ? { surface: options.surface } : {}),
-        ...(options.chatboxToken ? { chatboxToken: options.chatboxToken } : {}),
+        ...(options.chatboxId ? { chatboxId: options.chatboxId } : {}),
+        ...(options.chatboxId && Number.isFinite(options.accessVersion)
+          ? { accessVersion: options.accessVersion }
+          : {}),
         ...(options.serverId ? { serverId: options.serverId } : {}),
         ...(options.visitorDisplayName
           ? { visitorDisplayName: options.visitorDisplayName }

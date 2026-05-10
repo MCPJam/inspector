@@ -451,7 +451,8 @@ describe("App hosted OAuth callback handling", () => {
     );
 
     writeChatboxSession({
-      token: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 1,
       payload: {
         projectId: "ws_1",
         chatboxId: "sbx_1",
@@ -483,7 +484,8 @@ describe("App hosted OAuth callback handling", () => {
       serverId: "srv_asana",
       sessionId: "hosted-session-1",
       accessScope: "chat_v2",
-      chatboxToken: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 1,
       serverName: "asana",
       serverUrl: "https://mcp.asana.com/sse",
       returnHash: "#asaan",
@@ -569,7 +571,7 @@ describe("App hosted OAuth callback handling", () => {
           projectId: "ws_1",
           serverId: "srv_asana",
           sessionId: "hosted-session-1",
-          chatboxToken: "chatbox-token",
+          chatboxId: "sbx_1",
         }),
         "oauth-code",
         expect.objectContaining({
@@ -587,7 +589,8 @@ describe("App hosted OAuth callback handling", () => {
       projectId: "ws_1",
       serverId: "srv_asana",
       accessScope: "chat_v2",
-      chatboxToken: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 1,
       serverName: "asana",
       serverUrl: "https://mcp.asana.com/sse",
       returnHash: "#asaan",
@@ -605,7 +608,7 @@ describe("App hosted OAuth callback handling", () => {
           projectId: "ws_1",
           serverId: "srv_asana",
           sessionId: null,
-          chatboxToken: "chatbox-token",
+          chatboxId: "sbx_1",
         }),
         "oauth-code",
         expect.objectContaining({
@@ -2222,7 +2225,8 @@ describe("App hosted OAuth callback handling", () => {
       serverId: "srv_asana",
       sessionId: "hosted-session-chatboxes",
       accessScope: "chat_v2",
-      chatboxToken: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 1,
       serverName: "asana",
       serverUrl: "https://mcp.asana.com/sse",
       returnHash: "#chatboxes",
