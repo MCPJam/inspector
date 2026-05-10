@@ -14,7 +14,7 @@ import type {
 const {
   createProjectMock,
   ensureDefaultProjectMock,
-  updateClientConfigMock,
+  patchProjectDefaultConnectionMock,
   updateProjectMock,
   deleteProjectMock,
   projectQueryState,
@@ -25,7 +25,7 @@ const {
 } = vi.hoisted(() => ({
   createProjectMock: vi.fn(),
   ensureDefaultProjectMock: vi.fn(),
-  updateClientConfigMock: vi.fn(),
+  patchProjectDefaultConnectionMock: vi.fn(),
   updateProjectMock: vi.fn(),
   deleteProjectMock: vi.fn(),
   projectQueryState: {
@@ -62,7 +62,7 @@ vi.mock("../useProjects", () => ({
     createProject: createProjectMock,
     ensureDefaultProject: ensureDefaultProjectMock,
     updateProject: updateProjectMock,
-    updateClientConfig: updateClientConfigMock,
+    patchProjectDefaultConnection: patchProjectDefaultConnectionMock,
     deleteProject: deleteProjectMock,
   }),
   useProjectServers: () => projectServersState,
@@ -210,7 +210,7 @@ describe("useProjectState automatic project creation", () => {
     localStorage.clear();
     createProjectMock.mockResolvedValue("remote-project-id");
     ensureDefaultProjectMock.mockResolvedValue("default-project-id");
-    updateClientConfigMock.mockResolvedValue(undefined);
+    patchProjectDefaultConnectionMock.mockResolvedValue(undefined);
     updateProjectMock.mockResolvedValue("remote-project-id");
     deleteProjectMock.mockResolvedValue(undefined);
     projectQueryState.allProjects = [];
@@ -612,7 +612,11 @@ describe("useProjectState automatic project creation", () => {
     });
   });
 
-  it("keeps authenticated client-config saves pending until the remote echo arrives", async () => {
+  it("authenticated client-config saves resolve as soon as the v2 mutation returns", async () => {
+    // Phase 4: writes go through hostConfigsV2.patchProjectDefaultConnection.
+    // The mutation is awaited and the v2 row is the canonical write
+    // target, so the save resolves immediately on mutation completion —
+    // no project-doc echo round-trip.
     const savedConfig: ProjectConnectionConfigDraft = {
       version: 1,
       connectionDefaults: {
@@ -624,15 +628,6 @@ describe("useProjectState automatic project creation", () => {
           inspectorProfile: true,
         },
       },
-    };
-    const expectedPersistedClientConfig: ProjectClientConfig = {
-      version: 1,
-      connectionDefaults: {
-        headers: {},
-        requestTimeout: 10000,
-      },
-      clientCapabilities: savedConfig.clientCapabilities,
-      hostContext: {},
     };
 
     projectQueryState.allProjects = [
@@ -652,39 +647,18 @@ describe("useProjectState automatic project creation", () => {
     const appState = createAppState({
       default: createSyntheticDefaultProject(),
     });
-    const { result, rerender } = renderUseProjectState({ appState });
+    const { result } = renderUseProjectState({ appState });
 
-    let resolved = false;
-    const savePromise = result.current
-      .handleUpdateClientConfig("remote-1", savedConfig)
-      .then(() => {
-        resolved = true;
-      });
+    await result.current.handleUpdateClientConfig("remote-1", savedConfig);
 
-    await waitFor(() => {
-      expect(updateClientConfigMock).toHaveBeenCalledWith({
-        projectId: "remote-1",
-        clientConfig: expectedPersistedClientConfig,
-      });
+    expect(patchProjectDefaultConnectionMock).toHaveBeenCalledWith({
+      projectId: "remote-1",
+      connectionDefaults: { headers: {}, requestTimeout: 10000 },
+      clientCapabilities: savedConfig.clientCapabilities,
+      hostContext: {},
     });
-
-    expect(useClientConfigStore.getState().isAwaitingRemoteEcho).toBe(true);
-    expect(resolved).toBe(false);
-
-    projectQueryState.allProjects = [
-      {
-        ...projectQueryState.allProjects[0],
-        clientConfig: expectedPersistedClientConfig,
-      },
-    ];
-    projectQueryState.projects = [...projectQueryState.allProjects];
-    rerender({ organizationId: undefined });
-
-    await waitFor(() => {
-      expect(resolved).toBe(true);
-    });
-
-    await savePromise;
+    expect(useClientConfigStore.getState().isAwaitingRemoteEcho).toBe(false);
+    expect(useClientConfigStore.getState().isSaving).toBe(false);
   });
 
   it("composes host-context saves with the target project connection config", async () => {
@@ -780,31 +754,19 @@ describe("useProjectState automatic project creation", () => {
     const appState = createAppState({
       default: createSyntheticDefaultProject(),
     });
-    const { result, rerender } = renderUseProjectState({ appState });
+    const { result } = renderUseProjectState({ appState });
 
-    const savePromise = result.current.handleUpdateHostContext(
-      "remote-2",
-      savedHostContext,
-    );
+    await result.current.handleUpdateHostContext("remote-2", savedHostContext);
 
-    await waitFor(() => {
-      expect(updateClientConfigMock).toHaveBeenCalledWith({
-        projectId: "remote-2",
-        clientConfig: expectedPersistedClientConfig,
-      });
+    // Phase 4: the v2 patcher receives the composed connection portion
+    // (from remote-2's existing config) plus the new host context. The
+    // legacy `clientConfig` blob shape is no longer the wire format.
+    expect(patchProjectDefaultConnectionMock).toHaveBeenCalledWith({
+      projectId: "remote-2",
+      connectionDefaults: expectedPersistedClientConfig.connectionDefaults,
+      clientCapabilities: expectedPersistedClientConfig.clientCapabilities,
+      hostContext: savedHostContext,
     });
-
-    projectQueryState.allProjects = [
-      projectQueryState.allProjects[0],
-      {
-        ...projectQueryState.allProjects[1],
-        clientConfig: expectedPersistedClientConfig,
-      },
-    ];
-    projectQueryState.projects = [...projectQueryState.allProjects];
-    rerender({ organizationId: undefined });
-
-    await savePromise;
   });
 
   it("composes connection-config saves with the target project host context", async () => {
@@ -897,36 +859,28 @@ describe("useProjectState automatic project creation", () => {
     const appState = createAppState({
       default: createSyntheticDefaultProject(),
     });
-    const { result, rerender } = renderUseProjectState({ appState });
+    const { result } = renderUseProjectState({ appState });
 
-    const savePromise = result.current.handleUpdateClientConfig(
+    await result.current.handleUpdateClientConfig(
       "remote-2",
       savedConnectionConfig,
     );
 
-    await waitFor(() => {
-      expect(updateClientConfigMock).toHaveBeenCalledWith({
-        projectId: "remote-2",
-        clientConfig: expectedPersistedClientConfig,
-      });
+    // Phase 4: connection portion comes from the new draft, hostContext
+    // is preserved from the target project's existing config.
+    expect(patchProjectDefaultConnectionMock).toHaveBeenCalledWith({
+      projectId: "remote-2",
+      connectionDefaults: savedConnectionConfig.connectionDefaults,
+      clientCapabilities: savedConnectionConfig.clientCapabilities,
+      hostContext: remoteTwoHostContext,
     });
-
-    projectQueryState.allProjects = [
-      projectQueryState.allProjects[0],
-      {
-        ...projectQueryState.allProjects[1],
-        clientConfig: expectedPersistedClientConfig,
-      },
-    ];
-    projectQueryState.projects = [...projectQueryState.allProjects];
-    rerender({ organizationId: undefined });
-
-    await savePromise;
   });
 
-  it("keeps a newer project save pending when an older save times out", async () => {
-    vi.useFakeTimers();
-
+  it("calls the v2 patcher once per save and resolves each independently", async () => {
+    // Phase 4: writes go directly through the v2 mutation; the legacy
+    // echo-pending pattern (which gated newer saves on older saves
+    // timing out) no longer applies. Each save resolves on its own
+    // mutation completion.
     const firstSavedConfig: ProjectConnectionConfigDraft = {
       version: 1,
       connectionDefaults: {
@@ -950,12 +904,6 @@ describe("useProjectState automatic project creation", () => {
           projectTwo: true,
         },
       },
-    };
-    const secondPersistedClientConfig: ProjectClientConfig = {
-      version: 1,
-      connectionDefaults: secondSavedConfig.connectionDefaults,
-      clientCapabilities: secondSavedConfig.clientCapabilities,
-      hostContext: {},
     };
 
     projectQueryState.allProjects = [
@@ -983,52 +931,24 @@ describe("useProjectState automatic project creation", () => {
     const appState = createAppState({
       default: createSyntheticDefaultProject(),
     });
-    const { result, rerender } = renderUseProjectState({ appState });
+    const { result } = renderUseProjectState({ appState });
 
-    const firstSavePromise = result.current.handleUpdateClientConfig(
-      "remote-1",
-      firstSavedConfig,
-    );
-    const firstSaveError = firstSavePromise.catch((error) => error);
+    await result.current.handleUpdateClientConfig("remote-1", firstSavedConfig);
+    await result.current.handleUpdateClientConfig("remote-2", secondSavedConfig);
 
-    await Promise.resolve();
-    expect(updateClientConfigMock).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(5000);
+    expect(patchProjectDefaultConnectionMock).toHaveBeenCalledTimes(2);
+    expect(patchProjectDefaultConnectionMock).toHaveBeenNthCalledWith(1, {
+      projectId: "remote-1",
+      connectionDefaults: firstSavedConfig.connectionDefaults,
+      clientCapabilities: firstSavedConfig.clientCapabilities,
+      hostContext: {},
     });
-
-    const secondSavePromise = result.current.handleUpdateClientConfig(
-      "remote-2",
-      secondSavedConfig,
-    );
-
-    await Promise.resolve();
-    expect(updateClientConfigMock).toHaveBeenCalledTimes(2);
-    expect(useClientConfigStore.getState().pendingProjectId).toBe("remote-2");
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(5000);
+    expect(patchProjectDefaultConnectionMock).toHaveBeenNthCalledWith(2, {
+      projectId: "remote-2",
+      connectionDefaults: secondSavedConfig.connectionDefaults,
+      clientCapabilities: secondSavedConfig.clientCapabilities,
+      hostContext: {},
     });
-
-    await expect(firstSaveError).resolves.toBeInstanceOf(Error);
-    await expect(firstSavePromise).rejects.toThrow(
-      "Timed out waiting for project client config to sync.",
-    );
-    expect(useClientConfigStore.getState().pendingProjectId).toBe("remote-2");
-    expect(useClientConfigStore.getState().isAwaitingRemoteEcho).toBe(true);
-
-    projectQueryState.allProjects = [
-      projectQueryState.allProjects[0],
-      {
-        ...projectQueryState.allProjects[1],
-        clientConfig: secondPersistedClientConfig,
-      },
-    ];
-    projectQueryState.projects = [...projectQueryState.allProjects];
-    rerender({ organizationId: undefined });
-
-    await secondSavePromise;
   });
 
   it("treats the authenticated zero-org state as empty remote projects and clears stale synced selection", async () => {
@@ -1117,9 +1037,10 @@ describe("useProjectState automatic project creation", () => {
     expect(createProjectMock).not.toHaveBeenCalled();
   });
 
-  it("fails authenticated client-config saves when the remote echo times out", async () => {
-    vi.useFakeTimers();
-
+  it("propagates v2 mutation errors and clears saving state", async () => {
+    // Phase 4: when the v2 patcher rejects, the save promise rejects
+    // with the mutation's error and the store's isSaving / pendingProjectId
+    // both clear. The legacy echo timeout no longer applies.
     const savedConfig: ProjectConnectionConfigDraft = {
       version: 1,
       connectionDefaults: {
@@ -1147,28 +1068,18 @@ describe("useProjectState automatic project creation", () => {
     projectQueryState.projects = [...projectQueryState.allProjects];
     localStorage.setItem("convex-active-project-id", "remote-1");
 
+    patchProjectDefaultConnectionMock.mockRejectedValueOnce(
+      new Error("backend exploded"),
+    );
+
     const appState = createAppState({
       default: createSyntheticDefaultProject(),
     });
     const { result } = renderUseProjectState({ appState });
 
-    const savePromise = result.current.handleUpdateClientConfig(
-      "remote-1",
-      savedConfig,
-    );
-    const saveError = savePromise.catch((error) => error);
-
-    await Promise.resolve();
-    expect(updateClientConfigMock).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(10_000);
-    });
-
-    await expect(saveError).resolves.toBeInstanceOf(Error);
-    await expect(savePromise).rejects.toThrow(
-      "Timed out waiting for project client config to sync.",
-    );
+    await expect(
+      result.current.handleUpdateClientConfig("remote-1", savedConfig),
+    ).rejects.toThrow("backend exploded");
     expect(useClientConfigStore.getState().isAwaitingRemoteEcho).toBe(false);
     expect(useClientConfigStore.getState().isSaving).toBe(false);
   });
@@ -1394,7 +1305,11 @@ describe("useProjectState automatic project creation", () => {
     expect(result.current.effectiveProjects["convex-project-a"]).toBeDefined();
   });
 
-  it("rejects authenticated client-config saves when the hook unmounts mid-sync", async () => {
+  it("v2 client-config saves resolve even if the hook unmounts after the call", async () => {
+    // Phase 4: the v2 mutation is awaited and there is no in-flight
+    // echo wait that an unmount could interrupt. Once the mutation
+    // resolves the save is durable; the hook unmounting later doesn't
+    // reject the promise.
     const savedConfig: ProjectConnectionConfigDraft = {
       version: 1,
       connectionDefaults: {
@@ -1406,15 +1321,6 @@ describe("useProjectState automatic project creation", () => {
           inspectorProfile: true,
         },
       },
-    };
-    const expectedPersistedClientConfig: ProjectClientConfig = {
-      version: 1,
-      connectionDefaults: {
-        headers: {},
-        requestTimeout: 10000,
-      },
-      clientCapabilities: savedConfig.clientCapabilities,
-      hostContext: {},
     };
 
     projectQueryState.allProjects = [
@@ -1436,27 +1342,11 @@ describe("useProjectState automatic project creation", () => {
     });
     const { result, unmount } = renderUseProjectState({ appState });
 
-    const savePromise = result.current.handleUpdateClientConfig(
-      "remote-1",
-      savedConfig,
-    );
+    await result.current.handleUpdateClientConfig("remote-1", savedConfig);
 
-    await waitFor(() => {
-      expect(updateClientConfigMock).toHaveBeenCalledWith({
-        projectId: "remote-1",
-        clientConfig: expectedPersistedClientConfig,
-      });
-    });
-
+    expect(patchProjectDefaultConnectionMock).toHaveBeenCalledTimes(1);
     unmount();
-
-    await expect(savePromise).rejects.toThrow(
-      "Project client config sync was interrupted.",
-    );
-    await waitFor(() => {
-      expect(useClientConfigStore.getState().isAwaitingRemoteEcho).toBe(false);
-      expect(useClientConfigStore.getState().isSaving).toBe(false);
-    });
+    expect(useClientConfigStore.getState().isSaving).toBe(false);
   });
 });
 

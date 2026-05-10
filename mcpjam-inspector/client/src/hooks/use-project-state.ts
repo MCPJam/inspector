@@ -187,7 +187,7 @@ export function useProjectState({
     createProject: convexCreateProject,
     ensureDefaultProject: convexEnsureDefaultProject,
     updateProject: convexUpdateProject,
-    updateClientConfig: convexUpdateClientConfig,
+    patchProjectDefaultConnection: convexPatchProjectDefaultConnection,
     deleteProject: convexDeleteProject,
   } = useProjectMutations();
   const billingStatus = useOrganizationBillingStatus(
@@ -1011,76 +1011,95 @@ export function useProjectState({
       savedSlice: T | undefined;
       controller: ClientConfigSaveController<T>;
     }): Promise<void> => {
-      const awaitRemoteEcho = isAuthenticated && !shouldUseLocalFallback;
+      // Phase 4: writes go through `hostConfigsV2.patchProjectDefaultConnection`.
+      // The mutation is awaited; once it resolves the v2 row is durable so we
+      // mark saved immediately. The legacy round-trip echo (which watched
+      // `projects.clientConfig` for an updated value before resolving) is
+      // no longer needed — v2 is the canonical write target. The local
+      // store no longer needs to wait for a project-doc reactive update.
+      const useV2Write = isAuthenticated && !shouldUseLocalFallback;
 
       controller.beginSave({
         projectId,
         savedConfig: savedSlice,
-        awaitRemoteEcho,
+        awaitRemoteEcho: false,
       });
 
-      if (awaitRemoteEcho) {
-        const pendingSyncId = `project-client-config-sync-${pendingClientConfigSyncIdRef.current++}`;
-        const remoteEchoPromise = new Promise<void>((resolve, reject) => {
-          const supersededPendingId =
-            pendingClientConfigSyncByProjectRef.current.get(projectId);
-          if (supersededPendingId) {
-            clearPendingClientConfigSync(
-              supersededPendingId,
-              new Error(PROJECT_CLIENT_CONFIG_SYNC_SUPERSEDED_ERROR_MESSAGE),
-            );
+      if (useV2Write) {
+        try {
+          // Map the legacy ProjectClientConfig blob onto the v2 patcher
+          // args. `clientConfig === undefined` (Reset) maps to a clear:
+          // empty headers + default timeout, empty capabilities, empty
+          // host context — preserving model/prompt/temperature/host
+          // style/server selection on the v2 default. This matches the
+          // backend compat wrapper's clear semantics.
+          const cd = clientConfig?.connectionDefaults as
+            | { headers?: Record<string, string>; requestTimeout?: number }
+            | undefined
+            | null;
+          const partialConnectionDefaults: {
+            headers?: Record<string, string>;
+            requestTimeout?: number;
+          } = {};
+          if (clientConfig === undefined || cd === undefined) {
+            partialConnectionDefaults.headers = {};
+            // No DEFAULT_REQUEST_TIMEOUT_MS import here to keep the diff
+            // local; backend defaults to 10_000 if requestTimeout is
+            // omitted. Send the explicit zero-headers signal but let the
+            // backend supply the default timeout.
+          } else {
+            if (cd?.headers !== undefined) {
+              partialConnectionDefaults.headers =
+                (cd.headers as Record<string, string> | undefined) ?? {};
+            }
+            if (
+              cd?.requestTimeout !== undefined &&
+              Number.isFinite(cd.requestTimeout)
+            ) {
+              partialConnectionDefaults.requestTimeout = cd.requestTimeout;
+            }
           }
 
-          const timeoutId = setTimeout(() => {
-            pendingClientConfigSyncRef.current.delete(pendingSyncId);
-            if (
-              pendingClientConfigSyncByProjectRef.current.get(projectId) ===
-              pendingSyncId
-            ) {
-              pendingClientConfigSyncByProjectRef.current.delete(projectId);
-            }
-            reject(new Error(PROJECT_CLIENT_CONFIG_SYNC_TIMEOUT_ERROR_MESSAGE));
-          }, CLIENT_CONFIG_SYNC_ECHO_TIMEOUT_MS);
-
-          pendingClientConfigSyncByProjectRef.current.set(
+          await convexPatchProjectDefaultConnection({
             projectId,
-            pendingSyncId,
-          );
-          pendingClientConfigSyncRef.current.set(pendingSyncId, {
-            id: pendingSyncId,
-            projectId,
-            expectedSerializedConfig:
-              stringifyProjectClientConfig(clientConfig),
-            resolve,
-            reject,
-            timeoutId,
+            connectionDefaults:
+              Object.keys(partialConnectionDefaults).length > 0
+                ? partialConnectionDefaults
+                : undefined,
+            clientCapabilities:
+              clientConfig === undefined ? {} : clientConfig.clientCapabilities,
+            hostContext:
+              clientConfig === undefined ? {} : clientConfig.hostContext,
           });
-        });
-
-        try {
-          await convexUpdateClientConfig({
-            projectId,
-            clientConfig,
-          });
-          await remoteEchoPromise;
         } catch (error) {
-          clearPendingClientConfigSync(pendingSyncId);
           controller.failSave({
             projectId,
             savedConfig: savedSlice,
-            awaitRemoteEcho,
+            awaitRemoteEcho: false,
           });
           const errorMessage =
             error instanceof Error ? error.message : "Unknown error";
-          if (!isSupersededClientConfigSyncError(error)) {
-            logger.error("Failed to update project client config", {
-              error: errorMessage,
-              projectId,
-            });
-            toast.error(errorMessage);
-          }
+          logger.error("Failed to update project client config", {
+            error: errorMessage,
+            projectId,
+          });
+          toast.error(errorMessage);
           throw error instanceof Error ? error : new Error(errorMessage);
         }
+        // Optimistically update the local Project doc's clientConfig so
+        // reads from `effectiveProjects[projectId].clientConfig` reflect
+        // the new state immediately. The reactive project query will
+        // catch up on its next refetch.
+        dispatch({
+          type: "UPDATE_PROJECT",
+          projectId,
+          updates: { clientConfig },
+        });
+        controller.markSaved({
+          projectId,
+          savedConfig: savedSlice,
+          awaitRemoteEcho: false,
+        });
         return;
       }
 
@@ -1092,14 +1111,13 @@ export function useProjectState({
       controller.markSaved({
         projectId,
         savedConfig: savedSlice,
-        awaitRemoteEcho,
+        awaitRemoteEcho: false,
       });
     },
     [
       isAuthenticated,
       shouldUseLocalFallback,
-      clearPendingClientConfigSync,
-      convexUpdateClientConfig,
+      convexPatchProjectDefaultConnection,
       logger,
       dispatch,
     ],
