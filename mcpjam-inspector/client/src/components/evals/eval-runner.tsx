@@ -52,6 +52,8 @@ interface EvalRunnerProps {
   inline?: boolean;
   onSuccess?: (suiteId?: string) => void;
   preselectedServer?: string;
+  /** Pre-populate model selection from suite.defaultConfig.modelId. User can still change it. */
+  defaultModelId?: string;
 }
 
 type StepKey = (typeof WIZARD_STEPS)[number]["key"];
@@ -151,6 +153,7 @@ export function EvalRunner({
   inline = false,
   onSuccess,
   preselectedServer,
+  defaultModelId,
 }: EvalRunnerProps) {
   const [open, setOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -260,6 +263,18 @@ export function EvalRunner({
       return;
     }
 
+    // Suite defaultConfig takes precedence over stored preferences when present
+    if (defaultModelId) {
+      const suiteDefault = availableModels.find(
+        (m) => String(m.id) === defaultModelId,
+      );
+      if (suiteDefault) {
+        setSelectedModels([suiteDefault]);
+        setHasRestoredPreferences(true);
+        return;
+      }
+    }
+
     if (savedPreferences?.modelIds && savedPreferences.modelIds.length > 0) {
       const matches = availableModels.filter((model) =>
         savedPreferences.modelIds.includes(model.id),
@@ -270,7 +285,7 @@ export function EvalRunner({
     }
 
     setHasRestoredPreferences(true);
-  }, [availableModels, savedPreferences, hasRestoredPreferences]);
+  }, [availableModels, savedPreferences, hasRestoredPreferences, defaultModelId]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;

@@ -13,7 +13,6 @@ export interface ApiContext {
   clientConfigSyncPending?: boolean;
   getAccessToken?: GetAccessTokenFn;
   oauthTokensByServerId?: Record<string, string>;
-  shareToken?: string;
   chatboxToken?: string;
   isAuthenticated?: boolean;
   /** True when a WorkOS session exists (user signed in), even if token hasn't resolved yet. */
@@ -302,18 +301,12 @@ export function getHostedOAuthToken(serverId: string): string | undefined {
   return apiContext.oauthTokensByServerId?.[serverId];
 }
 
-export function getHostedShareToken(): string | undefined {
-  return apiContext.shareToken;
-}
-
 export function getHostedChatboxToken(): string | undefined {
   return apiContext.chatboxToken;
 }
 
 function getHostedAccessScope(): HostedAccessScope | undefined {
-  return getHostedShareToken() || getHostedChatboxToken()
-    ? "chat_v2"
-    : undefined;
+  return getHostedChatboxToken() ? "chat_v2" : undefined;
 }
 
 export function buildServerRequest(
@@ -332,7 +325,6 @@ export function buildServerRequest(
   const projectId = getHostedProjectId();
   const serverId = resolveHostedServerId(serverNameOrId);
   const oauthToken = getHostedOAuthToken(serverId);
-  const shareToken = getHostedShareToken();
   const chatboxToken = getHostedChatboxToken();
   const accessScope = getHostedAccessScope();
   return {
@@ -347,7 +339,6 @@ export function buildServerRequest(
       ? { clientCapabilities: apiContext.clientCapabilities }
       : {}),
     ...(accessScope ? { accessScope } : {}),
-    ...(shareToken ? { shareToken } : {}),
     ...(chatboxToken ? { chatboxToken } : {}),
   };
 }
@@ -359,7 +350,6 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
   clientCapabilities?: Record<string, unknown>;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
-  shareToken?: string;
   chatboxToken?: string;
 } {
   assertClientConfigSynced();
@@ -368,7 +358,6 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
   const serverIds = serverEntries.map((entry) => entry.serverId);
   const serverNames = serverEntries.map((entry) => entry.serverName);
   const oauthTokens = buildHostedOAuthTokensMap(serverIds);
-  const shareToken = getHostedShareToken();
   const chatboxToken = getHostedChatboxToken();
   const accessScope = getHostedAccessScope();
   return {
@@ -380,7 +369,6 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
       : {}),
     ...(oauthTokens ? { oauthTokens } : {}),
     ...(accessScope ? { accessScope } : {}),
-    ...(shareToken ? { shareToken } : {}),
     ...(chatboxToken ? { chatboxToken } : {}),
   };
 }
@@ -392,7 +380,6 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
   clientCapabilities?: Record<string, unknown>;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
-  shareToken?: string;
   chatboxToken?: string;
 } {
   assertClientConfigSynced();
@@ -401,7 +388,6 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
   const serverIds = serverEntries.map((entry) => entry.serverId);
   const serverNames = serverEntries.map((entry) => entry.serverName);
   const oauthTokens = buildHostedOAuthTokensMap(serverIds);
-  const shareToken = getHostedShareToken();
   const chatboxToken = getHostedChatboxToken();
   const accessScope = getHostedAccessScope();
 
@@ -414,7 +400,6 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
       : {}),
     ...(oauthTokens ? { oauthTokens } : {}),
     ...(accessScope ? { accessScope } : {}),
-    ...(shareToken ? { shareToken } : {}),
     ...(chatboxToken ? { chatboxToken } : {}),
   };
 }

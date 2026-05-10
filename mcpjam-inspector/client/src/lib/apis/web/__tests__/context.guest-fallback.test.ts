@@ -59,26 +59,6 @@ describe("getApiAuthorizationHeader guest fallback", () => {
     expect(getAccessToken).not.toHaveBeenCalled();
   });
 
-  it("prefers guest token for shared guests without calling WorkOS", async () => {
-    const getAccessToken = vi
-      .fn()
-      .mockResolvedValue("workos-token-should-skip");
-    setApiContext({
-      projectId: "ws-shared",
-      isAuthenticated: false,
-      serverIdsByName: { bench: "srv-1" },
-      getAccessToken,
-      shareToken: "share_tok_123",
-    });
-
-    vi.mocked(getGuestBearerToken).mockResolvedValue("guest-shared");
-
-    const result = await getApiAuthorizationHeader();
-
-    expect(result).toBe("Bearer guest-shared");
-    expect(getAccessToken).not.toHaveBeenCalled();
-  });
-
   it("prefers guest token for chatbox guests without calling WorkOS", async () => {
     const getAccessToken = vi
       .fn()
@@ -203,24 +183,6 @@ describe("guest-owned project request building", () => {
     expect(() => buildServerRequest("my-server")).toThrow(
       BootstrapNotReadyError,
     );
-  });
-
-  it("buildServerRequest uses project path for shared guests", () => {
-    setApiContext({
-      projectId: "ws-shared",
-      isAuthenticated: false,
-      shareToken: "share_tok_123",
-      serverIdsByName: { "my-server": "srv-1" },
-    });
-
-    const result = buildServerRequest("my-server");
-
-    expect(result).toMatchObject({
-      projectId: "ws-shared",
-      serverId: "srv-1",
-      serverName: "my-server",
-      shareToken: "share_tok_123",
-    });
   });
 
   it("buildServerRequest uses project path for chatbox guests", () => {

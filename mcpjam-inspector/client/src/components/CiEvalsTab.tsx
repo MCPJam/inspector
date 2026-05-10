@@ -282,6 +282,7 @@ export function CiEvalsTab({
     latestRunBySuiteId,
     evalsNavigationContext: "ci-evals",
     projectServers: ciProjectServers,
+    availableModels,
   });
 
   const suiteAggregate = useMemo(() => {

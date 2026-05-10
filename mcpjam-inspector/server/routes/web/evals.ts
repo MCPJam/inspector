@@ -35,7 +35,6 @@ const hostedBatchSchema = z.object({
   clientCapabilities: z.record(z.string(), z.unknown()).optional(),
   oauthTokens: z.record(z.string(), z.string()).optional(),
   accessScope: z.enum(["project_member", "chat_v2"]).optional(),
-  shareToken: z.string().min(1).optional(),
   chatboxToken: z.string().min(1).optional(),
 });
 
@@ -147,7 +146,6 @@ evals.post("/stream-test-case", async (c) => {
         | "project_member"
         | "chat_v2"
         | undefined,
-      shareToken: body.shareToken as string | undefined,
       chatboxToken: body.chatboxToken as string | undefined,
       serverNames: body.serverNames,
     },

@@ -2,12 +2,8 @@ import type { HostedOAuthSurface } from "@/lib/hosted-oauth-resume";
 import {
   readChatboxSession,
   CHATBOX_OAUTH_PENDING_KEY,
-} from "@/lib/chatbox-session";
-import {
-  readSharedServerSession,
-  SHARED_OAUTH_PENDING_KEY,
   slugify,
-} from "@/lib/shared-server-session";
+} from "@/lib/chatbox-session";
 
 export interface HostedOAuthPendingMarker {
   surface: HostedOAuthSurface;
@@ -18,7 +14,6 @@ export interface HostedOAuthPendingMarker {
   serverUrl: string | null;
   sessionId?: string | null;
   accessScope?: "project_member" | "chat_v2";
-  shareToken?: string | null;
   chatboxToken?: string | null;
   returnHash: string | null;
   startedAt: number;
@@ -80,7 +75,6 @@ export function writeHostedOAuthPendingMarker(
         serverUrl: marker.serverUrl ?? null,
         sessionId: marker.sessionId ?? null,
         accessScope: marker.accessScope ?? null,
-        shareToken: marker.shareToken ?? null,
         chatboxToken: marker.chatboxToken ?? null,
         returnHash: normalizeHostedOAuthReturnHash(marker.returnHash),
         startedAt: Date.now(),
@@ -101,7 +95,6 @@ export function readHostedOAuthPendingMarker(): HostedOAuthPendingMarker | null 
       !parsed ||
       typeof parsed !== "object" ||
       (parsed.surface !== "chatbox" &&
-        parsed.surface !== "shared" &&
         parsed.surface !== "project") ||
       typeof parsed.serverName !== "string" ||
       typeof parsed.startedAt !== "number"
@@ -131,8 +124,6 @@ export function readHostedOAuthPendingMarker(): HostedOAuthPendingMarker | null 
         parsed.accessScope === "chat_v2"
           ? parsed.accessScope
           : undefined,
-      shareToken:
-        typeof parsed.shareToken === "string" ? parsed.shareToken : null,
       chatboxToken:
         typeof parsed.chatboxToken === "string" ? parsed.chatboxToken : null,
       returnHash: normalizeHostedOAuthReturnHash(parsed.returnHash),
@@ -149,7 +140,6 @@ export function clearHostedOAuthPendingMarker(): void {
 }
 
 export function clearHostedOAuthLegacyPendingKeys(): void {
-  localStorage.removeItem(SHARED_OAUTH_PENDING_KEY);
   localStorage.removeItem(CHATBOX_OAUTH_PENDING_KEY);
 }
 
@@ -165,53 +155,26 @@ function inferHostedOAuthSurfaceFromSessions(
   const hasChatboxLegacyPending = !!localStorage.getItem(
     CHATBOX_OAUTH_PENDING_KEY
   );
-  const hasSharedLegacyPending = !!localStorage.getItem(
-    SHARED_OAUTH_PENDING_KEY
-  );
-
-  if (hasChatboxLegacyPending !== hasSharedLegacyPending) {
-    return hasChatboxLegacyPending ? "chatbox" : "shared";
+  if (hasChatboxLegacyPending) {
+    return "chatbox";
   }
 
   const chatboxSession = readChatboxSession();
-  const sharedSession = readSharedServerSession();
-
-  const chatboxMatch =
-    chatboxSession?.payload.servers.some((server) =>
-      matchesHostedOAuthServerIdentity(
-        {
-          serverName: server.serverName,
-          serverUrl: server.serverUrl,
-        },
-        { serverName, serverUrl }
-      )
-    ) ?? false;
-  const sharedMatch =
-    sharedSession != null
-      ? matchesHostedOAuthServerIdentity(
-          {
-            serverName: sharedSession.payload.serverName,
-            serverUrl: sharedSession.payload.serverUrl,
-          },
-          { serverName, serverUrl }
-        )
-      : false;
-
-  if (chatboxMatch && !sharedMatch) {
-    return "chatbox";
-  }
-  if (sharedMatch && !chatboxMatch) {
-    return "shared";
+  if (!chatboxSession) {
+    return null;
   }
 
-  if (chatboxSession && !sharedSession) {
-    return "chatbox";
-  }
-  if (sharedSession && !chatboxSession) {
-    return "shared";
-  }
+  const chatboxMatch = chatboxSession.payload.servers.some((server) =>
+    matchesHostedOAuthServerIdentity(
+      {
+        serverName: server.serverName,
+        serverUrl: server.serverUrl,
+      },
+      { serverName, serverUrl },
+    ),
+  );
 
-  return null;
+  return chatboxMatch ? "chatbox" : null;
 }
 
 export function getHostedOAuthCallbackContext(): HostedOAuthCallbackContext | null {
@@ -249,7 +212,6 @@ export function getHostedOAuthCallbackContext(): HostedOAuthCallbackContext | nu
     serverUrl,
     sessionId: null,
     accessScope: undefined,
-    shareToken: null,
     chatboxToken: null,
     returnHash: normalizeHostedOAuthReturnHash(
       localStorage.getItem("mcp-oauth-return-hash")
@@ -272,12 +234,5 @@ export function resolveHostedOAuthReturnHash(
       : "#chatbox";
   }
 
-  if (context.surface === "project") {
-    return "#servers";
-  }
-
-  const sharedSession = readSharedServerSession();
-  return sharedSession
-    ? `#${slugify(sharedSession.payload.serverName)}`
-    : "#shared";
+  return "#servers";
 }

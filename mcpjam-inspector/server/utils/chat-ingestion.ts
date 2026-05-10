@@ -42,6 +42,75 @@ interface ResumeConfig {
 }
 
 /**
+ * Direct-chat host configuration sent alongside the transcript so the backend
+ * can dedupe per-turn config into `hostConfigs`. Mirrors the `HostConfigPayload`
+ * shape accepted by the Convex `/ingest-chat` route. Only emitted for direct
+ * chats (serverShare and chatbox flows skip it).
+ *
+ * Phase 3 read switch: `hostStyle` carries the real host style
+ * (`claude` / `chatgpt`). The legacy literal `"direct"` is kept in
+ * the union for one deploy so an old backend (still expecting
+ * `'direct'`) keeps working until its roll lands; the new backend
+ * accepts both and normalizes legacy `'direct'` to the project
+ * default's real style with a `legacy_direct_style` warn.
+ */
+export type DirectChatHostStyle = "claude" | "chatgpt" | "direct";
+export interface DirectHostConfig {
+  hostStyle: DirectChatHostStyle;
+  systemPrompt: string;
+  modelId: string;
+  temperature: number;
+  requireToolApproval: boolean;
+  selectedServerIds: string[];
+}
+
+/**
+ * Build a contract-safe direct `hostConfig` payload from the inspector's
+ * loose runtime values. Coerces undefined `systemPrompt` / `temperature` /
+ * `requireToolApproval` / `selectedServerIds` into the types the backend's
+ * `isHostConfigPayload` guard requires — without this, paths like GPT-5 (where
+ * `resolvedTemperature` is undefined) would fail the guard and skip with
+ * `missing_field`.
+ *
+ * `hostStyle` defaults to `"claude"` when the caller doesn't supply one.
+ * Old call sites that used to hardcode `"direct"` should pass the
+ * resolved chat-tab host style instead — see ChatTabV2's hydration
+ * from project default for the source of truth.
+ */
+export function buildDirectHostConfig(input: {
+  modelId: string;
+  hostStyle?: DirectChatHostStyle;
+  systemPrompt?: string;
+  requestedTemperature?: number;
+  resolvedTemperature?: number;
+  requireToolApproval?: boolean;
+  selectedServerIds?: string[];
+}): DirectHostConfig {
+  const {
+    modelId,
+    hostStyle,
+    systemPrompt,
+    requestedTemperature,
+    resolvedTemperature,
+    requireToolApproval,
+    selectedServerIds,
+  } = input;
+  return {
+    hostStyle: hostStyle ?? "claude",
+    systemPrompt: systemPrompt ?? "",
+    modelId,
+    temperature:
+      typeof resolvedTemperature === "number"
+        ? resolvedTemperature
+        : typeof requestedTemperature === "number"
+          ? requestedTemperature
+          : 0.7,
+    requireToolApproval: requireToolApproval === true,
+    selectedServerIds: selectedServerIds ?? [],
+  };
+}
+
+/**
  * Shape of a single completed chat turn's trace as it flows from the stream
  * producers (`streamDirectChatWithLiveTrace`, `handleMCPJamFreeChatModel`)
  * through `persistChatSessionToConvex` to the Convex `/ingest-chat` handler.
@@ -64,10 +133,9 @@ interface PersistChatSessionOptions {
   modelSource: "mcpjam" | "byok" | "local_byok";
   authHeader?: string;
   projectId?: string;
-  sourceType?: "serverShare" | "chatbox" | "direct";
+  sourceType?: "chatbox" | "direct";
   directVisibility?: "private" | "project";
   surface?: "preview" | "share_link";
-  shareToken?: string;
   chatboxToken?: string;
   serverId?: string;
   visitorDisplayName?: string;
@@ -86,6 +154,7 @@ interface PersistChatSessionOptions {
   resumeConfig?: ResumeConfig;
   expectedVersion?: number;
   turnTrace?: PersistedTurnTrace;
+  hostConfig?: DirectHostConfig;
   /** Headers from the original browser request to forward for usage enrichment (user-agent, accept-language, geo headers). */
   forwardHeaders?: Record<string, string>;
 }
@@ -156,7 +225,6 @@ export async function persistChatSessionToConvex(
           ? { directVisibility: options.directVisibility }
           : {}),
         ...(options.surface ? { surface: options.surface } : {}),
-        ...(options.shareToken ? { shareToken: options.shareToken } : {}),
         ...(options.chatboxToken ? { chatboxToken: options.chatboxToken } : {}),
         ...(options.serverId ? { serverId: options.serverId } : {}),
         ...(options.visitorDisplayName
@@ -186,6 +254,7 @@ export async function persistChatSessionToConvex(
           ? { expectedVersion: options.expectedVersion }
           : {}),
         ...(options.turnTrace ? { turnTrace: options.turnTrace } : {}),
+        ...(options.hostConfig ? { hostConfig: options.hostConfig } : {}),
       }),
     });
 

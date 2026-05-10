@@ -94,7 +94,7 @@ export type RequestEventMap = {
   "chat.session.persist.failed": {
     failureKind: "timeout" | "http_error" | "exception" | "version_conflict";
     statusCode?: number;
-    sourceType?: "serverShare" | "chatbox" | "direct";
+    sourceType?: "chatbox" | "direct";
   };
   "widget.resource.served": {
     widgetType: "mcp_apps" | "chatgpt_apps";

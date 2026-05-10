@@ -30,37 +30,21 @@ import {
 
 // ── Zod Schemas ──────────────────────────────────────────────────────
 
-function refineHostedTokens<T extends z.ZodRawShape>(schema: z.ZodObject<T>) {
-  return schema.superRefine((value, ctx) => {
-    const hostedValue = value as {
-      shareToken?: string;
-      chatboxToken?: string;
-    };
-
-    if (hostedValue.shareToken && hostedValue.chatboxToken) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["chatboxToken"],
-        message: "shareToken and chatboxToken cannot both be provided",
-      });
-    }
-  });
-}
-
 const clientCapabilitiesSchema = z.record(z.string(), z.unknown());
 
-export const projectServerSchema = refineHostedTokens(
-  z.object({
-    projectId: z.string().min(1),
-    serverId: z.string().min(1),
-    serverName: z.string().min(1).optional(),
-    clientCapabilities: clientCapabilitiesSchema.optional(),
-    oauthAccessToken: z.string().optional(),
-    accessScope: z.enum(["project_member", "chat_v2"]).optional(),
-    shareToken: z.string().min(1).optional(),
-    chatboxToken: z.string().min(1).optional(),
-  })
-);
+export const projectServerSchema = z.object({
+  projectId: z.string().min(1),
+  // Optional but declared so zod doesn't strip it. Downstream callers in
+  // servers.ts and conformance.ts read this when present to scope authorize
+  // calls to a workspace mirror instead of a project.
+  workspaceId: z.string().min(1).optional(),
+  serverId: z.string().min(1),
+  serverName: z.string().min(1).optional(),
+  clientCapabilities: clientCapabilitiesSchema.optional(),
+  oauthAccessToken: z.string().optional(),
+  accessScope: z.enum(["project_member", "chat_v2"]).optional(),
+  chatboxToken: z.string().min(1).optional(),
+});
 
 export const toolsListSchema = projectServerSchema.extend({
   modelId: z.string().optional(),
@@ -85,18 +69,15 @@ export const promptsListSchema = projectServerSchema.extend({
   cursor: z.string().optional(),
 });
 
-export const promptsListMultiSchema = refineHostedTokens(
-  z.object({
-    projectId: z.string().min(1),
-    serverIds: z.array(z.string().min(1)).min(1),
-    serverNames: z.array(z.string().min(1)).optional(),
-    clientCapabilities: clientCapabilitiesSchema.optional(),
-    oauthTokens: z.record(z.string(), z.string()).optional(),
-    accessScope: z.enum(["project_member", "chat_v2"]).optional(),
-    shareToken: z.string().min(1).optional(),
-    chatboxToken: z.string().min(1).optional(),
-  })
-);
+export const promptsListMultiSchema = z.object({
+  projectId: z.string().min(1),
+  serverIds: z.array(z.string().min(1)).min(1),
+  serverNames: z.array(z.string().min(1)).optional(),
+  clientCapabilities: clientCapabilitiesSchema.optional(),
+  oauthTokens: z.record(z.string(), z.string()).optional(),
+  accessScope: z.enum(["project_member", "chat_v2"]).optional(),
+  chatboxToken: z.string().min(1).optional(),
+});
 
 export const promptsGetSchema = projectServerSchema.extend({
   promptName: z.string().min(1),
@@ -105,22 +86,19 @@ export const promptsGetSchema = projectServerSchema.extend({
     .optional(),
 });
 
-export const hostedChatSchema = refineHostedTokens(
-  z
-    .object({
-      projectId: z.string().min(1),
-      selectedServerIds: z.array(z.string().min(1)),
-      selectedServerNames: z.array(z.string().min(1)).optional(),
-      clientCapabilities: clientCapabilitiesSchema.optional(),
-      chatSessionId: z.string().min(1).optional(),
-      surface: z.enum(["preview", "share_link"]).optional(),
-      oauthTokens: z.record(z.string(), z.string()).optional(),
-      accessScope: z.enum(["project_member", "chat_v2"]).optional(),
-      shareToken: z.string().min(1).optional(),
-      chatboxToken: z.string().min(1).optional(),
-    })
-    .passthrough()
-);
+export const hostedChatSchema = z
+  .object({
+    projectId: z.string().min(1),
+    selectedServerIds: z.array(z.string().min(1)),
+    selectedServerNames: z.array(z.string().min(1)).optional(),
+    clientCapabilities: clientCapabilitiesSchema.optional(),
+    chatSessionId: z.string().min(1).optional(),
+    surface: z.enum(["preview", "share_link"]).optional(),
+    oauthTokens: z.record(z.string(), z.string()).optional(),
+    accessScope: z.enum(["project_member", "chat_v2"]).optional(),
+    chatboxToken: z.string().min(1).optional(),
+  })
+  .passthrough();
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -243,7 +221,6 @@ export async function authorizeServer(
   options?: {
     accessScope?: "project_member" | "chat_v2";
     workspaceId?: string;
-    shareToken?: string;
     chatboxToken?: string;
   }
 ): Promise<ClientSafeAuthorizeResponse> {
@@ -258,14 +235,6 @@ export async function authorizeServer(
 
   let response: Response;
   try {
-    if (options?.shareToken && options?.chatboxToken) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        "shareToken and chatboxToken cannot both be provided"
-      );
-    }
-
     response = await fetch(`${convexUrl}/web/authorize`, {
       method: "POST",
       headers: {
@@ -278,7 +247,6 @@ export async function authorizeServer(
           : { projectId }),
         serverId,
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
-        ...(options?.shareToken ? { shareToken: options.shareToken } : {}),
         ...(options?.chatboxToken
           ? { chatboxToken: options.chatboxToken }
           : {}),
@@ -332,7 +300,6 @@ export async function authorizeBatch(
   options?: {
     accessScope?: "project_member" | "chat_v2";
     workspaceId?: string;
-    shareToken?: string;
     chatboxToken?: string;
   }
 ): Promise<ConvexBatchAuthorizeResponse> {
@@ -347,14 +314,6 @@ export async function authorizeBatch(
 
   let response: Response;
   try {
-    if (options?.shareToken && options?.chatboxToken) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        "shareToken and chatboxToken cannot both be provided"
-      );
-    }
-
     response = await fetch(`${convexUrl}/web/authorize-batch`, {
       method: "POST",
       headers: {
@@ -367,7 +326,6 @@ export async function authorizeBatch(
           : { projectId }),
         serverIds,
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
-        ...(options?.shareToken ? { shareToken: options.shareToken } : {}),
         ...(options?.chatboxToken
           ? { chatboxToken: options.chatboxToken }
           : {}),
@@ -602,7 +560,6 @@ export async function createAuthorizedManager(
   options?: {
     accessScope?: "project_member" | "chat_v2";
     workspaceId?: string;
-    shareToken?: string;
     chatboxToken?: string;
     rpcLogger?: RpcLogger;
     serverNames?: string[];
@@ -633,7 +590,6 @@ export async function createAuthorizedManager(
     {
       accessScope: options?.accessScope,
       workspaceId: options?.workspaceId,
-      shareToken: options?.shareToken,
       chatboxToken: options?.chatboxToken,
     }
   );
@@ -855,10 +811,6 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
       raw.accessScope === "project_member" || raw.accessScope === "chat_v2"
         ? raw.accessScope
         : undefined;
-    const shareToken =
-      typeof raw.shareToken === "string" && raw.shareToken.trim()
-        ? raw.shareToken
-        : undefined;
     const chatboxToken =
       typeof raw.chatboxToken === "string" && raw.chatboxToken.trim()
         ? raw.chatboxToken
@@ -878,7 +830,6 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
           accessScope,
           workspaceId:
             typeof raw.workspaceId === "string" ? raw.workspaceId : undefined,
-          shareToken,
           chatboxToken,
           rpcLogger: rpcCollector?.rpcLogger,
           serverNames,

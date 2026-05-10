@@ -1,37 +1,37 @@
-diff --git a/.changeset/inspector-local-mode-dedup-and-billing.md b/.changeset/inspector-local-mode-dedup-and-billing.md
+diff --git a/.changeset/hostconfig-v2-and-chatbox-sharing.md b/.changeset/hostconfig-v2-and-chatbox-sharing.md
 deleted file mode 100644
-index dc1c09e62..000000000
---- a/.changeset/inspector-local-mode-dedup-and-billing.md
+index 365fce0b7..000000000
+--- a/.changeset/hostconfig-v2-and-chatbox-sharing.md
 +++ /dev/null
 @@ -1,5 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--Finish local-mode dedup (sync local OAuth tokens to Convex via import-tokens, collapse legacy localStorage state to no-ops), charge users after trial if paid during trial, make renderer transparent.
+-HostConfig v2: send hostConfig payload from inspector for direct chats, add HostConfigEditor component and v2 types, and switch reads to v2 (Phase 3). Replace server sharing with chatbox sharing. Add suite-level Default Execution Config editor for evals. Identify PostHog by actor key instead of auth state. Refactor: unify chat config boundaries by removing ChatTabV2 override props and nesting EvalChatHandoff fields under executionConfig.
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 25452cebe..e1170dbf5 100644
+index e1170dbf5..023bc4e4e 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.4.4",
-+  "version": "2.4.5",
+-  "version": "2.4.5",
++  "version": "2.4.6",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
 diff --git a/package-lock.json b/package-lock.json
-index a77c1d626..d2bfee7d6 100644
+index d2bfee7d6..603369ccf 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -288,7 +288,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.4.4",
-+      "version": "2.4.5",
+-      "version": "2.4.5",
++      "version": "2.4.6",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/anthropic": "^3.0.36",

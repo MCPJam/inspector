@@ -47,10 +47,16 @@ vi.mock("../../../utils/mcpjam-stream-handler.js", () => ({
   handleMCPJamFreeChatModel: handleMCPJamFreeChatModelMock,
 }));
 
-vi.mock("../../../utils/chat-ingestion.js", () => ({
-  persistChatSessionToConvex: persistChatSessionToConvexMock,
-  pickEnrichmentHeaders: vi.fn(() => ({})),
-}));
+vi.mock("../../../utils/chat-ingestion.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/chat-ingestion.js")
+  >("../../../utils/chat-ingestion.js");
+  return {
+    ...actual,
+    persistChatSessionToConvex: persistChatSessionToConvexMock,
+    pickEnrichmentHeaders: vi.fn(() => ({})),
+  };
+});
 
 vi.mock("../apps.js", () => ({
   default: new Hono(),
@@ -185,6 +191,10 @@ describe("web routes — chat-v2 hosted mode", () => {
         modelSource: "mcpjam",
       })
     );
+    // Non-direct flows must NOT send hostConfig — backend skips with
+    // missing_field, which is the desired behavior for chatbox/serverShare.
+    const persistArgs = persistChatSessionToConvexMock.mock.calls[0][0];
+    expect(persistArgs.hostConfig).toBeUndefined();
   });
 
   it("passes shared chatbox link context into the hosted model handler", async () => {
@@ -288,8 +298,51 @@ describe("web routes — chat-v2 hosted mode", () => {
         resumeConfig: expect.objectContaining({
           selectedServers: ["Asana"],
         }),
+        hostConfig: expect.objectContaining({
+          // Phase 3: hostStyle defaults to 'claude' when omitted —
+          // no more legacy 'direct' on the wire.
+          hostStyle: "claude",
+          modelId: "openai/gpt-5-mini",
+          selectedServerIds: ["server-1"],
+          // resolvedTemperature from prepareChatV2Mock default (0.7)
+          temperature: 0.7,
+        }),
       })
     );
+  });
+
+  it("attaches a numeric hostConfig.temperature when resolvedTemperature is undefined (GPT-5 path)", async () => {
+    prepareChatV2Mock.mockResolvedValueOnce({
+      allTools: {},
+      enhancedSystemPrompt: "system",
+      // GPT-5 paths leave resolvedTemperature undefined; the helper must coerce
+      // to a numeric fallback so the backend's HostConfigPayload guard accepts it.
+      resolvedTemperature: undefined,
+    });
+    const { app, token } = createWebTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        chatSessionId: "chat-session-gpt5",
+        temperature: 0.3,
+        messages: [{ role: "user", content: "hello" }],
+        model: {
+          id: "openai/gpt-5-mini",
+          provider: "openai",
+          name: "GPT-5 Mini",
+        },
+      },
+      token
+    );
+
+    expect(response.status).toBe(200);
+    const persistArgs = persistChatSessionToConvexMock.mock.calls[0][0];
+    expect(typeof persistArgs.hostConfig.temperature).toBe("number");
+    expect(persistArgs.hostConfig.temperature).toBe(0.3);
   });
 
   it("returns server names in hosted oauth-required chat errors", async () => {

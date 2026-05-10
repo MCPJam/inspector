@@ -28,7 +28,7 @@ import {
   validateHostedServer,
   type HostedServerValidateContext,
 } from "@/lib/apis/web/servers-api";
-import { slugify } from "@/lib/shared-server-session";
+import { slugify } from "@/lib/chatbox-session";
 import { ingestOAuthTraceLogs } from "@/stores/traffic-log-store";
 
 const INLINE_TOKEN_POLL_ATTEMPTS = 15;
@@ -191,7 +191,6 @@ export interface UseHostedOAuthGateOptions {
   pendingKey: string;
   servers: HostedOAuthServerDescriptor[];
   projectId?: string | null;
-  shareToken?: string;
   chatboxToken?: string;
   isAuthenticated?: boolean;
 }
@@ -212,7 +211,6 @@ export function useHostedOAuthGate({
   pendingKey,
   servers,
   projectId,
-  shareToken,
   chatboxToken,
   isAuthenticated = false,
 }: UseHostedOAuthGateOptions): UseHostedOAuthGateResult {
@@ -425,13 +423,11 @@ export function useHostedOAuthGate({
         serverId: server.serverId,
         serverName: server.serverName,
         serverUrl: server.serverUrl,
-        accessScope:
-          shareToken || chatboxToken
-            ? "chat_v2"
-            : isAuthenticated
-            ? "project_member"
-            : undefined,
-        shareToken,
+        accessScope: chatboxToken
+          ? "chat_v2"
+          : isAuthenticated
+          ? "project_member"
+          : undefined,
         chatboxToken,
         returnHash,
       });
@@ -501,7 +497,6 @@ export function useHostedOAuthGate({
       isVaultBacked,
       pendingKey,
       chatboxToken,
-      shareToken,
       surface,
       projectId,
     ]

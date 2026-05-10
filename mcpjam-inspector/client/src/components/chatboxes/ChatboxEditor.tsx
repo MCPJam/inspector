@@ -570,6 +570,15 @@ export function ChatboxEditor({
 
     setIsSaving(true);
     try {
+      // Phase 4: the backend createChatbox/updateChatbox accept either
+      // a v2 `hostConfig` arg or these legacy flat fields. The flat
+      // path lets the backend seed connection settings (headers /
+      // requestTimeout / clientCapabilities / hostContext) from the
+      // project's v2 default, which the editor UI doesn't surface.
+      // Sending an explicit v2 hostConfig here with empty connection
+      // settings would clobber project defaults — so we keep the flat
+      // path until the editor learns to read the project default
+      // and round-trip its connection portion.
       const payload = {
         name: trimmedName,
         description: description.trim() || undefined,
@@ -1173,13 +1182,13 @@ export function ChatboxEditor({
                       )}
                       minimalMode
                       reasoningDisplayMode="hidden"
-                      hostedProjectIdOverride={chatbox.projectId}
-                      hostedSelectedServerIdsOverride={activePreviewServers.map(
-                        (server) => server.serverId
-                      )}
                       hostedContext={{
                         chatboxToken: previewToken,
                         chatboxSurface: "preview",
+                        projectId: chatbox.projectId,
+                        selectedServerIds: activePreviewServers.map(
+                          (server) => server.serverId
+                        ),
                       }}
                       executionConfig={{
                         modelId,
