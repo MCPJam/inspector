@@ -58,6 +58,8 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     vi.clearAllMocks();
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("CONVEX_HTTP_URL", "https://example.convex.site");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
     convexClient.mutation.mockResolvedValue({ iterationId: "iter-1" });
     convexClient.query.mockResolvedValue({ status: "running" });
     convexClient.action.mockResolvedValue(undefined);
@@ -80,6 +82,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   async function runQuickTestCase(compareRunId?: string) {
@@ -171,6 +174,20 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       status: 200,
       statusText: "OK",
       body: stream,
+      text: vi.fn().mockResolvedValue(""),
+    };
+  }
+
+  function createOrgRuntimeResolveResponse() {
+    return {
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: vi.fn().mockResolvedValue({
+        ok: true,
+        runtimeLocation: "cloud",
+        providerKey: "openai",
+      }),
       text: vi.fn().mockResolvedValue(""),
     };
   }
@@ -468,6 +485,68 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     expect(createLlmModelMock).not.toHaveBeenCalled();
   });
 
+  it("forwards guest org runtime auth to resolve and backend eval calls", async () => {
+    fetchMock
+      .mockResolvedValueOnce(createOrgRuntimeResolveResponse())
+      .mockResolvedValueOnce(createBackendSuccessResponse());
+
+    await expect(
+      runEvalSuiteWithAiSdk({
+        suiteId: "suite-1",
+        runId: null,
+        config: {
+          tests: [
+            {
+              title: "Case",
+              query: "Hello",
+              runs: 1,
+              model: "gpt-4-turbo",
+              provider: "openai",
+              expectedToolCalls: [],
+              promptTurns: [
+                { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+              ],
+              testCaseId: "case-1",
+            },
+          ],
+          environment: { servers: ["srv-1"] },
+        },
+        orgRuntimeProjectId: "project-2",
+        orgRuntimeAuth: {
+          chatboxToken: "chatbox-token-2",
+          serverIds: ["srv-1"],
+        },
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "guest-token-2",
+        mcpClientManager: mcpClientManager as any,
+        testCaseId: "case-1",
+      }),
+    ).resolves.toBeDefined();
+
+    const resolveCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).endsWith("/stream/org/resolve"),
+    );
+    const resolveRequest = resolveCall?.[1] as { body?: string };
+    expect(JSON.parse(resolveRequest.body ?? "{}")).toMatchObject({
+      projectId: "project-2",
+      providerKey: "openai",
+      chatboxToken: "chatbox-token-2",
+      serverIds: ["srv-1"],
+    });
+
+    const streamCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).endsWith("/stream/org"),
+    );
+    const streamRequest = streamCall?.[1] as { body?: string };
+    expect(JSON.parse(streamRequest.body ?? "{}")).toMatchObject({
+      projectId: "project-2",
+      providerKey: "openai",
+      chatboxToken: "chatbox-token-2",
+      serverIds: ["srv-1"],
+    });
+  });
+
   it("streams bare MCPJam Anthropic test cases through the backend without a BYOK key", async () => {
     const emitted: Array<Record<string, unknown>> = [];
     fetchMock.mockResolvedValue(createBackendStreamResponse());
@@ -513,6 +592,75 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       "anthropic/claude-haiku-4.5",
     );
     expect(createLlmModelMock).not.toHaveBeenCalled();
+    expect(emitted).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "text_delta",
+          content: "Done",
+        }),
+      ]),
+    );
+  });
+
+  it("forwards guest org runtime auth to streaming eval calls", async () => {
+    const emitted: Array<Record<string, unknown>> = [];
+    fetchMock
+      .mockResolvedValueOnce(createOrgRuntimeResolveResponse())
+      .mockResolvedValueOnce(createBackendStreamResponse());
+
+    await expect(
+      streamTestCase({
+        test: {
+          title: "Case",
+          query: "Hello",
+          runs: 1,
+          model: "gpt-4-turbo",
+          provider: "openai",
+          expectedToolCalls: [],
+          promptTurns: [
+            { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+          ],
+          testCaseId: "case-1",
+        },
+        tools: {},
+        mcpClientManager: mcpClientManager as any,
+        recorder: null,
+        orgRuntimeProjectId: "project-1",
+        orgRuntimeAuth: {
+          chatboxToken: "chatbox-token",
+          serverIds: ["srv-1"],
+        },
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "guest-token",
+        testCaseId: "case-1",
+        suiteId: "suite-1",
+        runId: null,
+        emit: (event) => emitted.push(event as Record<string, unknown>),
+      }),
+    ).resolves.toBeDefined();
+
+    const resolveCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).endsWith("/stream/org/resolve"),
+    );
+    const resolveRequest = resolveCall?.[1] as { body?: string };
+    expect(JSON.parse(resolveRequest.body ?? "{}")).toMatchObject({
+      projectId: "project-1",
+      providerKey: "openai",
+      chatboxToken: "chatbox-token",
+      serverIds: ["srv-1"],
+    });
+
+    const streamCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).endsWith("/stream/org"),
+    );
+    const streamRequest = streamCall?.[1] as { body?: string };
+    expect(JSON.parse(streamRequest.body ?? "{}")).toMatchObject({
+      projectId: "project-1",
+      providerKey: "openai",
+      chatboxToken: "chatbox-token",
+      serverIds: ["srv-1"],
+    });
     expect(emitted).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

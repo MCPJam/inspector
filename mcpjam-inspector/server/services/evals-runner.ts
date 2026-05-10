@@ -31,6 +31,7 @@ import {
   deriveOrgProviderKey,
   resolveOrgProviderRuntime,
   type OrgProviderRuntime,
+  type ResolveOrgModelConfigAuth,
   type ResolvedOrgModelConfig,
 } from "../utils/org-model-config";
 import {
@@ -127,11 +128,17 @@ export type RunEvalSuiteOptions = {
   convexHttpUrl: string;
   convexAuthToken: string;
   orgRuntimeProjectId?: string;
+  orgRuntimeAuth?: EvalOrgRuntimeAuth;
   mcpClientManager: MCPClientManager;
   recorder?: SuiteRunRecorder | null;
   testCaseId?: string; // For quick runs, associate iterations with a specific test case
   compareRunId?: string; // For quick compare runs, group related iterations in metadata
 };
+
+export type EvalOrgRuntimeAuth = Pick<
+  ResolveOrgModelConfigAuth,
+  "chatboxToken" | "serverIds"
+>;
 
 /** One executed iteration inside a suite/quick run (evaluation + optional persisted iteration id). */
 export type EvalIterationOutcome = {
@@ -1023,6 +1030,7 @@ type RunIterationBaseParams = {
   modelApiKeys?: Record<string, string>;
   orgModelConfig?: ResolvedOrgModelConfig;
   orgResolvedProvider?: OrgProviderResolvedConfig;
+  orgRuntimeAuth?: EvalOrgRuntimeAuth;
   convexClient: ConvexHttpClient;
   runId: string | null; // For cancellation checks
   abortSignal?: AbortSignal; // For aborting in-flight requests
@@ -1131,6 +1139,7 @@ function resolveEvalModelRuntime(args: {
 
 async function resolveEvalOrgRuntime(args: {
   orgRuntimeProjectId?: string;
+  orgRuntimeAuth?: EvalOrgRuntimeAuth;
   modelDefinition: ModelDefinition;
   modelId: string;
   convexAuthToken: string;
@@ -1147,7 +1156,10 @@ async function resolveEvalOrgRuntime(args: {
     args.orgRuntimeProjectId,
     providerKey.key,
     args.modelId,
-    { bearerToken: args.convexAuthToken },
+    {
+      bearerToken: args.convexAuthToken,
+      ...args.orgRuntimeAuth,
+    },
   );
 }
 
@@ -1612,6 +1624,7 @@ const runIterationViaBackend = async ({
   endpointPath = "/stream",
   providerKey,
   projectId,
+  orgRuntimeAuth,
   convexClient,
   runId,
   abortSignal,
@@ -1746,6 +1759,9 @@ const runIterationViaBackend = async ({
   const authHeader = convexAuthToken
     ? { Authorization: `Bearer ${convexAuthToken}` }
     : ({} as Record<string, string>);
+  const orgRuntimeServerIds = orgRuntimeAuth?.serverIds?.filter(
+    (serverId) => serverId.trim().length > 0,
+  );
 
   let accumulatedUsage: UsageTotals = {
     inputTokens: 0,
@@ -1790,6 +1806,14 @@ const runIterationViaBackend = async ({
             model: modelId,
             ...(providerKey ? { providerKey } : {}),
             ...(projectId ? { projectId } : {}),
+            ...(endpointPath === "/stream/org" && orgRuntimeAuth?.chatboxToken
+              ? { chatboxToken: orgRuntimeAuth.chatboxToken }
+              : {}),
+            ...(endpointPath === "/stream/org" &&
+            orgRuntimeServerIds &&
+            orgRuntimeServerIds.length > 0
+              ? { serverIds: orgRuntimeServerIds }
+              : {}),
             ...(systemPrompt ? { systemPrompt } : {}),
             ...(temperature == null ? {} : { temperature }),
             ...(toolChoice ? { toolChoice } : {}),
@@ -2146,6 +2170,7 @@ const runTestCase = async (params: {
   modelApiKeys?: Record<string, string>;
   orgModelConfig?: ResolvedOrgModelConfig;
   orgRuntimeProjectId?: string;
+  orgRuntimeAuth?: EvalOrgRuntimeAuth;
   convexHttpUrl: string;
   convexAuthToken: string;
   convexClient: ConvexHttpClient;
@@ -2163,6 +2188,7 @@ const runTestCase = async (params: {
     modelApiKeys,
     orgModelConfig,
     orgRuntimeProjectId,
+    orgRuntimeAuth,
     convexHttpUrl,
     convexAuthToken,
     convexClient,
@@ -2189,6 +2215,7 @@ const runTestCase = async (params: {
         modelDefinition,
         modelId: resolvedModelId,
         convexAuthToken,
+        orgRuntimeAuth,
         modelApiKeys,
       });
 
@@ -2217,6 +2244,7 @@ const runTestCase = async (params: {
           orgRuntime?.runtimeLocation === "cloud"
             ? orgRuntimeProjectId
             : undefined,
+        orgRuntimeAuth,
         convexClient,
         modelApiKeys,
         orgModelConfig,
@@ -2261,6 +2289,7 @@ export const runEvalSuiteWithAiSdk = async ({
   modelApiKeys,
   orgModelConfig,
   orgRuntimeProjectId,
+  orgRuntimeAuth,
   convexClient,
   convexHttpUrl,
   convexAuthToken,
@@ -2274,6 +2303,15 @@ export const runEvalSuiteWithAiSdk = async ({
     environment: config.environment,
     mcpClientManager,
   });
+  const shouldForwardOrgRuntimeAuth =
+    Boolean(orgRuntimeAuth) || serverIds.length > 0;
+  const effectiveOrgRuntimeAuth: EvalOrgRuntimeAuth | undefined =
+    shouldForwardOrgRuntimeAuth
+      ? {
+          ...orgRuntimeAuth,
+          serverIds: orgRuntimeAuth?.serverIds ?? serverIds,
+        }
+      : undefined;
 
   if (!tests.length) {
     throw new Error("No tests supplied for eval run");
@@ -2335,6 +2373,7 @@ export const runEvalSuiteWithAiSdk = async ({
         modelApiKeys,
         orgModelConfig,
         orgRuntimeProjectId,
+        orgRuntimeAuth: effectiveOrgRuntimeAuth,
         convexHttpUrl,
         convexAuthToken,
         convexClient,
@@ -3050,6 +3089,7 @@ const streamIterationViaBackend = async ({
   endpointPath = "/stream",
   providerKey,
   projectId,
+  orgRuntimeAuth,
   convexClient,
   runId,
   abortSignal,
@@ -3186,6 +3226,9 @@ const streamIterationViaBackend = async ({
   const authHeader = convexAuthToken
     ? { Authorization: `Bearer ${convexAuthToken}` }
     : ({} as Record<string, string>);
+  const orgRuntimeServerIds = orgRuntimeAuth?.serverIds?.filter(
+    (serverId) => serverId.trim().length > 0,
+  );
 
   let accumulatedUsage: UsageTotals = {
     inputTokens: 0,
@@ -3236,6 +3279,14 @@ const streamIterationViaBackend = async ({
             model: modelId,
             ...(providerKey ? { providerKey } : {}),
             ...(projectId ? { projectId } : {}),
+            ...(endpointPath === "/stream/org" && orgRuntimeAuth?.chatboxToken
+              ? { chatboxToken: orgRuntimeAuth.chatboxToken }
+              : {}),
+            ...(endpointPath === "/stream/org" &&
+            orgRuntimeServerIds &&
+            orgRuntimeServerIds.length > 0
+              ? { serverIds: orgRuntimeServerIds }
+              : {}),
             ...(systemPrompt ? { systemPrompt } : {}),
             ...(temperature == null ? {} : { temperature }),
             ...(toolChoice ? { toolChoice } : {}),
@@ -3812,6 +3863,7 @@ export const streamTestCase = async (params: {
   modelApiKeys?: Record<string, string>;
   orgModelConfig?: ResolvedOrgModelConfig;
   orgRuntimeProjectId?: string;
+  orgRuntimeAuth?: EvalOrgRuntimeAuth;
   convexHttpUrl: string;
   convexAuthToken: string;
   convexClient: ConvexHttpClient;
@@ -3830,6 +3882,7 @@ export const streamTestCase = async (params: {
     modelApiKeys,
     orgModelConfig,
     orgRuntimeProjectId,
+    orgRuntimeAuth,
     convexHttpUrl,
     convexAuthToken,
     convexClient,
@@ -3857,6 +3910,7 @@ export const streamTestCase = async (params: {
         modelDefinition,
         modelId: resolvedModelId,
         convexAuthToken,
+        orgRuntimeAuth,
         modelApiKeys,
       });
 
@@ -3885,6 +3939,7 @@ export const streamTestCase = async (params: {
           orgRuntime?.runtimeLocation === "cloud"
             ? orgRuntimeProjectId
             : undefined,
+        orgRuntimeAuth,
         convexClient,
         modelApiKeys,
         orgModelConfig,

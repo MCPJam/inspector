@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import type { AppReadyStatus } from "@/lib/app-ready";
+import { HOSTED_MODE } from "@/lib/config";
 
 /**
  * Single source of truth for "is this app ready to dispatch a request?".
@@ -95,6 +96,15 @@ export function AppReadyProvider({
     }
     if (isLoadingAppState) {
       return { status: "bootstrapping", reason: "loading-app-state" };
+    }
+    if (!HOSTED_MODE) {
+      return {
+        status: "ready",
+        projectId:
+          effectiveActiveProjectId && effectiveActiveProjectId !== "none"
+            ? effectiveActiveProjectId
+            : null,
+      };
     }
     if (isConvexAuthLoading || !isConvexAuthenticated) {
       return { status: "bootstrapping", reason: "resolving-auth" };
