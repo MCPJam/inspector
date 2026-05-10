@@ -15,6 +15,8 @@ export type {
   StdioServerConfig,
   HttpServerConfig,
   BaseServerConfig,
+  UnauthorizedRefreshHandler,
+  UnauthorizedRefreshResult,
 } from "./types.js";
 
 // Types - State and status
@@ -103,6 +105,7 @@ export {
   MCPError,
   MCPAuthError,
   isAuthError,
+  isUnauthorized401,
   isMCPAuthError,
 } from "./errors.js";
 

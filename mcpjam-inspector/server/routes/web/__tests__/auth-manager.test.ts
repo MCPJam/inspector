@@ -26,6 +26,10 @@ const mockContext = {
   set: vi.fn(),
 } as unknown as Context;
 
+function fetchUrl(input: Parameters<typeof fetch>[0]): string {
+  return input instanceof Request ? input.url : input.toString();
+}
+
 describe("web auth manager batching", () => {
   const originalFetch = global.fetch;
   const originalConvexHttpUrl = process.env.CONVEX_HTTP_URL;
@@ -127,6 +131,8 @@ describe("web auth manager batching", () => {
     expect(result.oauthServerUrls).toEqual({
       "server-1": "https://server-1.example.com/mcp",
     });
+    const config = mcpClientManagerMock.mock.calls[0]?.[0]?.["server-1"];
+    expect(config.onUnauthorized).toBeUndefined();
     expect(mcpClientManagerMock).toHaveBeenCalledWith(
       {
         "server-1": expect.objectContaining({
@@ -141,6 +147,158 @@ describe("web auth manager batching", () => {
       },
       expect.any(Object)
     );
+  });
+
+  it("attaches hosted OAuth onUnauthorized and force-refreshes through Convex", async () => {
+    global.fetch = vi.fn(async (input, init) => {
+      const url = fetchUrl(input);
+      if (url.endsWith("/web/authorize-batch")) {
+        return new Response(
+          JSON.stringify({
+            results: {
+              "server-1": {
+                ok: true,
+                role: "member",
+                accessLevel: "project_member",
+                permissions: { chatOnly: false },
+                oauthAccessToken: "old-hosted-token",
+                serverConfig: {
+                  transportType: "http",
+                  url: "https://server-1.example.com/mcp",
+                  headers: {},
+                  useOAuth: true,
+                },
+              },
+            },
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }
+        );
+      }
+
+      expect(url).toBe("https://example.convex.site/web/oauth/force-refresh");
+      expect(init?.headers).toEqual({
+        "Content-Type": "application/json",
+        Authorization: "Bearer bearer-token",
+      });
+      expect(JSON.parse(init?.body as string)).toEqual({
+        projectId: "project-1",
+        serverId: "server-1",
+      });
+      return new Response(
+        JSON.stringify({
+          success: true,
+          accessToken: "new-hosted-token",
+          expiresAt: null,
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }) as typeof fetch;
+
+    await createAuthorizedManager(
+      mockContext,
+      "bearer-token",
+      "project-1",
+      ["server-1"],
+      10_000
+    );
+
+    const config = mcpClientManagerMock.mock.calls[0]?.[0]?.["server-1"];
+    expect(config).toEqual(
+      expect.objectContaining({
+        requestInit: {
+          headers: {
+            Authorization: "Bearer old-hosted-token",
+          },
+        },
+        onUnauthorized: expect.any(Function),
+      })
+    );
+
+    await expect(
+      config.onUnauthorized({
+        serverId: "server-1",
+        error: Object.assign(new Error("HTTP 401"), { statusCode: 401 }),
+      })
+    ).resolves.toEqual({ accessToken: "new-hosted-token" });
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("maps invalid hosted refresh tokens to reconnect details", async () => {
+    global.fetch = vi.fn(async (input) => {
+      const url = fetchUrl(input);
+      if (url.endsWith("/web/authorize-batch")) {
+        return new Response(
+          JSON.stringify({
+            results: {
+              "server-1": {
+                ok: true,
+                role: "member",
+                accessLevel: "project_member",
+                permissions: { chatOnly: false },
+                oauthAccessToken: "old-hosted-token",
+                serverConfig: {
+                  transportType: "http",
+                  url: "https://server-1.example.com/mcp",
+                  headers: {},
+                  useOAuth: true,
+                },
+              },
+            },
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          success: false,
+          code: "refresh_token_invalid",
+          message: "Please reconnect.",
+        }),
+        {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }) as typeof fetch;
+
+    await createAuthorizedManager(
+      mockContext,
+      "bearer-token",
+      "project-1",
+      ["server-1"],
+      10_000,
+      undefined,
+      undefined,
+      { serverNames: ["Asana"] }
+    );
+
+    const config = mcpClientManagerMock.mock.calls[0]?.[0]?.["server-1"];
+    await expect(
+      config.onUnauthorized({
+        serverId: "server-1",
+        error: Object.assign(new Error("HTTP 401"), { statusCode: 401 }),
+      })
+    ).rejects.toMatchObject<WebRouteError>({
+      status: 401,
+      code: "UNAUTHORIZED",
+      message: "Please reconnect.",
+      details: {
+        oauthRequired: true,
+        refreshTokenInvalid: true,
+        serverId: "server-1",
+        serverName: "Asana",
+      },
+    });
   });
 
   it("preserves oauthRequired error details when no token is available", async () => {

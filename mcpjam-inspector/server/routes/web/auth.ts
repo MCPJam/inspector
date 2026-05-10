@@ -1,7 +1,11 @@
 import { z } from "zod";
 import type { Context } from "hono";
 import { MCPClientManager } from "@mcpjam/sdk";
-import type { HttpServerConfig, RpcLogger } from "@mcpjam/sdk";
+import type {
+  HttpServerConfig,
+  RpcLogger,
+  UnauthorizedRefreshHandler,
+} from "@mcpjam/sdk";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
   attachHostedRpcLogs,
@@ -23,6 +27,9 @@ import {
   readJsonBody,
   parseWithSchema,
 } from "./errors.js";
+import {
+  buildHostedOAuthUnauthorizedHandler,
+} from "../../utils/hosted-oauth-refresh.js";
 
 // ── Zod Schemas ──────────────────────────────────────────────────────
 
@@ -408,7 +415,8 @@ export function toHttpConfig(
   authResponse: AuthorizedServerConfigHolder,
   timeoutMs: number,
   oauthAccessToken?: string,
-  clientCapabilities?: Record<string, unknown>
+  clientCapabilities?: Record<string, unknown>,
+  onUnauthorized?: UnauthorizedRefreshHandler
 ): HttpServerConfig {
   if (authResponse.serverConfig.transportType !== "http") {
     throw new WebRouteError(
@@ -442,6 +450,7 @@ export function toHttpConfig(
       headers,
     },
     timeout: timeoutMs,
+    ...(onUnauthorized ? { onUnauthorized } : {}),
   };
 }
 
@@ -516,6 +525,19 @@ export async function createAuthorizedManager(
 
     const oauthToken = auth.oauthAccessToken ?? oauthTokens?.[serverId];
     const displayServerName = serverNamesById?.[serverId] ?? serverId;
+    const onUnauthorized =
+      auth.serverConfig.useOAuth && auth.oauthAccessToken
+        ? buildHostedOAuthUnauthorizedHandler({
+            bearerToken,
+            projectId,
+            serverId,
+            serverName: displayServerName,
+            accessScope: options?.accessScope,
+            workspaceId: options?.workspaceId,
+            shareToken: options?.shareToken,
+            chatboxToken: options?.chatboxToken,
+          })
+        : undefined;
 
     if (auth.serverConfig.useOAuth) {
       if (auth.serverConfig.url) {
@@ -538,7 +560,13 @@ export async function createAuthorizedManager(
 
     return [
       serverId,
-      toHttpConfig(auth, timeoutMs, oauthToken, clientCapabilities),
+      toHttpConfig(
+        auth,
+        timeoutMs,
+        oauthToken,
+        clientCapabilities,
+        onUnauthorized
+      ),
     ] as const;
   });
 
