@@ -23,7 +23,7 @@ interface UseOnboardingOptions {
   isSignedInWithWorkOs: boolean;
   isWorkOsAuthLoading: boolean;
   hasRemoteOnboardingState?: boolean;
-  hasCompletedOnboarding?: boolean;
+  hasSeenOnboarding?: boolean;
   canPersistRemoteOnboarding?: boolean;
 }
 
@@ -46,18 +46,18 @@ function getInitialLocalPhase(
     isSignedInWithWorkOs,
     isWorkOsAuthLoading,
     hasRemoteOnboardingState = false,
-    hasCompletedOnboarding = false,
+    hasSeenOnboarding = false,
   }: Pick<
     UseOnboardingOptions,
     | "isSignedInWithWorkOs"
     | "isWorkOsAuthLoading"
     | "hasRemoteOnboardingState"
-    | "hasCompletedOnboarding"
+    | "hasSeenOnboarding"
   >,
 ): OnboardingPhase {
   if (isWorkOsAuthLoading) return "dismissed";
   if (isSignedInWithWorkOs) return "completed";
-  if (hasRemoteOnboardingState && hasCompletedOnboarding) return "completed";
+  if (hasRemoteOnboardingState && hasSeenOnboarding) return "dismissed";
 
   const persisted = hasRemoteOnboardingState ? null : readOnboardingState();
   if (!hasRemoteOnboardingState) {
@@ -72,7 +72,7 @@ function getInitialLocalPhase(
     serverEntries.length === 1 &&
     serverEntries[0]?.[0] === EXCALIDRAW_SERVER_NAME;
   const shouldContinueFirstRun =
-    (hasRemoteOnboardingState && !hasCompletedOnboarding) ||
+    (hasRemoteOnboardingState && !hasSeenOnboarding) ||
     persisted?.status === "started" ||
     (persisted?.status === "seen" && !persisted.shownAt);
 
@@ -98,12 +98,12 @@ export function useOnboarding({
   isSignedInWithWorkOs,
   isWorkOsAuthLoading,
   hasRemoteOnboardingState = false,
-  hasCompletedOnboarding = false,
+  hasSeenOnboarding = false,
   canPersistRemoteOnboarding = false,
 }: UseOnboardingOptions): UseOnboardingReturn {
   const posthog = usePostHog();
-  const completeOnboardingMutation = useMutation(
-    "users:completeOnboarding" as any,
+  const markOnboardingAsShownMutation = useMutation(
+    "users:markOnboardingShown" as any,
   );
   const trackingProps = useMemo(
     () => ({
@@ -118,7 +118,7 @@ export function useOnboarding({
       isSignedInWithWorkOs,
       isWorkOsAuthLoading,
       hasRemoteOnboardingState,
-      hasCompletedOnboarding,
+      hasSeenOnboarding,
     }),
   );
 
@@ -137,19 +137,19 @@ export function useOnboarding({
   const persistRemoteOnboardingShown = useCallback(() => {
     if (
       !canPersistRemoteOnboarding ||
-      hasCompletedOnboarding ||
+      hasSeenOnboarding ||
       didPersistRemoteShownRef.current
     ) {
       return;
     }
     didPersistRemoteShownRef.current = true;
-    completeOnboardingMutation().catch(() => {
+    markOnboardingAsShownMutation().catch(() => {
       didPersistRemoteShownRef.current = false;
     });
   }, [
     canPersistRemoteOnboarding,
-    completeOnboardingMutation,
-    hasCompletedOnboarding,
+    hasSeenOnboarding,
+    markOnboardingAsShownMutation,
   ]);
 
   const markFirstRunOnboardingShown = useCallback(() => {
@@ -159,8 +159,7 @@ export function useOnboarding({
 
   const persistCompletedState = useCallback(() => {
     writeOnboardingState({ status: "completed", completedAt: Date.now() });
-    persistRemoteOnboardingShown();
-  }, [persistRemoteOnboardingShown]);
+  }, []);
 
   useEffect(() => {
     if (isWorkOsAuthLoading) {
@@ -181,7 +180,7 @@ export function useOnboarding({
         isSignedInWithWorkOs: false,
         isWorkOsAuthLoading: false,
         hasRemoteOnboardingState,
-        hasCompletedOnboarding,
+        hasSeenOnboarding,
       });
     });
   }, [
@@ -189,7 +188,7 @@ export function useOnboarding({
     isWorkOsAuthLoading,
     isSignedInWithWorkOs,
     hasRemoteOnboardingState,
-    hasCompletedOnboarding,
+    hasSeenOnboarding,
   ]);
 
   // First-run guests: auto-connect Excalidraw in the background (no welcome overlay).
@@ -198,7 +197,7 @@ export function useOnboarding({
     if (didAutoConnectRef.current) return;
 
     if (hasRemoteOnboardingState) {
-      if (hasCompletedOnboarding) return;
+      if (hasSeenOnboarding) return;
     } else {
       const persisted = readOnboardingState();
       if (
@@ -234,7 +233,7 @@ export function useOnboarding({
     isWorkOsAuthLoading,
     isSignedInWithWorkOs,
     hasRemoteOnboardingState,
-    hasCompletedOnboarding,
+    hasSeenOnboarding,
     onConnect,
     posthog,
     trackingProps,

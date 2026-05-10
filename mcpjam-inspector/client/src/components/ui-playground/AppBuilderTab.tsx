@@ -80,7 +80,7 @@ interface AppBuilderTabProps {
   isSignedInWithWorkOs?: boolean;
   isWorkOsAuthLoading?: boolean;
   isConvexAuthenticated?: boolean;
-  hasCompletedFirstRunOnboarding?: boolean;
+  hasSeenFirstRunOnboarding?: boolean;
   /**
    * True while the currently selected server exists in runtime state but has
    * not yet appeared in the persisted project servers (Convex round-trip
@@ -129,7 +129,7 @@ export function AppBuilderTab({
   isSignedInWithWorkOs = false,
   isWorkOsAuthLoading = false,
   isConvexAuthenticated = false,
-  hasCompletedFirstRunOnboarding,
+  hasSeenFirstRunOnboarding,
   isServerSyncing = false,
   onConnect,
   onSaveHostContext,
@@ -149,8 +149,8 @@ export function AppBuilderTab({
     onConnect: onConnect ?? (() => {}),
     isSignedInWithWorkOs,
     isWorkOsAuthLoading,
-    hasRemoteOnboardingState: hasCompletedFirstRunOnboarding !== undefined,
-    hasCompletedOnboarding: hasCompletedFirstRunOnboarding === true,
+    hasRemoteOnboardingState: hasSeenFirstRunOnboarding !== undefined,
+    hasSeenOnboarding: hasSeenFirstRunOnboarding === true,
     canPersistRemoteOnboarding: isConvexAuthenticated,
   });
 

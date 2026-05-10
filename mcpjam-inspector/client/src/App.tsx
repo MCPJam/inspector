@@ -888,12 +888,12 @@ export default function App() {
   const hasAnyFirstRunBlockingProjectServers = Object.keys(
     projectServers
   ).some((serverName) => serverName !== EXCALIDRAW_SERVER_NAME);
-  const remoteFirstRunOnboardingCompleted =
+  const remoteFirstRunOnboardingShown =
     currentUser == null
       ? undefined
-      : currentUser.hasCompletedOnboarding === true;
-  const hasCompletedFirstRunOnboarding =
-    remoteFirstRunOnboardingCompleted === true;
+      : currentUser.hasSeenOnboarding === true ||
+        currentUser.hasCompletedOnboarding === true;
+  const hasSeenFirstRunOnboarding = remoteFirstRunOnboardingShown === true;
   const isHostedDefaultRoute = currentHashRoute.normalizedTab === "servers";
   const shouldHoldHostedDefaultRouteForAuth =
     HOSTED_MODE &&
@@ -1442,7 +1442,7 @@ export default function App() {
       return;
     }
 
-    if (hasCompletedFirstRunOnboarding) {
+    if (hasSeenFirstRunOnboarding) {
       return;
     }
 
@@ -1463,7 +1463,7 @@ export default function App() {
         hasAnyFirstRunBlockingProjectServers,
         window.location.hash,
         !!workOsUser,
-        remoteFirstRunOnboardingCompleted
+        remoteFirstRunOnboardingShown
       )
     ) {
       applyNavigation("app-builder", { updateHash: true });
@@ -1473,13 +1473,13 @@ export default function App() {
     applyNavigation,
     currentUser,
     effectiveHostedShellGateState,
-    hasCompletedFirstRunOnboarding,
+    hasSeenFirstRunOnboarding,
     hasAnyFirstRunBlockingProjectServers,
     isAuthenticated,
     isHostedChatRoute,
     isLoadingRemoteProjects,
     isWorkOsLoading,
-    remoteFirstRunOnboardingCompleted,
+    remoteFirstRunOnboardingShown,
     workOsUser,
   ]);
 
@@ -2378,9 +2378,7 @@ export default function App() {
               isSignedInWithWorkOs={!!workOsUser}
               isWorkOsAuthLoading={isWorkOsLoading}
               isConvexAuthenticated={isAuthenticated}
-              hasCompletedFirstRunOnboarding={
-                remoteFirstRunOnboardingCompleted
-              }
+              hasSeenFirstRunOnboarding={remoteFirstRunOnboardingShown}
               isServerSyncing={isSelectedServerSyncing}
               onConnect={handleConnect}
               onSaveHostContext={handleUpdateHostContext}
