@@ -787,12 +787,17 @@ export function ChatboxBuilderView({
     // verbatim. Block save until a seed has resolved so we don't ship
     // empty connectionDefaults / clientCapabilities / hostContext and
     // clobber the existing values. For edit-mode chatboxes prefer the
-    // chatbox's own config; fall back to the project default for
-    // legacy rows that resolve null. For create mode, use the project
-    // default directly.
-    const seedDto = chatboxId
-      ? (chatboxHostConfig ?? projectDefaultHostConfig)
-      : projectDefaultHostConfig;
+    // chatbox's own config; only fall back to the project default
+    // when the chatbox config has *resolved* null (legacy rows) — not
+    // while it's still undefined (loading), which would let the
+    // project default overwrite an existing chatbox's own connection
+    // fields if the project query resolves first. For create mode,
+    // use the project default directly.
+    const chatboxSeed =
+      chatboxHostConfig === null
+        ? projectDefaultHostConfig
+        : chatboxHostConfig;
+    const seedDto = chatboxId ? chatboxSeed : projectDefaultHostConfig;
     if (seedDto === undefined) {
       toast.error("Loading chatbox config — try again in a moment");
       return false;
