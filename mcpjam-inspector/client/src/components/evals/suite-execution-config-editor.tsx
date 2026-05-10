@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, RotateCcw, Save, Settings2, Trash2 } from "lucide-react";
+import { Loader2, RotateCcw, Save, Settings2 } from "lucide-react";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
@@ -19,13 +19,13 @@ type SuiteExecutionConfigEditorProps = {
   suite: Pick<EvalSuite, "_id" | "defaultConfig">;
   availableModels: ModelDefinition[];
   /**
-   * Optional clear callback — surfaces "Remove" affordance when the
-   * suite has a saved defaultConfig. The legacy mirror is cleared via
-   * the wider `updateTestSuite({ defaultConfig: null })` mutation
-   * which the parent owns, so we keep this as a callback rather than
-   * hardcoding the v1 path here.
+   * Phase 4: when set, surfaces a "Reset to project default" affordance.
+   * The parent passes the convex project id so the editor can fetch the
+   * project default and write it through `setSuiteConfig`. Replaces the
+   * legacy "Remove" button which cleared `suite.defaultConfig` via
+   * `updateTestSuite({ defaultConfig: null })`.
    */
-  onClear?: () => Promise<void>;
+  projectId?: string | null;
 };
 
 /**
@@ -45,13 +45,21 @@ type SuiteExecutionConfigEditorProps = {
 export function SuiteExecutionConfigEditor({
   suite,
   availableModels,
-  onClear,
+  projectId,
 }: SuiteExecutionConfigEditorProps) {
   void availableModels; // currently unused; HostConfigEditor uses a free-text modelId.
 
   const dto = useQuery(
     "hostConfigsV2:getSuiteConfig" as any,
     { suiteId: suite._id } as any,
+  ) as HostConfigDtoV2 | null | undefined;
+
+  // Phase 4: project default snapshot used by the "Reset to project
+  // default" affordance. Skipped when no projectId is wired through
+  // (e.g. unscoped guest suites).
+  const projectDefaultDto = useQuery(
+    "hostConfigsV2:getProjectDefault" as any,
+    projectId ? ({ projectId } as any) : "skip",
   ) as HostConfigDtoV2 | null | undefined;
 
   const setSuiteConfig = useMutation(
@@ -65,7 +73,7 @@ export function SuiteExecutionConfigEditor({
   const [baseline, setBaseline] = useState<HostConfigInputV2 | null>(null);
   const [hasJsonError, setHasJsonError] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [isClearing, setIsClearing] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
 
   // Track the scalar fields the legacy fallback reads so the editor
   // re-seeds when the parent clears `suite.defaultConfig` via
@@ -148,7 +156,7 @@ export function SuiteExecutionConfigEditor({
     serverIds: [],
     optionalServerIds: [],
   };
-  const canSave = isDirty && !hasJsonError && !isSaving && !isClearing;
+  const canSave = isDirty && !hasJsonError && !isSaving && !isResetting;
 
   const handleReset = () => {
     if (baseline) setValue(baseline);
@@ -180,13 +188,38 @@ export function SuiteExecutionConfigEditor({
     }
   };
 
-  const handleClear = async () => {
-    if (!onClear) return;
-    setIsClearing(true);
+  const handleResetToProjectDefault = async () => {
+    if (!projectDefaultDto) return;
+    setIsResetting(true);
     try {
-      await onClear();
+      // Phase 4: copy the project default into the suite-owned
+      // hostConfigId via setSuiteConfig. Server lists are forced empty
+      // since suite server selection lives on `suite.environment`. The
+      // mutation mints a new v2 row when the project-default content
+      // differs from the suite's existing row, or no-ops via dedupe
+      // when they already match.
+      const projectDefaultInput: HostConfigInputV2 = {
+        ...hostConfigDtoToInput(projectDefaultDto),
+        serverIds: [],
+        optionalServerIds: [],
+      };
+      await setSuiteConfig({
+        suiteId: suite._id,
+        input: projectDefaultInput,
+      });
+      setBaseline(projectDefaultInput);
+      setValue(projectDefaultInput);
+      toast.success("Suite reset to project default");
+    } catch (err) {
+      toast.error(
+        getBillingErrorMessage(
+          err,
+          "Failed to reset suite to project default",
+        ),
+      );
+      console.error("Failed to reset suite to project default:", err);
     } finally {
-      setIsClearing(false);
+      setIsResetting(false);
     }
   };
 
@@ -225,21 +258,20 @@ export function SuiteExecutionConfigEditor({
           </span>
         </div>
         <div className="flex items-center gap-2">
-          {onClear && suite.defaultConfig ? (
+          {projectDefaultDto ? (
             <Button
               type="button"
               variant="ghost"
               size="sm"
-              onClick={() => void handleClear()}
-              disabled={isClearing || isSaving}
-              className="text-destructive hover:text-destructive"
+              onClick={() => void handleResetToProjectDefault()}
+              disabled={isResetting || isSaving}
             >
-              {isClearing ? (
+              {isResetting ? (
                 <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
               ) : (
-                <Trash2 className="mr-1 h-3.5 w-3.5" />
+                <RotateCcw className="mr-1 h-3.5 w-3.5" />
               )}
-              Remove
+              Reset to project default
             </Button>
           ) : null}
           <Button
@@ -247,7 +279,7 @@ export function SuiteExecutionConfigEditor({
             variant="ghost"
             size="sm"
             onClick={handleReset}
-            disabled={!isDirty || isSaving || isClearing}
+            disabled={!isDirty || isSaving || isResetting}
           >
             <RotateCcw className="mr-1 h-3.5 w-3.5" />
             Reset

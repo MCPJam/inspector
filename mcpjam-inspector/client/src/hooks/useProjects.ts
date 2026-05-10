@@ -197,8 +197,12 @@ export function useProjectMutations() {
     "projects:ensureDefaultProject" as any
   );
   const updateProject = useMutation("projects:updateProject" as any);
-  const updateClientConfig = useMutation(
-    "projects:updateProjectClientConfig" as any
+  // Phase 4: write the project default's connection portion through the
+  // v2 owner pointer. The legacy `projects:updateProjectClientConfig`
+  // is still exported by the backend as a compat wrapper but the
+  // inspector no longer calls it.
+  const patchProjectDefaultConnection = useMutation(
+    "hostConfigsV2:patchProjectDefaultConnection" as any
   );
   const deleteProject = useMutation("projects:deleteProject" as any);
   const inviteProjectMember = useMutation(
@@ -218,7 +222,7 @@ export function useProjectMutations() {
     createProject,
     ensureDefaultProject,
     updateProject,
-    updateClientConfig,
+    patchProjectDefaultConnection,
     deleteProject,
     inviteProjectMember,
     removeProjectMember,

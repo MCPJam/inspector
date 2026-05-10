@@ -857,27 +857,7 @@ export function SuiteIterationsView({
             <SuiteExecutionConfigEditor
               suite={suite}
               availableModels={availableModels}
-              onClear={async () => {
-                try {
-                  await updateSuite({
-                    suiteId: suite._id,
-                    defaultConfig: null,
-                  });
-                  toast.success("Suite execution config removed");
-                } catch (error) {
-                  toast.error(
-                    getBillingErrorMessage(
-                      error,
-                      "Failed to remove suite execution config",
-                    ),
-                  );
-                  console.error(
-                    "Failed to remove suite execution config:",
-                    error,
-                  );
-                  throw error;
-                }
-              }}
+              projectId={projectId}
             />
 
             {/* Suite Description Section */}
