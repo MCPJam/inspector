@@ -16,7 +16,7 @@ import {
   Save,
 } from "lucide-react";
 import { ReactFlowProvider } from "@xyflow/react";
-import { useConvexAuth } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Card } from "@mcpjam/design-system/card";
 import {
@@ -67,7 +67,15 @@ import { ChatboxHostStyleProvider } from "@/contexts/chatbox-host-style-context"
 import type { ServerFormData } from "@/shared/types";
 import { buildChatboxCanvas } from "./chatboxCanvasBuilder";
 import { ChatboxCanvas } from "./ChatboxCanvas";
-import { DEFAULT_SYSTEM_PROMPT, toDraftConfig } from "./drafts";
+import {
+  DEFAULT_SYSTEM_PROMPT,
+  draftToHostConfigInputV2,
+  toDraftConfig,
+} from "./drafts";
+import {
+  hostConfigDtoToInput,
+  type HostConfigDtoV2,
+} from "@/lib/host-config-v2";
 import {
   computeSectionStatuses,
   SetupChecklistPanel,
@@ -296,6 +304,25 @@ export function ChatboxBuilderView({
   const { createChatbox, updateChatbox, setChatboxMode, upsertChatboxMember } =
     useChatboxMutations();
   const { createServer } = useServerMutations();
+
+  // Round-trip the chatbox's own hostConfig (edit mode). The save path
+  // sends a complete HostConfigInputV2 to the backend; the backend's
+  // mintV2ChatboxHostConfigFromV2Input persists the connection portion
+  // (connectionDefaults / clientCapabilities / hostContext) verbatim,
+  // so we MUST feed it the existing values or they'll be clobbered.
+  const chatboxHostConfig = useQuery(
+    "hostConfigsV2:getChatboxConfig" as any,
+    isAuthenticated && chatboxId ? ({ chatboxId } as any) : "skip"
+  ) as HostConfigDtoV2 | null | undefined;
+
+  // Seed for create mode: the project default supplies the connection
+  // portion the chatbox builder UI doesn't expose.
+  const projectDefaultHostConfig = useQuery(
+    "hostConfigsV2:getProjectDefault" as any,
+    isAuthenticated && !chatboxId && projectId
+      ? ({ projectId } as any)
+      : "skip"
+  ) as HostConfigDtoV2 | null | undefined;
 
   const [draftChatboxConfig, setDraftChatboxConfig] =
     useState<ChatboxDraftConfig>(() => {
@@ -745,22 +772,35 @@ export function ChatboxBuilderView({
       return false;
     }
 
+    // The backend's v2 hostConfig path persists connection fields
+    // verbatim. Block save until the seed query has resolved so we
+    // don't ship empty connectionDefaults / clientCapabilities /
+    // hostContext and clobber the existing values.
+    const seedDto = chatboxId ? chatboxHostConfig : projectDefaultHostConfig;
+    if (seedDto === undefined) {
+      toast.error("Loading chatbox config — try again in a moment");
+      return false;
+    }
+    const seedInput = seedDto ? hostConfigDtoToInput(seedDto) : null;
+    const draftWithTrimmedSystemPrompt: ChatboxDraftConfig = {
+      ...draftChatboxConfig,
+      systemPrompt:
+        draftChatboxConfig.systemPrompt.trim() || DEFAULT_SYSTEM_PROMPT,
+    };
+    const hostConfigInput = draftToHostConfigInputV2(
+      draftWithTrimmedSystemPrompt,
+      seedInput
+    );
+
     setIsSaving(true);
     try {
       const payload = {
         name: trimmedName,
         description: draftChatboxConfig.description.trim() || undefined,
-        hostStyle: draftChatboxConfig.hostStyle,
-        systemPrompt:
-          draftChatboxConfig.systemPrompt.trim() || DEFAULT_SYSTEM_PROMPT,
-        modelId: draftChatboxConfig.modelId,
-        temperature: draftChatboxConfig.temperature,
-        requireToolApproval: draftChatboxConfig.requireToolApproval,
-        serverIds: draftChatboxConfig.selectedServerIds,
-        optionalServerIds: draftChatboxConfig.optionalServerIds,
         allowGuestAccess: draftChatboxConfig.allowGuestAccess,
         welcomeDialog: draftChatboxConfig.welcomeDialog,
         feedbackDialog: draftChatboxConfig.feedbackDialog,
+        hostConfig: hostConfigInput,
       };
 
       if (!chatbox) {
@@ -797,6 +837,9 @@ export function ChatboxBuilderView({
     draftChatboxConfig,
     onSavedDraft,
     chatbox,
+    chatboxId,
+    chatboxHostConfig,
+    projectDefaultHostConfig,
     setChatboxMode,
     updateChatbox,
     projectId,
