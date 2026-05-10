@@ -23,7 +23,6 @@ import {
   serializeServersForSharing,
 } from "@/lib/project-serialization";
 import {
-  composeProjectClientConfig,
   pickProjectConnectionConfig,
   pickProjectHostContext,
   stableStringifyJson,
@@ -1002,12 +1001,26 @@ export function useProjectState({
   const persistProjectClientConfig = useCallback(
     async <T,>({
       projectId,
-      clientConfig,
+      slice,
       savedSlice,
       controller,
     }: {
       projectId: string;
-      clientConfig: ProjectClientConfig | undefined;
+      // The slice the user actually edited. Only this section is sent
+      // to the backend (the helper preserves the others) and only this
+      // section is updated optimistically — passing the full clientConfig
+      // would let a slow connection save clobber a newer host-context
+      // save and vice versa (P2). `connectionConfig: undefined` means
+      // "reset to default" for the connection slice.
+      slice:
+        | {
+            kind: "connection";
+            connectionConfig: ProjectConnectionConfigDraft | undefined;
+          }
+        | {
+            kind: "hostContext";
+            hostContext: ProjectHostContextDraft;
+          };
       savedSlice: T | undefined;
       controller: ClientConfigSaveController<T>;
     }): Promise<void> => {
@@ -1027,50 +1040,61 @@ export function useProjectState({
 
       if (useV2Write) {
         try {
-          // Map the legacy ProjectClientConfig blob onto the v2 patcher
-          // args. `clientConfig === undefined` (Reset) maps to a clear:
-          // empty headers + default timeout, empty capabilities, empty
-          // host context — preserving model/prompt/temperature/host
-          // style/server selection on the v2 default. This matches the
-          // backend compat wrapper's clear semantics.
-          const cd = clientConfig?.connectionDefaults as
-            | { headers?: Record<string, string>; requestTimeout?: number }
-            | undefined
-            | null;
-          const partialConnectionDefaults: {
-            headers?: Record<string, string>;
-            requestTimeout?: number;
-          } = {};
-          if (clientConfig === undefined || cd === undefined) {
-            partialConnectionDefaults.headers = {};
-            // No DEFAULT_REQUEST_TIMEOUT_MS import here to keep the diff
-            // local; backend defaults to 10_000 if requestTimeout is
-            // omitted. Send the explicit zero-headers signal but let the
-            // backend supply the default timeout.
+          if (slice.kind === "connection") {
+            const { connectionConfig } = slice;
+            // Map the legacy ProjectClientConfig blob onto the v2 patcher
+            // args. `connectionConfig === undefined` (Reset) maps to a
+            // clear: empty headers + default timeout, empty capabilities
+            // — preserving model/prompt/temperature/host style/server
+            // selection on the v2 default. This matches the backend compat
+            // wrapper's clear semantics.
+            const cd = connectionConfig?.connectionDefaults as
+              | { headers?: Record<string, string>; requestTimeout?: number }
+              | undefined
+              | null;
+            const partialConnectionDefaults: {
+              headers?: Record<string, string>;
+              requestTimeout?: number;
+            } = {};
+            if (connectionConfig === undefined || cd === undefined) {
+              partialConnectionDefaults.headers = {};
+              // Backend's partial validator now accepts headers-only;
+              // it merges the existing requestTimeout when omitted.
+            } else {
+              if (cd?.headers !== undefined) {
+                partialConnectionDefaults.headers =
+                  (cd.headers as Record<string, string> | undefined) ?? {};
+              }
+              if (
+                cd?.requestTimeout !== undefined &&
+                Number.isFinite(cd.requestTimeout)
+              ) {
+                partialConnectionDefaults.requestTimeout = cd.requestTimeout;
+              }
+            }
+            await convexPatchProjectDefaultConnection({
+              projectId,
+              connectionDefaults:
+                Object.keys(partialConnectionDefaults).length > 0
+                  ? partialConnectionDefaults
+                  : undefined,
+              clientCapabilities:
+                connectionConfig === undefined
+                  ? {}
+                  : connectionConfig.clientCapabilities,
+              // Leave hostContext untouched on the backend — passing
+              // undefined preserves the existing value (P2).
+              hostContext: undefined,
+            });
           } else {
-            if (cd?.headers !== undefined) {
-              partialConnectionDefaults.headers =
-                (cd.headers as Record<string, string> | undefined) ?? {};
-            }
-            if (
-              cd?.requestTimeout !== undefined &&
-              Number.isFinite(cd.requestTimeout)
-            ) {
-              partialConnectionDefaults.requestTimeout = cd.requestTimeout;
-            }
+            await convexPatchProjectDefaultConnection({
+              projectId,
+              // Leave connection portions untouched on the backend.
+              connectionDefaults: undefined,
+              clientCapabilities: undefined,
+              hostContext: slice.hostContext,
+            });
           }
-
-          await convexPatchProjectDefaultConnection({
-            projectId,
-            connectionDefaults:
-              Object.keys(partialConnectionDefaults).length > 0
-                ? partialConnectionDefaults
-                : undefined,
-            clientCapabilities:
-              clientConfig === undefined ? {} : clientConfig.clientCapabilities,
-            hostContext:
-              clientConfig === undefined ? {} : clientConfig.hostContext,
-          });
         } catch (error) {
           controller.failSave({
             projectId,
@@ -1086,15 +1110,29 @@ export function useProjectState({
           toast.error(errorMessage);
           throw error instanceof Error ? error : new Error(errorMessage);
         }
-        // Optimistically update the local Project doc's clientConfig so
-        // reads from `effectiveProjects[projectId].clientConfig` reflect
-        // the new state immediately. The reactive project query will
+        // Optimistically update only the slice the user edited. Using
+        // the slice-merge action (rather than dispatching a recomposed
+        // full clientConfig) keeps the sibling slice authoritative
+        // even when two saves race. The reactive project query will
         // catch up on its next refetch.
-        dispatch({
-          type: "UPDATE_PROJECT",
-          projectId,
-          updates: { clientConfig },
-        });
+        if (slice.kind === "connection") {
+          const cc = slice.connectionConfig;
+          dispatch({
+            type: "UPDATE_PROJECT_CLIENT_CONFIG_SLICE",
+            projectId,
+            slice: {
+              kind: "connection",
+              connectionDefaults: cc?.connectionDefaults,
+              clientCapabilities: cc?.clientCapabilities ?? {},
+            },
+          });
+        } else {
+          dispatch({
+            type: "UPDATE_PROJECT_CLIENT_CONFIG_SLICE",
+            projectId,
+            slice: { kind: "hostContext", hostContext: slice.hostContext },
+          });
+        }
         controller.markSaved({
           projectId,
           savedConfig: savedSlice,
@@ -1103,11 +1141,24 @@ export function useProjectState({
         return;
       }
 
-      dispatch({
-        type: "UPDATE_PROJECT",
-        projectId,
-        updates: { clientConfig },
-      });
+      if (slice.kind === "connection") {
+        const cc = slice.connectionConfig;
+        dispatch({
+          type: "UPDATE_PROJECT_CLIENT_CONFIG_SLICE",
+          projectId,
+          slice: {
+            kind: "connection",
+            connectionDefaults: cc?.connectionDefaults,
+            clientCapabilities: cc?.clientCapabilities ?? {},
+          },
+        });
+      } else {
+        dispatch({
+          type: "UPDATE_PROJECT_CLIENT_CONFIG_SLICE",
+          projectId,
+          slice: { kind: "hostContext", hostContext: slice.hostContext },
+        });
+      }
       controller.markSaved({
         projectId,
         savedConfig: savedSlice,
@@ -1265,7 +1316,6 @@ export function useProjectState({
       connectionConfig: ProjectConnectionConfigDraft | undefined,
     ): Promise<void> => {
       const clientConfigStore = useClientConfigStore.getState();
-      const projectClientConfig = effectiveProjects[projectId]?.clientConfig;
       const scopedDraftConfig = doesStoreSliceBelongToProject(
         clientConfigStore.activeProjectId,
         projectId,
@@ -1276,25 +1326,21 @@ export function useProjectState({
         connectionConfig ??
         scopedDraftConfig ??
         resolvePersistedConnectionConfig(projectId);
-      const clientConfig = composeProjectClientConfig({
-        connectionConfig: connectionConfigToPersist,
-        hostContext: resolvePersistedHostContext(projectId),
-        fallback: projectClientConfig ?? null,
-      });
 
       await persistProjectClientConfig({
         projectId,
-        clientConfig,
+        slice: {
+          kind: "connection",
+          connectionConfig: connectionConfigToPersist,
+        },
         savedSlice: connectionConfigToPersist,
         controller: connectionConfigSaveController,
       });
     },
     [
-      effectiveProjects,
       connectionConfigSaveController,
       persistProjectClientConfig,
       resolvePersistedConnectionConfig,
-      resolvePersistedHostContext,
     ],
   );
 
@@ -1304,7 +1350,6 @@ export function useProjectState({
       hostContext: ProjectHostContextDraft | undefined,
     ): Promise<void> => {
       const hostContextStore = useHostContextStore.getState();
-      const projectClientConfig = effectiveProjects[projectId]?.clientConfig;
       const scopedDraftHostContext = doesStoreSliceBelongToProject(
         hostContextStore.activeProjectId,
         projectId,
@@ -1315,24 +1360,17 @@ export function useProjectState({
         hostContext ??
         scopedDraftHostContext ??
         resolvePersistedHostContext(projectId);
-      const clientConfig = composeProjectClientConfig({
-        connectionConfig: resolvePersistedConnectionConfig(projectId),
-        hostContext: hostContextToPersist,
-        fallback: projectClientConfig ?? null,
-      });
 
       await persistProjectClientConfig({
         projectId,
-        clientConfig,
+        slice: { kind: "hostContext", hostContext: hostContextToPersist },
         savedSlice: hostContextToPersist,
         controller: hostContextSaveController,
       });
     },
     [
-      effectiveProjects,
       hostContextSaveController,
       persistProjectClientConfig,
-      resolvePersistedConnectionConfig,
       resolvePersistedHostContext,
     ],
   );

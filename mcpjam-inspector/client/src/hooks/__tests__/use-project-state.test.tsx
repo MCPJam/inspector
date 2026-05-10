@@ -651,17 +651,20 @@ describe("useProjectState automatic project creation", () => {
 
     await result.current.handleUpdateClientConfig("remote-1", savedConfig);
 
+    // Connection-only saves leave hostContext untouched on the backend
+    // by passing `undefined` (P2): the v2 patcher merges only the
+    // fields it receives.
     expect(patchProjectDefaultConnectionMock).toHaveBeenCalledWith({
       projectId: "remote-1",
       connectionDefaults: { headers: {}, requestTimeout: 10000 },
       clientCapabilities: savedConfig.clientCapabilities,
-      hostContext: {},
+      hostContext: undefined,
     });
     expect(useClientConfigStore.getState().isAwaitingRemoteEcho).toBe(false);
     expect(useClientConfigStore.getState().isSaving).toBe(false);
   });
 
-  it("composes host-context saves with the target project connection config", async () => {
+  it("sends only the host-context slice on host-context saves so connection settings are not clobbered", async () => {
     const remoteOneClientConfig: ProjectClientConfig = {
       version: 1,
       connectionDefaults: {
@@ -758,18 +761,26 @@ describe("useProjectState automatic project creation", () => {
 
     await result.current.handleUpdateHostContext("remote-2", savedHostContext);
 
-    // Phase 4: the v2 patcher receives the composed connection portion
-    // (from remote-2's existing config) plus the new host context. The
-    // legacy `clientConfig` blob shape is no longer the wire format.
+    // P2: host-context saves send only the hostContext slice. The
+    // backend helper preserves connectionDefaults / clientCapabilities
+    // when those fields are undefined, so a slow connection save can
+    // no longer overwrite them.
     expect(patchProjectDefaultConnectionMock).toHaveBeenCalledWith({
       projectId: "remote-2",
-      connectionDefaults: expectedPersistedClientConfig.connectionDefaults,
-      clientCapabilities: expectedPersistedClientConfig.clientCapabilities,
+      connectionDefaults: undefined,
+      clientCapabilities: undefined,
       hostContext: savedHostContext,
     });
+    // expectedPersistedClientConfig is referenced here purely as a
+    // sanity check that the test setup composes a recognizable
+    // post-save shape; the wire format itself is the per-slice patch
+    // asserted above.
+    expect(expectedPersistedClientConfig.hostContext).toEqual(
+      savedHostContext,
+    );
   });
 
-  it("composes connection-config saves with the target project host context", async () => {
+  it("sends only the connection slice on connection saves so host context is not clobbered", async () => {
     const remoteOneClientConfig: ProjectClientConfig = {
       version: 1,
       connectionDefaults: {
@@ -866,14 +877,18 @@ describe("useProjectState automatic project creation", () => {
       savedConnectionConfig,
     );
 
-    // Phase 4: connection portion comes from the new draft, hostContext
-    // is preserved from the target project's existing config.
+    // P2: connection saves send only the connection slice. The
+    // backend helper preserves hostContext when undefined, so a slow
+    // host-context save can no longer overwrite it.
     expect(patchProjectDefaultConnectionMock).toHaveBeenCalledWith({
       projectId: "remote-2",
       connectionDefaults: savedConnectionConfig.connectionDefaults,
       clientCapabilities: savedConnectionConfig.clientCapabilities,
-      hostContext: remoteTwoHostContext,
+      hostContext: undefined,
     });
+    expect(expectedPersistedClientConfig.hostContext).toEqual(
+      remoteTwoHostContext,
+    );
   });
 
   it("calls the v2 patcher once per save and resolves each independently", async () => {
@@ -941,13 +956,13 @@ describe("useProjectState automatic project creation", () => {
       projectId: "remote-1",
       connectionDefaults: firstSavedConfig.connectionDefaults,
       clientCapabilities: firstSavedConfig.clientCapabilities,
-      hostContext: {},
+      hostContext: undefined,
     });
     expect(patchProjectDefaultConnectionMock).toHaveBeenNthCalledWith(2, {
       projectId: "remote-2",
       connectionDefaults: secondSavedConfig.connectionDefaults,
       clientCapabilities: secondSavedConfig.clientCapabilities,
-      hostContext: {},
+      hostContext: undefined,
     });
   });
 
@@ -1082,6 +1097,133 @@ describe("useProjectState automatic project creation", () => {
     ).rejects.toThrow("backend exploded");
     expect(useClientConfigStore.getState().isAwaitingRemoteEcho).toBe(false);
     expect(useClientConfigStore.getState().isSaving).toBe(false);
+  });
+
+  it("interleaved connection and host-context saves do not clobber each other", async () => {
+    // P2 regression: previously persistProjectClientConfig sent all
+    // three sections (connectionDefaults / clientCapabilities /
+    // hostContext) on every save and dispatched a full clientConfig
+    // optimistically. A slow connection save resolving after a fast
+    // host-context save would overwrite the new hostContext both
+    // remotely and locally. Now each save sends only its slice and
+    // dispatches a slice-merge action.
+    const initialClientConfig: ProjectClientConfig = {
+      version: 1,
+      connectionDefaults: {
+        headers: { "x-initial": "yes" },
+        requestTimeout: 1000,
+      },
+      clientCapabilities: { initial: true },
+      hostContext: { theme: "light" },
+    };
+    const newConnection: ProjectConnectionConfigDraft = {
+      version: 1,
+      connectionDefaults: {
+        headers: { "x-new": "yes" },
+        requestTimeout: 2000,
+      },
+      clientCapabilities: { updated: true },
+    };
+    const newHostContext: ProjectHostContextDraft = { theme: "dark" };
+
+    projectQueryState.allProjects = [
+      {
+        _id: "remote-1",
+        name: "Remote project",
+        servers: {},
+        ownerId: "user-1",
+        createdAt: 1,
+        updatedAt: 1,
+        clientConfig: initialClientConfig,
+      },
+    ];
+    projectQueryState.projects = [...projectQueryState.allProjects];
+    localStorage.setItem("convex-active-project-id", "remote-1");
+
+    let resolveSlowConnectionSave!: () => void;
+    patchProjectDefaultConnectionMock.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSlowConnectionSave = resolve;
+        }),
+    );
+    patchProjectDefaultConnectionMock.mockResolvedValueOnce(undefined);
+
+    const appState = createAppState({
+      default: createSyntheticDefaultProject(),
+    });
+    const { result, dispatch } = renderUseProjectState({ appState });
+
+    // Kick off the slow connection save first (don't await).
+    const slowConnectionSave = result.current.handleUpdateClientConfig(
+      "remote-1",
+      newConnection,
+    );
+    // Then complete a host-context save while the connection save is
+    // still pending.
+    await result.current.handleUpdateHostContext("remote-1", newHostContext);
+    // Finally let the slow connection save resolve.
+    resolveSlowConnectionSave();
+    await slowConnectionSave;
+
+    // Wire format: each save sent only its own slice. The connection
+    // save did NOT include hostContext, so the backend helper's
+    // preserve-when-undefined merge keeps the new hostContext intact.
+    expect(patchProjectDefaultConnectionMock).toHaveBeenCalledTimes(2);
+    expect(patchProjectDefaultConnectionMock).toHaveBeenNthCalledWith(1, {
+      projectId: "remote-1",
+      connectionDefaults: newConnection.connectionDefaults,
+      clientCapabilities: newConnection.clientCapabilities,
+      hostContext: undefined,
+    });
+    expect(patchProjectDefaultConnectionMock).toHaveBeenNthCalledWith(2, {
+      projectId: "remote-1",
+      connectionDefaults: undefined,
+      clientCapabilities: undefined,
+      hostContext: newHostContext,
+    });
+
+    // Local optimistic dispatch: each save dispatched a slice-merge
+    // action, never a full UPDATE_PROJECT { clientConfig: ... }. That's
+    // what prevents the in-flight connection save from clobbering the
+    // newly-saved hostContext locally when it eventually resolves.
+    const sliceDispatches = dispatch.mock.calls
+      .map(([action]) => action)
+      .filter(
+        (
+          action,
+        ): action is Extract<
+          AppAction,
+          { type: "UPDATE_PROJECT_CLIENT_CONFIG_SLICE" }
+        > => action.type === "UPDATE_PROJECT_CLIENT_CONFIG_SLICE",
+      );
+    expect(sliceDispatches).toHaveLength(2);
+    expect(sliceDispatches[0]).toMatchObject({
+      projectId: "remote-1",
+      slice: {
+        kind: "hostContext",
+        hostContext: newHostContext,
+      },
+    });
+    expect(sliceDispatches[1]).toMatchObject({
+      projectId: "remote-1",
+      slice: {
+        kind: "connection",
+        connectionDefaults: newConnection.connectionDefaults,
+        clientCapabilities: newConnection.clientCapabilities,
+      },
+    });
+    // No call passed `updates: { clientConfig: ... }` — i.e. the full
+    // overwrite path that previously clobbered sibling slices.
+    const fullClientConfigDispatches = dispatch.mock.calls
+      .map(([action]) => action)
+      .filter(
+        (action) =>
+          action.type === "UPDATE_PROJECT" &&
+          (action as Extract<AppAction, { type: "UPDATE_PROJECT" }>).updates
+            .clientConfig !== undefined,
+      );
+    expect(fullClientConfigDispatches).toHaveLength(0);
   });
 
   it("formats project create billing errors for organization owners", async () => {

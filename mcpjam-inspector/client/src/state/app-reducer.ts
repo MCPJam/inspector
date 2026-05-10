@@ -4,6 +4,7 @@ import {
   ConnectionStatus,
   ServerWithName,
 } from "./app-types";
+import type { ProjectClientConfig } from "@/lib/client-config";
 
 const setStatus = (
   server: ServerWithName,
@@ -368,6 +369,46 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           [action.projectId]: {
             ...project,
             ...action.updates,
+            updatedAt: new Date(),
+          },
+        },
+      };
+    }
+
+    case "UPDATE_PROJECT_CLIENT_CONFIG_SLICE": {
+      // Merge a single section of clientConfig into the project's
+      // current value. Reading clientConfig from the latest state here
+      // (rather than recomposing from a stale snapshot at the call
+      // site) is what prevents a slow connection save from clobbering
+      // a newer host-context save (and vice versa). See P2 in PR #237/#2051.
+      const project = state.projects[action.projectId];
+      if (!project) return state;
+      const baseClientConfig: ProjectClientConfig = project.clientConfig
+        ? project.clientConfig
+        : {
+            version: 1,
+            connectionDefaults: undefined,
+            clientCapabilities: {},
+            hostContext: {},
+          };
+      const nextClientConfig: ProjectClientConfig =
+        action.slice.kind === "connection"
+          ? {
+              ...baseClientConfig,
+              connectionDefaults: action.slice.connectionDefaults,
+              clientCapabilities: action.slice.clientCapabilities,
+            }
+          : {
+              ...baseClientConfig,
+              hostContext: action.slice.hostContext,
+            };
+      return {
+        ...state,
+        projects: {
+          ...state.projects,
+          [action.projectId]: {
+            ...project,
+            clientConfig: nextClientConfig,
             updatedAt: new Date(),
           },
         },

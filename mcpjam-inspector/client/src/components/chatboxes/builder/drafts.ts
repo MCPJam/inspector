@@ -155,11 +155,15 @@ export const CHATBOX_TEMPLATE_STARTERS = CHATBOX_STARTERS.filter(
  * connection settings are seeded from the project default (the editor
  * does not surface them).
  *
- * connectionDefaults / clientCapabilities / hostContext are passed as
- * the v2 default empty shapes when no project default is supplied —
- * the backend's mintV2ChatboxHostConfigFromV2Input flow re-seeds from
- * the project default before persisting, so an empty seed here is
- * safe.
+ * IMPORTANT: callers MUST pass `projectDefault` whenever the chatbox
+ * being minted should inherit the project's connection settings.
+ * `mintV2ChatboxHostConfigFromV2Input` on the backend persists the
+ * caller-supplied connectionDefaults / clientCapabilities / hostContext
+ * verbatim — it does not re-seed from the project default. Calling
+ * this helper without `projectDefault` falls back to the v2 empty
+ * shapes (empty headers / SDK-default capabilities / empty host
+ * context) and will overwrite the project's connection settings on
+ * the chatbox row.
  */
 export function draftToHostConfigInputV2(
   draft: ChatboxDraftConfig,
