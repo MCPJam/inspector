@@ -28,7 +28,20 @@ export function getShareableAppOrigin(): string {
     : MCPJAM_APP_ORIGIN;
 }
 
-export type ChatboxShareMode = "any_signed_in_with_link" | "invited_only";
+/**
+ * Chatbox access modes. The post-refactor model exposes all three.
+ * `any_signed_in_with_link` is the legacy display label retained so
+ * existing UI strings keep working; new code should prefer the
+ * post-refactor names. The normalizer below maps the legacy/aliased
+ * values to the new identifiers.
+ */
+export type ChatboxShareMode =
+  | "project_members"
+  | "invited_only"
+  | "anyone_with_link"
+  // Legacy alias retained for sessions persisted by older inspector
+  // builds. TODO(chatbox-followup): remove after sessions expire.
+  | "any_signed_in_with_link";
 
 export interface ChatboxBootstrapServer {
   serverId: string;
@@ -65,9 +78,26 @@ export interface ChatboxBootstrapPayload {
 }
 
 export interface ChatboxSession {
+  /**
+   * Chatbox handshake token from the URL. Retained on the session for
+   * legacy callsites that still pass `chatboxToken` to the backend.
+   * Post-refactor: clients should call /web/chatbox/redeem on session
+   * mount, store the resulting `payload.chatboxId` + `accessVersion`,
+   * and stop forwarding `token` downstream.
+   *
+   * TODO(chatbox-followup): drop this field once every client surface
+   * has migrated to chatboxId.
+   */
   token: string;
   payload: ChatboxBootstrapPayload;
   surface?: "preview" | "share_link";
+  /**
+   * Backend-owned monotonic counter returned by /web/chatbox/redeem.
+   * Bumps whenever access changes (mode, revoke-all, allowlist edits,
+   * invite removal). Threaded into every chatbox-aware server call so
+   * inspector caches invalidate cleanly.
+   */
+  accessVersion?: number;
 }
 
 export const CHATBOX_SESSION_STORAGE_KEY = "mcpjam_chatbox_session_v1";
@@ -97,14 +127,12 @@ export interface ChatboxPlaygroundSession extends ChatboxSession {
 }
 
 function normalizeChatboxShareMode(mode: unknown): ChatboxShareMode {
-  if (
-    mode === "any_signed_in_with_link" ||
-    mode === "project_with_link" ||
-    mode === "anyone_with_link"
-  ) {
-    return "any_signed_in_with_link";
+  if (mode === "project_members") return "project_members";
+  if (mode === "anyone_with_link" || mode === "any_signed_in_with_link") {
+    return "anyone_with_link";
   }
-
+  // Legacy backend alias.
+  if (mode === "project_with_link") return "anyone_with_link";
   return "invited_only";
 }
 
@@ -155,6 +183,8 @@ function normalizeChatboxSession(
 
   return {
     token,
+    accessVersion:
+      typeof parsed.accessVersion === "number" ? parsed.accessVersion : undefined,
     payload: {
       projectId: payload.projectId,
       chatboxId: payload.chatboxId,

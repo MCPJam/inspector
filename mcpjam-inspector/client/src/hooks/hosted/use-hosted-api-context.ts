@@ -8,6 +8,10 @@ interface UseApiContextOptions {
   clientConfigSyncPending?: boolean;
   getAccessToken: () => Promise<string | undefined | null>;
   oauthTokensByServerId?: Record<string, string>;
+  // Post-refactor: chatboxId + accessVersion are the preferred auth keys;
+  // chatboxToken is accepted for surfaces that haven't migrated yet.
+  chatboxId?: string;
+  accessVersion?: number;
   chatboxToken?: string;
   isAuthenticated?: boolean;
   hasSession?: boolean;
@@ -21,6 +25,8 @@ export function useApiContext({
   clientConfigSyncPending,
   getAccessToken,
   oauthTokensByServerId,
+  chatboxId,
+  accessVersion,
   chatboxToken,
   isAuthenticated,
   hasSession,
@@ -43,6 +49,8 @@ export function useApiContext({
       clientConfigSyncPending,
       getAccessToken,
       oauthTokensByServerId,
+      chatboxId,
+      accessVersion,
       chatboxToken,
       isAuthenticated,
       hasSession,
@@ -59,6 +67,8 @@ export function useApiContext({
     clientConfigSyncPending,
     getAccessToken,
     oauthTokensByServerId,
+    chatboxId,
+    accessVersion,
     chatboxToken,
     isAuthenticated,
     hasSession,

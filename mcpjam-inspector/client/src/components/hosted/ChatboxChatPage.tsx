@@ -424,6 +424,12 @@ export function ChatboxChatPage({
     projectId: session?.payload.projectId ?? null,
     serverIdsByName: session ? hostedServerIdsByName : {},
     getAccessToken,
+    // Post-refactor: prefer (chatboxId, accessVersion) from the redeemed
+    // session over the raw URL token. The session writer stores the
+    // chatboxId on payload.chatboxId and the version on the top-level
+    // accessVersion field; both are populated by /api/web/chatboxes/redeem.
+    chatboxId: session?.payload.chatboxId,
+    accessVersion: session?.accessVersion,
     chatboxToken: tokenFromPath ?? session?.token,
     isAuthenticated: !!workOsUser,
     hasSession: !!workOsUser || isWorkOsLoading,
@@ -465,25 +471,55 @@ export function ChatboxChatPage({
           status: "started",
         });
         try {
-          const response = await authFetch("/api/web/chatboxes/bootstrap", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
+          // Phase E: prefer the new /redeem endpoint, which both mints a
+          // chatboxAccess grant on the backend AND returns the bootstrap
+          // payload. Fall back to the legacy /bootstrap endpoint if redeem
+          // is unavailable (older backend deployments) so this still works
+          // through the rollout.
+          const redeemResponse = await authFetch(
+            "/api/web/chatboxes/redeem",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ chatboxToken: tokenFromPath }),
             },
-            body: JSON.stringify({ token: tokenFromPath }),
-          });
+          );
 
-          if (!response.ok) {
-            throw await readRouteError(response);
+          let payload: ChatboxSession["payload"];
+          let accessVersionFromRedeem: number | undefined;
+
+          if (redeemResponse.ok) {
+            const redeemed = (await redeemResponse.json()) as {
+              chatboxId: string;
+              accessVersion: number;
+              bootstrap: ChatboxSession["payload"];
+            };
+            payload = redeemed.bootstrap;
+            accessVersionFromRedeem = redeemed.accessVersion;
+          } else if (redeemResponse.status === 404) {
+            // Redeem endpoint not deployed yet — use legacy bootstrap.
+            const response = await authFetch(
+              "/api/web/chatboxes/bootstrap",
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ token: tokenFromPath }),
+              },
+            );
+            if (!response.ok) throw await readRouteError(response);
+            payload = (await response.json()) as ChatboxSession["payload"];
+          } else {
+            throw await readRouteError(redeemResponse);
           }
-
-          const payload = (await response.json()) as ChatboxSession["payload"];
           if (cancelled) return;
 
           const nextSession: ChatboxSession = {
             token: tokenFromPath,
             payload,
             surface: readChatboxSurfaceFromUrl(window.location.search),
+            ...(typeof accessVersionFromRedeem === "number"
+              ? { accessVersion: accessVersionFromRedeem }
+              : {}),
           };
           writeCurrentSession(nextSession);
           setSession(nextSession);
