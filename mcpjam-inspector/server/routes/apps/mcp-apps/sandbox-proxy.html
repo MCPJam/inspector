@@ -2,6 +2,7 @@
 <html>
   <head>
     <meta charset="utf-8" />
+    <meta name="color-scheme" content="light dark" />
     <!-- Permissive CSP so nested srcdoc content is not constrained by host CSP.
          The actual security enforcement is done by the dynamically-generated CSP
          injected into the inner srcdoc iframe based on widget declarations (SEP-1865).
@@ -21,6 +22,7 @@
         width: 100%;
         overflow: hidden;
         background: transparent;
+        color-scheme: light dark;
       }
       * {
         box-sizing: border-box;
@@ -32,6 +34,7 @@
         padding: 0px;
         width: 100%;
         height: 100%;
+        color-scheme: light dark;
       }
     </style>
   </head>
@@ -241,9 +244,28 @@ document.addEventListener('securitypolicyviolation', function(e) {
         }
       }
 
+      /**
+       * Keep the proxy document and inner iframe in the same scheme as the
+       * host. Otherwise transparent widget documents can expose the browser's
+       * default iframe canvas instead of the MCP Jam chat surface.
+       * @param {unknown} value - Host theme, expected to be "light" or "dark"
+       * @returns {"light" | "dark" | "light dark"} Applied color-scheme
+       */
+      function applyColorScheme(value) {
+        const colorScheme =
+          value === "light" || value === "dark" ? value : "light dark";
+        document.documentElement.style.colorScheme = colorScheme;
+        if (document.body) {
+          document.body.style.colorScheme = colorScheme;
+        }
+        return colorScheme;
+      }
+
       // Create inner iframe immediately (before HTML arrives)
       const inner = document.createElement("iframe");
-      inner.style = "width:100%; height:100%; border:none;";
+      inner.style =
+        "width:100%; height:100%; border:none; background-color:transparent; color-scheme:light dark;";
+      applyColorScheme("light dark");
       // Default minimal sandbox before HTML arrives
       inner.setAttribute(
         "sandbox",
@@ -260,8 +282,9 @@ document.addEventListener('securitypolicyviolation', function(e) {
             event.data.method === "ui/notifications/sandbox-resource-ready"
           ) {
             // Load HTML into inner iframe with CSP enforcement
-            const { html, sandbox, csp, permissions, permissive } =
+            const { html, sandbox, csp, permissions, permissive, colorScheme } =
               event.data.params || {};
+            inner.style.colorScheme = applyColorScheme(colorScheme);
 
             if (typeof sandbox === "string") {
               inner.setAttribute("sandbox", sandbox);
@@ -299,6 +322,13 @@ document.addEventListener('securitypolicyviolation', function(e) {
                 inner.srcdoc = processedHtml;
               }
             }
+          } else if (
+            event.data &&
+            event.data.method ===
+              "ui/notifications/sandbox-color-scheme-changed"
+          ) {
+            const { colorScheme } = event.data.params || {};
+            inner.style.colorScheme = applyColorScheme(colorScheme);
           } else {
             // Forward other messages to inner iframe (guest UI)
             if (inner && inner.contentWindow) {

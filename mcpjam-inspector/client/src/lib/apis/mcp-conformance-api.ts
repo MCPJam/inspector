@@ -4,7 +4,7 @@ import type {
   ConformanceResult as OAuthConformanceResult,
 } from "@mcpjam/sdk";
 import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
-import { buildHostedServerRequest } from "@/lib/apis/web/context";
+import { buildServerRequest } from "@/lib/apis/web/context";
 import { webPost } from "@/lib/apis/web/base";
 import { authFetch } from "@/lib/session-token";
 
@@ -65,7 +65,7 @@ export async function runProtocolConformance(
         serverId: serverNameOrId,
       }),
     hosted: () => {
-      const request = buildHostedServerRequest(serverNameOrId);
+      const request = buildServerRequest(serverNameOrId);
       return webPost("/api/web/conformance/protocol", request);
     },
   });
@@ -80,7 +80,7 @@ export async function runAppsConformance(
         serverId: serverNameOrId,
       }),
     hosted: () => {
-      const request = buildHostedServerRequest(serverNameOrId);
+      const request = buildServerRequest(serverNameOrId);
       return webPost("/api/web/conformance/apps", request);
     },
   });
@@ -98,7 +98,7 @@ export async function startOAuthConformance(
         callbackOrigin: input.callbackOrigin,
       }),
     hosted: () => {
-      const request = buildHostedServerRequest(input.serverNameOrId);
+      const request = buildServerRequest(input.serverNameOrId);
       return webPost("/api/web/conformance/oauth/start", {
         ...request,
         oauthProfile: input.oauthProfile,

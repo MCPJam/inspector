@@ -3,9 +3,7 @@ import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
 import { getSessionToken } from "@/lib/session-token";
 import {
   buildHostedEvalServerBatchRequest,
-  buildHostedServerRequest,
-  buildHostedServerBatchRequest,
-  isGuestMode,
+  buildServerBatchRequest,
 } from "@/lib/apis/web/context";
 import { listHostedTools } from "@/lib/apis/web/tools-api";
 import { authFetch } from "@/lib/session-token";
@@ -37,9 +35,6 @@ export const EVALS_API_ENDPOINTS = {
 } as const;
 
 type JsonRecord = Record<string, unknown>;
-const GUEST_UNSUPPORTED_MESSAGE =
-  "Not available for guests yet. Sign in to use this.";
-
 type EvalRequestWithServers = {
   projectId?: string | null;
   serverIds: string[];
@@ -143,8 +138,8 @@ function mergeHostedServerBatch<
 >(
   request: T,
 ): Omit<T, "serverIds" | "convexAuthToken"> &
-  ReturnType<typeof buildHostedServerBatchRequest> {
-  const hostedBatch = buildHostedServerBatchRequest(request.serverIds);
+  ReturnType<typeof buildServerBatchRequest> {
+  const hostedBatch = buildServerBatchRequest(request.serverIds);
   const {
     convexAuthToken: _convexAuthToken,
     serverIds: _serverIds,
@@ -154,31 +149,6 @@ function mergeHostedServerBatch<
   return {
     ...requestWithoutConvexAuthToken,
     ...hostedBatch,
-    projectId: request.projectId ?? hostedBatch.projectId,
-  };
-}
-
-function mergeHostedEvalServerRequest<
-  T extends EvalRequestWithServers & { convexAuthToken?: string | null },
->(request: T): JsonRecord {
-  if (!isGuestMode()) {
-    return mergeHostedServerBatch(request) as JsonRecord;
-  }
-
-  const {
-    convexAuthToken: _convexAuthToken,
-    serverIds,
-    projectId: _projectId,
-    ...requestWithoutHostedAuth
-  } = request;
-
-  if (serverIds.length !== 1) {
-    throw new Error("Guest eval playground supports one server at a time");
-  }
-
-  return {
-    ...requestWithoutHostedAuth,
-    ...buildHostedServerRequest(serverIds[0]!),
   };
 }
 
@@ -266,10 +236,6 @@ export async function runEvals(request: RunEvalsRequest): Promise<any> {
     local: () =>
       postEvalRequest(EVALS_API_ENDPOINTS.local.run, request as JsonRecord),
     hosted: () => {
-      if (isGuestMode()) {
-        throw new Error(GUEST_UNSUPPORTED_MESSAGE);
-      }
-
       return postEvalRequest(EVALS_API_ENDPOINTS.hosted.run, {
         ...mergeHostedServerBatch(request),
         storageServerIds: request.storageServerIds ?? request.serverIds,
@@ -290,7 +256,7 @@ export async function runEvalTestCase(
     hosted: () =>
       postEvalRequest(
         EVALS_API_ENDPOINTS.hosted.runTestCase,
-        mergeHostedEvalServerRequest(request),
+        mergeHostedServerBatch(request) as JsonRecord,
       ),
   });
 }
@@ -307,7 +273,7 @@ export async function generateEvalTests(
     hosted: () =>
       postEvalRequest(
         EVALS_API_ENDPOINTS.hosted.generateTests,
-        mergeHostedEvalServerRequest(request),
+        mergeHostedServerBatch(request) as JsonRecord,
       ),
   });
 }
@@ -324,7 +290,7 @@ export async function generateNegativeEvalTests(
     hosted: () =>
       postEvalRequest(
         EVALS_API_ENDPOINTS.hosted.generateNegativeTests,
-        mergeHostedEvalServerRequest(request),
+        mergeHostedServerBatch(request) as JsonRecord,
       ),
   });
 }
@@ -383,7 +349,7 @@ export async function streamEvalTestCase(
     : EVALS_API_ENDPOINTS.local.streamTestCase;
 
   const payload = isHostedMode()
-    ? mergeHostedEvalServerRequest(request)
+    ? mergeHostedServerBatch(request) as JsonRecord
     : (request as JsonRecord);
 
   const response = await authFetch(endpoint, {

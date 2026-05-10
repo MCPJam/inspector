@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, act, screen } from "@testing-library/react";
 import React from "react";
+import { CHATGPT_HOST_STYLE, CLAUDE_HOST_STYLE } from "@/lib/host-styles";
 
 // Declare the global that Vite normally injects
 (globalThis as any).__APP_VERSION__ = "0.0.0-test";
@@ -322,13 +323,25 @@ describe("MCPAppsRenderer tool input streaming", () => {
   it("uses chatbox host style for SEP-1865 host context outside the playground", async () => {
     render(
       <ChatboxHostStyleProvider value="chatgpt">
-        <MCPAppsRenderer {...baseProps} />
+        <ChatboxHostThemeProvider value="dark">
+          <MCPAppsRenderer {...baseProps} />
+        </ChatboxHostThemeProvider>
       </ChatboxHostStyleProvider>,
     );
 
     await vi.waitFor(() => {
       expect(mockBridge.connect).toHaveBeenCalled();
     });
+
+    expect(
+      appBridgeArgsRef.current?.options?.hostContext?.styles?.variables?.[
+        "--color-background-primary"
+      ],
+    ).toBe(
+      CHATGPT_HOST_STYLE.resolveStyleVariables("dark")[
+        "--color-background-primary"
+      ],
+    );
 
     await act(async () => {
       triggerReady();
@@ -340,6 +353,12 @@ describe("MCPAppsRenderer tool input streaming", () => {
         expect.objectContaining({
           platform: "web",
           styles: expect.objectContaining({
+            variables: expect.objectContaining({
+              "--color-background-primary":
+                CHATGPT_HOST_STYLE.resolveStyleVariables("dark")[
+                  "--color-background-primary"
+                ],
+            }),
             css: expect.objectContaining({
               fonts: "",
             }),
@@ -366,6 +385,15 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
 
     expect(appBridgeArgsRef.current?.options?.hostContext?.theme).toBe("dark");
+    expect(
+      appBridgeArgsRef.current?.options?.hostContext?.styles?.variables?.[
+        "--color-background-primary"
+      ],
+    ).toBe(
+      CLAUDE_HOST_STYLE.resolveStyleVariables("dark")[
+        "--color-background-primary"
+      ],
+    );
 
     await act(async () => {
       triggerReady();
@@ -376,6 +404,14 @@ describe("MCPAppsRenderer tool input streaming", () => {
       expect(mockBridge.setHostContext).toHaveBeenLastCalledWith(
         expect.objectContaining({
           theme: "dark",
+          styles: expect.objectContaining({
+            variables: expect.objectContaining({
+              "--color-background-primary":
+                CLAUDE_HOST_STYLE.resolveStyleVariables("dark")[
+                  "--color-background-primary"
+                ],
+            }),
+          }),
         }),
       );
     });
@@ -443,7 +479,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
   });
 
-  it("filters non-standard host style variables out of the initialize payload", async () => {
+  it("layers sanitized custom host style variables over host defaults", async () => {
     mockHostContextStoreState.draftHostContext = {
       styles: {
         variables: {
@@ -462,9 +498,21 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
     expect(
       appBridgeArgsRef.current?.options?.hostContext?.styles?.variables,
-    ).toEqual({
-      "--font-sans": "Custom Sans",
-    });
+    ).toEqual(
+      expect.objectContaining({
+        "--color-background-primary":
+          CLAUDE_HOST_STYLE.resolveStyleVariables("light")[
+            "--color-background-primary"
+          ],
+        "--font-sans": "Custom Sans",
+      }),
+    );
+    expect(
+      appBridgeArgsRef.current?.options?.hostContext?.styles?.variables,
+    ).not.toHaveProperty("--mcpjam-theme-preset");
+    expect(
+      appBridgeArgsRef.current?.options?.hostContext?.styles?.variables,
+    ).not.toHaveProperty("--totally-unknown");
 
     await act(async () => {
       triggerReady();
@@ -475,13 +523,67 @@ describe("MCPAppsRenderer tool input streaming", () => {
       expect(mockBridge.setHostContext).toHaveBeenLastCalledWith(
         expect.objectContaining({
           styles: expect.objectContaining({
-            variables: {
+            variables: expect.objectContaining({
+              "--color-background-primary":
+                CLAUDE_HOST_STYLE.resolveStyleVariables("light")[
+                  "--color-background-primary"
+                ],
               "--font-sans": "Custom Sans",
-            },
+            }),
           }),
         }),
       );
     });
+  });
+
+  it("aligns the sandbox iframe with the host surface while providing host chrome", async () => {
+    render(<MCPAppsRenderer {...baseProps} />);
+
+    const iframe = await screen.findByTestId("sandboxed-iframe");
+    const hostChrome = screen.getByTestId("mcp-app-host-chrome");
+
+    expect(iframe.className).toContain("bg-transparent");
+    expect(sandboxedIframePropsRef.current?.style?.backgroundColor).toBe(
+      CLAUDE_HOST_STYLE.resolveStyleVariables("light")[
+        "--color-background-primary"
+      ],
+    );
+    expect(sandboxedIframePropsRef.current?.colorScheme).toBe("light");
+    expect(hostChrome).toHaveStyle({
+      backgroundColor:
+        CLAUDE_HOST_STYLE.resolveStyleVariables("light")[
+          "--color-background-primary"
+        ],
+    });
+  });
+
+  it("does not add host chrome when the widget opts out of border/background", async () => {
+    vi.mocked(authFetch).mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          html: "<html><body>live-widget</body></html>",
+          csp: undefined,
+          permissions: undefined,
+          permissive: false,
+          mimeTypeValid: true,
+          prefersBorder: false,
+        }),
+      status: 200,
+      headers: new Headers(),
+    } as Response);
+
+    render(<MCPAppsRenderer {...baseProps} prefersBorder={false} />);
+
+    const iframe = await screen.findByTestId("sandboxed-iframe");
+
+    expect(screen.queryByTestId("mcp-app-host-chrome")).not.toBeInTheDocument();
+    expect(iframe.className).toContain("bg-transparent");
+    expect(iframe.className).not.toContain("border border-border/40");
+    expect(sandboxedIframePropsRef.current?.style?.backgroundColor).toBe(
+      CLAUDE_HOST_STYLE.resolveChatBackground("light"),
+    );
+    expect(sandboxedIframePropsRef.current?.colorScheme).toBe("light");
   });
 
   it("anchors desktop playground PiP to the playground shell instead of the viewport", async () => {
@@ -501,7 +603,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
     );
 
     const iframe = await screen.findByTestId("sandboxed-iframe");
-    const container = iframe.parentElement as HTMLElement | null;
+    const hostChrome = iframe.parentElement as HTMLElement | null;
+    const container = hostChrome?.parentElement as HTMLElement | null;
+    expect(hostChrome?.dataset.testid).toBe("mcp-app-host-chrome");
     expect(container).not.toBeNull();
     expect(container?.className).toContain("absolute");
     expect(container?.className).not.toContain("fixed");

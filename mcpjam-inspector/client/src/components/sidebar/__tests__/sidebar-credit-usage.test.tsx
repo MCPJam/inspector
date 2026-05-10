@@ -11,13 +11,13 @@ let balanceState:
     }
   | undefined;
 let isLoadingState = false;
-let isAuthenticatedState = true;
+let hasWorkOsUserState = true;
 
 vi.mock("@/hooks/useCreditBalance", () => ({
   useCreditBalance: () => ({
     balance: balanceState,
     isLoading: isLoadingState,
-    isAuthenticated: isAuthenticatedState,
+    hasWorkOsUser: hasWorkOsUserState,
   }),
 }));
 
@@ -32,7 +32,7 @@ describe("SidebarCreditUsage", () => {
       freeDailyResetAt: Date.now() + 3 * 60 * 60 * 1000,
     };
     isLoadingState = false;
-    isAuthenticatedState = true;
+    hasWorkOsUserState = true;
   });
 
   afterEach(() => {
@@ -106,7 +106,7 @@ describe("SidebarCreditUsage", () => {
       freeDailyPercentUsed: 65,
       freeDailyResetAt: Date.now() + 2 * 60 * 60 * 1000,
     };
-    isAuthenticatedState = false;
+    hasWorkOsUserState = false;
 
     render(<SidebarCreditUsage includeGuests />);
 

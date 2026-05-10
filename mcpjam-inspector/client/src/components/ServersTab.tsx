@@ -83,8 +83,8 @@ import {
 } from "@/lib/quick-connect-pending";
 import { useProjectServers as useRemoteProjectServers } from "@/hooks/useProjects";
 import {
-  getEffectiveServerClientCapabilities,
   projectClientCapabilitiesNeedReconnect,
+  resolveEffectiveServerClientCapabilities,
 } from "@/lib/client-config";
 import {
   DndContext,
@@ -675,14 +675,27 @@ export function ServersTab({
         Object.entries(projectServers).map(([serverName, server]) => [
           serverName,
           server.connectionStatus === "connected" &&
+            // Suppress the indicator until runtime initializationInfo is
+            // populated. Without this guard the comparator treats
+            // `initialized=undefined` (just-connected, init-info round-trip
+            // not yet landed; or a previously-connected server after a page
+            // reload) as a structural mismatch against the project defaults
+            // and lights up the icon for servers the user never touched.
+            // Hosted /validate returns initInfo inline so this gap doesn't
+            // exist there; the fix is to inline initInfo on local connect/
+            // reconnect too — see executeLocalServerConnect.
+            server.initializationInfo?.clientCapabilities != null &&
             projectClientCapabilitiesNeedReconnect({
-              desiredCapabilities: getEffectiveServerClientCapabilities({
+              // Use the same precedence the connect path uses
+              // (`withProjectConnectionDefaults`): per-server explicit
+              // `clientCapabilities` override wins, otherwise merge project
+              // defaults with per-server `capabilities`. Recomputing with a
+              // different recipe lit up the indicator on unchanged servers.
+              desiredCapabilities: resolveEffectiveServerClientCapabilities({
+                serverConfig: server.config,
                 projectClientConfig:
                   projects[activeProjectId]?.clientConfig,
-                serverCapabilities: server.config.capabilities as
-                  | Record<string, unknown>
-                  | undefined,
-              }),
+              }) as Record<string, unknown>,
               initializedCapabilities: server.initializationInfo
                 ?.clientCapabilities as Record<string, unknown> | undefined,
             }),

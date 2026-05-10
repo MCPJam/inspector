@@ -58,7 +58,7 @@ function formatPlanTeaserPrice(
     return `from ${formatCurrencyAmount(
       minimumMonthlyCents / 100,
       planCatalog.currency,
-    )}/mo`;
+    )}/mo${seatMinimum > 1 ? ` (${seatMinimum}-seat minimum)` : ""}`;
   }
 
   return null;

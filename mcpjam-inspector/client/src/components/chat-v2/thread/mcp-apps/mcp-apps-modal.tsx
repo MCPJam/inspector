@@ -80,6 +80,13 @@ export function McpAppsModal({
   const [modalHtml, setModalHtml] = useState<string | null>(null);
   const modalSandboxRef = useRef<SandboxedIframeHandle>(null);
   const modalBridgeRef = useRef<AppBridge | null>(null);
+  const modalColorScheme =
+    hostContextRef.current?.theme === "light" ||
+    hostContextRef.current?.theme === "dark"
+      ? hostContextRef.current.theme
+      : themeModeRef.current === "light" || themeModeRef.current === "dark"
+        ? themeModeRef.current
+        : undefined;
 
   // Fetch modal HTML when modal opens
   useEffect(() => {
@@ -265,10 +272,15 @@ export function McpAppsModal({
               csp={widgetCsp}
               permissions={widgetPermissions}
               permissive={widgetPermissive}
+              colorScheme={modalColorScheme}
               onMessage={handleModalMessage}
               title={`MCP App Modal: ${title}`}
-              className="min-w-full border-0 rounded-md bg-background overflow-hidden"
-              style={{ height: "100%", minHeight: "400px" }}
+              className="min-w-full border-0 rounded-md bg-transparent overflow-hidden"
+              style={{
+                height: "100%",
+                minHeight: "400px",
+                backgroundColor: "transparent",
+              }}
             />
           )}
         </div>

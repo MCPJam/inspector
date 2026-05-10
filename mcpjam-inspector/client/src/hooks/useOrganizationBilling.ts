@@ -94,6 +94,7 @@ export interface OrganizationBillingStatus {
   trialPlan: OrganizationPlan | null;
   trialStartedAt: number | null;
   trialEndsAt: number | null;
+  deferredTrialBillingStartsAt?: number | null;
   trialDaysRemaining: number | null;
   decisionRequired: boolean;
   trialDecision: string | null;

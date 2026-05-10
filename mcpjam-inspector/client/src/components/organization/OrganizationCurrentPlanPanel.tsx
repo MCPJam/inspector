@@ -76,6 +76,9 @@ export function getCurrentPlanRenewalLine(
       : `Changes ${formattedScheduledChangeDate}`;
   }
   if (billingStatus.stripeCurrentPeriodEnd != null) {
+    if (billingStatus.subscriptionStatus === "trialing") {
+      return `First charge ${formattedPeriodEnd}`;
+    }
     return `Renews ${formattedPeriodEnd}`;
   }
   if (billingStatus.plan === "free" || !billingStatus.hasCustomer) {

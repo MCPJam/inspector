@@ -39,6 +39,7 @@ import { HOSTED_MODE } from "@/lib/config";
 import {
   injectHostedServerMapping,
   tryGetHostedServerDisplayName,
+  tryResolveProjectServer,
 } from "@/lib/apis/web/context";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import { authFetch } from "@/lib/session-token";
@@ -47,10 +48,9 @@ import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { useServerMutations, type RemoteServer } from "./useProjects";
 import {
   CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
-  getEffectiveServerClientCapabilities,
   getEffectiveProjectConnectionDefaults,
   mergeProjectConnectionHeaders,
-  normalizeProjectClientCapabilities,
+  resolveEffectiveServerClientCapabilities,
 } from "@/lib/client-config";
 import { EXCALIDRAW_SERVER_NAME } from "@/lib/excalidraw-quick-connect";
 import { readOnboardingState } from "@/lib/onboarding-state";
@@ -141,6 +141,10 @@ function mergeOAuthCallbackServerConfig(
  * This persists server URL, scopes, headers, and client credentials.
  */
 function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
+  if (HOSTED_MODE) {
+    return;
+  }
+
   if (formData.type !== "http" || !formData.useOAuth || !formData.url) {
     return;
   }
@@ -587,27 +591,11 @@ export function useServerState({
     const serversWithRuntime: Record<string, ServerWithName> = {};
     for (const [name, server] of Object.entries(project.servers)) {
       const runtimeState = appState.servers[name];
-
-      let envFromStorage: Record<string, string> | undefined;
-      try {
-        const stored = localStorage.getItem(`mcp-env-${name}`);
-        if (stored) envFromStorage = JSON.parse(stored);
-      } catch {
-        // Ignore parse errors
-      }
-
-      let configWithEnv: MCPServerConfig = server.config;
-      if (
-        envFromStorage &&
-        "command" in server.config &&
-        typeof server.config.command === "string"
-      ) {
-        configWithEnv = { ...server.config, env: envFromStorage };
-      }
-
+      // Env now lives on the Convex server doc and is returned by the
+      // resolver inside `server.config.env`; no localStorage read needed.
       serversWithRuntime[name] = {
         ...server,
-        config: configWithEnv,
+        config: server.config,
         connectionStatus: runtimeState?.connectionStatus || "disconnected",
         oauthTokens: runtimeState?.oauthTokens,
         initializationInfo: runtimeState?.initializationInfo,
@@ -640,6 +628,18 @@ export function useServerState({
   const effectiveServers = useMemo(() => {
     return activeProject?.servers || {};
   }, [activeProject]);
+
+  const connectedOrConnectingServerConfigs = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(effectiveServers).filter(
+          ([, server]) =>
+            server.connectionStatus === "connected" ||
+            server.connectionStatus === "connecting"
+        )
+      ),
+    [effectiveServers]
+  );
   const latestEffectiveServersRef = useRef(effectiveServers);
 
   useEffect(() => {
@@ -657,17 +657,11 @@ export function useServerState({
 
   const withProjectConnectionDefaults = useCallback(
     (serverConfig: MCPServerConfig): MCPServerConfig => {
-      const explicitClientCapabilities = serverConfig.clientCapabilities as
-        | Record<string, unknown>
-        | undefined;
-      const effectiveClientCapabilities = explicitClientCapabilities
-        ? normalizeProjectClientCapabilities(explicitClientCapabilities)
-        : getEffectiveServerClientCapabilities({
-            projectClientConfig: activeProject?.clientConfig,
-            serverCapabilities: serverConfig.capabilities as
-              | Record<string, unknown>
-              | undefined,
-          });
+      const effectiveClientCapabilities =
+        resolveEffectiveServerClientCapabilities({
+          serverConfig,
+          projectClientConfig: activeProject?.clientConfig,
+        });
 
       let nextRequestInit = serverConfig.requestInit;
       if ("url" in serverConfig) {
@@ -726,20 +720,74 @@ export function useServerState({
     return true;
   }, [isClientConfigSyncPending]);
 
+  // Extract runtime overlay applied by `withProjectConnectionDefaults` so the
+  // resolver path can reproduce them server-side. Without this, the resolver
+  // sees only the Convex-stored per-server config and loses project-level
+  // header overlays / timeout / capabilities. HTTP servers' Authorization is
+  // omitted here — OAuth bearer is reattached server-side from the Convex
+  // token store.
+  const buildResolverConnectionDefaults = useCallback(
+    (serverConfig: MCPServerConfig) => {
+      const defaults: {
+        headers?: Record<string, string>;
+        timeoutMs?: number;
+        clientCapabilities?: Record<string, unknown>;
+      } = {};
+      if ("url" in serverConfig) {
+        const headers = omitAuthorizationHeader(
+          extractRequestHeaders(serverConfig.requestInit)
+        );
+        if (headers && Object.keys(headers).length > 0) {
+          defaults.headers = headers;
+        }
+      }
+      if (typeof serverConfig.timeout === "number") {
+        defaults.timeoutMs = serverConfig.timeout;
+      }
+      const caps = serverConfig.clientCapabilities as
+        | Record<string, unknown>
+        | undefined;
+      if (caps && typeof caps === "object") defaults.clientCapabilities = caps;
+      return Object.keys(defaults).length > 0 ? defaults : undefined;
+    },
+    []
+  );
+
   const guardedTestConnection = useCallback(
     async (serverConfig: MCPServerConfig, serverName: string) => {
       assertClientConfigSynced();
+      // Opt into the resolver path when both projectId and a Convex serverId
+      // are populated in the API context; otherwise fall back to legacy
+      // {serverConfig, serverId} so brand-new servers (not yet synced to
+      // Convex) keep working. The 2-arg call signature is preserved when no
+      // resolver context is available so existing test mocks keep matching.
+      const resolved = tryResolveProjectServer(serverName);
+      if (resolved) {
+        return testConnection(serverConfig, resolved.serverId, {
+          projectId: resolved.projectId,
+          serverName,
+          connectionDefaults: buildResolverConnectionDefaults(serverConfig),
+        });
+      }
       return testConnection(serverConfig, serverName);
     },
-    [assertClientConfigSynced]
+    [assertClientConfigSynced, buildResolverConnectionDefaults]
   );
 
   const guardedReconnectServer = useCallback(
     async (serverName: string, serverConfig: MCPServerConfig) => {
       assertClientConfigSynced();
+      const resolved = tryResolveProjectServer(serverName);
+      if (resolved) {
+        return reconnectServer(resolved.serverId, serverConfig, {
+          projectId: resolved.projectId,
+          serverName,
+          connectionDefaults: buildResolverConnectionDefaults(serverConfig),
+        });
+      }
       return reconnectServer(serverName, serverConfig);
     },
-    [assertClientConfigSynced]
+    [assertClientConfigSynced, buildResolverConnectionDefaults]
   );
 
   const validateForm = (formData: ServerFormData): string | null => {
@@ -1679,34 +1727,45 @@ export function useServerState({
         oauthFlowProfile: formOAuthProfile,
         hasClientSecret: nextHasClientSecret,
       };
-      if (HOSTED_MODE) {
-        try {
-          const serverId = await syncServerToConvex(
-            formData.name,
-            serverEntryForSave,
-            clientSecretSyncOptions
-          );
-          if (serverId) {
-            hostedServerId = serverId;
-            injectHostedServerMapping(formData.name, serverId);
-          }
-        } catch (err) {
-          logger.warn("Sync to Convex failed (pre-connection)", {
-            serverName: formData.name,
-            err,
-          });
-        }
-      } else {
-        syncServerToConvex(
+      // Both modes: await Convex sync so the returned serverId is available
+      // for OAuth binding (hosted) and for the new {projectId, serverId}
+      // request shape (local mode resolver path). Failure is non-fatal in
+      // local mode — the legacy {serverConfig, serverId: name} body still
+      // works as a fallback.
+      let syncErr: unknown;
+      try {
+        const serverId = await syncServerToConvex(
           formData.name,
           serverEntryForSave,
           clientSecretSyncOptions
-        ).catch((err) =>
-          logger.warn("Background sync to Convex failed (pre-connection)", {
-            serverName: formData.name,
-            err,
-          })
         );
+        if (serverId) {
+          hostedServerId = serverId;
+          injectHostedServerMapping(formData.name, serverId);
+        }
+      } catch (err) {
+        syncErr = err;
+        logger.warn("Sync to Convex failed (pre-connection)", {
+          serverName: formData.name,
+          err,
+        });
+      }
+      if (HOSTED_MODE && formData.useOAuth && !hostedServerId) {
+        // OAuth in hosted mode requires a Convex serverId to bind credentials
+        // to; without it the OAuth dance would complete without a durable
+        // credential. Local-mode OAuth follows the same constraint post-
+        // unification but the legacy localStorage fallback still catches it.
+        const errorMessage =
+          syncErr instanceof Error
+            ? `Could not save the hosted server before starting OAuth: ${syncErr.message}`
+            : "Could not save the hosted server before starting OAuth. Please try again.";
+        dispatch({
+          type: "CONNECT_FAILURE",
+          name: formData.name,
+          error: errorMessage,
+        });
+        toast.error(errorMessage);
+        return;
       }
       if (!isAuthenticated) {
         const project = appState.projects[appState.activeProjectId];
@@ -1904,13 +1963,9 @@ export function useServerState({
             config: mcpConfig,
             useOAuth: formData.useOAuth ?? false,
           });
-          const env = (mcpConfig as any).env;
-          if (env && Object.keys(env).length > 0) {
-            localStorage.setItem(
-              `mcp-env-${formData.name}`,
-              JSON.stringify(env)
-            );
-          }
+          // Env now persists on the Convex server doc via syncServerToConvex;
+          // no localStorage write needed. The resolver returns env in the
+          // resolved config on subsequent connects.
           logger.info("Connection successful", { serverName: formData.name });
           if (
             !shouldSuppressExcalidrawConnectToastForOnboarding(formData.name)
@@ -2093,12 +2148,14 @@ export function useServerState({
         token_type: tokens.tokenType || "Bearer",
         expires_in: tokens.expiresIn,
       };
-      localStorage.setItem(
-        `mcp-tokens-${serverName}`,
-        JSON.stringify(tokenData)
-      );
+      if (!HOSTED_MODE) {
+        localStorage.setItem(
+          `mcp-tokens-${serverName}`,
+          JSON.stringify(tokenData)
+        );
+      }
 
-      if (tokens.clientId) {
+      if (!HOSTED_MODE && tokens.clientId) {
         localStorage.setItem(
           `mcp-client-${serverName}`,
           JSON.stringify({
@@ -2108,7 +2165,9 @@ export function useServerState({
         );
       }
 
-      localStorage.setItem(`mcp-serverUrl-${serverName}`, serverUrl);
+      if (!HOSTED_MODE) {
+        localStorage.setItem(`mcp-serverUrl-${serverName}`, serverUrl);
+      }
 
       const serverConfig = {
         url: serverUrl,
@@ -2382,8 +2441,12 @@ export function useServerState({
   );
 
   const cleanupServerLocalArtifacts = useCallback((serverName: string) => {
+    // Slice 5: env removal handled by Convex deleteServer; only OAuth local
+    // scratchpad remains and is cleaned up here. Once Slice 2's OAuth purge
+    // collapses the localStorage cache fully, this can drop too.
     clearOAuthData(serverName);
-    localStorage.removeItem(`mcp-env-${serverName}`);
+    // Env now lives on the Convex server doc; removal happens via the
+    // server-delete mutation. No localStorage cleanup needed.
   }, []);
 
   const removeServerFromStateAndCloud = useCallback(
@@ -3339,13 +3402,7 @@ export function useServerState({
     activeProject,
     effectiveServers,
     projectServers: effectiveServers,
-    connectedOrConnectingServerConfigs: Object.fromEntries(
-      Object.entries(effectiveServers).filter(
-        ([, server]) =>
-          server.connectionStatus === "connected" ||
-          server.connectionStatus === "connecting"
-      )
-    ),
+    connectedOrConnectingServerConfigs,
     selectedServerEntry: effectiveServers[appState.selectedServer],
     selectedMCPConfig: effectiveServers[appState.selectedServer]?.config,
     selectedMCPConfigs: appState.selectedMultipleServers

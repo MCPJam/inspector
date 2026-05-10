@@ -27,6 +27,14 @@ export interface ChatV2Request {
   }>;
   selectedServers?: string[];
   selectedServerNames?: string[];
+  /**
+   * Convex `Id<'servers'>` for each selected server, parallel to
+   * `selectedServers`. Local mode only fills this when the user is signed in
+   * and every selected server is synced to Convex — so consumers must treat a
+   * missing or short array as "no real Ids available" and not as `[]`. The
+   * hosted web route gets real Ids from a separate request schema.
+   */
+  selectedServerIds?: string[];
   requireToolApproval?: boolean;
   /**
    * Project ID for direct-chat history persistence and, when set, the server

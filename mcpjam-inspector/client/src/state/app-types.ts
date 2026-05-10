@@ -137,21 +137,46 @@ export type AppAction =
   | { type: "IMPORT_PROJECT"; project: Project }
   | { type: "DUPLICATE_PROJECT"; projectId: string; newName: string };
 
-export const initialAppState: AppState = {
-  projects: {
-    default: {
-      id: "default",
-      name: "Default",
-      description: "Default project",
-      servers: {},
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      isDefault: true,
+export function createLocalProjectId(): string {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
+    return crypto.randomUUID();
+  }
+
+  return `local_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export function createLocalDefaultProject(
+  overrides: Partial<Project> = {},
+): Project {
+  const now = new Date();
+  const id = overrides.id ?? createLocalProjectId();
+  return {
+    id,
+    name: "Default",
+    description: "Default project",
+    servers: {},
+    createdAt: now,
+    updatedAt: now,
+    isDefault: true,
+    ...overrides,
+  };
+}
+
+export function createInitialAppState(): AppState {
+  const project = createLocalDefaultProject();
+  return {
+    projects: {
+      [project.id]: project,
     },
-  },
-  activeProjectId: "default",
-  servers: {},
-  selectedServer: "none",
-  selectedMultipleServers: [],
-  isMultiSelectMode: false,
-};
+    activeProjectId: project.id,
+    servers: {},
+    selectedServer: "none",
+    selectedMultipleServers: [],
+    isMultiSelectMode: false,
+  };
+}
+
+export const initialAppState: AppState = createInitialAppState();

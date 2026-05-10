@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
 import servers from "../servers.js";
 
@@ -266,137 +266,241 @@ describe("DELETE /api/mcp/servers/:serverId", () => {
 describe("POST /api/mcp/servers/reconnect", () => {
   let mcpClientManager: ReturnType<typeof createMockMcpClientManager>;
   let app: Hono;
+  const originalConvexUrl = process.env.CONVEX_HTTP_URL;
+  const RECONNECT_PROJECT_ID = "proj_reconnect";
+  const RECONNECT_SERVER_ID = "srv_doc_id";
+  const RECONNECT_SERVER_NAME = "server-1";
+
+  function reconnectAuthHeaders() {
+    return {
+      "Content-Type": "application/json",
+      Authorization: "Bearer guest-bearer-test",
+    };
+  }
+
+  function mockBatchAuthorize(responseBody: unknown, init?: { status?: number }) {
+    const status = init?.status ?? 200;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        return new Response(JSON.stringify(responseBody), {
+          status,
+          headers: { "Content-Type": "application/json" },
+        });
+      })
+    );
+  }
 
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env.CONVEX_HTTP_URL = "https://convex.example";
     mcpClientManager = createMockMcpClientManager();
     app = createApp(mcpClientManager);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    if (originalConvexUrl === undefined) delete process.env.CONVEX_HTTP_URL;
+    else process.env.CONVEX_HTTP_URL = originalConvexUrl;
   });
 
   describe("validation", () => {
     it("returns 400 when serverId is missing", async () => {
       const res = await app.request("/api/mcp/servers/reconnect", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ serverConfig: { command: "node" } }),
+        headers: reconnectAuthHeaders(),
+        body: JSON.stringify({}),
       });
 
       expect(res.status).toBe(400);
-      const data = await res.json();
-      expect(data.success).toBe(false);
-      expect(data.error).toBe("serverId and serverConfig are required");
     });
 
-    it("returns 400 when serverConfig is missing", async () => {
+    it("returns 400 when resolver-path body is missing serverName", async () => {
       const res = await app.request("/api/mcp/servers/reconnect", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ serverId: "server-1" }),
+        headers: reconnectAuthHeaders(),
+        body: JSON.stringify({
+          projectId: RECONNECT_PROJECT_ID,
+          serverId: RECONNECT_SERVER_ID,
+        }),
       });
 
       expect(res.status).toBe(400);
-      const data = await res.json();
-      expect(data.success).toBe(false);
+      const data = (await res.json()) as { error?: string };
+      expect(data.error).toBe("serverName is required with projectId");
     });
-  });
 
-  describe("success cases", () => {
-    it("reconnects successfully with STDIO config", async () => {
+    it("returns 401 when projectId set but Authorization bearer is missing", async () => {
       const res = await app.request("/api/mcp/servers/reconnect", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          serverId: "server-1",
+          projectId: RECONNECT_PROJECT_ID,
+          serverId: RECONNECT_SERVER_ID,
+          serverName: RECONNECT_SERVER_NAME,
+        }),
+      });
+
+      expect(res.status).toBe(401);
+    });
+
+    it("returns 400 when projectId is missing (legacy body shape rejected)", async () => {
+      const res = await app.request("/api/mcp/servers/reconnect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          serverId: RECONNECT_SERVER_ID,
           serverConfig: { command: "node", args: ["server.js"] },
         }),
       });
 
+      expect(res.status).toBe(400);
+      const data = (await res.json()) as { error?: string };
+      expect(data.error).toBe("projectId is required");
+      // Legacy {serverConfig} body must NOT reach the manager.
+      expect(mcpClientManager.connectToServer).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("success cases", () => {
+    it("reconnects successfully with STDIO config from Convex", async () => {
+      mockBatchAuthorize({
+        results: {
+          [RECONNECT_SERVER_ID]: {
+            ok: true,
+            role: "owner",
+            accessLevel: "project_member",
+            permissions: { chatOnly: false },
+            serverConfig: {
+              transportType: "stdio",
+              command: "node",
+              args: ["server.js"],
+              env: {},
+            },
+          },
+        },
+      });
+
+      const res = await app.request("/api/mcp/servers/reconnect", {
+        method: "POST",
+        headers: reconnectAuthHeaders(),
+        body: JSON.stringify({
+          projectId: RECONNECT_PROJECT_ID,
+          serverId: RECONNECT_SERVER_ID,
+          serverName: RECONNECT_SERVER_NAME,
+        }),
+      });
+
       expect(res.status).toBe(200);
-      const data = await res.json();
+      const data = (await res.json()) as {
+        success: boolean;
+        status: string;
+        initInfo: unknown;
+      };
+      // Unified envelope: matches /api/mcp/connect and the hosted
+      // /api/web/servers/validate shape so the inspector client's
+      // `storeInitInfo` takes one path on both surfaces.
       expect(data.success).toBe(true);
-      expect(data.serverId).toBe("server-1");
       expect(data.status).toBe("connected");
-      expect(data.message).toContain("Reconnected to server");
+      // initInfo is included in the envelope (null when the manager has no
+      // live state). The mock returns a populated object, so it should land.
+      expect(data.initInfo).toBeDefined();
 
-      // Verify disconnect was called before connect
       expect(mcpClientManager.disconnectServer).toHaveBeenCalledWith(
-        "server-1",
+        RECONNECT_SERVER_NAME
       );
-      expect(mcpClientManager.connectToServer).toHaveBeenCalledWith(
-        "server-1",
-        { command: "node", args: ["server.js"] },
-      );
+      const callArgs = mcpClientManager.connectToServer.mock.calls[0];
+      expect(callArgs[0]).toBe(RECONNECT_SERVER_NAME);
+      expect(callArgs[1]).toMatchObject({
+        command: "node",
+        args: ["server.js"],
+      });
     });
 
-    it("passes URL string as-is", async () => {
+    it("reconnects successfully with HTTP config from Convex", async () => {
+      mockBatchAuthorize({
+        results: {
+          "http-server": {
+            ok: true,
+            role: "owner",
+            accessLevel: "project_member",
+            permissions: { chatOnly: false },
+            serverConfig: {
+              transportType: "http",
+              url: "http://localhost:3000/mcp",
+              headers: {},
+            },
+          },
+        },
+      });
+
       const res = await app.request("/api/mcp/servers/reconnect", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: reconnectAuthHeaders(),
         body: JSON.stringify({
+          projectId: RECONNECT_PROJECT_ID,
           serverId: "http-server",
-          serverConfig: { url: "http://localhost:3000/mcp" },
+          serverName: "http-server-display",
         }),
       });
 
       expect(res.status).toBe(200);
-      const callArgs = mcpClientManager.connectToServer.mock.calls[0][1];
-      expect(callArgs.url).toBe("http://localhost:3000/mcp");
-    });
-
-    it("normalizes URL object with href property to string", async () => {
-      const res = await app.request("/api/mcp/servers/reconnect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          serverId: "http-server",
-          serverConfig: { url: { href: "http://localhost:4000/api" } },
-        }),
-      });
-
-      expect(res.status).toBe(200);
-      const callArgs = mcpClientManager.connectToServer.mock.calls[0][1];
-      expect(callArgs.url).toBe("http://localhost:4000/api");
+      const callArgs = mcpClientManager.connectToServer.mock.calls[0];
+      expect(callArgs[0]).toBe("http-server-display");
+      // Resolver wraps the URL string in a URL object to match the legacy
+      // connect path's shape (`new URL(...)`), so assert against `.href`.
+      expect(callArgs[1].url).toBeInstanceOf(URL);
+      expect(callArgs[1].url.href).toBe("http://localhost:3000/mcp");
     });
   });
 
   describe("reconnection failures", () => {
-    it("returns error when reconnection fails to establish connection", async () => {
-      mcpClientManager.getConnectionStatus.mockReturnValue("failed");
-
-      const res = await app.request("/api/mcp/servers/reconnect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          serverId: "server-1",
-          serverConfig: { command: "node" },
-        }),
-      });
-
-      expect(res.status).toBe(200); // Route returns 200 but success: false
-      const data = await res.json();
-      expect(data.success).toBe(false);
-      expect(data.status).toBe("failed");
-      expect(data.error).toContain("failed");
-    });
-
     it("returns 500 when connectToServer throws", async () => {
+      // Pre-dedup, /reconnect also re-checked `getConnectionStatus` after
+      // `connectToServer` resolved and reported `success: false` if the
+      // status wasn't "connected". The shared `executeLocalServerConnect`
+      // helper drops that re-check — `connectToServer` only resolves when
+      // the SDK retry policy succeeds in setting `state.client`, so a
+      // resolve-but-not-connected race shouldn't happen in practice. The
+      // legitimate failure case is `connectToServer` rejecting, which both
+      // /connect and /reconnect handle uniformly here.
+      mockBatchAuthorize({
+        results: {
+          [RECONNECT_SERVER_ID]: {
+            ok: true,
+            role: "owner",
+            accessLevel: "project_member",
+            permissions: { chatOnly: false },
+            serverConfig: {
+              transportType: "stdio",
+              command: "node",
+              args: [],
+              env: {},
+            },
+          },
+        },
+      });
       mcpClientManager.connectToServer.mockRejectedValue(
-        new Error("Connection refused"),
+        new Error("Connection refused")
       );
 
       const res = await app.request("/api/mcp/servers/reconnect", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: reconnectAuthHeaders(),
         body: JSON.stringify({
-          serverId: "server-1",
-          serverConfig: { command: "node" },
+          projectId: RECONNECT_PROJECT_ID,
+          serverId: RECONNECT_SERVER_ID,
+          serverName: RECONNECT_SERVER_NAME,
         }),
       });
 
       expect(res.status).toBe(500);
-      const data = await res.json();
+      const data = (await res.json()) as { success: boolean; error: string };
       expect(data.success).toBe(false);
-      expect(data.error).toBe("Connection refused");
+      // Unified error wraps the underlying message with the server name —
+      // matches /api/mcp/connect's pre-existing wording.
+      expect(data.error).toContain("Connection refused");
+      expect(data.error).toContain(RECONNECT_SERVER_NAME);
     });
   });
 });
