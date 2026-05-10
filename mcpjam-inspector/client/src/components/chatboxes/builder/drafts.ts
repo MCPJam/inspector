@@ -5,6 +5,10 @@ import {
 } from "@/shared/types";
 import type { ChatboxDraftConfig, ChatboxStarterDefinition } from "./types";
 import type { ChatboxSettings } from "@/hooks/useChatboxes";
+import {
+  emptyHostConfigInputV2,
+  type HostConfigInputV2,
+} from "@/lib/host-config-v2";
 
 export const DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant.";
 
@@ -143,6 +147,87 @@ export const CHATBOX_BLANK_STARTER = CHATBOX_STARTERS.find(
 export const CHATBOX_TEMPLATE_STARTERS = CHATBOX_STARTERS.filter(
   (s) => s.id !== "blank",
 );
+
+/**
+ * Phase 4: build the v2 hostConfig input for a chatbox save from a
+ * draft + project connection seed. The chatbox's `hostConfig` carries
+ * its own model/prompt/temperature/host style/server selection;
+ * connection settings are seeded from the project default (the editor
+ * does not surface them).
+ *
+ * connectionDefaults / clientCapabilities / hostContext are passed as
+ * the v2 default empty shapes when no project default is supplied —
+ * the backend's mintV2ChatboxHostConfigFromV2Input flow re-seeds from
+ * the project default before persisting, so an empty seed here is
+ * safe.
+ */
+export function draftToHostConfigInputV2(
+  draft: ChatboxDraftConfig,
+  projectDefault?: Pick<
+    HostConfigInputV2,
+    "connectionDefaults" | "clientCapabilities" | "hostContext"
+  > | null,
+): HostConfigInputV2 {
+  const seed = emptyHostConfigInputV2({
+    hostStyle: draft.hostStyle,
+    modelId: draft.modelId,
+    systemPrompt: draft.systemPrompt,
+    temperature: draft.temperature,
+    requireToolApproval: draft.requireToolApproval,
+    serverIds: draft.selectedServerIds,
+    optionalServerIds: draft.optionalServerIds,
+    connectionDefaults: projectDefault?.connectionDefaults,
+    clientCapabilities: projectDefault?.clientCapabilities,
+    hostContext: projectDefault?.hostContext,
+  });
+  return seed;
+}
+
+/**
+ * Phase 4: migrate a sessionStorage builder draft from any older shape
+ * into a draft that the current builder can consume. Today the draft
+ * still stores flat fields (hostStyle/modelId/etc.) so this is a
+ * structural sanity check — fill defaults for anything missing so a
+ * draft persisted before required fields were added (e.g. the
+ * optionalServerIds split, or the welcome/feedback dialog blocks)
+ * doesn't crash the builder. When the draft already carries every
+ * required field this is a no-op.
+ */
+export function migrateBuilderDraft(
+  raw: Record<string, unknown> | null | undefined,
+): ChatboxDraftConfig | null {
+  if (!raw || typeof raw !== "object") return null;
+  const blank = CHATBOX_BLANK_STARTER.createDraft(getDefaultHostedModelId());
+  const merged: ChatboxDraftConfig = {
+    ...blank,
+    ...(raw as Partial<ChatboxDraftConfig>),
+    welcomeDialog: {
+      ...blank.welcomeDialog,
+      ...((raw as { welcomeDialog?: Partial<ChatboxDraftConfig["welcomeDialog"]> })
+        .welcomeDialog ?? {}),
+    },
+    feedbackDialog: {
+      ...blank.feedbackDialog,
+      ...((raw as { feedbackDialog?: Partial<ChatboxDraftConfig["feedbackDialog"]> })
+        .feedbackDialog ?? {}),
+    },
+    selectedServerIds: Array.isArray(
+      (raw as { selectedServerIds?: unknown }).selectedServerIds,
+    )
+      ? ((raw as { selectedServerIds: string[] }).selectedServerIds.filter(
+          (id) => typeof id === "string",
+        ) as string[])
+      : [],
+    optionalServerIds: Array.isArray(
+      (raw as { optionalServerIds?: unknown }).optionalServerIds,
+    )
+      ? ((raw as { optionalServerIds: string[] }).optionalServerIds.filter(
+          (id) => typeof id === "string",
+        ) as string[])
+      : [],
+  };
+  return merged;
+}
 
 export function toDraftConfig(chatbox: ChatboxSettings): ChatboxDraftConfig {
   return {
