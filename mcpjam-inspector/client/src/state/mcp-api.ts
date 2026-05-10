@@ -10,7 +10,6 @@ import {
 import {
   getHostedChatboxToken,
   getHostedOAuthToken,
-  getHostedShareToken,
 } from "@/lib/apis/web/context";
 import { BootstrapNotReadyError } from "@/lib/app-ready";
 import type { ConnectionDefaults } from "@/shared/connection-defaults";
@@ -60,14 +59,12 @@ function buildHostedValidationContext(
 ): HostedServerValidateContext | undefined {
   if (!options?.projectId) return undefined;
 
-  const shareToken = getHostedShareToken();
   const chatboxToken = getHostedChatboxToken();
   return {
     projectId: options.projectId,
     serverId,
     ...(options.serverName ? { serverName: options.serverName } : {}),
-    ...(shareToken || chatboxToken ? { accessScope: "chat_v2" } : {}),
-    ...(shareToken ? { shareToken } : {}),
+    ...(chatboxToken ? { accessScope: "chat_v2" } : {}),
     ...(chatboxToken ? { chatboxToken } : {}),
   };
 }
