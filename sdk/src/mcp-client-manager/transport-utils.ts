@@ -86,6 +86,33 @@ export function buildRequestInit(
 }
 
 /**
+ * Returns a copy of requestInit without Authorization headers.
+ *
+ * buildRequestInit intentionally preserves caller-provided auth, so token
+ * rotation must first remove stale auth headers before supplying a new
+ * accessToken.
+ */
+export function stripAuthorizationFromRequestInit(
+  requestInit: StreamableHTTPClientTransportOptions["requestInit"]
+): StreamableHTTPClientTransportOptions["requestInit"] {
+  if (!requestInit?.headers) {
+    return requestInit;
+  }
+
+  const normalized = normalizeHeaders(requestInit.headers);
+  const nextHeaders = Object.fromEntries(
+    Object.entries(normalized).filter(
+      ([key]) => key.toLowerCase() !== "authorization"
+    )
+  );
+
+  return {
+    ...requestInit,
+    headers: nextHeaders,
+  };
+}
+
+/**
  * Creates a logging wrapper transport that logs JSON-RPC traffic.
  *
  * @param serverId - The server ID for logging context

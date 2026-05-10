@@ -89,11 +89,10 @@ export interface OrgModelHandlerOptions {
    */
   authHeader?: string;
   /**
-   * Hosted share/chatbox tokens for guest chat sessions. Forwarded to
-   * /stream/org so Convex can authorize the guest against the project via
-   * the existing authorizeGuestServerAccessBatch query.
+   * Hosted chatbox token for guest chat sessions. Forwarded to /stream/org
+   * so Convex can authorize the guest against the project via the existing
+   * authorizeGuestServerAccessBatch query.
    */
-  shareToken?: string;
   chatboxToken?: string;
   clientIp?: string | null;
 }
@@ -183,7 +182,6 @@ export interface OrgLocalModelHandlerOptions {
   requireToolApproval?: boolean;
   /** Forwarded to /stream/org/local-usage for identity resolution. */
   authHeader?: string;
-  shareToken?: string;
   chatboxToken?: string;
   onConversationComplete?: (
     fullHistory: ModelMessage[],
@@ -211,7 +209,6 @@ export function handleLocalOrgChatModel(
     tools,
     requireToolApproval,
     authHeader,
-    shareToken,
     chatboxToken,
     onConversationComplete,
     onStreamComplete,
@@ -467,7 +464,6 @@ export function handleLocalOrgChatModel(
             turnId: traceTurn.turnId,
             promptIndex: traceTurn.promptIndex,
             authHeader,
-            shareToken,
             chatboxToken,
             selectedServers: options.selectedServers,
           }).catch((err) => {
@@ -529,7 +525,6 @@ async function postLocalUsage(params: {
   turnId?: string;
   promptIndex?: number;
   authHeader?: string;
-  shareToken?: string;
   chatboxToken?: string;
   selectedServers?: string[];
 }): Promise<void> {
@@ -561,7 +556,6 @@ async function postLocalUsage(params: {
         ...(typeof params.promptIndex === "number"
           ? { promptIndex: params.promptIndex }
           : {}),
-        ...(params.shareToken ? { shareToken: params.shareToken } : {}),
         ...(params.chatboxToken ? { chatboxToken: params.chatboxToken } : {}),
         ...(params.selectedServers && params.selectedServers.length > 0
           ? { serverIds: params.selectedServers }
@@ -621,7 +615,6 @@ export async function handleHostedOrgChatModel(
     extraBodyFields: {
       providerKey: options.providerKey,
       ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
-      ...(options.shareToken ? { shareToken: options.shareToken } : {}),
       // chatboxToken is set on the body by handleMCPJamFreeChatModel itself.
       ...(options.selectedServers && options.selectedServers.length > 0
         ? { serverIds: options.selectedServers }

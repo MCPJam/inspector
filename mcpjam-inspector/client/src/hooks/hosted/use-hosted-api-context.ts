@@ -8,7 +8,6 @@ interface UseApiContextOptions {
   clientConfigSyncPending?: boolean;
   getAccessToken: () => Promise<string | undefined | null>;
   oauthTokensByServerId?: Record<string, string>;
-  shareToken?: string;
   chatboxToken?: string;
   isAuthenticated?: boolean;
   hasSession?: boolean;
@@ -22,7 +21,6 @@ export function useApiContext({
   clientConfigSyncPending,
   getAccessToken,
   oauthTokensByServerId,
-  shareToken,
   chatboxToken,
   isAuthenticated,
   hasSession,
@@ -45,7 +43,6 @@ export function useApiContext({
       clientConfigSyncPending,
       getAccessToken,
       oauthTokensByServerId,
-      shareToken,
       chatboxToken,
       isAuthenticated,
       hasSession,
@@ -62,7 +59,6 @@ export function useApiContext({
     clientConfigSyncPending,
     getAccessToken,
     oauthTokensByServerId,
-    shareToken,
     chatboxToken,
     isAuthenticated,
     hasSession,

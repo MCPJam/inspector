@@ -7,19 +7,19 @@
           "type": "patch"
         }
       ],
-      "summary": "Finish local-mode dedup (sync local OAuth tokens to Convex via import-tokens, collapse legacy localStorage state to no-ops), charge users after trial if paid during trial, make renderer transparent.",
-      "id": "inspector-local-mode-dedup-and-billing"
+      "summary": "HostConfig v2: send hostConfig payload from inspector for direct chats, add HostConfigEditor component and v2 types, and switch reads to v2 (Phase 3). Replace server sharing with chatbox sharing. Add suite-level Default Execution Config editor for evals. Identify PostHog by actor key instead of auth state. Refactor: unify chat config boundaries by removing ChatTabV2 override props and nesting EvalChatHandoff fields under executionConfig.",
+      "id": "hostconfig-v2-and-chatbox-sharing"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
       "type": "patch",
-      "oldVersion": "2.4.4",
+      "oldVersion": "2.4.5",
       "changesets": [
-        "inspector-local-mode-dedup-and-billing"
+        "hostconfig-v2-and-chatbox-sharing"
       ],
-      "newVersion": "2.4.5"
+      "newVersion": "2.4.6"
     }
   ]
 }

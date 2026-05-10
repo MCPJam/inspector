@@ -53,7 +53,7 @@ import {
   HTTP_CONNECT_TIMEOUT,
 } from "./constants.js";
 import { isMethodUnavailableError, formatError } from "./error-utils.js";
-import { MCPAuthError, isAuthError } from "./errors.js";
+import { MCPAuthError, isAuthError, isUnauthorized401 } from "./errors.js";
 import {
   type RetryPolicy,
   isRetryableTransientError,
@@ -64,6 +64,7 @@ import {
   buildRequestInit,
   normalizeHeaders,
   getExistingAuthorization,
+  stripAuthorizationFromRequestInit,
   wrapTransportForLogging,
   createDefaultRpcLogger,
 } from "./transport-utils.js";
@@ -130,6 +131,10 @@ export class MCPClientManager {
   private readonly liveClientStates = new Map<string, LiveClientState>();
   private readonly toolsMetadataCache = new Map<string, Map<string, any>>();
   private readonly retryAbortControllers = new Map<string, Set<AbortController>>();
+  private readonly unauthorizedRefreshInFlight = new Map<
+    string,
+    Promise<string>
+  >();
 
   // Managers for specific features
   private readonly notificationManager = new NotificationManager();
@@ -620,14 +625,12 @@ export class MCPClientManager {
       return client.callTool(callParams, mergedOptions);
     };
 
-    return request.retry
-      ? this.runRetriedOperation(
-          serverId,
-          request.request,
-          request.retry,
-          operation
-        )
-      : operation();
+    return this.runRetriedOperation(
+      serverId,
+      request.request,
+      request.retry ?? { retries: 0, retryDelayMs: 0 },
+      operation
+    );
   }
 
   // ===========================================================================
@@ -1833,8 +1836,8 @@ export class MCPClientManager {
   ): Promise<T> {
     const { signal, cleanup } = this.createRetrySignal(serverId, options?.signal);
 
-    try {
-      return await retryWithPolicy({
+    const runWithTransientRetry = () =>
+      retryWithPolicy({
         policy: retryPolicy,
         signal,
         operation: async () => this.awaitWithAbort(operation(signal), signal),
@@ -1847,9 +1850,85 @@ export class MCPClientManager {
           }
         },
       });
+
+    try {
+      try {
+        return await runWithTransientRetry();
+      } catch (error) {
+        const refreshed = await this.refreshAccessTokenAfterUnauthorized(
+          serverId,
+          error,
+          signal
+        );
+        if (!refreshed) {
+          throw error;
+        }
+        return await runWithTransientRetry();
+      }
     } finally {
       cleanup();
     }
+  }
+
+  private async refreshAccessTokenAfterUnauthorized(
+    serverId: string,
+    error: unknown,
+    signal: AbortSignal
+  ): Promise<boolean> {
+    if (!isUnauthorized401(error)) {
+      return false;
+    }
+
+    const registeredState = this.registeredServers.get(serverId);
+    const config = registeredState?.config;
+    const onUnauthorized =
+      config && this.isHttpConfig(config) ? config.onUnauthorized : undefined;
+    if (
+      !config ||
+      !this.isHttpConfig(config) ||
+      !onUnauthorized ||
+      config.authProvider ||
+      config.refreshToken
+    ) {
+      return false;
+    }
+
+    let refreshPromise = this.unauthorizedRefreshInFlight.get(serverId);
+    if (!refreshPromise) {
+      refreshPromise = (async () => {
+        const result = await onUnauthorized({ serverId, error });
+        const accessToken = result?.accessToken?.trim();
+        if (!accessToken) {
+          throw new Error(
+            `Server "${serverId}" onUnauthorized returned an empty access token.`
+          );
+        }
+        return accessToken;
+      })()
+        .finally(() => {
+          if (this.unauthorizedRefreshInFlight.get(serverId) === refreshPromise) {
+            this.unauthorizedRefreshInFlight.delete(serverId);
+          }
+        });
+      this.unauthorizedRefreshInFlight.set(serverId, refreshPromise);
+    }
+
+    const accessToken = await this.awaitWithAbort(refreshPromise, signal);
+    const latestState = this.registeredServers.get(serverId);
+    const latestConfig = latestState?.config;
+    if (!latestState || !latestConfig || !this.isHttpConfig(latestConfig)) {
+      return false;
+    }
+
+    latestState.config = {
+      ...latestConfig,
+      accessToken,
+      requestInit: stripAuthorizationFromRequestInit(latestConfig.requestInit),
+    };
+    await this.destroyLiveState(serverId, {
+      abortRetryOperations: false,
+    });
+    return true;
   }
 
   private createRetrySignal(

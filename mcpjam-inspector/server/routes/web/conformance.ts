@@ -53,7 +53,6 @@ async function resolveHostedHttpConfig(
     {
       accessScope: wsBody.accessScope,
       workspaceId,
-      shareToken: wsBody.shareToken,
       chatboxToken: wsBody.chatboxToken,
     }
   );
@@ -109,7 +108,6 @@ async function resolveHostedServerConfig(
     {
       accessScope: wsBody.accessScope,
       workspaceId,
-      shareToken: wsBody.shareToken,
       chatboxToken: wsBody.chatboxToken,
     }
   );

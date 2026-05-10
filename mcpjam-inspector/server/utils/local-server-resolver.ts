@@ -5,6 +5,7 @@ import {
   WebRouteError,
   parseErrorMessage,
 } from "../routes/web/errors.js";
+import { buildHostedOAuthUnauthorizedHandler } from "./hosted-oauth-refresh.js";
 import { logger } from "./logger.js";
 import { setRequestLogContext } from "./request-logger.js";
 import {
@@ -273,6 +274,19 @@ export function toMCPServerConfig(
     oauthAccessToken?: string;
     clientCapabilities?: Record<string, unknown>;
     defaultHeaders?: Record<string, string>;
+    /**
+     * Identity needed to attach the SDK's `onUnauthorized` 401-recovery hook
+     * for hosted-OAuth servers. When all four are present and the server has
+     * a hosted OAuth token, the hook calls Convex `/web/oauth/force-refresh`
+     * with this same bearer to mint a fresh token without prompting reconnect.
+     * Header-only HTTP servers and stdio servers never get the hook.
+     */
+    refreshContext?: {
+      bearerToken: string;
+      projectId: string;
+      serverId: string;
+      serverName: string;
+    };
   }
 ): MCPServerConfig {
   const { serverConfig } = authResult;
@@ -335,6 +349,24 @@ export function toMCPServerConfig(
     http.capabilities = clientCapabilities;
     http.clientCapabilities = clientCapabilities;
   }
+
+  // Attach the SDK's 401-recovery hook only when this is a hosted-OAuth
+  // server (we have a token from `authorize-batch-local`) AND the caller
+  // supplied refresh context. Header-only HTTP servers can't be refreshed
+  // server-side, so the hook would be a no-op there.
+  if (
+    oauthToken &&
+    serverConfig.useOAuth === true &&
+    options?.refreshContext
+  ) {
+    http.onUnauthorized = buildHostedOAuthUnauthorizedHandler({
+      bearerToken: options.refreshContext.bearerToken,
+      projectId: options.refreshContext.projectId,
+      serverId: options.refreshContext.serverId,
+      serverName: options.refreshContext.serverName,
+    });
+  }
+
   return http as MCPServerConfig;
 }
 
@@ -391,6 +423,12 @@ export async function resolveLocalServerForConnect(
     clientCapabilities:
       options?.clientCapabilities ?? options?.defaults?.clientCapabilities,
     defaultHeaders: options?.defaults?.headers,
+    refreshContext: {
+      bearerToken,
+      projectId,
+      serverId,
+      serverName: options?.serverDisplayName ?? serverId,
+    },
   });
   return { config, authorizeResult: result };
 }
