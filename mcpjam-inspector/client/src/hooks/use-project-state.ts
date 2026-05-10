@@ -20,6 +20,43 @@ import {
   useProjectsBulkServers,
 } from "./useProjects";
 import { useEmbeddedBlobReadTelemetry } from "./useClientTelemetry";
+import * as Sentry from "@sentry/react";
+
+// PR-I2: defensive assertion for the cold-share / cold-duplicate data-loss
+// vector. PR-I1 made non-active project servers source from a bulk query
+// (stale-while-revalidate). If a `createProject(... servers: {} ...)` call
+// fires for a project whose source DID have servers in the bulk-query map,
+// we have a race-condition data loss. Today the path is not reachable from
+// production UI (the duplicate handler is wired but no rendered component
+// calls it; the share dialog only runs createProject for local-only
+// projects whose servers come from Redux, not the bulk query) — but this
+// guard makes any future regression visible in Sentry on the first
+// occurrence rather than silently corrupting user data.
+function assertNotColdSharingEmptyServers(args: {
+  callSite: "duplicate" | "migrate" | "import";
+  sourceProjectId: string;
+  serializedServerCount: number;
+  bulkServerCount: number | null;
+  embeddedServerCount: number;
+}): void {
+  if (args.serializedServerCount > 0) return;
+  if ((args.bulkServerCount ?? 0) === 0 && args.embeddedServerCount === 0) {
+    return;
+  }
+  Sentry.captureMessage(
+    "Cold-share data-loss invariant tripped: createProject called with empty servers but source has servers",
+    {
+      level: "error",
+      extra: {
+        callSite: args.callSite,
+        sourceProjectId: args.sourceProjectId,
+        serializedServerCount: args.serializedServerCount,
+        bulkServerCount: args.bulkServerCount,
+        embeddedServerCount: args.embeddedServerCount,
+      },
+    },
+  );
+}
 import {
   deserializeServersFromConvex,
   serializeServersForSharing,
@@ -798,6 +835,14 @@ export function useProjectState({
 
       try {
         const serializedServers = serializeServersForSharing(project.servers);
+        const bulkForSource = bulkServersByProject[project.id];
+        assertNotColdSharingEmptyServers({
+          callSite: "migrate",
+          sourceProjectId: project.id,
+          serializedServerCount: Object.keys(serializedServers).length,
+          bulkServerCount: bulkForSource ? bulkForSource.length : null,
+          embeddedServerCount: Object.keys(project.servers ?? {}).length,
+        });
         const projectId = await convexCreateProject({
           name: project.name,
           description: project.description,
@@ -1540,6 +1585,14 @@ export function useProjectState({
           const serializedServers = serializeServersForSharing(
             sourceProject.servers,
           );
+          const bulkForSource = bulkServersByProject[sourceProject.id];
+          assertNotColdSharingEmptyServers({
+            callSite: "duplicate",
+            sourceProjectId: sourceProject.id,
+            serializedServerCount: Object.keys(serializedServers).length,
+            bulkServerCount: bulkForSource ? bulkForSource.length : null,
+            embeddedServerCount: Object.keys(sourceProject.servers ?? {}).length,
+          });
           await convexCreateProject({
             name: newName,
             description: sourceProject.description,
@@ -1682,6 +1735,15 @@ export function useProjectState({
           const serializedServers = serializeServersForSharing(
             projectData.servers || {},
           );
+          assertNotColdSharingEmptyServers({
+            callSite: "import",
+            sourceProjectId: projectData.id ?? "<unknown-import>",
+            serializedServerCount: Object.keys(serializedServers).length,
+            // Import-from-JSON has no bulk-query source — the user pasted
+            // the payload. We only have the embedded count to compare.
+            bulkServerCount: null,
+            embeddedServerCount: Object.keys(projectData.servers ?? {}).length,
+          });
           await convexCreateProject({
             name: projectData.name,
             description: projectData.description,
