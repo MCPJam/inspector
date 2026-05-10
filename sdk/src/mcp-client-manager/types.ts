@@ -85,7 +85,17 @@ export type StdioServerConfig = BaseServerConfig & {
   refreshToken?: never;
   clientId?: never;
   clientSecret?: never;
+  onUnauthorized?: never;
 };
+
+export type UnauthorizedRefreshResult = {
+  accessToken: string;
+};
+
+export type UnauthorizedRefreshHandler = (args: {
+  serverId: string;
+  error: unknown;
+}) => Promise<UnauthorizedRefreshResult>;
 
 /**
  * Configuration for HTTP-based MCP servers (SSE or Streamable HTTP)
@@ -110,6 +120,12 @@ export type HttpServerConfig = BaseServerConfig & {
   clientId?: string;
   /** OAuth client secret. Optional, used with refreshToken. */
   clientSecret?: string;
+  /**
+   * Optional 401 recovery hook. When provided for access-token based HTTP
+   * configs, MCPClientManager calls it once after an operation fails with a
+   * strict HTTP 401, then rebuilds the transport with the returned token.
+   */
+  onUnauthorized?: UnauthorizedRefreshHandler;
   /** Reconnection options for Streamable HTTP */
   reconnectionOptions?: StreamableHTTPClientTransportOptions["reconnectionOptions"];
   /** Session ID for Streamable HTTP */
