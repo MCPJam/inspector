@@ -35,6 +35,10 @@ vi.mock("@/hooks/useProfilePicture", () => ({
   useProfilePicture: () => ({ profilePictureUrl: null }),
 }));
 
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: () => false,
+}));
+
 vi.mock("@/components/sidebar/sidebar-credit-usage", () => ({
   SidebarCreditUsage: ({
     className,

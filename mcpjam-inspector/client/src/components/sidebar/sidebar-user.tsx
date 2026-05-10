@@ -1,5 +1,7 @@
+import { useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -29,12 +31,26 @@ import { useProfilePicture } from "@/hooks/useProfilePicture";
 import { HOSTED_MODE } from "@/lib/config";
 import { SidebarCreditUsage } from "@/components/sidebar/sidebar-credit-usage";
 
-export function SidebarUser() {
+interface SidebarUserProps {
+  activeOrganizationId?: string;
+}
+
+export function SidebarUser({ activeOrganizationId }: SidebarUserProps = {}) {
   const { isLoading, isAuthenticated: _isAuthenticated } = useConvexAuth();
   const { user, signIn, signOut } = useAuth();
   const { profilePictureUrl } = useProfilePicture();
   const convexUser = useQuery("users:getCurrentUser" as any);
   const { isMobile } = useSidebar();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const billingUiEnabled =
+    useFeatureFlagEnabled("billing-entitlements-ui") === true;
+  const canNavigateToBilling =
+    billingUiEnabled && Boolean(activeOrganizationId);
+
+  const handleCreditUsageClick = () => {
+    setMenuOpen(false);
+    window.location.hash = `organizations/${activeOrganizationId}/billing`;
+  };
 
   const workOsName = user
     ? [user.firstName, user.lastName].filter(Boolean).join(" ")
@@ -95,7 +111,7 @@ export function SidebarUser() {
   return (
     <SidebarMenu>
       <SidebarMenuItem>
-        <DropdownMenu>
+        <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
           <DropdownMenuTrigger asChild>
             <SidebarMenuButton
               size="lg"
@@ -148,7 +164,11 @@ export function SidebarUser() {
                 </div>
               </div>
             </DropdownMenuLabel>
-            <SidebarCreditUsage className="px-1 pb-1" variant="full" />
+            <SidebarCreditUsage
+              className="px-1 pb-1"
+              variant="full"
+              onClick={canNavigateToBilling ? handleCreditUsageClick : undefined}
+            />
             <DropdownMenuSeparator />
             <DropdownMenuItem
               onClick={() => (window.location.hash = "profile")}

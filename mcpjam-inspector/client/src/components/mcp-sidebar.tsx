@@ -761,7 +761,7 @@ export function MCPSidebar({
           {!user ? (
             <SidebarCreditUsage className="px-1" includeGuests />
           ) : null}
-          <SidebarUser />
+          <SidebarUser activeOrganizationId={activeOrganizationId} />
         </SidebarFooter>
       </Sidebar>
       {shouldShowInviteCta && user && activeProject ? (
