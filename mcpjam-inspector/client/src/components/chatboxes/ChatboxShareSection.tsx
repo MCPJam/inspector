@@ -46,7 +46,6 @@ export function ChatboxShareSection({
   const { profilePictureUrl } = useProfilePicture();
   const {
     setChatboxMode,
-    updateChatbox,
     upsertChatboxMember,
     removeChatboxMember,
   } = useChatboxMutations();
@@ -110,12 +109,6 @@ export function ChatboxShareSection({
         next = (await setChatboxMode({
           chatboxId: settings.chatboxId,
           mode: target.mode,
-        })) as ChatboxSettings;
-      }
-      if (target.allowGuestAccess !== next.allowGuestAccess) {
-        next = (await updateChatbox({
-          chatboxId: settings.chatboxId,
-          allowGuestAccess: target.allowGuestAccess,
         })) as ChatboxSettings;
       }
       updateSettings(next);
