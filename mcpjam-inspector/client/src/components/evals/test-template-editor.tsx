@@ -70,10 +70,6 @@ import { normalizeToolChoice } from "@/shared/tool-choice";
 import { cn } from "@/lib/utils";
 import { computeIterationResult } from "./pass-criteria";
 import {
-  ChatboxHostStyleProvider,
-  ChatboxHostThemeProvider,
-} from "@/contexts/chatbox-host-style-context";
-import {
   buildHistoricalCompareRunRecords,
   buildComparePreviewTrace,
   buildCompareRunRecord,
@@ -114,7 +110,6 @@ import {
   adaptTraceToUiMessages,
   type TraceEnvelope,
 } from "./trace-viewer-adapter";
-import { getChatboxShellStyle } from "@/lib/chatbox-host-style";
 import { HostStylePillSelector } from "@/components/shared/HostStylePillSelector";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
@@ -2503,8 +2498,6 @@ function RunColumn({
   onTabChange: (tab: RunColumnTab) => void;
   onRetry: () => void;
 }) {
-  const themeMode = usePreferencesStore((state) => state.themeMode);
-  const hostStyle = usePreferencesStore((state) => state.hostStyle);
   const { toolsMetadata, toolServerMap, connectedServerIds } =
     useEvalTraceToolContext({
       serverNames,
@@ -2622,9 +2615,6 @@ function RunColumn({
     record.iteration == null &&
     record.streamingTrace == null &&
     hasStreamingTrace;
-  const shouldRenderChatShell = effectiveActiveTab === "chat";
-  const shellStyle = getChatboxShellStyle(hostStyle, themeMode);
-
   const displayTokens =
     record.streamingMetrics?.tokensUsed ?? record.metrics.tokensUsed;
   const toolCount =
@@ -2874,26 +2864,16 @@ function RunColumn({
       />
 
       <div className="flex min-w-0 max-lg:min-h-[min(52vh,26rem)] flex-1 flex-col overflow-hidden p-3 lg:min-h-0">
-        {shouldRenderChatShell ? (
-          <ChatboxHostStyleProvider value={hostStyle}>
-            <ChatboxHostThemeProvider value={themeMode}>
-              <div
-                className={cn(
-                  "chatbox-host-shell app-theme-scope flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/50",
-                  themeMode === "dark" && "dark",
-                )}
-                data-host-style={hostStyle}
-                style={shellStyle}
-              >
-                <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-3">
-                  {renderedRunContent}
-                </div>
-              </div>
-            </ChatboxHostThemeProvider>
-          </ChatboxHostStyleProvider>
-        ) : (
-          renderedRunContent
-        )}
+        {/*
+         * Phase 5 of the M1 plan: the test-case run view no longer wraps
+         * its chat tab in a chatbox-host-shell driven by the global
+         * `usePreferencesStore.hostStyle`. Host styling belongs to a
+         * client config (Phase 3 ClientConfigDto), not to the test case
+         * itself. The chat tab now renders as a plain panel; Phase 3b
+         * can opt this surface back into a per-config shell once
+         * multi-config runs land.
+         */}
+        {renderedRunContent}
       </div>
     </div>
   );

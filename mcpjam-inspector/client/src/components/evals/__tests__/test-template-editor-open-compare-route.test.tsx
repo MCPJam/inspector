@@ -966,7 +966,7 @@ describe("TestTemplateEditor run view from route", () => {
     ).not.toBeNull();
   });
 
-  it("updates the pre-run host-style control and carries it across compare columns", async () => {
+  it("updates the pre-run host-style control without leaking it into compare columns (M1 phase 5)", async () => {
     const user = userEvent.setup();
 
     streamEvalTestCaseMock.mockImplementation(
@@ -1027,11 +1027,12 @@ describe("TestTemplateEditor run view from route", () => {
       expect(streamEvalTestCaseMock).toHaveBeenCalledTimes(2);
     });
 
-    await waitFor(() => {
-      expect(
-        view.container.querySelectorAll('[data-host-style="chatgpt"]'),
-      ).toHaveLength(2);
-    });
+    // Phase 5: the pre-run host-style preference no longer dictates
+    // the test-case run-view chrome. Compare columns must NOT carry
+    // [data-host-style], even though the global preference did change.
+    expect(
+      view.container.querySelectorAll("[data-host-style]"),
+    ).toHaveLength(0);
   });
 
   it("defaults to Results tab when expected tool calls are on a non-first prompt turn (multi-turn case)", async () => {
@@ -1122,7 +1123,7 @@ describe("TestTemplateEditor run view from route", () => {
     });
   });
 
-  it("removes the pre-run host-style selector and only applies the host shell on Chat", async () => {
+  it("removes the pre-run host-style selector once a run starts and does not apply a host shell on any tab (M1 phase 5)", async () => {
     const user = userEvent.setup();
     const caseWithExpectedToolCalls = {
       ...caseDoc,
@@ -1202,18 +1203,18 @@ describe("TestTemplateEditor run view from route", () => {
 
     const card = getCompareCard("GPT-4");
 
-    // Default tab is Results when the case has expected tools, so the chat host shell
-    // should only appear after switching back to Chat.
+    // Phase 5: no host shell on any tab — host styling belongs to the
+    // client config (Phase 3), not to the test-case view.
     expect(card.querySelector("[data-host-style]")).toBeNull();
 
     await user.click(within(card).getByRole("button", { name: /^Chat$/i }));
-    expect(card.querySelector('[data-host-style="claude"]')).not.toBeNull();
+    expect(card.querySelector("[data-host-style]")).toBeNull();
 
     await user.click(within(card).getByRole("button", { name: /^Trace$/i }));
     expect(card.querySelector("[data-host-style]")).toBeNull();
 
     await user.click(within(card).getByRole("button", { name: /^Chat$/i }));
-    expect(card.querySelector('[data-host-style="claude"]')).not.toBeNull();
+    expect(card.querySelector("[data-host-style]")).toBeNull();
 
     await user.click(within(card).getByRole("button", { name: /^Raw$/i }));
     expect(card.querySelector("[data-host-style]")).toBeNull();
