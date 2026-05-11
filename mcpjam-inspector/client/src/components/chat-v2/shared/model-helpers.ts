@@ -1,4 +1,3 @@
-import { ProviderTokens } from "@/hooks/use-ai-provider-keys";
 import {
   SUPPORTED_MODELS,
   type ModelDefinition,
@@ -6,7 +5,6 @@ import {
   isMCPJamProvidedModel,
   Model,
 } from "@/shared/types";
-import type { CustomProvider } from "@mcpjam/sdk/browser";
 import type { OrgModelProvider } from "@/hooks/use-org-model-config";
 
 export function parseModelAliases(
@@ -18,68 +16,6 @@ export function parseModelAliases(
     .map((alias) => alias.trim())
     .filter((alias) => alias.length > 0)
     .map((alias) => ({ id: alias, name: alias, provider }));
-}
-
-export function buildAvailableModels(params: {
-  hasToken: (provider: keyof ProviderTokens) => boolean;
-  getOpenRouterSelectedModels: () => string[];
-  isOllamaRunning: boolean;
-  ollamaModels: ModelDefinition[];
-  getAzureBaseUrl: () => string;
-  customProviders: CustomProvider[];
-}): ModelDefinition[] {
-  const {
-    hasToken,
-    getAzureBaseUrl,
-    getOpenRouterSelectedModels,
-    isOllamaRunning,
-    ollamaModels,
-    customProviders,
-  } = params;
-
-  const providerHasKey: Record<string, boolean> = {
-    anthropic: hasToken("anthropic"),
-    openai: hasToken("openai"),
-    deepseek: hasToken("deepseek"),
-    google: hasToken("google"),
-    mistral: hasToken("mistral"),
-    xai: hasToken("xai"),
-    azure: Boolean(getAzureBaseUrl()),
-    ollama: isOllamaRunning,
-    openrouter: Boolean(
-      hasToken("openrouter") && getOpenRouterSelectedModels().length > 0,
-    ),
-    meta: false,
-  } as const;
-
-  const cloud = SUPPORTED_MODELS.filter((m) => {
-    if (isMCPJamProvidedModel(m.id)) return true;
-    return providerHasKey[m.provider];
-  });
-
-  const openRouterModels: ModelDefinition[] = providerHasKey.openrouter
-    ? getOpenRouterSelectedModels().map((id) => ({
-        id,
-        name: id,
-        provider: "openrouter" as const,
-      }))
-    : [];
-
-  const customModels: ModelDefinition[] = customProviders.flatMap((cp) =>
-    cp.modelIds.map((modelId) => ({
-      id: `custom:${cp.name}:${modelId}`,
-      name: modelId,
-      provider: "custom" as const,
-      customProviderName: cp.name,
-    })),
-  );
-
-  let models: ModelDefinition[] = cloud;
-  if (isOllamaRunning && ollamaModels.length > 0)
-    models = models.concat(ollamaModels);
-  if (openRouterModels.length > 0) models = models.concat(openRouterModels);
-  if (customModels.length > 0) models = models.concat(customModels);
-  return models;
 }
 
 /**
@@ -113,9 +49,15 @@ export function isOrgProviderAvailable(
  * Build the list of available models from an organization's provider config.
  * Used in org-backed projects where the server resolves API keys.
  *
- * For Ollama, static SUPPORTED_MODELS entries are absent (models are
- * org/user-specific), but org-configured modelIds are added directly below
- * so hosted local-runtime Ollama providers appear in the model picker.
+ * Local-only model discovery (for example a user's in-process Ollama daemon)
+ * is intentionally appended by callers, because those models depend on the
+ * machine running the inspector rather than organization config alone.
+ *
+ * Callers that append local-discovered Ollama models MUST dedupe by `id`:
+ * org-configured `modelIds` may already include matching names, and the
+ * returned list keys models on `id` alone (provider is fixed to "ollama"
+ * for both sources). See `use-chat-session.ts` and
+ * `use-available-eval-models.ts` for the canonical filter pattern.
  */
 export function buildAvailableModelsFromOrgConfig(
   orgConfig: OrgVisibleConfig | undefined,
@@ -144,14 +86,16 @@ export function buildAvailableModelsFromOrgConfig(
   const openRouterConfig = orgConfig.providers.find(
     (p) => p.providerKey === "openrouter" && p.enabled && p.hasSecret,
   );
-  if (openRouterConfig?.selectedModels && openRouterConfig.selectedModels.length > 0) {
-    const openRouterModels: ModelDefinition[] = openRouterConfig.selectedModels.map(
-      (id) => ({
+  if (
+    openRouterConfig?.selectedModels &&
+    openRouterConfig.selectedModels.length > 0
+  ) {
+    const openRouterModels: ModelDefinition[] =
+      openRouterConfig.selectedModels.map((id) => ({
         id,
         name: id,
         provider: "openrouter" as const,
-      }),
-    );
+      }));
     models.push(...openRouterModels);
   }
 
@@ -202,11 +146,11 @@ export const getDefaultModel = (
     "anthropic/claude-haiku-4.5",
     "openai/gpt-5-mini",
     "meta-llama/llama-4-scout",
-    Model.CLAUDE_3_7_SONNET_LATEST, // anthropic
+    Model.CLAUDE_SONNET_4_6, // anthropic (was 3.7-sonnet, retired 2026-02-19)
     Model.GPT_4_1, // openai
     Model.GEMINI_2_5_PRO, // google
-    Model.DEEPSEEK_CHAT, // deepseek
-    Model.MISTRAL_LARGE_LATEST, // mistral
+    Model.DEEPSEEK_V4_FLASH, // deepseek (was deepseek-chat, deprecating)
+    Model.MISTRAL_LARGE_3, // mistral (was mistral-large-latest)
   ];
 
   for (const id of modelIdsByPriority) {

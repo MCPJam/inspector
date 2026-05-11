@@ -55,12 +55,18 @@ type RunEvalsRequest = EvalRequestWithServers & {
   suiteDescription?: string;
   tests: Array<Record<string, unknown>>;
   storageServerIds?: string[];
-  modelApiKeys?: Record<string, string>;
   convexAuthToken?: string | null;
   notes?: string;
   passCriteria?: {
     minimumPassRate: number;
   };
+  /**
+   * True for suite reruns of already-persisted cases. Tells the server to
+   * skip the per-case upsert path so suite-default-derived wire fields
+   * (substituted models, merged advancedConfig) don't get baked into
+   * per-case overrides.
+   */
+  suiteRerun?: boolean;
 };
 
 type RunTestCaseRequest = EvalRequestWithServers & {
@@ -69,7 +75,6 @@ type RunTestCaseRequest = EvalRequestWithServers & {
   provider: string;
   compareRunId?: string;
   skipLastMessageRunUpdate?: boolean;
-  modelApiKeys?: Record<string, string>;
   convexAuthToken?: string | null;
   testCaseOverrides?: {
     query?: string;
@@ -302,7 +307,6 @@ export type StartTraceRepairParams =
       scope: "suite";
       suiteId: string;
       sourceRunId: string;
-      modelApiKeys?: Record<string, string>;
     }
   | {
       scope: "case";
@@ -310,7 +314,6 @@ export type StartTraceRepairParams =
       sourceRunId: string;
       sourceIterationId: string;
       testCaseId: string;
-      modelApiKeys?: Record<string, string>;
     };
 
 export async function startTraceRepair(

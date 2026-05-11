@@ -10,7 +10,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { toast } from "sonner";
-import { formatEnsureServersReadyError, useEvalHandlers } from "../use-eval-handlers";
+import {
+  formatEnsureServersReadyError,
+  useEvalHandlers,
+} from "../use-eval-handlers";
 import { API_ENDPOINTS } from "../constants";
 import { createFetchResponse, createDeferred } from "@/test";
 import { setApiContext } from "@/lib/apis/web/context";
@@ -180,7 +183,7 @@ describe("useEvalHandlers", () => {
         expect.objectContaining({
           method: "POST",
           headers: { "Content-Type": "application/json" },
-        }),
+        })
       );
     });
 
@@ -282,7 +285,7 @@ describe("useEvalHandlers", () => {
       // Verify regular fetch was NOT called with the evals/run endpoint
       const fetchCalls = fetchSpy.mock.calls.filter(
         (call) =>
-          typeof call[0] === "string" && call[0].includes("/api/mcp/evals/run"),
+          typeof call[0] === "string" && call[0].includes("/api/mcp/evals/run")
       );
       expect(fetchCalls).toHaveLength(0);
 
@@ -312,7 +315,7 @@ describe("useEvalHandlers", () => {
               },
             ],
           ]),
-        }),
+        })
       );
 
       await act(async () => {
@@ -330,7 +333,7 @@ describe("useEvalHandlers", () => {
         expect.objectContaining({
           method: "POST",
           headers: { "Content-Type": "application/json" },
-        }),
+        })
       );
     });
 
@@ -354,7 +357,7 @@ describe("useEvalHandlers", () => {
           ...defaultProps,
           connectedServerNames: new Set(),
           ensureServersReady,
-        }),
+        })
       );
 
       await act(async () => {
@@ -391,7 +394,7 @@ describe("useEvalHandlers", () => {
           success: true,
           suiteId: "suite-123",
           runId: "run-replay",
-        }),
+        })
       );
 
       const { result } = renderHook(() =>
@@ -409,7 +412,7 @@ describe("useEvalHandlers", () => {
               },
             ],
           ]),
-        }),
+        })
       );
 
       const mockSuite = {
@@ -430,7 +433,7 @@ describe("useEvalHandlers", () => {
         expect.objectContaining({
           method: "POST",
           headers: { "Content-Type": "application/json" },
-        }),
+        })
       );
 
       const callArgs = mockAuthFetch.mock.calls[0];
@@ -457,7 +460,7 @@ describe("useEvalHandlers", () => {
           success: true,
           suiteId: "suite-123",
           runId: "run-replay",
-        }),
+        })
       );
 
       const { result } = renderHook(() =>
@@ -474,7 +477,7 @@ describe("useEvalHandlers", () => {
               },
             ],
           ]),
-        }),
+        })
       );
 
       const mockSuite = {
@@ -494,7 +497,7 @@ describe("useEvalHandlers", () => {
         expect.objectContaining({
           method: "POST",
           headers: { "Content-Type": "application/json" },
-        }),
+        })
       );
 
       const callArgs = mockAuthFetch.mock.calls[0];
@@ -525,7 +528,7 @@ describe("useEvalHandlers", () => {
           success: true,
           suiteId: "suite-123",
           runId: "run-rerun",
-        }),
+        })
       );
 
       const { result } = renderHook(() =>
@@ -543,7 +546,7 @@ describe("useEvalHandlers", () => {
               },
             ],
           ]),
-        }),
+        })
       );
 
       const mockSuite = {
@@ -563,7 +566,7 @@ describe("useEvalHandlers", () => {
         expect.objectContaining({
           method: "POST",
           headers: { "Content-Type": "application/json" },
-        }),
+        })
       );
     });
 
@@ -575,7 +578,7 @@ describe("useEvalHandlers", () => {
           success: true,
           suiteId: "suite-clicked",
           runId: "run-replay",
-        }),
+        })
       );
 
       const { result } = renderHook(() =>
@@ -599,7 +602,7 @@ describe("useEvalHandlers", () => {
               },
             ],
           ]),
-        }),
+        })
       );
 
       await act(async () => {
@@ -631,7 +634,7 @@ describe("useEvalHandlers", () => {
           ...defaultProps,
           connectedServerNames: new Set(),
           ensureServersReady,
-        }),
+        })
       );
 
       await act(async () => {
@@ -648,7 +651,7 @@ describe("useEvalHandlers", () => {
             query: "Test query",
             models: [{ provider: "openai", model: "gpt-4o" }],
             expectedToolCalls: [],
-          } as any,
+          } as any
         );
       });
 
@@ -676,7 +679,7 @@ describe("useEvalHandlers", () => {
           ...defaultProps,
           connectedServerNames: new Set(),
           ensureServersReady,
-        }),
+        })
       );
 
       await act(async () => {
@@ -693,7 +696,7 @@ describe("useEvalHandlers", () => {
             query: "Test query",
             models: [{ provider: "openai", model: "gpt-4o" }],
             expectedToolCalls: [],
-          } as any,
+          } as any
         );
       });
 
@@ -713,19 +716,19 @@ describe("useEvalHandlers", () => {
           createFetchResponse({
             success: true,
             iteration: { _id: "iter-openai" },
-          }),
+          })
         )
         .mockResolvedValueOnce(
           createFetchResponse({
             success: true,
             iteration: { _id: "iter-anthropic" },
-          }),
+          })
         )
         .mockResolvedValueOnce(
           createFetchResponse({
             success: true,
             iteration: { _id: "iter-google" },
-          }),
+          })
         );
 
       const { result } = renderHook(() => useEvalHandlers(defaultProps));
@@ -751,13 +754,13 @@ describe("useEvalHandlers", () => {
               { provider: "google", model: "gemini-2.5-pro" },
             ],
             expectedToolCalls: [],
-          } as any,
+          } as any
         );
       });
 
       expect(mockAuthFetch).toHaveBeenCalledTimes(3);
       const requestBodies = mockAuthFetch.mock.calls.map((call) =>
-        JSON.parse(call[1].body as string),
+        JSON.parse(call[1].body as string)
       );
 
       expect(requestBodies).toEqual([
@@ -781,7 +784,7 @@ describe("useEvalHandlers", () => {
         }),
       ]);
       expect(toast.success).toHaveBeenCalledWith(
-        "Test completed across 3 models!",
+        "Test completed across 3 models!"
       );
       expect(response).toMatchObject({
         iteration: { _id: "iter-openai" },
@@ -817,7 +820,7 @@ describe("useEvalHandlers", () => {
           } as any,
           {
             selectedModel: "anthropic/claude-3-5-sonnet",
-          },
+          }
         );
       });
 
@@ -831,7 +834,7 @@ describe("useEvalHandlers", () => {
       });
       expect(requestBody.skipLastMessageRunUpdate).toBeUndefined();
       expect(toast.success).toHaveBeenCalledWith(
-        "Test completed successfully!",
+        "Test completed successfully!"
       );
     });
   });
@@ -840,7 +843,7 @@ describe("useEvalHandlers", () => {
     it("does not send modelApiKeys for MCPJam-provided replay models", async () => {
       const { isMCPJamProvidedModel } = await import("@/shared/types");
       vi.mocked(isMCPJamProvidedModel).mockImplementation(
-        (modelId: string) => modelId === "openai/gpt-4o-mini",
+        (modelId: string) => modelId === "openai/gpt-4o-mini"
       );
 
       mockIsHostedMode.mockReturnValue(false);
@@ -859,7 +862,7 @@ describe("useEvalHandlers", () => {
           success: true,
           suiteId: "suite-local",
           runId: "run-local-replay",
-        }),
+        })
       );
 
       const { result } = renderHook(() =>
@@ -872,7 +875,7 @@ describe("useEvalHandlers", () => {
             },
             recentRuns: [],
           } as any,
-        }),
+        })
       );
 
       await act(async () => {
@@ -887,7 +890,7 @@ describe("useEvalHandlers", () => {
           {
             _id: "run-source-local",
             hasServerReplayConfig: true,
-          } as any,
+          } as any
         );
       });
 
@@ -913,14 +916,14 @@ describe("useEvalHandlers", () => {
           success: true,
           suiteId: "suite-local",
           runId: "run-local-replay",
-        }),
+        })
       );
 
       const { result } = renderHook(() =>
         useEvalHandlers({
           ...defaultProps,
           selectedSuiteEntry: selectedSuiteEntry as any,
-        }),
+        })
       );
 
       const mockSuite = {
@@ -937,7 +940,7 @@ describe("useEvalHandlers", () => {
           {
             _id: "run-source-local",
             hasServerReplayConfig: true,
-          } as any,
+          } as any
         );
       });
 
@@ -946,11 +949,11 @@ describe("useEvalHandlers", () => {
         expect.objectContaining({
           method: "POST",
           headers: { "Content-Type": "application/json" },
-        }),
+        })
       );
     });
 
-    it("requires browser API keys for replay (shows toast error when missing)", async () => {
+    it("does not require browser API keys for replay", async () => {
       mockProviderHasToken.mockReturnValue(false);
 
       const { result } = renderHook(() =>
@@ -963,7 +966,7 @@ describe("useEvalHandlers", () => {
             },
             recentRuns: [],
           } as any,
-        }),
+        })
       );
 
       await act(async () => {
@@ -978,13 +981,19 @@ describe("useEvalHandlers", () => {
           {
             _id: "run-source",
             hasServerReplayConfig: true,
-          } as any,
+          } as any
         );
       });
 
-      expect(mockAuthFetch).not.toHaveBeenCalled();
-      expect(toast.error).toHaveBeenCalledWith(
-        expect.stringMatching(/API key.*Settings/i),
+      expect(mockAuthFetch).toHaveBeenCalledWith(
+        "/api/mcp/evals/replay-run",
+        expect.objectContaining({
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+      expect(toast.error).not.toHaveBeenCalledWith(
+        expect.stringMatching(/API key.*Settings/i)
       );
     });
 
@@ -1010,14 +1019,14 @@ describe("useEvalHandlers", () => {
           success: true,
           suiteId: "suite-456",
           runId: "run-new",
-        }),
+        })
       );
 
       const { result } = renderHook(() =>
         useEvalHandlers({
           ...defaultProps,
           selectedSuiteEntry: selectedSuiteEntry as any,
-        }),
+        })
       );
 
       const mockSuite = {
@@ -1036,7 +1045,7 @@ describe("useEvalHandlers", () => {
             _id: "run-replayable",
             hasServerReplayConfig: true,
             passCriteria: { minimumPassRate: 88 },
-          } as any,
+          } as any
         );
       });
 
@@ -1045,7 +1054,7 @@ describe("useEvalHandlers", () => {
         expect.objectContaining({
           method: "POST",
           headers: { "Content-Type": "application/json" },
-        }),
+        })
       );
 
       const callArgs = mockAuthFetch.mock.calls[0];
@@ -1076,7 +1085,7 @@ describe("useEvalHandlers", () => {
               expectedToolCalls: [],
             },
           ],
-        }),
+        })
       );
 
       const { result } = renderHook(() => useEvalHandlers(defaultProps));
@@ -1091,7 +1100,7 @@ describe("useEvalHandlers", () => {
         expect.objectContaining({
           method: "POST",
           headers: { "Content-Type": "application/json" },
-        }),
+        })
       );
     });
 
@@ -1110,7 +1119,7 @@ describe("useEvalHandlers", () => {
           ...defaultProps,
           connectedServerNames: new Set(["server-1"]),
           ensureServersReady,
-        }),
+        })
       );
 
       await act(async () => {
@@ -1149,7 +1158,7 @@ describe("useEvalHandlers", () => {
       const fetchCalls = fetchSpy.mock.calls.filter(
         (call) =>
           typeof call[0] === "string" &&
-          call[0].includes("/api/mcp/evals/generate-tests"),
+          call[0].includes("/api/mcp/evals/generate-tests")
       );
       expect(fetchCalls).toHaveLength(0);
 
@@ -1174,11 +1183,11 @@ describe("useEvalHandlers", () => {
               expectedToolCalls: ["tool2"],
             },
           ],
-        }),
+        })
       );
 
       mockMutations.createTestCaseMutation.mockResolvedValue(
-        "new-test-case-id",
+        "new-test-case-id"
       );
 
       const { result } = renderHook(() => useEvalHandlers(defaultProps));
@@ -1193,7 +1202,7 @@ describe("useEvalHandlers", () => {
 
     it("handles API errors gracefully", async () => {
       mockAuthFetch.mockResolvedValue(
-        createFetchResponse({ error: "API Error" }, 500),
+        createFetchResponse({ error: "API Error" }, 500)
       );
 
       const { result } = renderHook(() => useEvalHandlers(defaultProps));
@@ -1222,7 +1231,7 @@ describe("useEvalHandlers", () => {
           ...defaultProps,
           connectedServerNames: new Set(),
           ensureServersReady,
-        }),
+        })
       );
 
       await act(async () => {
@@ -1262,13 +1271,13 @@ describe("useEvalHandlers", () => {
                 expectedToolCalls: [],
               },
             ],
-          }),
+          })
         )
         .mockResolvedValueOnce(
           createFetchResponse({
             success: true,
             iteration: { _id: "iter-1" },
-          }),
+          })
         );
 
       mockMutations.createTestCaseMutation.mockResolvedValue("new-case-1");
@@ -1288,7 +1297,9 @@ describe("useEvalHandlers", () => {
       });
 
       expect(mockAuthFetch).toHaveBeenCalledTimes(2);
-      const runBody = JSON.parse(mockAuthFetch.mock.calls[1]![1]!.body as string);
+      const runBody = JSON.parse(
+        mockAuthFetch.mock.calls[1]![1]!.body as string
+      );
       expect(runBody.testCaseId).toBe("new-case-1");
     });
   });
@@ -1341,7 +1352,7 @@ describe("useEvalHandlers", () => {
           success: true,
           suiteId: "suite-456",
           runId: "run-new",
-        }),
+        })
       );
 
       const { result } = renderHook(() =>
@@ -1354,7 +1365,7 @@ describe("useEvalHandlers", () => {
             },
             recentRuns: [],
           } as any,
-        }),
+        })
       );
 
       await act(async () => {
@@ -1369,7 +1380,7 @@ describe("useEvalHandlers", () => {
           {
             _id: "run-replayable",
             hasServerReplayConfig: true,
-          } as any,
+          } as any
         );
       });
 
@@ -1464,10 +1475,10 @@ describe("formatEnsureServersReadyError", () => {
         ],
       },
       "run this test case",
-      [],
+      []
     );
     expect(msg).toBe(
-      "Unable to run this test case. This test depends on 2 MCP servers that are no longer in this project.",
+      "Unable to run this test case. This test depends on 2 MCP servers that are no longer in this project."
     );
     expect(msg).not.toMatch(/k123/);
   });
@@ -1477,10 +1488,10 @@ describe("formatEnsureServersReadyError", () => {
       formatEnsureServersReadyError(
         { ...base, missingServerNames: ["k1234567890123456789012345"] },
         "run this test case",
-        [],
-      ),
+        []
+      )
     ).toBe(
-      "Unable to run this test case. This test depends on an MCP server that is no longer in this project.",
+      "Unable to run this test case. This test depends on an MCP server that is no longer in this project."
     );
   });
 
@@ -1489,10 +1500,10 @@ describe("formatEnsureServersReadyError", () => {
       formatEnsureServersReadyError(
         { ...base, missingServerNames: ["k1234567890123456789012345"] },
         "run this suite",
-        [],
-      ),
+        []
+      )
     ).toBe(
-      "Unable to run this suite. This suite depends on an MCP server that is no longer in this project.",
+      "Unable to run this suite. This suite depends on an MCP server that is no longer in this project."
     );
   });
 
@@ -1504,8 +1515,8 @@ describe("formatEnsureServersReadyError", () => {
           reauthServerNames: ["mn79gdfjnftd2esny26j8n4w0s83hc8n"],
         },
         "run this test case",
-        [],
-      ),
+        []
+      )
     ).toBe("Re-authenticate, then try to run this test case.");
   });
 
@@ -1517,10 +1528,10 @@ describe("formatEnsureServersReadyError", () => {
           failedServerNames: ["mn79gdfjnftd2esny26j8n4w0s83hc8n"],
         },
         "run this suite",
-        [],
-      ),
+        []
+      )
     ).toBe(
-      "We couldn't connect to a required server. Try again to run this suite.",
+      "We couldn't connect to a required server. Try again to run this suite."
     );
   });
 });

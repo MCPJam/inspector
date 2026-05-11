@@ -18,9 +18,6 @@ import { getClientIp } from "../../utils/client-ip.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
 import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler";
-import { handleHostedOrgChatModel } from "../../utils/org-model-stream-handler.js";
-import { deriveOrgProviderKey } from "../../utils/org-model-config.js";
-import { HOSTED_MODE } from "../../config";
 import {
   buildDirectHostConfig,
   persistChatSessionToConvex,
@@ -454,7 +451,6 @@ chatV2.post("/", async (c) => {
     const mcpClientManager = c.mcpClientManager;
     const {
       messages,
-      apiKey,
       model,
       systemPrompt,
       temperature,
@@ -541,6 +537,11 @@ chatV2.post("/", async (c) => {
     const directHostConfig = hostConfigServerIds
       ? buildDirectHostConfig({
           modelId: String(modelDefinition.id),
+          // Phase 3: forward the chat tab's resolved host style so the
+          // backend writes a v2 hostConfig with a real (non-`'direct'`)
+          // hostStyle. Defaults to `'claude'` when omitted by the
+          // caller — see DirectChatHostStyle docs.
+          hostStyle: body.hostStyle,
           systemPrompt,
           requestedTemperature: temperature,
           resolvedTemperature,
@@ -626,86 +627,20 @@ chatV2.post("/", async (c) => {
       });
     }
 
-    // Hosted org BYOK: only in hosted mode, only when Convex is reachable,
-    // only when the request carries a projectId, and only when the caller
-    // hasn't supplied a client-side apiKey. A client-supplied apiKey is the
-    // strongest signal that the caller wants direct BYOK, so it wins —
-    // matches the precedence used in the eval flows (modelApiKeys ?? org).
-    // Otherwise we route the LLM call through Convex (/stream/org) so the
-    // org's vault-resolved provider keys never leave Convex. Local-mode BYOK
-    // (CLI / no Convex) falls through to createLlmModel + streamText below.
-    if (
-      HOSTED_MODE &&
-      process.env.CONVEX_HTTP_URL &&
-      process.env.INSPECTOR_SERVICE_TOKEN &&
-      typeof body.projectId === "string" &&
-      body.projectId &&
-      !apiKey
-    ) {
-      const providerKeyResult = deriveOrgProviderKey(modelDefinition);
-      if (!providerKeyResult.ok) {
-        return c.json({ error: providerKeyResult.error }, 400);
-      }
-      const providerKey = providerKeyResult.key;
-      const modelMessages = scrubMessages(
-        (await convertToModelMessages(messages)) as ModelMessage[],
+    if (modelDefinition.provider !== "ollama") {
+      return c.json(
+        {
+          error:
+            "Org-managed models must use /api/web/chat-v2. /api/mcp/chat-v2 only supports MCPJam-provided models and local Ollama.",
+        },
+        400,
       );
-      const sessionStartedAt = Date.now();
-      const chatSessionId = body.chatSessionId;
-      return handleHostedOrgChatModel({
-        projectId: body.projectId,
-        providerKey,
-        modelId: String(modelDefinition.id),
-        messages: modelMessages,
-        systemPrompt: enhancedSystemPrompt,
-        temperature: resolvedTemperature,
-        tools: allTools as ToolSet,
-        authHeader: c.req.header("authorization"),
-        clientIp: getClientIp(c),
-        mcpClientManager,
-        selectedServers,
-        requireToolApproval,
-        onConversationComplete: chatSessionId
-          ? async (fullHistory, turnTrace) => {
-              await persistChatSessionToConvex({
-                chatSessionId,
-                modelId: String(modelDefinition.id),
-                modelSource: "byok",
-                sourceType: "direct",
-                directVisibility: body.directVisibility,
-                authHeader: c.req.header("authorization"),
-                sessionMessages: fullHistory,
-                startedAt: sessionStartedAt,
-                lastActivityAt: Date.now(),
-                projectId: body.projectId,
-                resumeConfig: {
-                  systemPrompt,
-                  temperature,
-                  requireToolApproval,
-                  selectedServers,
-                },
-                ...(directHostConfig
-                  ? { hostConfig: directHostConfig }
-                  : {}),
-                expectedVersion: body.expectedVersion,
-                turnTrace,
-                forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
-              });
-            }
-          : undefined,
-      });
     }
 
-    // User-provided models: direct streamText
-    const llmModel = createLlmModel(
-      modelDefinition,
-      apiKey ?? "",
-      {
-        ollama: body.ollamaBaseUrl,
-        azure: body.azureBaseUrl,
-      },
-      body.customProviders,
-    );
+    // Local Ollama: direct streamText against the user's configured base URL.
+    const llmModel = createLlmModel(modelDefinition, "", {
+      ollama: body.ollamaBaseUrl,
+    });
 
     const modelMessages = await convertToModelMessages(messages);
 

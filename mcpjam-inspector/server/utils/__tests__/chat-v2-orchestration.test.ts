@@ -21,6 +21,7 @@ function mockManager(tools: Record<string, unknown>) {
     getToolsForAiSdk: vi.fn().mockResolvedValue(tools),
     getAllToolsMetadata: vi.fn().mockReturnValue({}),
     listServers: vi.fn().mockReturnValue([]),
+    hasServer: vi.fn().mockReturnValue(true),
   } as any;
 }
 
@@ -122,5 +123,22 @@ describe("prepareChatV2", () => {
         ],
       },
     ]);
+  });
+
+  it("filters selectedServers down to ids the manager has registered", async () => {
+    const manager = mockManager({});
+    manager.hasServer = vi.fn((id: string) => id === "live-server");
+
+    await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["live-server", "stale-server"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+    });
+
+    expect(manager.getToolsForAiSdk).toHaveBeenCalledWith(
+      ["live-server"],
+      undefined,
+    );
   });
 });

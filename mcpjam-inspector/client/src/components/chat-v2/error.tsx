@@ -15,6 +15,10 @@ import {
 import { JsonEditor } from "@/components/ui/json-editor";
 import { isMCPJamModelLimitError } from "@/lib/mcpjam-limit";
 import { cn } from "@/lib/utils";
+import {
+  isByokErrorCode,
+  isOrgScopedAuthError,
+} from "@/components/chat-v2/shared/chat-helpers";
 
 interface ErrorBoxProps {
   message: string;
@@ -28,6 +32,7 @@ interface ErrorBoxProps {
   onRetry?: () => void;
   canTopUp?: boolean;
   onTopUp?: () => void;
+  onOpenOrgModels?: () => void;
   /** When true, render the locked-account banner instead of any other state. */
   walletLocked?: boolean;
   /** Sub-classification of a rate-limit error. `"concurrency"` triggers the
@@ -59,6 +64,7 @@ export function ErrorBox({
   onRetry,
   canTopUp,
   onTopUp,
+  onOpenOrgModels,
   walletLocked,
   limitKind,
   retryAfterMs,
@@ -117,6 +123,8 @@ export function ErrorBox({
     : "text-destructive";
 
   const isAuthError = code === "auth_error";
+  const isByokProviderError =
+    isByokErrorCode(code) || isOrgScopedAuthError(code, message);
 
   const errorLabel = isMCPJamModelLimit
     ? "Daily MCPJam model limit reached"
@@ -230,6 +238,11 @@ export function ErrorBox({
           {canTopUp && onTopUp && (
             <Button type="button" onClick={onTopUp}>
               Top up to keep chatting
+            </Button>
+          )}
+          {isByokProviderError && onOpenOrgModels && (
+            <Button type="button" onClick={onOpenOrgModels}>
+              Open Organization Models
             </Button>
           )}
           {isRetryable && onRetry && (

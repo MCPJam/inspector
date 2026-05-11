@@ -1134,6 +1134,219 @@ describe("MCPClientManager", () => {
       expect(destroySpy).not.toHaveBeenCalled();
     });
 
+    it("refreshes once on 401, strips stale Authorization headers, and rebuilds the connection", async () => {
+      const unauthorized = Object.assign(new Error("HTTP 401"), {
+        statusCode: 401,
+      });
+      const fakeTransport = {
+        close: jest.fn().mockResolvedValue(undefined),
+      };
+      const fakeClient = {
+        close: jest.fn().mockResolvedValue(undefined),
+        listTools: jest
+          .fn()
+          .mockRejectedValueOnce(unauthorized)
+          .mockResolvedValueOnce({ tools: [] }),
+      };
+      const onUnauthorized = jest
+        .fn()
+        .mockResolvedValue({ accessToken: "new-access-token" });
+
+      seedRegisteredServer(manager, "hosted-oauth", {
+        url: "https://example.com/mcp",
+        accessToken: "old-access-token",
+        requestInit: {
+          headers: {
+            Authorization: "Bearer stale-header-token",
+            "X-Test": "1",
+          },
+        },
+        onUnauthorized,
+      });
+      seedLiveState(manager, "hosted-oauth", {
+        client: fakeClient,
+        transport: fakeTransport,
+      });
+
+      const connectSpy = jest
+        .spyOn(manager as any, "connectToServerOnce")
+        .mockImplementation(async (serverId: string) => {
+          seedLiveState(manager, serverId, { client: fakeClient });
+          return fakeClient as any;
+        });
+
+      await expect(manager.listTools("hosted-oauth")).resolves.toEqual({
+        tools: [],
+      });
+
+      expect(onUnauthorized).toHaveBeenCalledTimes(1);
+      expect(fakeClient.listTools).toHaveBeenCalledTimes(2);
+      expect(fakeClient.close).toHaveBeenCalledTimes(1);
+      expect(fakeTransport.close).toHaveBeenCalledTimes(1);
+      expect(connectSpy).toHaveBeenCalledTimes(1);
+      expect((manager.getServerConfig("hosted-oauth") as any).accessToken).toBe(
+        "new-access-token"
+      );
+      expect(
+        (manager.getServerConfig("hosted-oauth") as any).requestInit.headers
+      ).toEqual({ "X-Test": "1" });
+    });
+
+    it("surfaces a second 401 after the one refresh retry", async () => {
+      const unauthorized = Object.assign(new Error("HTTP 401"), {
+        statusCode: 401,
+      });
+      const fakeClient = {
+        listTools: jest.fn().mockRejectedValue(unauthorized),
+      };
+      const onUnauthorized = jest
+        .fn()
+        .mockResolvedValue({ accessToken: "new-access-token" });
+
+      seedRegisteredServer(manager, "hosted-oauth-second-401", {
+        url: "https://example.com/mcp",
+        accessToken: "old-access-token",
+        onUnauthorized,
+      });
+      seedLiveState(manager, "hosted-oauth-second-401", { client: fakeClient });
+      jest
+        .spyOn(manager as any, "connectToServerOnce")
+        .mockImplementation(async (serverId: string) => {
+          seedLiveState(manager, serverId, { client: fakeClient });
+          return fakeClient as any;
+        });
+
+      await expect(manager.listTools("hosted-oauth-second-401")).rejects.toThrow(
+        "HTTP 401"
+      );
+
+      expect(onUnauthorized).toHaveBeenCalledTimes(1);
+      expect(fakeClient.listTools).toHaveBeenCalledTimes(2);
+    });
+
+    it("surfaces onUnauthorized failures instead of the original 401", async () => {
+      const unauthorized = Object.assign(new Error("HTTP 401"), {
+        statusCode: 401,
+      });
+      const refreshError = Object.assign(new Error("refresh_token_invalid"), {
+        code: "refresh_token_invalid",
+      });
+      const fakeClient = {
+        listTools: jest.fn().mockRejectedValue(unauthorized),
+      };
+      const onUnauthorized = jest.fn().mockRejectedValue(refreshError);
+
+      seedRegisteredServer(manager, "hosted-oauth-refresh-fails", {
+        url: "https://example.com/mcp",
+        accessToken: "old-access-token",
+        onUnauthorized,
+      });
+      seedLiveState(manager, "hosted-oauth-refresh-fails", {
+        client: fakeClient,
+      });
+
+      let caughtError: unknown;
+      try {
+        await manager.listTools("hosted-oauth-refresh-fails");
+      } catch (error) {
+        caughtError = error;
+      }
+
+      expect(caughtError).toBe(refreshError);
+      expect(onUnauthorized).toHaveBeenCalledTimes(1);
+      expect(fakeClient.listTools).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not refresh on 403 authorization failures", async () => {
+      const forbidden = Object.assign(new Error("HTTP 403"), {
+        statusCode: 403,
+      });
+      const fakeClient = {
+        listTools: jest.fn().mockRejectedValue(forbidden),
+      };
+      const onUnauthorized = jest
+        .fn()
+        .mockResolvedValue({ accessToken: "new-access-token" });
+
+      seedRegisteredServer(manager, "hosted-oauth-403", {
+        url: "https://example.com/mcp",
+        accessToken: "old-access-token",
+        onUnauthorized,
+      });
+      seedLiveState(manager, "hosted-oauth-403", { client: fakeClient });
+
+      await expect(manager.listTools("hosted-oauth-403")).rejects.toThrow(
+        "HTTP 403"
+      );
+
+      expect(onUnauthorized).not.toHaveBeenCalled();
+      expect(fakeClient.listTools).toHaveBeenCalledTimes(1);
+    });
+
+    it("dedupes parallel 401 refreshes for one server", async () => {
+      const unauthorized = Object.assign(new Error("HTTP 401"), {
+        statusCode: 401,
+      });
+      const abortController = new AbortController();
+      let resolveRefresh: (value: { accessToken: string }) => void = () => {};
+      const refreshPromise = new Promise<{ accessToken: string }>((resolve) => {
+        resolveRefresh = resolve;
+      });
+      const onUnauthorized = jest.fn().mockReturnValue(refreshPromise);
+
+      seedRegisteredServer(manager, "hosted-oauth-parallel", {
+        url: "https://example.com/mcp",
+        accessToken: "old-access-token",
+        onUnauthorized,
+      });
+      const first = (manager as any).refreshAccessTokenAfterUnauthorized(
+        "hosted-oauth-parallel",
+        unauthorized,
+        abortController.signal
+      );
+      const second = (manager as any).refreshAccessTokenAfterUnauthorized(
+        "hosted-oauth-parallel",
+        unauthorized,
+        abortController.signal
+      );
+
+      expect(onUnauthorized).toHaveBeenCalledTimes(1);
+
+      resolveRefresh({ accessToken: "new-access-token" });
+      await expect(Promise.all([first, second])).resolves.toEqual([true, true]);
+      expect(onUnauthorized).toHaveBeenCalledTimes(1);
+      expect(
+        (manager.getServerConfig("hosted-oauth-parallel") as any).accessToken
+      ).toBe("new-access-token");
+    });
+
+    it("does not use onUnauthorized for refreshToken configs", async () => {
+      const unauthorized = Object.assign(new Error("HTTP 401"), {
+        statusCode: 401,
+      });
+      const fakeClient = {
+        listTools: jest.fn().mockRejectedValue(unauthorized),
+      };
+      const onUnauthorized = jest
+        .fn()
+        .mockResolvedValue({ accessToken: "new-access-token" });
+
+      seedRegisteredServer(manager, "refresh-token-config", {
+        url: "https://example.com/mcp",
+        refreshToken: "stored-refresh-token",
+        clientId: "client-id",
+        onUnauthorized,
+      });
+      seedLiveState(manager, "refresh-token-config", { client: fakeClient });
+
+      await expect(manager.listTools("refresh-token-config")).rejects.toThrow(
+        "HTTP 401"
+      );
+
+      expect(onUnauthorized).not.toHaveBeenCalled();
+      expect(fakeClient.listTools).toHaveBeenCalledTimes(1);
+    });
+
     it("cancels a connect when the client closes during the handshake", async () => {
       const fakeTransport = {
         close: jest.fn().mockResolvedValue(undefined),

@@ -82,7 +82,6 @@ export const RunEvalsRequestSchema = z.object({
     .array(z.string())
     .min(1, { message: "At least one server must be selected" }),
   serverNames: z.array(z.string()).optional(),
-  shareToken: z.string().optional(),
   chatboxToken: z.string().optional(),
   storageServerIds: z.array(z.string()).optional(),
   modelApiKeys: z.record(z.string(), z.string()).optional(),
@@ -93,6 +92,14 @@ export const RunEvalsRequestSchema = z.object({
       minimumPassRate: z.number(),
     })
     .optional(),
+  /**
+   * When true, the request is a rerun of an already-persisted suite — skip
+   * the per-test-case upsert. Without this, derived wire fields (suite
+   * default model substituted in for model-less cases, merged advancedConfig)
+   * get baked into per-case overrides on first rerun, breaking later edits
+   * to the suite default.
+   */
+  suiteRerun: z.boolean().optional(),
 });
 
 export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
@@ -109,7 +116,6 @@ export const RunTestCaseRequestSchema = z.object({
   serverIds: z
     .array(z.string())
     .min(1, { message: "At least one server must be selected" }),
-  shareToken: z.string().optional(),
   chatboxToken: z.string().optional(),
   modelApiKeys: z.record(z.string(), z.string()).optional(),
   convexAuthToken: z.string(),
@@ -287,7 +293,6 @@ export async function runEvalsWithManager(
     tests,
     serverIds,
     serverNames,
-    shareToken,
     chatboxToken,
     storageServerIds,
     modelApiKeys,
@@ -295,6 +300,7 @@ export async function runEvalsWithManager(
     convexAuthToken,
     notes,
     passCriteria,
+    suiteRerun,
   } = request;
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
@@ -381,6 +387,14 @@ export async function runEvalsWithManager(
       environment: persistedEnvironment,
     });
 
+    // On a suite rerun, do NOT upsert per-case fields. The wire payload
+    // contains values derived from suite.defaultConfig (model substituted in
+    // for model-less cases, etc.); writing them back would bake the current
+    // suite default into per-case overrides and stop later default changes
+    // from propagating. Cases are already persisted; rerun just runs them.
+    if (suiteRerun) {
+      // skip upsert
+    } else {
     const existingTestCases = await convexClient.query(
       "testSuites:listTestCases" as any,
       { suiteId: resolvedSuiteId },
@@ -484,6 +498,7 @@ export async function runEvalsWithManager(
         });
       }
     }
+    }
   } else {
     const createdSuite = await convexClient.mutation(
       "testSuites:createTestSuite" as any,
@@ -552,10 +567,10 @@ export async function runEvalsWithManager(
   // Treat an empty client-provided map as "no keys" so org fallback still runs.
   // For reruns, projectId may not be in the request — derive it from the
   // suite record so org BYOK keeps working.
-  const hasClientKeys =
-    !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
+  const hasClientKeys = !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
   const resolvedModelApiKeys = hasClientKeys ? modelApiKeys : undefined;
   let resolvedOrgModelConfig = orgModelConfig;
+  let orgRuntimeProjectId: string | undefined = projectId;
   if (!resolvedModelApiKeys && !resolvedOrgModelConfig) {
     let projectIdForOrgConfig: string | undefined = projectId;
     let legacyWorkspaceIdForOrgConfig: string | undefined;
@@ -567,6 +582,7 @@ export async function runEvalsWithManager(
         );
         if (suite?.projectId) {
           projectIdForOrgConfig = String(suite.projectId);
+          orgRuntimeProjectId = projectIdForOrgConfig;
         } else if (suite?.workspaceId) {
           legacyWorkspaceIdForOrgConfig = String(suite.workspaceId);
         }
@@ -580,13 +596,12 @@ export async function runEvalsWithManager(
     const orgConfigTarget = projectIdForOrgConfig
       ? { projectId: projectIdForOrgConfig }
       : legacyWorkspaceIdForOrgConfig
-      ? { workspaceId: legacyWorkspaceIdForOrgConfig }
-      : undefined;
+        ? { workspaceId: legacyWorkspaceIdForOrgConfig }
+        : undefined;
     if (orgConfigTarget) {
       try {
         const orgConfig = await resolveOrgModelConfig(orgConfigTarget, {
           bearerToken: convexAuthToken,
-          shareToken,
           chatboxToken,
           serverIds: resolvedServerIds,
         });
@@ -607,6 +622,11 @@ export async function runEvalsWithManager(
     config,
     modelApiKeys: resolvedModelApiKeys ?? undefined,
     orgModelConfig: resolvedOrgModelConfig,
+    orgRuntimeProjectId,
+    orgRuntimeAuth: {
+      chatboxToken,
+      serverIds: resolvedServerIds,
+    },
     convexClient,
     convexHttpUrl,
     convexAuthToken,
@@ -638,7 +658,6 @@ export async function runEvalTestCaseWithManager(
     provider,
     compareRunId,
     serverIds,
-    shareToken,
     chatboxToken,
     skipLastMessageRunUpdate,
     modelApiKeys,
@@ -693,8 +712,8 @@ export async function runEvalTestCaseWithManager(
   const testCaseOrgConfigTarget = testCaseProjectId
     ? { projectId: testCaseProjectId }
     : testCaseLegacyWorkspaceId
-    ? { workspaceId: testCaseLegacyWorkspaceId }
-    : undefined;
+      ? { workspaceId: testCaseLegacyWorkspaceId }
+      : undefined;
   if (
     !resolvedModelApiKeys &&
     !resolvedOrgModelConfig &&
@@ -705,7 +724,6 @@ export async function runEvalTestCaseWithManager(
         testCaseOrgConfigTarget,
         {
           bearerToken: convexAuthToken,
-          shareToken,
           chatboxToken,
           serverIds: resolvedServerIds,
         },
@@ -727,6 +745,11 @@ export async function runEvalTestCaseWithManager(
     },
     modelApiKeys: resolvedModelApiKeys ?? undefined,
     orgModelConfig: resolvedOrgModelConfig,
+    orgRuntimeProjectId: testCaseProjectId,
+    orgRuntimeAuth: {
+      chatboxToken,
+      serverIds: resolvedServerIds,
+    },
     convexClient,
     convexHttpUrl,
     convexAuthToken,
@@ -871,7 +894,6 @@ export async function streamEvalTestCaseWithManager(
     provider,
     compareRunId,
     serverIds,
-    shareToken,
     chatboxToken,
     skipLastMessageRunUpdate,
     modelApiKeys,
@@ -928,8 +950,8 @@ export async function streamEvalTestCaseWithManager(
   const streamTestCaseOrgConfigTarget = streamTestCaseProjectId
     ? { projectId: streamTestCaseProjectId }
     : streamTestCaseLegacyWorkspaceId
-    ? { workspaceId: streamTestCaseLegacyWorkspaceId }
-    : undefined;
+      ? { workspaceId: streamTestCaseLegacyWorkspaceId }
+      : undefined;
   if (
     !resolvedStreamModelApiKeys &&
     !resolvedStreamOrgModelConfig &&
@@ -940,7 +962,6 @@ export async function streamEvalTestCaseWithManager(
         streamTestCaseOrgConfigTarget,
         {
           bearerToken: convexAuthToken,
-          shareToken,
           chatboxToken,
           serverIds: resolvedServerIds,
         },
@@ -974,6 +995,11 @@ export async function streamEvalTestCaseWithManager(
           recorder: null,
           modelApiKeys: resolvedStreamModelApiKeys ?? undefined,
           orgModelConfig: resolvedStreamOrgModelConfig,
+          orgRuntimeProjectId: streamTestCaseProjectId,
+          orgRuntimeAuth: {
+            chatboxToken,
+            serverIds: resolvedServerIds,
+          },
           convexHttpUrl,
           convexAuthToken,
           convexClient,

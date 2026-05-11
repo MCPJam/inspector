@@ -299,7 +299,9 @@ describe("web routes — chat-v2 hosted mode", () => {
           selectedServers: ["Asana"],
         }),
         hostConfig: expect.objectContaining({
-          hostStyle: "direct",
+          // Phase 3: hostStyle defaults to 'claude' when omitted —
+          // no more legacy 'direct' on the wire.
+          hostStyle: "claude",
           modelId: "openai/gpt-5-mini",
           selectedServerIds: ["server-1"],
           // resolvedTemperature from prepareChatV2Mock default (0.7)

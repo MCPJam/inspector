@@ -83,7 +83,8 @@ import { useSharedAppState } from "@/state/app-state-context";
 import { Settings2 } from "lucide-react";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import type { LoadingIndicatorVariant } from "@/components/chat-v2/shared/loading-indicator-content";
-import { useConvexAuth } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
+import type { OrgModelProvider } from "@/hooks/use-org-model-config";
 import { useProjectServers } from "@/hooks/useViews";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import { useHostContextStore } from "@/stores/host-context-store";
@@ -354,6 +355,17 @@ export function PlaygroundMain({
   const convexProjectId =
     activeProject?.sharedProjectId ??
     (activeProject?.organizationId ? appState.activeProjectId : null);
+  const organizationId = activeProject?.organizationId ?? null;
+  // Fetch org-managed BYOK provider config so the playground model picker
+  // surfaces the same models as ChatTabV2. Without this, an org-invited
+  // user opening App Builder would only see MCPJam-provided models even
+  // though their org admin has configured Anthropic / OpenAI / etc.
+  const hostedOrgModelConfig = useQuery(
+    "organizationModelProviders:getVisibleConfig" as any,
+    isConvexAuthenticated && organizationId
+      ? ({ organizationId } as any)
+      : "skip",
+  ) as { providers: OrgModelProvider[] } | undefined;
   const { serversByName } = useProjectServers({
     isAuthenticated: isConvexAuthenticated,
     projectId: convexProjectId,
@@ -415,6 +427,7 @@ export function PlaygroundMain({
     addToolApprovalResponse,
   } = useChatSession({
     selectedServers,
+    hostedOrgModelConfig,
     hostedContext: {
       projectId: convexProjectId,
       selectedServerIds: hostedSelectedServerIds,
@@ -1663,6 +1676,7 @@ export function PlaygroundMain({
                         temperature,
                         requireToolApproval,
                       }}
+                      hostedOrgModelConfig={hostedOrgModelConfig}
                       hostedContext={{
                         projectId: convexProjectId,
                         selectedServerIds: hostedSelectedServerIds,

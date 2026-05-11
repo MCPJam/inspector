@@ -31,7 +31,6 @@ export type ResolveOrgModelConfigTarget =
 export type ResolveOrgModelConfigAuth = {
   authHeader?: string;
   bearerToken?: string;
-  shareToken?: string;
   chatboxToken?: string;
   serverIds?: string[];
 };
@@ -39,17 +38,20 @@ export type ResolveOrgModelConfigAuth = {
 // ---------------------------------------------------------------------------
 // Local-runtime eligibility
 //
-// Mirrors LOCAL_RUNTIME_PROVIDERS in convex/organizationModelProviders.ts.
-// Used by the chat-v2 route to skip the /stream/org/resolve round-trip for
-// providers that can never run locally — those always go through the cloud
-// path, so paying for a runtime-resolution call (and inheriting its failure
-// modes) on every turn is pure overhead and a regression for the cloud path.
+// Keep local runtime scoped to providers that naturally need the Inspector
+// process to make the request: Ollama and org custom providers. Built-in
+// providers like OpenAI/Anthropic/OpenRouter/Azure stay on the cloud BYOK path.
+// Keep this allowlist in sync with mcpjam-backend/convex/organizationModelProviders.ts.
 // ---------------------------------------------------------------------------
 
-const LOCAL_RUNTIME_ELIGIBLE_PROVIDERS = new Set(["ollama"]);
+const LOCAL_RUNTIME_PROVIDER_KEYS = new Set(["ollama"]);
 
 export function isLocalRuntimeEligible(providerKey: string): boolean {
-  return LOCAL_RUNTIME_ELIGIBLE_PROVIDERS.has(providerKey);
+  const normalized = providerKey.trim();
+  return (
+    LOCAL_RUNTIME_PROVIDER_KEYS.has(normalized) ||
+    normalized.startsWith("custom:")
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -97,16 +99,16 @@ function buildCacheKey(
   params: ResolveOrgModelConfigTarget,
   auth: ResolveOrgModelConfigAuth | undefined,
 ): string {
-  const target = "projectId" in params
-    ? `project:${params.projectId}`
-    : "workspaceId" in params
-    ? `legacy-workspace:${params.workspaceId}`
-    : `org:${params.organizationId}`;
+  const target =
+    "projectId" in params
+      ? `project:${params.projectId}`
+      : "workspaceId" in params
+        ? `legacy-workspace:${params.workspaceId}`
+        : `org:${params.organizationId}`;
   const authHash = createHash("sha256")
     .update(
       JSON.stringify({
         authorization: normalizeAuthHeader(auth) ?? "",
-        shareToken: auth?.shareToken?.trim() ?? "",
         chatboxToken: auth?.chatboxToken?.trim() ?? "",
         serverIds: normalizeServerIds(auth?.serverIds),
       }),
@@ -151,9 +153,6 @@ export async function resolveOrgModelConfig(
       },
       body: JSON.stringify({
         ...params,
-        ...(auth?.shareToken?.trim()
-          ? { shareToken: auth.shareToken.trim() }
-          : {}),
         ...(auth?.chatboxToken?.trim()
           ? { chatboxToken: auth.chatboxToken.trim() }
           : {}),
@@ -346,7 +345,12 @@ export function isUnsafeHostedOutboundUrl(rawUrl: string): boolean {
     if (lower === "::" || lower === "::1") return true;
     // fe80::/10 = fe80:: – febf:ffff:... (top 10 bits 1111 1110 10)
     // covers fe8x, fe9x, feax, febx — note fe80: alone misses fe81:–fe8f:
-    if (lower.startsWith("fe8") || lower.startsWith("fe9") || lower.startsWith("fea") || lower.startsWith("feb")) {
+    if (
+      lower.startsWith("fe8") ||
+      lower.startsWith("fe9") ||
+      lower.startsWith("fea") ||
+      lower.startsWith("feb")
+    ) {
       return true; // fe80::/10 link-local
     }
     if (/^f[cd][0-9a-f]{2}:/.test(lower)) return true; // fc00::/7 unique local
@@ -403,8 +407,14 @@ async function assertSafeHostedOutboundUrl(rawUrl: string): Promise<void> {
   if (isIpLiteral) return;
 
   const resolvedIps: string[] = [];
-  try { resolvedIps.push(...await dns.resolve4(host)); } catch { /* NXDOMAIN etc */ }
-  try { resolvedIps.push(...await dns.resolve6(host)); } catch {}
+  try {
+    resolvedIps.push(...(await dns.resolve4(host)));
+  } catch {
+    /* NXDOMAIN etc */
+  }
+  try {
+    resolvedIps.push(...(await dns.resolve6(host)));
+  } catch {}
   if (resolvedIps.length === 0) {
     throw new Error(
       `Provider base URL is blocked: hostname "${host}" could not be resolved`,
@@ -436,7 +446,9 @@ export type OrgProviderRuntimeLocal = {
   provider: OrgProviderResolvedConfig;
 };
 
-export type OrgProviderRuntime = OrgProviderRuntimeCloud | OrgProviderRuntimeLocal;
+export type OrgProviderRuntime =
+  | OrgProviderRuntimeCloud
+  | OrgProviderRuntimeLocal;
 
 const RUNTIME_CACHE_TTL_MS = 60_000;
 const RUNTIME_CACHE_MAX_ENTRIES = 1_000;
@@ -472,7 +484,6 @@ function buildRuntimeCacheKey(
     .update(
       JSON.stringify({
         authorization: normalizeAuthHeader(auth) ?? "",
-        shareToken: auth?.shareToken?.trim() ?? "",
         chatboxToken: auth?.chatboxToken?.trim() ?? "",
         serverIds: normalizeServerIds(auth?.serverIds),
       }),
@@ -502,7 +513,8 @@ export async function resolveOrgProviderRuntime(
   if (!convexHttpUrl) throw new Error("CONVEX_HTTP_URL is not set");
 
   const inspectorServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
-  if (!inspectorServiceToken) throw new Error("INSPECTOR_SERVICE_TOKEN is not set");
+  if (!inspectorServiceToken)
+    throw new Error("INSPECTOR_SERVICE_TOKEN is not set");
 
   const cacheKey = buildRuntimeCacheKey(projectId, providerKey, model, auth);
   const now = Date.now();
@@ -532,8 +544,9 @@ export async function resolveOrgProviderRuntime(
         projectId,
         providerKey,
         model,
-        ...(auth?.shareToken?.trim() ? { shareToken: auth.shareToken.trim() } : {}),
-        ...(auth?.chatboxToken?.trim() ? { chatboxToken: auth.chatboxToken.trim() } : {}),
+        ...(auth?.chatboxToken?.trim()
+          ? { chatboxToken: auth.chatboxToken.trim() }
+          : {}),
         ...(serverIds.length > 0 ? { serverIds } : {}),
       }),
       signal: controller.signal,
@@ -558,8 +571,14 @@ export async function resolveOrgProviderRuntime(
 
     if (data.runtimeLocation === "local") {
       const rawProvider = data.provider;
-      if (!rawProvider || typeof rawProvider.providerKey !== "string" || rawProvider.providerKey.length === 0) {
-        throw new Error("Org runtime resolve returned invalid local provider config");
+      if (
+        !rawProvider ||
+        typeof rawProvider.providerKey !== "string" ||
+        rawProvider.providerKey.length === 0
+      ) {
+        throw new Error(
+          "Org runtime resolve returned invalid local provider config",
+        );
       }
       // SSRF guard: in hosted mode reject baseUrls that point to private,
       // loopback, link-local, or cloud-metadata addresses — including
@@ -578,7 +597,8 @@ export async function resolveOrgProviderRuntime(
       };
     } else {
       const resolvedKey =
-        typeof data.providerKey === "string" && data.providerKey.trim().length > 0
+        typeof data.providerKey === "string" &&
+        data.providerKey.trim().length > 0
           ? data.providerKey
           : providerKey;
       result = {

@@ -3,27 +3,37 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useAvailableEvalModels } from "../use-available-eval-models";
 
 const {
-  mockBuildAvailableModels,
+  mockBuildAvailableModelsFromOrgConfig,
   mockDetectOllamaModels,
   mockDetectOllamaToolCapableModels,
+  mockUseQuery,
 } = vi.hoisted(() => ({
-  mockBuildAvailableModels: vi.fn(),
+  mockBuildAvailableModelsFromOrgConfig: vi.fn(),
   mockDetectOllamaModels: vi.fn(),
   mockDetectOllamaToolCapableModels: vi.fn(),
+  mockUseQuery: vi.fn(),
 }));
 
-vi.mock("@/hooks/use-ai-provider-keys", () => ({
-  useAiProviderKeys: () => ({
-    hasToken: vi.fn().mockReturnValue(true),
-    getOpenRouterSelectedModels: vi.fn().mockReturnValue(["openrouter/model"]),
-    getOllamaBaseUrl: vi.fn().mockReturnValue("http://127.0.0.1:11434/api"),
-    getAzureBaseUrl: vi.fn().mockReturnValue(""),
+vi.mock("convex/react", () => ({
+  useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
+  useQuery: (...args: unknown[]) => mockUseQuery(...args),
+}));
+
+vi.mock("@/state/app-state-context", () => ({
+  useSharedAppState: () => ({
+    activeProjectId: "project-1",
+    projects: {
+      "project-1": {
+        _id: "project-1",
+        organizationId: "org-1",
+      },
+    },
   }),
 }));
 
-vi.mock("@/hooks/use-custom-providers", () => ({
-  useCustomProviders: () => ({
-    customProviders: [],
+vi.mock("@/hooks/use-ollama-config", () => ({
+  useOllamaConfig: () => ({
+    getOllamaBaseUrl: vi.fn().mockReturnValue("http://127.0.0.1:11434/api"),
   }),
 }));
 
@@ -34,19 +44,36 @@ vi.mock("@/lib/ollama-utils", () => ({
 }));
 
 vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
-  buildAvailableModels: (...args: unknown[]) =>
-    mockBuildAvailableModels(...args),
+  buildAvailableModelsFromOrgConfig: (...args: unknown[]) =>
+    mockBuildAvailableModelsFromOrgConfig(...args),
 }));
 
 describe("useAvailableEvalModels", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockUseQuery.mockImplementation((name: string, args: unknown) => {
+      if (args === "skip") return undefined;
+      if (name === "organizations:getMyOrganizations") {
+        return [{ _id: "org-1", myRole: "member" }];
+      }
+      if (name === "organizationModelProviders:getVisibleConfig") {
+        return {
+          providers: [
+            {
+              providerKey: "openai",
+              enabled: true,
+            },
+          ],
+        };
+      }
+      return undefined;
+    });
     mockDetectOllamaModels.mockResolvedValue({
       isRunning: true,
       availableModels: ["llama3.2"],
     });
     mockDetectOllamaToolCapableModels.mockResolvedValue(["llama3.2"]);
-    mockBuildAvailableModels.mockReturnValue([
+    mockBuildAvailableModelsFromOrgConfig.mockReturnValue([
       {
         id: "openai/gpt-5-mini",
         name: "GPT-5 mini",
@@ -65,28 +92,77 @@ describe("useAvailableEvalModels", () => {
           name: "GPT-5 mini",
           provider: "openai",
         },
+        {
+          id: "llama3.2",
+          name: "llama3.2",
+          provider: "ollama",
+          disabled: false,
+          disabledReason: undefined,
+        },
       ]);
     });
 
     expect(mockDetectOllamaModels).toHaveBeenCalledWith(
-      "http://127.0.0.1:11434/api",
+      "http://127.0.0.1:11434/api"
     );
     expect(mockDetectOllamaToolCapableModels).toHaveBeenCalledWith(
-      "http://127.0.0.1:11434/api",
+      "http://127.0.0.1:11434/api"
     );
-    expect(mockBuildAvailableModels).toHaveBeenCalledWith(
-      expect.objectContaining({
-        isOllamaRunning: true,
-        ollamaModels: [
-          {
-            id: "llama3.2",
-            name: "llama3.2",
-            provider: "ollama",
-            disabled: false,
-            disabledReason: undefined,
-          },
-        ],
-      }),
-    );
+    expect(mockBuildAvailableModelsFromOrgConfig).toHaveBeenCalledWith({
+      providers: [
+        {
+          providerKey: "openai",
+          enabled: true,
+        },
+      ],
+    });
+  });
+
+  it("queries org model config for org guests", async () => {
+    mockUseQuery.mockImplementation((name: string, args: unknown) => {
+      if (args === "skip") return undefined;
+      if (name === "organizations:getMyOrganizations") {
+        return [{ _id: "org-1", myRole: "guest" }];
+      }
+      if (name === "organizationModelProviders:getVisibleConfig") {
+        return {
+          providers: [
+            {
+              providerKey: "openai",
+              enabled: true,
+            },
+          ],
+        };
+      }
+      return undefined;
+    });
+
+    const { result } = renderHook(() => useAvailableEvalModels());
+
+    await waitFor(() => {
+      expect(result.current.availableModels).toEqual([
+        {
+          id: "openai/gpt-5-mini",
+          name: "GPT-5 mini",
+          provider: "openai",
+        },
+        {
+          id: "llama3.2",
+          name: "llama3.2",
+          provider: "ollama",
+          disabled: false,
+          disabledReason: undefined,
+        },
+      ]);
+    });
+
+    expect(mockBuildAvailableModelsFromOrgConfig).toHaveBeenCalledWith({
+      providers: [
+        {
+          providerKey: "openai",
+          enabled: true,
+        },
+      ],
+    });
   });
 });

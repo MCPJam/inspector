@@ -7,6 +7,25 @@ const mockToastError = vi.hoisted(() => vi.fn());
 const mockGetChatHistoryDetail = vi.hoisted(() => vi.fn());
 const mockChatHistoryAction = vi.hoisted(() => vi.fn());
 const mockUseFeatureFlagEnabled = vi.hoisted(() => vi.fn(() => true));
+const mockVisibleOrganizationsRef = vi.hoisted(() => ({
+  current: [] as Array<{ _id: string; myRole?: string }>,
+}));
+const mockOrgModelConfigQuery = vi.hoisted(() => vi.fn());
+const mockAppStateRef = vi.hoisted(() => ({
+  current: {
+    servers: {
+      "server-1": {
+        connectionStatus: "connected",
+      },
+    },
+    projects: {
+      "project-1": {
+        sharedProjectId: "project-1",
+      },
+    },
+    activeProjectId: "project-1",
+  } as any,
+}));
 const mockReactiveHistoryState = vi.hoisted(() => ({
   session: undefined as any,
   widgetSnapshots: undefined as any,
@@ -66,6 +85,13 @@ vi.mock("convex/react", () => ({
     if (args === "skip") {
       return undefined;
     }
+    if (name === "organizations:getMyOrganizations") {
+      return mockVisibleOrganizationsRef.current;
+    }
+    if (name === "organizationModelProviders:getVisibleConfig") {
+      mockOrgModelConfigQuery(args);
+      return { providers: [] };
+    }
     if (name === "directChatHistory:getCurrentSession") {
       return mockReactiveHistoryState.session;
     }
@@ -124,19 +150,7 @@ vi.mock("@/lib/oauth/oauth-tokens", () => ({
 }));
 
 vi.mock("@/state/app-state-context", () => ({
-  useSharedAppState: () => ({
-    servers: {
-      "server-1": {
-        connectionStatus: "connected",
-      },
-    },
-    projects: {
-      "project-1": {
-        sharedProjectId: "project-1",
-      },
-    },
-    activeProjectId: "project-1",
-  }),
+  useSharedAppState: () => mockAppStateRef.current,
 }));
 
 vi.mock("@/components/ui/resizable", () => ({
@@ -421,6 +435,20 @@ describe("ChatTabV2 history sync", () => {
     );
     chatSessionOnResetRef.current = undefined;
     lastUseChatSessionOptionsRef.current = undefined;
+    mockVisibleOrganizationsRef.current = [];
+    mockAppStateRef.current = {
+      servers: {
+        "server-1": {
+          connectionStatus: "connected",
+        },
+      },
+      projects: {
+        "project-1": {
+          sharedProjectId: "project-1",
+        },
+      },
+      activeProjectId: "project-1",
+    };
     mockReactiveHistoryState.session = undefined;
     mockReactiveHistoryState.widgetSnapshots = undefined;
     Object.assign(mockUseChatSession, {
@@ -461,13 +489,59 @@ describe("ChatTabV2 history sync", () => {
     vi.useRealTimers();
   });
 
+  it("queries org model config for organization guests", () => {
+    mockAppStateRef.current = {
+      ...mockAppStateRef.current,
+      projects: {
+        "project-1": {
+          _id: "project-1",
+          organizationId: "org-1",
+        },
+      },
+    };
+    mockVisibleOrganizationsRef.current = [{ _id: "org-1", myRole: "guest" }];
+
+    render(<ChatTabV2 {...defaultProps} />);
+
+    expect(mockOrgModelConfigQuery).toHaveBeenCalledWith({
+      organizationId: "org-1",
+    });
+    expect(lastUseChatSessionOptionsRef.current?.hostedOrgModelConfig).toEqual({
+      providers: [],
+    });
+  });
+
+  it("queries org model config for organization members", () => {
+    mockAppStateRef.current = {
+      ...mockAppStateRef.current,
+      projects: {
+        "project-1": {
+          _id: "project-1",
+          organizationId: "org-1",
+        },
+      },
+    };
+    mockVisibleOrganizationsRef.current = [{ _id: "org-1", myRole: "member" }];
+
+    render(<ChatTabV2 {...defaultProps} />);
+
+    expect(mockOrgModelConfigQuery).toHaveBeenCalledWith({
+      organizationId: "org-1",
+    });
+    expect(lastUseChatSessionOptionsRef.current?.hostedOrgModelConfig).toEqual({
+      providers: [],
+    });
+  });
+
   it("suppresses hosted OAuth token fallback for chatbox contexts", () => {
     render(
       <ChatTabV2
         {...defaultProps}
-        hostedProjectIdOverride="project-1"
-        hostedSelectedServerIdsOverride={["server-1"]}
-        hostedContext={{ chatboxToken: "chatbox-token" }}
+        hostedContext={{
+          chatboxToken: "chatbox-token",
+          projectId: "project-1",
+          selectedServerIds: ["server-1"],
+        }}
       />
     );
 

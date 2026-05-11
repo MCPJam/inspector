@@ -114,7 +114,7 @@ vi.mock("ai", async () => {
         toUIMessageStreamResponse: vi.fn().mockReturnValue(
           new Response(JSON.stringify({ type: "text", content: "Hello" }), {
             headers: { "Content-Type": "text/event-stream" },
-          }),
+          })
         ),
       };
     }),
@@ -135,7 +135,7 @@ vi.mock("ai", async () => {
     createUIMessageStreamResponse: vi.fn().mockReturnValue(
       new Response(JSON.stringify({ type: "stream" }), {
         headers: { "Content-Type": "text/event-stream" },
-      }),
+      })
     ),
   };
 });
@@ -155,8 +155,9 @@ vi.mock("../../../utils/chat-helpers", async () => {
 
 // Mock shared types
 vi.mock("@/shared/types", async () => {
-  const actual =
-    await vi.importActual<typeof import("@/shared/types")>("@/shared/types");
+  const actual = await vi.importActual<typeof import("@/shared/types")>(
+    "@/shared/types"
+  );
   return {
     ...actual,
     isGPT5Model: vi.fn().mockReturnValue(false),
@@ -275,7 +276,7 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(data.error).toContain("'server.read_file'");
       expect(data.error).toContain("'namespace/list'");
       expect(data.error).toContain(
-        "Tool names must only contain letters, numbers, underscores, and hyphens (max 64 characters).",
+        "Tool names must only contain letters, numbers, underscores, and hyphens (max 64 characters)."
       );
     });
 
@@ -316,14 +317,14 @@ describe("POST /api/mcp/chat-v2", () => {
 
       const res = await postJson(app, "/api/mcp/chat-v2", {
         messages: [{ role: "user", content: "Hello" }],
-        model: { id: "gpt-4", name: "GPT-4", provider: "openai" },
-        apiKey: "test-key",
+        model: { id: "llama3.2", name: "Llama 3.2", provider: "ollama" },
+        ollamaBaseUrl: "http://127.0.0.1:11434",
       });
 
       expect(res.status).toBe(200);
     });
 
-    it("passes through when Anthropic model has only valid tool names", async () => {
+    it("rejects non-Ollama direct local models even with valid tool names", async () => {
       manager.getToolsForAiSdk.mockResolvedValue({
         read_file: { execute: vi.fn() },
         "list-items": { execute: vi.fn() },
@@ -339,7 +340,7 @@ describe("POST /api/mcp/chat-v2", () => {
         apiKey: "test-key",
       });
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(400);
     });
   });
 
@@ -347,23 +348,23 @@ describe("POST /api/mcp/chat-v2", () => {
     it("calls getToolsForAiSdk with selected servers", async () => {
       const res = await postJson(app, "/api/mcp/chat-v2", {
         messages: [{ role: "user", content: "Hello" }],
-        model: { id: "gpt-4", provider: "openai" },
-        apiKey: "test-key",
+        model: { id: "llama3.2", provider: "ollama" },
+        ollamaBaseUrl: "http://127.0.0.1:11434",
         selectedServers: ["server-1", "server-2"],
       });
 
       expect(res.status).toBe(200);
       expect(manager.getToolsForAiSdk).toHaveBeenCalledWith(
         ["server-1", "server-2"],
-        undefined,
+        undefined
       );
     });
 
     it("returns streaming response", async () => {
       const res = await postJson(app, "/api/mcp/chat-v2", {
         messages: [{ role: "user", content: "Hello" }],
-        model: { id: "gpt-4", provider: "openai" },
-        apiKey: "test-key",
+        model: { id: "llama3.2", provider: "ollama" },
+        ollamaBaseUrl: "http://127.0.0.1:11434",
       });
 
       expect(res.status).toBe(200);
@@ -374,8 +375,8 @@ describe("POST /api/mcp/chat-v2", () => {
     it("emits ordered live trace events for configured local models", async () => {
       const res = await postJson(app, "/api/mcp/chat-v2", {
         messages: [{ role: "user", content: "Hello" }],
-        model: { id: "gpt-4", provider: "openai" },
-        apiKey: "test-key",
+        model: { id: "llama3.2", provider: "ollama" },
+        ollamaBaseUrl: "http://127.0.0.1:11434",
       });
 
       expect(res.status).toBe(200);
@@ -387,7 +388,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const requestPayloadEvents = capturedStreamEvents.filter(
         (event) =>
           event?.type === "data-trace-event" &&
-          event.data?.type === "request_payload",
+          event.data?.type === "request_payload"
       );
 
       expect(traceEvents).toEqual(
@@ -397,16 +398,16 @@ describe("POST /api/mcp/chat-v2", () => {
           "text_delta",
           "trace_snapshot",
           "turn_finish",
-        ]),
+        ])
       );
       expect(traceEvents.indexOf("turn_start")).toBeLessThan(
-        traceEvents.indexOf("request_payload"),
+        traceEvents.indexOf("request_payload")
       );
       expect(traceEvents.indexOf("request_payload")).toBeLessThan(
-        traceEvents.indexOf("trace_snapshot"),
+        traceEvents.indexOf("trace_snapshot")
       );
       expect(traceEvents.indexOf("trace_snapshot")).toBeLessThan(
-        traceEvents.indexOf("turn_finish"),
+        traceEvents.indexOf("turn_finish")
       );
       expect(requestPayloadEvents).toHaveLength(1);
       expect(requestPayloadEvents[0]?.data).toMatchObject({
@@ -425,15 +426,15 @@ describe("POST /api/mcp/chat-v2", () => {
 
       await postJson(app, "/api/mcp/chat-v2", {
         messages: [{ role: "user", content: "Hello" }],
-        model: { id: "gpt-4", provider: "openai" },
-        apiKey: "test-key",
+        model: { id: "llama3.2", provider: "ollama" },
+        ollamaBaseUrl: "http://127.0.0.1:11434",
         temperature: 0.5,
       });
 
       expect(streamText).toHaveBeenCalledWith(
         expect.objectContaining({
           temperature: 0.5,
-        }),
+        })
       );
     });
 
@@ -442,14 +443,14 @@ describe("POST /api/mcp/chat-v2", () => {
 
       await postJson(app, "/api/mcp/chat-v2", {
         messages: [{ role: "user", content: "Hello" }],
-        model: { id: "gpt-4", provider: "openai" },
-        apiKey: "test-key",
+        model: { id: "llama3.2", provider: "ollama" },
+        ollamaBaseUrl: "http://127.0.0.1:11434",
       });
 
       expect(streamText).toHaveBeenCalledWith(
         expect.objectContaining({
           temperature: 0.7,
-        }),
+        })
       );
     });
 
@@ -458,20 +459,20 @@ describe("POST /api/mcp/chat-v2", () => {
 
       await postJson(app, "/api/mcp/chat-v2", {
         messages: [{ role: "user", content: "Hello" }],
-        model: { id: "gpt-4", provider: "openai" },
-        apiKey: "test-key",
+        model: { id: "llama3.2", provider: "ollama" },
+        ollamaBaseUrl: "http://127.0.0.1:11434",
         systemPrompt: "You are a helpful assistant",
       });
 
       expect(streamText).toHaveBeenCalledWith(
         expect.objectContaining({
           system: expect.stringContaining("You are a helpful assistant"),
-        }),
+        })
       );
       expect(streamText).not.toHaveBeenCalledWith(
         expect.objectContaining({
           system: expect.stringContaining("## Connected MCP Tools"),
-        }),
+        })
       );
     });
   });
@@ -479,13 +480,13 @@ describe("POST /api/mcp/chat-v2", () => {
   describe("error handling", () => {
     it("returns 500 when getToolsForAiSdk fails", async () => {
       manager.getToolsForAiSdk.mockRejectedValue(
-        new Error("Tools fetch failed"),
+        new Error("Tools fetch failed")
       );
 
       const res = await postJson(app, "/api/mcp/chat-v2", {
         messages: [{ role: "user", content: "Hello" }],
-        model: { id: "gpt-4", provider: "openai" },
-        apiKey: "test-key",
+        model: { id: "llama3.2", provider: "ollama" },
+        ollamaBaseUrl: "http://127.0.0.1:11434",
       });
       const { status, data } = await expectJson<ErrorResponse>(res);
 
@@ -502,8 +503,8 @@ describe("POST /api/mcp/chat-v2", () => {
           { role: "assistant", content: "Hi there!" },
           { role: "user", content: "How are you?" },
         ],
-        model: { id: "gpt-4", provider: "openai" },
-        apiKey: "test-key",
+        model: { id: "llama3.2", provider: "ollama" },
+        ollamaBaseUrl: "http://127.0.0.1:11434",
       });
 
       expect(res.status).toBe(200);
@@ -530,8 +531,8 @@ describe("POST /api/mcp/chat-v2", () => {
             toolCallId: "call-1",
           },
         ],
-        model: { id: "gpt-4", provider: "openai" },
-        apiKey: "test-key",
+        model: { id: "llama3.2", provider: "ollama" },
+        ollamaBaseUrl: "http://127.0.0.1:11434",
       });
 
       expect(res.status).toBe(200);
@@ -545,21 +546,19 @@ describe("POST /api/mcp/chat-v2", () => {
       capturedOnError = undefined;
     });
 
-    async function getOnError(
-      provider: string,
-    ): Promise<(error: unknown) => string> {
+    async function getOnError(): Promise<(error: unknown) => string> {
       await postJson(app, "/api/mcp/chat-v2", {
         messages: [{ role: "user", content: "Hello" }],
-        model: { id: "test-model", name: "Test", provider },
-        apiKey: "bad-key",
+        model: { id: "llama3.2", name: "Llama 3.2", provider: "ollama" },
+        ollamaBaseUrl: "http://127.0.0.1:11434",
       });
       capturedOnError = capturedCreateUiStreamOnError;
       expect(capturedOnError).toBeDefined();
       return capturedOnError!;
     }
 
-    it("returns normalized message for 401 APICallError from OpenAI", async () => {
-      const onError = await getOnError("openai");
+    it("normalizes OpenAI-shaped 401 APICallErrors for the active Ollama provider", async () => {
+      const onError = await getOnError();
       const error = new APICallError({
         message: "Incorrect API key provided: sk-proj-...",
         url: "https://api.openai.com/v1/chat/completions",
@@ -572,13 +571,13 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for openai. Please check your key under LLM Providers in Settings.",
+        "Invalid API key for ollama. Please check your key under LLM Providers in Settings."
       );
       expect(result.statusCode).toBe(401);
     });
 
-    it("returns normalized message for 401 APICallError from Anthropic", async () => {
-      const onError = await getOnError("anthropic");
+    it("normalizes Anthropic-shaped 401 APICallErrors for the active Ollama provider", async () => {
+      const onError = await getOnError();
       const error = new APICallError({
         message: "invalid x-api-key",
         url: "https://api.anthropic.com/v1/messages",
@@ -589,12 +588,12 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for anthropic. Please check your key under LLM Providers in Settings.",
+        "Invalid API key for ollama. Please check your key under LLM Providers in Settings."
       );
     });
 
-    it("returns normalized message for 401 APICallError from DeepSeek", async () => {
-      const onError = await getOnError("deepseek");
+    it("normalizes DeepSeek-shaped 401 APICallErrors for the active Ollama provider", async () => {
+      const onError = await getOnError();
       const error = new APICallError({
         message: "Authentication Fails, Your api key: ****dfaf is invalid",
         url: "https://api.deepseek.com/v1/chat",
@@ -607,13 +606,13 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for deepseek. Please check your key under LLM Providers in Settings.",
+        "Invalid API key for ollama. Please check your key under LLM Providers in Settings."
       );
       expect(result.statusCode).toBe(401);
     });
 
-    it("detects auth error from xAI 400 via response body keywords", async () => {
-      const onError = await getOnError("xai");
+    it("detects xAI-shaped 400 auth errors via response body keywords", async () => {
+      const onError = await getOnError();
       const error = new APICallError({
         message: "Bad Request",
         url: "https://api.x.ai/v1/chat/completions",
@@ -626,12 +625,12 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for xai. Please check your key under LLM Providers in Settings.",
+        "Invalid API key for ollama. Please check your key under LLM Providers in Settings."
       );
     });
 
-    it("detects auth error from Google 400 via response body keywords", async () => {
-      const onError = await getOnError("google");
+    it("detects Google-shaped 400 auth errors via response body keywords", async () => {
+      const onError = await getOnError();
       const error = new APICallError({
         message: "API key not valid. Please pass a valid API key.",
         url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash",
@@ -644,12 +643,12 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for google. Please check your key under LLM Providers in Settings.",
+        "Invalid API key for ollama. Please check your key under LLM Providers in Settings."
       );
     });
 
     it("does not treat non-auth 400 errors as auth errors", async () => {
-      const onError = await getOnError("openai");
+      const onError = await getOnError();
       const error = new APICallError({
         message: "Bad Request: invalid model",
         url: "https://api.openai.com/v1/chat/completions",
@@ -664,7 +663,7 @@ describe("POST /api/mcp/chat-v2", () => {
     });
 
     it("does not leak raw response body for auth errors", async () => {
-      const onError = await getOnError("openai");
+      const onError = await getOnError();
       const error = new APICallError({
         message: "Incorrect API key provided",
         url: "https://api.openai.com/v1/chat/completions",
@@ -680,7 +679,7 @@ describe("POST /api/mcp/chat-v2", () => {
     });
 
     it("passes through non-auth APICallErrors with details", async () => {
-      const onError = await getOnError("openai");
+      const onError = await getOnError();
       const error = new APICallError({
         message: "Rate limit exceeded",
         url: "https://api.openai.com/v1/chat/completions",
@@ -693,12 +692,12 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(result.code).toBeUndefined();
       expect(result.message).toBe("Rate limit exceeded");
       expect(result.details).toBe(
-        '{"error":{"message":"Rate limit exceeded"}}',
+        '{"error":{"message":"Rate limit exceeded"}}'
       );
     });
 
     it("passes through regular Error messages", async () => {
-      const onError = await getOnError("openai");
+      const onError = await getOnError();
       const error = new Error("Network connection failed");
 
       const result = onError(error);
@@ -706,13 +705,13 @@ describe("POST /api/mcp/chat-v2", () => {
     });
 
     it("converts non-Error values to string", async () => {
-      const onError = await getOnError("openai");
+      const onError = await getOnError();
       const result = onError("something broke");
       expect(result).toBe("something broke");
     });
 
     it("catches auth errors via duck-typing, not just APICallError instances", async () => {
-      const onError = await getOnError("openai");
+      const onError = await getOnError();
       const error = Object.assign(new Error("Unauthorized"), {
         statusCode: 401,
       });
@@ -720,7 +719,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for openai. Please check your key under LLM Providers in Settings.",
+        "Invalid API key for ollama. Please check your key under LLM Providers in Settings."
       );
     });
   });
@@ -805,8 +804,10 @@ describe("POST /api/mcp/chat-v2", () => {
         expect(body.sessionMessages).toEqual([
           { role: "user", content: "Hello" },
         ]);
+        // Phase 3: hostStyle defaults to 'claude' when the client
+        // doesn't supply one (no more legacy 'direct' on the wire).
         expect(body.hostConfig).toEqual({
-          hostStyle: "direct",
+          hostStyle: "claude",
           systemPrompt: "you are a helpful assistant",
           modelId: "google/gemini-2.5-flash",
           temperature: 0.4,
@@ -1036,8 +1037,9 @@ describe("POST /api/mcp/chat-v2", () => {
       }
     });
     it("uses a guest token for non-gated MCPJam guest requests", async () => {
-      const { getProductionGuestAuthHeader } =
-        await import("../../../utils/guest-auth.js");
+      const { getProductionGuestAuthHeader } = await import(
+        "../../../utils/guest-auth.js"
+      );
 
       const originalFetch = global.fetch;
       global.fetch = vi
@@ -1156,8 +1158,9 @@ describe("POST /api/mcp/chat-v2", () => {
     ])(
       "rejects gated MCPJam guest model $id before fetching guest auth",
       async ({ id, provider }) => {
-        const { getProductionGuestAuthHeader } =
-          await import("../../../utils/guest-auth.js");
+        const { getProductionGuestAuthHeader } = await import(
+          "../../../utils/guest-auth.js"
+        );
 
         const originalFetch = global.fetch;
         global.fetch = vi.fn();
@@ -1171,16 +1174,16 @@ describe("POST /api/mcp/chat-v2", () => {
 
           expect(status).toBe(403);
           expect(data.error).toBe(
-            "This MCPJam model is not available for guest access. Sign in to continue.",
+            "This MCPJam model is not available for guest access. Sign in to continue."
           );
           expect(
-            vi.mocked(getProductionGuestAuthHeader),
+            vi.mocked(getProductionGuestAuthHeader)
           ).not.toHaveBeenCalled();
           expect(global.fetch).not.toHaveBeenCalled();
         } finally {
           global.fetch = originalFetch;
         }
-      },
+      }
     );
   });
 
@@ -1210,7 +1213,7 @@ describe("POST /api/mcp/chat-v2", () => {
         return hasUnresolvedCallCount === 1;
       });
       vi.mocked(executeToolCallsFromMessages).mockImplementation((async (
-        messages: any[],
+        messages: any[]
       ) => {
         // Simulate adding tool result to messages
         const toolResultMsg = {
@@ -1266,34 +1269,34 @@ describe("POST /api/mcp/chat-v2", () => {
 
         // Find tool-input-available and tool-output-available events
         const toolInputEvents = capturedStreamEvents.filter(
-          (e) => e.type === "tool-input-available",
+          (e) => e.type === "tool-input-available"
         );
         const toolOutputEvents = capturedStreamEvents.filter(
-          (e) => e.type === "tool-output-available",
+          (e) => e.type === "tool-output-available"
         );
 
         // Verify tool-input-available was emitted for the orphaned tool call
         expect(toolInputEvents.length).toBeGreaterThanOrEqual(1);
         expect(
-          toolInputEvents.some((e) => e.toolCallId === "orphaned-call-123"),
+          toolInputEvents.some((e) => e.toolCallId === "orphaned-call-123")
         ).toBe(true);
 
         // Verify tool-output-available was also emitted
         expect(toolOutputEvents.length).toBeGreaterThanOrEqual(1);
         expect(
-          toolOutputEvents.some((e) => e.toolCallId === "orphaned-call-123"),
+          toolOutputEvents.some((e) => e.toolCallId === "orphaned-call-123")
         ).toBe(true);
 
         // Verify order: tool-input-available must come before tool-output-available
         const inputIndex = capturedStreamEvents.findIndex(
           (e) =>
             e.type === "tool-input-available" &&
-            e.toolCallId === "orphaned-call-123",
+            e.toolCallId === "orphaned-call-123"
         );
         const outputIndex = capturedStreamEvents.findIndex(
           (e) =>
             e.type === "tool-output-available" &&
-            e.toolCallId === "orphaned-call-123",
+            e.toolCallId === "orphaned-call-123"
         );
 
         expect(inputIndex).toBeLessThan(outputIndex);
@@ -1309,7 +1312,7 @@ describe("POST /api/mcp/chat-v2", () => {
       // No unresolved tool calls - all are resolved
       vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
       vi.mocked(executeToolCallsFromMessages).mockImplementation(
-        (async () => []) as any,
+        (async () => []) as any
       );
 
       // Mock fetch for CONVEX_HTTP_URL
@@ -1325,7 +1328,7 @@ describe("POST /api/mcp/chat-v2", () => {
               totalTokens: 2,
             },
           },
-        ]),
+        ])
       );
 
       try {
@@ -1362,7 +1365,7 @@ describe("POST /api/mcp/chat-v2", () => {
         const toolInputEvents = capturedStreamEvents.filter(
           (e) =>
             e.type === "tool-input-available" &&
-            e.toolCallId === "resolved-call-456",
+            e.toolCallId === "resolved-call-456"
         );
 
         expect(toolInputEvents.length).toBe(0);
@@ -1382,7 +1385,7 @@ describe("POST /api/mcp/chat-v2", () => {
         return hasUnresolvedCallCount === 1;
       });
       vi.mocked(executeToolCallsFromMessages).mockImplementation((async (
-        messages: any[],
+        messages: any[]
       ) => {
         // Simulate adding tool results for both calls
         const firstToolResult = {
@@ -1454,22 +1457,22 @@ describe("POST /api/mcp/chat-v2", () => {
 
         // Verify both tool calls get tool-input-available emitted
         const toolInputEvents = capturedStreamEvents.filter(
-          (e) => e.type === "tool-input-available",
+          (e) => e.type === "tool-input-available"
         );
 
         expect(toolInputEvents.some((e) => e.toolCallId === "call-1")).toBe(
-          true,
+          true
         );
         expect(toolInputEvents.some((e) => e.toolCallId === "call-2")).toBe(
-          true,
+          true
         );
 
         // Verify tool names and inputs are preserved
         const call1Event = toolInputEvents.find(
-          (e) => e.toolCallId === "call-1",
+          (e) => e.toolCallId === "call-1"
         );
         const call2Event = toolInputEvents.find(
-          (e) => e.toolCallId === "call-2",
+          (e) => e.toolCallId === "call-2"
         );
 
         expect(call1Event?.toolName).toBe("tool_a");
@@ -1492,7 +1495,7 @@ describe("POST /api/mcp/chat-v2", () => {
         return hasUnresolvedCallCount === 1;
       });
       vi.mocked(executeToolCallsFromMessages).mockImplementation((async (
-        messages: any[],
+        messages: any[]
       ) => {
         const msg1 = {
           role: "tool",
@@ -1580,24 +1583,24 @@ describe("POST /api/mcp/chat-v2", () => {
 
         // Both tool calls should be collected from a single fetch
         const toolInputEvents = capturedStreamEvents.filter(
-          (e) => e.type === "tool-input-available",
+          (e) => e.type === "tool-input-available"
         );
         expect(
-          toolInputEvents.some((e) => e.toolCallId === "batch-call-1"),
+          toolInputEvents.some((e) => e.toolCallId === "batch-call-1")
         ).toBe(true);
         expect(
-          toolInputEvents.some((e) => e.toolCallId === "batch-call-2"),
+          toolInputEvents.some((e) => e.toolCallId === "batch-call-2")
         ).toBe(true);
 
         // Both tool results should be emitted
         const toolOutputEvents = capturedStreamEvents.filter(
-          (e) => e.type === "tool-output-available",
+          (e) => e.type === "tool-output-available"
         );
         expect(
-          toolOutputEvents.some((e) => e.toolCallId === "batch-call-1"),
+          toolOutputEvents.some((e) => e.toolCallId === "batch-call-1")
         ).toBe(true);
         expect(
-          toolOutputEvents.some((e) => e.toolCallId === "batch-call-2"),
+          toolOutputEvents.some((e) => e.toolCallId === "batch-call-2")
         ).toBe(true);
 
         // Only 2 fetch calls total (one for tool calls batch, one for final response)
@@ -1620,7 +1623,7 @@ describe("POST /api/mcp/chat-v2", () => {
         return hasUnresolvedCallCount === 1;
       });
       vi.mocked(executeToolCallsFromMessages).mockImplementation((async (
-        messages: any[],
+        messages: any[]
       ) => {
         // Simulate adding tool result for the new tool call
         const toolResultMsg = {
@@ -1681,7 +1684,7 @@ describe("POST /api/mcp/chat-v2", () => {
         const toolInputEventsForNewCall = capturedStreamEvents.filter(
           (e) =>
             e.type === "tool-input-available" &&
-            e.toolCallId === "new-call-from-step",
+            e.toolCallId === "new-call-from-step"
         );
 
         // Should be emitted exactly ONCE (when processing json.messages),
@@ -1704,7 +1707,7 @@ describe("POST /api/mcp/chat-v2", () => {
       });
 
       vi.mocked(executeToolCallsFromMessages).mockImplementation((async (
-        messages: any[],
+        messages: any[]
       ) => {
         const latestAssistantWithToolCall = [...messages]
           .reverse()
@@ -1712,11 +1715,11 @@ describe("POST /api/mcp/chat-v2", () => {
             (msg) =>
               msg?.role === "assistant" &&
               Array.isArray(msg.content) &&
-              msg.content.some((part: any) => part?.type === "tool-call"),
+              msg.content.some((part: any) => part?.type === "tool-call")
           );
 
         const latestToolCall = latestAssistantWithToolCall?.content?.find(
-          (part: any) => part?.type === "tool-call",
+          (part: any) => part?.type === "tool-call"
         );
 
         if (!latestToolCall?.toolCallId) return [];
@@ -1784,10 +1787,10 @@ describe("POST /api/mcp/chat-v2", () => {
         await lastStreamExecution;
 
         const toolInputEvents = capturedStreamEvents.filter(
-          (e) => e.type === "tool-input-available",
+          (e) => e.type === "tool-input-available"
         );
         const toolOutputEvents = capturedStreamEvents.filter(
-          (e) => e.type === "tool-output-available",
+          (e) => e.type === "tool-output-available"
         );
 
         expect(fetchCallCount).toBe(3);
@@ -1802,10 +1805,10 @@ describe("POST /api/mcp/chat-v2", () => {
         expect(secondToolCallId).toMatch(/dup-call__s2_/);
 
         expect(
-          toolOutputEvents.some((e) => e.toolCallId === firstToolCallId),
+          toolOutputEvents.some((e) => e.toolCallId === firstToolCallId)
         ).toBe(true);
         expect(
-          toolOutputEvents.some((e) => e.toolCallId === secondToolCallId),
+          toolOutputEvents.some((e) => e.toolCallId === secondToolCallId)
         ).toBe(true);
       } finally {
         global.fetch = originalFetch;

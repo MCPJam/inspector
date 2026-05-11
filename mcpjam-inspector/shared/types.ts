@@ -270,13 +270,21 @@ export interface ModelDefinition {
 }
 
 export enum Model {
-  CLAUDE_OPUS_4_1 = "claude-opus-4-1",
-  CLAUDE_OPUS_4_0 = "claude-opus-4-0",
-  CLAUDE_SONNET_4_5 = "claude-sonnet-4-5",
-  CLAUDE_SONNET_4_0 = "claude-sonnet-4-0",
-  CLAUDE_3_7_SONNET_LATEST = "claude-3-7-sonnet-latest",
-  CLAUDE_HAIKU_4_5 = "claude-haiku-4-5",
-  CLAUDE_3_5_HAIKU_LATEST = "claude-3-5-haiku-latest",
+  // Anthropic — current generation (4.6+) uses dateless pinned IDs
+  CLAUDE_OPUS_4_7 = "claude-opus-4-7",
+  CLAUDE_SONNET_4_6 = "claude-sonnet-4-6",
+  CLAUDE_OPUS_4_6 = "claude-opus-4-6",
+  CLAUDE_HAIKU_4_5 = "claude-haiku-4-5-20251001",
+  // Anthropic — legacy (pre-4.6) use dated IDs because aliases like
+  // claude-opus-4-0 can be yanked before retirement.
+  CLAUDE_OPUS_4_5 = "claude-opus-4-5-20251101",
+  CLAUDE_SONNET_4_5 = "claude-sonnet-4-5-20250929",
+  CLAUDE_OPUS_4_1 = "claude-opus-4-1-20250805",
+  // Removed: claude-opus-4-20250514 + claude-sonnet-4-20250514 (deprecated
+  // 2026-04-14, retiring 2026-06-15 — and many accounts have already lost
+  // access). Replacement: claude-opus-4-7 / claude-sonnet-4-6.
+  // Removed: claude-3-7-sonnet (retired 2026-02-19) and claude-3-5-haiku
+  // (retired 2026-02-19) — both alias forms 404 against Anthropic's API.
   GPT_4_1 = "gpt-4.1",
   GPT_4_1_MINI = "gpt-4.1-mini",
   GPT_4_1_NANO = "gpt-4.1-nano",
@@ -294,9 +302,14 @@ export enum Model {
   GPT_5_1_CODEX = "gpt-5.1-codex",
   GPT_5_1_CODEX_MINI = "gpt-5.1-codex-mini",
   GPT_3_5_TURBO = "gpt-3.5-turbo",
+  // DeepSeek — v4 family is current; v3 aliases are deprecating
+  DEEPSEEK_V4_PRO = "deepseek-v4-pro",
+  DEEPSEEK_V4_FLASH = "deepseek-v4-flash",
   DEEPSEEK_CHAT = "deepseek-chat",
   DEEPSEEK_REASONER = "deepseek-reasoner",
-  // Google Gemini models
+  // Google Gemini models — 3.x is current
+  GEMINI_3_1_PRO_PREVIEW = "gemini-3.1-pro-preview",
+  GEMINI_3_1_FLASH_LITE = "gemini-3.1-flash-lite",
   GEMINI_2_5_PRO = "gemini-2.5-pro",
   GEMINI_2_5_FLASH = "gemini-2.5-flash",
   GEMINI_2_5_FLASH_LITE = "gemini-2.5-flash-lite",
@@ -310,18 +323,55 @@ export enum Model {
   GEMMA_2_27B = "gemma-2-27b",
   CODE_GEMMA_2B = "codegemma-2b",
   CODE_GEMMA_7B = "codegemma-7b",
-  // Mistral models
+  // Mistral — current dated IDs (aliases like mistral-large-latest still work
+  // but the dated form is recommended)
+  MISTRAL_LARGE_3 = "mistral-large-3-25-12",
+  MISTRAL_MEDIUM_3_5 = "mistral-medium-3-5-26-04",
+  MISTRAL_MEDIUM_3_1 = "mistral-medium-3-1-25-08",
+  MISTRAL_SMALL_4 = "mistral-small-2603",
+  MAGISTRAL_MEDIUM_1_2 = "magistral-medium-1-2-25-09",
+  DEVSTRAL_2 = "devstral-2-25-12",
+  CODESTRAL_25_08 = "codestral-25-08",
+  MINISTRAL_3_14B = "ministral-3-14b-25-12",
+  MINISTRAL_3_8B = "ministral-3-8b-25-12",
+  MINISTRAL_3_3B = "ministral-3-3b-25-12",
+  // Mistral — legacy aliases kept for back-compat
   MISTRAL_LARGE_LATEST = "mistral-large-latest",
   MISTRAL_SMALL_LATEST = "mistral-small-latest",
   CODESTRAL_LATEST = "codestral-latest",
   MINISTRAL_8B_LATEST = "ministral-8b-latest",
   MINISTRAL_3B_LATEST = "ministral-3b-latest",
-  // xAI models
+  // xAI/Grok — 4.3 is current
+  GROK_4_3 = "grok-4.3",
+  GROK_4 = "grok-4",
+  GROK_4_FAST = "grok-4-fast",
+  GROK_4_1_FAST = "grok-4-1-fast",
+  GROK_CODE_FAST_1 = "grok-code-fast-1",
   GROK_3 = "grok-3",
   GROK_3_MINI = "grok-3-mini",
-  GROK_CODE_FAST_1 = "grok-code-fast-1",
   GROK_4_FAST_NON_REASONING = "grok-4-fast-non-reasoning",
   GROK_4_FAST_REASONING = "grok-4-fast-reasoning",
+  // Moonshot / Kimi — OpenAI-compatible API
+  KIMI_K2_6 = "kimi-k2.6",
+  KIMI_K2 = "kimi-k2",
+  MOONSHOT_V1 = "moonshot-v1",
+  // Z.AI / GLM — OpenAI-compatible API
+  GLM_4_6 = "glm-4.6",
+  GLM_4_5 = "glm-4.5",
+  GLM_4_PLUS = "glm-4-plus",
+  GLM_4_AIR = "glm-4-air",
+  // Qwen / DashScope — OpenAI-compatible API
+  QWEN_3_6_MAX_PREVIEW = "qwen3.6-max-preview",
+  QWEN_3_6_PLUS = "qwen3.6-plus",
+  QWEN_3_6_FLASH = "qwen3.6-flash",
+  QWEN_MAX = "qwen-max",
+  QWEN_PLUS = "qwen-plus",
+  QWEN_TURBO = "qwen-turbo",
+  // MiniMax — OpenAI-compatible API
+  MINIMAX_M2_7 = "MiniMax-M2.7",
+  MINIMAX_M2_5 = "MiniMax-M2.5",
+  MINIMAX_M2_1 = "MiniMax-M2.1",
+  MINIMAX_M2 = "MiniMax-M2",
 }
 
 const freeModel = (
@@ -337,15 +387,35 @@ const freeModel = (
 });
 
 export const SUPPORTED_MODELS: ModelDefinition[] = [
+  // Anthropic — current generation first
   {
-    id: Model.CLAUDE_OPUS_4_1,
-    name: "Claude Opus 4.1",
+    id: Model.CLAUDE_OPUS_4_7,
+    name: "Claude Opus 4.7",
+    provider: "anthropic",
+    contextLength: 1000000,
+  },
+  {
+    id: Model.CLAUDE_SONNET_4_6,
+    name: "Claude Sonnet 4.6",
+    provider: "anthropic",
+    contextLength: 1000000,
+  },
+  {
+    id: Model.CLAUDE_OPUS_4_6,
+    name: "Claude Opus 4.6",
+    provider: "anthropic",
+    contextLength: 1000000,
+  },
+  {
+    id: Model.CLAUDE_HAIKU_4_5,
+    name: "Claude Haiku 4.5",
     provider: "anthropic",
     contextLength: 200000,
   },
+  // Anthropic — legacy
   {
-    id: Model.CLAUDE_OPUS_4_0,
-    name: "Claude Opus 4",
+    id: Model.CLAUDE_OPUS_4_5,
+    name: "Claude Opus 4.5",
     provider: "anthropic",
     contextLength: 200000,
   },
@@ -356,29 +426,14 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     contextLength: 200000,
   },
   {
-    id: Model.CLAUDE_SONNET_4_0,
-    name: "Claude Sonnet 4",
+    id: Model.CLAUDE_OPUS_4_1,
+    name: "Claude Opus 4.1",
     provider: "anthropic",
     contextLength: 200000,
   },
-  {
-    id: Model.CLAUDE_HAIKU_4_5,
-    name: "Claude Haiku 4.5",
-    provider: "anthropic",
-    contextLength: 200000,
-  },
-  {
-    id: Model.CLAUDE_3_7_SONNET_LATEST,
-    name: "Claude Sonnet 3.7",
-    provider: "anthropic",
-    contextLength: 200000,
-  },
-  {
-    id: Model.CLAUDE_3_5_HAIKU_LATEST,
-    name: "Claude Haiku 3.5",
-    provider: "anthropic",
-    contextLength: 200000,
-  },
+  // Claude Opus 4, Sonnet 4 (deprecated 2026-04-14, retiring 2026-06-15),
+  // Claude 3.7 Sonnet, 3.5 Haiku (retired 2026-02-19) entries all removed.
+  // Replacements: claude-opus-4-7 / claude-sonnet-4-6 / claude-haiku-4-5.
   {
     id: Model.GPT_5_1,
     name: "GPT-5.1",
@@ -464,19 +519,44 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     provider: "openai",
     contextLength: 128000,
   },
+  // DeepSeek BYOK — v4 family is current
+  {
+    id: Model.DEEPSEEK_V4_PRO,
+    name: "DeepSeek V4 Pro",
+    provider: "deepseek",
+    contextLength: 128000,
+  },
+  {
+    id: Model.DEEPSEEK_V4_FLASH,
+    name: "DeepSeek V4 Flash",
+    provider: "deepseek",
+    contextLength: 128000,
+  },
   {
     id: Model.DEEPSEEK_CHAT,
-    name: "DeepSeek Chat",
+    name: "DeepSeek Chat (legacy)",
     provider: "deepseek",
     contextLength: 128000,
   },
   {
     id: Model.DEEPSEEK_REASONER,
-    name: "DeepSeek Reasoner",
+    name: "DeepSeek Reasoner (legacy)",
     provider: "deepseek",
     contextLength: 128000,
   },
-  // Google Gemini models (latest first)
+  // Google Gemini BYOK — 3.x is current
+  {
+    id: Model.GEMINI_3_1_PRO_PREVIEW,
+    name: "Gemini 3.1 Pro Preview",
+    provider: "google",
+    contextLength: 1048576,
+  },
+  {
+    id: Model.GEMINI_3_1_FLASH_LITE,
+    name: "Gemini 3.1 Flash Lite",
+    provider: "google",
+    contextLength: 1048576,
+  },
   {
     id: Model.GEMINI_2_5_PRO,
     name: "Gemini 2.5 Pro",
@@ -490,10 +570,214 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     contextLength: 1000000,
   },
   {
+    id: Model.GEMINI_2_5_FLASH_LITE,
+    name: "Gemini 2.5 Flash Lite",
+    provider: "google",
+    contextLength: 1000000,
+  },
+  {
     id: Model.GEMINI_2_0_FLASH_EXP,
     name: "Gemini 2.0 Flash Experimental",
     provider: "google",
     contextLength: 1048576,
+  },
+  // Mistral BYOK
+  {
+    id: Model.MISTRAL_LARGE_3,
+    name: "Mistral Large 3",
+    provider: "mistral",
+    contextLength: 128000,
+  },
+  {
+    id: Model.MISTRAL_MEDIUM_3_5,
+    name: "Mistral Medium 3.5",
+    provider: "mistral",
+    contextLength: 128000,
+  },
+  {
+    id: Model.MISTRAL_MEDIUM_3_1,
+    name: "Mistral Medium 3.1",
+    provider: "mistral",
+    contextLength: 128000,
+  },
+  {
+    id: Model.MISTRAL_SMALL_4,
+    name: "Mistral Small 4",
+    provider: "mistral",
+    contextLength: 128000,
+  },
+  {
+    id: Model.MAGISTRAL_MEDIUM_1_2,
+    name: "Magistral Medium 1.2",
+    provider: "mistral",
+    contextLength: 128000,
+  },
+  {
+    id: Model.DEVSTRAL_2,
+    name: "Devstral 2",
+    provider: "mistral",
+    contextLength: 128000,
+  },
+  {
+    id: Model.CODESTRAL_25_08,
+    name: "Codestral",
+    provider: "mistral",
+    contextLength: 256000,
+  },
+  {
+    id: Model.MINISTRAL_3_14B,
+    name: "Ministral 3 14B",
+    provider: "mistral",
+    contextLength: 128000,
+  },
+  {
+    id: Model.MINISTRAL_3_8B,
+    name: "Ministral 3 8B",
+    provider: "mistral",
+    contextLength: 128000,
+  },
+  {
+    id: Model.MINISTRAL_3_3B,
+    name: "Ministral 3 3B",
+    provider: "mistral",
+    contextLength: 128000,
+  },
+  // xAI / Grok BYOK
+  {
+    id: Model.GROK_4_3,
+    name: "Grok 4.3",
+    provider: "xai",
+    contextLength: 256000,
+  },
+  {
+    id: Model.GROK_4,
+    name: "Grok 4",
+    provider: "xai",
+    contextLength: 256000,
+  },
+  {
+    id: Model.GROK_4_FAST,
+    name: "Grok 4 Fast",
+    provider: "xai",
+    contextLength: 2000000,
+  },
+  {
+    id: Model.GROK_4_1_FAST,
+    name: "Grok 4.1 Fast",
+    provider: "xai",
+    contextLength: 2000000,
+  },
+  {
+    id: Model.GROK_CODE_FAST_1,
+    name: "Grok Code Fast 1",
+    provider: "xai",
+    contextLength: 256000,
+  },
+  // Moonshot / Kimi BYOK
+  {
+    id: Model.KIMI_K2_6,
+    name: "Kimi K2.6",
+    provider: "moonshotai",
+    contextLength: 262144,
+  },
+  {
+    id: Model.KIMI_K2,
+    name: "Kimi K2",
+    provider: "moonshotai",
+    contextLength: 262144,
+  },
+  {
+    id: Model.MOONSHOT_V1,
+    name: "Moonshot v1",
+    provider: "moonshotai",
+    contextLength: 200000,
+  },
+  // Z.AI / GLM BYOK
+  {
+    id: Model.GLM_4_6,
+    name: "GLM 4.6",
+    provider: "z-ai",
+    contextLength: 200000,
+  },
+  {
+    id: Model.GLM_4_5,
+    name: "GLM 4.5",
+    provider: "z-ai",
+    contextLength: 200000,
+  },
+  {
+    id: Model.GLM_4_PLUS,
+    name: "GLM 4 Plus",
+    provider: "z-ai",
+    contextLength: 128000,
+  },
+  {
+    id: Model.GLM_4_AIR,
+    name: "GLM 4 Air",
+    provider: "z-ai",
+    contextLength: 128000,
+  },
+  // Qwen / DashScope BYOK
+  {
+    id: Model.QWEN_3_6_MAX_PREVIEW,
+    name: "Qwen 3.6 Max Preview",
+    provider: "qwen",
+    contextLength: 1000000,
+  },
+  {
+    id: Model.QWEN_3_6_PLUS,
+    name: "Qwen 3.6 Plus",
+    provider: "qwen",
+    contextLength: 1000000,
+  },
+  {
+    id: Model.QWEN_3_6_FLASH,
+    name: "Qwen 3.6 Flash",
+    provider: "qwen",
+    contextLength: 1000000,
+  },
+  {
+    id: Model.QWEN_MAX,
+    name: "Qwen Max",
+    provider: "qwen",
+    contextLength: 32000,
+  },
+  {
+    id: Model.QWEN_PLUS,
+    name: "Qwen Plus",
+    provider: "qwen",
+    contextLength: 32000,
+  },
+  {
+    id: Model.QWEN_TURBO,
+    name: "Qwen Turbo",
+    provider: "qwen",
+    contextLength: 1000000,
+  },
+  // MiniMax BYOK
+  {
+    id: Model.MINIMAX_M2_7,
+    name: "MiniMax M2.7",
+    provider: "minimax",
+    contextLength: 245760,
+  },
+  {
+    id: Model.MINIMAX_M2_5,
+    name: "MiniMax M2.5",
+    provider: "minimax",
+    contextLength: 245760,
+  },
+  {
+    id: Model.MINIMAX_M2_1,
+    name: "MiniMax M2.1",
+    provider: "minimax",
+    contextLength: 245760,
+  },
+  {
+    id: Model.MINIMAX_M2,
+    name: "MiniMax M2",
+    provider: "minimax",
+    contextLength: 245760,
   },
   {
     id: "openai/gpt-oss-120b",

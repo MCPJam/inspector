@@ -21,7 +21,7 @@ import { readBuilderSession, clearBuilderSession } from "@/lib/chatbox-session";
 import { ChatboxIndexPage, type ChatboxOpenOptions } from "./ChatboxIndexPage";
 import { ChatboxBuilderView } from "./ChatboxBuilderView";
 import { ChatboxLauncher } from "./ChatboxLauncher";
-import { getDefaultHostedModelId } from "./drafts";
+import { getDefaultHostedModelId, migrateBuilderDraft } from "./drafts";
 import type { ChatboxDraftConfig, ChatboxStarterDefinition } from "./types";
 
 interface ChatboxBuilderExperienceProps {
@@ -93,7 +93,10 @@ export default function ChatboxBuilderExperience({
 
     startTransition(() => {
       setSelectedChatboxId(session.chatboxId);
-      setDraft((session.draft as ChatboxDraftConfig | null) ?? null);
+      // Phase 4: migrate any older-shape draft (missing fields added
+      // since the draft was persisted) into the current shape before
+      // handing it to the builder.
+      setDraft(migrateBuilderDraft(session.draft) ?? null);
       const vm = session.viewMode;
       if (vm === "builder") {
         setRestoredViewMode("setup");

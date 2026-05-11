@@ -67,6 +67,14 @@ mcpjam tools call --url https://your-server.com/mcp --access-token $TOKEN \
 mcpjam tools list --url https://your-server.com/mcp --access-token $TOKEN --format json
 ```
 
+## Inspector chat models
+
+When the CLI starts a standalone local Inspector without `CONVEX_HTTP_URL` and
+`INSPECTOR_SERVICE_TOKEN`, Inspector chat is limited to Ollama/local-only
+execution. MCPJam-provided models and organization-managed BYOK providers,
+including providers configured with `runtimeLocation: "local"`, require
+connecting to an authenticated Inspector that can reach Convex.
+
 ## Why
 
 MCP servers don't have built-in health checks, OAuth conformance tests, or deploy-time regression detection. `mcpjam` adds those.

@@ -51,46 +51,46 @@ describe("resolveOrgModelConfig", () => {
       { projectId: "project_org_config_auth_scope" },
       {
         bearerToken: "user-a",
-        shareToken: " share-1 ",
+        chatboxToken: " share-1 ",
         serverIds: ["srv-b", "srv-a", "srv-a"],
-      },
+      }
     );
     await resolveOrgModelConfig(
       { projectId: "project_org_config_auth_scope" },
       {
         bearerToken: "user-a",
-        shareToken: "share-1",
+        chatboxToken: "share-1",
         serverIds: ["srv-a", "srv-b"],
-      },
+      }
     );
     await resolveOrgModelConfig(
       { projectId: "project_org_config_auth_scope" },
       {
         bearerToken: "user-b",
-        shareToken: "share-1",
+        chatboxToken: "share-1",
         serverIds: ["srv-a", "srv-b"],
-      },
+      }
     );
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      "https://convex.example/internal/v1/org-model-config/resolve",
+      "https://convex.example/internal/v1/org-model-config/resolve"
     );
     expect(
-      new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("authorization"),
+      new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("authorization")
     ).toBe("Bearer user-a");
     expect(
       new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get(
-        "X-Inspector-Service-Token",
-      ),
+        "X-Inspector-Service-Token"
+      )
     ).toBe("service-token");
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
       projectId: "project_org_config_auth_scope",
-      shareToken: "share-1",
+      chatboxToken: "share-1",
       serverIds: ["srv-a", "srv-b"],
     });
     expect(
-      new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get("authorization"),
+      new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get("authorization")
     ).toBe("Bearer user-b");
   });
 });
@@ -143,16 +143,14 @@ describe("isUnsafeHostedOutboundUrl", () => {
 });
 
 describe("isLocalRuntimeEligible", () => {
-  it("returns true only for ollama", () => {
+  it("only allows Ollama and custom providers to use local runtime", () => {
     expect(isLocalRuntimeEligible("ollama")).toBe(true);
-  });
-
-  it("returns false for cloud-only providers (so chat-v2 skips the resolve round-trip)", () => {
+    expect(isLocalRuntimeEligible("custom:my-llm")).toBe(true);
     expect(isLocalRuntimeEligible("openai")).toBe(false);
     expect(isLocalRuntimeEligible("anthropic")).toBe(false);
     expect(isLocalRuntimeEligible("azure")).toBe(false);
     expect(isLocalRuntimeEligible("google")).toBe(false);
     expect(isLocalRuntimeEligible("openrouter")).toBe(false);
-    expect(isLocalRuntimeEligible("custom:my-llm")).toBe(false);
+    expect(isLocalRuntimeEligible("")).toBe(false);
   });
 });

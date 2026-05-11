@@ -7,8 +7,8 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { HOSTED_MODE } from "@/lib/config";
 import type { AppReadyStatus } from "@/lib/app-ready";
+import { HOSTED_MODE } from "@/lib/config";
 
 /**
  * Single source of truth for "is this app ready to dispatch a request?".
@@ -98,7 +98,13 @@ export function AppReadyProvider({
       return { status: "bootstrapping", reason: "loading-app-state" };
     }
     if (!HOSTED_MODE) {
-      return { status: "ready", projectId: null };
+      return {
+        status: "ready",
+        projectId:
+          effectiveActiveProjectId && effectiveActiveProjectId !== "none"
+            ? effectiveActiveProjectId
+            : null,
+      };
     }
     if (isConvexAuthLoading || !isConvexAuthenticated) {
       return { status: "bootstrapping", reason: "resolving-auth" };
@@ -133,7 +139,6 @@ export function AppReadyProvider({
         isConvexAuthenticated,
         effectiveActiveProjectId,
         isLoadingRemoteProjects,
-        HOSTED_MODE,
       },
     };
     const key = JSON.stringify(snapshot);
@@ -143,8 +148,9 @@ export function AppReadyProvider({
       console.info("[AppReady]", snapshot);
     }
     if (import.meta.env.DEV && typeof window !== "undefined") {
-      (window as unknown as { __mcpjamAppReady?: typeof snapshot })
-        .__mcpjamAppReady = snapshot;
+      (
+        window as unknown as { __mcpjamAppReady?: typeof snapshot }
+      ).__mcpjamAppReady = snapshot;
     }
   }, [
     value,

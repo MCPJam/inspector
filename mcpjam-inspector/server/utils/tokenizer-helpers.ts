@@ -7,12 +7,25 @@ import { logger } from "./logger";
  * Values: Model IDs recognized by ai-tokenizer
  */
 const MODEL_ID_MAPPINGS: Record<string, string> = {
-  // Anthropic models
+  // Anthropic models — current-generation dateless IDs
+  "claude-opus-4-7": "anthropic/claude-opus-4.7",
+  "claude-sonnet-4-6": "anthropic/claude-sonnet-4.6",
+  "claude-opus-4-6": "anthropic/claude-opus-4.6",
+  // Anthropic models — dated/pinned IDs for legacy generations
+  "claude-haiku-4-5-20251001": "anthropic/claude-haiku-4.5",
+  "claude-opus-4-5-20251101": "anthropic/claude-opus-4.5",
+  "claude-sonnet-4-5-20250929": "anthropic/claude-sonnet-4.5",
+  "claude-opus-4-1-20250805": "anthropic/claude-opus-4.1",
+  "claude-opus-4-20250514": "anthropic/claude-opus-4",
+  "claude-sonnet-4-20250514": "anthropic/claude-sonnet-4",
+  // Anthropic — alias forms (still accepted by Anthropic until retirement)
   "claude-opus-4-1": "anthropic/claude-opus-4.1",
   "claude-opus-4-0": "anthropic/claude-opus-4",
   "claude-sonnet-4-5": "anthropic/claude-sonnet-4.5",
   "claude-sonnet-4-0": "anthropic/claude-sonnet-4",
   "claude-haiku-4-5": "anthropic/claude-haiku-4.5",
+  // Retired models (still mapped for token-counting on legacy persisted
+  // chats — Anthropic API itself returns 404 for these now).
   "claude-3-7-sonnet-latest": "anthropic/claude-3.7-sonnet",
   "claude-3-5-sonnet-latest": "anthropic/claude-3.5-sonnet",
   "claude-3-5-haiku-latest": "anthropic/claude-3.5-haiku",
