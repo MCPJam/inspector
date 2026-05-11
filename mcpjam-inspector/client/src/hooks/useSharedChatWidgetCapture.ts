@@ -229,7 +229,6 @@ export function useSharedChatWidgetCapture({
     new Set(persistedSnapshotToolCallIds),
   );
   const onStaleHostedAccessRef = useRef(onStaleHostedAccess);
-  const staleRefreshRequestedRef = useRef(false);
   // ToolCallIds whose upload was abandoned mid-flight because the backend
   // reported `chatbox_access_stale`. Replayed once the next
   // `hostedAccessVersion` arrives — without this, the parent's re-redeem
@@ -241,6 +240,13 @@ export function useSharedChatWidgetCapture({
     chatSessionId,
     hostedChatboxId,
   });
+  // Identity generation. Bumped whenever `chatSessionId` or
+  // `hostedChatboxId` changes. Each `uploadAttemptRef` invocation captures
+  // its generation at start and bails before any state-mutating
+  // continuation if the scope has moved — without this, an in-flight
+  // upload for chat A can land its `createWidgetSnapshot` call in chat B
+  // (refs are read lazily through the async function's awaits).
+  const scopeGenerationRef = useRef(0);
   const uploadAttemptRef = useRef<(toolCallId: string) => Promise<void>>(
     async () => {},
   );
@@ -272,14 +278,14 @@ export function useSharedChatWidgetCapture({
     sessionIdRef.current = chatSessionId;
     chatboxIdRef.current = hostedChatboxId;
     accessVersionRef.current = hostedAccessVersion;
-    // Re-arm the stale-access debounce so a subsequent divergence can
-    // trigger another re-redeem.
-    staleRefreshRequestedRef.current = false;
 
     if (identityChanged) {
       // Different chat or different chatbox → previous per-toolCallId state
       // is no longer relevant. Drop everything, including the stale-retry
-      // queue (those toolCallIds belong to the old scope).
+      // queue (those toolCallIds belong to the old scope). Bump the scope
+      // generation so any in-flight upload bails at its next continuation
+      // point rather than writing into the new scope.
+      scopeGenerationRef.current += 1;
       uploadedHashesRef.current.clear();
       cachedBlobsRef.current.clear();
       retryCountRef.current.clear();
@@ -318,6 +324,13 @@ export function useSharedChatWidgetCapture({
   uploadAttemptRef.current = async (toolCallId: string) => {
     const chatboxId = chatboxIdRef.current;
     const accessVersion = accessVersionRef.current;
+    // Generation snapshot. Re-read against `scopeGenerationRef.current`
+    // after every await to detect identity changes (chatSessionId /
+    // chatboxId) and bail before mutating per-scope refs or calling
+    // `createWidgetSnapshot` for the wrong chat.
+    const attemptGeneration = scopeGenerationRef.current;
+    const scopeStillValid = () =>
+      scopeGenerationRef.current === attemptGeneration;
     if (!enabled || !readyToPersist || inFlightRef.current.has(toolCallId)) {
       return;
     }
@@ -389,6 +402,13 @@ export function useSharedChatWidgetCapture({
               "application/json",
             ),
           ]);
+        if (!scopeStillValid()) {
+          // Scope moved while uploads were in flight. The blobs are
+          // orphaned in storage, but writing the cache entry under the
+          // new scope's refs would cause the next attempt to skip the
+          // re-upload pass and reference stale storage IDs.
+          return;
+        }
         cached = {
           htmlHash,
           widgetHtmlBlobId,
@@ -397,6 +417,8 @@ export function useSharedChatWidgetCapture({
         };
         cachedBlobsRef.current.set(toolCallId, cached);
       }
+
+      if (!scopeStillValid()) return;
 
       const snapshotPayload = {
         ...(chatboxId ? { chatboxId } : {}),
@@ -420,6 +442,15 @@ export function useSharedChatWidgetCapture({
       };
       const snapshotResult = await createWidgetSnapshot(snapshotPayload);
 
+      if (!scopeStillValid()) {
+        // Scope changed across the mutation await. The snapshot row was
+        // written for the previous chat — that's fine; the previous chat
+        // is what it belongs to. But don't touch the new scope's
+        // bookkeeping refs (uploadedHashesRef etc.), since the reset
+        // effect just cleared them on our behalf.
+        return;
+      }
+
       if (shouldRetryPendingSnapshot(snapshotResult, null)) {
         throw new Error("Session not found for chat session");
       }
@@ -428,12 +459,24 @@ export function useSharedChatWidgetCapture({
       cachedBlobsRef.current.delete(toolCallId);
       retryCountRef.current.delete(toolCallId);
     } catch (error) {
+      if (!scopeStillValid()) {
+        // Same as above — anything we do here would mutate refs that
+        // belong to a different scope now.
+        return;
+      }
       if (isStaleHostedAccessError(error)) {
         // Drop cached blobs uploaded under the stale accessVersion, queue
         // this toolCallId for replay once the fresh accessVersion arrives,
         // and ask the owner to re-redeem. The reset effect drains the
         // queue so recovery doesn't depend on an unrelated widget/message
         // change re-triggering the debounced sweep.
+        //
+        // No hook-side latch: the parent's `requestRefreshAccessVersion`
+        // gates re-entrancy with its own in-flight ref (cleared in
+        // `finally`), so concurrent stale errors coalesce there. Latching
+        // here would survive a failed `/api/web/chatboxes/redeem`
+        // response (no accessVersion bump → no reset → latch stuck true)
+        // and silently disable every future recovery attempt.
         cachedBlobsRef.current.delete(toolCallId);
         retryCountRef.current.delete(toolCallId);
         const existingTimer = pendingTimersRef.current.get(toolCallId);
@@ -442,10 +485,7 @@ export function useSharedChatWidgetCapture({
           pendingTimersRef.current.delete(toolCallId);
         }
         pendingStaleRetryRef.current.add(toolCallId);
-        if (!staleRefreshRequestedRef.current) {
-          staleRefreshRequestedRef.current = true;
-          onStaleHostedAccessRef.current?.();
-        }
+        onStaleHostedAccessRef.current?.();
       } else if (shouldRetryPendingSnapshot(undefined, error)) {
         const retries = retryCountRef.current.get(toolCallId) ?? 0;
         if (retries >= MAX_PENDING_SESSION_RETRIES) {

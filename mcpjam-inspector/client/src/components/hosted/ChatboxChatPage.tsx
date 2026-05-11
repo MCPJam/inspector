@@ -281,6 +281,15 @@ export function ChatboxChatPage({
   const [routeError, setRouteError] = useState<ChatboxRouteError | null>(null);
   const interactiveSignInEventKeyRef = useRef<string | null>(null);
   const tokenFromPath = useMemo(() => pathToken?.trim() || null, [pathToken]);
+  // Mirror `tokenFromPath` into a ref so async work (the silent re-redeem
+  // below) can detect a mid-flight navigation: when the user switches
+  // chatbox tokens before the in-flight `/api/web/chatboxes/redeem`
+  // response arrives, the resolved-but-stale session must not overwrite
+  // the new token's active session.
+  const tokenFromPathRef = useRef(tokenFromPath);
+  useEffect(() => {
+    tokenFromPathRef.current = tokenFromPath;
+  }, [tokenFromPath]);
   const isAuthSettling =
     Boolean(tokenFromPath) &&
     !playgroundParams &&
@@ -625,11 +634,13 @@ export function ChatboxChatPage({
           body: JSON.stringify({ chatboxToken: token }),
         });
         if (!redeemResponse.ok) return;
+        if (tokenFromPathRef.current !== token) return;
         const redeemed = (await redeemResponse.json()) as {
           chatboxId?: unknown;
           accessVersion?: unknown;
           bootstrap?: unknown;
         };
+        if (tokenFromPathRef.current !== token) return;
         const nextSession = normalizeChatboxSession({
           chatboxId:
             typeof redeemed.chatboxId === "string"
@@ -643,6 +654,9 @@ export function ChatboxChatPage({
           surface: readChatboxSurfaceFromUrl(window.location.search),
         });
         if (!nextSession) return;
+        // Final guard before mutating shared session state: a navigation
+        // between the JSON parse and now would still race.
+        if (tokenFromPathRef.current !== token) return;
         writeCurrentSession(nextSession);
         setSession(nextSession);
       } catch (error) {
