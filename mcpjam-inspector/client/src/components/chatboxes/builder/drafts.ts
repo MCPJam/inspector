@@ -176,19 +176,47 @@ export function migrateBuilderDraft(
           | { welcome?: unknown; feedback?: unknown }
           | undefined)
       : undefined;
+  // Pre-chatUi drafts (sessionStorage written before the envelope landed)
+  // carry welcome/feedback at the top level. Fall back to them per-surface
+  // when the new shape doesn't supply that surface, so an in-flight builder
+  // draft doesn't lose its body/cadence the moment we ship.
+  const legacyWelcome =
+    rawSurfaces?.welcome === undefined
+      ? ((raw as { welcomeDialog?: unknown }).welcomeDialog as
+          | Partial<ChatboxDraftConfig["chatUi"]["surfaces"]["welcome"]>
+          | undefined)
+      : undefined;
+  const legacyFeedback =
+    rawSurfaces?.feedback === undefined
+      ? ((raw as { feedbackDialog?: unknown }).feedbackDialog as
+          | Partial<ChatboxDraftConfig["chatUi"]["surfaces"]["feedback"]>
+          | undefined)
+      : undefined;
+  // Strip the legacy top-level keys before the spread so the merged draft
+  // doesn't carry orphan `welcomeDialog` / `feedbackDialog` properties at
+  // runtime alongside the canonical `chatUi`.
+  const {
+    welcomeDialog: _legacyWelcomeDialog,
+    feedbackDialog: _legacyFeedbackDialog,
+    ...rawWithoutLegacyKeys
+  } = raw as Record<string, unknown>;
+  void _legacyWelcomeDialog;
+  void _legacyFeedbackDialog;
   const merged: ChatboxDraftConfig = {
     ...blank,
-    ...(raw as Partial<ChatboxDraftConfig>),
+    ...(rawWithoutLegacyKeys as Partial<ChatboxDraftConfig>),
     chatUi: {
       surfaces: {
         welcome: {
           ...blank.chatUi.surfaces.welcome,
+          ...(legacyWelcome ?? {}),
           ...((rawSurfaces?.welcome as
             | Partial<ChatboxDraftConfig["chatUi"]["surfaces"]["welcome"]>
             | undefined) ?? {}),
         },
         feedback: {
           ...blank.chatUi.surfaces.feedback,
+          ...(legacyFeedback ?? {}),
           ...((rawSurfaces?.feedback as
             | Partial<ChatboxDraftConfig["chatUi"]["surfaces"]["feedback"]>
             | undefined) ?? {}),
@@ -214,8 +242,6 @@ export function migrateBuilderDraft(
 }
 
 export function toDraftConfig(chatbox: ChatboxSettings): ChatboxDraftConfig {
-  const welcome = chatbox.chatUi?.surfaces?.welcome;
-  const feedback = chatbox.chatUi?.surfaces?.feedback;
   return {
     name: chatbox.name,
     description: chatbox.description ?? "",
@@ -230,25 +256,32 @@ export function toDraftConfig(chatbox: ChatboxSettings): ChatboxDraftConfig {
     optionalServerIds: chatbox.servers
       .filter((server) => server.optional)
       .map((server) => server.serverId),
-    chatUi: {
-      surfaces: {
-        welcome: {
-          enabled: welcome?.enabled ?? true,
-          body: welcome?.body ?? "",
-        },
-        feedback: {
-          enabled: feedback?.enabled ?? true,
-          everyNToolCalls: Math.max(1, feedback?.everyNToolCalls ?? 1),
-          promptHint: feedback?.promptHint ?? "",
-        },
-      },
-    },
+    chatUi: toChatUiFromChatbox(chatbox),
   };
 }
 
-/** Mirror of `toDraftConfig`'s chatUi unpacking — used by `isDirty` comparator. */
+/**
+ * Unpacks the chatbox's `chatUi` into the draft shape (defaulting both
+ * surfaces). Shared between `toDraftConfig` and the `isDirty` comparator
+ * in `ChatboxBuilderView` so both arrive at the same default-coalesced
+ * envelope without `isDirty` having to rebuild the entire draft.
+ */
 export function toChatUiFromChatbox(
   chatbox: ChatboxSettings,
 ): ChatboxDraftConfig["chatUi"] {
-  return toDraftConfig(chatbox).chatUi;
+  const welcome = chatbox.chatUi?.surfaces?.welcome;
+  const feedback = chatbox.chatUi?.surfaces?.feedback;
+  return {
+    surfaces: {
+      welcome: {
+        enabled: welcome?.enabled ?? true,
+        body: welcome?.body ?? "",
+      },
+      feedback: {
+        enabled: feedback?.enabled ?? true,
+        everyNToolCalls: Math.max(1, feedback?.everyNToolCalls ?? 1),
+        promptHint: feedback?.promptHint ?? "",
+      },
+    },
+  };
 }

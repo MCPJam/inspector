@@ -40,6 +40,75 @@ describe("migrateBuilderDraft", () => {
     expect(migrated!.name).toBe("Pre-existing draft");
   });
 
+  it("rehydrates legacy top-level welcomeDialog/feedbackDialog into chatUi.surfaces", () => {
+    // sessionStorage drafts written before the chatUi envelope landed carry
+    // welcome/feedback at the top level. The migrator must fold them into
+    // the new shape so an in-flight builder draft doesn't lose its body or
+    // cadence the moment the new code ships.
+    const legacy = {
+      name: "Mid-edit draft",
+      hostStyle: "claude" as const,
+      systemPrompt: "Sys",
+      modelId: "openai/gpt-5-mini",
+      temperature: 0.5,
+      requireToolApproval: false,
+      selectedServerIds: ["srv-1"],
+      optionalServerIds: [],
+      mode: "anyone_with_link" as const,
+      allowGuestAccess: true,
+      welcomeDialog: { enabled: false, body: "Half-written welcome" },
+      feedbackDialog: {
+        enabled: true,
+        everyNToolCalls: 4,
+        promptHint: "Any blockers?",
+      },
+    };
+    const migrated = migrateBuilderDraft(legacy);
+    expect(migrated).not.toBeNull();
+    expect(migrated!.chatUi.surfaces.welcome).toEqual({
+      enabled: false,
+      body: "Half-written welcome",
+    });
+    expect(migrated!.chatUi.surfaces.feedback).toEqual({
+      enabled: true,
+      everyNToolCalls: 4,
+      promptHint: "Any blockers?",
+    });
+    // Orphan top-level keys must not ride along on the migrated draft.
+    expect(migrated as unknown as Record<string, unknown>).not.toHaveProperty(
+      "welcomeDialog",
+    );
+    expect(migrated as unknown as Record<string, unknown>).not.toHaveProperty(
+      "feedbackDialog",
+    );
+  });
+
+  it("prefers the new chatUi shape over legacy keys when both are present", () => {
+    const both = {
+      name: "Both shapes",
+      hostStyle: "claude" as const,
+      systemPrompt: "Sys",
+      modelId: "openai/gpt-5-mini",
+      temperature: 0.5,
+      requireToolApproval: false,
+      selectedServerIds: [],
+      optionalServerIds: [],
+      mode: "anyone_with_link" as const,
+      allowGuestAccess: true,
+      welcomeDialog: { enabled: false, body: "stale" },
+      chatUi: {
+        surfaces: {
+          welcome: { enabled: true, body: "fresh" },
+        },
+      },
+    };
+    const migrated = migrateBuilderDraft(both);
+    expect(migrated!.chatUi.surfaces.welcome).toEqual({
+      enabled: true,
+      body: "fresh",
+    });
+  });
+
   it("preserves complete drafts at the field level", () => {
     const draft = {
       name: "Complete",
