@@ -230,6 +230,17 @@ export function useSharedChatWidgetCapture({
   );
   const onStaleHostedAccessRef = useRef(onStaleHostedAccess);
   const staleRefreshRequestedRef = useRef(false);
+  // ToolCallIds whose upload was abandoned mid-flight because the backend
+  // reported `chatbox_access_stale`. Replayed once the next
+  // `hostedAccessVersion` arrives — without this, the parent's re-redeem
+  // silently changes a ref value and nothing re-fires the capture loop
+  // until an unrelated widget/message change happens to retrigger the
+  // debounced sweep.
+  const pendingStaleRetryRef = useRef(new Set<string>());
+  const prevScopeRef = useRef({
+    chatSessionId,
+    hostedChatboxId,
+  });
   const uploadAttemptRef = useRef<(toolCallId: string) => Promise<void>>(
     async () => {},
   );
@@ -253,22 +264,45 @@ export function useSharedChatWidgetCapture({
   }, [persistedSnapshotToolCallIds]);
 
   useEffect(() => {
+    const prev = prevScopeRef.current;
+    const identityChanged =
+      prev.chatSessionId !== chatSessionId ||
+      prev.hostedChatboxId !== hostedChatboxId;
+
     sessionIdRef.current = chatSessionId;
     chatboxIdRef.current = hostedChatboxId;
     accessVersionRef.current = hostedAccessVersion;
-    uploadedHashesRef.current.clear();
-    cachedBlobsRef.current.clear();
-    retryCountRef.current.clear();
-    // A successful identity refresh (new accessVersion) re-arms the
-    // stale-access debounce so the next divergence can trigger another
-    // re-redeem.
+    // Re-arm the stale-access debounce so a subsequent divergence can
+    // trigger another re-redeem.
     staleRefreshRequestedRef.current = false;
 
-    for (const timer of pendingTimersRef.current.values()) {
-      clearTimeout(timer);
+    if (identityChanged) {
+      // Different chat or different chatbox → previous per-toolCallId state
+      // is no longer relevant. Drop everything, including the stale-retry
+      // queue (those toolCallIds belong to the old scope).
+      uploadedHashesRef.current.clear();
+      cachedBlobsRef.current.clear();
+      retryCountRef.current.clear();
+      pendingStaleRetryRef.current.clear();
+      for (const timer of pendingTimersRef.current.values()) {
+        clearTimeout(timer);
+      }
+      pendingTimersRef.current.clear();
+      inFlightRef.current.clear();
+    } else if (pendingStaleRetryRef.current.size > 0) {
+      // accessVersion bumped on the same chatbox/session — the parent's
+      // silent re-redeem has handed us a fresh version. Replay the
+      // toolCallIds whose previous attempt died on `chatbox_access_stale`
+      // so the capture loop self-heals without waiting for an unrelated
+      // widget/message change.
+      const replay = Array.from(pendingStaleRetryRef.current);
+      pendingStaleRetryRef.current.clear();
+      for (const toolCallId of replay) {
+        void uploadAttemptRef.current(toolCallId);
+      }
     }
-    pendingTimersRef.current.clear();
-    inFlightRef.current.clear();
+
+    prevScopeRef.current = { chatSessionId, hostedChatboxId };
   }, [chatSessionId, hostedChatboxId, hostedAccessVersion]);
 
   useEffect(() => {
@@ -395,10 +429,11 @@ export function useSharedChatWidgetCapture({
       retryCountRef.current.delete(toolCallId);
     } catch (error) {
       if (isStaleHostedAccessError(error)) {
-        // Drop cached blobs uploaded under the stale accessVersion and
-        // ask the owner to re-redeem. The hook will reset (and rearm the
-        // debounce) when the fresh accessVersion flows back through props,
-        // and the capture loop fires again automatically.
+        // Drop cached blobs uploaded under the stale accessVersion, queue
+        // this toolCallId for replay once the fresh accessVersion arrives,
+        // and ask the owner to re-redeem. The reset effect drains the
+        // queue so recovery doesn't depend on an unrelated widget/message
+        // change re-triggering the debounced sweep.
         cachedBlobsRef.current.delete(toolCallId);
         retryCountRef.current.delete(toolCallId);
         const existingTimer = pendingTimersRef.current.get(toolCallId);
@@ -406,6 +441,7 @@ export function useSharedChatWidgetCapture({
           clearTimeout(existingTimer);
           pendingTimersRef.current.delete(toolCallId);
         }
+        pendingStaleRetryRef.current.add(toolCallId);
         if (!staleRefreshRequestedRef.current) {
           staleRefreshRequestedRef.current = true;
           onStaleHostedAccessRef.current?.();

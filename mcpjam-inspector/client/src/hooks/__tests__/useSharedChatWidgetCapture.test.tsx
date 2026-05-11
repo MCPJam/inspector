@@ -596,6 +596,104 @@ describe("useSharedChatWidgetCapture", () => {
     unmount();
   });
 
+  it("replays stale-failed snapshots when a fresh accessVersion arrives", async () => {
+    const onStaleHostedAccess = vi.fn();
+    class StaleError extends Error {
+      data: { code: string; currentAccessVersion: number };
+      constructor() {
+        super("Chatbox access version is stale; client must re-redeem.");
+        this.data = { code: "chatbox_access_stale", currentAccessVersion: 7 };
+      }
+    }
+
+    let uploadCounter = 0;
+    mockGenerateSnapshotUploadUrl.mockReset();
+    mockGenerateSnapshotUploadUrl.mockImplementation(async () => {
+      uploadCounter += 1;
+      throw new StaleError();
+    });
+
+    const { rerender, unmount } = renderHook(
+      ({ hostedAccessVersion }: { hostedAccessVersion: number }) =>
+        useSharedChatWidgetCapture({
+          enabled: true,
+          chatSessionId: "chat-session-replay",
+          hostedChatboxId: "cbx_1",
+          hostedAccessVersion,
+          onStaleHostedAccess,
+          messages: [
+            {
+              id: "assistant-1",
+              role: "assistant",
+              parts: [
+                {
+                  type: "tool-search",
+                  toolCallId: "call-replay",
+                  input: { q: "hello" },
+                  output: { result: "world", _serverId: "server-1" },
+                },
+              ],
+            } as any,
+          ],
+        }),
+      { initialProps: { hostedAccessVersion: 1 } },
+    );
+
+    act(() => {
+      useWidgetDebugStore.setState({
+        widgets: new Map([
+          [
+            "call-replay",
+            {
+              toolCallId: "call-replay",
+              toolName: "search",
+              protocol: "mcp-apps",
+              widgetState: null,
+              globals: { theme: "dark", displayMode: "inline" },
+              widgetHtml: "<div>Widget</div>",
+              updatedAt: Date.now(),
+            },
+          ],
+        ]),
+      });
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+
+    await flushMicrotasks();
+    const generateCallsAfterFirstFlight =
+      mockGenerateSnapshotUploadUrl.mock.calls.length;
+    expect(generateCallsAfterFirstFlight).toBeGreaterThanOrEqual(1);
+    expect(onStaleHostedAccess).toHaveBeenCalledTimes(1);
+    expect(mockCreateWidgetSnapshot).not.toHaveBeenCalled();
+
+    // Parent's silent re-redeem hands back a fresh accessVersion. Swap the
+    // mock to resolve so the replay actually succeeds end-to-end.
+    mockGenerateSnapshotUploadUrl.mockImplementation(async () => {
+      uploadCounter += 1;
+      return `https://upload.example.com/${uploadCounter}`;
+    });
+
+    rerender({ hostedAccessVersion: 2 });
+
+    await flushMicrotasks();
+
+    expect(mockGenerateSnapshotUploadUrl.mock.calls.length).toBeGreaterThan(
+      generateCallsAfterFirstFlight,
+    );
+    expect(mockCreateWidgetSnapshot).toHaveBeenCalledTimes(1);
+    expect(mockCreateWidgetSnapshot.mock.calls[0][0]).toMatchObject({
+      chatboxId: "cbx_1",
+      accessVersion: 2,
+      chatSessionId: "chat-session-replay",
+      toolCallId: "call-replay",
+    });
+
+    unmount();
+  });
+
   it("skips widget capture for tool calls that already have persisted snapshots", async () => {
     const { unmount } = renderHook(() =>
       useSharedChatWidgetCapture({

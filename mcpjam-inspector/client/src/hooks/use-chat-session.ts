@@ -909,18 +909,20 @@ function areAuthHeadersEqual(
 type HostedSessionScope = {
   projectId?: string | null;
   chatboxId?: string;
-  accessVersion?: number;
 };
 
+// `accessVersion` is intentionally NOT part of the scope. The chat-reset
+// path uses this comparison to decide when to blow away `chatSessionId` /
+// `messages`, which is only appropriate when *identity* changes (different
+// project, different chatbox). A pure `accessVersion` bump — e.g. from the
+// silent re-redeem triggered by `chatbox_access_stale` — keeps the same
+// chatbox and the same conversation; tearing the chat down on those bumps
+// would defeat the purpose of the recovery path.
 function areHostedSessionScopesEqual(
   a: HostedSessionScope,
   b: HostedSessionScope
 ): boolean {
-  return (
-    a.projectId === b.projectId &&
-    a.chatboxId === b.chatboxId &&
-    a.accessVersion === b.accessVersion
-  );
+  return a.projectId === b.projectId && a.chatboxId === b.chatboxId;
 }
 
 function isAuthDeniedError(error: unknown): boolean {
@@ -1035,7 +1037,6 @@ export function useChatSession({
   const lastResolvedHostedScopeRef = useRef<HostedSessionScope>({
     projectId: undefined,
     chatboxId: undefined,
-    accessVersion: undefined,
   });
   const pendingSessionHydrationRef = useRef<PendingSessionHydration | null>(
     null
@@ -1902,7 +1903,6 @@ export function useChatSession({
         const currentHostedScope = {
           projectId: hostedProjectId,
           chatboxId: hostedChatboxId,
-          accessVersion: hostedAccessVersion,
         };
         const hasResolvedBefore = hasResolvedAuthHeadersRef.current;
         const authHeadersChanged =
