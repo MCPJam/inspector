@@ -281,6 +281,15 @@ export function ChatboxChatPage({
   const [routeError, setRouteError] = useState<ChatboxRouteError | null>(null);
   const interactiveSignInEventKeyRef = useRef<string | null>(null);
   const tokenFromPath = useMemo(() => pathToken?.trim() || null, [pathToken]);
+  // Mirror `tokenFromPath` into a ref so async work (the silent re-redeem
+  // below) can detect a mid-flight navigation: when the user switches
+  // chatbox tokens before the in-flight `/api/web/chatboxes/redeem`
+  // response arrives, the resolved-but-stale session must not overwrite
+  // the new token's active session.
+  const tokenFromPathRef = useRef(tokenFromPath);
+  useEffect(() => {
+    tokenFromPathRef.current = tokenFromPath;
+  }, [tokenFromPath]);
   const isAuthSettling =
     Boolean(tokenFromPath) &&
     !playgroundParams &&
@@ -604,6 +613,79 @@ export function ChatboxChatPage({
     writeCurrentSession,
   ]);
 
+  // Silent re-redeem path. The capture hook (or any chatbox-aware caller)
+  // calls this when the backend reports `chatbox_access_stale`. It re-runs
+  // /web/chatbox/redeem against the URL token and updates `session` in
+  // place, which propagates a fresh `accessVersion` to every downstream
+  // consumer. Errors are swallowed — the original error UI is owned by the
+  // primary bootstrap effect above, and a refresh failure should leave the
+  // already-mounted chat alone rather than tearing the UI down.
+  //
+  // The in-flight latch is keyed by *token*, not a plain boolean. A
+  // navigation that swaps `tokenFromPath` from A to B while A's redeem is
+  // still pending must not block B from starting its own refresh — A's
+  // response would be discarded by the token-staleness guards below
+  // anyway, so leaving B with no refresh in flight would strand the
+  // capture hook's queued stale snapshot until an unrelated stale event
+  // or page reload happens to retrigger the callback.
+  const refreshInFlightTokenRef = useRef<string | null>(null);
+  const requestRefreshAccessVersion = useCallback(() => {
+    const token = tokenFromPath;
+    if (!token) return;
+    // Same-token re-entry → drop. Different-token re-entry → allow; the
+    // older fetch will land in storage but its `setSession` is gated by
+    // `tokenFromPathRef`.
+    if (refreshInFlightTokenRef.current === token) return;
+    refreshInFlightTokenRef.current = token;
+    void (async () => {
+      try {
+        const redeemResponse = await authFetch("/api/web/chatboxes/redeem", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chatboxToken: token }),
+        });
+        if (!redeemResponse.ok) return;
+        if (tokenFromPathRef.current !== token) return;
+        const redeemed = (await redeemResponse.json()) as {
+          chatboxId?: unknown;
+          accessVersion?: unknown;
+          bootstrap?: unknown;
+        };
+        if (tokenFromPathRef.current !== token) return;
+        const nextSession = normalizeChatboxSession({
+          chatboxId:
+            typeof redeemed.chatboxId === "string"
+              ? redeemed.chatboxId
+              : undefined,
+          accessVersion:
+            typeof redeemed.accessVersion === "number"
+              ? redeemed.accessVersion
+              : undefined,
+          payload: redeemed.bootstrap as ChatboxSession["payload"] | undefined,
+          surface: readChatboxSurfaceFromUrl(window.location.search),
+        });
+        if (!nextSession) return;
+        // Final guard before mutating shared session state: a navigation
+        // between the JSON parse and now would still race.
+        if (tokenFromPathRef.current !== token) return;
+        writeCurrentSession(nextSession);
+        setSession(nextSession);
+      } catch (error) {
+        console.warn(
+          "[ChatboxChatPage] Silent chatbox re-redeem failed",
+          error,
+        );
+      } finally {
+        // Only clear the latch if we're still the active in-flight refresh.
+        // A newer token's refresh may have already overwritten it; don't
+        // stomp on that one.
+        if (refreshInFlightTokenRef.current === token) {
+          refreshInFlightTokenRef.current = null;
+        }
+      }
+    })();
+  }, [tokenFromPath, writeCurrentSession]);
+
   const displayError = useMemo(
     () => getChatboxDisplayError(routeError),
     [routeError]
@@ -789,6 +871,7 @@ export function ChatboxChatPage({
             selectedServerIds: sessionServersActive.map(
               (server) => server.serverId
             ),
+            requestRefreshAccessVersion,
           }}
           executionConfig={{
             modelId: session.payload.modelId,
