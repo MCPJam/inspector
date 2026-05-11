@@ -21,6 +21,7 @@ const {
   projectServersState,
   projectsBulkServersState,
   emitEmbeddedBlobReadMock,
+  sentryCaptureMessageMock,
   organizationBillingStatusState,
   useOrganizationBillingStatusMock,
   serializeServersForSharingMock,
@@ -44,6 +45,7 @@ const {
     isLoading: false as boolean,
   },
   emitEmbeddedBlobReadMock: vi.fn(),
+  sentryCaptureMessageMock: vi.fn(),
   organizationBillingStatusState: {
     value: undefined as
       | {
@@ -53,6 +55,10 @@ const {
   },
   useOrganizationBillingStatusMock: vi.fn(),
   serializeServersForSharingMock: vi.fn((servers) => servers),
+}));
+
+vi.mock("@sentry/react", () => ({
+  captureMessage: sentryCaptureMessageMock,
 }));
 
 vi.mock("sonner", () => ({
@@ -1910,7 +1916,7 @@ describe("useProjectState convexProjects merge under loading", () => {
   });
 });
 
-describe("useProjectState bulk-server query (PR-I1)", () => {
+describe("useProjectState bulk-server query", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
@@ -2172,5 +2178,281 @@ describe("useProjectState bulk-server query (PR-I1)", () => {
     await waitFor(() => {
       expect(result.current.isLoadingBulkServers).toBe(true);
     });
+  });
+});
+
+describe("useProjectState cold-share data-loss guard", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    projectQueryState.allProjects = [];
+    projectQueryState.projects = [];
+    projectQueryState.isLoading = false;
+    projectServersState.servers = undefined;
+    projectServersState.isLoading = false;
+    projectsBulkServersState.serversByProject = {};
+    projectsBulkServersState.isLoading = false;
+    sentryCaptureMessageMock.mockReset();
+    createProjectMock.mockResolvedValue("new-remote-id");
+    organizationBillingStatusState.value = { canManageBilling: true };
+    useOrganizationBillingStatusMock.mockImplementation(
+      () => organizationBillingStatusState.value,
+    );
+  });
+
+  it("captures a Sentry message when handleDuplicateProject sends empty servers but the bulk query has servers for the source", async () => {
+    // The first remote project is treated as the active project by the hook
+    // when no explicit selection exists; its servers route through the flat
+    // single-project query rather than through the bulk query. The spacer
+    // claims that slot so `remote-1` exercises the bulk-query path under
+    // test.
+    projectQueryState.allProjects = [
+      {
+        _id: "active-spacer",
+        name: "Active",
+        servers: {},
+        ownerId: "u1",
+        organizationId: "org-route",
+        createdAt: 0,
+        updatedAt: 0,
+      },
+      {
+        _id: "remote-1",
+        name: "Source Project",
+        servers: {}, // empty in-record copy — before the bulk-query swap the picker had a stale read
+        ownerId: "u1",
+        organizationId: "org-route",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    projectQueryState.projects = projectQueryState.allProjects;
+    // The bulk query KNOWS the source has servers — but the user clicked
+    // duplicate before the bulk hydration propagated into the project
+    // state. Without the guard, this would silently create an empty
+    // duplicate.
+    projectsBulkServersState.serversByProject = {
+      "remote-1": [{ name: "s1" } as any, { name: "s2" } as any],
+    };
+
+    const appState = createAppState({
+      default: createSyntheticDefaultProject(),
+    });
+    const { result } = renderUseProjectState({
+      appState,
+      activeOrganizationId: "org-route",
+      hasOrganizations: true,
+      isLoadingOrganizations: false,
+      validOrganizationIds: ["org-route"],
+    });
+
+    // Simulate the cold-duplicate race: when handleDuplicateProject reads
+    // sourceProject.servers, the bulk-fed version hasn't been threaded into
+    // effectiveProjects yet (this mirrors a window of a few render frames
+    // in production). The serializer mock is identity, so an empty source
+    // map → empty serialized payload.
+    serializeServersForSharingMock.mockImplementationOnce(() => ({}));
+
+    await act(async () => {
+      await result.current.handleDuplicateProject("remote-1", "Copy");
+    });
+
+    expect(sentryCaptureMessageMock).toHaveBeenCalledTimes(1);
+    const [message, options] = sentryCaptureMessageMock.mock.calls[0];
+    expect(message).toMatch(/Cold-share data-loss invariant tripped/);
+    expect(options.level).toBe("error");
+    expect(options.extra.callSite).toBe("duplicate");
+    expect(options.extra.sourceProjectId).toBe("remote-1");
+    expect(options.extra.serializedServerCount).toBe(0);
+    expect(options.extra.bulkServerCount).toBe(2);
+  });
+
+  it("does not fire when the serialized payload is non-empty", async () => {
+    // Two projects: an active one (its servers come from the flat query, not
+    // the bulk query) and a non-active duplicate target (the one we
+    // exercise). Without the spacer the picker treats the first remote
+    // project as active and routes its server count through the empty flat
+    // query instead of through the bulk-query path we want to test.
+    projectQueryState.allProjects = [
+      {
+        _id: "active-spacer",
+        name: "Active",
+        servers: {},
+        ownerId: "u1",
+        organizationId: "org-route",
+        createdAt: 0,
+        updatedAt: 0,
+      },
+      {
+        _id: "remote-2",
+        name: "Source Project",
+        servers: { good: { name: "good" } },
+        ownerId: "u1",
+        organizationId: "org-route",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    projectQueryState.projects = projectQueryState.allProjects;
+    projectsBulkServersState.serversByProject = {
+      "remote-2": [{ name: "good" } as any],
+    };
+
+    const appState = createAppState({
+      default: createSyntheticDefaultProject(),
+    });
+    const { result } = renderUseProjectState({
+      appState,
+      activeOrganizationId: "org-route",
+      hasOrganizations: true,
+      isLoadingOrganizations: false,
+      validOrganizationIds: ["org-route"],
+    });
+
+    await act(async () => {
+      await result.current.handleDuplicateProject("remote-2", "Copy");
+    });
+
+    expect(sentryCaptureMessageMock).not.toHaveBeenCalled();
+    expect(createProjectMock).toHaveBeenCalled();
+  });
+
+  it("does not fire when the source project legitimately has no servers", async () => {
+    projectQueryState.allProjects = [
+      {
+        _id: "active-spacer",
+        name: "Active",
+        servers: {},
+        ownerId: "u1",
+        organizationId: "org-route",
+        createdAt: 0,
+        updatedAt: 0,
+      },
+      {
+        _id: "remote-3",
+        name: "Empty Project",
+        servers: {},
+        ownerId: "u1",
+        organizationId: "org-route",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    projectQueryState.projects = projectQueryState.allProjects;
+    // Bulk query confirmed the source is genuinely empty.
+    projectsBulkServersState.serversByProject = {
+      "remote-3": [],
+    };
+
+    const appState = createAppState({
+      default: createSyntheticDefaultProject(),
+    });
+    const { result } = renderUseProjectState({
+      appState,
+      activeOrganizationId: "org-route",
+      hasOrganizations: true,
+      isLoadingOrganizations: false,
+      validOrganizationIds: ["org-route"],
+    });
+
+    serializeServersForSharingMock.mockImplementationOnce(() => ({}));
+
+    await act(async () => {
+      await result.current.handleDuplicateProject("remote-3", "Copy");
+    });
+
+    expect(sentryCaptureMessageMock).not.toHaveBeenCalled();
+    expect(createProjectMock).toHaveBeenCalled();
+  });
+
+  it("captures the import call site with a null bulkServerCount", async () => {
+    projectQueryState.allProjects = [];
+    projectQueryState.projects = [];
+
+    const appState = createAppState({
+      default: createSyntheticDefaultProject(),
+    });
+    const { result } = renderUseProjectState({
+      appState,
+      activeOrganizationId: "org-route",
+      hasOrganizations: true,
+      isLoadingOrganizations: false,
+      validOrganizationIds: ["org-route"],
+    });
+
+    serializeServersForSharingMock.mockImplementationOnce(() => ({}));
+
+    await act(async () => {
+      await result.current.handleImportProject({
+        id: "import-1",
+        name: "Imported",
+        // The user pasted a file that claims the project has servers, but
+        // the post-serialize shape came out empty. This is the only
+        // realistic way the assertion fires on the import path.
+        servers: { ghost: { name: "ghost" } as any },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as any);
+    });
+
+    expect(sentryCaptureMessageMock).toHaveBeenCalledTimes(1);
+    const [, options] = sentryCaptureMessageMock.mock.calls[0];
+    expect(options.extra.callSite).toBe("import");
+    expect(options.extra.bulkServerCount).toBeNull();
+    expect(options.extra.embeddedServerCount).toBe(1);
+  });
+
+  it("captures the migrate call site when local-project migration serializes to empty", async () => {
+    // Local-only project with servers, ready to be migrated to Convex.
+    // The migration effect auto-fires on mount when an authenticated user
+    // has a matching organization and a local project that needs sharing.
+    projectQueryState.allProjects = [];
+    projectQueryState.projects = [];
+
+    const appState = createAppState({
+      default: createSyntheticDefaultProject(),
+      "local-1": createLocalProject("local-1", {
+        name: "Local with servers",
+        organizationId: "org-migrate",
+        servers: {
+          demo: {
+            name: "demo",
+            config: { url: "https://example.com/mcp" } as any,
+            lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+            connectionStatus: "disconnected",
+            retryCount: 0,
+          },
+        },
+      }),
+    });
+
+    // Force the serializer to drop every server. This is the only realistic
+    // way to trip the assertion on the migrate path — a real bug in the
+    // serialize step (or a future regression that nukes the map) would
+    // look exactly like this from the caller's perspective.
+    serializeServersForSharingMock.mockImplementationOnce(() => ({}));
+
+    renderUseProjectState({
+      appState,
+      activeOrganizationId: "org-migrate",
+      hasOrganizations: true,
+      isLoadingOrganizations: false,
+      validOrganizationIds: ["org-migrate"],
+    });
+
+    await waitFor(() => {
+      expect(sentryCaptureMessageMock).toHaveBeenCalled();
+    });
+
+    const migrateCall = sentryCaptureMessageMock.mock.calls.find(
+      (c: any[]) => c[1]?.extra?.callSite === "migrate",
+    );
+    expect(migrateCall, "expected a migrate-callSite Sentry message").toBeDefined();
+    expect(migrateCall![1].extra.serializedServerCount).toBe(0);
+    // local-only project ids never appear in the bulk-query map, so
+    // bulkServerCount is null for the migrate path by construction.
+    expect(migrateCall![1].extra.bulkServerCount).toBeNull();
+    expect(migrateCall![1].extra.embeddedServerCount).toBe(1);
+    expect(migrateCall![1].extra.sourceProjectId).toBe("local-1");
   });
 });

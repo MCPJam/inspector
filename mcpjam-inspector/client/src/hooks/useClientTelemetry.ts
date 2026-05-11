@@ -7,16 +7,11 @@ interface EmbeddedBlobReadEvent {
 }
 
 /**
- * Fire-and-forget telemetry emit for the vestigial embedded `servers` blob on
- * `RemoteProject`. Each `projectId` is reported at most once per browser
- * session, so the volume is bounded by the user's distinct non-active project
- * count. Failures are swallowed — a busted telemetry pipe must never affect
- * the picker.
- *
- * The backend's `telemetry.recordClientEvent` mutation logs a
- * `[mcpjam_client_telemetry]` line that the Axiom "Project Picker Latency"
- * dashboard counts; PR-B2 gates the embedded-blob removal on this count being
- * zero for seven consecutive days.
+ * Fire-and-forget telemetry emit for reads of the in-record `servers` map on
+ * a `RemoteProject`. Each `projectId` is reported at most once per browser
+ * session, so the volume is bounded by the user's distinct non-active
+ * project count. Failures are swallowed — a busted telemetry pipe must
+ * never affect the picker.
  */
 export function useEmbeddedBlobReadTelemetry() {
   const recordClientEvent = useMutation(
