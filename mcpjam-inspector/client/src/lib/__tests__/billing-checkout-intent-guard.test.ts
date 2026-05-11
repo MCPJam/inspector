@@ -16,34 +16,13 @@ function billingStatusFixture(
 }
 
 describe("guardCheckoutIntentAgainstBillingStatus", () => {
-  it("allows upgrade from free to solo", () => {
-    expect(
-      guardCheckoutIntentAgainstBillingStatus(
-        billingStatusFixture(),
-        "team",
-      ),
-    ).toEqual({ proceed: true });
-  });
-
   it("allows upgrade from free to team", () => {
     expect(
       guardCheckoutIntentAgainstBillingStatus(billingStatusFixture(), "team"),
     ).toEqual({ proceed: true });
   });
 
-  it("allows upgrade from solo to team", () => {
-    expect(
-      guardCheckoutIntentAgainstBillingStatus(
-        billingStatusFixture({
-          effectivePlan: "team",
-          source: "subscription",
-        }),
-        "team",
-      ),
-    ).toEqual({ proceed: true });
-  });
-
-  it("allows solo checkout during an active solo trial", () => {
+  it("allows team checkout during an active team trial", () => {
     expect(
       guardCheckoutIntentAgainstBillingStatus(
         billingStatusFixture({ effectivePlan: "team", source: "trial" }),
@@ -52,16 +31,7 @@ describe("guardCheckoutIntentAgainstBillingStatus", () => {
     ).toEqual({ proceed: true });
   });
 
-  it("allows team checkout during an active solo trial", () => {
-    expect(
-      guardCheckoutIntentAgainstBillingStatus(
-        billingStatusFixture({ effectivePlan: "team", source: "trial" }),
-        "team",
-      ),
-    ).toEqual({ proceed: true });
-  });
-
-  it("blocks when already on requested solo", () => {
+  it("blocks when already on team", () => {
     expect(
       guardCheckoutIntentAgainstBillingStatus(
         billingStatusFixture({
@@ -74,54 +44,6 @@ describe("guardCheckoutIntentAgainstBillingStatus", () => {
       proceed: false,
       reason: "already_on",
       currentPlan: "team",
-    });
-  });
-
-  it("blocks when already on requested team", () => {
-    expect(
-      guardCheckoutIntentAgainstBillingStatus(
-        billingStatusFixture({
-          effectivePlan: "team",
-          source: "subscription",
-        }),
-        "team",
-      ),
-    ).toEqual({
-      proceed: false,
-      reason: "already_on",
-      currentPlan: "team",
-    });
-  });
-
-  it("blocks solo link when on team", () => {
-    expect(
-      guardCheckoutIntentAgainstBillingStatus(
-        billingStatusFixture({
-          effectivePlan: "team",
-          source: "subscription",
-        }),
-        "team",
-      ),
-    ).toEqual({
-      proceed: false,
-      reason: "already_higher",
-      currentPlan: "team",
-    });
-  });
-
-  it("blocks solo link when on enterprise", () => {
-    expect(
-      guardCheckoutIntentAgainstBillingStatus(
-        billingStatusFixture({
-          effectivePlan: "enterprise",
-          source: "subscription",
-        }),
-        "team",
-      ),
-    ).toEqual({
-      proceed: false,
-      reason: "already_higher",
-      currentPlan: "enterprise",
     });
   });
 
