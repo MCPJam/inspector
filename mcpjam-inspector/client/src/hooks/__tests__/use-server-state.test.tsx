@@ -2,7 +2,10 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { flushSync } from "react-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppState, AppAction, ServerWithName } from "@/state/app-types";
-import { CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE } from "@/lib/client-config";
+import {
+  CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
+  PROJECT_NOT_PROVISIONED_ERROR_MESSAGE,
+} from "@/lib/client-config";
 import type { ProjectClientConfig } from "@/lib/client-config";
 import { useClientConfigStore } from "@/stores/client-config-store";
 import { useHostContextStore } from "@/stores/host-context-store";
@@ -18,6 +21,9 @@ const {
   clearOAuthDataMock,
   readStoredOAuthConfigMock,
   testConnectionMock,
+  reconnectServerMock,
+  getInitializationInfoMock,
+  tryResolveProjectServerMock,
   mockConvexQuery,
   mockCreateServer,
   mockUpdateServer,
@@ -31,6 +37,11 @@ const {
   clearOAuthDataMock: vi.fn(),
   readStoredOAuthConfigMock: vi.fn(),
   testConnectionMock: vi.fn(),
+  reconnectServerMock: vi.fn(),
+  getInitializationInfoMock: vi.fn(),
+  tryResolveProjectServerMock: vi.fn<
+    (serverNameOrId: string) => { projectId: string; serverId: string } | null
+  >(() => null),
   mockConvexQuery: vi.fn(),
   mockCreateServer: vi.fn(),
   mockUpdateServer: vi.fn(),
@@ -53,8 +64,8 @@ vi.mock("@/state/mcp-api", () => ({
   testConnection: testConnectionMock,
   deleteServer: vi.fn(),
   listServers: vi.fn(),
-  reconnectServer: vi.fn(),
-  getInitializationInfo: vi.fn(),
+  reconnectServer: reconnectServerMock,
+  getInitializationInfo: getInitializationInfoMock,
 }));
 
 vi.mock("@/state/oauth-orchestrator", () => ({
@@ -73,7 +84,7 @@ vi.mock("@/lib/oauth/mcp-oauth", () => ({
 vi.mock("@/lib/apis/web/context", () => ({
   injectHostedServerMapping: vi.fn(),
   tryGetHostedServerDisplayName: vi.fn(),
-  tryResolveProjectServer: vi.fn(() => null),
+  tryResolveProjectServer: tryResolveProjectServerMock,
 }));
 
 vi.mock("@/lib/session-token", () => ({
@@ -185,6 +196,18 @@ function renderUseServerState(
     })
   );
 }
+
+beforeEach(() => {
+  tryResolveProjectServerMock.mockReturnValue({
+    projectId: "project_default",
+    serverId: "srv_demo",
+  });
+  reconnectServerMock.mockReset();
+  getInitializationInfoMock.mockResolvedValue({
+    success: true,
+    initInfo: null,
+  });
+});
 
 describe("useServerState effective server projection", () => {
   beforeEach(() => {
@@ -322,6 +345,10 @@ describe("useServerState OAuth callback failures", () => {
     mockConvexQuery.mockResolvedValue(null);
     mockCreateServer.mockReset();
     mockUpdateServer.mockReset();
+    tryResolveProjectServerMock.mockReturnValue({
+      projectId: "project_default",
+      serverId: "srv_demo",
+    });
   });
 
   it("marks the pending server as failed when authorization is denied", async () => {
@@ -457,30 +484,31 @@ describe("useServerState OAuth callback failures", () => {
     renderUseServerState(dispatch, appState);
 
     await waitFor(() => {
-      expect(testConnectionMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          url: "https://example.com/mcp",
-          requestInit: expect.objectContaining({
-            headers: expect.objectContaining({
-              Authorization: "Bearer access-token",
-              "x-existing-header": "present",
-            }),
-          }),
-          timeout: 15000,
-          capabilities: {
-            roots: {
-              listChanged: true,
-            },
-          },
-          clientCapabilities: {
-            roots: {
-              listChanged: true,
-            },
-          },
-        }),
-        "demo-server"
-      );
+      expect(testConnectionMock).toHaveBeenCalled();
     });
+
+    expect(testConnectionMock.mock.calls.at(-1)?.[0]).toEqual(
+      expect.objectContaining({
+        url: "https://example.com/mcp",
+        requestInit: expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: "Bearer access-token",
+            "x-existing-header": "present",
+          }),
+        }),
+        timeout: 15000,
+        capabilities: {
+          roots: {
+            listChanged: true,
+          },
+        },
+        clientCapabilities: {
+          roots: {
+            listChanged: true,
+          },
+        },
+      })
+    );
 
     const upsertAction = dispatch.mock.calls.find(
       ([action]) => action.type === "UPSERT_SERVER"
@@ -528,18 +556,19 @@ describe("useServerState OAuth callback failures", () => {
     renderUseServerState(dispatch, appState);
 
     await waitFor(() => {
-      expect(testConnectionMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          url: "https://example.com/mcp",
-          requestInit: expect.objectContaining({
-            headers: expect.objectContaining({
-              Authorization: "Bearer access-token",
-            }),
+      expect(testConnectionMock).toHaveBeenCalled();
+    });
+
+    expect(testConnectionMock.mock.calls.at(-1)?.[0]).toEqual(
+      expect.objectContaining({
+        url: "https://example.com/mcp",
+        requestInit: expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: "Bearer access-token",
           }),
         }),
-        "demo-server"
-      );
-    });
+      })
+    );
 
     const connectConfig = testConnectionMock.mock.calls.at(-1)?.[0];
     expect(connectConfig).not.toHaveProperty("command");
@@ -567,6 +596,62 @@ describe("useServerState OAuth callback failures", () => {
     expect(
       dispatch.mock.calls.some(([action]) => action.type === "CONNECT_REQUEST")
     ).toBe(false);
+  });
+
+  it("blocks connect while the active project is still provisioning", async () => {
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, createAppState(), {
+      isAuthenticated: true,
+      useLocalFallback: false,
+    });
+
+    await act(async () => {
+      await result.current.handleConnect({
+        name: "new-server",
+        type: "http",
+        url: "https://example.com/mcp",
+      });
+    });
+
+    expect(toastError).toHaveBeenCalledWith(
+      PROJECT_NOT_PROVISIONED_ERROR_MESSAGE
+    );
+    expect(testConnectionMock).not.toHaveBeenCalled();
+    expect(mockCreateServer).not.toHaveBeenCalled();
+    expect(
+      dispatch.mock.calls.some(([action]) => action.type === "CONNECT_REQUEST")
+    ).toBe(false);
+  });
+
+  it("uses the friendly provisioning message when the resolver mapping is missing", async () => {
+    tryResolveProjectServerMock.mockReturnValue(null);
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true,
+      useLocalFallback: false,
+      effectiveProjects: appState.projects,
+    });
+
+    await act(async () => {
+      await result.current.handleConnect({
+        name: "new-server",
+        type: "http",
+        url: "https://example.com/mcp",
+      });
+    });
+
+    expect(testConnectionMock).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "CONNECT_FAILURE",
+      name: "new-server",
+      error: PROJECT_NOT_PROVISIONED_ERROR_MESSAGE,
+    });
+    expect(toastError).toHaveBeenCalledWith(
+      PROJECT_NOT_PROVISIONED_ERROR_MESSAGE
+    );
   });
 
   it("applies project connection defaults on local reconnect", async () => {

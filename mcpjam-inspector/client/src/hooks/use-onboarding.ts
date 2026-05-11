@@ -25,6 +25,7 @@ interface UseOnboardingOptions {
   hasRemoteOnboardingState?: boolean;
   hasSeenOnboarding?: boolean;
   canPersistRemoteOnboarding?: boolean;
+  isProjectProvisioned?: boolean;
 }
 
 interface UseOnboardingReturn {
@@ -100,6 +101,7 @@ export function useOnboarding({
   hasRemoteOnboardingState = false,
   hasSeenOnboarding = false,
   canPersistRemoteOnboarding = false,
+  isProjectProvisioned = true,
 }: UseOnboardingOptions): UseOnboardingReturn {
   const posthog = usePostHog();
   const markOnboardingAsShownMutation = useMutation(
@@ -195,6 +197,7 @@ export function useOnboarding({
   useEffect(() => {
     if (isWorkOsAuthLoading || isSignedInWithWorkOs) return;
     if (didAutoConnectRef.current) return;
+    if (!isProjectProvisioned) return;
 
     if (hasRemoteOnboardingState) {
       if (hasSeenOnboarding) return;
@@ -232,6 +235,7 @@ export function useOnboarding({
     servers,
     isWorkOsAuthLoading,
     isSignedInWithWorkOs,
+    isProjectProvisioned,
     hasRemoteOnboardingState,
     hasSeenOnboarding,
     onConnect,

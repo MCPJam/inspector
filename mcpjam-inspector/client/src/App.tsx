@@ -2320,6 +2320,7 @@ export default function App() {
               isSignedInWithWorkOs={!!workOsUser}
               isWorkOsAuthLoading={isWorkOsLoading}
               isConvexAuthenticated={isAuthenticated}
+              isProjectProvisioned={Boolean(activeProject?.sharedProjectId)}
               hasSeenFirstRunOnboarding={remoteFirstRunOnboardingShown}
               isServerSyncing={isSelectedServerSyncing}
               onConnect={handleConnect}

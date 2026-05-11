@@ -88,6 +88,33 @@ describe("useOnboarding", () => {
     });
   });
 
+  it("waits for project provisioning before auto-connecting Excalidraw", async () => {
+    const onConnect = vi.fn();
+    const { rerender } = renderHook(
+      ({ isProjectProvisioned }: { isProjectProvisioned: boolean }) =>
+        useOnboarding({
+          servers: {},
+          onConnect,
+          isSignedInWithWorkOs: false,
+          isWorkOsAuthLoading: false,
+          isProjectProvisioned,
+        }),
+      {
+        initialProps: {
+          isProjectProvisioned: false,
+        },
+      }
+    );
+
+    expect(onConnect).not.toHaveBeenCalled();
+
+    rerender({ isProjectProvisioned: true });
+
+    await waitFor(() => {
+      expect(onConnect).toHaveBeenCalledWith(EXCALIDRAW_SERVER_CONFIG);
+    });
+  });
+
   it("does not show the onboarding overlay while auth is still settling", () => {
     const { result } = renderHook(() =>
       useOnboarding({
