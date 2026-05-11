@@ -620,12 +620,23 @@ export function ChatboxChatPage({
   // consumer. Errors are swallowed — the original error UI is owned by the
   // primary bootstrap effect above, and a refresh failure should leave the
   // already-mounted chat alone rather than tearing the UI down.
-  const refreshInFlightRef = useRef(false);
+  //
+  // The in-flight latch is keyed by *token*, not a plain boolean. A
+  // navigation that swaps `tokenFromPath` from A to B while A's redeem is
+  // still pending must not block B from starting its own refresh — A's
+  // response would be discarded by the token-staleness guards below
+  // anyway, so leaving B with no refresh in flight would strand the
+  // capture hook's queued stale snapshot until an unrelated stale event
+  // or page reload happens to retrigger the callback.
+  const refreshInFlightTokenRef = useRef<string | null>(null);
   const requestRefreshAccessVersion = useCallback(() => {
-    if (refreshInFlightRef.current) return;
     const token = tokenFromPath;
     if (!token) return;
-    refreshInFlightRef.current = true;
+    // Same-token re-entry → drop. Different-token re-entry → allow; the
+    // older fetch will land in storage but its `setSession` is gated by
+    // `tokenFromPathRef`.
+    if (refreshInFlightTokenRef.current === token) return;
+    refreshInFlightTokenRef.current = token;
     void (async () => {
       try {
         const redeemResponse = await authFetch("/api/web/chatboxes/redeem", {
@@ -665,7 +676,12 @@ export function ChatboxChatPage({
           error,
         );
       } finally {
-        refreshInFlightRef.current = false;
+        // Only clear the latch if we're still the active in-flight refresh.
+        // A newer token's refresh may have already overwritten it; don't
+        // stomp on that one.
+        if (refreshInFlightTokenRef.current === token) {
+          refreshInFlightTokenRef.current = null;
+        }
       }
     })();
   }, [tokenFromPath, writeCurrentSession]);
