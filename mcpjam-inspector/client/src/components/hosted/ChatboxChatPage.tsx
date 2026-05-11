@@ -520,6 +520,7 @@ export function ChatboxChatPage({
                 : undefined,
             payload: redeemed.bootstrap as ChatboxSession["payload"] | undefined,
             surface: readChatboxSurfaceFromUrl(window.location.search),
+            shareToken: tokenFromPath ?? undefined,
           });
           if (!nextSession) {
             throw createChatboxRouteError(
@@ -663,6 +664,7 @@ export function ChatboxChatPage({
               : undefined,
           payload: redeemed.bootstrap as ChatboxSession["payload"] | undefined,
           surface: readChatboxSurfaceFromUrl(window.location.search),
+          shareToken: token,
         });
         if (!nextSession) return;
         // Final guard before mutating shared session state: a navigation
@@ -743,12 +745,15 @@ export function ChatboxChatPage({
     };
   }, [session]);
 
+  const shareableToken =
+    tokenFromPath ?? session?.shareToken?.trim() ?? null;
+
   const handleCopyLink = useCallback(async () => {
-    // The share URL is what the viewer is currently on — `tokenFromPath`
-    // is the canonical source. The session itself no longer carries the
-    // link token after the redeem refactor; persisting it on the read
-    // path would re-introduce the very token plumbing we removed.
-    const token = tokenFromPath?.trim();
+    // Token preference: live URL → persisted `session.shareToken`. After
+    // redeem we strip the token from the address bar via replaceState,
+    // so `session.shareToken` (captured at redeem time) is what makes
+    // Copy link work across reloads.
+    const token = shareableToken;
     if (!session || !token) {
       toast.error("Chatbox link unavailable");
       return;
@@ -767,7 +772,7 @@ export function ChatboxChatPage({
     } catch {
       toast.error("Failed to copy chatbox link");
     }
-  }, [session, tokenFromPath]);
+  }, [session, shareableToken]);
 
   const handleOpenMcpJam = useCallback(() => {
     clearChatboxSession();
@@ -925,7 +930,7 @@ export function ChatboxChatPage({
               />
             </button>
             <div className="flex flex-1 items-center justify-end gap-1.5">
-              {session ? (
+              {session && shareableToken ? (
                 <Button
                   variant="ghost"
                   size="sm"
