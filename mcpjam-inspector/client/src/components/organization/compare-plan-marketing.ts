@@ -42,8 +42,8 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
       },
       {
         label: "Projects",
-        free: t("1"),
-        team: t("10", true),
+        free: t("3"),
+        team: t("3", true),
         enterprise: t("Custom", true),
       },
       {
