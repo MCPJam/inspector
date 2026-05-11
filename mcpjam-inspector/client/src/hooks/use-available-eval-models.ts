@@ -1,14 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
-import type { ModelDefinition } from "@/shared/types";
+import { useConvexAuth, useQuery } from "convex/react";
+import {
+  isMCPJamProvidedModel,
+  type ModelDefinition,
+} from "@/shared/types";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 import { useCustomProviders } from "@/hooks/use-custom-providers";
 import {
   detectOllamaModels,
   detectOllamaToolCapableModels,
 } from "@/lib/ollama-utils";
-import { buildAvailableModels } from "@/components/chat-v2/shared/model-helpers";
+import {
+  buildAvailableModels,
+  buildAvailableModelsFromOrgConfig,
+} from "@/components/chat-v2/shared/model-helpers";
+import { HOSTED_MODE } from "@/lib/config";
+import type { OrgModelProvider } from "@/hooks/use-org-model-config";
 
-export function useAvailableEvalModels() {
+export function useAvailableEvalModels(
+  organizationId?: string | null,
+) {
   const {
     hasToken,
     getOpenRouterSelectedModels,
@@ -67,25 +78,41 @@ export function useAvailableEvalModels() {
     };
   }, [getOllamaBaseUrl]);
 
-  const availableModels = useMemo(
-    () =>
-      buildAvailableModels({
-        hasToken,
-        getOpenRouterSelectedModels,
-        isOllamaRunning,
-        ollamaModels,
-        getAzureBaseUrl,
-        customProviders,
-      }),
-    [
+  const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
+  const hostedOrgModelConfig = useQuery(
+    "organizationModelProviders:getVisibleConfig" as any,
+    HOSTED_MODE && isConvexAuthenticated && organizationId
+      ? ({ organizationId } as any)
+      : "skip",
+  ) as { providers: OrgModelProvider[] } | undefined;
+
+  const availableModels = useMemo(() => {
+    const localModels = buildAvailableModels({
       hasToken,
       getOpenRouterSelectedModels,
       isOllamaRunning,
       ollamaModels,
       getAzureBaseUrl,
       customProviders,
-    ],
-  );
+    });
+    if (HOSTED_MODE) {
+      if (hostedOrgModelConfig) {
+        return buildAvailableModelsFromOrgConfig(hostedOrgModelConfig);
+      }
+      return localModels.filter((model) =>
+        isMCPJamProvidedModel(String(model.id)),
+      );
+    }
+    return localModels;
+  }, [
+    hasToken,
+    getOpenRouterSelectedModels,
+    isOllamaRunning,
+    ollamaModels,
+    getAzureBaseUrl,
+    customProviders,
+    hostedOrgModelConfig,
+  ]);
 
   return { availableModels };
 }

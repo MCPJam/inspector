@@ -36,6 +36,15 @@ vi.mock("@/lib/ollama-utils", () => ({
 vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
   buildAvailableModels: (...args: unknown[]) =>
     mockBuildAvailableModels(...args),
+  buildAvailableModelsFromOrgConfig: vi.fn().mockReturnValue([]),
+}));
+
+vi.mock("convex/react", () => ({
+  useQuery: vi.fn().mockReturnValue(undefined),
+  useConvexAuth: vi.fn().mockReturnValue({
+    isAuthenticated: false,
+    isLoading: false,
+  }),
 }));
 
 describe("useAvailableEvalModels", () => {

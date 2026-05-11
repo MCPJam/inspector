@@ -211,7 +211,7 @@ describe("useEvalHandlers", () => {
       });
     });
 
-    it("applies iterationOverride to every test in the request", async () => {
+    it("sends iterationOverride as a top-level field while tests[].runs preserves the persisted default", async () => {
       mockConvexQuery.mockResolvedValueOnce([
         {
           _id: "tc-1",
@@ -225,7 +225,7 @@ describe("useEvalHandlers", () => {
           _id: "tc-2",
           title: "case B",
           query: "q b",
-          runs: 7, // stored default that override must replace
+          runs: 7, // persisted default — must NOT be replaced by the override
           models: [{ model: "gpt-4", provider: "openai" }],
           expectedToolCalls: [],
         },
@@ -246,8 +246,9 @@ describe("useEvalHandlers", () => {
 
       const requestBody = JSON.parse(mockAuthFetch.mock.calls[0][1].body);
       expect(requestBody.tests.length).toBe(2);
-      expect(requestBody.tests[0].runs).toBe(4);
-      expect(requestBody.tests[1].runs).toBe(4);
+      expect(requestBody.tests[0].runs).toBe(1);
+      expect(requestBody.tests[1].runs).toBe(7);
+      expect(requestBody.iterationOverride).toBe(4);
     });
 
     it("includes promptTurns and expectedOutput when rerunning saved cases", async () => {
@@ -1061,44 +1062,6 @@ describe("useEvalHandlers", () => {
           method: "POST",
           headers: { "Content-Type": "application/json" },
         }),
-      );
-    });
-
-    it("requires browser API keys for replay (shows toast error when missing)", async () => {
-      mockProviderHasToken.mockReturnValue(false);
-
-      const { result } = renderHook(() =>
-        useEvalHandlers({
-          ...defaultProps,
-          selectedSuiteEntry: {
-            latestRun: {
-              _id: "run-source",
-              hasServerReplayConfig: true,
-            },
-            recentRuns: [],
-          } as any,
-        }),
-      );
-
-      await act(async () => {
-        await result.current.handleReplayRun(
-          {
-            _id: "suite-no-keys",
-            name: "Suite",
-            description: "Needs external provider",
-            source: "sdk",
-            environment: { servers: ["server-1"] },
-          } as any,
-          {
-            _id: "run-source",
-            hasServerReplayConfig: true,
-          } as any,
-        );
-      });
-
-      expect(mockAuthFetch).not.toHaveBeenCalled();
-      expect(toast.error).toHaveBeenCalledWith(
-        expect.stringMatching(/API key.*Settings/i),
       );
     });
 

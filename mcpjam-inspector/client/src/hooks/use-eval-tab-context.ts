@@ -18,7 +18,11 @@ export function useEvalTabContext({
 }) {
   void isDirectGuest;
   const appState = useSharedAppState();
-  const { availableModels } = useAvailableEvalModels();
+  const activeProject = appState.activeProjectId
+    ? appState.projects?.[appState.activeProjectId]
+    : undefined;
+  const organizationId = activeProject?.organizationId ?? null;
+  const { availableModels } = useAvailableEvalModels(organizationId);
   const { members, canManageMembers } = useProjectMembers({
     isAuthenticated,
     projectId,

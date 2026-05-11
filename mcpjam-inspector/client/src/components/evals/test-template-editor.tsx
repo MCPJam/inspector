@@ -13,13 +13,10 @@ import {
   ArrowLeft,
   Code2,
   Loader2,
-  MoreHorizontal,
   Play,
-  Plus,
   RotateCw,
   Save,
   Square,
-  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
@@ -29,25 +26,18 @@ import {
 } from "@/lib/apis/evals-api";
 import { Button } from "@mcpjam/design-system/button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@mcpjam/design-system/dropdown-menu";
-import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
 import { TestCasePromptFlow } from "./test-case-prompt-flow";
+import { TestCaseIterationsTable } from "./test-case-iterations-table";
 import { CompareRunChatSurface } from "./compare-run-chat-surface";
 import { EvalTraceSurface } from "./eval-trace-surface";
 import {
   ModelCompareCardHeader,
   type MultiModelCardSummary,
 } from "@/components/chat-v2/model-compare-card-header";
-import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import type { ModelDefinition } from "@/shared/types";
 import {
@@ -56,7 +46,6 @@ import {
   prepareSingleTestCaseRun,
   resolveSelectedTestCaseModelValue,
   setPersistedTestCaseModelValue,
-  type TestCaseModelOption,
 } from "./single-test-case-runner";
 import {
   deriveLegacyPromptFields,
@@ -100,7 +89,8 @@ import {
   hasUnavailableServers,
   normalizeSuiteServerRefs,
 } from "./use-eval-handlers";
-import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-logo";
+import { ModelSelector } from "@/components/chat-v2/chat-input/model-selector";
+import type { ModelProvider } from "@/shared/types";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import {
   reduceEvalStreamEvent,
@@ -189,10 +179,6 @@ function deriveIsNegativeTestFromPromptTurns(
   promptTurns: PromptTurn[]
 ): boolean {
   return promptTurns.every((turn) => turn.expectedToolCalls.length === 0);
-}
-
-function compactModelLabel(name: string): string {
-  return name.replace(/\s*\(Free\)\s*$/i, "").trim() || name;
 }
 
 const validatePromptTurns = (promptTurns: PromptTurn[]): boolean => {
@@ -342,7 +328,6 @@ export function TestTemplateEditor({
   projectServers,
 }: TestTemplateEditorProps) {
   const { getAccessToken } = useAuth();
-  const { getToken, hasToken } = useAiProviderKeys();
   const hostStyle = usePreferencesStore((state) => state.hostStyle);
   const setHostStyle = usePreferencesStore((state) => state.setHostStyle);
   const [editForm, setEditForm] = useState<TestTemplate | null>(null);
@@ -359,7 +344,6 @@ export function TestTemplateEditor({
     }>
   >([]);
   const [selectedModelValues, setSelectedModelValues] = useState<string[]>([]);
-  const [addModelMenuOpen, setAddModelMenuOpen] = useState(false);
   const [compareRunRecords, setCompareRunRecords] = useState<
     Record<string, CompareRunRecord>
   >({});
@@ -378,6 +362,12 @@ export function TestTemplateEditor({
     []
   );
   const [isRunningCompare, setIsRunningCompare] = useState(false);
+  /**
+   * Transient per-run iteration count (1-10). Applies to the next Run
+   * triggered from this editor; does NOT mutate the persisted
+   * `EvalCase.runs` default. Mirrors the suite-header picker.
+   */
+  const [iterationOverride, setIterationOverride] = useState<number>(1);
   /** Concurrent compare `handleRunCompare` calls; used only for global `isRunningCompare`. */
   const compareHandlesInFlightRef = useRef(0);
   /**
@@ -440,7 +430,6 @@ export function TestTemplateEditor({
     setMobileVisibleModelValue(null);
     setExpandedPromptTurnIds([]);
     initializedSelectionCaseRef.current = null;
-    setAddModelMenuOpen(false);
   }, [openCompareFromRoute, selectedTestCaseId]);
 
   useEffect(() => {
@@ -482,6 +471,12 @@ export function TestTemplateEditor({
       advancedConfig: normalizeAdvancedConfig(currentTestCase.advancedConfig),
     });
     setExpandedPromptTurnIds(promptTurns.map((turn) => turn.id));
+    // Seed the transient picker from the persisted runs so a user who saved
+    // runs=N still sees N selected when the editor opens. Clamp to [1, 10]
+    // — the picker only exposes that range.
+    setIterationOverride(
+      Math.max(1, Math.min(10, currentTestCase.runs ?? 1)),
+    );
   }, [currentTestCase?._id]);
 
   const missingServers = useMemo(() => {
@@ -879,15 +874,44 @@ export function TestTemplateEditor({
     [modelOptions]
   );
 
-  const modelOptionByValue = useMemo(
+  const modelDefinitionsForSelector = useMemo<ModelDefinition[]>(
     () =>
-      Object.fromEntries(
-        modelOptions.map(
-          (option) => [option.value, option] as [string, TestCaseModelOption]
-        )
-      ),
-    [modelOptions]
+      modelOptions.map((option) => ({
+        id: option.model,
+        name: option.label,
+        provider: option.provider as ModelProvider,
+      })),
+    [modelOptions],
   );
+
+  const modelDefinitionByValue = useMemo(
+    () =>
+      new Map(
+        modelDefinitionsForSelector.map(
+          (model) =>
+            [`${model.provider}/${String(model.id)}`, model] as const,
+        ),
+      ),
+    [modelDefinitionsForSelector],
+  );
+
+  const selectedModelDefinitions = useMemo<ModelDefinition[]>(
+    () =>
+      selectedModelValues
+        .map((value) => modelDefinitionByValue.get(value))
+        .filter((model): model is ModelDefinition => !!model),
+    [selectedModelValues, modelDefinitionByValue],
+  );
+
+  const leadSelectedModel: ModelDefinition | null =
+    selectedModelDefinitions[0] ?? modelDefinitionsForSelector[0] ?? null;
+
+  const [multiModelEnabled, setMultiModelEnabled] = useState(false);
+  useEffect(() => {
+    if (selectedModelValues.length > 1) {
+      setMultiModelEnabled(true);
+    }
+  }, [selectedModelValues.length]);
 
   useEffect(() => {
     if (!currentTestCase?._id) {
@@ -1011,52 +1035,12 @@ export function TestTemplateEditor({
   }, [selectedModelValues, selectedTestCaseId]);
 
   useEffect(() => {
-    if (selectedModelValues.length > 0) {
-      setAddModelMenuOpen(false);
-    }
-  }, [selectedModelValues.length]);
-
-  useEffect(() => {
-    if (selectedModelValues.length > 0 || modelOptions.length === 0) {
-      return;
-    }
-
-    const onGlobalKeyDown = (event: globalThis.KeyboardEvent) => {
-      const target = event.target;
-      if (
-        target instanceof HTMLElement &&
-        (target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.isContentEditable)
-      ) {
-        return;
-      }
-
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        setAddModelMenuOpen(true);
-      }
-    };
-
-    window.addEventListener("keydown", onGlobalKeyDown);
-    return () => window.removeEventListener("keydown", onGlobalKeyDown);
-  }, [modelOptions.length, selectedModelValues.length]);
-
-  useEffect(() => {
     setMobileVisibleModelValue((current) =>
       current && selectedModelValues.includes(current)
         ? current
         : selectedModelValues[0] ?? null
     );
   }, [selectedModelValues]);
-
-  const addableModelOptions = useMemo(
-    () =>
-      modelOptions.filter(
-        (option) => !selectedModelValues.includes(option.value)
-      ),
-    [modelOptions, selectedModelValues]
-  );
 
   const selectedCompareRecords = useMemo(
     () =>
@@ -1103,53 +1087,22 @@ export function TestTemplateEditor({
     [currentTestCase?._id, selectedModelValues, suiteId]
   );
 
-  const handleAddModel = (modelValue: string) => {
-    setSelectedModelValues((previous) => {
-      if (previous.includes(modelValue)) {
-        return previous;
-      }
-      return [...previous, modelValue].slice(0, 3);
-    });
+  const modelDefToValue = (model: ModelDefinition) =>
+    `${model.provider}/${String(model.id)}`;
+
+  const handleSingleModelChange = (model: ModelDefinition) => {
+    setSelectedModelValues([modelDefToValue(model)]);
   };
 
-  const handleRemoveModel = (modelValue: string) => {
-    setSelectedModelValues((previous) =>
-      previous.filter((value) => value !== modelValue)
-    );
+  const handleSelectedModelsChange = (models: ModelDefinition[]) => {
+    setSelectedModelValues(models.map(modelDefToValue).slice(0, 3));
   };
 
-  const handleMakePrimaryModel = (modelValue: string) => {
-    setSelectedModelValues((previous) => {
-      if (!previous.includes(modelValue)) {
-        return previous;
-      }
-      const rest = previous.filter((value) => value !== modelValue);
-      return [modelValue, ...rest];
-    });
-  };
-
-  const handlePrimaryModelChange = (modelValue: string) => {
-    setSelectedModelValues((previous) => {
-      const tail = previous.slice(1).filter((v) => v !== modelValue);
-      return [modelValue, ...tail].slice(0, 3);
-    });
-  };
-
-  const handleReplaceModelAt = (index: number, newValue: string) => {
-    setSelectedModelValues((previous) => {
-      if (previous[index] === newValue) {
-        return previous;
-      }
-      const next = [...previous];
-      const otherIndex = next.findIndex(
-        (v, idx) => v === newValue && idx !== index
-      );
-      if (otherIndex >= 0) {
-        next[otherIndex] = next[index];
-      }
-      next[index] = newValue;
-      return next;
-    });
+  const handleMultiModelEnabledChange = (enabled: boolean) => {
+    setMultiModelEnabled(enabled);
+    if (!enabled) {
+      setSelectedModelValues((previous) => previous.slice(0, 1));
+    }
   };
 
   const handleStopCompare = useCallback(() => {
@@ -1276,13 +1229,11 @@ export function TestTemplateEditor({
           getAccessToken: isDirectGuest
             ? getGuestBearerToken
             : getAccessToken,
-          getToken,
-          hasToken,
           testCaseOverrides: {
             query: savePayload.query,
             expectedToolCalls: savePayload.expectedToolCalls,
             isNegativeTest: savePayload.isNegativeTest,
-            runs: savePayload.runs,
+            runs: iterationOverride,
             expectedOutput: savePayload.expectedOutput,
             promptTurns: savePayload.promptTurns,
             advancedConfig,
@@ -1930,6 +1881,24 @@ export function TestTemplateEditor({
                     </Button>
                   )
                 ) : null}
+                <label className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <span>Iterations</span>
+                  <select
+                    className="h-8 rounded-md border border-input bg-background px-2 text-foreground"
+                    value={iterationOverride}
+                    onChange={(e) =>
+                      setIterationOverride(Number(e.target.value))
+                    }
+                    aria-label="Iterations for the next run"
+                    disabled={isRunningCompare}
+                  >
+                    {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 {runDisabledTooltip ? (
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -2041,192 +2010,30 @@ export function TestTemplateEditor({
                   ) : null}
 
                   <div className="flex min-w-0 flex-1 items-center gap-2">
-                    <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                      {selectedModelValues.length === 0 ? (
-                        modelOptions.length === 0 ? (
-                          <span className="text-[13px] text-muted-foreground">
-                            No models
-                          </span>
-                        ) : (
-                          <DropdownMenu
-                            open={addModelMenuOpen}
-                            onOpenChange={setAddModelMenuOpen}
-                          >
-                            <DropdownMenuTrigger asChild>
-                              <button
-                                type="button"
-                                className="inline-flex h-8 max-w-[180px] shrink-0 items-center gap-2 rounded-full border border-border/60 bg-white px-2.5 text-left text-xs font-medium text-foreground shadow-none transition-colors hover:bg-muted/80 dark:bg-background dark:hover:bg-muted/40"
-                              >
-                                <Plus className="h-3.5 w-3.5 shrink-0" />
-                                <span className="truncate">Add model</span>
-                              </button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent
-                              align="start"
-                              className="max-h-64 overflow-y-auto"
-                            >
-                              {modelOptions.map((option) => (
-                                <DropdownMenuItem
-                                  key={option.value}
-                                  onClick={() => handleAddModel(option.value)}
-                                >
-                                  {option.label}
-                                </DropdownMenuItem>
-                              ))}
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        )
-                      ) : (
-                        <>
-                          {selectedModelValues.map((modelValue, index) => {
-                            const option = modelOptionByValue[modelValue];
-                            const label = resolveModelOptionLabel(
-                              modelValue,
-                              modelLabelByValue
-                            );
-                            const isSingleSelection =
-                              selectedModelValues.length === 1;
-
-                            return (
-                              <div
-                                key={modelValue}
-                                className={cn(
-                                  "flex h-8 max-w-[180px] shrink-0 items-center gap-1 rounded-full border px-2",
-                                  index === 0
-                                    ? "border-primary/25 bg-primary/5 text-foreground"
-                                    : "border-border/50 bg-muted/30 text-muted-foreground",
-                                )}
-                              >
-                                <ProviderLogo
-                                  provider={option?.provider ?? "custom"}
-                                  className="size-3.5 shrink-0"
-                                />
-                                <span
-                                  className={cn(
-                                    "min-w-0 flex-1 truncate text-xs font-medium",
-                                    index === 0
-                                      ? "text-foreground"
-                                      : "text-muted-foreground",
-                                  )}
-                                >
-                                  {compactModelLabel(label)}
-                                </span>
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger asChild>
-                                    <button
-                                      type="button"
-                                      className="shrink-0 rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-                                      aria-label={`Model options (${label})`}
-                                    >
-                                      <MoreHorizontal className="h-3.5 w-3.5" />
-                                    </button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent
-                                    align="start"
-                                    className="max-h-64 w-52 overflow-y-auto"
-                                  >
-                                    {modelOptions.length === 0 ? (
-                                      <div className="px-2 py-1.5 text-xs text-muted-foreground">
-                                        No models available
-                                      </div>
-                                    ) : (
-                                      modelOptions.map((opt) => (
-                                        <DropdownMenuItem
-                                          key={opt.value}
-                                          onClick={() =>
-                                            isSingleSelection
-                                              ? handlePrimaryModelChange(
-                                                  opt.value
-                                                )
-                                              : handleReplaceModelAt(
-                                                  index,
-                                                  opt.value
-                                                )
-                                          }
-                                        >
-                                          {opt.label}
-                                        </DropdownMenuItem>
-                                      ))
-                                    )}
-                                    {index > 0 ? (
-                                      <>
-                                        <DropdownMenuSeparator />
-                                        <DropdownMenuItem
-                                          onClick={() =>
-                                            handleMakePrimaryModel(modelValue)
-                                          }
-                                        >
-                                          Make lead model
-                                        </DropdownMenuItem>
-                                      </>
-                                    ) : null}
-                                    <DropdownMenuSeparator />
-                                    <DropdownMenuItem
-                                      className="text-destructive focus:text-destructive"
-                                      onClick={() =>
-                                        handleRemoveModel(modelValue)
-                                      }
-                                    >
-                                      Remove
-                                    </DropdownMenuItem>
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
-                                <button
-                                  type="button"
-                                  className="shrink-0 rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-                                  aria-label={`Remove ${label}`}
-                                  onClick={() => handleRemoveModel(modelValue)}
-                                >
-                                  <X className="h-3.5 w-3.5" />
-                                </button>
-                              </div>
-                            );
-                          })}
-                          {addableModelOptions.length > 0 &&
-                          selectedModelValues.length < 3 ? (
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <button
-                                  type="button"
-                                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border/60 bg-white text-foreground transition-colors hover:bg-muted/80 dark:bg-background dark:hover:bg-muted/50"
-                                  aria-label="Add model to compare"
-                                >
-                                  <Plus className="h-3.5 w-3.5" />
-                                </button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent
-                                align="end"
-                                className="max-h-64 overflow-y-auto"
-                              >
-                                {addableModelOptions.map((option) => (
-                                  <DropdownMenuItem
-                                    key={option.value}
-                                    onClick={() => handleAddModel(option.value)}
-                                  >
-                                    {option.label}
-                                  </DropdownMenuItem>
-                                ))}
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          ) : null}
-                        </>
-                      )}
-                    </div>
-
-                    {selectedModelValues.length > 1 ? (
-                      <button
-                        type="button"
-                        className="shrink-0 rounded p-1 text-[#9e9e9e] hover:bg-black/[0.04] hover:text-foreground dark:hover:bg-white/10"
-                        aria-label="Use lead model only"
-                        onClick={() =>
-                          setSelectedModelValues((previous) =>
-                            previous.slice(0, 1)
-                          )
+                    {modelDefinitionsForSelector.length === 0 ||
+                    !leadSelectedModel ? (
+                      <span className="text-[13px] text-muted-foreground">
+                        No models
+                      </span>
+                    ) : (
+                      <ModelSelector
+                        currentModel={leadSelectedModel}
+                        availableModels={modelDefinitionsForSelector}
+                        onModelChange={handleSingleModelChange}
+                        enableMultiModel
+                        multiModelEnabled={multiModelEnabled}
+                        selectedModels={
+                          selectedModelDefinitions.length > 0
+                            ? selectedModelDefinitions
+                            : [leadSelectedModel]
                         }
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    ) : null}
+                        onSelectedModelsChange={handleSelectedModelsChange}
+                        onMultiModelEnabledChange={
+                          handleMultiModelEnabledChange
+                        }
+                        maxSelectedModels={3}
+                      />
+                    )}
                   </div>
                 </div>
               </div>
@@ -2279,6 +2086,14 @@ export function TestTemplateEditor({
                 </Button>
               </div>
             ) : null}
+
+            <TestCaseIterationsTable
+              testCase={currentTestCase}
+              iterations={recentIterations ?? []}
+              serverNames={suite?.environment?.servers ?? []}
+              label="Iteration history"
+              emptyState="No iterations yet — run this case to see results here."
+            />
           </div>
         </div>
       ) : (
