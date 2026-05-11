@@ -25,6 +25,7 @@ import { ChatboxLauncher } from "./ChatboxLauncher";
 import { getDefaultHostedModelId, migrateBuilderDraft } from "./drafts";
 import type { ChatboxDraftConfig, ChatboxStarterDefinition } from "./types";
 import { useChatboxDemoSeed } from "./useChatboxDemoSeed";
+import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 
 interface ChatboxBuilderExperienceProps {
   projectId: string | null;
@@ -38,6 +39,9 @@ interface ChatboxBuilderExperienceProps {
     ctaLabel: string;
     onNavigateToBilling: () => void;
   } | null;
+  ensureServersReady?: (
+    serverNames: string[],
+  ) => Promise<EnsureServersReadyResult>;
 }
 
 export default function ChatboxBuilderExperience({
@@ -45,6 +49,7 @@ export default function ChatboxBuilderExperience({
   isCreateChatboxDisabled = false,
   isCreateChatboxLoading = false,
   createChatboxUpsell = null,
+  ensureServersReady,
 }: ChatboxBuilderExperienceProps) {
   const { isAuthenticated } = useConvexAuth();
   const { chatboxes, isLoading } = useChatboxList({
@@ -350,6 +355,7 @@ export default function ChatboxBuilderExperience({
           chatboxId={selectedChatboxId}
           draft={draft}
           initialViewMode={restoredViewMode}
+          ensureServersReady={ensureServersReady}
           onSavedDraft={handleSavedDraft}
           onBack={() => {
             clearBuilderSession();

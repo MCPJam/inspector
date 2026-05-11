@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import type { ChatboxSettings } from "@/hooks/useChatboxes";
 import { ChatboxBuilderView } from "../ChatboxBuilderView";
 import { CHATBOX_STARTERS, toDraftConfig } from "../drafts";
@@ -369,5 +369,121 @@ describe("ChatboxBuilderView", () => {
         loadingIndicatorVariant: "claude-mark",
       }),
     );
+  });
+
+  // Auto-connect: the builder Preview tab reuses the eval-style
+  // ensureServersReady so the local mcpClientManager actually has the
+  // chatbox's servers registered before the first message.
+  function createSavedChatboxWithServer(): ChatboxSettings {
+    const base = createSavedChatbox("claude");
+    return {
+      ...base,
+      servers: [
+        {
+          serverId: httpsServer._id,
+          serverName: httpsServer.name,
+          useOAuth: false,
+          serverUrl: httpsServer.url,
+          clientId: null,
+          oauthScopes: null,
+        },
+      ],
+    };
+  }
+
+  function lastChatTabProps(): Record<string, unknown> {
+    const call = mockChatTabV2.mock.calls.at(-1);
+    return (call?.[0] ?? {}) as Record<string, unknown>;
+  }
+
+  it("calls ensureServersReady with the configured server names on Preview open", async () => {
+    const chatbox = createSavedChatboxWithServer();
+    mockUseChatbox.mockReturnValue({ chatbox });
+    const ensureServersReady = vi.fn().mockResolvedValue({
+      readyServerNames: [httpsServer.name],
+      missingServerNames: [],
+      failedServerNames: [],
+      reauthServerNames: [],
+    });
+
+    render(
+      <ChatboxBuilderView
+        projectId="ws-1"
+        projectServers={[httpsServer]}
+        chatboxId={chatbox.chatboxId}
+        initialViewMode="preview"
+        ensureServersReady={ensureServersReady}
+        onBack={() => {}}
+        onSavedDraft={() => {}}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(ensureServersReady).toHaveBeenCalledWith([httpsServer.name]);
+    });
+    // Eventually unblocks the composer once the helper resolves.
+    await waitFor(() => {
+      expect(lastChatTabProps().chatboxComposerBlocked).toBe(false);
+    });
+  });
+
+  it("keeps the composer blocked with a reauth reason when ensureServersReady reports reauth", async () => {
+    const chatbox = createSavedChatboxWithServer();
+    mockUseChatbox.mockReturnValue({ chatbox });
+    const ensureServersReady = vi.fn().mockResolvedValue({
+      readyServerNames: [],
+      missingServerNames: [],
+      failedServerNames: [],
+      reauthServerNames: [httpsServer.name],
+    });
+
+    render(
+      <ChatboxBuilderView
+        projectId="ws-1"
+        projectServers={[httpsServer]}
+        chatboxId={chatbox.chatboxId}
+        initialViewMode="preview"
+        ensureServersReady={ensureServersReady}
+        onBack={() => {}}
+        onSavedDraft={() => {}}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(lastChatTabProps().chatboxComposerBlocked).toBe(true);
+    });
+    expect(lastChatTabProps().chatboxComposerBlockedReason).toContain(
+      "Reconnect",
+    );
+    expect(lastChatTabProps().chatboxComposerBlockedReason).toContain(
+      httpsServer.name,
+    );
+  });
+
+  it("does not invoke ensureServersReady while in setup mode", async () => {
+    const chatbox = createSavedChatboxWithServer();
+    mockUseChatbox.mockReturnValue({ chatbox });
+    const ensureServersReady = vi.fn().mockResolvedValue({
+      readyServerNames: [httpsServer.name],
+      missingServerNames: [],
+      failedServerNames: [],
+      reauthServerNames: [],
+    });
+
+    render(
+      <ChatboxBuilderView
+        projectId="ws-1"
+        projectServers={[httpsServer]}
+        chatboxId={chatbox.chatboxId}
+        initialViewMode="setup"
+        ensureServersReady={ensureServersReady}
+        onBack={() => {}}
+        onSavedDraft={() => {}}
+      />,
+    );
+
+    // Flush any pending microtasks before asserting absence.
+    await Promise.resolve();
+    expect(ensureServersReady).not.toHaveBeenCalled();
   });
 });
