@@ -18,7 +18,7 @@ describe("readCheckoutIntentFromSearch", () => {
   it("parses solo + annual", () => {
     expect(
       readCheckoutIntentFromSearch("?plan=solo&interval=annual"),
-    ).toEqual({ plan: "solo", interval: "annual" });
+    ).toEqual({ plan: "team", interval: "annual" });
   });
 
   it("defaults interval to monthly when omitted", () => {
@@ -66,9 +66,9 @@ describe("sessionStorage persistence", () => {
   });
 
   it("round-trips plan and interval", () => {
-    persistCheckoutIntent({ plan: "solo", interval: "annual" });
+    persistCheckoutIntent({ plan: "team", interval: "annual" });
     expect(readPersistedCheckoutIntent()).toEqual({
-      plan: "solo",
+      plan: "team",
       interval: "annual",
     });
   });
