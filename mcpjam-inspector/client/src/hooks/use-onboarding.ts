@@ -4,6 +4,8 @@ import { usePostHog } from "posthog-js/react";
 import { toast } from "sonner";
 import type { OnboardingPhase } from "@/lib/onboarding-state";
 import {
+  markOnboardingShown,
+  markOnboardingStarted,
   readOnboardingState,
   writeOnboardingState,
 } from "@/lib/onboarding-state";
@@ -18,8 +20,11 @@ import type { ServerWithName } from "@/hooks/use-app-state";
 interface UseOnboardingOptions {
   servers: Record<string, ServerWithName>;
   onConnect: (formData: ServerFormData) => void;
-  isAuthenticated: boolean;
-  isAuthLoading: boolean;
+  isSignedInWithWorkOs: boolean;
+  isWorkOsAuthLoading: boolean;
+  hasRemoteOnboardingState?: boolean;
+  hasSeenOnboarding?: boolean;
+  canPersistRemoteOnboarding?: boolean;
 }
 
 interface UseOnboardingReturn {
@@ -29,6 +34,7 @@ interface UseOnboardingReturn {
   /** True before the Excalidraw server row exists (auto-connect not yet dispatched). */
   isBootstrappingFirstRunConnection: boolean;
   connectExcalidraw: () => void;
+  markOnboardingShown: () => void;
   completeOnboarding: () => void;
   connectError: string | null;
   retryConnect: () => void;
@@ -36,19 +42,51 @@ interface UseOnboardingReturn {
 
 function getInitialLocalPhase(
   servers: Record<string, ServerWithName>,
-  isAuthenticated: boolean,
-  isAuthLoading: boolean,
+  {
+    isSignedInWithWorkOs,
+    isWorkOsAuthLoading,
+    hasRemoteOnboardingState = false,
+    hasSeenOnboarding = false,
+  }: Pick<
+    UseOnboardingOptions,
+    | "isSignedInWithWorkOs"
+    | "isWorkOsAuthLoading"
+    | "hasRemoteOnboardingState"
+    | "hasSeenOnboarding"
+  >,
 ): OnboardingPhase {
-  if (isAuthLoading) return "dismissed";
-  if (isAuthenticated) return "completed";
+  if (isWorkOsAuthLoading) return "dismissed";
+  if (isSignedInWithWorkOs) return "completed";
+  if (hasRemoteOnboardingState && hasSeenOnboarding) return "dismissed";
 
-  const persisted = readOnboardingState();
-  if (persisted?.status === "completed") return "completed";
-  if (persisted?.status === "dismissed") return "dismissed";
+  const persisted = hasRemoteOnboardingState ? null : readOnboardingState();
+  if (!hasRemoteOnboardingState) {
+    if (persisted?.status === "completed") return "completed";
+    if (persisted?.status === "dismissed") return "dismissed";
+    if (persisted?.status === "seen" && persisted.shownAt) return "dismissed";
+  }
 
-  const hasAnyServers = Object.keys(servers).length > 0;
-  if (!hasAnyServers && (!persisted || persisted.status === "seen")) {
+  const serverEntries = Object.entries(servers);
+  const hasAnyServers = serverEntries.length > 0;
+  const hasOnlyExcalidrawServer =
+    serverEntries.length === 1 &&
+    serverEntries[0]?.[0] === EXCALIDRAW_SERVER_NAME;
+  const shouldContinueFirstRun =
+    (hasRemoteOnboardingState && !hasSeenOnboarding) ||
+    persisted?.status === "started" ||
+    (persisted?.status === "seen" && !persisted.shownAt);
+
+  if (!hasAnyServers) {
     return "connecting_excalidraw";
+  }
+  const excalidrawServer = servers[EXCALIDRAW_SERVER_NAME];
+  if (shouldContinueFirstRun) {
+    if (excalidrawServer?.connectionStatus === "connected") {
+      return "connected_guided";
+    }
+    if (hasOnlyExcalidrawServer) {
+      return "connecting_excalidraw";
+    }
   }
 
   return "dismissed";
@@ -57,12 +95,15 @@ function getInitialLocalPhase(
 export function useOnboarding({
   servers,
   onConnect,
-  isAuthenticated,
-  isAuthLoading,
+  isSignedInWithWorkOs,
+  isWorkOsAuthLoading,
+  hasRemoteOnboardingState = false,
+  hasSeenOnboarding = false,
+  canPersistRemoteOnboarding = false,
 }: UseOnboardingOptions): UseOnboardingReturn {
   const posthog = usePostHog();
-  const completeOnboardingMutation = useMutation(
-    "users:completeOnboarding" as any,
+  const markOnboardingAsShownMutation = useMutation(
+    "users:markOnboardingShown" as any,
   );
   const trackingProps = useMemo(
     () => ({
@@ -73,33 +114,59 @@ export function useOnboarding({
   );
 
   const [phase, setPhase] = useState<OnboardingPhase>(() =>
-    getInitialLocalPhase(servers, isAuthenticated, isAuthLoading),
+    getInitialLocalPhase(servers, {
+      isSignedInWithWorkOs,
+      isWorkOsAuthLoading,
+      hasRemoteOnboardingState,
+      hasSeenOnboarding,
+    }),
   );
 
   const [connectError, setConnectError] = useState<string | null>(null);
   const excalidrawServer = servers[EXCALIDRAW_SERVER_NAME];
   const hasConnectedExcalidraw =
     excalidrawServer?.connectionStatus === "connected";
-  const isResolvingRemoteCompletion = isAuthLoading;
+  const isResolvingRemoteCompletion = isWorkOsAuthLoading;
 
   const didAutoConnectRef = useRef(false);
+  const didPersistRemoteShownRef = useRef(false);
 
   // Track first-run eligible once when auto-connect begins.
   const didTrackFirstRun = useRef(false);
 
+  const persistRemoteOnboardingShown = useCallback(() => {
+    if (
+      !canPersistRemoteOnboarding ||
+      hasSeenOnboarding ||
+      didPersistRemoteShownRef.current
+    ) {
+      return;
+    }
+    didPersistRemoteShownRef.current = true;
+    markOnboardingAsShownMutation().catch(() => {
+      didPersistRemoteShownRef.current = false;
+    });
+  }, [
+    canPersistRemoteOnboarding,
+    hasSeenOnboarding,
+    markOnboardingAsShownMutation,
+  ]);
+
+  const markFirstRunOnboardingShown = useCallback(() => {
+    markOnboardingShown();
+    persistRemoteOnboardingShown();
+  }, [persistRemoteOnboardingShown]);
+
   const persistCompletedState = useCallback(() => {
     writeOnboardingState({ status: "completed", completedAt: Date.now() });
-    if (isAuthenticated) {
-      completeOnboardingMutation().catch(() => {});
-    }
-  }, [completeOnboardingMutation, isAuthenticated]);
+  }, []);
 
   useEffect(() => {
-    if (isAuthLoading) {
+    if (isWorkOsAuthLoading) {
       return;
     }
 
-    if (isAuthenticated) {
+    if (isSignedInWithWorkOs) {
       setPhase("completed");
       return;
     }
@@ -109,35 +176,68 @@ export function useOnboarding({
         return currentPhase;
       }
 
-      return getInitialLocalPhase(servers, false, false);
+      return getInitialLocalPhase(servers, {
+        isSignedInWithWorkOs: false,
+        isWorkOsAuthLoading: false,
+        hasRemoteOnboardingState,
+        hasSeenOnboarding,
+      });
     });
-  }, [servers, isAuthLoading, isAuthenticated]);
+  }, [
+    servers,
+    isWorkOsAuthLoading,
+    isSignedInWithWorkOs,
+    hasRemoteOnboardingState,
+    hasSeenOnboarding,
+  ]);
 
   // First-run guests: auto-connect Excalidraw in the background (no welcome overlay).
   useEffect(() => {
-    if (isAuthLoading || isAuthenticated) return;
+    if (isWorkOsAuthLoading || isSignedInWithWorkOs) return;
     if (didAutoConnectRef.current) return;
 
-    const persisted = readOnboardingState();
-    if (
-      persisted?.status === "completed" ||
-      persisted?.status === "dismissed"
-    ) {
+    if (hasRemoteOnboardingState) {
+      if (hasSeenOnboarding) return;
+    } else {
+      const persisted = readOnboardingState();
+      if (
+        persisted?.status === "completed" ||
+        persisted?.status === "dismissed" ||
+        (persisted?.status === "seen" && persisted.shownAt)
+      ) {
+        return;
+      }
+    }
+    const hasBlockingServer = Object.keys(servers).some(
+      (serverName) => serverName !== EXCALIDRAW_SERVER_NAME,
+    );
+    if (hasBlockingServer) return;
+    const excalidrawStatus = servers[EXCALIDRAW_SERVER_NAME]?.connectionStatus;
+    if (excalidrawStatus === "connected" || excalidrawStatus === "connecting") {
       return;
     }
-    if (Object.keys(servers).length > 0) return;
     if (phase !== "connecting_excalidraw") return;
 
     didAutoConnectRef.current = true;
     if (!didTrackFirstRun.current) {
       didTrackFirstRun.current = true;
-      writeOnboardingState({ status: "seen" });
+      markOnboardingStarted();
       posthog.capture("onboarding_first_run_eligible", trackingProps);
     }
     setConnectError(null);
     onConnect(EXCALIDRAW_SERVER_CONFIG);
     posthog.capture("onboarding_connect_excalidraw_auto", trackingProps);
-  }, [phase, servers, isAuthLoading, isAuthenticated, onConnect, posthog]);
+  }, [
+    phase,
+    servers,
+    isWorkOsAuthLoading,
+    isSignedInWithWorkOs,
+    hasRemoteOnboardingState,
+    hasSeenOnboarding,
+    onConnect,
+    posthog,
+    trackingProps,
+  ]);
 
   // Monitor server connection for Excalidraw after connect is requested
   useEffect(() => {
@@ -209,6 +309,7 @@ export function useOnboarding({
     isResolvingRemoteCompletion,
     isBootstrappingFirstRunConnection,
     connectExcalidraw,
+    markOnboardingShown: markFirstRunOnboardingShown,
     completeOnboarding,
     connectError,
     retryConnect,

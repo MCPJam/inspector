@@ -40,6 +40,7 @@ vi.mock("sonner", () => ({
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
+  useQuery: () => null,
 }));
 
 vi.mock("@/hooks/useChatboxes", () => ({
@@ -217,7 +218,7 @@ describe("ChatboxEditor preview", () => {
 
     expect(mockWritePlaygroundSession).toHaveBeenCalledWith(
       expect.objectContaining({
-        token: "chatbox-token",
+        chatboxId: "sbx_1",
         surface: "preview",
         payload: expect.objectContaining({
           chatboxId: "sbx_1",

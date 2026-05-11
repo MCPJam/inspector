@@ -51,7 +51,8 @@ describe("resolveOrgModelConfig", () => {
       { projectId: "project_org_config_auth_scope" },
       {
         bearerToken: "user-a",
-        shareToken: " share-1 ",
+        chatboxId: " cbx_1 ",
+        accessVersion: 2,
         serverIds: ["srv-b", "srv-a", "srv-a"],
       },
     );
@@ -59,7 +60,8 @@ describe("resolveOrgModelConfig", () => {
       { projectId: "project_org_config_auth_scope" },
       {
         bearerToken: "user-a",
-        shareToken: "share-1",
+        chatboxId: "cbx_1",
+        accessVersion: 2,
         serverIds: ["srv-a", "srv-b"],
       },
     );
@@ -67,7 +69,8 @@ describe("resolveOrgModelConfig", () => {
       { projectId: "project_org_config_auth_scope" },
       {
         bearerToken: "user-b",
-        shareToken: "share-1",
+        chatboxId: "cbx_1",
+        accessVersion: 2,
         serverIds: ["srv-a", "srv-b"],
       },
     );
@@ -86,7 +89,8 @@ describe("resolveOrgModelConfig", () => {
     ).toBe("service-token");
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
       projectId: "project_org_config_auth_scope",
-      shareToken: "share-1",
+      chatboxId: "cbx_1",
+      accessVersion: 2,
       serverIds: ["srv-a", "srv-b"],
     });
     expect(

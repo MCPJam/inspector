@@ -62,7 +62,7 @@ describe("useSharedChatWidgetCapture", () => {
       useSharedChatWidgetCapture({
         enabled: true,
         chatSessionId: "chat-session-1",
-        hostedShareToken: "share-token",
+        hostedChatboxId: "cbx_1", hostedAccessVersion: 1,
         messages: [
           {
             id: "assistant-1",
@@ -132,7 +132,7 @@ describe("useSharedChatWidgetCapture", () => {
     expect(mockGenerateSnapshotUploadUrl).toHaveBeenCalledTimes(3);
     expect(global.fetch).toHaveBeenCalledTimes(3);
     expect(mockCreateWidgetSnapshot).toHaveBeenCalledWith({
-      shareToken: "share-token",
+      chatboxId: "cbx_1", accessVersion: 1,
       chatSessionId: "chat-session-1",
       serverId: "server-1",
       toolCallId: "call-1",
@@ -177,7 +177,7 @@ describe("useSharedChatWidgetCapture", () => {
           enabled: true,
           readyToPersist,
           chatSessionId: "chat-session-1",
-          hostedShareToken: "share-token",
+          hostedChatboxId: "cbx_1", hostedAccessVersion: 1,
           messages: [
             {
               id: "assistant-1",
@@ -256,7 +256,7 @@ describe("useSharedChatWidgetCapture", () => {
         useSharedChatWidgetCapture({
           enabled: true,
           chatSessionId: "chat-session-1",
-          hostedShareToken: "share-token",
+          hostedChatboxId: "cbx_1", hostedAccessVersion: 1,
           messages: [
             {
               id: "assistant-1",
@@ -363,7 +363,7 @@ describe("useSharedChatWidgetCapture", () => {
         useSharedChatWidgetCapture({
           enabled: true,
           chatSessionId: "chat-session-pending",
-          hostedShareToken: "share-token",
+          hostedChatboxId: "cbx_1", hostedAccessVersion: 1,
           messages: [
             {
               id: "assistant-1",
@@ -427,7 +427,7 @@ describe("useSharedChatWidgetCapture", () => {
       useSharedChatWidgetCapture({
         enabled: true,
         chatSessionId: "chat-session-2",
-        hostedChatboxToken: "chatbox-token",
+        hostedChatboxId: "cbx_1", hostedAccessVersion: 1,
         messages: [
           {
             id: "assistant-1",
@@ -481,7 +481,7 @@ describe("useSharedChatWidgetCapture", () => {
     await flushMicrotasks();
 
     expect(mockCreateWidgetSnapshot).toHaveBeenCalledWith({
-      chatboxToken: "chatbox-token",
+      chatboxId: "cbx_1", accessVersion: 1,
       chatSessionId: "chat-session-2",
       serverId: "srv_123",
       toolCallId: "call-2",

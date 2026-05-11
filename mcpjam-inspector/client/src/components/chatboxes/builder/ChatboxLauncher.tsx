@@ -6,13 +6,12 @@ import {
   CommandItem,
   CommandList,
 } from "@mcpjam/design-system/command";
-import { Building2, Globe, Search, Wand2 } from "lucide-react";
+import { Pencil, Search, Wand2 } from "lucide-react";
 import { CHATBOX_STARTERS } from "./drafts";
 import type { ChatboxStarterDefinition } from "./types";
 
 const STARTER_ICONS = {
-  "internal-qa": Building2,
-  "icp-demo": Globe,
+  "excalidraw-demo": Pencil,
   blank: Wand2,
 } as const;
 

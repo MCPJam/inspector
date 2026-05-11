@@ -35,8 +35,8 @@ const hostedBatchSchema = z.object({
   clientCapabilities: z.record(z.string(), z.unknown()).optional(),
   oauthTokens: z.record(z.string(), z.string()).optional(),
   accessScope: z.enum(["project_member", "chat_v2"]).optional(),
-  shareToken: z.string().min(1).optional(),
-  chatboxToken: z.string().min(1).optional(),
+  chatboxId: z.string().min(1).optional(),
+  accessVersion: z.number().int().nonnegative().optional(),
 });
 
 const hostedRunEvalsSchema = RunEvalsRequestSchema.omit({
@@ -147,8 +147,8 @@ evals.post("/stream-test-case", async (c) => {
         | "project_member"
         | "chat_v2"
         | undefined,
-      shareToken: body.shareToken as string | undefined,
-      chatboxToken: body.chatboxToken as string | undefined,
+      chatboxId: body.chatboxId as string | undefined,
+      accessVersion: body.accessVersion as number | undefined,
       serverNames: body.serverNames,
     },
   );

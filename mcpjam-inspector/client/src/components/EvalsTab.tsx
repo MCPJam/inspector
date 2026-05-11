@@ -150,6 +150,7 @@ export function EvalsTab({
     latestRunBySuiteId,
     projectServers,
     isDirectGuest,
+    availableModels,
   });
   const {
     deletingSuiteId,

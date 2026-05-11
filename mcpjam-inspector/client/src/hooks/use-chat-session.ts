@@ -34,7 +34,6 @@ import { useConvexAuth } from "convex/react";
 import {
   ModelDefinition,
   type ModelProvider,
-  isGPT5Model,
 } from "@/shared/types";
 import {
   ProviderTokens,
@@ -111,6 +110,14 @@ export interface UseChatSessionOptions {
   minimalMode?: boolean;
   /** Execution configuration (model, system prompt, temperature, tool approval) */
   executionConfig?: ExecutionConfig;
+  /**
+   * Phase 3: real host style for direct chat traces. Forwarded into
+   * the request body so the backend persists the v2 hostConfig with
+   * the user's actual host style (`claude` / `chatgpt`) rather than
+   * defaulting to `'claude'`. Omitted for chatbox flows — the
+   * backend resolves chatbox host style from the chatbox row.
+   */
+  hostStyle?: "claude" | "chatgpt";
   /** Callback when chat is reset */
   onReset?: (reason?: ChatSessionResetReason) => void;
 }
@@ -900,9 +907,9 @@ function areAuthHeadersEqual(
 }
 
 type HostedSessionScope = {
-  projectId?: string;
-  shareToken?: string;
-  chatboxToken?: string;
+  projectId?: string | null;
+  chatboxId?: string;
+  accessVersion?: number;
 };
 
 function areHostedSessionScopesEqual(
@@ -911,8 +918,8 @@ function areHostedSessionScopesEqual(
 ): boolean {
   return (
     a.projectId === b.projectId &&
-    a.shareToken === b.shareToken &&
-    a.chatboxToken === b.chatboxToken
+    a.chatboxId === b.chatboxId &&
+    a.accessVersion === b.accessVersion
   );
 }
 
@@ -931,13 +938,14 @@ export function useChatSession({
   hostedContext,
   minimalMode: _minimalMode = false,
   executionConfig,
+  hostStyle,
   onReset,
 }: UseChatSessionOptions): UseChatSessionReturn {
   const hostedProjectId = hostedContext?.projectId;
   const hostedSelectedServerIds = hostedContext?.selectedServerIds ?? [];
   const hostedOAuthTokens = hostedContext?.oauthTokens;
-  const hostedShareToken = hostedContext?.shareToken;
-  const hostedChatboxToken = hostedContext?.chatboxToken;
+  const hostedChatboxId = hostedContext?.chatboxId;
+  const hostedAccessVersion = hostedContext?.accessVersion;
   const hostedChatboxSurface = hostedContext?.chatboxSurface;
   const initialModelId = executionConfig?.modelId;
   const initialSystemPrompt =
@@ -1016,7 +1024,7 @@ export function useChatSession({
     isHostedGuest &&
     !isAuthLoading &&
     !!hostedProjectId &&
-    !!(hostedShareToken || hostedChatboxToken);
+    !!hostedChatboxId;
   const guestMode = sharedGuestMode;
   const skipNextForkDetectionRef = useRef(false);
   const hasResolvedAuthHeadersRef = useRef(false);
@@ -1025,8 +1033,8 @@ export function useChatSession({
   );
   const lastResolvedHostedScopeRef = useRef<HostedSessionScope>({
     projectId: undefined,
-    shareToken: undefined,
-    chatboxToken: undefined,
+    chatboxId: undefined,
+    accessVersion: undefined,
   });
   const pendingSessionHydrationRef = useRef<PendingSessionHydration | null>(
     null
@@ -1275,7 +1283,6 @@ export function useChatSession({
     } else {
       apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
     }
-    const isGpt5 = isGPT5Model(selectedModel.id);
 
     // Merge session auth headers with workos auth headers
     const sessionHeaders = getSessionAuthHeaders();
@@ -1299,7 +1306,7 @@ export function useChatSession({
           "Hosted chat context is not ready: missing projectId."
         );
       }
-      const isHostedDirectChat = !hostedShareToken && !hostedChatboxToken;
+      const isHostedDirectChat = !hostedChatboxId;
       return {
         projectId: hostedProjectId,
         chatSessionId,
@@ -1307,12 +1314,14 @@ export function useChatSession({
         selectedServerNames: selectedServers,
         accessScope: "chat_v2" as const,
         ...(isHostedDirectChat ? { directVisibility } : {}),
-        ...(hostedShareToken ? { shareToken: hostedShareToken } : {}),
-        ...(hostedChatboxToken ? { chatboxToken: hostedChatboxToken } : {}),
-        ...(hostedChatboxToken && hostedChatboxSurface
+        ...(hostedChatboxId ? { chatboxId: hostedChatboxId } : {}),
+        ...(hostedChatboxId && Number.isFinite(hostedAccessVersion)
+          ? { accessVersion: hostedAccessVersion }
+          : {}),
+        ...(hostedChatboxId && hostedChatboxSurface
           ? { surface: hostedChatboxSurface }
           : {}),
-        ...(!hostedChatboxToken &&
+        ...(isHostedDirectChat &&
         hostedOAuthTokens &&
         Object.keys(hostedOAuthTokens).length > 0
           ? { oauthTokens: hostedOAuthTokens }
@@ -1326,18 +1335,55 @@ export function useChatSession({
       body: () => ({
         model: selectedModel,
         ...(HOSTED_MODE ? {} : { apiKey }),
-        ...(isGpt5 ? {} : { temperature }),
+        // Always send the user's slider value. The server's `prepareChatV2`
+        // already drops temperature for GPT-5 before the LLM call (its API
+        // rejects the field), so what lands here is purely the user's
+        // intended config — and ingestion's hostConfig dedupes on it. If we
+        // stripped for GPT-5, every GPT-5 direct chat would dedupe to the
+        // helper's 0.7 fallback regardless of the slider.
+        temperature,
         systemPrompt,
         ...(HOSTED_MODE
           ? buildHostedBody()
           : {
               selectedServers,
               chatSessionId,
-              directVisibility,
+              // `directVisibility` only applies to direct chat. The
+              // /mcp/chat-v2 route gates it off when chatboxId is present
+              // (owner-preview persists as `sourceType: "chatbox"`), but
+              // omitting it client-side keeps the body honest about the
+              // session kind.
+              ...(hostedChatboxId ? {} : { directVisibility }),
               // Pass projectId for BYOK direct-chat history persistence
               ...(hostedProjectId ? { projectId: hostedProjectId } : {}),
+              // Convex server Ids parallel to `selectedServers`. Only sent
+              // when every name resolved to an Id — a partial mapping would
+              // hash to a different hostConfig than intended. Without this,
+              // the MCP route can't safely emit `hostConfig` because local
+              // server *names* aren't valid Convex Ids and the backend
+              // validator would reject the whole ingest call.
+              ...(hostedSelectedServerIds.length === selectedServers.length
+                ? { selectedServerIds: hostedSelectedServerIds }
+                : {}),
+              // Phase F: owner-preview / local chatbox sessions persist as
+              // `sourceType: "chatbox"`. Without forwarding the resolved
+              // chatbox identity here, /mcp/chat-v2 derives sourceType
+              // from absent fields and the chat is filed as a direct chat
+              // instead of a chatbox session.
+              ...(hostedChatboxId ? { chatboxId: hostedChatboxId } : {}),
+              ...(hostedChatboxId && Number.isFinite(hostedAccessVersion)
+                ? { accessVersion: hostedAccessVersion }
+                : {}),
+              ...(hostedChatboxId && hostedChatboxSurface
+                ? { surface: hostedChatboxSurface }
+                : {}),
             }),
         requireToolApproval: requireToolApprovalRef.current,
+        // Phase 3: forward the chat tab's resolved host style so
+        // direct chat traces persist with a real `claude`/`chatgpt`
+        // hostStyle (no more legacy `'direct'`). Omitted body falls
+        // back to the backend default of `'claude'`.
+        ...(hostStyle ? { hostStyle } : {}),
         ...(!HOSTED_MODE && customProviders.length > 0
           ? { customProviders }
           : {}),
@@ -1361,9 +1407,10 @@ export function useChatSession({
     chatSessionId,
     hostedSelectedServerIds,
     hostedOAuthTokens,
-    hostedShareToken,
-    hostedChatboxToken,
+    hostedChatboxId,
+    hostedAccessVersion,
     hostedChatboxSurface,
+    hostStyle,
     chatFetch,
     // requireToolApproval read from ref at request time
   ]);
@@ -1546,8 +1593,8 @@ export function useChatSession({
     enabled: HOSTED_MODE && isAuthenticated,
     readyToPersist: status === "ready",
     chatSessionId,
-    hostedShareToken,
-    hostedChatboxToken,
+    hostedChatboxId,
+    hostedAccessVersion,
     persistedSnapshotToolCallIds,
     messages,
   });
@@ -1852,8 +1899,8 @@ export function useChatSession({
         const previousHostedScope = lastResolvedHostedScopeRef.current;
         const currentHostedScope = {
           projectId: hostedProjectId,
-          shareToken: hostedShareToken,
-          chatboxToken: hostedChatboxToken,
+          chatboxId: hostedChatboxId,
+          accessVersion: hostedAccessVersion,
         };
         const hasResolvedBefore = hasResolvedAuthHeadersRef.current;
         const authHeadersChanged =
@@ -1885,8 +1932,8 @@ export function useChatSession({
     };
   }, [
     getAccessToken,
-    hostedShareToken,
-    hostedChatboxToken,
+    hostedChatboxId,
+    hostedAccessVersion,
     hostedProjectId,
     isAuthenticated,
     isHostedGuest,
@@ -1977,10 +2024,7 @@ export function useChatSession({
         );
       } catch (error) {
         if (
-          !(
-            (hostedShareToken || hostedChatboxToken) &&
-            isAuthDeniedError(error)
-          )
+          !(hostedChatboxId && isAuthDeniedError(error))
         ) {
           console.warn(
             "[useChatSession] Failed to fetch tools metadata:",
@@ -1996,12 +2040,7 @@ export function useChatSession({
     };
 
     fetchToolsMetadata();
-  }, [
-    selectedServersSignature,
-    selectedModel,
-    hostedShareToken,
-    hostedChatboxToken,
-  ]);
+  }, [selectedServersSignature, selectedModel, hostedChatboxId]);
 
   // System prompt token count
   useEffect(() => {
@@ -2021,10 +2060,7 @@ export function useChatSession({
         setSystemPromptTokenCount(count > 0 ? count : null);
       } catch (error) {
         if (
-          !(
-            (hostedShareToken || hostedChatboxToken) &&
-            isAuthDeniedError(error)
-          )
+          !(hostedChatboxId && isAuthDeniedError(error))
         ) {
           console.warn(
             "[useChatSession] Failed to count system prompt tokens:",
@@ -2038,7 +2074,7 @@ export function useChatSession({
     };
 
     fetchSystemPromptTokenCount();
-  }, [systemPrompt, selectedModel, hostedShareToken, hostedChatboxToken]);
+  }, [systemPrompt, selectedModel, hostedChatboxId]);
 
   const previousSelectedServersRef = useRef<string[]>(selectedServers);
   useEffect(() => {

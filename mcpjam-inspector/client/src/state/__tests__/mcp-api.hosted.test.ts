@@ -27,7 +27,7 @@ describe("mcp-api hosted-mode reconnect hardening", () => {
 
   it("normalizes hosted project timing errors for testConnection", async () => {
     validateHostedServerMock.mockRejectedValueOnce(
-      new BootstrapNotReadyError("provisioning-project"),
+      new BootstrapNotReadyError("provisioning-project")
     );
 
     const result = await testConnection({} as MCPServerConfig, "server-1");
@@ -40,7 +40,7 @@ describe("mcp-api hosted-mode reconnect hardening", () => {
 
   it("normalizes hosted server lookup errors for reconnectServer", async () => {
     validateHostedServerMock.mockRejectedValueOnce(
-      new Error('Hosted server not found for "server-2"'),
+      new Error('Hosted server not found for "server-2"')
     );
 
     const result = await reconnectServer("server-2", {} as MCPServerConfig);
@@ -66,7 +66,10 @@ describe("mcp-api hosted-mode reconnect hardening", () => {
     vi.useFakeTimers();
     validateHostedServerMock.mockReturnValueOnce(new Promise(() => {}));
 
-    const resultPromise = testConnection({} as MCPServerConfig, "server-timeout");
+    const resultPromise = testConnection(
+      {} as MCPServerConfig,
+      "server-timeout"
+    );
 
     await vi.advanceTimersByTimeAsync(20_000);
 
@@ -97,6 +100,36 @@ describe("mcp-api hosted-mode reconnect hardening", () => {
       "server-4",
       "access-token",
       undefined,
+      undefined
+    );
+    expect(result).toEqual({ success: true, status: "ok" });
+  });
+
+  it("uses explicit project/server context for freshly created hosted servers", async () => {
+    validateHostedServerMock.mockResolvedValueOnce({
+      success: true,
+      status: "ok",
+    });
+
+    const config = {
+      url: "https://mcp.excalidraw.com/mcp",
+      capabilities: { roots: { listChanged: true } },
+    } as unknown as MCPServerConfig;
+
+    const result = await testConnection(config, "server-doc-id", {
+      projectId: "project-1",
+      serverName: "Excalidraw (App)",
+    });
+
+    expect(validateHostedServerMock).toHaveBeenCalledWith(
+      "server-doc-id",
+      undefined,
+      { roots: { listChanged: true } },
+      {
+        projectId: "project-1",
+        serverId: "server-doc-id",
+        serverName: "Excalidraw (App)",
+      }
     );
     expect(result).toEqual({ success: true, status: "ok" });
   });
@@ -122,6 +155,7 @@ describe("mcp-api hosted-mode reconnect hardening", () => {
       "Excalidraw (App)",
       undefined,
       { roots: { listChanged: true } },
+      undefined
     );
     expect(result).toEqual({ success: true, status: "ok" });
   });

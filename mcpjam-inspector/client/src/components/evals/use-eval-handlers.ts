@@ -25,6 +25,7 @@ import { getSuiteReplayEligibility } from "./replay-eligibility";
 import type { useEvalMutations } from "./use-eval-mutations";
 import { authFetch } from "@/lib/session-token";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import type { ModelDefinition } from "@/shared/types";
 import {
   buildEvalConvexAuthPayload,
   getEvalApiEndpoints,
@@ -169,6 +170,8 @@ interface UseEvalHandlersProps {
   projectServers?: RemoteServer[];
   /** When true, this uses the direct-guest eval playground flow. */
   isDirectGuest?: boolean;
+  /** Available models; used to resolve provider when falling back to suite.defaultConfig.modelId. */
+  availableModels?: ModelDefinition[];
 }
 
 /**
@@ -186,6 +189,7 @@ export function useEvalHandlers({
   evalsNavigationContext = "evals",
   projectServers,
   isDirectGuest = false,
+  availableModels,
 }: UseEvalHandlersProps) {
   const convex = useConvex();
   const { getAccessToken } = useAuth();
@@ -266,12 +270,48 @@ export function useEvalHandlers({
       const tests: any[] = [];
       const providersNeeded = new Set<string>();
 
+      // Resolve the fallback model definition for cases with no per-case models.
+      // Disambiguate by provider when stored, so OpenRouter gpt-4o doesn't
+      // resolve to the native OpenAI gpt-4o if their ids collide.
+      const suiteDefaultModelDef = suite.defaultConfig?.modelId
+        ? (availableModels ?? []).find(
+            (m) =>
+              String(m.id) === suite.defaultConfig!.modelId &&
+              (!suite.defaultConfig!.provider ||
+                m.provider === suite.defaultConfig!.provider)
+          )
+        : undefined;
+      // Distinguish "no default set" from "default set but unresolvable"
+      // (e.g. model removed, availableModels still loading) so we can show a
+      // more useful toast than "add models to your test cases".
+      const suiteDefaultUnresolved =
+        !!suite.defaultConfig?.modelId && !suiteDefaultModelDef;
+
+      // Note: suite.defaultConfig.systemPrompt / temperature are NOT merged
+      // into per-case advancedConfig here. The wire field flows through the
+      // server's testCase upsert path and would bake the suite default into
+      // every per-case advancedConfig, breaking later edits to the suite
+      // default. Runtime application of suite defaults happens server-side
+      // (Convex testSuiteRun hostConfigId snapshot).
+
       for (const testCase of testCases) {
-        if (!testCase.models || testCase.models.length === 0) {
+        const hasModels = testCase.models && testCase.models.length > 0;
+        if (!hasModels && !suiteDefaultModelDef) {
           continue;
         }
 
-        for (const modelConfig of testCase.models) {
+        // Use per-case models when present; fall back to suite default model.
+        const modelConfigs: Array<{ model: string; provider: string }> =
+          hasModels
+            ? testCase.models
+            : [
+                {
+                  model: suiteDefaultModelDef!.id as string,
+                  provider: suiteDefaultModelDef!.provider,
+                },
+              ];
+
+        for (const modelConfig of modelConfigs) {
           tests.push({
             title: testCase.title,
             query: testCase.query,
@@ -294,7 +334,16 @@ export function useEvalHandlers({
       }
 
       if (tests.length === 0) {
-        toast.error("No tests to run. Please add models to your test cases.");
+        if (suiteDefaultUnresolved) {
+          const label = suite.defaultConfig?.provider
+            ? `${suite.defaultConfig.modelId} (${suite.defaultConfig.provider})`
+            : suite.defaultConfig?.modelId;
+          toast.error(
+            `Suite default model ${label} is not available. Re-select it in the suite's default execution config, or add per-case models.`
+          );
+        } else {
+          toast.error("No tests to run. Please add models to your test cases.");
+        }
         return null;
       }
 
@@ -321,7 +370,7 @@ export function useEvalHandlers({
         providersNeeded,
       };
     },
-    [getTestCasesForRerun, getToken, hasToken]
+    [getTestCasesForRerun, getToken, hasToken, availableModels]
   );
 
   const handleReplayRun = useCallback(
@@ -530,6 +579,10 @@ export function useEvalHandlers({
             minimumPassRate: minimumPassRate,
           },
           notes: criteriaNote,
+          // Cases are already persisted; tell the server to skip the
+          // per-case upsert so suite-default-derived wire fields don't
+          // get baked into per-case overrides.
+          suiteRerun: true,
         });
 
         // Track suite run started

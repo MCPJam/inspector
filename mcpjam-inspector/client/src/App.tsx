@@ -36,6 +36,8 @@ import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
 import { ErrorBoundary } from "./components/ui/error-boundary";
 import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
 import { EmptyState } from "./components/ui/empty-state";
+import { EXCALIDRAW_SERVER_NAME } from "./lib/excalidraw-quick-connect";
+import { isFirstRunEligible } from "./lib/onboarding-state";
 import { ProfileTab } from "./components/ProfileTab";
 import { BillingUpsellGate } from "./components/billing/BillingUpsellGate";
 import { OrganizationsTab } from "./components/OrganizationsTab";
@@ -92,10 +94,6 @@ import type {
 import { useViewQueries, useProjectServers } from "./hooks/useViews";
 import { HostedShellGate } from "./components/hosted/HostedShellGate";
 import { resolveHostedShellGateState } from "./components/hosted/hosted-shell-gate-state";
-import {
-  SharedServerChatPage,
-  getSharedPathTokenFromLocation,
-} from "./components/hosted/SharedServerChatPage";
 import {
   ChatboxChatPage,
   getChatboxPathTokenFromLocation,
@@ -157,17 +155,9 @@ import {
   clearChatboxSignInReturnPath,
   readChatboxSession,
   readChatboxSignInReturnPath,
+  slugify,
   writeChatboxSignInReturnPath,
 } from "./lib/chatbox-session";
-import {
-  clearSharedSignInReturnPath,
-  readSharedServerSession,
-  readSharedSignInReturnPath,
-  slugify,
-  writeSharedSignInReturnPath,
-  readPendingServerAdd,
-  clearPendingServerAdd,
-} from "./lib/shared-server-session";
 import {
   sanitizeHostedOAuthErrorMessage,
   clearHostedOAuthResumeMarker,
@@ -428,57 +418,26 @@ export default function App() {
     const callbackContext = getHostedOAuthCallbackContext();
     return callbackContext != null && callbackContext.surface !== "project";
   });
-  const [exitedSharedChat, setExitedSharedChat] = useState(false);
   const [exitedChatboxChat, setExitedChatboxChat] = useState(false);
-  const sharedPathToken = HOSTED_MODE ? getSharedPathTokenFromLocation() : null;
   const chatboxPathToken = HOSTED_MODE
     ? getChatboxPathTokenFromLocation()
     : null;
-  const sharedSession = HOSTED_MODE ? readSharedServerSession() : null;
   const chatboxSession = HOSTED_MODE ? readChatboxSession() : null;
-  const currentHashSlug = window.location.hash
-    .replace(/^#/, "")
-    .replace(/^\/+/, "")
-    .split("/")[0];
   const hostedRouteKind = useMemo(() => {
     if (!HOSTED_MODE) {
       return null;
     }
 
-    if (sharedPathToken) {
-      return "shared" as const;
-    }
     if (chatboxPathToken) {
       return "chatbox" as const;
     }
 
-    if (sharedSession && chatboxSession) {
-      if (currentHashSlug === slugify(sharedSession.payload.serverName)) {
-        return "shared" as const;
-      }
-      if (currentHashSlug === slugify(chatboxSession.payload.name)) {
-        return "chatbox" as const;
-      }
-      return null;
-    }
-
-    if (sharedSession) {
-      return "shared" as const;
-    }
     if (chatboxSession) {
       return "chatbox" as const;
     }
 
     return null;
-  }, [
-    currentHashSlug,
-    chatboxPathToken,
-    chatboxSession,
-    sharedPathToken,
-    sharedSession,
-  ]);
-  const isSharedChatRoute =
-    HOSTED_MODE && !exitedSharedChat && hostedRouteKind === "shared";
+  }, [chatboxPathToken, chatboxSession]);
   const isChatboxChatRoute =
     HOSTED_MODE && !exitedChatboxChat && hostedRouteKind === "chatbox";
 
@@ -489,7 +448,7 @@ export default function App() {
       setEvaluateRunsFlagsLoaded(posthog.featureFlags?.hasLoadedFlags === true);
     });
   }, [posthog]);
-  const isHostedChatRoute = isSharedChatRoute || isChatboxChatRoute;
+  const isHostedChatRoute = isChatboxChatRoute;
   const currentHash = window.location.hash || "#servers";
   const currentHashRoute = useMemo(
     () => resolveHostedNavigation(currentHash, HOSTED_MODE),
@@ -586,7 +545,7 @@ export default function App() {
       !!callbackContext.projectId && !!callbackContext.serverId;
     const isGuestChatboxSessionCallback =
       !isAuthenticated &&
-      !!callbackContext.chatboxToken &&
+      !!callbackContext.chatboxId &&
       !!callbackContext.sessionId;
     const shouldUseHostedCompletion =
       hasHostedServerContext &&
@@ -650,16 +609,19 @@ export default function App() {
 
   usePostHogIdentify();
 
+  const lastLaunchedActorRef = useRef<string | null>(null);
   useEffect(() => {
-    if (isAuthLoading) return;
+    if (!actorKey) return;
+    if (lastLaunchedActorRef.current === actorKey) return;
+    lastLaunchedActorRef.current = actorKey;
     posthog.capture("app_launched", {
       platform: detectPlatform(),
       environment: detectEnvironment(),
       user_agent: navigator.userAgent,
       version: __APP_VERSION__,
-      is_authenticated: isAuthenticated,
+      is_authenticated: Boolean(workOsUser),
     });
-  }, [isAuthLoading, isAuthenticated]);
+  }, [actorKey, workOsUser, posthog]);
 
   // Set the initial theme mode and preset on page load
   const initialThemeMode = getInitialThemeMode();
@@ -706,18 +668,16 @@ export default function App() {
     // Let AuthKit + Convex auth settle before leaving /callback.
     if (!isAuthLoading && isAuthenticated) {
       const chatboxReturnPath = readChatboxSignInReturnPath();
-      const sharedReturnPath = readSharedSignInReturnPath();
       const persistedCheckoutIntent = readPersistedCheckoutIntent();
       const billingReturnPath = persistedCheckoutIntent
         ? readBillingSignInReturnPath()
         : null;
       clearChatboxSignInReturnPath();
-      clearSharedSignInReturnPath();
       clearBillingSignInReturnPath();
       window.history.replaceState(
         {},
         "",
-        chatboxReturnPath ?? sharedReturnPath ?? billingReturnPath ?? "/"
+        chatboxReturnPath ?? billingReturnPath ?? "/"
       );
       setCallbackCompleted(true);
       setCallbackRecoveryExpired(false);
@@ -883,46 +843,21 @@ export default function App() {
   const pendingDashboardOAuthMessage = pendingDashboardOAuth
     ? `Finishing OAuth sign-in for ${pendingDashboardOAuth.serverName}...`
     : undefined;
+  const hasAnyFirstRunBlockingProjectServers = Object.keys(
+    projectServers
+  ).some((serverName) => serverName !== EXCALIDRAW_SERVER_NAME);
+  const remoteFirstRunOnboardingShown =
+    currentUser == null
+      ? undefined
+      : currentUser.hasSeenOnboarding === true ||
+        currentUser.hasCompletedOnboarding === true;
+  const hasSeenFirstRunOnboarding = remoteFirstRunOnboardingShown === true;
   const isHostedDefaultRoute = currentHashRoute.normalizedTab === "servers";
   const shouldHoldHostedDefaultRouteForAuth =
     HOSTED_MODE &&
     !isHostedChatRoute &&
     isHostedDefaultRoute &&
     hostedShellGateState === "auth-loading";
-
-  // Auto-add a shared server when returning from SharedServerChatPage via "Open MCPJam"
-  useEffect(() => {
-    if (isHostedChatRoute) return;
-    if (isLoadingRemoteProjects) return;
-    if (isAuthLoading) return;
-    // In hosted mode, also wait for the project to resolve. handleConnect
-    // would otherwise build a request with `projectId === "none"` and fail.
-    if (HOSTED_MODE && (!activeProjectId || activeProjectId === "none")) return;
-
-    const pending = readPendingServerAdd();
-    if (!pending) return;
-    clearPendingServerAdd();
-
-    if (projectServers[pending.serverName] !== undefined) {
-      return; // Server already exists
-    }
-
-    handleConnect({
-      name: pending.serverName,
-      type: "http",
-      url: pending.serverUrl,
-      useOAuth: pending.useOAuth,
-      clientId: pending.clientId ?? undefined,
-      oauthScopes: pending.oauthScopes ?? undefined,
-    });
-  }, [
-    isHostedChatRoute,
-    isLoadingRemoteProjects,
-    isAuthLoading,
-    activeProjectId,
-    projectServers,
-    handleConnect,
-  ]);
 
   const previousConnectedServersRef = useRef<Set<string> | null>(null);
   useEffect(() => {
@@ -1206,17 +1141,6 @@ export default function App() {
         preserveCurrentOrganizationOnNonOrgTarget?: boolean;
       }
     ) => {
-      if (isSharedChatRoute) {
-        const storedSession = readSharedServerSession();
-        if (storedSession) {
-          const expectedHash = slugify(storedSession.payload.serverName);
-          if (window.location.hash !== `#${expectedHash}`) {
-            window.location.hash = expectedHash;
-          }
-        }
-        return;
-      }
-
       if (isChatboxChatRoute) {
         const storedSession = readChatboxSession();
         if (storedSession) {
@@ -1284,7 +1208,6 @@ export default function App() {
     [
       effectiveOrganizations,
       isChatboxChatRoute,
-      isSharedChatRoute,
       setSelectedMultipleServersToAllServers,
     ]
   );
@@ -1413,6 +1336,64 @@ export default function App() {
     window.addEventListener("hashchange", applyHash);
     return () => window.removeEventListener("hashchange", applyHash);
   }, [applyNavigation, isHostedChatRoute]);
+
+  useLayoutEffect(() => {
+    if (isHostedChatRoute) {
+      return;
+    }
+
+    if (isWorkOsLoading) {
+      return;
+    }
+
+    if (effectiveHostedShellGateState !== "ready") {
+      return;
+    }
+
+    if (isAuthenticated && currentUser === undefined) {
+      return;
+    }
+
+    if (hasSeenFirstRunOnboarding) {
+      return;
+    }
+
+    // Hosted guests need Convex auth and their actor-owned project before App
+    // Builder can auto-connect Excalidraw against the right project.
+    if (
+      HOSTED_MODE &&
+      (!isAuthenticated ||
+        isLoadingRemoteProjects ||
+        !activeProjectId ||
+        activeProjectId === "none")
+    ) {
+      return;
+    }
+
+    if (
+      isFirstRunEligible(
+        hasAnyFirstRunBlockingProjectServers,
+        window.location.hash,
+        !!workOsUser,
+        remoteFirstRunOnboardingShown
+      )
+    ) {
+      applyNavigation("app-builder", { updateHash: true });
+    }
+  }, [
+    activeProjectId,
+    applyNavigation,
+    currentUser,
+    effectiveHostedShellGateState,
+    hasSeenFirstRunOnboarding,
+    hasAnyFirstRunBlockingProjectServers,
+    isAuthenticated,
+    isHostedChatRoute,
+    isLoadingRemoteProjects,
+    isWorkOsLoading,
+    remoteFirstRunOnboardingShown,
+    workOsUser,
+  ]);
 
   const consumeCheckoutIntent = useCallback(() => {
     clearPersistedCheckoutIntent();
@@ -1913,7 +1894,9 @@ export default function App() {
 
   if (
     !isHostedChatRoute &&
+    !!workOsUser &&
     isAuthenticated &&
+    currentUser?.isAnonymous !== true &&
     typeof currentUser?.createdAt === "number" &&
     currentUser.createdAt >= OCCUPATION_GATE_ROLLOUT_MS &&
     !currentUser?.occupation?.trim()
@@ -2304,8 +2287,10 @@ export default function App() {
               serverName={appState.selectedServer}
               servers={projectServers}
               activeProjectId={activeProjectId}
-              isAuthenticated={isAuthenticated}
-              isAuthLoading={isAuthLoading}
+              isSignedInWithWorkOs={!!workOsUser}
+              isWorkOsAuthLoading={isWorkOsLoading}
+              isConvexAuthenticated={isAuthenticated}
+              hasSeenFirstRunOnboarding={remoteFirstRunOnboardingShown}
               isServerSyncing={isSelectedServerSyncing}
               onConnect={handleConnect}
               onSaveHostContext={handleUpdateHostContext}
@@ -2446,9 +2431,6 @@ export default function App() {
                 : undefined
             }
             onSignIn={() => {
-              if (sharedPathToken) {
-                writeSharedSignInReturnPath(window.location.pathname);
-              }
               if (chatboxPathToken) {
                 writeChatboxSignInReturnPath(window.location.pathname);
               }
@@ -2458,12 +2440,7 @@ export default function App() {
               void signOut();
             }}
           >
-            {isSharedChatRoute ? (
-              <SharedServerChatPage
-                pathToken={sharedPathToken}
-                onExitSharedChat={() => setExitedSharedChat(true)}
-              />
-            ) : isChatboxChatRoute ? (
+            {isChatboxChatRoute ? (
               <ChatboxChatPage
                 pathToken={chatboxPathToken}
                 onExitChatboxChat={() => setExitedChatboxChat(true)}

@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "hono";
-import { persistChatSessionToConvex } from "../chat-ingestion";
+import {
+  buildDirectHostConfig,
+  persistChatSessionToConvex,
+} from "../chat-ingestion";
 import type { RequestLogContext } from "../log-events";
 
 const mockLogger = vi.hoisted(() => ({
@@ -62,8 +65,9 @@ describe("chat-ingestion", () => {
       modelId: "openai/gpt-oss-120b",
       modelSource: "mcpjam",
       authHeader: "Bearer bearer-token",
-      shareToken: "share-token",
-      sourceType: "serverShare",
+      chatboxId: "cbx_test",
+      accessVersion: 1,
+      sourceType: "chatbox",
       surface: "share_link",
       sessionMessages: [
         {
@@ -349,6 +353,48 @@ describe("chat-ingestion", () => {
     expect(mockLogger.warn).not.toHaveBeenCalled();
   });
 
+  it("forwards hostConfig verbatim when present on direct chats", async () => {
+    const hostConfig = {
+      hostStyle: "direct" as const,
+      systemPrompt: "you are helpful",
+      modelId: "openai/gpt-4o-mini",
+      temperature: 0.4,
+      requireToolApproval: true,
+      selectedServerIds: ["server-a", "server-b"],
+    };
+
+    await persistChatSessionToConvex({
+      chatSessionId: "session-host-config",
+      modelId: "openai/gpt-4o-mini",
+      modelSource: "byok",
+      authHeader: "Bearer bearer-token",
+      sourceType: "direct",
+      startedAt: 1,
+      hostConfig,
+    });
+
+    const request = (global.fetch as any).mock.calls[0]?.[1];
+    const body = JSON.parse((request?.body as string) ?? "{}");
+
+    expect(body.hostConfig).toEqual(hostConfig);
+  });
+
+  it("omits hostConfig from the request body when not provided", async () => {
+    await persistChatSessionToConvex({
+      chatSessionId: "session-host-config-omit",
+      modelId: "openai/gpt-4o-mini",
+      modelSource: "byok",
+      authHeader: "Bearer bearer-token",
+      sourceType: "direct",
+      startedAt: 1,
+    });
+
+    const request = (global.fetch as any).mock.calls[0]?.[1];
+    const body = JSON.parse((request?.body as string) ?? "{}");
+
+    expect("hostConfig" in body).toBe(false);
+  });
+
   it("includes directVisibility when persisting a direct chat", async () => {
     await persistChatSessionToConvex({
       chatSessionId: "session-5",
@@ -365,5 +411,96 @@ describe("chat-ingestion", () => {
 
     expect(body.sourceType).toBe("direct");
     expect(body.directVisibility).toBe("project");
+  });
+});
+
+describe("buildDirectHostConfig", () => {
+  it("falls back to requestedTemperature when resolvedTemperature is undefined (GPT-5 path)", () => {
+    const config = buildDirectHostConfig({
+      modelId: "openai/gpt-5",
+      systemPrompt: "hi",
+      requestedTemperature: 0.4,
+      resolvedTemperature: undefined,
+      requireToolApproval: false,
+      selectedServerIds: ["a"],
+    });
+
+    expect(config.temperature).toBe(0.4);
+    expect(typeof config.temperature).toBe("number");
+  });
+
+  it("falls back to 0.7 when both temperatures are undefined", () => {
+    const config = buildDirectHostConfig({
+      modelId: "openai/gpt-5",
+    });
+
+    expect(config.temperature).toBe(0.7);
+  });
+
+  it("coerces undefined systemPrompt to empty string", () => {
+    const config = buildDirectHostConfig({
+      modelId: "openai/gpt-4o",
+      systemPrompt: undefined,
+    });
+
+    expect(config.systemPrompt).toBe("");
+  });
+
+  it("coerces undefined selectedServerIds to empty array", () => {
+    const config = buildDirectHostConfig({
+      modelId: "openai/gpt-4o",
+    });
+
+    expect(config.selectedServerIds).toEqual([]);
+  });
+
+  it("coerces non-true requireToolApproval to false", () => {
+    const truthy = buildDirectHostConfig({
+      modelId: "openai/gpt-4o",
+      requireToolApproval: true,
+    });
+    const undef = buildDirectHostConfig({
+      modelId: "openai/gpt-4o",
+      requireToolApproval: undefined,
+    });
+
+    expect(truthy.requireToolApproval).toBe(true);
+    expect(undef.requireToolApproval).toBe(false);
+  });
+
+  it("defaults hostStyle to 'claude' when omitted (Phase 3 read switch)", () => {
+    // Phase 3: legacy `'direct'` is no longer the default. Callers
+    // that used to omit hostStyle now get 'claude' so new direct chat
+    // traces produce v2 hostConfigs with a real host style. Backend
+    // accepts the legacy literal `'direct'` for one deploy and
+    // normalizes with a `legacy_direct_style` warn.
+    const config = buildDirectHostConfig({
+      modelId: "anthropic/claude-haiku-4.5",
+      systemPrompt: "p",
+      resolvedTemperature: 0.2,
+      selectedServerIds: ["x", "y"],
+      requireToolApproval: true,
+    });
+
+    expect(config).toEqual({
+      hostStyle: "claude",
+      systemPrompt: "p",
+      modelId: "anthropic/claude-haiku-4.5",
+      temperature: 0.2,
+      requireToolApproval: true,
+      selectedServerIds: ["x", "y"],
+    });
+  });
+
+  it("forwards an explicit hostStyle (e.g. 'chatgpt') from the chat tab", () => {
+    const config = buildDirectHostConfig({
+      modelId: "openai/gpt-5-mini",
+      hostStyle: "chatgpt",
+      systemPrompt: "",
+      resolvedTemperature: 0.7,
+      selectedServerIds: [],
+      requireToolApproval: false,
+    });
+    expect(config.hostStyle).toBe("chatgpt");
   });
 });

@@ -4,6 +4,8 @@ import {
   writeOnboardingState,
   clearOnboardingState,
   isFirstRunEligible,
+  markOnboardingStarted,
+  markOnboardingShown,
 } from "../onboarding-state";
 
 describe("onboarding-state", () => {
@@ -19,6 +21,21 @@ describe("onboarding-state", () => {
     it("round-trips a seen state", () => {
       writeOnboardingState({ status: "seen" });
       expect(readOnboardingState()).toEqual({ status: "seen" });
+    });
+
+    it("marks onboarding as started before the NUX is shown", () => {
+      markOnboardingStarted();
+      expect(readOnboardingState()).toEqual(
+        expect.objectContaining({ status: "started" }),
+      );
+    });
+
+    it("marks onboarding as shown only after the NUX renders", () => {
+      markOnboardingStarted();
+      markOnboardingShown();
+      expect(readOnboardingState()).toEqual(
+        expect.objectContaining({ status: "seen", shownAt: expect.any(Number) }),
+      );
     });
 
     it("round-trips a completed state with timestamp", () => {
@@ -78,8 +95,18 @@ describe("onboarding-state", () => {
       expect(isFirstRunEligible(true, "")).toBe(false);
     });
 
-    it("returns false when the user is already authenticated", () => {
+    it("returns false when the user is signed in with WorkOS", () => {
       expect(isFirstRunEligible(false, "", true)).toBe(false);
+    });
+
+    it("does not treat guest Convex auth as signed-in WorkOS state", () => {
+      expect(isFirstRunEligible(false, "", false)).toBe(true);
+    });
+
+    it("uses the remote user row as source of truth when available", () => {
+      writeOnboardingState({ status: "seen", shownAt: Date.now() });
+      expect(isFirstRunEligible(false, "", false, false)).toBe(true);
+      expect(isFirstRunEligible(false, "", false, true)).toBe(false);
     });
 
     it("returns false when onboarding was completed", () => {
@@ -92,8 +119,18 @@ describe("onboarding-state", () => {
       expect(isFirstRunEligible(false, "")).toBe(false);
     });
 
-    it("returns false when onboarding was seen", () => {
+    it("returns true when auto-connect started but the NUX was not shown yet", () => {
+      writeOnboardingState({ status: "started", startedAt: Date.now() });
+      expect(isFirstRunEligible(false, "")).toBe(true);
+    });
+
+    it("returns true for legacy seen state without shownAt", () => {
       writeOnboardingState({ status: "seen" });
+      expect(isFirstRunEligible(false, "")).toBe(true);
+    });
+
+    it("returns false when onboarding was visibly shown", () => {
+      writeOnboardingState({ status: "seen", shownAt: Date.now() });
       expect(isFirstRunEligible(false, "")).toBe(false);
     });
   });

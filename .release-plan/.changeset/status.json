@@ -3,119 +3,23 @@
     {
       "releases": [
         {
-          "name": "@mcpjam/sdk",
-          "type": "patch"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "patch"
-        },
-        {
           "name": "@mcpjam/inspector",
           "type": "patch"
         }
       ],
-      "summary": "Bump sdk, cli, and inspector",
-      "id": "bump-sdk-cli-inspector"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "patch"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "patch"
-        },
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Patch sdk, cli, and inspector",
-      "id": "oauth-conformance-fixes"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "patch"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "patch"
-        },
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Fix `oauth login` hanging ~95s after browser auth. The interactive callback server's `stop()` was using `server.closeIdleConnections()`, which does not drain the browser's favicon keep-alive socket. Switched to `closeAllConnections()`, which is safe here because `stop()` runs in `runOAuthLogin`'s `finally` block after the token exchange has returned.",
-      "id": "oauth-login-callback-server-close"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "patch"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "patch"
-        },
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Patch sdk, cli, and inspector",
-      "id": "patch-sdk-cli-inspector"
+      "summary": "HostConfig v2: send hostConfig payload from inspector for direct chats, add HostConfigEditor component and v2 types, and switch reads to v2 (Phase 3). Replace server sharing with chatbox sharing. Add suite-level Default Execution Config editor for evals. Identify PostHog by actor key instead of auth state. Refactor: unify chat config boundaries by removing ChatTabV2 override props and nesting EvalChatHandoff fields under executionConfig.",
+      "id": "hostconfig-v2-and-chatbox-sharing"
     }
   ],
   "releases": [
     {
-      "name": "@mcpjam/sdk",
-      "type": "patch",
-      "oldVersion": "1.3.1",
-      "changesets": [
-        "bump-sdk-cli-inspector",
-        "oauth-conformance-fixes",
-        "oauth-login-callback-server-close",
-        "patch-sdk-cli-inspector"
-      ],
-      "newVersion": "1.3.2"
-    },
-    {
-      "name": "@mcpjam/cli",
-      "type": "patch",
-      "oldVersion": "3.3.3",
-      "changesets": [
-        "bump-sdk-cli-inspector",
-        "oauth-conformance-fixes",
-        "oauth-login-callback-server-close",
-        "patch-sdk-cli-inspector"
-      ],
-      "newVersion": "3.3.4"
-    },
-    {
       "name": "@mcpjam/inspector",
       "type": "patch",
-      "oldVersion": "2.4.3",
+      "oldVersion": "2.4.5",
       "changesets": [
-        "bump-sdk-cli-inspector",
-        "oauth-conformance-fixes",
-        "oauth-login-callback-server-close",
-        "patch-sdk-cli-inspector"
+        "hostconfig-v2-and-chatbox-sharing"
       ],
-      "newVersion": "2.4.4"
-    },
-    {
-      "name": "@mcpjam/mcp",
-      "type": "none",
-      "oldVersion": "0.0.1",
-      "changesets": [],
-      "newVersion": "0.0.1"
+      "newVersion": "2.4.6"
     }
   ]
 }

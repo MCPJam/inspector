@@ -17,18 +17,58 @@ import {
   useProjectMutations,
   useProjectQueries,
   useProjectServers,
+  useProjectsBulkServers,
 } from "./useProjects";
+import { useEmbeddedBlobReadTelemetry } from "./useClientTelemetry";
+import * as Sentry from "@sentry/react";
+
+// Defensive invariant: the serialized servers payload sent to `createProject`
+// must not be empty when the source project actually has servers. Emits a
+// Sentry message rather than throwing so the user-facing "create" path still
+// succeeds — we want to learn about the bug from the first occurrence, not
+// from a confused user a week later.
+//
+// `bulkServerCount` and `embeddedServerCount` together pinpoint the cause:
+// `bulkServerCount > 0` means the project had servers in the loaded list
+// when the call was made (likely a serialization regression); a non-zero
+// `embeddedServerCount` means the in-record copy still has servers.
+function assertNotColdSharingEmptyServers(args: {
+  callSite: "duplicate" | "migrate" | "import";
+  sourceProjectId: string;
+  serializedServerCount: number;
+  bulkServerCount: number | null;
+  embeddedServerCount: number;
+}): void {
+  if (args.serializedServerCount > 0) return;
+  if ((args.bulkServerCount ?? 0) === 0 && args.embeddedServerCount === 0) {
+    return;
+  }
+  Sentry.captureMessage(
+    "Cold-share data-loss invariant tripped: createProject called with empty servers but source has servers",
+    {
+      level: "error",
+      extra: {
+        callSite: args.callSite,
+        sourceProjectId: args.sourceProjectId,
+        serializedServerCount: args.serializedServerCount,
+        bulkServerCount: args.bulkServerCount,
+        embeddedServerCount: args.embeddedServerCount,
+      },
+    },
+  );
+}
 import {
   deserializeServersFromConvex,
   serializeServersForSharing,
 } from "@/lib/project-serialization";
 import {
-  composeProjectClientConfig,
+  DEFAULT_REQUEST_TIMEOUT_MS,
   pickProjectConnectionConfig,
   pickProjectHostContext,
   stableStringifyJson,
   type ProjectClientConfig,
   type ProjectConnectionConfigDraft,
+  type ProjectConnectionDefaults,
   type ProjectHostContextDraft,
 } from "@/lib/client-config";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
@@ -183,11 +223,27 @@ export function useProjectState({
     isAuthenticated,
     organizationId: projectOrganizationId,
   });
+  // Bulk-fetch servers for every visible project in one query so the picker
+  // can render server counts without N round trips. The active project still
+  // reads via the flat single-project query (see `useProjectServers` below);
+  // the bulk query covers every other project the picker renders.
+  const bulkServerProjectIds = useMemo(
+    () => (remoteProjects ?? []).map((p) => p._id),
+    [remoteProjects],
+  );
+  const {
+    serversByProject: bulkServersByProject,
+    isLoading: isLoadingBulkServers,
+  } = useProjectsBulkServers({
+    projectIds: bulkServerProjectIds,
+    isAuthenticated,
+  });
+  const emitEmbeddedBlobRead = useEmbeddedBlobReadTelemetry();
   const {
     createProject: convexCreateProject,
     ensureDefaultProject: convexEnsureDefaultProject,
     updateProject: convexUpdateProject,
-    updateClientConfig: convexUpdateClientConfig,
+    patchProjectDefaultConnection: convexPatchProjectDefaultConnection,
     deleteProject: convexDeleteProject,
   } = useProjectMutations();
   const billingStatus = useOrganizationBillingStatus(
@@ -353,6 +409,35 @@ export function useProjectState({
       (remoteProjects === undefined || isLoadingServers)) ||
     (isAuthLoading && !!convexActiveProjectId);
 
+  // Project ids whose server count was sourced from the in-record copy on
+  // this render. Telemetry is emitted in a separate effect (below) so we
+  // don't perform side effects during the render path. The resulting counter
+  // is what we watch to verify that no consumer still depends on the
+  // in-record copy before retiring it.
+  const embeddedBlobReadEventsThisRender = useMemo<
+    Array<{ projectId: string; serverCount: number }>
+  >(() => {
+    if (!remoteProjects) return [];
+    const events: Array<{ projectId: string; serverCount: number }> = [];
+    for (const rw of remoteProjects) {
+      if (rw._id === resolvedActiveProjectIdForServers) continue;
+      if (bulkServersByProject[rw._id] !== undefined) continue;
+      if (rw.servers && Object.keys(rw.servers).length > 0) {
+        events.push({
+          projectId: rw._id,
+          serverCount: Object.keys(rw.servers).length,
+        });
+      }
+    }
+    return events;
+  }, [remoteProjects, resolvedActiveProjectIdForServers, bulkServersByProject]);
+
+  useEffect(() => {
+    for (const event of embeddedBlobReadEventsThisRender) {
+      emitEmbeddedBlobRead(event);
+    }
+  }, [embeddedBlobReadEventsThisRender, emitEmbeddedBlobRead]);
+
   const convexProjects = useMemo((): Record<string, Project> => {
     if (!remoteProjects) return {};
     return Object.fromEntries(
@@ -370,8 +455,17 @@ export function useProjectState({
               activeProjectServersFlat,
             );
           }
-        } else if (rw.servers) {
-          deserializedServers = deserializeServersFromConvex(rw.servers);
+        } else {
+          // Bulk query is the primary source. Stale-while-revalidate:
+          // render `rw.servers` (the in-record copy) until the bulk query
+          // resolves, then swap to the fresh result. Without the fallback
+          // the picker would briefly flash "0 server(s)" on every fresh load.
+          const bulk = bulkServersByProject[rw._id];
+          if (bulk !== undefined) {
+            deserializedServers = deserializeServersFromConvex(bulk);
+          } else if (rw.servers) {
+            deserializedServers = deserializeServersFromConvex(rw.servers);
+          }
         }
 
         return [
@@ -393,7 +487,12 @@ export function useProjectState({
         ];
       }),
     );
-  }, [remoteProjects, resolvedActiveProjectIdForServers, activeProjectServersFlat]);
+  }, [
+    remoteProjects,
+    resolvedActiveProjectIdForServers,
+    activeProjectServersFlat,
+    bulkServersByProject,
+  ]);
 
   useEffect(() => {
     if (pendingClientConfigSyncRef.current.size === 0) {
@@ -736,6 +835,14 @@ export function useProjectState({
 
       try {
         const serializedServers = serializeServersForSharing(project.servers);
+        const bulkForSource = bulkServersByProject[project.id];
+        assertNotColdSharingEmptyServers({
+          callSite: "migrate",
+          sourceProjectId: project.id,
+          serializedServerCount: Object.keys(serializedServers).length,
+          bulkServerCount: bulkForSource ? bulkForSource.length : null,
+          embeddedServerCount: Object.keys(project.servers ?? {}).length,
+        });
         const projectId = await convexCreateProject({
           name: project.name,
           description: project.description,
@@ -786,6 +893,7 @@ export function useProjectState({
     hasResolvedProjectOrganizationSelection,
     canManageBillingForProjectActions,
     shouldTreatRemoteProjectsAsEmpty,
+    bulkServersByProject,
   ]);
 
   useEffect(() => {
@@ -1002,104 +1110,186 @@ export function useProjectState({
   const persistProjectClientConfig = useCallback(
     async <T,>({
       projectId,
-      clientConfig,
+      slice,
       savedSlice,
       controller,
     }: {
       projectId: string;
-      clientConfig: ProjectClientConfig | undefined;
+      // The slice the user actually edited. Only this section is sent
+      // to the backend (the helper preserves the others) and only this
+      // section is updated optimistically — passing the full clientConfig
+      // would let a slow connection save clobber a newer host-context
+      // save and vice versa (P2). `connectionConfig: undefined` means
+      // "reset to default" for the connection slice.
+      slice:
+        | {
+            kind: "connection";
+            connectionConfig: ProjectConnectionConfigDraft | undefined;
+          }
+        | {
+            kind: "hostContext";
+            hostContext: ProjectHostContextDraft;
+          };
       savedSlice: T | undefined;
       controller: ClientConfigSaveController<T>;
     }): Promise<void> => {
-      const awaitRemoteEcho = isAuthenticated && !shouldUseLocalFallback;
+      // Phase 4: writes go through `hostConfigsV2.patchProjectDefaultConnection`.
+      // The legacy project-doc echo wait is gone (v2 is the canonical
+      // target), but we still need a sync-pending window during the
+      // mutation in-flight period. `useProjectClientConfigSyncPending`
+      // (and the `assertClientConfigSynced` /
+      // `notifyIfClientConfigSyncPending` guards in use-server-state)
+      // gate connect / reconnect / test / resolver paths so a user who
+      // saves and immediately reconnects can't be served the still-stale
+      // `activeProject.clientConfig` (the optimistic slice-merge dispatch
+      // only runs after the await resolves). beginSave with
+      // awaitRemoteEcho:true sets that pending state; markSaved /
+      // failSave with awaitRemoteEcho:false skip the controller's
+      // pending-data gate so we clear immediately on mutation completion.
+      const useV2Write = isAuthenticated && !shouldUseLocalFallback;
 
       controller.beginSave({
         projectId,
         savedConfig: savedSlice,
-        awaitRemoteEcho,
+        awaitRemoteEcho: useV2Write,
       });
 
-      if (awaitRemoteEcho) {
-        const pendingSyncId = `project-client-config-sync-${pendingClientConfigSyncIdRef.current++}`;
-        const remoteEchoPromise = new Promise<void>((resolve, reject) => {
-          const supersededPendingId =
-            pendingClientConfigSyncByProjectRef.current.get(projectId);
-          if (supersededPendingId) {
-            clearPendingClientConfigSync(
-              supersededPendingId,
-              new Error(PROJECT_CLIENT_CONFIG_SYNC_SUPERSEDED_ERROR_MESSAGE),
-            );
+      // Resolve the connection slice into both the v2 wire payload and
+      // the local optimistic state. Reset (`connectionConfig ===
+      // undefined`) explicitly sends `{ headers: {}, requestTimeout:
+      // DEFAULT_REQUEST_TIMEOUT_MS }` — sending headers-only would let
+      // the backend's helper preserve the user's previous timeout while
+      // the optimistic local state shows defaults, drifting back to the
+      // old timeout on the next refetch.
+      let resolvedConnectionDefaults:
+        | ProjectConnectionDefaults
+        | undefined;
+      if (slice.kind === "connection") {
+        const { connectionConfig } = slice;
+        if (connectionConfig === undefined) {
+          resolvedConnectionDefaults = {
+            headers: {},
+            requestTimeout: DEFAULT_REQUEST_TIMEOUT_MS,
+          };
+        } else {
+          const cd = connectionConfig.connectionDefaults;
+          if (cd === undefined) {
+            resolvedConnectionDefaults = {
+              headers: {},
+              requestTimeout: DEFAULT_REQUEST_TIMEOUT_MS,
+            };
+          } else {
+            const requestTimeout =
+              cd.requestTimeout !== undefined &&
+              Number.isFinite(cd.requestTimeout)
+                ? cd.requestTimeout
+                : DEFAULT_REQUEST_TIMEOUT_MS;
+            resolvedConnectionDefaults = {
+              headers: cd.headers ?? {},
+              requestTimeout,
+            };
           }
+        }
+      }
+      const resolvedClientCapabilities =
+        slice.kind === "connection"
+          ? slice.connectionConfig === undefined
+            ? {}
+            : slice.connectionConfig.clientCapabilities
+          : undefined;
 
-          const timeoutId = setTimeout(() => {
-            pendingClientConfigSyncRef.current.delete(pendingSyncId);
-            if (
-              pendingClientConfigSyncByProjectRef.current.get(projectId) ===
-              pendingSyncId
-            ) {
-              pendingClientConfigSyncByProjectRef.current.delete(projectId);
-            }
-            reject(new Error(PROJECT_CLIENT_CONFIG_SYNC_TIMEOUT_ERROR_MESSAGE));
-          }, CLIENT_CONFIG_SYNC_ECHO_TIMEOUT_MS);
-
-          pendingClientConfigSyncByProjectRef.current.set(
-            projectId,
-            pendingSyncId,
-          );
-          pendingClientConfigSyncRef.current.set(pendingSyncId, {
-            id: pendingSyncId,
-            projectId,
-            expectedSerializedConfig:
-              stringifyProjectClientConfig(clientConfig),
-            resolve,
-            reject,
-            timeoutId,
-          });
-        });
-
+      if (useV2Write) {
         try {
-          await convexUpdateClientConfig({
-            projectId,
-            clientConfig,
-          });
-          await remoteEchoPromise;
+          if (slice.kind === "connection") {
+            await convexPatchProjectDefaultConnection({
+              projectId,
+              connectionDefaults: resolvedConnectionDefaults,
+              clientCapabilities: resolvedClientCapabilities,
+              // Leave hostContext untouched on the backend — passing
+              // undefined preserves the existing value (P2).
+              hostContext: undefined,
+            });
+          } else {
+            await convexPatchProjectDefaultConnection({
+              projectId,
+              // Leave connection portions untouched on the backend.
+              connectionDefaults: undefined,
+              clientCapabilities: undefined,
+              hostContext: slice.hostContext,
+            });
+          }
         } catch (error) {
-          clearPendingClientConfigSync(pendingSyncId);
           controller.failSave({
             projectId,
             savedConfig: savedSlice,
-            awaitRemoteEcho,
+            awaitRemoteEcho: false,
           });
           const errorMessage =
             error instanceof Error ? error.message : "Unknown error";
-          if (!isSupersededClientConfigSyncError(error)) {
-            logger.error("Failed to update project client config", {
-              error: errorMessage,
-              projectId,
-            });
-            toast.error(errorMessage);
-          }
+          logger.error("Failed to update project client config", {
+            error: errorMessage,
+            projectId,
+          });
+          toast.error(errorMessage);
           throw error instanceof Error ? error : new Error(errorMessage);
         }
+        // Optimistically update only the slice the user edited. Using
+        // the slice-merge action (rather than dispatching a recomposed
+        // full clientConfig) keeps the sibling slice authoritative
+        // even when two saves race. The reactive project query will
+        // catch up on its next refetch.
+        if (slice.kind === "connection") {
+          dispatch({
+            type: "UPDATE_PROJECT_CLIENT_CONFIG_SLICE",
+            projectId,
+            slice: {
+              kind: "connection",
+              connectionDefaults: resolvedConnectionDefaults,
+              clientCapabilities: resolvedClientCapabilities ?? {},
+            },
+          });
+        } else {
+          dispatch({
+            type: "UPDATE_PROJECT_CLIENT_CONFIG_SLICE",
+            projectId,
+            slice: { kind: "hostContext", hostContext: slice.hostContext },
+          });
+        }
+        controller.markSaved({
+          projectId,
+          savedConfig: savedSlice,
+          awaitRemoteEcho: false,
+        });
         return;
       }
 
-      dispatch({
-        type: "UPDATE_PROJECT",
-        projectId,
-        updates: { clientConfig },
-      });
+      if (slice.kind === "connection") {
+        dispatch({
+          type: "UPDATE_PROJECT_CLIENT_CONFIG_SLICE",
+          projectId,
+          slice: {
+            kind: "connection",
+            connectionDefaults: resolvedConnectionDefaults,
+            clientCapabilities: resolvedClientCapabilities ?? {},
+          },
+        });
+      } else {
+        dispatch({
+          type: "UPDATE_PROJECT_CLIENT_CONFIG_SLICE",
+          projectId,
+          slice: { kind: "hostContext", hostContext: slice.hostContext },
+        });
+      }
       controller.markSaved({
         projectId,
         savedConfig: savedSlice,
-        awaitRemoteEcho,
+        awaitRemoteEcho: false,
       });
     },
     [
       isAuthenticated,
       shouldUseLocalFallback,
-      clearPendingClientConfigSync,
-      convexUpdateClientConfig,
+      convexPatchProjectDefaultConnection,
       logger,
       dispatch,
     ],
@@ -1247,7 +1437,6 @@ export function useProjectState({
       connectionConfig: ProjectConnectionConfigDraft | undefined,
     ): Promise<void> => {
       const clientConfigStore = useClientConfigStore.getState();
-      const projectClientConfig = effectiveProjects[projectId]?.clientConfig;
       const scopedDraftConfig = doesStoreSliceBelongToProject(
         clientConfigStore.activeProjectId,
         projectId,
@@ -1258,25 +1447,21 @@ export function useProjectState({
         connectionConfig ??
         scopedDraftConfig ??
         resolvePersistedConnectionConfig(projectId);
-      const clientConfig = composeProjectClientConfig({
-        connectionConfig: connectionConfigToPersist,
-        hostContext: resolvePersistedHostContext(projectId),
-        fallback: projectClientConfig ?? null,
-      });
 
       await persistProjectClientConfig({
         projectId,
-        clientConfig,
+        slice: {
+          kind: "connection",
+          connectionConfig: connectionConfigToPersist,
+        },
         savedSlice: connectionConfigToPersist,
         controller: connectionConfigSaveController,
       });
     },
     [
-      effectiveProjects,
       connectionConfigSaveController,
       persistProjectClientConfig,
       resolvePersistedConnectionConfig,
-      resolvePersistedHostContext,
     ],
   );
 
@@ -1286,7 +1471,6 @@ export function useProjectState({
       hostContext: ProjectHostContextDraft | undefined,
     ): Promise<void> => {
       const hostContextStore = useHostContextStore.getState();
-      const projectClientConfig = effectiveProjects[projectId]?.clientConfig;
       const scopedDraftHostContext = doesStoreSliceBelongToProject(
         hostContextStore.activeProjectId,
         projectId,
@@ -1297,24 +1481,17 @@ export function useProjectState({
         hostContext ??
         scopedDraftHostContext ??
         resolvePersistedHostContext(projectId);
-      const clientConfig = composeProjectClientConfig({
-        connectionConfig: resolvePersistedConnectionConfig(projectId),
-        hostContext: hostContextToPersist,
-        fallback: projectClientConfig ?? null,
-      });
 
       await persistProjectClientConfig({
         projectId,
-        clientConfig,
+        slice: { kind: "hostContext", hostContext: hostContextToPersist },
         savedSlice: hostContextToPersist,
         controller: hostContextSaveController,
       });
     },
     [
-      effectiveProjects,
       hostContextSaveController,
       persistProjectClientConfig,
-      resolvePersistedConnectionConfig,
       resolvePersistedHostContext,
     ],
   );
@@ -1409,6 +1586,14 @@ export function useProjectState({
           const serializedServers = serializeServersForSharing(
             sourceProject.servers,
           );
+          const bulkForSource = bulkServersByProject[sourceProject.id];
+          assertNotColdSharingEmptyServers({
+            callSite: "duplicate",
+            sourceProjectId: sourceProject.id,
+            serializedServerCount: Object.keys(serializedServers).length,
+            bulkServerCount: bulkForSource ? bulkForSource.length : null,
+            embeddedServerCount: Object.keys(sourceProject.servers ?? {}).length,
+          });
           await convexCreateProject({
             name: newName,
             description: sourceProject.description,
@@ -1461,6 +1646,7 @@ export function useProjectState({
       projectOrganizationId,
       hasResolvedProjectOrganizationSelection,
       canManageBillingForProjectActions,
+      bulkServersByProject,
     ],
   );
 
@@ -1551,6 +1737,15 @@ export function useProjectState({
           const serializedServers = serializeServersForSharing(
             projectData.servers || {},
           );
+          assertNotColdSharingEmptyServers({
+            callSite: "import",
+            sourceProjectId: projectData.id ?? "<unknown-import>",
+            serializedServerCount: Object.keys(serializedServers).length,
+            // Import-from-JSON has no bulk-query source — the user pasted
+            // the payload. We only have the embedded count to compare.
+            bulkServerCount: null,
+            embeddedServerCount: Object.keys(projectData.servers ?? {}).length,
+          });
           await convexCreateProject({
             name: projectData.name,
             description: projectData.description,
@@ -1607,6 +1802,13 @@ export function useProjectState({
     remoteProjects,
     isLoadingProjects,
     activeProjectServersFlat,
+    // True while the bulk server query is in flight for the picker's
+    // non-active projects. Consumers (e.g. ProjectManagementDialog) gate
+    // the "{n} server(s)" label on this so it never flashes "0 server(s)"
+    // before the bulk query resolves. The active project ignores this flag
+    // — its count comes from the existing flat single-project query.
+    isLoadingBulkServers,
+    bulkServersByProject,
     // Always false — kept on the return shape so existing consumers
     // (tests, App.tsx) don't break in this PR. Convex-unreachable now
     // surfaces through the existing loading-skeleton path; no separate
