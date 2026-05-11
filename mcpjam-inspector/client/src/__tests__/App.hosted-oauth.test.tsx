@@ -683,6 +683,35 @@ describe("App hosted OAuth callback handling", () => {
     expect(mockHandleOAuthCallback).not.toHaveBeenCalled();
   });
 
+  it("attaches the WorkOS bearer when a signed-in user returns to a chatbox callback", async () => {
+    // Regression for the chatbox OAuth 403: on chatbox routes useApiContext is
+    // gated off, so authFetch's default header resolver demoted signed-in
+    // users to guest bearers. The fix explicitly fetches the WorkOS access
+    // token and passes it as authorizationHeader, bypassing apiContext.
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = { id: "user-workos-1" };
+    mockWorkOsAuthState.getAccessToken = vi
+      .fn()
+      .mockResolvedValue("workos-token");
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockCompleteHostedOAuthCallback).toHaveBeenCalledWith(
+        expect.objectContaining({
+          surface: "chatbox",
+          chatboxId: "sbx_1",
+        }),
+        "oauth-code",
+        expect.objectContaining({
+          authorizationHeader: "Bearer workos-token",
+          onTraceUpdate: expect.any(Function),
+        })
+      );
+    });
+    expect(mockGetGuestBearerToken).not.toHaveBeenCalled();
+  });
+
   it("does not keep the hosted loading screen for project OAuth callbacks", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
