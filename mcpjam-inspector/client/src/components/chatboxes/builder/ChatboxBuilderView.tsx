@@ -980,7 +980,6 @@ export function ChatboxBuilderView({
       const payload = {
         name: trimmedName,
         description: draftChatboxConfig.description.trim() || undefined,
-        allowGuestAccess: draftChatboxConfig.allowGuestAccess,
         welcomeDialog: draftChatboxConfig.welcomeDialog,
         feedbackDialog: draftChatboxConfig.feedbackDialog,
         hostConfig: hostConfigInput,
@@ -1007,6 +1006,12 @@ export function ChatboxBuilderView({
         chatboxId,
         ...payload,
       });
+      if (chatbox && draftChatboxConfig.mode !== chatbox.mode) {
+        await setChatboxMode({
+          chatboxId,
+          mode: draftChatboxConfig.mode,
+        });
+      }
       toast.success("Chatbox updated");
       return true;
     } catch (error) {

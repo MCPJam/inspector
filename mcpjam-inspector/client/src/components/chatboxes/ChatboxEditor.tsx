@@ -645,7 +645,6 @@ export function ChatboxEditor({
       const payload = {
         name: trimmedName,
         description: description.trim() || undefined,
-        allowGuestAccess,
         hostConfig: hostConfigInput,
       };
 
@@ -664,6 +663,12 @@ export function ChatboxEditor({
           chatboxId: chatbox!.chatboxId,
           ...payload,
         });
+        if (mode !== chatbox!.mode) {
+          result = await setChatboxMode({
+            chatboxId: chatbox!.chatboxId,
+            mode,
+          });
+        }
       }
 
       toast.success(isCreateMode ? "Chatbox created" : "Chatbox updated");

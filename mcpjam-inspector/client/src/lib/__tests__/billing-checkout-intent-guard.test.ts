@@ -20,7 +20,7 @@ describe("guardCheckoutIntentAgainstBillingStatus", () => {
     expect(
       guardCheckoutIntentAgainstBillingStatus(
         billingStatusFixture(),
-        "solo",
+        "team",
       ),
     ).toEqual({ proceed: true });
   });
@@ -35,7 +35,7 @@ describe("guardCheckoutIntentAgainstBillingStatus", () => {
     expect(
       guardCheckoutIntentAgainstBillingStatus(
         billingStatusFixture({
-          effectivePlan: "solo",
+          effectivePlan: "team",
           source: "subscription",
         }),
         "team",
@@ -46,8 +46,8 @@ describe("guardCheckoutIntentAgainstBillingStatus", () => {
   it("allows solo checkout during an active solo trial", () => {
     expect(
       guardCheckoutIntentAgainstBillingStatus(
-        billingStatusFixture({ effectivePlan: "solo", source: "trial" }),
-        "solo",
+        billingStatusFixture({ effectivePlan: "team", source: "trial" }),
+        "team",
       ),
     ).toEqual({ proceed: true });
   });
@@ -55,7 +55,7 @@ describe("guardCheckoutIntentAgainstBillingStatus", () => {
   it("allows team checkout during an active solo trial", () => {
     expect(
       guardCheckoutIntentAgainstBillingStatus(
-        billingStatusFixture({ effectivePlan: "solo", source: "trial" }),
+        billingStatusFixture({ effectivePlan: "team", source: "trial" }),
         "team",
       ),
     ).toEqual({ proceed: true });
@@ -65,15 +65,15 @@ describe("guardCheckoutIntentAgainstBillingStatus", () => {
     expect(
       guardCheckoutIntentAgainstBillingStatus(
         billingStatusFixture({
-          effectivePlan: "solo",
+          effectivePlan: "team",
           source: "subscription",
         }),
-        "solo",
+        "team",
       ),
     ).toEqual({
       proceed: false,
       reason: "already_on",
-      currentPlan: "solo",
+      currentPlan: "team",
     });
   });
 
@@ -100,7 +100,7 @@ describe("guardCheckoutIntentAgainstBillingStatus", () => {
           effectivePlan: "team",
           source: "subscription",
         }),
-        "solo",
+        "team",
       ),
     ).toEqual({
       proceed: false,
@@ -116,7 +116,7 @@ describe("guardCheckoutIntentAgainstBillingStatus", () => {
           effectivePlan: "enterprise",
           source: "subscription",
         }),
-        "solo",
+        "team",
       ),
     ).toEqual({
       proceed: false,
