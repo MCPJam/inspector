@@ -1,5 +1,5 @@
-import { renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useEnsureDbUser } from "../useEnsureDbUser";
 
 const mockState = vi.hoisted(() => ({
@@ -42,10 +42,17 @@ vi.mock("@sentry/react", () => ({
 describe("useEnsureDbUser", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockState.ensureUser.mockResolvedValue(undefined);
+    mockState.getGuestPromotionProof.mockResolvedValue(null);
+    mockState.revokeGuestSessionAndCookie.mockResolvedValue(false);
     mockState.actorKey = "guest-1";
     mockState.auth.user = null;
     mockState.convexAuth.isAuthenticated = true;
     mockState.convexAuth.isLoading = false;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("re-runs ensureUser when the guest actor key rotates", async () => {
@@ -95,6 +102,120 @@ describe("useEnsureDbUser", () => {
 
     await waitFor(() => {
       expect(mockState.sentrySetUser).toHaveBeenCalledWith(null);
+    });
+  });
+
+  it("does not re-run when AuthKit returns a new user object for the same id", async () => {
+    mockState.auth.user = { id: "workos-user-1" };
+    mockState.actorKey = "workos-user-1";
+    const { rerender } = renderHook(() => useEnsureDbUser());
+
+    await waitFor(() => {
+      expect(mockState.ensureUser).toHaveBeenCalledTimes(1);
+    });
+
+    mockState.auth.user = { id: "workos-user-1" };
+    rerender();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockState.ensureUser).toHaveBeenCalledTimes(1);
+  });
+
+  it("shares an in-flight ensureUser call for the same identity", async () => {
+    let resolveEnsureUser: (() => void) | undefined;
+    mockState.ensureUser.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveEnsureUser = resolve;
+        })
+    );
+
+    const { rerender } = renderHook(() => useEnsureDbUser());
+
+    await waitFor(() => {
+      expect(mockState.ensureUser).toHaveBeenCalledTimes(1);
+    });
+
+    const nextEnsureUser = vi.fn().mockResolvedValue(undefined);
+    mockState.ensureUser = nextEnsureUser;
+    rerender();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(nextEnsureUser).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveEnsureUser?.();
+    });
+  });
+
+  it("retries ensureUser on Convex write conflicts", async () => {
+    mockState.ensureUser
+      .mockRejectedValueOnce(
+        new Error(
+          'Documents read from or written to the "users" table changed while this mutation was being run'
+        )
+      )
+      .mockResolvedValueOnce(undefined);
+
+    renderHook(() => useEnsureDbUser());
+
+    await waitFor(() => {
+      expect(mockState.ensureUser).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("abandons a pending retry when the identity changes", async () => {
+    vi.useFakeTimers();
+    mockState.ensureUser
+      .mockRejectedValueOnce(
+        new Error(
+          'Documents read from or written to the "users" table changed while this mutation was being run'
+        )
+      )
+      .mockResolvedValue(undefined);
+
+    const { rerender } = renderHook(() => useEnsureDbUser());
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mockState.ensureUser).toHaveBeenCalledTimes(1);
+
+    mockState.actorKey = "guest-2";
+    rerender();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mockState.ensureUser).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      await vi.runOnlyPendingTimersAsync();
+    });
+
+    expect(mockState.ensureUser).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry unrelated ensureUser errors", async () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    mockState.ensureUser.mockRejectedValueOnce(new Error("boom"));
+
+    renderHook(() => useEnsureDbUser());
+
+    await waitFor(() => {
+      expect(mockState.ensureUser).toHaveBeenCalledTimes(1);
+      expect(consoleError).toHaveBeenCalledWith(
+        "[auth] ensureUser failed",
+        expect.any(Error)
+      );
     });
   });
 });
