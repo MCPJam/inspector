@@ -1,6 +1,7 @@
 import { useAction, useQuery } from "convex/react";
 import { useMemo, useState } from "react";
 import { FlaskConical, Loader2 } from "lucide-react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -51,6 +52,7 @@ export function SaveAsTestCaseAction({
   promptPreview,
   projectId,
 }: SaveAsTestCaseActionProps) {
+  const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [caseTitle, setCaseTitle] = useState(() =>
@@ -124,6 +126,11 @@ export function SaveAsTestCaseAction({
 
   // No projectId => no destination suite => no point showing the action.
   if (!projectId) {
+    return null;
+  }
+
+  // Gated behind the same flag as the Playground/Evals sidebar entry.
+  if (playgroundEnabled !== true) {
     return null;
   }
 
