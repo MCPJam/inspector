@@ -20,6 +20,43 @@ import {
   useProjectsBulkServers,
 } from "./useProjects";
 import { useEmbeddedBlobReadTelemetry } from "./useClientTelemetry";
+import * as Sentry from "@sentry/react";
+
+// Defensive invariant: the serialized servers payload sent to `createProject`
+// must not be empty when the source project actually has servers. Emits a
+// Sentry message rather than throwing so the user-facing "create" path still
+// succeeds — we want to learn about the bug from the first occurrence, not
+// from a confused user a week later.
+//
+// `bulkServerCount` and `embeddedServerCount` together pinpoint the cause:
+// `bulkServerCount > 0` means the project had servers in the loaded list
+// when the call was made (likely a serialization regression); a non-zero
+// `embeddedServerCount` means the in-record copy still has servers.
+function assertNotColdSharingEmptyServers(args: {
+  callSite: "duplicate" | "migrate" | "import";
+  sourceProjectId: string;
+  serializedServerCount: number;
+  bulkServerCount: number | null;
+  embeddedServerCount: number;
+}): void {
+  if (args.serializedServerCount > 0) return;
+  if ((args.bulkServerCount ?? 0) === 0 && args.embeddedServerCount === 0) {
+    return;
+  }
+  Sentry.captureMessage(
+    "Cold-share data-loss invariant tripped: createProject called with empty servers but source has servers",
+    {
+      level: "error",
+      extra: {
+        callSite: args.callSite,
+        sourceProjectId: args.sourceProjectId,
+        serializedServerCount: args.serializedServerCount,
+        bulkServerCount: args.bulkServerCount,
+        embeddedServerCount: args.embeddedServerCount,
+      },
+    },
+  );
+}
 import {
   deserializeServersFromConvex,
   serializeServersForSharing,
@@ -186,11 +223,10 @@ export function useProjectState({
     isAuthenticated,
     organizationId: projectOrganizationId,
   });
-  // PR-I1: bulk-fetch servers for every visible project in one query so the
-  // picker can stop relying on the embedded `servers` blob shipped on each
-  // `RemoteProject`. The active project still reads the flat
-  // single-project query (`useProjectServers` below); the bulk query covers
-  // every other project the picker renders.
+  // Bulk-fetch servers for every visible project in one query so the picker
+  // can render server counts without N round trips. The active project still
+  // reads via the flat single-project query (see `useProjectServers` below);
+  // the bulk query covers every other project the picker renders.
   const bulkServerProjectIds = useMemo(
     () => (remoteProjects ?? []).map((p) => p._id),
     [remoteProjects],
@@ -373,10 +409,11 @@ export function useProjectState({
       (remoteProjects === undefined || isLoadingServers)) ||
     (isAuthLoading && !!convexActiveProjectId);
 
-  // Project ids whose server count was sourced from the embedded blob on this
-  // render. Telemetry is emitted in a separate effect (below) so we don't
-  // perform side effects during the render path. PR-B2 watches the resulting
-  // Axiom counter and gates the embedded-blob removal on it being zero.
+  // Project ids whose server count was sourced from the in-record copy on
+  // this render. Telemetry is emitted in a separate effect (below) so we
+  // don't perform side effects during the render path. The resulting counter
+  // is what we watch to verify that no consumer still depends on the
+  // in-record copy before retiring it.
   const embeddedBlobReadEventsThisRender = useMemo<
     Array<{ projectId: string; serverCount: number }>
   >(() => {
@@ -419,9 +456,9 @@ export function useProjectState({
             );
           }
         } else {
-          // PR-I1: bulk query is the primary source. Stale-while-revalidate:
-          // render rw.servers (the embedded blob) until the bulk query
-          // resolves, then replace it with bulk data. Without the fallback
+          // Bulk query is the primary source. Stale-while-revalidate:
+          // render `rw.servers` (the in-record copy) until the bulk query
+          // resolves, then swap to the fresh result. Without the fallback
           // the picker would briefly flash "0 server(s)" on every fresh load.
           const bulk = bulkServersByProject[rw._id];
           if (bulk !== undefined) {
@@ -798,6 +835,14 @@ export function useProjectState({
 
       try {
         const serializedServers = serializeServersForSharing(project.servers);
+        const bulkForSource = bulkServersByProject[project.id];
+        assertNotColdSharingEmptyServers({
+          callSite: "migrate",
+          sourceProjectId: project.id,
+          serializedServerCount: Object.keys(serializedServers).length,
+          bulkServerCount: bulkForSource ? bulkForSource.length : null,
+          embeddedServerCount: Object.keys(project.servers ?? {}).length,
+        });
         const projectId = await convexCreateProject({
           name: project.name,
           description: project.description,
@@ -848,6 +893,7 @@ export function useProjectState({
     hasResolvedProjectOrganizationSelection,
     canManageBillingForProjectActions,
     shouldTreatRemoteProjectsAsEmpty,
+    bulkServersByProject,
   ]);
 
   useEffect(() => {
@@ -1540,6 +1586,14 @@ export function useProjectState({
           const serializedServers = serializeServersForSharing(
             sourceProject.servers,
           );
+          const bulkForSource = bulkServersByProject[sourceProject.id];
+          assertNotColdSharingEmptyServers({
+            callSite: "duplicate",
+            sourceProjectId: sourceProject.id,
+            serializedServerCount: Object.keys(serializedServers).length,
+            bulkServerCount: bulkForSource ? bulkForSource.length : null,
+            embeddedServerCount: Object.keys(sourceProject.servers ?? {}).length,
+          });
           await convexCreateProject({
             name: newName,
             description: sourceProject.description,
@@ -1592,6 +1646,7 @@ export function useProjectState({
       projectOrganizationId,
       hasResolvedProjectOrganizationSelection,
       canManageBillingForProjectActions,
+      bulkServersByProject,
     ],
   );
 
@@ -1682,6 +1737,15 @@ export function useProjectState({
           const serializedServers = serializeServersForSharing(
             projectData.servers || {},
           );
+          assertNotColdSharingEmptyServers({
+            callSite: "import",
+            sourceProjectId: projectData.id ?? "<unknown-import>",
+            serializedServerCount: Object.keys(serializedServers).length,
+            // Import-from-JSON has no bulk-query source — the user pasted
+            // the payload. We only have the embedded count to compare.
+            bulkServerCount: null,
+            embeddedServerCount: Object.keys(projectData.servers ?? {}).length,
+          });
           await convexCreateProject({
             name: projectData.name,
             description: projectData.description,
@@ -1738,11 +1802,11 @@ export function useProjectState({
     remoteProjects,
     isLoadingProjects,
     activeProjectServersFlat,
-    // PR-I1: true while the bulk server query is in flight for the picker's
-    // non-active projects. Consumers (e.g. ProjectManagementDialog) gate the
-    // "{n} server(s)" label on this so it never flashes "0 server(s)" before
-    // the bulk query resolves. The active project ignores this flag — its
-    // count comes from the existing flat query.
+    // True while the bulk server query is in flight for the picker's
+    // non-active projects. Consumers (e.g. ProjectManagementDialog) gate
+    // the "{n} server(s)" label on this so it never flashes "0 server(s)"
+    // before the bulk query resolves. The active project ignores this flag
+    // — its count comes from the existing flat single-project query.
     isLoadingBulkServers,
     bulkServersByProject,
     // Always false — kept on the return shape so existing consumers
