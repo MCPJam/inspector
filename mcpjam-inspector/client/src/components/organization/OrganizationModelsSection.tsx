@@ -103,6 +103,33 @@ const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     logo: "/mistral_logo.png",
   },
   { key: "xai", name: "xAI", kind: "api-key-only", logo: "/xai_logo.png" },
+  // OpenAI-compatible providers — admin only supplies an API key, the
+  // baseURL is hardcoded server-side in convex/stream/buildOrgModel.ts and
+  // mirrored in mcpjam-inspector/server/utils/chat-helpers.ts.
+  {
+    key: "moonshotai",
+    name: "Moonshot (Kimi)",
+    kind: "api-key-only",
+    logo: "/moonshot_light.png",
+  },
+  {
+    key: "z-ai",
+    name: "Z.AI (GLM)",
+    kind: "api-key-only",
+    logo: "/z-ai.png",
+  },
+  {
+    key: "qwen",
+    name: "Qwen",
+    kind: "api-key-only",
+    logo: "/qwen_logo.png",
+  },
+  {
+    key: "minimax",
+    name: "MiniMax",
+    kind: "api-key-only",
+    logo: "/minimax_logo.svg",
+  },
   {
     key: "azure",
     name: "Azure OpenAI",

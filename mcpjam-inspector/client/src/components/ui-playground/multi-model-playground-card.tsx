@@ -13,6 +13,7 @@ import {
   cloneUiMessages,
   formatErrorMessage,
 } from "@/components/chat-v2/shared/chat-helpers";
+import type { OrgVisibleConfig } from "@/components/chat-v2/shared/model-helpers";
 import type { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import {
   type MultiModelCardSummary,
@@ -91,6 +92,9 @@ interface MultiModelPlaygroundCardProps {
   stopRequestId: number;
   reasoningDisplayMode?: ReasoningDisplayMode;
   executionConfig: ExecutionConfig;
+  /** Org-managed BYOK provider config — forwarded to useChatSession so each
+   * compare card sees the same models as ChatTabV2 / PlaygroundMain. */
+  hostedOrgModelConfig?: OrgVisibleConfig;
   hostedContext?: HostedRuntimeContext;
   displayMode: DisplayMode;
   onDisplayModeChange: (mode: DisplayMode) => void;
@@ -125,6 +129,7 @@ export function MultiModelPlaygroundCard({
   stopRequestId,
   reasoningDisplayMode = "inline",
   executionConfig,
+  hostedOrgModelConfig,
   hostedContext,
   displayMode,
   onDisplayModeChange,
@@ -191,6 +196,7 @@ export function MultiModelPlaygroundCard({
     startChatWithMessages,
   } = useChatSession({
     selectedServers,
+    hostedOrgModelConfig,
     hostedContext,
     executionConfig: {
       ...executionConfig,

@@ -623,6 +623,10 @@ export async function runEvalsWithManager(
     modelApiKeys: resolvedModelApiKeys ?? undefined,
     orgModelConfig: resolvedOrgModelConfig,
     orgRuntimeProjectId,
+    orgRuntimeAuth: {
+      chatboxToken,
+      serverIds: resolvedServerIds,
+    },
     convexClient,
     convexHttpUrl,
     convexAuthToken,
@@ -742,6 +746,10 @@ export async function runEvalTestCaseWithManager(
     modelApiKeys: resolvedModelApiKeys ?? undefined,
     orgModelConfig: resolvedOrgModelConfig,
     orgRuntimeProjectId: testCaseProjectId,
+    orgRuntimeAuth: {
+      chatboxToken,
+      serverIds: resolvedServerIds,
+    },
     convexClient,
     convexHttpUrl,
     convexAuthToken,
@@ -988,6 +996,10 @@ export async function streamEvalTestCaseWithManager(
           modelApiKeys: resolvedStreamModelApiKeys ?? undefined,
           orgModelConfig: resolvedStreamOrgModelConfig,
           orgRuntimeProjectId: streamTestCaseProjectId,
+          orgRuntimeAuth: {
+            chatboxToken,
+            serverIds: resolvedServerIds,
+          },
           convexHttpUrl,
           convexAuthToken,
           convexClient,

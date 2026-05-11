@@ -71,7 +71,7 @@ describe("SettingsTab", () => {
     expect(
       screen.getByRole("switch", { name: "Toggle dark mode" }),
     ).toBeInTheDocument();
-    expect(screen.queryByText("LLM Providers")).not.toBeInTheDocument();
+    expect(screen.getByText("LLM Providers")).toBeInTheDocument();
   });
 
   it("updates theme when toggled", async () => {

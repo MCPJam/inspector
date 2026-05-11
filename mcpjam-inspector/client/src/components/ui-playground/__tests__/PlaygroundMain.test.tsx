@@ -143,6 +143,9 @@ vi.mock("convex/react", () => ({
     isAuthenticated: false,
     isLoading: false,
   }),
+  // useQuery used to fetch organizationModelProviders:getVisibleConfig.
+  // Tests don't exercise org BYOK so returning undefined is fine.
+  useQuery: () => undefined,
 }));
 
 // Mock useViews (useProjectServers)

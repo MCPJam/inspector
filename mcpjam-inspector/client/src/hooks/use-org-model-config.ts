@@ -29,6 +29,15 @@ export interface OrgModelConfigResult {
   error: string | null;
 }
 
+export function canReadOrgModelConfig(role: string | undefined): boolean {
+  return (
+    role === "owner" ||
+    role === "admin" ||
+    role === "member" ||
+    role === "guest"
+  );
+}
+
 export interface OrgModelUsageAggregate {
   key: string;
   requestCount: number;

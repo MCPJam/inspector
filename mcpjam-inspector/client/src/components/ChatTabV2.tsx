@@ -87,7 +87,10 @@ import {
 import { useProjectServers } from "@/hooks/useViews";
 import { HOSTED_MODE } from "@/lib/config";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
-import type { OrgModelProvider } from "@/hooks/use-org-model-config";
+import {
+  canReadOrgModelConfig,
+  type OrgModelProvider,
+} from "@/hooks/use-org-model-config";
 import { useOpenOrgModels } from "@/hooks/use-open-org-models";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
@@ -292,9 +295,21 @@ export function ChatTabV2({
     activeProject?.sharedProjectId ??
     (activeProject?.organizationId ? appState.activeProjectId : null);
   const organizationId = activeProject?.organizationId ?? null;
+  const visibleOrganizations = useQuery(
+    "organizations:getMyOrganizations" as any,
+    isConvexAuthenticated ? ({} as any) : "skip",
+  ) as Array<{ _id: string; myRole?: string }> | undefined;
+  const visibleOrganization = visibleOrganizations?.find(
+    (organization) => organization._id === organizationId,
+  );
+  const canQueryOrgModelConfig = Boolean(
+    isConvexAuthenticated &&
+      organizationId &&
+      canReadOrgModelConfig(visibleOrganization?.myRole),
+  );
   const hostedOrgModelConfig = useQuery(
     "organizationModelProviders:getVisibleConfig" as any,
-    isConvexAuthenticated && organizationId
+    canQueryOrgModelConfig && organizationId
       ? ({ organizationId } as any)
       : "skip",
   ) as { providers: OrgModelProvider[] } | undefined;
@@ -321,16 +336,12 @@ export function ChatTabV2({
   const hostedChatboxToken = hostedContext?.chatboxToken;
   const hostedChatboxSurface = hostedContext?.chatboxSurface;
   const effectiveHostedProjectId =
-    hostedProjectIdOverride ?? hostedContext?.projectId ?? convexProjectId;
+    hostedContext?.projectId ?? convexProjectId;
   const effectiveHostedSelectedServerIds =
-    hostedSelectedServerIdsOverride ??
-    hostedContext?.selectedServerIds ??
-    hostedSelectedServerIds;
+    hostedContext?.selectedServerIds ?? hostedSelectedServerIds;
   const effectiveHostedOAuthTokens = hostedChatboxToken
     ? undefined
-    : (hostedOAuthTokensOverride ??
-      hostedContext?.oauthTokens ??
-      hostedOAuthTokens);
+    : (hostedContext?.oauthTokens ?? hostedOAuthTokens);
   const isHostedDirectGuest =
     HOSTED_MODE &&
     !isConvexAuthenticated &&
@@ -2257,6 +2268,7 @@ export function ChatTabV2({
                             temperature,
                             requireToolApproval,
                           }}
+                          hostedOrgModelConfig={hostedOrgModelConfig}
                           hostedContext={{
                             ...hostedContext,
                             projectId: effectiveHostedProjectId,

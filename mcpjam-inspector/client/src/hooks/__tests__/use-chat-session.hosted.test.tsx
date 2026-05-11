@@ -88,14 +88,6 @@ vi.mock("@/lib/config", () => ({
 }));
 
 vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
-  buildAvailableModels: vi.fn(() => [
-    gatedAnthropicModel,
-    gatedGoogleModel,
-    gatedOpenAiModel,
-    allowedHostedModel,
-    allowedOpenAiModel,
-    guestModel,
-  ]),
   buildAvailableModelsFromOrgConfig: vi.fn((orgConfig) =>
     orgConfig
       ? [

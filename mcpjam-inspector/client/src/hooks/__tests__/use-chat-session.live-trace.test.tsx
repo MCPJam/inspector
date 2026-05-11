@@ -54,10 +54,11 @@ function tracePart(data: unknown) {
 
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: false,
+  NON_PROD_LOCKDOWN: false,
 }));
 
 vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
-  buildAvailableModels: vi.fn(() => [mcpJamModel]),
+  buildAvailableModelsFromOrgConfig: vi.fn(() => [mcpJamModel]),
   getDefaultModel: vi.fn(() => mcpJamModel),
 }));
 
@@ -109,6 +110,10 @@ vi.mock("@/lib/apis/mcp-tokenizer-api", () => ({
 vi.mock("@/lib/session-token", () => ({
   authFetch: vi.fn(),
   getAuthHeaders: vi.fn(() => ({})),
+}));
+
+vi.mock("@/lib/guest-session", () => ({
+  getGuestBearerToken: vi.fn(async () => null),
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({

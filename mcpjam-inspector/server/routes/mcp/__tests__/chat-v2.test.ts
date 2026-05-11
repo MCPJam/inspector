@@ -546,9 +546,7 @@ describe("POST /api/mcp/chat-v2", () => {
       capturedOnError = undefined;
     });
 
-    async function getOnError(
-      _provider: string
-    ): Promise<(error: unknown) => string> {
+    async function getOnError(): Promise<(error: unknown) => string> {
       await postJson(app, "/api/mcp/chat-v2", {
         messages: [{ role: "user", content: "Hello" }],
         model: { id: "llama3.2", name: "Llama 3.2", provider: "ollama" },
@@ -559,8 +557,8 @@ describe("POST /api/mcp/chat-v2", () => {
       return capturedOnError!;
     }
 
-    it("returns normalized message for 401 APICallError from OpenAI", async () => {
-      const onError = await getOnError("openai");
+    it("normalizes OpenAI-shaped 401 APICallErrors for the active Ollama provider", async () => {
+      const onError = await getOnError();
       const error = new APICallError({
         message: "Incorrect API key provided: sk-proj-...",
         url: "https://api.openai.com/v1/chat/completions",
@@ -578,8 +576,8 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(result.statusCode).toBe(401);
     });
 
-    it("returns normalized message for 401 APICallError from Anthropic", async () => {
-      const onError = await getOnError("anthropic");
+    it("normalizes Anthropic-shaped 401 APICallErrors for the active Ollama provider", async () => {
+      const onError = await getOnError();
       const error = new APICallError({
         message: "invalid x-api-key",
         url: "https://api.anthropic.com/v1/messages",
@@ -594,8 +592,8 @@ describe("POST /api/mcp/chat-v2", () => {
       );
     });
 
-    it("returns normalized message for 401 APICallError from DeepSeek", async () => {
-      const onError = await getOnError("deepseek");
+    it("normalizes DeepSeek-shaped 401 APICallErrors for the active Ollama provider", async () => {
+      const onError = await getOnError();
       const error = new APICallError({
         message: "Authentication Fails, Your api key: ****dfaf is invalid",
         url: "https://api.deepseek.com/v1/chat",
@@ -613,8 +611,8 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(result.statusCode).toBe(401);
     });
 
-    it("detects auth error from xAI 400 via response body keywords", async () => {
-      const onError = await getOnError("xai");
+    it("detects xAI-shaped 400 auth errors via response body keywords", async () => {
+      const onError = await getOnError();
       const error = new APICallError({
         message: "Bad Request",
         url: "https://api.x.ai/v1/chat/completions",
@@ -631,8 +629,8 @@ describe("POST /api/mcp/chat-v2", () => {
       );
     });
 
-    it("detects auth error from Google 400 via response body keywords", async () => {
-      const onError = await getOnError("google");
+    it("detects Google-shaped 400 auth errors via response body keywords", async () => {
+      const onError = await getOnError();
       const error = new APICallError({
         message: "API key not valid. Please pass a valid API key.",
         url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash",
@@ -650,7 +648,7 @@ describe("POST /api/mcp/chat-v2", () => {
     });
 
     it("does not treat non-auth 400 errors as auth errors", async () => {
-      const onError = await getOnError("openai");
+      const onError = await getOnError();
       const error = new APICallError({
         message: "Bad Request: invalid model",
         url: "https://api.openai.com/v1/chat/completions",
@@ -665,7 +663,7 @@ describe("POST /api/mcp/chat-v2", () => {
     });
 
     it("does not leak raw response body for auth errors", async () => {
-      const onError = await getOnError("openai");
+      const onError = await getOnError();
       const error = new APICallError({
         message: "Incorrect API key provided",
         url: "https://api.openai.com/v1/chat/completions",
@@ -681,7 +679,7 @@ describe("POST /api/mcp/chat-v2", () => {
     });
 
     it("passes through non-auth APICallErrors with details", async () => {
-      const onError = await getOnError("openai");
+      const onError = await getOnError();
       const error = new APICallError({
         message: "Rate limit exceeded",
         url: "https://api.openai.com/v1/chat/completions",
@@ -699,7 +697,7 @@ describe("POST /api/mcp/chat-v2", () => {
     });
 
     it("passes through regular Error messages", async () => {
-      const onError = await getOnError("openai");
+      const onError = await getOnError();
       const error = new Error("Network connection failed");
 
       const result = onError(error);
@@ -707,13 +705,13 @@ describe("POST /api/mcp/chat-v2", () => {
     });
 
     it("converts non-Error values to string", async () => {
-      const onError = await getOnError("openai");
+      const onError = await getOnError();
       const result = onError("something broke");
       expect(result).toBe("something broke");
     });
 
     it("catches auth errors via duck-typing, not just APICallError instances", async () => {
-      const onError = await getOnError("openai");
+      const onError = await getOnError();
       const error = Object.assign(new Error("Unauthorized"), {
         statusCode: 401,
       });

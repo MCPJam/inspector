@@ -146,11 +146,11 @@ export const getDefaultModel = (
     "anthropic/claude-haiku-4.5",
     "openai/gpt-5-mini",
     "meta-llama/llama-4-scout",
-    Model.CLAUDE_3_7_SONNET_LATEST, // anthropic
+    Model.CLAUDE_SONNET_4_6, // anthropic (was 3.7-sonnet, retired 2026-02-19)
     Model.GPT_4_1, // openai
     Model.GEMINI_2_5_PRO, // google
-    Model.DEEPSEEK_CHAT, // deepseek
-    Model.MISTRAL_LARGE_LATEST, // mistral
+    Model.DEEPSEEK_V4_FLASH, // deepseek (was deepseek-chat, deprecating)
+    Model.MISTRAL_LARGE_3, // mistral (was mistral-large-latest)
   ];
 
   for (const id of modelIdsByPriority) {
