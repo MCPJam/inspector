@@ -524,6 +524,9 @@ chatV2.post("/", async (c) => {
       );
     }
 
+    const TIMINGS = process.env.MCPJAM_LOCAL_CHATBOX_TIMINGS === "1";
+    const t0 = TIMINGS ? Date.now() : 0;
+
     let prepared;
     try {
       prepared = await prepareChatV2({
@@ -535,6 +538,12 @@ chatV2.post("/", async (c) => {
         requireToolApproval,
         customProviders: body.customProviders,
       });
+
+      if (TIMINGS) {
+        console.log(
+          `[chatbox-timings] chat-v2 prepareChatV2Ms=${Date.now() - t0} sourceType=${chatSessionSourceType} surface=${chatSessionSurface ?? "none"} serverCount=${selectedServers?.length ?? 0} modelId=${modelDefinition.id}`,
+        );
+      }
     } catch (error) {
       // prepareChatV2 throws on Anthropic validation errors — return 400.
       // All other errors (e.g. getToolsForAiSdk failure) propagate to the

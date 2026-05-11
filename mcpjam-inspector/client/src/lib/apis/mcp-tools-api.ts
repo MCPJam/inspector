@@ -189,10 +189,16 @@ export function getToolServerId(
   return map[toolName];
 }
 
+const CLIENT_TIMINGS =
+  typeof import.meta !== "undefined" &&
+  (import.meta as any).env?.VITE_MCPJAM_LOCAL_CHATBOX_TIMINGS === "1";
+
 export async function getToolsMetadata(
   serverIds: string[],
   modelId?: string,
 ): Promise<ToolsMetadataAggregate> {
+  const t0 = CLIENT_TIMINGS ? Date.now() : 0;
+
   const aggregate: ToolsMetadataAggregate = {
     metadata: {},
     toolServerMap: {},
@@ -215,6 +221,12 @@ export async function getToolsMetadata(
       }
     }),
   );
+
+  if (CLIENT_TIMINGS) {
+    console.log(
+      `[chatbox-timings] getToolsMetadata serverCount=${serverIds.length} hasModelId=${!!modelId} totalMs=${Date.now() - t0}`,
+    );
+  }
 
   return aggregate;
 }

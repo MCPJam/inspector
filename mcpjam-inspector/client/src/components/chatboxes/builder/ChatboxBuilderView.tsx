@@ -811,11 +811,19 @@ export function ChatboxBuilderView({
     }
 
     let cancelled = false;
-    setPreviewConnectStatus((prev) => ({
-      phase: "connecting",
-      readyCount: prev.phase === "ready" ? prev.readyCount : 0,
-      totalCount: activePreviewServerNames.length,
-    }));
+    setPreviewConnectStatus((prev) => {
+      // Don't flash "connecting" when switching back to the preview tab with
+      // the same server set already in ready state. ensureServersReady below
+      // will still verify and correct if anything actually changed.
+      if (prev.phase === "ready" && prev.totalCount === activePreviewServerNames.length) {
+        return prev;
+      }
+      return {
+        phase: "connecting",
+        readyCount: prev.phase === "ready" ? prev.readyCount : 0,
+        totalCount: activePreviewServerNames.length,
+      };
+    });
 
     void (async () => {
       try {
