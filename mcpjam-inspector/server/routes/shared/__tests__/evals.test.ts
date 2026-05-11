@@ -63,6 +63,26 @@ describe("RunEvalsRequestSchema runs cap", () => {
     );
     expect(result.success).toBe(false);
   });
+
+  it("accepts iterationOverride between 1 and 10", () => {
+    const base = buildSuiteRequest() as Record<string, unknown>;
+    expect(
+      RunEvalsRequestSchema.safeParse({ ...base, iterationOverride: 1 }).success,
+    ).toBe(true);
+    expect(
+      RunEvalsRequestSchema.safeParse({ ...base, iterationOverride: 10 }).success,
+    ).toBe(true);
+  });
+
+  it("rejects iterationOverride outside [1, 10]", () => {
+    const base = buildSuiteRequest() as Record<string, unknown>;
+    expect(
+      RunEvalsRequestSchema.safeParse({ ...base, iterationOverride: 0 }).success,
+    ).toBe(false);
+    expect(
+      RunEvalsRequestSchema.safeParse({ ...base, iterationOverride: 11 }).success,
+    ).toBe(false);
+  });
 });
 
 describe("RunTestCaseRequestSchema runs cap", () => {
@@ -110,6 +130,26 @@ describe("assertSuiteRunWithinCap", () => {
       buildSuiteRequest({ testCount: 10, runs: 10 }),
     );
     expect(() => assertSuiteRunWithinCap(req, 3)).not.toThrow();
+  });
+
+  it("uses iterationOverride for cap math instead of per-test runs", () => {
+    // 31 cases × runs=1 each is well under the cap, but with
+    // iterationOverride=10 the actual call count is 310 — must trip the cap.
+    const base = buildSuiteRequest({ testCount: 31, runs: 1 }) as Record<
+      string,
+      unknown
+    >;
+    const req = RunEvalsRequestSchema.parse({
+      ...base,
+      iterationOverride: 10,
+    });
+    try {
+      assertSuiteRunWithinCap(req);
+      throw new Error("expected throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(WebRouteError);
+      expect((err as WebRouteError).details?.totalCalls).toBe(310);
+    }
   });
 });
 

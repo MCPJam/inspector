@@ -36,7 +36,9 @@ import {
   DEFAULT_CHAT_COMPOSER_PLACEHOLDER,
   MINIMAL_CHAT_COMPOSER_PLACEHOLDER,
   cloneUiMessages,
+  extractUserMessageText,
 } from "@/components/chat-v2/shared/chat-helpers";
+import { SaveAsTestCaseAction } from "@/components/chat-v2/shared/save-as-test-case-action";
 import { MultiModelEmptyTraceDiagnosticsPanel } from "@/components/chat-v2/multi-model-empty-trace-diagnostics";
 import { MultiModelStartersEmptyLayout } from "@/components/chat-v2/multi-model-starters-empty";
 import { ErrorBox } from "@/components/chat-v2/error";
@@ -1406,6 +1408,18 @@ export function PlaygroundMain({
                 toolRenderOverrides={mergedToolRenderOverrides}
                 showSaveViewButton={!hideSaveViewButton}
                 loadingIndicatorVariant={loadingIndicatorVariant}
+                renderUserMessageActions={
+                  chatSessionId && convexProjectId
+                    ? (message) => (
+                        <SaveAsTestCaseAction
+                          sessionId={chatSessionId}
+                          userMessageId={message.id}
+                          promptPreview={extractUserMessageText(message)}
+                          projectId={convexProjectId}
+                        />
+                      )
+                    : undefined
+                }
               />
               {/* Invoking indicator while tool execution is in progress */}
               {isExecuting && executingToolName && (

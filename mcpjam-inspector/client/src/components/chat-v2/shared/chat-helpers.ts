@@ -602,3 +602,17 @@ export function buildSkillToolMessages(
 export function cloneUiMessages(messages: UIMessage[]): UIMessage[] {
   return structuredClone(messages);
 }
+
+/** First text part of a user message, used to seed prompt previews. */
+export function extractUserMessageText(message: UIMessage): string {
+  const parts = (message.parts ?? []) as Array<{
+    type?: string;
+    text?: unknown;
+  }>;
+  for (const part of parts) {
+    if (part?.type === "text" && typeof part.text === "string") {
+      return part.text;
+    }
+  }
+  return "";
+}

@@ -569,7 +569,7 @@ export function useEvalHandlers({
           tests: executionContext.tests.map((test) => ({
             title: test.title,
             query: test.query,
-            runs: options?.iterationOverride ?? test.runs ?? 1,
+            runs: test.runs ?? 1,
             model: test.model,
             provider: test.provider,
             expectedToolCalls: test.expectedToolCalls,
@@ -593,6 +593,7 @@ export function useEvalHandlers({
           // per-case upsert so suite-default-derived wire fields don't
           // get baked into per-case overrides.
           suiteRerun: true,
+          iterationOverride: options?.iterationOverride,
         });
 
         // Track suite run started

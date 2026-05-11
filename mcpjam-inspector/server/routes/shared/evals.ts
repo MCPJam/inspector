@@ -101,6 +101,13 @@ export const RunEvalsRequestSchema = z.object({
    * to the suite default.
    */
   suiteRerun: z.boolean().optional(),
+  /**
+   * Transient per-run iteration count (1-10). Overlays `runs` on every
+   * test case in the run snapshot without mutating the persisted
+   * `EvalCase.runs` default. Cap-math counts this against
+   * MAX_TOTAL_LLM_CALLS.
+   */
+  iterationOverride: z.number().int().min(1).max(10).optional(),
 });
 
 export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
@@ -152,8 +159,9 @@ export function assertSuiteRunWithinCap(
   request: RunEvalsRequest,
   configCount = 1,
 ) {
+  const override = request.iterationOverride;
   const totalIterations = request.tests.reduce(
-    (sum, t) => sum + (t.runs ?? 0),
+    (sum, t) => sum + (override ?? t.runs ?? 0),
     0,
   );
   const totalCalls = totalIterations * Math.max(configCount, 1);
@@ -341,6 +349,7 @@ export async function runEvalsWithManager(
     notes,
     passCriteria,
     suiteRerun,
+    iterationOverride,
   } = request;
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
@@ -587,6 +596,7 @@ export async function runEvalsWithManager(
     serverIds: resolvedServerIds,
     toolSnapshot,
     toolSnapshotDebug,
+    iterationOverride,
   });
 
   const replayConfigsToStore = filterAndRemapReplayConfigs(

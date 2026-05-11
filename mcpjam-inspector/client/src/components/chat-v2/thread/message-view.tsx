@@ -153,7 +153,7 @@ function MessageViewImpl({
       message.parts?.filter((part) => part.type !== "file") ?? [];
 
     return (
-      <div className="flex w-full min-w-0 flex-col items-end gap-2">
+      <div className="group/user-message flex w-full min-w-0 flex-col items-end gap-2">
         {/* File attachments above the bubble */}
         {fileParts.length > 0 && (
           <div className="flex max-w-[min(100%,48rem)] flex-wrap justify-end gap-2">
@@ -221,7 +221,7 @@ function MessageViewImpl({
           </UserMessageBubble>
         )}
         {renderUserMessageActions ? (
-          <div className="flex max-w-[min(100%,48rem)] justify-end">
+          <div className="flex max-w-[min(100%,48rem)] justify-end gap-1 opacity-0 transition-opacity duration-150 group-hover/user-message:opacity-100 focus-within:opacity-100">
             {renderUserMessageActions(message)}
           </div>
         ) : null}

@@ -20,6 +20,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import type { EvalSuiteOverviewEntry } from "@/components/evals/types";
 
@@ -124,17 +129,21 @@ export function SaveAsTestCaseAction({
 
   return (
     <>
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
-        onClick={() => setOpen(true)}
-        aria-label="Save this prompt as a test case"
-      >
-        <FlaskConical className="h-3.5 w-3.5" aria-hidden />
-        Save as test case
-      </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="inline-flex shrink-0">
+            <button
+              type="button"
+              aria-label="Save this prompt as a test case"
+              className="flex size-6 shrink-0 items-center justify-center rounded p-0.5 text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground"
+              onClick={() => setOpen(true)}
+            >
+              <FlaskConical className="h-3.5 w-3.5" aria-hidden />
+            </button>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>Save as test case</TooltipContent>
+      </Tooltip>
       <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>

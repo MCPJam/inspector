@@ -68,6 +68,12 @@ type RunEvalsRequest = EvalRequestWithServers & {
    * per-case overrides.
    */
   suiteRerun?: boolean;
+  /**
+   * Transient per-run iteration count (1-10). Server overlays `runs` on
+   * every test case in the run snapshot; persisted `EvalCase.runs`
+   * default is not mutated.
+   */
+  iterationOverride?: number;
 };
 
 type RunTestCaseRequest = EvalRequestWithServers & {

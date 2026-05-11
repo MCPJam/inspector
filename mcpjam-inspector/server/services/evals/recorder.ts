@@ -297,6 +297,7 @@ export const startSuiteRunWithRecorder = async ({
   environmentOverride,
   toolSnapshot,
   toolSnapshotDebug,
+  iterationOverride,
 }: {
   convexClient: ConvexHttpClient;
   suiteId: string;
@@ -316,6 +317,12 @@ export const startSuiteRunWithRecorder = async ({
   };
   toolSnapshot?: ServerToolSnapshot;
   toolSnapshotDebug?: Record<string, unknown>;
+  /**
+   * Transient per-run iteration count (1-10). Overlays `runs` on every
+   * snapshotted test case via the `startTestSuiteRun` mutation; persisted
+   * `testCase.runs` is untouched.
+   */
+  iterationOverride?: number;
 }) => {
   const response = await convexClient.mutation(
     "testSuites:startTestSuiteRun" as any,
@@ -328,6 +335,7 @@ export const startSuiteRunWithRecorder = async ({
       environmentOverride,
       toolSnapshot: sanitizeForConvexTransport(toolSnapshot),
       toolSnapshotDebug: sanitizeForConvexTransport(toolSnapshotDebug),
+      iterationOverride,
     },
   );
 
