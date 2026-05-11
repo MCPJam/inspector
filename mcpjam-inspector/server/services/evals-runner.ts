@@ -29,6 +29,7 @@ import { injectOpenAICompat } from "../utils/widget-helpers.js";
 import {
   buildLlmRuntimeConfigFromOrgConfig,
   deriveOrgProviderKey,
+  isLocalRuntimeEligible,
   resolveOrgProviderRuntime,
   type OrgProviderRuntime,
   type ResolveOrgModelConfigAuth,
@@ -1151,6 +1152,12 @@ async function resolveEvalOrgRuntime(args: {
   const providerKey = deriveOrgProviderKey(args.modelDefinition);
   if (!providerKey.ok) {
     throw new Error(providerKey.error);
+  }
+  if (!isLocalRuntimeEligible(providerKey.key)) {
+    return {
+      runtimeLocation: "cloud",
+      providerKey: providerKey.key,
+    };
   }
   return resolveOrgProviderRuntime(
     args.orgRuntimeProjectId,

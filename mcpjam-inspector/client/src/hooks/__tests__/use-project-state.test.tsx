@@ -1023,6 +1023,40 @@ describe("useProjectState automatic project creation", () => {
     );
   });
 
+  it("filters stale local org projects that the signed-in actor cannot access", async () => {
+    projectQueryState.allProjects = [];
+    projectQueryState.projects = [];
+
+    const appState = createAppState({
+      "stale-org-project": createLocalProject("stale-org-project", {
+        organizationId: "org-stale",
+      }),
+      "local-live-org-project": createLocalProject("local-live-org-project", {
+        organizationId: "org-live",
+      }),
+    });
+
+    const { result } = renderUseProjectState({
+      appState,
+      activeOrganizationId: "org-live",
+      hasOrganizations: true,
+      isLoadingOrganizations: false,
+      validOrganizationIds: ["org-live"],
+    });
+
+    await waitFor(() => {
+      expect(result.current.effectiveProjects).not.toHaveProperty(
+        "stale-org-project",
+      );
+      expect(result.current.effectiveProjects).toHaveProperty(
+        "local-live-org-project",
+      );
+      expect(result.current.effectiveActiveProjectId).toBe(
+        "local-live-org-project",
+      );
+    });
+  });
+
   it("does not migrate local projects from another org into the current organization", async () => {
     projectQueryState.allProjects = [];
     projectQueryState.projects = [];

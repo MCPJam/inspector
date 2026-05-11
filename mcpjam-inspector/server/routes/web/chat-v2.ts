@@ -187,10 +187,8 @@ chatV2.post("/", async (c) => {
 
         // Cloud-only providers (everything that isn't on the local-runtime
         // allowlist) skip the /stream/org/resolve round-trip entirely. The
-        // answer is always "cloud" for those, so calling resolve would just
-        // add latency and a new failure point on the cloud path — which
-        // regressed BYOK chat for cloud-only providers like OpenAI/Anthropic
-        // when resolve was made unconditional.
+        // answer is always "cloud" for those, so resolving would only add
+        // latency and another failure point on the cloud path.
         const runtime: OrgProviderRuntime = isLocalRuntimeEligible(providerKey)
           ? await resolveOrgProviderRuntime(
               hostedBody.projectId,

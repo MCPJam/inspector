@@ -17,6 +17,7 @@ import {
   cloneUiMessages,
   formatErrorMessage,
 } from "@/components/chat-v2/shared/chat-helpers";
+import type { OrgVisibleConfig } from "@/components/chat-v2/shared/model-helpers";
 import { useChatSession } from "@/hooks/use-chat-session";
 import { getChatComposerInteractivity } from "@/hooks/use-chat-stop-controls";
 import type { ModelDefinition } from "@/shared/types";
@@ -47,6 +48,9 @@ interface MultiModelChatCardProps {
   placeholder: string;
   reasoningDisplayMode: ReasoningDisplayMode;
   executionConfig: ExecutionConfig;
+  /** Org-managed BYOK provider config — forwarded to useChatSession so each
+   * compare card sees the same models as the single-model picker. */
+  hostedOrgModelConfig?: OrgVisibleConfig;
   hostedContext?: HostedRuntimeContext;
   onSummaryChange: (summary: MultiModelCardSummary) => void;
   onHasMessagesChange?: (modelId: string, hasMessages: boolean) => void;
@@ -71,6 +75,7 @@ export function MultiModelChatCard({
   placeholder,
   reasoningDisplayMode,
   executionConfig,
+  hostedOrgModelConfig,
   hostedContext,
   onSummaryChange,
   onHasMessagesChange,
@@ -121,6 +126,7 @@ export function MultiModelChatCard({
     startChatWithMessages,
   } = useChatSession({
     selectedServers,
+    hostedOrgModelConfig,
     hostedContext,
     executionConfig: {
       ...executionConfig,

@@ -38,15 +38,20 @@ export type ResolveOrgModelConfigAuth = {
 // ---------------------------------------------------------------------------
 // Local-runtime eligibility
 //
-// Any org-managed provider can be configured with runtimeLocation: "local":
-// LiteLLM gateways, Bedrock with local AWS/IAM auth, VPN-only endpoints, and
-// custom private-network providers all need the inspector process to execute
-// the request. Ollama is the only local-only-by-default provider, but it is not
-// the only local-runtime provider.
+// Keep local runtime scoped to providers that naturally need the Inspector
+// process to make the request: Ollama and org custom providers. Built-in
+// providers like OpenAI/Anthropic/OpenRouter/Azure stay on the cloud BYOK path.
+// Keep this allowlist in sync with mcpjam-backend/convex/organizationModelProviders.ts.
 // ---------------------------------------------------------------------------
 
+const LOCAL_RUNTIME_PROVIDER_KEYS = new Set(["ollama"]);
+
 export function isLocalRuntimeEligible(providerKey: string): boolean {
-  return providerKey.trim().length > 0;
+  const normalized = providerKey.trim();
+  return (
+    LOCAL_RUNTIME_PROVIDER_KEYS.has(normalized) ||
+    normalized.startsWith("custom:")
+  );
 }
 
 // ---------------------------------------------------------------------------

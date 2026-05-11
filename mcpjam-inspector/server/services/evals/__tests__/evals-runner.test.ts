@@ -178,16 +178,18 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     };
   }
 
-  function createOrgRuntimeResolveResponse() {
+  function createOrgRuntimeResolveResponse(
+    payload: Record<string, unknown> = {
+      ok: true,
+      runtimeLocation: "cloud",
+      providerKey: "openai",
+    },
+  ) {
     return {
       ok: true,
       status: 200,
       statusText: "OK",
-      json: vi.fn().mockResolvedValue({
-        ok: true,
-        runtimeLocation: "cloud",
-        providerKey: "openai",
-      }),
+      json: vi.fn().mockResolvedValue(payload),
       text: vi.fn().mockResolvedValue(""),
     };
   }
@@ -485,10 +487,8 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     expect(createLlmModelMock).not.toHaveBeenCalled();
   });
 
-  it("forwards guest org runtime auth to resolve and backend eval calls", async () => {
-    fetchMock
-      .mockResolvedValueOnce(createOrgRuntimeResolveResponse())
-      .mockResolvedValueOnce(createBackendSuccessResponse());
+  it("forwards guest org runtime auth to cloud-only backend eval calls", async () => {
+    fetchMock.mockResolvedValueOnce(createBackendSuccessResponse());
 
     await expect(
       runEvalSuiteWithAiSdk({
@@ -524,16 +524,10 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       }),
     ).resolves.toBeDefined();
 
-    const resolveCall = fetchMock.mock.calls.find(([url]) =>
-      String(url).endsWith("/stream/org/resolve"),
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("/stream/org/resolve"),
+      expect.anything(),
     );
-    const resolveRequest = resolveCall?.[1] as { body?: string };
-    expect(JSON.parse(resolveRequest.body ?? "{}")).toMatchObject({
-      projectId: "project-2",
-      providerKey: "openai",
-      chatboxToken: "chatbox-token-2",
-      serverIds: ["srv-1"],
-    });
 
     const streamCall = fetchMock.mock.calls.find(([url]) =>
       String(url).endsWith("/stream/org"),
@@ -545,6 +539,72 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       chatboxToken: "chatbox-token-2",
       serverIds: ["srv-1"],
     });
+  });
+
+  it("forwards guest org runtime auth when resolving custom local eval providers", async () => {
+    fetchMock.mockResolvedValueOnce(
+      createOrgRuntimeResolveResponse({
+        ok: true,
+        runtimeLocation: "local",
+        provider: {
+          providerKey: "custom:acme",
+          apiKey: "custom-secret",
+          baseUrl: "https://models.example/v1",
+          protocol: "openai-compatible",
+          modelIds: ["llama-3"],
+        },
+      }),
+    );
+
+    await expect(
+      runEvalSuiteWithAiSdk({
+        suiteId: "suite-1",
+        runId: null,
+        config: {
+          tests: [
+            {
+              title: "Custom Case",
+              query: "Hello",
+              runs: 1,
+              model: "custom:acme:llama-3",
+              provider: "custom",
+              expectedToolCalls: [],
+              promptTurns: [
+                { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+              ],
+              testCaseId: "case-1",
+            },
+          ],
+          environment: { servers: ["srv-1"] },
+        },
+        orgRuntimeProjectId: "project-2",
+        orgRuntimeAuth: {
+          chatboxToken: "chatbox-token-2",
+          serverIds: ["srv-1"],
+        },
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "guest-token-2",
+        mcpClientManager: mcpClientManager as any,
+        testCaseId: "case-1",
+      }),
+    ).resolves.toBeDefined();
+
+    const resolveCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).endsWith("/stream/org/resolve"),
+    );
+    const resolveRequest = resolveCall?.[1] as { body?: string };
+    expect(JSON.parse(resolveRequest.body ?? "{}")).toMatchObject({
+      projectId: "project-2",
+      providerKey: "custom:acme",
+      chatboxToken: "chatbox-token-2",
+      serverIds: ["srv-1"],
+    });
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "https://example.convex.site/stream/org",
+      expect.anything(),
+    );
+    expect(generateTextMock).toHaveBeenCalled();
   });
 
   it("streams bare MCPJam Anthropic test cases through the backend without a BYOK key", async () => {
@@ -602,11 +662,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     );
   });
 
-  it("forwards guest org runtime auth to streaming eval calls", async () => {
+  it("forwards guest org runtime auth to cloud-only streaming eval calls", async () => {
     const emitted: Array<Record<string, unknown>> = [];
-    fetchMock
-      .mockResolvedValueOnce(createOrgRuntimeResolveResponse())
-      .mockResolvedValueOnce(createBackendStreamResponse());
+    fetchMock.mockResolvedValueOnce(createBackendStreamResponse());
 
     await expect(
       streamTestCase({
@@ -640,16 +698,10 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       }),
     ).resolves.toBeDefined();
 
-    const resolveCall = fetchMock.mock.calls.find(([url]) =>
-      String(url).endsWith("/stream/org/resolve"),
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("/stream/org/resolve"),
+      expect.anything(),
     );
-    const resolveRequest = resolveCall?.[1] as { body?: string };
-    expect(JSON.parse(resolveRequest.body ?? "{}")).toMatchObject({
-      projectId: "project-1",
-      providerKey: "openai",
-      chatboxToken: "chatbox-token",
-      serverIds: ["srv-1"],
-    });
 
     const streamCall = fetchMock.mock.calls.find(([url]) =>
       String(url).endsWith("/stream/org"),

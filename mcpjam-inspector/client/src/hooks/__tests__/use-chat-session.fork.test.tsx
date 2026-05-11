@@ -49,7 +49,7 @@ vi.mock("@/lib/config", () => ({
 }));
 
 vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
-  buildAvailableModels: vi.fn(() => [baseModel]),
+  buildAvailableModelsFromOrgConfig: vi.fn(() => [baseModel]),
   getDefaultModel: vi.fn(() => baseModel),
 }));
 

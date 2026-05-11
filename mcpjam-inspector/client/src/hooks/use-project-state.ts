@@ -396,6 +396,11 @@ export function useProjectState({
     );
   }, [remoteProjects, resolvedActiveProjectIdForServers, activeProjectServersFlat]);
 
+  const validOrganizationIdSet = useMemo(
+    () => new Set(validOrganizationIds),
+    [validOrganizationIds],
+  );
+
   useEffect(() => {
     if (pendingClientConfigSyncRef.current.size === 0) {
       return;
@@ -417,16 +422,30 @@ export function useProjectState({
   }, [clearPendingClientConfigSync, convexProjects]);
 
   const scopedLocalProjects = useMemo((): Record<string, Project> => {
-    if (!shouldScopeLocalFallbackByOrganization) {
-      return appState.projects;
-    }
-
     return Object.fromEntries(
-      Object.entries(appState.projects).filter(
-        ([, project]) => project.organizationId === projectOrganizationId,
-      ),
+      Object.entries(appState.projects).filter(([, project]) => {
+        if (
+          isAuthenticated &&
+          project.organizationId &&
+          !validOrganizationIdSet.has(project.organizationId)
+        ) {
+          return false;
+        }
+
+        if (!shouldScopeLocalFallbackByOrganization) {
+          return true;
+        }
+
+        return project.organizationId === projectOrganizationId;
+      }),
     );
-  }, [appState.projects, shouldScopeLocalFallbackByOrganization, projectOrganizationId]);
+  }, [
+    appState.projects,
+    isAuthenticated,
+    projectOrganizationId,
+    shouldScopeLocalFallbackByOrganization,
+    validOrganizationIdSet,
+  ]);
 
   // Legacy fallback memo. Convex is the only source of truth post-unification;
   // `useLocalFallback` is permanently false. Kept as a stable empty/identity

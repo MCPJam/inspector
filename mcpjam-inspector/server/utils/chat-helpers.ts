@@ -69,6 +69,30 @@ export const createLlmModel = (
       })(modelDefinition.id);
     case "xai":
       return createXai({ apiKey })(modelDefinition.id);
+    // OpenAI-compatible providers with hardcoded baseURLs. Mirrors
+    // convex/stream/buildOrgModel.ts — keep the baseURLs in sync. Use
+    // createOpenAI({baseURL,apiKey}).chat() instead of pulling in
+    // @ai-sdk/openai-compatible (one fewer dep, same wire protocol).
+    case "moonshotai":
+      return createOpenAI({
+        apiKey,
+        baseURL: "https://api.moonshot.ai/v1",
+      }).chat(String(modelDefinition.id));
+    case "z-ai":
+      return createOpenAI({
+        apiKey,
+        baseURL: "https://api.z.ai/api/paas/v4",
+      }).chat(String(modelDefinition.id));
+    case "qwen":
+      return createOpenAI({
+        apiKey,
+        baseURL: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+      }).chat(String(modelDefinition.id));
+    case "minimax":
+      return createOpenAI({
+        apiKey,
+        baseURL: "https://api.minimax.io/v1",
+      }).chat(String(modelDefinition.id));
     case "azure": {
       const azureBaseUrl = baseUrls?.azure ?? "";
       // Extract resourceName from the Azure base URL so the SDK doesn't fall

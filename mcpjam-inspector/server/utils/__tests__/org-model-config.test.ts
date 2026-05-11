@@ -143,14 +143,14 @@ describe("isUnsafeHostedOutboundUrl", () => {
 });
 
 describe("isLocalRuntimeEligible", () => {
-  it("returns true for org-managed providers", () => {
+  it("only allows Ollama and custom providers to use local runtime", () => {
     expect(isLocalRuntimeEligible("ollama")).toBe(true);
-    expect(isLocalRuntimeEligible("openai")).toBe(true);
-    expect(isLocalRuntimeEligible("anthropic")).toBe(true);
-    expect(isLocalRuntimeEligible("azure")).toBe(true);
-    expect(isLocalRuntimeEligible("google")).toBe(true);
-    expect(isLocalRuntimeEligible("openrouter")).toBe(true);
     expect(isLocalRuntimeEligible("custom:my-llm")).toBe(true);
+    expect(isLocalRuntimeEligible("openai")).toBe(false);
+    expect(isLocalRuntimeEligible("anthropic")).toBe(false);
+    expect(isLocalRuntimeEligible("azure")).toBe(false);
+    expect(isLocalRuntimeEligible("google")).toBe(false);
+    expect(isLocalRuntimeEligible("openrouter")).toBe(false);
     expect(isLocalRuntimeEligible("")).toBe(false);
   });
 });
