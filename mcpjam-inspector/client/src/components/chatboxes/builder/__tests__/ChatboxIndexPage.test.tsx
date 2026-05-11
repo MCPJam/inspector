@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ChatboxIndexPage } from "../ChatboxIndexPage";
-import { CHATBOX_BLANK_STARTER, CHATBOX_STARTERS } from "../drafts";
+import { CHATBOX_BLANK_STARTER, CHATBOX_TEMPLATE_STARTERS } from "../drafts";
 
 const openLauncher = vi.fn();
 const selectStarter = vi.fn();
@@ -39,27 +39,23 @@ describe("ChatboxIndexPage", () => {
     );
 
     expect(
-      screen.getByRole("heading", { name: "Create your first chatbox" }),
-    ).toBeInTheDocument();
-    expect(
       screen.queryByPlaceholderText(/Search chatboxes/),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /Create New/i }),
+      screen.getByRole("heading", { name: "Get started" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: "Recommended templates" }),
+      screen.getByRole("button", { name: /Start from scratch/i }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: "Or start from scratch" }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Internal QA")).toBeInTheDocument();
-    expect(screen.getByText("External Beta Test")).toBeInTheDocument();
-    expect(screen.getByText("Browse all starters")).toBeInTheDocument();
+    for (const starter of CHATBOX_TEMPLATE_STARTERS) {
+      expect(
+        screen.getByRole("button", { name: new RegExp(starter.title, "i") }),
+      ).toBeInTheDocument();
+    }
   });
 
-  it("shows template details in a tooltip when hovering the info icon on a first-run starter tile", async () => {
-    const user = userEvent.setup();
+  it("invokes the template starter when its tile is clicked", () => {
+    const template = CHATBOX_TEMPLATE_STARTERS[0];
     render(
       <ChatboxIndexPage
         chatboxes={[]}
@@ -72,16 +68,13 @@ describe("ChatboxIndexPage", () => {
       />,
     );
 
-    const infoButtons = screen.getAllByRole("button", {
-      name: /What this template includes/i,
-    });
-    await user.hover(infoButtons[0]!);
-
-    const matches = await screen.findAllByText(/Claude-style host/i);
-    expect(matches.length).toBeGreaterThan(0);
+    fireEvent.click(
+      screen.getByRole("button", { name: new RegExp(template.title, "i") }),
+    );
+    expect(selectStarter).toHaveBeenCalledWith(template);
   });
 
-  it("invokes starter selection when a first-run tile is clicked", () => {
+  it("invokes blank starter when Start from scratch is clicked", () => {
     render(
       <ChatboxIndexPage
         chatboxes={[]}
@@ -94,28 +87,9 @@ describe("ChatboxIndexPage", () => {
       />,
     );
 
-    fireEvent.click(screen.getByText("Internal QA"));
-    expect(selectStarter).toHaveBeenCalledTimes(1);
-    expect(selectStarter).toHaveBeenCalledWith(
-      CHATBOX_STARTERS.find((s) => s.id === "internal-qa"),
+    fireEvent.click(
+      screen.getByRole("button", { name: /Start from scratch/i }),
     );
-  });
-
-  it("invokes blank starter when Create New is clicked", () => {
-    render(
-      <ChatboxIndexPage
-        chatboxes={[]}
-        isLoading={false}
-        onOpenChatbox={openChatbox}
-        onDuplicateChatbox={duplicateChatbox}
-        onDeleteChatbox={deleteChatbox}
-        onOpenStarterLauncher={openLauncher}
-        onSelectStarter={selectStarter}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: /Create New/i }));
-    expect(selectStarter).toHaveBeenCalledTimes(1);
     expect(selectStarter).toHaveBeenCalledWith(CHATBOX_BLANK_STARTER);
   });
 

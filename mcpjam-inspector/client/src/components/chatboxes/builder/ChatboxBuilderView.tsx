@@ -341,7 +341,7 @@ export function ChatboxBuilderView({
               temperature: 0.7,
               requireToolApproval: false,
               allowGuestAccess: false,
-              mode: "any_signed_in_with_link",
+              mode: "anyone_with_link",
               servers: [],
               link: null,
               members: [],

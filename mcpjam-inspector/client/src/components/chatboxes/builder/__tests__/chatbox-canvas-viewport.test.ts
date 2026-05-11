@@ -21,7 +21,7 @@ function minimalContext(
     temperature: 0.7,
     requireToolApproval: false,
     allowGuestAccess: false,
-    mode: "any_signed_in_with_link" as const,
+    mode: "anyone_with_link" as const,
     selectedServerIds: [] as string[],
     optionalServerIds: [] as string[],
     welcomeDialog: { enabled: true, body: "" },

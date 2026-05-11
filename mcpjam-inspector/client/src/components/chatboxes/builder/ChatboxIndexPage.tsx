@@ -1,15 +1,12 @@
 import { startTransition, useDeferredValue, useMemo, useState } from "react";
 import {
   CreditCard,
-  Building2,
-  Globe,
-  Info,
   LayoutGrid,
   List,
   Loader2,
+  Pencil,
   Plus,
   Search,
-  Sparkles,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { Alert, AlertDescription, AlertTitle } from "@mcpjam/design-system/alert";
@@ -17,11 +14,6 @@ import { Button } from "@mcpjam/design-system/button";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Card, CardInteractive } from "@mcpjam/design-system/card";
 import { Input } from "@mcpjam/design-system/input";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@mcpjam/design-system/tooltip";
 import type { ChatboxListItem } from "@/hooks/useChatboxes";
 import { getChatboxHostStyleShortLabel } from "@/lib/chatbox-host-style";
 import { ChatboxDeleteConfirmDialog } from "@/components/chatboxes/ChatboxDeleteConfirmDialog";
@@ -84,79 +76,6 @@ function ChatboxSummaryCard({
         Updated {formatDistanceToNow(chatbox.updatedAt, { addSuffix: true })}
       </p>
     </CardInteractive>
-  );
-}
-
-const STARTER_ICONS = {
-  "internal-qa": Building2,
-  "icp-demo": Globe,
-} as const;
-
-function FirstRunTemplateTile({
-  starter,
-  onSelectStarter,
-}: {
-  starter: ChatboxStarterDefinition;
-  onSelectStarter: (starter: ChatboxStarterDefinition) => void;
-}) {
-  const Icon = STARTER_ICONS[starter.id] ?? Sparkles;
-  const tooltip = starter.templateTooltip;
-
-  const tileInner = (
-    <>
-      <span className="inline-flex size-11 items-center justify-center rounded-2xl border border-border/60 bg-muted/35 transition-colors duration-200 group-hover:border-primary/35 group-hover:bg-primary/10">
-        <Icon className="size-5 text-muted-foreground transition-colors duration-200 group-hover:text-primary" />
-      </span>
-      <span className="mt-4 font-semibold leading-snug transition-colors group-hover:text-foreground">
-        {starter.title}
-      </span>
-      <span className="mt-2 line-clamp-3 text-sm text-muted-foreground">
-        {starter.description}
-      </span>
-    </>
-  );
-
-  if (!tooltip) {
-    return (
-      <button
-        type="button"
-        onClick={() => onSelectStarter(starter)}
-        className="group flex flex-col rounded-[28px] border border-border/70 bg-card/70 p-5 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/45 hover:bg-primary/5 hover:shadow-lg"
-      >
-        {tileInner}
-      </button>
-    );
-  }
-
-  return (
-    <div className="group relative rounded-[28px] border border-border/70 bg-card/70 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/45 hover:bg-primary/5 hover:shadow-lg">
-      <button
-        type="button"
-        onClick={() => onSelectStarter(starter)}
-        className="flex w-full flex-col rounded-[28px] p-5 pr-12 text-left"
-      >
-        {tileInner}
-      </button>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            className="absolute top-3 right-3 z-10 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            aria-label="What this template includes"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <Info className="size-4" aria-hidden />
-          </button>
-        </TooltipTrigger>
-        <TooltipContent
-          side="left"
-          sideOffset={6}
-          className="max-w-[220px] px-2.5 py-1.5 text-left text-xs leading-snug text-balance"
-        >
-          {tooltip}
-        </TooltipContent>
-      </Tooltip>
-    </div>
   );
 }
 
@@ -349,68 +268,62 @@ export function ChatboxIndexPage({
             <Loader2 className="size-5 animate-spin text-muted-foreground" />
           </div>
         ) : isFirstRunEmpty ? (
-          <div className="mx-auto flex max-w-3xl flex-col gap-8">
-            <div>
-              <h3 className="text-2xl font-semibold tracking-tight">
-                Create your first chatbox
-              </h3>
-              <p className="mt-2 text-sm text-muted-foreground">
-                Templates include defaults for common flows—usually the fastest
-                way to get started. Prefer an empty builder? Use Create New
-                under the templates. You can change everything before saving.
-              </p>
-            </div>
-
-            <div className="flex flex-col gap-4">
-              <h4 className="text-sm font-semibold text-foreground">
-                Recommended templates
+          <div className="flex min-h-full flex-col items-center justify-center px-2 py-4 sm:py-8">
+            <div className="w-full max-w-xl">
+              <h4 className="text-center text-[11px] font-semibold tracking-[0.22em] text-muted-foreground uppercase animate-in fade-in slide-in-from-bottom-2 duration-500 motion-reduce:animate-none motion-reduce:opacity-100">
+                Get started
               </h4>
-              <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2">
-                {CHATBOX_TEMPLATE_STARTERS.map((starter) => (
-                  <FirstRunTemplateTile
-                    key={starter.id}
-                    starter={starter}
-                    onSelectStarter={onSelectStarter}
-                  />
-                ))}
+              <div className="mt-6 grid gap-4 sm:grid-cols-2">
+                {[
+                  ...CHATBOX_TEMPLATE_STARTERS.map((starter) => ({
+                    key: starter.id,
+                    starter,
+                    icon: "pencil" as const,
+                  })),
+                  {
+                    key: CHATBOX_BLANK_STARTER.id,
+                    starter: CHATBOX_BLANK_STARTER,
+                    icon: "plus" as const,
+                  },
+                ].map(({ key, starter, icon }, tileIndex) => {
+                  const staggerDelay =
+                    tileIndex === 0
+                      ? ""
+                      : tileIndex === 1
+                        ? "delay-75"
+                        : "delay-150";
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => onSelectStarter(starter)}
+                      className={`group flex w-full flex-col gap-4 rounded-2xl border border-border/70 bg-card/70 p-6 text-left shadow-sm outline-none ring-offset-background transition-[transform,box-shadow,border-color,background-color] [transition-duration:200ms] ease-out animate-in fade-in slide-in-from-bottom-3 duration-500 hover:-translate-y-0.5 hover:border-primary/35 hover:bg-card hover:shadow-md focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 motion-reduce:animate-none motion-reduce:opacity-100 ${staggerDelay}`}
+                    >
+                      <span className="inline-flex size-11 items-center justify-center rounded-2xl border border-border/60 bg-muted/35 transition-colors duration-200 group-hover:border-primary/20 group-hover:bg-muted/55">
+                        {icon === "pencil" ? (
+                          <Pencil
+                            className="size-5 text-muted-foreground transition-colors duration-200 group-hover:text-foreground/80"
+                            aria-hidden
+                          />
+                        ) : (
+                          <Plus
+                            className="size-5 text-muted-foreground transition-colors duration-200 group-hover:text-foreground/80"
+                            aria-hidden
+                          />
+                        )}
+                      </span>
+                      <span className="text-base font-semibold tracking-tight text-foreground">
+                        {starter.id === CHATBOX_BLANK_STARTER.id
+                          ? "Start from scratch"
+                          : starter.title}
+                      </span>
+                      <span className="line-clamp-3 text-sm leading-relaxed text-muted-foreground">
+                        {starter.description}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <h4 className="text-sm font-medium text-muted-foreground">
-                Or start from scratch
-              </h4>
-              <div className="w-full max-w-md">
-                <button
-                  type="button"
-                  onClick={() => onSelectStarter(CHATBOX_BLANK_STARTER)}
-                  className="flex w-full flex-col gap-3 rounded-2xl border border-border/70 bg-card/70 p-5 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/30 hover:bg-card hover:shadow-md"
-                >
-                  <span className="inline-flex size-11 items-center justify-center rounded-2xl border border-border/60 bg-muted/35">
-                    <Plus
-                      className="size-5 text-muted-foreground"
-                      aria-hidden
-                    />
-                  </span>
-                  <span className="text-base font-semibold leading-snug text-foreground">
-                    Create New
-                  </span>
-                  <span className="line-clamp-3 text-sm text-muted-foreground">
-                    {CHATBOX_BLANK_STARTER.description}
-                  </span>
-                </button>
-              </div>
-            </div>
-
-            <div className="flex pb-4">
-              <Button
-                variant="outline"
-                size="lg"
-                className="rounded-xl"
-                onClick={onOpenStarterLauncher}
-              >
-                Browse all starters
-              </Button>
             </div>
           </div>
         ) : isSearchEmpty ? (
