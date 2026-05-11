@@ -27,14 +27,14 @@ describe("migrateBuilderDraft", () => {
       temperature: 0.5,
       requireToolApproval: false,
       selectedServerIds: ["srv-1", "srv-2"],
-      // Missing: optionalServerIds, welcomeDialog, feedbackDialog, mode, etc.
+      // Missing: optionalServerIds, chatUi (welcome/feedback), mode, etc.
     };
     const migrated = migrateBuilderDraft(oldShape);
     expect(migrated).not.toBeNull();
     expect(migrated!.selectedServerIds).toEqual(["srv-1", "srv-2"]);
     expect(migrated!.optionalServerIds).toEqual([]);
-    expect(migrated!.welcomeDialog).toBeDefined();
-    expect(migrated!.feedbackDialog).toBeDefined();
+    expect(migrated!.chatUi.surfaces.welcome).toBeDefined();
+    expect(migrated!.chatUi.surfaces.feedback).toBeDefined();
     expect(migrated!.mode).toBeDefined();
     expect(migrated!.allowGuestAccess).toBeDefined();
     expect(migrated!.name).toBe("Pre-existing draft");
@@ -53,11 +53,15 @@ describe("migrateBuilderDraft", () => {
       mode: "invited_only" as const,
       selectedServerIds: ["a", "b"],
       optionalServerIds: ["b"],
-      welcomeDialog: { enabled: true, body: "hi" },
-      feedbackDialog: {
-        enabled: true,
-        everyNToolCalls: 2,
-        promptHint: "feedback?",
+      chatUi: {
+        surfaces: {
+          welcome: { enabled: true, body: "hi" },
+          feedback: {
+            enabled: true,
+            everyNToolCalls: 2,
+            promptHint: "feedback?",
+          },
+        },
       },
     };
     const migrated = migrateBuilderDraft(draft);
@@ -79,8 +83,12 @@ describe("draftToHostConfigInputV2", () => {
       mode: "invited_only" as const,
       selectedServerIds: ["srv-1"],
       optionalServerIds: ["srv-1"],
-      welcomeDialog: { enabled: true, body: "" },
-      feedbackDialog: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+      chatUi: {
+        surfaces: {
+          welcome: { enabled: true, body: "" },
+          feedback: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+        },
+      },
     };
     const input = draftToHostConfigInputV2(draft);
     expect(input.hostStyle).toBe("claude");
@@ -105,8 +113,12 @@ describe("draftToHostConfigInputV2", () => {
       mode: "invited_only" as const,
       selectedServerIds: [],
       optionalServerIds: [],
-      welcomeDialog: { enabled: true, body: "" },
-      feedbackDialog: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+      chatUi: {
+        surfaces: {
+          welcome: { enabled: true, body: "" },
+          feedback: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+        },
+      },
     };
     const input = draftToHostConfigInputV2(draft, {
       connectionDefaults: {

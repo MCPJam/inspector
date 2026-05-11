@@ -477,8 +477,8 @@ export function ChatboxEditor({
 
   const oauthPending = pendingOAuthServers.length > 0;
   const welcomeAvailable =
-    (chatbox?.welcomeDialog?.enabled ?? true) &&
-    !!chatbox?.welcomeDialog?.body?.trim();
+    (chatbox?.chatUi?.surfaces?.welcome?.enabled ?? true) &&
+    !!chatbox?.chatUi?.surfaces?.welcome?.body?.trim();
   const introGate = useChatboxHostIntroGate({
     chatboxId: chatbox?.chatboxId ?? "",
     servers: requiredPreviewServers,
@@ -628,14 +628,19 @@ export function ChatboxEditor({
       mode,
       selectedServerIds,
       optionalServerIds,
-      welcomeDialog: {
-        enabled: chatbox?.welcomeDialog?.enabled ?? true,
-        body: chatbox?.welcomeDialog?.body ?? "",
-      },
-      feedbackDialog: {
-        enabled: chatbox?.feedbackDialog?.enabled ?? true,
-        everyNToolCalls: chatbox?.feedbackDialog?.everyNToolCalls ?? 1,
-        promptHint: chatbox?.feedbackDialog?.promptHint ?? "",
+      chatUi: {
+        surfaces: {
+          welcome: {
+            enabled: chatbox?.chatUi?.surfaces?.welcome?.enabled ?? true,
+            body: chatbox?.chatUi?.surfaces?.welcome?.body ?? "",
+          },
+          feedback: {
+            enabled: chatbox?.chatUi?.surfaces?.feedback?.enabled ?? true,
+            everyNToolCalls:
+              chatbox?.chatUi?.surfaces?.feedback?.everyNToolCalls ?? 1,
+            promptHint: chatbox?.chatUi?.surfaces?.feedback?.promptHint ?? "",
+          },
+        },
       },
     };
     const hostConfigInput = draftToHostConfigInputV2(synthDraft, seedInput);
@@ -733,9 +738,10 @@ export function ChatboxEditor({
       temperature,
       requireToolApproval,
       servers: selectedPreviewServers,
-      welcomeDialog: chatbox.welcomeDialog ?? {
-        enabled: true,
-        body: "",
+      chatUi: chatbox.chatUi ?? {
+        surfaces: {
+          welcome: { enabled: true, body: "" },
+        },
       },
     };
 
@@ -1287,7 +1293,7 @@ export function ChatboxEditor({
                 <ChatboxHostOnboardingOverlays
                   showWelcome={introGate.showWelcome}
                   onGetStarted={introGate.dismissIntro}
-                  welcomeBody={chatbox.welcomeDialog?.body}
+                  welcomeBody={chatbox.chatUi?.surfaces?.welcome?.body}
                   showAuthPanel={introGate.showAuthPanel}
                   pendingOAuthServers={pendingOAuthServers}
                   authorizeServer={authorizeServer}
