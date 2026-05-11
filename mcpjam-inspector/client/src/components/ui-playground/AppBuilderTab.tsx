@@ -80,6 +80,7 @@ interface AppBuilderTabProps {
   isSignedInWithWorkOs?: boolean;
   isWorkOsAuthLoading?: boolean;
   isConvexAuthenticated?: boolean;
+  isProjectProvisioned?: boolean;
   hasSeenFirstRunOnboarding?: boolean;
   /**
    * True while the currently selected server exists in runtime state but has
@@ -129,6 +130,7 @@ export function AppBuilderTab({
   isSignedInWithWorkOs = false,
   isWorkOsAuthLoading = false,
   isConvexAuthenticated = false,
+  isProjectProvisioned = true,
   hasSeenFirstRunOnboarding,
   isServerSyncing = false,
   onConnect,
@@ -152,6 +154,7 @@ export function AppBuilderTab({
     hasRemoteOnboardingState: hasSeenFirstRunOnboarding !== undefined,
     hasSeenOnboarding: hasSeenFirstRunOnboarding === true,
     canPersistRemoteOnboarding: isConvexAuthenticated,
+    isProjectProvisioned,
   });
 
   const firstRunComposerSeed =

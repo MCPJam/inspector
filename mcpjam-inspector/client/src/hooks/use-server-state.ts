@@ -48,6 +48,7 @@ import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { useServerMutations, type RemoteServer } from "./useProjects";
 import {
   CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
+  PROJECT_NOT_PROVISIONED_ERROR_MESSAGE,
   getEffectiveProjectConnectionDefaults,
   mergeProjectConnectionHeaders,
   resolveEffectiveServerClientCapabilities,
@@ -720,6 +721,31 @@ export function useServerState({
     return true;
   }, [isClientConfigSyncPending]);
 
+  const isProjectProvisioned = useMemo(
+    () => Boolean(activeProject?.sharedProjectId),
+    [activeProject?.sharedProjectId]
+  );
+
+  const getProjectNotProvisionedError = useCallback(() => {
+    if (isProjectProvisioned) {
+      return null;
+    }
+    if (useLocalFallbackRef.current || !isAuthenticatedRef.current) {
+      return null;
+    }
+    return PROJECT_NOT_PROVISIONED_ERROR_MESSAGE;
+  }, [isProjectProvisioned]);
+
+  const notifyIfProjectNotProvisioned = useCallback(() => {
+    const errorMessage = getProjectNotProvisionedError();
+    if (!errorMessage) {
+      return false;
+    }
+
+    toast.error(errorMessage);
+    return true;
+  }, [getProjectNotProvisionedError]);
+
   // Extract runtime overlay applied by `withProjectConnectionDefaults` so the
   // resolver path can reproduce them server-side. Without this, the resolver
   // sees only the Convex-stored per-server config and loses project-level
@@ -769,7 +795,7 @@ export function useServerState({
           connectionDefaults: buildResolverConnectionDefaults(serverConfig),
         });
       }
-      return testConnection(serverConfig, serverName);
+      throw new Error(PROJECT_NOT_PROVISIONED_ERROR_MESSAGE);
     },
     [assertClientConfigSynced, buildResolverConnectionDefaults]
   );
@@ -785,7 +811,7 @@ export function useServerState({
           connectionDefaults: buildResolverConnectionDefaults(serverConfig),
         });
       }
-      return reconnectServer(serverName, serverConfig);
+      throw new Error(PROJECT_NOT_PROVISIONED_ERROR_MESSAGE);
     },
     [assertClientConfigSynced, buildResolverConnectionDefaults]
   );
@@ -1680,6 +1706,9 @@ export function useServerState({
       if (notifyIfClientConfigSyncPending()) {
         return;
       }
+      if (notifyIfProjectNotProvisioned()) {
+        return;
+      }
 
       const validationError = validateForm(formData);
       if (validationError) {
@@ -2003,7 +2032,11 @@ export function useServerState({
           serverName: formData.name,
           error: errorMessage,
         });
-        toast.error(`Network error: ${errorMessage}`);
+        toast.error(
+          errorMessage === PROJECT_NOT_PROVISIONED_ERROR_MESSAGE
+            ? errorMessage
+            : `Network error: ${errorMessage}`
+        );
       }
     },
     [
@@ -2013,6 +2046,7 @@ export function useServerState({
       appState.projects,
       appState.activeProjectId,
       notifyIfClientConfigSyncPending,
+      notifyIfProjectNotProvisioned,
       prepareHostedProjectOAuthRedirect,
       resolveOAuthInitiationInputs,
       syncServerToConvex,
@@ -2248,6 +2282,9 @@ export function useServerState({
       if (notifyIfClientConfigSyncPending()) {
         return;
       }
+      if (notifyIfProjectNotProvisioned()) {
+        return;
+      }
 
       const result = await applyTokensFromOAuthFlow(
         serverName,
@@ -2260,7 +2297,11 @@ export function useServerState({
         toast.error(`Connection failed: ${result.error}`);
       }
     },
-    [applyTokensFromOAuthFlow, notifyIfClientConfigSyncPending]
+    [
+      applyTokensFromOAuthFlow,
+      notifyIfClientConfigSyncPending,
+      notifyIfProjectNotProvisioned,
+    ]
   );
 
   const handleRefreshTokensFromOAuthFlow = useCallback(
@@ -2279,6 +2320,9 @@ export function useServerState({
       if (notifyIfClientConfigSyncPending()) {
         return;
       }
+      if (notifyIfProjectNotProvisioned()) {
+        return;
+      }
 
       const result = await applyTokensFromOAuthFlow(
         serverName,
@@ -2291,7 +2335,11 @@ export function useServerState({
         toast.error(`Token refresh failed: ${result.error}`);
       }
     },
-    [applyTokensFromOAuthFlow, notifyIfClientConfigSyncPending]
+    [
+      applyTokensFromOAuthFlow,
+      notifyIfClientConfigSyncPending,
+      notifyIfProjectNotProvisioned,
+    ]
   );
 
   const cliConfigProcessedRef = useRef<boolean>(false);
@@ -2546,6 +2594,15 @@ export function useServerState({
         return {
           status: "failed",
           error: errorMessage,
+        };
+      }
+
+      const projectNotProvisionedError = getProjectNotProvisionedError();
+      if (projectNotProvisionedError) {
+        reportError(projectNotProvisionedError);
+        return {
+          status: "failed",
+          error: projectNotProvisionedError,
         };
       }
 
@@ -3011,6 +3068,7 @@ export function useServerState({
       activeProjectServersFlat,
       isAuthenticated,
       isClientConfigSyncPending,
+      getProjectNotProvisionedError,
       storeInitInfo,
       logger,
       dispatch,
@@ -3311,6 +3369,9 @@ export function useServerState({
       if (notifyIfClientConfigSyncPending()) {
         return { ok: false, serverName: originalServerName };
       }
+      if (notifyIfProjectNotProvisioned()) {
+        return { ok: false, serverName: originalServerName };
+      }
 
       const shouldPreserveOAuth =
         hadOAuthTokens &&
@@ -3394,6 +3455,7 @@ export function useServerState({
       useLocalFallback,
       persistServerToLocalProject,
       notifyIfClientConfigSyncPending,
+      notifyIfProjectNotProvisioned,
       guardedTestConnection,
     ]
   );
