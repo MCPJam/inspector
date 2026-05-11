@@ -763,8 +763,12 @@ export function ChatboxBuilderView({
     () => activePreviewServers.map((s) => s.serverName),
     [activePreviewServers]
   );
+  // Stable key for the reconnect effect. The `\0` delimiter prevents
+  // collisions between e.g. ["ab","c"] and ["a","bc"] (both join to "abc"
+  // without one), which would otherwise let a server-set swap skip the
+  // effect entirely. Matches the convention in use-playground-project-executions.
   const activePreviewServerNamesKey = useMemo(
-    () => activePreviewServerNames.slice().sort().join(""),
+    () => activePreviewServerNames.slice().sort().join("\0"),
     [activePreviewServerNames]
   );
   const [previewConnectStatus, setPreviewConnectStatus] = useState<{
