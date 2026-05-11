@@ -109,26 +109,53 @@ export default function ChatboxBuilderExperience({
   // available. After an OAuth redirect the page reloads and Convex needs to
   // reconnect, so projectId is null on the first render — useState
   // initializers would miss the saved session.
+  //
+  // We also wait for the chatboxes list to resolve so we can validate
+  // session.chatboxId against it: a stale id (deleted chatbox, different
+  // Convex deploy after `npm run dev`, account switch) would otherwise
+  // crash the React tree when ChatboxBuilderView's getChatboxConfig query
+  // throws "Chatbox not found".
   const restoredForProjectRef = useRef<string | null>(null);
   useEffect(() => {
     if (!projectId) return;
     if (isCreateChatboxLoading) return;
+    if (isLoading) return;
+    if (chatboxes === undefined) return;
     if (restoredForProjectRef.current === projectId) return;
-    restoredForProjectRef.current = projectId;
 
     const session = readBuilderSession(projectId);
-    if (!session || (!session.chatboxId && !session.draft)) return;
+    if (!session || (!session.chatboxId && !session.draft)) {
+      restoredForProjectRef.current = projectId;
+      return;
+    }
     if (!session.chatboxId && isCreateChatboxDisabled) {
       clearBuilderSession();
+      restoredForProjectRef.current = projectId;
       return;
     }
 
+    // Drop the saved chatboxId if the current chatboxes list doesn't
+    // include it — the chatbox was deleted, the user switched accounts,
+    // or this dev server points at a different Convex deploy than the
+    // one that minted the session.
+    const restoredChatboxId =
+      session.chatboxId &&
+      chatboxes.some((c) => c.chatboxId === session.chatboxId)
+        ? session.chatboxId
+        : null;
+    const restoredDraft = migrateBuilderDraft(session.draft) ?? null;
+
+    if (!restoredChatboxId && !restoredDraft) {
+      clearBuilderSession();
+      restoredForProjectRef.current = projectId;
+      return;
+    }
+
+    restoredForProjectRef.current = projectId;
+
     startTransition(() => {
-      setSelectedChatboxId(session.chatboxId);
-      // Phase 4: migrate any older-shape draft (missing fields added
-      // since the draft was persisted) into the current shape before
-      // handing it to the builder.
-      setDraft(migrateBuilderDraft(session.draft) ?? null);
+      setSelectedChatboxId(restoredChatboxId);
+      setDraft(restoredDraft);
       const vm = session.viewMode;
       if (vm === "builder") {
         setRestoredViewMode("setup");
@@ -140,7 +167,13 @@ export default function ChatboxBuilderExperience({
         );
       }
     });
-  }, [isCreateChatboxDisabled, isCreateChatboxLoading, projectId]);
+  }, [
+    chatboxes,
+    isCreateChatboxDisabled,
+    isCreateChatboxLoading,
+    isLoading,
+    projectId,
+  ]);
 
   const applyStarterDraft = useCallback(
     async (starter: ChatboxStarterDefinition) => {
