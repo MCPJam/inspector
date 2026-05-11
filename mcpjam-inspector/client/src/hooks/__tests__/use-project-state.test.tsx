@@ -2401,4 +2401,58 @@ describe("useProjectState cold-share data-loss guard (PR-I2)", () => {
     expect(options.extra.bulkServerCount).toBeNull();
     expect(options.extra.embeddedServerCount).toBe(1);
   });
+
+  it("captures the migrate call site when local-project migration serializes to empty", async () => {
+    // Local-only project with servers, ready to be migrated to Convex.
+    // The migration effect auto-fires on mount when an authenticated user
+    // has a matching organization and a local project that needs sharing.
+    projectQueryState.allProjects = [];
+    projectQueryState.projects = [];
+
+    const appState = createAppState({
+      default: createSyntheticDefaultProject(),
+      "local-1": createLocalProject("local-1", {
+        name: "Local with servers",
+        organizationId: "org-migrate",
+        servers: {
+          demo: {
+            name: "demo",
+            config: { url: "https://example.com/mcp" } as any,
+            lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+            connectionStatus: "disconnected",
+            retryCount: 0,
+          },
+        },
+      }),
+    });
+
+    // Force the serializer to drop every server. This is the only realistic
+    // way to trip the assertion on the migrate path — a real bug in the
+    // serialize step (or a future regression that nukes the map) would
+    // look exactly like this from the caller's perspective.
+    serializeServersForSharingMock.mockImplementationOnce(() => ({}));
+
+    renderUseProjectState({
+      appState,
+      activeOrganizationId: "org-migrate",
+      hasOrganizations: true,
+      isLoadingOrganizations: false,
+      validOrganizationIds: ["org-migrate"],
+    });
+
+    await waitFor(() => {
+      expect(sentryCaptureMessageMock).toHaveBeenCalled();
+    });
+
+    const migrateCall = sentryCaptureMessageMock.mock.calls.find(
+      (c: any[]) => c[1]?.extra?.callSite === "migrate",
+    );
+    expect(migrateCall, "expected a migrate-callSite Sentry message").toBeDefined();
+    expect(migrateCall![1].extra.serializedServerCount).toBe(0);
+    // local-only project ids never appear in the bulk-query map, so
+    // bulkServerCount is null for the migrate path by construction.
+    expect(migrateCall![1].extra.bulkServerCount).toBeNull();
+    expect(migrateCall![1].extra.embeddedServerCount).toBe(1);
+    expect(migrateCall![1].extra.sourceProjectId).toBe("local-1");
+  });
 });

@@ -893,6 +893,7 @@ export function useProjectState({
     hasResolvedProjectOrganizationSelection,
     canManageBillingForProjectActions,
     shouldTreatRemoteProjectsAsEmpty,
+    bulkServersByProject,
   ]);
 
   useEffect(() => {
@@ -1645,6 +1646,7 @@ export function useProjectState({
       projectOrganizationId,
       hasResolvedProjectOrganizationSelection,
       canManageBillingForProjectActions,
+      bulkServersByProject,
     ],
   );
 
