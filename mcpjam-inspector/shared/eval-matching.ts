@@ -1,19 +1,40 @@
 /**
- * Shared tool call matching logic for evals
- * Used by both client and server to ensure consistent pass/fail evaluation
+ * Shared tool call matching for the inspector.
+ *
+ * Thin re-export of the richer `evaluateToolCalls` matcher from the SDK
+ * (`@mcpjam/sdk/matchers`, a browser-safe subpath). The historical
+ * `matchToolCalls` function and `ToolCallMatchResult` type are preserved
+ * as compatibility aliases so existing inspector call sites keep working
+ * unchanged — call sites can migrate to `evaluateToolCalls` deliberately.
+ *
+ * Defaults preserve today's inspector behavior precisely:
+ *   - order-agnostic
+ *   - extra/unexpected calls reported but non-fatal
+ *   - partial argument matching with placeholder type checks (e.g.
+ *     `"string"` matches any string)
  */
 
-export type ToolCall = {
-  toolName: string;
-  arguments: Record<string, any>;
-};
+import {
+  evaluateToolCalls,
+  type EvalArgumentMismatch,
+  type EvalMatchOptions,
+  type EvalOutOfOrderToolCall,
+  type EvalToolCall,
+  type EvalToolCallMatchResult,
+} from "@mcpjam/sdk/matchers";
 
-export type ArgumentMismatch = {
-  toolName: string;
-  expectedArgs: Record<string, any>;
-  actualArgs: Record<string, any>;
-};
+export type ToolCall = EvalToolCall;
+export type ArgumentMismatch = EvalArgumentMismatch;
+export type OutOfOrderToolCall = EvalOutOfOrderToolCall;
 
+/**
+ * Inspector-shaped result that the existing tests + UI consume.
+ *
+ * Note: the inspector has historically used `unexpected` as the field
+ * name; the SDK matcher returns `extra`. We surface both here so the
+ * field rename can happen gradually. New code should prefer
+ * `evaluateToolCalls()` directly and read `extra` + `outOfOrder`.
+ */
 export type ToolCallMatchResult = {
   missing: ToolCall[];
   unexpected: ToolCall[];
@@ -21,190 +42,46 @@ export type ToolCallMatchResult = {
   passed: boolean;
 };
 
-type ArgumentPlaceholder =
-  | "any"
-  | "string"
-  | "number"
-  | "boolean"
-  | "object"
-  | "array"
-  | "null";
-
-function matchArgumentPlaceholder(
-  expectedValue: unknown,
-  actualValue: unknown,
-): boolean | null {
-  if (typeof expectedValue !== "string") {
-    return null;
-  }
-
-  switch (expectedValue.trim().toLowerCase() as ArgumentPlaceholder) {
-    case "any":
-      return actualValue !== undefined;
-    case "string":
-      return typeof actualValue === "string";
-    case "number":
-      return typeof actualValue === "number";
-    case "boolean":
-      return typeof actualValue === "boolean";
-    case "object":
-      return (
-        actualValue !== null &&
-        typeof actualValue === "object" &&
-        !Array.isArray(actualValue)
-      );
-    case "array":
-      return Array.isArray(actualValue);
-    case "null":
-      return actualValue === null;
-    default:
-      return null;
-  }
-}
+export type { EvalMatchOptions, EvalToolCallMatchResult };
+export { evaluateToolCalls };
 
 /**
- * Check if expected arguments are satisfied by actual arguments.
- * Only checks keys present in expected - actual may have additional keys.
- */
-export function argumentsMatch(
-  expectedArgs: Record<string, any>,
-  actualArgs: Record<string, any>,
-): boolean {
-  for (const [key, value] of Object.entries(expectedArgs)) {
-    const placeholderMatch = matchArgumentPlaceholder(value, actualArgs[key]);
-    if (placeholderMatch !== null) {
-      if (!placeholderMatch) {
-        return false;
-      }
-      continue;
-    }
-
-    if (JSON.stringify(actualArgs[key]) !== JSON.stringify(value)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-/**
- * Match expected tool calls against actual tool calls using a two-pass algorithm:
- * - Pass 1: Match expected calls to actual calls with matching toolName AND arguments
- * - Pass 2: For unmatched expected calls, try to match by toolName only (argument mismatches)
+ * Compatibility alias for the inspector's historical matcher.
  *
- * @param expected - Expected tool calls
- * @param actual - Actual tool calls that were made
- * @param isNegativeTest - If true, test passes when NO tools are called
- * @returns Match result with missing, unexpected, argument mismatches, and pass status
+ * Returns the legacy shape (missing/unexpected/argumentMismatches/passed)
+ * by delegating to {@link evaluateToolCalls} with the default
+ * order-agnostic / extras-allowed / partial-args options.
+ *
+ * Prefer {@link evaluateToolCalls} in new code.
  */
 export function matchToolCalls(
   expected: ToolCall[],
   actual: ToolCall[],
   isNegativeTest?: boolean,
 ): ToolCallMatchResult {
-  const normalizedExpected = Array.isArray(expected) ? expected : [];
-  const normalizedActual = Array.isArray(actual) ? actual : [];
-
-  // Handle negative tests: pass if NO tools were called
-  if (isNegativeTest) {
-    const passed = normalizedActual.length === 0;
-    return {
-      missing: [],
-      unexpected: normalizedActual,
-      argumentMismatches: [],
-      passed,
-    };
-  }
-
-  // Positive test: must call at least one tool
-  if (normalizedActual.length === 0) {
-    return {
-      missing: normalizedExpected,
-      unexpected: [],
-      argumentMismatches: [],
-      passed: false,
-    };
-  }
-
-  // Track which actual calls have been matched to prevent reuse
-  const matchedActualIndices = new Set<number>();
-  // Track which expected calls found a match (by index)
-  const matchedExpectedIndices = new Set<number>();
-
-  const argumentMismatches: ArgumentMismatch[] = [];
-
-  // Pass 1: Match expected calls to actual calls with matching toolName AND arguments
-  for (let ei = 0; ei < normalizedExpected.length; ei++) {
-    const exp = normalizedExpected[ei];
-    const expectedArgs = exp.arguments || {};
-
-    for (let ai = 0; ai < normalizedActual.length; ai++) {
-      if (matchedActualIndices.has(ai)) continue;
-
-      const act = normalizedActual[ai];
-      if (act.toolName !== exp.toolName) continue;
-
-      const actualArgs = act.arguments || {};
-
-      // Check if arguments match (empty expected args always match)
-      if (
-        Object.keys(expectedArgs).length === 0 ||
-        argumentsMatch(expectedArgs, actualArgs)
-      ) {
-        matchedActualIndices.add(ai);
-        matchedExpectedIndices.add(ei);
-        break;
-      }
-    }
-  }
-
-  // Pass 2: For unmatched expected calls, try to match by toolName only
-  // These will be recorded as argument mismatches
-  for (let ei = 0; ei < normalizedExpected.length; ei++) {
-    if (matchedExpectedIndices.has(ei)) continue;
-
-    const exp = normalizedExpected[ei];
-    const expectedArgs = exp.arguments || {};
-
-    for (let ai = 0; ai < normalizedActual.length; ai++) {
-      if (matchedActualIndices.has(ai)) continue;
-
-      const act = normalizedActual[ai];
-      if (act.toolName !== exp.toolName) continue;
-
-      const actualArgs = act.arguments || {};
-
-      // Found a toolName match but arguments don't match
-      matchedActualIndices.add(ai);
-      matchedExpectedIndices.add(ei);
-
-      // Only record mismatch if expected had arguments specified
-      if (Object.keys(expectedArgs).length > 0) {
-        argumentMismatches.push({
-          toolName: exp.toolName,
-          expectedArgs,
-          actualArgs,
-        });
-      }
-      break;
-    }
-  }
-
-  // Missing: expected calls that found no match at all
-  const missing = normalizedExpected.filter(
-    (_, idx) => !matchedExpectedIndices.has(idx),
-  );
-
-  // Unexpected: actual calls that were never matched
-  const unexpected = normalizedActual.filter(
-    (_, idx) => !matchedActualIndices.has(idx),
-  );
-
-  const passed = missing.length === 0 && argumentMismatches.length === 0;
-
+  const result = evaluateToolCalls(expected, actual, {
+    isNegativeTest,
+  });
   return {
-    missing,
-    unexpected,
-    argumentMismatches,
-    passed,
+    missing: result.missing,
+    unexpected: result.extra,
+    argumentMismatches: result.argumentMismatches,
+    passed: result.passed,
   };
+}
+
+/**
+ * Argument compatibility check kept for callers that depended on the
+ * standalone helper. Implements partial-match semantics with placeholder
+ * type checks (matches today's behavior).
+ */
+export function argumentsMatch(
+  expectedArgs: Record<string, unknown>,
+  actualArgs: Record<string, unknown>,
+): boolean {
+  const result = evaluateToolCalls(
+    [{ toolName: "__probe__", arguments: expectedArgs }],
+    [{ toolName: "__probe__", arguments: actualArgs }],
+  );
+  return result.argumentMismatches.length === 0;
 }
