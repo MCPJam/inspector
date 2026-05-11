@@ -771,12 +771,23 @@ export function ChatboxBuilderView({
     () => activePreviewServerNames.slice().sort().join("\0"),
     [activePreviewServerNames]
   );
+  // Seed in "connecting" when the Preview tab opens with servers and the
+  // helper plumbed: the reconnect effect below only fires after the first
+  // paint, so an initial `"idle"` would leave previewConnectComposerBlocked
+  // false for one frame, letting the composer briefly accept input before
+  // the local mcpClientManager has the servers registered.
   const [previewConnectStatus, setPreviewConnectStatus] = useState<{
     phase: "idle" | "connecting" | "ready" | "blocked";
     readyCount: number;
     totalCount: number;
     blockedReason?: string;
-  }>({ phase: "idle", readyCount: 0, totalCount: 0 });
+  }>(() => {
+    const total = activePreviewServerNames.length;
+    if (viewMode === "preview" && ensureServersReady && total > 0) {
+      return { phase: "connecting", readyCount: 0, totalCount: total };
+    }
+    return { phase: "idle", readyCount: 0, totalCount: 0 };
+  });
 
   useEffect(() => {
     // Only run while the Preview tab is active. Switching to setup/usage

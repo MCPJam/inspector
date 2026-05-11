@@ -396,6 +396,34 @@ describe("ChatboxBuilderView", () => {
     return (call?.[0] ?? {}) as Record<string, unknown>;
   }
 
+  it("blocks the composer on the first preview render before ensureServersReady fires", () => {
+    // Regression: useState initializer must seed `connecting` so the
+    // composer doesn't accept input for one frame before the reconnect
+    // effect runs (`useEffect` runs after the first paint).
+    const chatbox = createSavedChatboxWithServer();
+    mockUseChatbox.mockReturnValue({ chatbox });
+    const ensureServersReady = vi
+      .fn()
+      .mockReturnValue(new Promise(() => {}));
+
+    render(
+      <ChatboxBuilderView
+        projectId="ws-1"
+        projectServers={[httpsServer]}
+        chatboxId={chatbox.chatboxId}
+        initialViewMode="preview"
+        ensureServersReady={ensureServersReady}
+        onBack={() => {}}
+        onSavedDraft={() => {}}
+      />,
+    );
+
+    const firstCall = mockChatTabV2.mock.calls[0]?.[0] as
+      | Record<string, unknown>
+      | undefined;
+    expect(firstCall?.chatboxComposerBlocked).toBe(true);
+  });
+
   it("calls ensureServersReady with the configured server names on Preview open", async () => {
     const chatbox = createSavedChatboxWithServer();
     mockUseChatbox.mockReturnValue({ chatbox });
