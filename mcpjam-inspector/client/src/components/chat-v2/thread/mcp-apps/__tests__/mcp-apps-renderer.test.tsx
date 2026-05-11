@@ -320,6 +320,21 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(sandboxedIframePropsRef.current?.permissions).toBeUndefined();
   });
 
+  it("advertises model context and message host capabilities", async () => {
+    render(<MCPAppsRenderer {...baseProps} />);
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+
+    expect(appBridgeArgsRef.current?.hostCapabilities).toEqual(
+      expect.objectContaining({
+        updateModelContext: {},
+        message: {},
+      }),
+    );
+  });
+
   it("uses chatbox host style for SEP-1865 host context outside the playground", async () => {
     render(
       <ChatboxHostStyleProvider value="chatgpt">
