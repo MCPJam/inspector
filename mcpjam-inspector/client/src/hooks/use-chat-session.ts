@@ -1932,10 +1932,18 @@ export function useChatSession({
     return () => {
       active = false;
     };
+    // `hostedAccessVersion` is intentionally excluded. The effect resets
+    // `isSessionBootstrapComplete` to `false` synchronously on every run;
+    // including a value that bumps on every silent re-redeem (the
+    // `chatbox_access_stale` recovery path) would flip the flag false →
+    // true on each refresh, briefly unmounting downstream consumers gated
+    // on it (ChatTabV2). Auth-header resolution doesn't depend on the
+    // version, and the scope-equality check inside the effect no longer
+    // reads it either, so the effect body is exhaustive-deps-clean
+    // without it.
   }, [
     getAccessToken,
     hostedChatboxId,
-    hostedAccessVersion,
     hostedProjectId,
     isAuthenticated,
     isHostedGuest,
