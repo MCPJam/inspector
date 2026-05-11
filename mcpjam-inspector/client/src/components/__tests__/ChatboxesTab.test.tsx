@@ -69,8 +69,8 @@ function createPlanCatalog() {
         checkout: null,
       },
       solo: {
-        plan: "solo",
-        displayName: "Solo",
+        plan: "team",
+        displayName: "Team",
         billingModel: "flat",
         isSelfServe: true,
         prices: { monthly: 2500, annual: 24000 },
@@ -93,7 +93,7 @@ function createPlanCatalog() {
         includedSeats: 3,
         seatMinimum: null,
         checkout: {
-          plan: "solo",
+          plan: "team",
           supportedIntervals: ["monthly", "annual"],
         },
       },
@@ -234,15 +234,15 @@ describe("ChatboxesTab", () => {
     mockUseFeatureFlagEnabled.mockReturnValue(true);
     mockUseOrganizationBilling.mockReturnValue({
       billingStatus: {
-        plan: "solo",
-        effectivePlan: "solo",
+        plan: "team",
+        effectivePlan: "team",
         canManageBilling: true,
       },
       planCatalog: createPlanCatalog(),
       projectPremiumness: {
-        plan: "solo",
+        plan: "team",
         enforcementState: "active",
-        effectivePlan: "solo",
+        effectivePlan: "team",
         billingInterval: "monthly",
         source: "subscription",
         decisionRequired: false,
@@ -385,7 +385,7 @@ describe("ChatboxesTab", () => {
             scope: "organization",
             canAccess: false,
             shouldShowUpsell: true,
-            upgradePlan: "solo",
+            upgradePlan: "team",
             reason: "feature_not_included",
           },
         ],
@@ -433,7 +433,7 @@ describe("ChatboxesTab", () => {
             scope: "organization",
             canAccess: false,
             shouldShowUpsell: true,
-            upgradePlan: "solo",
+            upgradePlan: "team",
             reason: "feature_not_included",
           },
         ],
@@ -456,15 +456,15 @@ describe("ChatboxesTab", () => {
   it("shows an inline upgrade upsell when the project chatbox limit is reached", async () => {
     mockUseOrganizationBilling.mockReturnValue({
       billingStatus: {
-        plan: "solo",
-        effectivePlan: "solo",
+        plan: "team",
+        effectivePlan: "team",
         canManageBilling: true,
       },
       planCatalog: createPlanCatalog(),
       projectPremiumness: {
-        plan: "solo",
+        plan: "team",
         enforcementState: "active",
-        effectivePlan: "solo",
+        effectivePlan: "team",
         billingInterval: "monthly",
         source: "subscription",
         decisionRequired: false,
@@ -520,15 +520,15 @@ describe("ChatboxesTab", () => {
   it("shows owner-directed chatbox upsell copy for non-billing-managers", async () => {
     mockUseOrganizationBilling.mockReturnValue({
       billingStatus: {
-        plan: "solo",
-        effectivePlan: "solo",
+        plan: "team",
+        effectivePlan: "team",
         canManageBilling: false,
       },
       planCatalog: createPlanCatalog(),
       projectPremiumness: {
-        plan: "solo",
+        plan: "team",
         enforcementState: "active",
-        effectivePlan: "solo",
+        effectivePlan: "team",
         billingInterval: "monthly",
         source: "subscription",
         decisionRequired: false,

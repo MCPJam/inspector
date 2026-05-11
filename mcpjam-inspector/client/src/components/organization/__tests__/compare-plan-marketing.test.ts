@@ -37,10 +37,10 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
       (s) => s.title === "Organization & projects",
     );
     expect(
-      orgProjects?.rows.find((r) => r.label === "Seat limit")?.solo,
+      orgProjects?.rows.find((r) => r.label === "Seat limit")?.free,
     ).toEqual({
       kind: "text",
-      text: "3",
+      text: "5",
     });
     const security = COMPARE_PLAN_MARKETING_SECTIONS.find(
       (s) => s.title === "Security & Compliance",
@@ -58,10 +58,6 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
       (r) => r.label === "Daily rate limit / user",
     );
 
-    expect(rateLimitRow?.solo).toEqual({
-      kind: "text",
-      text: "$5",
-    });
     expect(rateLimitRow?.team).toEqual({
       kind: "text",
       text: "$5",

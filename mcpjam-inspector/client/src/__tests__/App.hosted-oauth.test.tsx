@@ -1406,7 +1406,7 @@ describe("App hosted OAuth callback handling", () => {
               scope: "organization",
               canAccess: false,
               shouldShowUpsell: true,
-              upgradePlan: "solo",
+              upgradePlan: "team",
               reason: "limit_reached",
               currentValue: 1,
               allowedValue: 1,
@@ -1457,7 +1457,7 @@ describe("App hosted OAuth callback handling", () => {
       expect(signIn).toHaveBeenCalled();
     });
     expect(readPersistedCheckoutIntent()).toEqual({
-      plan: "solo",
+      plan: "team",
       interval: "annual",
     });
     expect(readBillingSignInReturnPath()).toBe("/billing");
@@ -1468,7 +1468,7 @@ describe("App hosted OAuth callback handling", () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     sessionStorage.clear();
-    persistCheckoutIntent({ plan: "solo", interval: "annual" });
+    persistCheckoutIntent({ plan: "team", interval: "annual" });
     writeBillingSignInReturnPath("/billing");
     window.history.replaceState({}, "", "/callback?code=oauth-code");
 
@@ -1525,7 +1525,7 @@ describe("App hosted OAuth callback handling", () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     sessionStorage.clear();
-    persistCheckoutIntent({ plan: "solo", interval: "annual" });
+    persistCheckoutIntent({ plan: "team", interval: "annual" });
     window.history.replaceState({}, "", "/billing");
 
     mockUseFeatureFlagEnabled.mockImplementation(
@@ -1572,7 +1572,7 @@ describe("App hosted OAuth callback handling", () => {
           ).organizationId === "org-1" &&
           (props as { section?: string }).section === "billing" &&
           (props as { checkoutIntent?: { plan?: string } }).checkoutIntent
-            ?.plan === "solo" &&
+            ?.plan === "team" &&
           (props as { checkoutIntent?: { interval?: string } }).checkoutIntent
             ?.interval === "annual"
       )
@@ -1583,7 +1583,7 @@ describe("App hosted OAuth callback handling", () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     sessionStorage.clear();
-    persistCheckoutIntent({ plan: "solo", interval: "annual" });
+    persistCheckoutIntent({ plan: "team", interval: "annual" });
     writeBillingSignInReturnPath("/billing");
     writeChatboxSignInReturnPath("/chatbox/demo/token-123");
     window.history.replaceState({}, "", "/callback?code=oauth-code");
@@ -1652,7 +1652,7 @@ describe("App hosted OAuth callback handling", () => {
           ).organizationId === "org-1" &&
           (props as { section?: string }).section === "billing" &&
           (props as { checkoutIntent?: { plan?: string } }).checkoutIntent
-            ?.plan === "solo" &&
+            ?.plan === "team" &&
           (props as { checkoutIntent?: { interval?: string } }).checkoutIntent
             ?.interval === "annual"
       )
@@ -2218,7 +2218,7 @@ describe("App hosted OAuth callback handling", () => {
               scope: "organization",
               canAccess: false,
               shouldShowUpsell: true,
-              upgradePlan: "solo",
+              upgradePlan: "team",
               reason: "feature_not_included",
             },
           ],
@@ -2922,7 +2922,7 @@ describe("App hosted OAuth callback handling", () => {
               scope: "organization",
               canAccess: false,
               shouldShowUpsell: true,
-              upgradePlan: "solo",
+              upgradePlan: "team",
               reason: "feature_not_included",
             },
           ],
