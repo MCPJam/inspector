@@ -31,6 +31,11 @@ interface UseSharedChatWidgetCaptureOptions {
 
 const MAX_PENDING_SESSION_RETRIES = 5;
 const SNAPSHOT_CAPTURE_DELAY_MS = 500;
+// Bounded backoff for re-asking the parent to redeem when the previous
+// redeem appears to have failed (queue still non-empty, accessVersion
+// hasn't advanced). 1s, 2s, 4s, 8s, 16s — capped at 30s.
+const MAX_STALE_REFRESH_ATTEMPTS = 5;
+const STALE_REFRESH_BACKOFF_CEILING_MS = 30_000;
 
 interface ToolSnapshotSource {
   toolName: string;
@@ -236,6 +241,14 @@ export function useSharedChatWidgetCapture({
   // until an unrelated widget/message change happens to retrigger the
   // debounced sweep.
   const pendingStaleRetryRef = useRef(new Set<string>());
+  // Bounded backoff state for re-asking the parent to redeem. Tracks how
+  // many times the timer has refired (without an accessVersion bump in
+  // between) and the currently-scheduled timer. Reset to zero whenever
+  // accessVersion actually advances or the chat identity changes.
+  const staleRefreshAttemptsRef = useRef(0);
+  const staleRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const prevScopeRef = useRef({
     chatSessionId,
     hostedChatboxId,
@@ -254,6 +267,50 @@ export function useSharedChatWidgetCapture({
   useEffect(() => {
     onStaleHostedAccessRef.current = onStaleHostedAccess;
   }, [onStaleHostedAccess]);
+
+  // Re-fire the parent's refresh callback on a backoff while the queue is
+  // non-empty and accessVersion hasn't advanced. The parent's redeem can
+  // fail silently (network / 5xx / 4xx); without this, a single failed
+  // redeem strands the queued snapshot until an unrelated stale event or
+  // a page reload happens to retrigger the callback path.
+  const schedulePendingStaleRefresh = () => {
+    if (staleRefreshTimerRef.current) {
+      clearTimeout(staleRefreshTimerRef.current);
+      staleRefreshTimerRef.current = null;
+    }
+    if (pendingStaleRetryRef.current.size === 0) return;
+    const attempts = staleRefreshAttemptsRef.current;
+    if (attempts >= MAX_STALE_REFRESH_ATTEMPTS) {
+      console.warn(
+        "[useSharedChatWidgetCapture] Giving up on stale-access refresh after",
+        attempts,
+        "attempts; queued toolCallIds:",
+        Array.from(pendingStaleRetryRef.current),
+      );
+      return;
+    }
+    const delayMs = Math.min(
+      1000 * Math.pow(2, attempts),
+      STALE_REFRESH_BACKOFF_CEILING_MS,
+    );
+    staleRefreshTimerRef.current = setTimeout(() => {
+      staleRefreshTimerRef.current = null;
+      if (pendingStaleRetryRef.current.size === 0) return;
+      staleRefreshAttemptsRef.current += 1;
+      onStaleHostedAccessRef.current?.();
+      // Re-arm for the next backoff tick. If accessVersion bumps before
+      // the next fire, the reset effect cancels this timer and resets
+      // attempts to zero.
+      schedulePendingStaleRefresh();
+    }, delayMs);
+  };
+  const clearPendingStaleRefresh = () => {
+    if (staleRefreshTimerRef.current) {
+      clearTimeout(staleRefreshTimerRef.current);
+      staleRefreshTimerRef.current = null;
+    }
+    staleRefreshAttemptsRef.current = 0;
+  };
 
   useEffect(() => {
     toolSourcesRef.current = buildToolSourceMap(messages);
@@ -290,6 +347,7 @@ export function useSharedChatWidgetCapture({
       cachedBlobsRef.current.clear();
       retryCountRef.current.clear();
       pendingStaleRetryRef.current.clear();
+      clearPendingStaleRefresh();
       for (const timer of pendingTimersRef.current.values()) {
         clearTimeout(timer);
       }
@@ -300,7 +358,9 @@ export function useSharedChatWidgetCapture({
       // silent re-redeem has handed us a fresh version. Replay the
       // toolCallIds whose previous attempt died on `chatbox_access_stale`
       // so the capture loop self-heals without waiting for an unrelated
-      // widget/message change.
+      // widget/message change. Cancel the bounded-backoff timer too —
+      // we made progress, no further auto-refreshes needed.
+      clearPendingStaleRefresh();
       const replay = Array.from(pendingStaleRetryRef.current);
       pendingStaleRetryRef.current.clear();
       for (const toolCallId of replay) {
@@ -318,6 +378,10 @@ export function useSharedChatWidgetCapture({
       }
       pendingTimersRef.current.clear();
       inFlightRef.current.clear();
+      if (staleRefreshTimerRef.current) {
+        clearTimeout(staleRefreshTimerRef.current);
+        staleRefreshTimerRef.current = null;
+      }
     };
   }, []);
 
@@ -486,6 +550,12 @@ export function useSharedChatWidgetCapture({
         }
         pendingStaleRetryRef.current.add(toolCallId);
         onStaleHostedAccessRef.current?.();
+        // Arm/refresh the bounded-backoff timer. If the parent's redeem
+        // succeeds, `hostedAccessVersion` will bump, the reset effect
+        // drains the queue and cancels this timer. If the redeem fails,
+        // the timer re-fires `onStaleHostedAccess` on a growing backoff
+        // so the queued snapshot isn't stranded.
+        schedulePendingStaleRefresh();
       } else if (shouldRetryPendingSnapshot(undefined, error)) {
         const retries = retryCountRef.current.get(toolCallId) ?? 0;
         if (retries >= MAX_PENDING_SESSION_RETRIES) {

@@ -573,15 +573,18 @@ describe("useSharedChatWidgetCapture", () => {
 
     // One initial upload flight (three concurrent uploadBlob calls, one
     // per blob) — Promise.all rejects on the first stale error and
-    // suppresses the local retry path.
+    // suppresses the local snapshot-retry path.
     const generateCallsAfterFlight =
       mockGenerateSnapshotUploadUrl.mock.calls.length;
     expect(generateCallsAfterFlight).toBeGreaterThanOrEqual(1);
-    expect(onStaleHostedAccess).toHaveBeenCalledTimes(1);
+    expect(onStaleHostedAccess).toHaveBeenCalled();
     expect(mockCreateWidgetSnapshot).not.toHaveBeenCalled();
 
-    // No local exponential retry should be scheduled for a stale-access
-    // error — recovery is driven by the parent's re-redeem.
+    // No local *snapshot* retry should be scheduled — the
+    // `generateSnapshotUploadUrl` call count must stay flat even as the
+    // refresh-backoff timer fires repeatedly. (The refresh callback
+    // itself is allowed to be re-invoked on a bounded backoff; that
+    // behaviour is covered by a dedicated test.)
     act(() => {
       vi.advanceTimersByTime(60_000);
     });
@@ -591,7 +594,6 @@ describe("useSharedChatWidgetCapture", () => {
     expect(mockGenerateSnapshotUploadUrl.mock.calls.length).toBe(
       generateCallsAfterFlight,
     );
-    expect(onStaleHostedAccess).toHaveBeenCalledTimes(1);
 
     unmount();
   });
@@ -696,6 +698,90 @@ describe("useSharedChatWidgetCapture", () => {
 
     await flushMicrotasks();
     expect(onStaleHostedAccess.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+    unmount();
+  });
+
+  it("re-fires the refresh callback on a backoff while the queue is non-empty", async () => {
+    // Codex P2: if the parent's redeem fails (accessVersion never bumps),
+    // the queued stale snapshot must not be stranded — the hook should
+    // retry the refresh on a bounded backoff so the parent gets another
+    // chance.
+    const onStaleHostedAccess = vi.fn();
+    class StaleError extends Error {
+      data: { code: string; currentAccessVersion: number };
+      constructor() {
+        super("Chatbox access version is stale; client must re-redeem.");
+        this.data = { code: "chatbox_access_stale", currentAccessVersion: 7 };
+      }
+    }
+    mockGenerateSnapshotUploadUrl.mockReset();
+    mockGenerateSnapshotUploadUrl.mockRejectedValue(new StaleError());
+
+    const { unmount } = renderHook(() =>
+      useSharedChatWidgetCapture({
+        enabled: true,
+        chatSessionId: "chat-session-backoff",
+        hostedChatboxId: "cbx_1",
+        hostedAccessVersion: 1,
+        onStaleHostedAccess,
+        messages: [
+          {
+            id: "assistant-1",
+            role: "assistant",
+            parts: [
+              {
+                type: "tool-search",
+                toolCallId: "call-backoff",
+                input: { q: "hello" },
+                output: { result: "world", _serverId: "server-1" },
+              },
+            ],
+          } as any,
+        ],
+      }),
+    );
+
+    act(() => {
+      useWidgetDebugStore.setState({
+        widgets: new Map([
+          [
+            "call-backoff",
+            {
+              toolCallId: "call-backoff",
+              toolName: "search",
+              protocol: "mcp-apps",
+              widgetState: null,
+              globals: { theme: "dark", displayMode: "inline" },
+              widgetHtml: "<div>Widget</div>",
+              updatedAt: Date.now(),
+            },
+          ],
+        ]),
+      });
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+
+    await flushMicrotasks();
+    expect(onStaleHostedAccess).toHaveBeenCalledTimes(1);
+
+    // Parent's redeem failed: accessVersion never advanced. The backoff
+    // timer should re-fire the callback after ~1s.
+    act(() => {
+      vi.advanceTimersByTime(1100);
+    });
+    await flushMicrotasks();
+    expect(onStaleHostedAccess.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+    // And again after ~2s more (next backoff tick).
+    act(() => {
+      vi.advanceTimersByTime(2100);
+    });
+    await flushMicrotasks();
+    expect(onStaleHostedAccess.mock.calls.length).toBeGreaterThanOrEqual(3);
 
     unmount();
   });
