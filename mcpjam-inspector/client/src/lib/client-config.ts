@@ -42,8 +42,7 @@ export type HostSafeAreaInsets = {
 export const CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE =
   "Project connection defaults are still syncing. Try again in a moment.";
 
-export const PROJECT_NOT_PROVISIONED_ERROR_MESSAGE =
-  "Your project isn't ready yet. Refresh the page in a moment, or sign in if you're signed out, then try connecting again.";
+export const PROJECT_NOT_PROVISIONED_ERROR_MESSAGE = "Finishing setup.";
 
 export const DEFAULT_REQUEST_TIMEOUT_MS = 10000;
 
