@@ -1916,7 +1916,7 @@ describe("useProjectState convexProjects merge under loading", () => {
   });
 });
 
-describe("useProjectState bulk-server query (PR-I1)", () => {
+describe("useProjectState bulk-server query", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
@@ -2181,7 +2181,7 @@ describe("useProjectState bulk-server query (PR-I1)", () => {
   });
 });
 
-describe("useProjectState cold-share data-loss guard (PR-I2)", () => {
+describe("useProjectState cold-share data-loss guard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
@@ -2219,7 +2219,7 @@ describe("useProjectState cold-share data-loss guard (PR-I2)", () => {
       {
         _id: "remote-1",
         name: "Source Project",
-        servers: {}, // empty embedded blob — pre-PR-I1 the picker had a stale read
+        servers: {}, // empty in-record copy — before the bulk-query swap the picker had a stale read
         ownerId: "u1",
         organizationId: "org-route",
         createdAt: 1,
