@@ -52,6 +52,13 @@ interface MessageViewProps {
   interactive?: boolean;
   reasoningDisplayMode?: ReasoningDisplayMode;
   claudeFooterMode?: ClaudeFooterMode;
+  /**
+   * Optional slot rendered below each user message's bubble. The host
+   * (ChatTabV2) wires this when it has a persisted chat session, so a
+   * per-message "Save as test case" affordance can render with access to
+   * sessionId + per-message id.
+   */
+  renderUserMessageActions?: (message: UIMessage) => React.ReactNode;
 }
 
 function shouldRerenderMessage(prevMessage: UIMessage, nextMessage: UIMessage) {
@@ -91,7 +98,8 @@ function areMessageViewPropsEqual(
     prev.minimalMode === next.minimalMode &&
     prev.interactive === next.interactive &&
     prev.reasoningDisplayMode === next.reasoningDisplayMode &&
-    prev.claudeFooterMode === next.claudeFooterMode
+    prev.claudeFooterMode === next.claudeFooterMode &&
+    prev.renderUserMessageActions === next.renderUserMessageActions
   );
 }
 
@@ -119,6 +127,7 @@ function MessageViewImpl({
   interactive = true,
   reasoningDisplayMode = "inline",
   claudeFooterMode = "none",
+  renderUserMessageActions,
 }: MessageViewProps) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const chatboxHostStyle = useChatboxHostStyle();
@@ -211,6 +220,11 @@ function MessageViewImpl({
             ))}
           </UserMessageBubble>
         )}
+        {renderUserMessageActions ? (
+          <div className="flex max-w-[min(100%,48rem)] justify-end">
+            {renderUserMessageActions(message)}
+          </div>
+        ) : null}
       </div>
     );
   }

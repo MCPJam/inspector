@@ -55,7 +55,7 @@ export const RunEvalsRequestSchema = z.object({
     z.object({
       title: z.string(),
       query: z.string(),
-      runs: z.number().int().positive(),
+      runs: z.number().int().positive().max(10),
       model: z.string(),
       provider: z.string(),
       expectedToolCalls: z.array(
@@ -126,7 +126,7 @@ export const RunTestCaseRequestSchema = z.object({
       query: z.string().optional(),
       expectedToolCalls: z.array(z.any()).optional(),
       isNegativeTest: z.boolean().optional(),
-      runs: z.number().optional(),
+      runs: z.number().int().positive().max(10).optional(),
       expectedOutput: z.string().optional(),
       promptTurns: z.array(promptTurnSchema).optional(),
       advancedConfig: z
@@ -145,6 +145,43 @@ export type RunTestCaseRequest = z.infer<typeof RunTestCaseRequestSchema>;
 type RunTestCaseWithManagerRequest = RunTestCaseRequest & {
   orgModelConfig?: ResolvedOrgModelConfig;
 };
+
+export const MAX_TOTAL_LLM_CALLS = 300;
+
+export function assertSuiteRunWithinCap(
+  request: RunEvalsRequest,
+  configCount = 1,
+) {
+  const totalIterations = request.tests.reduce(
+    (sum, t) => sum + (t.runs ?? 0),
+    0,
+  );
+  const totalCalls = totalIterations * Math.max(configCount, 1);
+  if (totalCalls > MAX_TOTAL_LLM_CALLS) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `Suite run would issue ${totalCalls} LLM calls, above the cap of ${MAX_TOTAL_LLM_CALLS}. Reduce iterations or test count.`,
+      { totalCalls, cap: MAX_TOTAL_LLM_CALLS },
+    );
+  }
+}
+
+export function assertTestCaseRunWithinCap(
+  request: RunTestCaseRequest,
+  configCount = 1,
+) {
+  const iterations = request.testCaseOverrides?.runs ?? 1;
+  const totalCalls = iterations * Math.max(configCount, 1);
+  if (totalCalls > MAX_TOTAL_LLM_CALLS) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `Test case run would issue ${totalCalls} LLM calls, above the cap of ${MAX_TOTAL_LLM_CALLS}.`,
+      { totalCalls, cap: MAX_TOTAL_LLM_CALLS },
+    );
+  }
+}
 
 export const GenerateTestsRequestSchema = z.object({
   serverIds: z
@@ -320,6 +357,8 @@ export async function runEvalsWithManager(
       "projectId is required when creating a new eval suite",
     );
   }
+
+  assertSuiteRunWithinCap(request);
 
   const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
   const persistedServerRefs =
@@ -665,6 +704,8 @@ export async function runEvalTestCaseWithManager(
     testCaseOverrides,
   } = request;
 
+  assertTestCaseRunWithinCap(request);
+
   const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
   const { convexClient, convexHttpUrl } = createConvexClients(convexAuthToken);
 
@@ -897,6 +938,8 @@ export async function streamEvalTestCaseWithManager(
     convexAuthToken,
     testCaseOverrides,
   } = request;
+
+  assertTestCaseRunWithinCap(request);
 
   const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
   const { convexClient, convexHttpUrl } = createConvexClients(convexAuthToken);

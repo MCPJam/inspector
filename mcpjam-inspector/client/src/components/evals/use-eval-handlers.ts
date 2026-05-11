@@ -479,7 +479,17 @@ export function useEvalHandlers({
 
   // Rerun handler
   const handleRerun = useCallback(
-    async (suite: EvalSuite) => {
+    async (
+      suite: EvalSuite,
+      options?: {
+        /**
+         * Transient per-run override applied uniformly to every test in this
+         * suite run. Does NOT mutate the persisted `EvalCase.runs` default.
+         * Capped server-side at 10 per test.
+         */
+        iterationOverride?: number;
+      },
+    ) => {
       if (rerunningSuiteId) return;
 
       const suiteServers = normalizeSuiteServerRefs(suite.environment?.servers);
@@ -559,7 +569,7 @@ export function useEvalHandlers({
           tests: executionContext.tests.map((test) => ({
             title: test.title,
             query: test.query,
-            runs: test.runs ?? 1,
+            runs: options?.iterationOverride ?? test.runs ?? 1,
             model: test.model,
             provider: test.provider,
             expectedToolCalls: test.expectedToolCalls,
@@ -629,6 +639,12 @@ export function useEvalHandlers({
         selectedModel?: string | null;
         /** When true, omits the usual per-run success toasts (errors still surface). */
         suppressCompletionToasts?: boolean;
+        /**
+         * Transient per-run override for the number of iterations. Wired to
+         * `testCaseOverrides.runs`; does NOT mutate the persisted
+         * `EvalCase.runs` default. Capped server-side at 10.
+         */
+        iterationOverride?: number;
       },
     ) => {
       if (runningTestCaseId || rerunningSuiteId || replayingRunId) {
@@ -702,6 +718,10 @@ export function useEvalHandlers({
               getToken,
               hasToken,
               selectedModel,
+              testCaseOverrides:
+                options?.iterationOverride !== undefined
+                  ? { runs: options.iterationOverride }
+                  : undefined,
             })
           )
         );

@@ -211,6 +211,45 @@ describe("useEvalHandlers", () => {
       });
     });
 
+    it("applies iterationOverride to every test in the request", async () => {
+      mockConvexQuery.mockResolvedValueOnce([
+        {
+          _id: "tc-1",
+          title: "case A",
+          query: "q a",
+          runs: 1,
+          models: [{ model: "gpt-4", provider: "openai" }],
+          expectedToolCalls: [],
+        },
+        {
+          _id: "tc-2",
+          title: "case B",
+          query: "q b",
+          runs: 7, // stored default that override must replace
+          models: [{ model: "gpt-4", provider: "openai" }],
+          expectedToolCalls: [],
+        },
+      ]);
+
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+
+      await act(async () => {
+        await result.current.handleRerun(
+          {
+            _id: "suite-iter",
+            name: "Suite",
+            environment: { servers: ["server-1"] },
+          } as any,
+          { iterationOverride: 4 },
+        );
+      });
+
+      const requestBody = JSON.parse(mockAuthFetch.mock.calls[0][1].body);
+      expect(requestBody.tests.length).toBe(2);
+      expect(requestBody.tests[0].runs).toBe(4);
+      expect(requestBody.tests[1].runs).toBe(4);
+    });
+
     it("includes promptTurns and expectedOutput when rerunning saved cases", async () => {
       mockConvexQuery.mockResolvedValueOnce([
         {
@@ -833,6 +872,81 @@ describe("useEvalHandlers", () => {
       expect(toast.success).toHaveBeenCalledWith(
         "Test completed successfully!",
       );
+    });
+
+    it("threads iterationOverride into testCaseOverrides.runs", async () => {
+      const ensureServersReady = vi.fn().mockResolvedValue({
+        readyServerNames: ["server-1"],
+        missingServerNames: [],
+        failedServerNames: [],
+        reauthServerNames: [],
+      });
+
+      const { result } = renderHook(() =>
+        useEvalHandlers({
+          ...defaultProps,
+          connectedServerNames: new Set(),
+          ensureServersReady,
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleRunTestCase(
+          {
+            _id: "suite-123",
+            name: "Test Suite",
+            environment: { servers: ["server-1"] },
+          } as any,
+          {
+            _id: "case-123",
+            title: "Single-model case",
+            query: "Test query",
+            models: [{ provider: "openai", model: "gpt-4o" }],
+            expectedToolCalls: [],
+          } as any,
+          { iterationOverride: 5 },
+        );
+      });
+
+      const requestBody = JSON.parse(mockAuthFetch.mock.calls[0][1].body);
+      expect(requestBody.testCaseOverrides).toEqual({ runs: 5 });
+    });
+
+    it("omits testCaseOverrides when no iterationOverride is supplied", async () => {
+      const ensureServersReady = vi.fn().mockResolvedValue({
+        readyServerNames: ["server-1"],
+        missingServerNames: [],
+        failedServerNames: [],
+        reauthServerNames: [],
+      });
+
+      const { result } = renderHook(() =>
+        useEvalHandlers({
+          ...defaultProps,
+          connectedServerNames: new Set(),
+          ensureServersReady,
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleRunTestCase(
+          {
+            _id: "suite-123",
+            name: "Test Suite",
+            environment: { servers: ["server-1"] },
+          } as any,
+          {
+            _id: "case-123",
+            title: "Single-model case",
+            query: "Test query",
+            models: [{ provider: "openai", model: "gpt-4o" }],
+            expectedToolCalls: [],
+          } as any,
+        );
+      });
+
+      const requestBody = JSON.parse(mockAuthFetch.mock.calls[0][1].body);
+      expect(requestBody.testCaseOverrides).toBeUndefined();
     });
   });
 

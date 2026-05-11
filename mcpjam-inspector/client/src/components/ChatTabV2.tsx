@@ -34,6 +34,20 @@ import {
 import type { DialogElicitation } from "@/components/ToolsTab";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { Thread } from "@/components/chat-v2/thread";
+import { SaveAsTestCaseAction } from "@/components/chat-v2/shared/save-as-test-case-action";
+
+function extractUserMessageText(message: UIMessage): string {
+  const parts = (message.parts ?? []) as Array<{
+    type?: string;
+    text?: unknown;
+  }>;
+  for (const part of parts) {
+    if (part?.type === "text" && typeof part.text === "string") {
+      return part.text;
+    }
+  }
+  return "";
+}
 import { type ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/reasoning-part";
 import type { LoadingIndicatorVariant } from "@/components/chat-v2/shared/loading-indicator-content";
 import { ServerWithName } from "@/hooks/use-app-state";
@@ -2405,6 +2419,20 @@ export function ChatTabV2({
                           minimalMode={minimalMode}
                           loadingIndicatorVariant={loadingIndicatorVariant}
                           reasoningDisplayMode={reasoningDisplayMode}
+                          renderUserMessageActions={
+                            activeHistorySessionId && effectiveHostedProjectId
+                              ? (message) => (
+                                  <SaveAsTestCaseAction
+                                    sessionId={activeHistorySessionId}
+                                    userMessageId={message.id}
+                                    promptPreview={extractUserMessageText(
+                                      message,
+                                    )}
+                                    projectId={effectiveHostedProjectId}
+                                  />
+                                )
+                              : undefined
+                          }
                         />
                       </StickToBottom.Content>
                       <ScrollToBottomButton />

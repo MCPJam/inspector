@@ -112,6 +112,65 @@ describe("MessageView", () => {
       const textParts = screen.getAllByTestId("part-text");
       expect(textParts).toHaveLength(2);
     });
+
+    it("renders renderUserMessageActions slot below the bubble when provided", () => {
+      const message = createMessage({
+        id: "msg-row-test",
+        role: "user",
+        parts: [{ type: "text", text: "Save me" }],
+      });
+      const renderActions = vi.fn(() => (
+        <button data-testid="save-as-test-case-stub">save</button>
+      ));
+
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={message}
+          renderUserMessageActions={renderActions}
+        />,
+      );
+
+      expect(renderActions).toHaveBeenCalledTimes(1);
+      expect(renderActions).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "msg-row-test" }),
+      );
+      expect(
+        screen.getByTestId("save-as-test-case-stub"),
+      ).toBeInTheDocument();
+    });
+
+    it("does not render the actions slot when no renderer is provided", () => {
+      const message = createMessage({
+        role: "user",
+        parts: [{ type: "text", text: "no actions" }],
+      });
+      renderMessageView(<MessageView {...defaultProps} message={message} />);
+      expect(
+        screen.queryByTestId("save-as-test-case-stub"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("does not render the actions slot for assistant messages", () => {
+      const message = createMessage({
+        role: "assistant",
+        parts: [{ type: "text", text: "assistant reply" }],
+      });
+      const renderActions = vi.fn(() => (
+        <button data-testid="save-as-test-case-stub">save</button>
+      ));
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={message}
+          renderUserMessageActions={renderActions}
+        />,
+      );
+      expect(renderActions).not.toHaveBeenCalled();
+      expect(
+        screen.queryByTestId("save-as-test-case-stub"),
+      ).not.toBeInTheDocument();
+    });
   });
 
   describe("assistant messages", () => {

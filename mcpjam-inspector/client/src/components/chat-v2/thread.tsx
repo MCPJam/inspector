@@ -64,6 +64,12 @@ interface ThreadProps {
   viewportRef?: RefObject<HTMLElement | null>;
   contentClassName?: string;
   getMessageWrapperProps?: TranscriptThreadProps["getMessageWrapperProps"];
+  /**
+   * Optional slot rendered below each user message's bubble. ChatTabV2 wires
+   * this with a "Save as test case" affordance when a persisted chat session
+   * is active; other consumers can omit it.
+   */
+  renderUserMessageActions?: TranscriptThreadProps["renderUserMessageActions"];
 }
 
 export function Thread({
@@ -97,6 +103,7 @@ export function Thread({
   viewportRef,
   contentClassName,
   getMessageWrapperProps,
+  renderUserMessageActions,
 }: ThreadProps) {
   const [pipWidgetId, setPipWidgetId] = useState<string | null>(null);
   const [fullscreenWidgetId, setFullscreenWidgetId] = useState<string | null>(
@@ -217,6 +224,7 @@ export function Thread({
           "min-w-0 w-full max-w-4xl mx-auto px-4 pt-8 pb-16 space-y-8"
         }
         getMessageWrapperProps={getMessageWrapperProps}
+        renderUserMessageActions={renderUserMessageActions}
       />
       {shouldShowStandaloneThinkingIndicator && (
         <div className="min-w-0 w-full max-w-4xl mx-auto px-4">

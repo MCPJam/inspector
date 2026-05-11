@@ -200,6 +200,7 @@ export function TranscriptThread({
   resolvedLoadingIndicatorVariant,
   lastRenderableMessageId = null,
   getMessageWrapperProps,
+  renderUserMessageActions,
 }: TranscriptThreadProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -443,6 +444,7 @@ export function TranscriptThread({
               interactive={interactive}
               reasoningDisplayMode={reasoningDisplayMode}
               claudeFooterMode={claudeFooterMode}
+              renderUserMessageActions={renderUserMessageActions}
             />
           </div>
         );

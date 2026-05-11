@@ -214,6 +214,32 @@ export function SuiteIterationsView({
   const [runDetailSortBy, setRunDetailSortBy] = useState<
     "model" | "test" | "result"
   >("model");
+  /**
+   * Transient per-run iteration override (1-10). Applied to Run-all-cases and
+   * per-case quick runs triggered from this suite view. NOT persisted to
+   * `EvalCase.runs`; server enforces an absolute cap above 10.
+   */
+  const [iterationOverride, setIterationOverride] = useState<number>(1);
+
+  const onRerunWithOverride = useCallback(
+    (s: EvalSuite) =>
+      (onRerun as (suite: EvalSuite, opts?: { iterationOverride?: number }) => void)(
+        s,
+        { iterationOverride },
+      ),
+    [onRerun, iterationOverride],
+  );
+
+  const onRunTestCaseWithOverride = useCallback(
+    (testCase: EvalCase) =>
+      onRunTestCase
+        ? (onRunTestCase as (
+            tc: EvalCase,
+            opts?: { iterationOverride?: number },
+          ) => void)(testCase, { iterationOverride })
+        : undefined,
+    [onRunTestCase, iterationOverride],
+  );
   const effectiveRunDetailSortBy = runDetailSortByOverride ?? runDetailSortBy;
   const effectiveRunDetailSortChange =
     onRunDetailSortByChange ?? setRunDetailSortBy;
@@ -458,7 +484,9 @@ export function SuiteIterationsView({
             viewMode={viewMode}
             selectedRunDetails={selectedRunDetails}
             isEditMode={isEditMode}
-            onRerun={onRerun}
+            onRerun={onRerunWithOverride}
+            iterationOverride={iterationOverride}
+            onIterationOverrideChange={setIterationOverride}
             onReplayRun={onReplayRun}
             onCancelRun={onCancelRun}
             onViewModeChange={handleBackToOverview}
@@ -483,7 +511,7 @@ export function SuiteIterationsView({
             canGenerateTestCases={canGenerateTestCases}
             generateTestCasesDisabledReason={generateTestCasesDisabledReason}
             isGeneratingTestCases={isGeneratingTestCases}
-            onRunTestCase={onRunTestCase}
+            onRunTestCase={onRunTestCaseWithOverride}
             blockTestCaseRuns={Boolean(rerunningSuiteId || replayingRunId)}
             runningTestCaseId={runningTestCaseId}
             availableModels={availableModels}
@@ -631,7 +659,7 @@ export function SuiteIterationsView({
                       })
                     }
                     onRunClick={handleRunClick}
-                    onRunTestCase={onRunTestCase}
+                    onRunTestCase={onRunTestCaseWithOverride}
                     runningTestCaseId={runningTestCaseId}
                     blockTestCaseRuns={Boolean(
                       rerunningSuiteId || replayingRunId,
@@ -762,7 +790,7 @@ export function SuiteIterationsView({
                         })
                       }
                       onDeleteTestCasesBatch={onDeleteTestCasesBatch}
-                      onRunTestCase={onRunTestCase}
+                      onRunTestCase={onRunTestCaseWithOverride}
                       runningTestCaseId={runningTestCaseId}
                       blockTestCaseRuns={Boolean(
                         rerunningSuiteId || replayingRunId
