@@ -68,11 +68,15 @@ export function useChatboxDemoSeed({
   const [seededChatboxId, setSeededChatboxId] = useState<string | null>(null);
   const [isSeeding, setIsSeeding] = useState(false);
   const inFlightRef = useRef(false);
-  // Latch any attempt — including `alreadySeeded` no-ops — so a Convex
-  // refetch of an empty `chatboxes` list doesn't re-fire the mutation
-  // on every reference change. Server is transactional so this is only
-  // wasted chatter, but it's avoidable.
-  const attemptedRef = useRef(false);
+  // Latch any non-throwing attempt per project — including `alreadySeeded`
+  // no-ops — so a Convex refetch of an empty `chatboxes` list doesn't
+  // re-fire the mutation on every reference change. Keyed by projectId
+  // because ChatboxesTab swaps the `projectId` prop in place (no
+  // `key={projectId}`) when the user switches projects; a single
+  // boolean latch would block first-run seeding for every subsequent
+  // empty project in the session. Transient errors deliberately do not
+  // latch so the effect can retry after a network blip.
+  const attemptedProjectsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -83,14 +87,13 @@ export function useChatboxDemoSeed({
     if (chatboxes.length > 0) return;
     if (projectDefaultHostConfig === undefined) return;
     if (inFlightRef.current) return;
-    if (attemptedRef.current) return;
+    if (attemptedProjectsRef.current.has(projectId)) return;
 
     const starter = getDemoStarter();
     const seed = starter?.serverSeeds?.[0];
     if (!starter || !seed) return;
 
     inFlightRef.current = true;
-    attemptedRef.current = true;
     setIsSeeding(true);
 
     void (async () => {
@@ -128,6 +131,11 @@ export function useChatboxDemoSeed({
           alreadySeeded: boolean;
         };
 
+        // Latch *after* a non-throwing response (success or
+        // `alreadySeeded`) so we don't re-fire on Convex chatboxes-list
+        // refetches; the throw path falls through without latching so a
+        // transient network error can still retry.
+        attemptedProjectsRef.current.add(projectId);
         if (result.chatbox) {
           setSeededChatboxId(result.chatbox.chatboxId);
         }
