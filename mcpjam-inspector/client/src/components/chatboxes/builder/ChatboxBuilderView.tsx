@@ -818,6 +818,7 @@ export function ChatboxBuilderView({
       const payload = {
         name: trimmedName,
         description: draftChatboxConfig.description.trim() || undefined,
+        allowGuestAccess: draftChatboxConfig.allowGuestAccess,
         welcomeDialog: draftChatboxConfig.welcomeDialog,
         feedbackDialog: draftChatboxConfig.feedbackDialog,
         hostConfig: hostConfigInput,

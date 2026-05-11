@@ -68,6 +68,11 @@ export function useChatboxDemoSeed({
   const [seededChatboxId, setSeededChatboxId] = useState<string | null>(null);
   const [isSeeding, setIsSeeding] = useState(false);
   const inFlightRef = useRef(false);
+  // Latch any attempt — including `alreadySeeded` no-ops — so a Convex
+  // refetch of an empty `chatboxes` list doesn't re-fire the mutation
+  // on every reference change. Server is transactional so this is only
+  // wasted chatter, but it's avoidable.
+  const attemptedRef = useRef(false);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -78,12 +83,14 @@ export function useChatboxDemoSeed({
     if (chatboxes.length > 0) return;
     if (projectDefaultHostConfig === undefined) return;
     if (inFlightRef.current) return;
+    if (attemptedRef.current) return;
 
     const starter = getDemoStarter();
     const seed = starter?.serverSeeds?.[0];
     if (!starter || !seed) return;
 
     inFlightRef.current = true;
+    attemptedRef.current = true;
     setIsSeeding(true);
 
     void (async () => {

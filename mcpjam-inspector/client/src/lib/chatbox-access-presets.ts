@@ -13,6 +13,9 @@ export function chatboxAccessPresetFromSettings(
   if (mode === "invited_only") {
     return "invited_only";
   }
+  if (mode === "project_members") {
+    return "project";
+  }
   return allowGuestAccess ? "link_guests" : "project";
 }
 
@@ -21,7 +24,7 @@ export function settingsFromChatboxAccessPreset(
 ): { mode: ChatboxMode; allowGuestAccess: boolean } {
   switch (preset) {
     case "project":
-      return { mode: "anyone_with_link", allowGuestAccess: false };
+      return { mode: "project_members", allowGuestAccess: false };
     case "link_guests":
       return { mode: "anyone_with_link", allowGuestAccess: true };
     case "invited_only":

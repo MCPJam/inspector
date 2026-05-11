@@ -88,17 +88,19 @@ export default function ChatboxBuilderExperience({
     isCreateChatboxDisabled,
   });
 
-  // Auto-open the freshly seeded demo exactly once. Without the ref, the
-  // effect re-fires after the user clicks "Return to chatboxes" (which
-  // clears selectedChatboxId/draft) and bounces them straight back into
-  // the builder.
+  // Auto-open the freshly seeded demo exactly once. Latch the ref the
+  // first time we observe `seededChatboxId` regardless of whether we
+  // actually open it: if the user is already inside a restored session
+  // we want to leave them there, but we must *not* re-fire after they
+  // later click "Return to chatboxes" (which clears
+  // selectedChatboxId/draft) — that would bounce them back into the
+  // builder, the exact regression this guard exists to prevent.
   const autoOpenedSeedRef = useRef(false);
   useEffect(() => {
     if (!seededChatboxId) return;
     if (autoOpenedSeedRef.current) return;
-    // Don't yank the user out of a builder/preview they already opened.
-    if (selectedChatboxId || draft) return;
     autoOpenedSeedRef.current = true;
+    if (selectedChatboxId || draft) return;
     startTransition(() => {
       setSelectedChatboxId(seededChatboxId);
       setRestoredViewMode("preview");
