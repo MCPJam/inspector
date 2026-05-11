@@ -93,6 +93,13 @@ export interface ChatboxSession {
   accessVersion: number;
   payload: ChatboxBootstrapPayload;
   surface?: "preview" | "share_link";
+  /**
+   * Original URL share token captured at redeem time. Persisted so the
+   * hosted Copy link button can reconstruct the canonical share URL after
+   * the redeem flow rewrites the address bar to `/#<slug>`. UI-only — no
+   * backend call should key on this; access is gated by `accessVersion`.
+   */
+  shareToken?: string;
 }
 
 // Bumped from v1 → v2: ChatboxSession dropped the URL token and added
@@ -256,6 +263,10 @@ export function normalizeChatboxSession(
       chatUi: normalizeChatUiPayload(payload.chatUi),
     },
     surface: parsed.surface === "preview" ? "preview" : "share_link",
+    shareToken:
+      typeof parsed.shareToken === "string" && parsed.shareToken.trim()
+        ? parsed.shareToken.trim()
+        : undefined,
   };
 }
 
