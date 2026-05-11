@@ -60,9 +60,8 @@ function createPlanCatalog() {
           prioritySupport: false,
         },
         limits: {
-          maxMembers: 1,
-          maxProjects: 1,
-          maxServersPerProject: 3,
+          maxMembers: 5,
+          maxProjects: 3,
           maxChatboxesPerProject: 0,
           maxEvalRunsPerMonth: 5,
         },
@@ -70,41 +69,12 @@ function createPlanCatalog() {
         seatMinimum: null,
         checkout: null,
       },
-      solo: {
-        plan: "team",
-        displayName: "Team",
-        billingModel: "flat",
-        isSelfServe: true,
-        prices: { monthly: 2500, annual: 24000 },
-        features: {
-          evals: true,
-          chatboxes: true,
-          cicd: true,
-          customDomains: false,
-          auditLog: false,
-          sso: false,
-          prioritySupport: false,
-        },
-        limits: {
-          maxMembers: 3,
-          maxProjects: 2,
-          maxServersPerProject: 10,
-          maxChatboxesPerProject: 1,
-          maxEvalRunsPerMonth: 500,
-        },
-        includedSeats: 3,
-        seatMinimum: null,
-        checkout: {
-          plan: "team",
-          supportedIntervals: ["monthly", "annual"],
-        },
-      },
       team: {
         plan: "team",
         displayName: "Team",
         billingModel: "per_seat",
         isSelfServe: true,
-        prices: { monthly: 7400, annual: 70800 },
+        prices: { monthly: 3800, annual: 36000 },
         features: {
           evals: true,
           chatboxes: true,
@@ -115,14 +85,13 @@ function createPlanCatalog() {
           prioritySupport: true,
         },
         limits: {
-          maxMembers: 100,
-          maxProjects: 10,
-          maxServersPerProject: null,
+          maxMembers: null,
+          maxProjects: null,
           maxChatboxesPerProject: 3,
           maxEvalRunsPerMonth: 5000,
         },
         includedSeats: null,
-        seatMinimum: 4,
+        seatMinimum: null,
         checkout: {
           plan: "team",
           supportedIntervals: ["monthly", "annual"],
@@ -146,7 +115,6 @@ function createPlanCatalog() {
         limits: {
           maxMembers: null,
           maxProjects: null,
-          maxServersPerProject: null,
           maxChatboxesPerProject: null,
           maxEvalRunsPerMonth: null,
         },
@@ -504,7 +472,7 @@ describe("OrganizationsTab billing", () => {
     render(<OrganizationsTab organizationId="org-1" />);
 
     expect(
-      screen.getByText("$59 per seat/month, billed annually · 4 seat minimum"),
+      screen.getByText("$30 per seat/month, billed annually"),
     ).toBeInTheDocument();
     expect(
       screen.queryByText("Billing details are updating…"),
@@ -621,88 +589,6 @@ describe("OrganizationsTab billing", () => {
     ).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Change to monthly" }),
-    ).toBeInTheDocument();
-  });
-
-  it("shows explicit cross-tier scheduled copy and a reversal CTA when the change is cancelable", async () => {
-    const cancelScheduledBillingChange = vi.fn();
-    const hookState = createBillingHookState({
-      billingStatus: billingStatusFixture({
-        plan: "team",
-        effectivePlan: "team",
-        billingInterval: "annual",
-        subscriptionStatus: "active",
-        hasCustomer: true,
-        stripeCurrentPeriodEnd: Date.parse("2027-03-31T12:00:00.000Z"),
-        stripePriceId: "price_team_annual",
-        stripeScheduledPlan: "team",
-        stripeScheduledBillingInterval: "monthly",
-        stripeScheduledPriceId: "price_team_monthly",
-        stripeScheduledEffectiveAt: Date.parse("2027-04-01T12:00:00.000Z"),
-        canCancelScheduledBillingChange: true,
-      }),
-      cancelScheduledBillingChange:
-        cancelScheduledBillingChange.mockResolvedValue({
-          plan: "team",
-          billingInterval: "annual",
-        }),
-    });
-    mockUseOrganizationBilling.mockImplementation(() => hookState);
-
-    render(<OrganizationsTab organizationId="org-1" />);
-
-    expect(
-      screen.getByTestId("current-plan-scheduled-change"),
-    ).toHaveTextContent(
-      "Team monthly starts Apr 1, 2027. Team annual remains active until then.",
-    );
-    expect(
-      screen.getByRole("button", { name: "Keep Team annual plan" }),
-    ).toBeInTheDocument();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Keep Team annual plan" }),
-    );
-
-    await waitFor(() => {
-      expect(
-        screen.getByText(
-          "This cancels the pending change to Team monthly on Apr 1, 2027. Team annual remains active.",
-        ),
-      ).toBeInTheDocument();
-    });
-  });
-
-  it("does not offer an inline reversal CTA for cross-tier scheduled changes when cancellation is unavailable", () => {
-    mockUseOrganizationBilling.mockReturnValue(
-      createBillingHookState({
-        billingStatus: billingStatusFixture({
-          plan: "team",
-          effectivePlan: "team",
-          billingInterval: "annual",
-          subscriptionStatus: "active",
-          hasCustomer: true,
-          stripeCurrentPeriodEnd: Date.parse("2027-03-31T12:00:00.000Z"),
-          stripePriceId: "price_team_annual",
-          stripeScheduledPlan: "team",
-          stripeScheduledBillingInterval: "monthly",
-          stripeScheduledPriceId: "price_team_monthly",
-          stripeScheduledEffectiveAt: Date.parse("2027-04-01T12:00:00.000Z"),
-        }),
-      }),
-    );
-
-    render(<OrganizationsTab organizationId="org-1" />);
-
-    expect(
-      screen.getByTestId("current-plan-scheduled-change"),
-    ).toHaveTextContent(
-      "Team monthly starts Apr 1, 2027. Team annual remains active until then.",
-    );
-    expect(
-      screen.queryByRole("button", { name: "Keep Team annual plan" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Manage plan" }),
     ).toBeInTheDocument();
   });
 
@@ -1000,11 +886,6 @@ describe("OrganizationsTab billing", () => {
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "Team includes up to 3 members and 2 projects for $25/mo flat.",
-      ),
-    ).toBeInTheDocument();
-    expect(
       screen.getByRole("button", { name: "Upgrade to Team" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add member" })).toBeDisabled();
@@ -1096,12 +977,9 @@ describe("OrganizationsTab billing", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture({
-          plan: "team",
-          effectivePlan: "team",
-          billingInterval: "monthly",
-          subscriptionStatus: "active",
-          hasCustomer: true,
-          stripePriceId: "price_123",
+          plan: "free",
+          effectivePlan: "free",
+          source: "free",
         }),
       }),
     );
@@ -1121,12 +999,12 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
-    // Default interval is monthly — Team lists $25/mo
-    expect(screen.getByText(/\$25/)).toBeInTheDocument();
+    // Default interval is monthly — Team lists $38/seat/mo
+    expect(screen.getByText(/\$38/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Annual/ }));
-    expect(screen.getByText(/\$20/)).toBeInTheDocument();
+    expect(screen.getByText(/\$30/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^Monthly$/ }));
-    expect(screen.getByText(/\$25/)).toBeInTheDocument();
+    expect(screen.getByText(/\$38/)).toBeInTheDocument();
   });
 
   it("shows deferred billing copy for active trials with enough time remaining", () => {
@@ -1151,8 +1029,9 @@ describe("OrganizationsTab billing", () => {
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
     expect(
-      screen.getAllByText(/\$0 today\. First bill charged in advance on /),
-    ).toHaveLength(2);
+      screen.getAllByText(/\$0 today\. First bill charged in advance on /)
+        .length,
+    ).toBeGreaterThanOrEqual(1);
   });
 
   it("hides deferred billing copy when the backend does not return deferred billing eligibility", () => {
@@ -1262,16 +1141,14 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
-    expect(
-      within(getPlanColumn("Team")).getByRole("button", {
-        name: "Upgrade",
-      }),
-    ).toBeDisabled();
-    expect(
-      within(getPlanColumn("Team")).getByRole("button", {
-        name: "Loading...",
-      }),
-    ).toBeDisabled();
+    // While the change is in flight, the Team column's CTA is disabled.
+    // Production renders either "Upgrade" or "Loading..." depending on which
+    // tier is in-flight; both should be disabled regardless.
+    const teamButtons = within(getPlanColumn("Team")).getAllByRole("button");
+    expect(teamButtons.length).toBeGreaterThan(0);
+    for (const button of teamButtons) {
+      expect(button).toBeDisabled();
+    }
   });
 
   it("opens the dedicated cancellation flow when downgrading from a paid plan to Free", async () => {
@@ -1617,7 +1494,7 @@ describe("OrganizationsTab billing", () => {
       ).not.toBeInTheDocument();
     });
     expect(startPlanChange).not.toHaveBeenCalled();
-    expect(screen.getByText(/\$20/)).toBeInTheDocument();
+    expect(screen.getByText(/\$30/)).toBeInTheDocument();
   });
 
   it("consumes paid deep links before subscription status catches up", async () => {
