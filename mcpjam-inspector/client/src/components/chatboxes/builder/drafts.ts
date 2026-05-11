@@ -64,12 +64,16 @@ export const CHATBOX_STARTERS: ChatboxStarterDefinition[] = [
       mode: "anyone_with_link",
       selectedServerIds: [],
       optionalServerIds: [],
-      welcomeDialog: { enabled: true, body: WELCOME_BODY_EXCALIDRAW_DEMO },
-      feedbackDialog: {
-        enabled: true,
-        everyNToolCalls: 3,
-        promptHint:
-          "Short feedback is enough: what worked, what felt confusing, or what you would change.",
+      chatUi: {
+        surfaces: {
+          welcome: { enabled: true, body: WELCOME_BODY_EXCALIDRAW_DEMO },
+          feedback: {
+            enabled: true,
+            everyNToolCalls: 3,
+            promptHint:
+              "Short feedback is enough: what worked, what felt confusing, or what you would change.",
+          },
+        },
       },
     }),
   },
@@ -91,8 +95,12 @@ export const CHATBOX_STARTERS: ChatboxStarterDefinition[] = [
       mode: "anyone_with_link",
       selectedServerIds: [],
       optionalServerIds: [],
-      welcomeDialog: { enabled: true, body: "" },
-      feedbackDialog: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+      chatUi: {
+        surfaces: {
+          welcome: { enabled: true, body: "" },
+          feedback: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+        },
+      },
     }),
   },
 ];
@@ -161,18 +169,59 @@ export function migrateBuilderDraft(
 ): ChatboxDraftConfig | null {
   if (!raw || typeof raw !== "object") return null;
   const blank = CHATBOX_BLANK_STARTER.createDraft(getDefaultHostedModelId());
+  const rawChatUi = (raw as { chatUi?: unknown }).chatUi;
+  const rawSurfaces =
+    rawChatUi && typeof rawChatUi === "object"
+      ? ((rawChatUi as { surfaces?: unknown }).surfaces as
+          | { welcome?: unknown; feedback?: unknown }
+          | undefined)
+      : undefined;
+  // Pre-chatUi drafts (sessionStorage written before the envelope landed)
+  // carry welcome/feedback at the top level. Fall back to them per-surface
+  // when the new shape doesn't supply that surface, so an in-flight builder
+  // draft doesn't lose its body/cadence the moment we ship.
+  const legacyWelcome =
+    rawSurfaces?.welcome === undefined
+      ? ((raw as { welcomeDialog?: unknown }).welcomeDialog as
+          | Partial<ChatboxDraftConfig["chatUi"]["surfaces"]["welcome"]>
+          | undefined)
+      : undefined;
+  const legacyFeedback =
+    rawSurfaces?.feedback === undefined
+      ? ((raw as { feedbackDialog?: unknown }).feedbackDialog as
+          | Partial<ChatboxDraftConfig["chatUi"]["surfaces"]["feedback"]>
+          | undefined)
+      : undefined;
+  // Strip the legacy top-level keys before the spread so the merged draft
+  // doesn't carry orphan `welcomeDialog` / `feedbackDialog` properties at
+  // runtime alongside the canonical `chatUi`.
+  const {
+    welcomeDialog: _legacyWelcomeDialog,
+    feedbackDialog: _legacyFeedbackDialog,
+    ...rawWithoutLegacyKeys
+  } = raw as Record<string, unknown>;
+  void _legacyWelcomeDialog;
+  void _legacyFeedbackDialog;
   const merged: ChatboxDraftConfig = {
     ...blank,
-    ...(raw as Partial<ChatboxDraftConfig>),
-    welcomeDialog: {
-      ...blank.welcomeDialog,
-      ...((raw as { welcomeDialog?: Partial<ChatboxDraftConfig["welcomeDialog"]> })
-        .welcomeDialog ?? {}),
-    },
-    feedbackDialog: {
-      ...blank.feedbackDialog,
-      ...((raw as { feedbackDialog?: Partial<ChatboxDraftConfig["feedbackDialog"]> })
-        .feedbackDialog ?? {}),
+    ...(rawWithoutLegacyKeys as Partial<ChatboxDraftConfig>),
+    chatUi: {
+      surfaces: {
+        welcome: {
+          ...blank.chatUi.surfaces.welcome,
+          ...(legacyWelcome ?? {}),
+          ...((rawSurfaces?.welcome as
+            | Partial<ChatboxDraftConfig["chatUi"]["surfaces"]["welcome"]>
+            | undefined) ?? {}),
+        },
+        feedback: {
+          ...blank.chatUi.surfaces.feedback,
+          ...(legacyFeedback ?? {}),
+          ...((rawSurfaces?.feedback as
+            | Partial<ChatboxDraftConfig["chatUi"]["surfaces"]["feedback"]>
+            | undefined) ?? {}),
+        },
+      },
     },
     selectedServerIds: Array.isArray(
       (raw as { selectedServerIds?: unknown }).selectedServerIds,
@@ -207,17 +256,32 @@ export function toDraftConfig(chatbox: ChatboxSettings): ChatboxDraftConfig {
     optionalServerIds: chatbox.servers
       .filter((server) => server.optional)
       .map((server) => server.serverId),
-    welcomeDialog: {
-      enabled: chatbox.welcomeDialog?.enabled ?? true,
-      body: chatbox.welcomeDialog?.body ?? "",
-    },
-    feedbackDialog: {
-      enabled: chatbox.feedbackDialog?.enabled ?? true,
-      everyNToolCalls: Math.max(
-        1,
-        chatbox.feedbackDialog?.everyNToolCalls ?? 1,
-      ),
-      promptHint: chatbox.feedbackDialog?.promptHint ?? "",
+    chatUi: toChatUiFromChatbox(chatbox),
+  };
+}
+
+/**
+ * Unpacks the chatbox's `chatUi` into the draft shape (defaulting both
+ * surfaces). Shared between `toDraftConfig` and the `isDirty` comparator
+ * in `ChatboxBuilderView` so both arrive at the same default-coalesced
+ * envelope without `isDirty` having to rebuild the entire draft.
+ */
+export function toChatUiFromChatbox(
+  chatbox: ChatboxSettings,
+): ChatboxDraftConfig["chatUi"] {
+  const welcome = chatbox.chatUi?.surfaces?.welcome;
+  const feedback = chatbox.chatUi?.surfaces?.feedback;
+  return {
+    surfaces: {
+      welcome: {
+        enabled: welcome?.enabled ?? true,
+        body: welcome?.body ?? "",
+      },
+      feedback: {
+        enabled: feedback?.enabled ?? true,
+        everyNToolCalls: Math.max(1, feedback?.everyNToolCalls ?? 1),
+        promptHint: feedback?.promptHint ?? "",
+      },
     },
   };
 }

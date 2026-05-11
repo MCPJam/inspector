@@ -59,7 +59,16 @@ describe("SetupChecklistPanel", () => {
       <SetupChecklistPanel
         chatboxDraft={{
           ...baseDraft,
-          welcomeDialog: { ...baseDraft.welcomeDialog, enabled: false },
+          chatUi: {
+            ...baseDraft.chatUi,
+            surfaces: {
+              ...baseDraft.chatUi.surfaces,
+              welcome: {
+                ...baseDraft.chatUi.surfaces.welcome,
+                enabled: false,
+              },
+            },
+          },
         }}
         savedChatbox={null}
         projectServers={[]}
