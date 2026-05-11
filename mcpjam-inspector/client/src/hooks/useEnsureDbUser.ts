@@ -8,6 +8,9 @@ import {
 } from "@/lib/guest-session";
 import { useActorKey } from "@/hooks/use-actor-key";
 
+// Fallback substring used when Convex doesn't surface a structured error
+// code for write-conflicts. Update if Convex changes the wording — without
+// it, retries silently stop firing and conflicts re-surface in Sentry.
 const CONVEX_WRITE_CONFLICT_MESSAGE =
   "changed while this mutation was being run";
 const ENSURE_USER_RETRY_DELAYS_MS = [50, 150];
@@ -100,8 +103,25 @@ export function useEnsureDbUser() {
   const ensureUser = useMutation(
     "users:ensureUser" as any
   ) as EnsureUserMutation;
-  // Tracks the identity we last ensured for. Guest rows are keyed by the
-  // cookie-backed guest id so in-tab guest rotation re-runs ensureUser.
+  // Three refs coordinate dedup, cancellation, and shared in-flight calls.
+  // They are deliberately distinct — collapsing any two reintroduces a race:
+  //
+  // - lastEnsuredIdentityRef: identity we've already *successfully* ensured.
+  //   Short-circuits the effect so we don't re-call ensureUser for the same
+  //   identity across re-renders. Guest rows are keyed by the cookie-backed
+  //   guest id so in-tab guest rotation re-runs ensureUser.
+  //
+  // - activeEnsureIdentityRef: identity the *currently running* async work
+  //   belongs to. The run and its retry loop bail out the moment this stops
+  //   matching, so a late identity change (e.g. guest → WorkOS mid-flight)
+  //   cancels stale work instead of overwriting the new identity's state.
+  //
+  // - inFlightEnsureRef: identity-tagged shared promise. If a second caller
+  //   (another hook instance, or a re-render that survived cancellation)
+  //   hits the same identity while a request is in flight, it awaits the
+  //   existing promise instead of opening a duplicate call. Cleared only if
+  //   it still points at the same promise — a later identity may have
+  //   replaced it, and we must not null out the new entry.
   const lastEnsuredIdentityRef = useRef<string | null>(null);
   const activeEnsureIdentityRef = useRef<string | null>(null);
   const inFlightEnsureRef = useRef<{
