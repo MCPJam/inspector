@@ -13,13 +13,13 @@ describe("chatboxAccessPresetFromSettings", () => {
 
   it("maps link mode without guests to project preset", () => {
     expect(
-      chatboxAccessPresetFromSettings("any_signed_in_with_link", false),
+      chatboxAccessPresetFromSettings("anyone_with_link", false),
     ).toBe("project");
   });
 
   it("maps link mode with guests to link_guests preset", () => {
     expect(
-      chatboxAccessPresetFromSettings("any_signed_in_with_link", true),
+      chatboxAccessPresetFromSettings("anyone_with_link", true),
     ).toBe("link_guests");
   });
 });

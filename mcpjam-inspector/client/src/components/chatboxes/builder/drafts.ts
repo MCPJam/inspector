@@ -15,25 +15,13 @@ export const DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant.";
 /** Default temperature for template starters (matches blank; personas do not vary temperature). */
 const TEMPLATE_TEMPERATURE = 0.7;
 
-const WELCOME_BODY_INTERNAL_QA = [
-  "Welcome to Internal QA.",
-  "",
-  "This chatbox uses invite-only access: only people invited by email can open it (project membership alone does not grant access). Use it to test tool behavior, regressions, and realistic flows with your MCP servers.",
-  "",
-  "What to expect:",
-  "• Messages and tool usage may be reviewed by your team.",
-  "• Connect only servers and data you are allowed to use for internal QA.",
-  "• Feedback prompts help you report issues, unexpected tool results, or severity.",
-  "",
-  "When reporting problems, include what you asked, what you expected, and what happened—especially around tool calls.",
-  "",
-  "Need access? Ask a teammate who can manage this chatbox to invite your email.",
-].join("\n");
+/** Canonical URL for the Excalidraw demo MCP server seed. */
+export const EXCALIDRAW_MCP_URL = "https://mcp.excalidraw.com/";
 
-const WELCOME_BODY_ICP_DEMO = [
-  "Welcome — thanks for trying this out.",
+const WELCOME_BODY_EXCALIDRAW_DEMO = [
+  "Welcome — try the Excalidraw demo.",
   "",
-  "This is a preview of our assistant. Ask it a question or give it a task to try it out.",
+  "This chatbox is pre-wired with the Excalidraw MCP server. Ask the assistant to sketch a diagram, walk through an idea visually, or just play with what the tools can do.",
 ].join("\n");
 
 /** Prefer a stable default; the first MCPJam model in SUPPORTED_MODELS is often gpt-oss-120b. */
@@ -55,57 +43,28 @@ export function getDefaultHostedModelId(): string {
 
 export const CHATBOX_STARTERS: ChatboxStarterDefinition[] = [
   {
-    id: "internal-qa",
-    title: "Internal QA",
+    id: "excalidraw-demo",
+    title: "Excalidraw demo",
     description:
-      "Invite-only by default. Replay realistic internal flows with your MCP servers.",
+      "Try a ready-made chatbox wired to the Excalidraw MCP server.",
     promptHint:
-      "QA teammates can use this to verify tool behavior against real company data.",
+      "Great for sharing a quick demo — ask the assistant to sketch a diagram and watch the tools work.",
     templateTooltip:
-      "Invite-only (email invites). Tool approval off. Claude-style host. Welcome and feedback tuned for internal QA (prompts after tool-using turns).",
+      "Link-shareable. Tool approval on. ChatGPT-style host. Pre-attaches the Excalidraw MCP server so the chatbox is usable on first save.",
+    serverSeeds: [{ name: "Excalidraw", url: EXCALIDRAW_MCP_URL }],
     createDraft: (defaultModelId) => ({
-      name: "Internal QA",
-      description:
-        "Validate production-ready assistant behavior with your internal team.",
-      hostStyle: "claude",
-      systemPrompt: DEFAULT_SYSTEM_PROMPT,
-      modelId: defaultModelId,
-      temperature: TEMPLATE_TEMPERATURE,
-      requireToolApproval: false,
-      allowGuestAccess: false,
-      mode: "invited_only",
-      selectedServerIds: [],
-      optionalServerIds: [],
-      welcomeDialog: { enabled: true, body: WELCOME_BODY_INTERNAL_QA },
-      feedbackDialog: {
-        enabled: true,
-        everyNToolCalls: 1,
-        promptHint:
-          "Include repro steps, expected vs actual behavior, and severity (blocker vs minor).",
-      },
-    }),
-  },
-  {
-    id: "icp-demo",
-    title: "External Beta Test",
-    description: "For prospects and partners who open via signed-in link.",
-    promptHint:
-      "Use when you want prospects to try your assistant with guided access.",
-    templateTooltip:
-      "Signed-in link access. Tool approval on. ChatGPT-style host. Welcome and feedback tuned for external testers; lighter feedback cadence.",
-    createDraft: (defaultModelId) => ({
-      name: "External Beta Test",
-      description: "External testing for prospects and design partners.",
+      name: "Excalidraw demo",
+      description: "A demo chatbox powered by the Excalidraw MCP server.",
       hostStyle: "chatgpt",
       systemPrompt: DEFAULT_SYSTEM_PROMPT,
       modelId: defaultModelId,
       temperature: TEMPLATE_TEMPERATURE,
       requireToolApproval: true,
       allowGuestAccess: false,
-      mode: "any_signed_in_with_link",
+      mode: "anyone_with_link",
       selectedServerIds: [],
       optionalServerIds: [],
-      welcomeDialog: { enabled: true, body: WELCOME_BODY_ICP_DEMO },
+      welcomeDialog: { enabled: true, body: WELCOME_BODY_EXCALIDRAW_DEMO },
       feedbackDialog: {
         enabled: true,
         everyNToolCalls: 3,
@@ -129,7 +88,7 @@ export const CHATBOX_STARTERS: ChatboxStarterDefinition[] = [
       temperature: 0.7,
       requireToolApproval: false,
       allowGuestAccess: false,
-      mode: "any_signed_in_with_link",
+      mode: "anyone_with_link",
       selectedServerIds: [],
       optionalServerIds: [],
       welcomeDialog: { enabled: true, body: "" },

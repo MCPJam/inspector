@@ -1,7 +1,10 @@
 import { useMutation, useQuery } from "convex/react";
 import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
 
-export type ChatboxMode = "any_signed_in_with_link" | "invited_only";
+export type ChatboxMode =
+  | "anyone_with_link"
+  | "invited_only"
+  | "project_members";
 
 export interface ChatboxMember {
   _id: string;

@@ -201,7 +201,7 @@ export function ChatboxEditor({
     chatbox?.allowGuestAccess ?? true
   );
   const [mode, setMode] = useState<ChatboxMode>(
-    chatbox?.mode ?? "any_signed_in_with_link"
+    chatbox?.mode ?? "anyone_with_link"
   );
   const [selectedServerIds, setSelectedServerIds] = useState<string[]>(
     chatbox?.servers.map((s) => s.serverId) ?? []
@@ -240,7 +240,7 @@ export function ChatboxEditor({
       setTemperature(0.7);
       setRequireToolApproval(false);
       setAllowGuestAccess(true);
-      setMode("any_signed_in_with_link");
+      setMode("anyone_with_link");
       setSelectedServerIds([]);
       setOptionalServerIds([]);
       setPreviewEnabledOptionalIds([]);

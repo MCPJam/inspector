@@ -106,7 +106,7 @@ function createSavedChatbox(hostStyle: "claude" | "chatgpt"): ChatboxSettings {
     temperature: 0.7,
     requireToolApproval: false,
     allowGuestAccess: false,
-    mode: "any_signed_in_with_link" as const,
+    mode: "anyone_with_link" as const,
     servers: [],
     link: {
       token: `token-${hostStyle}`,

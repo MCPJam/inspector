@@ -16,6 +16,7 @@ import {
 import {
   useProjectQueries,
   useProjectServers,
+  useServerMutations,
 } from "@/hooks/useProjects";
 import { readBuilderSession, clearBuilderSession } from "@/lib/chatbox-session";
 import { ChatboxIndexPage, type ChatboxOpenOptions } from "./ChatboxIndexPage";
@@ -23,6 +24,7 @@ import { ChatboxBuilderView } from "./ChatboxBuilderView";
 import { ChatboxLauncher } from "./ChatboxLauncher";
 import { getDefaultHostedModelId, migrateBuilderDraft } from "./drafts";
 import type { ChatboxDraftConfig, ChatboxStarterDefinition } from "./types";
+import { useChatboxDemoSeed } from "./useChatboxDemoSeed";
 
 interface ChatboxBuilderExperienceProps {
   projectId: string | null;
@@ -55,6 +57,7 @@ export default function ChatboxBuilderExperience({
     isAuthenticated,
     projectId,
   });
+  const { createServer } = useServerMutations();
   const projectName =
     projects.find((w) => w._id === projectId)?.name ?? null;
 
@@ -72,6 +75,35 @@ export default function ChatboxBuilderExperience({
   const [duplicatingChatboxId, setDuplicatingChatboxId] = useState<
     string | null
   >(null);
+
+  // First-run auto-seed: when a project has zero chatboxes and we
+  // haven't tried before, mint the Excalidraw demo + open it directly
+  // in preview so the user starts typing instead of staring at an
+  // empty index.
+  const { seededChatboxId, isSeeding } = useChatboxDemoSeed({
+    isAuthenticated,
+    projectId,
+    chatboxes,
+    isLoadingChatboxes: isLoading,
+    isCreateChatboxDisabled,
+  });
+
+  // Auto-open the freshly seeded demo exactly once. Without the ref, the
+  // effect re-fires after the user clicks "Return to chatboxes" (which
+  // clears selectedChatboxId/draft) and bounces them straight back into
+  // the builder.
+  const autoOpenedSeedRef = useRef(false);
+  useEffect(() => {
+    if (!seededChatboxId) return;
+    if (autoOpenedSeedRef.current) return;
+    // Don't yank the user out of a builder/preview they already opened.
+    if (selectedChatboxId || draft) return;
+    autoOpenedSeedRef.current = true;
+    startTransition(() => {
+      setSelectedChatboxId(seededChatboxId);
+      setRestoredViewMode("preview");
+    });
+  }, [draft, seededChatboxId, selectedChatboxId]);
 
   // Restore builder session from sessionStorage when projectId becomes
   // available. After an OAuth redirect the page reloads and Convex needs to
@@ -111,18 +143,63 @@ export default function ChatboxBuilderExperience({
   }, [isCreateChatboxDisabled, isCreateChatboxLoading, projectId]);
 
   const applyStarterDraft = useCallback(
-    (starter: ChatboxStarterDefinition) => {
+    async (starter: ChatboxStarterDefinition) => {
       if (isCreateChatboxDisabled || isCreateChatboxLoading) {
         return;
       }
+
+      // Resolve any pre-attached server seeds against the project: reuse a
+      // server with a matching URL when present, otherwise mint a new
+      // RemoteServer row so the saved chatbox is usable on first save.
+      // Failure to seed is non-fatal — fall through to a server-less draft.
+      const seededServerIds: string[] = [];
+      if (projectId && starter.serverSeeds?.length) {
+        for (const seed of starter.serverSeeds) {
+          const existing = servers.find(
+            (s) => s.transportType === "http" && s.url === seed.url,
+          );
+          if (existing) {
+            seededServerIds.push(existing._id);
+            continue;
+          }
+          try {
+            const id = (await createServer({
+              projectId,
+              name: seed.name,
+              enabled: true,
+              transportType: "http",
+              url: seed.url,
+            } as any)) as string;
+            if (id) seededServerIds.push(id);
+          } catch (error) {
+            toast.error(
+              error instanceof Error
+                ? error.message
+                : `Failed to attach ${seed.name} to the demo`,
+            );
+          }
+        }
+      }
+
+      const baseDraft = starter.createDraft(getDefaultHostedModelId());
+      const nextDraft: ChatboxDraftConfig = seededServerIds.length
+        ? { ...baseDraft, selectedServerIds: seededServerIds }
+        : baseDraft;
+
       startTransition(() => {
         setSelectedChatboxId(null);
-        setDraft(starter.createDraft(getDefaultHostedModelId()));
+        setDraft(nextDraft);
         setRestoredViewMode(undefined);
         setStarterLauncherOpen(false);
       });
     },
-    [isCreateChatboxDisabled, isCreateChatboxLoading],
+    [
+      createServer,
+      isCreateChatboxDisabled,
+      isCreateChatboxLoading,
+      projectId,
+      servers,
+    ],
   );
 
   const handleOpenStarterLauncher = useCallback(() => {
@@ -236,7 +313,7 @@ export default function ChatboxBuilderExperience({
       ) : (
         <ChatboxIndexPage
           chatboxes={chatboxes}
-          isLoading={isLoading}
+          isLoading={isLoading || isSeeding}
           onOpenChatbox={(chatboxId: string, options?: ChatboxOpenOptions) => {
             startTransition(() => {
               setSelectedChatboxId(chatboxId);

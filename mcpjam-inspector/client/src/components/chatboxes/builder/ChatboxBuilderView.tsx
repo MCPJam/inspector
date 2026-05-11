@@ -341,7 +341,7 @@ export function ChatboxBuilderView({
               temperature: 0.7,
               requireToolApproval: false,
               allowGuestAccess: false,
-              mode: "any_signed_in_with_link",
+              mode: "anyone_with_link",
               servers: [],
               link: null,
               members: [],
@@ -818,7 +818,6 @@ export function ChatboxBuilderView({
       const payload = {
         name: trimmedName,
         description: draftChatboxConfig.description.trim() || undefined,
-        allowGuestAccess: draftChatboxConfig.allowGuestAccess,
         welcomeDialog: draftChatboxConfig.welcomeDialog,
         feedbackDialog: draftChatboxConfig.feedbackDialog,
         hostConfig: hostConfigInput,
