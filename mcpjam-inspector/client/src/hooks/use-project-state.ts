@@ -17,7 +17,9 @@ import {
   useProjectMutations,
   useProjectQueries,
   useProjectServers,
+  useProjectsBulkServers,
 } from "./useProjects";
+import { useEmbeddedBlobReadTelemetry } from "./useClientTelemetry";
 import {
   deserializeServersFromConvex,
   serializeServersForSharing,
@@ -184,6 +186,23 @@ export function useProjectState({
     isAuthenticated,
     organizationId: projectOrganizationId,
   });
+  // PR-I1: bulk-fetch servers for every visible project in one query so the
+  // picker can stop relying on the embedded `servers` blob shipped on each
+  // `RemoteProject`. The active project still reads the flat
+  // single-project query (`useProjectServers` below); the bulk query covers
+  // every other project the picker renders.
+  const bulkServerProjectIds = useMemo(
+    () => (remoteProjects ?? []).map((p) => p._id),
+    [remoteProjects],
+  );
+  const {
+    serversByProject: bulkServersByProject,
+    isLoading: isLoadingBulkServers,
+  } = useProjectsBulkServers({
+    projectIds: bulkServerProjectIds,
+    isAuthenticated,
+  });
+  const emitEmbeddedBlobRead = useEmbeddedBlobReadTelemetry();
   const {
     createProject: convexCreateProject,
     ensureDefaultProject: convexEnsureDefaultProject,
@@ -354,6 +373,34 @@ export function useProjectState({
       (remoteProjects === undefined || isLoadingServers)) ||
     (isAuthLoading && !!convexActiveProjectId);
 
+  // Project ids whose server count was sourced from the embedded blob on this
+  // render. Telemetry is emitted in a separate effect (below) so we don't
+  // perform side effects during the render path. PR-B2 watches the resulting
+  // Axiom counter and gates the embedded-blob removal on it being zero.
+  const embeddedBlobReadEventsThisRender = useMemo<
+    Array<{ projectId: string; serverCount: number }>
+  >(() => {
+    if (!remoteProjects) return [];
+    const events: Array<{ projectId: string; serverCount: number }> = [];
+    for (const rw of remoteProjects) {
+      if (rw._id === resolvedActiveProjectIdForServers) continue;
+      if (bulkServersByProject[rw._id] !== undefined) continue;
+      if (rw.servers && Object.keys(rw.servers).length > 0) {
+        events.push({
+          projectId: rw._id,
+          serverCount: Object.keys(rw.servers).length,
+        });
+      }
+    }
+    return events;
+  }, [remoteProjects, resolvedActiveProjectIdForServers, bulkServersByProject]);
+
+  useEffect(() => {
+    for (const event of embeddedBlobReadEventsThisRender) {
+      emitEmbeddedBlobRead(event);
+    }
+  }, [embeddedBlobReadEventsThisRender, emitEmbeddedBlobRead]);
+
   const convexProjects = useMemo((): Record<string, Project> => {
     if (!remoteProjects) return {};
     return Object.fromEntries(
@@ -371,8 +418,17 @@ export function useProjectState({
               activeProjectServersFlat,
             );
           }
-        } else if (rw.servers) {
-          deserializedServers = deserializeServersFromConvex(rw.servers);
+        } else {
+          // PR-I1: bulk query is the primary source. Stale-while-revalidate:
+          // render rw.servers (the embedded blob) until the bulk query
+          // resolves, then replace it with bulk data. Without the fallback
+          // the picker would briefly flash "0 server(s)" on every fresh load.
+          const bulk = bulkServersByProject[rw._id];
+          if (bulk !== undefined) {
+            deserializedServers = deserializeServersFromConvex(bulk);
+          } else if (rw.servers) {
+            deserializedServers = deserializeServersFromConvex(rw.servers);
+          }
         }
 
         return [
@@ -394,7 +450,12 @@ export function useProjectState({
         ];
       }),
     );
-  }, [remoteProjects, resolvedActiveProjectIdForServers, activeProjectServersFlat]);
+  }, [
+    remoteProjects,
+    resolvedActiveProjectIdForServers,
+    activeProjectServersFlat,
+    bulkServersByProject,
+  ]);
 
   useEffect(() => {
     if (pendingClientConfigSyncRef.current.size === 0) {
@@ -1677,6 +1738,13 @@ export function useProjectState({
     remoteProjects,
     isLoadingProjects,
     activeProjectServersFlat,
+    // PR-I1: true while the bulk server query is in flight for the picker's
+    // non-active projects. Consumers (e.g. ProjectManagementDialog) gate the
+    // "{n} server(s)" label on this so it never flashes "0 server(s)" before
+    // the bulk query resolves. The active project ignores this flag — its
+    // count comes from the existing flat query.
+    isLoadingBulkServers,
+    bulkServersByProject,
     // Always false — kept on the return shape so existing consumers
     // (tests, App.tsx) don't break in this PR. Convex-unreachable now
     // surfaces through the existing loading-skeleton path; no separate

@@ -19,6 +19,8 @@ const {
   deleteProjectMock,
   projectQueryState,
   projectServersState,
+  projectsBulkServersState,
+  emitEmbeddedBlobReadMock,
   organizationBillingStatusState,
   useOrganizationBillingStatusMock,
   serializeServersForSharingMock,
@@ -37,6 +39,11 @@ const {
     servers: undefined as any,
     isLoading: false as boolean,
   },
+  projectsBulkServersState: {
+    serversByProject: {} as Record<string, any[]>,
+    isLoading: false as boolean,
+  },
+  emitEmbeddedBlobReadMock: vi.fn(),
   organizationBillingStatusState: {
     value: undefined as
       | {
@@ -66,6 +73,11 @@ vi.mock("../useProjects", () => ({
     deleteProject: deleteProjectMock,
   }),
   useProjectServers: () => projectServersState,
+  useProjectsBulkServers: () => projectsBulkServersState,
+}));
+
+vi.mock("../useClientTelemetry", () => ({
+  useEmbeddedBlobReadTelemetry: () => emitEmbeddedBlobReadMock,
 }));
 
 vi.mock("../useOrganizationBilling", () => ({
@@ -74,7 +86,14 @@ vi.mock("../useOrganizationBilling", () => ({
 }));
 
 vi.mock("@/lib/project-serialization", () => ({
-  deserializeServersFromConvex: vi.fn((servers) => servers ?? {}),
+  deserializeServersFromConvex: vi.fn((servers) => {
+    if (Array.isArray(servers)) {
+      return Object.fromEntries(
+        (servers as Array<{ name: string }>).map((s) => [s.name, s]),
+      );
+    }
+    return servers ?? {};
+  }),
   serializeServersForSharing: serializeServersForSharingMock,
 }));
 
@@ -1888,5 +1907,270 @@ describe("useProjectState convexProjects merge under loading", () => {
     expect(
       result.current.effectiveProjects["guest-project"]?.servers,
     ).toEqual({});
+  });
+});
+
+describe("useProjectState bulk-server query (PR-I1)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    projectQueryState.allProjects = [];
+    projectQueryState.projects = [];
+    projectQueryState.isLoading = false;
+    projectServersState.servers = undefined;
+    projectServersState.isLoading = false;
+    projectsBulkServersState.serversByProject = {};
+    projectsBulkServersState.isLoading = false;
+    emitEmbeddedBlobReadMock.mockReset();
+    organizationBillingStatusState.value = undefined;
+    useOrganizationBillingStatusMock.mockImplementation(
+      () => organizationBillingStatusState.value,
+    );
+  });
+
+  it("prefers the bulk-query result over the embedded servers blob", async () => {
+    projectQueryState.allProjects = [
+      {
+        _id: "active",
+        name: "Active",
+        servers: { stale: { name: "stale" } },
+        ownerId: "u1",
+        organizationId: "org-a",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      {
+        _id: "non-active",
+        name: "Non-Active",
+        // The embedded blob has a stale entry that the bulk result should
+        // override.
+        servers: { stale: { name: "stale" } },
+        ownerId: "u1",
+        organizationId: "org-a",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    projectQueryState.projects = projectQueryState.allProjects;
+    projectsBulkServersState.serversByProject = {
+      "non-active": [{ name: "fresh-from-bulk" } as any],
+    };
+    projectsBulkServersState.isLoading = false;
+
+    const appState = createAppState({});
+    const { result } = renderUseProjectState({ appState });
+
+    await waitFor(() => {
+      expect(result.current.effectiveProjects["non-active"]).toBeDefined();
+    });
+
+    const nonActiveServers =
+      result.current.effectiveProjects["non-active"].servers;
+    expect(Object.keys(nonActiveServers)).toEqual(["fresh-from-bulk"]);
+    expect(nonActiveServers).not.toHaveProperty("stale");
+  });
+
+  it("stale-while-revalidate: falls through to the embedded blob until the bulk query resolves", async () => {
+    projectQueryState.allProjects = [
+      {
+        _id: "active",
+        name: "Active",
+        servers: {},
+        ownerId: "u1",
+        organizationId: "org-a",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      {
+        _id: "non-active",
+        name: "Non-Active",
+        servers: { embedded: { name: "embedded" } },
+        ownerId: "u1",
+        organizationId: "org-a",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    projectQueryState.projects = projectQueryState.allProjects;
+    // Bulk query has not resolved yet.
+    projectsBulkServersState.serversByProject = {};
+    projectsBulkServersState.isLoading = true;
+
+    const appState = createAppState({});
+    const { result } = renderUseProjectState({ appState });
+
+    await waitFor(() => {
+      expect(result.current.effectiveProjects["non-active"]).toBeDefined();
+    });
+
+    // The non-active project renders the embedded blob immediately so the
+    // picker never flashes "0 server(s)" before bulk hydration.
+    expect(
+      Object.keys(result.current.effectiveProjects["non-active"].servers),
+    ).toEqual(["embedded"]);
+  });
+
+  it("emits embedded-blob-read telemetry when the SWR fallback is used", async () => {
+    projectQueryState.allProjects = [
+      {
+        _id: "active",
+        name: "Active",
+        servers: {},
+        ownerId: "u1",
+        organizationId: "org-a",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      {
+        _id: "fallback-1",
+        name: "Fallback 1",
+        servers: { a: { name: "a" }, b: { name: "b" } },
+        ownerId: "u1",
+        organizationId: "org-a",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      {
+        _id: "fallback-2",
+        name: "Fallback 2",
+        servers: { c: { name: "c" } },
+        ownerId: "u1",
+        organizationId: "org-a",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    projectQueryState.projects = projectQueryState.allProjects;
+    projectsBulkServersState.serversByProject = {};
+    projectsBulkServersState.isLoading = true;
+
+    const appState = createAppState({});
+    renderUseProjectState({ appState });
+
+    await waitFor(() => {
+      expect(emitEmbeddedBlobReadMock).toHaveBeenCalled();
+    });
+
+    const ids = emitEmbeddedBlobReadMock.mock.calls.map(
+      (c: any[]) => c[0].projectId,
+    );
+    expect(ids).toContain("fallback-1");
+    expect(ids).toContain("fallback-2");
+    // Active project must not emit — its servers don't come from the
+    // embedded blob, they come from the flat single-project query.
+    expect(ids).not.toContain("active");
+
+    const fallback1Call = emitEmbeddedBlobReadMock.mock.calls.find(
+      (c: any[]) => c[0].projectId === "fallback-1",
+    );
+    expect(fallback1Call?.[0].serverCount).toBe(2);
+  });
+
+  it("does not emit telemetry once the bulk query has resolved for a project", async () => {
+    // The telemetry path skips the active project unconditionally, so a
+    // single-project setup would pass even if the bulk-resolved short-circuit
+    // were removed. The `active-spacer` project owns the active slot so `p1`
+    // is forced through the non-active path and the bulk-resolved check is
+    // what we're actually exercising.
+    projectQueryState.allProjects = [
+      {
+        _id: "active-spacer",
+        name: "Active",
+        servers: {},
+        ownerId: "u1",
+        organizationId: "org-a",
+        createdAt: 0,
+        updatedAt: 0,
+      },
+      {
+        _id: "p1",
+        name: "P1",
+        servers: { embedded: { name: "embedded" } },
+        ownerId: "u1",
+        organizationId: "org-a",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    projectQueryState.projects = projectQueryState.allProjects;
+    projectsBulkServersState.serversByProject = {
+      p1: [{ name: "bulk" } as any],
+    };
+    projectsBulkServersState.isLoading = false;
+
+    const appState = createAppState({
+      p1: {
+        id: "p1",
+        name: "P1",
+        servers: {},
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    });
+    renderUseProjectState({ appState });
+
+    await waitFor(() => {
+      expect(emitEmbeddedBlobReadMock).not.toHaveBeenCalled();
+    });
+  });
+
+  it("does not emit telemetry for the active project even when its embedded blob is non-empty", async () => {
+    projectQueryState.allProjects = [
+      {
+        _id: "active",
+        name: "Active",
+        // Active project's embedded blob is vestigial — its servers come from
+        // the flat single-project query, so even when this map is non-empty
+        // we must not count it as a read.
+        servers: { vestigial: { name: "vestigial" } },
+        ownerId: "u1",
+        organizationId: "org-a",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    projectQueryState.projects = projectQueryState.allProjects;
+    projectServersState.servers = []; // flat query resolved with no servers
+    projectsBulkServersState.serversByProject = {};
+    projectsBulkServersState.isLoading = false;
+
+    const appState = createAppState({
+      active: {
+        id: "active",
+        name: "Active",
+        servers: {},
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    });
+    renderUseProjectState({ appState });
+
+    await waitFor(() => {
+      expect(emitEmbeddedBlobReadMock).not.toHaveBeenCalled();
+    });
+  });
+
+  it("exposes bulk-loading state through the hook return", async () => {
+    projectQueryState.allProjects = [
+      {
+        _id: "p1",
+        name: "P1",
+        servers: {},
+        ownerId: "u1",
+        organizationId: "org-a",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    projectQueryState.projects = projectQueryState.allProjects;
+    projectsBulkServersState.serversByProject = {};
+    projectsBulkServersState.isLoading = true;
+
+    const appState = createAppState({});
+    const { result } = renderUseProjectState({ appState });
+
+    await waitFor(() => {
+      expect(result.current.isLoadingBulkServers).toBe(true);
+    });
   });
 });
