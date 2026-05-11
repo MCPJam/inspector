@@ -35,13 +35,48 @@ describe("getClientIp", () => {
     expect(getClientIp(ctx)).toBe("9.10.11.12");
   });
 
-  it("returns null when no headers are present", () => {
+  it("returns null when no headers are present and no socket info is available (test-mock context)", () => {
     expect(getClientIp(makeCtx({}))).toBe(null);
   });
 
   it("trims whitespace", () => {
     const ctx = makeCtx({ "cf-connecting-ip": "  1.2.3.4  " });
     expect(getClientIp(ctx)).toBe("1.2.3.4");
+  });
+
+  it("falls back to the socket peer address when no proxy headers are present (npx-style direct hit)", () => {
+    // Shape that @hono/node-server's getConnInfo reads: c.env.incoming.socket.
+    // Covers the `npx @mcpjam/inspector` case where the browser hits the
+    // server directly with no proxy injecting forwarded-for headers.
+    const ctx = {
+      req: { header: (_name: string) => undefined },
+      env: {
+        incoming: {
+          socket: { remoteAddress: "::1", remotePort: 12345, remoteFamily: "IPv6" },
+        },
+      },
+    } as any;
+    expect(getClientIp(ctx)).toBe("::1");
+  });
+
+  it("prefers proxy headers over the socket peer address when both are present", () => {
+    // Hosted prod must keep using the proxy-supplied client IP even when the
+    // adapter-level socket info is available — otherwise rate limiting would
+    // bucket every request on the proxy's loopback address.
+    const ctx = {
+      req: {
+        header: (name: string) =>
+          ({ "cf-connecting-ip": "203.0.113.10" } as Record<string, string>)[
+            name.toLowerCase()
+          ],
+      },
+      env: {
+        incoming: {
+          socket: { remoteAddress: "::1", remotePort: 12345, remoteFamily: "IPv6" },
+        },
+      },
+    } as any;
+    expect(getClientIp(ctx)).toBe("203.0.113.10");
   });
 });
 
