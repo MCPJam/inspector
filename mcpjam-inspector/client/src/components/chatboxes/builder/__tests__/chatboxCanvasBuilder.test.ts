@@ -15,8 +15,12 @@ const baseDraft = (): ChatboxDraftConfig => ({
   mode: "anyone_with_link",
   selectedServerIds: ["srv-draft"],
   optionalServerIds: [],
-  welcomeDialog: { enabled: true, body: "" },
-  feedbackDialog: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+  chatUi: {
+    surfaces: {
+      welcome: { enabled: true, body: "" },
+      feedback: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+    },
+  },
 });
 
 const projectServers = [

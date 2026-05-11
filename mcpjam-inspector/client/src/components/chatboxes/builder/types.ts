@@ -27,6 +27,15 @@ export interface ChatboxFeedbackDialogDraft {
   promptHint: string;
 }
 
+export interface ChatUiSurfacesDraft {
+  welcome: ChatboxWelcomeDialogDraft;
+  feedback: ChatboxFeedbackDialogDraft;
+}
+
+export interface ChatUiDraft {
+  surfaces: ChatUiSurfacesDraft;
+}
+
 export interface ChatboxDraftConfig {
   name: string;
   description: string;
@@ -40,8 +49,7 @@ export interface ChatboxDraftConfig {
   selectedServerIds: string[];
   /** Subset of selectedServerIds that are optional (off by default for testers). */
   optionalServerIds: string[];
-  welcomeDialog: ChatboxWelcomeDialogDraft;
-  feedbackDialog: ChatboxFeedbackDialogDraft;
+  chatUi: ChatUiDraft;
 }
 
 export interface ChatboxBuilderContext {

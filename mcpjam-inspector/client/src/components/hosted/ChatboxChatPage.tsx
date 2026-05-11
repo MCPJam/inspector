@@ -796,8 +796,8 @@ export function ChatboxChatPage({
   const shellStyle = getChatboxShellStyle(hostStyle, themeMode);
   const oauthPending = pendingOAuthServers.length > 0;
   const welcomeAvailable =
-    (session?.payload.welcomeDialog?.enabled ?? true) &&
-    !!session?.payload.welcomeDialog?.body?.trim();
+    (session?.payload.chatUi?.surfaces?.welcome?.enabled ?? true) &&
+    !!session?.payload.chatUi?.surfaces?.welcome?.body?.trim();
   const introGate = useChatboxHostIntroGate({
     chatboxId: session?.payload.chatboxId ?? "",
     servers: sessionServersRequired,
@@ -893,7 +893,7 @@ export function ChatboxChatPage({
         <ChatboxHostOnboardingOverlays
           showWelcome={introGate.showWelcome}
           onGetStarted={introGate.dismissIntro}
-          welcomeBody={session.payload.welcomeDialog?.body}
+          welcomeBody={session.payload.chatUi?.surfaces?.welcome?.body}
           showAuthPanel={introGate.showAuthPanel}
           pendingOAuthServers={pendingOAuthServers}
           authorizeServer={authorizeServer}

@@ -52,6 +52,12 @@ export interface ChatboxWelcomeDialogPayload {
   body?: string;
 }
 
+export interface ChatUiPayload {
+  surfaces?: {
+    welcome?: ChatboxWelcomeDialogPayload | null;
+  } | null;
+}
+
 export interface ChatboxBootstrapPayload {
   projectId: string;
   chatboxId: string;
@@ -67,7 +73,7 @@ export interface ChatboxBootstrapPayload {
   requireToolApproval: boolean;
   servers: ChatboxBootstrapServer[];
   /** When set by bootstrap or playground snapshot, drives hosted welcome copy. */
-  welcomeDialog?: ChatboxWelcomeDialogPayload | null;
+  chatUi?: ChatUiPayload | null;
 }
 
 export interface ChatboxSession {
@@ -124,6 +130,31 @@ const PLAYGROUND_TTL_MS = 24 * 60 * 60 * 1000;
 export interface ChatboxPlaygroundSession extends ChatboxSession {
   playgroundId: string;
   updatedAt: number;
+}
+
+// Defensive normalizer for the chatUi envelope in playground snapshots and
+// /web/chatbox/redeem responses. Returns `undefined` when no recognized
+// surface is present; the hosted runtime only consumes the `welcome`
+// surface today (feedback never reaches the bootstrap payload).
+function normalizeChatUiPayload(input: unknown): ChatUiPayload | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const surfaces = (input as { surfaces?: unknown }).surfaces;
+  if (!surfaces || typeof surfaces !== "object") return undefined;
+  const welcomeRaw = (surfaces as { welcome?: unknown }).welcome;
+  const welcome =
+    welcomeRaw &&
+    typeof welcomeRaw === "object" &&
+    typeof (welcomeRaw as { enabled?: unknown }).enabled === "boolean"
+      ? {
+          enabled: (welcomeRaw as { enabled: boolean }).enabled,
+          body:
+            typeof (welcomeRaw as { body?: unknown }).body === "string"
+              ? (welcomeRaw as { body: string }).body
+              : "",
+        }
+      : undefined;
+  if (!welcome) return undefined;
+  return { surfaces: { welcome } };
 }
 
 function normalizeChatboxShareMode(mode: unknown): ChatboxShareMode {
@@ -229,18 +260,7 @@ export function normalizeChatboxSession(
             : null,
           optional: Boolean(server.optional),
         })),
-      welcomeDialog:
-        payload.welcomeDialog &&
-        typeof payload.welcomeDialog === "object" &&
-        typeof payload.welcomeDialog.enabled === "boolean"
-          ? {
-              enabled: payload.welcomeDialog.enabled,
-              body:
-                typeof payload.welcomeDialog.body === "string"
-                  ? payload.welcomeDialog.body
-                  : "",
-            }
-          : undefined,
+      chatUi: normalizeChatUiPayload(payload.chatUi),
     },
     surface: parsed.surface === "preview" ? "preview" : "share_link",
     shareToken:

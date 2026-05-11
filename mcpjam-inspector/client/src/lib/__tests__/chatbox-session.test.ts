@@ -107,7 +107,7 @@ describe("chatbox-session", () => {
             optional: false,
           },
         ],
-        welcomeDialog: undefined,
+        chatUi: undefined,
       },
       surface: "share_link",
     });
@@ -180,7 +180,7 @@ describe("chatbox-session", () => {
         temperature: 0.4,
         requireToolApproval: true,
         servers: [],
-        welcomeDialog: undefined,
+        chatUi: undefined,
       },
       surface: "share_link",
     });
