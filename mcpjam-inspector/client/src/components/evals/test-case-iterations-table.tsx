@@ -16,6 +16,13 @@ interface TestCaseIterationsTableProps {
   /** Override the "Iterations" header. Pass empty string to omit. */
   label?: string;
   emptyState?: string;
+  /**
+   * `failing-first` (default): triage order — failures float to the top.
+   * `chronological`: newest first, regardless of result. Use this in
+   * editor / live-iteration views where "what did I just run" is the
+   * primary question.
+   */
+  sortMode?: "failing-first" | "chronological";
 }
 
 function formatTimeAgo(timestamp: number): string {
@@ -45,10 +52,16 @@ export function TestCaseIterationsTable({
   serverNames = [],
   label = "Iterations",
   emptyState = "No iterations found for this test.",
+  sortMode = "failing-first",
 }: TestCaseIterationsTableProps) {
   const [openIterationId, setOpenIterationId] = useState<string | null>(null);
 
   const sortedIterations = (() => {
+    if (sortMode === "chronological") {
+      return [...iterations].sort(
+        (a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0),
+      );
+    }
     const failing = iterations.filter(
       (i) => computeIterationResult(i) === "failed",
     );
@@ -85,7 +98,8 @@ export function TestCaseIterationsTable({
               <div className="min-w-[50px] text-center">Calls</div>
               <div className="min-w-[60px] text-center">Tokens</div>
               <div className="min-w-[40px] text-right">Time</div>
-              {onViewRun && <div className="min-w-[100px]">Run</div>}
+              <div className="min-w-[80px] text-right">When</div>
+              {onViewRun && <div className="min-w-[60px]">Run</div>}
             </div>
           </div>
           {sortedIterations.map((iteration) => {
@@ -166,21 +180,26 @@ export function TestCaseIterationsTable({
                           ? formatDuration(durationMs)
                           : "—"}
                     </div>
-                    {iteration.suiteRunId && onViewRun && !isPending && (
-                      <div className="min-w-[100px]">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-5 text-[11px] px-2"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onViewRun(iteration.suiteRunId!);
-                          }}
-                        >
-                          {formatTimeAgo(iteration.createdAt)}
-                        </Button>
+                    <div className="min-w-[80px] text-right text-xs text-muted-foreground">
+                      {formatTimeAgo(iteration.createdAt)}
+                    </div>
+                    {onViewRun ? (
+                      <div className="min-w-[60px]">
+                        {iteration.suiteRunId && !isPending ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-5 text-[11px] px-2"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onViewRun(iteration.suiteRunId!);
+                            }}
+                          >
+                            View run
+                          </Button>
+                        ) : null}
                       </div>
-                    )}
+                    ) : null}
                     {isPending && (
                       <div className="w-3.5 flex items-center justify-center">
                         <Loader2 className="h-3.5 w-3.5 animate-spin text-warning" />

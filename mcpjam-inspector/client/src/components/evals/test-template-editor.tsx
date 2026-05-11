@@ -2093,6 +2093,7 @@ export function TestTemplateEditor({
               serverNames={suite?.environment?.servers ?? []}
               label="Iteration history"
               emptyState="No iterations yet — run this case to see results here."
+              sortMode="chronological"
             />
           </div>
         </div>
