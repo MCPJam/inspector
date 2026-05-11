@@ -160,6 +160,8 @@ vi.mock("convex/react", () => ({
   useConvexAuth: () => ({
     isAuthenticated: true,
   }),
+  useMutation: () => vi.fn(),
+  useQuery: () => undefined,
 }));
 
 vi.mock("posthog-js/react", () => ({
@@ -203,6 +205,7 @@ vi.mock("@/hooks/useProjects", () => ({
   useProjectServers: () => ({
     servers: [],
   }),
+  useServerMutations: () => ({ createServer: vi.fn() }),
 }));
 
 vi.mock("../chatboxes/builder/ChatboxBuilderView", () => ({

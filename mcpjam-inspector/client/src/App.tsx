@@ -2141,6 +2141,7 @@ export default function App() {
                 projectId={billingProjectId}
                 organizationId={activeProjectBillingOrganizationId}
                 isBillingContextPending={isBillingContextPending}
+                ensureServersReady={ensureServersReady}
               />
             ))}
           {activeTab === "resources" && (
