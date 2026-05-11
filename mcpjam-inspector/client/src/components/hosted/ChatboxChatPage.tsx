@@ -604,6 +604,58 @@ export function ChatboxChatPage({
     writeCurrentSession,
   ]);
 
+  // Silent re-redeem path. The capture hook (or any chatbox-aware caller)
+  // calls this when the backend reports `chatbox_access_stale`. It re-runs
+  // /web/chatbox/redeem against the URL token and updates `session` in
+  // place, which propagates a fresh `accessVersion` to every downstream
+  // consumer. Errors are swallowed — the original error UI is owned by the
+  // primary bootstrap effect above, and a refresh failure should leave the
+  // already-mounted chat alone rather than tearing the UI down.
+  const refreshInFlightRef = useRef(false);
+  const requestRefreshAccessVersion = useCallback(() => {
+    if (refreshInFlightRef.current) return;
+    const token = tokenFromPath;
+    if (!token) return;
+    refreshInFlightRef.current = true;
+    void (async () => {
+      try {
+        const redeemResponse = await authFetch("/api/web/chatboxes/redeem", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chatboxToken: token }),
+        });
+        if (!redeemResponse.ok) return;
+        const redeemed = (await redeemResponse.json()) as {
+          chatboxId?: unknown;
+          accessVersion?: unknown;
+          bootstrap?: unknown;
+        };
+        const nextSession = normalizeChatboxSession({
+          chatboxId:
+            typeof redeemed.chatboxId === "string"
+              ? redeemed.chatboxId
+              : undefined,
+          accessVersion:
+            typeof redeemed.accessVersion === "number"
+              ? redeemed.accessVersion
+              : undefined,
+          payload: redeemed.bootstrap as ChatboxSession["payload"] | undefined,
+          surface: readChatboxSurfaceFromUrl(window.location.search),
+        });
+        if (!nextSession) return;
+        writeCurrentSession(nextSession);
+        setSession(nextSession);
+      } catch (error) {
+        console.warn(
+          "[ChatboxChatPage] Silent chatbox re-redeem failed",
+          error,
+        );
+      } finally {
+        refreshInFlightRef.current = false;
+      }
+    })();
+  }, [tokenFromPath, writeCurrentSession]);
+
   const displayError = useMemo(
     () => getChatboxDisplayError(routeError),
     [routeError]
@@ -789,6 +841,7 @@ export function ChatboxChatPage({
             selectedServerIds: sessionServersActive.map(
               (server) => server.serverId
             ),
+            requestRefreshAccessVersion,
           }}
           executionConfig={{
             modelId: session.payload.modelId,

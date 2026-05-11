@@ -22,6 +22,11 @@ interface UseSharedChatWidgetCaptureOptions {
   hostedAccessVersion?: number;
   persistedSnapshotToolCallIds?: string[];
   messages: UIMessage[];
+  // Called when the backend reports `chatbox_access_stale` — the owner
+  // (typically ChatboxChatPage via use-chat-session) should re-run the
+  // /web/chatbox/redeem fetch so a fresh `hostedAccessVersion` flows back
+  // into this hook and the capture loop re-fires.
+  onStaleHostedAccess?: () => void;
 }
 
 const MAX_PENDING_SESSION_RETRIES = 5;
@@ -167,6 +172,19 @@ function shouldRetryPendingSnapshot(result: unknown, error: unknown): boolean {
   return message.includes("Session not found");
 }
 
+// Convex `ConvexError` payloads land on `err.data`. The backend throws
+// `{ code: 'chatbox_access_stale', currentAccessVersion }` when the client's
+// cached accessVersion no longer matches the chatbox doc — recovery is to
+// re-redeem, not to back off and retry locally.
+function isStaleHostedAccessError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const data = (error as { data?: unknown }).data;
+  if (!data || typeof data !== "object") return false;
+  return (
+    (data as { code?: unknown }).code === "chatbox_access_stale"
+  );
+}
+
 export function useSharedChatWidgetCapture({
   enabled,
   readyToPersist = true,
@@ -175,6 +193,7 @@ export function useSharedChatWidgetCapture({
   hostedAccessVersion,
   persistedSnapshotToolCallIds = [],
   messages,
+  onStaleHostedAccess,
 }: UseSharedChatWidgetCaptureOptions): void {
   const widgets = useWidgetDebugStore((state) => state.widgets);
   const generateSnapshotUploadUrl = useMutation(
@@ -209,9 +228,15 @@ export function useSharedChatWidgetCapture({
   const persistedSnapshotToolCallIdsRef = useRef(
     new Set(persistedSnapshotToolCallIds),
   );
+  const onStaleHostedAccessRef = useRef(onStaleHostedAccess);
+  const staleRefreshRequestedRef = useRef(false);
   const uploadAttemptRef = useRef<(toolCallId: string) => Promise<void>>(
     async () => {},
   );
+
+  useEffect(() => {
+    onStaleHostedAccessRef.current = onStaleHostedAccess;
+  }, [onStaleHostedAccess]);
 
   useEffect(() => {
     toolSourcesRef.current = buildToolSourceMap(messages);
@@ -234,6 +259,10 @@ export function useSharedChatWidgetCapture({
     uploadedHashesRef.current.clear();
     cachedBlobsRef.current.clear();
     retryCountRef.current.clear();
+    // A successful identity refresh (new accessVersion) re-arms the
+    // stale-access debounce so the next divergence can trigger another
+    // re-redeem.
+    staleRefreshRequestedRef.current = false;
 
     for (const timer of pendingTimersRef.current.values()) {
       clearTimeout(timer);
@@ -365,7 +394,23 @@ export function useSharedChatWidgetCapture({
       cachedBlobsRef.current.delete(toolCallId);
       retryCountRef.current.delete(toolCallId);
     } catch (error) {
-      if (shouldRetryPendingSnapshot(undefined, error)) {
+      if (isStaleHostedAccessError(error)) {
+        // Drop cached blobs uploaded under the stale accessVersion and
+        // ask the owner to re-redeem. The hook will reset (and rearm the
+        // debounce) when the fresh accessVersion flows back through props,
+        // and the capture loop fires again automatically.
+        cachedBlobsRef.current.delete(toolCallId);
+        retryCountRef.current.delete(toolCallId);
+        const existingTimer = pendingTimersRef.current.get(toolCallId);
+        if (existingTimer) {
+          clearTimeout(existingTimer);
+          pendingTimersRef.current.delete(toolCallId);
+        }
+        if (!staleRefreshRequestedRef.current) {
+          staleRefreshRequestedRef.current = true;
+          onStaleHostedAccessRef.current?.();
+        }
+      } else if (shouldRetryPendingSnapshot(undefined, error)) {
         const retries = retryCountRef.current.get(toolCallId) ?? 0;
         if (retries >= MAX_PENDING_SESSION_RETRIES) {
           console.warn(

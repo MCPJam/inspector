@@ -947,6 +947,7 @@ export function useChatSession({
   const hostedChatboxId = hostedContext?.chatboxId;
   const hostedAccessVersion = hostedContext?.accessVersion;
   const hostedChatboxSurface = hostedContext?.chatboxSurface;
+  const requestRefreshAccessVersion = hostedContext?.requestRefreshAccessVersion;
   const initialModelId = executionConfig?.modelId;
   const initialSystemPrompt =
     executionConfig?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
@@ -1597,6 +1598,7 @@ export function useChatSession({
     hostedAccessVersion,
     persistedSnapshotToolCallIds,
     messages,
+    onStaleHostedAccess: requestRefreshAccessVersion,
   });
 
   const setMessages = useCallback<
