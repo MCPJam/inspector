@@ -85,11 +85,6 @@ function getOrganizationRouteHash(
   return `organizations/${organizationId}`;
 }
 
-interface PendingPaidUpgradeConfirmation {
-  tier: "team";
-  billingInterval: BillingInterval;
-}
-
 interface PendingDowngradeConfirmation {
   targetPlan: "free";
   targetBillingInterval: BillingInterval | null;
@@ -103,24 +98,6 @@ interface ScheduledBillingChangeCancellationState {
   dialogTitle: string;
   dialogDescription: string;
   successMessage: string;
-}
-
-function shouldConfirmPaidUpgrade(
-  _billingStatus: OrganizationBillingStatus | undefined,
-  _tier: "team",
-): boolean {
-  // With only one paid self-serve tier (Team), there is no direct upgrade
-  // between paid tiers, so paid-upgrade confirmation never applies.
-  return false;
-}
-
-function formatCurrencyAmount(amount: number, currency: string): string {
-  return new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency,
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(amount);
 }
 
 function formatBillingDate(timestampMs: number | null): string | null {
@@ -207,27 +184,6 @@ function getScheduledBillingChangeCancellationState(
     dialogDescription: `This cancels the pending ${changeNoun} to ${scheduledDescriptor}${effectiveDateSuffix}. ${currentPlanName} ${currentIntervalLabel} remains active.`,
     successMessage: `Scheduled billing change canceled. ${currentPlanName} ${currentIntervalLabel} remains active.`,
   };
-}
-
-function getPaidUpgradeConfirmationSummary(
-  planCatalog: PlanCatalog | undefined,
-  billingInterval: BillingInterval,
-): string {
-  const teamPlan = planCatalog?.plans.team;
-  const seatMinimum = teamPlan?.seatMinimum ?? 4;
-  const priceCents = teamPlan?.prices[billingInterval];
-
-  if (typeof priceCents !== "number") {
-    return billingInterval === "annual"
-      ? `Team with annual billing (${seatMinimum}-seat minimum)`
-      : `Team with monthly billing (${seatMinimum}-seat minimum)`;
-  }
-
-  const billedAmount = (priceCents * seatMinimum) / 100;
-  const cadence = billingInterval === "annual" ? "year" : "month";
-  const currency = planCatalog?.currency ?? "usd";
-
-  return `Team at ${formatCurrencyAmount(billedAmount, currency)}/${cadence} (${seatMinimum}-seat minimum)`;
 }
 
 export function OrganizationsTab({
@@ -494,8 +450,6 @@ function OrganizationPage({
     scheduledBillingChangeConfirmOpen,
     setScheduledBillingChangeConfirmOpen,
   ] = useState(false);
-  const [pendingPaidUpgradeConfirmation, setPendingPaidUpgradeConfirmation] =
-    useState<PendingPaidUpgradeConfirmation | null>(null);
   const [pendingDowngradeConfirmation, setPendingDowngradeConfirmation] =
     useState<PendingDowngradeConfirmation | null>(null);
   const scheduledBillingChangeCancellation =
@@ -882,36 +836,9 @@ function OrganizationPage({
     billingInterval: "monthly" | "annual",
     options: CheckoutNavigationOptions = {},
   ) => {
-    if (shouldConfirmPaidUpgrade(billingStatus, tier)) {
-      setPendingPaidUpgradeConfirmation({
-        tier,
-        billingInterval,
-      });
-      return;
-    }
-
     await executeManualPlanChange(tier, billingInterval, options);
   };
 
-  const handleConfirmPaidUpgrade = async () => {
-    if (!pendingPaidUpgradeConfirmation) return;
-
-    try {
-      await executeManualPlanChange(
-        pendingPaidUpgradeConfirmation.tier,
-        pendingPaidUpgradeConfirmation.billingInterval,
-      );
-    } finally {
-      setPendingPaidUpgradeConfirmation(null);
-    }
-  };
-
-  const paidUpgradeConfirmationSummary = pendingPaidUpgradeConfirmation
-    ? getPaidUpgradeConfirmationSummary(
-        planCatalog,
-        pendingPaidUpgradeConfirmation.billingInterval,
-      )
-    : null;
   const pendingDowngradeEffectiveDate = formatBillingDate(
     billingStatus?.stripeCurrentPeriodEnd ?? null,
   );
@@ -1565,55 +1492,6 @@ function OrganizationPage({
                 : pendingDowngradeConfirmation?.targetPlan === "free"
                   ? "Open cancellation flow"
                   : "Schedule downgrade"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <AlertDialog
-        open={pendingPaidUpgradeConfirmation !== null}
-        onOpenChange={(open) => {
-          if (!open && !isStartingPlanChange) {
-            setPendingPaidUpgradeConfirmation(null);
-          }
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Upgrade to Team?</AlertDialogTitle>
-            <AlertDialogDescription className="space-y-2">
-              <span className="block">
-                This upgrade takes effect immediately and updates your existing
-                Team subscription in place.
-              </span>
-              <span className="block">
-                We do not send you through Stripe Checkout.
-              </span>
-              <span className="block">
-                Stripe prorates the rest of your current billing period instead
-                of waiting until renewal, so unused Team time is factored
-                into the Team change.
-              </span>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="rounded-md border border-border/60 bg-muted/30 px-4 py-3 text-sm">
-            <span className="font-medium text-foreground">
-              {paidUpgradeConfirmationSummary ??
-                "Team billing will apply with the 4-seat minimum."}
-            </span>
-          </div>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={isStartingPlanChange}>
-              Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={(event) => {
-                event.preventDefault();
-                void handleConfirmPaidUpgrade();
-              }}
-              disabled={isStartingPlanChange}
-            >
-              {isStartingPlanChange ? "Upgrading..." : "Upgrade now"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
