@@ -1436,7 +1436,7 @@ describe("App hosted OAuth callback handling", () => {
   it("shows billing handoff loading and triggers sign-in for guest billing entry", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
-    window.history.replaceState({}, "", "/billing?plan=solo&interval=annual");
+    window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
 
     const signIn = vi.fn();
     mockUseAuth.mockReturnValue({
@@ -1604,7 +1604,7 @@ describe("App hosted OAuth callback handling", () => {
   it("keeps billing resume behind the checkout spinner for signed-in users", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
-    window.history.replaceState({}, "", "/billing?plan=solo&interval=annual");
+    window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
 
     mockUseFeatureFlagEnabled.mockImplementation(
       (flag: string) => flag === "billing-entitlements-ui"
@@ -1662,7 +1662,7 @@ describe("App hosted OAuth callback handling", () => {
   it("drops the billing overlay when checkout intent is consumed", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
-    window.history.replaceState({}, "", "/billing?plan=solo&interval=annual");
+    window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
 
     mockUseFeatureFlagEnabled.mockImplementation(
       (flag: string) => flag === "billing-entitlements-ui"
@@ -1714,7 +1714,7 @@ describe("App hosted OAuth callback handling", () => {
   it("drops the billing overlay when checkout navigation starts", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
-    window.history.replaceState({}, "", "/billing?plan=solo&interval=annual");
+    window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
 
     mockUseFeatureFlagEnabled.mockImplementation(
       (flag: string) => flag === "billing-entitlements-ui"
@@ -1769,7 +1769,7 @@ describe("App hosted OAuth callback handling", () => {
   it("clears billing handoff state when no organization is available", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
-    window.history.replaceState({}, "", "/billing?plan=solo&interval=annual");
+    window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
 
     mockUseFeatureFlagEnabled.mockImplementation(
       (flag: string) => flag === "billing-entitlements-ui"
