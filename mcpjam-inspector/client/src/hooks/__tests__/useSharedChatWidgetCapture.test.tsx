@@ -510,6 +510,497 @@ describe("useSharedChatWidgetCapture", () => {
     unmount();
   });
 
+  it("requests a hosted-access refresh on chatbox_access_stale and skips the local retry", async () => {
+    const onStaleHostedAccess = vi.fn();
+    class StaleError extends Error {
+      data: { code: string; currentAccessVersion: number };
+      constructor() {
+        super("Chatbox access version is stale; client must re-redeem.");
+        this.data = { code: "chatbox_access_stale", currentAccessVersion: 7 };
+      }
+    }
+    mockGenerateSnapshotUploadUrl.mockReset();
+    mockGenerateSnapshotUploadUrl.mockRejectedValue(new StaleError());
+
+    const { unmount } = renderHook(() =>
+      useSharedChatWidgetCapture({
+        enabled: true,
+        chatSessionId: "chat-session-stale",
+        hostedChatboxId: "cbx_1",
+        hostedAccessVersion: 1,
+        onStaleHostedAccess,
+        messages: [
+          {
+            id: "assistant-1",
+            role: "assistant",
+            parts: [
+              {
+                type: "tool-search",
+                toolCallId: "call-stale",
+                input: { q: "hello" },
+                output: { result: "world", _serverId: "server-1" },
+              },
+            ],
+          } as any,
+        ],
+      }),
+    );
+
+    act(() => {
+      useWidgetDebugStore.setState({
+        widgets: new Map([
+          [
+            "call-stale",
+            {
+              toolCallId: "call-stale",
+              toolName: "search",
+              protocol: "mcp-apps",
+              widgetState: null,
+              globals: { theme: "dark", displayMode: "inline" },
+              widgetHtml: "<div>Widget</div>",
+              updatedAt: Date.now(),
+            },
+          ],
+        ]),
+      });
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+
+    await flushMicrotasks();
+
+    // One initial upload flight (three concurrent uploadBlob calls, one
+    // per blob) — Promise.all rejects on the first stale error and
+    // suppresses the local snapshot-retry path.
+    const generateCallsAfterFlight =
+      mockGenerateSnapshotUploadUrl.mock.calls.length;
+    expect(generateCallsAfterFlight).toBeGreaterThanOrEqual(1);
+    expect(onStaleHostedAccess).toHaveBeenCalled();
+    expect(mockCreateWidgetSnapshot).not.toHaveBeenCalled();
+
+    // No local *snapshot* retry should be scheduled — the
+    // `generateSnapshotUploadUrl` call count must stay flat even as the
+    // refresh-backoff timer fires repeatedly. (The refresh callback
+    // itself is allowed to be re-invoked on a bounded backoff; that
+    // behaviour is covered by a dedicated test.)
+    act(() => {
+      vi.advanceTimersByTime(60_000);
+    });
+
+    await flushMicrotasks();
+
+    expect(mockGenerateSnapshotUploadUrl.mock.calls.length).toBe(
+      generateCallsAfterFlight,
+    );
+
+    unmount();
+  });
+
+  it("retries stale snapshots even after the first refresh callback fails to advance accessVersion", async () => {
+    // P2 from review: if the parent's /redeem fetch fails, hostedAccessVersion
+    // never bumps, so the reset effect never runs. The hook must still fire
+    // onStaleHostedAccess on subsequent stale errors instead of latching
+    // permanently.
+    const onStaleHostedAccess = vi.fn();
+    class StaleError extends Error {
+      data: { code: string; currentAccessVersion: number };
+      constructor() {
+        super("Chatbox access version is stale; client must re-redeem.");
+        this.data = { code: "chatbox_access_stale", currentAccessVersion: 7 };
+      }
+    }
+    mockGenerateSnapshotUploadUrl.mockReset();
+    mockGenerateSnapshotUploadUrl.mockRejectedValue(new StaleError());
+
+    const { unmount } = renderHook(() =>
+      useSharedChatWidgetCapture({
+        enabled: true,
+        chatSessionId: "chat-session-refresh-fail",
+        hostedChatboxId: "cbx_1",
+        hostedAccessVersion: 1,
+        onStaleHostedAccess,
+        messages: [
+          {
+            id: "assistant-1",
+            role: "assistant",
+            parts: [
+              {
+                type: "tool-search",
+                toolCallId: "call-a",
+                input: { q: "a" },
+                output: { result: "a", _serverId: "server-1" },
+              },
+              {
+                type: "tool-search",
+                toolCallId: "call-b",
+                input: { q: "b" },
+                output: { result: "b", _serverId: "server-1" },
+              },
+            ],
+          } as any,
+        ],
+      }),
+    );
+
+    act(() => {
+      useWidgetDebugStore.setState({
+        widgets: new Map([
+          [
+            "call-a",
+            {
+              toolCallId: "call-a",
+              toolName: "search",
+              protocol: "mcp-apps",
+              widgetState: null,
+              globals: { theme: "dark", displayMode: "inline" },
+              widgetHtml: "<div>A</div>",
+              updatedAt: Date.now(),
+            },
+          ],
+        ]),
+      });
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+
+    await flushMicrotasks();
+    expect(onStaleHostedAccess).toHaveBeenCalledTimes(1);
+
+    // Parent's /redeem call failed silently — hostedAccessVersion did not
+    // advance. A second widget showing up later must still trigger another
+    // refresh, not get blocked by a stuck latch.
+    act(() => {
+      useWidgetDebugStore.setState({
+        widgets: new Map([
+          [
+            "call-b",
+            {
+              toolCallId: "call-b",
+              toolName: "search",
+              protocol: "mcp-apps",
+              widgetState: null,
+              globals: { theme: "dark", displayMode: "inline" },
+              widgetHtml: "<div>B</div>",
+              updatedAt: Date.now(),
+            },
+          ],
+        ]),
+      });
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+
+    await flushMicrotasks();
+    expect(onStaleHostedAccess.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+    unmount();
+  });
+
+  it("re-fires the refresh callback on a backoff while the queue is non-empty", async () => {
+    // Codex P2: if the parent's redeem fails (accessVersion never bumps),
+    // the queued stale snapshot must not be stranded — the hook should
+    // retry the refresh on a bounded backoff so the parent gets another
+    // chance.
+    const onStaleHostedAccess = vi.fn();
+    class StaleError extends Error {
+      data: { code: string; currentAccessVersion: number };
+      constructor() {
+        super("Chatbox access version is stale; client must re-redeem.");
+        this.data = { code: "chatbox_access_stale", currentAccessVersion: 7 };
+      }
+    }
+    mockGenerateSnapshotUploadUrl.mockReset();
+    mockGenerateSnapshotUploadUrl.mockRejectedValue(new StaleError());
+
+    const { unmount } = renderHook(() =>
+      useSharedChatWidgetCapture({
+        enabled: true,
+        chatSessionId: "chat-session-backoff",
+        hostedChatboxId: "cbx_1",
+        hostedAccessVersion: 1,
+        onStaleHostedAccess,
+        messages: [
+          {
+            id: "assistant-1",
+            role: "assistant",
+            parts: [
+              {
+                type: "tool-search",
+                toolCallId: "call-backoff",
+                input: { q: "hello" },
+                output: { result: "world", _serverId: "server-1" },
+              },
+            ],
+          } as any,
+        ],
+      }),
+    );
+
+    act(() => {
+      useWidgetDebugStore.setState({
+        widgets: new Map([
+          [
+            "call-backoff",
+            {
+              toolCallId: "call-backoff",
+              toolName: "search",
+              protocol: "mcp-apps",
+              widgetState: null,
+              globals: { theme: "dark", displayMode: "inline" },
+              widgetHtml: "<div>Widget</div>",
+              updatedAt: Date.now(),
+            },
+          ],
+        ]),
+      });
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+
+    await flushMicrotasks();
+    expect(onStaleHostedAccess).toHaveBeenCalledTimes(1);
+
+    // Parent's redeem failed: accessVersion never advanced. The backoff
+    // timer should re-fire the callback after ~1s.
+    act(() => {
+      vi.advanceTimersByTime(1100);
+    });
+    await flushMicrotasks();
+    expect(onStaleHostedAccess.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+    // And again after ~2s more (next backoff tick).
+    act(() => {
+      vi.advanceTimersByTime(2100);
+    });
+    await flushMicrotasks();
+    expect(onStaleHostedAccess.mock.calls.length).toBeGreaterThanOrEqual(3);
+
+    unmount();
+  });
+
+  it("does not write to the new scope when chatSessionId changes mid-upload", async () => {
+    // CodeRabbit Major: an in-flight uploadAttemptRef started for chat A
+    // must not call createWidgetSnapshot against chat B's refs after a
+    // chatSessionId change.
+    let resolveCreateWidgetSnapshot: ((value: unknown) => void) | null = null;
+    mockCreateWidgetSnapshot.mockReset();
+    mockCreateWidgetSnapshot.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveCreateWidgetSnapshot = resolve;
+        }),
+    );
+
+    const { rerender, unmount } = renderHook(
+      ({ chatSessionId }: { chatSessionId: string }) =>
+        useSharedChatWidgetCapture({
+          enabled: true,
+          chatSessionId,
+          hostedChatboxId: "cbx_1",
+          hostedAccessVersion: 1,
+          messages: [
+            {
+              id: "assistant-1",
+              role: "assistant",
+              parts: [
+                {
+                  type: "tool-search",
+                  toolCallId: "call-race",
+                  input: { q: "race" },
+                  output: { result: "ok", _serverId: "server-1" },
+                },
+              ],
+            } as any,
+          ],
+        }),
+      { initialProps: { chatSessionId: "chat-A" } },
+    );
+
+    act(() => {
+      useWidgetDebugStore.setState({
+        widgets: new Map([
+          [
+            "call-race",
+            {
+              toolCallId: "call-race",
+              toolName: "search",
+              protocol: "mcp-apps",
+              widgetState: null,
+              globals: { theme: "dark", displayMode: "inline" },
+              widgetHtml: "<div>Race</div>",
+              updatedAt: Date.now(),
+            },
+          ],
+        ]),
+      });
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+
+    await flushMicrotasks();
+
+    // createWidgetSnapshot is awaiting; identity now changes.
+    expect(mockCreateWidgetSnapshot).toHaveBeenCalledTimes(1);
+    rerender({ chatSessionId: "chat-B" });
+    await flushMicrotasks();
+
+    // Resolve the pending mutation as if it succeeded for chat A.
+    act(() => {
+      resolveCreateWidgetSnapshot?.("snapshot-A");
+    });
+    await flushMicrotasks();
+
+    // The hook must not have written into chat B's bookkeeping refs. The
+    // observable signal: re-supplying the same widget after the rerender
+    // should NOT be treated as a duplicate. Bump the widget so the capture
+    // loop kicks again under chat-B.
+    act(() => {
+      useWidgetDebugStore.setState({
+        widgets: new Map([
+          [
+            "call-race",
+            {
+              toolCallId: "call-race",
+              toolName: "search",
+              protocol: "mcp-apps",
+              widgetState: null,
+              globals: { theme: "dark", displayMode: "inline" },
+              widgetHtml: "<div>Race v2</div>",
+              updatedAt: Date.now() + 1,
+            },
+          ],
+        ]),
+      });
+    });
+
+    // Swap the createWidgetSnapshot mock to resolve immediately for the
+    // chat-B attempt.
+    mockCreateWidgetSnapshot.mockImplementation(async () => "snapshot-B");
+
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    await flushMicrotasks();
+
+    // A second createWidgetSnapshot call should have happened under chat-B
+    // — proving the leaked chat-A success did not poison the
+    // uploadedHashes / cachedBlobs maps.
+    expect(mockCreateWidgetSnapshot).toHaveBeenCalledTimes(2);
+    expect(mockCreateWidgetSnapshot.mock.calls[1][0].chatSessionId).toBe(
+      "chat-B",
+    );
+
+    unmount();
+  });
+
+  it("replays stale-failed snapshots when a fresh accessVersion arrives", async () => {
+    const onStaleHostedAccess = vi.fn();
+    class StaleError extends Error {
+      data: { code: string; currentAccessVersion: number };
+      constructor() {
+        super("Chatbox access version is stale; client must re-redeem.");
+        this.data = { code: "chatbox_access_stale", currentAccessVersion: 7 };
+      }
+    }
+
+    let uploadCounter = 0;
+    mockGenerateSnapshotUploadUrl.mockReset();
+    mockGenerateSnapshotUploadUrl.mockImplementation(async () => {
+      uploadCounter += 1;
+      throw new StaleError();
+    });
+
+    const { rerender, unmount } = renderHook(
+      ({ hostedAccessVersion }: { hostedAccessVersion: number }) =>
+        useSharedChatWidgetCapture({
+          enabled: true,
+          chatSessionId: "chat-session-replay",
+          hostedChatboxId: "cbx_1",
+          hostedAccessVersion,
+          onStaleHostedAccess,
+          messages: [
+            {
+              id: "assistant-1",
+              role: "assistant",
+              parts: [
+                {
+                  type: "tool-search",
+                  toolCallId: "call-replay",
+                  input: { q: "hello" },
+                  output: { result: "world", _serverId: "server-1" },
+                },
+              ],
+            } as any,
+          ],
+        }),
+      { initialProps: { hostedAccessVersion: 1 } },
+    );
+
+    act(() => {
+      useWidgetDebugStore.setState({
+        widgets: new Map([
+          [
+            "call-replay",
+            {
+              toolCallId: "call-replay",
+              toolName: "search",
+              protocol: "mcp-apps",
+              widgetState: null,
+              globals: { theme: "dark", displayMode: "inline" },
+              widgetHtml: "<div>Widget</div>",
+              updatedAt: Date.now(),
+            },
+          ],
+        ]),
+      });
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+
+    await flushMicrotasks();
+    const generateCallsAfterFirstFlight =
+      mockGenerateSnapshotUploadUrl.mock.calls.length;
+    expect(generateCallsAfterFirstFlight).toBeGreaterThanOrEqual(1);
+    expect(onStaleHostedAccess).toHaveBeenCalledTimes(1);
+    expect(mockCreateWidgetSnapshot).not.toHaveBeenCalled();
+
+    // Parent's silent re-redeem hands back a fresh accessVersion. Swap the
+    // mock to resolve so the replay actually succeeds end-to-end.
+    mockGenerateSnapshotUploadUrl.mockImplementation(async () => {
+      uploadCounter += 1;
+      return `https://upload.example.com/${uploadCounter}`;
+    });
+
+    rerender({ hostedAccessVersion: 2 });
+
+    await flushMicrotasks();
+
+    expect(mockGenerateSnapshotUploadUrl.mock.calls.length).toBeGreaterThan(
+      generateCallsAfterFirstFlight,
+    );
+    expect(mockCreateWidgetSnapshot).toHaveBeenCalledTimes(1);
+    expect(mockCreateWidgetSnapshot.mock.calls[0][0]).toMatchObject({
+      chatboxId: "cbx_1",
+      accessVersion: 2,
+      chatSessionId: "chat-session-replay",
+      toolCallId: "call-replay",
+    });
+
+    unmount();
+  });
+
   it("skips widget capture for tool calls that already have persisted snapshots", async () => {
     const { unmount } = renderHook(() =>
       useSharedChatWidgetCapture({

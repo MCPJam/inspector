@@ -909,18 +909,20 @@ function areAuthHeadersEqual(
 type HostedSessionScope = {
   projectId?: string | null;
   chatboxId?: string;
-  accessVersion?: number;
 };
 
+// `accessVersion` is intentionally NOT part of the scope. The chat-reset
+// path uses this comparison to decide when to blow away `chatSessionId` /
+// `messages`, which is only appropriate when *identity* changes (different
+// project, different chatbox). A pure `accessVersion` bump — e.g. from the
+// silent re-redeem triggered by `chatbox_access_stale` — keeps the same
+// chatbox and the same conversation; tearing the chat down on those bumps
+// would defeat the purpose of the recovery path.
 function areHostedSessionScopesEqual(
   a: HostedSessionScope,
   b: HostedSessionScope
 ): boolean {
-  return (
-    a.projectId === b.projectId &&
-    a.chatboxId === b.chatboxId &&
-    a.accessVersion === b.accessVersion
-  );
+  return a.projectId === b.projectId && a.chatboxId === b.chatboxId;
 }
 
 function isAuthDeniedError(error: unknown): boolean {
@@ -947,6 +949,7 @@ export function useChatSession({
   const hostedChatboxId = hostedContext?.chatboxId;
   const hostedAccessVersion = hostedContext?.accessVersion;
   const hostedChatboxSurface = hostedContext?.chatboxSurface;
+  const requestRefreshAccessVersion = hostedContext?.requestRefreshAccessVersion;
   const initialModelId = executionConfig?.modelId;
   const initialSystemPrompt =
     executionConfig?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
@@ -1034,7 +1037,6 @@ export function useChatSession({
   const lastResolvedHostedScopeRef = useRef<HostedSessionScope>({
     projectId: undefined,
     chatboxId: undefined,
-    accessVersion: undefined,
   });
   const pendingSessionHydrationRef = useRef<PendingSessionHydration | null>(
     null
@@ -1597,6 +1599,7 @@ export function useChatSession({
     hostedAccessVersion,
     persistedSnapshotToolCallIds,
     messages,
+    onStaleHostedAccess: requestRefreshAccessVersion,
   });
 
   const setMessages = useCallback<
@@ -1900,7 +1903,6 @@ export function useChatSession({
         const currentHostedScope = {
           projectId: hostedProjectId,
           chatboxId: hostedChatboxId,
-          accessVersion: hostedAccessVersion,
         };
         const hasResolvedBefore = hasResolvedAuthHeadersRef.current;
         const authHeadersChanged =
@@ -1930,10 +1932,18 @@ export function useChatSession({
     return () => {
       active = false;
     };
+    // `hostedAccessVersion` is intentionally excluded. The effect resets
+    // `isSessionBootstrapComplete` to `false` synchronously on every run;
+    // including a value that bumps on every silent re-redeem (the
+    // `chatbox_access_stale` recovery path) would flip the flag false →
+    // true on each refresh, briefly unmounting downstream consumers gated
+    // on it (ChatTabV2). Auth-header resolution doesn't depend on the
+    // version, and the scope-equality check inside the effect no longer
+    // reads it either, so the effect body is exhaustive-deps-clean
+    // without it.
   }, [
     getAccessToken,
     hostedChatboxId,
-    hostedAccessVersion,
     hostedProjectId,
     isAuthenticated,
     isHostedGuest,
