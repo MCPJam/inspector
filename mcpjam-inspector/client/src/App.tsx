@@ -489,6 +489,16 @@ export default function App() {
 
   // Handle hosted OAuth callback: claim the callback before any hosted page renders.
   useEffect(() => {
+    // Wait for Convex/WorkOS auth to settle before deciding signed-in vs guest
+    // bearer. On post-redirect mount the first render sees
+    // isAuthenticated=false while isAuthLoading=true; routing a signed-in
+    // user's completion through the guest-bearer branch materializes a fresh
+    // anonymous user with no chatboxAccess row and 403s on
+    // /web/oauth/complete + /web/oauth/session/progress, then clears the
+    // pending marker so the post-settle re-run can't recover.
+    if (isAuthLoading) {
+      return;
+    }
     const callbackContext = getHostedOAuthCallbackContext();
     if (!callbackContext || callbackContext.surface === "project") {
       setHostedOAuthHandling(false);
@@ -564,6 +574,25 @@ export default function App() {
               };
             }
             authorizationHeader = `Bearer ${guestBearerToken}`;
+          } else if (workOsUser) {
+            // On chatbox routes, `useApiContext` is disabled (App.tsx
+            // `enabled: !isHostedChatRoute`), so the module-level apiContext
+            // is EMPTY_CONTEXT. authFetch's default header resolver then sees
+            // `!apiContext.isAuthenticated && !apiContext.hasSession`, decides
+            // the actor is a guest, and attaches a guest bearer — even though
+            // the user is WorkOS-signed-in. The backend then materializes a
+            // fresh anonymous user and 403s on chatboxAccess lookup. Explicitly
+            // attach the WorkOS bearer here so the chatbox-route gating of
+            // apiContext cannot demote a signed-in user to a guest.
+            try {
+              const accessToken = await getAccessToken();
+              if (accessToken) {
+                authorizationHeader = `Bearer ${accessToken}`;
+              }
+            } catch {
+              // Fall through to authFetch default. The callback will retry
+              // via the standard error UI if this token fetch fails.
+            }
           }
 
           return completeHostedOAuthCallback(callbackContext, code, {
@@ -605,7 +634,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [isAuthenticated]);
+  }, [isAuthLoading, isAuthenticated, workOsUser, getAccessToken]);
 
   usePostHogIdentify();
 
