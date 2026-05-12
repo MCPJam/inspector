@@ -81,6 +81,24 @@ You can run tests in two ways:
   Running tests requires connected MCP servers. If the Run button is disabled, check that your servers are connected in the Servers tab.
 </Note>
 
+### Validator settings
+
+Each suite has **default validator settings** that control how tool calls are matched when computing pass/fail. You can override these at three levels:
+
+| Level | Where to set it | Persists? |
+|-------|-----------------|-----------|
+| Suite default | Suite settings → **Default validators** section | Yes |
+| Case override | Test case editor → **Validators** section | Yes |
+| Run override | Suite header → validators icon (sliders) next to **Run all** | No — one run only |
+
+The three options are:
+
+- **Tool order** — `Any order` (default) or `Strict` (actual calls must appear in the same sequence as expected).
+- **Extra tool calls** — `Allow extras` (default) or `Forbidden` (any call not in the expected list fails the iteration).
+- **Args** — `Partial` (default, actual args must contain expected keys), `Exact` (no extra keys allowed), or `Ignore` (skip argument comparison entirely).
+
+When a run override is active, a badge labeled **override** appears on the validators button. Click **Reset** inside the popover to clear it.
+
 ## Analyzing Results
 
 ### Results & Runs View
