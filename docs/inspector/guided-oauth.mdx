@@ -38,3 +38,9 @@ To begin debugging OAuth flows:
 5. **Start Testing** - Click **Continue** to begin the OAuth flow
 
 The debugger will guide you through each step of the OAuth handshake, providing real-time feedback and educational context.
+
+## Desktop app behavior
+
+When using the OAuth Debugger in the MCPJam Desktop app, the authorization step opens in your system browser instead of inside the app. After you approve access in the browser, you will see a **"Continue in MCPJam Desktop"** page that automatically hands control back to the desktop app. If the handoff does not happen automatically, click the link on that page to return.
+
+Once the browser callback is received, the desktop app resumes the OAuth flow and displays the result in the OAuth Flow tab.
