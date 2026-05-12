@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  cspDomainSetHasEntries,
   matchesDomain,
   resolveSandboxCsp,
   resolveSandboxPermissions,
@@ -829,5 +830,39 @@ describe("resolveSandboxPermissions", () => {
     // clipboard-write deliberately NOT clamped (most apps need it
     // for "copy to clipboard" buttons).
     expect(result.effective["clipboard-write"]).toBe(true);
+  });
+});
+
+describe("cspDomainSetHasEntries", () => {
+  it("returns false for undefined and empty sets", () => {
+    expect(cspDomainSetHasEntries(undefined)).toBe(false);
+    expect(cspDomainSetHasEntries({})).toBe(false);
+    // Explicit empty arrays — must NOT count as "has policy"
+    // (would let an empty `csp: {}` from a payload outside the
+    // editor trigger the resolver pipeline and produce
+    // all-empty-array effective directives → iframe blocks all).
+    expect(
+      cspDomainSetHasEntries({
+        connectDomains: [],
+        resourceDomains: [],
+        frameDomains: [],
+        baseUriDomains: [],
+      }),
+    ).toBe(false);
+  });
+
+  it("returns true when any directive has at least one entry", () => {
+    expect(
+      cspDomainSetHasEntries({ connectDomains: ["a"] }),
+    ).toBe(true);
+    expect(
+      cspDomainSetHasEntries({ resourceDomains: ["b"] }),
+    ).toBe(true);
+    expect(
+      cspDomainSetHasEntries({ frameDomains: ["c"] }),
+    ).toBe(true);
+    expect(
+      cspDomainSetHasEntries({ baseUriDomains: ["d"] }),
+    ).toBe(true);
   });
 });

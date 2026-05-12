@@ -455,6 +455,26 @@ function intersectDomainLists(
  * implementing a general glob matcher because CSP source-expression
  * semantics are well-defined and don't include arbitrary patterns.
  */
+/**
+ * `true` when a `CspDomainSet` carries at least one non-empty domain
+ * list. The editor collapses empty sets to `undefined` before saving,
+ * but a backend payload or persisted session could carry a literal
+ * empty `{}` — and an empty set MUST NOT count as "has policy"
+ * because the resolver would compute all-empty-array directives and
+ * the iframe would block all widget network access.
+ */
+export function cspDomainSetHasEntries(
+  set: CspDomainSet | undefined,
+): boolean {
+  if (!set) return false;
+  return (
+    (set.connectDomains?.length ?? 0) > 0 ||
+    (set.resourceDomains?.length ?? 0) > 0 ||
+    (set.frameDomains?.length ?? 0) > 0 ||
+    (set.baseUriDomains?.length ?? 0) > 0
+  );
+}
+
 export function matchesDomain(pattern: string, domain: string): boolean {
   if (pattern === domain) return true;
   if (pattern === "*") return true;

@@ -70,6 +70,7 @@ import {
 import { useChatboxHostCapabilitiesOverride } from "@/contexts/chatbox-host-capabilities-override-context";
 import { useChatboxMcpProfile } from "@/contexts/chatbox-mcp-profile-context";
 import {
+  cspDomainSetHasEntries,
   resolveSandboxCsp,
   resolveSandboxPermissions,
 } from "@/lib/sandbox-policy";
@@ -712,7 +713,21 @@ export function MCPAppsRenderer({
   // widget CSP and no profile narrowing, returns undefined to keep
   // pre-feature behavior (permissive iframe).
   const resolvedCsp = useMemo(() => {
-    if (!widgetCsp && !mcpProfile?.apps?.sandbox?.csp) return undefined;
+    // Same "meaningful content" check as profileHasCsp — a bare
+    // `csp: {}` from a payload outside the editor must NOT trigger
+    // the resolver pipeline (it would produce empty-array directives
+    // and the iframe would block all network access). Mirror the
+    // editor's collapse-to-undefined rule here so wire-level payloads
+    // and editor saves behave identically.
+    const profileCspBlock = mcpProfile?.apps?.sandbox?.csp;
+    const profileCspHasContent = Boolean(
+      profileCspBlock &&
+        (profileCspBlock.mode !== undefined ||
+          cspDomainSetHasEntries(profileCspBlock.restrictTo) ||
+          cspDomainSetHasEntries(profileCspBlock.deny) ||
+          profileCspBlock.extensions !== undefined),
+    );
+    if (!widgetCsp && !profileCspHasContent) return undefined;
     const eff = resolvedCspLayers.effective;
     return {
       connectDomains: eff.connectDomains ?? [],
@@ -759,7 +774,22 @@ export function MCPAppsRenderer({
   // rules silently bypass. Hosted chatboxes hit this every render
   // because `ChatTabV2`'s minimalMode wiring sets cspMode="permissive"
   // upstream, making `widgetPermissive=true` the default.
-  const profileHasCsp = Boolean(mcpProfile?.apps?.sandbox?.csp);
+  // "Has CSP policy" means the profile's csp block carries at least
+  // one meaningful field — `mode`, a non-empty `restrictTo` /
+  // `deny`, or `extensions`. A bare `csp: {}` (which a payload from
+  // outside the editor could carry — `normalizeMcpProfile` doesn't
+  // strip empty inner blocks) MUST NOT count as policy, because
+  // `resolvedCsp` then computes all-empty-array directives and the
+  // iframe ends up with `permissive=false` + empty CSP, silently
+  // blocking all widget network access.
+  const profileCsp = mcpProfile?.apps?.sandbox?.csp;
+  const profileHasCsp = Boolean(
+    profileCsp &&
+      (profileCsp.mode !== undefined ||
+        cspDomainSetHasEntries(profileCsp.restrictTo) ||
+        cspDomainSetHasEntries(profileCsp.deny) ||
+        profileCsp.extensions !== undefined),
+  );
   const effectivePermissive = profileHasCsp ? false : widgetPermissive;
 
   const resolvedPermissions = useMemo(() => {
