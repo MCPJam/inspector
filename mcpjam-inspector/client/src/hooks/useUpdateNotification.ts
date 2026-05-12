@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { toast } from "sonner";
 import type { UpdateStatus } from "@/types/electron";
 
 export function useUpdateNotification() {
@@ -16,10 +17,14 @@ export function useUpdateNotification() {
     });
 
     api.onUpdateStatus((next) => setStatus(next));
+    api.onUpdateError(() => {
+      toast.error("Update failed. Try again later.");
+    });
 
     return () => {
       cancelled = true;
       window.electronAPI?.update?.removeUpdateStatusListener();
+      window.electronAPI?.update?.removeUpdateErrorListener();
     };
   }, []);
 
@@ -31,9 +36,19 @@ export function useUpdateNotification() {
     window.electronAPI?.update?.simulateUpdate?.();
   }, []);
 
+  const simulateUpdateDownloaded = useCallback(() => {
+    window.electronAPI?.update?.simulateUpdateDownloaded?.();
+  }, []);
+
+  const simulateUpdateError = useCallback(() => {
+    window.electronAPI?.update?.simulateUpdateError?.();
+  }, []);
+
   return {
     status,
     restartAndInstall,
     simulateUpdate,
+    simulateUpdateDownloaded,
+    simulateUpdateError,
   };
 }

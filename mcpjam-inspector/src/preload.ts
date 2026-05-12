@@ -47,9 +47,13 @@ interface ElectronAPI {
   update: {
     onUpdateStatus: (callback: (status: UpdateStatus) => void) => void;
     removeUpdateStatusListener: () => void;
+    onUpdateError: (callback: () => void) => void;
+    removeUpdateErrorListener: () => void;
     getUpdateStatus: () => Promise<UpdateStatus>;
     restartAndInstall: () => void;
     simulateUpdate?: () => void; // Dev only - for testing
+    simulateUpdateDownloaded?: () => void; // Dev only - for testing
+    simulateUpdateError?: () => void; // Dev only - for testing
   };
 }
 
@@ -98,6 +102,12 @@ const electronAPI: ElectronAPI = {
     removeUpdateStatusListener: () => {
       ipcRenderer.removeAllListeners("update-status");
     },
+    onUpdateError: (callback: () => void) => {
+      ipcRenderer.on("update-error", () => callback());
+    },
+    removeUpdateErrorListener: () => {
+      ipcRenderer.removeAllListeners("update-error");
+    },
     getUpdateStatus: () => ipcRenderer.invoke("app:get-update-status"),
     restartAndInstall: () => {
       ipcRenderer.send("app:restart-for-update");
@@ -106,6 +116,12 @@ const electronAPI: ElectronAPI = {
       ? {
           simulateUpdate: () => {
             ipcRenderer.send("app:simulate-update");
+          },
+          simulateUpdateDownloaded: () => {
+            ipcRenderer.send("app:simulate-update-downloaded");
+          },
+          simulateUpdateError: () => {
+            ipcRenderer.send("app:simulate-update-error");
           },
         }
       : {}),

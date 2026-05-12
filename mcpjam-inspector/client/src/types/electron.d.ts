@@ -43,9 +43,13 @@ export interface ElectronAPI {
   update: {
     onUpdateStatus: (callback: (status: UpdateStatus) => void) => void;
     removeUpdateStatusListener: () => void;
+    onUpdateError: (callback: () => void) => void;
+    removeUpdateErrorListener: () => void;
     getUpdateStatus: () => Promise<UpdateStatus>;
     restartAndInstall: () => void;
     simulateUpdate?: () => void;
+    simulateUpdateDownloaded?: () => void;
+    simulateUpdateError?: () => void;
   };
 }
 

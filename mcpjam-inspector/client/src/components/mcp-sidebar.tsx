@@ -20,6 +20,7 @@ import {
   Puzzle,
   UserPlus,
   ShieldCheck,
+  Loader2,
 } from "lucide-react";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { standardEventProps } from "@/lib/PosthogUtils";
@@ -708,8 +709,11 @@ export function MCPSidebar({
                 size="sm"
                 onClick={restartAndInstall}
                 disabled={updateInstalling}
-                className="w-full bg-primary hover:bg-primary/90 text-primary-foreground h-7 text-xs font-medium rounded-md"
+                className="w-full bg-primary hover:bg-primary/90 text-primary-foreground h-7 text-xs font-medium rounded-md gap-1.5"
               >
+                {updateInstalling && (
+                  <Loader2 className="size-3 animate-spin" aria-hidden />
+                )}
                 {updateInstalling ? "Updating…" : "Update"}
               </Button>
             </div>

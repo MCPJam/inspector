@@ -3,30 +3,52 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import { useUpdateNotification } from "../useUpdateNotification";
 import type { UpdateStatus } from "@/types/electron";
 
+const { mockToastError } = vi.hoisted(() => ({
+  mockToastError: vi.fn(),
+}));
+
+vi.mock("sonner", () => ({
+  toast: {
+    error: mockToastError,
+  },
+}));
+
 function setupElectronMock(initial: UpdateStatus = { kind: "idle" }) {
   const mockOnUpdateStatus = vi.fn();
   const mockRemoveUpdateStatusListener = vi.fn();
+  const mockOnUpdateError = vi.fn();
+  const mockRemoveUpdateErrorListener = vi.fn();
   const mockGetUpdateStatus = vi.fn().mockResolvedValue(initial);
   const mockRestartAndInstall = vi.fn();
   const mockSimulateUpdate = vi.fn();
+  const mockSimulateUpdateDownloaded = vi.fn();
+  const mockSimulateUpdateError = vi.fn();
 
   window.isElectron = true;
   window.electronAPI = {
     update: {
       onUpdateStatus: mockOnUpdateStatus,
       removeUpdateStatusListener: mockRemoveUpdateStatusListener,
+      onUpdateError: mockOnUpdateError,
+      removeUpdateErrorListener: mockRemoveUpdateErrorListener,
       getUpdateStatus: mockGetUpdateStatus,
       restartAndInstall: mockRestartAndInstall,
       simulateUpdate: mockSimulateUpdate,
+      simulateUpdateDownloaded: mockSimulateUpdateDownloaded,
+      simulateUpdateError: mockSimulateUpdateError,
     },
   } as any;
 
   return {
     mockOnUpdateStatus,
     mockRemoveUpdateStatusListener,
+    mockOnUpdateError,
+    mockRemoveUpdateErrorListener,
     mockGetUpdateStatus,
     mockRestartAndInstall,
     mockSimulateUpdate,
+    mockSimulateUpdateDownloaded,
+    mockSimulateUpdateError,
   };
 }
 
@@ -38,6 +60,7 @@ function clearElectronMock() {
 describe("useUpdateNotification", () => {
   beforeEach(() => {
     clearElectronMock();
+    mockToastError.mockClear();
   });
 
   describe("initial state", () => {
@@ -64,10 +87,11 @@ describe("useUpdateNotification", () => {
 
   describe("Electron status listener", () => {
     it("registers onUpdateStatus listener in Electron", () => {
-      const { mockOnUpdateStatus } = setupElectronMock();
+      const { mockOnUpdateStatus, mockOnUpdateError } = setupElectronMock();
 
       renderHook(() => useUpdateNotification());
       expect(mockOnUpdateStatus).toHaveBeenCalledWith(expect.any(Function));
+      expect(mockOnUpdateError).toHaveBeenCalledWith(expect.any(Function));
     });
 
     it("does not register listener when not in Electron", () => {
@@ -119,13 +143,32 @@ describe("useUpdateNotification", () => {
       });
     });
 
+    it("shows a generic toast when main reports an update error", () => {
+      const { mockOnUpdateError } = setupElectronMock();
+
+      renderHook(() => useUpdateNotification());
+      const callback = mockOnUpdateError.mock.calls[0][0];
+
+      act(() => {
+        callback();
+      });
+
+      expect(mockToastError).toHaveBeenCalledWith(
+        "Update failed. Try again later.",
+      );
+    });
+
     it("removes listener on unmount", () => {
-      const { mockRemoveUpdateStatusListener } = setupElectronMock();
+      const {
+        mockRemoveUpdateStatusListener,
+        mockRemoveUpdateErrorListener,
+      } = setupElectronMock();
 
       const { unmount } = renderHook(() => useUpdateNotification());
       unmount();
 
       expect(mockRemoveUpdateStatusListener).toHaveBeenCalled();
+      expect(mockRemoveUpdateErrorListener).toHaveBeenCalled();
     });
   });
 
@@ -153,15 +196,23 @@ describe("useUpdateNotification", () => {
 
   describe("simulateUpdate", () => {
     it("calls the Electron simulate API", () => {
-      const { mockSimulateUpdate } = setupElectronMock();
+      const {
+        mockSimulateUpdate,
+        mockSimulateUpdateDownloaded,
+        mockSimulateUpdateError,
+      } = setupElectronMock();
 
       const { result } = renderHook(() => useUpdateNotification());
 
       act(() => {
         result.current.simulateUpdate();
+        result.current.simulateUpdateDownloaded();
+        result.current.simulateUpdateError();
       });
 
       expect(mockSimulateUpdate).toHaveBeenCalled();
+      expect(mockSimulateUpdateDownloaded).toHaveBeenCalled();
+      expect(mockSimulateUpdateError).toHaveBeenCalled();
     });
   });
 });
