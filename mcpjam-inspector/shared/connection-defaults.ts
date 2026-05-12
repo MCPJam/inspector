@@ -20,4 +20,21 @@ export type ConnectionDefaults = {
   timeoutMs?: number;
   /** MCP client capabilities forwarded to the SDK transport. */
   clientCapabilities?: Record<string, unknown>;
+  /**
+   * Per-connection MCP `initialize.params.clientInfo` override, resolved
+   * client-side from `hostConfig.mcpProfile.initialize.clientInfo`. Undefined
+   * means "use SDK defaults" — preserves historical wire behavior for users
+   * who haven't opted into the mcpProfile feature. Extra fields (`title`
+   * and future spec additions) survive verbatim through the SDK without an
+   * SDK bump.
+   */
+  clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
+  /**
+   * Per-connection proposed protocolVersion, resolved from the first entry
+   * of `hostConfig.mcpProfile.initialize.supportedProtocolVersions`. When
+   * set, the SDK sends this in `initialize.params.protocolVersion` AND uses
+   * it as the sole accept-list entry — a server that can't speak it fails
+   * fast (desired behavior for reproducible eval pins).
+   */
+  proposedProtocolVersion?: string;
 };

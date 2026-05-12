@@ -50,6 +50,32 @@ export type BaseServerConfig = {
   timeout?: number;
   /** Client version to report */
   version?: string;
+  /**
+   * Per-server override of `clientInfo` sent in MCP `initialize`. When set,
+   * takes precedence over the manager's `defaultClientName` /
+   * `defaultClientVersion` and the per-server `version`. Extra fields
+   * (e.g. `title`) are passed through verbatim so future spec additions
+   * land here without an SDK bump.
+   *
+   * Wired into the inspector via `hostConfig.mcpProfile.initialize.clientInfo`.
+   * Leaving this undefined means "use the manager defaults" (which is what
+   * historical callers expect).
+   */
+  clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
+  /**
+   * Proposed protocolVersion to send in MCP `initialize.params`. When set,
+   * this overrides the upstream Client's hardcoded `LATEST_PROTOCOL_VERSION`
+   * via an outgoing-request interceptor (rewrite of `initialize` params
+   * only; subsequent requests are unaffected).
+   *
+   * Wired into the inspector via the first entry of
+   * `hostConfig.mcpProfile.initialize.supportedProtocolVersions`. The
+   * upstream Client still validates the server's response against its
+   * `SUPPORTED_PROTOCOL_VERSIONS` allowlist — pinning a version the SDK
+   * doesn't recognize will fail at connect time, which is the desired
+   * behavior for reproducible eval pins.
+   */
+  proposedProtocolVersion?: string;
   /** Error handler for this server */
   onError?: (error: unknown) => void;
   /** Enable simple console logging of JSON-RPC traffic */
@@ -254,6 +280,20 @@ export interface MCPClientManagerOptions {
   defaultClientName?: string;
   /** Default client version to report */
   defaultClientVersion?: string;
+  /**
+   * Default `clientInfo` extra fields (e.g. `title`) to advertise to servers.
+   * Per-server `clientInfo.name` / `clientInfo.version` override this. Extra
+   * keys here are merged into the per-server clientInfo at connect time so
+   * future MCP spec additions don't require an SDK bump.
+   */
+  defaultClientInfoExtras?: Record<string, unknown>;
+  /**
+   * Default proposed protocolVersion sent in MCP `initialize.params`. Per-
+   * server `proposedProtocolVersion` overrides this. When neither is set,
+   * the upstream Client's hardcoded `LATEST_PROTOCOL_VERSION` is used and
+   * historical behavior is preserved verbatim.
+   */
+  defaultProposedProtocolVersion?: string;
   /** Default capabilities to advertise */
   defaultCapabilities?: ClientCapabilityOptions;
   /** Default request timeout in milliseconds */

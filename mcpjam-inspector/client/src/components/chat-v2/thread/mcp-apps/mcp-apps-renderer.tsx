@@ -30,6 +30,11 @@ import {
 } from "@/components/ui/sandboxed-iframe";
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
+import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
+import {
+  resolveSandboxCsp,
+  resolveSandboxPermissions,
+} from "@mcpjam/sdk/browser";
 import {
   useTrafficLogStore,
   extractMethod,
@@ -216,6 +221,10 @@ export function MCPAppsRenderer({
   const chatboxHostStyle = useChatboxHostStyle();
   const chatboxHostTheme = useChatboxHostTheme();
   const hostCapabilitiesOverride = useChatboxHostCapabilitiesOverride();
+  // Active hostConfig.mcpProfile from the surrounding scope (chatbox
+  // session, project default, eval suite). Drives the resolver below
+  // when set; undefined preserves widget-derived sandbox behavior.
+  const activeMcpProfile = useActiveMcpProfile();
   const draftHostContext = useHostContextStore((s) => s.draftHostContext);
   const baseHostContext = useMemo(
     () =>
@@ -1203,17 +1212,73 @@ export function MCPAppsRenderer({
     // gates land (see comment near its definition). Runtime `sandbox` stays
     // widget-derived per SEP-1865 — CSP/permissions are approved per UI
     // resource, not a vendor trait.
+    //
+    // When the active host config has an `mcpProfile.apps.sandbox` policy,
+    // run the shared resolver from `@mcpjam/sdk` (see `sdk/src/sandbox-policy.ts`).
+    // Precedence: baseline-from-mode → restrictTo intersect → deny subtract
+    // → hosted-mode hard clamp. The resolver is opt-in — when there's no
+    // policy, the existing widget-derived behavior is preserved byte-for-byte.
+    // Both this renderer and the ChatGPT-app renderer consume the SAME
+    // resolver so the hosted-mode clamp can't be bypassed by mounting
+    // through a different surface (the failure mode the plan flagged).
+    const sandboxCspPolicy = activeMcpProfile?.apps?.sandbox?.csp;
+    const sandboxPermissionsPolicy = activeMcpProfile?.apps?.sandbox?.permissions;
+    let resolvedSandboxCsp: McpUiResourceCsp | undefined;
+    if (sandboxCspPolicy) {
+      const resolved = resolveSandboxCsp({
+        resourceCsp: widgetCsp,
+        policy: sandboxCspPolicy,
+        hostedMode: HOSTED_MODE,
+      });
+      resolvedSandboxCsp = {
+        connectDomains: resolved.connectDomains,
+        resourceDomains: resolved.resourceDomains,
+        frameDomains: resolved.frameDomains,
+        baseUriDomains: resolved.baseUriDomains,
+      };
+    }
+    let resolvedSandboxPermissions: McpUiResourcePermissions | undefined;
+    if (sandboxPermissionsPolicy) {
+      const resourcePermsMap: Record<string, boolean> = {};
+      if (widgetPermissions && typeof widgetPermissions === "object") {
+        for (const [k, v] of Object.entries(
+          widgetPermissions as Record<string, unknown>,
+        )) {
+          if (v !== undefined && v !== null) resourcePermsMap[k] = true;
+        }
+      }
+      const resolved = resolveSandboxPermissions({
+        resourcePermissions: resourcePermsMap,
+        policy: sandboxPermissionsPolicy,
+        hostedMode: HOSTED_MODE,
+      });
+      // Reshape the resolver output back into the McpUiResourcePermissions
+      // shape (each granted permission is an empty object per SEP-1865).
+      const out: Record<string, Record<string, never>> = {};
+      for (const name of Object.keys(resolved.granted)) {
+        out[name] = {};
+      }
+      resolvedSandboxPermissions = out as McpUiResourcePermissions;
+    }
+
     const bridge = new AppBridge(
       null,
       { name: "mcpjam-inspector", version: __APP_VERSION__ },
       {
         ...effectiveHostCapabilities,
         sandbox: {
-          // In permissive mode: omit CSP (undefined) to indicate no restrictions
-          // In widget-declared mode: pass the widget's declared CSP
-          csp: widgetPermissive ? undefined : widgetCsp,
-          // Always pass permissions (if widget declared them)
-          permissions: widgetPermissions,
+          // mcpProfile-resolved CSP wins when set. Otherwise: permissive
+          // mode omits CSP (no restrictions); widget-declared mode passes
+          // the resource declaration through. Three distinct outcomes —
+          // documented here because the precedence is meaningful for
+          // anyone debugging "why did my widget's CSP change?".
+          csp: resolvedSandboxCsp
+            ? resolvedSandboxCsp
+            : widgetPermissive
+              ? undefined
+              : widgetCsp,
+          // Same opt-in shape for permissions.
+          permissions: resolvedSandboxPermissions ?? widgetPermissions,
         },
       },
       { hostContext: hostContextRef.current ?? {} },

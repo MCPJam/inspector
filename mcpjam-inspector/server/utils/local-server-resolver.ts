@@ -259,6 +259,29 @@ export function parseConnectionDefaults(
     out.clientCapabilities = input.clientCapabilities as Record<string, unknown>;
   }
 
+  // Accept clientInfo only as a plain object with at least a `name` or
+  // `version` — gates against null/array/scalar shapes that would slip
+  // past `typeof === "object"`. Same advisory posture as the other fields:
+  // drop rather than reject so a malformed wire payload doesn't kill the
+  // whole connect request.
+  if (
+    input.clientInfo &&
+    typeof input.clientInfo === "object" &&
+    !Array.isArray(input.clientInfo)
+  ) {
+    const ci = input.clientInfo as Record<string, unknown>;
+    if (typeof ci.name === "string" || typeof ci.version === "string") {
+      out.clientInfo = ci as ConnectionDefaults["clientInfo"];
+    }
+  }
+
+  if (
+    typeof input.proposedProtocolVersion === "string" &&
+    input.proposedProtocolVersion.trim() !== ""
+  ) {
+    out.proposedProtocolVersion = input.proposedProtocolVersion;
+  }
+
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
@@ -287,6 +310,24 @@ export function toMCPServerConfig(
       serverId: string;
       serverName: string;
     };
+    /**
+     * Per-connection MCP `initialize.params.clientInfo` override resolved
+     * from `hostConfig.mcpProfile.initialize.clientInfo`. Undefined means
+     * "use SDK defaults" (the inspector's hardcoded clientInfo). Forwarded
+     * verbatim to MCPClientManager so extra fields (`title`, future spec
+     * additions) survive without an SDK bump.
+     */
+    clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
+    /**
+     * Per-connection proposed protocolVersion, resolved from the first
+     * entry of `hostConfig.mcpProfile.initialize.supportedProtocolVersions`.
+     * Undefined means "use SDK defaults" — the upstream Client falls back
+     * to `LATEST_PROTOCOL_VERSION`. When set, the SDK sends this version
+     * in `initialize.params.protocolVersion` AND uses it as the sole
+     * accept-list entry, so a server that can't speak it fails fast
+     * (desired behavior for reproducible eval pins).
+     */
+    proposedProtocolVersion?: string;
   }
 ): MCPServerConfig {
   const { serverConfig } = authResult;
@@ -306,6 +347,12 @@ export function toMCPServerConfig(
       stdio.capabilities = clientCapabilities;
       stdio.clientCapabilities = clientCapabilities;
     }
+    // mcpProfile.initialize fields flow into the SDK's per-server config.
+    // Undefined skips the field entirely so callers that don't opt in stay
+    // byte-identical to historical behavior on the wire.
+    if (options?.clientInfo) stdio.clientInfo = options.clientInfo;
+    if (options?.proposedProtocolVersion)
+      stdio.proposedProtocolVersion = options.proposedProtocolVersion;
     return stdio as MCPServerConfig;
   }
 
@@ -349,6 +396,10 @@ export function toMCPServerConfig(
     http.capabilities = clientCapabilities;
     http.clientCapabilities = clientCapabilities;
   }
+  // mcpProfile.initialize fields — same opt-in shape as the stdio branch.
+  if (options?.clientInfo) http.clientInfo = options.clientInfo;
+  if (options?.proposedProtocolVersion)
+    http.proposedProtocolVersion = options.proposedProtocolVersion;
 
   // Attach the SDK's 401-recovery hook only when this is a hosted-OAuth
   // server (we have a token from `authorize-batch-local`) AND the caller
@@ -423,6 +474,13 @@ export async function resolveLocalServerForConnect(
     clientCapabilities:
       options?.clientCapabilities ?? options?.defaults?.clientCapabilities,
     defaultHeaders: options?.defaults?.headers,
+    // mcpProfile.initialize fields ride through ConnectionDefaults end-to-end:
+    // client computes them from hostConfig.mcpProfile, wire-serializes onto
+    // /api/mcp/connect, parseConnectionDefaults gates the shape, and they
+    // land on the per-server SDK config here. Undefined preserves
+    // historical wire behavior — no opt-in, no change.
+    clientInfo: options?.defaults?.clientInfo,
+    proposedProtocolVersion: options?.defaults?.proposedProtocolVersion,
     refreshContext: {
       bearerToken,
       projectId,

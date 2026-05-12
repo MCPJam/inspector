@@ -43,6 +43,7 @@ import {
 import { Button } from "@mcpjam/design-system/button";
 import {
   type HostConfigInputV2,
+  type HostConfigMcpProfileV1,
   type HostStyleId,
   DEFAULT_TEMPERATURE_V2,
 } from "@/lib/host-config-v2";
@@ -345,7 +346,427 @@ export function HostConfigEditor({
             onErrorChange={setHostCapsOverrideError}
           />
         ) : null}
+
+        {owner !== "connection-only" ? (
+          <McpProfileSection
+            profile={value.mcpProfile}
+            onChange={(mcpProfile) => update({ mcpProfile })}
+          />
+        ) : null}
       </section>
+    </div>
+  );
+}
+
+/**
+ * Editor for the optional `mcpProfile` envelope on a host config.
+ *
+ * Minimal v1 surface (per the inspector PR plan): structured controls for
+ * the spec-stable fields (`clientInfo.{name,version,title}`,
+ * `supportedProtocolVersions`, CSP/permissions `mode`) plus raw-JSON
+ * editors for the freeform CSP/permissions allow/deny sets.
+ *
+ * `undefined` ↔ `{ profileVersion: 1 }` distinction is preserved
+ * verbatim: the section starts hidden (`undefined`), "Enable" stamps a
+ * fresh `{ profileVersion: 1 }`, and "Reset to SDK defaults" snaps it
+ * back to `undefined`. The backend hashes those two states distinctly
+ * (PR #269 test) so the "user opted in" signal survives a reload-save
+ * cycle.
+ *
+ * Per-`hostStyle` defaults (auto-populating clientInfo on host-style
+ * change) are intentionally deferred to v2 — they create surprising
+ * "why did my profile change?" behavior on the picker and the
+ * inspector PR plan flagged them as out-of-scope.
+ */
+function McpProfileSection({
+  profile,
+  onChange,
+}: {
+  profile: HostConfigMcpProfileV1 | undefined;
+  onChange: (next: HostConfigMcpProfileV1 | undefined) => void;
+}) {
+  const [expanded, setExpanded] = useState<boolean>(profile !== undefined);
+  const enabled = profile !== undefined;
+
+  const enable = useCallback(() => {
+    setExpanded(true);
+    if (!enabled) onChange({ profileVersion: 1 });
+  }, [enabled, onChange]);
+
+  const resetToDefault = useCallback(() => {
+    // Snap back to `undefined` so the SDK falls back to its built-in
+    // clientInfo + protocolVersion. Distinct from `{ profileVersion: 1 }`
+    // on the wire — that "empty envelope" hashes differently because the
+    // user explicitly opted in.
+    onChange(undefined);
+  }, [onChange]);
+
+  const updateInitialize = useCallback(
+    (
+      patch: Partial<NonNullable<HostConfigMcpProfileV1["initialize"]>>,
+    ) => {
+      const base: HostConfigMcpProfileV1 = profile ?? { profileVersion: 1 };
+      const nextInitialize = {
+        ...(base.initialize ?? {}),
+        ...patch,
+      };
+      // Collapse to undefined when every subfield is empty so a half-
+      // filled-then-cleared edit doesn't leave a vacuous `initialize: {}`
+      // on the wire (which would still hash distinctly from absent).
+      const hasInitFields =
+        nextInitialize.clientInfo !== undefined ||
+        (nextInitialize.supportedProtocolVersions &&
+          nextInitialize.supportedProtocolVersions.length > 0);
+      onChange({
+        ...base,
+        initialize: hasInitFields ? nextInitialize : undefined,
+      });
+    },
+    [profile, onChange],
+  );
+
+  const updateClientInfo = useCallback(
+    (patch: { name?: string; version?: string; title?: string }) => {
+      const current = profile?.initialize?.clientInfo ?? {};
+      const nextClientInfo: Record<string, unknown> = { ...current };
+      if (patch.name !== undefined) nextClientInfo.name = patch.name;
+      if (patch.version !== undefined) nextClientInfo.version = patch.version;
+      if (patch.title !== undefined) {
+        if (patch.title === "") delete nextClientInfo.title;
+        else nextClientInfo.title = patch.title;
+      }
+      // Drop the field entirely when both name + version are empty —
+      // backend validator requires both. Avoids saving partial state
+      // that would be rejected.
+      const hasRequired =
+        typeof nextClientInfo.name === "string" &&
+        nextClientInfo.name.trim() !== "" &&
+        typeof nextClientInfo.version === "string" &&
+        nextClientInfo.version.trim() !== "";
+      updateInitialize({
+        clientInfo: hasRequired ? nextClientInfo : undefined,
+      });
+    },
+    [profile, updateInitialize],
+  );
+
+  const updateProtocolVersions = useCallback(
+    (raw: string) => {
+      const versions = raw
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line !== "");
+      updateInitialize({
+        supportedProtocolVersions: versions.length > 0 ? versions : undefined,
+      });
+    },
+    [updateInitialize],
+  );
+
+  if (!enabled) {
+    return (
+      <div className="grid gap-2">
+        <div className="flex items-center justify-between gap-2">
+          <Label>MCP profile (advanced)</Label>
+          <Button type="button" size="sm" variant="ghost" onClick={enable}>
+            Enable
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Pin the `clientInfo`, supported protocol versions, and sandbox
+          policy this host config advertises in MCP `initialize`. Leave
+          disabled to use SDK defaults — recommended for normal use.
+        </p>
+      </div>
+    );
+  }
+
+  const clientInfo = profile?.initialize?.clientInfo ?? {};
+  const protocolVersionsText = (
+    profile?.initialize?.supportedProtocolVersions ?? []
+  ).join("\n");
+
+  return (
+    <div className="grid gap-3 rounded-md border border-border/50 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <Label>MCP profile</Label>
+        <div className="flex items-center gap-1">
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => setExpanded((e) => !e)}
+          >
+            {expanded ? "Collapse" : "Expand"}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={resetToDefault}
+          >
+            Reset to SDK defaults
+          </Button>
+        </div>
+      </div>
+
+      {expanded ? (
+        <>
+          <div className="grid gap-2">
+            <Label className="text-xs font-medium">Client identity</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <Input
+                placeholder="name (e.g. chatgpt)"
+                value={
+                  typeof clientInfo.name === "string" ? clientInfo.name : ""
+                }
+                onChange={(e) => updateClientInfo({ name: e.target.value })}
+              />
+              <Input
+                placeholder="version (e.g. 1.0.0)"
+                value={
+                  typeof clientInfo.version === "string"
+                    ? clientInfo.version
+                    : ""
+                }
+                onChange={(e) => updateClientInfo({ version: e.target.value })}
+              />
+            </div>
+            <Input
+              placeholder="title (optional, e.g. ChatGPT Desktop)"
+              value={
+                typeof clientInfo.title === "string" ? clientInfo.title : ""
+              }
+              onChange={(e) => updateClientInfo({ title: e.target.value })}
+            />
+            <p className="text-xs text-muted-foreground">
+              Both name and version are required when client identity is
+              set. Saved verbatim to MCP `initialize.params.clientInfo`.
+            </p>
+          </div>
+
+          <div className="grid gap-2">
+            <Label className="text-xs font-medium">
+              Supported protocol versions (one per line, first = proposed)
+            </Label>
+            <Textarea
+              rows={3}
+              placeholder={"2025-11-25\n2025-06-18"}
+              value={protocolVersionsText}
+              onChange={(e) => updateProtocolVersions(e.target.value)}
+              className="font-mono text-xs"
+            />
+            <p className="text-xs text-muted-foreground">
+              First entry is proposed in `initialize.params.protocolVersion`;
+              the full list is the accept-set. Order is semantic — do not
+              shuffle.
+            </p>
+          </div>
+
+          <McpProfileSandboxEditor
+            profile={profile}
+            onChange={onChange}
+          />
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Sandbox subsection — CSP and permissions. Uses structured mode
+ * dropdowns + raw-JSON for the more complex allow/deny shapes. v1 keeps
+ * the JSON editors lean rather than building four-domain-list
+ * widgets per directive; the editor evolves once usage patterns settle.
+ */
+function McpProfileSandboxEditor({
+  profile,
+  onChange,
+}: {
+  profile: HostConfigMcpProfileV1 | undefined;
+  onChange: (next: HostConfigMcpProfileV1 | undefined) => void;
+}) {
+  const updateSandbox = useCallback(
+    (
+      patch: Partial<
+        NonNullable<NonNullable<HostConfigMcpProfileV1["apps"]>["sandbox"]>
+      >,
+    ) => {
+      const base: HostConfigMcpProfileV1 = profile ?? { profileVersion: 1 };
+      const nextSandbox = {
+        ...(base.apps?.sandbox ?? {}),
+        ...patch,
+      };
+      const hasSandboxFields =
+        nextSandbox.csp !== undefined ||
+        nextSandbox.permissions !== undefined;
+      onChange({
+        ...base,
+        apps: hasSandboxFields ? { sandbox: nextSandbox } : undefined,
+      });
+    },
+    [profile, onChange],
+  );
+
+  const csp = profile?.apps?.sandbox?.csp;
+  const permissions = profile?.apps?.sandbox?.permissions;
+
+  return (
+    <div className="grid gap-3 rounded-md border border-border/30 p-3">
+      <Label className="text-xs font-medium">Sandbox (MCP Apps)</Label>
+
+      <div className="grid gap-2">
+        <Label className="text-xs">CSP mode</Label>
+        <Select
+          value={csp?.mode ?? "declared"}
+          onValueChange={(v) =>
+            updateSandbox({
+              csp: {
+                ...(csp ?? {}),
+                mode: v as "host-default" | "declared" | "relaxed",
+              },
+            })
+          }
+        >
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="declared">
+              Declared (use resource's CSP)
+            </SelectItem>
+            <SelectItem value="host-default">
+              Host default (inspector's baseline)
+            </SelectItem>
+            <SelectItem value="relaxed">Relaxed (dev only)</SelectItem>
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">
+          restrictTo intersects with the baseline; deny always wins. Below
+          take effect in every mode.
+        </p>
+      </div>
+
+      <McpProfileCspDomainSetEditor
+        label="restrictTo (intersect with baseline)"
+        value={csp?.restrictTo}
+        onChange={(restrictTo) =>
+          updateSandbox({ csp: { ...(csp ?? {}), restrictTo } })
+        }
+      />
+      <McpProfileCspDomainSetEditor
+        label="deny (always blocked)"
+        value={csp?.deny}
+        onChange={(deny) =>
+          updateSandbox({ csp: { ...(csp ?? {}), deny } })
+        }
+      />
+
+      <Separator />
+
+      <div className="grid gap-2">
+        <Label className="text-xs">Permissions mode</Label>
+        <Select
+          value={permissions?.mode ?? "resource-declared"}
+          onValueChange={(v) =>
+            updateSandbox({
+              permissions: {
+                ...(permissions ?? {}),
+                mode: v as "resource-declared" | "deny-all" | "custom",
+              },
+            })
+          }
+        >
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="resource-declared">
+              Resource-declared (default)
+            </SelectItem>
+            <SelectItem value="deny-all">Deny all</SelectItem>
+            <SelectItem value="custom">Custom allow/deny</SelectItem>
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">
+          Resource declaration is the ceiling — host can never grant a
+          permission the resource didn't request.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Single editor for one CspDomainSet (four parallel directive lists).
+ * One textarea per directive — JSON-array style — keeps the surface lean
+ * while exposing all four directives the spec defines.
+ */
+function McpProfileCspDomainSetEditor({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: { connectDomains?: string[]; resourceDomains?: string[]; frameDomains?: string[]; baseUriDomains?: string[] } | undefined;
+  onChange: (
+    next:
+      | {
+          connectDomains?: string[];
+          resourceDomains?: string[];
+          frameDomains?: string[];
+          baseUriDomains?: string[];
+        }
+      | undefined,
+  ) => void;
+}) {
+  const directives: Array<{
+    key: "connectDomains" | "resourceDomains" | "frameDomains" | "baseUriDomains";
+    placeholder: string;
+  }> = [
+    { key: "connectDomains", placeholder: "https://api.example.com" },
+    { key: "resourceDomains", placeholder: "https://cdn.example.com" },
+    { key: "frameDomains", placeholder: "https://player.example.com" },
+    { key: "baseUriDomains", placeholder: "https://example.com" },
+  ];
+
+  const updateDirective = (
+    key: typeof directives[number]["key"],
+    raw: string,
+  ) => {
+    const items = raw
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter((s) => s !== "");
+    const nextValue = { ...(value ?? {}) };
+    if (items.length === 0) {
+      delete nextValue[key];
+    } else {
+      nextValue[key] = items;
+    }
+    // Drop the whole set when every directive is empty so undefined
+    // round-trips cleanly through the backend canonicalizer (it
+    // distinguishes undefined from `{}` for hash purposes).
+    const hasAny = directives.some((d) => {
+      const list = nextValue[d.key];
+      return Array.isArray(list) && list.length > 0;
+    });
+    onChange(hasAny ? nextValue : undefined);
+  };
+
+  return (
+    <div className="grid gap-2">
+      <Label className="text-xs">{label}</Label>
+      {directives.map((d) => (
+        <Textarea
+          key={d.key}
+          rows={2}
+          className="font-mono text-xs"
+          placeholder={`${d.key}\n  ${d.placeholder}`}
+          value={(value?.[d.key] ?? []).join("\n")}
+          onChange={(e) => updateDirective(d.key, e.target.value)}
+        />
+      ))}
     </div>
   );
 }
