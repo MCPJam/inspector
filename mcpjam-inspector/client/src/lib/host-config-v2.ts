@@ -177,11 +177,19 @@ export function resolveEffectiveHostCapabilities(args: {
   hostStyle: HostStyleId | null | undefined;
   hostCapabilitiesOverride?: Record<string, unknown>;
 }): Omit<McpUiHostCapabilities, "sandbox"> {
-  if (args.hostCapabilitiesOverride) {
-    return args.hostCapabilitiesOverride as Omit<
-      McpUiHostCapabilities,
-      "sandbox"
-    >;
+  // `!== undefined` (not truthy-check): `{}` is a meaningful override
+  // ("advertise nothing") and must take the strip-then-return path, not
+  // silently fall through to the preset.
+  if (args.hostCapabilitiesOverride !== undefined) {
+    // Strip `sandbox` defensively: the JSON editor doesn't prevent users
+    // from typing it in, and leaking a static sandbox blob into the
+    // advertised handshake would violate the per-resource sandbox rule
+    // (SEP-1865 — sandbox is approved per UI resource at runtime, not as
+    // a vendor trait). Matches the return-type contract.
+    const { sandbox: _sandbox, ...rest } = args.hostCapabilitiesOverride as {
+      sandbox?: unknown;
+    } & Record<string, unknown>;
+    return rest as Omit<McpUiHostCapabilities, "sandbox">;
   }
   return getHostCapabilitiesForStyle(args.hostStyle);
 }

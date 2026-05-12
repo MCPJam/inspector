@@ -3,6 +3,7 @@ import {
   emptyHostConfigInputV2,
   hostConfigDtoToInput,
   hostConfigInputsEqual,
+  resolveEffectiveHostCapabilities,
   type HostConfigDtoV2,
   type HostConfigInputV2,
 } from "../host-config-v2";
@@ -269,5 +270,43 @@ describe("hostConfigDtoToInput", () => {
     };
     const input = hostConfigDtoToInput(dto);
     expect(input.hostCapabilitiesOverride).toBeUndefined();
+  });
+});
+
+describe("resolveEffectiveHostCapabilities", () => {
+  it("strips sandbox from the override before returning", () => {
+    // SEP-1865: sandbox is approved per UI resource at runtime, not a
+    // vendor trait. If a user pastes sandbox into the JSON editor, it
+    // MUST NOT leak into the advertised hostCapabilities blob.
+    const resolved = resolveEffectiveHostCapabilities({
+      hostStyle: "claude",
+      hostCapabilitiesOverride: {
+        serverTools: { listChanged: true },
+        sandbox: { permissions: { camera: {} } },
+      },
+    });
+    expect(resolved).not.toHaveProperty("sandbox");
+    // Sibling fields survive — sandbox stripping must be surgical.
+    expect(resolved).toEqual({ serverTools: { listChanged: true } });
+  });
+
+  it("returns an empty {} override as 'advertise nothing' (not preset)", () => {
+    // The override is explicitly the empty object — must hash distinctly
+    // from undefined (which would fall through to the host style preset).
+    const resolved = resolveEffectiveHostCapabilities({
+      hostStyle: "claude",
+      hostCapabilitiesOverride: {},
+    });
+    expect(resolved).toEqual({});
+  });
+
+  it("falls back to the host style preset when no override is set", () => {
+    const resolved = resolveEffectiveHostCapabilities({
+      hostStyle: "claude",
+      hostCapabilitiesOverride: undefined,
+    });
+    // Claude preset advertises message; sentinel that we picked the
+    // preset rather than the spec-default {}.
+    expect(resolved).toHaveProperty("message");
   });
 });

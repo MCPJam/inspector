@@ -99,6 +99,7 @@ import {
   ChatboxHostStyleProvider,
   ChatboxHostThemeProvider,
 } from "@/contexts/chatbox-host-style-context";
+import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-host-capabilities-override-context";
 import { useComposerOnboarding } from "@/hooks/use-composer-onboarding";
 import { useDebouncedXRayPayload } from "@/hooks/use-debounced-x-ray-payload";
 import { useModelSelectorLayoutLock } from "@/hooks/use-model-selector-layout-lock";
@@ -446,6 +447,9 @@ export function PlaygroundMain({
   // Host chat background: actual chat area colors from each host's UI
   // (separate from the 76 MCP spec widget design tokens)
   const hostStyle = usePreferencesStore((s) => s.hostStyle);
+  const hostCapabilitiesOverride = usePreferencesStore(
+    (s) => s.hostCapabilitiesOverride
+  );
   const globalThemeMode = usePreferencesStore(
     (s) => s.themeMode
   ) as ThreadThemeMode;
