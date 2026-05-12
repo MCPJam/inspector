@@ -40,6 +40,7 @@ export function injectOpenAICompat(
     theme?: string;
     viewMode?: string;
     viewParams?: Record<string, unknown>;
+    useLocalStorageWidgetState?: boolean;
   }
 ): string {
   if (html.includes('id="openai-compat-config"')) {
@@ -54,6 +55,7 @@ export function injectOpenAICompat(
     theme: widgetData.theme ?? "dark",
     viewMode: widgetData.viewMode ?? "inline",
     viewParams: widgetData.viewParams ?? {},
+    useLocalStorageWidgetState: widgetData.useLocalStorageWidgetState ?? false,
   });
 
   const configScript = `<script type="application/json" id="openai-compat-config">${configJson}</script>`;
