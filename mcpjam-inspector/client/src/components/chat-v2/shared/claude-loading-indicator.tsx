@@ -43,9 +43,9 @@ function ClaudeSvg({
       viewBox={viewBox}
       className={className}
       preserveAspectRatio={preserveAspectRatio}
-      style={hidden ? { ...style, display: "none" } : style}
+      style={style}
       data-testid={testId}
-      aria-hidden={hidden || undefined}
+      {...(hidden ? { hidden: true } : {})}
     >
       <path d={pathData} />
     </svg>
