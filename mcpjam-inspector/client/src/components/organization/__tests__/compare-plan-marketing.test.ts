@@ -80,4 +80,25 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
       emphasize: true,
     });
   });
+
+  it("advertises unlimited servers per project across every tier (matches backend entitlement)", () => {
+    const orgProjects = COMPARE_PLAN_MARKETING_SECTIONS.find(
+      (s) => s.title === "Organization & projects",
+    );
+    const serversRow = orgProjects?.rows.find(
+      (r) => r.label === "Servers per project",
+    );
+
+    expect(serversRow?.free).toEqual({ kind: "text", text: "Unlimited" });
+    expect(serversRow?.team).toEqual({
+      kind: "text",
+      text: "Unlimited",
+      emphasize: true,
+    });
+    expect(serversRow?.enterprise).toEqual({
+      kind: "text",
+      text: "Unlimited",
+      emphasize: true,
+    });
+  });
 });
