@@ -16,6 +16,7 @@ import {
   useAiProviderKeys,
   type ProviderTokens,
 } from "@/hooks/use-ai-provider-keys";
+import { useCustomProviders } from "@/hooks/use-custom-providers";
 import { cn } from "@/lib/utils";
 import { ModelDefinition, isMCPJamProvidedModel } from "@/shared/types";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
@@ -102,7 +103,7 @@ const validateExpectedToolCalls = (toolCalls: ExpectedToolCall[]): boolean => {
 };
 
 function getFirstPromptTurn(
-  promptTurns: PromptTurn[] | undefined,
+  promptTurns: PromptTurn[] | undefined
 ): PromptTurn | undefined {
   return Array.isArray(promptTurns) && promptTurns.length > 0
     ? promptTurns[0]
@@ -110,7 +111,7 @@ function getFirstPromptTurn(
 }
 
 function promptTurnsRepresentNegativeCase(
-  promptTurns: PromptTurn[] | undefined,
+  promptTurns: PromptTurn[] | undefined
 ): boolean {
   return (
     Array.isArray(promptTurns) &&
@@ -121,7 +122,7 @@ function promptTurnsRepresentNegativeCase(
 
 function mapGeneratedTemplate(
   test: GeneratedEvalTestCase,
-  index: number,
+  index: number
 ): TestTemplate {
   const promptTurns =
     Array.isArray(test.promptTurns) && test.promptTurns.length > 0
@@ -136,8 +137,8 @@ function mapGeneratedTemplate(
     expectedToolCalls: firstTurn?.expectedToolCalls
       ? firstTurn.expectedToolCalls
       : Array.isArray(test.expectedToolCalls)
-        ? test.expectedToolCalls
-        : [],
+      ? test.expectedToolCalls
+      : [],
     isNegativeTest:
       test.isNegativeTest === true ||
       promptTurnsRepresentNegativeCase(promptTurns),
@@ -172,6 +173,7 @@ export function EvalRunner({
   const { getAccessToken } = useAuth();
   const appState = useSharedAppState();
   const { getToken, hasToken } = useAiProviderKeys();
+  const { customProviders, getCustomProviderByName } = useCustomProviders();
 
   // Initialize with preselected server if provided
   const [selectedServers, setSelectedServers] = useState<string[]>(() => {
@@ -187,7 +189,7 @@ export function EvalRunner({
   const [modelTab, setModelTab] = useState<"mcpjam" | "yours">("mcpjam");
   // Auto-name suite after server if preselected
   const [suiteName, setSuiteName] = useState(
-    hasPreselectedServer ? preselectedServer : "",
+    hasPreselectedServer ? preselectedServer : ""
   );
   const [suiteDescription, setSuiteDescription] = useState("");
   const [showNameError, setShowNameError] = useState(false);
@@ -196,20 +198,20 @@ export function EvalRunner({
 
   // Pass/fail criteria state
   const [minimumPassRate, setMinimumPassRate] = useState<number>(
-    DEFAULTS.MIN_PASS_RATE,
+    DEFAULTS.MIN_PASS_RATE
   );
 
   const connectedServers = useMemo(
     () =>
       Object.entries(appState.servers).filter(
-        ([, server]) => server.connectionStatus === "connected",
+        ([, server]) => server.connectionStatus === "connected"
       ),
-    [appState.servers],
+    [appState.servers]
   );
 
   const connectedServerNames = useMemo(
     () => new Set(connectedServers.map(([name]) => name)),
-    [connectedServers],
+    [connectedServers]
   );
 
   useEffect(() => {
@@ -247,7 +249,7 @@ export function EvalRunner({
 
     if (savedPreferences.servers?.length) {
       const filtered = savedPreferences.servers.filter((server) =>
-        connectedServerNames.has(server),
+        connectedServerNames.has(server)
       );
       if (filtered.length) {
         setSelectedServers(filtered);
@@ -266,7 +268,7 @@ export function EvalRunner({
     // Suite defaultConfig takes precedence over stored preferences when present
     if (defaultModelId) {
       const suiteDefault = availableModels.find(
-        (m) => String(m.id) === defaultModelId,
+        (m) => String(m.id) === defaultModelId
       );
       if (suiteDefault) {
         setSelectedModels([suiteDefault]);
@@ -277,7 +279,7 @@ export function EvalRunner({
 
     if (savedPreferences?.modelIds && savedPreferences.modelIds.length > 0) {
       const matches = availableModels.filter((model) =>
-        savedPreferences.modelIds.includes(model.id),
+        savedPreferences.modelIds.includes(model.id)
       );
       if (matches.length > 0) {
         setSelectedModels(matches);
@@ -285,7 +287,12 @@ export function EvalRunner({
     }
 
     setHasRestoredPreferences(true);
-  }, [availableModels, savedPreferences, hasRestoredPreferences, defaultModelId]);
+  }, [
+    availableModels,
+    savedPreferences,
+    hasRestoredPreferences,
+    defaultModelId,
+  ]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -299,7 +306,7 @@ export function EvalRunner({
       };
       localStorage.setItem(
         STORAGE_KEYS.EVAL_RUNNER_PREFERENCES,
-        JSON.stringify(payload),
+        JSON.stringify(payload)
       );
     } catch (error) {
       console.warn("Failed to persist eval runner preferences", error);
@@ -338,14 +345,19 @@ export function EvalRunner({
 
   const validTestTemplates = useMemo(
     () => testTemplates.filter((template) => template.query.trim().length > 0),
-    [testTemplates],
+    [testTemplates]
   );
 
   const stepCompletion = useMemo(() => {
     // Check that all selected models have credentials
     const allModelsHaveCredentials = selectedModels.every((model) => {
       const isJam = isMCPJamProvidedModel(model.id);
-      return isJam || hasToken(model.provider as keyof ProviderTokens);
+      if (isJam) return true;
+      if (model.provider === "custom" && model.customProviderName) {
+        const cp = getCustomProviderByName(model.customProviderName);
+        return Boolean(cp?.apiKey);
+      }
+      return hasToken(model.provider as keyof ProviderTokens);
     });
 
     // Check if all valid test templates are properly configured
@@ -368,7 +380,13 @@ export function EvalRunner({
       model: selectedModels.length > 0 && allModelsHaveCredentials,
       tests: validTestTemplates.length > 0 && allTestsAreValid,
     };
-  }, [selectedServers, selectedModels, validTestTemplates, hasToken]);
+  }, [
+    selectedServers,
+    selectedModels,
+    validTestTemplates,
+    hasToken,
+    getCustomProviderByName,
+  ]);
 
   const highestAvailableStep = useMemo(() => {
     if (!stepCompletion.servers) return 0;
@@ -427,7 +445,7 @@ export function EvalRunner({
   const handleUpdateTestTemplate = <K extends keyof TestTemplate>(
     index: number,
     field: K,
-    value: TestTemplate[K],
+    value: TestTemplate[K]
   ) => {
     setTestTemplates((prev) => {
       const next = [...prev];
@@ -503,13 +521,13 @@ export function EvalRunner({
         setTestTemplates(generatedTemplates);
         setCurrentStep(2);
         toast.success(
-          `Generated ${generatedTemplates.length} test template(s).`,
+          `Generated ${generatedTemplates.length} test template(s).`
         );
       }
     } catch (error) {
       console.error("Failed to generate tests:", error);
       toast.error(
-        getBillingErrorMessage(error, "Failed to generate test cases"),
+        getBillingErrorMessage(error, "Failed to generate test cases")
       );
     } finally {
       setIsGenerating(false);
@@ -555,13 +573,13 @@ export function EvalRunner({
         setTestTemplates((prev) => [...prev, ...generatedNegativeTemplates]);
         setCurrentStep(2);
         toast.success(
-          `Generated ${generatedNegativeTemplates.length} negative test template(s).`,
+          `Generated ${generatedNegativeTemplates.length} negative test template(s).`
         );
       }
     } catch (error) {
       console.error("Failed to generate negative tests:", error);
       toast.error(
-        getBillingErrorMessage(error, "Failed to generate negative test cases"),
+        getBillingErrorMessage(error, "Failed to generate negative test cases")
       );
     } finally {
       setIsGeneratingNegativeTests(false);
@@ -599,17 +617,32 @@ export function EvalRunner({
 
     // Collect API keys for all selected models
     const modelApiKeys: Record<string, string> = {};
+    const usesCustomProviders = selectedModels.some(
+      (m) => m.provider === "custom"
+    );
     for (const model of selectedModels) {
       if (!isMCPJamProvidedModel(model.id)) {
-        const key = getToken(model.provider as keyof ProviderTokens);
-        if (!key) {
-          toast.error(
-            `Please configure your ${model.provider} API key in Settings`,
-          );
-          setCurrentStep(1);
-          return;
+        if (model.provider === "custom" && model.customProviderName) {
+          const cp = getCustomProviderByName(model.customProviderName);
+          if (!cp?.apiKey) {
+            toast.error(
+              `Please configure an API key for custom provider "${model.customProviderName}" in Settings`
+            );
+            setCurrentStep(1);
+            return;
+          }
+          // Custom provider keys are sent via the customProviders config
+        } else {
+          const key = getToken(model.provider as keyof ProviderTokens);
+          if (!key) {
+            toast.error(
+              `Please configure your ${model.provider} API key in Settings`
+            );
+            setCurrentStep(1);
+            return;
+          }
+          modelApiKeys[model.provider] = key;
         }
-        modelApiKeys[model.provider] = key;
       }
     }
 
@@ -672,6 +705,15 @@ export function EvalRunner({
         tests: expandedTests,
         serverIds: selectedServers,
         modelApiKeys,
+        customProviders: usesCustomProviders
+          ? customProviders.map((cp) => ({
+              name: cp.name,
+              protocol: cp.protocol,
+              baseUrl: cp.baseUrl,
+              modelIds: cp.modelIds,
+              ...(cp.apiKey ? { apiKey: cp.apiKey } : {}),
+            }))
+          : undefined,
         convexAuthToken: accessToken,
         passCriteria: {
           minimumPassRate: minimumPassRate,
@@ -782,7 +824,7 @@ export function EvalRunner({
               disabled={!isSelectable}
               className={cn(
                 "flex flex-col items-center gap-2 transition",
-                !isSelectable && "cursor-not-allowed opacity-60",
+                !isSelectable && "cursor-not-allowed opacity-60"
               )}
             >
               <span
@@ -795,7 +837,7 @@ export function EvalRunner({
                     "border-primary bg-primary/10 text-primary",
                   !isActive &&
                     !isCompleted &&
-                    "border-border text-muted-foreground",
+                    "border-border text-muted-foreground"
                 )}
               >
                 {index + 1}
@@ -803,7 +845,7 @@ export function EvalRunner({
               <span
                 className={cn(
                   "text-xs leading-tight",
-                  isActive ? "text-foreground" : "text-muted-foreground",
+                  isActive ? "text-foreground" : "text-muted-foreground"
                 )}
               >
                 {step.title}
@@ -836,12 +878,12 @@ export function EvalRunner({
       const hasInvalidPositiveTests = validTestTemplates.some(
         (template) =>
           !template.isNegativeTest &&
-          !validateExpectedToolCalls(template.expectedToolCalls),
+          !validateExpectedToolCalls(template.expectedToolCalls)
       );
       const hasInvalidNegativeTests = validTestTemplates.some(
         (template) =>
           template.isNegativeTest &&
-          (!template.scenario?.trim() || !template.query.trim()),
+          (!template.scenario?.trim() || !template.query.trim())
       );
 
       if (hasInvalidPositiveTests) {
@@ -881,7 +923,7 @@ export function EvalRunner({
     <div
       className={cn(
         "mx-auto flex w-full flex-col gap-8 pb-10 pt-4",
-        inline ? "max-w-none px-4 sm:px-6 md:px-12 lg:px-32" : "max-w-3xl px-4",
+        inline ? "max-w-none px-4 sm:px-6 md:px-12 lg:px-32" : "max-w-3xl px-4"
       )}
     >
       <div className="flex flex-wrap items-center gap-4">
@@ -935,7 +977,7 @@ export function EvalRunner({
                           platform: detectPlatform(),
                           environment: detectEnvironment(),
                           step: currentStep,
-                        },
+                        }
                       );
                       void handleSubmit();
                     }
@@ -946,7 +988,7 @@ export function EvalRunner({
                   }
                   className={cn(
                     "justify-center gap-2",
-                    !nextDisabled && "shadow-sm",
+                    !nextDisabled && "shadow-sm"
                   )}
                 >
                   {currentStep === WIZARD_STEPS.length - 1 ? "Start" : "Next"}

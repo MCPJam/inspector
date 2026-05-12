@@ -9,11 +9,11 @@ const createLlmModelMock = vi.hoisted(() =>
       _modelDefinition?: unknown,
       _apiKey?: unknown,
       _baseUrls?: unknown,
-      _customProviders?: unknown,
+      _customProviders?: unknown
     ) => ({
       id: "mock-model",
-    }),
-  ),
+    })
+  )
 );
 
 vi.mock("ai", () => ({
@@ -23,8 +23,9 @@ vi.mock("ai", () => ({
 }));
 
 vi.mock("@mcpjam/sdk", async () => {
-  const actual =
-    await vi.importActual<typeof import("@mcpjam/sdk")>("@mcpjam/sdk");
+  const actual = await vi.importActual<typeof import("@mcpjam/sdk")>(
+    "@mcpjam/sdk"
+  );
   return {
     ...actual,
     finalizePassedForEval: ({ matchPassed }: { matchPassed: boolean }) =>
@@ -37,7 +38,7 @@ vi.mock("../../../utils/chat-helpers", () => ({
     modelDefinition: unknown,
     apiKey: unknown,
     baseUrls?: unknown,
-    customProviders?: unknown,
+    customProviders?: unknown
   ) => createLlmModelMock(modelDefinition, apiKey, baseUrls, customProviders),
 }));
 
@@ -232,7 +233,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             model: "gpt-5-mini",
             provider: "openai",
             expectedToolCalls: [],
-            promptTurns: [{ id: "turn-1", prompt: "Hello", expectedToolCalls: [] }],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
             testCaseId: "case-1",
           },
         ],
@@ -272,7 +275,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             model: "gpt-5-mini",
             provider: "openai",
             expectedToolCalls: [],
-            promptTurns: [{ id: "turn-1", prompt: "Hello", expectedToolCalls: [] }],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
             testCaseId: "case-1",
           },
         ],
@@ -294,7 +299,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       testCaseId: "case-1",
     });
 
-    expect(mcpClientManager.getToolsForAiSdk).toHaveBeenCalledWith(["server-1"]);
+    expect(mcpClientManager.getToolsForAiSdk).toHaveBeenCalledWith([
+      "server-1",
+    ]);
   });
 
   it("maps current fullStream chunks into eval stream events", async () => {
@@ -416,7 +423,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           type: "step_finish",
           usage: { inputTokens: 2, outputTokens: 3 },
         }),
-      ]),
+      ])
     );
   });
 
@@ -450,20 +457,20 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         convexAuthToken: "token",
         mcpClientManager: mcpClientManager as any,
         testCaseId: "case-1",
-      }),
+      })
     ).resolves.toBeDefined();
 
     expect(fetchMock).toHaveBeenCalledWith(
       "https://example.convex.site/stream",
       expect.objectContaining({
         method: "POST",
-      }),
+      })
     );
     const compareRequest = fetchMock.mock.calls[0]?.[1] as {
       body?: string;
     };
     expect(JSON.parse(compareRequest.body ?? "{}").model).toBe(
-      "anthropic/claude-haiku-4.5",
+      "anthropic/claude-haiku-4.5"
     );
     expect(createLlmModelMock).not.toHaveBeenCalled();
   });
@@ -497,20 +504,20 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         suiteId: "suite-1",
         runId: null,
         emit: (event) => emitted.push(event as Record<string, unknown>),
-      }),
+      })
     ).resolves.toBeDefined();
 
     expect(fetchMock).toHaveBeenCalledWith(
       "https://example.convex.site/stream",
       expect.objectContaining({
         method: "POST",
-      }),
+      })
     );
     const streamRequest = fetchMock.mock.calls[0]?.[1] as {
       body?: string;
     };
     expect(JSON.parse(streamRequest.body ?? "{}").model).toBe(
-      "anthropic/claude-haiku-4.5",
+      "anthropic/claude-haiku-4.5"
     );
     expect(createLlmModelMock).not.toHaveBeenCalled();
     expect(emitted).toEqual(
@@ -519,7 +526,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           type: "text_delta",
           content: "Done",
         }),
-      ]),
+      ])
     );
   });
 
@@ -576,7 +583,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           baseUrl: "https://models.example/v1",
           modelIds: ["llama-3"],
         },
-      ],
+      ]
     );
   });
 
@@ -624,7 +631,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       }),
       "az-secret",
       { azure: "https://resource.openai.azure.com/openai" },
-      undefined,
+      undefined
     );
   });
 
@@ -671,7 +678,58 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       }),
       "",
       { ollama: "http://ollama.internal:11434" },
+      undefined
+    );
+  });
+
+  it("passes request-level customProviders to createLlmModel for custom provider models", async () => {
+    const customProviderConfigs = [
+      {
+        name: "my-proxy",
+        protocol: "openai-compatible",
+        baseUrl: "https://my-proxy-url.com",
+        modelIds: ["gpt-5.2"],
+        apiKey: "custom-key-123",
+      },
+    ];
+
+    await runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: null,
+      config: {
+        tests: [
+          {
+            title: "Custom provider test",
+            query: "Hello",
+            runs: 1,
+            model: "custom:my-proxy:gpt-5.2",
+            provider: "custom",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-1",
+          },
+        ],
+        environment: { servers: ["srv-1"] },
+      },
+      customProviders: customProviderConfigs,
+      convexClient: convexClient as any,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: mcpClientManager as any,
+      testCaseId: "case-1",
+    });
+
+    expect(createLlmModelMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "custom:my-proxy:gpt-5.2",
+        provider: "custom",
+        customProviderName: "my-proxy",
+      }),
+      "",
       undefined,
+      customProviderConfigs
     );
   });
 });

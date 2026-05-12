@@ -56,6 +56,13 @@ type RunEvalsRequest = EvalRequestWithServers & {
   tests: Array<Record<string, unknown>>;
   storageServerIds?: string[];
   modelApiKeys?: Record<string, string>;
+  customProviders?: Array<{
+    name: string;
+    protocol: string;
+    baseUrl: string;
+    modelIds: string[];
+    apiKey?: string;
+  }>;
   convexAuthToken?: string | null;
   notes?: string;
   passCriteria?: {
@@ -149,9 +156,9 @@ export function buildEvalConvexAuthPayload(convexAuthToken: string) {
 }
 
 function mergeHostedServerBatch<
-  T extends EvalRequestWithServers & { convexAuthToken?: string | null },
+  T extends EvalRequestWithServers & { convexAuthToken?: string | null }
 >(
-  request: T,
+  request: T
 ): Omit<T, "serverIds" | "convexAuthToken"> &
   ReturnType<typeof buildServerBatchRequest> {
   const hostedBatch = buildServerBatchRequest(request.serverIds);
@@ -169,7 +176,7 @@ function mergeHostedServerBatch<
 
 async function postEvalRequest<TResponse>(
   path: string,
-  payload: JsonRecord,
+  payload: JsonRecord
 ): Promise<TResponse> {
   const response = await authFetch(path, {
     method: "POST",
@@ -197,8 +204,8 @@ async function postEvalRequest<TResponse>(
       typeof errorBody?.message === "string"
         ? errorBody.message
         : typeof errorBody?.error === "string"
-          ? errorBody.error
-          : `Request failed (${response.status})`;
+        ? errorBody.error
+        : `Request failed (${response.status})`;
     const limitKind = (errorBody as { limitKind?: unknown } | null | undefined)
       ?.limitKind;
     notifyMCPJamLimitError({
@@ -217,7 +224,7 @@ async function postEvalRequest<TResponse>(
 }
 
 export async function listEvalTools(
-  request: EvalRequestWithServers,
+  request: EvalRequestWithServers
 ): Promise<ToolListResponse> {
   if (request.serverIds.length === 0) {
     return { tools: [] };
@@ -236,7 +243,7 @@ export async function listEvalTools(
             ...tool,
             serverId: serverNameOrId,
           }));
-        }),
+        })
       );
 
       return {
@@ -260,52 +267,52 @@ export async function runEvals(request: RunEvalsRequest): Promise<any> {
 }
 
 export async function runEvalTestCase(
-  request: RunTestCaseRequest,
+  request: RunTestCaseRequest
 ): Promise<any> {
   return runByMode({
     local: () =>
       postEvalRequest(
         EVALS_API_ENDPOINTS.local.runTestCase,
-        request as JsonRecord,
+        request as JsonRecord
       ),
     hosted: () =>
       postEvalRequest(
         EVALS_API_ENDPOINTS.hosted.runTestCase,
-        mergeHostedServerBatch(request) as JsonRecord,
+        mergeHostedServerBatch(request) as JsonRecord
       ),
   });
 }
 
 export async function generateEvalTests(
-  request: GenerateTestsRequest,
+  request: GenerateTestsRequest
 ): Promise<GenerateEvalTestsResponse> {
   return runByMode({
     local: () =>
       postEvalRequest(
         EVALS_API_ENDPOINTS.local.generateTests,
-        request as JsonRecord,
+        request as JsonRecord
       ),
     hosted: () =>
       postEvalRequest(
         EVALS_API_ENDPOINTS.hosted.generateTests,
-        mergeHostedServerBatch(request) as JsonRecord,
+        mergeHostedServerBatch(request) as JsonRecord
       ),
   });
 }
 
 export async function generateNegativeEvalTests(
-  request: GenerateTestsRequest,
+  request: GenerateTestsRequest
 ): Promise<GenerateEvalTestsResponse> {
   return runByMode({
     local: () =>
       postEvalRequest(
         EVALS_API_ENDPOINTS.local.generateNegativeTests,
-        request as JsonRecord,
+        request as JsonRecord
       ),
     hosted: () =>
       postEvalRequest(
         EVALS_API_ENDPOINTS.hosted.generateNegativeTests,
-        mergeHostedServerBatch(request) as JsonRecord,
+        mergeHostedServerBatch(request) as JsonRecord
       ),
   });
 }
@@ -327,7 +334,7 @@ export type StartTraceRepairParams =
     };
 
 export async function startTraceRepair(
-  params: StartTraceRepairParams,
+  params: StartTraceRepairParams
 ): Promise<{ success: boolean; jobId: string; existing?: boolean }> {
   return runByMode({
     local: () =>
@@ -359,14 +366,14 @@ export async function stopTraceRepair(jobId: string): Promise<void> {
 export async function streamEvalTestCase(
   request: RunTestCaseRequest,
   onEvent: (event: EvalStreamEvent) => void,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<void> {
   const endpoint = isHostedMode()
     ? EVALS_API_ENDPOINTS.hosted.streamTestCase
     : EVALS_API_ENDPOINTS.local.streamTestCase;
 
   const payload = isHostedMode()
-    ? mergeHostedServerBatch(request) as JsonRecord
+    ? (mergeHostedServerBatch(request) as JsonRecord)
     : (request as JsonRecord);
 
   const response = await authFetch(endpoint, {

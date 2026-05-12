@@ -41,7 +41,7 @@ const promptTurnSchema = z.object({
     z.object({
       toolName: z.string(),
       arguments: z.record(z.string(), z.any()),
-    }),
+    })
   ),
   expectedOutput: z.string().optional(),
 });
@@ -62,7 +62,7 @@ export const RunEvalsRequestSchema = z.object({
         z.object({
           toolName: z.string(),
           arguments: z.record(z.string(), z.any()),
-        }),
+        })
       ),
       isNegativeTest: z.boolean().optional(),
       scenario: z.string().optional(),
@@ -76,7 +76,7 @@ export const RunEvalsRequestSchema = z.object({
         })
         .passthrough()
         .optional(),
-    }),
+    })
   ),
   serverIds: z
     .array(z.string())
@@ -86,6 +86,17 @@ export const RunEvalsRequestSchema = z.object({
   accessVersion: z.number().int().nonnegative().optional(),
   storageServerIds: z.array(z.string()).optional(),
   modelApiKeys: z.record(z.string(), z.string()).optional(),
+  customProviders: z
+    .array(
+      z.object({
+        name: z.string(),
+        protocol: z.string(),
+        baseUrl: z.string(),
+        modelIds: z.array(z.string()),
+        apiKey: z.string().optional(),
+      })
+    )
+    .optional(),
   convexAuthToken: z.string(),
   notes: z.string().optional(),
   passCriteria: z
@@ -157,7 +168,7 @@ export const MAX_TOTAL_LLM_CALLS = 300;
 
 export function assertSuiteRunWithinCap(
   request: RunEvalsRequest,
-  configCount = 1,
+  configCount = 1
 ) {
   const override = request.iterationOverride;
   // Each iteration issues one model call per prompt turn; counting only `runs`
@@ -173,7 +184,7 @@ export function assertSuiteRunWithinCap(
       400,
       ErrorCode.VALIDATION_ERROR,
       `Suite run would issue ${totalCalls} LLM calls, above the cap of ${MAX_TOTAL_LLM_CALLS}. Reduce iterations or test count.`,
-      { totalCalls, cap: MAX_TOTAL_LLM_CALLS },
+      { totalCalls, cap: MAX_TOTAL_LLM_CALLS }
     );
   }
 }
@@ -188,7 +199,7 @@ export function assertSuiteRunWithinCap(
 export function assertTestCaseRunWithinCap(
   request: RunTestCaseRequest,
   configCount = 1,
-  resolved?: { promptTurnsLength?: number },
+  resolved?: { promptTurnsLength?: number }
 ) {
   const iterations = request.testCaseOverrides?.runs ?? 1;
   const overrideTurns = request.testCaseOverrides?.promptTurns?.length;
@@ -200,7 +211,7 @@ export function assertTestCaseRunWithinCap(
       400,
       ErrorCode.VALIDATION_ERROR,
       `Test case run would issue ${totalCalls} LLM calls, above the cap of ${MAX_TOTAL_LLM_CALLS}.`,
-      { totalCalls, cap: MAX_TOTAL_LLM_CALLS },
+      { totalCalls, cap: MAX_TOTAL_LLM_CALLS }
     );
   }
 }
@@ -244,7 +255,7 @@ function createConvexClients(convexAuthToken: string) {
 
 export function resolveServerIdsOrThrow(
   requestedIds: string[],
-  clientManager: MCPClientManager,
+  clientManager: MCPClientManager
 ): string[] {
   const available = clientManager.listServers();
   const resolved: string[] = [];
@@ -258,7 +269,7 @@ export function resolveServerIdsOrThrow(
       throw new WebRouteError(
         404,
         ErrorCode.NOT_FOUND,
-        `Server '${requestedId}' not found`,
+        `Server '${requestedId}' not found`
       );
     }
 
@@ -287,7 +298,7 @@ function normalizeForComparison(obj: any): any {
 export function filterAndRemapReplayConfigs(
   replayConfigs: MCPServerReplayConfig[],
   resolvedServerIds: string[],
-  persistedServerIds: string[],
+  persistedServerIds: string[]
 ): MCPServerReplayConfig[] {
   const persistedIdByResolvedId = new Map<string, string>();
 
@@ -344,7 +355,7 @@ function buildPersistedSuiteEnvironment(args: {
 
 export async function runEvalsWithManager(
   clientManager: MCPClientManager,
-  request: RunEvalsWithManagerRequest,
+  request: RunEvalsWithManagerRequest
 ) {
   const {
     suiteId,
@@ -358,6 +369,7 @@ export async function runEvalsWithManager(
     accessVersion,
     storageServerIds,
     modelApiKeys,
+    customProviders,
     orgModelConfig,
     convexAuthToken,
     notes,
@@ -370,14 +382,14 @@ export async function runEvalsWithManager(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "Provide suiteId or suiteName",
+      "Provide suiteId or suiteName"
     );
   }
   if (!suiteId && !projectId) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "projectId is required when creating a new eval suite",
+      "projectId is required when creating a new eval suite"
     );
   }
 
@@ -400,7 +412,7 @@ export async function runEvalsWithManager(
       resolvedServerIds,
       {
         logPrefix: "evals",
-      },
+      }
     );
 
   let resolvedSuiteId = suiteId ?? null;
@@ -460,109 +472,109 @@ export async function runEvalsWithManager(
     if (suiteRerun) {
       // skip upsert
     } else {
-    const existingTestCases = await convexClient.query(
-      "testSuites:listTestCases" as any,
-      { suiteId: resolvedSuiteId },
-    );
-
-    for (const [, testCaseData] of testCaseMap.entries()) {
-      const existingTestCase = existingTestCases?.find(
-        (tc: any) =>
-          tc.title === testCaseData.title && tc.query === testCaseData.query,
+      const existingTestCases = await convexClient.query(
+        "testSuites:listTestCases" as any,
+        { suiteId: resolvedSuiteId }
       );
 
-      if (existingTestCase) {
-        const normalize = (val: any) =>
-          val === undefined || val === null ? null : val;
+      for (const [, testCaseData] of testCaseMap.entries()) {
+        const existingTestCase = existingTestCases?.find(
+          (tc: any) =>
+            tc.title === testCaseData.title && tc.query === testCaseData.query
+        );
 
-        const modelsChanged =
-          JSON.stringify(
-            normalizeForComparison(existingTestCase.models || []),
-          ) !==
-          JSON.stringify(normalizeForComparison(testCaseData.models || []));
-        const runsChanged =
-          normalize(existingTestCase.runs) !== normalize(testCaseData.runs);
-        const expectedToolCallsChanged =
-          JSON.stringify(
-            normalizeForComparison(existingTestCase.expectedToolCalls || []),
-          ) !==
-          JSON.stringify(
-            normalizeForComparison(testCaseData.expectedToolCalls || []),
-          );
-        const isNegativeTestChanged =
-          normalize(existingTestCase.isNegativeTest) !==
-          normalize(testCaseData.isNegativeTest);
-        const scenarioChanged =
-          normalize(existingTestCase.scenario) !==
-          normalize(testCaseData.scenario);
-        const expectedOutputChanged =
-          normalize(existingTestCase.expectedOutput) !==
-          normalize(testCaseData.expectedOutput);
-        const promptTurnsChanged =
-          JSON.stringify(
-            normalizeForComparison(existingTestCase.promptTurns || []),
-          ) !==
-          JSON.stringify(
-            normalizeForComparison(testCaseData.promptTurns || []),
-          );
-        const judgeRequirementChanged =
-          normalize(existingTestCase.judgeRequirement) !==
-          normalize(testCaseData.judgeRequirement);
-        const advancedConfigChanged =
-          JSON.stringify(
-            normalizeForComparison(existingTestCase.advancedConfig),
-          ) !==
-          JSON.stringify(normalizeForComparison(testCaseData.advancedConfig));
+        if (existingTestCase) {
+          const normalize = (val: any) =>
+            val === undefined || val === null ? null : val;
 
-        const hasChanges =
-          modelsChanged ||
-          runsChanged ||
-          expectedToolCallsChanged ||
-          isNegativeTestChanged ||
-          scenarioChanged ||
-          expectedOutputChanged ||
-          promptTurnsChanged ||
-          judgeRequirementChanged ||
-          advancedConfigChanged;
+          const modelsChanged =
+            JSON.stringify(
+              normalizeForComparison(existingTestCase.models || [])
+            ) !==
+            JSON.stringify(normalizeForComparison(testCaseData.models || []));
+          const runsChanged =
+            normalize(existingTestCase.runs) !== normalize(testCaseData.runs);
+          const expectedToolCallsChanged =
+            JSON.stringify(
+              normalizeForComparison(existingTestCase.expectedToolCalls || [])
+            ) !==
+            JSON.stringify(
+              normalizeForComparison(testCaseData.expectedToolCalls || [])
+            );
+          const isNegativeTestChanged =
+            normalize(existingTestCase.isNegativeTest) !==
+            normalize(testCaseData.isNegativeTest);
+          const scenarioChanged =
+            normalize(existingTestCase.scenario) !==
+            normalize(testCaseData.scenario);
+          const expectedOutputChanged =
+            normalize(existingTestCase.expectedOutput) !==
+            normalize(testCaseData.expectedOutput);
+          const promptTurnsChanged =
+            JSON.stringify(
+              normalizeForComparison(existingTestCase.promptTurns || [])
+            ) !==
+            JSON.stringify(
+              normalizeForComparison(testCaseData.promptTurns || [])
+            );
+          const judgeRequirementChanged =
+            normalize(existingTestCase.judgeRequirement) !==
+            normalize(testCaseData.judgeRequirement);
+          const advancedConfigChanged =
+            JSON.stringify(
+              normalizeForComparison(existingTestCase.advancedConfig)
+            ) !==
+            JSON.stringify(normalizeForComparison(testCaseData.advancedConfig));
 
-        if (hasChanges) {
-          await convexClient.mutation("testSuites:updateTestCase" as any, {
-            testCaseId: existingTestCase._id,
+          const hasChanges =
+            modelsChanged ||
+            runsChanged ||
+            expectedToolCallsChanged ||
+            isNegativeTestChanged ||
+            scenarioChanged ||
+            expectedOutputChanged ||
+            promptTurnsChanged ||
+            judgeRequirementChanged ||
+            advancedConfigChanged;
+
+          if (hasChanges) {
+            await convexClient.mutation("testSuites:updateTestCase" as any, {
+              testCaseId: existingTestCase._id,
+              models: testCaseData.models,
+              runs: testCaseData.runs,
+              expectedToolCalls: sanitizeForConvexTransport(
+                testCaseData.expectedToolCalls
+              ),
+              isNegativeTest: testCaseData.isNegativeTest,
+              scenario: testCaseData.scenario,
+              expectedOutput: testCaseData.expectedOutput,
+              promptTurns: sanitizeForConvexTransport(testCaseData.promptTurns),
+              advancedConfig: sanitizeForConvexTransport(
+                testCaseData.advancedConfig
+              ),
+            });
+          }
+        } else {
+          await convexClient.mutation("testSuites:createTestCase" as any, {
+            suiteId: resolvedSuiteId,
+            title: testCaseData.title,
+            query: testCaseData.query,
             models: testCaseData.models,
             runs: testCaseData.runs,
             expectedToolCalls: sanitizeForConvexTransport(
-              testCaseData.expectedToolCalls,
+              testCaseData.expectedToolCalls
             ),
             isNegativeTest: testCaseData.isNegativeTest,
             scenario: testCaseData.scenario,
             expectedOutput: testCaseData.expectedOutput,
             promptTurns: sanitizeForConvexTransport(testCaseData.promptTurns),
+            judgeRequirement: testCaseData.judgeRequirement,
             advancedConfig: sanitizeForConvexTransport(
-              testCaseData.advancedConfig,
+              testCaseData.advancedConfig
             ),
           });
         }
-      } else {
-        await convexClient.mutation("testSuites:createTestCase" as any, {
-          suiteId: resolvedSuiteId,
-          title: testCaseData.title,
-          query: testCaseData.query,
-          models: testCaseData.models,
-          runs: testCaseData.runs,
-          expectedToolCalls: sanitizeForConvexTransport(
-            testCaseData.expectedToolCalls,
-          ),
-          isNegativeTest: testCaseData.isNegativeTest,
-          scenario: testCaseData.scenario,
-          expectedOutput: testCaseData.expectedOutput,
-          promptTurns: sanitizeForConvexTransport(testCaseData.promptTurns),
-          judgeRequirement: testCaseData.judgeRequirement,
-          advancedConfig: sanitizeForConvexTransport(
-            testCaseData.advancedConfig,
-          ),
-        });
       }
-    }
     }
   } else {
     const createdSuite = await convexClient.mutation(
@@ -573,7 +585,7 @@ export async function runEvalsWithManager(
         description: suiteDescription,
         environment: persistedEnvironment,
         defaultPassCriteria: passCriteria,
-      },
+      }
     );
 
     if (!createdSuite?._id) {
@@ -590,7 +602,7 @@ export async function runEvalsWithManager(
         models: testCaseData.models,
         runs: testCaseData.runs,
         expectedToolCalls: sanitizeForConvexTransport(
-          testCaseData.expectedToolCalls,
+          testCaseData.expectedToolCalls
         ),
         isNegativeTest: testCaseData.isNegativeTest,
         scenario: testCaseData.scenario,
@@ -616,7 +628,7 @@ export async function runEvalsWithManager(
   const replayConfigsToStore = filterAndRemapReplayConfigs(
     clientManager.getServerReplayConfigs(),
     resolvedServerIds,
-    persistedServerRefs,
+    persistedServerRefs
   );
   if (replayConfigsToStore.length > 0) {
     try {
@@ -633,8 +645,7 @@ export async function runEvalsWithManager(
   // Treat an empty client-provided map as "no keys" so org fallback still runs.
   // For reruns, projectId may not be in the request — derive it from the
   // suite record so org BYOK keeps working.
-  const hasClientKeys =
-    !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
+  const hasClientKeys = !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
   const resolvedModelApiKeys = hasClientKeys ? modelApiKeys : undefined;
   let resolvedOrgModelConfig = orgModelConfig;
   if (!resolvedModelApiKeys && !resolvedOrgModelConfig) {
@@ -644,7 +655,7 @@ export async function runEvalsWithManager(
       try {
         const suite = await convexClient.query(
           "testSuites:getTestSuite" as any,
-          { suiteId: resolvedSuiteId },
+          { suiteId: resolvedSuiteId }
         );
         if (suite?.projectId) {
           projectIdForOrgConfig = String(suite.projectId);
@@ -687,6 +698,7 @@ export async function runEvalsWithManager(
     runId,
     config,
     modelApiKeys: resolvedModelApiKeys ?? undefined,
+    customProviders,
     orgModelConfig: resolvedOrgModelConfig,
     convexClient,
     convexHttpUrl,
@@ -711,7 +723,7 @@ export type RunEvalTestCaseWithManagerOptions = {
 export async function runEvalTestCaseWithManager(
   clientManager: MCPClientManager,
   request: RunTestCaseWithManagerRequest,
-  options?: RunEvalTestCaseWithManagerOptions,
+  options?: RunEvalTestCaseWithManagerOptions
 ) {
   const {
     testCaseId,
@@ -793,7 +805,7 @@ export async function runEvalTestCaseWithManager(
           chatboxId,
           accessVersion,
           serverIds: resolvedServerIds,
-        },
+        }
       );
     } catch (error) {
       logger.warn("[evals] Failed to resolve org model config for test case", {
@@ -828,13 +840,13 @@ export async function runEvalTestCaseWithManager(
   if (expectedIterationId) {
     latestIteration = await convexClient.query(
       "testSuites:getTestIteration" as any,
-      { iterationId: expectedIterationId },
+      { iterationId: expectedIterationId }
     );
   }
   if (!latestIteration) {
     const recentIterations = await convexClient.query(
       "testSuites:listTestIterations" as any,
-      { testCaseId },
+      { testCaseId }
     );
     latestIteration = recentIterations?.[0] || null;
   }
@@ -859,18 +871,18 @@ export async function runEvalTestCaseWithManager(
 
 export async function generateEvalTestsWithManager(
   clientManager: MCPClientManager,
-  request: GenerateTestsRequest,
+  request: GenerateTestsRequest
 ) {
   const resolvedServerIds = resolveServerIdsOrThrow(
     request.serverIds,
-    clientManager,
+    clientManager
   );
   const { toolSnapshot } = await captureToolSnapshotForEvalAuthoring(
     clientManager,
     resolvedServerIds,
     {
       logPrefix: "evals.generate-tests",
-    },
+    }
   );
   const filteredTools = flattenServerToolSnapshotTools(toolSnapshot);
 
@@ -878,7 +890,7 @@ export async function generateEvalTestsWithManager(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "No tools found for selected servers",
+      "No tools found for selected servers"
     );
   }
 
@@ -890,7 +902,7 @@ export async function generateEvalTestsWithManager(
   const tests = await generateTestCases(
     toolSnapshot,
     convexHttpUrl,
-    request.convexAuthToken,
+    request.convexAuthToken
   );
 
   return {
@@ -901,18 +913,18 @@ export async function generateEvalTestsWithManager(
 
 export async function generateNegativeEvalTestsWithManager(
   clientManager: MCPClientManager,
-  request: GenerateNegativeTestsRequest,
+  request: GenerateNegativeTestsRequest
 ) {
   const resolvedServerIds = resolveServerIdsOrThrow(
     request.serverIds,
-    clientManager,
+    clientManager
   );
   const { toolSnapshot } = await captureToolSnapshotForEvalAuthoring(
     clientManager,
     resolvedServerIds,
     {
       logPrefix: "evals.generate-negative-tests",
-    },
+    }
   );
   const filteredTools = flattenServerToolSnapshotTools(toolSnapshot);
 
@@ -920,7 +932,7 @@ export async function generateNegativeEvalTestsWithManager(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "No tools found for selected servers",
+      "No tools found for selected servers"
     );
   }
 
@@ -932,7 +944,7 @@ export async function generateNegativeEvalTestsWithManager(
   const tests = await generateNegativeTestCases(
     toolSnapshot,
     convexHttpUrl,
-    request.convexAuthToken,
+    request.convexAuthToken
   );
 
   return {
@@ -948,7 +960,7 @@ export async function streamEvalTestCaseWithManager(
   options?: {
     skipLastMessageRunUpdate?: boolean;
     onStreamComplete?: () => void;
-  },
+  }
 ): Promise<ReadableStream<Uint8Array>> {
   const {
     testCaseId,
@@ -1032,7 +1044,7 @@ export async function streamEvalTestCaseWithManager(
           chatboxId,
           accessVersion,
           serverIds: resolvedServerIds,
-        },
+        }
       );
     } catch (error) {
       logger.warn(
@@ -1040,13 +1052,13 @@ export async function streamEvalTestCaseWithManager(
         {
           testCaseId,
           error: error instanceof Error ? error.message : String(error),
-        },
+        }
       );
     }
   }
 
   const tools = (await clientManager.getToolsForAiSdk(
-    resolvedServerIds,
+    resolvedServerIds
   )) as Record<string, any>;
   const encoder = new TextEncoder();
 
@@ -1085,13 +1097,13 @@ export async function streamEvalTestCaseWithManager(
         if (expectedIterationId) {
           latestIteration = await convexClient.query(
             "testSuites:getTestIteration" as any,
-            { iterationId: expectedIterationId },
+            { iterationId: expectedIterationId }
           );
         }
         if (!latestIteration) {
           const recentIterations = await convexClient.query(
             "testSuites:listTestIterations" as any,
-            { testCaseId },
+            { testCaseId }
           );
           latestIteration = recentIterations?.[0] || null;
         }
@@ -1114,7 +1126,7 @@ export async function streamEvalTestCaseWithManager(
             type: "complete",
             iterationId: expectedIterationId,
             iteration: latestIteration,
-          }),
+          })
         );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -1126,7 +1138,7 @@ export async function streamEvalTestCaseWithManager(
               error instanceof WebRouteError && error.details
                 ? JSON.stringify(error.details)
                 : undefined,
-          }),
+          })
         );
       } finally {
         try {
