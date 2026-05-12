@@ -230,7 +230,20 @@ const strictModeResponse = (c: any, path: string) =>
     410,
   );
 
-// Initialize centralized MCPJam Client Manager and wire RPC logging to SSE bus
+// Initialize centralized MCPJam Client Manager and wire RPC logging to SSE bus.
+//
+// TODO(mcpProfile): this is a process-singleton MCPClientManager with
+// no hostConfig context. The SDK now accepts `defaultClientName` /
+// `defaultClientVersion` / `defaultClientTitle` /
+// `defaultSupportedProtocolVersions` options (see SDK
+// MCPClientManagerOptions), but threading the active chatbox's
+// `mcpProfile.initialize.{clientInfo, supportedProtocolVersions}`
+// into this singleton would require per-request manager instances
+// (or per-server overrides on MCPServerConfig) — a larger
+// architectural change than this PR. Until then, this singleton uses
+// SDK defaults; per-eval-run / per-OAuth-flow managers in
+// `services/evals/route-helpers.ts` and `routes/web/auth.ts` are the
+// next-best places to plumb hostConfig context when needed.
 const mcpClientManager = new MCPClientManager(
   {},
   {

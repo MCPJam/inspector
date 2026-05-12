@@ -5,6 +5,7 @@ import {
   ChatboxHostThemeProvider,
 } from "@/contexts/chatbox-host-style-context";
 import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-host-capabilities-override-context";
+import { ChatboxMcpProfileProvider } from "@/contexts/chatbox-mcp-profile-context";
 import { getChatboxShellStyle } from "@/lib/chatbox-host-style";
 import { cn } from "@/lib/utils";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -31,6 +32,12 @@ export function HostStyledChatTabV2({
       <ChatboxHostCapabilitiesOverrideProvider
         value={hostCapabilitiesOverride}
       >
+        {/* Direct Chat has no profile editor yet — Provider stays
+            in the tree so children that read useChatboxMcpProfile
+            get a stable `undefined` (= SDK defaults). When a Direct
+            Chat profile editor lands, lift the value into the
+            preferences store and feed it here. */}
+        <ChatboxMcpProfileProvider value={undefined}>
         <ChatboxHostThemeProvider value={themeMode}>
           <div
             className={cn(
@@ -48,6 +55,7 @@ export function HostStyledChatTabV2({
             />
           </div>
         </ChatboxHostThemeProvider>
+        </ChatboxMcpProfileProvider>
       </ChatboxHostCapabilitiesOverrideProvider>
     </ChatboxHostStyleProvider>
   );

@@ -143,6 +143,14 @@ export class MCPClientManager {
   // Default options
   private readonly defaultClientName: string | undefined;
   private readonly defaultClientVersion: string;
+  // Optional `title` for the `Implementation` schema advertised in
+  // initialize. Undefined ⇒ field is omitted from the wire payload.
+  private readonly defaultClientTitle: string | undefined;
+  // Optional ordered accept-list of MCP protocol versions to propose
+  // in `initialize`. First entry is what `params.protocolVersion`
+  // carries; remaining entries are the accept-list. Undefined ⇒ fall
+  // back to the SDK's hardcoded `SUPPORTED_PROTOCOL_VERSIONS`.
+  private readonly defaultSupportedProtocolVersions: string[] | undefined;
   private readonly defaultCapabilities: ClientCapabilityOptions;
   private readonly defaultTimeout: number;
   private readonly defaultLogJsonRpc: boolean;
@@ -167,6 +175,18 @@ export class MCPClientManager {
     this.defaultClientVersion =
       options.defaultClientVersion ?? DEFAULT_CLIENT_VERSION;
     this.defaultClientName = options.defaultClientName;
+    this.defaultClientTitle = options.defaultClientTitle;
+    // Defensive copy — order matters here (first entry is proposed)
+    // so we must not alias the caller's array. Also drop the field
+    // entirely when an empty array slips through; the SDK upstream
+    // treats `undefined` as "fall back to defaults," and we want the
+    // same semantics regardless of whether the caller passed `[]` or
+    // never set the field.
+    this.defaultSupportedProtocolVersions =
+      options.defaultSupportedProtocolVersions &&
+      options.defaultSupportedProtocolVersions.length > 0
+        ? [...options.defaultSupportedProtocolVersions]
+        : undefined;
     this.defaultCapabilities = mergeClientCapabilities(
       getDefaultClientCapabilities(),
       options.defaultCapabilities
@@ -1110,13 +1130,31 @@ export class MCPClientManager {
     let transport: Transport | undefined;
     const clientCapabilities = this.buildCapabilities(serverId, config);
     try {
-      client = new Client(
-        {
-          name: this.defaultClientName ?? serverId,
-          version: config.version ?? this.defaultClientVersion,
-        },
-        { capabilities: clientCapabilities }
-      );
+      // Build the `Implementation` payload for `initialize.clientInfo`.
+      // `name` and `version` are required by the MCP lifecycle spec;
+      // `title` is optional and only emitted when the inspector
+      // pinned one via the hostConfig profile.
+      const clientInfo: { name: string; version: string; title?: string } = {
+        name: this.defaultClientName ?? serverId,
+        version: config.version ?? this.defaultClientVersion,
+      };
+      if (this.defaultClientTitle !== undefined) {
+        clientInfo.title = this.defaultClientTitle;
+      }
+      // `supportedProtocolVersions` flows through into the SDK's
+      // `ProtocolOptions`. Order is preserved (first = proposed in
+      // `params.protocolVersion`). Omitted means "fall back to the
+      // SDK's hardcoded `SUPPORTED_PROTOCOL_VERSIONS`."
+      const clientOptions: {
+        capabilities: typeof clientCapabilities;
+        supportedProtocolVersions?: string[];
+      } = { capabilities: clientCapabilities };
+      if (this.defaultSupportedProtocolVersions !== undefined) {
+        clientOptions.supportedProtocolVersions = [
+          ...this.defaultSupportedProtocolVersions,
+        ];
+      }
+      client = new Client(clientInfo, clientOptions);
 
       // Apply handlers
       this.notificationManager.applyToClient(serverId, client);

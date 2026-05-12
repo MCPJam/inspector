@@ -3,9 +3,12 @@ import {
   emptyHostConfigInputV2,
   hostConfigDtoToInput,
   hostConfigInputsEqual,
+  resolveClientInfo,
   resolveEffectiveHostCapabilities,
+  resolveSupportedProtocolVersions,
   type HostConfigDtoV2,
   type HostConfigInputV2,
+  type HostConfigMcpProfileV1,
 } from "../host-config-v2";
 
 function makeInput(overrides: Partial<HostConfigInputV2> = {}): HostConfigInputV2 {
@@ -308,5 +311,270 @@ describe("resolveEffectiveHostCapabilities", () => {
     // Claude preset advertises message; sentinel that we picked the
     // preset rather than the spec-default {}.
     expect(resolved).toHaveProperty("message");
+  });
+});
+
+describe("resolveClientInfo", () => {
+  it("returns undefined when the profile is unset (SDK-default sentinel)", () => {
+    expect(resolveClientInfo(undefined)).toBeUndefined();
+  });
+
+  it("returns undefined when the profile has no initialize.clientInfo", () => {
+    // Even an opted-in profile (`profileVersion: 1` present, all
+    // subfields undefined) must produce SDK-default sentinel here.
+    // Substituting a synthetic `{}` would silently make every
+    // upstream `initialize` advertise the wrong identity.
+    expect(resolveClientInfo({ profileVersion: 1 })).toBeUndefined();
+    expect(
+      resolveClientInfo({ profileVersion: 1, initialize: {} }),
+    ).toBeUndefined();
+  });
+
+  it("returns the clientInfo object verbatim when set", () => {
+    const profile: HostConfigMcpProfileV1 = {
+      profileVersion: 1,
+      initialize: {
+        clientInfo: { name: "chatgpt", version: "1.0", title: "ChatGPT" },
+      },
+    };
+    expect(resolveClientInfo(profile)).toEqual({
+      name: "chatgpt",
+      version: "1.0",
+      title: "ChatGPT",
+    });
+  });
+
+  it("returns a copy (not a reference) so callers can't mutate stored state", () => {
+    // Symmetric with the resolveSupportedProtocolVersions
+    // defensive-copy test. Step 3 wiring will hand this object to
+    // `new Client(clientInfo, ...)`, where the SDK may
+    // freeze/augment what it receives — a shared reference would
+    // mean a downstream tweak silently mutates the persisted
+    // profile state.
+    const profile: HostConfigMcpProfileV1 = {
+      profileVersion: 1,
+      initialize: {
+        clientInfo: { name: "chatgpt", version: "1.0" },
+      },
+    };
+    const resolved = resolveClientInfo(profile)!;
+    (resolved as Record<string, unknown>).extraField = "hacked";
+    // Original profile must be untouched.
+    expect(profile.initialize!.clientInfo).toEqual({
+      name: "chatgpt",
+      version: "1.0",
+    });
+  });
+});
+
+describe("resolveSupportedProtocolVersions", () => {
+  it("returns undefined when the profile is unset", () => {
+    expect(resolveSupportedProtocolVersions(undefined)).toBeUndefined();
+  });
+
+  it("returns undefined when initialize.supportedProtocolVersions is absent", () => {
+    expect(
+      resolveSupportedProtocolVersions({ profileVersion: 1 }),
+    ).toBeUndefined();
+  });
+
+  it("returns the version list verbatim (order matters)", () => {
+    // First entry is proposed in initialize.params.protocolVersion;
+    // remaining entries form the accept-list. Order is semantic —
+    // resolveSupportedProtocolVersions must NOT sort or dedupe.
+    const versions = ["2025-11-25", "2025-06-18"];
+    expect(
+      resolveSupportedProtocolVersions({
+        profileVersion: 1,
+        initialize: { supportedProtocolVersions: versions },
+      }),
+    ).toEqual(versions);
+  });
+
+  it("returns a copy (not a reference) so callers can't mutate stored state", () => {
+    const versions = ["2025-11-25", "2025-06-18"];
+    const profile: HostConfigMcpProfileV1 = {
+      profileVersion: 1,
+      initialize: { supportedProtocolVersions: versions },
+    };
+    const resolved = resolveSupportedProtocolVersions(profile)!;
+    resolved.push("hacked");
+    // Original profile must be untouched.
+    expect(profile.initialize!.supportedProtocolVersions).toEqual([
+      "2025-11-25",
+      "2025-06-18",
+    ]);
+  });
+
+  it("returns undefined for explicit empty array (defensive)", () => {
+    // The backend canonicalizer rejects empty arrays at write time
+    // (PR #269 P2 fix), but if a malformed payload reaches the
+    // client, the resolver MUST treat it as "use SDK defaults"
+    // rather than handing the SDK a zero-length accept-list and
+    // breaking initialize negotiation.
+    expect(
+      resolveSupportedProtocolVersions({
+        profileVersion: 1,
+        initialize: { supportedProtocolVersions: [] },
+      }),
+    ).toBeUndefined();
+  });
+});
+
+describe("emptyHostConfigInputV2 + hostConfigDtoToInput — mcpProfile preservation", () => {
+  it("preserves `mcpProfile: undefined` round-trip (NEVER synthesizes a default envelope)", () => {
+    // The single most important invariant on the inspector side: a
+    // DTO with `mcpProfile: undefined` must produce a save payload
+    // with `mcpProfile: undefined`. The backend treats undefined /
+    // `{ profileVersion: 1 }` / `{}` as three distinct canonical
+    // hashes — synthesizing any default here would silently churn
+    // the persisted hostConfig row's _id on every editor open.
+    const empty = emptyHostConfigInputV2({});
+    expect(empty.mcpProfile).toBeUndefined();
+    // JSON.stringify must NOT include the key — that's what the
+    // backend canonicalizer relies on to dedupe absent-vs-set hashes.
+    expect(JSON.parse(JSON.stringify(empty))).not.toHaveProperty(
+      "mcpProfile",
+    );
+  });
+
+  it("preserves a populated mcpProfile verbatim through DTO → input → save round-trip", () => {
+    const profile: HostConfigMcpProfileV1 = {
+      profileVersion: 1,
+      initialize: {
+        clientInfo: { name: "chatgpt", version: "1.0" },
+        supportedProtocolVersions: ["2025-11-25"],
+      },
+      apps: {
+        sandbox: {
+          csp: {
+            mode: "declared",
+            deny: { connectDomains: ["evil.com"] },
+          },
+        },
+      },
+    };
+    const dto: HostConfigDtoV2 = {
+      id: "hc_1",
+      schemaVersion: 2,
+      hostStyle: "claude",
+      modelId: "x",
+      systemPrompt: "",
+      temperature: 0.7,
+      requireToolApproval: false,
+      serverIds: [],
+      optionalServerIds: [],
+      connectionDefaults: { headers: {}, requestTimeout: 10_000 },
+      clientCapabilities: {},
+      hostContext: {},
+      mcpProfile: profile,
+    };
+    const input = hostConfigDtoToInput(dto);
+    expect(input.mcpProfile).toEqual(profile);
+    // Deep clone — not the same reference (caller mutations don't
+    // leak into the source DTO).
+    expect(input.mcpProfile).not.toBe(profile);
+    expect(input.mcpProfile?.apps?.sandbox?.csp).not.toBe(
+      profile.apps?.sandbox?.csp,
+    );
+  });
+
+  it("hostConfigInputsEqual returns true for identical mcpProfile + false on any difference", () => {
+    const base = emptyHostConfigInputV2({
+      hostStyle: "claude",
+      modelId: "x",
+      systemPrompt: "",
+      temperature: 0.7,
+      requireToolApproval: false,
+      serverIds: [],
+      optionalServerIds: [],
+      connectionDefaults: { headers: {}, requestTimeout: 10_000 },
+      clientCapabilities: {},
+      hostContext: {},
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: {
+          clientInfo: { name: "x", version: "1" },
+          supportedProtocolVersions: ["2025-11-25", "2025-06-18"],
+        },
+      },
+    });
+    const same = emptyHostConfigInputV2({
+      ...base,
+      mcpProfile: base.mcpProfile,
+    });
+    expect(hostConfigInputsEqual(base, same)).toBe(true);
+
+    // Order of supportedProtocolVersions is SEMANTIC (first entry is
+    // proposed). Different orderings must compare as not-equal —
+    // matches backend canonical hash divergence.
+    const reordered = emptyHostConfigInputV2({
+      ...base,
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: {
+          clientInfo: { name: "x", version: "1" },
+          supportedProtocolVersions: ["2025-06-18", "2025-11-25"],
+        },
+      },
+    });
+    expect(hostConfigInputsEqual(base, reordered)).toBe(false);
+  });
+
+  it("hostConfigInputsEqual treats CSP domain array order as a SET (matches backend canonicalization)", () => {
+    // Backend canonicalizes CSP domain arrays as sets: trim, dedupe,
+    // sort. The editor's dirty-detection MUST agree — otherwise a
+    // cosmetic reorder shows up as dirty when the backend would
+    // dedupe to the same canonical hash.
+    const a = emptyHostConfigInputV2({
+      hostStyle: "claude",
+      modelId: "x",
+      systemPrompt: "",
+      temperature: 0.7,
+      requireToolApproval: false,
+      serverIds: [],
+      optionalServerIds: [],
+      connectionDefaults: { headers: {}, requestTimeout: 10_000 },
+      clientCapabilities: {},
+      hostContext: {},
+      mcpProfile: {
+        profileVersion: 1,
+        apps: {
+          sandbox: {
+            csp: {
+              restrictTo: { connectDomains: ["b.com", "a.com"] },
+              deny: { connectDomains: ["spam.com", "evil.com"] },
+            },
+          },
+        },
+      },
+    });
+    const b = emptyHostConfigInputV2({
+      ...a,
+      mcpProfile: {
+        profileVersion: 1,
+        apps: {
+          sandbox: {
+            csp: {
+              restrictTo: { connectDomains: ["a.com", "b.com"] },
+              deny: { connectDomains: ["evil.com", "spam.com"] },
+            },
+          },
+        },
+      },
+    });
+    expect(hostConfigInputsEqual(a, b)).toBe(true);
+  });
+
+  it("hostConfigInputsEqual distinguishes `undefined` from `{ profileVersion: 1 }`", () => {
+    // Mirrors the backend's tri-state contract: undefined ≠ an empty
+    // envelope (the user "opting in" to a profile but configuring
+    // nothing). Two configs that differ only in this signal must NOT
+    // dedupe via the editor's dirty check.
+    const undef = emptyHostConfigInputV2({});
+    const empty = emptyHostConfigInputV2({
+      mcpProfile: { profileVersion: 1 },
+    });
+    expect(hostConfigInputsEqual(undef, empty)).toBe(false);
   });
 });

@@ -32,6 +32,7 @@ import { isHostedOAuthBusy } from "@/lib/hosted-oauth-resume";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import { ChatboxHostStyleProvider } from "@/contexts/chatbox-host-style-context";
 import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-host-capabilities-override-context";
+import { ChatboxMcpProfileProvider } from "@/contexts/chatbox-mcp-profile-context";
 import { ChatboxHostOnboardingOverlays } from "@/components/hosted/ChatboxHostOnboardingOverlays";
 import { useChatboxHostIntroGate } from "@/components/hosted/useChatboxHostIntroGate";
 import { getChatboxShellStyle } from "@/lib/chatbox-host-style";
@@ -909,6 +910,13 @@ export function ChatboxChatPage({
       <ChatboxHostCapabilitiesOverrideProvider
         value={session?.payload.hostCapabilitiesOverride}
       >
+      <ChatboxMcpProfileProvider
+        // `normalizeChatboxSession` rejects malformed envelopes (non-v1
+        // profileVersion, non-object input) so the value here is
+        // either a valid HostConfigMcpProfileV1 or undefined — no
+        // runtime guard needed at the provider boundary.
+        value={session?.payload.mcpProfile}
+      >
       <div
         className="chatbox-host-shell flex h-svh min-h-0 flex-col overflow-hidden"
         data-host-style={hostStyle}
@@ -950,6 +958,7 @@ export function ChatboxChatPage({
 
         {renderContent()}
       </div>
+      </ChatboxMcpProfileProvider>
       </ChatboxHostCapabilitiesOverrideProvider>
     </ChatboxHostStyleProvider>
   );

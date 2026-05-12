@@ -12,6 +12,17 @@ type JsonRpcBody = {
   params?: any;
 };
 
+// TODO(mcpProfile): `protocolVersion` is hardcoded here because this
+// helper builds an `initialize` *result* for downstream consumers of
+// the inspector's HTTP bridge (the bridge acts as an MCP server to
+// external clients), NOT an upstream `initialize.params` we send to
+// our own MCP servers. The user-saved `mcpProfile.initialize.supported
+// ProtocolVersions` applies to the *upstream* path only — see
+// `@mcpjam/sdk` `MCPClientManager` (`defaultSupportedProtocolVersions`
+// option) for that. Threading per-request hostConfig context into the
+// bridge routes is a separate scope (routes don't currently know which
+// chatbox / project they're proxying for); revisit when that wiring
+// exists.
 export function buildInitializeResult(serverId: string, mode: BridgeMode) {
   if (mode === "adapter") {
     return {

@@ -68,6 +68,12 @@ import {
   useChatboxHostTheme,
 } from "@/contexts/chatbox-host-style-context";
 import { useChatboxHostCapabilitiesOverride } from "@/contexts/chatbox-host-capabilities-override-context";
+import { useChatboxMcpProfile } from "@/contexts/chatbox-mcp-profile-context";
+import {
+  cspDomainSetHasEntries,
+  resolveSandboxCsp,
+  resolveSandboxPermissions,
+} from "@/lib/sandbox-policy";
 import { useHostContextStore } from "@/stores/host-context-store";
 import {
   clampDisplayModeToAvailableModes,
@@ -216,6 +222,15 @@ export function MCPAppsRenderer({
   const chatboxHostStyle = useChatboxHostStyle();
   const chatboxHostTheme = useChatboxHostTheme();
   const hostCapabilitiesOverride = useChatboxHostCapabilitiesOverride();
+  // Active hostConfig's mcpProfile (clientInfo, supported protocol versions,
+  // sandbox policy). Used below to resolve the effective CSP layers so the
+  // CSP debug overlay can show baseline → restrictTo → deny → hosted clamp
+  // → effective. Actual *enforcement* of restrictTo/deny in the iframe's
+  // injected CSP header is a follow-up — today the renderer still hands the
+  // widget-declared CSP to `fetchMcpAppsWidgetContent` unchanged. The
+  // debug-store update below uses the resolver output so the overlay
+  // reflects the post-feature contract.
+  const mcpProfile = useChatboxMcpProfile();
   const draftHostContext = useHostContextStore((s) => s.draftHostContext);
   const baseHostContext = useMemo(
     () =>
@@ -601,25 +616,12 @@ export function MCPAppsRenderer({
         // Store widget HTML in debug store for save view feature
         setWidgetHtmlStore(toolCallId, html);
 
-        // Update the widget debug store with CSP and permissions info
-        if (csp || permissions || !permissive) {
-          setWidgetCspStore(toolCallId, {
-            mode: permissive ? "permissive" : "widget-declared",
-            connectDomains: csp?.connectDomains || [],
-            resourceDomains: csp?.resourceDomains || [],
-            frameDomains: csp?.frameDomains || [],
-            baseUriDomains: csp?.baseUriDomains || [],
-            permissions: permissions,
-            widgetDeclared: csp
-              ? {
-                  connectDomains: csp.connectDomains,
-                  resourceDomains: csp.resourceDomains,
-                  frameDomains: csp.frameDomains,
-                  baseUriDomains: csp.baseUriDomains,
-                }
-              : null,
-          });
-        }
+        // Debug-store CSP+permissions update is handled by a separate
+        // effect below — that way changing `mcpProfile` mid-session
+        // refreshes the resolved overlay without forcing a widget HTML
+        // refetch. The fetch effect just primes the component state
+        // (widgetCsp / widgetPermissions / widgetPermissive); the
+        // dedicated effect reacts to those plus mcpProfile.
         logWidgetDebug("host-to-ui", "debug/widget-content-ready", {
           cached: false,
           cspMode,
@@ -654,6 +656,244 @@ export function MCPAppsRenderer({
     isOffline,
     cachedWidgetHtmlUrl,
     initialPrefersBorder,
+  ]);
+
+  // Resolve the layered sandbox CSP whenever the widget's declared
+  // CSP OR the active `mcpProfile` changes. Memoized so both the CSP
+  // debug overlay (effect below) and the iframe enforcement props
+  // (`csp={resolvedCsp}` / `permissions={resolvedPermissions}` on
+  // SandboxedIframe) see the same resolved values. Without this
+  // single source of truth, the overlay would show the post-profile
+  // CSP while the iframe still enforced the raw widget-declared CSP
+  // — a documented enforcement gap (Codex P1) where deny/restrict/
+  // hosted-clamp rules would silently NOT apply at the iframe
+  // boundary.
+  // Single source of truth for "does the profile carry meaningful
+  // CSP policy?" — used by `resolvedCspLayers`, the `resolvedCsp`
+  // memo's early-return, and `effectivePermissive` below. Lifted out
+  // so all three gates can't drift; adding a new CSP sub-field means
+  // updating one expression, not three.
+  //
+  // An empty `csp: {}` (no mode / no restrictTo / no deny /
+  // extensions) MUST NOT count as policy — `normalizeMcpProfile`
+  // doesn't strip empty inner blocks, and the resolver would
+  // otherwise compute all-empty-array directives and the iframe
+  // would block all widget network access.
+  const profileHasCsp = useMemo(() => {
+    const block = mcpProfile?.apps?.sandbox?.csp;
+    if (!block) return false;
+    return (
+      block.mode !== undefined ||
+      cspDomainSetHasEntries(block.restrictTo) ||
+      cspDomainSetHasEntries(block.deny) ||
+      block.extensions !== undefined
+    );
+  }, [mcpProfile]);
+
+  const resolvedCspLayers = useMemo(() => {
+    const widgetDeclaredCsp = widgetCsp
+      ? {
+          connectDomains: widgetCsp.connectDomains,
+          resourceDomains: widgetCsp.resourceDomains,
+          frameDomains: widgetCsp.frameDomains,
+          baseUriDomains: widgetCsp.baseUriDomains,
+        }
+      : undefined;
+    // Wildcard baseline used in two places below: when the widget
+    // declared no CSP (it was effectively permissive pre-feature),
+    // AND in `relaxedCsp` (the dev-convenience "permit everything"
+    // mode). Defined once so any future tweak — e.g. adding a fifth
+    // directive — stays consistent across both consumers.
+    const wildcardCsp = {
+      connectDomains: ["*"],
+      resourceDomains: ["*"],
+      frameDomains: ["*"],
+      baseUriDomains: ["*"],
+    };
+    // When the widget declared NO CSP, its pre-feature behavior was
+    // permissive (no CSP injection at all). A profile saying
+    // "deny evil.com" must mean "narrow that permissive baseline,"
+    // NOT "start from empty and subtract from nothing" — the latter
+    // would block ALL network access on every otherwise-permissive
+    // widget, exactly the foot-gun a user adding `deny` to keep a
+    // single domain out would walk into.
+    //
+    // Per SEP-1865: the host MAY restrict but MUST NOT loosen the
+    // resource declaration. The resource here declared NO upper
+    // bound (no CSP at all), so the host can apply arbitrary
+    // restrictions starting from wildcards.
+    const resourceCsp =
+      widgetDeclaredCsp ?? (profileHasCsp ? wildcardCsp : undefined);
+    return resolveSandboxCsp({
+      resourceCsp,
+      // Today the inspector's "renderer baseline" when no profile is
+      // active IS the widget-declared CSP — that's what the
+      // pre-profile iframe enforced. Passing it as hostDefaultCsp
+      // gives `mode: "host-default"` parity with that legacy
+      // behavior; otherwise selecting it would resolve to empty and
+      // break every widget's network access. When the renderer ever
+      // grows a separate preset baseline (e.g. an inspector-wide
+      // CSP independent of the widget's declaration), wire it here.
+      hostDefaultCsp: widgetDeclaredCsp ?? wildcardCsp,
+      // `relaxed` mode is the dev-convenience "permit everything"
+      // baseline. We pass concrete wildcards (`*` per directive)
+      // rather than `undefined` so selecting the mode produces a
+      // working, permissive set instead of resolving to empty. In
+      // hosted mode, the platform clamp strips these wildcards
+      // back to a safe baseline regardless of user intent — so
+      // `relaxed` is genuinely useful in local dev and not a
+      // hosted-mode foot-gun.
+      relaxedCsp: wildcardCsp,
+      isHostedMode: HOSTED_MODE,
+      profile: mcpProfile,
+    });
+  }, [widgetCsp, mcpProfile, profileHasCsp]);
+
+  // Resolved CSP shape the SandboxedIframe consumes. Mirrors the
+  // widget-declared shape (`McpUiResourceCsp`-like) so the iframe
+  // wiring doesn't have to branch on profile presence. When no
+  // widget CSP and no profile narrowing, returns undefined to keep
+  // pre-feature behavior (permissive iframe).
+  const resolvedCsp = useMemo(() => {
+    if (!widgetCsp && !profileHasCsp) return undefined;
+    const eff = resolvedCspLayers.effective;
+    // Preserve undefined per directive — DO NOT default to `[]`.
+    // The sandbox proxy treats `undefined` as "no restriction on
+    // this directive family" but `[]` as "block this directive
+    // entirely." Defaulting an undeclared `resourceDomains` to `[]`
+    // would turn a widget that only declared `connectDomains` into
+    // one with all script/style/font/img loads blocked. The
+    // resolver returns `undefined` for any directive that wasn't
+    // in the baseline AND wasn't restricted/denied, so propagating
+    // that through here matches pre-feature behavior verbatim.
+    return {
+      connectDomains: eff.connectDomains,
+      resourceDomains: eff.resourceDomains,
+      frameDomains: eff.frameDomains,
+      baseUriDomains: eff.baseUriDomains,
+    };
+  }, [resolvedCspLayers, widgetCsp, profileHasCsp]);
+
+  // Resolved permissions for the iframe `allow=` attribute. Without
+  // this, `permissions.mode: "deny-all"` and `permissions.deny`
+  // entries in the profile would only show up in the debug overlay
+  // while the iframe kept granting the resource-declared set.
+  const resolvedPermissionsLayers = useMemo(() => {
+    return resolveSandboxPermissions({
+      resourcePermissions: widgetPermissions
+        ? // McpUiResourcePermissions stores keys with empty-object
+          // values to mean "requested"; flatten to boolean for the
+          // resolver's ceiling check.
+          Object.fromEntries(
+            Object.keys(widgetPermissions).map((k) => [k, true]),
+          )
+        : undefined,
+      isHostedMode: HOSTED_MODE,
+      profile: mcpProfile,
+    });
+  }, [widgetPermissions, mcpProfile]);
+
+  // Whether a host-level CSP policy is active. Gates `permissive`
+  // ONLY on CSP — permissions are passed independently via the
+  // iframe's `permissions=` prop, so a permissions-only profile
+  // doesn't need to flip `permissive`. Without this narrowing, a
+  // permissions-only profile would force `permissive=false` while
+  // `resolvedCsp` is still `undefined` (because the resolver's
+  // early-return at the `resolvedCsp` memo bails when there's no
+  // widgetCsp AND no profile.apps.sandbox.csp), and SandboxedIframe
+  // would fall back to a restrictive default CSP — inadvertently
+  // breaking widget network access even though the user only
+  // configured a permissions policy.
+  //
+  // When the profile sets CSP, the sandbox proxy treats
+  // `permissive=true` as "skip CSP injection entirely," so we MUST
+  // flip permissive to false there or the restrictTo / deny / clamp
+  // rules silently bypass. Hosted chatboxes hit this every render
+  // because `ChatTabV2`'s minimalMode wiring sets cspMode="permissive"
+  // upstream, making `widgetPermissive=true` the default.
+  // `profileHasCsp` is hoisted above; `effectivePermissive` gates
+  // on it so the iframe only switches off permissive mode when the
+  // profile actually carries meaningful CSP policy.
+  const effectivePermissive = profileHasCsp ? false : widgetPermissive;
+
+  const resolvedPermissions = useMemo(() => {
+    // Rebuild the McpUiResourcePermissions shape from the resolver's
+    // effective boolean set, preserving the ORIGINAL value the
+    // resource declared for each granted key (the type accepts
+    // both `true` and `{}` markers; the iframe wrapper compares by
+    // key presence). Substituting a synthetic `{}` would diverge
+    // from what the resource sent (and from what existing call
+    // sites assert in tests).
+    const granted: Record<string, unknown> = {};
+    for (const [key, allowed] of Object.entries(
+      resolvedPermissionsLayers.effective,
+    )) {
+      if (!allowed) continue;
+      // Prefer the original marker (true | {} | anything truthy)
+      // from widgetPermissions when available; fall back to `true`
+      // for keys the profile granted on its own.
+      const original = (widgetPermissions as Record<string, unknown> | undefined)?.[key];
+      granted[key] = original !== undefined ? original : true;
+    }
+    // Return undefined (NOT null) when no permissions remain after
+    // resolution. SandboxedIframe and AppBridge prop types accept
+    // `McpUiResourcePermissions | undefined`; preserving null here
+    // would type-error those call sites. The empty-permissions
+    // semantic ("no `allow=` attribute, SEP-1865 safe default") is
+    // identical whether the source was widgetPermissions=null or
+    // widgetPermissions=undefined.
+    return Object.keys(granted).length > 0
+      ? (granted as McpUiResourcePermissions)
+      : undefined;
+  }, [resolvedPermissionsLayers, widgetPermissions]);
+
+  // Update the widget-debug-store entry whenever the resolved layers
+  // change. Stays separate from the iframe enforcement so the overlay
+  // can refresh without forcing the iframe to remount.
+  useEffect(() => {
+    if (!widgetCsp && !widgetPermissions && effectivePermissive) {
+      // No CSP, no permissions, fully permissive — nothing to display
+      // in the overlay; keep the store untouched so a previous entry
+      // isn't clobbered by an empty one on remount.
+      return;
+    }
+    setWidgetCspStore(toolCallId, {
+      mode: effectivePermissive ? "permissive" : "widget-declared",
+      connectDomains: resolvedCspLayers.effective.connectDomains || [],
+      resourceDomains: resolvedCspLayers.effective.resourceDomains || [],
+      frameDomains: resolvedCspLayers.effective.frameDomains || [],
+      baseUriDomains: resolvedCspLayers.effective.baseUriDomains || [],
+      permissions: resolvedPermissions ?? undefined,
+      widgetDeclared: widgetCsp
+        ? {
+            connectDomains: widgetCsp.connectDomains,
+            resourceDomains: widgetCsp.resourceDomains,
+            frameDomains: widgetCsp.frameDomains,
+            baseUriDomains: widgetCsp.baseUriDomains,
+          }
+        : null,
+    });
+    // setWidgetCspStore omitted from deps: it's a Zustand selector
+    // pulling a fixed store-method (`s.setWidgetCsp`), so its
+    // identity is stable across renders. Including it would be
+    // valid (no TDZ — function-component const bindings exist by
+    // the time effect callbacks fire), but pointless: the effect
+    // would never re-run on its account, and the deps array
+    // already covers every value the effect's body actually reads.
+    // Same omission pattern as the fetch effect above.
+  }, [
+    widgetCsp,
+    widgetPermissions,
+    // `effectivePermissive`, NOT `widgetPermissive` — the body reads
+    // the effective value (which depends on whether the profile has
+    // saved policy), so listing `widgetPermissive` here would leave
+    // the debug-store entry stale whenever the profile toggles its
+    // sandbox block without touching widgetPermissive. Booleans
+    // compare by value in deps, so this doesn't add render churn.
+    effectivePermissive,
+    resolvedCspLayers,
+    resolvedPermissions,
+    toolCallId,
   ]);
 
   // UI logging
@@ -1209,11 +1449,17 @@ export function MCPAppsRenderer({
       {
         ...effectiveHostCapabilities,
         sandbox: {
-          // In permissive mode: omit CSP (undefined) to indicate no restrictions
-          // In widget-declared mode: pass the widget's declared CSP
-          csp: widgetPermissive ? undefined : widgetCsp,
-          // Always pass permissions (if widget declared them)
-          permissions: widgetPermissions,
+          // In permissive mode: omit CSP (undefined) to indicate no restrictions.
+          // In widget-declared mode: pass the RESOLVED CSP (resolver output
+          // including profile restrictTo / deny / hosted clamp). The bridge
+          // advertises the same effective set the iframe boundary enforces;
+          // an app shouldn't be able to introspect a CSP that's wider than
+          // what its requests actually escape.
+          csp: effectivePermissive ? undefined : resolvedCsp,
+          // Resolved permissions (after `mode` / `allow` / `deny` /
+          // hosted clamp) so the bridge advertises the same set the
+          // iframe `allow=` attribute applies.
+          permissions: resolvedPermissions,
         },
       },
       { hostContext: hostContextRef.current ?? {} },
@@ -1298,9 +1544,22 @@ export function MCPAppsRenderer({
     registerBridgeHandlers,
     setWidgetModelContext,
     cspMode,
+    // Raw widget* values stay in deps for the
+    // `debug/bridge-connect-start` log entry inside the effect body.
     widgetCsp,
     widgetPermissions,
     widgetPermissive,
+    // Bridge advertises the RESOLVED sandbox policy at handshake
+    // (`sandbox: { csp, permissions }` in the AppBridge config below).
+    // Without tracking the resolved values too, editing
+    // `mcpProfile.apps.sandbox.*` while a widget is mounted leaves
+    // `ui/initialize` advertising stale policy while the iframe
+    // enforces the new one. Host-config preview / playground flows
+    // hit this regularly because they re-render the renderer
+    // without remounting the widget HTML.
+    resolvedCsp,
+    resolvedPermissions,
+    effectivePermissive,
     logWidgetDebug,
     // Bridge must rebuild when the advertised host capabilities change
     // (host style switch or override edit) so the new handshake reflects
@@ -1574,9 +1833,15 @@ export function MCPAppsRenderer({
       ref={sandboxRef}
       html={bridgeTransportReady ? widgetHtml : null}
       sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
-      csp={widgetCsp}
-      permissions={widgetPermissions}
-      permissive={widgetPermissive}
+      // Iframe enforcement reads the RESOLVED policy (resolver
+      // output, including restrictTo intersection, deny subtraction,
+      // and hosted-mode clamp), NOT the raw widget-declared CSP.
+      // The debug overlay above and this iframe both consume the
+      // same memoized values, so what users see in the overlay is
+      // what actually applies at the iframe boundary.
+      csp={resolvedCsp}
+      permissions={resolvedPermissions}
+      permissive={effectivePermissive}
       colorScheme={resolvedTheme}
       onProxyReady={() => {
         setSandboxProxyReady(true);
@@ -1670,9 +1935,16 @@ export function MCPAppsRenderer({
         template={modalTemplate}
         params={modalParams}
         registerBridgeHandlers={registerBridgeHandlers}
-        widgetCsp={widgetCsp}
-        widgetPermissions={widgetPermissions}
-        widgetPermissive={widgetPermissive}
+        // Modal iframe must consume the RESOLVED policy too —
+        // otherwise a profile's restrictTo / deny / hosted-clamp
+        // rules apply to the inline view but bypass when a widget
+        // opens its modal surface. The prop names retain
+        // `widget*` shape for source-compat; the modal forwards
+        // them to its own SandboxedIframe + AppBridge identically
+        // to how the inline view's props flow.
+        widgetCsp={resolvedCsp}
+        widgetPermissions={resolvedPermissions}
+        widgetPermissive={effectivePermissive}
         hostContextRef={hostContextRef}
         serverId={serverId}
         resourceUri={resourceUri}

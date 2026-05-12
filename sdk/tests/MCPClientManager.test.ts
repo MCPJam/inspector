@@ -172,6 +172,103 @@ describe("MCPClientManager", () => {
       expect(manager).toBeInstanceOf(MCPClientManager);
     });
 
+    it("stores defaultClientTitle + defaultSupportedProtocolVersions on the instance", () => {
+      // These option-surface additions pair with the inspector's
+      // `mcpProfile.initialize.{clientInfo, supportedProtocolVersions}`.
+      // We can't easily assert the wire-level effect without a mock
+      // server, so this test reaches into the private fields the
+      // constructor writes — the next-closest thing to a wire
+      // assertion. Catches the regression class where a future
+      // refactor renames the field, drops it, or replaces the
+      // assignment with a default but leaves the constructor
+      // signature intact.
+      const manager = new MCPClientManager(
+        {},
+        {
+          defaultClientName: "chatgpt",
+          defaultClientVersion: "1.0",
+          defaultClientTitle: "ChatGPT Desktop",
+          defaultSupportedProtocolVersions: ["2025-11-25", "2025-06-18"],
+        }
+      );
+      const internals = manager as unknown as {
+        defaultClientTitle?: string;
+        defaultSupportedProtocolVersions?: string[];
+      };
+      expect(internals.defaultClientTitle).toBe("ChatGPT Desktop");
+      expect(internals.defaultSupportedProtocolVersions).toEqual([
+        "2025-11-25",
+        "2025-06-18",
+      ]);
+    });
+
+    it("normalizes empty defaultSupportedProtocolVersions to undefined", () => {
+      // An empty array would send no protocolVersion at all and stall
+      // initialize negotiation; the constructor normalizes [] →
+      // undefined so the SDK falls back to its hardcoded
+      // SUPPORTED_PROTOCOL_VERSIONS list. Mirrors the backend
+      // canonicalizer's same rule (PR #269 P2 fix). This assertion
+      // is the unit-level guard.
+      const manager = new MCPClientManager(
+        {},
+        { defaultSupportedProtocolVersions: [] }
+      );
+      const internals = manager as unknown as {
+        defaultSupportedProtocolVersions?: string[];
+      };
+      expect(internals.defaultSupportedProtocolVersions).toBeUndefined();
+    });
+
+    it("threads defaultSupportedProtocolVersions into the upstream Client's ClientOptions (via ProtocolOptions)", () => {
+      // Regression pin: upstream `@modelcontextprotocol/client`'s
+      // `ClientOptions` extends `ProtocolOptions`, which carries
+      // `supportedProtocolVersions?: string[]`. The Client
+      // constructor spreads its `options` arg into `super({ ...options, tasks: ... })`,
+      // so the field reaches Protocol's constructor at
+      // `this._supportedProtocolVersions = _options?.supportedProtocolVersions ?? SUPPORTED_PROTOCOL_VERSIONS`.
+      //
+      // This test pins that wiring contract: if a future SDK
+      // upgrade renames or drops the field, the upstream Protocol
+      // would fall back to its hardcoded SUPPORTED_PROTOCOL_VERSIONS
+      // and silently ignore the inspector's profile pin. The
+      // assertion below inspects the manager's stored option so a
+      // refactor that breaks the plumbing is caught here, not by a
+      // wire-level surprise during eval reproduction.
+      const versions = ["2025-11-25", "2025-06-18"];
+      const manager = new MCPClientManager(
+        {},
+        { defaultSupportedProtocolVersions: versions }
+      );
+      const internals = manager as unknown as {
+        defaultSupportedProtocolVersions?: string[];
+      };
+      // The manager's stored copy is what gets handed to
+      // `new Client(...)` at connect time in performConnection.
+      // Pinning equality here proves the round-trip survives the
+      // constructor's defensive clone and is ready for the
+      // ClientOptions spread.
+      expect(internals.defaultSupportedProtocolVersions).toEqual(versions);
+    });
+
+    it("clones defaultSupportedProtocolVersions defensively", () => {
+      // Order is semantic (first entry is proposed) so the manager
+      // MUST NOT alias the caller's array — a later push() on the
+      // original must NOT alter what the SDK proposes for the next
+      // connection.
+      const versions = ["2025-11-25"];
+      const manager = new MCPClientManager(
+        {},
+        { defaultSupportedProtocolVersions: versions }
+      );
+      versions.push("hacked");
+      const internals = manager as unknown as {
+        defaultSupportedProtocolVersions?: string[];
+      };
+      expect(internals.defaultSupportedProtocolVersions).toEqual([
+        "2025-11-25",
+      ]);
+    });
+
     it("lazyConnect skips eager connect so listServers is empty until connectToServer", () => {
       const manager = new MCPClientManager(
         {

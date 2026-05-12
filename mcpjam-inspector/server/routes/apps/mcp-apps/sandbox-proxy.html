@@ -291,9 +291,19 @@ document.addEventListener('securitypolicyviolation', function(e) {
             }
 
             // Set Permission Policy allow attribute based on requested permissions (SEP-1865)
+            // Always update (set OR remove). If we only conditionally
+            // SET the attribute, a profile flipping to permissions
+            // deny-all (or denying the last grant) leaves stale
+            // camera/microphone/geolocation grants on the iframe
+            // until a full remount — saved deny policy unenforced
+            // mid-session. Symmetric semantics: empty/undefined →
+            // remove the attribute (= no Permission Policy header,
+            // SEP-1865 safe default); non-empty → set.
             const allowAttribute = buildAllowAttribute(permissions);
             if (allowAttribute) {
               inner.setAttribute("allow", allowAttribute);
+            } else {
+              inner.removeAttribute("allow");
             }
 
             if (typeof html === "string") {

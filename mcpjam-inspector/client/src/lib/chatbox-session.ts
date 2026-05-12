@@ -3,6 +3,7 @@ import {
   type ChatboxHostStyle,
 } from "@/lib/chatbox-host-style";
 import { DEFAULT_HOST_STYLE } from "@/lib/host-styles";
+import type { HostConfigMcpProfileV1 } from "@/lib/host-config-v2";
 
 const MCPJAM_APP_ORIGIN = "https://app.mcpjam.com";
 
@@ -80,6 +81,13 @@ export interface ChatboxBootstrapPayload {
    * runtime falls back to the active `hostStyle`'s preset.
    */
   hostCapabilitiesOverride?: Record<string, unknown>;
+  /**
+   * Versioned envelope for host-level MCP state (clientInfo, supported
+   * protocol versions, MCP Apps sandbox policy). Surfaced by the
+   * backend's chatboxRedeem so the hosted runtime can apply the saved
+   * sandbox policy at the iframe boundary. Undefined → SDK defaults.
+   */
+  mcpProfile?: HostConfigMcpProfileV1;
 }
 
 export interface ChatboxSession {
@@ -170,6 +178,27 @@ function normalizeHostCapabilitiesOverride(
     return undefined;
   }
   return input as Record<string, unknown>;
+}
+
+/**
+ * Normalize the mcpProfile from a redeem payload (or persisted
+ * session). Reject anything that isn't a plain object with
+ * `profileVersion === 1` — the canonicalizer's same forward-compat
+ * trip wire (PR #269) ensures a v2 envelope from the future doesn't
+ * silently round-trip through a v1 reader, and a persisted session
+ * carrying a corrupt or future-version envelope falls back to "no
+ * profile" rather than misapplying unrecognized fields.
+ */
+function normalizeMcpProfile(
+  input: unknown,
+): HostConfigMcpProfileV1 | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return undefined;
+  }
+  if ((input as { profileVersion?: unknown }).profileVersion !== 1) {
+    return undefined;
+  }
+  return input as HostConfigMcpProfileV1;
 }
 
 function normalizeChatboxShareMode(mode: unknown): ChatboxShareMode {
@@ -279,6 +308,9 @@ export function normalizeChatboxSession(
       hostCapabilitiesOverride: normalizeHostCapabilitiesOverride(
         (payload as { hostCapabilitiesOverride?: unknown })
           .hostCapabilitiesOverride,
+      ),
+      mcpProfile: normalizeMcpProfile(
+        (payload as { mcpProfile?: unknown }).mcpProfile,
       ),
     },
     surface: parsed.surface === "preview" ? "preview" : "share_link",
