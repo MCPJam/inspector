@@ -94,10 +94,11 @@ export const OAuthAuthorizationModal = ({
       let cleanup: (() => void) | undefined;
       let cancelled = false;
 
-      if (window.isElectron && window.electronAPI?.app?.openExternal) {
+      const openExternal = window.electronAPI?.app?.openExternal;
+      if (window.isElectron && openExternal) {
         void (async () => {
           try {
-            await window.electronAPI.app.openExternal(authorizationUrl);
+            await openExternal(authorizationUrl);
             if (cancelled) return;
             onOpenChange(false);
             hasOpenedRef.current = false;

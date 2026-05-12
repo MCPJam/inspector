@@ -743,7 +743,7 @@ function OrganizationPage({
   ) => {
     const currentPlan = billingStatus?.plan;
 
-    if (currentPlan === "team" && targetPlan === "free") {
+    if (currentPlan === "team" && targetPlan === "free" && billingStatus) {
       setPendingDowngradeConfirmation({
         targetPlan: "free",
         targetBillingInterval: null,

@@ -10,7 +10,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
-import { ServerFormData } from "@/shared/types.js";
+import {
+  ServerFormData,
+  type ServerFormOAuthProtocolMode,
+} from "@/shared/types.js";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { HOSTED_MODE } from "@/lib/config";
 import { usePostHog } from "posthog-js/react";
@@ -33,7 +36,7 @@ interface AddServerModalProps {
 
 function normalizeOauthProtocolMode(
   value?: ServerFormData["oauthProtocolMode"],
-): ServerFormData["oauthProtocolMode"] {
+): ServerFormOAuthProtocolMode {
   return value === "2025-03-26" ||
     value === "2025-06-18" ||
     value === "2025-11-25"

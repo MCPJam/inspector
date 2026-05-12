@@ -95,6 +95,12 @@ function computeDirtyState(
 }
 
 function normalizeConfigForEditing(
+  config: ProjectConnectionConfigDraft | null,
+): ProjectConnectionConfigDraft | null;
+function normalizeConfigForEditing(
+  config: ProjectConnectionConfigDraft | undefined,
+): ProjectConnectionConfigDraft | undefined;
+function normalizeConfigForEditing(
   config: ProjectConnectionConfigDraft | null | undefined,
 ): ProjectConnectionConfigDraft | null | undefined {
   if (!config) {
@@ -321,7 +327,17 @@ export const useClientConfigStore = create<ClientConfigStoreState>(
       set((state) => {
         const defaultConfig =
           state.defaultConfig ?? buildDefaultProjectConnectionConfig();
-        const nextValue = defaultConfig[section];
+        const nextValue =
+          section === "connectionDefaults"
+            ? ((defaultConfig.connectionDefaults ??
+                buildDefaultProjectConnectionDefaults()) as Record<
+                string,
+                unknown
+              >)
+            : ((defaultConfig.clientCapabilities ?? {}) as Record<
+                string,
+                unknown
+              >);
         const nextState = setSectionValue(state, section, nextValue);
         const { textField, errorField } = getSectionFieldNames(section);
         return {

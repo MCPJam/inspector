@@ -60,7 +60,7 @@ export function CompactIterationRow({
           </span>
           <span className="text-xs text-muted-foreground min-w-[140px] max-w-[140px] truncate">
             {iteration.testCaseSnapshot?.model ||
-              iterationTestCase?.model ||
+              iterationTestCase?.models?.[0]?.model ||
               "—"}
           </span>
           <span className="text-xs font-mono text-muted-foreground min-w-[60px] max-w-[60px] text-right">
