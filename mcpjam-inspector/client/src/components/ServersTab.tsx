@@ -536,7 +536,7 @@ export function ServersTab({
   organizationId,
   isBillingContextPending = false,
   isLoadingProjects,
-  onProjectShared,
+  onProjectShared: _onProjectShared,
   isRegistryEnabled = false,
   onNavigateToRegistry,
   onSaveClientConfig,

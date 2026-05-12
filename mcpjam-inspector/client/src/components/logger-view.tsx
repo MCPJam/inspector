@@ -49,15 +49,7 @@ import {
 } from "@/lib/oauth/oauth-debugger-navigation";
 import { cn } from "@/lib/utils";
 
-type RpcDirection = "in" | "out" | string;
 type TrafficSource = "mcp-server" | "mcp-apps" | "oauth";
-
-interface RpcEventMessage {
-  serverId: string;
-  direction: RpcDirection;
-  message: unknown; // raw JSON-RPC payload (request/response/error)
-  timestamp?: string;
-}
 
 interface RenderableRpcItem {
   id: string;

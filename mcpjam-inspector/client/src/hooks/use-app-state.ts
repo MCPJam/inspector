@@ -5,7 +5,6 @@ import { useLogger } from "./use-logger";
 import {
   createLocalDefaultProject,
   initialAppState,
-  type AppState,
   type ServerWithName,
 } from "@/state/app-types";
 import { appReducer } from "@/state/app-reducer";

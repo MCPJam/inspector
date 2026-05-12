@@ -52,7 +52,6 @@ import { SidebarCreditUsage } from "@/components/sidebar/sidebar-credit-usage";
 import { SidebarTrialCountdown } from "@/components/sidebar/sidebar-trial-countdown";
 import { ShareProjectDialog } from "@/components/project/ShareProjectDialog";
 import { useUpdateNotification } from "@/hooks/useUpdateNotification";
-import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Tooltip,

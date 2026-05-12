@@ -12,7 +12,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
-import type { EvalSuite, EvalSuiteConfigTest } from "./types";
+import type { EvalSuite } from "./types";
 import type { ModelDefinition } from "@/shared/types";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-logo";
@@ -31,7 +31,7 @@ interface SuiteTestsConfigProps {
 }
 
 export function SuiteTestsConfig({
-  suite,
+  suite: _suite,
   testCases,
   onUpdate,
   availableModels,

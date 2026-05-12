@@ -6,7 +6,7 @@ import {
   AccordionTrigger,
   AccordionContent,
 } from "@mcpjam/design-system/accordion";
-import { type RefObject, useMemo, useState, useEffect } from "react";
+import { type RefObject, useState, useEffect } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import { SearchInput } from "../ui/search-input";

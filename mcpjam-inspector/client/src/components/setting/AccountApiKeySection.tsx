@@ -42,7 +42,7 @@ function ApiKeyCopyField({
   value,
   isCopied,
   onCopy,
-  copyLabel,
+  copyLabel: _copyLabel,
   tooltip = "Copy to clipboard",
 }: CopyFieldProps) {
   return (

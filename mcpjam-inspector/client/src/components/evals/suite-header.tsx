@@ -143,7 +143,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     generateTestCasesDisabledReason,
     isGeneratingTestCases = false,
     onCreateTestCase,
-    blockTestCaseRuns = false,
+    blockTestCaseRuns: _blockTestCaseRuns = false,
     runningTestCaseId = null,
     runsViewMode = "runs",
     availableModels = [],

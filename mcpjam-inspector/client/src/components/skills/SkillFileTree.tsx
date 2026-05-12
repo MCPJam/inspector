@@ -10,7 +10,7 @@ import {
   Image,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { SkillFile } from "@shared/skill-types";
+import type { SkillFile } from "@/shared/skill-types";
 
 interface SkillFileTreeProps {
   files: SkillFile[];

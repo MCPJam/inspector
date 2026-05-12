@@ -45,7 +45,6 @@ import {
   type BillingInterval,
   type OrganizationBillingStatus,
   type OrganizationPlan,
-  type PlanCatalog,
 } from "@/hooks/useOrganizationBilling";
 import {
   formatPlanName,
@@ -360,7 +359,6 @@ function OrganizationPage({
   const canInvite = canEdit;
   const {
     billingStatus,
-    entitlements,
     organizationPremiumness,
     planCatalog,
     isLoadingBilling,

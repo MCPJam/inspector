@@ -32,7 +32,7 @@ import type {
   SkillListItem,
   SkillFile,
   SkillFileContent,
-} from "@shared/skill-types";
+} from "@/shared/skill-types";
 import { SkillUploadDialog } from "./chat-v2/chat-input/skills/skill-upload-dialog";
 import {
   AlertDialog,
@@ -52,9 +52,9 @@ export function SkillsTab() {
   const [skills, setSkills] = useState<SkillListItem[]>([]);
   const [selectedSkillName, setSelectedSkillName] = useState<string>("");
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [_loading, setLoading] = useState(false);
   const [fetchingSkills, setFetchingSkills] = useState(false);
-  const [error, setError] = useState<string>("");
+  const [_error, setError] = useState<string>("");
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
   const [skillToDelete, setSkillToDelete] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);

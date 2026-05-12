@@ -51,7 +51,6 @@ import {
   type OrgModelUsageSummary,
   type OrgModelProvider,
 } from "@/hooks/use-org-model-config";
-import { HOSTED_MODE } from "@/lib/config";
 
 // ---------------------------------------------------------------------------
 // Provider catalog -- defines known providers and their configuration fields
