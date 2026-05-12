@@ -149,9 +149,9 @@ export function ToolPart({
   const outputData = (part as any).output;
   const errorText = (part as any).errorText ?? (part as any).error;
   const traceDisplayText =
-    typeof (part as { traceDisplayText?: unknown }).traceDisplayText ===
-    "string"
-      ? (part as { traceDisplayText: string }).traceDisplayText
+    typeof (part as unknown as { traceDisplayText?: unknown })
+      .traceDisplayText === "string"
+      ? (part as unknown as { traceDisplayText: string }).traceDisplayText
       : undefined;
   const traceDisplayMode = (part as { traceDisplayMode?: TraceDisplayMode })
     .traceDisplayMode;

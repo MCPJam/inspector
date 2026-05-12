@@ -257,12 +257,17 @@ export function useSuiteData(
         if (!groups.has(snapshotKey)) {
           const virtualTestCase: EvalCase = {
             _id: snapshotKey,
-            evalTestSuiteId: suite._id,
+            testSuiteId: suite._id,
             createdBy: iteration.createdBy || "",
             title: iteration.testCaseSnapshot.title,
             query: iteration.testCaseSnapshot.query,
-            provider: iteration.testCaseSnapshot.provider,
-            model: iteration.testCaseSnapshot.model,
+            models: [
+              {
+                model: iteration.testCaseSnapshot.model,
+                provider: iteration.testCaseSnapshot.provider,
+              },
+            ],
+            runs: 1,
             expectedToolCalls: iteration.testCaseSnapshot.expectedToolCalls,
           };
           groups.set(snapshotKey, {
@@ -339,39 +344,6 @@ export function useSuiteData(
       }
     >();
 
-    // First, add templates from suite config
-    const configTests = suite.config?.tests || [];
-    configTests.forEach((test: any) => {
-      const templateTitle = test.title.replace(/\s*\[.*?\]\s*$/, "").trim();
-      const templateKey = `template:${templateTitle}-${test.query}`;
-
-      if (!groups.has(templateKey)) {
-        groups.set(templateKey, {
-          title: templateTitle,
-          query: test.query,
-          testCaseIds: [],
-          iterations: [],
-          summary: {
-            runs: 0,
-            passed: 0,
-            failed: 0,
-            cancelled: 0,
-            pending: 0,
-            tokens: 0,
-            avgDuration: null,
-          },
-        });
-      }
-
-      if (test.testCaseId) {
-        const group = groups.get(templateKey)!;
-        if (!group.testCaseIds.includes(test.testCaseId)) {
-          group.testCaseIds.push(test.testCaseId);
-        }
-      }
-    });
-
-    // Then, group by testTemplateKey from schema
     caseGroups.forEach((group) => {
       if (!group.testCase) return;
 
@@ -379,14 +351,9 @@ export function useSuiteData(
       const templateTitle = group.testCase.title
         .replace(/\s*\[.*?\]\s*$/, "")
         .trim();
-      const configTemplateKey = `template:${templateTitle}-${group.testCase.query}`;
 
-      const keyToUse = groups.has(configTemplateKey)
-        ? configTemplateKey
-        : templateKey;
-
-      if (!groups.has(keyToUse)) {
-        groups.set(keyToUse, {
+      if (!groups.has(templateKey)) {
+        groups.set(templateKey, {
           title: templateTitle,
           query: group.testCase.query,
           testCaseIds: [],
@@ -403,7 +370,7 @@ export function useSuiteData(
         });
       }
 
-      const templateGroup = groups.get(keyToUse)!;
+      const templateGroup = groups.get(templateKey)!;
       if (!templateGroup.testCaseIds.includes(group.testCase._id)) {
         templateGroup.testCaseIds.push(group.testCase._id);
       }
@@ -414,7 +381,7 @@ export function useSuiteData(
       ...group,
       summary: computeIterationSummary(group.iterations),
     }));
-  }, [caseGroups, suite.config?.tests]);
+  }, [caseGroups]);
 
   return {
     activeRunIds,

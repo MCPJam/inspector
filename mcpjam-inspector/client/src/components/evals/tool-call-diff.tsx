@@ -18,7 +18,7 @@ type ToolCallDiffProps = {
  */
 export function ToolCallDiff({
   result,
-  expectedToolCalls,
+  expectedToolCalls: _expectedToolCalls,
   actualToolCalls,
 }: ToolCallDiffProps) {
   const { missing, extra, outOfOrder, argumentMismatches } = result;

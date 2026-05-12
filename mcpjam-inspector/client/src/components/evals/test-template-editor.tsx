@@ -40,6 +40,7 @@ import {
 } from "@/components/chat-v2/model-compare-card-header";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import type { ModelDefinition } from "@/shared/types";
+import type { RemoteServer } from "@/hooks/useProjects";
 import {
   buildTestCaseModelOptions,
   getPersistedTestCaseModelValue,
@@ -140,11 +141,7 @@ interface TestTemplateEditorProps {
   ensureServersReady?: (
     serverNames: string[],
   ) => Promise<EnsureServersReadyResult>;
-  projectServers?: Array<{
-    _id: string;
-    name: string;
-    transportType?: "stdio" | "http";
-  }>;
+  projectServers?: RemoteServer[];
 }
 
 const createEmptyPromptTurn = (index: number): PromptTurn => ({
@@ -889,11 +886,11 @@ export function TestTemplateEditor({
 
   const modelDefinitionByValue = useMemo(
     () =>
-      new Map(
-        modelDefinitionsForSelector.map(
-          (model) =>
-            [`${model.provider}/${String(model.id)}`, model] as const,
-        ),
+      new Map<string, ModelDefinition>(
+        modelDefinitionsForSelector.map((model) => [
+          `${model.provider}/${String(model.id)}`,
+          model,
+        ]),
       ),
     [modelDefinitionsForSelector],
   );

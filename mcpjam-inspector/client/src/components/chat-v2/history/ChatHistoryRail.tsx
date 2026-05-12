@@ -238,7 +238,7 @@ export function ChatHistoryRail({
     const wasStreaming = wasStreamingRef.current;
     wasStreamingRef.current = isStreaming;
 
-    const timeoutIds: ReturnType<typeof window.setTimeout>[] = [];
+    const timeoutIds: number[] = [];
 
     if (wasStreaming && !isStreaming && !isReactive) {
       void refetch();

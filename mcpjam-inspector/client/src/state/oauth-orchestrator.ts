@@ -104,7 +104,7 @@ function normalizeHeaders(headers: unknown): Record<string, string> | undefined 
 
   if (typeof headers === "object") {
     const entries = Object.entries(headers).filter(
-      ([, value]): value is string => typeof value === "string",
+      (entry): entry is [string, string] => typeof entry[1] === "string",
     );
     return sanitizeOAuthSetupHeaders(Object.fromEntries(entries));
   }

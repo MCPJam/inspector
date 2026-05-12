@@ -22,6 +22,7 @@ import { getChatComposerInteractivity } from "@/hooks/use-chat-stop-controls";
 import type { ModelDefinition } from "@/shared/types";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
 import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
+import type { TraceViewMode } from "@/components/evals/trace-view-mode-tabs";
 
 type ChatTraceViewMode = "chat" | "timeline" | "raw";
 
@@ -147,7 +148,8 @@ export function MultiModelChatCard({
     setRevealedInChat(true);
   }, []);
 
-  const handleTraceViewModeChange = useCallback((mode: ChatTraceViewMode) => {
+  const handleTraceViewModeChange = useCallback((mode: TraceViewMode) => {
+    if (mode === "tools") return;
     setTraceViewMode(mode);
     setRevealedInChat(false);
   }, []);

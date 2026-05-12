@@ -533,7 +533,8 @@ export function ChatboxBuilderView({
     };
 
     writePlaygroundSession({
-      token: chatbox.link.token,
+      chatboxId: chatbox.chatboxId,
+      accessVersion: 0,
       payload,
       surface: "preview",
       playgroundId,
