@@ -64,7 +64,7 @@ export class DebugMCPOAuthClientProvider implements OAuthClientProvider {
     sessionStorage.setItem(key, JSON.stringify(tokens));
   }
 
-  redirectToAuthorization(authorizationUrl: URL): void {
+  redirectToAuthorization(_authorizationUrl: URL): void {
     // For debugging, we'll show the URL instead of redirecting
     // In a real debug environment, we might want to copy to clipboard or show in UI
   }

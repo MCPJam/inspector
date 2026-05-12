@@ -1,4 +1,4 @@
-import { AppWindow, FileCode, Wrench, Database } from "lucide-react";
+import { Wrench, Database } from "lucide-react";
 import type {
   ArchNodeDef,
   ArchEdgeDef,

@@ -101,7 +101,6 @@ import {
 } from "@/contexts/chatbox-host-style-context";
 import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-host-capabilities-override-context";
 import { useComposerOnboarding } from "@/hooks/use-composer-onboarding";
-import { useDebouncedXRayPayload } from "@/hooks/use-debounced-x-ray-payload";
 import { useModelSelectorLayoutLock } from "@/hooks/use-model-selector-layout-lock";
 import {
   getChatComposerInteractivity,
@@ -383,7 +382,6 @@ export function PlaygroundMain({
     setMessages,
     sendMessage,
     stop,
-    status,
     error,
     chatSessionId,
     selectedModel,

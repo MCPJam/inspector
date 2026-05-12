@@ -11,7 +11,7 @@ import {
   SquareSlash,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { SkillFile, SkillListItem } from "@shared/skill-types";
+import type { SkillFile, SkillListItem } from "@/shared/skill-types";
 
 interface SkillsFileTreeProps {
   skills: SkillListItem[];

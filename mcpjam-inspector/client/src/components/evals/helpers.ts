@@ -106,7 +106,7 @@ export function getTemplateKey(test: {
 }
 
 export function aggregateSuite(
-  suite: EvalSuite,
+  _suite: EvalSuite,
   cases: EvalCase[],
   iterations: EvalIteration[],
 ): SuiteAggregate {

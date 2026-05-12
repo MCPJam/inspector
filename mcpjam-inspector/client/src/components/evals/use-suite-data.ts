@@ -165,7 +165,7 @@ export function useSuiteData(
       }
     });
 
-    const data = Array.from(modelMap.entries()).map(([model, stats]) => ({
+    const data = Array.from(modelMap.entries()).map(([_model, stats]) => ({
       model: stats.modelName,
       passRate:
         stats.total > 0 ? Math.round((stats.passed / stats.total) * 100) : 0,
@@ -534,7 +534,7 @@ export function useRunDetailData(
 
     // Sort alphabetically by model name for consistent, fixed ordering
     const modelData = Array.from(modelMap.entries())
-      .map(([model, stats]) => ({
+      .map(([_model, stats]) => ({
         model: stats.modelName,
         passRate:
           stats.total > 0 ? Math.round((stats.passed / stats.total) * 100) : 0,

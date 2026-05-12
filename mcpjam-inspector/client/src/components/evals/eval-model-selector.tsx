@@ -35,7 +35,7 @@ function openRouterToModelDefinition(
 
 export function EvalModelSelector({
   selectedModel,
-  availableModels,
+  availableModels: _availableModels,
   onModelChange,
 }: EvalModelSelectorProps) {
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
