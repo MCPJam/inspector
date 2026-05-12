@@ -531,6 +531,31 @@ describe("resolveSandboxCsp — hosted-mode hard clamp", () => {
     ]);
   });
 
+  it("strips schemeless host:port loopback in hosted mode (regression: localhost:3000 splitScheme misparse)", () => {
+    // Regression for Bugbot Medium: `localhost:3000` matched
+    // splitScheme's scheme regex as `{scheme: "localhost", host: "3000"}`.
+    // The clamp's loopback check then compared the extracted hostname
+    // "3000" against "localhost" and missed — so a schemeless
+    // `localhost:3000` in a CSP source list bypassed the bedrock
+    // guard. Disambiguation: a digit follows the colon → it's a
+    // port, not a scheme.
+    const result = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: [
+          "https://api.example.com",
+          "localhost:3000",
+          "127.0.0.1:8080",
+          "10.0.0.1:443",
+          "192.168.1.5:5173",
+        ],
+      },
+      isHostedMode: true,
+    });
+    expect(result.effective.connectDomains).toEqual([
+      "https://api.example.com",
+    ]);
+  });
+
   it("strips port-bearing wildcards in hosted mode (regression: *:3000, https://*:443, *.com:8080)", () => {
     // Regression for Bugbot Medium: the wildcard guards previously
     // string-equality-checked `host === "*"` and `host.startsWith

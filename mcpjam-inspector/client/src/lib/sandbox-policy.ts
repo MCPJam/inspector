@@ -595,9 +595,28 @@ function splitScheme(value: string): {
   //
   // Grammar from RFC 3986
   // (scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )).
+  //
+  // Ambiguity: `localhost:3000` and `evil.com:8080` ALSO match the
+  // regex above (the prefix happens to be valid scheme syntax). A
+  // naive scheme-match here would parse them as
+  // `{scheme: "localhost", host: "3000"}` — and the clamp's loopback
+  // check `lowerHost === "localhost"` would then look at "3000" and
+  // miss, so a CSP entry `localhost:3000` (without `http://`) would
+  // bypass the bedrock guard. Same class of bug for `evil.com:8080`.
+  //
+  // Disambiguation: scheme-source expressions like `javascript:`,
+  // `data:`, `blob:`, `mailto:` are followed by NON-NUMERIC content
+  // (URI path, payload, or empty). A `host:port` form is always
+  // followed by a NUMERIC port. So: if the part after the first
+  // colon starts with a digit, treat the whole thing as a
+  // schemeless host:port and don't strip a scheme.
   const schemeMatch = /^([a-zA-Z][a-zA-Z0-9+.\-]*):/.exec(value);
   if (schemeMatch) {
     const rest = value.slice(schemeMatch[0].length);
+    if (/^\d/.test(rest)) {
+      // host:port shape — keep the whole thing as host.
+      return { scheme: undefined, host: value };
+    }
     return {
       scheme: schemeMatch[1]!.toLowerCase(),
       // Strip a leading `//` so callers that compare `host` to e.g.
