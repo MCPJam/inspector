@@ -1881,9 +1881,16 @@ export function MCPAppsRenderer({
         template={modalTemplate}
         params={modalParams}
         registerBridgeHandlers={registerBridgeHandlers}
-        widgetCsp={widgetCsp}
-        widgetPermissions={widgetPermissions}
-        widgetPermissive={widgetPermissive}
+        // Modal iframe must consume the RESOLVED policy too —
+        // otherwise a profile's restrictTo / deny / hosted-clamp
+        // rules apply to the inline view but bypass when a widget
+        // opens its modal surface. The prop names retain
+        // `widget*` shape for source-compat; the modal forwards
+        // them to its own SandboxedIframe + AppBridge identically
+        // to how the inline view's props flow.
+        widgetCsp={resolvedCsp}
+        widgetPermissions={resolvedPermissions}
+        widgetPermissive={effectivePermissive}
         hostContextRef={hostContextRef}
         serverId={serverId}
         resourceUri={resourceUri}

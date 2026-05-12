@@ -394,6 +394,12 @@ function ClientIdentitySubsection({
       <Label className="text-xs font-medium">
         Client identity (sent in <code>initialize.clientInfo</code>)
       </Label>
+      <p className="text-xs text-amber-600 dark:text-amber-400">
+        Saved to your hostConfig but not yet applied at the MCP wire —
+        per-request <code>MCPClientManager</code> threading lands in a
+        follow-up PR. Servers will continue to see the inspector
+        default identity until then.
+      </p>
       <div className="grid grid-cols-3 gap-2">
         <Input
           aria-label="Client name"
@@ -515,6 +521,12 @@ function ProtocolVersionsSubsection({
       <Label className="text-xs font-medium">
         Supported protocol versions (ordered — first is proposed)
       </Label>
+      <p className="text-xs text-amber-600 dark:text-amber-400">
+        Saved to your hostConfig but not yet applied at the MCP wire —
+        per-request <code>MCPClientManager</code> threading lands in a
+        follow-up PR. Initialize negotiation will continue to use the
+        SDK&apos;s defaults until then.
+      </p>
       {rows.length > 0 ? (
         <div className="grid gap-1">
           {rows.map((v, i) => (
