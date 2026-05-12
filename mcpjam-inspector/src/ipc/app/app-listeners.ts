@@ -37,6 +37,14 @@ export function registerAppListeners(
       throw new Error("Refusing to open non-HTTP external URL");
     }
 
+    if (
+      process.env.NODE_ENV === "development" &&
+      process.env.MCPJAM_FORCE_ELECTRON_OAUTH_FALLBACK === "true"
+    ) {
+      log.warn("Forcing open-external failure for Electron OAuth fallback test");
+      throw new Error("Forced open-external failure for OAuth fallback test");
+    }
+
     log.info("Renderer requested system browser open");
     await shell.openExternal(parsedUrl.toString());
   });

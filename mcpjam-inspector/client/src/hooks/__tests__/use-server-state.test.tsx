@@ -313,6 +313,7 @@ describe("useServerState OAuth callback failures", () => {
     vi.clearAllMocks();
     localStorage.clear();
     window.history.replaceState({}, "", "/");
+    window.isElectron = false;
     useClientConfigStore.setState({
       activeProjectId: null,
       defaultConfig: null,
@@ -457,6 +458,49 @@ describe("useServerState OAuth callback failures", () => {
     } finally {
       consoleErrorSpy.mockRestore();
     }
+  });
+
+  it("completes Electron in-app fallback callbacks in the renderer", async () => {
+    window.isElectron = true;
+    localStorage.setItem("mcp-oauth-pending", "demo-server");
+    localStorage.setItem("mcp-oauth-return-hash", "#demo-server");
+    handleOAuthCallbackMock.mockResolvedValue({
+      success: true,
+      serverName: "demo-server",
+      serverConfig: {
+        type: "http",
+        url: "https://example.com/mcp",
+      },
+    });
+    window.history.replaceState(
+      {},
+      "",
+      "/oauth/callback?code=test-code&state=electron_mcp:test-state",
+    );
+
+    expect(buildElectronMcpCallbackUrl()).toBeNull();
+
+    const dispatch = vi.fn();
+    renderUseServerState(dispatch);
+
+    await waitFor(() => {
+      expect(handleOAuthCallbackMock).toHaveBeenCalledWith(
+        "test-code",
+        expect.objectContaining({
+          onTraceUpdate: expect.any(Function),
+        }),
+      );
+    });
+    await waitFor(() => {
+      expect(toastSuccess).toHaveBeenCalledWith(
+        "OAuth connection successful! Connected to demo-server.",
+      );
+    });
+
+    expect(window.location.pathname).toBe("/");
+    expect(window.location.search).toBe("");
+    expect(window.location.hash).toBe("#demo-server");
+    expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
   });
 
   it("ignores regular browser OAuth callbacks that are not tagged for Electron", () => {

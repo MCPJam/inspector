@@ -2109,6 +2109,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 
   async redirectToAuthorization(authorizationUrl: URL) {
+    const authorizationUrlString = authorizationUrl.toString();
     captureServerDetailModalOAuthResume(this.serverName);
     // Store server name for callback recovery
     localStorage.setItem("mcp-oauth-pending", this.serverName);
@@ -2117,19 +2118,28 @@ export class MCPOAuthProvider implements OAuthClientProvider {
       localStorage.setItem("mcp-oauth-return-hash", window.location.hash);
     }
 
-    if (window.isElectron && window.electronAPI?.app?.openExternal) {
-      try {
-        await window.electronAPI.app.openExternal(authorizationUrl.toString());
-        return;
-      } catch (error) {
-        console.error(
-          "Failed to open system browser for MCP OAuth, falling back to in-app navigation:",
-          error,
+    if (window.isElectron) {
+      if (window.electronAPI?.app?.openExternal) {
+        try {
+          await window.electronAPI.app.openExternal(authorizationUrlString);
+          return;
+        } catch (error) {
+          console.warn(
+            "Failed to open system browser for MCP OAuth; continuing inside MCPJam Desktop:",
+            error,
+          );
+        }
+      } else {
+        console.warn(
+          "System browser opener is unavailable for MCP OAuth; continuing inside MCPJam Desktop.",
         );
       }
+
+      this.navigateToUrl(authorizationUrlString);
+      return;
     }
 
-    this.navigateToUrl(authorizationUrl.toString());
+    this.navigateToUrl(authorizationUrlString);
   }
 
   navigateToUrl(url: string) {

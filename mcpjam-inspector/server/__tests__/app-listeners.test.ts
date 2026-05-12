@@ -62,6 +62,7 @@ describe("registerAppListeners", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
     registeredHandlers.clear();
     currentMainWindow = createWindow(1);
 
@@ -104,6 +105,21 @@ describe("registerAppListeners", () => {
     expect(openExternalMock).not.toHaveBeenCalled();
     expect(logWarnMock).toHaveBeenCalledWith(
       "Ignoring open-external from untrusted sender (id: 1)",
+    );
+  });
+
+  it("can force open-external to fail in development for OAuth fallback testing", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("MCPJAM_FORCE_ELECTRON_OAUTH_FALLBACK", "true");
+    const openExternal = getOpenExternalHandler();
+
+    await expect(
+      openExternal({ sender: { id: 1 } }, "https://example.com/oauth"),
+    ).rejects.toThrow("Forced open-external failure for OAuth fallback test");
+
+    expect(openExternalMock).not.toHaveBeenCalled();
+    expect(logWarnMock).toHaveBeenCalledWith(
+      "Forcing open-external failure for Electron OAuth fallback test",
     );
   });
 });

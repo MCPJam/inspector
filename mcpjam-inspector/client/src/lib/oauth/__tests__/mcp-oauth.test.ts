@@ -976,8 +976,8 @@ describe("mcp-oauth", () => {
       const navigateSpy = vi
         .spyOn(provider, "navigateToUrl")
         .mockImplementation(() => {});
-      const consoleErrorSpy = vi
-        .spyOn(console, "error")
+      const consoleWarnSpy = vi
+        .spyOn(console, "warn")
         .mockImplementation(() => {});
       const openExternal = vi
         .fn()
@@ -1008,7 +1008,49 @@ describe("mcp-oauth", () => {
       expect(navigateSpy).toHaveBeenCalledWith(
         "https://auth.example.com/authorize",
       );
-      expect(consoleErrorSpy).toHaveBeenCalled();
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        "Failed to open system browser for MCP OAuth; continuing inside MCPJam Desktop:",
+        expect.any(Error),
+      );
+    });
+
+    it("falls back to in-app navigation when Electron browser opener is unavailable", async () => {
+      vi.restoreAllMocks();
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+      );
+      const navigateSpy = vi
+        .spyOn(provider, "navigateToUrl")
+        .mockImplementation(() => {});
+      const consoleWarnSpy = vi
+        .spyOn(console, "warn")
+        .mockImplementation(() => {});
+
+      Object.defineProperty(window, "isElectron", {
+        configurable: true,
+        writable: true,
+        value: true,
+      });
+      Object.defineProperty(window, "electronAPI", {
+        configurable: true,
+        writable: true,
+        value: {
+          app: {},
+        },
+      });
+
+      await provider.redirectToAuthorization(
+        new URL("https://auth.example.com/authorize"),
+      );
+
+      expect(navigateSpy).toHaveBeenCalledWith(
+        "https://auth.example.com/authorize",
+      );
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        "System browser opener is unavailable for MCP OAuth; continuing inside MCPJam Desktop.",
+      );
     });
 
     it("explains why automatic mode resolved to DCR when CIMD support was not advertised", async () => {

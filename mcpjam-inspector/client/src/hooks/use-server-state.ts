@@ -1522,6 +1522,8 @@ export function useServerState({
         localStorage.removeItem("mcp-oauth-return-hash");
         if (isHostedProjectCallback) {
           clearHostedOAuthPendingState();
+        }
+        if (result.success) {
           localStorage.removeItem("mcp-oauth-pending");
         }
 
