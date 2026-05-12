@@ -88,6 +88,31 @@ describe("hostConfigInputsEqual", () => {
     });
     expect(hostConfigInputsEqual(a, b)).toBe(false);
   });
+
+  it("treats two undefined hostCapabilitiesOverrides as equal", () => {
+    expect(
+      hostConfigInputsEqual(
+        makeInput({ hostCapabilitiesOverride: undefined }),
+        makeInput({ hostCapabilitiesOverride: undefined }),
+      ),
+    ).toBe(true);
+  });
+
+  it("distinguishes undefined from an empty {} override", () => {
+    const a = makeInput({ hostCapabilitiesOverride: undefined });
+    const b = makeInput({ hostCapabilitiesOverride: {} });
+    expect(hostConfigInputsEqual(a, b)).toBe(false);
+  });
+
+  it("detects nested value changes in hostCapabilitiesOverride", () => {
+    const a = makeInput({
+      hostCapabilitiesOverride: { openLinks: {} } as Record<string, unknown>,
+    });
+    const b = makeInput({
+      hostCapabilitiesOverride: {} as Record<string, unknown>,
+    });
+    expect(hostConfigInputsEqual(a, b)).toBe(false);
+  });
 });
 
 describe("emptyHostConfigInputV2", () => {
@@ -197,5 +222,52 @@ describe("hostConfigDtoToInput", () => {
         >
       ),
     ).toEqual({ value: 1 });
+  });
+
+  it("deep-clones hostCapabilitiesOverride when present", () => {
+    const dto: HostConfigDtoV2 = {
+      id: "host-3",
+      schemaVersion: 2,
+      hostStyle: "claude",
+      modelId: "x",
+      systemPrompt: "",
+      temperature: 0.7,
+      requireToolApproval: false,
+      serverIds: [],
+      optionalServerIds: [],
+      connectionDefaults: { headers: {}, requestTimeout: 10000 },
+      clientCapabilities: {},
+      hostContext: {},
+      hostCapabilitiesOverride: {
+        serverTools: { listChanged: true },
+      } as Record<string, unknown>,
+    };
+    const input = hostConfigDtoToInput(dto);
+    (input.hostCapabilitiesOverride!.serverTools as Record<string, unknown>)
+      .listChanged = false;
+
+    expect(
+      (dto.hostCapabilitiesOverride!.serverTools as Record<string, unknown>)
+        .listChanged,
+    ).toBe(true);
+  });
+
+  it("leaves hostCapabilitiesOverride undefined when the dto omits it", () => {
+    const dto: HostConfigDtoV2 = {
+      id: "host-4",
+      schemaVersion: 2,
+      hostStyle: "claude",
+      modelId: "x",
+      systemPrompt: "",
+      temperature: 0.7,
+      requireToolApproval: false,
+      serverIds: [],
+      optionalServerIds: [],
+      connectionDefaults: { headers: {}, requestTimeout: 10000 },
+      clientCapabilities: {},
+      hostContext: {},
+    };
+    const input = hostConfigDtoToInput(dto);
+    expect(input.hostCapabilitiesOverride).toBeUndefined();
   });
 });

@@ -15,6 +15,11 @@ import {
 } from "@/config/claude-desktop-host-context";
 import type { HostStyleDefinition } from "./types";
 
+// NOTE: capability presets are best-effort mocks of what each vendor publicly
+// supports today. Treat them as starting points — verify against vendor docs
+// when behavior matters, and refine as the inspector's enforcement layer
+// (Step 4) lands. Sandbox is omitted intentionally; it's resource-derived at
+// runtime (see HostStyleDefinition.hostCapabilities).
 export const CLAUDE_HOST_STYLE: HostStyleDefinition = {
   id: "claude",
   label: "Claude",
@@ -25,6 +30,14 @@ export const CLAUDE_HOST_STYLE: HostStyleDefinition = {
   protocolOverride: UIType.MCP_APPS,
   platform: CLAUDE_DESKTOP_PLATFORM,
   fontCss: CLAUDE_DESKTOP_FONT_CSS,
+  hostCapabilities: {
+    openLinks: {},
+    serverTools: { listChanged: true },
+    serverResources: { listChanged: true },
+    logging: {},
+    updateModelContext: { text: {} },
+    message: { text: {} },
+  },
   resolveStyleVariables: getClaudeDesktopStyleVariables,
   resolveChatBackground: (theme) => CLAUDE_DESKTOP_CHAT_BACKGROUND[theme],
 };
@@ -39,6 +52,16 @@ export const CHATGPT_HOST_STYLE: HostStyleDefinition = {
   protocolOverride: UIType.OPENAI_SDK,
   platform: CHATGPT_PLATFORM,
   fontCss: CHATGPT_FONT_CSS,
+  hostCapabilities: {
+    openLinks: {},
+    serverTools: { listChanged: true },
+    // Differs from Claude: ChatGPT's Apps SDK historically focuses on tool
+    // calls rather than proxying server resources/logging. Adjust once
+    // verified against the current OpenAI Apps SDK documentation.
+    updateModelContext: { text: {} },
+    message: { text: {} },
+    downloadFile: {},
+  },
   resolveStyleVariables: getChatGPTStyleVariables,
   resolveChatBackground: (theme) => CHATGPT_CHAT_BACKGROUND[theme],
 };

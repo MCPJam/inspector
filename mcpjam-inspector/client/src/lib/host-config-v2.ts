@@ -11,11 +11,13 @@
  * place; the shape below is stable.
  */
 
+import type { McpUiHostCapabilities } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
 import {
   DEFAULT_REQUEST_TIMEOUT_MS,
   stableStringifyJson,
 } from "@/lib/client-config";
+import { getHostCapabilitiesForStyle } from "@/lib/host-styles";
 import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
 
 export type HostStyleId = ChatboxHostStyle;
@@ -40,6 +42,14 @@ export type HostConfigInputV2 = {
   connectionDefaults: HostConfigConnectionDefaults;
   clientCapabilities: Record<string, unknown>;
   hostContext: Record<string, unknown>;
+  /**
+   * User override for the MCP Apps `hostCapabilities` blob advertised in the
+   * `ui/initialize` response. When undefined, the renderer falls back to the
+   * preset declared by the active `hostStyle`. Tracked as an **override** so
+   * source is unambiguous: switching host styles must not drag a stale base
+   * value along, and "Reset to profile" is a one-line undefined write.
+   */
+  hostCapabilitiesOverride?: Record<string, unknown>;
 };
 
 /**
@@ -59,6 +69,8 @@ export type HostConfigDtoV2 = {
   connectionDefaults: HostConfigConnectionDefaults;
   clientCapabilities: Record<string, unknown>;
   hostContext: Record<string, unknown>;
+  /** Optional user override (see HostConfigInputV2.hostCapabilitiesOverride). */
+  hostCapabilitiesOverride?: Record<string, unknown>;
 };
 
 export const DEFAULT_HOST_STYLE_V2: HostStyleId = "claude";
@@ -107,6 +119,9 @@ export function emptyHostConfigInputV2(
     hostContext: partial.hostContext
       ? deepCloneJsonRecord(partial.hostContext)
       : {},
+    hostCapabilitiesOverride: partial.hostCapabilitiesOverride
+      ? deepCloneJsonRecord(partial.hostCapabilitiesOverride)
+      : undefined,
   };
 }
 
@@ -133,7 +148,42 @@ export function hostConfigDtoToInput(
     },
     clientCapabilities: deepCloneJsonRecord(dto.clientCapabilities),
     hostContext: deepCloneJsonRecord(dto.hostContext),
+    hostCapabilitiesOverride: dto.hostCapabilitiesOverride
+      ? deepCloneJsonRecord(dto.hostCapabilitiesOverride)
+      : undefined,
   };
+}
+
+/**
+ * Resolve the `hostCapabilities` blob the MCP Apps iframe handshake should
+ * advertise for a given host config. Precedence:
+ *   1. User-saved `hostCapabilitiesOverride` (verbatim, when present)
+ *   2. The active host style's preset
+ *   3. Spec-default "no claims" baseline (handled inside
+ *      {@link getHostCapabilitiesForStyle})
+ *
+ * **Sandbox is intentionally NOT resolved here.** Per SEP-1865, sandbox
+ * CSP/permissions are approved per-UI-resource at runtime and merged into
+ * the final blob by the renderer. Profile presets and user overrides cover
+ * vendor-trait fields only.
+ *
+ * **Conformance gap (advertise vs. enforce):** This returns the value the
+ * handshake will advertise. Until enforcement gates land in the renderer's
+ * request handlers, behavior may still service methods this blob omits.
+ * Use this value as the single source of truth when enforcement ships so
+ * advertise and enforce stay in lockstep.
+ */
+export function resolveEffectiveHostCapabilities(args: {
+  hostStyle: HostStyleId | null | undefined;
+  hostCapabilitiesOverride?: Record<string, unknown>;
+}): Omit<McpUiHostCapabilities, "sandbox"> {
+  if (args.hostCapabilitiesOverride) {
+    return args.hostCapabilitiesOverride as Omit<
+      McpUiHostCapabilities,
+      "sandbox"
+    >;
+  }
+  return getHostCapabilitiesForStyle(args.hostStyle);
 }
 
 function deepCloneJsonRecord(
@@ -185,7 +235,21 @@ export function hostConfigInputsEqual(
     return false;
   if (!jsonRecordEq(a.clientCapabilities, b.clientCapabilities)) return false;
   if (!jsonRecordEq(a.hostContext, b.hostContext)) return false;
+  if (!optionalJsonRecordEq(a.hostCapabilitiesOverride, b.hostCapabilitiesOverride))
+    return false;
   return true;
+}
+
+function optionalJsonRecordEq(
+  a: Record<string, unknown> | undefined,
+  b: Record<string, unknown> | undefined,
+): boolean {
+  // Treat `undefined` (use profile preset) and `{}` (explicit empty override)
+  // as distinct values — flipping between them changes the resolved blob and
+  // must register as dirty.
+  if (a === undefined && b === undefined) return true;
+  if (a === undefined || b === undefined) return false;
+  return jsonRecordEq(a, b);
 }
 
 function stringArrayEq(a: string[], b: string[]): boolean {

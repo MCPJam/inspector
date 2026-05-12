@@ -11,8 +11,10 @@ const {
   mockPreferencesState: {
     themeMode: "light",
     hostStyle: "claude",
+    hostCapabilitiesOverride: undefined,
     setThemeMode: vi.fn(),
     setHostStyle: vi.fn(),
+    setHostCapabilitiesOverride: vi.fn(),
   },
   mockUIPlaygroundStore: {
     deviceType: "desktop",
@@ -92,6 +94,11 @@ vi.mock("@/components/ui-playground/SafeAreaEditor", () => ({
 vi.mock("@/components/shared/HostContextDialog", () => ({
   HostContextDialog: ({ open }: { open: boolean }) =>
     open ? <div data-testid="host-context-dialog" /> : null,
+}));
+
+vi.mock("@/components/host-config/HostCapabilitiesOverrideDialog", () => ({
+  HostCapabilitiesOverrideDialog: ({ open }: { open: boolean }) =>
+    open ? <div data-testid="host-capabilities-dialog" /> : null,
 }));
 
 vi.mock("@/components/shared/host-context-constants", () => ({
