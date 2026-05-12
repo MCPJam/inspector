@@ -679,13 +679,14 @@ export function EvalsTab({
           canDeleteRuns={canDeleteRuns}
           hideRunActions
           onDeleteTestCasesBatch={handleDeleteTestCasesBatch}
-          onRunTestCase={(testCase) => {
+          onRunTestCase={(testCase, opts) => {
             void (async () => {
               const data = await handlers.handleRunTestCase(
                 selectedSuite,
                 testCase,
                 {
                   location: "test_cases_overview",
+                  iterationOverride: opts?.iterationOverride,
                 },
               );
               const firstIterationId =

@@ -104,6 +104,13 @@ interface SuiteHeaderProps {
   onSuiteModelsUpdate?: (models: SuiteOverviewModelRow[]) => Promise<void>;
   /** Playground run detail: compact KPI strip rendered beside the run title. */
   runDetailKpiStrip?: ReactNode;
+  /**
+   * Transient per-run iteration count (1-10). Applied to both Run-all-cases
+   * and per-case runs triggered from this suite view; does NOT mutate the
+   * persisted `EvalCase.runs` defaults.
+   */
+  iterationOverride?: number;
+  onIterationOverrideChange?: (value: number | undefined) => void;
 }
 
 export function SuiteHeader(props: SuiteHeaderProps) {
@@ -116,6 +123,8 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     onReplayRun,
     onCancelRun,
     onViewModeChange,
+    iterationOverride,
+    onIterationOverrideChange,
     connectedServerNames,
     rerunningSuiteId,
     replayingRunId = null,
@@ -387,35 +396,61 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                   : null;
           const runAllConnectionHint =
             missingServers.length > 0 ? "Connect and run." : null;
+          const iterationPicker = onIterationOverrideChange ? (
+            <label className="flex items-center gap-1 text-xs text-muted-foreground">
+              <span>Iterations</span>
+              <select
+                className="h-8 rounded-md border border-input bg-background px-2 text-foreground"
+                value={iterationOverride ?? ""}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  onIterationOverrideChange(raw === "" ? undefined : Number(raw));
+                }}
+                aria-label="Iterations per test case for the next run"
+                disabled={isRunAllDisabled}
+              >
+                <option value="">Auto</option>
+                {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null;
           const runAllButton = (
-            <Button
-              type="button"
-              variant="default"
-              size="sm"
-              className="h-8 gap-1.5"
-              disabled={isRunAllDisabled}
-              aria-label="Run all cases in this suite"
-              aria-busy={isRerunning}
-              onClick={() => {
-                posthog.capture("run_all_cases_button_clicked", {
-                  location: "suite_header",
-                  platform: detectPlatform(),
-                  environment: detectEnvironment(),
-                  suite_id: suite._id,
-                });
-                onRerun(suite);
-              }}
-            >
-              {isRerunning ? (
-                <Loader2
-                  className="h-3.5 w-3.5 shrink-0 animate-spin"
-                  aria-hidden
-                />
-              ) : (
-                <Play className="h-3.5 w-3.5 shrink-0" aria-hidden />
-              )}
-              Run all
-            </Button>
+            <div className="flex items-center gap-2">
+              {iterationPicker}
+              <Button
+                type="button"
+                variant="default"
+                size="sm"
+                className="h-8 gap-1.5"
+                disabled={isRunAllDisabled}
+                aria-label="Run all cases in this suite"
+                aria-busy={isRerunning}
+                onClick={() => {
+                  posthog.capture("run_all_cases_button_clicked", {
+                    location: "suite_header",
+                    platform: detectPlatform(),
+                    environment: detectEnvironment(),
+                    suite_id: suite._id,
+                    iteration_override: iterationOverride ?? null,
+                  });
+                  onRerun(suite);
+                }}
+              >
+                {isRerunning ? (
+                  <Loader2
+                    className="h-3.5 w-3.5 shrink-0 animate-spin"
+                    aria-hidden
+                  />
+                ) : (
+                  <Play className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                )}
+                Run all
+              </Button>
+            </div>
           );
           if (isRunAllDisabled && runAllDisabledReasonTooltip) {
             return (

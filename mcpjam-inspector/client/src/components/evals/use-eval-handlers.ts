@@ -4,10 +4,6 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { toast } from "sonner";
 import posthog from "posthog-js";
 import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
-import {
-  useAiProviderKeys,
-  type ProviderTokens,
-} from "@/hooks/use-ai-provider-keys";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { navigateToEvalsRoute, type EvalsRoute } from "@/lib/evals-router";
 import {
@@ -193,7 +189,6 @@ export function useEvalHandlers({
 }: UseEvalHandlersProps) {
   const convex = useConvex();
   const { getAccessToken } = useAuth();
-  const { getToken, hasToken } = useAiProviderKeys();
 
   // Action states
   const [rerunningSuiteId, setRerunningSuiteId] = useState<string | null>(null);
@@ -347,20 +342,10 @@ export function useEvalHandlers({
         return null;
       }
 
+      // Provider secrets are resolved server-side from the organization
+      // model-providers config in both hosted and local modes, so we no longer
+      // gate runs on client-held tokens.
       const modelApiKeys: Record<string, string> = {};
-      for (const provider of providersNeeded) {
-        const tokenKey = provider.toLowerCase() as keyof ProviderTokens;
-        if (!hasToken(tokenKey)) {
-          toast.error(
-            `Please add your ${provider} API key in Settings before running evals`
-          );
-          return null;
-        }
-        const key = getToken(tokenKey);
-        if (key) {
-          modelApiKeys[provider] = key;
-        }
-      }
 
       return {
         suiteServers: normalizeSuiteServerRefs(suite.environment?.servers),
@@ -370,7 +355,7 @@ export function useEvalHandlers({
         providersNeeded,
       };
     },
-    [getTestCasesForRerun, getToken, hasToken, availableModels]
+    [getTestCasesForRerun, availableModels]
   );
 
   const handleReplayRun = useCallback(
@@ -479,7 +464,17 @@ export function useEvalHandlers({
 
   // Rerun handler
   const handleRerun = useCallback(
-    async (suite: EvalSuite) => {
+    async (
+      suite: EvalSuite,
+      options?: {
+        /**
+         * Transient per-run override applied uniformly to every test in this
+         * suite run. Does NOT mutate the persisted `EvalCase.runs` default.
+         * Capped server-side at 10 per test.
+         */
+        iterationOverride?: number;
+      },
+    ) => {
       if (rerunningSuiteId) return;
 
       const suiteServers = normalizeSuiteServerRefs(suite.environment?.servers);
@@ -583,6 +578,7 @@ export function useEvalHandlers({
           // per-case upsert so suite-default-derived wire fields don't
           // get baked into per-case overrides.
           suiteRerun: true,
+          iterationOverride: options?.iterationOverride,
         });
 
         // Track suite run started
@@ -629,6 +625,12 @@ export function useEvalHandlers({
         selectedModel?: string | null;
         /** When true, omits the usual per-run success toasts (errors still surface). */
         suppressCompletionToasts?: boolean;
+        /**
+         * Transient per-run override for the number of iterations. Wired to
+         * `testCaseOverrides.runs`; does NOT mutate the persisted
+         * `EvalCase.runs` default. Capped server-side at 10.
+         */
+        iterationOverride?: number;
       },
     ) => {
       if (runningTestCaseId || rerunningSuiteId || replayingRunId) {
@@ -699,9 +701,11 @@ export function useEvalHandlers({
               getAccessToken: isDirectGuest
                 ? getGuestBearerToken
                 : getAccessToken,
-              getToken,
-              hasToken,
               selectedModel,
+              testCaseOverrides:
+                options?.iterationOverride !== undefined
+                  ? { runs: options.iterationOverride }
+                  : undefined,
             })
           )
         );
@@ -878,8 +882,6 @@ export function useEvalHandlers({
       replayingRunId,
       projectId,
       getAccessToken,
-      getToken,
-      hasToken,
       connectedServerNames,
       ensureServersReady,
       projectServers,

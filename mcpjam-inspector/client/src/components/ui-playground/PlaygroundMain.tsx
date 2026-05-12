@@ -36,7 +36,9 @@ import {
   DEFAULT_CHAT_COMPOSER_PLACEHOLDER,
   MINIMAL_CHAT_COMPOSER_PLACEHOLDER,
   cloneUiMessages,
+  extractUserMessageText,
 } from "@/components/chat-v2/shared/chat-helpers";
+import { SaveAsTestCaseAction } from "@/components/chat-v2/shared/save-as-test-case-action";
 import { MultiModelEmptyTraceDiagnosticsPanel } from "@/components/chat-v2/multi-model-empty-trace-diagnostics";
 import { MultiModelStartersEmptyLayout } from "@/components/chat-v2/multi-model-starters-empty";
 import { ErrorBox } from "@/components/chat-v2/error";
@@ -1010,6 +1012,21 @@ export function PlaygroundMain({
     [injectedToolRenderOverrides, externalToolRenderOverrides]
   );
 
+  // Map UIMessage.id -> promptIndex (0-based ordinal among role: "user"
+  // messages). Same key the backend uses to anchor a turn inside the
+  // persisted ModelMessage[] transcript blob.
+  const userPromptIndexById = useMemo(() => {
+    const map = new Map<string, number>();
+    let userOrdinal = 0;
+    for (const msg of messages) {
+      if (msg.role === "user") {
+        map.set(msg.id, userOrdinal);
+        userOrdinal += 1;
+      }
+    }
+    return map;
+  }, [messages]);
+
   // Placeholder: Chat tab strings for multi-model; playground default for single-model
   let placeholder = showPostConnectGuide
     ? MINIMAL_CHAT_COMPOSER_PLACEHOLDER
@@ -1406,6 +1423,22 @@ export function PlaygroundMain({
                 toolRenderOverrides={mergedToolRenderOverrides}
                 showSaveViewButton={!hideSaveViewButton}
                 loadingIndicatorVariant={loadingIndicatorVariant}
+                renderUserMessageActions={
+                  chatSessionId && convexProjectId
+                    ? (message) => {
+                        const promptIndex = userPromptIndexById.get(message.id);
+                        if (promptIndex === undefined) return null;
+                        return (
+                          <SaveAsTestCaseAction
+                            chatSessionId={chatSessionId}
+                            promptIndex={promptIndex}
+                            promptPreview={extractUserMessageText(message)}
+                            projectId={convexProjectId}
+                          />
+                        );
+                      }
+                    : undefined
+                }
               />
               {/* Invoking indicator while tool execution is in progress */}
               {isExecuting && executingToolName && (

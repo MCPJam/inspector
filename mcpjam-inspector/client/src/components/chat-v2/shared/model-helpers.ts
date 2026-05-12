@@ -195,6 +195,130 @@ export function buildAvailableModelsFromOrgConfig(
   return models;
 }
 
+/** Strip the redundant "(Free)" tier suffix for denser labels. */
+export function compactModelLabel(name: string | undefined | null): string {
+  if (!name) return "";
+  return name.replace(/\s*\(Free\)\s*$/i, "").trim() || name;
+}
+
+/** Display name for a provider group key (handles `custom:<slug>`). */
+export function getProviderDisplayName(groupKey: string): string {
+  if (groupKey.startsWith("custom:")) {
+    return groupKey.slice("custom:".length);
+  }
+
+  switch (groupKey) {
+    case "azure":
+      return "Azure OpenAI";
+    case "anthropic":
+      return "Anthropic";
+    case "openai":
+      return "OpenAI";
+    case "deepseek":
+      return "DeepSeek";
+    case "google":
+      return "Google AI";
+    case "mistral":
+      return "Mistral AI";
+    case "ollama":
+      return "Ollama";
+    case "meta":
+      return "Meta";
+    case "xai":
+      return "xAI";
+    case "openrouter":
+      return "OpenRouter";
+    case "moonshotai":
+      return "Moonshot AI";
+    case "z-ai":
+      return "Zhipu AI";
+    case "minimax":
+      return "MiniMax";
+    case "qwen":
+      return "Qwen";
+    default:
+      return groupKey;
+  }
+}
+
+/** Logo lookup name — collapses `custom:<slug>` to `custom`. */
+export function getLogoProvider(groupKey: string): string {
+  return groupKey.startsWith("custom:") ? "custom" : groupKey;
+}
+
+export interface ModelMenuItem {
+  id: string;
+  name: string;
+  provider: string;
+  customProviderName?: string;
+}
+
+export interface ModelMenuGroup<T extends ModelMenuItem> {
+  /** Group key — provider name, or `custom:<slug>` for custom providers. */
+  provider: string;
+  title: string;
+  /** "provided" = MCPJam-hosted free models; "configured" = user/org BYOK models. */
+  providerType: "provided" | "configured";
+  models: T[];
+}
+
+/**
+ * Group models by their provider key, splitting MCPJam-provided "free" tier
+ * out from user/org-configured models so the menu can label each section
+ * clearly. Custom providers are keyed as `custom:<slug>`.
+ */
+export function buildModelMenuGroups<T extends ModelMenuItem>(
+  models: T[],
+  options: { hideProvidedModels?: boolean } = {},
+): ModelMenuGroup<T>[] {
+  const { hideProvidedModels = false } = options;
+
+  const byProvider = new Map<string, T[]>();
+  for (const model of models) {
+    const key =
+      model.provider === "custom" && model.customProviderName
+        ? `custom:${model.customProviderName}`
+        : model.provider;
+    const existing = byProvider.get(key);
+    if (existing) {
+      existing.push(model);
+    } else {
+      byProvider.set(key, [model]);
+    }
+  }
+
+  const sortedKeys = Array.from(byProvider.keys()).sort();
+  const groups: ModelMenuGroup<T>[] = [];
+
+  for (const provider of sortedKeys) {
+    const list = byProvider.get(provider) ?? [];
+    const filtered = hideProvidedModels
+      ? list.filter((m) => !isMCPJamProvidedModel(String(m.id)))
+      : list;
+    if (filtered.length === 0) continue;
+
+    const provided = filtered.filter((m) => isMCPJamProvidedModel(String(m.id)));
+    const configured = filtered.filter(
+      (m) => !isMCPJamProvidedModel(String(m.id)),
+    );
+    const title = getProviderDisplayName(provider);
+
+    if (provided.length > 0) {
+      groups.push({ provider, title, providerType: "provided", models: provided });
+    }
+    if (configured.length > 0) {
+      groups.push({
+        provider,
+        title,
+        providerType: "configured",
+        models: configured,
+      });
+    }
+  }
+
+  return groups;
+}
+
 export const getDefaultModel = (
   availableModels: ModelDefinition[],
 ): ModelDefinition => {

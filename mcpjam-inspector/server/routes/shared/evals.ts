@@ -55,7 +55,7 @@ export const RunEvalsRequestSchema = z.object({
     z.object({
       title: z.string(),
       query: z.string(),
-      runs: z.number().int().positive(),
+      runs: z.number().int().positive().max(10),
       model: z.string(),
       provider: z.string(),
       expectedToolCalls: z.array(
@@ -101,6 +101,13 @@ export const RunEvalsRequestSchema = z.object({
    * to the suite default.
    */
   suiteRerun: z.boolean().optional(),
+  /**
+   * Transient per-run iteration count (1-10). Overlays `runs` on every
+   * test case in the run snapshot without mutating the persisted
+   * `EvalCase.runs` default. Cap-math counts this against
+   * MAX_TOTAL_LLM_CALLS.
+   */
+  iterationOverride: z.number().int().min(1).max(10).optional(),
 });
 
 export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
@@ -126,7 +133,7 @@ export const RunTestCaseRequestSchema = z.object({
       query: z.string().optional(),
       expectedToolCalls: z.array(z.any()).optional(),
       isNegativeTest: z.boolean().optional(),
-      runs: z.number().optional(),
+      runs: z.number().int().positive().max(10).optional(),
       expectedOutput: z.string().optional(),
       promptTurns: z.array(promptTurnSchema).optional(),
       advancedConfig: z
@@ -145,6 +152,58 @@ export type RunTestCaseRequest = z.infer<typeof RunTestCaseRequestSchema>;
 type RunTestCaseWithManagerRequest = RunTestCaseRequest & {
   orgModelConfig?: ResolvedOrgModelConfig;
 };
+
+export const MAX_TOTAL_LLM_CALLS = 300;
+
+export function assertSuiteRunWithinCap(
+  request: RunEvalsRequest,
+  configCount = 1,
+) {
+  const override = request.iterationOverride;
+  // Each iteration issues one model call per prompt turn; counting only `runs`
+  // lets a multi-turn save-from-chat case bypass the cap.
+  const totalCalls =
+    request.tests.reduce((sum, t) => {
+      const iterations = override ?? t.runs ?? 0;
+      const turns = Math.max(t.promptTurns?.length ?? 0, 1);
+      return sum + iterations * turns;
+    }, 0) * Math.max(configCount, 1);
+  if (totalCalls > MAX_TOTAL_LLM_CALLS) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `Suite run would issue ${totalCalls} LLM calls, above the cap of ${MAX_TOTAL_LLM_CALLS}. Reduce iterations or test count.`,
+      { totalCalls, cap: MAX_TOTAL_LLM_CALLS },
+    );
+  }
+}
+
+/**
+ * Counts override prompt-turns when present, then falls back to the
+ * persisted case's prompt-turns count. Callers that have already loaded
+ * the persisted test case should pass it via `resolved` — without it, a
+ * multi-turn saved case can slip past the cap because we'd count it as a
+ * single-turn run.
+ */
+export function assertTestCaseRunWithinCap(
+  request: RunTestCaseRequest,
+  configCount = 1,
+  resolved?: { promptTurnsLength?: number },
+) {
+  const iterations = request.testCaseOverrides?.runs ?? 1;
+  const overrideTurns = request.testCaseOverrides?.promptTurns?.length;
+  const resolvedTurns = resolved?.promptTurnsLength;
+  const turns = Math.max(overrideTurns ?? resolvedTurns ?? 0, 1);
+  const totalCalls = iterations * turns * Math.max(configCount, 1);
+  if (totalCalls > MAX_TOTAL_LLM_CALLS) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `Test case run would issue ${totalCalls} LLM calls, above the cap of ${MAX_TOTAL_LLM_CALLS}.`,
+      { totalCalls, cap: MAX_TOTAL_LLM_CALLS },
+    );
+  }
+}
 
 export const GenerateTestsRequestSchema = z.object({
   serverIds: z
@@ -304,6 +363,7 @@ export async function runEvalsWithManager(
     notes,
     passCriteria,
     suiteRerun,
+    iterationOverride,
   } = request;
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
@@ -320,6 +380,8 @@ export async function runEvalsWithManager(
       "projectId is required when creating a new eval suite",
     );
   }
+
+  assertSuiteRunWithinCap(request);
 
   const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
   const persistedServerRefs =
@@ -548,6 +610,7 @@ export async function runEvalsWithManager(
     serverIds: resolvedServerIds,
     toolSnapshot,
     toolSnapshotDebug,
+    iterationOverride,
   });
 
   const replayConfigsToStore = filterAndRemapReplayConfigs(
@@ -675,6 +738,10 @@ export async function runEvalTestCaseWithManager(
   if (!testCase) {
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Test case not found");
   }
+
+  assertTestCaseRunWithinCap(request, 1, {
+    promptTurnsLength: testCase.promptTurns?.length,
+  });
 
   const test = {
     title: testCase.title,
@@ -908,6 +975,10 @@ export async function streamEvalTestCaseWithManager(
   if (!testCase) {
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Test case not found");
   }
+
+  assertTestCaseRunWithinCap(request, 1, {
+    promptTurnsLength: testCase.promptTurns?.length,
+  });
 
   const test = {
     title: testCase.title,

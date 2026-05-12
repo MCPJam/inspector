@@ -258,6 +258,31 @@ describe("TestTemplateEditor run view from route", () => {
       .length;
   }
 
+  // Adds the given models to the compare selection via the chat-v2
+  // ModelSelector popover that replaced the old "Add model to compare"
+  // dropdown. Assumes the lead (pre-selected) model is GPT-4, which the
+  // shared `caseDoc` fixture seeds via `models: [{ provider: "openai",
+  // model: "gpt-4" }]`.
+  async function addCompareModels(
+    user: ReturnType<typeof userEvent.setup>,
+    modelNames: string[],
+  ): Promise<void> {
+    await user.click(
+      screen.getByRole("button", { name: /^openai logo/i }),
+    );
+    await user.click(
+      await screen.findByRole("switch", { name: /multiple models/i }),
+    );
+    for (const name of modelNames) {
+      await user.click(
+        await screen.findByRole("option", {
+          name: new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"),
+        }),
+      );
+    }
+    await user.keyboard("{Escape}");
+  }
+
   function getLatestTraceViewerProps() {
     const lastCall = mockTraceViewer.mock.calls.at(-1)?.[0];
     expect(lastCall).toBeDefined();
@@ -590,14 +615,7 @@ describe("TestTemplateEditor run view from route", () => {
       expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
     });
 
-    await user.click(
-      screen.getByRole("button", { name: /add model to compare/i })
-    );
-    await user.click(screen.getByText("Claude 4.5 Sonnet"));
-    await user.click(
-      screen.getByRole("button", { name: /add model to compare/i })
-    );
-    await user.click(screen.getByText("Gemini 2.5 Pro"));
+    await addCompareModels(user, ["Claude 4.5 Sonnet", "Gemini 2.5 Pro"]);
 
     await user.click(screen.getByRole("button", { name: /run compare/i }));
 
@@ -1017,10 +1035,7 @@ describe("TestTemplateEditor run view from route", () => {
       ).not.toBeNull();
     });
 
-    await user.click(
-      screen.getByRole("button", { name: /add model to compare/i }),
-    );
-    await user.click(screen.getByText("Claude 4.5 Sonnet"));
+    await addCompareModels(user, ["Claude 4.5 Sonnet"]);
     await user.click(screen.getByRole("button", { name: /run compare/i }));
 
     await waitFor(() => {
@@ -1324,14 +1339,7 @@ describe("TestTemplateEditor run view from route", () => {
       expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
     });
 
-    await user.click(
-      screen.getByRole("button", { name: /add model to compare/i })
-    );
-    await user.click(screen.getByText("Claude 4.5 Sonnet"));
-    await user.click(
-      screen.getByRole("button", { name: /add model to compare/i })
-    );
-    await user.click(screen.getByText("Gemini 2.5 Pro"));
+    await addCompareModels(user, ["Claude 4.5 Sonnet", "Gemini 2.5 Pro"]);
 
     await user.click(screen.getByRole("button", { name: /run compare/i }));
 
@@ -1453,14 +1461,7 @@ describe("TestTemplateEditor run view from route", () => {
       expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
     });
 
-    await user.click(
-      screen.getByRole("button", { name: /add model to compare/i })
-    );
-    await user.click(screen.getByText("Claude 4.5 Sonnet"));
-    await user.click(
-      screen.getByRole("button", { name: /add model to compare/i })
-    );
-    await user.click(screen.getByText("Gemini 2.5 Pro"));
+    await addCompareModels(user, ["Claude 4.5 Sonnet", "Gemini 2.5 Pro"]);
 
     await user.click(screen.getByRole("button", { name: /run compare/i }));
 
@@ -1585,14 +1586,7 @@ describe("TestTemplateEditor run view from route", () => {
       expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
     });
 
-    await user.click(
-      screen.getByRole("button", { name: /add model to compare/i })
-    );
-    await user.click(screen.getByText("Claude 4.5 Sonnet"));
-    await user.click(
-      screen.getByRole("button", { name: /add model to compare/i })
-    );
-    await user.click(screen.getByText("Gemini 2.5 Pro"));
+    await addCompareModels(user, ["Claude 4.5 Sonnet", "Gemini 2.5 Pro"]);
 
     await user.click(screen.getByRole("button", { name: /run compare/i }));
 
@@ -1723,14 +1717,7 @@ describe("TestTemplateEditor run view from route", () => {
       expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
     });
 
-    await user.click(
-      screen.getByRole("button", { name: /add model to compare/i })
-    );
-    await user.click(screen.getByText("Claude 4.5 Sonnet"));
-    await user.click(
-      screen.getByRole("button", { name: /add model to compare/i })
-    );
-    await user.click(screen.getByText("Gemini 2.5 Pro"));
+    await addCompareModels(user, ["Claude 4.5 Sonnet", "Gemini 2.5 Pro"]);
 
     await user.click(screen.getByRole("button", { name: /run compare/i }));
 

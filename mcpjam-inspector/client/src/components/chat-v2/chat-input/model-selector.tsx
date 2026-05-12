@@ -26,6 +26,11 @@ import {
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
+import {
+  compactModelLabel,
+  getLogoProvider,
+  getProviderDisplayName,
+} from "@/components/chat-v2/shared/model-helpers";
 
 interface ModelSelectorProps {
   currentModel: ModelDefinition;
@@ -75,46 +80,6 @@ const groupModelsByProvider = (
   return groupedModels;
 };
 
-const getProviderDisplayName = (groupKey: GroupKey): string => {
-  if (groupKey.startsWith("custom:")) {
-    return groupKey.slice("custom:".length);
-  }
-
-  switch (groupKey) {
-    case "azure":
-      return "Azure OpenAI";
-    case "anthropic":
-      return "Anthropic";
-    case "openai":
-      return "OpenAI";
-    case "deepseek":
-      return "DeepSeek";
-    case "google":
-      return "Google AI";
-    case "mistral":
-      return "Mistral AI";
-    case "ollama":
-      return "Ollama";
-    case "meta":
-      return "Meta";
-    case "xai":
-      return "xAI";
-    case "moonshotai":
-      return "Moonshot AI";
-    case "z-ai":
-      return "Zhipu AI";
-    case "minimax":
-      return "MiniMax";
-    case "qwen":
-      return "Qwen";
-    default:
-      return groupKey;
-  }
-};
-
-const getLogoProvider = (groupKey: GroupKey): string =>
-  groupKey.startsWith("custom:") ? "custom" : groupKey;
-
 const getCustomName = (groupKey: GroupKey): string | undefined =>
   groupKey.startsWith("custom:") ? groupKey.slice("custom:".length) : undefined;
 
@@ -129,11 +94,6 @@ function sameModelOrder(
   return left.every(
     (model, index) => String(model.id) === String(right[index]?.id),
   );
-}
-
-/** Strip redundant tier suffix for a denser list (search value still uses full name). */
-function compactModelLabel(name: string): string {
-  return name.replace(/\s*\(Free\)\s*$/i, "").trim() || name;
 }
 
 export function ModelSelector({

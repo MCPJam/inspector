@@ -34,6 +34,7 @@ import {
 import type { DialogElicitation } from "@/components/ToolsTab";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { Thread } from "@/components/chat-v2/thread";
+import { SaveAsTestCaseAction } from "@/components/chat-v2/shared/save-as-test-case-action";
 import { type ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/reasoning-part";
 import type { LoadingIndicatorVariant } from "@/components/chat-v2/shared/loading-indicator-content";
 import { ServerWithName } from "@/hooks/use-app-state";
@@ -63,6 +64,7 @@ import {
   DEFAULT_CHAT_COMPOSER_PLACEHOLDER,
   MINIMAL_CHAT_COMPOSER_PLACEHOLDER,
   cloneUiMessages,
+  extractUserMessageText,
 } from "@/components/chat-v2/shared/chat-helpers";
 import { MultiModelEmptyTraceDiagnosticsPanel } from "@/components/chat-v2/multi-model-empty-trace-diagnostics";
 import { MultiModelStartersEmptyLayout } from "@/components/chat-v2/multi-model-starters-empty";
@@ -445,6 +447,22 @@ export function ChatTabV2({
   const hasConversationMessages = messages.some(
     (msg) => msg.role === "user" || msg.role === "assistant"
   );
+
+  // Map UIMessage.id -> promptIndex (0-based ordinal among role: "user"
+  // messages). Matches the `promptIndex` the backend records on
+  // `chatSessionTurnTraces` and uses to anchor a turn inside the persisted
+  // ModelMessage[] transcript blob (which carries no per-message ids).
+  const userPromptIndexById = useMemo(() => {
+    const map = new Map<string, number>();
+    let userOrdinal = 0;
+    for (const msg of messages) {
+      if (msg.role === "user") {
+        map.set(msg.id, userOrdinal);
+        userOrdinal += 1;
+      }
+    }
+    return map;
+  }, [messages]);
 
   const hasUnsavedDraft =
     !!input.trim() ||
@@ -2405,6 +2423,25 @@ export function ChatTabV2({
                           minimalMode={minimalMode}
                           loadingIndicatorVariant={loadingIndicatorVariant}
                           reasoningDisplayMode={reasoningDisplayMode}
+                          renderUserMessageActions={
+                            chatSessionId && effectiveHostedProjectId
+                              ? (message) => {
+                                  const promptIndex =
+                                    userPromptIndexById.get(message.id);
+                                  if (promptIndex === undefined) return null;
+                                  return (
+                                    <SaveAsTestCaseAction
+                                      chatSessionId={chatSessionId}
+                                      promptIndex={promptIndex}
+                                      promptPreview={extractUserMessageText(
+                                        message,
+                                      )}
+                                      projectId={effectiveHostedProjectId}
+                                    />
+                                  );
+                                }
+                              : undefined
+                          }
                         />
                       </StickToBottom.Content>
                       <ScrollToBottomButton />

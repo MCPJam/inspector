@@ -1008,6 +1008,13 @@ type RunIterationBaseParams = {
   runId: string | null; // For cancellation checks
   abortSignal?: AbortSignal; // For aborting in-flight requests
   compareRunId?: string;
+  /**
+   * If supplied, the runner skips the upfront `recordIterationStartWithoutRun`
+   * call and reuses this id. Used by `streamTestCase` when `runs > 1` so all N
+   * pending rows appear in the iteration history immediately, before iteration
+   * #1 finishes.
+   */
+  precreatedIterationId?: string;
 };
 
 type RunIterationAiSdkParams = RunIterationBaseParams & {
@@ -1109,6 +1116,7 @@ const runIterationWithAiSdk = async ({
   runId,
   abortSignal,
   compareRunId,
+  precreatedIterationId,
 }: RunIterationAiSdkParams) => {
   const resolvedTest = resolveEvalTestCase(test);
 
@@ -1199,9 +1207,11 @@ const runIterationWithAiSdk = async ({
     startedAt: runStartedAt,
   };
 
-  const iterationId = recorder
-    ? await recorder.startIteration(iterationParams)
-    : await createIterationDirectly(convexClient, iterationParams);
+  const iterationId = precreatedIterationId
+    ? precreatedIterationId
+    : recorder
+      ? await recorder.startIteration(iterationParams)
+      : await createIterationDirectly(convexClient, iterationParams);
 
   const baseMessages: ModelMessage[] = [];
   if (system) {
@@ -1552,6 +1562,7 @@ const runIterationViaBackend = async ({
   runId,
   abortSignal,
   compareRunId,
+  precreatedIterationId,
 }: RunIterationBackendParams) => {
   const resolvedTest = resolveEvalTestCase(test);
 
@@ -1638,9 +1649,11 @@ const runIterationViaBackend = async ({
     startedAt: runStartedAt,
   };
 
-  const iterationId = recorder
-    ? await recorder.startIteration(iterationParams)
-    : await createIterationDirectly(convexClient, iterationParams);
+  const iterationId = precreatedIterationId
+    ? precreatedIterationId
+    : recorder
+      ? await recorder.startIteration(iterationParams)
+      : await createIterationDirectly(convexClient, iterationParams);
 
   const toolDefs = Object.entries(tools).map(([name, tool]) => {
     const schema = (tool as any)?.inputSchema;
@@ -2111,7 +2124,56 @@ const runTestCase = async (params: {
 
   const outcomes: EvalIterationOutcome[] = [];
 
+  // Mirrors `streamTestCase`: pre-create all N pending iteration rows for
+  // quick-run paths with runs > 1 so the iteration history shows every row
+  // immediately, not one-at-a-time as the loop progresses.
+  const shouldPrecreateIterations =
+    recorder == null && runId == null && test.runs > 1;
+  const precreatedIterationIds: (string | undefined)[] = [];
+  if (shouldPrecreateIterations) {
+    const resolvedTestForPrecreate = resolveEvalTestCase(test);
+    const precreatedAt = Date.now();
+    for (let runIndex = 0; runIndex < test.runs; runIndex++) {
+      try {
+        const iterationParams = {
+          testCaseId: test.testCaseId ?? testCaseId,
+          testCaseSnapshot: {
+            title: test.title,
+            query: resolvedTestForPrecreate.query,
+            provider: test.provider,
+            model: test.model,
+            runs: test.runs,
+            expectedToolCalls: resolvedTestForPrecreate.expectedToolCalls,
+            isNegativeTest: test.isNegativeTest,
+            expectedOutput: resolvedTestForPrecreate.expectedOutput,
+            promptTurns: resolvedTestForPrecreate.promptTurns,
+            advancedConfig: resolvedTestForPrecreate.advancedConfig,
+          },
+          iterationNumber: runIndex + 1,
+          startedAt: precreatedAt,
+        };
+        const id = await createIterationDirectly(
+          convexClient,
+          iterationParams,
+        );
+        precreatedIterationIds.push(id);
+      } catch (error) {
+        logger.warn(
+          "[evals] Failed to precreate iteration row; falling back to per-loop create",
+          {
+            runIndex,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        );
+        precreatedIterationIds.push(undefined);
+      }
+    }
+  }
+
   for (let runIndex = 0; runIndex < test.runs; runIndex++) {
+    const precreatedIterationId = shouldPrecreateIterations
+      ? precreatedIterationIds[runIndex]
+      : undefined;
     if (isJamModel) {
       const iterationOutcome = await runIterationViaBackend({
         test,
@@ -2130,6 +2192,7 @@ const runTestCase = async (params: {
         runId,
         abortSignal,
         compareRunId,
+        precreatedIterationId,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -2150,6 +2213,7 @@ const runTestCase = async (params: {
       runId,
       abortSignal,
       compareRunId,
+      precreatedIterationId,
     });
     outcomes.push(iterationOutcome);
   }
@@ -2401,6 +2465,7 @@ const streamIterationWithAiSdk = async ({
   abortSignal,
   emit,
   compareRunId,
+  precreatedIterationId,
 }: RunIterationAiSdkParams & {
   emit: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
@@ -2492,9 +2557,11 @@ const streamIterationWithAiSdk = async ({
     startedAt: runStartedAt,
   };
 
-  const iterationId = recorder
-    ? await recorder.startIteration(iterationParams)
-    : await createIterationDirectly(convexClient, iterationParams);
+  const iterationId = precreatedIterationId
+    ? precreatedIterationId
+    : recorder
+      ? await recorder.startIteration(iterationParams)
+      : await createIterationDirectly(convexClient, iterationParams);
 
   const baseMessages: ModelMessage[] = [];
   if (system) {
@@ -2949,6 +3016,7 @@ const streamIterationViaBackend = async ({
   abortSignal,
   emit,
   compareRunId,
+  precreatedIterationId,
 }: RunIterationBackendParams & {
   emit: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
@@ -3036,9 +3104,11 @@ const streamIterationViaBackend = async ({
     startedAt: runStartedAt,
   };
 
-  const iterationId = recorder
-    ? await recorder.startIteration(iterationParams)
-    : await createIterationDirectly(convexClient, iterationParams);
+  const iterationId = precreatedIterationId
+    ? precreatedIterationId
+    : recorder
+      ? await recorder.startIteration(iterationParams)
+      : await createIterationDirectly(convexClient, iterationParams);
 
   const toolDefs = Object.entries(tools).map(([name, tool]) => {
     const schema = (tool as any)?.inputSchema;
@@ -3740,7 +3810,59 @@ export const streamTestCase = async (params: {
 
   const outcomes: EvalIterationOutcome[] = [];
 
+  // Quick-run streaming with runs > 1: pre-create all N pending iteration
+  // rows so they appear in the iteration history immediately. The suite
+  // path already pre-creates upstream via precreateIterationsForRun, so we
+  // only do this when there's no recorder (no suite run) and no runId.
+  // Failures here are non-fatal — fall back to per-loop creation inside the
+  // iteration runners (the existing behavior).
+  const shouldPrecreateIterations =
+    recorder == null && runId == null && test.runs > 1;
+  const precreatedIterationIds: (string | undefined)[] = [];
+  if (shouldPrecreateIterations) {
+    const resolvedTestForPrecreate = resolveEvalTestCase(test);
+    const precreatedAt = Date.now();
+    for (let runIndex = 0; runIndex < test.runs; runIndex++) {
+      try {
+        const iterationParams = {
+          testCaseId: test.testCaseId ?? testCaseId,
+          testCaseSnapshot: {
+            title: test.title,
+            query: resolvedTestForPrecreate.query,
+            provider: test.provider,
+            model: test.model,
+            runs: test.runs,
+            expectedToolCalls: resolvedTestForPrecreate.expectedToolCalls,
+            isNegativeTest: test.isNegativeTest,
+            expectedOutput: resolvedTestForPrecreate.expectedOutput,
+            promptTurns: resolvedTestForPrecreate.promptTurns,
+            advancedConfig: resolvedTestForPrecreate.advancedConfig,
+          },
+          iterationNumber: runIndex + 1,
+          startedAt: precreatedAt,
+        };
+        const id = await createIterationDirectly(
+          convexClient,
+          iterationParams,
+        );
+        precreatedIterationIds.push(id);
+      } catch (error) {
+        logger.warn(
+          "[evals] Failed to precreate streaming iteration row; will fall back to per-loop create",
+          {
+            runIndex,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        );
+        precreatedIterationIds.push(undefined);
+      }
+    }
+  }
+
   for (let runIndex = 0; runIndex < test.runs; runIndex++) {
+    const precreatedIterationId = shouldPrecreateIterations
+      ? precreatedIterationIds[runIndex]
+      : undefined;
     if (isJamModel) {
       const iterationOutcome = await streamIterationViaBackend({
         test,
@@ -3760,6 +3882,7 @@ export const streamTestCase = async (params: {
         abortSignal,
         emit,
         compareRunId,
+        precreatedIterationId,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -3781,6 +3904,7 @@ export const streamTestCase = async (params: {
       abortSignal,
       emit,
       compareRunId,
+      precreatedIterationId,
     });
     outcomes.push(iterationOutcome);
   }
