@@ -669,6 +669,73 @@ export function groupSuitesByTag(
   return groups;
 }
 
+/**
+ * Compute a percentile from a numeric series using linear interpolation.
+ * Returns `null` for empty input. `p` is 0..1 (e.g. 0.5, 0.95).
+ *
+ * Exposed for unit tests; prefer the higher-level `iterationLatencyP50` /
+ * `iterationLatencyP95` / `iterationTokensP50` / `iterationTokensP95`
+ * helpers below for inspector code paths.
+ */
+export function percentile(values: number[], p: number): number | null {
+  if (!Array.isArray(values) || values.length === 0) return null;
+  // Sort first so the p<=0 / p>=1 short-circuits don't spread the whole
+  // array into Math.min / Math.max (blows up past ~100k args).
+  const sorted = [...values].sort((a, b) => a - b);
+  if (p <= 0) return sorted[0];
+  if (p >= 1) return sorted[sorted.length - 1];
+  const rank = (sorted.length - 1) * p;
+  const lo = Math.floor(rank);
+  const hi = Math.ceil(rank);
+  if (lo === hi) return sorted[lo];
+  const w = rank - lo;
+  return sorted[lo] * (1 - w) + sorted[hi] * w;
+}
+
+function iterationDurationMs(it: EvalIteration): number | null {
+  const start = it.startedAt;
+  const end = it.updatedAt;
+  if (typeof start !== "number" || typeof end !== "number") return null;
+  if (end < start) return null;
+  return end - start;
+}
+
+/** p50 of per-iteration durations (ms) across `completed` iterations. */
+export function iterationLatencyP50(items: EvalIteration[]): number | null {
+  const vals = items
+    .filter((it) => it.status === "completed")
+    .map(iterationDurationMs)
+    .filter((v): v is number => v !== null);
+  return percentile(vals, 0.5);
+}
+
+/** p95 of per-iteration durations (ms) across `completed` iterations. */
+export function iterationLatencyP95(items: EvalIteration[]): number | null {
+  const vals = items
+    .filter((it) => it.status === "completed")
+    .map(iterationDurationMs)
+    .filter((v): v is number => v !== null);
+  return percentile(vals, 0.95);
+}
+
+/** p50 of `tokensUsed` across `completed` iterations. */
+export function iterationTokensP50(items: EvalIteration[]): number | null {
+  const vals = items
+    .filter((it) => it.status === "completed")
+    .map((it) => it.tokensUsed)
+    .filter((v): v is number => typeof v === "number");
+  return percentile(vals, 0.5);
+}
+
+/** p95 of `tokensUsed` across `completed` iterations. */
+export function iterationTokensP95(items: EvalIteration[]): number | null {
+  const vals = items
+    .filter((it) => it.status === "completed")
+    .map((it) => it.tokensUsed)
+    .filter((v): v is number => typeof v === "number");
+  return percentile(vals, 0.95);
+}
+
 /** Highest `runNumber` among completed runs (Convex `listTestSuiteRuns` is newest-first but we still sort defensively). */
 export function pickLatestCompletedRun(
   runs: EvalSuiteRun[],

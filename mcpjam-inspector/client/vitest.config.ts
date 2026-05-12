@@ -9,6 +9,7 @@ const sdkSkillReferenceEntry = path.resolve(
   rootDir,
   "../sdk/src/skill-reference.ts",
 );
+const sdkMatchersEntry = path.resolve(rootDir, "../sdk/src/matchers.ts");
 const mcpSdkClientAuthEntry = path.resolve(
   workspaceNodeModulesDir,
   "@modelcontextprotocol/sdk/dist/esm/client/auth.js",
@@ -59,6 +60,7 @@ export default defineConfig({
         replacement: sdkSkillReferenceEntry,
       },
       { find: "@mcpjam/sdk/browser", replacement: sdkBrowserEntry },
+      { find: "@mcpjam/sdk/matchers", replacement: sdkMatchersEntry },
       {
         find: "@modelcontextprotocol/sdk/client/auth.js",
         replacement: mcpSdkClientAuthEntry,
