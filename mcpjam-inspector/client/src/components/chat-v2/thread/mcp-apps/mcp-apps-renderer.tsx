@@ -668,8 +668,30 @@ export function MCPAppsRenderer({
   // — a documented enforcement gap (Codex P1) where deny/restrict/
   // hosted-clamp rules would silently NOT apply at the iframe
   // boundary.
+  // Single source of truth for "does the profile carry meaningful
+  // CSP policy?" — used by `resolvedCspLayers`, the `resolvedCsp`
+  // memo's early-return, and `effectivePermissive` below. Lifted out
+  // so all three gates can't drift; adding a new CSP sub-field means
+  // updating one expression, not three.
+  //
+  // An empty `csp: {}` (no mode / no restrictTo / no deny /
+  // extensions) MUST NOT count as policy — `normalizeMcpProfile`
+  // doesn't strip empty inner blocks, and the resolver would
+  // otherwise compute all-empty-array directives and the iframe
+  // would block all widget network access.
+  const profileHasCsp = useMemo(() => {
+    const block = mcpProfile?.apps?.sandbox?.csp;
+    if (!block) return false;
+    return (
+      block.mode !== undefined ||
+      cspDomainSetHasEntries(block.restrictTo) ||
+      cspDomainSetHasEntries(block.deny) ||
+      block.extensions !== undefined
+    );
+  }, [mcpProfile]);
+
   const resolvedCspLayers = useMemo(() => {
-    const resourceCsp = widgetCsp
+    const widgetDeclaredCsp = widgetCsp
       ? {
           connectDomains: widgetCsp.connectDomains,
           resourceDomains: widgetCsp.resourceDomains,
@@ -677,6 +699,31 @@ export function MCPAppsRenderer({
           baseUriDomains: widgetCsp.baseUriDomains,
         }
       : undefined;
+    // Wildcard baseline used in two places below: when the widget
+    // declared no CSP (it was effectively permissive pre-feature),
+    // AND in `relaxedCsp` (the dev-convenience "permit everything"
+    // mode). Defined once so any future tweak — e.g. adding a fifth
+    // directive — stays consistent across both consumers.
+    const wildcardCsp = {
+      connectDomains: ["*"],
+      resourceDomains: ["*"],
+      frameDomains: ["*"],
+      baseUriDomains: ["*"],
+    };
+    // When the widget declared NO CSP, its pre-feature behavior was
+    // permissive (no CSP injection at all). A profile saying
+    // "deny evil.com" must mean "narrow that permissive baseline,"
+    // NOT "start from empty and subtract from nothing" — the latter
+    // would block ALL network access on every otherwise-permissive
+    // widget, exactly the foot-gun a user adding `deny` to keep a
+    // single domain out would walk into.
+    //
+    // Per SEP-1865: the host MAY restrict but MUST NOT loosen the
+    // resource declaration. The resource here declared NO upper
+    // bound (no CSP at all), so the host can apply arbitrary
+    // restrictions starting from wildcards.
+    const resourceCsp =
+      widgetDeclaredCsp ?? (profileHasCsp ? wildcardCsp : undefined);
     return resolveSandboxCsp({
       resourceCsp,
       // Today the inspector's "renderer baseline" when no profile is
@@ -687,7 +734,7 @@ export function MCPAppsRenderer({
       // break every widget's network access. When the renderer ever
       // grows a separate preset baseline (e.g. an inspector-wide
       // CSP independent of the widget's declaration), wire it here.
-      hostDefaultCsp: resourceCsp,
+      hostDefaultCsp: widgetDeclaredCsp ?? wildcardCsp,
       // `relaxed` mode is the dev-convenience "permit everything"
       // baseline. We pass concrete wildcards (`*` per directive)
       // rather than `undefined` so selecting the mode produces a
@@ -696,16 +743,11 @@ export function MCPAppsRenderer({
       // back to a safe baseline regardless of user intent — so
       // `relaxed` is genuinely useful in local dev and not a
       // hosted-mode foot-gun.
-      relaxedCsp: {
-        connectDomains: ["*"],
-        resourceDomains: ["*"],
-        frameDomains: ["*"],
-        baseUriDomains: ["*"],
-      },
+      relaxedCsp: wildcardCsp,
       isHostedMode: HOSTED_MODE,
       profile: mcpProfile,
     });
-  }, [widgetCsp, mcpProfile]);
+  }, [widgetCsp, mcpProfile, profileHasCsp]);
 
   // Resolved CSP shape the SandboxedIframe consumes. Mirrors the
   // widget-declared shape (`McpUiResourceCsp`-like) so the iframe
@@ -713,21 +755,7 @@ export function MCPAppsRenderer({
   // widget CSP and no profile narrowing, returns undefined to keep
   // pre-feature behavior (permissive iframe).
   const resolvedCsp = useMemo(() => {
-    // Same "meaningful content" check as profileHasCsp — a bare
-    // `csp: {}` from a payload outside the editor must NOT trigger
-    // the resolver pipeline (it would produce empty-array directives
-    // and the iframe would block all network access). Mirror the
-    // editor's collapse-to-undefined rule here so wire-level payloads
-    // and editor saves behave identically.
-    const profileCspBlock = mcpProfile?.apps?.sandbox?.csp;
-    const profileCspHasContent = Boolean(
-      profileCspBlock &&
-        (profileCspBlock.mode !== undefined ||
-          cspDomainSetHasEntries(profileCspBlock.restrictTo) ||
-          cspDomainSetHasEntries(profileCspBlock.deny) ||
-          profileCspBlock.extensions !== undefined),
-    );
-    if (!widgetCsp && !profileCspHasContent) return undefined;
+    if (!widgetCsp && !profileHasCsp) return undefined;
     const eff = resolvedCspLayers.effective;
     return {
       connectDomains: eff.connectDomains ?? [],
@@ -735,7 +763,7 @@ export function MCPAppsRenderer({
       frameDomains: eff.frameDomains ?? [],
       baseUriDomains: eff.baseUriDomains ?? [],
     };
-  }, [resolvedCspLayers, widgetCsp, mcpProfile]);
+  }, [resolvedCspLayers, widgetCsp, profileHasCsp]);
 
   // Resolved permissions for the iframe `allow=` attribute. Without
   // this, `permissions.mode: "deny-all"` and `permissions.deny`
@@ -774,22 +802,9 @@ export function MCPAppsRenderer({
   // rules silently bypass. Hosted chatboxes hit this every render
   // because `ChatTabV2`'s minimalMode wiring sets cspMode="permissive"
   // upstream, making `widgetPermissive=true` the default.
-  // "Has CSP policy" means the profile's csp block carries at least
-  // one meaningful field — `mode`, a non-empty `restrictTo` /
-  // `deny`, or `extensions`. A bare `csp: {}` (which a payload from
-  // outside the editor could carry — `normalizeMcpProfile` doesn't
-  // strip empty inner blocks) MUST NOT count as policy, because
-  // `resolvedCsp` then computes all-empty-array directives and the
-  // iframe ends up with `permissive=false` + empty CSP, silently
-  // blocking all widget network access.
-  const profileCsp = mcpProfile?.apps?.sandbox?.csp;
-  const profileHasCsp = Boolean(
-    profileCsp &&
-      (profileCsp.mode !== undefined ||
-        cspDomainSetHasEntries(profileCsp.restrictTo) ||
-        cspDomainSetHasEntries(profileCsp.deny) ||
-        profileCsp.extensions !== undefined),
-  );
+  // `profileHasCsp` is hoisted above; `effectivePermissive` gates
+  // on it so the iframe only switches off permissive mode when the
+  // profile actually carries meaningful CSP policy.
   const effectivePermissive = profileHasCsp ? false : widgetPermissive;
 
   const resolvedPermissions = useMemo(() => {

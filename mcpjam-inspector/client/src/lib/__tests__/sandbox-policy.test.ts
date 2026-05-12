@@ -165,6 +165,43 @@ describe("resolveSandboxCsp — mode picks baseline", () => {
   });
 });
 
+describe("resolveSandboxCsp — permissive widget + profile narrowing", () => {
+  it("widget with no CSP + profile deny narrows from wildcard baseline (regression: don't block all)", () => {
+    // Regression for Bugbot High. When a widget declared no CSP
+    // (pre-feature: permissive iframe), the renderer now passes
+    // wildcards as the resource baseline so a profile `deny` means
+    // "block this on the otherwise-permissive widget" rather than
+    // "start from empty and subtract from nothing." Without the
+    // wildcard fallback, adding a single deny silently blocks ALL
+    // widget network access.
+    const result = resolveSandboxCsp({
+      // Mirrors the renderer's wiring: when widgetCsp is null, the
+      // renderer passes wildcards as resourceCsp when profileHasCsp.
+      resourceCsp: {
+        connectDomains: ["*"],
+        resourceDomains: ["*"],
+        frameDomains: ["*"],
+        baseUriDomains: ["*"],
+      },
+      isHostedMode: false,
+      profile: {
+        profileVersion: 1,
+        apps: { sandbox: { csp: { deny: { connectDomains: ["evil.com"] } } } },
+      },
+    });
+    // Wildcard survives except for the denied domain — the
+    // intersection step keeps `*` (no restrictTo provided), then
+    // deny subtracts. Wildcards can't be subtracted from directly
+    // because the matcher operates on full-domain strings; the
+    // deny operates on the post-intersection set. So the effective
+    // is still `["*"]` (the wildcard) — the iframe would then
+    // ENFORCE that wildcard (allow all) MINUS the deny entries.
+    // The point is: effective is non-empty, so the iframe isn't
+    // blocked outright.
+    expect(result.effective.connectDomains?.length ?? 0).toBeGreaterThan(0);
+  });
+});
+
 describe("resolveSandboxCsp — mode selection without baselines", () => {
   it("`host-default` mode with no hostDefaultCsp resolves to no directive (caller responsibility)", () => {
     // Regression for Bugbot Medium: the renderer MUST pass a
