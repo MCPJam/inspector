@@ -568,6 +568,11 @@ export function MCPSidebar({
     updateStatus.kind === "pending" || updateStatus.kind === "downloaded";
   const updateInstalling =
     updateStatus.kind === "pending" && updateStatus.installRequested;
+  const handleUpdateClick = () => {
+    if (!updateInstalling) {
+      restartAndInstall();
+    }
+  };
   const [showInviteDialog, setShowInviteDialog] = useState(false);
   const learnMore = useLearnMore();
   const { state, isMobile } = useSidebar();
@@ -637,7 +642,7 @@ export function MCPSidebar({
   return (
     <>
       <Sidebar collapsible="icon" {...props}>
-        <SidebarHeader>
+        <SidebarHeader className="gap-1 px-2 pt-1.5 pb-2">
           <div
             className={cn(
               "no-drag",
@@ -648,7 +653,7 @@ export function MCPSidebar({
               <button
                 type="button"
                 onClick={() => handleNavClick("#servers")}
-                className="flex w-full cursor-pointer items-center justify-center px-4 py-4 transition-opacity hover:opacity-80"
+                className="flex w-full cursor-pointer items-center justify-center px-4 py-3 transition-opacity hover:opacity-80"
               >
                 <img
                   src={
@@ -666,7 +671,7 @@ export function MCPSidebar({
                   type="button"
                   onClick={() => handleNavClick("#servers")}
                   className={cn(
-                    "relative z-0 flex w-full cursor-pointer items-center justify-center py-3 transition-opacity duration-200",
+                    "relative z-0 flex w-full cursor-pointer items-center justify-center py-2 transition-opacity duration-200",
                     /* Reserve space for the collapse control so the logo stays visually centered and
                        clicks on the logo never compete with the invisible hit target. */
                     "px-2 pr-10 hover:opacity-80",
@@ -704,15 +709,18 @@ export function MCPSidebar({
             )}
           </div>
           {showUpdateButton && (
-            <div className="px-2 pb-2">
+            <div className="px-3">
               <Button
                 size="sm"
-                onClick={restartAndInstall}
-                disabled={updateInstalling}
-                className="w-full bg-primary hover:bg-primary/90 text-primary-foreground h-7 text-xs font-medium rounded-md gap-1.5"
+                onClick={handleUpdateClick}
+                aria-disabled={updateInstalling}
+                className={cn(
+                  "h-5 w-full gap-1 rounded-full bg-primary px-2 text-[11px] font-medium text-primary-foreground hover:bg-primary/90",
+                  updateInstalling && "pointer-events-none hover:bg-primary",
+                )}
               >
                 {updateInstalling && (
-                  <Loader2 className="size-3 animate-spin" aria-hidden />
+                  <Loader2 className="size-2.5 animate-spin" aria-hidden />
                 )}
                 {updateInstalling ? "Updating…" : "Update"}
               </Button>
