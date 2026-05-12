@@ -149,7 +149,11 @@ Use the visual status indicators to quickly identify issues:
 
 For failed tests, expand the iteration to view:
 
-- Expected vs Actual tool calls (see what's missing or unexpected)
+- **Categorized diff** — a structured breakdown above the raw Expected/Actual grids that groups discrepancies into four categories:
+  - **Missing** — expected tool calls that were never made
+  - **Extra** — actual calls that weren't expected (reported but non-fatal by default)
+  - **Out of order** — calls that happened in the wrong sequence (when order checking is enabled)
+  - **Arg mismatch** — right tool name, wrong arguments (shown side-by-side)
 - Full conversation trace (understand why the model made different decisions)
 
 <Tip>
