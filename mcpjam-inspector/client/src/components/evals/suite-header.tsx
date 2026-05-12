@@ -110,7 +110,7 @@ interface SuiteHeaderProps {
    * persisted `EvalCase.runs` defaults.
    */
   iterationOverride?: number;
-  onIterationOverrideChange?: (value: number) => void;
+  onIterationOverrideChange?: (value: number | undefined) => void;
 }
 
 export function SuiteHeader(props: SuiteHeaderProps) {
@@ -396,27 +396,28 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                   : null;
           const runAllConnectionHint =
             missingServers.length > 0 ? "Connect and run." : null;
-          const iterationPicker =
-            iterationOverride !== undefined && onIterationOverrideChange ? (
-              <label className="flex items-center gap-1 text-xs text-muted-foreground">
-                <span>Iterations</span>
-                <select
-                  className="h-8 rounded-md border border-input bg-background px-2 text-foreground"
-                  value={iterationOverride}
-                  onChange={(e) =>
-                    onIterationOverrideChange(Number(e.target.value))
-                  }
-                  aria-label="Iterations per test case for the next run"
-                  disabled={isRunAllDisabled}
-                >
-                  {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
-                    <option key={n} value={n}>
-                      {n}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null;
+          const iterationPicker = onIterationOverrideChange ? (
+            <label className="flex items-center gap-1 text-xs text-muted-foreground">
+              <span>Iterations</span>
+              <select
+                className="h-8 rounded-md border border-input bg-background px-2 text-foreground"
+                value={iterationOverride ?? ""}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  onIterationOverrideChange(raw === "" ? undefined : Number(raw));
+                }}
+                aria-label="Iterations per test case for the next run"
+                disabled={isRunAllDisabled}
+              >
+                <option value="">Auto</option>
+                {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null;
           const runAllButton = (
             <div className="flex items-center gap-2">
               {iterationPicker}

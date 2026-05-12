@@ -448,6 +448,22 @@ export function ChatTabV2({
     (msg) => msg.role === "user" || msg.role === "assistant"
   );
 
+  // Map UIMessage.id -> promptIndex (0-based ordinal among role: "user"
+  // messages). Matches the `promptIndex` the backend records on
+  // `chatSessionTurnTraces` and uses to anchor a turn inside the persisted
+  // ModelMessage[] transcript blob (which carries no per-message ids).
+  const userPromptIndexById = useMemo(() => {
+    const map = new Map<string, number>();
+    let userOrdinal = 0;
+    for (const msg of messages) {
+      if (msg.role === "user") {
+        map.set(msg.id, userOrdinal);
+        userOrdinal += 1;
+      }
+    }
+    return map;
+  }, [messages]);
+
   const hasUnsavedDraft =
     !!input.trim() ||
     mcpPromptResults.length > 0 ||
@@ -2408,17 +2424,22 @@ export function ChatTabV2({
                           loadingIndicatorVariant={loadingIndicatorVariant}
                           reasoningDisplayMode={reasoningDisplayMode}
                           renderUserMessageActions={
-                            activeHistorySessionId && effectiveHostedProjectId
-                              ? (message) => (
-                                  <SaveAsTestCaseAction
-                                    sessionId={activeHistorySessionId}
-                                    userMessageId={message.id}
-                                    promptPreview={extractUserMessageText(
-                                      message,
-                                    )}
-                                    projectId={effectiveHostedProjectId}
-                                  />
-                                )
+                            chatSessionId && effectiveHostedProjectId
+                              ? (message) => {
+                                  const promptIndex =
+                                    userPromptIndexById.get(message.id);
+                                  if (promptIndex === undefined) return null;
+                                  return (
+                                    <SaveAsTestCaseAction
+                                      chatSessionId={chatSessionId}
+                                      promptIndex={promptIndex}
+                                      promptPreview={extractUserMessageText(
+                                        message,
+                                      )}
+                                      projectId={effectiveHostedProjectId}
+                                    />
+                                  );
+                                }
                               : undefined
                           }
                         />

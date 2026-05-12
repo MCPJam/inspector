@@ -32,6 +32,7 @@ export interface TestCaseModelOption {
   label: string;
   provider: string;
   model: string;
+  customProviderName?: string;
 }
 
 const TEST_CASE_MODEL_SELECTION_STORAGE_PREFIX =
@@ -62,6 +63,9 @@ export function buildTestCaseModelOptions(
       label: availableModel.name,
       provider: availableModel.provider,
       model: String(availableModel.id),
+      ...(availableModel.customProviderName
+        ? { customProviderName: availableModel.customProviderName }
+        : {}),
     });
   }
 

@@ -151,6 +151,31 @@ describe("assertSuiteRunWithinCap", () => {
       expect((err as WebRouteError).details?.totalCalls).toBe(310);
     }
   });
+
+  it("multiplies promptTurns when counting LLM calls", () => {
+    // 151 multi-turn cases × runs=1 × 3 turns each = 453 LLM calls — would
+    // bypass the cap if only `runs` was summed.
+    const base = buildSuiteRequest({ testCount: 151, runs: 1 }) as {
+      tests: Array<Record<string, unknown>>;
+    } & Record<string, unknown>;
+    const makeTurn = (id: string) => ({
+      id,
+      prompt: "p",
+      expectedToolCalls: [],
+    });
+    base.tests = base.tests.map((t) => ({
+      ...t,
+      promptTurns: [makeTurn("a"), makeTurn("b"), makeTurn("c")],
+    }));
+    const req = RunEvalsRequestSchema.parse(base);
+    try {
+      assertSuiteRunWithinCap(req);
+      throw new Error("expected throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(WebRouteError);
+      expect((err as WebRouteError).details?.totalCalls).toBe(453);
+    }
+  });
 });
 
 describe("assertTestCaseRunWithinCap", () => {

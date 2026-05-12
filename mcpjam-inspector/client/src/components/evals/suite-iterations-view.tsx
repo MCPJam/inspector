@@ -172,7 +172,10 @@ export function SuiteIterationsView({
   /** Playground: batch delete test cases from the cases table (no runs UI). */
   onDeleteTestCasesBatch?: (testCaseIds: string[]) => Promise<void>;
   /** Per-case run from the cases overview table (Explore / CI). */
-  onRunTestCase?: (testCase: EvalCase) => void;
+  onRunTestCase?: (
+    testCase: EvalCase,
+    opts?: { iterationOverride?: number },
+  ) => void;
   runningTestCaseId?: string | null;
   onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
   projectServers?: Array<{
@@ -215,11 +218,14 @@ export function SuiteIterationsView({
     "model" | "test" | "result"
   >("model");
   /**
-   * Transient per-run iteration override (1-10). Applied to Run-all-cases and
-   * per-case quick runs triggered from this suite view. NOT persisted to
-   * `EvalCase.runs`; server enforces an absolute cap above 10.
+   * Transient per-run iteration override (1-10) applied to Run-all-cases and
+   * per-case quick runs triggered from this suite view. `undefined` means
+   * "Auto" — each test uses its persisted `EvalCase.runs`. Never written
+   * back to the persisted default; server enforces an absolute cap above 10.
    */
-  const [iterationOverride, setIterationOverride] = useState<number>(1);
+  const [iterationOverride, setIterationOverride] = useState<
+    number | undefined
+  >(undefined);
 
   const onRerunWithOverride = useCallback(
     (s: EvalSuite) =>
@@ -230,13 +236,13 @@ export function SuiteIterationsView({
     [onRerun, iterationOverride],
   );
 
-  const onRunTestCaseWithOverride = useCallback(
-    (testCase: EvalCase) =>
+  const onRunTestCaseWithOverride = useMemo<
+    ((testCase: EvalCase) => void) | undefined
+  >(
+    () =>
       onRunTestCase
-        ? (onRunTestCase as (
-            tc: EvalCase,
-            opts?: { iterationOverride?: number },
-          ) => void)(testCase, { iterationOverride })
+        ? (testCase: EvalCase) =>
+            onRunTestCase(testCase, { iterationOverride })
         : undefined,
     [onRunTestCase, iterationOverride],
   );

@@ -160,11 +160,14 @@ export function assertSuiteRunWithinCap(
   configCount = 1,
 ) {
   const override = request.iterationOverride;
-  const totalIterations = request.tests.reduce(
-    (sum, t) => sum + (override ?? t.runs ?? 0),
-    0,
-  );
-  const totalCalls = totalIterations * Math.max(configCount, 1);
+  // Each iteration issues one model call per prompt turn; counting only `runs`
+  // lets a multi-turn save-from-chat case bypass the cap.
+  const totalCalls =
+    request.tests.reduce((sum, t) => {
+      const iterations = override ?? t.runs ?? 0;
+      const turns = Math.max(t.promptTurns?.length ?? 0, 1);
+      return sum + iterations * turns;
+    }, 0) * Math.max(configCount, 1);
   if (totalCalls > MAX_TOTAL_LLM_CALLS) {
     throw new WebRouteError(
       400,
@@ -180,7 +183,11 @@ export function assertTestCaseRunWithinCap(
   configCount = 1,
 ) {
   const iterations = request.testCaseOverrides?.runs ?? 1;
-  const totalCalls = iterations * Math.max(configCount, 1);
+  const turns = Math.max(
+    request.testCaseOverrides?.promptTurns?.length ?? 0,
+    1,
+  );
+  const totalCalls = iterations * turns * Math.max(configCount, 1);
   if (totalCalls > MAX_TOTAL_LLM_CALLS) {
     throw new WebRouteError(
       400,

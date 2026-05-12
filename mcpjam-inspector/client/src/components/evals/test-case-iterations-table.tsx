@@ -130,11 +130,20 @@ export function TestCaseIterationsTable({
                   isPending && "opacity-60",
                 )}
               >
-                <button
+                <div
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={isOpen}
                   title={`Iteration ${computedResult}`}
                   onClick={() =>
                     setOpenIterationId(isOpen ? null : iteration._id)
                   }
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setOpenIterationId(isOpen ? null : iteration._id);
+                    }
+                  }}
                   className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 cursor-pointer hover:bg-muted/50"
                 >
                   <div className="flex min-w-0 flex-1 items-center gap-3 pl-2">
@@ -206,7 +215,7 @@ export function TestCaseIterationsTable({
                       </div>
                     )}
                   </div>
-                </button>
+                </div>
                 {isOpen && (
                   <div className="border-t bg-muted/20 px-4 pb-4 pt-3 pl-8">
                     <IterationDetails

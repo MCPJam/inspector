@@ -880,6 +880,9 @@ export function TestTemplateEditor({
         id: option.model,
         name: option.label,
         provider: option.provider as ModelProvider,
+        ...(option.customProviderName
+          ? { customProviderName: option.customProviderName }
+          : {}),
       })),
     [modelOptions],
   );

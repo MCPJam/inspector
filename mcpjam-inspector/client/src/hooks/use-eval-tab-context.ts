@@ -18,10 +18,13 @@ export function useEvalTabContext({
 }) {
   void isDirectGuest;
   const appState = useSharedAppState();
-  const activeProject = appState.activeProjectId
-    ? appState.projects?.[appState.activeProjectId]
+  // Scope to the requested project so model availability follows that project's
+  // org rather than whatever happens to be the globally-active project.
+  const scopedProjectId = projectId ?? appState.activeProjectId ?? null;
+  const scopedProject = scopedProjectId
+    ? appState.projects?.[scopedProjectId]
     : undefined;
-  const organizationId = activeProject?.organizationId ?? null;
+  const organizationId = scopedProject?.organizationId ?? null;
   const { availableModels } = useAvailableEvalModels(organizationId);
   const { members, canManageMembers } = useProjectMembers({
     isAuthenticated,

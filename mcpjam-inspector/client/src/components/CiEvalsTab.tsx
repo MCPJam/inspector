@@ -704,13 +704,14 @@ export function CiEvalsTab({
                     omitSuiteHeader
                     onRunTestCase={
                       selectedSuite
-                        ? (tc) => {
+                        ? (tc, opts) => {
                             void (async () => {
                               const data = await handlers.handleRunTestCase(
                                 selectedSuite,
                                 tc,
                                 {
                                   location: "test_cases_overview",
+                                  iterationOverride: opts?.iterationOverride,
                                 },
                               );
                               const iterationId = (data?.iteration?._id ??

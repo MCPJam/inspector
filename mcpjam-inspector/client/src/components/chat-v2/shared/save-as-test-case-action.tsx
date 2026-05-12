@@ -30,8 +30,20 @@ import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import type { EvalSuiteOverviewEntry } from "@/components/evals/types";
 
 type SaveAsTestCaseActionProps = {
-  sessionId: string;
-  userMessageId: string;
+  /**
+   * Client-generated chat session id (the `chatSessionId` string, not the
+   * Convex `_id`). Always available in the inspector regardless of
+   * HOSTED_MODE / history-rail state.
+   */
+  chatSessionId: string;
+  /**
+   * Zero-based ordinal of this user message among `role: "user"` messages
+   * in the chat — matches the `promptIndex` recorded on
+   * `chatSessionTurnTraces` / `testCase.promptIndex` and is what the
+   * backend uses to anchor a turn inside the persisted transcript blob
+   * (which carries no per-message ids).
+   */
+  promptIndex: number;
   /** Used to seed the test-case title; not sent to the server. */
   promptPreview?: string;
   /** Required to fetch suites and create a new suite when needed. */
@@ -42,13 +54,12 @@ type DestinationMode = "existing" | "new";
 
 /**
  * Per-user-message overflow action that promotes a single chat turn into a
- * test case. The Convex action does the heavy lifting (slicing the
- * transcript, compiling the prompt turn, refusing turns with no observed
- * tool calls); this component is just a small affordance + form.
+ * test case. Turns with no observed tool calls are saved as negative tests
+ * (mirrors the session-level importer).
  */
 export function SaveAsTestCaseAction({
-  sessionId,
-  userMessageId,
+  chatSessionId,
+  promptIndex,
   promptPreview,
   projectId,
 }: SaveAsTestCaseActionProps) {
@@ -103,8 +114,8 @@ export function SaveAsTestCaseAction({
     setSubmitting(true);
     try {
       await saveAsTestCase({
-        sessionId,
-        userMessageId,
+        chatSessionId,
+        promptIndex,
         projectId,
         testCaseTitle: caseTitle.trim(),
         ...(destinationMode === "existing"
@@ -156,8 +167,8 @@ export function SaveAsTestCaseAction({
           <DialogHeader>
             <DialogTitle>Save as test case</DialogTitle>
             <DialogDescription>
-              Captures this prompt and the assistant's tool calls. Only works
-              when the assistant actually called a tool on this turn.
+              Captures this prompt and the assistant's tool calls. Turns
+              without tool calls are saved as negative tests.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
