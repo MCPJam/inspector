@@ -69,6 +69,29 @@ describe("matchesDomain", () => {
     ).toBe(true);
   });
 
+  it("port-specific patterns NARROW by port (regression: restrictTo with port should not cover other ports)", () => {
+    // Regression for Codex P2: a port-specific pattern must
+    // distinguish ports. Previously matchesDomain stripped ports
+    // from both sides, so `restrictTo: ["https://api.example.com:443"]`
+    // would wrongly cover `https://api.example.com:8443` and a
+    // port-specific deny would block every port on that host.
+    expect(
+      matchesDomain(
+        "https://api.example.com:443",
+        "https://api.example.com:443",
+      ),
+    ).toBe(true);
+    expect(
+      matchesDomain(
+        "https://api.example.com:443",
+        "https://api.example.com:8443",
+      ),
+    ).toBe(false);
+    // Bracketed IPv6 with port.
+    expect(matchesDomain("http://[::1]:3000", "http://[::1]:3000")).toBe(true);
+    expect(matchesDomain("http://[::1]:3000", "http://[::1]:4000")).toBe(false);
+  });
+
   it("suffix wildcard does NOT match unrelated hosts", () => {
     expect(
       matchesDomain("https://*.example.com", "https://attacker.com"),

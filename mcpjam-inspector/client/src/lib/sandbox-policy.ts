@@ -481,22 +481,27 @@ export function matchesDomain(pattern: string, domain: string): boolean {
     return false;
   }
 
-  // Strip ports from BOTH sides before comparison. A CSP pattern like
-  // `https://*.example.com` MUST match `https://api.example.com:8443` —
-  // the port is part of the URL but not part of the host-suffix
-  // matching rule. Without this, a deny like `https://*.evil.com`
-  // would fail to match `https://api.evil.com:8443` and let it
-  // through the clamp. Same disambiguation rule for IPv6.
-  //
   // Lowercase both sides per RFC 3986 §3.2.2 — hostnames are
-  // case-insensitive. Without this, a profile-author typing
-  // `https://API.example.com` in restrictTo wouldn't match
-  // `https://api.example.com` in the baseline, silently dropping the
-  // entry and either widening (via missed restrictTo) or narrowing
-  // (via missed deny) the effective set. Aligns with the
-  // `lowerHost.toLowerCase()` the hosted clamp already does.
+  // case-insensitive. Aligns with `lowerHost.toLowerCase()` in
+  // the hosted clamp.
   const patternHost = extractHostname(patternParts.host).toLowerCase();
   const domainHost = extractHostname(domainParts.host).toLowerCase();
+
+  // Port handling. CSP source expressions can include a port; when
+  // the pattern specifies one, the domain's port must match. When
+  // the pattern omits a port, ANY port on the matching host passes
+  // — that's the wildcard behavior the previous fix targeted
+  // (`https://*.evil.com` must catch `https://api.evil.com:8443`).
+  //
+  // This restores port-specific narrowing the strip-both-sides
+  // approach broke: `restrictTo: ["https://api.example.com:443"]`
+  // now NARROWS to port 443 only, instead of letting through
+  // `https://api.example.com:8443`.
+  const patternPort = extractPort(patternParts.host);
+  const domainPort = extractPort(domainParts.host);
+  if (patternPort !== undefined && patternPort !== domainPort) {
+    return false;
+  }
 
   // `*` host alone matches any host (e.g. `https://*` matches
   // `https://api.example.com`).
@@ -511,6 +516,28 @@ export function matchesDomain(pattern: string, domain: string): boolean {
   }
 
   return patternHost === domainHost;
+}
+
+/**
+ * Extract the port (as a numeric string) from a host string, or
+ * `undefined` when there's no port suffix. Mirrors the IPv6
+ * disambiguation in `extractHostname`: bracketed IPv6 carries its
+ * port AFTER the closing bracket (`[::1]:3000`); bare IPv6 (more
+ * than one colon, no brackets) has no port form per RFC 3986; and
+ * everything else uses the single trailing `:port`.
+ */
+function extractPort(host: string): string | undefined {
+  if (host.startsWith("[")) {
+    const closeIdx = host.indexOf("]");
+    if (closeIdx < 0) return undefined;
+    const after = host.slice(closeIdx + 1);
+    if (after.startsWith(":")) return after.slice(1);
+    return undefined;
+  }
+  if ((host.match(/:/g)?.length ?? 0) > 1) return undefined;
+  const colonIdx = host.indexOf(":");
+  if (colonIdx < 0) return undefined;
+  return host.slice(colonIdx + 1);
 }
 
 function splitScheme(value: string): {
