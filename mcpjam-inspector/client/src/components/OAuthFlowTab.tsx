@@ -458,7 +458,7 @@ export const OAuthFlowTab = ({
         const code = parsed.searchParams.get("code");
         const state = parsed.searchParams.get("state");
         if (code) {
-          processOAuthCallback(code, state);
+          processOAuthCallback(code, state ?? undefined);
         }
       } catch (error) {
         console.error("Failed to process Electron OAuth callback:", error);

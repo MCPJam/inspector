@@ -250,8 +250,13 @@ export interface McpLifecycleStepSlim {
   direction: "client-to-server" | "server-to-client";
 }
 
+type HttpLifecycleStep = Exclude<
+  McpLifecycleStep20250326,
+  "close_stdin" | "process_exit"
+>;
+
 export const LIFECYCLE_GUIDE_SLIM: Record<
-  (typeof HTTP_STEP_ORDER)[number],
+  HttpLifecycleStep,
   McpLifecycleStepSlim
 > = {
   initialize_request: {

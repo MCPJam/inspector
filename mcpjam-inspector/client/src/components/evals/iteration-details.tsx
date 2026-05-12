@@ -13,7 +13,11 @@ import {
   AlertCircle,
   Loader2,
 } from "lucide-react";
-import { ToolServerMap, listTools } from "@/lib/apis/mcp-tools-api";
+import {
+  ToolServerMap,
+  listTools,
+  type ListToolsResultWithMetadata,
+} from "@/lib/apis/mcp-tools-api";
 import { JsonEditor } from "@/components/ui/json-editor";
 import {
   Collapsible,
@@ -326,12 +330,7 @@ export function IterationDetails({
     serverNames.forEach((serverId) => {
       void listTools({ serverId })
         .then(
-          (
-            result: ToolServerMap & {
-              tools?: Array<{ name: string; inputSchema?: any }>;
-              toolsMetadata?: Record<string, unknown>;
-            },
-          ) => {
+          (result: ListToolsResultWithMetadata) => {
             if (cancelled) return;
 
             setConnectedServerIds((prev) =>

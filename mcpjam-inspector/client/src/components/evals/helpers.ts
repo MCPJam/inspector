@@ -142,8 +142,8 @@ export function aggregateSuite(
       byCaseMap.set(id, {
         testCaseId: id,
         title: c?.title || "Untitled",
-        provider: c?.provider || "",
-        model: c?.model || "",
+        provider: c?.models?.[0]?.provider || "",
+        model: c?.models?.[0]?.model || "",
         runs: totalRuns,
         passed: 0,
         failed: 0,
@@ -374,7 +374,7 @@ export function evalOverviewEntryLastRunStatusLabel(
     return "Cancelled";
   }
   if (r.status === "completed") return "Completed";
-  return r.status.replace(/-/g, " ");
+  return "Unknown";
 }
 
 /** Tailwind classes for {@link evalOverviewEntryLastRunStatusLabel}. */

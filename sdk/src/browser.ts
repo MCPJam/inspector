@@ -143,6 +143,7 @@ export type {
   OAuthFlowStep,
   OAuthProtocolVersion,
   OAuthRequestExecutor,
+  OAuthRequestResult,
   OAuthStateMachine,
   RegistrationStrategy2025_03_26,
   RegistrationStrategy2025_06_18,

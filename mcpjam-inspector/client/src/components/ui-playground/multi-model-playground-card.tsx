@@ -42,6 +42,7 @@ import {
 } from "@/lib/chatbox-host-style";
 import type { DeviceType, DisplayMode } from "@/stores/ui-playground-store";
 import type { BroadcastChatTurnRequest } from "@/components/chat-v2/multi-model-chat-card";
+import type { TraceViewMode } from "@/components/evals/trace-view-mode-tabs";
 
 type PlaygroundTraceViewMode = "chat" | "timeline" | "raw";
 type ThreadThemeMode = "light" | "dark";
@@ -268,13 +269,11 @@ export function MultiModelPlaygroundCard({
     setRevealedInChat(true);
   }, []);
 
-  const handleTraceViewModeChange = useCallback(
-    (mode: PlaygroundTraceViewMode) => {
-      setTraceViewMode(mode);
-      setRevealedInChat(false);
-    },
-    [],
-  );
+  const handleTraceViewModeChange = useCallback((mode: TraceViewMode) => {
+    if (mode === "tools") return;
+    setTraceViewMode(mode);
+    setRevealedInChat(false);
+  }, []);
 
   const showLiveTracePending =
     activeTraceViewMode === "timeline" &&

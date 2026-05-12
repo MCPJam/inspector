@@ -88,10 +88,12 @@ export function createOAuthServer(
     config: createHttpServerConfig(url),
     useOAuth: true,
     oauthTokens: {
+      client_id: "test-client-id",
+      client_secret: "test-client-secret",
       access_token: "test-access-token",
       refresh_token: "test-refresh-token",
-      token_type: "Bearer",
       expires_in: 3600,
+      scope: "",
     },
     ...overrides,
   });
