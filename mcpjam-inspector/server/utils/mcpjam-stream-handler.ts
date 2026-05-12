@@ -70,7 +70,6 @@ import { hashGuestSpendIp } from "./guest-spend-ip.js";
 
 const MAX_STEPS = 20;
 const GUEST_IP_HASH_HEADER = "x-mcpjam-guest-ip-hash";
-const GUEST_IP_UNKNOWN_SENTINEL = "_unknown";
 const streamChunkSchema = zodSchema(z.unknown());
 
 export interface MCPJamHandlerOptions {
@@ -117,8 +116,8 @@ export interface MCPJamHandlerOptions {
    * Originating client IP from the inbound request. Hashed and forwarded as
    * `x-mcpjam-guest-ip-hash` so Convex can apply the per-IP daily spend cap
    * for guests in addition to the per-cookie cap. Null when no IP is
-   * available (dev / missing forwarded-for) — caller header is sent as the
-   * `_unknown` sentinel so all keyless callers share one bucket.
+   * available (dev / missing forwarded-for), in which case the header is
+   * omitted and Convex falls back to the per-cookie guest cap.
    */
   clientIp?: string | null;
 }
@@ -972,18 +971,26 @@ async function processOneStep(
     clientIp,
   } = ctx;
   // Hash the originating IP for the per-IP daily spend cap. Hashing here
-  // (server-side) keeps the raw IP off the wire to Convex. Always send a
-  // value — `_unknown` funnels keyless callers into one shared bucket
-  // rather than letting them bypass by stripping the header.
+  // (server-side) keeps the raw IP off the wire to Convex. If no hash can be
+  // produced, omit the header so Convex uses its cookie-only guest fallback
+  // instead of pooling unrelated guests in a shared unknown-IP bucket.
   const ipHash = clientIp ? await hashGuestSpendIp(clientIp) : null;
+  const convexHeaders: Record<string, string> = {
+    "content-type": "application/json",
+    ...(authHeader ? { authorization: authHeader } : {}),
+    ...(extraHeaders ?? {}),
+  };
+  for (const header of Object.keys(convexHeaders)) {
+    if (header.toLowerCase() === GUEST_IP_HASH_HEADER) {
+      delete convexHeaders[header];
+    }
+  }
+  if (ipHash) {
+    convexHeaders[GUEST_IP_HASH_HEADER] = ipHash;
+  }
   const res = await fetch(`${process.env.CONVEX_HTTP_URL}${endpointPath}`, {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      ...(authHeader ? { authorization: authHeader } : {}),
-      ...(extraHeaders ?? {}),
-      [GUEST_IP_HASH_HEADER]: ipHash ?? GUEST_IP_UNKNOWN_SENTINEL,
-    },
+    headers: convexHeaders,
     body: JSON.stringify({
       mode: "stream",
       // Persist only once at the end of the full agentic loop via
@@ -995,9 +1002,7 @@ async function processOneStep(
       ...(temperature !== undefined ? { temperature } : {}),
       tools: toolDefs,
       ...(chatboxId ? { chatboxId } : {}),
-      ...(chatboxId && Number.isFinite(accessVersion)
-        ? { accessVersion }
-        : {}),
+      ...(chatboxId && Number.isFinite(accessVersion) ? { accessVersion } : {}),
       ...(projectId ? { projectId } : {}),
       ...(chatSessionId ? { chatSessionId } : {}),
       ...(sourceType ? { sourceType } : {}),

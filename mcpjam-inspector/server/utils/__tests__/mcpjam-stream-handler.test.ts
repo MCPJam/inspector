@@ -47,7 +47,7 @@ vi.mock("ai", async () => {
     createUIMessageStreamResponse: vi.fn().mockReturnValue(
       new Response("{}", {
         headers: { "Content-Type": "text/event-stream" },
-      }),
+      })
     ),
   };
 });
@@ -58,8 +58,9 @@ vi.mock("@/shared/http-tool-calls", () => ({
 }));
 
 vi.mock("../chat-helpers", async () => {
-  const actual =
-    await vi.importActual<typeof import("../chat-helpers")>("../chat-helpers");
+  const actual = await vi.importActual<typeof import("../chat-helpers")>(
+    "../chat-helpers"
+  );
   return {
     ...actual,
     scrubMcpAppsToolResultsForBackend: vi.fn((messages) => messages),
@@ -94,7 +95,7 @@ describe("mcpjam-stream-handler", () => {
           finishReason: "stop",
           totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
         },
-      ]),
+      ])
     );
   });
 
@@ -143,7 +144,7 @@ describe("mcpjam-stream-handler", () => {
     await lastExecution;
 
     const fetchBody = JSON.parse(
-      ((global.fetch as any).mock.calls[0]?.[1]?.body as string) ?? "{}",
+      ((global.fetch as any).mock.calls[0]?.[1]?.body as string) ?? "{}"
     );
     const scrubbedMessages = JSON.parse(fetchBody.messages);
 
@@ -169,7 +170,7 @@ describe("mcpjam-stream-handler", () => {
         endedAt: expect.any(Number),
         spans: expect.any(Array),
         modelId: expect.any(String),
-      }),
+      })
     );
   });
 
@@ -217,7 +218,7 @@ describe("mcpjam-stream-handler", () => {
     await lastExecution;
 
     const fetchBody = JSON.parse(
-      ((global.fetch as any).mock.calls[0]?.[1]?.body as string) ?? "{}",
+      ((global.fetch as any).mock.calls[0]?.[1]?.body as string) ?? "{}"
     );
     const scrubbedMessages = JSON.parse(fetchBody.messages);
 
@@ -324,7 +325,7 @@ describe("mcpjam-stream-handler", () => {
     expect(onConversationComplete).toHaveBeenCalledTimes(1);
     expect(onStreamComplete).toHaveBeenCalledTimes(1);
     expect(onStreamComplete.mock.invocationCallOrder[0]).toBeGreaterThan(
-      onConversationComplete.mock.invocationCallOrder[0],
+      onConversationComplete.mock.invocationCallOrder[0]
     );
   });
 
@@ -380,7 +381,7 @@ describe("mcpjam-stream-handler", () => {
     await lastExecution;
 
     const fetchBody = JSON.parse(
-      ((global.fetch as any).mock.calls[0]?.[1]?.body as string) ?? "{}",
+      ((global.fetch as any).mock.calls[0]?.[1]?.body as string) ?? "{}"
     );
     const scrubbedMessages = JSON.parse(fetchBody.messages);
 
@@ -438,7 +439,7 @@ describe("mcpjam-stream-handler", () => {
           finishReason: "stop",
           totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
         },
-      ]),
+      ])
     );
 
     await handleMCPJamFreeChatModel({
@@ -500,7 +501,7 @@ describe("mcpjam-stream-handler", () => {
           finishReason: "stop",
           totalUsage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
         },
-      ]),
+      ])
     );
 
     await handleMCPJamFreeChatModel({
@@ -565,7 +566,7 @@ describe("mcpjam-stream-handler", () => {
           promptIndex: 0,
           stepIndex: 0,
         }),
-      ]),
+      ])
     );
     expect(traceEvents[4]).toMatchObject({
       type: "turn_finish",
@@ -602,7 +603,7 @@ describe("mcpjam-stream-handler", () => {
             totalTokens: 15,
           },
         },
-      ]),
+      ])
     );
 
     await handleMCPJamFreeChatModel({
@@ -629,7 +630,7 @@ describe("mcpjam-stream-handler", () => {
     });
 
     const llmSpan = snapshot.snapshot.spans.find(
-      (s: any) => s.category === "llm",
+      (s: any) => s.category === "llm"
     );
     expect(llmSpan).toBeDefined();
     expect(llmSpan.inputTokens).toBe(10);
@@ -650,7 +651,7 @@ describe("mcpjam-stream-handler", () => {
       () =>
         new Promise<Response>((resolve) => {
           resolveFetch = resolve;
-        }),
+        })
     );
 
     const collector = createHostedRpcLogCollector({
@@ -705,13 +706,13 @@ describe("mcpjam-stream-handler", () => {
           finishReason: "stop",
           totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
         },
-      ]),
+      ])
     );
 
     await lastExecution;
 
     const rpcChunks = writtenChunks.filter(
-      (chunk) => chunk?.type === "data-rpc-log",
+      (chunk) => chunk?.type === "data-rpc-log"
     );
     expect(rpcChunks).toEqual(
       expect.arrayContaining([
@@ -727,7 +728,7 @@ describe("mcpjam-stream-handler", () => {
             direction: "receive",
           }),
         }),
-      ]),
+      ])
     );
   });
 
@@ -745,7 +746,7 @@ describe("mcpjam-stream-handler", () => {
           finishReason: "stop",
           totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
         },
-      ]),
+      ])
     );
     vi.mocked(hasUnresolvedToolCalls).mockImplementation(
       (messages) =>
@@ -753,8 +754,8 @@ describe("mcpjam-stream-handler", () => {
           (message: any) =>
             message?.role === "assistant" &&
             Array.isArray(message.content) &&
-            message.content.some((part: any) => part.type === "tool-call"),
-        ) && !messages.some((message: any) => message?.role === "tool"),
+            message.content.some((part: any) => part.type === "tool-call")
+        ) && !messages.some((message: any) => message?.role === "tool")
     );
     vi.mocked(executeToolCallsFromMessages).mockImplementation(
       async (messages: any[]) => {
@@ -776,7 +777,7 @@ describe("mcpjam-stream-handler", () => {
         };
         messages.splice(2, 0, toolResultMessage);
         return [toolResultMessage] as any;
-      },
+      }
     );
 
     await handleMCPJamFreeChatModel({
@@ -801,7 +802,7 @@ describe("mcpjam-stream-handler", () => {
       .filter((chunk) => chunk?.type === "data-trace-event")
       .map((chunk) => chunk.data);
     const requestPayloadEvents = traceEvents.filter(
-      (event) => event.type === "request_payload",
+      (event) => event.type === "request_payload"
     );
 
     expect(traceEvents.map((event) => event.type)).toEqual(
@@ -812,7 +813,7 @@ describe("mcpjam-stream-handler", () => {
         "tool_result",
         "trace_snapshot",
         "turn_finish",
-      ]),
+      ])
     );
     expect(traceEvents).toEqual(
       expect.arrayContaining([
@@ -837,7 +838,7 @@ describe("mcpjam-stream-handler", () => {
             }),
           }),
         }),
-      ]),
+      ])
     );
     expect(requestPayloadEvents).toHaveLength(2);
     expect(requestPayloadEvents.map((event) => event.stepIndex)).toEqual([
@@ -906,7 +907,7 @@ describe("mcpjam-stream-handler", () => {
       delete process.env.GUEST_SESSION_HASH_PEPPER;
     });
 
-    it("sends the _unknown sentinel when clientIp is null", async () => {
+    it("omits the guest IP hash header when clientIp is null", async () => {
       process.env.GUEST_SESSION_HASH_PEPPER = "test-pepper-for-ip-hash";
 
       await handleMCPJamFreeChatModel({
@@ -924,7 +925,7 @@ describe("mcpjam-stream-handler", () => {
 
       const headers = (global.fetch as any).mock.calls[0]?.[1]
         ?.headers as Record<string, string>;
-      expect(headers["x-mcpjam-guest-ip-hash"]).toBe("_unknown");
+      expect(headers["x-mcpjam-guest-ip-hash"]).toBeUndefined();
 
       delete process.env.GUEST_SESSION_HASH_PEPPER;
     });
@@ -954,6 +955,30 @@ describe("mcpjam-stream-handler", () => {
       expect(headers["x-mcpjam-guest-ip-hash"]).toMatch(/^[A-Za-z0-9_-]+$/);
 
       delete process.env.GUEST_SESSION_HASH_PEPPER;
+    });
+
+    it("drops caller-provided guest IP hash when clientIp is null", async () => {
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "hi" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        clientIp: null,
+        extraHeaders: {
+          "x-mcpjam-guest-ip-hash": "attacker-controlled",
+          "X-MCPJam-Guest-IP-Hash": "attacker-controlled-case",
+        },
+      });
+
+      await lastExecution;
+
+      const headers = (global.fetch as any).mock.calls[0]?.[1]
+        ?.headers as Record<string, string>;
+      expect(headers["x-mcpjam-guest-ip-hash"]).toBeUndefined();
+      expect(headers["X-MCPJam-Guest-IP-Hash"]).toBeUndefined();
     });
 
     it("hashes IPv4 and ::ffff:-mapped IPv6 of the same client identically", async () => {
