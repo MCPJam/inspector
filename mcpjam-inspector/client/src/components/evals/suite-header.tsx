@@ -63,7 +63,10 @@ interface SuiteHeaderProps {
   isEditMode: boolean;
   onRerun: (
     suite: EvalSuite,
-    opts?: { matchOptionsOverride?: EvalMatchOptions },
+    opts?: {
+      matchOptionsOverride?: EvalMatchOptions;
+      iterationOverride?: number;
+    },
   ) => void;
   onReplayRun?: (suite: EvalSuite, run: EvalSuiteRun) => void;
   onCancelRun: (runId: string) => void;
@@ -453,13 +456,14 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                     suite_id: suite._id,
                     iteration_override: iterationOverride ?? null,
                   });
-                  if (runMatchOptionsOverride) {
-                    onRerun(suite, {
-                      matchOptionsOverride: runMatchOptionsOverride,
-                    });
-                  } else {
-                    onRerun(suite);
-                  }
+                  onRerun(suite, {
+                    ...(runMatchOptionsOverride
+                      ? { matchOptionsOverride: runMatchOptionsOverride }
+                      : {}),
+                    ...(iterationOverride !== undefined
+                      ? { iterationOverride }
+                      : {}),
+                  });
                 }}
               >
                 {isRerunning ? (
@@ -693,11 +697,17 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                       onClick={() =>
                         replayableLatestRun
                           ? onReplayRun?.(suite, replayableLatestRun)
-                          : runMatchOptionsOverride
-                            ? onRerun(suite, {
-                                matchOptionsOverride: runMatchOptionsOverride,
-                              })
-                            : onRerun(suite)
+                          : onRerun(suite, {
+                              ...(runMatchOptionsOverride
+                                ? {
+                                    matchOptionsOverride:
+                                      runMatchOptionsOverride,
+                                  }
+                                : {}),
+                              ...(iterationOverride !== undefined
+                                ? { iterationOverride }
+                                : {}),
+                            })
                       }
                       disabled={
                         replayableLatestRun

@@ -251,6 +251,57 @@ describe("useEvalHandlers", () => {
       expect(requestBody.iterationOverride).toBe(4);
     });
 
+    it("forwards matchOptionsOverride and iterationOverride together to runEvals", async () => {
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+
+      await act(async () => {
+        await result.current.handleRerun(
+          {
+            _id: "suite-overrides",
+            name: "Suite",
+            environment: { servers: ["server-1"] },
+          } as any,
+          {
+            iterationOverride: 4,
+            matchOptionsOverride: { argumentMatching: "exact" },
+          },
+        );
+      });
+
+      const requestBody = JSON.parse(mockAuthFetch.mock.calls[0][1].body);
+      expect(requestBody.iterationOverride).toBe(4);
+      expect(requestBody.matchOptionsOverride).toEqual({
+        argumentMatching: "exact",
+      });
+    });
+
+    it("forwards matchOptionsOverride without iterationOverride", async () => {
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+
+      await act(async () => {
+        await result.current.handleRerun(
+          {
+            _id: "suite-match-only",
+            name: "Suite",
+            environment: { servers: ["server-1"] },
+          } as any,
+          {
+            matchOptionsOverride: {
+              argumentMatching: "exact",
+              allowExtraToolCalls: false,
+            },
+          },
+        );
+      });
+
+      const requestBody = JSON.parse(mockAuthFetch.mock.calls[0][1].body);
+      expect(requestBody.matchOptionsOverride).toEqual({
+        argumentMatching: "exact",
+        allowExtraToolCalls: false,
+      });
+      expect(requestBody.iterationOverride).toBeUndefined();
+    });
+
     it("includes promptTurns and expectedOutput when rerunning saved cases", async () => {
       mockConvexQuery.mockResolvedValueOnce([
         {
