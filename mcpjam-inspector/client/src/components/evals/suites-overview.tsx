@@ -81,8 +81,6 @@ export function SuitesOverview({
           const runsLabel =
             totals.runs === 1 ? "1 run" : `${totals.runs} runs total`;
 
-          const numberOfTestCases = suite.config?.tests?.length ?? 0;
-
           const isRunInProgress =
             latestRun?.status === "running" || latestRun?.status === "pending";
 
@@ -131,16 +129,6 @@ export function SuitesOverview({
                       <span>{lastRunLabel}</span>
                       <span>•</span>
                       <span>{runsLabel}</span>
-                      {numberOfTestCases > 0 ? (
-                        <>
-                          <span>•</span>
-                          <span>
-                            {numberOfTestCases === 1
-                              ? "1 test case"
-                              : `${numberOfTestCases} test cases`}
-                          </span>
-                        </>
-                      ) : null}
                       {servers.length > 0 ? (
                         <>
                           <span>•</span>
