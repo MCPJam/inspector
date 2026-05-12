@@ -8,7 +8,7 @@ import { VitePlugin } from "@electron-forge/plugin-vite";
 import { FusesPlugin } from "@electron-forge/plugin-fuses";
 import { FuseV1Options, FuseVersion } from "@electron/fuses";
 import { resolve, join, dirname } from "path";
-import { cpSync, existsSync, mkdirSync } from "fs";
+import { cpSync, existsSync, mkdirSync, readdirSync } from "fs";
 
 const enableMacSigning = process.platform === "darwin";
 const macSignIdentity = process.env.MAC_CODESIGN_IDENTITY?.trim();
@@ -96,18 +96,28 @@ const config: ForgeConfig = {
           return;
         }
         const dest = join(buildPath, ".vite", "build", "node_modules", "@ngrok");
-        mkdirSync(dest, { recursive: true });
-
-        // Copy only the platform-matched native package to avoid bundling redundant binaries.
-        const platformPkg = `ngrok-${_platform}-${_arch}`;
-        const pkgsToCopy = ["ngrok", platformPkg];
         try {
+          mkdirSync(dest, { recursive: true });
+
+          const nativePkgs = readdirSync(ngrokSrc, { withFileTypes: true })
+            .filter(
+              (entry) => entry.isDirectory() && entry.name.startsWith("ngrok-")
+            )
+            .map((entry) => entry.name)
+            .sort();
+          if (nativePkgs.length === 0) {
+            console.warn(
+              "[forge] No @ngrok/ngrok-* native packages found — ngrok tunnels will fail at runtime",
+            );
+          }
+
+          const pkgsToCopy = ["ngrok", ...nativePkgs];
           for (const pkg of pkgsToCopy) {
             const src = join(ngrokSrc, pkg);
             if (existsSync(src)) {
               console.log(`[forge] Copying @ngrok/${pkg} to ${dest}`);
               cpSync(src, join(dest, pkg), { recursive: true });
-            } else if (pkg === platformPkg) {
+            } else {
               console.warn(
                 `[forge] @ngrok/${pkg} not found at ${src} — ngrok tunnels will fail at runtime`,
               );
