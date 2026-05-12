@@ -168,10 +168,21 @@ export function McpProfileSection({
         onChange={(versions) =>
           updateProfile((draft) => {
             const initialize = draft.initialize ?? {};
-            if (versions === undefined) {
+            // Normalize at the persistence boundary, NOT in the row
+            // input handler (the row handler keeps the controlled
+            // value as typed so the user can build up "2025-11-25"
+            // one keystroke at a time without the entry vanishing).
+            // Backend canonicalizer rejects empty arrays and
+            // blank/whitespace entries (PR #269 P2 fix); mirror that
+            // here so the editor never ships a payload the backend
+            // would reject — saves the user a round-trip error.
+            const cleaned = versions
+              ?.map((v) => v.trim())
+              .filter((v) => v.length > 0);
+            if (cleaned === undefined || cleaned.length === 0) {
               delete initialize.supportedProtocolVersions;
             } else {
-              initialize.supportedProtocolVersions = versions;
+              initialize.supportedProtocolVersions = cleaned;
             }
             if (Object.keys(initialize).length === 0) {
               delete draft.initialize;
@@ -302,17 +313,44 @@ function ClientIdentitySubsection({
     typeof clientInfo?.title === "string" ? clientInfo.title : "";
 
   const commit = (next: { name: string; version: string; title: string }) => {
-    // Backend soft-validates: when clientInfo is set, both name and
-    // version must be non-empty. If the user clears both, fold the
-    // whole subsection back to undefined so we don't persist a
-    // half-typed identity that would fail canonicalization on save.
-    if (next.name.trim() === "" && next.version.trim() === "") {
+    // Backend soft-validates: when clientInfo is set, BOTH name and
+    // version must be non-empty (PR #269 canonicalizer rejects
+    // half-typed identities at write time). The editor mirrors that
+    // rule here so the user sees the same field-level Save gate
+    // either way:
+    //
+    //   - both empty       → fold the subsection back to undefined
+    //                        (no clientInfo persisted; SDK default).
+    //   - one empty        → swallow the partial state. Persisting
+    //                        `{ name: "x" }` alone would round-trip
+    //                        back to the editor as a half-filled
+    //                        form that fails canonicalization on the
+    //                        next save. Instead we hold the keystroke
+    //                        in the input element (controlled `next`)
+    //                        and only commit once the second field
+    //                        crosses non-empty too. The downside: a
+    //                        rapid clear-both-fields needs an
+    //                        explicit "Reset to inspector default"
+    //                        click. Worth it to avoid the
+    //                        "save fails on a field I cleared" trap.
+    //   - both populated   → commit { name, version, title?, ...extras }.
+    const trimmedName = next.name.trim();
+    const trimmedVersion = next.version.trim();
+    if (trimmedName === "" && trimmedVersion === "") {
       onChange(undefined);
       return;
     }
-    const out: Record<string, unknown> = {};
-    if (next.name.trim() !== "") out.name = next.name.trim();
-    if (next.version.trim() !== "") out.version = next.version.trim();
+    if (trimmedName === "" || trimmedVersion === "") {
+      // Hold partial state in the controlled inputs without
+      // persisting. The user sees both fields cleared / typed as
+      // expected; the previous saved value (or undefined) stays on
+      // disk until they finish the pair.
+      return;
+    }
+    const out: Record<string, unknown> = {
+      name: trimmedName,
+      version: trimmedVersion,
+    };
     if (next.title.trim() !== "") out.title = next.title.trim();
     // Preserve any extra fields the user might have round-tripped
     // through the API (future spec additions). Drop our three

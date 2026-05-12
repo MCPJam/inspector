@@ -54,6 +54,34 @@ export type SandboxPermissionsMode =
   | "custom";
 
 /**
+ * Validate / coerce an unknown mode value to the SandboxCspMode union.
+ *
+ * The resolver may be called with a profile written by a *future*
+ * inspector version that introduces a new mode (or with corrupt
+ * data). A naive `as SandboxCspMode` cast would let those values
+ * leak out of the resolver and break consumers that exhaustive-match
+ * on the union. Normalizing to `"declared"` (the spec-safest default)
+ * keeps the type contract honest and fail-safe: an unknown mode
+ * never widens the effective CSP.
+ */
+function normalizeCspMode(input: unknown): SandboxCspMode {
+  return input === "host-default" || input === "declared" || input === "relaxed"
+    ? input
+    : "declared";
+}
+
+function normalizePermissionsMode(
+  input: unknown,
+  fallback: SandboxPermissionsMode,
+): SandboxPermissionsMode {
+  return input === "resource-declared" ||
+    input === "deny-all" ||
+    input === "custom"
+    ? input
+    : fallback;
+}
+
+/**
  * Per-directive resolved sets, in five "layers" so the CSP debug
  * overlay can render the resolution as a one-screen answer to "why
  * is this directive what it is."
@@ -125,11 +153,6 @@ export type ResolveSandboxArgs = {
   profile?: HostConfigMcpProfileV1;
 };
 
-export type ResolveSandboxResult = {
-  csp: SandboxCspLayers;
-  permissions: SandboxPermissionsLayers;
-};
-
 // -----------------------------------------------------------------------------
 // CSP resolution
 // -----------------------------------------------------------------------------
@@ -143,8 +166,7 @@ export type ResolveSandboxResult = {
 export function resolveSandboxCsp(
   args: ResolveSandboxArgs,
 ): SandboxCspLayers {
-  const mode = (args.profile?.apps?.sandbox?.csp?.mode ??
-    "declared") as SandboxCspMode;
+  const mode = normalizeCspMode(args.profile?.apps?.sandbox?.csp?.mode);
 
   // Step 1 — baseline picked by `mode`. Per spec:
   //   - "declared": resource declaration is the upper bound. The
@@ -250,9 +272,10 @@ export function resolveSandboxPermissions(
 ): SandboxPermissionsLayers {
   const resourceCeiling = args.resourcePermissions ?? {};
   const profilePerms = args.profile?.apps?.sandbox?.permissions;
-  const mode = (profilePerms?.mode ??
-    args.defaultPermissionsMode ??
-    "resource-declared") as SandboxPermissionsMode;
+  const mode = normalizePermissionsMode(
+    profilePerms?.mode,
+    args.defaultPermissionsMode ?? "resource-declared",
+  );
 
   // Step 1 — pick candidate set per `mode`.
   let candidate: Record<string, boolean> = {};
@@ -324,19 +347,11 @@ export function resolveSandboxPermissions(
   };
 }
 
-/**
- * Convenience wrapper that resolves both CSP and permissions in one
- * call. Mostly for the renderer's "give me everything" path; tests
- * exercise each resolver independently.
- */
-export function resolveSandboxPolicy(
-  args: ResolveSandboxArgs,
-): ResolveSandboxResult {
-  return {
-    csp: resolveSandboxCsp(args),
-    permissions: resolveSandboxPermissions(args),
-  };
-}
+// `resolveSandboxPolicy` (a wrapper returning { csp, permissions }) was
+// intentionally removed: the renderer and tests both call the two
+// resolvers independently, and exporting an unused convenience wrapper
+// would add to the module's surface area without a consumer. Callers
+// that want both resolved sets can call the two functions directly.
 
 // -----------------------------------------------------------------------------
 // Internals
@@ -353,22 +368,64 @@ function cloneCspDomainSet(set: CspDomainSet | undefined): CspDomainSet {
 }
 
 /**
- * Intersect two domain lists with wildcard awareness. A wildcard in
- * `b` (e.g. `https://*.example.com`) matches any concrete domain in
- * `a` that fits the suffix pattern. A concrete-vs-concrete entry
- * matches by string equality.
+ * Intersect a baseline domain list (`a`) with a restrictTo list (`b`),
+ * with wildcard awareness in BOTH directions.
+ *
+ * Two cases the resolver must handle:
+ *
+ * 1. **Concrete baseline, wildcard restrictTo** — keep the baseline
+ *    entry if any restrictTo pattern matches it. Example:
+ *      baseline:    ["https://api.example.com", "https://api.other.com"]
+ *      restrictTo:  ["https://*.example.com"]
+ *      effective:   ["https://api.example.com"]
+ *
+ * 2. **Wildcard baseline, concrete restrictTo** — keep the restrictTo
+ *    entry if any baseline pattern covers it. Without this case,
+ *    a relaxed-mode baseline of `["*"]` intersected with
+ *    `["https://api.example.com"]` would resolve to `[]` and break
+ *    the widget — exactly opposite of "host MAY restrict." Per
+ *    SEP-1865 the host restricting a wildcard MUST yield the
+ *    narrower concrete entries, not the wildcard nor an empty set.
+ *
+ * Concrete-vs-concrete falls out of either branch via string
+ * equality (matchesDomain returns true for equal strings).
+ *
+ * Output is deduped by string identity. Wildcard baseline entries
+ * that aren't narrowed by any restrictTo entry are dropped — the
+ * narrowing IS the point of restrictTo. A wildcard with no narrower
+ * restrictTo entry would be wider than what the user asked for, so
+ * the spec-safe choice is to drop it.
  */
-function intersectDomainLists(a: string[], b: string[]): string[] {
+function intersectDomainLists(
+  baseline: string[],
+  restrictTo: string[],
+): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
-  for (const entry of a) {
-    if (b.some((pattern) => matchesDomain(pattern, entry))) {
-      if (!seen.has(entry)) {
-        seen.add(entry);
-        out.push(entry);
-      }
+  const add = (entry: string) => {
+    if (seen.has(entry)) return;
+    seen.add(entry);
+    out.push(entry);
+  };
+
+  // Case 1: keep baseline entries the restrictTo covers.
+  for (const entry of baseline) {
+    if (restrictTo.some((pattern) => matchesDomain(pattern, entry))) {
+      add(entry);
     }
   }
+
+  // Case 2: keep restrictTo entries the baseline covers (the
+  // narrower-than-wildcard case). Only adds entries the baseline
+  // *itself* doesn't already match concretely — those were caught
+  // by Case 1.
+  for (const entry of restrictTo) {
+    if (baseline.includes(entry)) continue; // already added in Case 1
+    if (baseline.some((pattern) => matchesDomain(pattern, entry))) {
+      add(entry);
+    }
+  }
+
   return out;
 }
 
@@ -467,13 +524,33 @@ function isHostedClampBlocked(domain: string, _key: CspDirectiveKey): boolean {
   if (scheme === "data") return true;
   if (scheme === "blob") return true;
 
-  // localhost / loopback / RFC-1918. Strip an optional port suffix —
-  // CSP source expressions allow `host:port`, but the clamp matches
-  // by hostname only ("localhost" should be blocked whether or not
-  // it has a port).
-  const hostnameOnly = host.includes(":")
-    ? host.slice(0, host.indexOf(":"))
-    : host;
+  // localhost / loopback / RFC-1918. Strip an optional port suffix.
+  //
+  // IPv6 needs special care: bracketed CSP source expressions look
+  // like `[::1]:3000`; bare host strings like `::1` carry their own
+  // colons that are NOT port separators. A naive `slice(0,
+  // host.indexOf(":"))` reduces `[::1]:3000` to `[` and `::1` to the
+  // empty string, both of which slip through every loopback check
+  // below — exactly the bypass the clamp is supposed to prevent.
+  //
+  // Disambiguation:
+  //   1. Bracketed IPv6 (`[hex...]`)  — strip the brackets first,
+  //      then drop any `:port` that follows the closing bracket.
+  //   2. Bare IPv6 (more than one `:` and no brackets) — treat the
+  //      entire host as the hostname (no port-stripping).
+  //   3. Everything else (zero or one `:`) — port-strip on the
+  //      single colon.
+  let hostnameOnly: string;
+  if (host.startsWith("[")) {
+    const closeIdx = host.indexOf("]");
+    hostnameOnly = closeIdx >= 0 ? host.slice(1, closeIdx) : host.slice(1);
+  } else if ((host.match(/:/g)?.length ?? 0) > 1) {
+    hostnameOnly = host;
+  } else if (host.includes(":")) {
+    hostnameOnly = host.slice(0, host.indexOf(":"));
+  } else {
+    hostnameOnly = host;
+  }
   const lowerHost = hostnameOnly.toLowerCase();
   if (
     lowerHost === "localhost" ||

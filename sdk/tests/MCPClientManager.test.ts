@@ -172,15 +172,16 @@ describe("MCPClientManager", () => {
       expect(manager).toBeInstanceOf(MCPClientManager);
     });
 
-    it("accepts defaultClientTitle + defaultSupportedProtocolVersions options without throwing", () => {
-      // These are the option-surface additions that pair with the
-      // inspector's `mcpProfile.initialize.{clientInfo, supportedProtocol
-      // Versions}`. We can't easily assert the wire-level effect in a
-      // unit test (no mock server here); the integration assertion
-      // lives in the inspector tests where the resolved profile is
-      // verified to flow into the client constructor. This test just
-      // pins the constructor signature so a future refactor doesn't
-      // silently drop the field.
+    it("stores defaultClientTitle + defaultSupportedProtocolVersions on the instance", () => {
+      // These option-surface additions pair with the inspector's
+      // `mcpProfile.initialize.{clientInfo, supportedProtocolVersions}`.
+      // We can't easily assert the wire-level effect without a mock
+      // server, so this test reaches into the private fields the
+      // constructor writes — the next-closest thing to a wire
+      // assertion. Catches the regression class where a future
+      // refactor renames the field, drops it, or replaces the
+      // assignment with a default but leaves the constructor
+      // signature intact.
       const manager = new MCPClientManager(
         {},
         {
@@ -190,19 +191,51 @@ describe("MCPClientManager", () => {
           defaultSupportedProtocolVersions: ["2025-11-25", "2025-06-18"],
         }
       );
-      expect(manager).toBeInstanceOf(MCPClientManager);
+      const internals = manager as unknown as {
+        defaultClientTitle?: string;
+        defaultSupportedProtocolVersions?: string[];
+      };
+      expect(internals.defaultClientTitle).toBe("ChatGPT Desktop");
+      expect(internals.defaultSupportedProtocolVersions).toEqual([
+        "2025-11-25",
+        "2025-06-18",
+      ]);
     });
 
-    it("treats empty defaultSupportedProtocolVersions as undefined (fall back to SDK defaults)", () => {
+    it("normalizes empty defaultSupportedProtocolVersions to undefined", () => {
       // An empty array would send no protocolVersion at all and stall
-      // initialize negotiation; the constructor normalizes [] → undefined
-      // so we never hand the SDK a zero-length accept-list. Mirrors the
-      // backend canonicalizer's same rule (PR #269 P2 fix).
+      // initialize negotiation; the constructor normalizes [] →
+      // undefined so the SDK falls back to its hardcoded
+      // SUPPORTED_PROTOCOL_VERSIONS list. Mirrors the backend
+      // canonicalizer's same rule (PR #269 P2 fix). This assertion
+      // is the unit-level guard.
       const manager = new MCPClientManager(
         {},
         { defaultSupportedProtocolVersions: [] }
       );
-      expect(manager).toBeInstanceOf(MCPClientManager);
+      const internals = manager as unknown as {
+        defaultSupportedProtocolVersions?: string[];
+      };
+      expect(internals.defaultSupportedProtocolVersions).toBeUndefined();
+    });
+
+    it("clones defaultSupportedProtocolVersions defensively", () => {
+      // Order is semantic (first entry is proposed) so the manager
+      // MUST NOT alias the caller's array — a later push() on the
+      // original must NOT alter what the SDK proposes for the next
+      // connection.
+      const versions = ["2025-11-25"];
+      const manager = new MCPClientManager(
+        {},
+        { defaultSupportedProtocolVersions: versions }
+      );
+      versions.push("hacked");
+      const internals = manager as unknown as {
+        defaultSupportedProtocolVersions?: string[];
+      };
+      expect(internals.defaultSupportedProtocolVersions).toEqual([
+        "2025-11-25",
+      ]);
     });
 
     it("lazyConnect skips eager connect so listServers is empty until connectToServer", () => {

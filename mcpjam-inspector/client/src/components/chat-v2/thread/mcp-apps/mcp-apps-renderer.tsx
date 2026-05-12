@@ -612,49 +612,12 @@ export function MCPAppsRenderer({
         // Store widget HTML in debug store for save view feature
         setWidgetHtmlStore(toolCallId, html);
 
-        // Update the widget debug store with CSP and permissions info.
-        // Apply the profile's sandbox.csp resolution on top of the
-        // widget-declared CSP so the debug overlay shows the
-        // baseline → restrictTo → deny → hosted-clamp → effective
-        // layers. `effective` is what enforcement would emit; the
-        // debug-store fields below report effective values per spec.
-        if (csp || permissions || !permissive) {
-          const resourceCsp = csp
-            ? {
-                connectDomains: csp.connectDomains,
-                resourceDomains: csp.resourceDomains,
-                frameDomains: csp.frameDomains,
-                baseUriDomains: csp.baseUriDomains,
-              }
-            : undefined;
-          const cspLayers = resolveSandboxCsp({
-            resourceCsp,
-            // host-default / relaxed baselines aren't wired here yet —
-            // the renderer keeps its existing "widget-declared" CSP as
-            // baseline when mode is "declared" (the default). When the
-            // renderer-preset CSP becomes addressable as a value, pass
-            // it as `hostDefaultCsp` so `mode: "host-default"` resolves
-            // against the same set the iframe enforces today.
-            isHostedMode: HOSTED_MODE,
-            profile: mcpProfile,
-          });
-          setWidgetCspStore(toolCallId, {
-            mode: permissive ? "permissive" : "widget-declared",
-            connectDomains: cspLayers.effective.connectDomains || [],
-            resourceDomains: cspLayers.effective.resourceDomains || [],
-            frameDomains: cspLayers.effective.frameDomains || [],
-            baseUriDomains: cspLayers.effective.baseUriDomains || [],
-            permissions: permissions,
-            widgetDeclared: csp
-              ? {
-                  connectDomains: csp.connectDomains,
-                  resourceDomains: csp.resourceDomains,
-                  frameDomains: csp.frameDomains,
-                  baseUriDomains: csp.baseUriDomains,
-                }
-              : null,
-          });
-        }
+        // Debug-store CSP+permissions update is handled by a separate
+        // effect below — that way changing `mcpProfile` mid-session
+        // refreshes the resolved overlay without forcing a widget HTML
+        // refetch. The fetch effect just primes the component state
+        // (widgetCsp / widgetPermissions / widgetPermissive); the
+        // dedicated effect reacts to those plus mcpProfile.
         logWidgetDebug("host-to-ui", "debug/widget-content-ready", {
           cached: false,
           cspMode,
@@ -690,6 +653,62 @@ export function MCPAppsRenderer({
     cachedWidgetHtmlUrl,
     initialPrefersBorder,
   ]);
+
+  // Resolve and surface the layered sandbox CSP for the CSP debug
+  // overlay whenever the widget's declared CSP / permissions OR the
+  // active `mcpProfile` changes. Split out from the fetch effect
+  // above so a mid-session profile change refreshes the overlay
+  // without forcing a widget HTML refetch (the HTML doesn't depend
+  // on profile — CSP is enforced at the iframe boundary, not baked
+  // into the widget body).
+  useEffect(() => {
+    if (!widgetCsp && !widgetPermissions && widgetPermissive) {
+      // No CSP, no permissions, fully permissive — nothing to display
+      // in the overlay; keep the store untouched so a previous entry
+      // isn't clobbered by an empty one on remount.
+      return;
+    }
+    const resourceCsp = widgetCsp
+      ? {
+          connectDomains: widgetCsp.connectDomains,
+          resourceDomains: widgetCsp.resourceDomains,
+          frameDomains: widgetCsp.frameDomains,
+          baseUriDomains: widgetCsp.baseUriDomains,
+        }
+      : undefined;
+    const cspLayers = resolveSandboxCsp({
+      resourceCsp,
+      // host-default / relaxed baselines aren't wired here yet — the
+      // renderer keeps its existing "widget-declared" CSP as baseline
+      // when mode is "declared" (the default). When the renderer-preset
+      // CSP becomes addressable as a value, pass it as `hostDefaultCsp`
+      // so `mode: "host-default"` resolves against the same set the
+      // iframe enforces today.
+      isHostedMode: HOSTED_MODE,
+      profile: mcpProfile,
+    });
+    setWidgetCspStore(toolCallId, {
+      mode: widgetPermissive ? "permissive" : "widget-declared",
+      connectDomains: cspLayers.effective.connectDomains || [],
+      resourceDomains: cspLayers.effective.resourceDomains || [],
+      frameDomains: cspLayers.effective.frameDomains || [],
+      baseUriDomains: cspLayers.effective.baseUriDomains || [],
+      permissions: widgetPermissions ?? undefined,
+      widgetDeclared: widgetCsp
+        ? {
+            connectDomains: widgetCsp.connectDomains,
+            resourceDomains: widgetCsp.resourceDomains,
+            frameDomains: widgetCsp.frameDomains,
+            baseUriDomains: widgetCsp.baseUriDomains,
+          }
+        : null,
+    });
+    // setWidgetCspStore is a stable Zustand selector reference — same
+    // pattern the fetch effect above uses for its store-method
+    // setters. Listing it in deps creates a TDZ reference because the
+    // store-method bindings are declared further down in the
+    // component body.
+  }, [widgetCsp, widgetPermissions, widgetPermissive, mcpProfile, toolCallId]);
 
   // UI logging
   const addUiLog = useTrafficLogStore((s) => s.addLog);

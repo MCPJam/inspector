@@ -28,7 +28,14 @@ describe("matchesDomain", () => {
     expect(
       matchesDomain("https://*.example.com", "https://api.v2.example.com"),
     ).toBe(true);
-    // Bare suffix matches too — per CSP spec for *.example.com.
+    // Intentional divergence from W3C CSP Level 3: that spec's
+    // host-source algorithm matches subdomains ONLY, not the bare
+    // apex. We diverge so a profile saying "restrict to
+    // *.example.com" doesn't silently exclude `example.com` itself —
+    // a common author intent in MCP host-policy use cases. Real
+    // browser CSP enforcement won't behave this way; the resolver
+    // owns the divergence and the CSP debug overlay surfaces the
+    // effective set so users can see what actually got matched.
     expect(
       matchesDomain("https://*.example.com", "https://example.com"),
     ).toBe(true);
@@ -124,6 +131,55 @@ describe("resolveSandboxCsp — restrictTo intersection (applies in EVERY mode)"
       },
     });
     expect(result.afterRestrictTo.connectDomains).toEqual(["b.com"]);
+  });
+
+  it("narrows wildcard baseline to concrete restrictTo entries (regression: bidirectional intersection)", () => {
+    // Regression for Codex P2 / Bugbot High: when the baseline is a
+    // wildcard (e.g. `*` in relaxed mode, or `https://*.example.com`
+    // from a resource that declared it), a concrete `restrictTo`
+    // entry must still narrow it. The naive
+    // `b.some(p => matchesDomain(p, baselineEntry))` direction
+    // alone would drop the wildcard and yield []. The bidirectional
+    // implementation keeps concrete restrictTo entries the baseline
+    // wildcard covers — matching SEP-1865's "host MAY restrict, MUST
+    // NOT widen" semantic.
+    const relaxedRestrict = resolveSandboxCsp({
+      relaxedCsp: { connectDomains: ["*"] },
+      isHostedMode: false,
+      profile: {
+        profileVersion: 1,
+        apps: {
+          sandbox: {
+            csp: {
+              mode: "relaxed",
+              restrictTo: { connectDomains: ["https://api.example.com"] },
+            },
+          },
+        },
+      },
+    });
+    expect(relaxedRestrict.effective.connectDomains).toEqual([
+      "https://api.example.com",
+    ]);
+
+    // Same shape with a more specific wildcard baseline.
+    const wildcardSubdomainRestrict = resolveSandboxCsp({
+      resourceCsp: { connectDomains: ["https://*.example.com"] },
+      isHostedMode: false,
+      profile: {
+        profileVersion: 1,
+        apps: {
+          sandbox: {
+            csp: {
+              restrictTo: { connectDomains: ["https://api.example.com"] },
+            },
+          },
+        },
+      },
+    });
+    expect(wildcardSubdomainRestrict.effective.connectDomains).toEqual([
+      "https://api.example.com",
+    ]);
   });
 
   it("NEVER unions undeclared domains in (SEP-1865 rule)", () => {
@@ -244,6 +300,28 @@ describe("resolveSandboxCsp — hosted-mode hard clamp", () => {
     });
     expect(result.afterHostedClamp.connectDomains).toEqual([
       "https://api.ok.com",
+    ]);
+  });
+
+  it("strips IPv6 loopback in hosted mode (regression: bracketed + bare forms)", () => {
+    // Regression for Codex P1: a naive `slice(0, indexOf(':'))`
+    // port-strip reduces `[::1]:3000` to `[` and bare `::1` to the
+    // empty string — both slip through every loopback check. The
+    // clamp's IPv6 disambiguation must handle bracketed (`[::1]:port`),
+    // bracketed-without-port (`[::1]`), and bare (`::1`) forms.
+    const result = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: [
+          "https://api.example.com",
+          "http://[::1]:3000",
+          "http://[::1]",
+          "::1",
+        ],
+      },
+      isHostedMode: true,
+    });
+    expect(result.effective.connectDomains).toEqual([
+      "https://api.example.com",
     ]);
   });
 
