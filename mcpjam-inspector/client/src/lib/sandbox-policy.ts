@@ -467,15 +467,22 @@ export function matchesDomain(pattern: string, domain: string): boolean {
     return false;
   }
 
-  const patternHost = patternParts.host;
-  const domainHost = domainParts.host;
+  // Strip ports from BOTH sides before comparison. A CSP pattern like
+  // `https://*.example.com` MUST match `https://api.example.com:8443` —
+  // the port is part of the URL but not part of the host-suffix
+  // matching rule. Without this, a deny like `https://*.evil.com`
+  // would fail to match `https://api.evil.com:8443` and let it
+  // through the clamp. Same disambiguation rule for IPv6.
+  const patternHost = extractHostname(patternParts.host);
+  const domainHost = extractHostname(domainParts.host);
 
   // `*` host alone matches any host (e.g. `https://*` matches
   // `https://api.example.com`).
   if (patternHost === "*") return true;
 
   // Suffix wildcard: `*.example.com` matches `api.example.com` and
-  // also `example.com` (per CSP spec).
+  // (intentionally diverging from W3C CSP3) the bare apex
+  // `example.com` itself.
   if (patternHost.startsWith("*.")) {
     const suffix = patternHost.slice(2); // drop "*."
     return domainHost === suffix || domainHost.endsWith("." + suffix);
@@ -488,9 +495,70 @@ function splitScheme(value: string): {
   scheme: string | undefined;
   host: string;
 } {
-  const idx = value.indexOf("://");
-  if (idx < 0) return { scheme: undefined, host: value };
-  return { scheme: value.slice(0, idx), host: value.slice(idx + 3) };
+  // CSP source expressions come in two forms:
+  //   1. `scheme://host[...]` — the common case for http/https/ws/wss.
+  //   2. `scheme:` (single colon, no host) — `javascript:`, `data:`,
+  //      `blob:`, `filesystem:`. Scheme-source expressions per CSP
+  //      grammar. Treating them as schemeless silently bypasses the
+  //      hosted clamp's `javascript`/`data`/`blob` blocks.
+  //
+  // The split MUST anchor on the FIRST colon, not on `://`. Inputs
+  // like `blob:https://example.com/foo` have BOTH a single-colon
+  // scheme prefix AND a later `://`; matching the triple form first
+  // would yield scheme="blob:https" which the clamp's
+  // `scheme === "blob"` check won't recognize, slipping the entry
+  // past defense-in-depth. Match the leading scheme token, then
+  // peel `//` off the host if present to keep behavior parity with
+  // the URL-shaped case.
+  //
+  // Grammar from RFC 3986
+  // (scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )).
+  const schemeMatch = /^([a-zA-Z][a-zA-Z0-9+.\-]*):/.exec(value);
+  if (schemeMatch) {
+    const rest = value.slice(schemeMatch[0].length);
+    return {
+      scheme: schemeMatch[1]!.toLowerCase(),
+      // Strip a leading `//` so callers that compare `host` to e.g.
+      // `"localhost"` or wildcards don't need to know whether the
+      // caller wrote `http://localhost` vs `localhost-only` (rare).
+      // The hierarchical form is the common case; the scheme-only
+      // form falls through with `host` carrying whatever followed
+      // the colon (e.g. `image/png;base64,...` for `data:`).
+      host: rest.startsWith("//") ? rest.slice(2) : rest,
+    };
+  }
+  return { scheme: undefined, host: value };
+}
+
+/**
+ * Extract the bare hostname from a possibly-port-suffixed host string.
+ *
+ * Used by both `matchesDomain` (for wildcard suffix comparisons that
+ * must be host-vs-host, not host-vs-host:port) and the hosted-mode
+ * clamp's loopback checks (where `localhost:3000` must still match
+ * the `localhost` literal). Centralized here so the two callers
+ * agree on the IPv6 disambiguation rules:
+ *   1. Bracketed IPv6 (`[hex...]`) — strip the brackets, then drop
+ *      any `:port` that follows the closing bracket.
+ *   2. Bare IPv6 (more than one `:`, no brackets) — entire host is
+ *      the hostname (no port-stripping); a naive `slice(0,
+ *      indexOf(':'))` would reduce `::1` to `""` and slip past
+ *      every loopback check.
+ *   3. Everything else (zero or one `:`) — port-strip on the
+ *      single colon.
+ */
+function extractHostname(host: string): string {
+  if (host.startsWith("[")) {
+    const closeIdx = host.indexOf("]");
+    return closeIdx >= 0 ? host.slice(1, closeIdx) : host.slice(1);
+  }
+  if ((host.match(/:/g)?.length ?? 0) > 1) {
+    return host;
+  }
+  if (host.includes(":")) {
+    return host.slice(0, host.indexOf(":"));
+  }
+  return host;
 }
 
 /**
@@ -524,34 +592,12 @@ function isHostedClampBlocked(domain: string, _key: CspDirectiveKey): boolean {
   if (scheme === "data") return true;
   if (scheme === "blob") return true;
 
-  // localhost / loopback / RFC-1918. Strip an optional port suffix.
-  //
-  // IPv6 needs special care: bracketed CSP source expressions look
-  // like `[::1]:3000`; bare host strings like `::1` carry their own
-  // colons that are NOT port separators. A naive `slice(0,
-  // host.indexOf(":"))` reduces `[::1]:3000` to `[` and `::1` to the
-  // empty string, both of which slip through every loopback check
-  // below — exactly the bypass the clamp is supposed to prevent.
-  //
-  // Disambiguation:
-  //   1. Bracketed IPv6 (`[hex...]`)  — strip the brackets first,
-  //      then drop any `:port` that follows the closing bracket.
-  //   2. Bare IPv6 (more than one `:` and no brackets) — treat the
-  //      entire host as the hostname (no port-stripping).
-  //   3. Everything else (zero or one `:`) — port-strip on the
-  //      single colon.
-  let hostnameOnly: string;
-  if (host.startsWith("[")) {
-    const closeIdx = host.indexOf("]");
-    hostnameOnly = closeIdx >= 0 ? host.slice(1, closeIdx) : host.slice(1);
-  } else if ((host.match(/:/g)?.length ?? 0) > 1) {
-    hostnameOnly = host;
-  } else if (host.includes(":")) {
-    hostnameOnly = host.slice(0, host.indexOf(":"));
-  } else {
-    hostnameOnly = host;
-  }
-  const lowerHost = hostnameOnly.toLowerCase();
+  // localhost / loopback / RFC-1918. Reuse `extractHostname` so the
+  // clamp and `matchesDomain` agree on how to strip ports (and how
+  // to handle bracketed / bare IPv6 forms — a naive
+  // `slice(0, indexOf(':'))` would reduce `[::1]:3000` to `[` and
+  // bare `::1` to `""`, slipping past every loopback check below).
+  const lowerHost = extractHostname(host).toLowerCase();
   if (
     lowerHost === "localhost" ||
     lowerHost === "127.0.0.1" ||

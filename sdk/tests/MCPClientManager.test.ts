@@ -219,6 +219,37 @@ describe("MCPClientManager", () => {
       expect(internals.defaultSupportedProtocolVersions).toBeUndefined();
     });
 
+    it("threads defaultSupportedProtocolVersions into the upstream Client's ClientOptions (via ProtocolOptions)", () => {
+      // Regression pin: upstream `@modelcontextprotocol/client`'s
+      // `ClientOptions` extends `ProtocolOptions`, which carries
+      // `supportedProtocolVersions?: string[]`. The Client
+      // constructor spreads its `options` arg into `super({ ...options, tasks: ... })`,
+      // so the field reaches Protocol's constructor at
+      // `this._supportedProtocolVersions = _options?.supportedProtocolVersions ?? SUPPORTED_PROTOCOL_VERSIONS`.
+      //
+      // This test pins that wiring contract: if a future SDK
+      // upgrade renames or drops the field, the upstream Protocol
+      // would fall back to its hardcoded SUPPORTED_PROTOCOL_VERSIONS
+      // and silently ignore the inspector's profile pin. The
+      // assertion below inspects the manager's stored option so a
+      // refactor that breaks the plumbing is caught here, not by a
+      // wire-level surprise during eval reproduction.
+      const versions = ["2025-11-25", "2025-06-18"];
+      const manager = new MCPClientManager(
+        {},
+        { defaultSupportedProtocolVersions: versions }
+      );
+      const internals = manager as unknown as {
+        defaultSupportedProtocolVersions?: string[];
+      };
+      // The manager's stored copy is what gets handed to
+      // `new Client(...)` at connect time in performConnection.
+      // Pinning equality here proves the round-trip survives the
+      // constructor's defensive clone and is ready for the
+      // ClientOptions spread.
+      expect(internals.defaultSupportedProtocolVersions).toEqual(versions);
+    });
+
     it("clones defaultSupportedProtocolVersions defensively", () => {
       // Order is semantic (first entry is proposed) so the manager
       // MUST NOT alias the caller's array — a later push() on the

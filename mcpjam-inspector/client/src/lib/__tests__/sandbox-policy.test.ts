@@ -40,6 +40,18 @@ describe("matchesDomain", () => {
       matchesDomain("https://*.example.com", "https://example.com"),
     ).toBe(true);
   });
+  it("wildcard matching strips ports on the domain side (regression: deny with port)", () => {
+    // Regression for Bugbot Medium: a deny pattern of `https://*.evil.com`
+    // must still match `https://api.evil.com:8443`. Previously the
+    // domain side retained the port suffix and `endsWith` failed.
+    expect(
+      matchesDomain("https://*.evil.com", "https://api.evil.com:8443"),
+    ).toBe(true);
+    expect(
+      matchesDomain("https://api.example.com", "https://api.example.com:443"),
+    ).toBe(true);
+  });
+
   it("suffix wildcard does NOT match unrelated hosts", () => {
     expect(
       matchesDomain("https://*.example.com", "https://attacker.com"),
@@ -300,6 +312,28 @@ describe("resolveSandboxCsp — hosted-mode hard clamp", () => {
     });
     expect(result.afterHostedClamp.connectDomains).toEqual([
       "https://api.ok.com",
+    ]);
+  });
+
+  it("strips javascript:/data:/blob: scheme-source expressions in hosted mode (regression: single-colon scheme)", () => {
+    // Regression for CodeRabbit Critical: CSP scheme-source
+    // expressions are written with a single colon (`javascript:`,
+    // `data:`, `blob:`). The previous `splitScheme` only detected
+    // `scheme://` and returned `undefined` for these, letting them
+    // slip past the clamp's scheme blocks at lines 578-585.
+    const result = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: [
+          "https://api.example.com",
+          "javascript:alert(1)",
+          "data:image/png;base64,abc",
+          "blob:https://example.com/foo",
+        ],
+      },
+      isHostedMode: true,
+    });
+    expect(result.effective.connectDomains).toEqual([
+      "https://api.example.com",
     ]);
   });
 

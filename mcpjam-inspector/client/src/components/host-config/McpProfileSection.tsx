@@ -21,7 +21,7 @@
  * by accidentally synthesizing an empty container on save.
  */
 
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
@@ -168,21 +168,15 @@ export function McpProfileSection({
         onChange={(versions) =>
           updateProfile((draft) => {
             const initialize = draft.initialize ?? {};
-            // Normalize at the persistence boundary, NOT in the row
-            // input handler (the row handler keeps the controlled
-            // value as typed so the user can build up "2025-11-25"
-            // one keystroke at a time without the entry vanishing).
-            // Backend canonicalizer rejects empty arrays and
-            // blank/whitespace entries (PR #269 P2 fix); mirror that
-            // here so the editor never ships a payload the backend
-            // would reject — saves the user a round-trip error.
-            const cleaned = versions
-              ?.map((v) => v.trim())
-              .filter((v) => v.length > 0);
-            if (cleaned === undefined || cleaned.length === 0) {
+            // The subsection has already trimmed + filtered empties
+            // (the parent of the subsection's local draft state is
+            // what receives this call). `undefined` here means "no
+            // versions persisted" — DON'T re-normalize and DON'T
+            // store an empty array.
+            if (versions === undefined || versions.length === 0) {
               delete initialize.supportedProtocolVersions;
             } else {
-              initialize.supportedProtocolVersions = cleaned;
+              initialize.supportedProtocolVersions = versions;
             }
             if (Object.keys(initialize).length === 0) {
               delete draft.initialize;
@@ -306,45 +300,71 @@ function ClientIdentitySubsection({
   clientInfo: Record<string, unknown> | undefined;
   onChange: (next: Record<string, unknown> | undefined) => void;
 }) {
-  const name = typeof clientInfo?.name === "string" ? clientInfo.name : "";
-  const version =
-    typeof clientInfo?.version === "string" ? clientInfo.version : "";
-  const title =
-    typeof clientInfo?.title === "string" ? clientInfo.title : "";
+  // Local draft state, NOT derived directly from props.
+  //
+  // Why this matters: with controlled inputs reading `clientInfo?.name`
+  // directly, the "swallow keystroke" pattern (return early when only
+  // one of name/version is non-empty) is impossible — React always
+  // re-renders the input with the prop value, so a user typing the
+  // first character of `name` on a brand-new profile would see their
+  // keystroke vanish before they can type the second field. The local
+  // draft preserves what the user typed; we only call `onChange`
+  // upstream when the validity gate (both name+version non-empty)
+  // is satisfied or when both fields are cleared.
+  const initialDraft = useMemo(
+    () => ({
+      name: typeof clientInfo?.name === "string" ? clientInfo.name : "",
+      version:
+        typeof clientInfo?.version === "string" ? clientInfo.version : "",
+      title: typeof clientInfo?.title === "string" ? clientInfo.title : "",
+    }),
+    // We only want to re-seed when the persisted identity actually
+    // changes — not on every parent re-render. JSON serialization is
+    // the cheapest stable key for these three string fields.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      typeof clientInfo?.name === "string" ? clientInfo.name : null,
+      typeof clientInfo?.version === "string" ? clientInfo.version : null,
+      typeof clientInfo?.title === "string" ? clientInfo.title : null,
+    ],
+  );
+  const [draft, setDraft] = useState(initialDraft);
+  // Re-sync local draft when the persisted identity changes from the
+  // outside (e.g. "Reset entire profile" button, or external save
+  // round-trip with different values).
+  const lastSyncedRef = useRef(initialDraft);
+  useEffect(() => {
+    if (
+      initialDraft.name !== lastSyncedRef.current.name ||
+      initialDraft.version !== lastSyncedRef.current.version ||
+      initialDraft.title !== lastSyncedRef.current.title
+    ) {
+      lastSyncedRef.current = initialDraft;
+      setDraft(initialDraft);
+    }
+  }, [initialDraft]);
 
   const commit = (next: { name: string; version: string; title: string }) => {
+    // Update local draft FIRST so the controlled inputs render the
+    // user's typed characters even when we don't persist upstream.
+    setDraft(next);
     // Backend soft-validates: when clientInfo is set, BOTH name and
     // version must be non-empty (PR #269 canonicalizer rejects
-    // half-typed identities at write time). The editor mirrors that
-    // rule here so the user sees the same field-level Save gate
-    // either way:
-    //
-    //   - both empty       → fold the subsection back to undefined
-    //                        (no clientInfo persisted; SDK default).
-    //   - one empty        → swallow the partial state. Persisting
-    //                        `{ name: "x" }` alone would round-trip
-    //                        back to the editor as a half-filled
-    //                        form that fails canonicalization on the
-    //                        next save. Instead we hold the keystroke
-    //                        in the input element (controlled `next`)
-    //                        and only commit once the second field
-    //                        crosses non-empty too. The downside: a
-    //                        rapid clear-both-fields needs an
-    //                        explicit "Reset to inspector default"
-    //                        click. Worth it to avoid the
-    //                        "save fails on a field I cleared" trap.
-    //   - both populated   → commit { name, version, title?, ...extras }.
+    // half-typed identities at write time). Mirror that here:
+    //   - both empty   → fold the subsection back to `undefined`.
+    //   - one empty    → hold local draft, DON'T call upstream onChange
+    //                    (the previous valid value stays persisted; the
+    //                    user sees their typing in the inputs).
+    //   - both filled  → commit { name, version, title?, ...extras }.
     const trimmedName = next.name.trim();
     const trimmedVersion = next.version.trim();
     if (trimmedName === "" && trimmedVersion === "") {
+      lastSyncedRef.current = next;
       onChange(undefined);
       return;
     }
     if (trimmedName === "" || trimmedVersion === "") {
-      // Hold partial state in the controlled inputs without
-      // persisting. The user sees both fields cleared / typed as
-      // expected; the previous saved value (or undefined) stays on
-      // disk until they finish the pair.
+      // Partial state: visible in local draft, not yet persisted.
       return;
     }
     const out: Record<string, unknown> = {
@@ -352,15 +372,16 @@ function ClientIdentitySubsection({
       version: trimmedVersion,
     };
     if (next.title.trim() !== "") out.title = next.title.trim();
-    // Preserve any extra fields the user might have round-tripped
-    // through the API (future spec additions). Drop our three
-    // known ones first so we don't double-write.
+    // Preserve extra fields the user might have round-tripped through
+    // the API (future spec additions). Drop our three known ones
+    // first so we don't double-write.
     if (clientInfo) {
       for (const [k, v] of Object.entries(clientInfo)) {
         if (k === "name" || k === "version" || k === "title") continue;
         out[k] = v;
       }
     }
+    lastSyncedRef.current = next;
     onChange(out);
   };
 
@@ -373,31 +394,58 @@ function ClientIdentitySubsection({
         <Input
           aria-label="Client name"
           placeholder="name (e.g. chatgpt)"
-          value={name}
-          onChange={(e) => commit({ name: e.target.value, version, title })}
+          value={draft.name}
+          onChange={(e) =>
+            commit({
+              name: e.target.value,
+              version: draft.version,
+              title: draft.title,
+            })
+          }
         />
         <Input
           aria-label="Client version"
           placeholder="version (e.g. 1.0)"
-          value={version}
+          value={draft.version}
           onChange={(e) =>
-            commit({ name, version: e.target.value, title })
+            commit({
+              name: draft.name,
+              version: e.target.value,
+              title: draft.title,
+            })
           }
         />
         <Input
           aria-label="Client title (optional)"
           placeholder="title (optional)"
-          value={title}
-          onChange={(e) => commit({ name, version, title: e.target.value })}
+          value={draft.title}
+          onChange={(e) =>
+            commit({
+              name: draft.name,
+              version: draft.version,
+              title: e.target.value,
+            })
+          }
         />
       </div>
+      {(draft.name.trim() !== "" && draft.version.trim() === "") ||
+      (draft.name.trim() === "" && draft.version.trim() !== "") ? (
+        <p className="text-xs text-amber-600 dark:text-amber-400">
+          Both <code>name</code> and <code>version</code> are required when
+          setting <code>clientInfo</code> — keep typing to save.
+        </p>
+      ) : null}
       {clientInfo !== undefined ? (
         <Button
           type="button"
           variant="link"
           size="sm"
           className="-ml-3 justify-start text-xs"
-          onClick={() => onChange(undefined)}
+          onClick={() => {
+            setDraft({ name: "", version: "", title: "" });
+            lastSyncedRef.current = { name: "", version: "", title: "" };
+            onChange(undefined);
+          }}
         >
           Reset to inspector default
         </Button>
@@ -418,11 +466,45 @@ function ProtocolVersionsSubsection({
   versions: string[] | undefined;
   onChange: (next: string[] | undefined) => void;
 }) {
-  // Editing is a single textarea — one version per line. Order is
-  // semantic (first = proposed in initialize), so we render rows in
-  // file order and use up/down arrows to reorder. A textarea is good
-  // enough for v1; a richer reorder UI is a v2 polish.
-  const rows = versions ?? [];
+  // Local draft state so an "Add version" click can render an empty
+  // row before the user types into it. If we routed every change
+  // through the parent's onChange (which trims + filters empties for
+  // canonicalizer compliance), the empty row would be stripped
+  // immediately and the user could never start a new entry. Local
+  // state preserves the in-progress UI; we only publish the cleaned
+  // list upstream when it would actually persist meaningfully.
+  const [rows, setRows] = useState<string[]>(() => versions ?? []);
+
+  // Re-sync when the persisted versions change from outside (e.g.
+  // "Reset entire profile"). Compare by canonical content so we
+  // don't re-seed on parent re-renders carrying the same array
+  // reference rewrap.
+  const persistedJson = useMemo(
+    () => JSON.stringify(versions ?? null),
+    [versions],
+  );
+  const lastSyncedJsonRef = useRef<string>(persistedJson);
+  useEffect(() => {
+    if (persistedJson !== lastSyncedJsonRef.current) {
+      lastSyncedJsonRef.current = persistedJson;
+      setRows(versions ?? []);
+    }
+  }, [persistedJson, versions]);
+
+  const commit = (next: string[]) => {
+    setRows(next);
+    // Persist the canonicalizer-safe subset (trim + drop empties).
+    // The local UI keeps in-progress empties; the upstream parent
+    // only ever sees clean entries, matching the backend's
+    // non-empty / non-blank invariant.
+    const cleaned = next.map((v) => v.trim()).filter((v) => v.length > 0);
+    const out = cleaned.length === 0 ? undefined : cleaned;
+    // Pre-sync the ref to the value we're about to send so the
+    // resync effect doesn't fire and clobber local in-progress
+    // empty rows when the parent re-renders with the cleaned subset.
+    lastSyncedJsonRef.current = JSON.stringify(out ?? null);
+    onChange(out);
+  };
 
   return (
     <div className="grid gap-2">
@@ -442,7 +524,7 @@ function ProtocolVersionsSubsection({
                 onChange={(e) => {
                   const next = [...rows];
                   next[i] = e.target.value;
-                  onChange(next);
+                  commit(next);
                 }}
               />
               <Button
@@ -453,7 +535,7 @@ function ProtocolVersionsSubsection({
                 onClick={() => {
                   const next = [...rows];
                   [next[i - 1], next[i]] = [next[i]!, next[i - 1]!];
-                  onChange(next);
+                  commit(next);
                 }}
               >
                 ↑
@@ -466,7 +548,7 @@ function ProtocolVersionsSubsection({
                 onClick={() => {
                   const next = [...rows];
                   [next[i + 1], next[i]] = [next[i]!, next[i + 1]!];
-                  onChange(next);
+                  commit(next);
                 }}
               >
                 ↓
@@ -475,10 +557,7 @@ function ProtocolVersionsSubsection({
                 type="button"
                 variant="ghost"
                 size="sm"
-                onClick={() => {
-                  const next = rows.filter((_, j) => j !== i);
-                  onChange(next.length === 0 ? undefined : next);
-                }}
+                onClick={() => commit(rows.filter((_, j) => j !== i))}
               >
                 Remove
               </Button>
@@ -495,7 +574,12 @@ function ProtocolVersionsSubsection({
         variant="outline"
         size="sm"
         className="w-fit"
-        onClick={() => onChange([...rows, ""])}
+        // Local-state-only push of an empty row. The commit() call
+        // would strip the empty before persisting it upstream, so
+        // we skip commit() here and just grow the local rows array.
+        // The first typed character in the new row will route
+        // through the Input's onChange → commit() and persist.
+        onClick={() => setRows([...rows, ""])}
       >
         + Add version
       </Button>
