@@ -16,11 +16,12 @@ import {
 } from "react";
 import {
   Clock,
+  Cpu,
   Globe,
   Hand,
   Moon,
   MousePointer2,
-  Palette,
+  Paintbrush,
   Settings2,
   Shield,
   Sun,
@@ -407,7 +408,7 @@ export function HostContextHeader({
               data-testid="host-capabilities-trigger"
               onClick={() => setHostCapsDialogOpen(true)}
             >
-              <Settings2 className="h-3.5 w-3.5" />
+              <Cpu className="h-3.5 w-3.5" />
               <span className="whitespace-nowrap @max-[700px]/playground-header:sr-only">
                 Host Capabilities
               </span>
@@ -430,7 +431,7 @@ export function HostContextHeader({
           <TooltipTrigger asChild>
             <div className="flex shrink-0 items-center gap-0.5 rounded-md border bg-background p-0.5 shadow-xs">
               <div className="flex h-6 w-6 items-center justify-center @max-[820px]/playground-header:hidden">
-                <Palette className="h-3.5 w-3.5 text-muted-foreground" />
+                <Paintbrush className="h-3.5 w-3.5 text-muted-foreground" />
               </div>
               {listHostStyles().map((host) => (
                 <Button

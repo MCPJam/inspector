@@ -53,10 +53,11 @@ vi.mock("lucide-react", () => ({
   Globe: () => <span data-testid="icon-globe" />,
   Clock: () => <span data-testid="icon-clock" />,
   Shield: () => <span data-testid="icon-shield" />,
+  Cpu: () => <span data-testid="icon-cpu" />,
   Settings2: () => <span data-testid="icon-settings" />,
   MousePointer2: () => <span data-testid="icon-mouse" />,
   Hand: () => <span data-testid="icon-hand" />,
-  Palette: () => <span data-testid="icon-palette" />,
+  Paintbrush: () => <span data-testid="icon-paintbrush" />,
 }));
 
 vi.mock("@mcpjam/design-system/button", () => ({
