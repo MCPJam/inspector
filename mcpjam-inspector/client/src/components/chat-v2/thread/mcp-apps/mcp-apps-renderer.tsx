@@ -1172,6 +1172,8 @@ export function MCPAppsRenderer({
         serverTools: {},
         serverResources: {},
         logging: {},
+        updateModelContext: {},
+        message: {},
         sandbox: {
           // In permissive mode: omit CSP (undefined) to indicate no restrictions
           // In widget-declared mode: pass the widget's declared CSP
