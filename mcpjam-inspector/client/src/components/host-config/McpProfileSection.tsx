@@ -790,7 +790,19 @@ function SandboxPermissionsSubsection({
     onChange(next);
   };
 
-  const knownPermissions = ["camera", "microphone", "geolocation", "clipboardWrite"];
+  // Permission key names follow the Permissions Policy spec
+  // (kebab-case). The hosted clamp's `HOSTED_CLAMP_SENSITIVE_PERMISSIONS`
+  // set, `resolveSandboxPermissions`' resource-declared input, and the
+  // iframe `allow=` attribute all use kebab-case — a camelCase key
+  // here would silently fail the ceiling intersection in the
+  // resolver, leaving the box checked in the UI but the permission
+  // denied at the wire.
+  const knownPermissions = [
+    "camera",
+    "microphone",
+    "geolocation",
+    "clipboard-write",
+  ];
 
   return (
     <div className="grid gap-2">
