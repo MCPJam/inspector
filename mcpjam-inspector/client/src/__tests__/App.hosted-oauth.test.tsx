@@ -277,6 +277,8 @@ vi.mock("../lib/theme-utils", () => ({
 vi.mock("../lib/oauth/mcp-oauth", () => ({
   completeHostedOAuthCallback: mockCompleteHostedOAuthCallback,
   handleOAuthCallback: mockHandleOAuthCallback,
+  isElectronMcpCallbackState: (state: string | null | undefined) =>
+    Boolean(state?.startsWith("electron_mcp:")),
 }));
 
 vi.mock("../lib/guest-session", () => ({

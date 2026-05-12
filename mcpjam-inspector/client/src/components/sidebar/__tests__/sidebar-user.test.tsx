@@ -131,4 +131,20 @@ describe("SidebarUser", () => {
     expect(creditUsage).toHaveAttribute("data-variant", "full");
     expect(creditUsage).toHaveClass("px-1", "pb-1");
   });
+
+  it("returns logout to the app origin instead of the callback route", () => {
+    authState.user = {
+      email: "owner@example.com",
+      firstName: "Owner",
+      lastName: "Example",
+    };
+
+    render(<SidebarUser />);
+
+    fireEvent.click(screen.getByText("Log out"));
+
+    expect(authState.signOutMock).toHaveBeenCalledWith({
+      returnTo: window.location.origin,
+    });
+  });
 });

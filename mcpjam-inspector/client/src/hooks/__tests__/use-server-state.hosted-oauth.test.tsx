@@ -62,6 +62,8 @@ vi.mock("@/lib/oauth/mcp-oauth", () => ({
   getStoredTokens: vi.fn(),
   clearOAuthData: vi.fn(),
   initiateOAuth: vi.fn(),
+  isElectronMcpCallbackState: (state: string | null | undefined) =>
+    Boolean(state?.startsWith("electron_mcp:")),
   readStoredOAuthConfig: readStoredOAuthConfigMock,
 }));
 
