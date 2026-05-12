@@ -11,7 +11,9 @@ export {
 } from "./built-ins";
 export {
   DEFAULT_HOST_STYLE,
+  SPEC_DEFAULT_HOST_CAPABILITIES,
   findHostStyle,
+  getHostCapabilitiesForStyle,
   getHostStyleOrDefault,
   isKnownHostStyleId,
   listHostStyles,

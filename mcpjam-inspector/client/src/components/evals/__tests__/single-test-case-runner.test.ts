@@ -92,8 +92,6 @@ describe("single-test-case-runner", () => {
       suite,
       testCase,
       getAccessToken: vi.fn().mockResolvedValue("token-123"),
-      getToken: vi.fn().mockReturnValue("openai-key"),
-      hasToken: vi.fn().mockReturnValue(true),
     });
 
     expect(prepared).toEqual({
@@ -104,9 +102,6 @@ describe("single-test-case-runner", () => {
         model: "gpt-4o",
         provider: "openai",
         serverIds: ["asana"],
-        modelApiKeys: {
-          openai: "openai-key",
-        },
         convexAuthToken: "token-123",
         testCaseOverrides: undefined,
       },
@@ -120,8 +115,6 @@ describe("single-test-case-runner", () => {
       testCase,
       selectedModel: "anthropic/anthropic/claude-haiku-4.5",
       getAccessToken: vi.fn().mockResolvedValue("token-123"),
-      getToken: vi.fn().mockReturnValue(null),
-      hasToken: vi.fn().mockReturnValue(false),
     });
 
     expect(prepared).toEqual({
@@ -132,7 +125,6 @@ describe("single-test-case-runner", () => {
         model: "anthropic/claude-haiku-4.5",
         provider: "anthropic",
         serverIds: ["asana"],
-        modelApiKeys: undefined,
         convexAuthToken: "token-123",
         testCaseOverrides: undefined,
       },
@@ -148,8 +140,6 @@ describe("single-test-case-runner", () => {
         models: [{ provider: "anthropic", model: "claude-haiku-4.5" }],
       },
       getAccessToken: vi.fn().mockResolvedValue("token-123"),
-      getToken: vi.fn().mockReturnValue(null),
-      hasToken: vi.fn().mockReturnValue(false),
     });
 
     expect(prepared).toEqual({
@@ -160,7 +150,6 @@ describe("single-test-case-runner", () => {
         model: "claude-haiku-4.5",
         provider: "anthropic",
         serverIds: ["asana"],
-        modelApiKeys: undefined,
         convexAuthToken: "token-123",
         testCaseOverrides: undefined,
       },

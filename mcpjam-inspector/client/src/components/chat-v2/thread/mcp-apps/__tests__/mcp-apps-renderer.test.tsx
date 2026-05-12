@@ -220,6 +220,7 @@ import {
   ChatboxHostStyleProvider,
   ChatboxHostThemeProvider,
 } from "@/contexts/chatbox-host-style-context";
+import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-host-capabilities-override-context";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 const baseProps = {
@@ -318,6 +319,81 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(sandboxedIframePropsRef.current?.permissive).toBe(true);
     expect(sandboxedIframePropsRef.current?.csp).toBeUndefined();
     expect(sandboxedIframePropsRef.current?.permissions).toBeUndefined();
+  });
+
+  it("advertises hostCapabilities from the active host style preset (claude)", async () => {
+    render(
+      <ChatboxHostStyleProvider value="claude">
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostStyleProvider>,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+
+    // Should advertise Claude's preset, not the old empty literal.
+    expect(appBridgeArgsRef.current?.hostCapabilities).toEqual(
+      expect.objectContaining(CLAUDE_HOST_STYLE.hostCapabilities),
+    );
+  });
+
+  it("falls back to the spec-default 'no claims' blob when no style is resolvable", async () => {
+    // No ChatboxHostStyleProvider, isPlaygroundActive is false in this test
+    // setup, so effectiveHostStyle is null. The resolver MUST NOT silently
+    // impersonate Claude here — it returns the spec-default {}.
+    render(<MCPAppsRenderer {...baseProps} />);
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+
+    const { sandbox: _sandbox, ...vendorOnly } =
+      appBridgeArgsRef.current?.hostCapabilities ?? {};
+    expect(vendorOnly).toEqual({});
+  });
+
+  it("flips advertised hostCapabilities when host style switches to chatgpt", async () => {
+    render(
+      <ChatboxHostStyleProvider value="chatgpt">
+        <ChatboxHostThemeProvider value="dark">
+          <MCPAppsRenderer {...baseProps} />
+        </ChatboxHostThemeProvider>
+      </ChatboxHostStyleProvider>,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+
+    expect(appBridgeArgsRef.current?.hostCapabilities).toEqual(
+      expect.objectContaining(CHATGPT_HOST_STYLE.hostCapabilities),
+    );
+    // Sanity: profiles differ — switching is observable.
+    expect(appBridgeArgsRef.current?.hostCapabilities).not.toEqual(
+      expect.objectContaining(CLAUDE_HOST_STYLE.hostCapabilities),
+    );
+  });
+
+  it("user override wins over the host style preset", async () => {
+    const override = {
+      openLinks: {},
+      // Intentionally omits serverTools / serverResources / message etc.
+      // so the resolved blob is observably distinct from both presets.
+    };
+    render(
+      <ChatboxHostCapabilitiesOverrideProvider value={override}>
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostCapabilitiesOverrideProvider>,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+
+    const { sandbox: _sandbox, ...vendorOnly } =
+      appBridgeArgsRef.current?.hostCapabilities ?? {};
+    expect(vendorOnly).toEqual(override);
   });
 
   it("uses chatbox host style for SEP-1865 host context outside the playground", async () => {

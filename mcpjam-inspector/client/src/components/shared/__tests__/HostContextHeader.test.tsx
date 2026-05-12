@@ -11,8 +11,10 @@ const {
   mockPreferencesState: {
     themeMode: "light",
     hostStyle: "claude",
+    hostCapabilitiesOverride: undefined,
     setThemeMode: vi.fn(),
     setHostStyle: vi.fn(),
+    setHostCapabilitiesOverride: vi.fn(),
   },
   mockUIPlaygroundStore: {
     deviceType: "desktop",
@@ -51,10 +53,11 @@ vi.mock("lucide-react", () => ({
   Globe: () => <span data-testid="icon-globe" />,
   Clock: () => <span data-testid="icon-clock" />,
   Shield: () => <span data-testid="icon-shield" />,
+  Cpu: () => <span data-testid="icon-cpu" />,
   Settings2: () => <span data-testid="icon-settings" />,
   MousePointer2: () => <span data-testid="icon-mouse" />,
   Hand: () => <span data-testid="icon-hand" />,
-  Palette: () => <span data-testid="icon-palette" />,
+  Paintbrush: () => <span data-testid="icon-paintbrush" />,
 }));
 
 vi.mock("@mcpjam/design-system/button", () => ({
@@ -92,6 +95,11 @@ vi.mock("@/components/ui-playground/SafeAreaEditor", () => ({
 vi.mock("@/components/shared/HostContextDialog", () => ({
   HostContextDialog: ({ open }: { open: boolean }) =>
     open ? <div data-testid="host-context-dialog" /> : null,
+}));
+
+vi.mock("@/components/host-config/HostCapabilitiesOverrideDialog", () => ({
+  HostCapabilitiesOverrideDialog: ({ open }: { open: boolean }) =>
+    open ? <div data-testid="host-capabilities-dialog" /> : null,
 }));
 
 vi.mock("@/components/shared/host-context-constants", () => ({

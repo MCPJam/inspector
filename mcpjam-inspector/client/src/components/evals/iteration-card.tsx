@@ -39,7 +39,7 @@ export function IterationCard({
             {iteration.error && (
               <AlertCircle
                 className="h-3.5 w-3.5 text-destructive"
-                title="Error occurred"
+                aria-label="Error occurred"
               />
             )}
           </div>

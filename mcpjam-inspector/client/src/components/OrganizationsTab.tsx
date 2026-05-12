@@ -45,7 +45,6 @@ import {
   type BillingInterval,
   type OrganizationBillingStatus,
   type OrganizationPlan,
-  type PlanCatalog,
 } from "@/hooks/useOrganizationBilling";
 import {
   formatPlanName,
@@ -360,7 +359,6 @@ function OrganizationPage({
   const canInvite = canEdit;
   const {
     billingStatus,
-    entitlements,
     organizationPremiumness,
     planCatalog,
     isLoadingBilling,
@@ -745,7 +743,7 @@ function OrganizationPage({
   ) => {
     const currentPlan = billingStatus?.plan;
 
-    if (currentPlan === "team" && targetPlan === "free") {
+    if (currentPlan === "team" && targetPlan === "free" && billingStatus) {
       setPendingDowngradeConfirmation({
         targetPlan: "free",
         targetBillingInterval: null,
@@ -1030,9 +1028,6 @@ function OrganizationPage({
               isStartingPlanChange={isStartingPlanChange}
               pendingPlanChangeTarget={pendingPlanChangeTarget}
               isOpeningPortal={isOpeningPortal}
-              activeMemberCount={
-                membersLoading ? undefined : activeMembers.length
-              }
               onDowngradePlan={handleDowngradePlan}
               onStartPlanChange={handlePlanChange}
               onStartAutoPlanChange={handleAutoPlanChange}
@@ -1088,6 +1083,15 @@ function OrganizationPage({
                         {isInviting ? "Inviting..." : "Add member"}
                       </Button>
                     </div>
+
+                    {billingStatus?.plan &&
+                    planCatalog?.plans[billingStatus.plan]?.billingModel ===
+                      "per_seat" ? (
+                      <p className="text-xs text-muted-foreground">
+                        Pending invites are free. You'll be billed for this
+                        seat once the invite is accepted.
+                      </p>
+                    ) : null}
 
                     {memberInviteGate.isDenied ? (
                       <Alert

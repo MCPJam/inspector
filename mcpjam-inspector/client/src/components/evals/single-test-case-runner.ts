@@ -1,17 +1,20 @@
-import type { ProviderTokens } from "@/hooks/use-ai-provider-keys";
 import { HOSTED_MODE } from "@/lib/config";
-import { isMCPJamProvidedModel, type ModelDefinition } from "@/shared/types";
+import type { ModelDefinition } from "@/shared/types";
 import type { EvalCase, EvalSuite } from "./types";
 import type { PromptTurn } from "@/shared/prompt-turns";
+import type { EvalMatchOptions } from "@/shared/eval-matching";
 
-type TestCaseRunOverrides = Pick<
-  EvalCase,
-  | "query"
-  | "expectedToolCalls"
-  | "isNegativeTest"
-  | "runs"
-  | "expectedOutput"
-  | "advancedConfig"
+type TestCaseRunOverrides = Partial<
+  Pick<
+    EvalCase,
+    | "query"
+    | "expectedToolCalls"
+    | "isNegativeTest"
+    | "runs"
+    | "expectedOutput"
+    | "advancedConfig"
+    | "matchOptions"
+  >
 >;
 type TestCaseRunOverridesWithTurns = TestCaseRunOverrides & {
   promptTurns?: PromptTurn[];
@@ -22,10 +25,10 @@ interface PrepareSingleTestCaseRunParams {
   suite: Pick<EvalSuite, "environment">;
   testCase: Pick<EvalCase, "_id" | "models">;
   getAccessToken: () => Promise<string | null>;
-  getToken: (provider: keyof ProviderTokens) => string | null | undefined;
-  hasToken: (provider: keyof ProviderTokens) => boolean;
   selectedModel?: string | null;
   testCaseOverrides?: TestCaseRunOverridesWithTurns;
+  /** One-off run override; does not persist on the case. */
+  matchOptionsOverride?: EvalMatchOptions;
 }
 
 export interface TestCaseModelOption {
@@ -33,6 +36,7 @@ export interface TestCaseModelOption {
   label: string;
   provider: string;
   model: string;
+  customProviderName?: string;
 }
 
 const TEST_CASE_MODEL_SELECTION_STORAGE_PREFIX =
@@ -63,6 +67,9 @@ export function buildTestCaseModelOptions(
       label: availableModel.name,
       provider: availableModel.provider,
       model: String(availableModel.id),
+      ...(availableModel.customProviderName
+        ? { customProviderName: availableModel.customProviderName }
+        : {}),
     });
   }
 
@@ -147,10 +154,9 @@ export async function prepareSingleTestCaseRun({
   suite,
   testCase,
   getAccessToken,
-  getToken,
-  hasToken,
   selectedModel,
   testCaseOverrides,
+  matchOptionsOverride,
 }: PrepareSingleTestCaseRunParams) {
   const modelValue =
     selectedModel ?? getDefaultTestCaseModelValue(testCase) ?? null;
@@ -166,22 +172,6 @@ export async function prepareSingleTestCaseRun({
     throw new Error("Invalid model selection");
   }
 
-  const modelApiKeys: Record<string, string> = {};
-
-  if (!isMCPJamProvidedModel(model, provider)) {
-    const tokenKey = provider.toLowerCase() as keyof ProviderTokens;
-    if (!hasToken(tokenKey)) {
-      throw new Error(
-        `Please add your ${provider} API key in Settings before running this test`,
-      );
-    }
-
-    const key = getToken(tokenKey);
-    if (key) {
-      modelApiKeys[provider] = key;
-    }
-  }
-
   const convexAuthToken = HOSTED_MODE ? null : await getAccessToken();
 
   return {
@@ -192,10 +182,9 @@ export async function prepareSingleTestCaseRun({
       model,
       provider,
       serverIds: suite.environment?.servers || [],
-      modelApiKeys:
-        Object.keys(modelApiKeys).length > 0 ? modelApiKeys : undefined,
       convexAuthToken,
       testCaseOverrides,
+      matchOptionsOverride,
     },
   };
 }

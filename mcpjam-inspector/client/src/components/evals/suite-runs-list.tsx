@@ -108,11 +108,9 @@ export function SuiteRunsList({
               .length;
             const completedTotal = passed + failed;
             const summaryPassed = run.summary?.passed ?? 0;
-            const summaryFailed = run.summary?.failed ?? 0;
             const summaryTotal = run.summary?.total ?? 0;
 
             const effectivePassed = completedTotal > 0 ? passed : summaryPassed;
-            const effectiveFailed = completedTotal > 0 ? failed : summaryFailed;
             const effectiveTotal =
               completedTotal > 0 ? completedTotal : summaryTotal;
             const passRate =

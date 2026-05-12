@@ -80,7 +80,7 @@ export interface XAAFlowState {
   authzServerIssuer?: string;
   authzMetadata?: {
     issuer: string;
-    token_endpoint: string;
+    token_endpoint?: string;
     grant_types_supported?: string[];
     response_types_supported?: string[];
     scopes_supported?: string[];

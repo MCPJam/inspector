@@ -81,8 +81,6 @@ import {
   writeStoredActiveProjectId,
 } from "@/lib/active-project-storage";
 
-const CLIENT_CONFIG_SYNC_ECHO_TIMEOUT_MS = 10000;
-
 function stringifyProjectClientConfig(
   clientConfig: ProjectClientConfig | undefined,
 ) {
@@ -100,10 +98,6 @@ interface PendingClientConfigSync {
 
 const PROJECT_CLIENT_CONFIG_SYNC_INTERRUPTED_ERROR_MESSAGE =
   "Project client config sync was interrupted.";
-const PROJECT_CLIENT_CONFIG_SYNC_TIMEOUT_ERROR_MESSAGE =
-  "Timed out waiting for project client config to sync.";
-const PROJECT_CLIENT_CONFIG_SYNC_SUPERSEDED_ERROR_MESSAGE =
-  "Project client config sync was superseded by a newer save.";
 
 interface ClientConfigSaveController<T> {
   beginSave: (input: {
@@ -152,13 +146,6 @@ function canApplyStoreSaveState(
   projectId: string,
 ) {
   return activeProjectId === null || activeProjectId === projectId;
-}
-
-function isSupersededClientConfigSyncError(error: unknown) {
-  return (
-    error instanceof Error &&
-    error.message === PROJECT_CLIENT_CONFIG_SYNC_SUPERSEDED_ERROR_MESSAGE
-  );
 }
 
 export interface UseProjectStateParams {
@@ -284,7 +271,6 @@ export function useProjectState({
   const pendingClientConfigSyncRef = useRef<
     Map<string, PendingClientConfigSync>
   >(new Map());
-  const pendingClientConfigSyncIdRef = useRef(0);
   const pendingClientConfigSyncByProjectRef = useRef<Map<string, string>>(
     new Map(),
   );

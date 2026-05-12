@@ -15,11 +15,11 @@
     {
       "name": "@mcpjam/inspector",
       "type": "patch",
-      "oldVersion": "2.4.7",
+      "oldVersion": "2.4.8",
       "changesets": [
         "inspector-rollup-pre-soundcheck-deploy"
       ],
-      "newVersion": "2.4.8"
+      "newVersion": "2.4.9"
     }
   ]
 }

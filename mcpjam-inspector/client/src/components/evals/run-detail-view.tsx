@@ -465,7 +465,7 @@ export function RunDetailView({
   selectedRunChartData,
   runDetailSortBy,
   onSortChange,
-  serverNames = [],
+  serverNames: _serverNames = [],
   selectedIterationId,
   onSelectIteration,
   hideCiMetadata,
@@ -485,12 +485,7 @@ export function RunDetailView({
         suiteId: selectedRunDetails.suiteId,
         testId: testCaseId,
       }));
-  const {
-    pending: runInsightsPending,
-    requested: runInsightsRequested,
-    failedGeneration: runInsightsFailedGeneration,
-    error: runInsightsError,
-  } = useRunInsights(selectedRunDetails, { autoRequest: true });
+  useRunInsights(selectedRunDetails, { autoRequest: true });
 
   const {
     summary: serverQualitySummary,

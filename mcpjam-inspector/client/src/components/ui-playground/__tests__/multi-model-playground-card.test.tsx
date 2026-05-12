@@ -90,6 +90,11 @@ vi.mock("@/components/chat-v2/model-compare-card-header", () => ({
   },
 }));
 
+vi.mock("@/stores/preferences/preferences-provider", () => ({
+  usePreferencesStore: <T,>(selector: (state: any) => T): T =>
+    selector({ hostCapabilitiesOverride: null }),
+}));
+
 vi.mock("@/contexts/chatbox-host-style-context", () => ({
   ChatboxHostStyleProvider: ({ children }: { children: React.ReactNode }) => (
     <>{children}</>
@@ -97,6 +102,19 @@ vi.mock("@/contexts/chatbox-host-style-context", () => ({
   ChatboxHostThemeProvider: ({ children }: { children: React.ReactNode }) => (
     <>{children}</>
   ),
+}));
+
+vi.mock("@/contexts/chatbox-host-capabilities-override-context", () => ({
+  ChatboxHostCapabilitiesOverrideProvider: ({
+    children,
+  }: {
+    children: React.ReactNode;
+  }) => <>{children}</>,
+  useChatboxHostCapabilitiesOverride: () => null,
+}));
+
+vi.mock("@/stores/preferences/preferences-provider", () => ({
+  usePreferencesStore: () => null,
 }));
 
 const model = {

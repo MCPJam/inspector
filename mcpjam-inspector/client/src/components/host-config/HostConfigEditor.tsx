@@ -40,12 +40,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
+import { Button } from "@mcpjam/design-system/button";
 import {
   type HostConfigInputV2,
   type HostStyleId,
   DEFAULT_TEMPERATURE_V2,
 } from "@/lib/host-config-v2";
-import { listHostStyles } from "@/lib/host-styles";
+import {
+  getHostCapabilitiesForStyle,
+  listHostStyles,
+} from "@/lib/host-styles";
 
 export type HostConfigEditorOwner =
   | "project-default"
@@ -95,7 +99,14 @@ export function HostConfigEditor({
   const [headersError, setHeadersError] = useState<string | null>(null);
   const [capsError, setCapsError] = useState<string | null>(null);
   const [hostCtxError, setHostCtxError] = useState<string | null>(null);
-  const hasError = headersError != null || capsError != null || hostCtxError != null;
+  const [hostCapsOverrideError, setHostCapsOverrideError] = useState<
+    string | null
+  >(null);
+  const hasError =
+    headersError != null ||
+    capsError != null ||
+    hostCtxError != null ||
+    hostCapsOverrideError != null;
   useEffect(() => {
     onValidityChange?.(hasError);
   }, [hasError, onValidityChange]);
@@ -323,7 +334,86 @@ export function HostConfigEditor({
             />
           </div>
         ) : null}
+
+        {owner !== "connection-only" ? (
+          <HostCapabilitiesOverrideSection
+            hostStyle={value.hostStyle}
+            override={value.hostCapabilitiesOverride}
+            onChange={(hostCapabilitiesOverride) =>
+              update({ hostCapabilitiesOverride })
+            }
+            onErrorChange={setHostCapsOverrideError}
+          />
+        ) : null}
       </section>
+    </div>
+  );
+}
+
+/**
+ * Editor for the optional MCP Apps `hostCapabilities` override (advertised in
+ * `ui/initialize`). When the override is undefined, the renderer falls back
+ * to the active host style's preset; this section shows that preset as the
+ * placeholder so users can see what they'd be overriding. Resetting writes
+ * `undefined`, which snaps back to the preset.
+ *
+ * CONFORMANCE GAP: this configures the *advertised* blob. Behavior gating
+ * inside request handlers is a separate, deferred step (see
+ * registerBridgeHandlers in mcp-apps-renderer.tsx).
+ */
+function HostCapabilitiesOverrideSection({
+  hostStyle,
+  override,
+  onChange,
+  onErrorChange,
+}: {
+  hostStyle: HostStyleId;
+  override: Record<string, unknown> | undefined;
+  onChange: (next: Record<string, unknown> | undefined) => void;
+  onErrorChange: (error: string | null) => void;
+}) {
+  const profilePreset = useMemo(
+    () => getHostCapabilitiesForStyle(hostStyle),
+    [hostStyle],
+  );
+  const profilePresetJson = useMemo(
+    () => JSON.stringify(profilePreset, null, 2),
+    [profilePreset],
+  );
+  const isOverriding = override !== undefined;
+  // When the user hasn't set an override, seed the editor with the profile
+  // preset (writeable copy) so they have a visible starting point for edits.
+  const editorValue = isOverriding ? override : (profilePreset as Record<string, unknown>);
+
+  return (
+    <div className="grid gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <Label>Host capabilities override (JSON)</Label>
+        {isOverriding ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => onChange(undefined)}
+          >
+            Reset to {hostStyle} preset
+          </Button>
+        ) : (
+          <span className="text-xs text-muted-foreground">
+            Using {hostStyle} preset
+          </span>
+        )}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Advertised in <code>ui/initialize</code>. Leave at the preset to match
+        the vendor; override to mock specific capability combinations.
+      </p>
+      <JsonRecordEditor
+        value={editorValue}
+        onChange={(next) => onChange(next)}
+        onErrorChange={onErrorChange}
+        placeholder={profilePresetJson}
+      />
     </div>
   );
 }

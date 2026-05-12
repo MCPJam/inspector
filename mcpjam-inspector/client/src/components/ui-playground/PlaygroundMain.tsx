@@ -36,7 +36,9 @@ import {
   DEFAULT_CHAT_COMPOSER_PLACEHOLDER,
   MINIMAL_CHAT_COMPOSER_PLACEHOLDER,
   cloneUiMessages,
+  extractUserMessageText,
 } from "@/components/chat-v2/shared/chat-helpers";
+import { SaveAsTestCaseAction } from "@/components/chat-v2/shared/save-as-test-case-action";
 import { MultiModelEmptyTraceDiagnosticsPanel } from "@/components/chat-v2/multi-model-empty-trace-diagnostics";
 import { MultiModelStartersEmptyLayout } from "@/components/chat-v2/multi-model-starters-empty";
 import { ErrorBox } from "@/components/chat-v2/error";
@@ -97,8 +99,8 @@ import {
   ChatboxHostStyleProvider,
   ChatboxHostThemeProvider,
 } from "@/contexts/chatbox-host-style-context";
+import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-host-capabilities-override-context";
 import { useComposerOnboarding } from "@/hooks/use-composer-onboarding";
-import { useDebouncedXRayPayload } from "@/hooks/use-debounced-x-ray-payload";
 import { useModelSelectorLayoutLock } from "@/hooks/use-model-selector-layout-lock";
 import {
   getChatComposerInteractivity,
@@ -380,7 +382,6 @@ export function PlaygroundMain({
     setMessages,
     sendMessage,
     stop,
-    status,
     error,
     chatSessionId,
     selectedModel,
@@ -444,6 +445,9 @@ export function PlaygroundMain({
   // Host chat background: actual chat area colors from each host's UI
   // (separate from the 76 MCP spec widget design tokens)
   const hostStyle = usePreferencesStore((s) => s.hostStyle);
+  const hostCapabilitiesOverride = usePreferencesStore(
+    (s) => s.hostCapabilitiesOverride
+  );
   const globalThemeMode = usePreferencesStore(
     (s) => s.themeMode
   ) as ThreadThemeMode;
@@ -1010,6 +1014,21 @@ export function PlaygroundMain({
     [injectedToolRenderOverrides, externalToolRenderOverrides]
   );
 
+  // Map UIMessage.id -> promptIndex (0-based ordinal among role: "user"
+  // messages). Same key the backend uses to anchor a turn inside the
+  // persisted ModelMessage[] transcript blob.
+  const userPromptIndexById = useMemo(() => {
+    const map = new Map<string, number>();
+    let userOrdinal = 0;
+    for (const msg of messages) {
+      if (msg.role === "user") {
+        map.set(msg.id, userOrdinal);
+        userOrdinal += 1;
+      }
+    }
+    return map;
+  }, [messages]);
+
   // Placeholder: Chat tab strings for multi-model; playground default for single-model
   let placeholder = showPostConnectGuide
     ? MINIMAL_CHAT_COMPOSER_PLACEHOLDER
@@ -1406,6 +1425,22 @@ export function PlaygroundMain({
                 toolRenderOverrides={mergedToolRenderOverrides}
                 showSaveViewButton={!hideSaveViewButton}
                 loadingIndicatorVariant={loadingIndicatorVariant}
+                renderUserMessageActions={
+                  chatSessionId && convexProjectId
+                    ? (message) => {
+                        const promptIndex = userPromptIndexById.get(message.id);
+                        if (promptIndex === undefined) return null;
+                        return (
+                          <SaveAsTestCaseAction
+                            chatSessionId={chatSessionId}
+                            promptIndex={promptIndex}
+                            promptPreview={extractUserMessageText(message)}
+                            projectId={convexProjectId}
+                          />
+                        );
+                      }
+                    : undefined
+                }
               />
               {/* Invoking indicator while tool execution is in progress */}
               {isExecuting && executingToolName && (
@@ -1711,6 +1746,9 @@ export function PlaygroundMain({
           <>
             {showLiveTraceDiagnostics && (
               <ChatboxHostStyleProvider value={hostStyle}>
+                <ChatboxHostCapabilitiesOverrideProvider
+                  value={hostCapabilitiesOverride}
+                >
                 <ChatboxHostThemeProvider value={effectiveThreadTheme}>
                   <div
                     className={cn(
@@ -1771,6 +1809,7 @@ export function PlaygroundMain({
                     </div>
                   </div>
                 </ChatboxHostThemeProvider>
+                </ChatboxHostCapabilitiesOverrideProvider>
               </ChatboxHostStyleProvider>
             )}
 
@@ -1780,6 +1819,9 @@ export function PlaygroundMain({
               style={showLiveTraceDiagnostics ? { display: "none" } : undefined}
             >
               <ChatboxHostStyleProvider value={hostStyle}>
+                <ChatboxHostCapabilitiesOverrideProvider
+                  value={hostCapabilitiesOverride}
+                >
                 <ChatboxHostThemeProvider value={effectiveThreadTheme}>
                   <div
                     className={cn(
@@ -1809,6 +1851,7 @@ export function PlaygroundMain({
                     </div>
                   </div>
                 </ChatboxHostThemeProvider>
+                </ChatboxHostCapabilitiesOverrideProvider>
               </ChatboxHostStyleProvider>
             </div>
           </>

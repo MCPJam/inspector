@@ -232,6 +232,8 @@ describe("mcp-oauth", () => {
     mockRunOAuthStateMachine.mockReset();
     mockGetConvexSiteUrl.mockReturnValue("https://test.convex.site");
     mockSelectResourceURL.mockReset();
+    window.isElectron = false;
+    delete window.electronAPI;
     mockStartAuthorization.mockReset();
 
     vi.stubGlobal(
@@ -425,6 +427,8 @@ describe("mcp-oauth", () => {
     vi.unstubAllGlobals();
     localStorage.clear();
     sessionStorage.clear();
+    window.isElectron = false;
+    delete window.electronAPI;
   });
 
   async function seedPendingOAuth(
@@ -885,6 +889,170 @@ describe("mcp-oauth", () => {
   });
 
   describe("persisted discovery state", () => {
+    it("tags Electron-started OAuth state for desktop callback recovery", async () => {
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+      );
+
+      window.isElectron = true;
+
+      expect(provider.state()).toMatch(/^electron_mcp:mock-random-string$/);
+    });
+
+    it("keeps the browser callback redirect URI in Electron", async () => {
+      window.isElectron = true;
+
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+      );
+
+      expect(provider.redirectUrl).toBe(
+        `${window.location.origin}/oauth/callback`,
+      );
+      expect(provider.clientMetadata.redirect_uris).toEqual([
+        `${window.location.origin}/oauth/callback`,
+      ]);
+    });
+
+    it("tags state-machine authorization URLs before opening the browser in Electron", async () => {
+      window.isElectron = true;
+      mockStartAuthorization.mockImplementationOnce(async (_url, options) => {
+        const authorizationUrl = new URL("https://auth.example.com/authorize");
+        authorizationUrl.searchParams.set("state", "mock-state");
+        authorizationUrl.searchParams.set(
+          "redirect_uri",
+          String((options as { redirectUri?: string }).redirectUri),
+        );
+        return {
+          authorizationUrl,
+          codeVerifier: "test-verifier",
+        };
+      });
+
+      const { MCPOAuthProvider, initiateOAuth } = await import("../mcp-oauth");
+      const redirectSpy = vi
+        .spyOn(MCPOAuthProvider.prototype, "redirectToAuthorization")
+        .mockResolvedValue(undefined);
+
+      const result = await initiateOAuth({
+        serverName: "example",
+        serverUrl: "https://example.com",
+      });
+
+      expect(result.error).toBeUndefined();
+      expect(result.success).toBe(true);
+      const openedUrl = redirectSpy.mock.calls.at(-1)?.[0] as URL;
+      expect(openedUrl.searchParams.get("state")).toBe(
+        "electron_mcp:mock-state",
+      );
+      expect(openedUrl.searchParams.get("redirect_uri")).toBe(
+        `${window.location.origin}/oauth/callback`,
+      );
+    });
+
+    it("keeps browser OAuth state untagged", async () => {
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+      );
+
+      window.isElectron = false;
+
+      expect(provider.state()).toBe("mock-random-string");
+    });
+
+    it("falls back to in-app navigation when Electron browser open fails", async () => {
+      vi.restoreAllMocks();
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+      );
+      const navigateSpy = vi
+        .spyOn(provider, "navigateToUrl")
+        .mockImplementation(() => {});
+      const consoleWarnSpy = vi
+        .spyOn(console, "warn")
+        .mockImplementation(() => {});
+      const openExternal = vi
+        .fn()
+        .mockRejectedValue(new Error("system browser unavailable"));
+
+      Object.defineProperty(window, "isElectron", {
+        configurable: true,
+        writable: true,
+        value: true,
+      });
+      Object.defineProperty(window, "electronAPI", {
+        configurable: true,
+        writable: true,
+        value: {
+          app: {
+            openExternal,
+          },
+        },
+      });
+
+      await provider.redirectToAuthorization(
+        new URL("https://auth.example.com/authorize"),
+      );
+
+      expect(openExternal).toHaveBeenCalledWith(
+        "https://auth.example.com/authorize",
+      );
+      expect(navigateSpy).toHaveBeenCalledWith(
+        "https://auth.example.com/authorize",
+      );
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        "Failed to open system browser for MCP OAuth; continuing inside MCPJam Desktop:",
+        expect.any(Error),
+      );
+    });
+
+    it("falls back to in-app navigation when Electron browser opener is unavailable", async () => {
+      vi.restoreAllMocks();
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+      );
+      const navigateSpy = vi
+        .spyOn(provider, "navigateToUrl")
+        .mockImplementation(() => {});
+      const consoleWarnSpy = vi
+        .spyOn(console, "warn")
+        .mockImplementation(() => {});
+
+      Object.defineProperty(window, "isElectron", {
+        configurable: true,
+        writable: true,
+        value: true,
+      });
+      Object.defineProperty(window, "electronAPI", {
+        configurable: true,
+        writable: true,
+        value: {
+          app: {},
+        },
+      });
+
+      await provider.redirectToAuthorization(
+        new URL("https://auth.example.com/authorize"),
+      );
+
+      expect(navigateSpy).toHaveBeenCalledWith(
+        "https://auth.example.com/authorize",
+      );
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        "System browser opener is unavailable for MCP OAuth; continuing inside MCPJam Desktop.",
+      );
+    });
+
     it("explains why automatic mode resolved to DCR when CIMD support was not advertised", async () => {
       mockDiscoverOAuthServerInfo.mockResolvedValue(createAsanaDiscoveryState());
 

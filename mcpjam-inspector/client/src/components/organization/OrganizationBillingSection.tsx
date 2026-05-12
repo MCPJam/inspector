@@ -315,7 +315,7 @@ const COMPARE_PLAN_ROW_LABEL_TOOLTIPS: Record<
   "Seat limit": {
     ariaLabel: "About seat limits",
     content:
-      "Seats don't need to be filled by a member. To add a new member, you'll need to have one empty seat.",
+      "You're charged only for active members. Pending invites are free until accepted.",
     contentClassName: "max-w-[18rem]",
   },
   "SSO / SAML": {
@@ -467,7 +467,6 @@ interface OrganizationBillingSectionProps {
   isStartingPlanChange: boolean;
   pendingPlanChangeTarget: "team" | null;
   isOpeningPortal: boolean;
-  activeMemberCount: number | undefined;
   onDowngradePlan: (
     plan: OrganizationPlan,
     billingInterval: BillingInterval,
@@ -493,7 +492,6 @@ export function OrganizationBillingSection({
   isStartingPlanChange,
   pendingPlanChangeTarget,
   isOpeningPortal,
-  activeMemberCount,
   onDowngradePlan,
   onStartPlanChange,
   onStartAutoPlanChange,
@@ -850,7 +848,6 @@ export function OrganizationBillingSection({
                           billingConfigured,
                           canManageBilling,
                           isBillingActionPending,
-                          activeMemberCount,
                           onDowngradePlan: (
                             targetPlan,
                             targetBillingInterval,

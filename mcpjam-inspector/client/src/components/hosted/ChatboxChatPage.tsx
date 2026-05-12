@@ -31,6 +31,7 @@ import { bootstrapServerToHostedOAuthDescriptor } from "@/components/chatboxes/b
 import { isHostedOAuthBusy } from "@/lib/hosted-oauth-resume";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import { ChatboxHostStyleProvider } from "@/contexts/chatbox-host-style-context";
+import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-host-capabilities-override-context";
 import { ChatboxHostOnboardingOverlays } from "@/components/hosted/ChatboxHostOnboardingOverlays";
 import { useChatboxHostIntroGate } from "@/components/hosted/useChatboxHostIntroGate";
 import { getChatboxShellStyle } from "@/lib/chatbox-host-style";
@@ -905,6 +906,9 @@ export function ChatboxChatPage({
 
   return (
     <ChatboxHostStyleProvider value={hostStyle}>
+      <ChatboxHostCapabilitiesOverrideProvider
+        value={session?.payload.hostCapabilitiesOverride}
+      >
       <div
         className="chatbox-host-shell flex h-svh min-h-0 flex-col overflow-hidden"
         data-host-style={hostStyle}
@@ -946,6 +950,7 @@ export function ChatboxChatPage({
 
         {renderContent()}
       </div>
+      </ChatboxHostCapabilitiesOverrideProvider>
     </ChatboxHostStyleProvider>
   );
 }

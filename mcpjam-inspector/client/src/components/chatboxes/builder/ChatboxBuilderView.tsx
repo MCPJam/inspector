@@ -67,6 +67,7 @@ import {
   type ChatboxBootstrapServer,
 } from "@/lib/chatbox-session";
 import { ChatboxHostStyleProvider } from "@/contexts/chatbox-host-style-context";
+import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-host-capabilities-override-context";
 import type { ServerFormData } from "@/shared/types";
 import { buildChatboxCanvas } from "./chatboxCanvasBuilder";
 import { ChatboxCanvas } from "./ChatboxCanvas";
@@ -532,7 +533,8 @@ export function ChatboxBuilderView({
     };
 
     writePlaygroundSession({
-      token: chatbox.link.token,
+      chatboxId: chatbox.chatboxId,
+      accessVersion: 0,
       payload,
       surface: "preview",
       playgroundId,
@@ -1294,6 +1296,9 @@ export function ChatboxBuilderView({
                               <ChatboxHostStyleProvider
                                 value={draftChatboxConfig.hostStyle}
                               >
+                              <ChatboxHostCapabilitiesOverrideProvider
+                                value={chatboxHostConfig?.hostCapabilitiesOverride}
+                              >
                                 <ChatTabV2
                                   key={chatKey}
                                   connectedOrConnectingServerConfigs={
@@ -1347,6 +1352,7 @@ export function ChatboxBuilderView({
                                     );
                                   }}
                                 />
+                              </ChatboxHostCapabilitiesOverrideProvider>
                               </ChatboxHostStyleProvider>
                               <ChatboxHostOnboardingOverlays
                                 showWelcome={introGate.showWelcome}

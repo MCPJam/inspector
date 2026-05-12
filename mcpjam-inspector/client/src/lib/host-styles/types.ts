@@ -1,4 +1,7 @@
-import type { McpUiStyles } from "@modelcontextprotocol/ext-apps/app-bridge";
+import type {
+  McpUiHostCapabilities,
+  McpUiStyles,
+} from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 
 export type HostStyleId = string;
@@ -40,6 +43,19 @@ export interface HostStyleDefinition {
   platform: "web" | "desktop" | "mobile";
   /** Inline @font-face CSS injected into MCP App iframes. */
   fontCss: string;
+  /**
+   * MCP Apps `hostCapabilities` blob advertised in the `ui/initialize`
+   * response for this host. Excludes `sandbox` — sandbox CSP/permissions are
+   * approved per UI resource (widget-declared) at runtime, not as a static
+   * vendor trait, per SEP-1865.
+   *
+   * NOTE: Advertising a capability is a runtime contract. Until enforcement
+   * gates land in `registerBridgeHandlers`, behavior may still service methods
+   * that the handshake says are unsupported. Profiles should reflect what the
+   * vendor *actually* supports so widget authors testing against the mock are
+   * not misled when enforcement catches up.
+   */
+  hostCapabilities: Omit<McpUiHostCapabilities, "sandbox">;
   resolveStyleVariables: (theme: HostThemeMode) => McpUiStyles;
   resolveChatBackground: (theme: HostThemeMode) => string;
 }

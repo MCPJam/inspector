@@ -97,6 +97,12 @@ export type EvalTestCase = {
     temperature?: number;
     toolChoice?: EvalToolChoice | string;
   } & Record<string, unknown>;
+  /**
+   * Effective per-iteration match options. Suite-level runs receive this
+   * pre-resolved from Convex `precreateIterationsForRun`; single-case
+   * runs resolve it in the route handler.
+   */
+  matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
   testCaseId?: string;
 };
 
@@ -883,6 +889,7 @@ async function createIterationDirectly(
       expectedOutput?: string;
       promptTurns?: PromptTurn[];
       advancedConfig?: Record<string, unknown>;
+      matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
     };
     iterationNumber: number;
     startedAt: number;
@@ -1008,6 +1015,13 @@ type RunIterationBaseParams = {
   runId: string | null; // For cancellation checks
   abortSignal?: AbortSignal; // For aborting in-flight requests
   compareRunId?: string;
+  /**
+   * If supplied, the runner skips the upfront `recordIterationStartWithoutRun`
+   * call and reuses this id. Used by `streamTestCase` when `runs > 1` so all N
+   * pending rows appear in the iteration history immediately, before iteration
+   * #1 finishes.
+   */
+  precreatedIterationId?: string;
 };
 
 type RunIterationAiSdkParams = RunIterationBaseParams & {
@@ -1109,6 +1123,7 @@ const runIterationWithAiSdk = async ({
   runId,
   abortSignal,
   compareRunId,
+  precreatedIterationId,
 }: RunIterationAiSdkParams) => {
   const resolvedTest = resolveEvalTestCase(test);
 
@@ -1125,6 +1140,7 @@ const runIterationWithAiSdk = async ({
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
+            test.matchOptions,
           ),
           iterationId: undefined,
         };
@@ -1142,6 +1158,7 @@ const runIterationWithAiSdk = async ({
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
+            test.matchOptions,
           ),
           iterationId: undefined,
         };
@@ -1194,14 +1211,17 @@ const runIterationWithAiSdk = async ({
       expectedOutput,
       promptTurns,
       advancedConfig,
+      matchOptions: test.matchOptions,
     },
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
   };
 
-  const iterationId = recorder
-    ? await recorder.startIteration(iterationParams)
-    : await createIterationDirectly(convexClient, iterationParams);
+  const iterationId = precreatedIterationId
+    ? precreatedIterationId
+    : recorder
+      ? await recorder.startIteration(iterationParams)
+      : await createIterationDirectly(convexClient, iterationParams);
 
   const baseMessages: ModelMessage[] = [];
   if (system) {
@@ -1374,6 +1394,7 @@ const runIterationWithAiSdk = async ({
       promptTurns,
       toolsCalledByPrompt,
       test.isNegativeTest,
+      test.matchOptions,
     );
     const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
 
@@ -1445,6 +1466,7 @@ const runIterationWithAiSdk = async ({
           promptTurns,
           toolsCalledByPrompt,
           test.isNegativeTest,
+          test.matchOptions,
         ),
         iterationId: undefined,
       };
@@ -1494,6 +1516,7 @@ const runIterationWithAiSdk = async ({
       promptTurns,
       toolsCalledByPrompt,
       test.isNegativeTest,
+      test.matchOptions,
     );
     const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
     const widgetSnapshots = await captureEvalTraceWidgetSnapshots({
@@ -1552,6 +1575,7 @@ const runIterationViaBackend = async ({
   runId,
   abortSignal,
   compareRunId,
+  precreatedIterationId,
 }: RunIterationBackendParams) => {
   const resolvedTest = resolveEvalTestCase(test);
 
@@ -1568,6 +1592,7 @@ const runIterationViaBackend = async ({
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
+            test.matchOptions,
           ),
           iterationId: undefined,
         };
@@ -1585,6 +1610,7 @@ const runIterationViaBackend = async ({
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
+            test.matchOptions,
           ),
           iterationId: undefined,
         };
@@ -1633,14 +1659,17 @@ const runIterationViaBackend = async ({
       expectedOutput,
       promptTurns,
       advancedConfig,
+      matchOptions: test.matchOptions,
     },
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
   };
 
-  const iterationId = recorder
-    ? await recorder.startIteration(iterationParams)
-    : await createIterationDirectly(convexClient, iterationParams);
+  const iterationId = precreatedIterationId
+    ? precreatedIterationId
+    : recorder
+      ? await recorder.startIteration(iterationParams)
+      : await createIterationDirectly(convexClient, iterationParams);
 
   const toolDefs = Object.entries(tools).map(([name, tool]) => {
     const schema = (tool as any)?.inputSchema;
@@ -1957,6 +1986,7 @@ const runIterationViaBackend = async ({
               promptTurns,
               toolsCalledByPrompt,
               test.isNegativeTest,
+              test.matchOptions,
             ),
             iterationId: undefined,
           };
@@ -2006,6 +2036,7 @@ const runIterationViaBackend = async ({
     promptTurns,
     toolsCalledByPrompt,
     test.isNegativeTest,
+    test.matchOptions,
   );
   const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
 
@@ -2111,7 +2142,57 @@ const runTestCase = async (params: {
 
   const outcomes: EvalIterationOutcome[] = [];
 
+  // Mirrors `streamTestCase`: pre-create all N pending iteration rows for
+  // quick-run paths with runs > 1 so the iteration history shows every row
+  // immediately, not one-at-a-time as the loop progresses.
+  const shouldPrecreateIterations =
+    recorder == null && runId == null && test.runs > 1;
+  const precreatedIterationIds: (string | undefined)[] = [];
+  if (shouldPrecreateIterations) {
+    const resolvedTestForPrecreate = resolveEvalTestCase(test);
+    const precreatedAt = Date.now();
+    for (let runIndex = 0; runIndex < test.runs; runIndex++) {
+      try {
+        const iterationParams = {
+          testCaseId: test.testCaseId ?? testCaseId,
+          testCaseSnapshot: {
+            title: test.title,
+            query: resolvedTestForPrecreate.query,
+            provider: test.provider,
+            model: test.model,
+            runs: test.runs,
+            expectedToolCalls: resolvedTestForPrecreate.expectedToolCalls,
+            isNegativeTest: test.isNegativeTest,
+            expectedOutput: resolvedTestForPrecreate.expectedOutput,
+            promptTurns: resolvedTestForPrecreate.promptTurns,
+            advancedConfig: resolvedTestForPrecreate.advancedConfig,
+            matchOptions: test.matchOptions,
+          },
+          iterationNumber: runIndex + 1,
+          startedAt: precreatedAt,
+        };
+        const id = await createIterationDirectly(
+          convexClient,
+          iterationParams,
+        );
+        precreatedIterationIds.push(id);
+      } catch (error) {
+        logger.warn(
+          "[evals] Failed to precreate iteration row; falling back to per-loop create",
+          {
+            runIndex,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        );
+        precreatedIterationIds.push(undefined);
+      }
+    }
+  }
+
   for (let runIndex = 0; runIndex < test.runs; runIndex++) {
+    const precreatedIterationId = shouldPrecreateIterations
+      ? precreatedIterationIds[runIndex]
+      : undefined;
     if (isJamModel) {
       const iterationOutcome = await runIterationViaBackend({
         test,
@@ -2130,6 +2211,7 @@ const runTestCase = async (params: {
         runId,
         abortSignal,
         compareRunId,
+        precreatedIterationId,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -2150,6 +2232,7 @@ const runTestCase = async (params: {
       runId,
       abortSignal,
       compareRunId,
+      precreatedIterationId,
     });
     outcomes.push(iterationOutcome);
   }
@@ -2401,6 +2484,7 @@ const streamIterationWithAiSdk = async ({
   abortSignal,
   emit,
   compareRunId,
+  precreatedIterationId,
 }: RunIterationAiSdkParams & {
   emit: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
@@ -2419,6 +2503,7 @@ const streamIterationWithAiSdk = async ({
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
+            test.matchOptions,
           ),
           iterationId: undefined,
         };
@@ -2435,6 +2520,7 @@ const streamIterationWithAiSdk = async ({
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
+            test.matchOptions,
           ),
           iterationId: undefined,
         };
@@ -2487,14 +2573,17 @@ const streamIterationWithAiSdk = async ({
       expectedOutput,
       promptTurns,
       advancedConfig,
+      matchOptions: test.matchOptions,
     },
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
   };
 
-  const iterationId = recorder
-    ? await recorder.startIteration(iterationParams)
-    : await createIterationDirectly(convexClient, iterationParams);
+  const iterationId = precreatedIterationId
+    ? precreatedIterationId
+    : recorder
+      ? await recorder.startIteration(iterationParams)
+      : await createIterationDirectly(convexClient, iterationParams);
 
   const baseMessages: ModelMessage[] = [];
   if (system) {
@@ -2746,6 +2835,7 @@ const streamIterationWithAiSdk = async ({
       promptTurns,
       toolsCalledByPrompt,
       test.isNegativeTest,
+      test.matchOptions,
     );
     const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
 
@@ -2815,6 +2905,7 @@ const streamIterationWithAiSdk = async ({
           promptTurns,
           toolsCalledByPrompt,
           test.isNegativeTest,
+          test.matchOptions,
         ),
         iterationId: undefined,
       };
@@ -2864,6 +2955,7 @@ const streamIterationWithAiSdk = async ({
       promptTurns,
       toolsCalledByPrompt,
       test.isNegativeTest,
+      test.matchOptions,
     );
     const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
     const widgetSnapshots = await captureEvalTraceWidgetSnapshots({
@@ -2949,6 +3041,7 @@ const streamIterationViaBackend = async ({
   abortSignal,
   emit,
   compareRunId,
+  precreatedIterationId,
 }: RunIterationBackendParams & {
   emit: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
@@ -2967,6 +3060,7 @@ const streamIterationViaBackend = async ({
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
+            test.matchOptions,
           ),
           iterationId: undefined,
         };
@@ -2983,6 +3077,7 @@ const streamIterationViaBackend = async ({
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
+            test.matchOptions,
           ),
           iterationId: undefined,
         };
@@ -3031,14 +3126,17 @@ const streamIterationViaBackend = async ({
       expectedOutput,
       promptTurns,
       advancedConfig,
+      matchOptions: test.matchOptions,
     },
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
   };
 
-  const iterationId = recorder
-    ? await recorder.startIteration(iterationParams)
-    : await createIterationDirectly(convexClient, iterationParams);
+  const iterationId = precreatedIterationId
+    ? precreatedIterationId
+    : recorder
+      ? await recorder.startIteration(iterationParams)
+      : await createIterationDirectly(convexClient, iterationParams);
 
   const toolDefs = Object.entries(tools).map(([name, tool]) => {
     const schema = (tool as any)?.inputSchema;
@@ -3552,6 +3650,7 @@ const streamIterationViaBackend = async ({
               promptTurns,
               toolsCalledByPrompt,
               test.isNegativeTest,
+              test.matchOptions,
             ),
             iterationId: undefined,
           };
@@ -3633,6 +3732,7 @@ const streamIterationViaBackend = async ({
     promptTurns,
     toolsCalledByPrompt,
     test.isNegativeTest,
+    test.matchOptions,
   );
   const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
 
@@ -3740,7 +3840,60 @@ export const streamTestCase = async (params: {
 
   const outcomes: EvalIterationOutcome[] = [];
 
+  // Quick-run streaming with runs > 1: pre-create all N pending iteration
+  // rows so they appear in the iteration history immediately. The suite
+  // path already pre-creates upstream via precreateIterationsForRun, so we
+  // only do this when there's no recorder (no suite run) and no runId.
+  // Failures here are non-fatal — fall back to per-loop creation inside the
+  // iteration runners (the existing behavior).
+  const shouldPrecreateIterations =
+    recorder == null && runId == null && test.runs > 1;
+  const precreatedIterationIds: (string | undefined)[] = [];
+  if (shouldPrecreateIterations) {
+    const resolvedTestForPrecreate = resolveEvalTestCase(test);
+    const precreatedAt = Date.now();
+    for (let runIndex = 0; runIndex < test.runs; runIndex++) {
+      try {
+        const iterationParams = {
+          testCaseId: test.testCaseId ?? testCaseId,
+          testCaseSnapshot: {
+            title: test.title,
+            query: resolvedTestForPrecreate.query,
+            provider: test.provider,
+            model: test.model,
+            runs: test.runs,
+            expectedToolCalls: resolvedTestForPrecreate.expectedToolCalls,
+            isNegativeTest: test.isNegativeTest,
+            expectedOutput: resolvedTestForPrecreate.expectedOutput,
+            promptTurns: resolvedTestForPrecreate.promptTurns,
+            advancedConfig: resolvedTestForPrecreate.advancedConfig,
+            matchOptions: test.matchOptions,
+          },
+          iterationNumber: runIndex + 1,
+          startedAt: precreatedAt,
+        };
+        const id = await createIterationDirectly(
+          convexClient,
+          iterationParams,
+        );
+        precreatedIterationIds.push(id);
+      } catch (error) {
+        logger.warn(
+          "[evals] Failed to precreate streaming iteration row; will fall back to per-loop create",
+          {
+            runIndex,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        );
+        precreatedIterationIds.push(undefined);
+      }
+    }
+  }
+
   for (let runIndex = 0; runIndex < test.runs; runIndex++) {
+    const precreatedIterationId = shouldPrecreateIterations
+      ? precreatedIterationIds[runIndex]
+      : undefined;
     if (isJamModel) {
       const iterationOutcome = await streamIterationViaBackend({
         test,
@@ -3760,6 +3913,7 @@ export const streamTestCase = async (params: {
         abortSignal,
         emit,
         compareRunId,
+        precreatedIterationId,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -3781,6 +3935,7 @@ export const streamTestCase = async (params: {
       abortSignal,
       emit,
       compareRunId,
+      precreatedIterationId,
     });
     outcomes.push(iterationOutcome);
   }

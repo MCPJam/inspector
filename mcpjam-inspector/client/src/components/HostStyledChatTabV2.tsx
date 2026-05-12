@@ -4,6 +4,7 @@ import {
   ChatboxHostStyleProvider,
   ChatboxHostThemeProvider,
 } from "@/contexts/chatbox-host-style-context";
+import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-host-capabilities-override-context";
 import { getChatboxShellStyle } from "@/lib/chatbox-host-style";
 import { cn } from "@/lib/utils";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -20,27 +21,34 @@ export function HostStyledChatTabV2({
   const themeMode = usePreferencesStore((state) => state.themeMode);
   const hostStyle = usePreferencesStore((state) => state.hostStyle);
   const setHostStyle = usePreferencesStore((state) => state.setHostStyle);
+  const hostCapabilitiesOverride = usePreferencesStore(
+    (state) => state.hostCapabilitiesOverride,
+  );
   const shellStyle = getChatboxShellStyle(hostStyle, themeMode);
 
   return (
     <ChatboxHostStyleProvider value={hostStyle}>
-      <ChatboxHostThemeProvider value={themeMode}>
-        <div
-          className={cn(
-            "chatbox-host-shell app-theme-scope flex h-full min-h-0 flex-1 flex-col overflow-hidden",
-            themeMode === "dark" && "dark",
-          )}
-          data-host-style={hostStyle}
-          style={shellStyle}
-        >
-          <ChatTabV2
-            {...props}
-            showHostStyleSelector={showHostStyleSelector}
-            hostStyle={hostStyle}
-            onHostStyleChange={setHostStyle}
-          />
-        </div>
-      </ChatboxHostThemeProvider>
+      <ChatboxHostCapabilitiesOverrideProvider
+        value={hostCapabilitiesOverride}
+      >
+        <ChatboxHostThemeProvider value={themeMode}>
+          <div
+            className={cn(
+              "chatbox-host-shell app-theme-scope flex h-full min-h-0 flex-1 flex-col overflow-hidden",
+              themeMode === "dark" && "dark",
+            )}
+            data-host-style={hostStyle}
+            style={shellStyle}
+          >
+            <ChatTabV2
+              {...props}
+              showHostStyleSelector={showHostStyleSelector}
+              hostStyle={hostStyle}
+              onHostStyleChange={setHostStyle}
+            />
+          </div>
+        </ChatboxHostThemeProvider>
+      </ChatboxHostCapabilitiesOverrideProvider>
     </ChatboxHostStyleProvider>
   );
 }

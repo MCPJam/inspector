@@ -25,6 +25,11 @@ import {
 import { flattenServerToolSnapshotTools } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "../../services/evals/convex-sanitize.js";
 import { type PromptTurn } from "@/shared/prompt-turns";
+import {
+  matchOptionsSchema,
+  resolveMatchOptions,
+  type MatchOptionsDTO,
+} from "@/shared/eval-matching";
 
 const toolChoiceSchema = z.union([
   z.enum(["auto", "none", "required"]),
@@ -55,7 +60,7 @@ export const RunEvalsRequestSchema = z.object({
     z.object({
       title: z.string(),
       query: z.string(),
-      runs: z.number().int().positive(),
+      runs: z.number().int().positive().max(10),
       model: z.string(),
       provider: z.string(),
       expectedToolCalls: z.array(
@@ -76,6 +81,7 @@ export const RunEvalsRequestSchema = z.object({
         })
         .passthrough()
         .optional(),
+      matchOptions: matchOptionsSchema.optional(),
     }),
   ),
   serverIds: z
@@ -101,6 +107,19 @@ export const RunEvalsRequestSchema = z.object({
    * to the suite default.
    */
   suiteRerun: z.boolean().optional(),
+  /**
+   * Transient per-run iteration count (1-10). Overlays `runs` on every
+   * test case in the run snapshot without mutating the persisted
+   * `EvalCase.runs` default. Cap-math counts this against
+   * MAX_TOTAL_LLM_CALLS.
+   */
+  iterationOverride: z.number().int().min(1).max(10).optional(),
+  /**
+   * One-off match-option override for this run only. Resolved on top of
+   * suite defaults + case overrides into each iteration's snapshot;
+   * does NOT mutate persisted suite/case records.
+   */
+  matchOptionsOverride: matchOptionsSchema.optional(),
 });
 
 export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
@@ -126,7 +145,7 @@ export const RunTestCaseRequestSchema = z.object({
       query: z.string().optional(),
       expectedToolCalls: z.array(z.any()).optional(),
       isNegativeTest: z.boolean().optional(),
-      runs: z.number().optional(),
+      runs: z.number().int().positive().max(10).optional(),
       expectedOutput: z.string().optional(),
       promptTurns: z.array(promptTurnSchema).optional(),
       advancedConfig: z
@@ -137,14 +156,72 @@ export const RunTestCaseRequestSchema = z.object({
         })
         .passthrough()
         .optional(),
+      matchOptions: matchOptionsSchema.optional(),
     })
     .optional(),
+  /**
+   * One-off match-option override for this single-case run only. Does
+   * NOT mutate the persisted case's `matchOptions`.
+   */
+  matchOptionsOverride: matchOptionsSchema.optional(),
 });
 
 export type RunTestCaseRequest = z.infer<typeof RunTestCaseRequestSchema>;
 type RunTestCaseWithManagerRequest = RunTestCaseRequest & {
   orgModelConfig?: ResolvedOrgModelConfig;
 };
+
+export const MAX_TOTAL_LLM_CALLS = 300;
+
+export function assertSuiteRunWithinCap(
+  request: RunEvalsRequest,
+  configCount = 1,
+) {
+  const override = request.iterationOverride;
+  // Each iteration issues one model call per prompt turn; counting only `runs`
+  // lets a multi-turn save-from-chat case bypass the cap.
+  const totalCalls =
+    request.tests.reduce((sum, t) => {
+      const iterations = override ?? t.runs ?? 0;
+      const turns = Math.max(t.promptTurns?.length ?? 0, 1);
+      return sum + iterations * turns;
+    }, 0) * Math.max(configCount, 1);
+  if (totalCalls > MAX_TOTAL_LLM_CALLS) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `Suite run would issue ${totalCalls} LLM calls, above the cap of ${MAX_TOTAL_LLM_CALLS}. Reduce iterations or test count.`,
+      { totalCalls, cap: MAX_TOTAL_LLM_CALLS },
+    );
+  }
+}
+
+/**
+ * Counts override prompt-turns when present, then falls back to the
+ * persisted case's prompt-turns count. Callers that have already loaded
+ * the persisted test case should pass it via `resolved` — without it, a
+ * multi-turn saved case can slip past the cap because we'd count it as a
+ * single-turn run.
+ */
+export function assertTestCaseRunWithinCap(
+  request: RunTestCaseRequest,
+  configCount = 1,
+  resolved?: { promptTurnsLength?: number },
+) {
+  const iterations = request.testCaseOverrides?.runs ?? 1;
+  const overrideTurns = request.testCaseOverrides?.promptTurns?.length;
+  const resolvedTurns = resolved?.promptTurnsLength;
+  const turns = Math.max(overrideTurns ?? resolvedTurns ?? 0, 1);
+  const totalCalls = iterations * turns * Math.max(configCount, 1);
+  if (totalCalls > MAX_TOTAL_LLM_CALLS) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `Test case run would issue ${totalCalls} LLM calls, above the cap of ${MAX_TOTAL_LLM_CALLS}.`,
+      { totalCalls, cap: MAX_TOTAL_LLM_CALLS },
+    );
+  }
+}
 
 export const GenerateTestsRequestSchema = z.object({
   serverIds: z
@@ -165,6 +242,28 @@ export const GenerateNegativeTestsRequestSchema = z.object({
 export type GenerateNegativeTestsRequest = z.infer<
   typeof GenerateNegativeTestsRequestSchema
 >;
+
+/**
+ * Best-effort fetch of a suite's `defaultMatchOptions` so single-case
+ * runs resolve the same suite → case → override precedence chain that
+ * `precreateIterationsForRun` applies for suite-level runs.
+ * Returns undefined on any error; defaults still apply downstream.
+ */
+async function loadSuiteDefaultMatchOptions(
+  convexClient: ConvexHttpClient,
+  suiteId?: string,
+): Promise<MatchOptionsDTO | undefined> {
+  if (!suiteId) return undefined;
+  try {
+    const suite = await convexClient.query("testSuites:getTestSuite" as any, {
+      suiteId,
+    });
+    return (suite?.defaultMatchOptions as MatchOptionsDTO | undefined) ??
+      undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 function createConvexClients(convexAuthToken: string) {
   const convexUrl = process.env.CONVEX_URL;
@@ -304,6 +403,8 @@ export async function runEvalsWithManager(
     notes,
     passCriteria,
     suiteRerun,
+    iterationOverride,
+    matchOptionsOverride,
   } = request;
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
@@ -320,6 +421,8 @@ export async function runEvalsWithManager(
       "projectId is required when creating a new eval suite",
     );
   }
+
+  assertSuiteRunWithinCap(request);
 
   const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
   const persistedServerRefs =
@@ -357,6 +460,7 @@ export async function runEvalsWithManager(
       promptTurns?: PromptTurn[];
       judgeRequirement?: string;
       advancedConfig?: any;
+      matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
     }
   >();
 
@@ -374,6 +478,7 @@ export async function runEvalsWithManager(
         expectedOutput: test.expectedOutput,
         promptTurns: test.promptTurns,
         advancedConfig: test.advancedConfig,
+        matchOptions: test.matchOptions,
       });
     }
     testCaseMap.get(key)!.models.push({
@@ -451,6 +556,11 @@ export async function runEvalsWithManager(
             normalizeForComparison(existingTestCase.advancedConfig),
           ) !==
           JSON.stringify(normalizeForComparison(testCaseData.advancedConfig));
+        const matchOptionsChanged =
+          JSON.stringify(
+            normalizeForComparison(existingTestCase.matchOptions),
+          ) !==
+          JSON.stringify(normalizeForComparison(testCaseData.matchOptions));
 
         const hasChanges =
           modelsChanged ||
@@ -461,7 +571,8 @@ export async function runEvalsWithManager(
           expectedOutputChanged ||
           promptTurnsChanged ||
           judgeRequirementChanged ||
-          advancedConfigChanged;
+          advancedConfigChanged ||
+          matchOptionsChanged;
 
         if (hasChanges) {
           await convexClient.mutation("testSuites:updateTestCase" as any, {
@@ -478,6 +589,7 @@ export async function runEvalsWithManager(
             advancedConfig: sanitizeForConvexTransport(
               testCaseData.advancedConfig,
             ),
+            matchOptions: testCaseData.matchOptions,
           });
         }
       } else {
@@ -498,6 +610,7 @@ export async function runEvalsWithManager(
           advancedConfig: sanitizeForConvexTransport(
             testCaseData.advancedConfig,
           ),
+          matchOptions: testCaseData.matchOptions,
         });
       }
     }
@@ -536,6 +649,7 @@ export async function runEvalsWithManager(
         promptTurns: sanitizeForConvexTransport(testCaseData.promptTurns),
         judgeRequirement: testCaseData.judgeRequirement,
         advancedConfig: sanitizeForConvexTransport(testCaseData.advancedConfig),
+        matchOptions: testCaseData.matchOptions,
       });
     }
   }
@@ -548,6 +662,8 @@ export async function runEvalsWithManager(
     serverIds: resolvedServerIds,
     toolSnapshot,
     toolSnapshotDebug,
+    iterationOverride,
+    matchOptionsOverride,
   });
 
   const replayConfigsToStore = filterAndRemapReplayConfigs(
@@ -663,6 +779,7 @@ export async function runEvalTestCaseWithManager(
     orgModelConfig,
     convexAuthToken,
     testCaseOverrides,
+    matchOptionsOverride,
   } = request;
 
   const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
@@ -676,6 +793,14 @@ export async function runEvalTestCaseWithManager(
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Test case not found");
   }
 
+  assertTestCaseRunWithinCap(request, 1, {
+    promptTurnsLength: testCase.promptTurns?.length,
+  });
+
+  const suiteDefaultMatchOptions = await loadSuiteDefaultMatchOptions(
+    convexClient,
+    testCase.evalTestSuiteId,
+  );
   const test = {
     title: testCase.title,
     query: testCaseOverrides?.query ?? testCase.query,
@@ -693,6 +818,13 @@ export async function runEvalTestCaseWithManager(
       testCase.promptTurns,
     advancedConfig:
       testCaseOverrides?.advancedConfig ?? testCase.advancedConfig,
+    matchOptions: resolveMatchOptions(
+      suiteDefaultMatchOptions,
+      (testCaseOverrides?.matchOptions ?? testCase.matchOptions) as
+        | MatchOptionsDTO
+        | undefined,
+      matchOptionsOverride,
+    ),
     testCaseId: testCase._id,
   };
 
@@ -896,6 +1028,7 @@ export async function streamEvalTestCaseWithManager(
     orgModelConfig,
     convexAuthToken,
     testCaseOverrides,
+    matchOptionsOverride,
   } = request;
 
   const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
@@ -909,6 +1042,14 @@ export async function streamEvalTestCaseWithManager(
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Test case not found");
   }
 
+  assertTestCaseRunWithinCap(request, 1, {
+    promptTurnsLength: testCase.promptTurns?.length,
+  });
+
+  const suiteDefaultMatchOptions = await loadSuiteDefaultMatchOptions(
+    convexClient,
+    testCase.evalTestSuiteId,
+  );
   const test = {
     title: testCase.title,
     query: testCaseOverrides?.query ?? testCase.query,
@@ -926,6 +1067,13 @@ export async function streamEvalTestCaseWithManager(
       testCase.promptTurns,
     advancedConfig:
       testCaseOverrides?.advancedConfig ?? testCase.advancedConfig,
+    matchOptions: resolveMatchOptions(
+      suiteDefaultMatchOptions,
+      (testCaseOverrides?.matchOptions ?? testCase.matchOptions) as
+        | MatchOptionsDTO
+        | undefined,
+      matchOptionsOverride,
+    ),
     testCaseId: testCase._id,
   };
 

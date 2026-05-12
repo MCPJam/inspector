@@ -11,7 +11,7 @@ import type {
   PremiumnessState,
 } from "@/hooks/useOrganizationBilling";
 export function getDisplayPriceCentsForPlan(
-  plan: OrganizationPlan,
+  _plan: OrganizationPlan,
   interval: BillingInterval,
   catalogEntry: PlanCatalogEntry,
 ): number | null {

@@ -3,13 +3,17 @@ import { flushSync } from "react-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppState, AppAction, ServerWithName } from "@/state/app-types";
 import {
+  buildElectronMcpCallbackUrl,
+  shouldRetryOAuthConnectionFailure,
+  useServerState,
+} from "../use-server-state";
+import {
   CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
   PROJECT_NOT_PROVISIONED_ERROR_MESSAGE,
 } from "@/lib/client-config";
 import type { ProjectClientConfig } from "@/lib/client-config";
 import { useClientConfigStore } from "@/stores/client-config-store";
 import { useHostContextStore } from "@/stores/host-context-store";
-import { useServerState } from "../use-server-state";
 
 const {
   toastError,
@@ -72,14 +76,18 @@ vi.mock("@/state/oauth-orchestrator", () => ({
   ensureAuthorizedForReconnect: vi.fn(),
 }));
 
-vi.mock("@/lib/oauth/mcp-oauth", () => ({
-  completeHostedOAuthCallback: completeHostedOAuthCallbackMock,
-  handleOAuthCallback: handleOAuthCallbackMock,
-  getStoredTokens: getStoredTokensMock,
-  clearOAuthData: clearOAuthDataMock,
-  initiateOAuth: initiateOAuthMock,
-  readStoredOAuthConfig: readStoredOAuthConfigMock,
-}));
+vi.mock("@/lib/oauth/mcp-oauth", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/oauth/mcp-oauth")>();
+  return {
+    ...actual,
+    completeHostedOAuthCallback: completeHostedOAuthCallbackMock,
+    handleOAuthCallback: handleOAuthCallbackMock,
+    getStoredTokens: getStoredTokensMock,
+    clearOAuthData: clearOAuthDataMock,
+    initiateOAuth: initiateOAuthMock,
+    readStoredOAuthConfig: readStoredOAuthConfigMock,
+  };
+});
 
 vi.mock("@/lib/apis/web/context", () => ({
   injectHostedServerMapping: vi.fn(),
@@ -197,6 +205,12 @@ function renderUseServerState(
   );
 }
 
+async function flushAsyncWork(iterations = 5): Promise<void> {
+  for (let index = 0; index < iterations; index += 1) {
+    await Promise.resolve();
+  }
+}
+
 beforeEach(() => {
   tryResolveProjectServerMock.mockReturnValue({
     projectId: "project_default",
@@ -299,6 +313,7 @@ describe("useServerState OAuth callback failures", () => {
     vi.clearAllMocks();
     localStorage.clear();
     window.history.replaceState({}, "", "/");
+    window.isElectron = false;
     useClientConfigStore.setState({
       activeProjectId: null,
       defaultConfig: null,
@@ -404,6 +419,186 @@ describe("useServerState OAuth callback failures", () => {
       "Error completing OAuth flow: Token exchange failed"
     );
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
+  });
+
+  it("bounces browser OAuth callbacks back into Electron when the OAuth state is tagged for desktop", async () => {
+    window.isElectron = false;
+    window.history.replaceState(
+      {},
+      "",
+      "/oauth/callback?code=test-code&state=electron_mcp:test-state",
+    );
+
+    expect(buildElectronMcpCallbackUrl()).toBe(
+      "mcpjam://oauth/callback?flow=mcp&code=test-code&state=electron_mcp%3Atest-state",
+    );
+  });
+
+  it("defers Electron-tagged browser callbacks to the App-level desktop return notice", async () => {
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    window.isElectron = false;
+    window.history.replaceState(
+      {},
+      "",
+      "/oauth/callback?code=test-code&state=electron_mcp:test-state",
+    );
+
+    try {
+      const dispatch = vi.fn();
+      renderUseServerState(dispatch);
+      await flushAsyncWork();
+
+      expect(handleOAuthCallbackMock).not.toHaveBeenCalled();
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(consoleErrorSpy).not.toHaveBeenCalledWith(
+        "Not implemented: navigation to another Document",
+      );
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
+  it("completes Electron in-app fallback callbacks in the renderer", async () => {
+    window.isElectron = true;
+    localStorage.setItem("mcp-oauth-pending", "demo-server");
+    localStorage.setItem("mcp-oauth-return-hash", "#demo-server");
+    handleOAuthCallbackMock.mockResolvedValue({
+      success: true,
+      serverName: "demo-server",
+      serverConfig: {
+        type: "http",
+        url: "https://example.com/mcp",
+      },
+    });
+    window.history.replaceState(
+      {},
+      "",
+      "/oauth/callback?code=test-code&state=electron_mcp:test-state",
+    );
+
+    expect(buildElectronMcpCallbackUrl()).toBeNull();
+
+    const dispatch = vi.fn();
+    renderUseServerState(dispatch);
+
+    await waitFor(() => {
+      expect(handleOAuthCallbackMock).toHaveBeenCalledWith(
+        "test-code",
+        expect.objectContaining({
+          onTraceUpdate: expect.any(Function),
+        }),
+      );
+    });
+    await waitFor(() => {
+      expect(toastSuccess).toHaveBeenCalledWith(
+        "OAuth connection successful! Connected to demo-server.",
+      );
+    });
+
+    expect(window.location.pathname).toBe("/");
+    expect(window.location.search).toBe("");
+    expect(window.location.hash).toBe("#demo-server");
+    expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
+  });
+
+  it("ignores regular browser OAuth callbacks that are not tagged for Electron", () => {
+    window.isElectron = false;
+    window.history.replaceState(
+      {},
+      "",
+      "/oauth/callback?code=test-code&state=test-state",
+    );
+
+    expect(buildElectronMcpCallbackUrl()).toBeNull();
+  });
+
+  it("detects retryable transport errors after OAuth", () => {
+    expect(
+      shouldRetryOAuthConnectionFailure(
+        "Streamable HTTP error: Request timed out. SSE error: SSE error: Non-200 status code (404).",
+      ),
+    ).toBe(true);
+    expect(
+      shouldRetryOAuthConnectionFailure(
+        "OAuth failed with invalid_client from the authorization server",
+      ),
+    ).toBe(false);
+  });
+
+  it("retries transient connection failures once after a successful OAuth callback", async () => {
+    vi.useFakeTimers();
+
+    localStorage.setItem("mcp-oauth-pending", "demo-server");
+    localStorage.setItem(
+      "mcp-serverUrl-demo-server",
+      "https://example.com/mcp",
+    );
+    localStorage.setItem("mcp-oauth-return-hash", "#demo-server");
+    window.history.replaceState({}, "", "/oauth/callback?code=test-code");
+
+    handleOAuthCallbackMock.mockResolvedValue({
+      success: true,
+      serverName: "demo-server",
+      serverConfig: {
+        url: "https://example.com/mcp",
+        requestInit: {
+          headers: {
+            Authorization: "Bearer token",
+          },
+        },
+      },
+    });
+    getStoredTokensMock.mockReturnValue({
+      access_token: "token",
+    } as any);
+    testConnectionMock
+      .mockResolvedValueOnce({
+        success: false,
+        error:
+          'Connection failed for server demo-server: Failed to connect to MCP server "demo-server" using HTTP transports. Streamable HTTP error: Request timed out. SSE error: SSE error: Non-200 status code (404).',
+      } as any)
+      .mockResolvedValueOnce({
+        success: true,
+        initInfo: null,
+      } as any);
+
+    try {
+      const dispatch = vi.fn();
+      renderUseServerState(dispatch);
+
+      await act(async () => {
+        await flushAsyncWork();
+      });
+
+      expect(handleOAuthCallbackMock).toHaveBeenCalledWith(
+        "test-code",
+        expect.objectContaining({
+          onTraceUpdate: expect.any(Function),
+        })
+      );
+      expect(testConnectionMock).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1500);
+        await flushAsyncWork();
+      });
+
+      expect(testConnectionMock).toHaveBeenCalledTimes(2);
+
+      expect(toastSuccess).toHaveBeenCalledWith(
+        "OAuth connection successful! Connected to demo-server.",
+      );
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "CONNECT_SUCCESS",
+          name: "demo-server",
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("restores the app root after a successful browser OAuth callback", async () => {

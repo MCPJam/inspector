@@ -44,6 +44,7 @@ import { OrganizationsTab } from "./components/OrganizationsTab";
 import { SupportTab } from "./components/SupportTab";
 import { RegistryTab } from "./components/RegistryTab";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
+import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
 import { MCPSidebar } from "./components/mcp-sidebar";
 import { SidebarInset, SidebarProvider } from "./components/ui/sidebar";
 import {
@@ -167,6 +168,7 @@ import {
   completeHostedOAuthCallback,
   handleOAuthCallback,
 } from "./lib/oauth/mcp-oauth";
+import { buildElectronMcpCallbackUrl } from "./hooks/use-server-state";
 import { getEffectiveProjectClientCapabilities } from "./lib/client-config";
 import { buildEvalsHash } from "./lib/evals-router";
 import { withTestingSurface } from "./lib/testing-surface";
@@ -669,6 +671,7 @@ export default function App() {
     "/oauth/callback/debug"
   );
   const isOAuthCallback = window.location.pathname === "/callback";
+  const electronMcpCallbackUrl = buildElectronMcpCallbackUrl();
 
   useEffect(() => {
     if (!isOAuthCallback) {
@@ -1852,6 +1855,12 @@ export default function App() {
 
   if (isDebugCallback) {
     return <OAuthDebugCallback />;
+  }
+
+  if (electronMcpCallbackUrl) {
+    return (
+      <OAuthDesktopReturnNotice returnToElectronUrl={electronMcpCallbackUrl} />
+    );
   }
 
   if (hostedOAuthHandling) {

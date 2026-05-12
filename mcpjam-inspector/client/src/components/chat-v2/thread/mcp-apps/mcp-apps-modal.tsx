@@ -148,6 +148,8 @@ export function McpAppsModal({
         serverTools: {},
         serverResources: {},
         logging: {},
+        updateModelContext: {},
+        message: {},
         sandbox: {
           csp: widgetPermissive ? undefined : widgetCsp,
           permissions: widgetPermissions,

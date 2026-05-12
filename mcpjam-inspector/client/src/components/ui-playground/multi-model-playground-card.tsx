@@ -33,6 +33,8 @@ import {
   ChatboxHostStyleProvider,
   ChatboxHostThemeProvider,
 } from "@/contexts/chatbox-host-style-context";
+import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-host-capabilities-override-context";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import type { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
   getChatboxChatBackground,
@@ -40,6 +42,7 @@ import {
 } from "@/lib/chatbox-host-style";
 import type { DeviceType, DisplayMode } from "@/stores/ui-playground-store";
 import type { BroadcastChatTurnRequest } from "@/components/chat-v2/multi-model-chat-card";
+import type { TraceViewMode } from "@/components/evals/trace-view-mode-tabs";
 
 type PlaygroundTraceViewMode = "chat" | "timeline" | "raw";
 type ThreadThemeMode = "light" | "dark";
@@ -147,6 +150,9 @@ export function MultiModelPlaygroundCard({
   addColumnSeed = null,
   onTranscriptSync,
 }: MultiModelPlaygroundCardProps) {
+  const hostCapabilitiesOverride = usePreferencesStore(
+    (s) => s.hostCapabilitiesOverride,
+  );
   const [modelContextQueue, setModelContextQueue] = useState<
     {
       toolCallId: string;
@@ -263,13 +269,11 @@ export function MultiModelPlaygroundCard({
     setRevealedInChat(true);
   }, []);
 
-  const handleTraceViewModeChange = useCallback(
-    (mode: PlaygroundTraceViewMode) => {
-      setTraceViewMode(mode);
-      setRevealedInChat(false);
-    },
-    [],
-  );
+  const handleTraceViewModeChange = useCallback((mode: TraceViewMode) => {
+    if (mode === "tools") return;
+    setTraceViewMode(mode);
+    setRevealedInChat(false);
+  }, []);
 
   const showLiveTracePending =
     activeTraceViewMode === "timeline" &&
@@ -643,6 +647,9 @@ export function MultiModelPlaygroundCard({
           </div>
         ) : (
           <ChatboxHostStyleProvider value={hostStyle}>
+            <ChatboxHostCapabilitiesOverrideProvider
+              value={hostCapabilitiesOverride}
+            >
             <ChatboxHostThemeProvider value={effectiveThreadTheme}>
               <div
                 className={cn(
@@ -707,6 +714,7 @@ export function MultiModelPlaygroundCard({
                 )}
               </div>
             </ChatboxHostThemeProvider>
+            </ChatboxHostCapabilitiesOverrideProvider>
           </ChatboxHostStyleProvider>
         )}
       </div>

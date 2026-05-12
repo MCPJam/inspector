@@ -3,6 +3,17 @@ import log from "electron-log";
 
 const isDev = process.env.NODE_ENV === "development";
 
+function sendToRenderer(
+  mainWindow: BrowserWindow,
+  channel: string,
+  payload: unknown,
+): void {
+  if (mainWindow.isDestroyed()) return;
+  const wc = mainWindow.webContents;
+  if (wc.isDestroyed()) return;
+  wc.send(channel, payload);
+}
+
 export function registerUpdateListeners(mainWindow: BrowserWindow): void {
   // Handle restart request from renderer
   ipcMain.on("app:restart-for-update", (event) => {
@@ -26,12 +37,10 @@ export function registerUpdateListeners(mainWindow: BrowserWindow): void {
         return;
       }
       log.info("Simulating update available (dev mode)");
-      if (mainWindow && mainWindow.webContents) {
-        mainWindow.webContents.send("update-ready", {
-          version: "99.0.0",
-          releaseNotes: "Simulated update for testing",
-        });
-      }
+      sendToRenderer(mainWindow, "update-ready", {
+        version: "99.0.0",
+        releaseNotes: "Simulated update for testing",
+      });
     });
   }
 }
@@ -40,14 +49,10 @@ export function setupAutoUpdaterEvents(mainWindow: BrowserWindow): void {
   // Listen for update-downloaded event from autoUpdater
   autoUpdater.on("update-downloaded", (event, releaseNotes, releaseName) => {
     log.info(`Update downloaded: ${releaseName}`);
-
-    // Notify renderer that update is ready
-    if (mainWindow && mainWindow.webContents) {
-      mainWindow.webContents.send("update-ready", {
-        version: releaseName || "new version",
-        releaseNotes: releaseNotes || "",
-      });
-    }
+    sendToRenderer(mainWindow, "update-ready", {
+      version: releaseName || "new version",
+      releaseNotes: releaseNotes || "",
+    });
   });
 
   autoUpdater.on("checking-for-update", () => {

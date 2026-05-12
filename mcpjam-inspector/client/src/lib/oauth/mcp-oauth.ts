@@ -73,6 +73,8 @@ interface StoredOAuthDiscoveryState {
   discoveryState: OAuthDiscoveryState;
 }
 
+const ELECTRON_MCP_CALLBACK_STATE_PREFIX = "electron_mcp:";
+
 interface StoredOAuthClientInformation {
   client_id?: string;
   client_secret?: string;
@@ -1479,6 +1481,48 @@ export interface OAuthResult {
   oauthResourceUrl?: string;
 }
 
+export function buildMCPOAuthState(): string {
+  const state = generateRandomString(32);
+  if (window.isElectron) {
+    return `${ELECTRON_MCP_CALLBACK_STATE_PREFIX}${state}`;
+  }
+  return state;
+}
+
+export function isElectronMcpCallbackState(
+  state: string | null | undefined,
+): boolean {
+  return Boolean(state && state.startsWith(ELECTRON_MCP_CALLBACK_STATE_PREFIX));
+}
+
+function tagElectronMcpCallbackState(state: string | null | undefined): string {
+  if (isElectronMcpCallbackState(state)) {
+    return state!;
+  }
+
+  return `${ELECTRON_MCP_CALLBACK_STATE_PREFIX}${
+    state || generateRandomString(32)
+  }`;
+}
+
+function buildElectronMcpAuthorizationRequest(authorizationUrl: string): {
+  authorizationUrl: string;
+  state?: string;
+} {
+  if (typeof window === "undefined" || !window.isElectron) {
+    return { authorizationUrl };
+  }
+
+  try {
+    const url = new URL(authorizationUrl);
+    const state = tagElectronMcpCallbackState(url.searchParams.get("state"));
+    url.searchParams.set("state", state);
+    return { authorizationUrl: url.toString(), state };
+  } catch {
+    return { authorizationUrl };
+  }
+}
+
 interface HostedOAuthCompletionResponse {
   success: boolean;
   expiresAt?: number | null;
@@ -1885,7 +1929,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 
   state(): string {
-    return generateRandomString(32);
+    return buildMCPOAuthState();
   }
 
   get redirectUrl(): string {
@@ -2065,6 +2109,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 
   async redirectToAuthorization(authorizationUrl: URL) {
+    const authorizationUrlString = authorizationUrl.toString();
     captureServerDetailModalOAuthResume(this.serverName);
     // Store server name for callback recovery
     localStorage.setItem("mcp-oauth-pending", this.serverName);
@@ -2072,7 +2117,33 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     if (window.location.hash) {
       localStorage.setItem("mcp-oauth-return-hash", window.location.hash);
     }
-    window.location.href = authorizationUrl.toString();
+
+    if (window.isElectron) {
+      if (window.electronAPI?.app?.openExternal) {
+        try {
+          await window.electronAPI.app.openExternal(authorizationUrlString);
+          return;
+        } catch (error) {
+          console.warn(
+            "Failed to open system browser for MCP OAuth; continuing inside MCPJam Desktop:",
+            error,
+          );
+        }
+      } else {
+        console.warn(
+          "System browser opener is unavailable for MCP OAuth; continuing inside MCPJam Desktop.",
+        );
+      }
+
+      this.navigateToUrl(authorizationUrlString);
+      return;
+    }
+
+    this.navigateToUrl(authorizationUrlString);
+  }
+
+  navigateToUrl(url: string) {
+    window.location.assign(url);
   }
 
   async saveCodeVerifier(codeVerifier: string) {
@@ -2448,12 +2519,14 @@ export async function initiateOAuth(
         emitTraceSnapshot(snapshot);
       },
       onAuthorizationRequest: async ({ authorizationUrl }) => {
+        const electronAuthorization =
+          buildElectronMcpAuthorizationRequest(authorizationUrl);
         const resourceMetadata = getState().resourceMetadata as
           | { resource?: unknown }
           | undefined;
         const oauthResourceUrl = resolveOAuthResourceUrl({
           serverUrl: options.serverUrl,
-          authorizationUrl,
+          authorizationUrl: electronAuthorization.authorizationUrl,
           configuredResourceUrl: options.resourceUrl,
           resourceMetadata,
         });
@@ -2462,10 +2535,15 @@ export async function initiateOAuth(
         // authorization URL is updated to the redirected one so the callback
         // path round-trips the same resource.
         const redirectedAuthorizationUrl = withOAuthResourceParam(
-          authorizationUrl,
+          electronAuthorization.authorizationUrl,
           oauthResourceUrl
         );
-        updateState({ authorizationUrl: redirectedAuthorizationUrl });
+        updateState({
+          authorizationUrl: redirectedAuthorizationUrl,
+          ...(electronAuthorization.state
+            ? { state: electronAuthorization.state }
+            : {}),
+        });
         writeStoredOAuthConfig(options.serverName, {
           resourceUrl: oauthResourceUrl,
         });
@@ -2627,9 +2705,12 @@ export async function completeHostedOAuthCallback(
     );
   let stopProgressPolling = false;
   let progressPollingPromise: Promise<void> | null = null;
-  let resolveTerminalProgressFailure:
-    | ((failure: { message: string; oauthTrace?: OAuthTrace }) => void)
-    | null = null;
+  type TerminalProgressFailureResolver = (failure: {
+    message: string;
+    oauthTrace?: OAuthTrace;
+  }) => void;
+  let resolveTerminalProgressFailure: TerminalProgressFailureResolver | null =
+    null;
 
   try {
     if (!serverName) {
@@ -2728,7 +2809,9 @@ export async function completeHostedOAuthCallback(
             if (progress?.success && progress.status === "failed") {
               stopProgressPolling = true;
               if (resolveTerminalProgressFailure) {
-                resolveTerminalProgressFailure({
+                (
+                  resolveTerminalProgressFailure as TerminalProgressFailureResolver
+                )({
                   message:
                     progress.lastError ||
                     progress.error ||

@@ -13,6 +13,9 @@ import {
 import { SuiteTestsConfig } from "./suite-tests-config";
 import { TestTemplateEditor } from "./test-template-editor";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
+import { ValidatorsSection } from "./validators-section";
+import type { EvalMatchOptions } from "@/shared/eval-matching";
+import { MATCH_OPTIONS_DEFAULTS } from "@/shared/eval-matching";
 import { TestCasesOverview } from "./test-cases-overview";
 import { TestCaseDetailView } from "./test-case-detail-view";
 import { SuiteDashboard } from "./suite-dashboard";
@@ -39,6 +42,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { Loader2, Trash2 } from "lucide-react";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
+import type { RemoteServer } from "@/hooks/useProjects";
 import {
   normalizeDraftEvalCaseForExport,
   normalizeEvalCaseForExport,
@@ -172,14 +176,13 @@ export function SuiteIterationsView({
   /** Playground: batch delete test cases from the cases table (no runs UI). */
   onDeleteTestCasesBatch?: (testCaseIds: string[]) => Promise<void>;
   /** Per-case run from the cases overview table (Explore / CI). */
-  onRunTestCase?: (testCase: EvalCase) => void;
+  onRunTestCase?: (
+    testCase: EvalCase,
+    opts?: { iterationOverride?: number },
+  ) => void;
   runningTestCaseId?: string | null;
   onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
-  projectServers?: Array<{
-    _id: string;
-    name: string;
-    transportType?: "stdio" | "http";
-  }>;
+  projectServers?: RemoteServer[];
   /** When true, this is rendering the direct-guest eval playground flow. */
   isDirectGuest?: boolean;
   /** Playground: connect suite MCP servers before compare run (same as per-case run). */
@@ -214,6 +217,47 @@ export function SuiteIterationsView({
   const [runDetailSortBy, setRunDetailSortBy] = useState<
     "model" | "test" | "result"
   >("model");
+  /**
+   * Transient per-run iteration count (1-10) applied to Run-all-cases and
+   * per-case quick runs triggered from this suite view. Defaults to
+   * `undefined` (Auto) so the per-case persisted `EvalCase.runs` is honored
+   * until the user picks an explicit value. Never written back to
+   * persistence. Server enforces an absolute cap above 10.
+   */
+  const [iterationOverride, setIterationOverride] = useState<
+    number | undefined
+  >(undefined);
+
+  const onRerunWithOverride = useCallback(
+    (
+      s: EvalSuite,
+      opts?: {
+        matchOptionsOverride?: EvalMatchOptions;
+        iterationOverride?: number;
+      },
+    ) =>
+      (
+        onRerun as (
+          suite: EvalSuite,
+          opts?: {
+            matchOptionsOverride?: EvalMatchOptions;
+            iterationOverride?: number;
+          },
+        ) => void
+      )(s, opts),
+    [onRerun],
+  );
+
+  const onRunTestCaseWithOverride = useMemo<
+    ((testCase: EvalCase) => void) | undefined
+  >(
+    () =>
+      onRunTestCase
+        ? (testCase: EvalCase) =>
+            onRunTestCase(testCase, { iterationOverride })
+        : undefined,
+    [onRunTestCase, iterationOverride],
+  );
   const effectiveRunDetailSortBy = runDetailSortByOverride ?? runDetailSortBy;
   const effectiveRunDetailSortChange =
     onRunDetailSortByChange ?? setRunDetailSortBy;
@@ -458,7 +502,9 @@ export function SuiteIterationsView({
             viewMode={viewMode}
             selectedRunDetails={selectedRunDetails}
             isEditMode={isEditMode}
-            onRerun={onRerun}
+            onRerun={onRerunWithOverride}
+            iterationOverride={iterationOverride}
+            onIterationOverrideChange={setIterationOverride}
             onReplayRun={onReplayRun}
             onCancelRun={onCancelRun}
             onViewModeChange={handleBackToOverview}
@@ -483,7 +529,7 @@ export function SuiteIterationsView({
             canGenerateTestCases={canGenerateTestCases}
             generateTestCasesDisabledReason={generateTestCasesDisabledReason}
             isGeneratingTestCases={isGeneratingTestCases}
-            onRunTestCase={onRunTestCase}
+            onRunTestCase={onRunTestCaseWithOverride}
             blockTestCaseRuns={Boolean(rerunningSuiteId || replayingRunId)}
             runningTestCaseId={runningTestCaseId}
             availableModels={availableModels}
@@ -631,7 +677,7 @@ export function SuiteIterationsView({
                       })
                     }
                     onRunClick={handleRunClick}
-                    onRunTestCase={onRunTestCase}
+                    onRunTestCase={onRunTestCaseWithOverride}
                     runningTestCaseId={runningTestCaseId}
                     blockTestCaseRuns={Boolean(
                       rerunningSuiteId || replayingRunId,
@@ -762,7 +808,7 @@ export function SuiteIterationsView({
                         })
                       }
                       onDeleteTestCasesBatch={onDeleteTestCasesBatch}
-                      onRunTestCase={onRunTestCase}
+                      onRunTestCase={onRunTestCaseWithOverride}
                       runningTestCaseId={runningTestCaseId}
                       blockTestCaseRuns={Boolean(
                         rerunningSuiteId || replayingRunId
@@ -935,6 +981,30 @@ export function SuiteIterationsView({
                     setDefaultMinimumPassRate(
                       suite.defaultPassCriteria?.minimumPassRate ?? 100
                     );
+                  }
+                }}
+              />
+            </div>
+
+            {/* Default Validators Section */}
+            <div className="space-y-3">
+              <ValidatorsSection
+                title="Default validators"
+                description="Applied to every run unless a test case or 'this run' popover changes them."
+                value={suite.defaultMatchOptions}
+                inheritedFrom={MATCH_OPTIONS_DEFAULTS}
+                onChange={async (next: EvalMatchOptions | undefined) => {
+                  try {
+                    await updateSuite({
+                      suiteId: suite._id,
+                      defaultMatchOptions: next ?? null,
+                    });
+                    toast.success("Default validators updated");
+                  } catch (error) {
+                    toast.error(
+                      getBillingErrorMessage(error, "Failed to update suite")
+                    );
+                    console.error("Failed to update default validators:", error);
                   }
                 }}
               />

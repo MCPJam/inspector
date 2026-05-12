@@ -136,7 +136,10 @@ export function draftToHostConfigInputV2(
   draft: ChatboxDraftConfig,
   projectDefault?: Pick<
     HostConfigInputV2,
-    "connectionDefaults" | "clientCapabilities" | "hostContext"
+    | "connectionDefaults"
+    | "clientCapabilities"
+    | "hostContext"
+    | "hostCapabilitiesOverride"
   > | null,
 ): HostConfigInputV2 {
   const seed = emptyHostConfigInputV2({
@@ -150,6 +153,10 @@ export function draftToHostConfigInputV2(
     connectionDefaults: projectDefault?.connectionDefaults,
     clientCapabilities: projectDefault?.clientCapabilities,
     hostContext: projectDefault?.hostContext,
+    // Inherit the project default's MCP Apps capability override so
+    // new/edited chatboxes match what the project-default editor saved.
+    // Undefined here keeps "use the active host style preset" intact.
+    hostCapabilitiesOverride: projectDefault?.hostCapabilitiesOverride,
   });
   return seed;
 }

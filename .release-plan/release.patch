@@ -15,28 +15,28 @@ index 9ca91d5d2..000000000
 -- Compare-plans table: removed the team seat-minimum label and finished the Projects row in the plan comparison.
 -- Chatbox builder: removed the unused `allowGuestAccess` toggle.
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 25bea9ab7..b14c96000 100644
+index b14c96000..dbf3d5570 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.4.7",
-+  "version": "2.4.8",
+-  "version": "2.4.8",
++  "version": "2.4.9",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
 diff --git a/package-lock.json b/package-lock.json
-index 760f964b3..93ee30f7a 100644
+index 93ee30f7a..3179ddff4 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -288,7 +288,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.4.7",
-+      "version": "2.4.8",
+-      "version": "2.4.8",
++      "version": "2.4.9",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/anthropic": "^3.0.36",

@@ -63,9 +63,7 @@ export function SuiteRow({
     );
   }, [suite, suiteDetails]);
 
-  const testCount = Array.isArray(suite.config?.tests)
-    ? suite.config.tests.length
-    : 0;
+  const testCount = suiteDetails?.testCases.length ?? 0;
 
   const serverTags = useMemo(() => {
     if (!Array.isArray(servers)) return [] as string[];

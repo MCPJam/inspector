@@ -8,6 +8,7 @@ export interface ElectronAPI {
   app: {
     getVersion: () => Promise<string>;
     getPlatform: () => Promise<string>;
+    openExternal: (url: string) => Promise<void>;
   };
 
   // File operations

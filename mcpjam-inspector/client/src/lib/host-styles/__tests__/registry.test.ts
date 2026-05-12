@@ -3,7 +3,9 @@ import {
   CHATGPT_HOST_STYLE,
   CLAUDE_HOST_STYLE,
   DEFAULT_HOST_STYLE,
+  SPEC_DEFAULT_HOST_CAPABILITIES,
   findHostStyle,
+  getHostCapabilitiesForStyle,
   getHostStyleOrDefault,
   isKnownHostStyleId,
   listHostStyles,
@@ -56,6 +58,7 @@ describe("host-styles registry", () => {
       protocolOverride: CLAUDE_HOST_STYLE.protocolOverride,
       platform: "web",
       fontCss: "",
+      hostCapabilities: {},
       resolveStyleVariables: CLAUDE_HOST_STYLE.resolveStyleVariables,
       resolveChatBackground: () => "rgba(0, 0, 0, 1)",
     };
@@ -65,6 +68,38 @@ describe("host-styles registry", () => {
     expect(findHostStyle("test-host-registry")).toBe(fakeStyle);
     expect(isKnownHostStyleId("test-host-registry")).toBe(true);
     expect(listHostStyles()).toContain(fakeStyle);
+  });
+
+  it("returns the host style's hostCapabilities preset by id", () => {
+    expect(getHostCapabilitiesForStyle("claude")).toBe(
+      CLAUDE_HOST_STYLE.hostCapabilities,
+    );
+    expect(getHostCapabilitiesForStyle("chatgpt")).toBe(
+      CHATGPT_HOST_STYLE.hostCapabilities,
+    );
+  });
+
+  it("falls back to the spec-default capabilities for unknown ids (NOT claude)", () => {
+    // Critical: we don't want unknown ids to silently impersonate Claude's
+    // capability blob. The honest fallback is "no claims."
+    expect(getHostCapabilitiesForStyle("does-not-exist")).toBe(
+      SPEC_DEFAULT_HOST_CAPABILITIES,
+    );
+    expect(getHostCapabilitiesForStyle(null)).toBe(
+      SPEC_DEFAULT_HOST_CAPABILITIES,
+    );
+    expect(getHostCapabilitiesForStyle(undefined)).toBe(
+      SPEC_DEFAULT_HOST_CAPABILITIES,
+    );
+  });
+
+  it("differentiates claude and chatgpt capability presets", () => {
+    // Two profiles MUST differ in at least one observable key — otherwise
+    // host-style switching is cosmetic only and provides no signal to
+    // widget authors testing cross-client.
+    expect(CLAUDE_HOST_STYLE.hostCapabilities).not.toEqual(
+      CHATGPT_HOST_STYLE.hostCapabilities,
+    );
   });
 
   it("rejects duplicate host style ids", async () => {
