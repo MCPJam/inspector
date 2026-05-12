@@ -754,6 +754,13 @@ function isHostedClampBlocked(domain: string, _key: CspDirectiveKey): boolean {
     v6groups !== null &&
     v6groups.slice(0, 7).every((g) => g === "0") &&
     v6groups[7] === "1";
+  // IPv6 unspecified address (RFC 4291 §2.5.2): `::` — all-zero
+  // groups. The v6 analog of IPv4 `0.0.0.0`; on dual-stack hosts
+  // it routes to local services and is exactly the class of risk
+  // the explicit `0.0.0.0` block exists to prevent. Closing it
+  // here so an attacker can't slip past by picking the v6 form.
+  const isIpv6Unspecified =
+    v6groups !== null && v6groups.every((g) => g === "0");
   // IPv6 Unique Local Address (RFC 4193): fc00::/7 — first 7 bits
   // are 1111110. In hex, first group has high nibble 0xfc or 0xfd
   // (any value in [0xfc00, 0xfdff]). These are the IPv6 analog of
@@ -801,6 +808,7 @@ function isHostedClampBlocked(domain: string, _key: CspDirectiveKey): boolean {
     effectiveHost.startsWith("10.") ||
     effectiveHost.startsWith("192.168.") ||
     isIpv6Loopback ||
+    isIpv6Unspecified ||
     isIpv6Ula ||
     isIpv6LinkLocal
   ) {

@@ -444,6 +444,32 @@ describe("resolveSandboxCsp — hosted-mode hard clamp", () => {
     ]);
   });
 
+  it("strips IPv6 unspecified address `::` (regression: dual-stack 0.0.0.0 analog)", () => {
+    // Regression for Bugbot Medium: `[::]` is the IPv6 wildcard
+    // bind address — on dual-stack hosts it routes to local
+    // services exactly the same way `0.0.0.0` does. Without an
+    // explicit check, it slipped past the clamp because:
+    //   - isIpv6Loopback requires last group = 1 (it's 0)
+    //   - not ULA (first group not in fc00–fdff)
+    //   - not link-local (first group not in fe80–febf)
+    //   - not IPv4-mapped (group 5 not "ffff")
+    //   - string-match checks compare against IPv4 literals only.
+    const result = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: [
+          "https://api.example.com",
+          "http://[::]:3000",
+          "http://[::]",
+          "http://[0:0:0:0:0:0:0:0]",
+        ],
+      },
+      isHostedMode: true,
+    });
+    expect(result.effective.connectDomains).toEqual([
+      "https://api.example.com",
+    ]);
+  });
+
   it("strips canonical and compressed IPv6 loopback forms (regression: 0:0:0:0:0:0:0:1, ::1, 0::1)", () => {
     // Regression for CodeRabbit Critical follow-up: literal-string
     // `effectiveHost === "::1"` only catches one IPv6 loopback form.
