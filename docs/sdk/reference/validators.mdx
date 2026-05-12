@@ -398,6 +398,97 @@ const test = new EvalTest({
 
 ---
 
+## Structured Eval Matching
+
+Use these exports when you need detailed match results or want to share match configuration across suite, case, and run layers.
+
+### evaluateToolCalls()
+
+Returns a structured result describing which calls matched, were missing, were extra, or were out of order.
+
+```typescript
+evaluateToolCalls(
+  expected: EvalToolCall[],
+  actual: EvalToolCall[],
+  options?: EvalMatchOptions & { isNegativeTest?: boolean }
+): EvalToolCallMatchResult
+```
+
+#### EvalMatchOptions
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `toolCallOrder` | `"ignore" \| "strict"` | `"ignore"` | Whether actual calls must appear in the same order as expected. |
+| `allowExtraToolCalls` | `boolean` | `true` | When `false`, any call not in the expected list fails. |
+| `argumentMatching` | `"partial" \| "exact" \| "ignore"` | `"partial"` | `"partial"` — actual args must contain expected keys; `"exact"` — no extra keys allowed; `"ignore"` — skip argument comparison. |
+
+#### EvalToolCallMatchResult
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `passed` | `boolean` | Whether the overall match passed. |
+| `missing` | `EvalToolCall[]` | Expected calls not found in actual. |
+| `extra` | `EvalToolCall[]` | Actual calls not in expected. |
+| `outOfOrder` | `EvalOutOfOrderToolCall[]` | Calls present but in the wrong position (strict order only). |
+| `argumentMismatches` | `EvalArgumentMismatch[]` | Calls where arguments did not match. |
+
+#### Example
+
+```typescript
+import { evaluateToolCalls } from "@mcpjam/sdk";
+
+const result = evaluateToolCalls(
+  [{ toolName: "add", arguments: { a: 1, b: 2 } }],
+  [{ toolName: "add", arguments: { a: 1, b: 2, extra: "x" } }],
+  { argumentMatching: "exact" },
+);
+
+console.log(result.passed);              // false
+console.log(result.argumentMismatches);  // [{ toolName: "add", ... }]
+```
+
+---
+
+### MATCH_OPTIONS_DEFAULTS
+
+The canonical defaults used by `evaluateToolCalls` when options are omitted. Import this constant to avoid redefining the same literals in your own code.
+
+```typescript
+import { MATCH_OPTIONS_DEFAULTS } from "@mcpjam/sdk";
+
+console.log(MATCH_OPTIONS_DEFAULTS);
+// { toolCallOrder: "ignore", allowExtraToolCalls: true, argumentMatching: "partial" }
+```
+
+---
+
+### resolveMatchOptions()
+
+Merges match options from suite → case → run-override layers on top of `MATCH_OPTIONS_DEFAULTS`. `undefined` fields inherit from the next layer; explicit values win at their layer.
+
+```typescript
+resolveMatchOptions(
+  suite?: EvalMatchOptions,
+  testCase?: EvalMatchOptions,
+  runOverride?: EvalMatchOptions,
+): Required<EvalMatchOptions>
+```
+
+#### Example
+
+```typescript
+import { resolveMatchOptions } from "@mcpjam/sdk";
+
+const resolved = resolveMatchOptions(
+  { toolCallOrder: "strict" },          // suite default
+  { argumentMatching: "exact" },        // case override
+  { allowExtraToolCalls: false },       // one-off run override
+);
+// { toolCallOrder: "strict", argumentMatching: "exact", allowExtraToolCalls: false }
+```
+
+---
+
 ## Quick Reference
 
 | Validator | Use Case |
@@ -411,6 +502,9 @@ const test = new EvalTest({
 | `matchToolCallWithPartialArgs` | Subset of arguments |
 | `matchToolArgument` | Single argument value |
 | `matchToolArgumentWith` | Custom validation |
+| `evaluateToolCalls` | Structured match result with configurable options |
+| `MATCH_OPTIONS_DEFAULTS` | Canonical default match options |
+| `resolveMatchOptions` | Merge suite/case/run option layers |
 
 ---
 
