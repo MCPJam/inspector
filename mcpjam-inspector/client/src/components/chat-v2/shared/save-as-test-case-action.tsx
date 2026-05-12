@@ -118,6 +118,7 @@ export function SaveAsTestCaseAction({
         promptIndex,
         projectId,
         testCaseTitle: caseTitle.trim(),
+        updateSuiteEnvironment: true,
         ...(destinationMode === "existing"
           ? { destinationSuiteId: selectedSuiteId }
           : { newSuiteName: newSuiteName.trim() }),
