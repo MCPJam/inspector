@@ -825,7 +825,13 @@ export function MCPAppsRenderer({
   }, [
     widgetCsp,
     widgetPermissions,
-    widgetPermissive,
+    // `effectivePermissive`, NOT `widgetPermissive` — the body reads
+    // the effective value (which depends on whether the profile has
+    // saved policy), so listing `widgetPermissive` here would leave
+    // the debug-store entry stale whenever the profile toggles its
+    // sandbox block without touching widgetPermissive. Booleans
+    // compare by value in deps, so this doesn't add render churn.
+    effectivePermissive,
     resolvedCspLayers,
     resolvedPermissions,
     toolCallId,
