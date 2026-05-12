@@ -14,12 +14,12 @@ const ORDER_OPTIONS: Array<{
   value: Exclude<EvalMatchOptions["toolCallOrder"], undefined>;
   label: string;
 }> = [
-  { value: "ignore", label: "Any" },
+  { value: "ignore", label: "Any order" },
   { value: "strict", label: "Strict" },
 ];
 
 const EXTRAS_OPTIONS: Array<{ value: "true" | "false"; label: string }> = [
-  { value: "true", label: "Allowed" },
+  { value: "true", label: "Allow extras" },
   { value: "false", label: "Forbidden" },
 ];
 

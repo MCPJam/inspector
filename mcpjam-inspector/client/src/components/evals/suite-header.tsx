@@ -420,6 +420,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                 aria-label="Iterations per test case for the next run"
                 disabled={isRunAllDisabled}
               >
+                <option value="">Auto</option>
                 {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
                   <option key={n} value={n}>
                     {n}

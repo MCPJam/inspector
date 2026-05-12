@@ -222,13 +222,14 @@ export function SuiteIterationsView({
   >("model");
   /**
    * Transient per-run iteration count (1-10) applied to Run-all-cases and
-   * per-case quick runs triggered from this suite view. Defaults to 1 so the
-   * UI is self-explanatory; never written back to the persisted
-   * `EvalCase.runs`. Server enforces an absolute cap above 10.
+   * per-case quick runs triggered from this suite view. Defaults to
+   * `undefined` (Auto) so the per-case persisted `EvalCase.runs` is honored
+   * until the user picks an explicit value. Never written back to
+   * persistence. Server enforces an absolute cap above 10.
    */
   const [iterationOverride, setIterationOverride] = useState<
     number | undefined
-  >(1);
+  >(undefined);
 
   const onRerunWithOverride = useCallback(
     (s: EvalSuite) =>

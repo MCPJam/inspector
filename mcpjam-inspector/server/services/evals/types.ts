@@ -102,16 +102,38 @@ export const evaluateMultiTurnResults = (
       }
 
       if (turn.expectedToolCalls.length === 0) {
+        // When the turn has no expected calls, only short-circuit if extras
+        // are allowed. With allowExtraToolCalls=false, any actual call on this
+        // turn is an unexpected extra that must fail evaluation.
+        if (matchOptions?.allowExtraToolCalls !== false) {
+          return {
+            promptIndex,
+            prompt: turn.prompt,
+            expectedToolCalls: turn.expectedToolCalls,
+            actualToolCalls,
+            expectedOutput: turn.expectedOutput,
+            missing: [],
+            unexpected: [],
+            argumentMismatches: [],
+            passed: true,
+          };
+        }
+        const evaluation = evaluateResults(
+          [],
+          actualToolCalls,
+          undefined,
+          matchOptions,
+        );
         return {
           promptIndex,
           prompt: turn.prompt,
           expectedToolCalls: turn.expectedToolCalls,
           actualToolCalls,
           expectedOutput: turn.expectedOutput,
-          missing: [],
-          unexpected: [],
-          argumentMismatches: [],
-          passed: true,
+          missing: evaluation.missing,
+          unexpected: evaluation.unexpected,
+          argumentMismatches: evaluation.argumentMismatches,
+          passed: evaluation.passed,
         };
       }
 
@@ -137,14 +159,18 @@ export const evaluateMultiTurnResults = (
 
   const assertedSummaries = isNegativeTest
     ? promptSummaries
-    : promptSummaries.filter((summary) => summary.expectedToolCalls.length > 0);
+    : promptSummaries.filter(
+        // Include turns that either declared expectations OR failed at
+        // evaluation time (e.g. strict-extras turn with 0 expected calls but
+        // actual calls present). The latter would otherwise be silently
+        // dropped from the aggregate pass/fail roll-up.
+        (summary) => summary.expectedToolCalls.length > 0 || !summary.passed,
+      );
   const failedSummaries = assertedSummaries.filter(
     (summary) => !summary.passed,
   );
-  const firstFailedTurn = promptSummaries.find((summary) =>
-    isNegativeTest
-      ? !summary.passed
-      : summary.expectedToolCalls.length > 0 && !summary.passed,
+  const firstFailedTurn = promptSummaries.find(
+    (summary) => !summary.passed,
   );
 
   return {
