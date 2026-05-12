@@ -43,11 +43,6 @@ export function resolveBrowserOAuthRedirectOrigin(
 }
 
 export function getRedirectUri(): string {
-  // Check if running in Electron with custom protocol support
-  if (typeof window !== "undefined" && (window as any).electron) {
-    return "mcpjam://oauth/callback";
-  }
-
   if (typeof window !== "undefined") {
     return `${resolveBrowserOAuthRedirectOrigin(
       window.location

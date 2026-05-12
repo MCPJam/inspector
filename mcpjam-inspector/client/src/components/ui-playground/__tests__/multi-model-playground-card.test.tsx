@@ -90,6 +90,11 @@ vi.mock("@/components/chat-v2/model-compare-card-header", () => ({
   },
 }));
 
+vi.mock("@/stores/preferences/preferences-provider", () => ({
+  usePreferencesStore: <T,>(selector: (state: any) => T): T =>
+    selector({ hostCapabilitiesOverride: null }),
+}));
+
 vi.mock("@/contexts/chatbox-host-style-context", () => ({
   ChatboxHostStyleProvider: ({ children }: { children: React.ReactNode }) => (
     <>{children}</>

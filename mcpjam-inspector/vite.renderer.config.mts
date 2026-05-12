@@ -31,12 +31,19 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       fs: {
-        allow: [resolve(__dirname, "./client/src/assets")],
+        allow: [resolve(__dirname, "./client"), resolve(__dirname, "./shared")],
       },
       proxy: {
         "/api": {
           target: "http://localhost:6274",
           changeOrigin: true,
+        },
+        // Proxy WorkOS API calls during Electron local dev to avoid browser CORS
+        // issues and match the web client Vite config behavior.
+        "/user_management": {
+          target: "https://api.workos.com",
+          changeOrigin: true,
+          secure: true,
         },
       },
     },

@@ -5,9 +5,24 @@ import {
 } from "@/lib/oauth/oauthUtils";
 import { CheckCircle2, XCircle } from "lucide-react";
 
+export function buildElectronDebugCallbackUrl(): string {
+  const callbackUrl = new URL("mcpjam://oauth/callback");
+  callbackUrl.searchParams.set("flow", "debug");
+
+  const params = new URLSearchParams(window.location.search);
+  for (const [key, value] of params.entries()) {
+    callbackUrl.searchParams.append(key, value);
+  }
+
+  return callbackUrl.toString();
+}
+
 export default function OAuthDebugCallback() {
   const callbackParams = parseOAuthCallbackParams(window.location.search);
   const [codeSent, setCodeSent] = useState(false);
+  const [returnToElectronUrl, setReturnToElectronUrl] = useState<string | null>(
+    null,
+  );
   const hasAttemptedSendRef = useRef(false);
 
   useEffect(() => {
@@ -16,7 +31,28 @@ export default function OAuthDebugCallback() {
       return;
     }
 
-    // If successful and we have a code, send it to the parent window
+    const isInPopup = Boolean(window.opener && !window.opener.closed);
+    const isNamedOAuthPopup = window.name.startsWith("oauth_authorization_");
+
+    // Electron cold-start debug callbacks do not have a live opener session to
+    // hand results back to, so keep the callback visible instead of attempting
+    // popup behavior in the only app window.
+    if (window.isElectron && !isInPopup) {
+      return;
+    }
+
+    // System-browser debug callbacks need to bounce back into the Electron app.
+    // Browser popup flows may lose `window.opener` due to COOP, so preserve the
+    // fallback path for our named OAuth popup windows.
+    if (!window.isElectron && !isInPopup && !isNamedOAuthPopup) {
+      hasAttemptedSendRef.current = true;
+      const electronUrl = buildElectronDebugCallbackUrl();
+      setReturnToElectronUrl(electronUrl);
+      window.location.replace(electronUrl);
+      return;
+    }
+
+    // If successful and we have a code, send it to the parent window.
     if (callbackParams.successful && callbackParams.code) {
       hasAttemptedSendRef.current = true;
       try {
@@ -28,9 +64,6 @@ export default function OAuthDebugCallback() {
           code: callbackParams.code,
           state: stateParam,
         };
-
-        // Check if we're in a popup window
-        const isInPopup = window.opener && !window.opener.closed;
 
         // Method 1: Try window.opener (works most of the time)
         if (isInPopup) {
@@ -97,6 +130,13 @@ export default function OAuthDebugCallback() {
                 <p className="mt-4 text-xs text-muted-foreground">
                   Return to the OAuth Flow tab and paste the code to continue.
                 </p>
+                {window.isElectron && !window.opener && (
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    The debug session is no longer attached to a popup window.
+                    Reopen the OAuth Flow tab in MCPJam Inspector and start the
+                    flow again to exchange a fresh code.
+                  </p>
+                )}
               </>
             )}
           </>
@@ -111,7 +151,28 @@ export default function OAuthDebugCallback() {
             <div className="text-xs text-muted-foreground whitespace-pre-wrap">
               {generateOAuthErrorDescription(callbackParams)}
             </div>
+            {window.isElectron && !window.opener && (
+              <p className="mt-3 text-xs text-muted-foreground">
+                The debug session is no longer active in a popup window. Return
+                to MCPJam Inspector and start a new flow to retry.
+              </p>
+            )}
           </>
+        )}
+        {!window.isElectron && returnToElectronUrl && (
+          <div className="mt-4 space-y-2 text-xs text-muted-foreground">
+            <p>
+              MCPJam Desktop should open automatically. If you are back in the
+              browser, please close this page and continue in MCPJam Desktop.
+            </p>
+            <p>
+              If nothing happened,{" "}
+              <a className="underline" href={returnToElectronUrl}>
+                click here
+              </a>
+              .
+            </p>
+          </div>
         )}
       </div>
     </div>
