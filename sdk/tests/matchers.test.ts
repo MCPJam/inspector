@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { evaluateToolCalls } from "../src/matchers.js";
+import {
+  evaluateToolCalls,
+  MATCH_OPTIONS_DEFAULTS,
+  resolveMatchOptions,
+} from "../src/matchers.js";
 import type { EvalToolCall } from "../src/matchers.js";
 
 const tc = (toolName: string, args: Record<string, unknown> = {}): EvalToolCall => ({
@@ -223,5 +227,63 @@ describe("evaluateToolCalls — negative tests", () => {
     });
     expect(result.passed).toBe(false);
     expect(result.extra.map((c) => c.toolName)).toEqual(["a"]);
+  });
+});
+
+describe("MATCH_OPTIONS_DEFAULTS", () => {
+  it("matches the inline defaults documented for evaluateToolCalls", () => {
+    expect(MATCH_OPTIONS_DEFAULTS).toEqual({
+      toolCallOrder: "ignore",
+      allowExtraToolCalls: true,
+      argumentMatching: "partial",
+    });
+  });
+});
+
+describe("resolveMatchOptions precedence", () => {
+  it("returns defaults when every layer is undefined", () => {
+    expect(resolveMatchOptions()).toEqual(MATCH_OPTIONS_DEFAULTS);
+  });
+
+  it("suite < case < run override", () => {
+    const merged = resolveMatchOptions(
+      { toolCallOrder: "strict" },
+      { argumentMatching: "exact" },
+      { allowExtraToolCalls: false },
+    );
+    expect(merged).toEqual({
+      toolCallOrder: "strict",
+      argumentMatching: "exact",
+      allowExtraToolCalls: false,
+    });
+  });
+
+  it("run override wins over case override on overlapping fields", () => {
+    const merged = resolveMatchOptions(
+      undefined,
+      { toolCallOrder: "ignore", argumentMatching: "exact" },
+      { toolCallOrder: "strict" },
+    );
+    expect(merged.toolCallOrder).toBe("strict");
+    expect(merged.argumentMatching).toBe("exact");
+  });
+
+  it("case override wins over suite default on overlapping fields", () => {
+    const merged = resolveMatchOptions(
+      { allowExtraToolCalls: true },
+      { allowExtraToolCalls: false },
+      undefined,
+    );
+    expect(merged.allowExtraToolCalls).toBe(false);
+  });
+
+  it("treats explicit undefined fields as inherit (does not clobber lower layers)", () => {
+    const merged = resolveMatchOptions(
+      { toolCallOrder: "strict" },
+      { toolCallOrder: undefined, argumentMatching: "exact" },
+      undefined,
+    );
+    expect(merged.toolCallOrder).toBe("strict");
+    expect(merged.argumentMatching).toBe("exact");
   });
 });

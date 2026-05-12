@@ -1,4 +1,4 @@
-import { matchToolCalls } from "@/shared/eval-matching";
+import { evaluateToolCalls } from "@/shared/eval-matching";
 import { EvalIteration, EvalSuiteRun } from "./types";
 
 export type PassCriteriaType =
@@ -101,11 +101,17 @@ export function computeIterationPassed(
   const actual = iteration.actualToolCalls || [];
   const expected = iteration.testCaseSnapshot?.expectedToolCalls || [];
   const isNegativeTest = iteration.testCaseSnapshot?.isNegativeTest;
+  const snapshotMatchOptions = iteration.testCaseSnapshot?.matchOptions;
 
-  // Use shared matching logic
-  const matchResult = matchToolCalls(expected, actual, isNegativeTest);
+  // Use shared matching logic; honor per-iteration snapshot options when
+  // present. Missing field on old iterations → defaults preserve prior
+  // inspector behavior (order-agnostic, extras allowed, partial args).
+  const matchResult = evaluateToolCalls(expected, actual, {
+    ...snapshotMatchOptions,
+    isNegativeTest,
+  });
 
-  // For negative tests, the shared function handles everything
+  // For negative tests, the matcher handles everything
   if (isNegativeTest) {
     return matchResult.passed;
   }
@@ -115,7 +121,8 @@ export function computeIterationPassed(
     return true;
   }
 
-  // Apply tolerances from criteria
+  // Apply tolerances from criteria (aggregate-suite leniency, not
+  // per-call match semantics).
   const effectiveMissing = criteria?.allowUnexpectedTools
     ? []
     : matchResult.missing;
@@ -123,7 +130,19 @@ export function computeIterationPassed(
     ? []
     : matchResult.argumentMismatches;
 
-  return effectiveMissing.length === 0 && effectiveMismatches.length === 0;
+  if (effectiveMissing.length > 0 || effectiveMismatches.length > 0) {
+    return false;
+  }
+
+  // Snapshot may also fail on out-of-order or extras (when strict).
+  // Mirror the matcher's `passed` for those cases.
+  if (matchResult.outOfOrder.length > 0) {
+    return false;
+  }
+  if (snapshotMatchOptions?.allowExtraToolCalls === false && matchResult.extra.length > 0) {
+    return false;
+  }
+  return true;
 }
 
 /**

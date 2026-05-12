@@ -14,8 +14,11 @@
  *     `"string"` matches any string)
  */
 
+import { z } from "zod";
 import {
   evaluateToolCalls,
+  MATCH_OPTIONS_DEFAULTS,
+  resolveMatchOptions,
   type EvalArgumentMismatch,
   type EvalMatchOptions,
   type EvalOutOfOrderToolCall,
@@ -26,6 +29,25 @@ import {
 export type ToolCall = EvalToolCall;
 export type ArgumentMismatch = EvalArgumentMismatch;
 export type OutOfOrderToolCall = EvalOutOfOrderToolCall;
+
+/**
+ * Zod schema mirroring `EvalMatchOptions` for transport boundaries
+ * (HTTP request bodies, Convex args). Keep field names + value enums in
+ * lockstep with `@mcpjam/sdk/matchers`.
+ */
+export const matchOptionsSchema = z
+  .object({
+    toolCallOrder: z.enum(["ignore", "strict"]).optional(),
+    allowExtraToolCalls: z.boolean().optional(),
+    argumentMatching: z.enum(["exact", "partial", "ignore"]).optional(),
+  })
+  .strict();
+
+/**
+ * Transport DTO — narrow Pick from the SDK type so server/client wire
+ * payloads import a stable name from this boundary module.
+ */
+export type MatchOptionsDTO = z.infer<typeof matchOptionsSchema>;
 
 /**
  * Inspector-shaped result that the existing tests + UI consume.
@@ -43,7 +65,7 @@ export type ToolCallMatchResult = {
 };
 
 export type { EvalMatchOptions, EvalToolCallMatchResult };
-export { evaluateToolCalls };
+export { evaluateToolCalls, MATCH_OPTIONS_DEFAULTS, resolveMatchOptions };
 
 /**
  * Compatibility alias for the inspector's historical matcher.

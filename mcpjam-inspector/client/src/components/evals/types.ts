@@ -1,6 +1,7 @@
 import type { PromptTurn, PromptTurnToolCall } from "@/shared/prompt-turns";
 import type { EvalTraceBlobV1 } from "@/shared/eval-trace";
 import type { EvalStreamToolCall } from "@/shared/eval-stream-events";
+import type { EvalMatchOptions } from "@/shared/eval-matching";
 import type { TraceEnvelope, TraceMessage } from "./trace-viewer-adapter";
 
 export type EvalSuiteConfigTest = {
@@ -18,6 +19,8 @@ export type EvalSuiteConfigTest = {
   expectedOutput?: string; // The output or experience expected from the MCP server
   promptTurns?: PromptTurn[];
   advancedConfig?: Record<string, unknown>;
+  /** Effective validator options for this entry, resolved at run-start. */
+  matchOptions?: EvalMatchOptions;
   testCaseId?: string;
 };
 
@@ -43,6 +46,8 @@ export type EvalSuite = {
   defaultPassCriteria?: {
     minimumPassRate: number;
   };
+  /** Suite-level default validator options (used unless a case overrides). */
+  defaultMatchOptions?: EvalMatchOptions;
   _creationTime?: number; // Convex auto field
   tags?: string[];
   defaultConfig?: {
@@ -75,6 +80,8 @@ export type EvalCase = {
   expectedOutput?: string; // The output or experience expected from the MCP server
   promptTurns?: PromptTurn[];
   advancedConfig?: Record<string, unknown>;
+  /** Case-level validator override; merged on top of suite defaults. */
+  matchOptions?: EvalMatchOptions;
   lastMessageRun?: string | null;
   _creationTime?: number; // Convex auto field
 };
@@ -99,6 +106,8 @@ export type EvalIteration = {
     expectedOutput?: string; // The output or experience expected from the MCP server
     promptTurns?: PromptTurn[];
     advancedConfig?: Record<string, unknown>;
+    /** Effective validator options used for this iteration's pass/fail. */
+    matchOptions?: EvalMatchOptions;
   };
   suiteRunId?: string;
   configRevision?: string;
@@ -210,6 +219,8 @@ export type EvalSuiteRun = {
   passCriteria?: {
     minimumPassRate: number;
   };
+  /** One-off validator override applied to all iterations in this run. */
+  matchOptionsOverride?: EvalMatchOptions;
   result?: "pending" | "passed" | "failed" | "cancelled";
   source?: "ui" | "sdk";
   replayedFromRunId?: string;

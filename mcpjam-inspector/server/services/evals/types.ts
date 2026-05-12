@@ -1,5 +1,6 @@
 import {
-  matchToolCalls,
+  evaluateToolCalls,
+  type EvalMatchOptions,
   type ToolCall,
   type ArgumentMismatch,
 } from "@/shared/eval-matching";
@@ -45,25 +46,25 @@ export const evaluateResults = (
   expectedToolCalls: ToolCall[],
   toolsCalled: ToolCall[],
   isNegativeTest?: boolean,
+  matchOptions?: EvalMatchOptions,
 ): EvaluationResult => {
   const normalizedExpected = Array.isArray(expectedToolCalls)
     ? expectedToolCalls
     : [];
   const normalizedCalled = Array.isArray(toolsCalled) ? toolsCalled : [];
 
-  const matchResult = matchToolCalls(
-    normalizedExpected,
-    normalizedCalled,
+  const result = evaluateToolCalls(normalizedExpected, normalizedCalled, {
+    ...matchOptions,
     isNegativeTest,
-  );
+  });
 
   return {
     expectedToolCalls: normalizedExpected,
     toolsCalled: normalizedCalled,
-    missing: matchResult.missing,
-    unexpected: matchResult.unexpected,
-    argumentMismatches: matchResult.argumentMismatches,
-    passed: matchResult.passed,
+    missing: result.missing,
+    unexpected: result.extra,
+    argumentMismatches: result.argumentMismatches,
+    passed: result.passed,
   };
 };
 
@@ -71,6 +72,7 @@ export const evaluateMultiTurnResults = (
   promptTurns: PromptTurn[],
   toolsCalledByPrompt: ToolCall[][],
   isNegativeTest?: boolean,
+  matchOptions?: EvalMatchOptions,
 ): MultiTurnEvaluationResult => {
   const normalizedTurns = Array.isArray(promptTurns) ? promptTurns : [];
   const promptSummaries: PromptTurnEvaluation[] = normalizedTurns.map(
@@ -80,7 +82,12 @@ export const evaluateMultiTurnResults = (
         : [];
 
       if (isNegativeTest) {
-        const evaluation = evaluateResults([], actualToolCalls, true);
+        const evaluation = evaluateResults(
+          [],
+          actualToolCalls,
+          true,
+          matchOptions,
+        );
         return {
           promptIndex,
           prompt: turn.prompt,
@@ -111,6 +118,8 @@ export const evaluateMultiTurnResults = (
       const evaluation = evaluateResults(
         turn.expectedToolCalls,
         actualToolCalls,
+        undefined,
+        matchOptions,
       );
       return {
         promptIndex,

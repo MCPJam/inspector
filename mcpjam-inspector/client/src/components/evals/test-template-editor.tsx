@@ -56,8 +56,14 @@ import {
   type PromptTurn,
 } from "@/shared/prompt-turns";
 import { normalizeToolChoice } from "@/shared/tool-choice";
+import {
+  resolveMatchOptions,
+  type EvalMatchOptions,
+} from "@/shared/eval-matching";
 import { cn } from "@/lib/utils";
 import { computeIterationResult } from "./pass-criteria";
+import { ValidatorsSection } from "./validators-section";
+import { RunValidatorsPopover } from "./run-validators-popover";
 import {
   ChatboxHostStyleProvider,
   ChatboxHostThemeProvider,
@@ -114,6 +120,7 @@ interface TestTemplate {
   scenario?: string;
   promptTurns: PromptTurn[];
   advancedConfig?: Record<string, unknown>;
+  matchOptions?: EvalMatchOptions;
 }
 
 interface TestTemplateEditorProps {
@@ -331,6 +338,9 @@ export function TestTemplateEditor({
   const hostStyle = usePreferencesStore((state) => state.hostStyle);
   const setHostStyle = usePreferencesStore((state) => state.setHostStyle);
   const [editForm, setEditForm] = useState<TestTemplate | null>(null);
+  const [runMatchOptionsOverride, setRunMatchOptionsOverride] = useState<
+    EvalMatchOptions | undefined
+  >(undefined);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editorMode, setEditorMode] = useState<EditorMode>(
     openCompareFromRoute ? "run" : "config"
@@ -469,6 +479,7 @@ export function TestTemplateEditor({
       scenario: currentTestCase.scenario ?? "",
       promptTurns,
       advancedConfig: normalizeAdvancedConfig(currentTestCase.advancedConfig),
+      matchOptions: currentTestCase.matchOptions,
     });
     setExpandedPromptTurnIds(promptTurns.map((turn) => turn.id));
     // Seed the transient picker from the persisted runs so a user who saved
@@ -583,12 +594,20 @@ export function TestTemplateEditor({
     const serverNegativeFlagMismatch =
       (currentTestCase.isNegativeTest ?? false) !== effectiveNegativeOnServer;
 
+    const normalizedMatchOptions = JSON.stringify(
+      normalizeForComparison(editForm.matchOptions ?? null)
+    );
+    const normalizedCurrentMatchOptions = JSON.stringify(
+      normalizeForComparison(currentTestCase.matchOptions ?? null)
+    );
+
     return (
       editForm.title !== currentTestCase.title ||
       editForm.runs !== currentTestCase.runs ||
       normalizedScenario !== normalizedCurrentScenario ||
       normalizedPromptTurns !== normalizedCurrentPromptTurns ||
       normalizedAdvancedConfig !== normalizedCurrentAdvancedConfig ||
+      normalizedMatchOptions !== normalizedCurrentMatchOptions ||
       serverNegativeFlagMismatch
     );
   }, [editForm, currentAdvancedConfig, currentPromptTurns, currentTestCase]);
@@ -753,6 +772,7 @@ export function TestTemplateEditor({
       promptTurns: normalizedPromptTurns,
       isNegativeTest,
       advancedConfig: normalizeAdvancedConfig(form.advancedConfig),
+      matchOptions: form.matchOptions,
     };
   };
 
@@ -1240,7 +1260,9 @@ export function TestTemplateEditor({
             expectedOutput: savePayload.expectedOutput,
             promptTurns: savePayload.promptTurns,
             advancedConfig,
+            matchOptions: savePayload.matchOptions,
           },
+          matchOptionsOverride: runMatchOptionsOverride,
         });
 
         return {
@@ -1906,6 +1928,16 @@ export function TestTemplateEditor({
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <span className="inline-flex items-center gap-2">
+                        <RunValidatorsPopover
+                          persistedEffective={resolveMatchOptions(
+                            suite?.defaultMatchOptions,
+                            editForm?.matchOptions ?? currentTestCase?.matchOptions,
+                          )}
+                          runOverride={runMatchOptionsOverride}
+                          onChange={setRunMatchOptionsOverride}
+                          variant="icon"
+                          disabled={isRunningCompare}
+                        />
                         <Button
                           type="button"
                           size="sm"
@@ -1947,6 +1979,16 @@ export function TestTemplateEditor({
                   </Tooltip>
                 ) : (
                   <span className="inline-flex items-center gap-2">
+                    <RunValidatorsPopover
+                      persistedEffective={resolveMatchOptions(
+                        suite?.defaultMatchOptions,
+                        editForm?.matchOptions ?? currentTestCase?.matchOptions,
+                      )}
+                      runOverride={runMatchOptionsOverride}
+                      onChange={setRunMatchOptionsOverride}
+                      variant="icon"
+                      disabled={isRunningCompare}
+                    />
                     <Button
                       type="button"
                       size="sm"
@@ -2075,6 +2117,24 @@ export function TestTemplateEditor({
                 />
               ) : null}
             </div>
+
+            {editForm ? (
+              <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
+                <ValidatorsSection
+                  title="Validators"
+                  description="Validator settings for this case. Reset to follow the suite default."
+                  value={editForm.matchOptions}
+                  inheritedFrom={resolveMatchOptions(
+                    suite?.defaultMatchOptions,
+                  )}
+                  onChange={(next) =>
+                    setEditForm((current) =>
+                      current ? { ...current, matchOptions: next } : current
+                    )
+                  }
+                />
+              </div>
+            ) : null}
 
             {currentTestCase.lastMessageRun ? (
               <div className="flex items-center justify-end">
