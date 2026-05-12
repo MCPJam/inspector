@@ -337,6 +337,31 @@ describe("resolveSandboxCsp — hosted-mode hard clamp", () => {
     ]);
   });
 
+  it("strips IPv4-mapped IPv6 loopback / RFC-1918 in hosted mode (regression: ::ffff:* bypass)", () => {
+    // Regression for CodeRabbit Minor: `::ffff:127.0.0.1` and other
+    // IPv4-mapped IPv6 forms route packets to the embedded v4
+    // address. The previous clamp dropped them through every
+    // `startsWith("127.")` / `startsWith("10.")` etc. check because
+    // the string literal starts with `::ffff:`. Unfolding the
+    // mapped v4 inside the clamp closes that hole.
+    const result = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: [
+          "https://api.example.com",
+          "http://[::ffff:127.0.0.1]",
+          "http://[::ffff:10.0.0.1]:8443",
+          "http://[::ffff:192.168.1.5]",
+          "http://[::ffff:169.254.169.254]", // AWS IMDS — link-local exfil
+          "http://[::ffff:172.20.0.1]",
+        ],
+      },
+      isHostedMode: true,
+    });
+    expect(result.effective.connectDomains).toEqual([
+      "https://api.example.com",
+    ]);
+  });
+
   it("strips IPv6 loopback in hosted mode (regression: bracketed + bare forms)", () => {
     // Regression for Codex P1: a naive `slice(0, indexOf(':'))`
     // port-strip reduces `[::1]:3000` to `[` and bare `::1` to the

@@ -47,6 +47,27 @@ const CSP_DIRECTIVE_KEYS: readonly CspDirectiveKey[] = [
   "baseUriDomains",
 ] as const;
 
+/**
+ * Permissions the hosted-mode clamp always strips, regardless of
+ * profile intent. Camera/microphone/geolocation are sensitive
+ * vendor-trait fields the platform refuses to delegate to a
+ * widget-author profile. `clipboard-read` is included because
+ * read-side clipboard access is a credible exfil channel —
+ * `clipboard-write` is intentionally NOT clamped (most apps need
+ * "copy to clipboard" buttons and the write-side risk is much
+ * lower).
+ *
+ * Module-scoped const so the Set is allocated once (not per
+ * `resolveSandboxPermissions` call, which the renderer hits on every
+ * app render) and easy to grep for in security audits.
+ */
+const HOSTED_CLAMP_SENSITIVE_PERMISSIONS: ReadonlySet<string> = new Set([
+  "camera",
+  "microphone",
+  "geolocation",
+  "clipboard-read",
+]);
+
 export type SandboxCspMode = "host-default" | "declared" | "relaxed";
 export type SandboxPermissionsMode =
   | "resource-declared"
@@ -320,21 +341,14 @@ export function resolveSandboxPermissions(
   }
 
   // Step 4 — hosted-mode clamp. Strip sensitive permissions
-  // (camera/microphone/geolocation) regardless of profile. Matches
-  // the same defense-in-depth pattern as the CSP clamp.
-  const SENSITIVE = new Set([
-    "camera",
-    "microphone",
-    "geolocation",
-    "clipboard-read",
-    // clipboard-write deliberately NOT in the strip-list — most apps
-    // need it for "copy to clipboard" buttons and read-side leakage
-    // is the real exfil risk.
-  ]);
+  // (camera/microphone/geolocation/clipboard-read) regardless of
+  // profile. See HOSTED_CLAMP_SENSITIVE_PERMISSIONS (module scope)
+  // for the rationale per entry; the set lives at module scope so
+  // it's allocated once and audit-greppable.
   const effective: Record<string, boolean> = { ...afterDeny };
   if (args.isHostedMode) {
     for (const key of Object.keys(effective)) {
-      if (SENSITIVE.has(key)) effective[key] = false;
+      if (HOSTED_CLAMP_SENSITIVE_PERMISSIONS.has(key)) effective[key] = false;
     }
   }
 
@@ -598,25 +612,37 @@ function isHostedClampBlocked(domain: string, _key: CspDirectiveKey): boolean {
   // `slice(0, indexOf(':'))` would reduce `[::1]:3000` to `[` and
   // bare `::1` to `""`, slipping past every loopback check below).
   const lowerHost = extractHostname(host).toLowerCase();
+  // IPv4-mapped IPv6 form (`::ffff:a.b.c.d`) — the embedded v4 literal
+  // is the actual destination, so unfold it before the loopback /
+  // RFC-1918 / link-local checks fire. Without this normalization,
+  // `http://[::ffff:127.0.0.1]` survives the bracket strip (→
+  // `::ffff:127.0.0.1`) and then bypasses every `startsWith("127.")`
+  // / `startsWith("10.")` / `startsWith("192.168.")` /
+  // `startsWith("169.254.")` check below — a documented bedrock-guard
+  // bypass.
+  const v4MappedMatch = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(
+    lowerHost,
+  );
+  const effectiveHost = v4MappedMatch ? v4MappedMatch[1]! : lowerHost;
   if (
-    lowerHost === "localhost" ||
-    lowerHost === "127.0.0.1" ||
-    lowerHost.startsWith("127.") ||
-    lowerHost === "0.0.0.0" ||
-    lowerHost.startsWith("10.") ||
-    lowerHost.startsWith("192.168.") ||
-    lowerHost === "::1"
+    effectiveHost === "localhost" ||
+    effectiveHost === "127.0.0.1" ||
+    effectiveHost.startsWith("127.") ||
+    effectiveHost === "0.0.0.0" ||
+    effectiveHost.startsWith("10.") ||
+    effectiveHost.startsWith("192.168.") ||
+    effectiveHost === "::1"
   ) {
     return true;
   }
   // 172.16.0.0/12 — match `172.16.` through `172.31.`
-  const m172 = /^172\.(\d+)\./.exec(lowerHost);
+  const m172 = /^172\.(\d+)\./.exec(effectiveHost);
   if (m172) {
     const n = Number(m172[1]);
     if (n >= 16 && n <= 31) return true;
   }
   // 169.254.0.0/16 — link-local
-  if (lowerHost.startsWith("169.254.")) return true;
+  if (effectiveHost.startsWith("169.254.")) return true;
 
   // MCPJam same-origin. Strip any host ending in `mcpjam.com` /
   // `mcpjam.dev` / `mcpjam.ai` — the inspector's own API/auth

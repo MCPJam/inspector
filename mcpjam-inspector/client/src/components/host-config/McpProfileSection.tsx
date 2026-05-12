@@ -65,9 +65,13 @@ export function McpProfileSection({
   // commit). Subsection helpers don't surface their own errors yet.
   const hasError = extensionsError !== null;
 
-  // Notify parent on error-state transitions.
+  // Notify parent on error-state transitions. `onErrorChange` is
+  // intentionally omitted from deps — parent callers tend to pass
+  // inline lambdas (fresh identity per render) which would cause
+  // this effect to run on every render and flood with no-op
+  // notifications. `hasError` is the signal that matters.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useStateEffect(() => onErrorChange?.(hasError), [hasError]);
+  useEffect(() => onErrorChange?.(hasError), [hasError]);
 
   const profile = value;
   const updateProfile = (
@@ -789,20 +793,17 @@ function SandboxPermissionsSubsection({
         <span className="text-xs text-muted-foreground">
           deny (comma-separated permission names — always wins):
         </span>
-        <Input
-          value={deny.join(", ")}
+        <CommaListInput
+          ariaLabel="Permissions deny list"
           placeholder="e.g. camera, microphone"
-          onChange={(e) => {
-            const next = e.target.value
-              .split(",")
-              .map((s) => s.trim())
-              .filter((s) => s !== "");
+          value={deny}
+          onCommit={(next) =>
             update((draft) => {
               if (next.length === 0) delete draft.deny;
               else draft.deny = next;
               return draft;
-            });
-          }}
+            })
+          }
         />
       </div>
     </div>
@@ -835,16 +836,12 @@ function DomainSetEditor({
         {directives.map(({ key, placeholder }) => {
           const list = value?.[key] ?? [];
           return (
-            <Input
+            <CommaListInput
               key={key}
-              aria-label={`CSP ${key}`}
-              value={list.join(", ")}
+              ariaLabel={`CSP ${key}`}
               placeholder={placeholder}
-              onChange={(e) => {
-                const next = e.target.value
-                  .split(",")
-                  .map((s) => s.trim())
-                  .filter((s) => s !== "");
+              value={list}
+              onCommit={(next) => {
                 const draft: CspDomainSet = { ...(value ?? {}) };
                 if (next.length === 0) delete draft[key];
                 else draft[key] = next;
@@ -855,6 +852,66 @@ function DomainSetEditor({
         })}
       </div>
     </div>
+  );
+}
+
+/**
+ * Single-line input bound to a comma-separated string list, with the
+ * "swallowed comma" UX bug fixed. Routing every keystroke through a
+ * `split → trim → filter` round-trip drops the trailing empty token
+ * the instant the user types a comma, so the comma disappears under
+ * the caret. Same shape of fix as `ProtocolVersionsSubsection` and
+ * `ClientIdentitySubsection`: hold the raw typed string locally,
+ * normalize and publish upstream only on blur (and when the
+ * canonical content sourced from props changes).
+ */
+function CommaListInput({
+  value,
+  ariaLabel,
+  placeholder,
+  onCommit,
+}: {
+  /** Canonical list from upstream (normalized — no empty strings). */
+  value: string[];
+  ariaLabel: string;
+  placeholder?: string;
+  /** Receives the normalized list. Empty array means "no entries." */
+  onCommit: (next: string[]) => void;
+}) {
+  // Local raw text — what the user sees while typing.
+  const [draft, setDraft] = useState<string>(() => value.join(", "));
+  // Re-seed when the canonical content actually changes (e.g. an
+  // external reset or a sibling save that mutated the list). The
+  // sort prevents a cosmetic reorder from triggering re-sync.
+  const persistedKey = useMemo(() => [...value].sort().join("\n"), [value]);
+  const lastSyncedRef = useRef<string>(persistedKey);
+  useEffect(() => {
+    if (persistedKey !== lastSyncedRef.current) {
+      lastSyncedRef.current = persistedKey;
+      setDraft(value.join(", "));
+    }
+  }, [persistedKey, value]);
+
+  const commit = () => {
+    const next = draft
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s !== "");
+    // Pre-sync the ref to the value we're publishing so the resync
+    // effect doesn't fire on the parent's re-render and overwrite
+    // the user's input field with the joined-and-resorted output.
+    lastSyncedRef.current = [...next].sort().join("\n");
+    onCommit(next);
+  };
+
+  return (
+    <Input
+      aria-label={ariaLabel}
+      placeholder={placeholder}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+    />
   );
 }
 
@@ -893,7 +950,3 @@ function isCspDomainSetEmpty(set: CspDomainSet | undefined): boolean {
   );
 }
 
-// Tiny `useEffect`-shaped helper that avoids the import surface for
-// React's `useEffect`. Mirrors useEffect semantics for a single-deps
-// case. Kept inline to avoid a one-line wrapper hop.
-import { useEffect as useStateEffect } from "react";
