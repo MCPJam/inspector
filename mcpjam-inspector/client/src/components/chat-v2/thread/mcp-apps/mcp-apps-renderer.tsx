@@ -67,6 +67,7 @@ import {
   useChatboxHostStyle,
   useChatboxHostTheme,
 } from "@/contexts/chatbox-host-style-context";
+import { useChatboxHostCapabilitiesOverride } from "@/contexts/chatbox-host-capabilities-override-context";
 import { useHostContextStore } from "@/stores/host-context-store";
 import {
   clampDisplayModeToAvailableModes,
@@ -74,6 +75,7 @@ import {
   extractHostDisplayModes,
   extractHostTheme,
 } from "@/lib/client-config";
+import { resolveEffectiveHostCapabilities } from "@/lib/host-config-v2";
 
 // Injected by Vite at build time from package.json
 declare const __APP_VERSION__: string;
@@ -213,6 +215,7 @@ export function MCPAppsRenderer({
   const sharedHostStyle = usePreferencesStore((s) => s.hostStyle);
   const chatboxHostStyle = useChatboxHostStyle();
   const chatboxHostTheme = useChatboxHostTheme();
+  const hostCapabilitiesOverride = useChatboxHostCapabilitiesOverride();
   const draftHostContext = useHostContextStore((s) => s.draftHostContext);
   const baseHostContext = useMemo(
     () =>
@@ -788,6 +791,19 @@ export function MCPAppsRenderer({
     ? sharedHostStyle
     : chatboxHostStyle;
   const hostStyleDefinition = getHostStyleOrDefault(effectiveHostStyle);
+  // Single source of truth for what `hostCapabilities` this view will
+  // advertise. The bridge-creation effect (`new AppBridge(...)`) spreads this
+  // value into the handshake; `registerBridgeHandlers` closes over it so the
+  // future enforcement PR can read the same blob without duplicating the
+  // resolution logic (which would risk advertise/enforce drift).
+  const effectiveHostCapabilities = useMemo(
+    () =>
+      resolveEffectiveHostCapabilities({
+        hostStyle: effectiveHostStyle,
+        hostCapabilitiesOverride,
+      }),
+    [effectiveHostStyle, hostCapabilitiesOverride],
+  );
   themeModeRef.current = resolvedTheme;
   const styleVariables = useMemo(
     () => hostStyleDefinition.resolveStyleVariables(resolvedTheme),
@@ -921,6 +937,24 @@ export function MCPAppsRenderer({
     onAppSupportedDisplayModesChange,
   ]);
 
+  // ENFORCEMENT LANDING PAD (deferred):
+  // `effectiveHostCapabilities` (above) is the contract advertised in
+  // ui/initialize. The handlers bound below SHOULD eventually gate their work
+  // on it so that "advertise" and "enforce" stay in lockstep, otherwise the
+  // handshake lies (advertised "unsupported" + behavior "supported") — which
+  // is worse than no mock at all for conformance testing. Mapping for the
+  // follow-up PR:
+  //   • bridge.onopenlink            ← effectiveHostCapabilities.openLinks
+  //   • bridge.onmessage             ← effectiveHostCapabilities.message
+  //   • bridge.onupdatemodelcontext  ← effectiveHostCapabilities.updateModelContext
+  //   • bridge.oncalltool            ← effectiveHostCapabilities.serverTools
+  //   • bridge.onreadresource /
+  //     onlistresources /
+  //     onlistresourcetemplates      ← effectiveHostCapabilities.serverResources
+  //   • bridge.onloggingmessage      ← effectiveHostCapabilities.logging
+  //   • (downloadFile handler)       ← effectiveHostCapabilities.downloadFile
+  // When enforcement lands, add `effectiveHostCapabilities` to this
+  // useCallback's dep array.
   const registerBridgeHandlers = useCallback(
     (bridge: AppBridge) => {
       bridge.oninitialized = () => {
@@ -1164,16 +1198,16 @@ export function MCPAppsRenderer({
       toolState: toolState ?? null,
     });
 
+    // `effectiveHostCapabilities` is computed at component scope so
+    // `registerBridgeHandlers` can read the same value when enforcement
+    // gates land (see comment near its definition). Runtime `sandbox` stays
+    // widget-derived per SEP-1865 — CSP/permissions are approved per UI
+    // resource, not a vendor trait.
     const bridge = new AppBridge(
       null,
       { name: "mcpjam-inspector", version: __APP_VERSION__ },
       {
-        openLinks: {},
-        serverTools: {},
-        serverResources: {},
-        logging: {},
-        updateModelContext: {},
-        message: {},
+        ...effectiveHostCapabilities,
         sandbox: {
           // In permissive mode: omit CSP (undefined) to indicate no restrictions
           // In widget-declared mode: pass the widget's declared CSP
@@ -1268,6 +1302,10 @@ export function MCPAppsRenderer({
     widgetPermissions,
     widgetPermissive,
     logWidgetDebug,
+    // Bridge must rebuild when the advertised host capabilities change
+    // (host style switch or override edit) so the new handshake reflects
+    // the new contract.
+    effectiveHostCapabilities,
   ]);
 
   useEffect(() => {

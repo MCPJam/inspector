@@ -1,5 +1,19 @@
+import type { McpUiHostCapabilities } from "@modelcontextprotocol/ext-apps/app-bridge";
 import { BUILT_IN_HOST_STYLES, CLAUDE_HOST_STYLE } from "./built-ins";
 import type { HostStyleDefinition, HostStyleId } from "./types";
+
+/**
+ * Last-resort fallback used when no host style resolves (e.g., the caller
+ * passed an unknown id and we don't want to silently inherit Claude's
+ * capability blob). Mirrors the "advertise nothing" position from the SEP —
+ * widgets that gate on optional fields will treat them as unsupported.
+ *
+ * `sandbox` is intentionally omitted; it's per-resource runtime data.
+ */
+export const SPEC_DEFAULT_HOST_CAPABILITIES: Omit<
+  McpUiHostCapabilities,
+  "sandbox"
+> = {};
 
 const registry = new Map<HostStyleId, HostStyleDefinition>();
 
@@ -44,6 +58,20 @@ export function getHostStyleOrDefault(
   id: HostStyleId | null | undefined,
 ): HostStyleDefinition {
   return findHostStyle(id) ?? DEFAULT_HOST_STYLE;
+}
+
+/**
+ * Resolve the `hostCapabilities` blob this host style advertises.
+ *
+ * Unlike {@link getHostStyleOrDefault} this does NOT silently fall back to
+ * Claude's preset — an unknown/absent id returns
+ * {@link SPEC_DEFAULT_HOST_CAPABILITIES} so the resolved blob reflects an
+ * honest "no claims" baseline rather than impersonating Claude.
+ */
+export function getHostCapabilitiesForStyle(
+  id: HostStyleId | null | undefined,
+): Omit<McpUiHostCapabilities, "sandbox"> {
+  return findHostStyle(id)?.hostCapabilities ?? SPEC_DEFAULT_HOST_CAPABILITIES;
 }
 
 export function isKnownHostStyleId(id: unknown): id is HostStyleId {

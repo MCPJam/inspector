@@ -15,6 +15,11 @@ import {
 } from "@/config/claude-desktop-host-context";
 import type { HostStyleDefinition } from "./types";
 
+// NOTE: capability presets are best-effort mocks of what each vendor publicly
+// supports today. Treat them as starting points — verify against vendor docs
+// when behavior matters, and refine as the inspector's enforcement layer
+// (Step 4) lands. Sandbox is omitted intentionally; it's resource-derived at
+// runtime (see HostStyleDefinition.hostCapabilities).
 export const CLAUDE_HOST_STYLE: HostStyleDefinition = {
   id: "claude",
   label: "Claude",
@@ -25,6 +30,19 @@ export const CLAUDE_HOST_STYLE: HostStyleDefinition = {
   protocolOverride: UIType.MCP_APPS,
   platform: CLAUDE_DESKTOP_PLATFORM,
   fontCss: CLAUDE_DESKTOP_FONT_CSS,
+  // Only claim capabilities the renderer actually implements. listChanged
+  // notifications are not forwarded into the iframe yet, so omit them here
+  // — apps that gate on `listChanged: true` would otherwise hit dead paths.
+  // Re-add per field when the renderer wires the corresponding notification
+  // (see the enforcement landing pad in mcp-apps-renderer.tsx).
+  hostCapabilities: {
+    openLinks: {},
+    serverTools: {},
+    serverResources: {},
+    logging: {},
+    updateModelContext: { text: {} },
+    message: { text: {} },
+  },
   resolveStyleVariables: getClaudeDesktopStyleVariables,
   resolveChatBackground: (theme) => CLAUDE_DESKTOP_CHAT_BACKGROUND[theme],
 };
@@ -39,6 +57,19 @@ export const CHATGPT_HOST_STYLE: HostStyleDefinition = {
   protocolOverride: UIType.OPENAI_SDK,
   platform: CHATGPT_PLATFORM,
   fontCss: CHATGPT_FONT_CSS,
+  // Only claim capabilities the renderer actually implements (see comment
+  // on CLAUDE_HOST_STYLE.hostCapabilities). `downloadFile` is a renderer
+  // TODO and `listChanged` notifications aren't forwarded yet — both are
+  // omitted to keep advertise and behavior in sync.
+  hostCapabilities: {
+    openLinks: {},
+    serverTools: {},
+    // Differs from Claude: ChatGPT's Apps SDK historically focuses on tool
+    // calls rather than proxying server resources/logging. Adjust once
+    // verified against the current OpenAI Apps SDK documentation.
+    updateModelContext: { text: {} },
+    message: { text: {} },
+  },
   resolveStyleVariables: getChatGPTStyleVariables,
   resolveChatBackground: (theme) => CHATGPT_CHAT_BACKGROUND[theme],
 };

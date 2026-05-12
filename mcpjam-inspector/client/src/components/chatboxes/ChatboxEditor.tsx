@@ -63,6 +63,7 @@ import {
 } from "@mcpjam/design-system/popover";
 import { getLoadingIndicatorVariantForHostStyle } from "@/components/chat-v2/shared/loading-indicator-content";
 import { ChatboxHostStyleProvider } from "@/contexts/chatbox-host-style-context";
+import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-host-capabilities-override-context";
 import { ChatboxHostOnboardingOverlays } from "@/components/hosted/ChatboxHostOnboardingOverlays";
 import { useChatboxHostIntroGate } from "@/components/hosted/useChatboxHostIntroGate";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -1239,6 +1240,9 @@ export function ChatboxEditor({
             ) : (
               <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
                 <ChatboxHostStyleProvider value={hostStyle}>
+                  <ChatboxHostCapabilitiesOverrideProvider
+                    value={chatboxHostConfig?.hostCapabilitiesOverride}
+                  >
                   <div
                     className="flex min-h-0 flex-1 overflow-hidden"
                     data-host-style={hostStyle}
@@ -1289,6 +1293,7 @@ export function ChatboxEditor({
                       }}
                     />
                   </div>
+                  </ChatboxHostCapabilitiesOverrideProvider>
                 </ChatboxHostStyleProvider>
                 <ChatboxHostOnboardingOverlays
                   showWelcome={introGate.showWelcome}

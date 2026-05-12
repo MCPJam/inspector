@@ -16,11 +16,12 @@ import {
 } from "react";
 import {
   Clock,
+  Cpu,
   Globe,
   Hand,
   Moon,
   MousePointer2,
-  Palette,
+  Paintbrush,
   Settings2,
   Shield,
   Sun,
@@ -52,6 +53,7 @@ import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { SafeAreaEditor } from "@/components/ui-playground/SafeAreaEditor";
 import { HostContextDialog } from "@/components/shared/HostContextDialog";
+import { HostCapabilitiesOverrideDialog } from "@/components/host-config/HostCapabilitiesOverrideDialog";
 import {
   PRESET_DEVICE_CONFIGS,
   TIMEZONE_OPTIONS,
@@ -67,6 +69,13 @@ export { PRESET_DEVICE_CONFIGS } from "@/components/shared/host-context-constant
 
 const CUSTOM_DEVICE_BASE = {
   label: "Custom",
+};
+
+/** Muted toolbar hints (`design-system/tooltip`): popover chrome, avoids primary “CTA” orange. */
+const PLAYGROUND_HEADER_TOOLTIP = {
+  variant: "muted" as const,
+  sideOffset: 6,
+  collisionPadding: 12,
 };
 
 export interface HostContextHeaderProps {
@@ -92,6 +101,7 @@ export function HostContextHeader({
   const [cspPopoverOpen, setCspPopoverOpen] = useState(false);
   const [timezonePopoverOpen, setTimezonePopoverOpen] = useState(false);
   const [hostContextDialogOpen, setHostContextDialogOpen] = useState(false);
+  const [hostCapsDialogOpen, setHostCapsDialogOpen] = useState(false);
 
   const widthInputId = useId();
   const heightInputId = useId();
@@ -118,6 +128,12 @@ export function HostContextHeader({
   const themeMode = usePreferencesStore((state) => state.themeMode);
   const hostStyle = usePreferencesStore((state) => state.hostStyle);
   const setHostStyle = usePreferencesStore((state) => state.setHostStyle);
+  const hostCapabilitiesOverride = usePreferencesStore(
+    (state) => state.hostCapabilitiesOverride,
+  );
+  const setHostCapabilitiesOverride = usePreferencesStore(
+    (state) => state.setHostCapabilitiesOverride,
+  );
 
   const usesMcpAppsCsp =
     protocol === UIType.MCP_APPS ||
@@ -200,7 +216,7 @@ export function HostContextHeader({
                 </Button>
               </PopoverTrigger>
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
               <p className="font-medium">Device</p>
             </TooltipContent>
           </Tooltip>
@@ -233,7 +249,7 @@ export function HostContextHeader({
                 </Button>
               </PopoverTrigger>
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
               <p className="font-medium">Locale</p>
             </TooltipContent>
           </Tooltip>
@@ -263,7 +279,7 @@ export function HostContextHeader({
                 </Button>
               </PopoverTrigger>
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
               <p className="font-medium">Timezone</p>
             </TooltipContent>
           </Tooltip>
@@ -298,7 +314,7 @@ export function HostContextHeader({
                 </Button>
               </PopoverTrigger>
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
               <p className="font-medium">CSP</p>
             </TooltipContent>
           </Tooltip>
@@ -323,9 +339,9 @@ export function HostContextHeader({
                 <MousePointer2 className="h-3.5 w-3.5" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
               <p className="font-medium">Hover</p>
-              <p className="text-xs font-light text-primary-foreground/90">
+              <p className="text-xs font-light text-muted-foreground">
                 {capabilities.hover ? "Enabled" : "Disabled"}
               </p>
             </TooltipContent>
@@ -342,9 +358,9 @@ export function HostContextHeader({
                 <Hand className="h-3.5 w-3.5" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
               <p className="font-medium">Touch</p>
-              <p className="text-xs font-light text-primary-foreground/90">
+              <p className="text-xs font-light text-muted-foreground">
                 {capabilities.touch ? "Enabled" : "Disabled"}
               </p>
             </TooltipContent>
@@ -357,7 +373,7 @@ export function HostContextHeader({
               <SafeAreaEditor />
             </div>
           </TooltipTrigger>
-          <TooltipContent>
+          <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
             <p className="font-medium">Safe Area</p>
           </TooltipContent>
         </Tooltip>
@@ -382,7 +398,7 @@ export function HostContextHeader({
               ) : null}
             </Button>
           </TooltipTrigger>
-          <TooltipContent>
+          <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP} className="max-w-sm">
             <p className="font-medium">Host Context</p>
             <p className="text-xs text-muted-foreground">
               Edit raw `hostContext` JSON
@@ -392,9 +408,37 @@ export function HostContextHeader({
 
         <Tooltip>
           <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 shrink-0 gap-1.5 border bg-background px-2 text-xs shadow-xs"
+              data-testid="host-capabilities-trigger"
+              onClick={() => setHostCapsDialogOpen(true)}
+            >
+              <Cpu className="h-3.5 w-3.5" />
+              <span className="whitespace-nowrap @max-[700px]/playground-header:sr-only">
+                Host Capabilities
+              </span>
+              {hostCapabilitiesOverride !== undefined ? (
+                <span className="whitespace-nowrap text-[10px] text-amber-600 @max-[700px]/playground-header:sr-only dark:text-amber-400">
+                  Override
+                </span>
+              ) : null}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP} className="max-w-sm">
+            <p className="font-medium">Host Capabilities</p>
+            <p className="text-xs text-muted-foreground">
+              Override the `hostCapabilities` advertised in ui/initialize
+            </p>
+          </TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
             <div className="flex shrink-0 items-center gap-0.5 rounded-md border bg-background p-0.5 shadow-xs">
               <div className="flex h-6 w-6 items-center justify-center @max-[820px]/playground-header:hidden">
-                <Palette className="h-3.5 w-3.5 text-muted-foreground" />
+                <Paintbrush className="h-3.5 w-3.5 text-muted-foreground" />
               </div>
               {listHostStyles().map((host) => (
                 <Button
@@ -413,7 +457,9 @@ export function HostContextHeader({
               ))}
             </div>
           </TooltipTrigger>
-          <TooltipContent>Host Styles</TooltipContent>
+          <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
+            <p className="font-medium">Host Styles</p>
+          </TooltipContent>
         </Tooltip>
 
         {showThemeToggle ? (
@@ -433,8 +479,10 @@ export function HostContextHeader({
                 )}
               </Button>
             </TooltipTrigger>
-            <TooltipContent>
-              {effectiveThemeMode === "dark" ? "Light mode" : "Dark mode"}
+            <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
+              <p className="font-medium">
+                {effectiveThemeMode === "dark" ? "Light mode" : "Dark mode"}
+              </p>
             </TooltipContent>
           </Tooltip>
         ) : null}
@@ -445,6 +493,14 @@ export function HostContextHeader({
         open={hostContextDialogOpen}
         onOpenChange={setHostContextDialogOpen}
         onSaveHostContext={onSaveHostContext}
+      />
+
+      <HostCapabilitiesOverrideDialog
+        open={hostCapsDialogOpen}
+        onOpenChange={setHostCapsDialogOpen}
+        hostStyle={hostStyle}
+        override={hostCapabilitiesOverride}
+        onSave={setHostCapabilitiesOverride}
       />
     </div>
   );

@@ -3,6 +3,7 @@ import {
   emptyHostConfigInputV2,
   hostConfigDtoToInput,
   hostConfigInputsEqual,
+  resolveEffectiveHostCapabilities,
   type HostConfigDtoV2,
   type HostConfigInputV2,
 } from "../host-config-v2";
@@ -85,6 +86,31 @@ describe("hostConfigInputsEqual", () => {
     });
     const b = makeInput({
       connectionDefaults: { headers: {}, requestTimeout: 5001 },
+    });
+    expect(hostConfigInputsEqual(a, b)).toBe(false);
+  });
+
+  it("treats two undefined hostCapabilitiesOverrides as equal", () => {
+    expect(
+      hostConfigInputsEqual(
+        makeInput({ hostCapabilitiesOverride: undefined }),
+        makeInput({ hostCapabilitiesOverride: undefined }),
+      ),
+    ).toBe(true);
+  });
+
+  it("distinguishes undefined from an empty {} override", () => {
+    const a = makeInput({ hostCapabilitiesOverride: undefined });
+    const b = makeInput({ hostCapabilitiesOverride: {} });
+    expect(hostConfigInputsEqual(a, b)).toBe(false);
+  });
+
+  it("detects nested value changes in hostCapabilitiesOverride", () => {
+    const a = makeInput({
+      hostCapabilitiesOverride: { openLinks: {} } as Record<string, unknown>,
+    });
+    const b = makeInput({
+      hostCapabilitiesOverride: {} as Record<string, unknown>,
     });
     expect(hostConfigInputsEqual(a, b)).toBe(false);
   });
@@ -197,5 +223,90 @@ describe("hostConfigDtoToInput", () => {
         >
       ),
     ).toEqual({ value: 1 });
+  });
+
+  it("deep-clones hostCapabilitiesOverride when present", () => {
+    const dto: HostConfigDtoV2 = {
+      id: "host-3",
+      schemaVersion: 2,
+      hostStyle: "claude",
+      modelId: "x",
+      systemPrompt: "",
+      temperature: 0.7,
+      requireToolApproval: false,
+      serverIds: [],
+      optionalServerIds: [],
+      connectionDefaults: { headers: {}, requestTimeout: 10000 },
+      clientCapabilities: {},
+      hostContext: {},
+      hostCapabilitiesOverride: {
+        serverTools: { listChanged: true },
+      } as Record<string, unknown>,
+    };
+    const input = hostConfigDtoToInput(dto);
+    (input.hostCapabilitiesOverride!.serverTools as Record<string, unknown>)
+      .listChanged = false;
+
+    expect(
+      (dto.hostCapabilitiesOverride!.serverTools as Record<string, unknown>)
+        .listChanged,
+    ).toBe(true);
+  });
+
+  it("leaves hostCapabilitiesOverride undefined when the dto omits it", () => {
+    const dto: HostConfigDtoV2 = {
+      id: "host-4",
+      schemaVersion: 2,
+      hostStyle: "claude",
+      modelId: "x",
+      systemPrompt: "",
+      temperature: 0.7,
+      requireToolApproval: false,
+      serverIds: [],
+      optionalServerIds: [],
+      connectionDefaults: { headers: {}, requestTimeout: 10000 },
+      clientCapabilities: {},
+      hostContext: {},
+    };
+    const input = hostConfigDtoToInput(dto);
+    expect(input.hostCapabilitiesOverride).toBeUndefined();
+  });
+});
+
+describe("resolveEffectiveHostCapabilities", () => {
+  it("strips sandbox from the override before returning", () => {
+    // SEP-1865: sandbox is approved per UI resource at runtime, not a
+    // vendor trait. If a user pastes sandbox into the JSON editor, it
+    // MUST NOT leak into the advertised hostCapabilities blob.
+    const resolved = resolveEffectiveHostCapabilities({
+      hostStyle: "claude",
+      hostCapabilitiesOverride: {
+        serverTools: { listChanged: true },
+        sandbox: { permissions: { camera: {} } },
+      },
+    });
+    expect(resolved).not.toHaveProperty("sandbox");
+    // Sibling fields survive — sandbox stripping must be surgical.
+    expect(resolved).toEqual({ serverTools: { listChanged: true } });
+  });
+
+  it("returns an empty {} override as 'advertise nothing' (not preset)", () => {
+    // The override is explicitly the empty object — must hash distinctly
+    // from undefined (which would fall through to the host style preset).
+    const resolved = resolveEffectiveHostCapabilities({
+      hostStyle: "claude",
+      hostCapabilitiesOverride: {},
+    });
+    expect(resolved).toEqual({});
+  });
+
+  it("falls back to the host style preset when no override is set", () => {
+    const resolved = resolveEffectiveHostCapabilities({
+      hostStyle: "claude",
+      hostCapabilitiesOverride: undefined,
+    });
+    // Claude preset advertises message; sentinel that we picked the
+    // preset rather than the spec-default {}.
+    expect(resolved).toHaveProperty("message");
   });
 });

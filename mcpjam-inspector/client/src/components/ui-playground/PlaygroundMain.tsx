@@ -99,6 +99,7 @@ import {
   ChatboxHostStyleProvider,
   ChatboxHostThemeProvider,
 } from "@/contexts/chatbox-host-style-context";
+import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-host-capabilities-override-context";
 import { useComposerOnboarding } from "@/hooks/use-composer-onboarding";
 import { useDebouncedXRayPayload } from "@/hooks/use-debounced-x-ray-payload";
 import { useModelSelectorLayoutLock } from "@/hooks/use-model-selector-layout-lock";
@@ -446,6 +447,9 @@ export function PlaygroundMain({
   // Host chat background: actual chat area colors from each host's UI
   // (separate from the 76 MCP spec widget design tokens)
   const hostStyle = usePreferencesStore((s) => s.hostStyle);
+  const hostCapabilitiesOverride = usePreferencesStore(
+    (s) => s.hostCapabilitiesOverride
+  );
   const globalThemeMode = usePreferencesStore(
     (s) => s.themeMode
   ) as ThreadThemeMode;
@@ -1744,6 +1748,9 @@ export function PlaygroundMain({
           <>
             {showLiveTraceDiagnostics && (
               <ChatboxHostStyleProvider value={hostStyle}>
+                <ChatboxHostCapabilitiesOverrideProvider
+                  value={hostCapabilitiesOverride}
+                >
                 <ChatboxHostThemeProvider value={effectiveThreadTheme}>
                   <div
                     className={cn(
@@ -1804,6 +1811,7 @@ export function PlaygroundMain({
                     </div>
                   </div>
                 </ChatboxHostThemeProvider>
+                </ChatboxHostCapabilitiesOverrideProvider>
               </ChatboxHostStyleProvider>
             )}
 
@@ -1813,6 +1821,9 @@ export function PlaygroundMain({
               style={showLiveTraceDiagnostics ? { display: "none" } : undefined}
             >
               <ChatboxHostStyleProvider value={hostStyle}>
+                <ChatboxHostCapabilitiesOverrideProvider
+                  value={hostCapabilitiesOverride}
+                >
                 <ChatboxHostThemeProvider value={effectiveThreadTheme}>
                   <div
                     className={cn(
@@ -1842,6 +1853,7 @@ export function PlaygroundMain({
                     </div>
                   </div>
                 </ChatboxHostThemeProvider>
+                </ChatboxHostCapabilitiesOverrideProvider>
               </ChatboxHostStyleProvider>
             </div>
           </>
