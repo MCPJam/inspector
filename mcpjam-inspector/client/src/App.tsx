@@ -2024,7 +2024,6 @@ export default function App() {
               onRemove={handleRemoveServer}
               projects={projects}
               activeProjectId={activeProjectId}
-              organizationId={activeProjectBillingOrganizationId}
               pendingDashboardOAuth={pendingDashboardOAuth}
               isBillingContextPending={isBillingContextPending}
               isLoadingProjects={isLoadingRemoteProjects}

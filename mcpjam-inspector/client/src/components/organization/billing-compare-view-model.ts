@@ -109,18 +109,6 @@ export function buildComparePlanSectionsFromCatalog(
             ),
             enterprise: t("Custom", true),
           };
-        case "Servers per project":
-          return {
-            ...row,
-            free: formatLimitValue(
-              getEntry(planCatalog, "free").limits.maxServersPerProject,
-            ),
-            team: formatLimitValue(
-              getEntry(planCatalog, "team").limits.maxServersPerProject,
-              true,
-            ),
-            enterprise: t("Unlimited", true),
-          };
         case "Evals CI/CD runs":
           return {
             ...row,

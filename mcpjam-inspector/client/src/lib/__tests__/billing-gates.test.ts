@@ -198,7 +198,7 @@ describe("resolveBillingGateState", () => {
       useProjectBillingGate({
         projectId: "shared-ws-1",
         organizationId: null,
-        gate: BILLING_GATES.serverCreation,
+        gate: BILLING_GATES.chatboxCreation,
       }),
     );
 
@@ -214,7 +214,7 @@ describe("resolveBillingGateState", () => {
       useProjectBillingGate({
         projectId: "shared-ws-1",
         organizationId: "org-1",
-        gate: BILLING_GATES.serverCreation,
+        gate: BILLING_GATES.chatboxCreation,
       }),
     );
 

@@ -15,7 +15,6 @@ export type BillingFeatureName =
 export type BillingLimitName =
   | "maxMembers"
   | "maxProjects"
-  | "maxServersPerProject"
   | "maxChatboxesPerProject"
   | "maxEvalRunsPerMonth";
 
@@ -27,7 +26,6 @@ export type PremiumnessGateKey =
   | "auditLog"
   | "maxMembers"
   | "maxProjects"
-  | "maxServersPerProject"
   | "maxChatboxesPerProject"
   | "maxEvalRunsPerMonth";
 

@@ -60,7 +60,6 @@ function createPlanCatalog() {
         limits: {
           maxMembers: 1,
           maxProjects: 1,
-          maxServersPerProject: 3,
           maxChatboxesPerProject: 0,
           maxEvalRunsPerMonth: 5,
         },
@@ -86,7 +85,6 @@ function createPlanCatalog() {
         limits: {
           maxMembers: 3,
           maxProjects: 2,
-          maxServersPerProject: 10,
           maxChatboxesPerProject: 1,
           maxEvalRunsPerMonth: 500,
         },
@@ -115,7 +113,6 @@ function createPlanCatalog() {
         limits: {
           maxMembers: 100,
           maxProjects: 10,
-          maxServersPerProject: null,
           maxChatboxesPerProject: 3,
           maxEvalRunsPerMonth: 5000,
         },
@@ -144,7 +141,6 @@ function createPlanCatalog() {
         limits: {
           maxMembers: null,
           maxProjects: null,
-          maxServersPerProject: null,
           maxChatboxesPerProject: null,
           maxEvalRunsPerMonth: null,
         },

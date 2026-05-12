@@ -157,8 +157,6 @@ export function formatPremiumnessGateKey(gateKey: PremiumnessGateKey): string {
       return "Members";
     case "maxProjects":
       return "Projects";
-    case "maxServersPerProject":
-      return "Servers per project";
     case "maxChatboxesPerProject":
       return "Chatboxes per project";
     case "maxEvalRunsPerMonth":

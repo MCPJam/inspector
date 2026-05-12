@@ -62,7 +62,6 @@ import {
   HoverCardContent,
   HoverCardTrigger,
 } from "@mcpjam/design-system/hover-card";
-import { BILLING_GATES, useProjectBillingGate } from "@/lib/billing-gates";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -507,7 +506,6 @@ interface ServersTabProps {
   onRemove: (serverName: string) => void;
   projects: Record<string, Project>;
   activeProjectId: string;
-  organizationId: string | null;
   isBillingContextPending?: boolean;
   isLoadingProjects?: boolean;
   onProjectShared?: (
@@ -533,7 +531,6 @@ export function ServersTab({
   onRemove,
   projects,
   activeProjectId,
-  organizationId,
   isBillingContextPending = false,
   isLoadingProjects,
   onProjectShared,
@@ -550,12 +547,6 @@ export function ServersTab({
     useState<PendingQuickConnectState | null>(() => readPendingQuickConnect());
   const selectedProject = projects[activeProjectId];
   const registryProjectId = selectedProject?.sharedProjectId ?? null;
-  const resolvedOrganizationId = isBillingContextPending
-    ? null
-    : organizationId;
-  const resolvedRegistryProjectId = isBillingContextPending
-    ? null
-    : registryProjectId;
 
   const {
     catalogCards,
@@ -571,13 +562,6 @@ export function ServersTab({
 
   const [quickConnectMiniCardsExpanded, setQuickConnectMiniCardsExpanded] =
     useState(() => Object.keys(projectServers).length <= 2);
-
-  // Billing gate for server creation
-  const serverCreationGate = useProjectBillingGate({
-    projectId: resolvedRegistryProjectId,
-    organizationId: resolvedOrganizationId,
-    gate: BILLING_GATES.serverCreation,
-  });
 
   const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
     useJsonRpcPanelVisibility();
@@ -1124,13 +1108,6 @@ export function ServersTab({
   ]);
 
   const handleAddServerClick = () => {
-    if (serverCreationGate.isDenied) {
-      toast.error(
-        serverCreationGate.denialMessage ??
-          "Upgrade required to add more servers"
-      );
-      return;
-    }
     posthog.capture("add_server_button_clicked", {
       location: "servers_tab",
       platform: detectPlatform(),
@@ -1141,13 +1118,6 @@ export function ServersTab({
   };
 
   const handleImportJsonClick = () => {
-    if (serverCreationGate.isDenied) {
-      toast.error(
-        serverCreationGate.denialMessage ??
-          "Upgrade required to add more servers"
-      );
-      return;
-    }
     posthog.capture("import_json_button_clicked", {
       location: "servers_tab",
       platform: detectPlatform(),

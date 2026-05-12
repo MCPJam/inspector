@@ -38,10 +38,6 @@ export const BILLING_GATES = {
     gateKey: "maxProjects",
     feature: null,
   },
-  serverCreation: {
-    gateKey: "maxServersPerProject",
-    feature: null,
-  },
 } as const satisfies Record<string, BillingGateDefinition>;
 
 export interface ResolvedBillingGate {
