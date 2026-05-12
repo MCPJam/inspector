@@ -54,7 +54,7 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
       },
       {
         label: "Servers per project",
-        free: t("3"),
+        free: t("Unlimited"),
         team: t("Unlimited", true),
         enterprise: t("Unlimited", true),
       },
