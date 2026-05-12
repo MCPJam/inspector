@@ -105,6 +105,35 @@ function matchArgumentPlaceholder(
   }
 }
 
+/**
+ * Stable JSON stringify: sorts object keys recursively so deep-equality
+ * via string compare is order-insensitive. Tool args produced by
+ * different runtimes routinely come back with keys in a different order
+ * (e.g. AI SDK vs MCP server vs hand-authored expected), so a naive
+ * `JSON.stringify` compare would report false mismatches.
+ *
+ * No Date / cyclic ref handling — tool args are plain JSON in practice.
+ */
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(",")}]`;
+  }
+  const keys = Object.keys(value as Record<string, unknown>).sort();
+  return `{${keys
+    .map(
+      (k) =>
+        `${JSON.stringify(k)}:${stableStringify((value as Record<string, unknown>)[k])}`,
+    )
+    .join(",")}}`;
+}
+
+function deepEqual(a: unknown, b: unknown): boolean {
+  return stableStringify(a) === stableStringify(b);
+}
+
 function partialArgumentsMatch(
   expectedArgs: Record<string, unknown>,
   actualArgs: Record<string, unknown>,
@@ -115,7 +144,7 @@ function partialArgumentsMatch(
       if (!placeholder) return false;
       continue;
     }
-    if (JSON.stringify(actualArgs[key]) !== JSON.stringify(value)) {
+    if (!deepEqual(actualArgs[key], value)) {
       return false;
     }
   }
@@ -126,9 +155,7 @@ function exactArgumentsMatch(
   expectedArgs: Record<string, unknown>,
   actualArgs: Record<string, unknown>,
 ): boolean {
-  // Cheapest deep-equal that's good enough for tool args (no Dates, no
-  // cyclic refs in practice).
-  return JSON.stringify(expectedArgs) === JSON.stringify(actualArgs);
+  return deepEqual(expectedArgs, actualArgs);
 }
 
 function argsCompatible(

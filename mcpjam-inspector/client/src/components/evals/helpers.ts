@@ -679,9 +679,11 @@ export function groupSuitesByTag(
  */
 export function percentile(values: number[], p: number): number | null {
   if (!Array.isArray(values) || values.length === 0) return null;
-  if (p <= 0) return Math.min(...values);
-  if (p >= 1) return Math.max(...values);
+  // Sort first so the p<=0 / p>=1 short-circuits don't spread the whole
+  // array into Math.min / Math.max (blows up past ~100k args).
   const sorted = [...values].sort((a, b) => a - b);
+  if (p <= 0) return sorted[0];
+  if (p >= 1) return sorted[sorted.length - 1];
   const rank = (sorted.length - 1) * p;
   const lo = Math.floor(rank);
   const hi = Math.ceil(rank);

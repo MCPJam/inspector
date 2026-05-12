@@ -44,6 +44,14 @@ describe("evaluateToolCalls — defaults preserve inspector behavior", () => {
     expect(result.passed).toBe(true);
   });
 
+  it("nested object args match regardless of key order (partial default)", () => {
+    const result = evaluateToolCalls(
+      [tc("save", { meta: { x: 1, y: 2 } })],
+      [tc("save", { meta: { y: 2, x: 1 } })],
+    );
+    expect(result.passed).toBe(true);
+  });
+
   it("reports missing calls", () => {
     const result = evaluateToolCalls([tc("a"), tc("b")], [tc("a")]);
     expect(result.passed).toBe(false);
@@ -169,6 +177,24 @@ describe("evaluateToolCalls — argumentMatching: exact", () => {
     expect(result.argumentMismatches).toEqual([
       { toolName: "add", expectedArgs: {}, actualArgs: { a: 1 } },
     ]);
+  });
+
+  it("matches regardless of top-level key order", () => {
+    const result = evaluateToolCalls(
+      [tc("add", { a: 1, b: 2 })],
+      [tc("add", { b: 2, a: 1 })],
+      { argumentMatching: "exact" },
+    );
+    expect(result.passed).toBe(true);
+  });
+
+  it("matches regardless of nested object key order", () => {
+    const result = evaluateToolCalls(
+      [tc("save", { meta: { x: 1, y: 2 } })],
+      [tc("save", { meta: { y: 2, x: 1 } })],
+      { argumentMatching: "exact" },
+    );
+    expect(result.passed).toBe(true);
   });
 });
 

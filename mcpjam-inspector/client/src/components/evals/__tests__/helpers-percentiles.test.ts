@@ -58,6 +58,14 @@ describe("percentile", () => {
     const p = percentile(vals, 0.95);
     expect(p).toBeCloseTo(19.05, 5);
   });
+
+  it("handles very large series at p=0 / p=1 without exceeding the JS arg-spread limit", () => {
+    // 200k elements — well past the ~100k arg-spread ceiling on most
+    // engines. Pre-fix this would have thrown via Math.min/max(...vals).
+    const vals = Array.from({ length: 200_000 }, (_, i) => i);
+    expect(percentile(vals, 0)).toBe(0);
+    expect(percentile(vals, 1)).toBe(199_999);
+  });
 });
 
 describe("iteration latency percentiles", () => {
