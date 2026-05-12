@@ -562,7 +562,11 @@ export function MCPSidebar({
   const { user } = useAuth();
   const learningEnabled = !!learningFlagEnabled && isAuthenticated;
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const { updateReady, restartAndInstall } = useUpdateNotification();
+  const { status: updateStatus, restartAndInstall } = useUpdateNotification();
+  const showUpdateButton =
+    updateStatus.kind === "pending" || updateStatus.kind === "downloaded";
+  const updateInstalling =
+    updateStatus.kind === "pending" && updateStatus.installRequested;
   const [showInviteDialog, setShowInviteDialog] = useState(false);
   const learnMore = useLearnMore();
   const { state, isMobile } = useSidebar();
@@ -698,14 +702,15 @@ export function MCPSidebar({
               />
             )}
           </div>
-          {updateReady && (
+          {showUpdateButton && (
             <div className="px-2 pb-2">
               <Button
                 size="sm"
                 onClick={restartAndInstall}
+                disabled={updateInstalling}
                 className="w-full bg-primary hover:bg-primary/90 text-primary-foreground h-7 text-xs font-medium rounded-md"
               >
-                Update & Restart
+                {updateInstalling ? "Updating…" : "Update"}
               </Button>
             </div>
           )}

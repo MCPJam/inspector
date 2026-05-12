@@ -1,29 +1,30 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, act } from "@testing-library/react";
+import { renderHook, act, waitFor } from "@testing-library/react";
 import { useUpdateNotification } from "../useUpdateNotification";
+import type { UpdateStatus } from "@/types/electron";
 
-const STORAGE_KEY = "mcpjam-pending-update";
-
-// Helper to set up window.electronAPI mock
-function setupElectronMock() {
-  const mockOnUpdateReady = vi.fn();
-  const mockRemoveUpdateReadyListener = vi.fn();
+function setupElectronMock(initial: UpdateStatus = { kind: "idle" }) {
+  const mockOnUpdateStatus = vi.fn();
+  const mockRemoveUpdateStatusListener = vi.fn();
+  const mockGetUpdateStatus = vi.fn().mockResolvedValue(initial);
   const mockRestartAndInstall = vi.fn();
   const mockSimulateUpdate = vi.fn();
 
   window.isElectron = true;
   window.electronAPI = {
     update: {
-      onUpdateReady: mockOnUpdateReady,
-      removeUpdateReadyListener: mockRemoveUpdateReadyListener,
+      onUpdateStatus: mockOnUpdateStatus,
+      removeUpdateStatusListener: mockRemoveUpdateStatusListener,
+      getUpdateStatus: mockGetUpdateStatus,
       restartAndInstall: mockRestartAndInstall,
       simulateUpdate: mockSimulateUpdate,
     },
   } as any;
 
   return {
-    mockOnUpdateReady,
-    mockRemoveUpdateReadyListener,
+    mockOnUpdateStatus,
+    mockRemoveUpdateStatusListener,
+    mockGetUpdateStatus,
     mockRestartAndInstall,
     mockSimulateUpdate,
   };
@@ -36,81 +37,101 @@ function clearElectronMock() {
 
 describe("useUpdateNotification", () => {
   beforeEach(() => {
-    localStorage.clear();
     clearElectronMock();
   });
 
   describe("initial state", () => {
-    it("returns null when no update is stored", () => {
+    it("returns idle when not running in Electron", () => {
       const { result } = renderHook(() => useUpdateNotification());
-      expect(result.current.updateReady).toBeNull();
+      expect(result.current.status).toEqual({ kind: "idle" });
     });
 
-    it("restores update info from localStorage", () => {
-      const stored = { version: "2.0.0", releaseNotes: "New stuff" };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
+    it("hydrates initial status from main via getUpdateStatus", async () => {
+      const initial: UpdateStatus = {
+        kind: "downloaded",
+        version: "3.0.0",
+        releaseNotes: "Big release",
+      };
+      setupElectronMock(initial);
 
       const { result } = renderHook(() => useUpdateNotification());
-      expect(result.current.updateReady).toEqual(stored);
-    });
 
-    it("returns null when localStorage has invalid JSON", () => {
-      localStorage.setItem(STORAGE_KEY, "not-json{{{");
-
-      const { result } = renderHook(() => useUpdateNotification());
-      expect(result.current.updateReady).toBeNull();
+      await waitFor(() => {
+        expect(result.current.status).toEqual(initial);
+      });
     });
   });
 
-  describe("Electron update listener", () => {
-    it("registers onUpdateReady listener in Electron", () => {
-      const { mockOnUpdateReady } = setupElectronMock();
+  describe("Electron status listener", () => {
+    it("registers onUpdateStatus listener in Electron", () => {
+      const { mockOnUpdateStatus } = setupElectronMock();
 
       renderHook(() => useUpdateNotification());
-      expect(mockOnUpdateReady).toHaveBeenCalledWith(expect.any(Function));
+      expect(mockOnUpdateStatus).toHaveBeenCalledWith(expect.any(Function));
     });
 
     it("does not register listener when not in Electron", () => {
-      // window.isElectron is undefined
       const { result } = renderHook(() => useUpdateNotification());
-      expect(result.current.updateReady).toBeNull();
+      expect(result.current.status).toEqual({ kind: "idle" });
     });
 
-    it("sets updateReady and persists to localStorage when update arrives", () => {
-      const { mockOnUpdateReady } = setupElectronMock();
+    it("transitions through pending → downloaded as main broadcasts", () => {
+      const { mockOnUpdateStatus } = setupElectronMock();
 
       const { result } = renderHook(() => useUpdateNotification());
-
-      // Grab the callback that was passed to onUpdateReady
-      const callback = mockOnUpdateReady.mock.calls[0][0];
-      const updateInfo = { version: "3.0.0", releaseNotes: "Big release" };
+      const callback = mockOnUpdateStatus.mock.calls[0][0];
 
       act(() => {
-        callback(updateInfo);
+        callback({ kind: "pending", installRequested: false });
+      });
+      expect(result.current.status).toEqual({
+        kind: "pending",
+        installRequested: false,
       });
 
-      expect(result.current.updateReady).toEqual(updateInfo);
-      expect(localStorage.getItem(STORAGE_KEY)).toBe(
-        JSON.stringify(updateInfo),
-      );
+      act(() => {
+        callback({
+          kind: "downloaded",
+          version: "3.0.0",
+          releaseNotes: "Big release",
+        });
+      });
+      expect(result.current.status).toEqual({
+        kind: "downloaded",
+        version: "3.0.0",
+        releaseNotes: "Big release",
+      });
+    });
+
+    it("reflects installRequested flag from pending status", () => {
+      const { mockOnUpdateStatus } = setupElectronMock();
+
+      const { result } = renderHook(() => useUpdateNotification());
+      const callback = mockOnUpdateStatus.mock.calls[0][0];
+
+      act(() => {
+        callback({ kind: "pending", installRequested: true });
+      });
+
+      expect(result.current.status).toEqual({
+        kind: "pending",
+        installRequested: true,
+      });
     });
 
     it("removes listener on unmount", () => {
-      const { mockRemoveUpdateReadyListener } = setupElectronMock();
+      const { mockRemoveUpdateStatusListener } = setupElectronMock();
 
       const { unmount } = renderHook(() => useUpdateNotification());
       unmount();
 
-      expect(mockRemoveUpdateReadyListener).toHaveBeenCalled();
+      expect(mockRemoveUpdateStatusListener).toHaveBeenCalled();
     });
   });
 
   describe("restartAndInstall", () => {
-    it("clears localStorage and calls Electron API", () => {
+    it("forwards to the Electron API", () => {
       const { mockRestartAndInstall } = setupElectronMock();
-
-      // Simulate a stored update
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: "2.0.0" }));
 
       const { result } = renderHook(() => useUpdateNotification());
 
@@ -118,14 +139,12 @@ describe("useUpdateNotification", () => {
         result.current.restartAndInstall();
       });
 
-      expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
       expect(mockRestartAndInstall).toHaveBeenCalled();
     });
 
     it("does nothing when not in Electron", () => {
       const { result } = renderHook(() => useUpdateNotification());
 
-      // Should not throw
       act(() => {
         result.current.restartAndInstall();
       });
@@ -133,7 +152,7 @@ describe("useUpdateNotification", () => {
   });
 
   describe("simulateUpdate", () => {
-    it("calls Electron simulate API", () => {
+    it("calls the Electron simulate API", () => {
       const { mockSimulateUpdate } = setupElectronMock();
 
       const { result } = renderHook(() => useUpdateNotification());

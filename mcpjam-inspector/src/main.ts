@@ -15,7 +15,11 @@ import { createHonoApp } from "../server/app.js";
 import log from "electron-log";
 import { updateElectronApp } from "update-electron-app";
 import { registerListeners } from "./ipc/listeners-register.js";
-import { setupAutoUpdaterEvents } from "./ipc/update/update-listeners.js";
+import {
+  installUpdateOnQuit,
+  setTrustedUpdateWindow,
+  setupAutoUpdaterEvents,
+} from "./ipc/update/update-listeners.js";
 import {
   buildProtocolOAuthCallbackUrl,
   buildRendererCallbackUrl,
@@ -26,6 +30,10 @@ import {
 // Configure logging
 log.transports.file.level = "info";
 log.transports.console.level = "debug";
+
+// Wire autoUpdater event handlers BEFORE update-electron-app starts polling,
+// otherwise an early `update-available` event could fire before our listener exists.
+setupAutoUpdaterEvents();
 
 // Enable auto-updater (with custom notification handling)
 updateElectronApp({
@@ -402,6 +410,7 @@ async function handleOAuthCallbackUrl(url: string): Promise<void> {
     if (!mainWindow) {
       if (rendererCallbackUrl) {
         mainWindow = createMainWindow(baseUrl);
+        setTrustedUpdateWindow(mainWindow);
         mainWindow.loadURL(rendererCallbackUrl.toString());
       } else {
         const debugCallbackUrl = new URL("/oauth/callback/debug", baseUrl);
@@ -410,6 +419,7 @@ async function handleOAuthCallbackUrl(url: string): Promise<void> {
           debugCallbackUrl.searchParams.append(key, value);
         }
         mainWindow = createMainWindow(baseUrl);
+        setTrustedUpdateWindow(mainWindow);
         mainWindow.loadURL(debugCallbackUrl.toString());
       }
     } else if (rendererCallbackUrl) {
@@ -531,9 +541,6 @@ app.whenReady().then(async () => {
     // Register IPC listeners
     registerListeners(mainWindow, () => mainWindow);
 
-    // Setup auto-updater events to notify renderer when update is ready
-    setupAutoUpdaterEvents(mainWindow);
-
     appBootstrapped = true;
 
     if (pendingProtocolUrl) {
@@ -574,11 +581,13 @@ app.on("activate", async () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     if (serverPort > 0) {
       mainWindow = createMainWindow(getServerUrl());
+      setTrustedUpdateWindow(mainWindow);
     } else {
       // Restart server if needed
       try {
         serverPort = await startHonoServer();
         mainWindow = createMainWindow(getServerUrl());
+        setTrustedUpdateWindow(mainWindow);
       } catch (error) {
         log.error("Failed to restart server:", error);
       }
@@ -630,7 +639,15 @@ app.on("web-contents-created", (_, contents) => {
 });
 
 // Handle app shutdown
-app.on("before-quit", () => {
+app.on("before-quit", (event) => {
+  // Safety net: if a new build has been downloaded but the user never clicked the
+  // button, install it during quit so the next launch is on the new version.
+  // quitAndInstall() re-fires before-quit; the helper guards with isQuittingForUpdate
+  // so the second pass falls through and we still close the server.
+  if (installUpdateOnQuit()) {
+    event.preventDefault();
+    return;
+  }
   if (server) {
     server.close?.();
   }

@@ -1,62 +1,38 @@
 import { useEffect, useState, useCallback } from "react";
-
-interface UpdateInfo {
-  version: string;
-  releaseNotes?: string;
-}
-
-const STORAGE_KEY = "mcpjam-pending-update";
+import type { UpdateStatus } from "@/types/electron";
 
 export function useUpdateNotification() {
-  const [updateReady, setUpdateReady] = useState<UpdateInfo | null>(() => {
-    // Check localStorage on initial load
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        try {
-          return JSON.parse(saved);
-        } catch {
-          return null;
-        }
-      }
-    }
-    return null;
-  });
+  const [status, setStatus] = useState<UpdateStatus>({ kind: "idle" });
 
   useEffect(() => {
-    // Only set up if running in Electron
     if (!window.isElectron || !window.electronAPI?.update) {
       return;
     }
+    const api = window.electronAPI.update;
 
-    const handleUpdateReady = (info: UpdateInfo) => {
-      console.log("Update ready:", info);
-      setUpdateReady(info);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(info));
-    };
+    let cancelled = false;
+    api.getUpdateStatus().then((initial) => {
+      if (!cancelled) setStatus(initial);
+    });
 
-    window.electronAPI.update.onUpdateReady(handleUpdateReady);
+    api.onUpdateStatus((next) => setStatus(next));
 
     return () => {
-      window.electronAPI?.update?.removeUpdateReadyListener();
+      cancelled = true;
+      window.electronAPI?.update?.removeUpdateStatusListener();
     };
   }, []);
 
   const restartAndInstall = useCallback(() => {
-    if (window.electronAPI?.update) {
-      localStorage.removeItem(STORAGE_KEY);
-      window.electronAPI.update.restartAndInstall();
-    }
+    window.electronAPI?.update?.restartAndInstall();
   }, []);
 
   const simulateUpdate = useCallback(() => {
-    if (window.electronAPI?.update) {
-      window.electronAPI.update.simulateUpdate?.();
-    }
+    window.electronAPI?.update?.simulateUpdate?.();
   }, []);
 
   return {
-    updateReady,
+    status,
     restartAndInstall,
     simulateUpdate,
   };
