@@ -30,11 +30,17 @@ export type ConnectionDefaults = {
    */
   clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
   /**
-   * Per-connection proposed protocolVersion, resolved from the first entry
-   * of `hostConfig.mcpProfile.initialize.supportedProtocolVersions`. When
-   * set, the SDK sends this in `initialize.params.protocolVersion` AND uses
-   * it as the sole accept-list entry — a server that can't speak it fails
-   * fast (desired behavior for reproducible eval pins).
+   * Per-connection supported protocol versions, resolved verbatim from
+   * `hostConfig.mcpProfile.initialize.supportedProtocolVersions`. When set,
+   * the SDK sends `supportedProtocolVersions[0]` as
+   * `initialize.params.protocolVersion` and uses the full array as the
+   * accept-list — a server that negotiates any listed version is accepted;
+   * a server that negotiates an unlisted version fails fast (desired
+   * behavior for reproducible eval pins). Order is semantic; preserve it.
+   *
+   * An earlier shape passed only `proposedProtocolVersion: string`; that
+   * collapsed the accept-list to one entry and quietly broke pins where
+   * the user listed multiple versions. Forward the full array.
    */
-  proposedProtocolVersion?: string;
+  supportedProtocolVersions?: string[];
 };

@@ -388,6 +388,34 @@ function McpProfileSection({
   const [expanded, setExpanded] = useState<boolean>(profile !== undefined);
   const enabled = profile !== undefined;
 
+  // Local draft buffer for the clientInfo fields. The persisted envelope
+  // only accepts complete `{ name, version }` pairs (the backend validator
+  // rejects partial state), but the editor must let users type one field
+  // at a time. Storing the in-progress text here breaks the "input shows
+  // empty value because hasRequired = false → persisted clientInfo →
+  // undefined → controlled input rerenders empty" loop.
+  //
+  // Initialized from the persisted profile so reloads round-trip; flushed
+  // to the persisted envelope only when both required fields are present.
+  // Title is independent (optional per spec) and flushes whenever the
+  // required pair is already complete.
+  const persistedClientInfo = profile?.initialize?.clientInfo;
+  const [clientInfoDraft, setClientInfoDraft] = useState<{
+    name: string;
+    version: string;
+    title: string;
+  }>(() => ({
+    name: typeof persistedClientInfo?.name === "string" ? persistedClientInfo.name : "",
+    version:
+      typeof persistedClientInfo?.version === "string"
+        ? persistedClientInfo.version
+        : "",
+    title:
+      typeof persistedClientInfo?.title === "string"
+        ? persistedClientInfo.title
+        : "",
+  }));
+
   const enable = useCallback(() => {
     setExpanded(true);
     if (!enabled) onChange({ profileVersion: 1 });
@@ -427,24 +455,51 @@ function McpProfileSection({
 
   const updateClientInfo = useCallback(
     (patch: { name?: string; version?: string; title?: string }) => {
-      const current = profile?.initialize?.clientInfo ?? {};
-      const nextClientInfo: Record<string, unknown> = { ...current };
-      if (patch.name !== undefined) nextClientInfo.name = patch.name;
-      if (patch.version !== undefined) nextClientInfo.version = patch.version;
-      if (patch.title !== undefined) {
-        if (patch.title === "") delete nextClientInfo.title;
-        else nextClientInfo.title = patch.title;
-      }
-      // Drop the field entirely when both name + version are empty —
-      // backend validator requires both. Avoids saving partial state
-      // that would be rejected.
-      const hasRequired =
-        typeof nextClientInfo.name === "string" &&
-        nextClientInfo.name.trim() !== "" &&
-        typeof nextClientInfo.version === "string" &&
-        nextClientInfo.version.trim() !== "";
-      updateInitialize({
-        clientInfo: hasRequired ? nextClientInfo : undefined,
+      // Update the local draft (always reflects what the user typed) and
+      // separately decide whether to flush to the persisted envelope.
+      // The persisted envelope only accepts complete `{ name, version }`
+      // pairs (backend rejects partial state); the editor must let users
+      // type one field at a time, so we keep the in-progress text here
+      // and flush only when both required fields are non-empty.
+      setClientInfoDraft((prev) => {
+        const next = { ...prev };
+        if (patch.name !== undefined) next.name = patch.name;
+        if (patch.version !== undefined) next.version = patch.version;
+        if (patch.title !== undefined) next.title = patch.title;
+
+        const nameTrim = next.name.trim();
+        const versionTrim = next.version.trim();
+        const titleTrim = next.title.trim();
+        const hasRequired = nameTrim !== "" && versionTrim !== "";
+
+        // Preserve forward-compat extras (e.g. future spec fields the
+        // backend round-trips verbatim) that the persisted envelope
+        // already carries — we never round-trip them through the draft,
+        // so they'd otherwise be dropped on every flush.
+        const preserved: Record<string, unknown> = {};
+        const persisted = profile?.initialize?.clientInfo;
+        if (persisted && typeof persisted === "object") {
+          for (const [k, v] of Object.entries(persisted)) {
+            if (k === "name" || k === "version" || k === "title") continue;
+            preserved[k] = v;
+          }
+        }
+
+        if (hasRequired) {
+          const nextClientInfo: Record<string, unknown> = {
+            ...preserved,
+            name: nameTrim,
+            version: versionTrim,
+          };
+          if (titleTrim !== "") nextClientInfo.title = titleTrim;
+          updateInitialize({ clientInfo: nextClientInfo });
+        } else {
+          // Required pair incomplete — drop `clientInfo` from the envelope
+          // so the backend doesn't reject the save. The draft survives so
+          // the user can keep typing.
+          updateInitialize({ clientInfo: undefined });
+        }
+        return next;
       });
     },
     [profile, updateInitialize],
@@ -481,7 +536,10 @@ function McpProfileSection({
     );
   }
 
-  const clientInfo = profile?.initialize?.clientInfo ?? {};
+  // Inputs read from the local draft (which always reflects what the user
+  // typed); the persisted envelope only sees complete combos. See the
+  // `clientInfoDraft` state declaration above for rationale.
+  const clientInfo = clientInfoDraft;
   const protocolVersionsText = (
     profile?.initialize?.supportedProtocolVersions ?? []
   ).join("\n");
@@ -513,30 +571,28 @@ function McpProfileSection({
       {expanded ? (
         <>
           <div className="grid gap-2">
-            <Label className="text-xs font-medium">Client identity</Label>
+            <Label className="text-xs font-medium" htmlFor="mcp-profile-client-name">
+              Client identity
+            </Label>
             <div className="grid grid-cols-2 gap-2">
               <Input
+                id="mcp-profile-client-name"
+                aria-label="Client name"
                 placeholder="name (e.g. chatgpt)"
-                value={
-                  typeof clientInfo.name === "string" ? clientInfo.name : ""
-                }
+                value={clientInfo.name}
                 onChange={(e) => updateClientInfo({ name: e.target.value })}
               />
               <Input
+                aria-label="Client version"
                 placeholder="version (e.g. 1.0.0)"
-                value={
-                  typeof clientInfo.version === "string"
-                    ? clientInfo.version
-                    : ""
-                }
+                value={clientInfo.version}
                 onChange={(e) => updateClientInfo({ version: e.target.value })}
               />
             </div>
             <Input
+              aria-label="Client title (optional)"
               placeholder="title (optional, e.g. ChatGPT Desktop)"
-              value={
-                typeof clientInfo.title === "string" ? clientInfo.title : ""
-              }
+              value={clientInfo.title}
               onChange={(e) => updateClientInfo({ title: e.target.value })}
             />
             <p className="text-xs text-muted-foreground">
@@ -723,11 +779,29 @@ function McpProfileCspDomainSetEditor({
   const directives: Array<{
     key: "connectDomains" | "resourceDomains" | "frameDomains" | "baseUriDomains";
     placeholder: string;
+    /** Human-readable label used for the directive's accessible name. */
+    directiveLabel: string;
   }> = [
-    { key: "connectDomains", placeholder: "https://api.example.com" },
-    { key: "resourceDomains", placeholder: "https://cdn.example.com" },
-    { key: "frameDomains", placeholder: "https://player.example.com" },
-    { key: "baseUriDomains", placeholder: "https://example.com" },
+    {
+      key: "connectDomains",
+      placeholder: "https://api.example.com",
+      directiveLabel: "connect-src",
+    },
+    {
+      key: "resourceDomains",
+      placeholder: "https://cdn.example.com",
+      directiveLabel: "resource (img/script/style/font/media)",
+    },
+    {
+      key: "frameDomains",
+      placeholder: "https://player.example.com",
+      directiveLabel: "frame-src",
+    },
+    {
+      key: "baseUriDomains",
+      placeholder: "https://example.com",
+      directiveLabel: "base-uri",
+    },
   ];
 
   const updateDirective = (
@@ -755,17 +829,29 @@ function McpProfileCspDomainSetEditor({
   };
 
   return (
-    <div className="grid gap-2">
+    <div className="grid gap-2" role="group" aria-label={label}>
       <Label className="text-xs">{label}</Label>
       {directives.map((d) => (
-        <Textarea
-          key={d.key}
-          rows={2}
-          className="font-mono text-xs"
-          placeholder={`${d.key}\n  ${d.placeholder}`}
-          value={(value?.[d.key] ?? []).join("\n")}
-          onChange={(e) => updateDirective(d.key, e.target.value)}
-        />
+        <div key={d.key} className="grid gap-1">
+          {/* Per-directive label is a real DOM <label> for screen readers.
+              The placeholder is illustrative, not the accessible name —
+              relying on placeholder text alone fails WCAG 1.3.1 / 4.1.2. */}
+          <Label
+            htmlFor={`mcp-profile-csp-${label}-${d.key}`}
+            className="text-[10px] font-mono uppercase text-muted-foreground"
+          >
+            {d.directiveLabel}
+          </Label>
+          <Textarea
+            id={`mcp-profile-csp-${label}-${d.key}`}
+            aria-label={`${label} ${d.directiveLabel}`}
+            rows={2}
+            className="font-mono text-xs"
+            placeholder={d.placeholder}
+            value={(value?.[d.key] ?? []).join("\n")}
+            onChange={(e) => updateDirective(d.key, e.target.value)}
+          />
+        </div>
       ))}
     </div>
   );

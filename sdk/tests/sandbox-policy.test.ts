@@ -392,4 +392,124 @@ describe("resolveSandboxPermissions", () => {
     expect(perms.granted).toEqual({ camera: true });
     expect(perms.trace.deniedByProfile).toEqual(["microphone"]);
   });
+
+  // Guards the aliasing regression: `trace.afterMode` used to point at the
+  // same object as `granted`, so the in-place `delete` mutations in
+  // step 3 + step 4 silently erased the stage-2 snapshot. A future
+  // refactor that re-aliases must trip this test.
+  test("trace.afterMode is the post-mode snapshot, NOT the final granted set", () => {
+    const perms = resolveSandboxPermissions({
+      resourcePermissions: { camera: true, microphone: true, geolocation: true },
+      policy: {
+        mode: "resource-declared",
+        deny: ["microphone"], // removed at step 3
+      },
+      hostedMode: true, // step 4 strips camera + geolocation
+    });
+    expect(perms.granted).toEqual({});
+    // afterMode should still include EVERY resource-declared permission —
+    // it captures the candidate set right after mode application, before
+    // any subtraction.
+    expect(perms.trace.afterMode).toEqual({
+      camera: true,
+      microphone: true,
+      geolocation: true,
+    });
+    expect(perms.trace.deniedByProfile).toEqual(["microphone"]);
+    expect(perms.trace.deniedByHostedClamp).toEqual(
+      expect.arrayContaining(["camera", "geolocation"]),
+    );
+  });
+});
+
+describe("resolveSandboxCsp — hosted clamp hostname normalization", () => {
+  test("strips mixed-case unsafe schemes (case-insensitive)", () => {
+    const csp = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: [
+          "JavaScript:alert(1)",
+          "VBSCRIPT:evil()",
+          "Data:text/html,",
+          "https://safe.com",
+        ],
+      },
+      policy: { mode: "declared" },
+      hostedMode: true,
+    });
+    expect(csp.connectDomains).toEqual(["https://safe.com"]);
+  });
+
+  test("strips ws:// and wss:// localhost / private-network endpoints", () => {
+    const csp = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: [
+          "ws://localhost:9000",
+          "wss://127.0.0.1:8443",
+          "ws://10.0.0.5",
+          "wss://api.example.com",
+        ],
+      },
+      policy: { mode: "declared" },
+      hostedMode: true,
+    });
+    expect(csp.connectDomains).toEqual(["wss://api.example.com"]);
+  });
+
+  test("strips zero-padded IPv4 and IPv4-mapped IPv6 loopback", () => {
+    const csp = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: [
+          // URL parser normalizes 127.000.000.001 → 127.0.0.1
+          "https://127.000.000.001",
+          // Bracketed IPv6 loopback
+          "https://[::1]",
+          // IPv4-mapped IPv6 loopback
+          "https://[::ffff:127.0.0.1]",
+          "https://safe.example.com",
+        ],
+      },
+      policy: { mode: "declared" },
+      hostedMode: true,
+    });
+    expect(csp.connectDomains).toEqual(["https://safe.example.com"]);
+  });
+
+  test("strips link-local (169.254.x.x) and shared address space (100.64.x.x)", () => {
+    const csp = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: [
+          "https://169.254.169.254", // cloud metadata endpoint
+          "https://100.64.0.1",
+          "https://172.20.0.1", // RFC1918
+          "https://safe.com",
+        ],
+      },
+      policy: { mode: "declared" },
+      hostedMode: true,
+    });
+    expect(csp.connectDomains).toEqual(["https://safe.com"]);
+  });
+
+  test("strips protocol-relative localhost", () => {
+    const csp = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: ["//localhost:3000", "//safe.com"],
+      },
+      policy: { mode: "declared" },
+      hostedMode: true,
+    });
+    // Protocol-relative `//safe.com` resolves to a non-loopback host.
+    expect(csp.connectDomains).toEqual(["//safe.com"]);
+  });
+
+  test("strips bare-scheme tokens including uppercase", () => {
+    const csp = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: ["HTTPS:", "HTTP:", "WSS:", "https://good.com"],
+      },
+      policy: { mode: "declared" },
+      hostedMode: true,
+    });
+    expect(csp.connectDomains).toEqual(["https://good.com"]);
+  });
 });

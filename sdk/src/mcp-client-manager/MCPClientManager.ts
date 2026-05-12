@@ -152,14 +152,13 @@ export class MCPClientManager {
    */
   private readonly defaultClientInfoExtras: Record<string, unknown>;
   /**
-   * Default proposed protocolVersion. When set, an interceptor on each
-   * Client's outgoing `initialize` request rewrites
-   * `params.protocolVersion` to this value. Per-server
-   * `proposedProtocolVersion` takes precedence. Undefined here preserves
-   * historical behavior (upstream Client's hardcoded
-   * `LATEST_PROTOCOL_VERSION`).
+   * Default supported protocol versions accept-list. Forwarded to the
+   * upstream Client as `ClientOptions.supportedProtocolVersions`. Per-
+   * server `supportedProtocolVersions` overrides this. Undefined here
+   * preserves historical behavior (upstream Client's built-in
+   * `SUPPORTED_PROTOCOL_VERSIONS` default).
    */
-  private readonly defaultProposedProtocolVersion: string | undefined;
+  private readonly defaultSupportedProtocolVersions: string[] | undefined;
   private readonly defaultCapabilities: ClientCapabilityOptions;
   private readonly defaultTimeout: number;
   private readonly defaultLogJsonRpc: boolean;
@@ -185,8 +184,8 @@ export class MCPClientManager {
       options.defaultClientVersion ?? DEFAULT_CLIENT_VERSION;
     this.defaultClientName = options.defaultClientName;
     this.defaultClientInfoExtras = options.defaultClientInfoExtras ?? {};
-    this.defaultProposedProtocolVersion =
-      options.defaultProposedProtocolVersion;
+    this.defaultSupportedProtocolVersions =
+      options.defaultSupportedProtocolVersions;
     this.defaultCapabilities = mergeClientCapabilities(
       getDefaultClientCapabilities(),
       options.defaultCapabilities
@@ -1146,25 +1145,26 @@ export class MCPClientManager {
           config.version ??
           this.defaultClientVersion,
       };
-      // Resolve the proposed protocolVersion accept-list. Per-server
-      // `proposedProtocolVersion` wins over `defaultProposedProtocolVersion`;
-      // when neither is set, we omit the option so the upstream Client uses
-      // its built-in `SUPPORTED_PROTOCOL_VERSIONS` default (preserves
-      // historical wire behavior byte-for-byte). The MCP SDK's Client
-      // already accepts `supportedProtocolVersions: string[]` in its
-      // ClientOptions/ProtocolOptions — first entry is sent in
+      // Resolve the supported protocol versions accept-list. Per-server
+      // `supportedProtocolVersions` wins over
+      // `defaultSupportedProtocolVersions`; when neither is set we omit the
+      // option so the upstream Client uses its built-in
+      // `SUPPORTED_PROTOCOL_VERSIONS` default (preserves historical wire
+      // behavior byte-for-byte). The MCP SDK's Client accepts
+      // `supportedProtocolVersions: string[]` in ClientOptions —
+      // `supportedProtocolVersions[0]` is sent in
       // `initialize.params.protocolVersion`; the full set is the accept-
-      // list used to validate the server's response. Mirrors the
-      // parameterized pattern the OAuth state machines have been using
-      // via `buildInitializeRequestBody` in
-      // `sdk/src/oauth/state-machines/shared/initialize.ts`.
-      const proposedProtocolVersion =
-        config.proposedProtocolVersion ??
-        this.defaultProposedProtocolVersion;
+      // list used to validate the server's response. Forwarding the full
+      // array (rather than collapsing to a single entry) lets users pin a
+      // multi-version accept-list — e.g. `["2025-11-25", "2025-06-18"]`
+      // proposes the newer version but still accepts the older one.
+      const supportedProtocolVersions =
+        config.supportedProtocolVersions ??
+        this.defaultSupportedProtocolVersions;
       const clientOptions: ClientOptions = {
         capabilities: clientCapabilities,
-        ...(proposedProtocolVersion
-          ? { supportedProtocolVersions: [proposedProtocolVersion] }
+        ...(supportedProtocolVersions && supportedProtocolVersions.length > 0
+          ? { supportedProtocolVersions }
           : {}),
       };
       client = new Client(

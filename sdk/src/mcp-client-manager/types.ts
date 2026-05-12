@@ -63,19 +63,19 @@ export type BaseServerConfig = {
    */
   clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
   /**
-   * Proposed protocolVersion to send in MCP `initialize.params`. When set,
-   * this overrides the upstream Client's hardcoded `LATEST_PROTOCOL_VERSION`
-   * via an outgoing-request interceptor (rewrite of `initialize` params
-   * only; subsequent requests are unaffected).
+   * Supported protocol versions accept-list passed into the upstream Client
+   * as `ClientOptions.supportedProtocolVersions`. The Client sends
+   * `supportedProtocolVersions[0]` as `initialize.params.protocolVersion`
+   * and accepts any of the listed versions in the server's response.
    *
-   * Wired into the inspector via the first entry of
-   * `hostConfig.mcpProfile.initialize.supportedProtocolVersions`. The
-   * upstream Client still validates the server's response against its
-   * `SUPPORTED_PROTOCOL_VERSIONS` allowlist — pinning a version the SDK
-   * doesn't recognize will fail at connect time, which is the desired
-   * behavior for reproducible eval pins.
+   * Wired into the inspector verbatim from
+   * `hostConfig.mcpProfile.initialize.supportedProtocolVersions`. Order is
+   * semantic — preserve it. A pin like `["2025-11-25", "2025-06-18"]`
+   * proposes the newer version but still accepts the older one if the
+   * server negotiates it; the prior shape (`proposedProtocolVersion:
+   * string`) collapsed this to a singleton and silently broke that case.
    */
-  proposedProtocolVersion?: string;
+  supportedProtocolVersions?: string[];
   /** Error handler for this server */
   onError?: (error: unknown) => void;
   /** Enable simple console logging of JSON-RPC traffic */
@@ -288,12 +288,12 @@ export interface MCPClientManagerOptions {
    */
   defaultClientInfoExtras?: Record<string, unknown>;
   /**
-   * Default proposed protocolVersion sent in MCP `initialize.params`. Per-
-   * server `proposedProtocolVersion` overrides this. When neither is set,
-   * the upstream Client's hardcoded `LATEST_PROTOCOL_VERSION` is used and
-   * historical behavior is preserved verbatim.
+   * Default supported protocol versions accept-list. Per-server
+   * `supportedProtocolVersions` overrides this. When neither is set, the
+   * upstream Client's built-in `SUPPORTED_PROTOCOL_VERSIONS` default is
+   * used and historical behavior is preserved verbatim.
    */
-  defaultProposedProtocolVersion?: string;
+  defaultSupportedProtocolVersions?: string[];
   /** Default capabilities to advertise */
   defaultCapabilities?: ClientCapabilityOptions;
   /** Default request timeout in milliseconds */

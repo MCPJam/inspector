@@ -259,27 +259,39 @@ export function parseConnectionDefaults(
     out.clientCapabilities = input.clientCapabilities as Record<string, unknown>;
   }
 
-  // Accept clientInfo only as a plain object with at least a `name` or
-  // `version` — gates against null/array/scalar shapes that would slip
-  // past `typeof === "object"`. Same advisory posture as the other fields:
-  // drop rather than reject so a malformed wire payload doesn't kill the
-  // whole connect request.
+  // Accept clientInfo as a plain object (not null/array/scalar). Drop on
+  // shape mismatch rather than reject — a malformed payload shouldn't kill
+  // the whole connect request. Extras-only objects (`{ title: "..." }`
+  // without name/version) survive this gate because the upstream MCP
+  // Client backfills name/version from manager defaults; gating on
+  // name/version presence here used to silently drop forward-compat
+  // payloads where the host only wanted to pin `title` or future spec
+  // fields.
   if (
     input.clientInfo &&
     typeof input.clientInfo === "object" &&
     !Array.isArray(input.clientInfo)
   ) {
     const ci = input.clientInfo as Record<string, unknown>;
-    if (typeof ci.name === "string" || typeof ci.version === "string") {
+    // Require at least one own enumerable key so a literal `{}` doesn't
+    // hash distinctly from "field omitted" in downstream wire logs.
+    if (Object.keys(ci).length > 0) {
       out.clientInfo = ci as ConnectionDefaults["clientInfo"];
     }
   }
 
-  if (
-    typeof input.proposedProtocolVersion === "string" &&
-    input.proposedProtocolVersion.trim() !== ""
-  ) {
-    out.proposedProtocolVersion = input.proposedProtocolVersion;
+  // Accept the full supportedProtocolVersions array. Filter to non-empty
+  // trimmed strings — preserves order (semantic per the SDK contract:
+  // `supportedProtocolVersions[0]` is what the SDK proposes). Drop the
+  // field entirely if no valid entries remain.
+  if (Array.isArray(input.supportedProtocolVersions)) {
+    const versions = input.supportedProtocolVersions
+      .filter((v): v is string => typeof v === "string")
+      .map((v) => v.trim())
+      .filter((v) => v !== "");
+    if (versions.length > 0) {
+      out.supportedProtocolVersions = versions;
+    }
   }
 
   return Object.keys(out).length > 0 ? out : undefined;
@@ -319,15 +331,16 @@ export function toMCPServerConfig(
      */
     clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
     /**
-     * Per-connection proposed protocolVersion, resolved from the first
-     * entry of `hostConfig.mcpProfile.initialize.supportedProtocolVersions`.
+     * Per-connection supported protocol versions accept-list, resolved
+     * verbatim from `hostConfig.mcpProfile.initialize.supportedProtocolVersions`.
      * Undefined means "use SDK defaults" — the upstream Client falls back
-     * to `LATEST_PROTOCOL_VERSION`. When set, the SDK sends this version
-     * in `initialize.params.protocolVersion` AND uses it as the sole
-     * accept-list entry, so a server that can't speak it fails fast
-     * (desired behavior for reproducible eval pins).
+     * to its built-in `SUPPORTED_PROTOCOL_VERSIONS`. When set, the SDK
+     * sends `supportedProtocolVersions[0]` as
+     * `initialize.params.protocolVersion` and uses the full list as the
+     * accept-set; a server negotiating any listed version is accepted, an
+     * unlisted version fails fast.
      */
-    proposedProtocolVersion?: string;
+    supportedProtocolVersions?: string[];
   }
 ): MCPServerConfig {
   const { serverConfig } = authResult;
@@ -351,8 +364,12 @@ export function toMCPServerConfig(
     // Undefined skips the field entirely so callers that don't opt in stay
     // byte-identical to historical behavior on the wire.
     if (options?.clientInfo) stdio.clientInfo = options.clientInfo;
-    if (options?.proposedProtocolVersion)
-      stdio.proposedProtocolVersion = options.proposedProtocolVersion;
+    if (
+      options?.supportedProtocolVersions &&
+      options.supportedProtocolVersions.length > 0
+    ) {
+      stdio.supportedProtocolVersions = options.supportedProtocolVersions;
+    }
     return stdio as MCPServerConfig;
   }
 
@@ -398,8 +415,12 @@ export function toMCPServerConfig(
   }
   // mcpProfile.initialize fields — same opt-in shape as the stdio branch.
   if (options?.clientInfo) http.clientInfo = options.clientInfo;
-  if (options?.proposedProtocolVersion)
-    http.proposedProtocolVersion = options.proposedProtocolVersion;
+  if (
+    options?.supportedProtocolVersions &&
+    options.supportedProtocolVersions.length > 0
+  ) {
+    http.supportedProtocolVersions = options.supportedProtocolVersions;
+  }
 
   // Attach the SDK's 401-recovery hook only when this is a hosted-OAuth
   // server (we have a token from `authorize-batch-local`) AND the caller
@@ -480,7 +501,7 @@ export async function resolveLocalServerForConnect(
     // land on the per-server SDK config here. Undefined preserves
     // historical wire behavior — no opt-in, no change.
     clientInfo: options?.defaults?.clientInfo,
-    proposedProtocolVersion: options?.defaults?.proposedProtocolVersion,
+    supportedProtocolVersions: options?.defaults?.supportedProtocolVersions,
     refreshContext: {
       bearerToken,
       projectId,

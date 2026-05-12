@@ -341,37 +341,44 @@ export function resolveSandboxPermissions(
     args.policy?.mode ?? "resource-declared";
 
   // Step 1 — start from the resource declaration as candidate.
-  // Step 2 — apply mode.
-  let afterMode: Record<string, boolean>;
+  // Step 2 — apply mode. Each stage produces an IMMUTABLE snapshot so the
+  // trace fields below capture the value at that stage (the prior shape
+  // aliased `afterMode` and `granted` to the same object reference, so
+  // `trace.afterMode` always equaled the final granted set — useless for
+  // debugging "which step dropped this permission?").
+  let afterModeSnapshot: Record<string, boolean>;
   switch (effectiveMode) {
     case "resource-declared":
-      afterMode = { ...declared };
+      afterModeSnapshot = { ...declared };
       break;
     case "deny-all":
-      afterMode = {};
+      afterModeSnapshot = {};
       break;
     case "custom": {
       // `allow` is the candidate set; resource declaration acts as the
       // ceiling (host can never grant a permission the resource didn't
       // request).
-      afterMode = {};
+      afterModeSnapshot = {};
       const allow = args.policy?.allow ?? {};
       for (const [name, granted] of Object.entries(allow)) {
         if (granted && declared[name]) {
-          afterMode[name] = true;
+          afterModeSnapshot[name] = true;
         }
       }
       break;
     }
   }
 
+  // Working copy for Steps 3+4 so the snapshots above remain unchanged.
+  const working: Record<string, boolean> = { ...afterModeSnapshot };
+
   // Step 3 — subtract profile deny.
   const deniedByProfile: string[] = [];
   if (args.policy?.deny && args.policy.deny.length > 0) {
     for (const name of args.policy.deny) {
-      if (afterMode[name]) {
+      if (working[name]) {
         deniedByProfile.push(name);
-        delete afterMode[name];
+        delete working[name];
       }
     }
   }
@@ -381,18 +388,21 @@ export function resolveSandboxPermissions(
   const deniedByHostedClamp: string[] = [];
   if (args.hostedMode) {
     for (const name of hostedClampDeny) {
-      if (afterMode[name]) {
+      if (working[name]) {
         deniedByHostedClamp.push(name);
-        delete afterMode[name];
+        delete working[name];
       }
     }
   }
 
   return {
-    granted: afterMode,
+    granted: working,
     trace: {
       declared,
-      afterMode,
+      // afterMode is the post-step-2 snapshot — NOT the final granted set.
+      // This is the stage immediately after `mode` picks the candidate
+      // surface and before deny/clamp subtract from it.
+      afterMode: afterModeSnapshot,
       deniedByProfile,
       deniedByHostedClamp,
       effectiveMode,
@@ -437,9 +447,13 @@ function matchesAnyDeny(domain: string, denyList: string[]): boolean {
 
 /**
  * Hosted-mode clamp predicate. Strips:
- *   - Bare wildcards (`*`, `https:`, `http:`).
- *   - Localhost / loopback / private-network domains.
- *   - Unsafe schemes (`javascript:`, `vbscript:`).
+ *   - Bare wildcards (`*`, bare-scheme tokens like `https:`).
+ *   - Localhost / loopback / private-network / link-local hostnames,
+ *     regardless of scheme (http/https/ws/wss) and IP form (decimal,
+ *     zero-padded, hex, IPv4-mapped IPv6).
+ *   - Unsafe schemes (`javascript:`, `vbscript:`, `data:`, `file:`, etc.),
+ *     matched case-insensitively because CSP source expressions are
+ *     case-insensitive on the scheme.
  *
  * NOT a replacement for CSP-level enforcement — this is defense in depth.
  * The browser enforces CSP regardless; this prevents a profile from
@@ -451,33 +465,134 @@ function matchesAnyDeny(domain: string, denyList: string[]): boolean {
  * origins to strip).
  */
 function isHostedDangerousDomain(domain: string): boolean {
-  // Bare wildcards.
-  if (domain === "*") return true;
-  if (domain === "https:" || domain === "http:" || domain === "ws:" || domain === "wss:") return true;
-  if (domain.startsWith("https://*") && !domain.includes(".")) return true;
+  if (typeof domain !== "string") return true;
+  const trimmed = domain.trim();
+  if (trimmed === "") return true;
+  const lower = trimmed.toLowerCase();
 
-  // Unsafe schemes (CSP source expressions).
+  // Bare CSP wildcards / scheme-only tokens.
+  if (trimmed === "*") return true;
   if (
-    domain.startsWith("javascript:") ||
-    domain.startsWith("vbscript:") ||
-    domain.startsWith("file:")
+    lower === "https:" ||
+    lower === "http:" ||
+    lower === "ws:" ||
+    lower === "wss:" ||
+    lower === "data:" ||
+    lower === "blob:"
   ) {
     return true;
   }
 
-  // Localhost / loopback / private-network ranges.
-  if (
-    /^https?:\/\/localhost(:|$|\/)/i.test(domain) ||
-    /^https?:\/\/127\./i.test(domain) ||
-    /^https?:\/\/10\./i.test(domain) ||
-    /^https?:\/\/192\.168\./i.test(domain) ||
-    /^https?:\/\/172\.(1[6-9]|2[0-9]|3[01])\./i.test(domain) ||
-    /^https?:\/\/0\.0\.0\.0/i.test(domain) ||
-    /^https?:\/\/\[::1\]/i.test(domain) ||
-    /^https?:\/\/\[fe80::/i.test(domain)
-  ) {
+  // Unsafe schemes. Case-insensitive — `JavaScript:` was a known bypass.
+  const UNSAFE_SCHEME_PREFIXES = [
+    "javascript:",
+    "vbscript:",
+    "file:",
+    "data:",
+    "blob:",
+    "filesystem:",
+    "view-source:",
+  ];
+  for (const prefix of UNSAFE_SCHEME_PREFIXES) {
+    if (lower.startsWith(prefix)) return true;
+  }
+
+  // Protocol-relative form `//localhost:3000` — strip these too.
+  if (trimmed.startsWith("//")) {
+    return isDangerousHostname(extractHostname("https:" + trimmed));
+  }
+
+  // Parse anything that looks like a URL. Covers all four schemes the spec
+  // expects (http, https, ws, wss) and any case variation thereof. Use the
+  // URL parser to normalize the host — that's how we catch zero-padded
+  // IPv4 (`127.000.000.001` → `127.0.0.1`), IPv4-mapped IPv6
+  // (`[::ffff:127.0.0.1]` → `::ffff:127.0.0.1`), and other forms a regex
+  // would silently miss.
+  if (/^(https?|wss?):\/\//i.test(trimmed)) {
+    return isDangerousHostname(extractHostname(trimmed));
+  }
+
+  // CSP supports bare host expressions too (`localhost:3000`,
+  // `*.example.com`). Treat them as hostnames if they don't look like a
+  // URL above.
+  if (trimmed.includes("*")) {
+    // `https://*` style wildcards without a domain part.
+    if (
+      lower === "https://*" ||
+      lower === "http://*" ||
+      lower === "ws://*" ||
+      lower === "wss://*"
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  return isDangerousHostname(trimmed.toLowerCase());
+}
+
+/**
+ * Try to extract the hostname from an arbitrary URL-like string using the
+ * native parser. Returns the raw input lower-cased on parse failure so the
+ * caller can still apply hostname-pattern checks defensively.
+ */
+function extractHostname(input: string): string {
+  try {
+    return new URL(input).hostname.toLowerCase();
+  } catch {
+    return input.toLowerCase();
+  }
+}
+
+/**
+ * True if `hostname` (already lower-cased) refers to a loopback /
+ * private-network / link-local / disallowed target. Operates on
+ * URL-normalized strings, so zero-padded IPv4 and IPv4-mapped IPv6 already
+ * resolve to their canonical form.
+ */
+function isDangerousHostname(hostname: string): boolean {
+  if (!hostname) return true;
+
+  // Strip enclosing brackets from IPv6 literals so we can pattern-match.
+  let host = hostname;
+  if (host.startsWith("[") && host.endsWith("]")) {
+    host = host.slice(1, -1);
+  }
+
+  if (host === "localhost") return true;
+  if (host.endsWith(".localhost")) return true;
+
+  // IPv4 loopback / unspecified.
+  if (/^127(?:\.\d{1,3}){3}$/.test(host)) return true;
+  if (host === "0.0.0.0") return true;
+
+  // RFC1918 private ranges.
+  if (/^10(?:\.\d{1,3}){3}$/.test(host)) return true;
+  if (/^192\.168(?:\.\d{1,3}){2}$/.test(host)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}$/.test(host)) return true;
+
+  // Link-local (RFC3927) and shared address space (RFC6598).
+  if (/^169\.254(?:\.\d{1,3}){2}$/.test(host)) return true;
+  if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])(?:\.\d{1,3}){2}$/.test(host)) {
     return true;
   }
+
+  // IPv6 loopback / link-local / IPv4-mapped loopback. The URL parser
+  // canonicalizes these to lower case + collapses zeros, so direct prefix
+  // checks suffice.
+  if (host === "::1") return true;
+  if (host.startsWith("fe80:")) return true;
+  // IPv4-mapped IPv6 loopback. The URL parser canonicalizes
+  // `::ffff:127.0.0.1` to its hex form `::ffff:7f00:1` (and similar for
+  // other addresses in 127.0.0.0/8), so check both the canonical hex
+  // shape (`::ffff:7fXX:XXXX`) AND the dotted form (preserved when the
+  // string never round-tripped through `new URL`, e.g. bare host
+  // expressions). `7f00` is `127.0` in hex; the full prefix `::ffff:7f`
+  // covers every IPv4-mapped address in 127.0.0.0/8.
+  if (/^::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}$/.test(host)) return true;
+  if (/^::ffff:127(?:\.\d{1,3}){3}$/.test(host)) return true;
+  // IPv6 unique local addresses (fc00::/7).
+  if (/^f[cd][0-9a-f]{2}:/.test(host)) return true;
 
   return false;
 }

@@ -842,7 +842,7 @@ export function useServerState({
           string,
           unknown
         >;
-        proposedProtocolVersion?: string;
+        supportedProtocolVersions?: string[];
       } = {};
       if ("url" in serverConfig) {
         const headers = omitAuthorizationHeader(
@@ -864,11 +864,16 @@ export function useServerState({
         defaults.clientInfo = ci;
       }
       const versions = mcpProfile?.initialize?.supportedProtocolVersions;
-      if (Array.isArray(versions) && typeof versions[0] === "string") {
-        // First entry is the proposed version per the SDK contract. The
-        // editor disallows empty arrays at write time but we still
-        // defensively check.
-        defaults.proposedProtocolVersion = versions[0];
+      if (Array.isArray(versions) && versions.length > 0) {
+        // Forward the full accept-list. First entry is what the SDK
+        // proposes in `initialize.params.protocolVersion`; later entries
+        // are accepted if the server negotiates one of them. Collapsing
+        // to `[versions[0]]` was the prior shape and silently caused
+        // "server speaks a later listed version → connect fails," which
+        // defeats the point of letting users pin a multi-version list.
+        defaults.supportedProtocolVersions = versions.filter(
+          (v): v is string => typeof v === "string" && v.trim() !== "",
+        );
       }
       return Object.keys(defaults).length > 0 ? defaults : undefined;
     },

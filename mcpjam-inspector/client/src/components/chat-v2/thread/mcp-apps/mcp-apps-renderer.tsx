@@ -913,6 +913,85 @@ export function MCPAppsRenderer({
     hostContextRef.current = hostContext;
   }, [hostContext]);
 
+  // Resolve the effective sandbox policy ONCE, at component scope, so the
+  // same value reaches three independent consumers without drift:
+  //   - the AppBridge constructor below (capability handshake)
+  //   - the <SandboxedIframe> below (browser-enforced CSP / Permission-Policy)
+  //   - the <McpAppsModal> below (its own sandboxed iframe for view_mode=modal)
+  //
+  // Computing this inside the bridge useEffect (the old shape) leaked the
+  // policy into ONE consumer only — the iframe got the raw resource
+  // declaration and the browser ignored the host clamp, which is exactly the
+  // failure the shared resolver was supposed to prevent. The resolver is the
+  // single source of truth; everything that mounts untrusted UI reads from
+  // here.
+  //
+  // `effectivePermissive` collapses to `false` whenever a host policy applies
+  // — SandboxedIframe treats `permissive: true` as "skip CSP injection
+  // entirely", which would silently neuter the resolver output.
+  const sandboxCspPolicy = activeMcpProfile?.apps?.sandbox?.csp;
+  const sandboxPermissionsPolicy =
+    activeMcpProfile?.apps?.sandbox?.permissions;
+  const effectiveSandbox = useMemo<{
+    csp: McpUiResourceCsp | undefined;
+    permissions: McpUiResourcePermissions | undefined;
+    permissive: boolean;
+    hostPolicyApplied: boolean;
+  }>(() => {
+    let resolvedCsp: McpUiResourceCsp | undefined;
+    if (sandboxCspPolicy) {
+      const resolved = resolveSandboxCsp({
+        resourceCsp: widgetCsp,
+        policy: sandboxCspPolicy,
+        hostedMode: HOSTED_MODE,
+      });
+      resolvedCsp = {
+        connectDomains: resolved.connectDomains,
+        resourceDomains: resolved.resourceDomains,
+        frameDomains: resolved.frameDomains,
+        baseUriDomains: resolved.baseUriDomains,
+      };
+    }
+    let resolvedPermissions: McpUiResourcePermissions | undefined;
+    if (sandboxPermissionsPolicy) {
+      const resourcePermsMap: Record<string, boolean> = {};
+      if (widgetPermissions && typeof widgetPermissions === "object") {
+        for (const [k, v] of Object.entries(
+          widgetPermissions as Record<string, unknown>,
+        )) {
+          if (v !== undefined && v !== null) resourcePermsMap[k] = true;
+        }
+      }
+      const resolved = resolveSandboxPermissions({
+        resourcePermissions: resourcePermsMap,
+        policy: sandboxPermissionsPolicy,
+        hostedMode: HOSTED_MODE,
+      });
+      const out: Record<string, Record<string, never>> = {};
+      for (const name of Object.keys(resolved.granted)) {
+        out[name] = {};
+      }
+      resolvedPermissions = out as McpUiResourcePermissions;
+    }
+    const hostPolicyApplied = !!resolvedCsp || !!resolvedPermissions;
+    return {
+      csp: resolvedCsp ?? (widgetPermissive ? undefined : widgetCsp),
+      permissions: resolvedPermissions ?? widgetPermissions,
+      // A host-applied CSP MUST be honored at the browser layer. When the
+      // host policy is in force, force `permissive: false` so the
+      // SandboxedIframe injects the meta-CSP. Otherwise pass the
+      // widget-derived flag through.
+      permissive: hostPolicyApplied ? false : widgetPermissive,
+      hostPolicyApplied,
+    };
+  }, [
+    sandboxCspPolicy,
+    sandboxPermissionsPolicy,
+    widgetCsp,
+    widgetPermissions,
+    widgetPermissive,
+  ]);
+
   useEffect(() => {
     onSendFollowUpRef.current = onSendFollowUp;
     onCallToolRef.current = onCallTool;
@@ -1200,85 +1279,30 @@ export function MCPAppsRenderer({
     isReadyRef.current = false;
     logWidgetDebug("host-to-ui", "debug/bridge-connect-start", {
       cspMode,
-      hasCsp: !!widgetCsp,
-      hasPermissions: !!widgetPermissions,
+      // Reflect the resolved (host-policy-applied) sandbox so the debug
+      // panel matches what the iframe and bridge will actually see.
+      hasCsp: !!effectiveSandbox.csp,
+      hasPermissions: !!effectiveSandbox.permissions,
       htmlLength: widgetHtml.length,
-      permissive: widgetPermissive,
+      permissive: effectiveSandbox.permissive,
+      hostPolicyApplied: effectiveSandbox.hostPolicyApplied,
       toolState: toolState ?? null,
     });
 
-    // `effectiveHostCapabilities` is computed at component scope so
-    // `registerBridgeHandlers` can read the same value when enforcement
-    // gates land (see comment near its definition). Runtime `sandbox` stays
-    // widget-derived per SEP-1865 — CSP/permissions are approved per UI
-    // resource, not a vendor trait.
-    //
-    // When the active host config has an `mcpProfile.apps.sandbox` policy,
-    // run the shared resolver from `@mcpjam/sdk` (see `sdk/src/sandbox-policy.ts`).
-    // Precedence: baseline-from-mode → restrictTo intersect → deny subtract
-    // → hosted-mode hard clamp. The resolver is opt-in — when there's no
-    // policy, the existing widget-derived behavior is preserved byte-for-byte.
-    // Both this renderer and the ChatGPT-app renderer consume the SAME
-    // resolver so the hosted-mode clamp can't be bypassed by mounting
-    // through a different surface (the failure mode the plan flagged).
-    const sandboxCspPolicy = activeMcpProfile?.apps?.sandbox?.csp;
-    const sandboxPermissionsPolicy = activeMcpProfile?.apps?.sandbox?.permissions;
-    let resolvedSandboxCsp: McpUiResourceCsp | undefined;
-    if (sandboxCspPolicy) {
-      const resolved = resolveSandboxCsp({
-        resourceCsp: widgetCsp,
-        policy: sandboxCspPolicy,
-        hostedMode: HOSTED_MODE,
-      });
-      resolvedSandboxCsp = {
-        connectDomains: resolved.connectDomains,
-        resourceDomains: resolved.resourceDomains,
-        frameDomains: resolved.frameDomains,
-        baseUriDomains: resolved.baseUriDomains,
-      };
-    }
-    let resolvedSandboxPermissions: McpUiResourcePermissions | undefined;
-    if (sandboxPermissionsPolicy) {
-      const resourcePermsMap: Record<string, boolean> = {};
-      if (widgetPermissions && typeof widgetPermissions === "object") {
-        for (const [k, v] of Object.entries(
-          widgetPermissions as Record<string, unknown>,
-        )) {
-          if (v !== undefined && v !== null) resourcePermsMap[k] = true;
-        }
-      }
-      const resolved = resolveSandboxPermissions({
-        resourcePermissions: resourcePermsMap,
-        policy: sandboxPermissionsPolicy,
-        hostedMode: HOSTED_MODE,
-      });
-      // Reshape the resolver output back into the McpUiResourcePermissions
-      // shape (each granted permission is an empty object per SEP-1865).
-      const out: Record<string, Record<string, never>> = {};
-      for (const name of Object.keys(resolved.granted)) {
-        out[name] = {};
-      }
-      resolvedSandboxPermissions = out as McpUiResourcePermissions;
-    }
-
+    // Sandbox policy is resolved once at component scope (see
+    // `effectiveSandbox` above) and reused here so the AppBridge handshake
+    // and the rendered <SandboxedIframe> stay in lockstep. Computing this
+    // inline used to be the canonical correctness bug: the bridge got the
+    // resolved policy while the iframe still got the raw resource
+    // declaration, so the browser-enforced CSP didn't honor the host clamp.
     const bridge = new AppBridge(
       null,
       { name: "mcpjam-inspector", version: __APP_VERSION__ },
       {
         ...effectiveHostCapabilities,
         sandbox: {
-          // mcpProfile-resolved CSP wins when set. Otherwise: permissive
-          // mode omits CSP (no restrictions); widget-declared mode passes
-          // the resource declaration through. Three distinct outcomes —
-          // documented here because the precedence is meaningful for
-          // anyone debugging "why did my widget's CSP change?".
-          csp: resolvedSandboxCsp
-            ? resolvedSandboxCsp
-            : widgetPermissive
-              ? undefined
-              : widgetCsp,
-          // Same opt-in shape for permissions.
-          permissions: resolvedSandboxPermissions ?? widgetPermissions,
+          csp: effectiveSandbox.csp,
+          permissions: effectiveSandbox.permissions,
         },
       },
       { hostContext: hostContextRef.current ?? {} },
@@ -1363,9 +1387,12 @@ export function MCPAppsRenderer({
     registerBridgeHandlers,
     setWidgetModelContext,
     cspMode,
-    widgetCsp,
-    widgetPermissions,
-    widgetPermissive,
+    // Bridge must rebuild when the resolved sandbox policy changes — a host
+    // toggling deny rules at runtime needs the new handshake. The memo
+    // identity captures `widgetCsp`/`widgetPermissions`/`widgetPermissive`
+    // and the active mcpProfile transitively, so they don't need their own
+    // entries here.
+    effectiveSandbox,
     logWidgetDebug,
     // Bridge must rebuild when the advertised host capabilities change
     // (host style switch or override edit) so the new handshake reflects
@@ -1508,17 +1535,16 @@ export function MCPAppsRenderer({
   useEffect(() => {
     if (!bridgeTransportReady || !widgetHtml) return;
     logWidgetDebug("host-to-ui", "debug/sandbox-html-ready", {
-      hasCsp: !!widgetCsp,
-      hasPermissions: !!widgetPermissions,
+      hasCsp: !!effectiveSandbox.csp,
+      hasPermissions: !!effectiveSandbox.permissions,
       htmlLength: widgetHtml.length,
-      permissive: widgetPermissive,
+      permissive: effectiveSandbox.permissive,
+      hostPolicyApplied: effectiveSandbox.hostPolicyApplied,
     });
   }, [
     bridgeTransportReady,
     widgetHtml,
-    widgetCsp,
-    widgetPermissions,
-    widgetPermissive,
+    effectiveSandbox,
     logWidgetDebug,
   ]);
 
@@ -1639,9 +1665,16 @@ export function MCPAppsRenderer({
       ref={sandboxRef}
       html={bridgeTransportReady ? widgetHtml : null}
       sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
-      csp={widgetCsp}
-      permissions={widgetPermissions}
-      permissive={widgetPermissive}
+      // Browser-enforced CSP / Permission Policy MUST receive the resolved
+      // values, not the raw resource declaration. `effectiveSandbox` runs the
+      // shared resolver (mode → restrictTo intersect → deny subtract →
+      // hosted-mode clamp); when a host policy applies it forces
+      // `permissive: false` so SandboxedIframe injects the meta-CSP rather
+      // than skipping it. Passing `widgetCsp` here directly is the canonical
+      // regression — keep the resolver path.
+      csp={effectiveSandbox.csp}
+      permissions={effectiveSandbox.permissions}
+      permissive={effectiveSandbox.permissive}
       colorScheme={resolvedTheme}
       onProxyReady={() => {
         setSandboxProxyReady(true);
@@ -1735,9 +1768,13 @@ export function MCPAppsRenderer({
         template={modalTemplate}
         params={modalParams}
         registerBridgeHandlers={registerBridgeHandlers}
-        widgetCsp={widgetCsp}
-        widgetPermissions={widgetPermissions}
-        widgetPermissive={widgetPermissive}
+        // The modal mounts its own SandboxedIframe via `fetchMcpAppsWidgetContent`.
+        // Pass the resolved values so the modal's CSP enforcement matches the
+        // inline iframe — otherwise a host deny rule applies to inline but
+        // not to a modal-mode widget reading the same resource.
+        widgetCsp={effectiveSandbox.csp}
+        widgetPermissions={effectiveSandbox.permissions}
+        widgetPermissive={effectiveSandbox.permissive}
         hostContextRef={hostContextRef}
         serverId={serverId}
         resourceUri={resourceUri}
