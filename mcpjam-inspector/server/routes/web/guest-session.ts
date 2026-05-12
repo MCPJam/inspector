@@ -36,7 +36,7 @@ const GUEST_SESSION_COOKIE_NAME = "__Host-mcpjam_guest_session";
 // Passing the entire Cookie header would leak unrelated auth/CSRF cookies
 // from the Inspector origin to Convex / hosted MCPJam.
 function extractGuestSessionCookie(
-  cookieHeader: string | null | undefined,
+  cookieHeader: string | null | undefined
 ): string | null {
   if (!cookieHeader) return null;
   const prefix = `${GUEST_SESSION_COOKIE_NAME}=`;
@@ -100,7 +100,7 @@ guestSession.post("/", async (c) => {
         code: ErrorCode.FORBIDDEN,
         message: "Guest access is disabled in this environment.",
       },
-      403,
+      403
     );
   }
 
@@ -112,7 +112,7 @@ guestSession.post("/", async (c) => {
         message:
           "Unable to determine client IP for guest session rate limiting.",
       },
-      429,
+      429
     );
   }
   const rateLimitKey = ip ?? "local-dev";
@@ -128,7 +128,7 @@ guestSession.post("/", async (c) => {
             code: ErrorCode.RATE_LIMITED,
             message: "Too many guest session requests. Try again later.",
           },
-          429,
+          429
         );
       }
       entry.count++;
@@ -160,7 +160,7 @@ guestSession.post("/", async (c) => {
     cookie: extractGuestSessionCookie(c.req.header("cookie")),
     userAgent: c.req.header("user-agent") ?? null,
     body,
-    ipHash,
+    ...(ipHash ? { ipHash } : {}),
   };
 
   const result = shouldFetchGuestSessionFromConvex()
@@ -185,17 +185,16 @@ guestSession.post("/", async (c) => {
         code: ErrorCode.FORBIDDEN,
         message: "Guest session revoked.",
       },
-      403,
+      403
     );
   }
 
   return c.json(
     {
       code: ErrorCode.INTERNAL_ERROR,
-      message:
-        "Unable to obtain a guest session right now. Please try again.",
+      message: "Unable to obtain a guest session right now. Please try again.",
     },
-    503,
+    503
   );
 });
 
@@ -234,7 +233,7 @@ guestSession.post("/revoke", async (c) => {
         code: ErrorCode.FORBIDDEN,
         message: "Guest access is disabled in this environment.",
       },
-      403,
+      403
     );
   }
 
@@ -275,7 +274,7 @@ guestSession.post("/revoke", async (c) => {
       code: ErrorCode.INTERNAL_ERROR,
       message: "Unable to revoke guest session right now.",
     },
-    503,
+    503
   );
 });
 
@@ -299,7 +298,7 @@ guestSession.post("/promotion-proof", async (c) => {
         code: ErrorCode.FORBIDDEN,
         message: "Guest access is disabled in this environment.",
       },
-      403,
+      403
     );
   }
 
@@ -311,7 +310,7 @@ guestSession.post("/promotion-proof", async (c) => {
         message:
           "Unable to determine client IP for guest session rate limiting.",
       },
-      429,
+      429
     );
   }
   const rateLimitKey = ip ?? "local-dev";
@@ -326,7 +325,7 @@ guestSession.post("/promotion-proof", async (c) => {
             code: ErrorCode.RATE_LIMITED,
             message: "Too many guest session requests. Try again later.",
           },
-          429,
+          429
         );
       }
       entry.count++;
@@ -364,7 +363,7 @@ guestSession.post("/promotion-proof", async (c) => {
         code: ErrorCode.FORBIDDEN,
         message: "Guest session revoked.",
       },
-      403,
+      403
     );
   }
 
@@ -374,7 +373,7 @@ guestSession.post("/promotion-proof", async (c) => {
       message:
         "Unable to obtain a guest promotion proof right now. Please try again.",
     },
-    503,
+    503
   );
 });
 
