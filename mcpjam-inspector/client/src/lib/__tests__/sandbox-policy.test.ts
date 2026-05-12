@@ -40,6 +40,23 @@ describe("matchesDomain", () => {
       matchesDomain("https://*.example.com", "https://example.com"),
     ).toBe(true);
   });
+  it("host comparison is case-insensitive (regression: RFC 3986 §3.2.2)", () => {
+    // Without case-insensitive matching, a profile-author typing
+    // `https://API.example.com` in restrictTo or deny would silently
+    // mismatch against `https://api.example.com` in the resource
+    // declaration, either widening (missed restrictTo intersection)
+    // or under-blocking (missed deny subtraction).
+    expect(
+      matchesDomain("https://API.example.com", "https://api.example.com"),
+    ).toBe(true);
+    expect(
+      matchesDomain("https://*.EXAMPLE.com", "https://api.example.com"),
+    ).toBe(true);
+    expect(
+      matchesDomain("https://*.example.com", "https://API.EXAMPLE.COM"),
+    ).toBe(true);
+  });
+
   it("wildcard matching strips ports on the domain side (regression: deny with port)", () => {
     // Regression for Bugbot Medium: a deny pattern of `https://*.evil.com`
     // must still match `https://api.evil.com:8443`. Previously the
@@ -337,6 +354,30 @@ describe("resolveSandboxCsp — hosted-mode hard clamp", () => {
     ]);
   });
 
+  it("strips path-suffixed hosts before clamping (regression: mcpjam.com/api, localhost/foo)", () => {
+    // Regression for CodeRabbit Major: CSP source expressions legally
+    // carry paths (`https://mcpjam.com/api`). Without path-stripping
+    // in extractHostname, `lowerHost` becomes `mcpjam.com/api`, so
+    // `=== "mcpjam.com"` and `.endsWith(".mcpjam.com")` both miss
+    // and the MCPJam same-origin clamp is bypassed. Same gap for
+    // `localhost/admin` against the `=== "localhost"` guard.
+    const result = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: [
+          "https://api.example.com",
+          "https://mcpjam.com/api",
+          "https://localhost/admin",
+          "https://api.mcpjam.dev/v1?token=secret",
+          "http://10.0.0.1/x#frag",
+        ],
+      },
+      isHostedMode: true,
+    });
+    expect(result.effective.connectDomains).toEqual([
+      "https://api.example.com",
+    ]);
+  });
+
   it("strips canonical and compressed IPv6 loopback forms (regression: 0:0:0:0:0:0:0:1, ::1, 0::1)", () => {
     // Regression for CodeRabbit Critical follow-up: literal-string
     // `effectiveHost === "::1"` only catches one IPv6 loopback form.
@@ -352,6 +393,59 @@ describe("resolveSandboxCsp — hosted-mode hard clamp", () => {
           "http://[0:0:0:0:0:0:0:1]",
           "http://[0::1]",
           "http://[::0:1]",
+        ],
+      },
+      isHostedMode: true,
+    });
+    expect(result.effective.connectDomains).toEqual([
+      "https://api.example.com",
+    ]);
+  });
+
+  it("strips leading-zero IPv6 forms (regression: 0000::0001, 0000:0000:0000:0000:0000:FFFF:7F00:0001)", () => {
+    // Regression for Bugbot High: `expandIPv6` previously lowercased
+    // each group but didn't strip leading zeros, so `"0000"` stayed
+    // as `"0000"` and the downstream `g === "0"` / `g === "ffff"`
+    // checks failed for padded forms. An attacker could pick the
+    // padded variant to slip past loopback / IPv4-mapped guards.
+    const result = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: [
+          "https://api.example.com",
+          // Leading-zero loopback.
+          "http://[0000::0001]",
+          // Fully padded IPv4-mapped 127.0.0.1.
+          "http://[0000:0000:0000:0000:0000:FFFF:7F00:0001]",
+          // Uppercase + padding mix.
+          "http://[0000:0000:0000:0000:0000:FFFF:0A00:0001]",
+        ],
+      },
+      isHostedMode: true,
+    });
+    expect(result.effective.connectDomains).toEqual([
+      "https://api.example.com",
+    ]);
+  });
+
+  it("strips native IPv6 ULA (fc00::/7) and link-local (fe80::/10) in hosted mode", () => {
+    // Regression for Codex P1: native IPv6 private/link-local
+    // targets bypass the clamp on networks with IPv6 routing
+    // because the previous implementation only handled loopback
+    // and IPv4-mapped. fc00::/7 (ULA — IPv6 RFC-1918 analog) and
+    // fe80::/10 (link-local) are both reachable from a hosted
+    // widget if the underlying network has v6 routing — exactly
+    // the internal-network bypass the bedrock clamp is supposed
+    // to prevent.
+    const result = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: [
+          "https://api.example.com",
+          // Unique Local Address (fc00::/7).
+          "http://[fc00::1]",
+          "http://[fd00::1]",
+          // Link-local (fe80::/10).
+          "http://[fe80::1]",
+          "http://[febf::1]",
         ],
       },
       isHostedMode: true,

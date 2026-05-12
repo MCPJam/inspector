@@ -593,7 +593,19 @@ function ProtocolVersionsSubsection({
           variant="link"
           size="sm"
           className="-ml-3 w-fit justify-start text-xs"
-          onClick={() => onChange(undefined)}
+          onClick={() => {
+            // Clear local rows AND publish undefined. If the user
+            // had only local-only empty rows (added via "+ Add
+            // version" without typing anything), the parent prop is
+            // already undefined — calling onChange alone wouldn't
+            // change the prop, the resync effect wouldn't fire, and
+            // the stale empty rows would stay visible. Setting local
+            // state and pre-syncing the ref to the new "no
+            // versions" state covers both cases.
+            setRows([]);
+            lastSyncedJsonRef.current = JSON.stringify(null);
+            onChange(undefined);
+          }}
         >
           Reset to inspector default
         </Button>

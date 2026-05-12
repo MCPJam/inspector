@@ -487,8 +487,16 @@ export function matchesDomain(pattern: string, domain: string): boolean {
   // matching rule. Without this, a deny like `https://*.evil.com`
   // would fail to match `https://api.evil.com:8443` and let it
   // through the clamp. Same disambiguation rule for IPv6.
-  const patternHost = extractHostname(patternParts.host);
-  const domainHost = extractHostname(domainParts.host);
+  //
+  // Lowercase both sides per RFC 3986 §3.2.2 — hostnames are
+  // case-insensitive. Without this, a profile-author typing
+  // `https://API.example.com` in restrictTo wouldn't match
+  // `https://api.example.com` in the baseline, silently dropping the
+  // entry and either widening (via missed restrictTo) or narrowing
+  // (via missed deny) the effective set. Aligns with the
+  // `lowerHost.toLowerCase()` the hosted clamp already does.
+  const patternHost = extractHostname(patternParts.host).toLowerCase();
+  const domainHost = extractHostname(domainParts.host).toLowerCase();
 
   // `*` host alone matches any host (e.g. `https://*` matches
   // `https://api.example.com`).
@@ -575,10 +583,20 @@ function expandIPv6(addr: string): string[] | null {
   // Embedded dotted-quad in the low 32 bits (RFC 4291 §2.5.5).
   // Strip and replace with the two equivalent hex groups so the
   // rest of the parser only has to deal with hex.
+  //
+  // Prefix is REQUIRED (no longer optional) and constrained to
+  // IPv6 segment characters only (hex + colons). This means:
+  //   - `::ffff:1.2.3.4` — prefix `::ffff:` matches.
+  //   - `0:0:0:0:0:0:1.2.3.4` — prefix matches.
+  //   - bare `127.0.0.1` — no prefix → no match (correctly rejected
+  //     so a bare v4 doesn't enter the v4-mapped branch).
+  //   - `evil.com:1.2.3.4` — `v`/`i`/`l` aren't hex, prefix fails →
+  //     correctly rejected. Previously the loose `(.*:)?` would let
+  //     this enter and produce garbage hex groups before falling
+  //     out at the group-count check.
   let work = addr;
-  const dottedMatch = /^(.*:)?(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(
-    addr,
-  );
+  const dottedMatch =
+    /^([0-9a-fA-F:]*:)(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(addr);
   if (dottedMatch) {
     const a = Number(dottedMatch[2]);
     const b = Number(dottedMatch[3]);
@@ -616,7 +634,15 @@ function expandIPv6(addr: string): string[] | null {
   const out: string[] = [];
   for (const g of groups) {
     if (!/^[0-9a-fA-F]{1,4}$/.test(g)) return null;
-    out.push(g.toLowerCase());
+    // Normalize: strip leading zeros so downstream equality checks
+    // can rely on `"0"` / `"ffff"` instead of needing to match every
+    // padded variant. Without this normalization, `0000::0001`
+    // (loopback) and `0000:0000:0000:0000:0000:FFFF:7F00:0001`
+    // (IPv4-mapped 127.0.0.1) slip past every literal-string check
+    // in the clamp — a documented bedrock-guard bypass. Empty string
+    // after stripping (i.e. group was all zeros) maps back to "0".
+    const stripped = g.toLowerCase().replace(/^0+/, "");
+    out.push(stripped === "" ? "0" : stripped);
   }
   return out;
 }
@@ -639,17 +665,38 @@ function expandIPv6(addr: string): string[] | null {
  *      single colon.
  */
 function extractHostname(host: string): string {
+  // Bracketed IPv6 first — the contents may contain `/?#` characters
+  // that would otherwise look like path/query/fragment separators.
+  // RFC 3986 fences the IPv6 literal inside `[...]` precisely so
+  // separators inside don't break URL parsing; honor that boundary.
   if (host.startsWith("[")) {
     const closeIdx = host.indexOf("]");
-    return closeIdx >= 0 ? host.slice(1, closeIdx) : host.slice(1);
+    const inside = closeIdx >= 0 ? host.slice(1, closeIdx) : host.slice(1);
+    // Anything after `]` is `:port`, `/path`, `?query`, `#frag` —
+    // none of which we care about for hostname comparison.
+    return inside;
   }
-  if ((host.match(/:/g)?.length ?? 0) > 1) {
-    return host;
+  // For everything else, drop path / query / fragment first.
+  // CSP source expressions legally accept paths
+  // (`https://mcpjam.com/api`, `https://10.0.0.1/admin`); leaving
+  // them attached would let `mcpjam.com/api` evade the same-origin
+  // `=== "mcpjam.com"` / `.endsWith(".mcpjam.com")` clamp, and
+  // `localhost/x` slip past the literal `=== "localhost"` guard.
+  // Identical normalization for both clamp and matchesDomain
+  // callers — that's why this helper exists.
+  const stopIdx = host.search(/[/?#]/);
+  const hostOnly = stopIdx >= 0 ? host.slice(0, stopIdx) : host;
+  // Port-strip on the single colon. More than one colon means a
+  // bare IPv6 (those should normally be bracketed in CSP, but we
+  // accept the bare form too) — return as-is; the IPv6 expander
+  // can interpret it.
+  if ((hostOnly.match(/:/g)?.length ?? 0) > 1) {
+    return hostOnly;
   }
-  if (host.includes(":")) {
-    return host.slice(0, host.indexOf(":"));
+  if (hostOnly.includes(":")) {
+    return hostOnly.slice(0, hostOnly.indexOf(":"));
   }
-  return host;
+  return hostOnly;
 }
 
 /**
@@ -707,6 +754,30 @@ function isHostedClampBlocked(domain: string, _key: CspDirectiveKey): boolean {
     v6groups !== null &&
     v6groups.slice(0, 7).every((g) => g === "0") &&
     v6groups[7] === "1";
+  // IPv6 Unique Local Address (RFC 4193): fc00::/7 — first 7 bits
+  // are 1111110. In hex, first group has high nibble 0xfc or 0xfd
+  // (any value in [0xfc00, 0xfdff]). These are the IPv6 analog of
+  // RFC-1918 — internal-network targets a hosted widget must never
+  // reach. Without this check, a profile editor entry like
+  // `http://[fd00::1]` would bypass the clamp because it's neither
+  // loopback nor IPv4-mapped.
+  const isIpv6Ula =
+    v6groups !== null &&
+    (() => {
+      const first = parseInt(v6groups[0]!, 16);
+      return first >= 0xfc00 && first <= 0xfdff;
+    })();
+  // IPv6 link-local (RFC 4291): fe80::/10. First 10 bits are
+  // 1111111010, so first group is in [0xfe80, 0xfebf]. Same
+  // bedrock-guard rationale as ULA — link-local routes never leave
+  // the local segment, so a hosted widget reaching one is an
+  // internal-network probe.
+  const isIpv6LinkLocal =
+    v6groups !== null &&
+    (() => {
+      const first = parseInt(v6groups[0]!, 16);
+      return first >= 0xfe80 && first <= 0xfebf;
+    })();
   // IPv4-mapped IPv6: first 5 groups 0, group 5 = "ffff", last 2
   // groups encode the v4 address (RFC 4291 §2.5.5.2). Catches both
   // dotted-quad form (`::ffff:127.0.0.1`) and hex form
@@ -729,7 +800,9 @@ function isHostedClampBlocked(domain: string, _key: CspDirectiveKey): boolean {
     effectiveHost === "0.0.0.0" ||
     effectiveHost.startsWith("10.") ||
     effectiveHost.startsWith("192.168.") ||
-    isIpv6Loopback
+    isIpv6Loopback ||
+    isIpv6Ula ||
+    isIpv6LinkLocal
   ) {
     return true;
   }
