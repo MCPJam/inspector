@@ -94,6 +94,42 @@ describe("isMCPJamModelLimitError", () => {
     ).toBe(true);
   });
 
+  it("detects rate-limit codes wrapped by formatStreamError's {message, details} envelope", () => {
+    // mcpjam-inspector/server/routes/mcp/chat-v2.ts:formatStreamError
+    // serializes non-auth API errors as `{message, details: <raw response
+    // body>}`. The real rate-limit code lives nested inside the
+    // stringified `details`, not at the top level of the message JSON.
+    expect(
+      isMCPJamModelLimitError({
+        message: JSON.stringify({
+          message: "AI_APICallError: rate limit hit",
+          details: JSON.stringify({
+            ok: false,
+            code: "user_rate_limit",
+            limitKind: "total",
+            error: "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+          }),
+        }),
+      }),
+    ).toBe(true);
+  });
+
+  it("respects the concurrency carve-out in a formatStreamError envelope", () => {
+    expect(
+      isMCPJamModelLimitError({
+        message: JSON.stringify({
+          message: "AI_APICallError: rate limit hit",
+          details: JSON.stringify({
+            ok: false,
+            code: "user_rate_limit",
+            limitKind: "concurrency",
+            error: "Another credit-funded chat is still in flight.",
+          }),
+        }),
+      }),
+    ).toBe(false);
+  });
+
   it("ignores unrelated errors", () => {
     expect(
       isMCPJamModelLimitError({

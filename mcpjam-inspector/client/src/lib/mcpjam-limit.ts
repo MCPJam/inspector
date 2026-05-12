@@ -68,6 +68,29 @@ const limitKindFromShape = (
   return value === "total" || value === "concurrency" ? value : undefined;
 };
 
+/** Expand `value` into the top-level JSON object(s) we're willing to
+ * inspect for a rate-limit signal. Recurses one extra level into a
+ * stringified `details` field so backend stream errors wrapped by
+ * `formatStreamError` as `{message, details: "<raw upstream JSON>"}`
+ * still surface the upstream `code`/`limitKind`. */
+const collectShapes = (
+  value: unknown,
+  shapes: Record<string, unknown>[],
+): void => {
+  let shape: Record<string, unknown> | null = null;
+  if (value && typeof value === "object") {
+    shape = value as Record<string, unknown>;
+  } else if (typeof value === "string" && value.length > 0) {
+    shape = extractEmbeddedJsonObject(value);
+  }
+  if (!shape) return;
+  shapes.push(shape);
+  if (typeof shape.details === "string") {
+    const inner = extractEmbeddedJsonObject(shape.details);
+    if (inner) shapes.push(inner);
+  }
+};
+
 export function isMCPJamModelLimitError(args: MCPJamLimitErrorInput): boolean {
   // Single source of truth for the concurrency carve-out: a transient
   // throttle resolves in seconds and is owned by the inline retry banner,
@@ -82,21 +105,17 @@ export function isMCPJamModelLimitError(args: MCPJamLimitErrorInput): boolean {
   //     the raw text when JSON.parse fails)
   //   - `message` as a JSON-prefixed string (AI SDK wraps SSE error chunks
   //     like `Backend stream error: 429 {"code":...}`)
+  //   - a stringified `shape.details` one level deeper — the inspector's
+  //     `formatStreamError` wraps non-auth backend errors as
+  //     `{message, details: "<raw response body>"}`, so the real rate-limit
+  //     code lives nested in `details`.
   // We deliberately avoid walking arbitrary nested keys or substring-matching
   // the bare `user_rate_limit` identifier — those caught unrelated error
   // payloads that happened to mention the identifier in passing and opened
   // the modal for guests on their first send.
   const shapes: Array<Record<string, unknown>> = [];
-  if (args.details && typeof args.details === "object") {
-    shapes.push(args.details as Record<string, unknown>);
-  } else if (typeof args.details === "string") {
-    const embedded = extractEmbeddedJsonObject(args.details);
-    if (embedded) shapes.push(embedded);
-  }
-  if (typeof args.message === "string" && args.message.length > 0) {
-    const embedded = extractEmbeddedJsonObject(args.message);
-    if (embedded) shapes.push(embedded);
-  }
+  collectShapes(args.details, shapes);
+  collectShapes(args.message, shapes);
 
   for (const shape of shapes) {
     // Honor a concurrency carve-out declared alongside the code so a
