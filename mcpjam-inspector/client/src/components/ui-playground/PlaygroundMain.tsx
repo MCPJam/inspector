@@ -1748,6 +1748,9 @@ export function PlaygroundMain({
           <>
             {showLiveTraceDiagnostics && (
               <ChatboxHostStyleProvider value={hostStyle}>
+                <ChatboxHostCapabilitiesOverrideProvider
+                  value={hostCapabilitiesOverride}
+                >
                 <ChatboxHostThemeProvider value={effectiveThreadTheme}>
                   <div
                     className={cn(
@@ -1808,6 +1811,7 @@ export function PlaygroundMain({
                     </div>
                   </div>
                 </ChatboxHostThemeProvider>
+                </ChatboxHostCapabilitiesOverrideProvider>
               </ChatboxHostStyleProvider>
             )}
 
@@ -1817,6 +1821,9 @@ export function PlaygroundMain({
               style={showLiveTraceDiagnostics ? { display: "none" } : undefined}
             >
               <ChatboxHostStyleProvider value={hostStyle}>
+                <ChatboxHostCapabilitiesOverrideProvider
+                  value={hostCapabilitiesOverride}
+                >
                 <ChatboxHostThemeProvider value={effectiveThreadTheme}>
                   <div
                     className={cn(
@@ -1846,6 +1853,7 @@ export function PlaygroundMain({
                     </div>
                   </div>
                 </ChatboxHostThemeProvider>
+                </ChatboxHostCapabilitiesOverrideProvider>
               </ChatboxHostStyleProvider>
             </div>
           </>

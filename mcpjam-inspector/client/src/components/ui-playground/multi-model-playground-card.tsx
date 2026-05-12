@@ -33,6 +33,8 @@ import {
   ChatboxHostStyleProvider,
   ChatboxHostThemeProvider,
 } from "@/contexts/chatbox-host-style-context";
+import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-host-capabilities-override-context";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import type { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
   getChatboxChatBackground,
@@ -147,6 +149,9 @@ export function MultiModelPlaygroundCard({
   addColumnSeed = null,
   onTranscriptSync,
 }: MultiModelPlaygroundCardProps) {
+  const hostCapabilitiesOverride = usePreferencesStore(
+    (s) => s.hostCapabilitiesOverride,
+  );
   const [modelContextQueue, setModelContextQueue] = useState<
     {
       toolCallId: string;
@@ -643,6 +648,9 @@ export function MultiModelPlaygroundCard({
           </div>
         ) : (
           <ChatboxHostStyleProvider value={hostStyle}>
+            <ChatboxHostCapabilitiesOverrideProvider
+              value={hostCapabilitiesOverride}
+            >
             <ChatboxHostThemeProvider value={effectiveThreadTheme}>
               <div
                 className={cn(
@@ -707,6 +715,7 @@ export function MultiModelPlaygroundCard({
                 )}
               </div>
             </ChatboxHostThemeProvider>
+            </ChatboxHostCapabilitiesOverrideProvider>
           </ChatboxHostStyleProvider>
         )}
       </div>

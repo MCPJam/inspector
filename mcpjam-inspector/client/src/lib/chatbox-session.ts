@@ -74,6 +74,12 @@ export interface ChatboxBootstrapPayload {
   servers: ChatboxBootstrapServer[];
   /** When set by bootstrap or playground snapshot, drives hosted welcome copy. */
   chatUi?: ChatUiPayload | null;
+  /**
+   * User override for the MCP Apps `hostCapabilities` blob (see
+   * HostConfigInputV2.hostCapabilitiesOverride). When undefined the hosted
+   * runtime falls back to the active `hostStyle`'s preset.
+   */
+  hostCapabilitiesOverride?: Record<string, unknown>;
 }
 
 export interface ChatboxSession {
@@ -155,6 +161,15 @@ function normalizeChatUiPayload(input: unknown): ChatUiPayload | undefined {
       : undefined;
   if (!welcome) return undefined;
   return { surfaces: { welcome } };
+}
+
+function normalizeHostCapabilitiesOverride(
+  input: unknown,
+): Record<string, unknown> | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return undefined;
+  }
+  return input as Record<string, unknown>;
 }
 
 function normalizeChatboxShareMode(mode: unknown): ChatboxShareMode {
@@ -261,6 +276,10 @@ export function normalizeChatboxSession(
           optional: Boolean(server.optional),
         })),
       chatUi: normalizeChatUiPayload(payload.chatUi),
+      hostCapabilitiesOverride: normalizeHostCapabilitiesOverride(
+        (payload as { hostCapabilitiesOverride?: unknown })
+          .hostCapabilitiesOverride,
+      ),
     },
     surface: parsed.surface === "preview" ? "preview" : "share_link",
     shareToken:
