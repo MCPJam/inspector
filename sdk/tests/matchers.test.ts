@@ -158,6 +158,18 @@ describe("evaluateToolCalls — argumentMatching: exact", () => {
     );
     expect(result.passed).toBe(false);
   });
+
+  it("reports a mismatch when expected args are {} but actual has keys", () => {
+    const result = evaluateToolCalls(
+      [tc("add", {})],
+      [tc("add", { a: 1 })],
+      { argumentMatching: "exact" },
+    );
+    expect(result.passed).toBe(false);
+    expect(result.argumentMismatches).toEqual([
+      { toolName: "add", expectedArgs: {}, actualArgs: { a: 1 } },
+    ]);
+  });
 });
 
 describe("evaluateToolCalls — argumentMatching: ignore", () => {

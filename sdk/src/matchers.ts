@@ -234,10 +234,12 @@ export function evaluateToolCalls(
       matchedExpectedIndices.add(ei);
       expectedToActualIndex.set(ei, ai);
 
-      if (
-        argumentMatching !== "ignore" &&
-        Object.keys(expectedArgs).length > 0
-      ) {
+      // We're in Pass 2 because argsCompatible already returned false in
+      // Pass 1, so any non-"ignore" mode here is a real argument mismatch
+      // — including the exact-mode case where expected is {} but actual is
+      // non-empty (partial mode never reaches here with empty expected
+      // since argsCompatible short-circuits to true).
+      if (argumentMatching !== "ignore") {
         argumentMismatches.push({
           toolName: exp.toolName,
           expectedArgs,

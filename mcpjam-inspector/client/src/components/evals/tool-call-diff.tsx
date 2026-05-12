@@ -126,8 +126,6 @@ export function ToolCallDiff({
           ))}
         </DiffSection>
       ) : null}
-
-      {expectedToolCalls === undefined ? null : null /* prop retained for future enrichment */}
     </div>
   );
 }
