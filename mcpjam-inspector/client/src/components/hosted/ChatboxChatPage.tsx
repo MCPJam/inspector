@@ -32,6 +32,8 @@ import { isHostedOAuthBusy } from "@/lib/hosted-oauth-resume";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import { ChatboxHostStyleProvider } from "@/contexts/chatbox-host-style-context";
 import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-host-capabilities-override-context";
+import { ChatboxMcpProfileProvider } from "@/contexts/chatbox-mcp-profile-context";
+import type { HostConfigMcpProfileV1 } from "@/lib/host-config-v2";
 import { ChatboxHostOnboardingOverlays } from "@/components/hosted/ChatboxHostOnboardingOverlays";
 import { useChatboxHostIntroGate } from "@/components/hosted/useChatboxHostIntroGate";
 import { getChatboxShellStyle } from "@/lib/chatbox-host-style";
@@ -909,6 +911,17 @@ export function ChatboxChatPage({
       <ChatboxHostCapabilitiesOverrideProvider
         value={session?.payload.hostCapabilitiesOverride}
       >
+      <ChatboxMcpProfileProvider
+        // Backend `chatboxRedeem` surfaces `mcpProfile` on the redeem
+        // payload (PR #269 line 136-ish). Cast through `unknown` — the
+        // redeem payload type doesn't currently declare it; once the
+        // schema-shape sync lands we can drop the cast.
+        value={
+          (session?.payload as unknown as {
+            mcpProfile?: HostConfigMcpProfileV1;
+          })?.mcpProfile
+        }
+      >
       <div
         className="chatbox-host-shell flex h-svh min-h-0 flex-col overflow-hidden"
         data-host-style={hostStyle}
@@ -950,6 +963,7 @@ export function ChatboxChatPage({
 
         {renderContent()}
       </div>
+      </ChatboxMcpProfileProvider>
       </ChatboxHostCapabilitiesOverrideProvider>
     </ChatboxHostStyleProvider>
   );

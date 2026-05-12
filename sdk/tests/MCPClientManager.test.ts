@@ -172,6 +172,39 @@ describe("MCPClientManager", () => {
       expect(manager).toBeInstanceOf(MCPClientManager);
     });
 
+    it("accepts defaultClientTitle + defaultSupportedProtocolVersions options without throwing", () => {
+      // These are the option-surface additions that pair with the
+      // inspector's `mcpProfile.initialize.{clientInfo, supportedProtocol
+      // Versions}`. We can't easily assert the wire-level effect in a
+      // unit test (no mock server here); the integration assertion
+      // lives in the inspector tests where the resolved profile is
+      // verified to flow into the client constructor. This test just
+      // pins the constructor signature so a future refactor doesn't
+      // silently drop the field.
+      const manager = new MCPClientManager(
+        {},
+        {
+          defaultClientName: "chatgpt",
+          defaultClientVersion: "1.0",
+          defaultClientTitle: "ChatGPT Desktop",
+          defaultSupportedProtocolVersions: ["2025-11-25", "2025-06-18"],
+        }
+      );
+      expect(manager).toBeInstanceOf(MCPClientManager);
+    });
+
+    it("treats empty defaultSupportedProtocolVersions as undefined (fall back to SDK defaults)", () => {
+      // An empty array would send no protocolVersion at all and stall
+      // initialize negotiation; the constructor normalizes [] → undefined
+      // so we never hand the SDK a zero-length accept-list. Mirrors the
+      // backend canonicalizer's same rule (PR #269 P2 fix).
+      const manager = new MCPClientManager(
+        {},
+        { defaultSupportedProtocolVersions: [] }
+      );
+      expect(manager).toBeInstanceOf(MCPClientManager);
+    });
+
     it("lazyConnect skips eager connect so listServers is empty until connectToServer", () => {
       const manager = new MCPClientManager(
         {

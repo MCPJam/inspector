@@ -140,6 +140,7 @@ export function draftToHostConfigInputV2(
     | "clientCapabilities"
     | "hostContext"
     | "hostCapabilitiesOverride"
+    | "mcpProfile"
   > | null,
 ): HostConfigInputV2 {
   const seed = emptyHostConfigInputV2({
@@ -157,6 +158,10 @@ export function draftToHostConfigInputV2(
     // new/edited chatboxes match what the project-default editor saved.
     // Undefined here keeps "use the active host style preset" intact.
     hostCapabilitiesOverride: projectDefault?.hostCapabilitiesOverride,
+    // Same rationale for mcpProfile: a new chatbox should inherit the
+    // project's pinned client identity / protocol versions / sandbox
+    // policy. Undefined stays undefined (SDK defaults).
+    mcpProfile: projectDefault?.mcpProfile,
   });
   return seed;
 }

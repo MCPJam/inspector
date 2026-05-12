@@ -68,6 +68,8 @@ import {
   useChatboxHostTheme,
 } from "@/contexts/chatbox-host-style-context";
 import { useChatboxHostCapabilitiesOverride } from "@/contexts/chatbox-host-capabilities-override-context";
+import { useChatboxMcpProfile } from "@/contexts/chatbox-mcp-profile-context";
+import { resolveSandboxCsp } from "@/lib/sandbox-policy";
 import { useHostContextStore } from "@/stores/host-context-store";
 import {
   clampDisplayModeToAvailableModes,
@@ -216,6 +218,15 @@ export function MCPAppsRenderer({
   const chatboxHostStyle = useChatboxHostStyle();
   const chatboxHostTheme = useChatboxHostTheme();
   const hostCapabilitiesOverride = useChatboxHostCapabilitiesOverride();
+  // Active hostConfig's mcpProfile (clientInfo, supported protocol versions,
+  // sandbox policy). Used below to resolve the effective CSP layers so the
+  // CSP debug overlay can show baseline → restrictTo → deny → hosted clamp
+  // → effective. Actual *enforcement* of restrictTo/deny in the iframe's
+  // injected CSP header is a follow-up — today the renderer still hands the
+  // widget-declared CSP to `fetchMcpAppsWidgetContent` unchanged. The
+  // debug-store update below uses the resolver output so the overlay
+  // reflects the post-feature contract.
+  const mcpProfile = useChatboxMcpProfile();
   const draftHostContext = useHostContextStore((s) => s.draftHostContext);
   const baseHostContext = useMemo(
     () =>
@@ -601,14 +612,38 @@ export function MCPAppsRenderer({
         // Store widget HTML in debug store for save view feature
         setWidgetHtmlStore(toolCallId, html);
 
-        // Update the widget debug store with CSP and permissions info
+        // Update the widget debug store with CSP and permissions info.
+        // Apply the profile's sandbox.csp resolution on top of the
+        // widget-declared CSP so the debug overlay shows the
+        // baseline → restrictTo → deny → hosted-clamp → effective
+        // layers. `effective` is what enforcement would emit; the
+        // debug-store fields below report effective values per spec.
         if (csp || permissions || !permissive) {
+          const resourceCsp = csp
+            ? {
+                connectDomains: csp.connectDomains,
+                resourceDomains: csp.resourceDomains,
+                frameDomains: csp.frameDomains,
+                baseUriDomains: csp.baseUriDomains,
+              }
+            : undefined;
+          const cspLayers = resolveSandboxCsp({
+            resourceCsp,
+            // host-default / relaxed baselines aren't wired here yet —
+            // the renderer keeps its existing "widget-declared" CSP as
+            // baseline when mode is "declared" (the default). When the
+            // renderer-preset CSP becomes addressable as a value, pass
+            // it as `hostDefaultCsp` so `mode: "host-default"` resolves
+            // against the same set the iframe enforces today.
+            isHostedMode: HOSTED_MODE,
+            profile: mcpProfile,
+          });
           setWidgetCspStore(toolCallId, {
             mode: permissive ? "permissive" : "widget-declared",
-            connectDomains: csp?.connectDomains || [],
-            resourceDomains: csp?.resourceDomains || [],
-            frameDomains: csp?.frameDomains || [],
-            baseUriDomains: csp?.baseUriDomains || [],
+            connectDomains: cspLayers.effective.connectDomains || [],
+            resourceDomains: cspLayers.effective.resourceDomains || [],
+            frameDomains: cspLayers.effective.frameDomains || [],
+            baseUriDomains: cspLayers.effective.baseUriDomains || [],
             permissions: permissions,
             widgetDeclared: csp
               ? {

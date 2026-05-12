@@ -46,6 +46,7 @@ import {
   type HostStyleId,
   DEFAULT_TEMPERATURE_V2,
 } from "@/lib/host-config-v2";
+import { McpProfileSection } from "./McpProfileSection";
 import {
   getHostCapabilitiesForStyle,
   listHostStyles,
@@ -102,11 +103,13 @@ export function HostConfigEditor({
   const [hostCapsOverrideError, setHostCapsOverrideError] = useState<
     string | null
   >(null);
+  const [mcpProfileHasError, setMcpProfileHasError] = useState(false);
   const hasError =
     headersError != null ||
     capsError != null ||
     hostCtxError != null ||
-    hostCapsOverrideError != null;
+    hostCapsOverrideError != null ||
+    mcpProfileHasError;
   useEffect(() => {
     onValidityChange?.(hasError);
   }, [hasError, onValidityChange]);
@@ -343,6 +346,14 @@ export function HostConfigEditor({
               update({ hostCapabilitiesOverride })
             }
             onErrorChange={setHostCapsOverrideError}
+          />
+        ) : null}
+
+        {owner !== "connection-only" ? (
+          <McpProfileSection
+            value={value.mcpProfile}
+            onChange={(mcpProfile) => update({ mcpProfile })}
+            onErrorChange={setMcpProfileHasError}
           />
         ) : null}
       </section>

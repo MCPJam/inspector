@@ -254,6 +254,31 @@ export interface MCPClientManagerOptions {
   defaultClientName?: string;
   /** Default client version to report */
   defaultClientVersion?: string;
+  /**
+   * Optional client `title` field of the MCP `Implementation` schema
+   * (e.g. "ChatGPT Desktop"). Surfaces a human-readable label to MCP
+   * servers; absent means SDK falls back to omitting the field.
+   *
+   * Mirrors the inspector's `mcpProfile.initialize.clientInfo.title`
+   * — the inspector resolves the active hostConfig's profile and
+   * threads it here so the upstream `initialize` advertises the
+   * user-pinned identity (Claude / ChatGPT / Cursor / custom).
+   */
+  defaultClientTitle?: string;
+  /**
+   * Default MCP protocol versions to propose during `initialize`.
+   * Order is semantic: the FIRST entry is sent in
+   * `initialize.params.protocolVersion`; the full list forms the
+   * accept-list. When omitted, the SDK falls back to its hardcoded
+   * `SUPPORTED_PROTOCOL_VERSIONS` constant.
+   *
+   * Mirrors the inspector's
+   * `mcpProfile.initialize.supportedProtocolVersions` — pinning a
+   * single-entry list produces reproducible eval runs that always
+   * negotiate the same version, even across SDK upgrades that bump
+   * the default-proposed version.
+   */
+  defaultSupportedProtocolVersions?: string[];
   /** Default capabilities to advertise */
   defaultCapabilities?: ClientCapabilityOptions;
   /** Default request timeout in milliseconds */

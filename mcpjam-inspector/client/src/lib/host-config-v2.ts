@@ -28,6 +28,87 @@ export type HostConfigConnectionDefaults = {
 };
 
 /**
+ * Set of CSP domain lists keyed by directive family. Mirrors the
+ * backend `CspDomainSet` in `convex/lib/hostConfigV2.ts`. The backend
+ * canonicalizes these as **sets** — order does not affect the row hash
+ * (trim → dedupe → sort). The frontend MUST treat them the same so
+ * the editor's "no changes" detection (`hostConfigInputsEqual`) doesn't
+ * report a cosmetic reorder as dirty.
+ */
+export type CspDomainSet = {
+  connectDomains?: string[];
+  resourceDomains?: string[];
+  frameDomains?: string[];
+  baseUriDomains?: string[];
+};
+
+/**
+ * Versioned envelope for host-level MCP state — clientInfo, supported
+ * protocol versions, MCP Apps sandbox policy. Mirrors backend
+ * `HostConfigMcpProfileV1`. The semantics are spec-driven; copy the
+ * shape verbatim and do NOT re-derive intent here.
+ *
+ * **`undefined` means "SDK defaults".** This file's helpers must
+ * preserve that — never substitute `{}` or `{ profileVersion: 1 }` as
+ * a default, because the backend treats those three as distinct
+ * (different canonical hashes). The save round-trip contract is:
+ * `undefined` in → `undefined` out.
+ */
+export type HostConfigMcpProfileV1 = {
+  profileVersion: 1;
+  initialize?: {
+    /**
+     * Order is semantic. First entry is proposed in
+     * `initialize.params.protocolVersion`; all entries form the
+     * accept-list. A single-item array pins a reproducible version.
+     */
+    supportedProtocolVersions?: string[];
+    /**
+     * The exact `initialize.clientInfo` object the SDK should send to
+     * MCP servers. Required when set: `name` + `version`. Extra fields
+     * (`title`, future spec additions) pass through verbatim.
+     */
+    clientInfo?: Record<string, unknown>;
+  };
+  apps?: {
+    sandbox?: {
+      csp?: {
+        /**
+         * `declared` — baseline is the resource's `_meta.ui.csp`.
+         * `host-default` — baseline is the inspector's renderer default.
+         * `relaxed` — permissive baseline (hosted-mode clamp still applies).
+         *
+         * Picking a mode does NOT skip `restrictTo` / `deny` — those
+         * always apply on top of whichever baseline `mode` selects.
+         */
+        mode?: "host-default" | "declared" | "relaxed";
+        /**
+         * Intersection — final set = baseline ∩ restrictTo. Per
+         * SEP-1865 the host MAY restrict but MUST NOT add undeclared
+         * domains.
+         */
+        restrictTo?: CspDomainSet;
+        /** Subtraction — always wins over baseline and over `restrictTo`. */
+        deny?: CspDomainSet;
+        extensions?: Record<string, unknown>;
+      };
+      permissions?: {
+        /**
+         * `resource-declared` — pass the resource's declaration through.
+         * `deny-all` — emit no `allow=` attribute.
+         * `custom` — use `allow` as the candidate set then subtract `deny`.
+         */
+        mode?: "resource-declared" | "deny-all" | "custom";
+        allow?: Record<string, boolean>;
+        deny?: string[];
+        extensions?: Record<string, unknown>;
+      };
+    };
+  };
+  extensions?: Record<string, unknown>;
+};
+
+/**
  * Mutable input shape. All fields are required at write time so the editor
  * can't accidentally erase a section.
  */
@@ -50,6 +131,14 @@ export type HostConfigInputV2 = {
    * value along, and "Reset to profile" is a one-line undefined write.
    */
   hostCapabilitiesOverride?: Record<string, unknown>;
+  /**
+   * Versioned envelope for host-level MCP state (clientInfo, supported
+   * protocol versions, MCP Apps sandbox policy). Optional; `undefined`
+   * means "use SDK defaults / no host-level sandbox override." The
+   * backend treats `undefined`, `{}`, and `{ profileVersion: 1 }` as
+   * three distinct canonical hashes — never substitute a default here.
+   */
+  mcpProfile?: HostConfigMcpProfileV1;
 };
 
 /**
@@ -71,6 +160,13 @@ export type HostConfigDtoV2 = {
   hostContext: Record<string, unknown>;
   /** Optional user override (see HostConfigInputV2.hostCapabilitiesOverride). */
   hostCapabilitiesOverride?: Record<string, unknown>;
+  /**
+   * Surfaced verbatim from the backend DTO. `undefined` is meaningful
+   * ("no host-level profile — fall back to SDK defaults") and must
+   * round-trip back through save paths unchanged. See
+   * HostConfigInputV2.mcpProfile.
+   */
+  mcpProfile?: HostConfigMcpProfileV1;
 };
 
 export const DEFAULT_HOST_STYLE_V2: HostStyleId = "claude";
@@ -122,6 +218,15 @@ export function emptyHostConfigInputV2(
     hostCapabilitiesOverride: partial.hostCapabilitiesOverride
       ? deepCloneJsonRecord(partial.hostCapabilitiesOverride)
       : undefined,
+    // Deep-clone the profile if provided, otherwise leave undefined.
+    // Do NOT substitute `{ profileVersion: 1 }` as a "default empty"
+    // envelope — the backend treats undefined vs an empty envelope as
+    // distinct hashes (the latter signals "user opted into a profile
+    // but configured nothing"). Round-tripping the wrong value here
+    // would silently churn the row's _id.
+    mcpProfile: partial.mcpProfile
+      ? cloneMcpProfile(partial.mcpProfile)
+      : undefined,
   };
 }
 
@@ -151,7 +256,20 @@ export function hostConfigDtoToInput(
     hostCapabilitiesOverride: dto.hostCapabilitiesOverride
       ? deepCloneJsonRecord(dto.hostCapabilitiesOverride)
       : undefined,
+    mcpProfile: dto.mcpProfile ? cloneMcpProfile(dto.mcpProfile) : undefined,
   };
+}
+
+/**
+ * Deep-clone a HostConfigMcpProfileV1. Preserves the
+ * `undefined`-means-default contract: nested optionals stay `undefined`,
+ * NOT `{}`, so JSON.stringify produces the same wire bytes as the
+ * source envelope.
+ */
+function cloneMcpProfile(
+  profile: HostConfigMcpProfileV1,
+): HostConfigMcpProfileV1 {
+  return deepCloneJsonValue(profile) as HostConfigMcpProfileV1;
 }
 
 /**
@@ -192,6 +310,42 @@ export function resolveEffectiveHostCapabilities(args: {
     return rest as Omit<McpUiHostCapabilities, "sandbox">;
   }
   return getHostCapabilitiesForStyle(args.hostStyle);
+}
+
+/**
+ * Resolve the clientInfo the upstream MCP `initialize` request should
+ * carry. Returns `undefined` to signal "use SDK defaults" — callers
+ * (the SDK's MCPClientManager wiring) must interpret `undefined` as
+ * "don't pass me anything; let the SDK fall back to its hardcoded
+ * client name / version."
+ *
+ * NEVER returns a synthesized default object. A profile without
+ * `initialize.clientInfo` set MUST yield `undefined` here, otherwise
+ * the SDK loses its ability to distinguish "user pinned an identity"
+ * from "user wants SDK defaults."
+ */
+export function resolveClientInfo(
+  profile: HostConfigMcpProfileV1 | undefined,
+): Record<string, unknown> | undefined {
+  return profile?.initialize?.clientInfo;
+}
+
+/**
+ * Resolve the accept-list of MCP protocol versions for the upstream
+ * `initialize`. First entry is the one proposed in
+ * `params.protocolVersion`. Returns `undefined` to signal "use SDK
+ * defaults" — same contract as {@link resolveClientInfo}.
+ *
+ * A non-empty array is the backend's invariant when the field is set
+ * (validated in `canonicalizeHostConfigV2`), so callers can rely on
+ * `versions.length > 0` whenever this returns a defined value.
+ */
+export function resolveSupportedProtocolVersions(
+  profile: HostConfigMcpProfileV1 | undefined,
+): string[] | undefined {
+  const versions = profile?.initialize?.supportedProtocolVersions;
+  if (!versions || versions.length === 0) return undefined;
+  return [...versions];
 }
 
 function deepCloneJsonRecord(
@@ -245,7 +399,71 @@ export function hostConfigInputsEqual(
   if (!jsonRecordEq(a.hostContext, b.hostContext)) return false;
   if (!optionalJsonRecordEq(a.hostCapabilitiesOverride, b.hostCapabilitiesOverride))
     return false;
+  if (!mcpProfileEq(a.mcpProfile, b.mcpProfile)) return false;
   return true;
+}
+
+/**
+ * Profile equality that mirrors the backend's canonicalization rules:
+ * - `undefined` and `{ profileVersion: 1 }` are distinct (backend
+ *   hashes them differently to preserve the "user opted in" signal).
+ * - `supportedProtocolVersions` order is **semantic** — different
+ *   orderings hash differently and must compare as unequal here.
+ * - CSP domain arrays under `restrictTo` / `deny` are **sets** —
+ *   order does not affect canonical hash; the editor MUST treat them
+ *   the same, otherwise a cosmetic reorder shows as dirty when the
+ *   backend would dedupe to the same row.
+ *
+ * Anything else inside the envelope deep-compares with key-order
+ * normalization (same rule as clientCapabilities / hostContext).
+ */
+function mcpProfileEq(
+  a: HostConfigMcpProfileV1 | undefined,
+  b: HostConfigMcpProfileV1 | undefined,
+): boolean {
+  if (a === undefined && b === undefined) return true;
+  if (a === undefined || b === undefined) return false;
+  // Canonicalize CSP domain sets in-place on clones so the
+  // stableStringifyJson compares the same shape the backend stores.
+  return (
+    stableStringifyJson(canonicalizeMcpProfileForEquality(a)) ===
+    stableStringifyJson(canonicalizeMcpProfileForEquality(b))
+  );
+}
+
+function canonicalizeMcpProfileForEquality(
+  profile: HostConfigMcpProfileV1,
+): Record<string, unknown> {
+  const clone = cloneMcpProfile(profile);
+  const csp = clone.apps?.sandbox?.csp;
+  if (csp?.restrictTo) csp.restrictTo = sortCspDomainSet(csp.restrictTo);
+  if (csp?.deny) csp.deny = sortCspDomainSet(csp.deny);
+  const perms = clone.apps?.sandbox?.permissions;
+  if (perms?.deny) {
+    // Permission deny lists are sets too (matches backend's
+    // `Array.from(new Set(...)).sort()`).
+    perms.deny = Array.from(
+      new Set(perms.deny.map((s) => s.trim()).filter((s) => s !== "")),
+    ).sort();
+  }
+  return clone as unknown as Record<string, unknown>;
+}
+
+function sortCspDomainSet(set: CspDomainSet): CspDomainSet {
+  const out: CspDomainSet = {};
+  for (const k of [
+    "connectDomains",
+    "resourceDomains",
+    "frameDomains",
+    "baseUriDomains",
+  ] as const) {
+    const list = set[k];
+    if (list === undefined) continue;
+    out[k] = Array.from(
+      new Set(list.map((s) => s.trim()).filter((s) => s !== "")),
+    ).sort();
+  }
+  return out;
 }
 
 function optionalJsonRecordEq(
