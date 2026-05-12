@@ -360,6 +360,103 @@ matchToolArgumentWith(
 
 ---
 
+## Categorized Eval Matcher
+
+### evaluateToolCalls()
+
+A richer alternative to the boolean validators. Returns a structured result that categorises every discrepancy — missing calls, extra calls, out-of-order calls, and argument mismatches — instead of a single `true`/`false`.
+
+Available from the browser-safe `@mcpjam/sdk/matchers` subpath and also re-exported from `@mcpjam/sdk`.
+
+```typescript
+import { evaluateToolCalls } from "@mcpjam/sdk/matchers";
+
+evaluateToolCalls(
+  expected: EvalToolCall[],
+  actual: EvalToolCall[],
+  options?: EvalMatchOptions & { isNegativeTest?: boolean }
+): EvalToolCallMatchResult
+```
+
+#### EvalToolCall
+
+```typescript
+type EvalToolCall = {
+  toolName: string;
+  arguments: Record<string, unknown>;
+};
+```
+
+#### EvalMatchOptions
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `toolCallOrder` | `"ignore" \| "strict"` | `"ignore"` | `"strict"` fails the test when matched calls appear out of sequence. |
+| `allowExtraToolCalls` | `boolean` | `true` | When `false`, any actual call beyond what's expected fails the test. |
+| `argumentMatching` | `"partial" \| "exact" \| "ignore"` | `"partial"` | `"partial"` checks only expected keys and supports placeholder strings (`"string"`, `"number"`, `"any"`, etc.). `"exact"` requires deep equality. `"ignore"` skips argument comparison. |
+| `isNegativeTest` | `boolean` | `false` | When `true`, the test passes only if no tools were called. |
+
+#### EvalToolCallMatchResult
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `passed` | `boolean` | `true` when there are no missing calls, no argument mismatches, no out-of-order calls, and extras are within the allowed limit. |
+| `missing` | `EvalToolCall[]` | Expected calls that were never made. |
+| `extra` | `EvalToolCall[]` | Actual calls that were not expected. |
+| `outOfOrder` | `EvalOutOfOrderToolCall[]` | Matched calls that appeared in the wrong sequence (only populated when `toolCallOrder: "strict"`). |
+| `argumentMismatches` | `EvalArgumentMismatch[]` | Calls where the tool name matched but arguments did not. |
+
+#### Argument placeholders (partial mode)
+
+When `argumentMatching` is `"partial"` (the default), string values in `expected` are treated as type placeholders:
+
+| Placeholder | Matches |
+|-------------|---------|
+| `"any"` | Any defined value |
+| `"string"` | Any string |
+| `"number"` | Any number |
+| `"boolean"` | Any boolean |
+| `"object"` | Any non-array object |
+| `"array"` | Any array |
+| `"null"` | `null` |
+
+#### Examples
+
+```typescript
+import { evaluateToolCalls } from "@mcpjam/sdk/matchers";
+
+// Basic usage — defaults match today's inspector behavior
+const result = evaluateToolCalls(
+  [{ toolName: "search", arguments: { q: "string" } }],
+  [{ toolName: "search", arguments: { q: "hello world" } }],
+);
+// result.passed === true  (placeholder "string" matched)
+
+// Strict order
+const ordered = evaluateToolCalls(
+  [{ toolName: "fetch", arguments: {} }, { toolName: "save", arguments: {} }],
+  [{ toolName: "save", arguments: {} }, { toolName: "fetch", arguments: {} }],
+  { toolCallOrder: "strict" },
+);
+// ordered.passed === false
+// ordered.outOfOrder[0].toolName === "save"
+
+// Exact argument matching
+const exact = evaluateToolCalls(
+  [{ toolName: "add", arguments: { a: 1, b: 2 } }],
+  [{ toolName: "add", arguments: { a: 1, b: 99 } }],
+  { argumentMatching: "exact" },
+);
+// exact.passed === false
+// exact.argumentMismatches[0].expectedArgs === { a: 1, b: 2 }
+
+// Negative test — passes only when no tools are called
+const neg = evaluateToolCalls([], [], { isNegativeTest: true });
+// neg.passed === true
+```
+
+---
+
 ## Usage with Test Frameworks
 
 ### Jest / Vitest
