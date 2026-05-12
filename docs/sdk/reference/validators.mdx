@@ -4,12 +4,13 @@ description: "API reference for validator functions"
 icon: "book"
 ---
 
-The SDK provides 9 validator functions for asserting tool call behavior in tests. All validators return `boolean` values.
+The SDK provides validator functions for asserting tool call behavior in tests. The simple boolean helpers return `boolean` values. The structured `evaluateToolCalls` function returns a detailed match result and supports configurable match options.
 
 ## Import
 
 ```typescript
 import {
+  // Boolean helpers
   matchToolCalls,
   matchToolCallsSubset,
   matchAnyToolCall,
@@ -19,6 +20,10 @@ import {
   matchToolCallWithPartialArgs,
   matchToolArgument,
   matchToolArgumentWith,
+  // Structured eval matching
+  evaluateToolCalls,
+  MATCH_OPTIONS_DEFAULTS,
+  resolveMatchOptions,
 } from "@mcpjam/sdk";
 ```
 
