@@ -685,9 +685,13 @@ describe("ChatboxChatPage", () => {
             oauthScopes: null,
           },
         ],
-        welcomeDialog: {
-          enabled: true,
-          body: "Connect Asana before chatting.",
+        chatUi: {
+          surfaces: {
+            welcome: {
+              enabled: true,
+              body: "Connect Asana before chatting.",
+            },
+          },
         },
       },
     });
@@ -914,7 +918,7 @@ describe("ChatboxChatPage", () => {
       };
     }
 
-    it("shows welcome dialog when welcomeDialog is enabled and has content", async () => {
+    it("shows welcome dialog when chatUi welcome surface is enabled and has content", async () => {
       writeChatboxSession({
         chatboxId: "sbx_1",
         accessVersion: 1,
@@ -932,9 +936,13 @@ describe("ChatboxChatPage", () => {
           temperature: 0.7,
           requireToolApproval: false,
           servers: [nonOAuthServer()],
-          welcomeDialog: {
-            enabled: true,
-            body: "Welcome — thanks for trying this out.",
+          chatUi: {
+            surfaces: {
+              welcome: {
+                enabled: true,
+                body: "Welcome — thanks for trying this out.",
+              },
+            },
           },
         },
       });
@@ -971,9 +979,13 @@ describe("ChatboxChatPage", () => {
           temperature: 0.7,
           requireToolApproval: false,
           servers: [nonOAuthServer()],
-          welcomeDialog: {
-            enabled: true,
-            body: "Welcome — thanks for trying this out.",
+          chatUi: {
+            surfaces: {
+              welcome: {
+                enabled: true,
+                body: "Welcome — thanks for trying this out.",
+              },
+            },
           },
         },
       });
@@ -990,7 +1002,7 @@ describe("ChatboxChatPage", () => {
       expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
     });
 
-    it("skips welcome and goes straight to chat when welcomeDialog.enabled is false", async () => {
+    it("skips welcome and goes straight to chat when chatUi welcome.enabled is false", async () => {
       writeChatboxSession({
         chatboxId: "sbx_1",
         accessVersion: 1,
@@ -1008,9 +1020,13 @@ describe("ChatboxChatPage", () => {
           temperature: 0.7,
           requireToolApproval: false,
           servers: [nonOAuthServer()],
-          welcomeDialog: {
-            enabled: false,
-            body: "This should not appear.",
+          chatUi: {
+            surfaces: {
+              welcome: {
+                enabled: false,
+                body: "This should not appear.",
+              },
+            },
           },
         },
       });
@@ -1026,7 +1042,7 @@ describe("ChatboxChatPage", () => {
       ).not.toBeInTheDocument();
     });
 
-    it("skips welcome and goes straight to chat when welcomeDialog body is empty", async () => {
+    it("skips welcome and goes straight to chat when chatUi welcome body is empty", async () => {
       writeChatboxSession({
         chatboxId: "sbx_1",
         accessVersion: 1,
@@ -1044,9 +1060,13 @@ describe("ChatboxChatPage", () => {
           temperature: 0.7,
           requireToolApproval: false,
           servers: [nonOAuthServer()],
-          welcomeDialog: {
-            enabled: true,
-            body: "",
+          chatUi: {
+            surfaces: {
+              welcome: {
+                enabled: true,
+                body: "",
+              },
+            },
           },
         },
       });

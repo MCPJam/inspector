@@ -7,30 +7,19 @@
           "type": "patch"
         }
       ],
-      "summary": "Inspector rollup since the last release:\n\n- Chatbox auth: full migration to the org-scoped auth path.\n- Chatbox saves now write through the v2 host-config path; preview auto-connects configured MCP servers before the first turn so the model sees tools on turn one.\n- Chatbox NUX: first-run demo auto-seeds, and a fix for the \"return to index\" navigation after a lost onboarding session.\n- Project picker fetches all project servers in one bulk call with stale-while-revalidate, removing the per-project N+1 lookups when switching projects.\n- Sentry alert when a project create silently drops servers (regression guard).\n- Solo tier removed from the inspector UI and accompanying tests.\n- Local chat (unauthenticated chat session) wired up end-to-end.\n- 401 responses now consult the cached session before surfacing the error.\n- `useEnsureDbUser` hardened so genuine user-creation errors surface instead of being swallowed.",
-      "id": "inspector-rollup-post-phase4"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Phase 4 HostConfig v2 write switch (inspector): connection settings now route through `hostConfigsV2.patchProjectDefaultConnection` instead of the legacy `projects.updateProjectClientConfig` (mutation completion is the durability signal — no project-doc echo round-trip). Eval suite settings replace \"Remove\" with \"Reset to project default\" which copies the current project default into the suite's owned `hostConfigId`. Chatbox builder draft loader migrates older sessionStorage drafts (missing fields filled from the blank starter) so persisted drafts from previous shapes don't crash the builder.",
-      "id": "phase-4-hostconfig-v2-write-switch"
+      "summary": "Inspector rollup since the last release:\n\n- Chatbox OAuth: attach the WorkOS bearer token on `/oauth/callback` to fix the 403 some users hit when finishing the chatbox auth flow.\n- Sidebar credit usage: clicking the progress bar now sends the user to billing.\n- Compare-plans table: removed the team seat-minimum label and finished the Projects row in the plan comparison.\n- Chatbox builder: removed the unused `allowGuestAccess` toggle.",
+      "id": "inspector-rollup-pre-soundcheck-deploy"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
       "type": "patch",
-      "oldVersion": "2.4.6",
+      "oldVersion": "2.4.8",
       "changesets": [
-        "inspector-rollup-post-phase4",
-        "phase-4-hostconfig-v2-write-switch"
+        "inspector-rollup-pre-soundcheck-deploy"
       ],
-      "newVersion": "2.4.7"
+      "newVersion": "2.4.9"
     }
   ]
 }

@@ -107,8 +107,7 @@ export function useChatboxDemoSeed({
           projectId,
           name: draft.name,
           description: draft.description.trim() || undefined,
-          welcomeDialog: draft.welcomeDialog,
-          feedbackDialog: draft.feedbackDialog,
+          chatUi: draft.chatUi,
           mode: draft.mode,
           serverSeed: { name: seed.name, url: seed.url },
           hostConfigSeed: {

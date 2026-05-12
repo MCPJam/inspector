@@ -1,58 +1,42 @@
-diff --git a/.changeset/inspector-rollup-post-phase4.md b/.changeset/inspector-rollup-post-phase4.md
+diff --git a/.changeset/inspector-rollup-pre-soundcheck-deploy.md b/.changeset/inspector-rollup-pre-soundcheck-deploy.md
 deleted file mode 100644
-index 1c6c000b7..000000000
---- a/.changeset/inspector-rollup-post-phase4.md
+index 9ca91d5d2..000000000
+--- a/.changeset/inspector-rollup-pre-soundcheck-deploy.md
 +++ /dev/null
-@@ -1,15 +0,0 @@
+@@ -1,10 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
 -Inspector rollup since the last release:
 -
--- Chatbox auth: full migration to the org-scoped auth path.
--- Chatbox saves now write through the v2 host-config path; preview auto-connects configured MCP servers before the first turn so the model sees tools on turn one.
--- Chatbox NUX: first-run demo auto-seeds, and a fix for the "return to index" navigation after a lost onboarding session.
--- Project picker fetches all project servers in one bulk call with stale-while-revalidate, removing the per-project N+1 lookups when switching projects.
--- Sentry alert when a project create silently drops servers (regression guard).
--- Solo tier removed from the inspector UI and accompanying tests.
--- Local chat (unauthenticated chat session) wired up end-to-end.
--- 401 responses now consult the cached session before surfacing the error.
--- `useEnsureDbUser` hardened so genuine user-creation errors surface instead of being swallowed.
-diff --git a/.changeset/phase-4-hostconfig-v2-write-switch.md b/.changeset/phase-4-hostconfig-v2-write-switch.md
-deleted file mode 100644
-index e897c0687..000000000
---- a/.changeset/phase-4-hostconfig-v2-write-switch.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Phase 4 HostConfig v2 write switch (inspector): connection settings now route through `hostConfigsV2.patchProjectDefaultConnection` instead of the legacy `projects.updateProjectClientConfig` (mutation completion is the durability signal — no project-doc echo round-trip). Eval suite settings replace "Remove" with "Reset to project default" which copies the current project default into the suite's owned `hostConfigId`. Chatbox builder draft loader migrates older sessionStorage drafts (missing fields filled from the blank starter) so persisted drafts from previous shapes don't crash the builder.
+-- Chatbox OAuth: attach the WorkOS bearer token on `/oauth/callback` to fix the 403 some users hit when finishing the chatbox auth flow.
+-- Sidebar credit usage: clicking the progress bar now sends the user to billing.
+-- Compare-plans table: removed the team seat-minimum label and finished the Projects row in the plan comparison.
+-- Chatbox builder: removed the unused `allowGuestAccess` toggle.
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 023bc4e4e..25bea9ab7 100644
+index b14c96000..dbf3d5570 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.4.6",
-+  "version": "2.4.7",
+-  "version": "2.4.8",
++  "version": "2.4.9",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
 diff --git a/package-lock.json b/package-lock.json
-index 603369ccf..760f964b3 100644
+index 93ee30f7a..3179ddff4 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -288,7 +288,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.4.6",
-+      "version": "2.4.7",
+-      "version": "2.4.8",
++      "version": "2.4.9",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/anthropic": "^3.0.36",

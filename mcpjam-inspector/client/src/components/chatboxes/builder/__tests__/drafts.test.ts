@@ -27,17 +27,86 @@ describe("migrateBuilderDraft", () => {
       temperature: 0.5,
       requireToolApproval: false,
       selectedServerIds: ["srv-1", "srv-2"],
-      // Missing: optionalServerIds, welcomeDialog, feedbackDialog, mode, etc.
+      // Missing: optionalServerIds, chatUi (welcome/feedback), mode, etc.
     };
     const migrated = migrateBuilderDraft(oldShape);
     expect(migrated).not.toBeNull();
     expect(migrated!.selectedServerIds).toEqual(["srv-1", "srv-2"]);
     expect(migrated!.optionalServerIds).toEqual([]);
-    expect(migrated!.welcomeDialog).toBeDefined();
-    expect(migrated!.feedbackDialog).toBeDefined();
+    expect(migrated!.chatUi.surfaces.welcome).toBeDefined();
+    expect(migrated!.chatUi.surfaces.feedback).toBeDefined();
     expect(migrated!.mode).toBeDefined();
     expect(migrated!.allowGuestAccess).toBeDefined();
     expect(migrated!.name).toBe("Pre-existing draft");
+  });
+
+  it("rehydrates legacy top-level welcomeDialog/feedbackDialog into chatUi.surfaces", () => {
+    // sessionStorage drafts written before the chatUi envelope landed carry
+    // welcome/feedback at the top level. The migrator must fold them into
+    // the new shape so an in-flight builder draft doesn't lose its body or
+    // cadence the moment the new code ships.
+    const legacy = {
+      name: "Mid-edit draft",
+      hostStyle: "claude" as const,
+      systemPrompt: "Sys",
+      modelId: "openai/gpt-5-mini",
+      temperature: 0.5,
+      requireToolApproval: false,
+      selectedServerIds: ["srv-1"],
+      optionalServerIds: [],
+      mode: "anyone_with_link" as const,
+      allowGuestAccess: true,
+      welcomeDialog: { enabled: false, body: "Half-written welcome" },
+      feedbackDialog: {
+        enabled: true,
+        everyNToolCalls: 4,
+        promptHint: "Any blockers?",
+      },
+    };
+    const migrated = migrateBuilderDraft(legacy);
+    expect(migrated).not.toBeNull();
+    expect(migrated!.chatUi.surfaces.welcome).toEqual({
+      enabled: false,
+      body: "Half-written welcome",
+    });
+    expect(migrated!.chatUi.surfaces.feedback).toEqual({
+      enabled: true,
+      everyNToolCalls: 4,
+      promptHint: "Any blockers?",
+    });
+    // Orphan top-level keys must not ride along on the migrated draft.
+    expect(migrated as unknown as Record<string, unknown>).not.toHaveProperty(
+      "welcomeDialog",
+    );
+    expect(migrated as unknown as Record<string, unknown>).not.toHaveProperty(
+      "feedbackDialog",
+    );
+  });
+
+  it("prefers the new chatUi shape over legacy keys when both are present", () => {
+    const both = {
+      name: "Both shapes",
+      hostStyle: "claude" as const,
+      systemPrompt: "Sys",
+      modelId: "openai/gpt-5-mini",
+      temperature: 0.5,
+      requireToolApproval: false,
+      selectedServerIds: [],
+      optionalServerIds: [],
+      mode: "anyone_with_link" as const,
+      allowGuestAccess: true,
+      welcomeDialog: { enabled: false, body: "stale" },
+      chatUi: {
+        surfaces: {
+          welcome: { enabled: true, body: "fresh" },
+        },
+      },
+    };
+    const migrated = migrateBuilderDraft(both);
+    expect(migrated!.chatUi.surfaces.welcome).toEqual({
+      enabled: true,
+      body: "fresh",
+    });
   });
 
   it("preserves complete drafts at the field level", () => {
@@ -53,11 +122,15 @@ describe("migrateBuilderDraft", () => {
       mode: "invited_only" as const,
       selectedServerIds: ["a", "b"],
       optionalServerIds: ["b"],
-      welcomeDialog: { enabled: true, body: "hi" },
-      feedbackDialog: {
-        enabled: true,
-        everyNToolCalls: 2,
-        promptHint: "feedback?",
+      chatUi: {
+        surfaces: {
+          welcome: { enabled: true, body: "hi" },
+          feedback: {
+            enabled: true,
+            everyNToolCalls: 2,
+            promptHint: "feedback?",
+          },
+        },
       },
     };
     const migrated = migrateBuilderDraft(draft);
@@ -79,8 +152,12 @@ describe("draftToHostConfigInputV2", () => {
       mode: "invited_only" as const,
       selectedServerIds: ["srv-1"],
       optionalServerIds: ["srv-1"],
-      welcomeDialog: { enabled: true, body: "" },
-      feedbackDialog: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+      chatUi: {
+        surfaces: {
+          welcome: { enabled: true, body: "" },
+          feedback: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+        },
+      },
     };
     const input = draftToHostConfigInputV2(draft);
     expect(input.hostStyle).toBe("claude");
@@ -105,8 +182,12 @@ describe("draftToHostConfigInputV2", () => {
       mode: "invited_only" as const,
       selectedServerIds: [],
       optionalServerIds: [],
-      welcomeDialog: { enabled: true, body: "" },
-      feedbackDialog: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+      chatUi: {
+        surfaces: {
+          welcome: { enabled: true, body: "" },
+          feedback: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+        },
+      },
     };
     const input = draftToHostConfigInputV2(draft, {
       connectionDefaults: {

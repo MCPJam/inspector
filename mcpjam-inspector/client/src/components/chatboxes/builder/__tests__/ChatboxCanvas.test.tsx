@@ -138,8 +138,12 @@ describe("ChatboxCanvas", () => {
         mode: "anyone_with_link",
         selectedServerIds: ["srv1"],
         optionalServerIds: [],
-        welcomeDialog: { enabled: true, body: "" },
-        feedbackDialog: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+        chatUi: {
+          surfaces: {
+            welcome: { enabled: true, body: "" },
+            feedback: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+          },
+        },
       },
       projectServers: [
         {
@@ -208,8 +212,12 @@ describe("ChatboxCanvas", () => {
         mode: "anyone_with_link",
         selectedServerIds: [],
         optionalServerIds: [],
-        welcomeDialog: { enabled: true, body: "" },
-        feedbackDialog: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+        chatUi: {
+          surfaces: {
+            welcome: { enabled: true, body: "" },
+            feedback: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+          },
+        },
       },
       projectServers: [
         {
@@ -294,8 +302,12 @@ describe("ChatboxCanvas", () => {
         mode: "anyone_with_link",
         selectedServerIds: ["a", "b"],
         optionalServerIds: [],
-        welcomeDialog: { enabled: true, body: "" },
-        feedbackDialog: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+        chatUi: {
+          surfaces: {
+            welcome: { enabled: true, body: "" },
+            feedback: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+          },
+        },
       },
       projectServers: [
         {
@@ -361,8 +373,12 @@ describe("ChatboxCanvas", () => {
       allowGuestAccess: false,
       mode: "anyone_with_link" as const,
       optionalServerIds: [] as string[],
-      welcomeDialog: { enabled: true, body: "" },
-      feedbackDialog: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+      chatUi: {
+        surfaces: {
+          welcome: { enabled: true, body: "" },
+          feedback: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+        },
+      },
     };
 
     const server = {
@@ -670,8 +686,12 @@ function minimalContext(
     mode: "anyone_with_link" as const,
     selectedServerIds: [] as string[],
     optionalServerIds: [] as string[],
-    welcomeDialog: { enabled: true, body: "" },
-    feedbackDialog: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+    chatUi: {
+      surfaces: {
+        welcome: { enabled: true, body: "" },
+        feedback: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+      },
+    },
     ...overrides,
   };
   return {

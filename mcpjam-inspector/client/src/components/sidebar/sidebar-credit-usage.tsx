@@ -8,12 +8,14 @@ interface SidebarCreditUsageProps {
   className?: string;
   includeGuests?: boolean;
   variant?: "strip" | "full";
+  onClick?: () => void;
 }
 
 export function SidebarCreditUsage({
   className,
   includeGuests = false,
   variant = "strip",
+  onClick,
 }: SidebarCreditUsageProps = {}) {
   const { balance, isLoading, hasWorkOsUser } = useCreditBalance({
     includeGuests,
@@ -37,49 +39,70 @@ export function SidebarCreditUsage({
   const showGuestUpgradeHint =
     variant === "strip" && includeGuests && !hasWorkOsUser && !isLoading;
 
+  const innerContent = (
+    <div className={cn("px-2 py-1.5", variant === "full" && "px-2.5 py-2")}>
+      {variant === "full" ? (
+        <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          Credit usage
+        </p>
+      ) : null}
+      <div
+        className={cn(
+          "flex flex-col",
+          variant === "full" ? "gap-2.5" : "gap-0"
+        )}
+      >
+        <SidebarUsageRow
+          label="Daily limit"
+          percentText={`${dailyPercentUsed}%${
+            variant === "full" ? " used" : ""
+          }`}
+          eyebrowText={
+            showGuestUpgradeHint ? "Sign in for 15× daily usage" : null
+          }
+          helperText={resetText}
+          fillPercent={balance ? balance.freeDailyPercentUsed : 0}
+          isLoading={isLoading}
+          testId="sidebar-usage-daily"
+        />
+        {variant === "full" && !isLoading && hasPaidHistory && balance ? (
+          <SidebarUsageRow
+            label="Paid credits"
+            percentText={`${paidPercentUsed}% used`}
+            helperText={null}
+            fillPercent={paidPercentUsed}
+            isLoading={false}
+            testId="sidebar-usage-paid"
+          />
+        ) : null}
+      </div>
+    </div>
+  );
+
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        data-testid="sidebar-credit-usage"
+        aria-label="Credit usage"
+        className={cn(
+          "group-data-[collapsible=icon]:hidden w-full text-left rounded-md cursor-pointer hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+          className
+        )}
+      >
+        {innerContent}
+      </button>
+    );
+  }
+
   return (
     <div
       data-testid="sidebar-credit-usage"
       aria-label="Credit usage"
       className={cn("group-data-[collapsible=icon]:hidden", className)}
     >
-      <div className={cn("px-2 py-1.5", variant === "full" && "px-2.5 py-2")}>
-        {variant === "full" ? (
-          <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-            Credit usage
-          </p>
-        ) : null}
-        <div
-          className={cn(
-            "flex flex-col",
-            variant === "full" ? "gap-2.5" : "gap-0"
-          )}
-        >
-          <SidebarUsageRow
-            label="Daily limit"
-            percentText={`${dailyPercentUsed}%${
-              variant === "full" ? " used" : ""
-            }`}
-            eyebrowText={
-              showGuestUpgradeHint ? "Sign in for 15× daily usage" : null
-            }
-            helperText={resetText}
-            fillPercent={balance ? balance.freeDailyPercentUsed : 0}
-            isLoading={isLoading}
-            testId="sidebar-usage-daily"
-          />
-          {variant === "full" && !isLoading && hasPaidHistory && balance ? (
-            <SidebarUsageRow
-              label="Paid credits"
-              percentText={`${paidPercentUsed}% used`}
-              helperText={null}
-              fillPercent={paidPercentUsed}
-              isLoading={false}
-              testId="sidebar-usage-paid"
-            />
-          ) : null}
-        </div>
-      </div>
+      {innerContent}
     </div>
   );
 }

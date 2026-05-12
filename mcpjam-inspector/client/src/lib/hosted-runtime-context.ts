@@ -9,4 +9,11 @@ export type HostedRuntimeContext = {
   chatboxId?: string;
   accessVersion?: number;
   chatboxSurface?: "preview" | "share_link";
+  /**
+   * Silent re-redeem trigger. Called when a chatbox-aware Convex mutation
+   * reports `chatbox_access_stale` — the owner re-runs
+   * /web/chatbox/redeem and updates `accessVersion` in place so dependent
+   * flows can retry without a page reload.
+   */
+  requestRefreshAccessVersion?: () => void;
 };
