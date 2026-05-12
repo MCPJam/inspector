@@ -115,6 +115,72 @@ describe("resolveSandboxCsp — mode picks baseline", () => {
   });
 });
 
+describe("resolveSandboxCsp — mode selection without baselines", () => {
+  it("`host-default` mode with no hostDefaultCsp resolves to no directive (caller responsibility)", () => {
+    // Regression for Bugbot Medium: the renderer MUST pass a
+    // `hostDefaultCsp` baseline when offering this mode to users
+    // (the renderer wires it to the widget-declared CSP today).
+    // The resolver itself is correctly faithful to the caller —
+    // `mode: "host-default"` without a baseline means "no
+    // baseline," which produces no directive at all (undefined).
+    // The caller-side wiring in mcp-apps-renderer.tsx pins this
+    // contract: it explicitly passes a baseline matching the
+    // legacy pre-profile iframe behavior so this mode is never
+    // exposed to users without something for the resolver to
+    // intersect/subtract against.
+    const result = resolveSandboxCsp({
+      resourceCsp: { connectDomains: ["https://api.example.com"] },
+      isHostedMode: false,
+      profile: {
+        profileVersion: 1,
+        apps: { sandbox: { csp: { mode: "host-default" } } },
+      },
+    });
+    expect(result.effective.connectDomains).toBeUndefined();
+  });
+
+  it("`relaxed` mode with no relaxedCsp resolves to no directive (caller responsibility)", () => {
+    const result = resolveSandboxCsp({
+      resourceCsp: { connectDomains: ["https://api.example.com"] },
+      isHostedMode: false,
+      profile: {
+        profileVersion: 1,
+        apps: { sandbox: { csp: { mode: "relaxed" } } },
+      },
+    });
+    expect(result.effective.connectDomains).toBeUndefined();
+  });
+
+  it("`relaxed` mode + wildcard baseline + hosted clamp narrows back to safe set", () => {
+    // Simulates the renderer's actual wiring: passes
+    // `relaxedCsp: { connectDomains: ["*"] }` so the mode is
+    // genuinely permissive in local dev. In hosted mode, the
+    // platform clamp strips the wildcard back so `relaxed` is
+    // never a hosted-mode foot-gun.
+    const local = resolveSandboxCsp({
+      relaxedCsp: { connectDomains: ["*"] },
+      isHostedMode: false,
+      profile: {
+        profileVersion: 1,
+        apps: { sandbox: { csp: { mode: "relaxed" } } },
+      },
+    });
+    // Local dev: wildcard survives.
+    expect(local.effective.connectDomains).toEqual(["*"]);
+
+    const hosted = resolveSandboxCsp({
+      relaxedCsp: { connectDomains: ["*"] },
+      isHostedMode: true,
+      profile: {
+        profileVersion: 1,
+        apps: { sandbox: { csp: { mode: "relaxed" } } },
+      },
+    });
+    // Hosted: clamp strips the wildcard.
+    expect(hosted.effective.connectDomains).toEqual([]);
+  });
+});
+
 describe("resolveSandboxCsp — restrictTo intersection (applies in EVERY mode)", () => {
   it("intersects baseline with restrictTo (`declared` mode)", () => {
     // The most important regression: `mode: "declared"` is NOT a
