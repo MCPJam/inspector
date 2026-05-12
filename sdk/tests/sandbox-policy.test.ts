@@ -278,6 +278,158 @@ describe("resolveSandboxCsp — hosted-mode clamp", () => {
   });
 });
 
+describe("resolveSandboxCsp — hostedClampExtraDeny (app-specific clamp)", () => {
+  // P1 regression: a hosted widget could declare app-sensitive origins
+  // (e.g. https://app.mcpjam.com) in connectDomains and have them
+  // forwarded into the iframe's CSP — letting it exfiltrate the user's
+  // session. policy.deny is profile-overridable (bypassable); this
+  // caller-supplied clamp is not.
+
+  test("strips exact matches in hosted mode", () => {
+    const csp = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: [
+          "https://app.mcpjam.com/api/secret",
+          "https://api.example.com",
+        ],
+      },
+      policy: { mode: "declared" },
+      hostedMode: true,
+      hostedClampExtraDeny: {
+        connectDomains: ["https://app.mcpjam.com/api/secret"],
+      },
+    });
+    expect(csp.connectDomains).toEqual(["https://api.example.com"]);
+    expect(csp.trace.hostedClamp.stripped.connectDomains).toContain(
+      "https://app.mcpjam.com/api/secret",
+    );
+  });
+
+  test("wildcard pattern strips all matching subdomains", () => {
+    const csp = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: [
+          "https://app.mcpjam.com",
+          "https://api.mcpjam.com",
+          "https://www.mcpjam.com",
+          "https://api.example.com",
+        ],
+      },
+      policy: { mode: "declared" },
+      hostedMode: true,
+      hostedClampExtraDeny: {
+        connectDomains: ["https://*.mcpjam.com"],
+      },
+    });
+    expect(csp.connectDomains).toEqual(["https://api.example.com"]);
+  });
+
+  test("hostedClampExtraDeny is a no-op when hostedMode=false (dev preserves)", () => {
+    // The clamp gates on hostedMode === true. In dev/local mode, the
+    // user explicitly opted out of strict behavior — same rationale as
+    // the built-in clamp predicate. Keeps "develop locally with full
+    // freedom" workable.
+    const csp = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: [
+          "https://app.mcpjam.com",
+          "https://api.example.com",
+        ],
+      },
+      policy: { mode: "declared" },
+      hostedMode: false,
+      hostedClampExtraDeny: {
+        connectDomains: ["https://*.mcpjam.com"],
+      },
+    });
+    expect(csp.connectDomains).toEqual([
+      "https://app.mcpjam.com",
+      "https://api.example.com",
+    ]);
+    expect(csp.trace.hostedClamp.stripped).toEqual({});
+  });
+
+  test("built-in dangerous patterns AND extra deny both run in one pass", () => {
+    const csp = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: [
+          "*", // stripped by built-in (wildcard)
+          "https://localhost:3000", // stripped by built-in (loopback)
+          "https://app.mcpjam.com", // stripped by extra
+          "https://api.example.com", // kept
+        ],
+      },
+      policy: { mode: "declared" },
+      hostedMode: true,
+      hostedClampExtraDeny: {
+        connectDomains: ["https://*.mcpjam.com"],
+      },
+    });
+    expect(csp.connectDomains).toEqual(["https://api.example.com"]);
+    // Trace surfaces both reasons so the debug UI can show why.
+    const stripped = csp.trace.hostedClamp.stripped.connectDomains ?? [];
+    expect(stripped).toContain("*");
+    expect(stripped).toContain("https://localhost:3000");
+    expect(stripped).toContain("https://app.mcpjam.com");
+  });
+
+  test("hostedClampExtraDeny applied per-directive (frameDomains alone)", () => {
+    // restrictTo / deny shapes are per-directive; hostedClampExtraDeny
+    // mirrors that. A caller can strip only specific directives without
+    // touching others. Important for the inspector use case where only
+    // connect/resource/frame/baseUri need MCPJam stripping (no other
+    // directive families exist today, but the shape supports growth).
+    const csp = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: ["https://app.mcpjam.com"],
+        frameDomains: ["https://app.mcpjam.com"],
+      },
+      policy: { mode: "declared" },
+      hostedMode: true,
+      hostedClampExtraDeny: {
+        // Only frameDomains is gated; connectDomains intentionally NOT
+        // listed here.
+        frameDomains: ["https://*.mcpjam.com"],
+      },
+    });
+    expect(csp.frameDomains).toEqual([]);
+    expect(csp.connectDomains).toEqual(["https://app.mcpjam.com"]);
+  });
+
+  test("extra deny survives all earlier precedence steps (resource+restrictTo+deny)", () => {
+    // Full pipeline: resource declares everything, restrictTo keeps a
+    // subset, profile.deny removes one, then hostedClampExtraDeny still
+    // strips the app origin even though restrictTo "allowed" it. This
+    // proves the clamp is non-bypassable from the profile editor.
+    const csp = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: [
+          "https://app.mcpjam.com",
+          "https://api.example.com",
+          "https://evil.com",
+          "https://other.com",
+        ],
+      },
+      policy: {
+        mode: "declared",
+        restrictTo: {
+          connectDomains: [
+            "https://app.mcpjam.com",
+            "https://api.example.com",
+            "https://evil.com",
+          ],
+        },
+        deny: { connectDomains: ["https://evil.com"] },
+      },
+      hostedMode: true,
+      hostedClampExtraDeny: {
+        connectDomains: ["https://*.mcpjam.com"],
+      },
+    });
+    expect(csp.connectDomains).toEqual(["https://api.example.com"]);
+  });
+});
+
 describe("resolveSandboxCsp — combined precedence (the full pipeline)", () => {
   test("resource + restrictTo + deny + hosted clamp run in order", () => {
     const csp = resolveSandboxCsp({

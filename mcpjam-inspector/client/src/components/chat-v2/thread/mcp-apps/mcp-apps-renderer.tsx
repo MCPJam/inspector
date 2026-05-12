@@ -91,6 +91,23 @@ const DEFAULT_INPUT_SCHEMA = { type: "object" } as const;
 const SUPPRESSED_UI_LOG_METHODS = new Set(["ui/notifications/size-changed"]);
 const PIP_MAX_HEIGHT = "min(40vh, 600px)";
 
+/**
+ * Origins the hosted-mode sandbox clamp must strip from any widget-
+ * declared CSP. A hosted widget could otherwise declare an MCPJam
+ * origin in `connectDomains` and use the user's authenticated session
+ * to exfiltrate data through the iframe. Forwarded into the SDK via
+ * `resolveSandboxCsp`'s `hostedClampExtraDeny` — that's the only
+ * codepath that's NOT profile-overridable (unlike `policy.deny`).
+ *
+ * Wildcards cover all subdomains (api, staging, www, etc.) without
+ * having to enumerate them. The bare-host entry catches widgets that
+ * declare the apex domain directly.
+ */
+const MCPJAM_HOSTED_CLAMP_ORIGINS: ReadonlyArray<string> = [
+  "https://*.mcpjam.com",
+  "https://mcpjam.com",
+];
+
 type DisplayMode = "inline" | "pip" | "fullscreen";
 type HostStyleVariables = NonNullable<
   NonNullable<McpUiHostContext["styles"]>["variables"]
@@ -964,6 +981,27 @@ export function MCPAppsRenderer({
         // break any widget that fetches external assets.
         hostDefaultBaseline: widgetCsp,
         hostedMode: HOSTED_MODE,
+        // Defense in depth: in hosted mode strip any widget-declared
+        // domain matching MCPJam's own app/API origins. A hosted widget
+        // that declares `https://app.mcpjam.com/api/...` in
+        // connectDomains could otherwise use the iframe as an
+        // exfiltration channel via the user's authenticated session.
+        // The list is hardcoded here (and not in the SDK) because
+        // "which origins count as MCPJam" is an inspector concern, not
+        // a shared SDK concern; the SDK just enforces what we pass.
+        // Wildcard pattern strips all subdomains incl. staging/api.
+        hostedClampExtraDeny: HOSTED_MODE
+          ? {
+              // Spread the readonly constant into mutable arrays — the
+              // SDK's `SandboxCspDomainSet` shape declares them as
+              // `string[]`. Spreading per directive avoids accidental
+              // aliasing if the SDK ever mutates internally.
+              connectDomains: [...MCPJAM_HOSTED_CLAMP_ORIGINS],
+              resourceDomains: [...MCPJAM_HOSTED_CLAMP_ORIGINS],
+              frameDomains: [...MCPJAM_HOSTED_CLAMP_ORIGINS],
+              baseUriDomains: [...MCPJAM_HOSTED_CLAMP_ORIGINS],
+            }
+          : undefined,
       });
       resolvedCsp = {
         connectDomains: resolved.connectDomains,

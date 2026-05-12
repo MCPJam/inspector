@@ -28,8 +28,12 @@
  *      `restrictTo`, the baseline, and the resource declaration.
  *      Applies in EVERY mode.
  *   4. HOSTED-MODE HARD CLAMP — strips dangerous values regardless of
- *      profile (wildcards, localhost/private networks, unsafe schemes,
- *      MCPJam same-origin API access). NOT configurable from `mcpProfile`.
+ *      profile (wildcards, localhost/private networks, unsafe schemes).
+ *      Built-in patterns are NOT configurable from `mcpProfile`. Callers
+ *      may pass an additional `hostedClampExtraDeny` set for app-specific
+ *      origins they want stripped (e.g. the inspector's own API origin —
+ *      this is the only place that protects against a hosted widget
+ *      declaring same-origin exfiltration targets in `connectDomains`).
  *
  * Result is a typed `EffectiveSandboxCsp` carrying the four directive
  * lists ready for header-string construction by a downstream helper
@@ -168,6 +172,19 @@ export interface ResolveSandboxCspArgs {
    * the resolver doesn't sniff env or origin.
    */
   hostedMode: boolean;
+  /**
+   * App-specific origins the hosted clamp MUST strip in addition to the
+   * built-in `isHostedDangerousDomain` patterns. Only applied when
+   * `hostedMode === true`. Supports the same wildcard-prefix matching as
+   * `policy.deny` (`https://*.example.com` matches subdomains).
+   *
+   * Mirrors `ResolveSandboxPermissionsArgs.hostedClampDeny`. This is the
+   * only place that protects against a hosted widget declaring app-
+   * sensitive origins (e.g. the inspector's own API origin) in
+   * `connectDomains` to exfiltrate data — `policy.deny` is profile-
+   * configurable and therefore bypassable; this is not.
+   */
+  hostedClampExtraDeny?: SandboxCspDomainSet;
 }
 
 export interface ResolveSandboxPermissionsArgs {
@@ -295,12 +312,22 @@ export function resolveSandboxCsp(
   let final: ResourceDeclaredCsp;
   if (args.hostedMode) {
     final = {};
+    const extraDenyByDirective = args.hostedClampExtraDeny;
     for (const key of CSP_DIRECTIVE_KEYS) {
       const before = afterDeny[key] ?? [];
+      const extraDenyList = extraDenyByDirective?.[key];
       const stripped: string[] = [];
       const kept: string[] = [];
       for (const d of before) {
-        if (isHostedDangerousDomain(d)) {
+        // Two reasons to strip: the built-in dangerous-pattern predicate,
+        // or a caller-supplied app-specific origin (e.g. MCPJam's own
+        // API host). Either alone is sufficient — both run in this single
+        // pass so the trace's `stripped` list captures everything.
+        const isExtra =
+          extraDenyList !== undefined &&
+          extraDenyList.length > 0 &&
+          matchesAnyDeny(d, extraDenyList);
+        if (isHostedDangerousDomain(d) || isExtra) {
           stripped.push(d);
         } else {
           kept.push(d);
