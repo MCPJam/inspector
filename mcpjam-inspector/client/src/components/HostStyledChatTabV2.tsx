@@ -25,7 +25,6 @@ export function HostStyledChatTabV2({
   const hostCapabilitiesOverride = usePreferencesStore(
     (state) => state.hostCapabilitiesOverride,
   );
-  const mcpProfile = usePreferencesStore((state) => state.mcpProfile);
   const shellStyle = getChatboxShellStyle(hostStyle, themeMode);
 
   return (
@@ -33,7 +32,12 @@ export function HostStyledChatTabV2({
       <ChatboxHostCapabilitiesOverrideProvider
         value={hostCapabilitiesOverride}
       >
-        <ChatboxMcpProfileProvider value={mcpProfile}>
+        {/* Direct Chat has no profile editor yet — Provider stays
+            in the tree so children that read useChatboxMcpProfile
+            get a stable `undefined` (= SDK defaults). When a Direct
+            Chat profile editor lands, lift the value into the
+            preferences store and feed it here. */}
+        <ChatboxMcpProfileProvider value={undefined}>
         <ChatboxHostThemeProvider value={themeMode}>
           <div
             className={cn(
