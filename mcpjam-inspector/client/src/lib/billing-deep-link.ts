@@ -148,10 +148,10 @@ export function readPersistedCheckoutIntent(): CheckoutIntent | null {
     }
     const plan = (parsed as { plan: unknown }).plan;
     const interval = (parsed as { interval: unknown }).interval;
-    if (!isValidPlan(typeof plan === "string" ? plan : null)) {
+    if (typeof plan !== "string" || !isValidPlan(plan)) {
       return null;
     }
-    if (!isValidInterval(typeof interval === "string" ? interval : null)) {
+    if (typeof interval !== "string" || !isValidInterval(interval)) {
       return null;
     }
     return { plan, interval };
