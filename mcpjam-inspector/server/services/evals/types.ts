@@ -102,10 +102,16 @@ export const evaluateMultiTurnResults = (
       }
 
       if (turn.expectedToolCalls.length === 0) {
-        // When the turn has no expected calls, only short-circuit if extras
-        // are allowed. With allowExtraToolCalls=false, any actual call on this
-        // turn is an unexpected extra that must fail evaluation.
-        if (matchOptions?.allowExtraToolCalls !== false) {
+        // A turn with no expectations should normally pass. The one exception
+        // is strict extras (`allowExtraToolCalls === false`) when the model
+        // *did* make calls on this turn — those calls are unexpected extras
+        // and must fail. We can't route through `evaluateResults` for the
+        // empty-actual case because the SDK matcher fails positive
+        // both-empty by design.
+        if (
+          matchOptions?.allowExtraToolCalls === false &&
+          actualToolCalls.length > 0
+        ) {
           return {
             promptIndex,
             prompt: turn.prompt,
@@ -113,27 +119,21 @@ export const evaluateMultiTurnResults = (
             actualToolCalls,
             expectedOutput: turn.expectedOutput,
             missing: [],
-            unexpected: [],
+            unexpected: actualToolCalls,
             argumentMismatches: [],
-            passed: true,
+            passed: false,
           };
         }
-        const evaluation = evaluateResults(
-          [],
-          actualToolCalls,
-          undefined,
-          matchOptions,
-        );
         return {
           promptIndex,
           prompt: turn.prompt,
           expectedToolCalls: turn.expectedToolCalls,
           actualToolCalls,
           expectedOutput: turn.expectedOutput,
-          missing: evaluation.missing,
-          unexpected: evaluation.unexpected,
-          argumentMismatches: evaluation.argumentMismatches,
-          passed: evaluation.passed,
+          missing: [],
+          unexpected: [],
+          argumentMismatches: [],
+          passed: true,
         };
       }
 

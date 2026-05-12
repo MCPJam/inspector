@@ -229,12 +229,23 @@ export function SuiteIterationsView({
   >(undefined);
 
   const onRerunWithOverride = useCallback(
-    (s: EvalSuite) =>
-      (onRerun as (suite: EvalSuite, opts?: { iterationOverride?: number }) => void)(
-        s,
-        { iterationOverride },
-      ),
-    [onRerun, iterationOverride],
+    (
+      s: EvalSuite,
+      opts?: {
+        matchOptionsOverride?: EvalMatchOptions;
+        iterationOverride?: number;
+      },
+    ) =>
+      (
+        onRerun as (
+          suite: EvalSuite,
+          opts?: {
+            matchOptionsOverride?: EvalMatchOptions;
+            iterationOverride?: number;
+          },
+        ) => void
+      )(s, opts),
+    [onRerun],
   );
 
   const onRunTestCaseWithOverride = useMemo<

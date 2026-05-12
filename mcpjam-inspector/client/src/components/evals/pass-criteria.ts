@@ -116,9 +116,11 @@ export function computeIterationPassed(
     return matchResult.passed;
   }
 
-  // For positive tests with no expected calls but tools were called = pass
+  // For positive tests with no expected calls but tools were called: pass
+  // unless extras are disallowed at this snapshot, in which case those
+  // calls are unexpected extras and must fail.
   if (expected.length === 0 && actual.length > 0) {
-    return true;
+    return snapshotMatchOptions?.allowExtraToolCalls !== false;
   }
 
   // Apply tolerances from criteria (aggregate-suite leniency, not

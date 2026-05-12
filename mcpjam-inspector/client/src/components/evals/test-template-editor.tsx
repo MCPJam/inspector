@@ -805,9 +805,13 @@ export function TestTemplateEditor({
     }
 
     try {
+      const savePayload = buildSavePayload(editForm);
       await updateTestCaseMutation({
         testCaseId: currentTestCase._id,
-        ...buildSavePayload(editForm),
+        ...savePayload,
+        // Pass `null` (not undefined) so the mutation knows to clear a
+        // previously-persisted case-level override when the user resets it.
+        matchOptions: savePayload.matchOptions ?? null,
       });
       toast.success("Changes saved");
     } catch (error) {
@@ -855,7 +859,14 @@ export function TestTemplateEditor({
 
     await updateTestCaseMutation({
       testCaseId: currentTestCase._id,
-      ...(hasUnsavedChanges ? savePayload : {}),
+      ...(hasUnsavedChanges
+        ? {
+            ...savePayload,
+            // null (not undefined) signals "clear" — required to wipe a
+            // previously-persisted case-level matchOptions override.
+            matchOptions: savePayload.matchOptions ?? null,
+          }
+        : {}),
       ...(modelsUnchanged ? {} : { models: nextModels }),
     });
   };
