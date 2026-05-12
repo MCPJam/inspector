@@ -772,11 +772,14 @@ export function MCPAppsRenderer({
           }
         : null,
     });
-    // setWidgetCspStore is a stable Zustand selector reference — same
-    // pattern the fetch effect above uses for its store-method
-    // setters. Listing it in deps creates a TDZ reference because the
-    // store-method bindings are declared further down in the
-    // component body.
+    // setWidgetCspStore omitted from deps: it's a Zustand selector
+    // pulling a fixed store-method (`s.setWidgetCsp`), so its
+    // identity is stable across renders. Including it would be
+    // valid (no TDZ — function-component const bindings exist by
+    // the time effect callbacks fire), but pointless: the effect
+    // would never re-run on its account, and the deps array
+    // already covers every value the effect's body actually reads.
+    // Same omission pattern as the fetch effect above.
   }, [
     widgetCsp,
     widgetPermissions,
