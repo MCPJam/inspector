@@ -527,17 +527,30 @@ export function matchesDomain(pattern: string, domain: string): boolean {
  * everything else uses the single trailing `:port`.
  */
 function extractPort(host: string): string | undefined {
+  // Bracketed IPv6 first: the port (if any) lives after `]`, and
+  // anything after THAT is path/query/fragment we must drop.
   if (host.startsWith("[")) {
     const closeIdx = host.indexOf("]");
     if (closeIdx < 0) return undefined;
-    const after = host.slice(closeIdx + 1);
-    if (after.startsWith(":")) return after.slice(1);
-    return undefined;
+    let after = host.slice(closeIdx + 1);
+    if (!after.startsWith(":")) return undefined;
+    after = after.slice(1);
+    const stopIdx = after.search(/[/?#]/);
+    return stopIdx >= 0 ? after.slice(0, stopIdx) : after;
   }
-  if ((host.match(/:/g)?.length ?? 0) > 1) return undefined;
-  const colonIdx = host.indexOf(":");
+  // For everything else: strip path / query / fragment first so a
+  // CSP source like `api.example.com:443/path` doesn't return port
+  // `"443/path"` and break port-equality matching downstream.
+  // Mirrors the same normalization extractHostname does — the two
+  // helpers MUST agree on where the "host[:port]" segment ends.
+  const stopIdx = host.search(/[/?#]/);
+  const hostOnly = stopIdx >= 0 ? host.slice(0, stopIdx) : host;
+  // Bare IPv6 (more than one colon, no brackets) has no port form
+  // per RFC 3986.
+  if ((hostOnly.match(/:/g)?.length ?? 0) > 1) return undefined;
+  const colonIdx = hostOnly.indexOf(":");
   if (colonIdx < 0) return undefined;
-  return host.slice(colonIdx + 1);
+  return hostOnly.slice(colonIdx + 1);
 }
 
 function splitScheme(value: string): {
@@ -739,11 +752,17 @@ function isHostedClampBlocked(domain: string, _key: CspDirectiveKey): boolean {
   // Wildcards always blocked.
   if (domain === "*") return true;
   const { scheme, host } = splitScheme(domain);
-  if (host === "*") return true;
-  if (host.startsWith("*.")) {
+  // Strip path/query/fragment + port from the hostname so the
+  // wildcard guards below catch port-bearing forms too. Without
+  // this, `*:3000` / `https://*:443` / `*.com:443` slipped past
+  // — the documented bedrock-guard would not strip a wildcard
+  // that reaches any host on a specific port.
+  const hostname = extractHostname(host);
+  if (hostname === "*") return true;
+  if (hostname.startsWith("*.")) {
     // A user-declared `*.com` or `*.io` is too broad even though it's
     // not a literal `*`. Block any wildcard at a TLD-only level.
-    const suffix = host.slice(2);
+    const suffix = hostname.slice(2);
     if (!suffix.includes(".")) return true;
   }
 

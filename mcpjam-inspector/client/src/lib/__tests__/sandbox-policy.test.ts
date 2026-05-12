@@ -69,6 +69,32 @@ describe("matchesDomain", () => {
     ).toBe(true);
   });
 
+  it("port comparison strips path/query/fragment (regression: api.example.com:443/path)", () => {
+    // Regression for Bugbot Medium: `extractPort` must drop path/
+    // query/fragment before reading the port. Otherwise
+    // `api.example.com:443/path` returns port `"443/path"` and
+    // never matches the bare-port form, silently widening
+    // restrictTo and breaking deny.
+    expect(
+      matchesDomain(
+        "https://api.example.com:443",
+        "https://api.example.com:443/path",
+      ),
+    ).toBe(true);
+    expect(
+      matchesDomain(
+        "https://api.example.com:443/api",
+        "https://api.example.com:443/admin",
+      ),
+    ).toBe(true);
+    expect(
+      matchesDomain(
+        "https://api.example.com:443?token=x",
+        "https://api.example.com:443",
+      ),
+    ).toBe(true);
+  });
+
   it("port-specific patterns NARROW by port (regression: restrictTo with port should not cover other ports)", () => {
     // Regression for Codex P2: a port-specific pattern must
     // distinguish ports. Previously matchesDomain stripped ports
@@ -458,6 +484,30 @@ describe("resolveSandboxCsp — hosted-mode hard clamp", () => {
           "https://localhost/admin",
           "https://api.mcpjam.dev/v1?token=secret",
           "http://10.0.0.1/x#frag",
+        ],
+      },
+      isHostedMode: true,
+    });
+    expect(result.effective.connectDomains).toEqual([
+      "https://api.example.com",
+    ]);
+  });
+
+  it("strips port-bearing wildcards in hosted mode (regression: *:3000, https://*:443, *.com:8080)", () => {
+    // Regression for Bugbot Medium: the wildcard guards previously
+    // string-equality-checked `host === "*"` and `host.startsWith
+    // ("*.")` BEFORE port-stripping. So `*:3000` left `host="*:3000"`
+    // which matched neither guard, and `https://*:443` produced
+    // `host="*:443"` likewise unblocked. Now extractHostname runs
+    // first so the hostname comparison sees just `*` / `*.com`
+    // regardless of port suffix.
+    const result = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: [
+          "https://api.example.com",
+          "*:3000",
+          "https://*:443",
+          "https://*.com:8080",
         ],
       },
       isHostedMode: true,
