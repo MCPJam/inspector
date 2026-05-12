@@ -355,6 +355,7 @@ type ReportEvalResultsInput = MCPJamReportingConfig & {
 | `framework` | `string` | No | Test framework name (e.g., `"jest"`, `"vitest"`) |
 | `ci` | `EvalCiMetadata` | No | CI/CD pipeline context |
 | `expectedIterations` | `number` | No | Expected total iterations for progress tracking |
+| `tags` | `string[]` | No | Free-form tags attached to the run for filtering in the MCPJam dashboard |
 | `agent` | `{ getServerReplayConfigs?: () => MCPServerReplayConfig[] \| undefined }` | No | Preferred replay source for manual reporting; use an agent created with `mcpClientManager` so results can include [`widgetSnapshots`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) from [`PromptResult.toEvalResult()`](/sdk/reference/prompt-result) |
 | `mcpClientManager` | `MCPClientManager` | No | Replay source when no `agent` is provided; does not populate `widgetSnapshots` unless your `results[].widgetSnapshots` or trace payloads already include them |
 
