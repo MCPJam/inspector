@@ -2,6 +2,7 @@ import { HOSTED_MODE } from "@/lib/config";
 import type { ModelDefinition } from "@/shared/types";
 import type { EvalCase, EvalSuite } from "./types";
 import type { PromptTurn } from "@/shared/prompt-turns";
+import type { EvalMatchOptions } from "@/shared/eval-matching";
 
 type TestCaseRunOverrides = Partial<
   Pick<
@@ -12,6 +13,7 @@ type TestCaseRunOverrides = Partial<
     | "runs"
     | "expectedOutput"
     | "advancedConfig"
+    | "matchOptions"
   >
 >;
 type TestCaseRunOverridesWithTurns = TestCaseRunOverrides & {
@@ -25,6 +27,8 @@ interface PrepareSingleTestCaseRunParams {
   getAccessToken: () => Promise<string | null>;
   selectedModel?: string | null;
   testCaseOverrides?: TestCaseRunOverridesWithTurns;
+  /** One-off run override; does not persist on the case. */
+  matchOptionsOverride?: EvalMatchOptions;
 }
 
 export interface TestCaseModelOption {
@@ -152,6 +156,7 @@ export async function prepareSingleTestCaseRun({
   getAccessToken,
   selectedModel,
   testCaseOverrides,
+  matchOptionsOverride,
 }: PrepareSingleTestCaseRunParams) {
   const modelValue =
     selectedModel ?? getDefaultTestCaseModelValue(testCase) ?? null;
@@ -179,6 +184,7 @@ export async function prepareSingleTestCaseRun({
       serverIds: suite.environment?.servers || [],
       convexAuthToken,
       testCaseOverrides,
+      matchOptionsOverride,
     },
   };
 }

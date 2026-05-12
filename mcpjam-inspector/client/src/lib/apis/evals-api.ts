@@ -10,6 +10,7 @@ import { authFetch } from "@/lib/session-token";
 import { notifyMCPJamLimitError } from "@/lib/mcpjam-limit";
 import type { EvalStreamEvent } from "@/shared/eval-stream-events";
 import type { PromptTurn } from "@/shared/prompt-turns";
+import type { EvalMatchOptions } from "@/shared/eval-matching";
 
 export const EVALS_API_ENDPOINTS = {
   local: {
@@ -74,6 +75,12 @@ type RunEvalsRequest = EvalRequestWithServers & {
    * default is not mutated.
    */
   iterationOverride?: number;
+  /**
+   * One-off match-option override applied to every iteration of this run
+   * (layered on top of suite default + case override). Does not mutate
+   * persisted suite/case records.
+   */
+  matchOptionsOverride?: EvalMatchOptions;
 };
 
 type RunTestCaseRequest = EvalRequestWithServers & {
@@ -100,7 +107,10 @@ type RunTestCaseRequest = EvalRequestWithServers & {
       expectedOutput?: string;
     }>;
     advancedConfig?: Record<string, unknown>;
+    matchOptions?: EvalMatchOptions;
   };
+  /** One-off run override; does not persist on the case. */
+  matchOptionsOverride?: EvalMatchOptions;
 };
 
 type GenerateTestsRequest = EvalRequestWithServers & {

@@ -319,6 +319,7 @@ export function useEvalHandlers({
             expectedOutput: testCase.expectedOutput,
             promptTurns: testCase.promptTurns,
             advancedConfig: testCase.advancedConfig,
+            matchOptions: testCase.matchOptions,
             testCaseId: testCase._id,
           });
 
@@ -473,6 +474,11 @@ export function useEvalHandlers({
          * Capped server-side at 10 per test.
          */
         iterationOverride?: number;
+        /**
+         * One-off match-options override for this run only. Applied to every
+         * test in the run. Does NOT mutate persisted suite/case records.
+         */
+        matchOptionsOverride?: import("@/shared/eval-matching").EvalMatchOptions;
       },
     ) => {
       if (rerunningSuiteId) return;
@@ -563,6 +569,7 @@ export function useEvalHandlers({
             expectedOutput: test.expectedOutput,
             promptTurns: test.promptTurns,
             advancedConfig: test.advancedConfig,
+            matchOptions: (test as { matchOptions?: unknown }).matchOptions,
           })),
           serverIds: executionContext.suiteServers,
           modelApiKeys:
@@ -579,6 +586,7 @@ export function useEvalHandlers({
           // get baked into per-case overrides.
           suiteRerun: true,
           iterationOverride: options?.iterationOverride,
+          matchOptionsOverride: options?.matchOptionsOverride,
         });
 
         // Track suite run started
