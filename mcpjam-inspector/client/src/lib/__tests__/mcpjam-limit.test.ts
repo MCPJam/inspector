@@ -115,10 +115,14 @@ describe("isMCPJamModelLimitError", () => {
   });
 
   it("respects the concurrency carve-out in a formatStreamError envelope", () => {
+    // The serialized payload deliberately embeds the user-facing
+    // "MCPJam model limit" phrase alongside `limitKind: "concurrency"`
+    // so the trailing raw-message regex fallback can't sneak past the
+    // carve-out and open the modal for a transient throttle.
     expect(
       isMCPJamModelLimitError({
         message: JSON.stringify({
-          message: "AI_APICallError: rate limit hit",
+          message: "AI_APICallError: Daily MCPJam model limit reached",
           details: JSON.stringify({
             ok: false,
             code: "user_rate_limit",

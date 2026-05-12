@@ -117,11 +117,17 @@ export function isMCPJamModelLimitError(args: MCPJamLimitErrorInput): boolean {
   collectShapes(args.details, shapes);
   collectShapes(args.message, shapes);
 
+  // First pass: a concurrency carve-out declared anywhere in the
+  // inspected shapes is global — the wrapper produced by
+  // `formatStreamError` and its parsed `details` describe the same
+  // error, so neither a sibling shape's `message` field nor the raw
+  // message regex below should re-open the modal for a transient
+  // throttle.
   for (const shape of shapes) {
-    // Honor a concurrency carve-out declared alongside the code so a
-    // throttle wrapped in a backend error string doesn't open the modal.
-    if (limitKindFromShape(shape) === "concurrency") continue;
+    if (limitKindFromShape(shape) === "concurrency") return false;
+  }
 
+  for (const shape of shapes) {
     const code = typeof shape.code === "string" ? shape.code : undefined;
     if (code && MCPJAM_LIMIT_CODES.has(code)) return true;
 
