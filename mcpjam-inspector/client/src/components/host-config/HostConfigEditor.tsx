@@ -416,6 +416,77 @@ function McpProfileSection({
         : "",
   }));
 
+  // Ref mirror of the draft so the flush logic in `updateClientInfo` can
+  // read the latest committed value WITHOUT firing the parent `onChange`
+  // from inside a `setClientInfoDraft` updater callback (React state
+  // updaters must be pure; double-firing under StrictMode + concurrent
+  // mode would re-emit onChange for the same edit).
+  const clientInfoDraftRef = useRef(clientInfoDraft);
+  useEffect(() => {
+    clientInfoDraftRef.current = clientInfoDraft;
+  }, [clientInfoDraft]);
+
+  // Sync the local draft from the persisted profile when the parent
+  // overwrites it externally. Three scenarios this handles:
+  //
+  //   1. "Reset to SDK defaults" — `onChange(undefined)` clears the
+  //      envelope; without this effect the draft stays populated and the
+  //      NEXT keystroke flushes the stale values right back in.
+  //   2. Parent DTO reload — switching projects or receiving a fresh DTO
+  //      replaces `profile`; the draft would otherwise display stale
+  //      identity from the previous config.
+  //   3. Programmatic patches from elsewhere in the editor.
+  //
+  // The invariant we hold: if the value the current draft WOULD flush
+  // equals the persisted clientInfo, persisted reflects our own write —
+  // keep the draft as-is so an in-progress edit (e.g. user is typing
+  // `title` after `name`/`version` are stable) isn't clobbered. Otherwise
+  // persisted has diverged externally; mirror it into the draft.
+  useEffect(() => {
+    const persistedCi = profile?.initialize?.clientInfo;
+    const draft = clientInfoDraftRef.current;
+    const draftName = draft.name.trim();
+    const draftVersion = draft.version.trim();
+    const draftTitle = draft.title.trim();
+    const draftWouldFlush = draftName !== "" && draftVersion !== "";
+
+    if (!persistedCi) {
+      // Persisted is empty. If the draft also can't flush, we're already
+      // in sync (partial edit in progress; flushed undefined; no work).
+      if (!draftWouldFlush) return;
+      // Otherwise persisted was cleared externally → mirror.
+      setClientInfoDraft({ name: "", version: "", title: "" });
+      return;
+    }
+
+    const persistedName =
+      typeof persistedCi.name === "string" ? persistedCi.name : "";
+    const persistedVersion =
+      typeof persistedCi.version === "string" ? persistedCi.version : "";
+    const persistedTitle =
+      typeof persistedCi.title === "string" ? persistedCi.title : "";
+
+    // Persisted reflects our own write iff every field the draft would
+    // flush matches the persisted value. Title comparison is
+    // asymmetric: an empty draft title shouldn't trip the divergence
+    // check if persisted also has no title.
+    if (
+      draftWouldFlush &&
+      persistedName === draftName &&
+      persistedVersion === draftVersion &&
+      (draftTitle === "" ? persistedTitle === "" : persistedTitle === draftTitle)
+    ) {
+      return;
+    }
+
+    // External divergence — mirror persisted into the draft.
+    setClientInfoDraft({
+      name: persistedName,
+      version: persistedVersion,
+      title: persistedTitle,
+    });
+  }, [profile]);
+
   const enable = useCallback(() => {
     setExpanded(true);
     if (!enabled) onChange({ profileVersion: 1 });
@@ -425,7 +496,9 @@ function McpProfileSection({
     // Snap back to `undefined` so the SDK falls back to its built-in
     // clientInfo + protocolVersion. Distinct from `{ profileVersion: 1 }`
     // on the wire — that "empty envelope" hashes differently because the
-    // user explicitly opted in.
+    // user explicitly opted in. The draft-sync effect above will clear
+    // the local draft on the next render so re-enabling doesn't surface
+    // stale values.
     onChange(undefined);
   }, [onChange]);
 
@@ -455,52 +528,53 @@ function McpProfileSection({
 
   const updateClientInfo = useCallback(
     (patch: { name?: string; version?: string; title?: string }) => {
-      // Update the local draft (always reflects what the user typed) and
-      // separately decide whether to flush to the persisted envelope.
-      // The persisted envelope only accepts complete `{ name, version }`
-      // pairs (backend rejects partial state); the editor must let users
-      // type one field at a time, so we keep the in-progress text here
-      // and flush only when both required fields are non-empty.
-      setClientInfoDraft((prev) => {
-        const next = { ...prev };
-        if (patch.name !== undefined) next.name = patch.name;
-        if (patch.version !== undefined) next.version = patch.version;
-        if (patch.title !== undefined) next.title = patch.title;
+      // Compute the next draft from the ref-mirrored latest committed
+      // value, then commit it to state with a PURE setter call and flush
+      // to the parent envelope outside any state updater. The previous
+      // shape called `updateInitialize` (which fires parent `onChange`)
+      // from inside the `setClientInfoDraft` updater, which violates
+      // React's purity rule and double-fires under StrictMode.
+      const prev = clientInfoDraftRef.current;
+      const next = { ...prev };
+      if (patch.name !== undefined) next.name = patch.name;
+      if (patch.version !== undefined) next.version = patch.version;
+      if (patch.title !== undefined) next.title = patch.title;
 
-        const nameTrim = next.name.trim();
-        const versionTrim = next.version.trim();
-        const titleTrim = next.title.trim();
-        const hasRequired = nameTrim !== "" && versionTrim !== "";
+      clientInfoDraftRef.current = next;
+      setClientInfoDraft(next);
 
-        // Preserve forward-compat extras (e.g. future spec fields the
-        // backend round-trips verbatim) that the persisted envelope
-        // already carries — we never round-trip them through the draft,
-        // so they'd otherwise be dropped on every flush.
-        const preserved: Record<string, unknown> = {};
-        const persisted = profile?.initialize?.clientInfo;
-        if (persisted && typeof persisted === "object") {
-          for (const [k, v] of Object.entries(persisted)) {
-            if (k === "name" || k === "version" || k === "title") continue;
-            preserved[k] = v;
-          }
+      const nameTrim = next.name.trim();
+      const versionTrim = next.version.trim();
+      const titleTrim = next.title.trim();
+      const hasRequired = nameTrim !== "" && versionTrim !== "";
+
+      // Preserve forward-compat extras (e.g. future spec fields the
+      // backend round-trips verbatim) that the persisted envelope
+      // already carries — we never route them through the draft, so
+      // they'd otherwise be dropped on every flush.
+      const preserved: Record<string, unknown> = {};
+      const persisted = profile?.initialize?.clientInfo;
+      if (persisted && typeof persisted === "object") {
+        for (const [k, v] of Object.entries(persisted)) {
+          if (k === "name" || k === "version" || k === "title") continue;
+          preserved[k] = v;
         }
+      }
 
-        if (hasRequired) {
-          const nextClientInfo: Record<string, unknown> = {
-            ...preserved,
-            name: nameTrim,
-            version: versionTrim,
-          };
-          if (titleTrim !== "") nextClientInfo.title = titleTrim;
-          updateInitialize({ clientInfo: nextClientInfo });
-        } else {
-          // Required pair incomplete — drop `clientInfo` from the envelope
-          // so the backend doesn't reject the save. The draft survives so
-          // the user can keep typing.
-          updateInitialize({ clientInfo: undefined });
-        }
-        return next;
-      });
+      if (hasRequired) {
+        const nextClientInfo: Record<string, unknown> = {
+          ...preserved,
+          name: nameTrim,
+          version: versionTrim,
+        };
+        if (titleTrim !== "") nextClientInfo.title = titleTrim;
+        updateInitialize({ clientInfo: nextClientInfo });
+      } else {
+        // Required pair incomplete — drop `clientInfo` from the envelope
+        // so the backend doesn't reject the save. The draft survives so
+        // the user can keep typing.
+        updateInitialize({ clientInfo: undefined });
+      }
     },
     [profile, updateInitialize],
   );

@@ -938,11 +938,31 @@ export function MCPAppsRenderer({
     permissive: boolean;
     hostPolicyApplied: boolean;
   }>(() => {
+    // "relaxed" CSP mode is an explicit dev escape hatch. The resolver
+    // can't model "no restrictions" as a domain list (CSP allowlists
+    // can't represent `*` without inviting the hosted clamp to strip
+    // it), so handle it at the renderer: skip CSP entirely (no
+    // meta-CSP injection) and let the browser's default-allow govern
+    // network access. Future work: still apply restrictTo/deny on top
+    // of relaxed; today the resolver doesn't have a "permissive
+    // baseline" primitive so we ignore those in relaxed mode.
+    const isRelaxedCsp = sandboxCspPolicy?.mode === "relaxed";
+
     let resolvedCsp: McpUiResourceCsp | undefined;
-    if (sandboxCspPolicy) {
+    if (sandboxCspPolicy && !isRelaxedCsp) {
       const resolved = resolveSandboxCsp({
         resourceCsp: widgetCsp,
         policy: sandboxCspPolicy,
+        // "host-default" mode falls back to an EMPTY allowlist inside
+        // the resolver when `hostDefaultBaseline` is omitted (per
+        // SEP-1865 secure-default). For the inspector, the only sensible
+        // default baseline we have is the resource's own declaration —
+        // passing it here means "host-default" is restrictive only as
+        // much as the resource itself asked for (never more, possibly
+        // less if restrictTo/deny narrow it). Without this, picking
+        // "host-default" would silently emit `connect-src 'none'` and
+        // break any widget that fetches external assets.
+        hostDefaultBaseline: widgetCsp,
         hostedMode: HOSTED_MODE,
       });
       resolvedCsp = {
@@ -973,15 +993,28 @@ export function MCPAppsRenderer({
       }
       resolvedPermissions = out as McpUiResourcePermissions;
     }
-    const hostPolicyApplied = !!resolvedCsp || !!resolvedPermissions;
+    const hostPolicyApplied =
+      !!resolvedCsp || !!resolvedPermissions || isRelaxedCsp;
     return {
-      csp: resolvedCsp ?? (widgetPermissive ? undefined : widgetCsp),
+      // Relaxed CSP mode → no CSP at all (caller's `permissive: true`
+      // below tells SandboxedIframe to skip CSP injection). Otherwise
+      // pass the resolver output through, falling back to the widget's
+      // own derivation when no host CSP policy is in force.
+      csp: isRelaxedCsp
+        ? undefined
+        : (resolvedCsp ?? (widgetPermissive ? undefined : widgetCsp)),
       permissions: resolvedPermissions ?? widgetPermissions,
-      // A host-applied CSP MUST be honored at the browser layer. When the
-      // host policy is in force, force `permissive: false` so the
-      // SandboxedIframe injects the meta-CSP. Otherwise pass the
-      // widget-derived flag through.
-      permissive: hostPolicyApplied ? false : widgetPermissive,
+      // A host-applied CSP MUST be honored at the browser layer. When a
+      // restrictive host policy is in force, force `permissive: false` so
+      // the SandboxedIframe injects the meta-CSP. In relaxed mode the
+      // host policy is "permissive on purpose" → force `permissive: true`
+      // so the iframe doesn't inject any meta-CSP at all. Without
+      // host-side CSP policy, pass the widget-derived flag through.
+      permissive: isRelaxedCsp
+        ? true
+        : resolvedCsp || resolvedPermissions
+          ? false
+          : widgetPermissive,
       hostPolicyApplied,
     };
   }, [
