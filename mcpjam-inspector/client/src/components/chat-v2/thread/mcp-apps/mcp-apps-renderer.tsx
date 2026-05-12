@@ -725,17 +725,26 @@ export function MCPAppsRenderer({
   }, [widgetPermissions, mcpProfile]);
 
   const resolvedPermissions = useMemo(() => {
-    // Reconstruct the McpUiResourcePermissions shape (record of
-    // permission-name → `{}`) from the boolean effective set. The
-    // iframe wrapper interprets each key's presence as "granted."
-    const granted: Record<string, Record<string, never>> = {};
+    // Rebuild the McpUiResourcePermissions shape from the resolver's
+    // effective boolean set, preserving the ORIGINAL value the
+    // resource declared for each granted key (the type accepts
+    // both `true` and `{}` markers; the iframe wrapper compares by
+    // key presence). Substituting a synthetic `{}` would diverge
+    // from what the resource sent (and from what existing call
+    // sites assert in tests).
+    const granted: Record<string, unknown> = {};
     for (const [key, allowed] of Object.entries(
       resolvedPermissionsLayers.effective,
     )) {
-      if (allowed) granted[key] = {};
+      if (!allowed) continue;
+      // Prefer the original marker (true | {} | anything truthy)
+      // from widgetPermissions when available; fall back to `true`
+      // for keys the profile granted on its own.
+      const original = (widgetPermissions as Record<string, unknown> | undefined)?.[key];
+      granted[key] = original !== undefined ? original : true;
     }
     // Return undefined (NOT null) when no permissions remain after
-    // resolution. The SandboxedIframe and AppBridge prop types accept
+    // resolution. SandboxedIframe and AppBridge prop types accept
     // `McpUiResourcePermissions | undefined`; preserving null here
     // would type-error those call sites. The empty-permissions
     // semantic ("no `allow=` attribute, SEP-1865 safe default") is
@@ -744,7 +753,7 @@ export function MCPAppsRenderer({
     return Object.keys(granted).length > 0
       ? (granted as McpUiResourcePermissions)
       : undefined;
-  }, [resolvedPermissionsLayers]);
+  }, [resolvedPermissionsLayers, widgetPermissions]);
 
   // Update the widget-debug-store entry whenever the resolved layers
   // change. Stays separate from the iframe enforcement so the overlay

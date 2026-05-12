@@ -343,6 +343,28 @@ describe("resolveClientInfo", () => {
       title: "ChatGPT",
     });
   });
+
+  it("returns a copy (not a reference) so callers can't mutate stored state", () => {
+    // Symmetric with the resolveSupportedProtocolVersions
+    // defensive-copy test. Step 3 wiring will hand this object to
+    // `new Client(clientInfo, ...)`, where the SDK may
+    // freeze/augment what it receives — a shared reference would
+    // mean a downstream tweak silently mutates the persisted
+    // profile state.
+    const profile: HostConfigMcpProfileV1 = {
+      profileVersion: 1,
+      initialize: {
+        clientInfo: { name: "chatgpt", version: "1.0" },
+      },
+    };
+    const resolved = resolveClientInfo(profile)!;
+    (resolved as Record<string, unknown>).extraField = "hacked";
+    // Original profile must be untouched.
+    expect(profile.initialize!.clientInfo).toEqual({
+      name: "chatgpt",
+      version: "1.0",
+    });
+  });
 });
 
 describe("resolveSupportedProtocolVersions", () => {

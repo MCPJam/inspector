@@ -327,7 +327,16 @@ export function resolveEffectiveHostCapabilities(args: {
 export function resolveClientInfo(
   profile: HostConfigMcpProfileV1 | undefined,
 ): Record<string, unknown> | undefined {
-  return profile?.initialize?.clientInfo;
+  const ci = profile?.initialize?.clientInfo;
+  if (ci === undefined) return undefined;
+  // Defensive shallow copy — symmetric with the
+  // `[...versions]` clone in resolveSupportedProtocolVersions.
+  // A caller mutating the returned object (e.g. plumbing into
+  // `new Client(clientInfo, ...)` and tacking on a transport field)
+  // must not mutate the stored profile state — Step 3 wiring will
+  // hand this directly to the SDK and the SDK's Client constructor
+  // may freeze or augment what it receives.
+  return { ...ci };
 }
 
 /**
