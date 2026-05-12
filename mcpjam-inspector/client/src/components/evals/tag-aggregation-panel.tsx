@@ -4,7 +4,6 @@ import {
   ChevronRight,
   TrendingUp,
   TrendingDown,
-  Minus,
   Search,
   AlertCircle,
 } from "lucide-react";

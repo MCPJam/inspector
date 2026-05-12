@@ -157,14 +157,6 @@ export function EvalsTab({
     rerunningSuiteId,
     cancellingRunId,
     deletingRunId,
-    isGeneratingTests,
-    handleCreateTestCase,
-    handleGenerateTests,
-    handleRerun,
-    handleCancelRun,
-    handleDelete,
-    handleDeleteRun,
-    directDeleteRun,
     directDeleteTestCase,
   } = handlers;
 

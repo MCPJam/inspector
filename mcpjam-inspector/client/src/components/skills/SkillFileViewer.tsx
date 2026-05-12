@@ -3,7 +3,7 @@ import { RefreshCw, FileText, Download } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { ScrollArea, ScrollBar } from "@mcpjam/design-system/scroll-area";
 import { MemoizedMarkdown } from "@/components/chat-v2/thread/memomized-markdown";
-import type { SkillFileContent } from "@shared/skill-types";
+import type { SkillFileContent } from "@/shared/skill-types";
 
 interface SkillFileViewerProps {
   file: SkillFileContent | null;
@@ -16,7 +16,7 @@ interface SkillFileViewerProps {
 /**
  * Get language identifier from MIME type for code blocks
  */
-function getLanguageFromMime(mimeType: string, fileName: string): string {
+function getLanguageFromMime(_mimeType: string, fileName: string): string {
   const ext = fileName.split(".").pop()?.toLowerCase() || "";
 
   const extToLang: Record<string, string> = {

@@ -11,7 +11,6 @@ import type {
 import {
   formatDuration,
   formatRunId,
-  orderCommitGroupRunsByOutcome,
 } from "./helpers";
 import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { RunHeaderCompactStats } from "./run-header-compact-stats";
@@ -53,24 +52,6 @@ function getModelsUsed(runs: EvalSuiteRun[]): string[] {
   return Array.from(models);
 }
 
-function getTotalCases(runs: EvalSuiteRun[]): {
-  total: number;
-  passed: number;
-  failed: number;
-} {
-  let total = 0,
-    passed = 0,
-    failed = 0;
-  for (const run of runs) {
-    if (run.summary) {
-      total += run.summary.total;
-      passed += run.summary.passed;
-      failed += run.summary.failed;
-    }
-  }
-  return { total, passed, failed };
-}
-
 export function CommitDetailView({
   commitGroup,
   route,
@@ -86,13 +67,7 @@ export function CommitDetailView({
 
   const totalDuration = getTotalDuration(commitGroup.runs);
   const models = getModelsUsed(commitGroup.runs);
-  const totalCases = getTotalCases(commitGroup.runs);
   const isManual = commitGroup.commitSha.startsWith("manual-");
-
-  const orderedRuns = useMemo(
-    () => orderCommitGroupRunsByOutcome(commitGroup.runs),
-    [commitGroup.runs],
-  );
 
   // Find the selected run
   const selectedRun = useMemo(() => {
