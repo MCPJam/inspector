@@ -1089,6 +1089,15 @@ function OrganizationPage({
                       </Button>
                     </div>
 
+                    {billingStatus?.plan &&
+                    planCatalog?.plans[billingStatus.plan]?.billingModel ===
+                      "per_seat" ? (
+                      <p className="text-xs text-muted-foreground">
+                        Pending invites are free. You'll be billed for this
+                        seat once the invite is accepted.
+                      </p>
+                    ) : null}
+
                     {memberInviteGate.isDenied ? (
                       <Alert
                         className="border-primary/20 bg-primary/[0.04]"
