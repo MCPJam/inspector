@@ -435,7 +435,7 @@ export function shouldRetryOAuthConnectionFailure(
   return (
     normalized.includes("request timed out") ||
     normalized.includes("streamable http error") ||
-    normalized.includes("sse error: sse error: non-200 status code (404)")
+    (normalized.includes("non-200 status code") && normalized.includes("404"))
   );
 }
 

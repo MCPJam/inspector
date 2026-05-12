@@ -316,7 +316,13 @@ function createMainWindow(serverUrl: string): BrowserWindow {
       return;
     }
 
-    if (isRendererAppNavigation(url) || !isSafeExternalUrl(url)) {
+    if (isRendererAppNavigation(url)) {
+      return;
+    }
+
+    if (!isSafeExternalUrl(url)) {
+      log.warn("Blocking unsafe navigation from main window");
+      event.preventDefault();
       return;
     }
 
