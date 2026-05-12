@@ -327,10 +327,17 @@ export const useClientConfigStore = create<ClientConfigStoreState>(
       set((state) => {
         const defaultConfig =
           state.defaultConfig ?? buildDefaultProjectConnectionConfig();
-        const nextValue = (defaultConfig[section] ?? {}) as Record<
-          string,
-          unknown
-        >;
+        const nextValue =
+          section === "connectionDefaults"
+            ? ((defaultConfig.connectionDefaults ??
+                buildDefaultProjectConnectionDefaults()) as Record<
+                string,
+                unknown
+              >)
+            : ((defaultConfig.clientCapabilities ?? {}) as Record<
+                string,
+                unknown
+              >);
         const nextState = setSectionValue(state, section, nextValue);
         const { textField, errorField } = getSectionFieldNames(section);
         return {
