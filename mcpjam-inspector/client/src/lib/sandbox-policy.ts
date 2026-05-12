@@ -545,6 +545,83 @@ function splitScheme(value: string): {
 }
 
 /**
+ * Expand an IPv6 address string into 8 lowercase hex 16-bit groups,
+ * or `null` when the input isn't a recognizable IPv6 form. Handles:
+ *
+ *   - Full canonical form: `0:0:0:0:0:0:0:1`
+ *   - `::` zero-run compression at any position: `::1`, `1::`,
+ *     `2001:db8::1`
+ *   - IPv4-mapped low-32-bit form: `::ffff:a.b.c.d` and the hex form
+ *     `::ffff:7f00:1` are both expanded to `0:0:0:0:0:ffff:7f00:0001`.
+ *
+ * Used by the hosted-mode clamp to canonicalize varied IPv6 inputs
+ * before checking for loopback / IPv4-mapped private ranges. A
+ * single regex can only catch one form at a time — `::1` is
+ * different bytes from `0:0:0:0:0:0:0:1`, but both name the same
+ * loopback address; an attacker can pick whichever form bypasses
+ * the clamp. Routing all forms through one normalizer closes that
+ * variant-shopping bypass.
+ *
+ * Deliberately permissive on group hex casing and leading zeros
+ * (RFC 4291 allows either) but strict on syntax: rejects more than
+ * one `::`, more than 8 groups, or non-hex groups.
+ */
+function expandIPv6(addr: string): string[] | null {
+  // Reject obviously-invalid characters early so the split-and-fill
+  // below doesn't have to defensively check each group's content.
+  if (addr.length === 0) return null;
+  if (addr.includes(":::")) return null;
+
+  // Embedded dotted-quad in the low 32 bits (RFC 4291 §2.5.5).
+  // Strip and replace with the two equivalent hex groups so the
+  // rest of the parser only has to deal with hex.
+  let work = addr;
+  const dottedMatch = /^(.*:)?(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(
+    addr,
+  );
+  if (dottedMatch) {
+    const a = Number(dottedMatch[2]);
+    const b = Number(dottedMatch[3]);
+    const c = Number(dottedMatch[4]);
+    const d = Number(dottedMatch[5]);
+    if (a > 255 || b > 255 || c > 255 || d > 255) return null;
+    const hi = ((a << 8) | b).toString(16);
+    const lo = ((c << 8) | d).toString(16);
+    work = `${dottedMatch[1] ?? ""}${hi}:${lo}`;
+  }
+
+  // Compression handling: `::` elides one or more all-zero groups.
+  const parts = work.split("::");
+  if (parts.length > 2) return null;
+
+  const left = parts[0]!.length > 0 ? parts[0]!.split(":") : [];
+  const right =
+    parts.length === 2 && parts[1]!.length > 0
+      ? parts[1]!.split(":")
+      : [];
+
+  if (parts.length === 1) {
+    // No compression — must already have all 8 groups.
+    if (left.length !== 8) return null;
+  } else {
+    // Compression — must elide at least 1 group, i.e. total < 8.
+    if (left.length + right.length >= 8) return null;
+  }
+
+  const fillCount = 8 - left.length - right.length;
+  const fill = Array<string>(parts.length === 2 ? fillCount : 0).fill("0");
+  const groups = [...left, ...fill, ...right];
+  if (groups.length !== 8) return null;
+
+  const out: string[] = [];
+  for (const g of groups) {
+    if (!/^[0-9a-fA-F]{1,4}$/.test(g)) return null;
+    out.push(g.toLowerCase());
+  }
+  return out;
+}
+
+/**
  * Extract the bare hostname from a possibly-port-suffixed host string.
  *
  * Used by both `matchesDomain` (for wildcard suffix comparisons that
@@ -612,18 +689,39 @@ function isHostedClampBlocked(domain: string, _key: CspDirectiveKey): boolean {
   // `slice(0, indexOf(':'))` would reduce `[::1]:3000` to `[` and
   // bare `::1` to `""`, slipping past every loopback check below).
   const lowerHost = extractHostname(host).toLowerCase();
-  // IPv4-mapped IPv6 form (`::ffff:a.b.c.d`) — the embedded v4 literal
-  // is the actual destination, so unfold it before the loopback /
-  // RFC-1918 / link-local checks fire. Without this normalization,
-  // `http://[::ffff:127.0.0.1]` survives the bracket strip (→
-  // `::ffff:127.0.0.1`) and then bypasses every `startsWith("127.")`
-  // / `startsWith("10.")` / `startsWith("192.168.")` /
-  // `startsWith("169.254.")` check below — a documented bedrock-guard
-  // bypass.
-  const v4MappedMatch = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(
-    lowerHost,
-  );
-  const effectiveHost = v4MappedMatch ? v4MappedMatch[1]! : lowerHost;
+  // IPv6 normalization. CSP entries can express the same address
+  // in many forms — `::1` vs `0:0:0:0:0:0:0:1`, `::ffff:127.0.0.1`
+  // vs `::ffff:7f00:1`, etc. Without canonicalization, an attacker
+  // can pick whichever form bypasses the clamp's literal startsWith
+  // checks. Route everything through one expander so the loopback
+  // and IPv4-mapped checks see a stable shape.
+  //
+  // `effectiveHost` ends up holding the dotted-quad form when the
+  // input was an IPv4-mapped IPv6 (so the downstream `startsWith
+  // ("127.")` / `startsWith("10.")` / etc. checks fire); otherwise
+  // it keeps the original lowerHost.
+  const v6groups = expandIPv6(lowerHost);
+  // Loopback in any IPv6 form: all groups 0 except last = 1.
+  // Catches `::1`, `0:0:0:0:0:0:0:1`, `0::1`, `::0:1`, etc.
+  const isIpv6Loopback =
+    v6groups !== null &&
+    v6groups.slice(0, 7).every((g) => g === "0") &&
+    v6groups[7] === "1";
+  // IPv4-mapped IPv6: first 5 groups 0, group 5 = "ffff", last 2
+  // groups encode the v4 address (RFC 4291 §2.5.5.2). Catches both
+  // dotted-quad form (`::ffff:127.0.0.1`) and hex form
+  // (`::ffff:7f00:1`) — the dotted form is converted to hex during
+  // expansion.
+  let effectiveHost = lowerHost;
+  if (
+    v6groups !== null &&
+    v6groups[5] === "ffff" &&
+    v6groups.slice(0, 5).every((g) => g === "0")
+  ) {
+    const hi = parseInt(v6groups[6]!, 16);
+    const lo = parseInt(v6groups[7]!, 16);
+    effectiveHost = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+  }
   if (
     effectiveHost === "localhost" ||
     effectiveHost === "127.0.0.1" ||
@@ -631,7 +729,7 @@ function isHostedClampBlocked(domain: string, _key: CspDirectiveKey): boolean {
     effectiveHost === "0.0.0.0" ||
     effectiveHost.startsWith("10.") ||
     effectiveHost.startsWith("192.168.") ||
-    effectiveHost === "::1"
+    isIpv6Loopback
   ) {
     return true;
   }

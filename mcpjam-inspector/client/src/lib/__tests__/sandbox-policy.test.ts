@@ -337,6 +337,55 @@ describe("resolveSandboxCsp — hosted-mode hard clamp", () => {
     ]);
   });
 
+  it("strips canonical and compressed IPv6 loopback forms (regression: 0:0:0:0:0:0:0:1, ::1, 0::1)", () => {
+    // Regression for CodeRabbit Critical follow-up: literal-string
+    // `effectiveHost === "::1"` only catches one IPv6 loopback form.
+    // RFC 4291 lets the same address be written canonical
+    // (`0:0:0:0:0:0:0:1`), compressed (`::1`), or with the `::` at
+    // various positions (`0::1`, `::0:1`). All must be blocked or an
+    // attacker picks the form that slips past.
+    const result = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: [
+          "https://api.example.com",
+          "http://[::1]",
+          "http://[0:0:0:0:0:0:0:1]",
+          "http://[0::1]",
+          "http://[::0:1]",
+        ],
+      },
+      isHostedMode: true,
+    });
+    expect(result.effective.connectDomains).toEqual([
+      "https://api.example.com",
+    ]);
+  });
+
+  it("strips hex IPv4-mapped IPv6 (regression: ::ffff:7f00:1 == 127.0.0.1)", () => {
+    // Regression for CodeRabbit Critical follow-up: `::ffff:7f00:1`
+    // is the hex form of `::ffff:127.0.0.1`. The previous narrow
+    // regex only matched dotted-quad form, letting the hex form
+    // slip past every IPv4 loopback / RFC-1918 / link-local check.
+    const result = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: [
+          "https://api.example.com",
+          // 127.0.0.1 hex-encoded as IPv4-mapped IPv6.
+          "http://[::ffff:7f00:1]",
+          // 10.0.0.1 hex-encoded.
+          "http://[::ffff:0a00:1]",
+          // 169.254.169.254 (AWS IMDS) hex-encoded — leading-zero
+          // variant.
+          "http://[::ffff:a9fe:a9fe]",
+        ],
+      },
+      isHostedMode: true,
+    });
+    expect(result.effective.connectDomains).toEqual([
+      "https://api.example.com",
+    ]);
+  });
+
   it("strips IPv4-mapped IPv6 loopback / RFC-1918 in hosted mode (regression: ::ffff:* bypass)", () => {
     // Regression for CodeRabbit Minor: `::ffff:127.0.0.1` and other
     // IPv4-mapped IPv6 forms route packets to the embedded v4
