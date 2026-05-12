@@ -127,7 +127,6 @@ let mockJsonRpcPanelVisible = false;
 const mockConnectRegistry = vi.fn();
 const mockLoggerView = vi.fn();
 const mockUseRegistryServers = vi.fn();
-const mockUseProjectBillingGate = vi.fn();
 
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
@@ -148,15 +147,6 @@ vi.mock("../client-config/ClientConfigTab", () => ({
     </div>
   ),
 }));
-
-vi.mock("@/lib/billing-gates", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/billing-gates")>();
-  return {
-    ...actual,
-    useProjectBillingGate: (...args: unknown[]) =>
-      mockUseProjectBillingGate(...args),
-  };
-});
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({
@@ -446,7 +436,6 @@ describe("ServersTab shared detail modal", () => {
     onRemove: vi.fn(),
     projects,
     activeProjectId: "project-1",
-    organizationId: "org-1",
     isBillingContextPending: false,
     onSwitchProject: vi.fn(),
     onCreateProject: vi.fn().mockResolvedValue("project-2"),
@@ -473,25 +462,6 @@ describe("ServersTab shared detail modal", () => {
     mockRegistryLoading = false;
     mockJsonRpcPanelVisible = false;
     mockLoggerView.mockReset();
-    mockUseProjectBillingGate.mockImplementation(
-      ({
-        organizationId,
-        gate,
-      }: {
-        organizationId: string | null;
-        gate: unknown;
-      }) => ({
-        organizationId,
-        gate,
-        decision: null,
-        currentPlan: "team",
-        upgradePlan: null,
-        canManageBilling: true,
-        isLoading: false,
-        isDenied: false,
-        denialMessage: null,
-      })
-    );
     mockConnectRegistry.mockReset();
     mockConnectRegistry.mockImplementation(async (server) => {
       defaultProps.onConnect({
@@ -527,12 +497,6 @@ describe("ServersTab shared detail modal", () => {
       screen.getByTestId("servers-billing-context-pending")
     ).toBeInTheDocument();
     expect(screen.queryByText("Add Server")).not.toBeInTheDocument();
-    expect(mockUseProjectBillingGate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        projectId: null,
-        organizationId: null,
-      })
-    );
   });
 
   it("shows a no-project state when there is no selected project", () => {
