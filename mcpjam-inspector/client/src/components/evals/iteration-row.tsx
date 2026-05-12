@@ -2,7 +2,6 @@ import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { EvalIteration, EvalCase } from "./types";
-import { IterationDetails } from "./iteration-details";
 import { evalStatusLeftBorderClasses, formatRunId } from "./helpers";
 
 interface IterationRowProps {
@@ -23,7 +22,7 @@ export function CompactIterationRow({
   iterationTestCase,
   iterationRun,
   onViewRun,
-  formatTime,
+  formatTime: _formatTime,
   formatDuration,
   isOpen = false,
   onToggle,
@@ -33,10 +32,6 @@ export function CompactIterationRow({
   const durationMs =
     startedAt && completedAt ? Math.max(completedAt - startedAt, 0) : null;
   const isPending = iteration.result === "pending";
-
-  const runTimestamp = iterationRun
-    ? formatTime(iterationRun._id ? undefined : iteration.createdAt)
-    : null;
 
   const actualToolCalls = iteration.actualToolCalls || [];
 

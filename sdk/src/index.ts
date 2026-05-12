@@ -495,3 +495,15 @@ export type {
   ListToolsParams,
   WithEphemeralClientOptions,
 } from "./operations.js";
+
+// Eval matchers (browser-safe; also exported from `@mcpjam/sdk/matchers`)
+export {
+  evaluateToolCalls,
+} from "./matchers.js";
+export type {
+  EvalArgumentMismatch,
+  EvalMatchOptions,
+  EvalOutOfOrderToolCall,
+  EvalToolCall,
+  EvalToolCallMatchResult,
+} from "./matchers.js";

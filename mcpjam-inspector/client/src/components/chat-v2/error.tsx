@@ -53,7 +53,7 @@ export function ErrorBox({
   errorDetails,
   onResetChat,
   code,
-  statusCode,
+  statusCode: _statusCode,
   isRetryable,
   isMCPJamPlatformError,
   onRetry,

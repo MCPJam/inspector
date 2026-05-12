@@ -104,6 +104,19 @@ vi.mock("@/contexts/chatbox-host-style-context", () => ({
   ),
 }));
 
+vi.mock("@/contexts/chatbox-host-capabilities-override-context", () => ({
+  ChatboxHostCapabilitiesOverrideProvider: ({
+    children,
+  }: {
+    children: React.ReactNode;
+  }) => <>{children}</>,
+  useChatboxHostCapabilitiesOverride: () => null,
+}));
+
+vi.mock("@/stores/preferences/preferences-provider", () => ({
+  usePreferencesStore: () => null,
+}));
+
 const model = {
   id: "openai/gpt-5-mini",
   name: "GPT-5 Mini",

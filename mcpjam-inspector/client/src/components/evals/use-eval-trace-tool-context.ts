@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useConvexAuth } from "convex/react";
 import {
   listTools,
-  type ListToolsResultWithMetadata,
   type ToolServerMap,
 } from "@/lib/apis/mcp-tools-api";
 import { HOSTED_MODE } from "@/lib/config";

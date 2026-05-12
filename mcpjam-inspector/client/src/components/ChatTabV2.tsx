@@ -369,7 +369,6 @@ export function ChatTabV2({
     restoredToolRenderOverrides,
     liveTraceEnvelope,
     requestPayloadHistory,
-    hasTraceSnapshot,
     hasLiveTimelineContent,
     traceViewsSupported,
     isStreaming,
@@ -417,11 +416,12 @@ export function ChatTabV2({
   });
 
   // Chat history handlers
-  const showHistoryRail =
+  const showHistoryRail = Boolean(
     HOSTED_MODE &&
-    !minimalMode &&
-    !hostedChatboxId &&
-    chatHistoryRailEnabled;
+      !minimalMode &&
+      !hostedChatboxId &&
+      chatHistoryRailEnabled,
+  );
   const {
     session: reactiveHistorySession,
     widgetSnapshots: reactiveHistoryWidgetSnapshots,
@@ -2339,7 +2339,10 @@ export function ChatTabV2({
                         }}
                         sendFollowUpMessage={
                           activeTraceViewMode === "chat" && revealedInChat
-                            ? handleSendFollowUp
+                            ? (text: string) => {
+                                lastSentUserMessageRef.current = text;
+                                sendMessage({ text });
+                              }
                             : undefined
                         }
                         onFullscreenChange={setIsWidgetFullscreen}

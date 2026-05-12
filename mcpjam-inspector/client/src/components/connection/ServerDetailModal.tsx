@@ -86,8 +86,6 @@ export function ServerDetailModal({
   const isMCPAppServer = isMCPApp(toolsData);
   const isOpenAIAppServer = isOpenAIApp(toolsData);
   const isOpenAIAppAndMCPAppServer = isOpenAIAppAndMCPApp(toolsData);
-  const hasWidgetMetadata =
-    isMCPAppServer || isOpenAIAppServer || isOpenAIAppAndMCPAppServer;
 
   const formState = useServerForm(server, { projectClientConfig });
   const trimmedName = formState.name.trim();
