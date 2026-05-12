@@ -54,8 +54,8 @@ type DestinationMode = "existing" | "new";
 
 /**
  * Per-user-message overflow action that promotes a single chat turn into a
- * test case. Turns with no observed tool calls are saved as negative tests
- * (mirrors the session-level importer).
+ * test case. The backend rejects turns with no observed tool calls; create
+ * a negative test directly from the Evals suite when one is needed.
  */
 export function SaveAsTestCaseAction({
   chatSessionId,
@@ -169,7 +169,8 @@ export function SaveAsTestCaseAction({
             <DialogTitle>Save as test case</DialogTitle>
             <DialogDescription>
               Captures this prompt and the assistant's tool calls. Turns
-              without tool calls are saved as negative tests.
+              with no observed tool calls can't be saved here — create a
+              negative test from the Evals suite instead.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">

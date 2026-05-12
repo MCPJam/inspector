@@ -178,15 +178,22 @@ export function assertSuiteRunWithinCap(
   }
 }
 
+/**
+ * Counts override prompt-turns when present, then falls back to the
+ * persisted case's prompt-turns count. Callers that have already loaded
+ * the persisted test case should pass it via `resolved` — without it, a
+ * multi-turn saved case can slip past the cap because we'd count it as a
+ * single-turn run.
+ */
 export function assertTestCaseRunWithinCap(
   request: RunTestCaseRequest,
   configCount = 1,
+  resolved?: { promptTurnsLength?: number },
 ) {
   const iterations = request.testCaseOverrides?.runs ?? 1;
-  const turns = Math.max(
-    request.testCaseOverrides?.promptTurns?.length ?? 0,
-    1,
-  );
+  const overrideTurns = request.testCaseOverrides?.promptTurns?.length;
+  const resolvedTurns = resolved?.promptTurnsLength;
+  const turns = Math.max(overrideTurns ?? resolvedTurns ?? 0, 1);
   const totalCalls = iterations * turns * Math.max(configCount, 1);
   if (totalCalls > MAX_TOTAL_LLM_CALLS) {
     throw new WebRouteError(
@@ -721,8 +728,6 @@ export async function runEvalTestCaseWithManager(
     testCaseOverrides,
   } = request;
 
-  assertTestCaseRunWithinCap(request);
-
   const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
   const { convexClient, convexHttpUrl } = createConvexClients(convexAuthToken);
 
@@ -733,6 +738,10 @@ export async function runEvalTestCaseWithManager(
   if (!testCase) {
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Test case not found");
   }
+
+  assertTestCaseRunWithinCap(request, 1, {
+    promptTurnsLength: testCase.promptTurns?.length,
+  });
 
   const test = {
     title: testCase.title,
@@ -956,8 +965,6 @@ export async function streamEvalTestCaseWithManager(
     testCaseOverrides,
   } = request;
 
-  assertTestCaseRunWithinCap(request);
-
   const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
   const { convexClient, convexHttpUrl } = createConvexClients(convexAuthToken);
 
@@ -968,6 +975,10 @@ export async function streamEvalTestCaseWithManager(
   if (!testCase) {
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Test case not found");
   }
+
+  assertTestCaseRunWithinCap(request, 1, {
+    promptTurnsLength: testCase.promptTurns?.length,
+  });
 
   const test = {
     title: testCase.title,

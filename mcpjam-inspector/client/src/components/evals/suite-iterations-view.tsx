@@ -220,8 +220,13 @@ export function SuiteIterationsView({
   /**
    * Transient per-run iteration override (1-10) applied to Run-all-cases and
    * per-case quick runs triggered from this suite view. `undefined` means
-   * "Auto" — each test uses its persisted `EvalCase.runs`. Never written
-   * back to the persisted default; server enforces an absolute cap above 10.
+   * "Auto":
+   *   - Suite reruns: each test uses its persisted `EvalCase.runs`.
+   *   - Per-case quick runs: a single iteration (the route defaults
+   *     `runs` to 1 when no override is sent — persisted `runs` is not
+   *     consulted here).
+   * Never written back to the persisted default; server enforces an
+   * absolute cap above 10.
    */
   const [iterationOverride, setIterationOverride] = useState<
     number | undefined

@@ -191,6 +191,38 @@ describe("assertTestCaseRunWithinCap", () => {
       WebRouteError,
     );
   });
+
+  it("counts persisted promptTurns when no override is sent", () => {
+    // runs=10 override, no promptTurns override, persisted case has 31
+    // turns → 310 LLM calls, must trip the cap. Without passing
+    // `resolved.promptTurnsLength` the guard would see 10 × 1 = 10.
+    const req = RunTestCaseRequestSchema.parse(buildTestCaseRequest(10));
+    try {
+      assertTestCaseRunWithinCap(req, 1, { promptTurnsLength: 31 });
+      throw new Error("expected throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(WebRouteError);
+      expect((err as WebRouteError).details?.totalCalls).toBe(310);
+    }
+  });
+
+  it("override promptTurns wins over persisted count", () => {
+    const base = buildTestCaseRequest(10) as Record<string, unknown>;
+    const req = RunTestCaseRequestSchema.parse({
+      ...base,
+      testCaseOverrides: {
+        ...(base.testCaseOverrides as Record<string, unknown>),
+        promptTurns: [
+          { id: "a", prompt: "p", expectedToolCalls: [] },
+          { id: "b", prompt: "p", expectedToolCalls: [] },
+        ],
+      },
+    });
+    // 10 × 2 = 20, well within cap — persisted 999 turns are ignored.
+    expect(() =>
+      assertTestCaseRunWithinCap(req, 1, { promptTurnsLength: 999 }),
+    ).not.toThrow();
+  });
 });
 
 describe("filterAndRemapReplayConfigs", () => {
