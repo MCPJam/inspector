@@ -757,11 +757,20 @@ export function MCPAppsRenderer({
   const resolvedCsp = useMemo(() => {
     if (!widgetCsp && !profileHasCsp) return undefined;
     const eff = resolvedCspLayers.effective;
+    // Preserve undefined per directive — DO NOT default to `[]`.
+    // The sandbox proxy treats `undefined` as "no restriction on
+    // this directive family" but `[]` as "block this directive
+    // entirely." Defaulting an undeclared `resourceDomains` to `[]`
+    // would turn a widget that only declared `connectDomains` into
+    // one with all script/style/font/img loads blocked. The
+    // resolver returns `undefined` for any directive that wasn't
+    // in the baseline AND wasn't restricted/denied, so propagating
+    // that through here matches pre-feature behavior verbatim.
     return {
-      connectDomains: eff.connectDomains ?? [],
-      resourceDomains: eff.resourceDomains ?? [],
-      frameDomains: eff.frameDomains ?? [],
-      baseUriDomains: eff.baseUriDomains ?? [],
+      connectDomains: eff.connectDomains,
+      resourceDomains: eff.resourceDomains,
+      frameDomains: eff.frameDomains,
+      baseUriDomains: eff.baseUriDomains,
     };
   }, [resolvedCspLayers, widgetCsp, profileHasCsp]);
 
