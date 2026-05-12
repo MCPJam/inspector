@@ -403,6 +403,7 @@ Advanced replay override. Most users should not construct this manually.
 | `externalCaseId` | `string` | No | Custom case ID |
 | `metadata` | `Record<string, string \| number \| boolean>` | No | Custom metadata |
 | `isNegativeTest` | `boolean` | No | Whether this is a negative test |
+| `matchOptions` | `EvalMatchOptions` | No | Per-result match options. When present, the inspector snapshots these onto the iteration so historical pass/fail computation honors them. See [`EvalMatchOptions`](/sdk/reference/validators#evalmatchoptions) |
 | `widgetSnapshots` | `EvalWidgetSnapshotInput[]` | No | MCP App HTML replay payloads (typically from [`getWidgetSnapshots()`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) on [`PromptResult`](/sdk/reference/prompt-result)). Omitted when not using MCP Apps or when `TestAgent` had no `mcpClientManager` |
 
 ### ReportEvalResultsOutput
