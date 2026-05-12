@@ -60,6 +60,31 @@ export function McpProfileSection({
   );
   const [extensionsError, setExtensionsError] = useState<string | null>(null);
 
+  // External-change resync for the extensions textarea, mirroring
+  // the ClientIdentitySubsection / ProtocolVersionsSubsection /
+  // CommaListInput pattern. Without this, a backend save returning
+  // canonicalized data (e.g. key-sorted JSON) or a parent-driven
+  // value change (other than the explicit "Reset entire profile"
+  // button, which clears local state directly) leaves the textarea
+  // showing stale content while the actual profile holds different
+  // extensions data. Compare by stable-stringified content so cosmetic
+  // re-renders carrying the same data don't fight the user's
+  // in-progress edit.
+  const extensionsCanonicalKey = useMemo(
+    () => (value?.extensions ? JSON.stringify(value.extensions) : ""),
+    [value?.extensions],
+  );
+  const lastSyncedExtensionsRef = useRef<string>(extensionsCanonicalKey);
+  useEffect(() => {
+    if (extensionsCanonicalKey !== lastSyncedExtensionsRef.current) {
+      lastSyncedExtensionsRef.current = extensionsCanonicalKey;
+      setExtensionsRaw(
+        value?.extensions ? JSON.stringify(value.extensions, null, 2) : "",
+      );
+      setExtensionsError(null);
+    }
+  }, [extensionsCanonicalKey, value?.extensions]);
+
   // Aggregated error reporting — currently only the raw-JSON
   // extensions field can be invalid (structured controls validate on
   // commit). Subsection helpers don't surface their own errors yet.
@@ -130,6 +155,10 @@ export function McpProfileSection({
             onClick={() => {
               setExtensionsRaw("");
               setExtensionsError(null);
+              // Pre-sync the resync ref so the upcoming external
+              // value-change (profile → undefined) doesn't refire
+              // the resync effect against this manual clear.
+              lastSyncedExtensionsRef.current = "";
               onChange(undefined);
             }}
           >
@@ -257,6 +286,13 @@ export function McpProfileSection({
             setExtensionsRaw(next);
             if (next.trim() === "") {
               setExtensionsError(null);
+              // Pre-sync the resync ref to match the about-to-be-
+              // published canonical content. The parent's
+              // updateProfile call may re-render this component with
+              // an externally-canonicalized JSON; without this
+              // pre-sync the resync effect would race the user's
+              // typing.
+              lastSyncedExtensionsRef.current = "";
               updateProfile((draft) => {
                 delete draft.extensions;
                 return draft;
@@ -274,6 +310,7 @@ export function McpProfileSection({
                 return;
               }
               setExtensionsError(null);
+              lastSyncedExtensionsRef.current = JSON.stringify(parsed);
               updateProfile((draft) => {
                 draft.extensions = parsed as Record<string, unknown>;
                 return draft;
