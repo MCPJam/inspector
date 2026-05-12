@@ -315,7 +315,7 @@ const COMPARE_PLAN_ROW_LABEL_TOOLTIPS: Record<
   "Seat limit": {
     ariaLabel: "About seat limits",
     content:
-      "Seats don't need to be filled by a member. To add a new member, you'll need to have one empty seat.",
+      "You're charged only for active members. Pending invites are free until accepted.",
     contentClassName: "max-w-[18rem]",
   },
   "SSO / SAML": {
