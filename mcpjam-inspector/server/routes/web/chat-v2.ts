@@ -120,6 +120,9 @@ chatV2.post("/", async (c) => {
     // authorizes via project ownership for both guest and authed users.
     // accessScope is only set when a token is in play (shared chat / chatbox)
     // since that's an orthogonal access path keyed on the token, not the actor.
+    const TIMINGS = process.env.MCPJAM_LOCAL_CHATBOX_TIMINGS === "1";
+    const tReqStart = TIMINGS ? Date.now() : 0;
+
     const { manager, oauthServerUrls: urls } = await createAuthorizedManager(
       c,
       bearerToken,
@@ -138,6 +141,12 @@ chatV2.post("/", async (c) => {
     );
     oauthServerUrls = urls;
 
+    if (TIMINGS) {
+      console.log(
+        `[chatbox-timings] web/chat-v2 createAuthorizedManagerMs=${Date.now() - tReqStart} isChatbox=${isChatboxSession} serverCount=${selectedServerIds.length} surface=${surface ?? "none"}`,
+      );
+    }
+
     try {
       const sessionStartedAt = Date.now();
       let prepared;
@@ -151,6 +160,11 @@ chatV2.post("/", async (c) => {
           requireToolApproval,
           customProviders: body.customProviders,
         });
+        if (TIMINGS) {
+          console.log(
+            `[chatbox-timings] web/chat-v2 prepareChatV2Ms=${Date.now() - sessionStartedAt} isChatbox=${isChatboxSession} surface=${surface ?? "none"}`,
+          );
+        }
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         if (msg.includes("Invalid tool name(s) for Anthropic")) {

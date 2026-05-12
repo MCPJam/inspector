@@ -938,7 +938,7 @@ export function useChatSession({
   directVisibility = "private",
   hostedOrgModelConfig,
   hostedContext,
-  minimalMode: _minimalMode = false,
+  minimalMode = false,
   executionConfig,
   hostStyle,
   onReset,
@@ -1992,6 +1992,8 @@ export function useChatSession({
     return () => clearInterval(interval);
   }, [getOllamaBaseUrl]);
 
+  const fetchMetadataIdRef = useRef(0);
+
   // Fetch tools metadata
   useEffect(() => {
     const fetchToolsMetadata = async () => {
@@ -2011,7 +2013,10 @@ export function useChatSession({
         return;
       }
 
-      const shouldCountTokens = selectedModel?.id && selectedModel?.provider;
+      // minimalMode: context popover is hidden — skip tokenization to avoid a
+      // Convex roundtrip per server. Widget/MCP-Apps metadata still fetched.
+      const shouldCountTokens =
+        !minimalMode && selectedModel?.id && selectedModel?.provider;
       const modelIdForTokens = shouldCountTokens
         ? isMCPJamProvidedModel(String(selectedModel.id))
           ? String(selectedModel.id)
@@ -2020,11 +2025,13 @@ export function useChatSession({
 
       setMcpToolsTokenCountLoading(!!modelIdForTokens);
 
+      const fetchId = ++fetchMetadataIdRef.current;
       try {
         const { metadata, toolServerMap, tokenCounts } = await getToolsMetadata(
           selectedServers,
           modelIdForTokens
         );
+        if (fetchId !== fetchMetadataIdRef.current) return;
         setToolsMetadata(metadata);
         setToolServerMap(toolServerMap);
         setMcpToolsTokenCount(
@@ -2033,6 +2040,7 @@ export function useChatSession({
             : null
         );
       } catch (error) {
+        if (fetchId !== fetchMetadataIdRef.current) return;
         if (
           !(hostedChatboxId && isAuthDeniedError(error))
         ) {
@@ -2045,17 +2053,20 @@ export function useChatSession({
         setToolServerMap({});
         setMcpToolsTokenCount(null);
       } finally {
-        setMcpToolsTokenCountLoading(false);
+        if (fetchId === fetchMetadataIdRef.current) {
+          setMcpToolsTokenCountLoading(false);
+        }
       }
     };
 
     fetchToolsMetadata();
-  }, [selectedServersSignature, selectedModel, hostedChatboxId]);
+  }, [selectedServersSignature, selectedModel, hostedChatboxId, minimalMode]);
 
   // System prompt token count
   useEffect(() => {
     const fetchSystemPromptTokenCount = async () => {
-      if (!systemPrompt || !selectedModel?.id || !selectedModel?.provider) {
+      // minimalMode: token count UI is hidden — skip the Convex roundtrip
+      if (minimalMode || !systemPrompt || !selectedModel?.id || !selectedModel?.provider) {
         setSystemPromptTokenCount(null);
         setSystemPromptTokenCountLoading(false);
         return;
@@ -2084,7 +2095,7 @@ export function useChatSession({
     };
 
     fetchSystemPromptTokenCount();
-  }, [systemPrompt, selectedModel, hostedChatboxId]);
+  }, [systemPrompt, selectedModel, hostedChatboxId, minimalMode]);
 
   const previousSelectedServersRef = useRef<string[]>(selectedServers);
   useEffect(() => {

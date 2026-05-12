@@ -8,6 +8,7 @@ interface ImportMetaEnv {
   readonly VITE_MCPJAM_NONPROD_LOCKDOWN?: string;
   readonly VITE_MCPJAM_EMPLOYEE_EMAIL_DOMAINS?: string;
   readonly VITE_WORKOS_DEV_MODE?: string;
+  readonly VITE_MCPJAM_LOCAL_CHATBOX_TIMINGS?: string;
   // more env variables...
 }
 

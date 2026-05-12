@@ -279,7 +279,7 @@ describe("useChatSession minimal mode parity", () => {
     mockCountTextTokens.mockResolvedValue(123);
   });
 
-  it("still prefetches tools metadata when minimalMode is true", async () => {
+  it("still prefetches tools metadata when minimalMode is true, but without modelId", async () => {
     const selectedServers = ["server-1"];
     renderHook(() =>
       useChatSession({
@@ -294,17 +294,17 @@ describe("useChatSession minimal mode parity", () => {
     await waitFor(() => {
       expect(mockGetToolsMetadata).toHaveBeenCalled();
     });
+    // minimalMode omits modelId to skip the Convex tokenizer roundtrip
     expect(mockGetToolsMetadata).toHaveBeenCalledWith(
       ["server-1"],
-      "openai/gpt-4",
+      undefined,
     );
   });
 
-  it("still counts system prompt tokens when minimalMode is true", async () => {
-    const selectedServers = ["server-1"];
-    renderHook(() =>
+  it("skips system prompt token counting when minimalMode is true", async () => {
+    const { result } = renderHook(() =>
       useChatSession({
-        selectedServers,
+        selectedServers: ["server-1"],
         minimalMode: true,
         executionConfig: {
           systemPrompt: "Custom prompt",
@@ -312,12 +312,51 @@ describe("useChatSession minimal mode parity", () => {
       }),
     );
 
+    // Give the effect time to settle
     await waitFor(() => {
-      expect(mockCountTextTokens).toHaveBeenCalledWith(
-        "Custom prompt",
-        "openai/gpt-4",
-      );
+      expect(result.current.systemPromptTokenCountLoading).toBe(false);
     });
+    expect(mockCountTextTokens).not.toHaveBeenCalled();
+    expect(result.current.systemPromptTokenCount).toBeNull();
+  });
+
+  it("ignores stale getToolsMetadata responses when selectedServers changes quickly", async () => {
+    let resolveFirst!: (v: any) => void;
+    const firstFetch = new Promise((res) => { resolveFirst = res; });
+    const secondResult = {
+      metadata: { tool_b: { title: "Tool B" } },
+      toolServerMap: { tool_b: "server-2" },
+      tokenCounts: null,
+    };
+    mockGetToolsMetadata
+      .mockReturnValueOnce(firstFetch)
+      .mockResolvedValueOnce(secondResult);
+
+    let servers = ["server-1"];
+    const { result, rerender } = renderHook(
+      ({ selectedServers }: { selectedServers: string[] }) =>
+        useChatSession({ selectedServers, minimalMode: true }),
+      { initialProps: { selectedServers: servers } },
+    );
+
+    // Trigger a second fetch before the first resolves
+    servers = ["server-2"];
+    rerender({ selectedServers: servers });
+
+    await waitFor(() => expect(mockGetToolsMetadata).toHaveBeenCalledTimes(2));
+
+    // Resolve the first (stale) fetch with different data
+    resolveFirst({
+      metadata: { tool_a: { title: "Tool A" } },
+      toolServerMap: { tool_a: "server-1" },
+      tokenCounts: null,
+    });
+
+    await waitFor(() => {
+      // Only the second fetch's result should be applied
+      expect(result.current.toolServerMap).toEqual({ tool_b: "server-2" });
+    });
+    expect(result.current.toolsMetadata).toEqual({ tool_b: { title: "Tool B" } });
   });
 
   it("soft-fails shared metadata auth denial without noisy warning", async () => {
