@@ -741,21 +741,26 @@ export function MCPAppsRenderer({
     });
   }, [widgetPermissions, mcpProfile]);
 
-  // Whether a host-level sandbox policy is active. When true the
-  // iframe enforcement must NOT be "permissive" — the sandbox proxy
-  // treats `permissive=true` as "skip CSP injection entirely," which
-  // would silently bypass restrictTo / deny / hosted-clamp rules the
-  // user explicitly saved. Hosted chatboxes hit this every render
+  // Whether a host-level CSP policy is active. Gates `permissive`
+  // ONLY on CSP — permissions are passed independently via the
+  // iframe's `permissions=` prop, so a permissions-only profile
+  // doesn't need to flip `permissive`. Without this narrowing, a
+  // permissions-only profile would force `permissive=false` while
+  // `resolvedCsp` is still `undefined` (because the resolver's
+  // early-return at the `resolvedCsp` memo bails when there's no
+  // widgetCsp AND no profile.apps.sandbox.csp), and SandboxedIframe
+  // would fall back to a restrictive default CSP — inadvertently
+  // breaking widget network access even though the user only
+  // configured a permissions policy.
+  //
+  // When the profile sets CSP, the sandbox proxy treats
+  // `permissive=true` as "skip CSP injection entirely," so we MUST
+  // flip permissive to false there or the restrictTo / deny / clamp
+  // rules silently bypass. Hosted chatboxes hit this every render
   // because `ChatTabV2`'s minimalMode wiring sets cspMode="permissive"
-  // upstream, making `widgetPermissive=true` the default — so without
-  // this override, every hosted chatbox would ignore its saved
-  // profile policy. Local dev / unprofiled flows keep the existing
-  // permissive behavior.
-  const profileHasPolicy = Boolean(
-    mcpProfile?.apps?.sandbox?.csp ||
-      mcpProfile?.apps?.sandbox?.permissions,
-  );
-  const effectivePermissive = profileHasPolicy ? false : widgetPermissive;
+  // upstream, making `widgetPermissive=true` the default.
+  const profileHasCsp = Boolean(mcpProfile?.apps?.sandbox?.csp);
+  const effectivePermissive = profileHasCsp ? false : widgetPermissive;
 
   const resolvedPermissions = useMemo(() => {
     // Rebuild the McpUiResourcePermissions shape from the resolver's
@@ -1485,9 +1490,22 @@ export function MCPAppsRenderer({
     registerBridgeHandlers,
     setWidgetModelContext,
     cspMode,
+    // Raw widget* values stay in deps for the
+    // `debug/bridge-connect-start` log entry inside the effect body.
     widgetCsp,
     widgetPermissions,
     widgetPermissive,
+    // Bridge advertises the RESOLVED sandbox policy at handshake
+    // (`sandbox: { csp, permissions }` in the AppBridge config below).
+    // Without tracking the resolved values too, editing
+    // `mcpProfile.apps.sandbox.*` while a widget is mounted leaves
+    // `ui/initialize` advertising stale policy while the iframe
+    // enforces the new one. Host-config preview / playground flows
+    // hit this regularly because they re-render the renderer
+    // without remounting the widget HTML.
+    resolvedCsp,
+    resolvedPermissions,
+    effectivePermissive,
     logWidgetDebug,
     // Bridge must rebuild when the advertised host capabilities change
     // (host style switch or override edit) so the new handshake reflects
