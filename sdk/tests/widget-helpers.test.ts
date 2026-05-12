@@ -1,6 +1,7 @@
 import {
   buildChatGptRuntimeHead,
   buildCspMetaContent,
+  injectOpenAICompat,
 } from "../src/widget-helpers.js";
 
 describe("buildCspMetaContent", () => {
@@ -43,5 +44,44 @@ describe("buildChatGptRuntimeHead", () => {
 
     expect(result).toContain('<base href="/">');
     expect(result).not.toContain("window.__widgetBaseUrl");
+  });
+});
+
+describe("injectOpenAICompat", () => {
+  const baseWidget = {
+    toolId: "call-1",
+    toolName: "demo.tool",
+    toolInput: { foo: "bar" },
+    toolOutput: null,
+  };
+
+  const parseConfig = (html: string) => {
+    const match = html.match(
+      /<script type="application\/json" id="openai-compat-config">([\s\S]*?)<\/script>/,
+    );
+    if (!match) throw new Error("config script not found");
+    return JSON.parse(match[1]);
+  };
+
+  it("defaults useLocalStorageWidgetState to false when omitted", () => {
+    const out = injectOpenAICompat("<head></head>", baseWidget);
+    expect(parseConfig(out).useLocalStorageWidgetState).toBe(false);
+  });
+
+  it("forwards useLocalStorageWidgetState=true into the config script", () => {
+    const out = injectOpenAICompat("<head></head>", {
+      ...baseWidget,
+      useLocalStorageWidgetState: true,
+    });
+    expect(parseConfig(out).useLocalStorageWidgetState).toBe(true);
+  });
+
+  it("is idempotent when the config script is already present", () => {
+    const first = injectOpenAICompat("<head></head>", baseWidget);
+    const second = injectOpenAICompat(first, {
+      ...baseWidget,
+      useLocalStorageWidgetState: true,
+    });
+    expect(second).toBe(first);
   });
 });

@@ -67,6 +67,7 @@ const {
     clearCspViolations: vi.fn(),
     setWidgetModelContext: vi.fn(),
     setWidgetHtml: vi.fn(),
+    setWidgetState: vi.fn(),
   };
 
   return {
@@ -183,6 +184,7 @@ vi.mock("@/stores/widget-debug-store", () => ({
       clearCspViolations: stableStoreFns.clearCspViolations,
       setWidgetModelContext: stableStoreFns.setWidgetModelContext,
       setWidgetHtml: stableStoreFns.setWidgetHtml,
+      setWidgetState: stableStoreFns.setWidgetState,
     }),
 }));
 
@@ -207,6 +209,8 @@ vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
 
 vi.mock("lucide-react", () => ({
   X: (props: any) => <div {...props} />,
+  ChevronLeft: (props: any) => <div {...props} />,
+  ChevronRight: (props: any) => <div {...props} />,
 }));
 
 vi.mock("../mcp-apps-modal", () => ({
@@ -1264,6 +1268,74 @@ describe("MCPAppsRenderer tool input streaming", () => {
       callId: 42,
       error: "Invalid fileId",
     });
+  });
+
+  it("routes openai/setWidgetState to onWidgetStateChange and the debug store", async () => {
+    const onWidgetStateChange = vi.fn();
+    render(
+      <MCPAppsRenderer
+        {...baseProps}
+        cachedWidgetHtmlUrl="blob:cached"
+        onWidgetStateChange={onWidgetStateChange}
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.onMessage).toBeTypeOf("function");
+    });
+
+    const state = { counter: 7 };
+    act(() => {
+      sandboxedIframePropsRef.current.onMessage({
+        data: {
+          jsonrpc: "2.0",
+          method: "openai/setWidgetState",
+          params: { state, toolId: baseProps.toolCallId },
+        },
+      } as MessageEvent);
+    });
+
+    expect(onWidgetStateChange).toHaveBeenCalledWith(
+      baseProps.toolCallId,
+      state,
+    );
+    expect(stableStoreFns.setWidgetState).toHaveBeenCalledWith(
+      baseProps.toolCallId,
+      state,
+    );
+  });
+
+  it("accepts openai/navigationStateChanged without throwing", async () => {
+    // Visible behavior is the back/forward chevrons in the fullscreen header.
+    // Asserting the chevron's disabled attribute requires entering fullscreen,
+    // which is not deterministic in this harness. The handler being wired up
+    // and parsing the payload without crashing is what this test guards;
+    // end-to-end nav verification belongs to Stage 2's 2x2 matrix.
+    render(
+      <MCPAppsRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />,
+    );
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.onMessage).toBeTypeOf("function");
+    });
+
+    expect(() =>
+      act(() => {
+        sandboxedIframePropsRef.current.onMessage({
+          data: {
+            jsonrpc: "2.0",
+            method: "openai/navigationStateChanged",
+            params: {
+              canGoBack: true,
+              canGoForward: false,
+              currentIndex: 1,
+              historyLength: 2,
+              toolId: baseProps.toolCallId,
+            },
+          },
+        } as MessageEvent);
+      }),
+    ).not.toThrow();
   });
 
   it("hides MCP app resource URI metadata row in minimal mode", async () => {

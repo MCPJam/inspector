@@ -23,7 +23,7 @@ import {
   useUIPlaygroundStore,
   type CspMode,
 } from "@/stores/ui-playground-store";
-import { X } from "lucide-react";
+import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import {
   SandboxedIframe,
   SandboxedIframeHandle,
@@ -206,6 +206,7 @@ export function MCPAppsRenderer({
   onRequestFullscreen,
   onExitFullscreen,
   onModelContextUpdate,
+  onWidgetStateChange,
   onAppSupportedDisplayModesChange,
   isOffline,
   cachedWidgetHtmlUrl,
@@ -434,6 +435,13 @@ export function MCPAppsRenderer({
     useState<CheckoutSession | null>(null);
   const [checkoutCallId, setCheckoutCallId] = useState<number | null>(null);
 
+  // Navigation state from openai/navigationStateChanged — drives the
+  // fullscreen header's back/forward chevrons (Stage 1.5).
+  const [navState, setNavState] = useState<{
+    canGoBack: boolean;
+    canGoForward: boolean;
+  }>({ canGoBack: false, canGoForward: false });
+
   // Reset widget HTML when cachedWidgetHtmlUrl changes (e.g., different view selected)
   useEffect(() => {
     setWidgetHtml(null);
@@ -448,6 +456,7 @@ export function MCPAppsRenderer({
       isCachedReplay ? true : (initialWidgetPermissive ?? false),
     );
     setPrefersBorder(initialPrefersBorder ?? true);
+    setNavState({ canGoBack: false, canGoForward: false });
   }, [
     cachedWidgetHtmlUrl,
     isCachedReplay,
@@ -700,6 +709,7 @@ export function MCPAppsRenderer({
   // Widget debug store
   const setWidgetDebugInfo = useWidgetDebugStore((s) => s.setWidgetDebugInfo);
   const setWidgetGlobals = useWidgetDebugStore((s) => s.setWidgetGlobals);
+  const setWidgetStateDebug = useWidgetDebugStore((s) => s.setWidgetState);
   const setWidgetCspStore = useWidgetDebugStore((s) => s.setWidgetCsp);
   const addCspViolation = useWidgetDebugStore((s) => s.addCspViolation);
   const clearCspViolations = useWidgetDebugStore((s) => s.clearCspViolations);
@@ -1477,9 +1487,35 @@ export function MCPAppsRenderer({
         setCheckoutCallId(cId as number);
         setCheckoutSession(sessionData as unknown as CheckoutSession);
         setCheckoutOpen(true);
+      } else if (data.method === "openai/setWidgetState") {
+        // Widget → host: widget state changed. Persist into the debug store
+        // (mirrors widget-state inspection UI) and bubble to the optional
+        // parent callback. Note: actual cross-iframe state sync is handled
+        // by the compat runtime's localStorage path; the host doesn't need
+        // to ferry the value to peer iframes.
+        const params = data.params ?? {};
+        setWidgetStateDebug(toolCallId, params.state);
+        onWidgetStateChange?.(toolCallId, params.state);
+      } else if (data.method === "openai/navigationStateChanged") {
+        const params = data.params ?? {};
+        setNavState({
+          canGoBack: !!params.canGoBack,
+          canGoForward: !!params.canGoForward,
+        });
       }
     }
   };
+
+  const postNavigate = useCallback(
+    (direction: "back" | "forward") => {
+      sandboxRef.current?.postMessage({
+        jsonrpc: "2.0",
+        method: "openai/navigate",
+        params: { direction, toolId: toolCallId },
+      });
+    },
+    [toolCallId],
+  );
   const showWidget = isReady && canRenderStreamingInput;
 
   useEffect(() => {
@@ -1683,7 +1719,26 @@ export function MCPAppsRenderer({
 
       {isFullscreen && !isContainedFullscreenMode && (
         <div className="flex items-center justify-between px-4 h-14 border-b border-border/40 bg-background/95 backdrop-blur z-40 shrink-0">
-          <div />
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => postNavigate("back")}
+              disabled={!navState.canGoBack}
+              className="p-2 rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+              aria-label="Navigate back"
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => postNavigate("forward")}
+              disabled={!navState.canGoForward}
+              className="p-2 rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+              aria-label="Navigate forward"
+            >
+              <ChevronRight className="w-5 h-5" />
+            </button>
+          </div>
           <div className="font-medium text-sm text-muted-foreground">
             {toolName}
           </div>
