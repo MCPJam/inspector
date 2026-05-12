@@ -467,7 +467,6 @@ interface OrganizationBillingSectionProps {
   isStartingPlanChange: boolean;
   pendingPlanChangeTarget: "team" | null;
   isOpeningPortal: boolean;
-  activeMemberCount: number | undefined;
   onDowngradePlan: (
     plan: OrganizationPlan,
     billingInterval: BillingInterval,
@@ -493,7 +492,6 @@ export function OrganizationBillingSection({
   isStartingPlanChange,
   pendingPlanChangeTarget,
   isOpeningPortal,
-  activeMemberCount,
   onDowngradePlan,
   onStartPlanChange,
   onStartAutoPlanChange,
@@ -850,7 +848,6 @@ export function OrganizationBillingSection({
                           billingConfigured,
                           canManageBilling,
                           isBillingActionPending,
-                          activeMemberCount,
                           onDowngradePlan: (
                             targetPlan,
                             targetBillingInterval,
