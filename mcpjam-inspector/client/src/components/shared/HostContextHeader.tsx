@@ -71,6 +71,13 @@ const CUSTOM_DEVICE_BASE = {
   label: "Custom",
 };
 
+/** Muted toolbar hints (`design-system/tooltip`): popover chrome, avoids primary “CTA” orange. */
+const PLAYGROUND_HEADER_TOOLTIP = {
+  variant: "muted" as const,
+  sideOffset: 6,
+  collisionPadding: 12,
+};
+
 export interface HostContextHeaderProps {
   activeProjectId: string | null;
   onSaveHostContext?: (
@@ -209,7 +216,7 @@ export function HostContextHeader({
                 </Button>
               </PopoverTrigger>
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
               <p className="font-medium">Device</p>
             </TooltipContent>
           </Tooltip>
@@ -242,7 +249,7 @@ export function HostContextHeader({
                 </Button>
               </PopoverTrigger>
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
               <p className="font-medium">Locale</p>
             </TooltipContent>
           </Tooltip>
@@ -272,7 +279,7 @@ export function HostContextHeader({
                 </Button>
               </PopoverTrigger>
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
               <p className="font-medium">Timezone</p>
             </TooltipContent>
           </Tooltip>
@@ -307,7 +314,7 @@ export function HostContextHeader({
                 </Button>
               </PopoverTrigger>
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
               <p className="font-medium">CSP</p>
             </TooltipContent>
           </Tooltip>
@@ -332,9 +339,9 @@ export function HostContextHeader({
                 <MousePointer2 className="h-3.5 w-3.5" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
               <p className="font-medium">Hover</p>
-              <p className="text-xs font-light text-primary-foreground/90">
+              <p className="text-xs font-light text-muted-foreground">
                 {capabilities.hover ? "Enabled" : "Disabled"}
               </p>
             </TooltipContent>
@@ -351,9 +358,9 @@ export function HostContextHeader({
                 <Hand className="h-3.5 w-3.5" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
               <p className="font-medium">Touch</p>
-              <p className="text-xs font-light text-primary-foreground/90">
+              <p className="text-xs font-light text-muted-foreground">
                 {capabilities.touch ? "Enabled" : "Disabled"}
               </p>
             </TooltipContent>
@@ -366,7 +373,7 @@ export function HostContextHeader({
               <SafeAreaEditor />
             </div>
           </TooltipTrigger>
-          <TooltipContent>
+          <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
             <p className="font-medium">Safe Area</p>
           </TooltipContent>
         </Tooltip>
@@ -391,7 +398,7 @@ export function HostContextHeader({
               ) : null}
             </Button>
           </TooltipTrigger>
-          <TooltipContent>
+          <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP} className="max-w-sm">
             <p className="font-medium">Host Context</p>
             <p className="text-xs text-muted-foreground">
               Edit raw `hostContext` JSON
@@ -419,7 +426,7 @@ export function HostContextHeader({
               ) : null}
             </Button>
           </TooltipTrigger>
-          <TooltipContent>
+          <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP} className="max-w-sm">
             <p className="font-medium">Host Capabilities</p>
             <p className="text-xs text-muted-foreground">
               Override the `hostCapabilities` advertised in ui/initialize
@@ -450,7 +457,9 @@ export function HostContextHeader({
               ))}
             </div>
           </TooltipTrigger>
-          <TooltipContent>Host Styles</TooltipContent>
+          <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
+            <p className="font-medium">Host Styles</p>
+          </TooltipContent>
         </Tooltip>
 
         {showThemeToggle ? (
@@ -470,8 +479,10 @@ export function HostContextHeader({
                 )}
               </Button>
             </TooltipTrigger>
-            <TooltipContent>
-              {effectiveThemeMode === "dark" ? "Light mode" : "Dark mode"}
+            <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
+              <p className="font-medium">
+                {effectiveThemeMode === "dark" ? "Light mode" : "Dark mode"}
+              </p>
             </TooltipContent>
           </Tooltip>
         ) : null}
