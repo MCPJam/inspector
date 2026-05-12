@@ -52,9 +52,7 @@ export function SkillsTab() {
   const [skills, setSkills] = useState<SkillListItem[]>([]);
   const [selectedSkillName, setSelectedSkillName] = useState<string>("");
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
-  const [_loading, setLoading] = useState(false);
   const [fetchingSkills, setFetchingSkills] = useState(false);
-  const [_error, setError] = useState<string>("");
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
   const [skillToDelete, setSkillToDelete] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -104,7 +102,6 @@ export function SkillsTab() {
 
   const fetchSkills = async () => {
     setFetchingSkills(true);
-    setError("");
 
     try {
       const skillsList = await listSkills();
@@ -121,27 +118,18 @@ export function SkillsTab() {
         setSelectedSkillName(skillsList[0].name);
       }
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : `Could not fetch skills: ${err}`;
-      setError(message);
+      console.error("Could not fetch skills:", err);
     } finally {
       setFetchingSkills(false);
     }
   };
 
   const fetchSkillContent = async (name: string) => {
-    setLoading(true);
-    setError("");
-
     try {
       const skill = await getSkill(name);
       setSelectedSkill(skill);
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : `Error getting skill: ${err}`;
-      setError(message);
-    } finally {
-      setLoading(false);
+      console.error("Error getting skill:", err);
     }
   };
 
@@ -207,9 +195,7 @@ export function SkillsTab() {
         return next;
       });
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : `Error deleting skill: ${err}`;
-      setError(message);
+      console.error("Error deleting skill:", err);
     } finally {
       setIsDeleting(false);
       setSkillToDelete(null);

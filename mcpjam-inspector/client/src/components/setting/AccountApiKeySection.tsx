@@ -34,7 +34,6 @@ type CopyFieldProps = {
   value: string;
   isCopied: boolean;
   onCopy: () => void;
-  copyLabel: string;
   tooltip?: string;
 };
 
@@ -42,7 +41,6 @@ function ApiKeyCopyField({
   value,
   isCopied,
   onCopy,
-  copyLabel: _copyLabel,
   tooltip = "Copy to clipboard",
 }: CopyFieldProps) {
   return (
@@ -316,7 +314,6 @@ export function AccountApiKeySection({
             value={apiKeyPlaintext ?? ""}
             isCopied={isCopied}
             onCopy={handleCopyPlaintext}
-            copyLabel="Copy"
           />
         </DialogContent>
       </Dialog>
