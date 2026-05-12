@@ -29,13 +29,7 @@ function formatSeatLimit(
   if (plan === "enterprise") {
     return t("Custom", true);
   }
-  if (plan === "free") {
-    return t("1 (just you)");
-  }
-  const value =
-    plan === "solo"
-      ? (entry.includedSeats ?? entry.limits.maxMembers)
-      : entry.limits.maxMembers;
+  const value = entry.limits.maxMembers;
   if (value == null) {
     return t("Unlimited", plan === "team");
   }
@@ -97,10 +91,6 @@ export function buildComparePlanSectionsFromCatalog(
           return {
             ...row,
             free: formatSeatLimit("free", getEntry(planCatalog, "free")),
-            solo: formatSeatLimit(
-              "solo",
-              getEntry(planCatalog, "solo"),
-            ),
             team: formatSeatLimit("team", getEntry(planCatalog, "team")),
             enterprise: formatSeatLimit(
               "enterprise",
@@ -112,9 +102,6 @@ export function buildComparePlanSectionsFromCatalog(
             ...row,
             free: formatLimitValue(
               getEntry(planCatalog, "free").limits.maxProjects,
-            ),
-            solo: formatLimitValue(
-              getEntry(planCatalog, "solo").limits.maxProjects,
             ),
             team: formatLimitValue(
               getEntry(planCatalog, "team").limits.maxProjects,
@@ -128,9 +115,6 @@ export function buildComparePlanSectionsFromCatalog(
             free: formatLimitValue(
               getEntry(planCatalog, "free").limits.maxServersPerProject,
             ),
-            solo: formatLimitValue(
-              getEntry(planCatalog, "solo").limits.maxServersPerProject,
-            ),
             team: formatLimitValue(
               getEntry(planCatalog, "team").limits.maxServersPerProject,
               true,
@@ -141,10 +125,6 @@ export function buildComparePlanSectionsFromCatalog(
           return {
             ...row,
             free: formatEvalRuns("free", getEntry(planCatalog, "free")),
-            solo: formatEvalRuns(
-              "solo",
-              getEntry(planCatalog, "solo"),
-            ),
             team: formatEvalRuns("team", getEntry(planCatalog, "team")),
             enterprise: t("Custom", true),
           };
@@ -152,10 +132,6 @@ export function buildComparePlanSectionsFromCatalog(
           return {
             ...row,
             free: formatDeployments("free", getEntry(planCatalog, "free")),
-            solo: formatDeployments(
-              "solo",
-              getEntry(planCatalog, "solo"),
-            ),
             team: formatDeployments("team", getEntry(planCatalog, "team")),
             enterprise: t("Custom", true),
           };

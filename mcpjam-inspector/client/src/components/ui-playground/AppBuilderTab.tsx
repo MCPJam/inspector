@@ -76,8 +76,12 @@ interface AppBuilderTabProps {
   serverConfig?: MCPServerConfig;
   serverName?: string;
   servers?: Record<string, ServerWithName>;
-  isAuthenticated?: boolean;
-  isAuthLoading?: boolean;
+  /** WorkOS sign-in state only; Convex guest auth must not skip NUX. */
+  isSignedInWithWorkOs?: boolean;
+  isWorkOsAuthLoading?: boolean;
+  isConvexAuthenticated?: boolean;
+  isProjectProvisioned?: boolean;
+  hasSeenFirstRunOnboarding?: boolean;
   /**
    * True while the currently selected server exists in runtime state but has
    * not yet appeared in the persisted project servers (Convex round-trip
@@ -123,8 +127,11 @@ export function AppBuilderTab({
   serverConfig,
   serverName,
   servers = {},
-  isAuthenticated = false,
-  isAuthLoading = false,
+  isSignedInWithWorkOs = false,
+  isWorkOsAuthLoading = false,
+  isConvexAuthenticated = false,
+  isProjectProvisioned = true,
+  hasSeenFirstRunOnboarding,
   isServerSyncing = false,
   onConnect,
   onSaveHostContext,
@@ -142,8 +149,12 @@ export function AppBuilderTab({
   const onboarding = useOnboarding({
     servers,
     onConnect: onConnect ?? (() => {}),
-    isAuthenticated,
-    isAuthLoading,
+    isSignedInWithWorkOs,
+    isWorkOsAuthLoading,
+    hasRemoteOnboardingState: hasSeenFirstRunOnboarding !== undefined,
+    hasSeenOnboarding: hasSeenFirstRunOnboarding === true,
+    canPersistRemoteOnboarding: isConvexAuthenticated,
+    isProjectProvisioned,
   });
 
   const firstRunComposerSeed =
@@ -824,7 +835,26 @@ export function AppBuilderTab({
     return () => clearTimeout(id);
   }, [serverName, isServerSyncing]);
 
-  if (onboarding.isResolvingRemoteCompletion) {
+  const isResolvingRemoteCompletion = onboarding.isResolvingRemoteCompletion;
+  const isBootstrappingFirstRunConnection =
+    onboarding.isBootstrappingFirstRunConnection && !!onConnect;
+  const isWaitingForServerSync =
+    !serverConfig && isServerSyncing && !syncTimedOut;
+  const shouldMarkFirstRunNuxShown =
+    firstRunComposerSeed &&
+    onboarding.isGuidedPostConnect &&
+    !isResolvingRemoteCompletion &&
+    !isBootstrappingFirstRunConnection &&
+    !isWaitingForServerSync &&
+    !!serverConfig;
+
+  useEffect(() => {
+    if (shouldMarkFirstRunNuxShown) {
+      onboarding.markOnboardingShown();
+    }
+  }, [onboarding.markOnboardingShown, shouldMarkFirstRunNuxShown]);
+
+  if (isResolvingRemoteCompletion) {
     return (
       <div className="h-full flex flex-col overflow-hidden relative">
         <AppBuilderSkeleton />
@@ -832,7 +862,7 @@ export function AppBuilderTab({
     );
   }
 
-  if (onboarding.isBootstrappingFirstRunConnection && onConnect) {
+  if (isBootstrappingFirstRunConnection) {
     return (
       <div className="h-full flex flex-col overflow-hidden relative">
         <AppBuilderSkeleton />
@@ -843,7 +873,7 @@ export function AppBuilderTab({
   // Server is in runtime state but not yet reflected in the persisted
   // project (Convex round-trip pending). Show a skeleton instead of the
   // misleading "No Server Selected" empty state during the sync window.
-  if (!serverConfig && isServerSyncing && !syncTimedOut) {
+  if (isWaitingForServerSync) {
     return (
       <div className="h-full flex flex-col overflow-hidden relative">
         <AppBuilderSkeleton />

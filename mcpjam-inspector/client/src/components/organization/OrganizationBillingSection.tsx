@@ -43,12 +43,7 @@ import { type ComparePlanCell } from "@/components/organization/compare-plan-mar
 import { CreditBalanceCard } from "@/components/billing/CreditBalanceCard";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 
-const PLAN_ORDER: OrganizationPlan[] = [
-  "free",
-  "solo",
-  "team",
-  "enterprise",
-];
+const PLAN_ORDER: OrganizationPlan[] = ["free", "team", "enterprise"];
 
 /** Column highlighted as the recommended tier (matches common pricing-page “Popular”). */
 const POPULAR_PLAN: OrganizationPlan = "team";
@@ -60,9 +55,6 @@ function getPlanRank(plan: OrganizationPlan): number {
   return PLAN_ORDER.indexOf(plan);
 }
 
-const SOLO_PLAN_MEMBER_LIMIT_TOOLTIP =
-  "Solo plan is only available to organizations with 1 member.";
-
 function getPlanColumnCta(params: {
   plan: OrganizationPlan;
   currentPlan: OrganizationPlan;
@@ -70,13 +62,12 @@ function getPlanColumnCta(params: {
   billingConfigured: boolean;
   canManageBilling: boolean;
   isBillingActionPending: boolean;
-  activeMemberCount: number | undefined;
   onDowngradePlan: (
     plan: OrganizationPlan,
     billingInterval: BillingInterval,
   ) => void;
   onStartPlanChange: (
-    plan: "solo" | "team",
+    plan: "team",
     billingInterval: BillingInterval,
   ) => Promise<void>;
   billingInterval: BillingInterval;
@@ -94,7 +85,6 @@ function getPlanColumnCta(params: {
     billingConfigured,
     canManageBilling,
     isBillingActionPending,
-    activeMemberCount,
     onDowngradePlan,
     onStartPlanChange,
     billingInterval,
@@ -104,12 +94,6 @@ function getPlanColumnCta(params: {
   const isHigherTier = getPlanRank(plan) > getPlanRank(currentPlan);
   const isDowngrade = getPlanRank(plan) < getPlanRank(currentPlan);
   const isEnterprisePlan = plan === "enterprise";
-  // While member count is still loading, conservatively block Solo for non-current
-  // plans so a multi-member org can't briefly see an enabled Solo CTA before the
-  // count resolves.
-  const soloBlockedByMemberCount =
-    plan === "solo" &&
-    (activeMemberCount === undefined || activeMemberCount > 1);
 
   if (isCurrentPlan) {
     return { label: "Current plan", disabled: true, variant: "outline" };
@@ -128,14 +112,6 @@ function getPlanColumnCta(params: {
   }
 
   if (isDowngrade) {
-    if (soloBlockedByMemberCount) {
-      return {
-        label: "Downgrade",
-        disabled: true,
-        variant: "outline",
-        tooltip: SOLO_PLAN_MEMBER_LIMIT_TOOLTIP,
-      };
-    }
     return {
       label: "Downgrade",
       disabled:
@@ -146,16 +122,8 @@ function getPlanColumnCta(params: {
   }
 
   if (isHigherTier && entry.isSelfServe) {
-    if (plan !== "solo" && plan !== "team") {
+    if (plan !== "team") {
       return { label: "Unavailable", disabled: true, variant: "outline" };
-    }
-    if (soloBlockedByMemberCount) {
-      return {
-        label: "Upgrade",
-        disabled: true,
-        variant: "outline",
-        tooltip: SOLO_PLAN_MEMBER_LIMIT_TOOLTIP,
-      };
     }
     return {
       label: "Upgrade",
@@ -182,23 +150,37 @@ function formatCurrency(
   }).format(amount);
 }
 
-/** Price line for the compare table; Solo uses flat `/mo` (3-seat cap), Team uses `/seat/mo`. */
+function formatBillingDate(timestampMs: number): string {
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(timestampMs));
+}
+
+function getDeferredTrialBillingCopy(
+  billingStatus: OrganizationBillingStatus | undefined,
+): string | null {
+  const deferredTrialBillingStartsAt =
+    billingStatus?.deferredTrialBillingStartsAt;
+  if (typeof deferredTrialBillingStartsAt !== "number") {
+    return null;
+  }
+
+  return `$0 today. First bill charged in advance on ${formatBillingDate(
+    deferredTrialBillingStartsAt,
+  )}.`;
+}
+
+/** Price line for the compare table; Team uses `/seat/mo`. */
 function formatPlanPriceLabel(
-  plan: OrganizationPlan,
+  _plan: OrganizationPlan,
   amountInCents: number | null,
   currency: string,
   interval: BillingInterval,
 ): string {
   if (amountInCents == null) {
     return interval === "annual" ? "Custom annual" : "Custom pricing";
-  }
-
-  if (plan === "solo") {
-    if (interval === "monthly") {
-      return `${formatCurrency(amountInCents / 100, currency, 0)}/mo`;
-    }
-    const monthlyEquivalentDollars = amountInCents / 12 / 100;
-    return `${formatCurrency(Math.round(monthlyEquivalentDollars), currency, 0)}/mo`;
   }
 
   if (interval === "monthly") {
@@ -455,7 +437,7 @@ function BillingIntervalToggle({
         Annual
         <span
           className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary sm:px-2 sm:text-xs"
-          title="Solo: savings vs paying the monthly rate for 12 months."
+          title="Team: savings vs paying the monthly rate for 12 months."
         >
           -{annualDiscountPct}%
         </span>
@@ -483,7 +465,7 @@ interface OrganizationBillingSectionProps {
   isLoadingBilling: boolean;
   isLoadingPlanCatalog: boolean;
   isStartingPlanChange: boolean;
-  pendingPlanChangeTarget: "solo" | "team" | null;
+  pendingPlanChangeTarget: "team" | null;
   isOpeningPortal: boolean;
   activeMemberCount: number | undefined;
   onDowngradePlan: (
@@ -491,11 +473,11 @@ interface OrganizationBillingSectionProps {
     billingInterval: BillingInterval,
   ) => Promise<void>;
   onStartPlanChange: (
-    plan: "solo" | "team",
+    plan: "team",
     billingInterval: BillingInterval,
   ) => Promise<void>;
   onStartAutoPlanChange?: (
-    plan: "solo" | "team",
+    plan: "team",
     billingInterval: BillingInterval,
   ) => Promise<void>;
   checkoutIntent?: CheckoutIntentWithOrganization | null;
@@ -645,6 +627,7 @@ export function OrganizationBillingSection({
   const compareSections = planCatalog
     ? buildComparePlanSectionsFromCatalog(planCatalog)
     : null;
+  const deferredTrialBillingCopy = getDeferredTrialBillingCopy(billingStatus);
 
   return (
     <div className="space-y-5">
@@ -782,7 +765,7 @@ export function OrganizationBillingSection({
                   Compare plans
                 </p>
                 <CardTitle className="text-sm font-semibold leading-snug sm:text-base">
-                  Find the right plan for your team
+                  Compare Free vs Team
                 </CardTitle>
                 <p className="pt-1 text-xs leading-snug text-muted-foreground">
                   {ORG_COMPARE_PLANS_NOTE}
@@ -801,7 +784,7 @@ export function OrganizationBillingSection({
             </div>
           ) : (
             <div className="relative w-full overflow-x-auto overscroll-x-contain">
-              <div className="min-w-[56rem] px-4 pb-6 sm:px-6">
+              <div className="min-w-[44rem] px-4 pb-6 sm:px-6">
                 <Table>
                   <TableHeader>
                     <TableRow className="border-b hover:bg-transparent [&_th]:align-top [&_th]:h-full">
@@ -813,7 +796,7 @@ export function OrganizationBillingSection({
                                 Compare plans
                               </p>
                               <CardTitle className="text-sm font-semibold leading-snug sm:text-base">
-                                Find the right plan for your team
+                                Compare Free vs Team
                               </CardTitle>
                               <p className="pt-1 text-xs leading-snug text-muted-foreground">
                                 {ORG_COMPARE_PLANS_NOTE}
@@ -883,9 +866,15 @@ export function OrganizationBillingSection({
                           pendingPlanChangeTarget === plan &&
                           (cta.label === "Upgrade" ||
                             cta.label === "Downgrade") &&
-                          (plan === "solo" || plan === "team");
+                          (plan === "team");
                         const showCtaSpinner = showPlanChangeSpinner;
                         const isPopular = plan === POPULAR_PLAN;
+                        const showDeferredTrialBillingCopy =
+                          deferredTrialBillingCopy != null &&
+                          cta.label === "Upgrade" &&
+                          !cta.disabled &&
+                          !cta.tooltip &&
+                          (plan === "team");
                         return (
                           <TableHead
                             key={plan}
@@ -915,6 +904,11 @@ export function OrganizationBillingSection({
                                   {entry.seatMinimum ? (
                                     <p className="text-xs leading-snug text-muted-foreground">
                                       {entry.seatMinimum} seat minimum
+                                    </p>
+                                  ) : null}
+                                  {showDeferredTrialBillingCopy ? (
+                                    <p className="text-[11px] font-medium leading-tight text-muted-foreground">
+                                      {deferredTrialBillingCopy}
                                     </p>
                                   ) : null}
                                 </div>
@@ -987,7 +981,6 @@ export function OrganizationBillingSection({
                         {section.rows.map((row, rowIndex) => {
                           const cells: ComparePlanCell[] = [
                             row.free,
-                            row.solo,
                             row.team,
                             row.enterprise,
                           ];

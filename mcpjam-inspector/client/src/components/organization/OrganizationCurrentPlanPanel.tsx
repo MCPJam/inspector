@@ -76,6 +76,9 @@ export function getCurrentPlanRenewalLine(
       : `Changes ${formattedScheduledChangeDate}`;
   }
   if (billingStatus.stripeCurrentPeriodEnd != null) {
+    if (billingStatus.subscriptionStatus === "trialing") {
+      return `First charge ${formattedPeriodEnd}`;
+    }
     return `Renews ${formattedPeriodEnd}`;
   }
   if (billingStatus.plan === "free" || !billingStatus.hasCustomer) {
@@ -258,7 +261,7 @@ export function OrganizationCurrentPlanPanel({
     billingConfigured &&
     canManageBilling &&
     !isTrial &&
-    (currentPlan === "solo" || currentPlan === "team") &&
+    currentPlan === "team" &&
     billingStatus.billingInterval != null &&
     scheduledChangeDetailLine == null &&
     !billingStatus.stripeCancelAtPeriodEnd;

@@ -59,7 +59,16 @@ describe("SetupChecklistPanel", () => {
       <SetupChecklistPanel
         chatboxDraft={{
           ...baseDraft,
-          welcomeDialog: { ...baseDraft.welcomeDialog, enabled: false },
+          chatUi: {
+            ...baseDraft.chatUi,
+            surfaces: {
+              ...baseDraft.chatUi.surfaces,
+              welcome: {
+                ...baseDraft.chatUi.surfaces.welcome,
+                enabled: false,
+              },
+            },
+          },
         }}
         savedChatbox={null}
         projectServers={[]}
@@ -133,9 +142,12 @@ describe("SetupChecklistPanel", () => {
   });
 
   it("shows invite-only save prompt in Access when chatbox is unsaved", () => {
-    const internalDraft = CHATBOX_STARTERS.find(
-      (s) => s.id === "internal-qa",
-    )!.createDraft("openai/gpt-5-mini");
+    const internalDraft = {
+      ...CHATBOX_STARTERS.find((s) => s.id === "blank")!.createDraft(
+        "openai/gpt-5-mini",
+      ),
+      mode: "invited_only" as const,
+    };
     render(
       <SetupChecklistPanel
         chatboxDraft={internalDraft}
@@ -159,9 +171,12 @@ describe("SetupChecklistPanel", () => {
   });
 
   it("shows invite email field when inviteChatboxMember is wired (e.g. saved chatbox id)", () => {
-    const internalDraft = CHATBOX_STARTERS.find(
-      (s) => s.id === "internal-qa",
-    )!.createDraft("openai/gpt-5-mini");
+    const internalDraft = {
+      ...CHATBOX_STARTERS.find((s) => s.id === "blank")!.createDraft(
+        "openai/gpt-5-mini",
+      ),
+      mode: "invited_only" as const,
+    };
     render(
       <SetupChecklistPanel
         chatboxDraft={internalDraft}

@@ -67,9 +67,16 @@ export async function prepareChatV2(
     customProviders,
   } = options;
 
+  // Drop ids the manager hasn't registered (server disabled/disconnected, or
+  // a stale id baked into a chatbox config). Passing them through reaches
+  // ensureConnected and throws "Unknown MCP server", 500-ing the whole chat.
+  const knownSelectedServers = selectedServers?.filter((id) =>
+    mcpClientManager.hasServer(id),
+  );
+
   // 1. Get MCP + skill tools
   const mcpTools = await mcpClientManager.getToolsForAiSdk(
-    selectedServers,
+    knownSelectedServers,
     requireToolApproval ? { needsApproval: requireToolApproval } : undefined,
   );
   const { tools: skillTools, systemPromptSection: skillsPromptSection } =
@@ -120,10 +127,10 @@ export async function prepareChatV2(
       scrubMcpAppsToolResultsForBackend(
         scrubUnavailableToolHistoryForBackend(msgs, availableToolNames),
         mcpClientManager,
-        selectedServers,
+        knownSelectedServers,
       ),
       mcpClientManager,
-      selectedServers,
+      knownSelectedServers,
     );
 
   return {

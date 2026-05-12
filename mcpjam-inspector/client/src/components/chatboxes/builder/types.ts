@@ -27,6 +27,15 @@ export interface ChatboxFeedbackDialogDraft {
   promptHint: string;
 }
 
+export interface ChatUiSurfacesDraft {
+  welcome: ChatboxWelcomeDialogDraft;
+  feedback: ChatboxFeedbackDialogDraft;
+}
+
+export interface ChatUiDraft {
+  surfaces: ChatUiSurfacesDraft;
+}
+
 export interface ChatboxDraftConfig {
   name: string;
   description: string;
@@ -40,8 +49,7 @@ export interface ChatboxDraftConfig {
   selectedServerIds: string[];
   /** Subset of selectedServerIds that are optional (off by default for testers). */
   optionalServerIds: string[];
-  welcomeDialog: ChatboxWelcomeDialogDraft;
-  feedbackDialog: ChatboxFeedbackDialogDraft;
+  chatUi: ChatUiDraft;
 }
 
 export interface ChatboxBuilderContext {
@@ -86,12 +94,24 @@ export interface ChatboxBuilderViewModel {
   edges: Edge[];
 }
 
+/**
+ * A canned MCP server a starter wants pre-attached to the new chatbox.
+ * Resolved at starter-selection time: existing project servers matching
+ * `url` are reused; otherwise a new `RemoteServer` row is created.
+ */
+export interface ChatboxStarterServerSeed {
+  name: string;
+  url: string;
+}
+
 export interface ChatboxStarterDefinition {
-  id: "internal-qa" | "icp-demo" | "blank";
+  id: "excalidraw-demo" | "blank";
   title: string;
   description: string;
   promptHint: string;
   /** Short hover text on the template info icon (first-run tiles). */
   templateTooltip?: string;
+  /** Servers to attach to the resulting draft. See ChatboxStarterServerSeed. */
+  serverSeeds?: ChatboxStarterServerSeed[];
   createDraft: (defaultModelId: string) => ChatboxDraftConfig;
 }

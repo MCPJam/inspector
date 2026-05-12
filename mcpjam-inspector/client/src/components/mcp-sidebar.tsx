@@ -49,6 +49,7 @@ import { MCPIcon } from "@/components/ui/mcp-icon";
 import { SidebarUser } from "@/components/sidebar/sidebar-user";
 import { SidebarContextSwitcher } from "@/components/sidebar/sidebar-context-switcher";
 import { SidebarCreditUsage } from "@/components/sidebar/sidebar-credit-usage";
+import { SidebarTrialCountdown } from "@/components/sidebar/sidebar-trial-countdown";
 import { ShareProjectDialog } from "@/components/project/ShareProjectDialog";
 import { useUpdateNotification } from "@/hooks/useUpdateNotification";
 import { Badge } from "@mcpjam/design-system/badge";
@@ -69,7 +70,10 @@ import { withTestingSurface } from "@/lib/testing-surface";
 import { HOSTED_LOCAL_ONLY_TOOLTIP } from "@/lib/hosted-ui";
 import { useLearnMore } from "@/hooks/use-learn-more";
 import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpandedPanel";
-import type { BillingFeatureName } from "@/hooks/useOrganizationBilling";
+import {
+  useOrganizationBillingStatus,
+  type BillingFeatureName,
+} from "@/hooks/useOrganizationBilling";
 import type { Project } from "@/state/app-types";
 import type { OrganizationRouteSection } from "@/lib/hosted-navigation";
 
@@ -569,6 +573,18 @@ export function MCPSidebar({
     );
   }, [activeProject?.organizationId, projects]);
   const shouldShowInviteCta = isAuthenticated && !!user && !!activeProject;
+  const trialBilling = useOrganizationBillingStatus(
+    activeProject?.organizationId ?? null,
+    { enabled: billingUiEnabled && !!activeProject?.organizationId },
+  );
+  const trialActive =
+    billingUiEnabled &&
+    trialBilling?.trialStatus === "active" &&
+    !!trialBilling.trialEndsAt;
+  const handleTrialUpgradeClick = () => {
+    if (!activeProject?.organizationId) return;
+    window.location.hash = `#organizations/${activeProject.organizationId}/billing`;
+  };
 
   const handleNavClick = (url: string) => {
     if (onNavigate && url.startsWith("#")) {
@@ -758,10 +774,18 @@ export function MCPSidebar({
               </SidebarMenuItem>
             </SidebarMenu>
           ) : null}
+          {shouldShowInviteCta && trialActive && trialBilling?.trialEndsAt ? (
+            <SidebarTrialCountdown
+              trialEndsAt={trialBilling.trialEndsAt}
+              trialStartedAt={trialBilling.trialStartedAt}
+              onUpgradeClick={handleTrialUpgradeClick}
+              className="mt-1"
+            />
+          ) : null}
           {!user ? (
             <SidebarCreditUsage className="px-1" includeGuests />
           ) : null}
-          <SidebarUser />
+          <SidebarUser activeOrganizationId={activeOrganizationId} />
         </SidebarFooter>
       </Sidebar>
       {shouldShowInviteCta && user && activeProject ? (

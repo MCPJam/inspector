@@ -12,6 +12,7 @@ const {
   mockUseServerMutations,
   mockConvexQuery,
   testConnectionMock,
+  mockTryResolveProjectServer,
   readStoredOAuthConfigMock,
   toastSuccess,
 } = vi.hoisted(() => ({
@@ -26,6 +27,9 @@ const {
   })),
   mockConvexQuery: vi.fn(),
   testConnectionMock: vi.fn(),
+  mockTryResolveProjectServer: vi.fn<
+    (serverNameOrId: string) => { projectId: string; serverId: string } | null
+  >(() => ({ projectId: "ws_1", serverId: "srv_asana" })),
   readStoredOAuthConfigMock: vi.fn(),
   toastSuccess: vi.fn(),
 }));
@@ -64,7 +68,7 @@ vi.mock("@/lib/oauth/mcp-oauth", () => ({
 vi.mock("@/lib/apis/web/context", () => ({
   injectHostedServerMapping: vi.fn(),
   tryGetHostedServerDisplayName: vi.fn(),
-  tryResolveProjectServer: vi.fn(() => null),
+  tryResolveProjectServer: mockTryResolveProjectServer,
 }));
 
 vi.mock("@/lib/session-token", () => ({
@@ -109,6 +113,7 @@ function renderHostedServerState(
           ws_1: {
             id: "ws_1",
             name: "Project",
+            sharedProjectId: "ws_1",
             clientConfig: options?.projectClientConfig,
             servers: {
               asana: {
@@ -157,6 +162,7 @@ function renderHostedServerState(
         ws_1: {
           id: "ws_1",
           name: "Project",
+          sharedProjectId: "ws_1",
           clientConfig: options?.projectClientConfig,
           servers: {
             asana: {
@@ -210,6 +216,10 @@ describe("useServerState hosted OAuth callback guards", () => {
       success: true,
       initInfo: {},
     });
+    mockTryResolveProjectServer.mockReturnValue({
+      projectId: "ws_1",
+      serverId: "srv_asana",
+    });
     readStoredOAuthConfigMock.mockReturnValue({});
   });
 
@@ -236,7 +246,16 @@ describe("useServerState hosted OAuth callback guards", () => {
         isAuthLoading: false,
         isLoadingProjects: false,
         useLocalFallback: false,
-        effectiveProjects: {} as any,
+        effectiveProjects: {
+          ws_1: {
+            id: "ws_1",
+            name: "Project",
+            sharedProjectId: "ws_1",
+            servers: {},
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        } as any,
         effectiveActiveProjectId: "ws_1",
         activeProjectServersFlat: [],
         logger: {
@@ -290,7 +309,16 @@ describe("useServerState hosted OAuth callback guards", () => {
         isAuthLoading: false,
         isLoadingProjects: false,
         useLocalFallback: false,
-        effectiveProjects: {} as any,
+        effectiveProjects: {
+          ws_1: {
+            id: "ws_1",
+            name: "Project",
+            sharedProjectId: "ws_1",
+            servers: {},
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        } as any,
         effectiveActiveProjectId: "ws_1",
         activeProjectServersFlat: [],
         logger: {
@@ -417,7 +445,7 @@ describe("useServerState hosted OAuth callback guards", () => {
 
     await waitFor(() => {
       expect(mockReconnectServer).toHaveBeenCalledWith(
-        "asana",
+        "srv_asana",
         expect.objectContaining({
           type: "http",
           url: "https://mcp.asana.com/sse",
@@ -426,6 +454,10 @@ describe("useServerState hosted OAuth callback guards", () => {
               projectProfile: {},
             },
           }),
+        }),
+        expect.objectContaining({
+          projectId: "ws_1",
+          serverName: "asana",
         }),
       );
     });

@@ -135,11 +135,15 @@ describe("ChatboxCanvas", () => {
         temperature: 0.7,
         requireToolApproval: false,
         allowGuestAccess: false,
-        mode: "any_signed_in_with_link",
+        mode: "anyone_with_link",
         selectedServerIds: ["srv1"],
         optionalServerIds: [],
-        welcomeDialog: { enabled: true, body: "" },
-        feedbackDialog: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+        chatUi: {
+          surfaces: {
+            welcome: { enabled: true, body: "" },
+            feedback: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+          },
+        },
       },
       projectServers: [
         {
@@ -205,11 +209,15 @@ describe("ChatboxCanvas", () => {
         temperature: 0.7,
         requireToolApproval: false,
         allowGuestAccess: false,
-        mode: "any_signed_in_with_link",
+        mode: "anyone_with_link",
         selectedServerIds: [],
         optionalServerIds: [],
-        welcomeDialog: { enabled: true, body: "" },
-        feedbackDialog: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+        chatUi: {
+          surfaces: {
+            welcome: { enabled: true, body: "" },
+            feedback: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+          },
+        },
       },
       projectServers: [
         {
@@ -291,11 +299,15 @@ describe("ChatboxCanvas", () => {
         temperature: 0.7,
         requireToolApproval: false,
         allowGuestAccess: false,
-        mode: "any_signed_in_with_link",
+        mode: "anyone_with_link",
         selectedServerIds: ["a", "b"],
         optionalServerIds: [],
-        welcomeDialog: { enabled: true, body: "" },
-        feedbackDialog: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+        chatUi: {
+          surfaces: {
+            welcome: { enabled: true, body: "" },
+            feedback: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+          },
+        },
       },
       projectServers: [
         {
@@ -359,10 +371,14 @@ describe("ChatboxCanvas", () => {
       temperature: 0.7,
       requireToolApproval: false,
       allowGuestAccess: false,
-      mode: "any_signed_in_with_link" as const,
+      mode: "anyone_with_link" as const,
       optionalServerIds: [] as string[],
-      welcomeDialog: { enabled: true, body: "" },
-      feedbackDialog: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+      chatUi: {
+        surfaces: {
+          welcome: { enabled: true, body: "" },
+          feedback: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+        },
+      },
     };
 
     const server = {
@@ -667,11 +683,15 @@ function minimalContext(
     temperature: 0.7,
     requireToolApproval: false,
     allowGuestAccess: false,
-    mode: "any_signed_in_with_link" as const,
+    mode: "anyone_with_link" as const,
     selectedServerIds: [] as string[],
     optionalServerIds: [] as string[],
-    welcomeDialog: { enabled: true, body: "" },
-    feedbackDialog: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+    chatUi: {
+      surfaces: {
+        welcome: { enabled: true, body: "" },
+        feedback: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+      },
+    },
     ...overrides,
   };
   return {

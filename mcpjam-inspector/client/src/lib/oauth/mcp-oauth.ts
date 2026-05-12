@@ -1750,11 +1750,13 @@ async function createHostedOAuthSessionIfNeeded(input: {
       ...(pendingMarker.accessScope
         ? { accessScope: pendingMarker.accessScope }
         : {}),
-      ...(pendingMarker.shareToken
-        ? { shareToken: pendingMarker.shareToken }
+      ...(pendingMarker.chatboxId
+        ? { chatboxId: pendingMarker.chatboxId }
         : {}),
-      ...(pendingMarker.chatboxToken
-        ? { chatboxToken: pendingMarker.chatboxToken }
+      ...(pendingMarker.chatboxId &&
+      typeof pendingMarker.accessVersion === "number" &&
+      Number.isFinite(pendingMarker.accessVersion)
+        ? { accessVersion: pendingMarker.accessVersion }
         : {}),
     }),
   });
@@ -1814,11 +1816,13 @@ async function readHostedOAuthSessionProgress(input: {
         ...(input.context.accessScope
           ? { accessScope: input.context.accessScope }
           : {}),
-        ...(input.context.shareToken
-          ? { shareToken: input.context.shareToken }
+        ...(input.context.chatboxId
+          ? { chatboxId: input.context.chatboxId }
           : {}),
-        ...(input.context.chatboxToken
-          ? { chatboxToken: input.context.chatboxToken }
+        ...(input.context.chatboxId &&
+        typeof input.context.accessVersion === "number" &&
+        Number.isFinite(input.context.accessVersion)
+          ? { accessVersion: input.context.accessVersion }
           : {}),
       }),
     }
@@ -2781,9 +2785,11 @@ export async function completeHostedOAuthCallback(
                 },
               }),
           ...(context.accessScope ? { accessScope: context.accessScope } : {}),
-          ...(context.shareToken ? { shareToken: context.shareToken } : {}),
-          ...(context.chatboxToken
-            ? { chatboxToken: context.chatboxToken }
+          ...(context.chatboxId ? { chatboxId: context.chatboxId } : {}),
+          ...(context.chatboxId &&
+          typeof context.accessVersion === "number" &&
+          Number.isFinite(context.accessVersion)
+            ? { accessVersion: context.accessVersion }
             : {}),
         }),
       });

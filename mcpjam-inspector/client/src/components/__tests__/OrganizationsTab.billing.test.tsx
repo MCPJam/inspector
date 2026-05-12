@@ -60,9 +60,8 @@ function createPlanCatalog() {
           prioritySupport: false,
         },
         limits: {
-          maxMembers: 1,
-          maxProjects: 1,
-          maxServersPerProject: 3,
+          maxMembers: 5,
+          maxProjects: 3,
           maxChatboxesPerProject: 0,
           maxEvalRunsPerMonth: 5,
         },
@@ -70,41 +69,12 @@ function createPlanCatalog() {
         seatMinimum: null,
         checkout: null,
       },
-      solo: {
-        plan: "solo",
-        displayName: "Solo",
-        billingModel: "flat",
-        isSelfServe: true,
-        prices: { monthly: 2500, annual: 24000 },
-        features: {
-          evals: true,
-          chatboxes: true,
-          cicd: true,
-          customDomains: false,
-          auditLog: false,
-          sso: false,
-          prioritySupport: false,
-        },
-        limits: {
-          maxMembers: 3,
-          maxProjects: 2,
-          maxServersPerProject: 10,
-          maxChatboxesPerProject: 1,
-          maxEvalRunsPerMonth: 500,
-        },
-        includedSeats: 3,
-        seatMinimum: null,
-        checkout: {
-          plan: "solo",
-          supportedIntervals: ["monthly", "annual"],
-        },
-      },
       team: {
         plan: "team",
         displayName: "Team",
         billingModel: "per_seat",
         isSelfServe: true,
-        prices: { monthly: 7400, annual: 70800 },
+        prices: { monthly: 3800, annual: 36000 },
         features: {
           evals: true,
           chatboxes: true,
@@ -115,14 +85,13 @@ function createPlanCatalog() {
           prioritySupport: true,
         },
         limits: {
-          maxMembers: 100,
-          maxProjects: 10,
-          maxServersPerProject: null,
+          maxMembers: null,
+          maxProjects: null,
           maxChatboxesPerProject: 3,
           maxEvalRunsPerMonth: 5000,
         },
         includedSeats: null,
-        seatMinimum: 4,
+        seatMinimum: null,
         checkout: {
           plan: "team",
           supportedIntervals: ["monthly", "annual"],
@@ -146,7 +115,6 @@ function createPlanCatalog() {
         limits: {
           maxMembers: null,
           maxProjects: null,
-          maxServersPerProject: null,
           maxChatboxesPerProject: null,
           maxEvalRunsPerMonth: null,
         },
@@ -187,6 +155,7 @@ function billingStatusFixture(
     trialPlan: null,
     trialStartedAt: null,
     trialEndsAt: null,
+    deferredTrialBillingStartsAt: null,
     trialDaysRemaining: null,
     decisionRequired: false,
     trialDecision: null,
@@ -231,7 +200,7 @@ function renderAutoCheckoutTab(options?: {
   const initialCheckoutIntent: CheckoutIntentWithOrganization =
     options?.checkoutIntent ?? {
       organizationId: "org-1",
-      plan: "solo",
+      plan: "team",
       interval: "annual",
     };
 
@@ -461,6 +430,30 @@ describe("OrganizationsTab billing", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("shows 'First charge' copy while the subscription is trialing", () => {
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          billingInterval: "monthly",
+          subscriptionStatus: "trialing",
+          source: "subscription",
+          hasCustomer: true,
+          stripeCurrentPeriodEnd: Date.parse("2026-05-19T12:00:00.000Z"),
+          stripePriceId: "price_team_monthly",
+        }),
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" />);
+
+    expect(screen.getByTestId("current-plan-renewal")).toHaveTextContent(
+      "First charge May 19, 2026",
+    );
+    expect(screen.queryByText(/Renews /)).not.toBeInTheDocument();
+  });
+
   it("does not show stale billing-updating copy once plan and interval are resolved", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
@@ -479,7 +472,7 @@ describe("OrganizationsTab billing", () => {
     render(<OrganizationsTab organizationId="org-1" />);
 
     expect(
-      screen.getByText("$59 per seat/month, billed annually · 4 seat minimum"),
+      screen.getByText("$30 per seat/month, billed annually"),
     ).toBeInTheDocument();
     expect(
       screen.queryByText("Billing details are updating…"),
@@ -490,16 +483,16 @@ describe("OrganizationsTab billing", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture({
-          plan: "solo",
-          effectivePlan: "solo",
+          plan: "team",
+          effectivePlan: "team",
           billingInterval: "annual",
           subscriptionStatus: "active",
           hasCustomer: true,
           stripeCurrentPeriodEnd: Date.parse("2027-03-31T12:00:00.000Z"),
-          stripePriceId: "price_solo_annual",
-          stripeScheduledPlan: "solo",
+          stripePriceId: "price_team_annual",
+          stripeScheduledPlan: "team",
           stripeScheduledBillingInterval: "monthly",
-          stripeScheduledPriceId: "price_solo_monthly",
+          stripeScheduledPriceId: "price_team_monthly",
           stripeScheduledEffectiveAt: Date.parse("2027-04-01T12:00:00.000Z"),
           canCancelScheduledBillingChange: true,
         }),
@@ -518,7 +511,7 @@ describe("OrganizationsTab billing", () => {
       screen.queryByRole("button", { name: "Change to monthly" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Keep Solo annual plan" }),
+      screen.getByRole("button", { name: "Keep Team annual plan" }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Manage plan" }),
@@ -599,97 +592,15 @@ describe("OrganizationsTab billing", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows explicit cross-tier scheduled copy and a reversal CTA when the change is cancelable", async () => {
-    const cancelScheduledBillingChange = vi.fn();
-    const hookState = createBillingHookState({
-      billingStatus: billingStatusFixture({
-        plan: "team",
-        effectivePlan: "team",
-        billingInterval: "annual",
-        subscriptionStatus: "active",
-        hasCustomer: true,
-        stripeCurrentPeriodEnd: Date.parse("2027-03-31T12:00:00.000Z"),
-        stripePriceId: "price_team_annual",
-        stripeScheduledPlan: "solo",
-        stripeScheduledBillingInterval: "monthly",
-        stripeScheduledPriceId: "price_solo_monthly",
-        stripeScheduledEffectiveAt: Date.parse("2027-04-01T12:00:00.000Z"),
-        canCancelScheduledBillingChange: true,
-      }),
-      cancelScheduledBillingChange:
-        cancelScheduledBillingChange.mockResolvedValue({
-          plan: "team",
-          billingInterval: "annual",
-        }),
-    });
-    mockUseOrganizationBilling.mockImplementation(() => hookState);
-
-    render(<OrganizationsTab organizationId="org-1" />);
-
-    expect(
-      screen.getByTestId("current-plan-scheduled-change"),
-    ).toHaveTextContent(
-      "Solo monthly starts Apr 1, 2027. Team annual remains active until then.",
-    );
-    expect(
-      screen.getByRole("button", { name: "Keep Team annual plan" }),
-    ).toBeInTheDocument();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Keep Team annual plan" }),
-    );
-
-    await waitFor(() => {
-      expect(
-        screen.getByText(
-          "This cancels the pending change to Solo monthly on Apr 1, 2027. Team annual remains active.",
-        ),
-      ).toBeInTheDocument();
-    });
-  });
-
-  it("does not offer an inline reversal CTA for cross-tier scheduled changes when cancellation is unavailable", () => {
-    mockUseOrganizationBilling.mockReturnValue(
-      createBillingHookState({
-        billingStatus: billingStatusFixture({
-          plan: "team",
-          effectivePlan: "team",
-          billingInterval: "annual",
-          subscriptionStatus: "active",
-          hasCustomer: true,
-          stripeCurrentPeriodEnd: Date.parse("2027-03-31T12:00:00.000Z"),
-          stripePriceId: "price_team_annual",
-          stripeScheduledPlan: "solo",
-          stripeScheduledBillingInterval: "monthly",
-          stripeScheduledPriceId: "price_solo_monthly",
-          stripeScheduledEffectiveAt: Date.parse("2027-04-01T12:00:00.000Z"),
-        }),
-      }),
-    );
-
-    render(<OrganizationsTab organizationId="org-1" />);
-
-    expect(
-      screen.getByTestId("current-plan-scheduled-change"),
-    ).toHaveTextContent(
-      "Solo monthly starts Apr 1, 2027. Team annual remains active until then.",
-    );
-    expect(
-      screen.queryByRole("button", { name: "Keep Team annual plan" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Manage plan" }),
-    ).toBeInTheDocument();
-  });
-
-  it("shows trial messaging without paid Solo pricing copy for active trials", () => {
+  it("shows trial messaging without paid Team pricing copy for active trials", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture({
           plan: "free",
-          effectivePlan: "solo",
+          effectivePlan: "team",
           source: "trial",
           trialStatus: "active",
-          trialPlan: "solo",
+          trialPlan: "team",
           trialStartedAt: Date.parse("2026-04-01T00:00:00.000Z"),
           trialEndsAt: Date.parse("2026-04-08T00:00:00.000Z"),
         }),
@@ -698,7 +609,7 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" />);
 
-    expect(screen.getByText("Solo Trial")).toBeInTheDocument();
+    expect(screen.getByText("Team Trial")).toBeInTheDocument();
     expect(
       screen.getByText("7-day trial · no active subscription yet"),
     ).toBeInTheDocument();
@@ -715,7 +626,7 @@ describe("OrganizationsTab billing", () => {
       createBillingHookState({
         billingStatus: billingStatusFixture({
           plan: "free",
-          effectivePlan: "solo",
+          effectivePlan: "team",
           source: "simulation",
         }),
       }),
@@ -723,10 +634,10 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" />);
 
-    expect(screen.getByText("Solo")).toBeInTheDocument();
+    expect(screen.getByText("Team")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Simulation active. Limits and access use Solo, while billing remains on Free.",
+        "Simulation active. Limits and access use Team, while billing remains on Free.",
       ),
     ).toBeInTheDocument();
     expect(
@@ -739,8 +650,8 @@ describe("OrganizationsTab billing", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture({
-          plan: "solo",
-          effectivePlan: "solo",
+          plan: "team",
+          effectivePlan: "team",
           billingInterval: "monthly",
           subscriptionStatus: "active",
           hasCustomer: true,
@@ -771,8 +682,8 @@ describe("OrganizationsTab billing", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture({
-          plan: "solo",
-          effectivePlan: "solo",
+          plan: "team",
+          effectivePlan: "team",
           billingInterval: "monthly",
           subscriptionStatus: "active",
           hasCustomer: true,
@@ -786,7 +697,7 @@ describe("OrganizationsTab billing", () => {
 
     expect(screen.getByText("Plans & Billing")).toBeInTheDocument();
     expect(screen.getAllByText("Current plan").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Solo").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Team").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Team").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Enterprise").length).toBeGreaterThan(0);
   });
@@ -952,7 +863,7 @@ describe("OrganizationsTab billing", () => {
               scope: "organization",
               canAccess: false,
               shouldShowUpsell: true,
-              upgradePlan: "solo",
+              upgradePlan: "team",
               reason: "limit_reached",
               currentValue: 1,
               allowedValue: 1,
@@ -975,12 +886,7 @@ describe("OrganizationsTab billing", () => {
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "Solo includes up to 3 members and 2 projects for $25/mo flat.",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Upgrade to Solo" }),
+      screen.getByRole("button", { name: "Upgrade to Team" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add member" })).toBeDisabled();
   });
@@ -1046,7 +952,7 @@ describe("OrganizationsTab billing", () => {
               scope: "organization",
               canAccess: false,
               shouldShowUpsell: true,
-              upgradePlan: "solo",
+              upgradePlan: "team",
               reason: "limit_reached",
               currentValue: 1,
               allowedValue: 1,
@@ -1063,7 +969,7 @@ describe("OrganizationsTab billing", () => {
       screen.getByText("Ask an organization owner to review billing options."),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Upgrade to Solo" }),
+      screen.queryByRole("button", { name: "Upgrade to Team" }),
     ).not.toBeInTheDocument();
   });
 
@@ -1071,12 +977,9 @@ describe("OrganizationsTab billing", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture({
-          plan: "solo",
-          effectivePlan: "solo",
-          billingInterval: "monthly",
-          subscriptionStatus: "active",
-          hasCustomer: true,
-          stripePriceId: "price_123",
+          plan: "free",
+          effectivePlan: "free",
+          source: "free",
         }),
       }),
     );
@@ -1096,15 +999,102 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
-    // Default interval is monthly — Solo lists $25/mo
-    expect(screen.getByText(/\$25/)).toBeInTheDocument();
+    // Default interval is monthly — Team lists $38/seat/mo
+    expect(screen.getByText(/\$38/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Annual/ }));
-    expect(screen.getByText(/\$20/)).toBeInTheDocument();
+    expect(screen.getByText(/\$30/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^Monthly$/ }));
-    expect(screen.getByText(/\$25/)).toBeInTheDocument();
+    expect(screen.getByText(/\$38/)).toBeInTheDocument();
   });
 
-  it("starts checkout for Solo from the billing subview", async () => {
+  it("shows deferred billing copy for active trials with enough time remaining", () => {
+    const now = Date.now();
+    const trialEndsAt = now + 10 * 24 * 60 * 60 * 1000;
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "free",
+          effectivePlan: "team",
+          source: "trial",
+          trialStatus: "active",
+          trialPlan: "team",
+          trialStartedAt: now - 24 * 60 * 60 * 1000,
+          trialEndsAt,
+          deferredTrialBillingStartsAt: trialEndsAt,
+          trialDaysRemaining: 10,
+        }),
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+    expect(
+      screen.getAllByText(/\$0 today\. First bill charged in advance on /)
+        .length,
+    ).toBeGreaterThanOrEqual(1);
+  });
+
+  it("hides deferred billing copy when the backend does not return deferred billing eligibility", () => {
+    const now = Date.now();
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "free",
+          effectivePlan: "team",
+          source: "trial",
+          trialStatus: "active",
+          trialPlan: "team",
+          trialStartedAt: now - 24 * 60 * 60 * 1000,
+          trialEndsAt: now + 36 * 60 * 60 * 1000,
+          trialDaysRemaining: 2,
+        }),
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+    expect(screen.queryByText(/\$0 today/)).not.toBeInTheDocument();
+  });
+
+  it("hides deferred billing copy when upgrade actions are disabled", () => {
+    const now = Date.now();
+    const trialEndsAt = now + 10 * 24 * 60 * 60 * 1000;
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "free",
+          effectivePlan: "team",
+          source: "trial",
+          trialStatus: "active",
+          trialPlan: "team",
+          trialStartedAt: now - 24 * 60 * 60 * 1000,
+          trialEndsAt,
+          deferredTrialBillingStartsAt: trialEndsAt,
+          trialDaysRemaining: 10,
+          canManageBilling: false,
+          isOwner: false,
+        }),
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+    expect(screen.queryByText(/\$0 today/)).not.toBeInTheDocument();
+  });
+
+  it("hides deferred billing copy when there is no active trial", () => {
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture(),
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+    expect(screen.queryByText(/\$0 today/)).not.toBeInTheDocument();
+  });
+
+  it("starts checkout for Team from the billing subview", async () => {
     const startPlanChange = vi.fn().mockResolvedValue({
       kind: "checkout",
       checkoutUrl: "https://stripe.test/checkout",
@@ -1126,7 +1116,7 @@ describe("OrganizationsTab billing", () => {
     await waitFor(() => {
       expect(startPlanChange).toHaveBeenCalledWith(
         expect.stringContaining("#organizations/org-1/billing"),
-        "solo",
+        "team",
         "monthly",
         { confirmPaidPlanChange: true },
       );
@@ -1151,251 +1141,14 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
-    expect(
-      within(getPlanColumn("Solo")).getByRole("button", {
-        name: "Upgrade",
-      }),
-    ).toBeDisabled();
-    expect(
-      within(getPlanColumn("Team")).getByRole("button", {
-        name: "Loading...",
-      }),
-    ).toBeDisabled();
-  });
-
-  it("opens a confirmation dialog before paid upgrades", async () => {
-    const startPlanChange = vi.fn();
-    mockUseOrganizationBilling.mockReturnValue(
-      createBillingHookState({
-        billingStatus: billingStatusFixture({
-          plan: "solo",
-          effectivePlan: "solo",
-          billingInterval: "monthly",
-          subscriptionStatus: "active",
-          hasCustomer: true,
-          stripePriceId: "price_solo",
-        }),
-        startPlanChange,
-      }),
-    );
-
-    render(<OrganizationsTab organizationId="org-1" section="billing" />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Upgrade" }));
-
-    expect(screen.getByText("Upgrade to Team?")).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "This upgrade takes effect immediately and updates your existing Solo subscription in place.",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("We do not send you through Stripe Checkout."),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "Stripe prorates the rest of your current billing period instead of waiting until renewal, so unused Solo time is factored into the Team change.",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/Team at \$296\/month \(4-seat minimum\)/),
-    ).toBeInTheDocument();
-    expect(startPlanChange).not.toHaveBeenCalled();
-  });
-
-  it("does not change plan when the paid upgrade confirmation is canceled", async () => {
-    const startPlanChange = vi.fn();
-    mockUseOrganizationBilling.mockReturnValue(
-      createBillingHookState({
-        billingStatus: billingStatusFixture({
-          plan: "solo",
-          effectivePlan: "solo",
-          billingInterval: "monthly",
-          subscriptionStatus: "active",
-          hasCustomer: true,
-          stripePriceId: "price_solo",
-        }),
-        startPlanChange,
-      }),
-    );
-
-    render(<OrganizationsTab organizationId="org-1" section="billing" />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Upgrade" }));
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-
-    await waitFor(() => {
-      expect(screen.queryByText("Upgrade to Team?")).not.toBeInTheDocument();
-    });
-    expect(startPlanChange).not.toHaveBeenCalled();
-  });
-
-  it("disables the paid-upgrade confirmation buttons while the upgrade request is running", async () => {
-    const hookState = createBillingHookState({
-      billingStatus: billingStatusFixture({
-        plan: "solo",
-        effectivePlan: "solo",
-        billingInterval: "monthly",
-        subscriptionStatus: "active",
-        hasCustomer: true,
-        stripePriceId: "price_solo",
-      }),
-      isStartingPlanChange: false,
-    });
-    mockUseOrganizationBilling.mockImplementation(() => hookState);
-
-    const view = render(
-      <OrganizationsTab organizationId="org-1" section="billing" />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Upgrade" }));
-    expect(screen.getByText("Upgrade to Team?")).toBeInTheDocument();
-
-    hookState.isStartingPlanChange = true;
-    hookState.pendingPlanChangeTarget = "team";
-    view.rerender(
-      <OrganizationsTab organizationId="org-1" section="billing" />,
-    );
-
-    expect(screen.getByRole("button", { name: "Upgrading..." })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
-  });
-
-  it("updates the existing subscription in place after paid upgrade confirmation", async () => {
-    const startPlanChange = vi.fn().mockResolvedValue({
-      kind: "updated",
-      subscription: {
-        plan: "team",
-        billingInterval: "monthly",
-      },
-    });
-    mockUseOrganizationBilling.mockReturnValue(
-      createBillingHookState({
-        billingStatus: billingStatusFixture({
-          plan: "solo",
-          effectivePlan: "solo",
-          billingInterval: "monthly",
-          subscriptionStatus: "active",
-          hasCustomer: true,
-          stripePriceId: "price_solo",
-        }),
-        startPlanChange,
-      }),
-    );
-
-    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
-
-    render(<OrganizationsTab organizationId="org-1" section="billing" />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Upgrade" }));
-    expect(screen.getByText("Upgrade to Team?")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Upgrade now" }));
-
-    await waitFor(() => {
-      expect(startPlanChange).toHaveBeenCalledWith(
-        expect.stringContaining("#organizations/org-1/billing"),
-        "team",
-        "monthly",
-        { confirmPaidPlanChange: true },
-      );
-    });
-    expect(openSpy).not.toHaveBeenCalled();
-    expect(toast.success).toHaveBeenCalledWith("Plan updated to Team.");
-    await waitFor(() => {
-      expect(screen.queryByText("Upgrade to Team?")).not.toBeInTheDocument();
-    });
-
-    openSpy.mockRestore();
-  });
-
-  it("confirms team downgrades to Solo, schedules them for renewal, and stays in app", async () => {
-    const hookState = createBillingHookState({
-      billingStatus: billingStatusFixture({
-        plan: "team",
-        effectivePlan: "team",
-        billingInterval: "annual",
-        subscriptionStatus: "active",
-        hasCustomer: true,
-        stripeCurrentPeriodEnd: Date.parse("2027-04-01T12:00:00.000Z"),
-        stripePriceId: "price_team_annual",
-      }),
-    });
-    const startPlanChange = vi.fn().mockImplementation(async () => {
-      hookState.billingStatus = billingStatusFixture({
-        plan: "team",
-        effectivePlan: "team",
-        billingInterval: "annual",
-        subscriptionStatus: "active",
-        hasCustomer: true,
-        stripeCurrentPeriodEnd: Date.parse("2027-04-01T12:00:00.000Z"),
-        stripePriceId: "price_team_annual",
-        stripeScheduledPlan: "solo",
-        stripeScheduledBillingInterval: "monthly",
-        stripeScheduledPriceId: "price_solo_monthly",
-        stripeScheduledEffectiveAt: Date.parse("2027-04-01T12:00:00.000Z"),
-        canCancelScheduledBillingChange: true,
-      });
-      return {
-        kind: "scheduled",
-        subscription: {
-          plan: "team",
-          billingInterval: "annual",
-          stripeScheduledPlan: "solo",
-          stripeScheduledBillingInterval: "monthly",
-          stripeCanCancelScheduledBillingChange: true,
-        },
-      };
-    });
-    hookState.startPlanChange = startPlanChange;
-    mockUseOrganizationBilling.mockImplementation(() => hookState);
-
-    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
-    const view = render(
-      <OrganizationsTab organizationId="org-1" section="billing" />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: /^Monthly$/ }));
-    fireEvent.click(
-      within(getPlanColumn("Solo")).getByRole("button", {
-        name: "Downgrade",
-      }),
-    );
-
-    expect(screen.getByText("Downgrade to Solo?")).toBeInTheDocument();
-    expect(
-      screen.getByText("This downgrade takes effect at renewal, not now."),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("Team annual remains active until then."),
-    ).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Schedule downgrade" }));
-
-    await waitFor(() => {
-      expect(startPlanChange).toHaveBeenCalledWith(
-        expect.stringContaining("#organizations/org-1/billing"),
-        "solo",
-        "monthly",
-        { confirmPaidPlanChange: false },
-      );
-    });
-    expect(openSpy).not.toHaveBeenCalled();
-    expect(toast.success).toHaveBeenCalledWith(
-      "Downgrade to Solo monthly scheduled for renewal.",
-    );
-
-    view.rerender(<OrganizationsTab organizationId="org-1" />);
-
-    expect(
-      screen.getByTestId("current-plan-scheduled-change"),
-    ).toHaveTextContent(
-      "Solo monthly starts Apr 1, 2027. Team annual remains active until then.",
-    );
-    expect(
-      screen.getByRole("button", { name: "Keep Team annual plan" }),
-    ).toBeInTheDocument();
-
-    openSpy.mockRestore();
+    // While the change is in flight, the Team column's CTA is disabled.
+    // Production renders either "Upgrade" or "Loading..." depending on which
+    // tier is in-flight; both should be disabled regardless.
+    const teamButtons = within(getPlanColumn("Team")).getAllByRole("button");
+    expect(teamButtons.length).toBeGreaterThan(0);
+    for (const button of teamButtons) {
+      expect(button).toBeDisabled();
+    }
   });
 
   it("opens the dedicated cancellation flow when downgrading from a paid plan to Free", async () => {
@@ -1407,13 +1160,13 @@ describe("OrganizationsTab billing", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture({
-          plan: "solo",
-          effectivePlan: "solo",
+          plan: "team",
+          effectivePlan: "team",
           billingInterval: "annual",
           subscriptionStatus: "active",
           hasCustomer: true,
           stripeCurrentPeriodEnd: Date.parse("2027-04-01T12:00:00.000Z"),
-          stripePriceId: "price_solo_annual",
+          stripePriceId: "price_team_annual",
         }),
         startPlanChange,
         openPortal,
@@ -1436,7 +1189,7 @@ describe("OrganizationsTab billing", () => {
       screen.getByText("This cancellation takes effect at renewal, not now."),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Solo annual remains active until Apr 1, 2027."),
+      screen.getByText("Team annual remains active until Apr 1, 2027."),
     ).toBeInTheDocument();
     expect(
       screen.getByText("After that, the organization returns to Free."),
@@ -1497,7 +1250,7 @@ describe("OrganizationsTab billing", () => {
     await waitFor(() => {
       expect(startPlanChange).toHaveBeenCalledWith(
         expect.stringContaining("#organizations/org-1/billing"),
-        "solo",
+        "team",
         "annual",
         { confirmPaidPlanChange: false },
       );
@@ -1533,7 +1286,7 @@ describe("OrganizationsTab billing", () => {
     const navigateBillingInSameTab = vi.fn();
     const checkoutIntent = {
       organizationId: "org-1",
-      plan: "solo" as const,
+      plan: "team" as const,
       interval: "annual" as const,
     };
 
@@ -1576,10 +1329,10 @@ describe("OrganizationsTab billing", () => {
       createBillingHookState({
         billingStatus: billingStatusFixture({
           plan: "free",
-          effectivePlan: "solo",
+          effectivePlan: "team",
           source: "trial",
           trialStatus: "active",
-          trialPlan: "solo",
+          trialPlan: "team",
           trialEndsAt: Date.parse("2026-04-08T00:00:00.000Z"),
           trialDaysRemaining: 7,
         }),
@@ -1593,7 +1346,7 @@ describe("OrganizationsTab billing", () => {
     renderAutoCheckoutTab({
       checkoutIntent: {
         organizationId: "org-1",
-        plan: "solo",
+        plan: "team",
         interval: "annual",
       },
       onCheckoutIntentConsumed,
@@ -1607,7 +1360,7 @@ describe("OrganizationsTab billing", () => {
     await waitFor(() => {
       expect(startPlanChange).toHaveBeenCalledWith(
         expect.stringContaining("#organizations/org-1/billing"),
-        "solo",
+        "team",
         "annual",
         { confirmPaidPlanChange: false },
       );
@@ -1632,10 +1385,10 @@ describe("OrganizationsTab billing", () => {
       createBillingHookState({
         billingStatus: billingStatusFixture({
           plan: "free",
-          effectivePlan: "solo",
+          effectivePlan: "team",
           source: "trial",
           trialStatus: "active",
-          trialPlan: "solo",
+          trialPlan: "team",
           trialEndsAt: Date.parse("2026-04-08T00:00:00.000Z"),
           trialDaysRemaining: 7,
         }),
@@ -1709,13 +1462,13 @@ describe("OrganizationsTab billing", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture({
-          plan: "solo",
-          effectivePlan: "solo",
+          plan: "team",
+          effectivePlan: "team",
           source: "subscription",
           billingInterval: "monthly",
           subscriptionStatus: "active",
           hasCustomer: true,
-          stripePriceId: "price_solo",
+          stripePriceId: "price_team",
         }),
         startPlanChange,
       }),
@@ -1741,7 +1494,7 @@ describe("OrganizationsTab billing", () => {
       ).not.toBeInTheDocument();
     });
     expect(startPlanChange).not.toHaveBeenCalled();
-    expect(screen.getByText(/\$20/)).toBeInTheDocument();
+    expect(screen.getByText(/\$30/)).toBeInTheDocument();
   });
 
   it("consumes paid deep links before subscription status catches up", async () => {
@@ -1749,12 +1502,12 @@ describe("OrganizationsTab billing", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture({
-          plan: "solo",
-          effectivePlan: "solo",
+          plan: "team",
+          effectivePlan: "team",
           billingInterval: "monthly",
           subscriptionStatus: null,
           hasCustomer: true,
-          stripePriceId: "price_solo",
+          stripePriceId: "price_team",
         }),
         startPlanChange,
       }),
@@ -1804,7 +1557,7 @@ describe("OrganizationsTab billing", () => {
     await waitFor(() => {
       expect(startPlanChange).toHaveBeenCalledWith(
         expect.stringContaining("#organizations/org-1/billing"),
-        "solo",
+        "team",
         "annual",
         { confirmPaidPlanChange: false },
       );
@@ -1866,8 +1619,8 @@ describe("OrganizationsTab billing", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture({
-          plan: "solo",
-          effectivePlan: "solo",
+          plan: "team",
+          effectivePlan: "team",
           billingInterval: "monthly",
           subscriptionStatus: "active",
           hasCustomer: true,

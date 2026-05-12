@@ -465,14 +465,16 @@ describe("ChatTabV2 history sync", () => {
     render(
       <ChatTabV2
         {...defaultProps}
-        hostedProjectIdOverride="project-1"
-        hostedSelectedServerIdsOverride={["server-1"]}
-        hostedContext={{ chatboxToken: "chatbox-token" }}
+        hostedContext={{
+          chatboxId: "cbx_test", accessVersion: 1,
+          projectId: "project-1",
+          selectedServerIds: ["server-1"],
+        }}
       />
     );
 
     expect(lastUseChatSessionOptionsRef.current?.hostedContext).toMatchObject({
-      chatboxToken: "chatbox-token",
+      chatboxId: "cbx_test", accessVersion: 1,
     });
     expect(
       lastUseChatSessionOptionsRef.current?.hostedContext?.oauthTokens

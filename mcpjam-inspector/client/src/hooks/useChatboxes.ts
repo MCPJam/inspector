@@ -1,7 +1,21 @@
 import { useMutation, useQuery } from "convex/react";
 import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
+import type {
+  ChatUiSettings,
+  ChatboxFeedbackDialogSettings,
+  ChatboxWelcomeDialogSettings,
+} from "@/types/chatUi";
 
-export type ChatboxMode = "any_signed_in_with_link" | "invited_only";
+export type {
+  ChatUiSettings,
+  ChatboxFeedbackDialogSettings,
+  ChatboxWelcomeDialogSettings,
+};
+
+export type ChatboxMode =
+  | "anyone_with_link"
+  | "invited_only"
+  | "project_members";
 
 export interface ChatboxMember {
   _id: string;
@@ -33,18 +47,6 @@ export interface ChatboxServerSettings {
   optional?: boolean;
 }
 
-export interface ChatboxWelcomeDialogSettings {
-  enabled: boolean;
-  body?: string;
-}
-
-export interface ChatboxFeedbackDialogSettings {
-  enabled: boolean;
-  /** Completed tool calls between feedback prompts in hosted sessions (not user message count). */
-  everyNToolCalls?: number;
-  promptHint?: string;
-}
-
 export interface ChatboxSettings {
   chatboxId: string;
   projectId: string;
@@ -57,10 +59,8 @@ export interface ChatboxSettings {
   requireToolApproval: boolean;
   allowGuestAccess: boolean;
   mode: ChatboxMode;
-  /** When present, drives welcome dialog in hosted chatbox (Convex may add fields incrementally). */
-  welcomeDialog?: ChatboxWelcomeDialogSettings | null;
-  /** When present, drives tester feedback cadence and copy. */
-  feedbackDialog?: ChatboxFeedbackDialogSettings | null;
+  /** Chat UI config envelope: welcome / feedback dialog surfaces (and future surfaces / branding). */
+  chatUi?: ChatUiSettings | null;
   servers: ChatboxServerSettings[];
   link: {
     token: string;

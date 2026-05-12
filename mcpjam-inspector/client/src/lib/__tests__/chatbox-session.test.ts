@@ -13,6 +13,7 @@ import {
   readChatboxSurfaceFromUrl,
   readChatboxSession,
   readChatboxSignInReturnPath,
+  CHATBOX_SESSION_STORAGE_KEY,
   CHATBOX_SIGN_IN_RETURN_PATH_STORAGE_KEY,
   writeBuilderSession,
   writePlaygroundSession,
@@ -41,7 +42,8 @@ describe("chatbox-session", () => {
     expect(hasActiveChatboxSession()).toBe(false);
 
     writeChatboxSession({
-      token: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 1,
       payload: {
         projectId: "ws_1",
         chatboxId: "sbx_1",
@@ -68,7 +70,7 @@ describe("chatbox-session", () => {
       name: "Chatbox",
       description: "Hosted chatbox",
       hostStyle: "chatgpt" as const,
-      mode: "any_signed_in_with_link" as const,
+      mode: "anyone_with_link" as const,
       allowGuestAccess: true,
       viewerIsProjectMember: false,
       systemPrompt: "System prompt",
@@ -87,10 +89,11 @@ describe("chatbox-session", () => {
       ],
     };
 
-    writeChatboxSession({ token: "chatbox-token", payload });
+    writeChatboxSession({ chatboxId: "sbx_1", accessVersion: 4, payload });
 
     expect(readChatboxSession()).toEqual({
-      token: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 4,
       payload: {
         ...payload,
         servers: [
@@ -104,17 +107,46 @@ describe("chatbox-session", () => {
             optional: false,
           },
         ],
-        welcomeDialog: undefined,
+        chatUi: undefined,
       },
       surface: "share_link",
     });
   });
 
-  it("defaults missing hostStyle to claude for legacy chatbox sessions", () => {
+  it("rejects stored sessions that lack a top-level chatboxId or accessVersion", () => {
     sessionStorage.setItem(
-      "mcpjam_chatbox_session_v1",
+      CHATBOX_SESSION_STORAGE_KEY,
       JSON.stringify({
         token: "chatbox-token",
+        payload: {
+          projectId: "ws_1",
+          chatboxId: "sbx_1",
+          name: "Old Chatbox",
+          hostStyle: "claude",
+          mode: "invited_only",
+          allowGuestAccess: false,
+          viewerIsProjectMember: true,
+          systemPrompt: "You are helpful.",
+          modelId: "openai/gpt-5-mini",
+          temperature: 0.4,
+          requireToolApproval: true,
+          servers: [],
+        },
+      }),
+    );
+
+    // Stored row predates the post-refactor session shape; reading it must
+    // produce null so the landing page falls through to re-redeem rather than
+    // silently driving the read path without a chatboxId/accessVersion.
+    expect(readChatboxSession()).toBeNull();
+  });
+
+  it("defaults missing hostStyle to claude for legacy chatbox sessions", () => {
+    sessionStorage.setItem(
+      CHATBOX_SESSION_STORAGE_KEY,
+      JSON.stringify({
+        chatboxId: "sbx_1",
+        accessVersion: 1,
         payload: {
           projectId: "ws_1",
           chatboxId: "sbx_1",
@@ -132,7 +164,8 @@ describe("chatbox-session", () => {
     );
 
     expect(readChatboxSession()).toEqual({
-      token: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 1,
       payload: {
         projectId: "ws_1",
         chatboxId: "sbx_1",
@@ -147,6 +180,7 @@ describe("chatbox-session", () => {
         temperature: 0.4,
         requireToolApproval: true,
         servers: [],
+        chatUi: undefined,
       },
       surface: "share_link",
     });
@@ -154,9 +188,10 @@ describe("chatbox-session", () => {
 
   it("preserves extensible hostStyle ids before a host definition is registered", () => {
     sessionStorage.setItem(
-      "mcpjam_chatbox_session_v1",
+      CHATBOX_SESSION_STORAGE_KEY,
       JSON.stringify({
-        token: "chatbox-token",
+        chatboxId: "sbx_1",
+        accessVersion: 1,
         payload: {
           projectId: "ws_1",
           chatboxId: "sbx_1",
@@ -179,7 +214,8 @@ describe("chatbox-session", () => {
 
   it("preserves preview surface when explicitly stored", () => {
     writeChatboxSession({
-      token: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 1,
       surface: "preview",
       payload: {
         projectId: "ws_1",
@@ -203,7 +239,8 @@ describe("chatbox-session", () => {
   it("round-trips playground sessions until their ttl expires", () => {
     writePlaygroundSession({
       playgroundId: "pg_123",
-      token: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 1,
       surface: "preview",
       updatedAt: Date.now(),
       payload: {
@@ -226,7 +263,8 @@ describe("chatbox-session", () => {
     expect(stored).toEqual(
       expect.objectContaining({
         playgroundId: "pg_123",
-        token: "chatbox-token",
+        chatboxId: "sbx_1",
+        accessVersion: 1,
         surface: "preview",
       }),
     );
@@ -287,7 +325,8 @@ describe("chatbox-session", () => {
   it("clears stored playground sessions", () => {
     writePlaygroundSession({
       playgroundId: "pg_123",
-      token: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 1,
       surface: "preview",
       updatedAt: Date.now(),
       payload: {

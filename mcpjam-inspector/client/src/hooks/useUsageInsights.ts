@@ -5,7 +5,7 @@ import type {
 } from "@/hooks/chatbox-usage-filters";
 import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
 
-export type InsightsSourceType = "chatbox" | "serverShare";
+export type InsightsSourceType = "chatbox";
 
 export type FeedbackBucketCount = {
   segment: string;
@@ -69,20 +69,17 @@ function toServerFilters(state: UsageFilterState) {
 }
 
 export function useUsageInsights({
-  sourceType,
   sourceId,
   filters,
   enabled = true,
 }: {
-  sourceType: InsightsSourceType;
+  sourceType?: InsightsSourceType;
   sourceId: string | null;
   filters: UsageFilterState;
   enabled?: boolean;
 }) {
-  // v1 only wires chatbox sources. ServerShare will reuse this hook by
-  // swapping the underlying queries once the backend parity lands.
   const chatboxArgs =
-    enabled && sourceType === "chatbox" && sourceId
+    enabled && sourceId
       ? ({
           chatboxId: sourceId,
           limit: 100,
@@ -91,7 +88,7 @@ export function useUsageInsights({
       : "skip";
 
   const breakdownArgs =
-    enabled && sourceType === "chatbox" && sourceId
+    enabled && sourceId
       ? ({
           chatboxId: sourceId,
           filters: toServerFilters(filters),

@@ -338,15 +338,18 @@ export function computeSectionStatuses(
 
   const access: SectionStatusKind = draft.mode ? "complete" : "attention";
 
-  const welcome: SectionStatusKind = draft.welcomeDialog.enabled
+  const welcomeSurface = draft.chatUi.surfaces.welcome;
+  const feedbackSurface = draft.chatUi.surfaces.feedback;
+
+  const welcome: SectionStatusKind = welcomeSurface.enabled
     ? "default_on"
     : "optional";
 
   const feedbackInvalid =
-    draft.feedbackDialog.enabled && draft.feedbackDialog.everyNToolCalls < 1;
+    feedbackSurface.enabled && feedbackSurface.everyNToolCalls < 1;
   const feedback: SectionStatusKind = feedbackInvalid
     ? "attention"
-    : draft.feedbackDialog.enabled
+    : feedbackSurface.enabled
       ? "default_on"
       : "optional";
 
@@ -801,38 +804,50 @@ export function SetupChecklistPanel({
                       </p>
                     </div>
                     <Switch
-                      checked={chatboxDraft.welcomeDialog.enabled}
+                      checked={chatboxDraft.chatUi.surfaces.welcome.enabled}
                       onCheckedChange={(checked) =>
                         onDraftChange((draft) => ({
                           ...draft,
-                          welcomeDialog: {
-                            ...draft.welcomeDialog,
-                            enabled: checked,
+                          chatUi: {
+                            ...draft.chatUi,
+                            surfaces: {
+                              ...draft.chatUi.surfaces,
+                              welcome: {
+                                ...draft.chatUi.surfaces.welcome,
+                                enabled: checked,
+                              },
+                            },
                           },
                         }))
                       }
                     />
                   </div>
-                  {chatboxDraft.welcomeDialog.enabled ? (
+                  {chatboxDraft.chatUi.surfaces.welcome.enabled ? (
                     <div className="space-y-2">
                       <Label htmlFor="welcome-body">Welcome content</Label>
                       <Textarea
                         id="welcome-body"
                         rows={5}
-                        value={chatboxDraft.welcomeDialog.body}
+                        value={chatboxDraft.chatUi.surfaces.welcome.body}
                         onChange={(event) =>
                           onDraftChange((draft) => ({
                             ...draft,
-                            welcomeDialog: {
-                              ...draft.welcomeDialog,
-                              body: event.target.value,
+                            chatUi: {
+                              ...draft.chatUi,
+                              surfaces: {
+                                ...draft.chatUi.surfaces,
+                                welcome: {
+                                  ...draft.chatUi.surfaces.welcome,
+                                  body: event.target.value,
+                                },
+                              },
                             },
                           }))
                         }
                         placeholder="What your audience should know before they start…"
                       />
                       <p className="text-xs text-muted-foreground">
-                        {chatboxDraft.welcomeDialog.body.trim()
+                        {chatboxDraft.chatUi.surfaces.welcome.body.trim()
                           ? "Shown once, the first time someone opens your chatbox link."
                           : "Leave blank to skip — no welcome will be shown."}
                       </p>
@@ -868,19 +883,25 @@ export function SetupChecklistPanel({
                       </p>
                     </div>
                     <Switch
-                      checked={chatboxDraft.feedbackDialog.enabled}
+                      checked={chatboxDraft.chatUi.surfaces.feedback.enabled}
                       onCheckedChange={(checked) =>
                         onDraftChange((draft) => ({
                           ...draft,
-                          feedbackDialog: {
-                            ...draft.feedbackDialog,
-                            enabled: checked,
+                          chatUi: {
+                            ...draft.chatUi,
+                            surfaces: {
+                              ...draft.chatUi.surfaces,
+                              feedback: {
+                                ...draft.chatUi.surfaces.feedback,
+                                enabled: checked,
+                              },
+                            },
                           },
                         }))
                       }
                     />
                   </div>
-                  {chatboxDraft.feedbackDialog.enabled ? (
+                  {chatboxDraft.chatUi.surfaces.feedback.enabled ? (
                     <>
                       <div className="space-y-2">
                         <Label>Every N tool calls</Label>
@@ -893,16 +914,24 @@ export function SetupChecklistPanel({
                           type="number"
                           min={1}
                           step={1}
-                          value={chatboxDraft.feedbackDialog.everyNToolCalls}
+                          value={
+                            chatboxDraft.chatUi.surfaces.feedback.everyNToolCalls
+                          }
                           onChange={(event) => {
                             const n = Number.parseInt(event.target.value, 10);
                             onDraftChange((draft) => ({
                               ...draft,
-                              feedbackDialog: {
-                                ...draft.feedbackDialog,
-                                everyNToolCalls: Number.isFinite(n)
-                                  ? Math.max(1, n)
-                                  : 1,
+                              chatUi: {
+                                ...draft.chatUi,
+                                surfaces: {
+                                  ...draft.chatUi.surfaces,
+                                  feedback: {
+                                    ...draft.chatUi.surfaces.feedback,
+                                    everyNToolCalls: Number.isFinite(n)
+                                      ? Math.max(1, n)
+                                      : 1,
+                                  },
+                                },
                               },
                             }));
                           }}
@@ -913,13 +942,19 @@ export function SetupChecklistPanel({
                         <Textarea
                           id="feedback-hint"
                           rows={3}
-                          value={chatboxDraft.feedbackDialog.promptHint}
+                          value={chatboxDraft.chatUi.surfaces.feedback.promptHint}
                           onChange={(event) =>
                             onDraftChange((draft) => ({
                               ...draft,
-                              feedbackDialog: {
-                                ...draft.feedbackDialog,
-                                promptHint: event.target.value,
+                              chatUi: {
+                                ...draft.chatUi,
+                                surfaces: {
+                                  ...draft.chatUi.surfaces,
+                                  feedback: {
+                                    ...draft.chatUi.surfaces.feedback,
+                                    promptHint: event.target.value,
+                                  },
+                                },
                               },
                             }))
                           }

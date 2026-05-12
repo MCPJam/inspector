@@ -19,6 +19,7 @@ import type { ModelDefinition } from "@/shared/types";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
 import {
+  buildDirectHostConfig,
   persistChatSessionToConvex,
   pickEnrichmentHeaders,
   type PersistedTurnTrace,
@@ -72,8 +73,12 @@ chatV2.post("/", async (c) => {
       projectId: string;
       selectedServerIds: string[];
       selectedServerNames?: string[];
-      shareToken?: string;
-      chatboxToken?: string;
+      // Clients call /api/web/chatboxes/redeem on mount and pass the
+      // resolved `chatboxId` + `accessVersion` on every chatbox-aware
+      // request thereafter. The link token is never forwarded on the
+      // read path.
+      chatboxId?: string;
+      accessVersion?: number;
       accessScope?: "project_member" | "chat_v2";
       surface?: "preview" | "share_link";
     };
@@ -86,10 +91,13 @@ chatV2.post("/", async (c) => {
       requireToolApproval,
       selectedServerIds,
       selectedServerNames,
-      shareToken,
-      chatboxToken,
+      chatboxId,
+      accessVersion,
       surface,
     } = body;
+    // True when this turn flows through a chatbox surface. sourceType +
+    // accessScope decisions hinge on this.
+    const isChatboxSession = Boolean(chatboxId);
 
     if (!Array.isArray(messages) || messages.length === 0) {
       throw new WebRouteError(
@@ -121,9 +129,9 @@ chatV2.post("/", async (c) => {
       hostedBody.oauthTokens,
       hostedBody.clientCapabilities,
       {
-        ...(shareToken || chatboxToken ? { accessScope: "chat_v2" } : {}),
-        shareToken,
-        chatboxToken,
+        ...(isChatboxSession ? { accessScope: "chat_v2" } : {}),
+        chatboxId,
+        accessVersion,
         rpcLogger: rpcCollector.rpcLogger,
         serverNames: selectedServerNames,
       }
@@ -185,11 +193,7 @@ chatV2.post("/", async (c) => {
         const providerKey = deriveOrgProviderKey(modelDefinition);
         const modelId = String(modelDefinition.id);
         const scrubbedMessages = scrubMessages(modelMessages as ModelMessage[]);
-        const sourceType = shareToken
-          ? "serverShare"
-          : chatboxToken
-          ? "chatbox"
-          : "direct";
+        const sourceType = isChatboxSession ? "chatbox" : "direct";
 
         // Cloud-only providers (everything that isn't on the local-runtime
         // allowlist) skip the /stream/org/resolve round-trip entirely. The
@@ -204,8 +208,8 @@ chatV2.post("/", async (c) => {
               modelId,
               {
                 authHeader: c.req.header("authorization"),
-                shareToken,
-                chatboxToken,
+                chatboxId,
+                accessVersion,
                 serverIds: selectedServerIds,
               },
             )
@@ -213,7 +217,7 @@ chatV2.post("/", async (c) => {
 
         const onConversationComplete = hostedChatSessionId
           ? async (fullHistory: ModelMessage[], turnTrace: PersistedTurnTrace) => {
-              const isDirectChat = !shareToken && !chatboxToken;
+              const isDirectChat = !isChatboxSession;
               await persistChatSessionToConvex({
                 chatSessionId: hostedChatSessionId,
                 modelId,
@@ -221,12 +225,9 @@ chatV2.post("/", async (c) => {
                   runtime.runtimeLocation === "local" ? "local_byok" : "byok",
                 projectId: hostedBody.projectId,
                 sourceType,
-                ...(chatboxToken && surface ? { surface } : {}),
-                shareToken,
-                chatboxToken,
-                ...(shareToken && selectedServerIds[0]
-                  ? { serverId: selectedServerIds[0] }
-                  : {}),
+                ...(isChatboxSession && surface ? { surface } : {}),
+                chatboxId,
+                accessVersion,
                 authHeader: c.req.header("authorization"),
                 sessionMessages: fullHistory,
                 startedAt: sessionStartedAt,
@@ -244,6 +245,19 @@ chatV2.post("/", async (c) => {
                             ? selectedServerNames
                             : selectedServerIds,
                       },
+                      hostConfig: buildDirectHostConfig({
+                        modelId,
+                        // Phase 3: real host style flows from the
+                        // chat tab; old inspector builds omit it and
+                        // the backend defaults to 'claude' (no more
+                        // legacy 'direct' hostStyle in new traces).
+                        hostStyle: body.hostStyle,
+                        systemPrompt,
+                        requestedTemperature: temperature,
+                        resolvedTemperature,
+                        requireToolApproval,
+                        selectedServerIds,
+                      }),
                     }
                   : {}),
                 turnTrace,
@@ -265,8 +279,8 @@ chatV2.post("/", async (c) => {
             temperature: resolvedTemperature,
             tools: allTools as ToolSet,
             authHeader: c.req.header("authorization"),
-            shareToken,
-            chatboxToken,
+            chatboxId,
+            accessVersion,
             selectedServers: selectedServerIds,
             requireToolApproval,
             onConversationComplete,
@@ -289,8 +303,8 @@ chatV2.post("/", async (c) => {
           tools: allTools as ToolSet,
           authHeader: c.req.header("authorization"),
           clientIp: getClientIp(c),
-          shareToken,
-          chatboxToken,
+          chatboxId,
+          accessVersion,
           mcpClientManager: manager,
           selectedServers: selectedServerIds,
           requireToolApproval,
@@ -315,40 +329,30 @@ chatV2.post("/", async (c) => {
         messages: modelMessages as ModelMessage[],
         modelId: String(modelDefinition.id),
         chatSessionId: hostedChatSessionId,
-        sourceType: shareToken
-          ? "serverShare"
-          : chatboxToken
-          ? "chatbox"
-          : "direct",
+        sourceType: isChatboxSession ? "chatbox" : "direct",
         systemPrompt: enhancedSystemPrompt,
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
         authHeader: c.req.header("authorization"),
         clientIp: getClientIp(c),
-        chatboxToken,
+        chatboxId,
+        accessVersion,
         projectId: hostedBody.projectId,
         mcpClientManager: manager,
         selectedServers: selectedServerIds,
         requireToolApproval,
         onConversationComplete: hostedChatSessionId
           ? async (fullHistory, turnTrace) => {
-              const isDirectChat = !shareToken && !chatboxToken;
+              const isDirectChat = !isChatboxSession;
               await persistChatSessionToConvex({
                 chatSessionId: hostedChatSessionId,
                 modelId: String(modelDefinition.id),
                 modelSource: "mcpjam",
                 projectId: hostedBody.projectId,
-                sourceType: shareToken
-                  ? "serverShare"
-                  : chatboxToken
-                  ? "chatbox"
-                  : "direct",
-                ...(chatboxToken && surface ? { surface } : {}),
-                shareToken,
-                chatboxToken,
-                ...(shareToken && selectedServerIds[0]
-                  ? { serverId: selectedServerIds[0] }
-                  : {}),
+                sourceType: isChatboxSession ? "chatbox" : "direct",
+                ...(isChatboxSession && surface ? { surface } : {}),
+                chatboxId,
+                accessVersion,
                 authHeader: c.req.header("authorization"),
                 sessionMessages: fullHistory,
                 startedAt: sessionStartedAt,
@@ -367,6 +371,21 @@ chatV2.post("/", async (c) => {
                             ? selectedServerNames
                             : selectedServerIds,
                       },
+                      hostConfig: buildDirectHostConfig({
+                        modelId: String(modelDefinition.id),
+                        // Phase 3: forward the chat tab's resolved
+                        // host style (parity with the org-BYOK and
+                        // mcp/chat-v2 call sites). Without this, the
+                        // MCPJam-free path always persisted as
+                        // 'claude' regardless of the user's actual
+                        // hostStyle.
+                        hostStyle: body.hostStyle,
+                        systemPrompt,
+                        requestedTemperature: temperature,
+                        resolvedTemperature,
+                        requireToolApproval,
+                        selectedServerIds,
+                      }),
                     }
                   : {}),
                 turnTrace,

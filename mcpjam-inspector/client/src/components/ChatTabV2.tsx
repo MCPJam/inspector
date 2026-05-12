@@ -126,9 +126,6 @@ interface ChatTabProps {
   onHasMessagesChange?: (hasMessages: boolean) => void;
   enableMultiModelChat?: boolean;
   minimalMode?: boolean;
-  hostedProjectIdOverride?: string;
-  hostedSelectedServerIdsOverride?: string[];
-  hostedOAuthTokensOverride?: Record<string, string>;
   hostedContext?: HostedRuntimeContext;
   executionConfig?: ExecutionConfig;
   reasoningDisplayMode?: ReasoningDisplayMode;
@@ -165,9 +162,6 @@ export function ChatTabV2({
   onHasMessagesChange,
   enableMultiModelChat = false,
   minimalMode = false,
-  hostedProjectIdOverride,
-  hostedSelectedServerIdsOverride,
-  hostedOAuthTokensOverride,
   hostedContext,
   executionConfig,
   reasoningDisplayMode = "inline",
@@ -321,22 +315,20 @@ export function ChatTabV2({
       ),
     [selectedConnectedServerNames, serversByName, appState.servers]
   );
-  const hostedShareToken = hostedContext?.shareToken;
-  const hostedChatboxToken = hostedContext?.chatboxToken;
+  const hostedChatboxId = hostedContext?.chatboxId;
   const hostedChatboxSurface = hostedContext?.chatboxSurface;
   const effectiveHostedProjectId =
-    hostedProjectIdOverride ?? convexProjectId;
+    hostedContext?.projectId ?? convexProjectId;
   const effectiveHostedSelectedServerIds =
-    hostedSelectedServerIdsOverride ?? hostedSelectedServerIds;
-  const effectiveHostedOAuthTokens = hostedChatboxToken
+    hostedContext?.selectedServerIds ?? hostedSelectedServerIds;
+  const effectiveHostedOAuthTokens = hostedChatboxId
     ? undefined
-    : hostedOAuthTokensOverride ?? hostedOAuthTokens;
+    : hostedContext?.oauthTokens ?? hostedOAuthTokens;
   const isHostedDirectGuest =
     HOSTED_MODE &&
     !isConvexAuthenticated &&
     !effectiveHostedProjectId &&
-    !hostedShareToken &&
-    !hostedChatboxToken;
+    !hostedChatboxId;
 
   // Use shared chat session hook
   const {
@@ -395,6 +387,14 @@ export function ChatTabV2({
       oauthTokens: effectiveHostedOAuthTokens,
     },
     executionConfig,
+    // Phase 3: forward the resolved chat-tab host style so direct
+    // chat traces persist with `claude`/`chatgpt` rather than
+    // defaulting to `'claude'` regardless of user choice. Backend
+    // ingestion ignores it for chatbox flows (those resolve from the
+    // chatbox row), so it's safe to forward unconditionally.
+    hostStyle: hostStyle === "claude" || hostStyle === "chatgpt"
+      ? hostStyle
+      : undefined,
     minimalMode,
     onReset: (reason?: ChatSessionResetReason) => {
       if (reason === "auth-bootstrap" || reason === "hydrate") {
@@ -418,8 +418,7 @@ export function ChatTabV2({
   const showHistoryRail =
     HOSTED_MODE &&
     !minimalMode &&
-    !hostedShareToken &&
-    !hostedChatboxToken &&
+    !hostedChatboxId &&
     chatHistoryRailEnabled;
   const {
     session: reactiveHistorySession,
@@ -1096,8 +1095,7 @@ export function ChatTabV2({
     enableMultiModelChat &&
     !minimalMode &&
     !executionConfig?.modelId &&
-    !hostedShareToken &&
-    !hostedChatboxToken &&
+    !hostedChatboxId &&
     !hostedChatboxSurface &&
     availableModels.length > 1;
   // When viewing a history session, fall back to single-model rendering so
@@ -1277,10 +1275,11 @@ export function ChatTabV2({
       return;
     }
 
+    const { executionConfig: handoffExec } = evalChatHandoff;
     let matchingModel = null;
-    if (evalChatHandoff.modelId) {
+    if (handoffExec.modelId) {
       matchingModel = availableModels.find(
-        (model) => String(model.id) === evalChatHandoff.modelId
+        (model) => String(model.id) === handoffExec.modelId
       );
       if (!matchingModel && availableModels.length === 0) {
         return;
@@ -1299,16 +1298,16 @@ export function ChatTabV2({
     startChatWithMessages(evalChatHandoff.messages);
     appliedEvalChatHandoffIdRef.current = evalChatHandoff.id;
 
-    if (typeof evalChatHandoff.systemPrompt === "string") {
-      setSystemPrompt(evalChatHandoff.systemPrompt);
+    if (typeof handoffExec.systemPrompt === "string") {
+      setSystemPrompt(handoffExec.systemPrompt);
     }
 
-    if (typeof evalChatHandoff.temperature === "number") {
-      setTemperature(evalChatHandoff.temperature);
+    if (typeof handoffExec.temperature === "number") {
+      setTemperature(handoffExec.temperature);
     }
 
-    if (typeof evalChatHandoff.requireToolApproval === "boolean") {
-      setRequireToolApproval(evalChatHandoff.requireToolApproval);
+    if (typeof handoffExec.requireToolApproval === "boolean") {
+      setRequireToolApproval(handoffExec.requireToolApproval);
     }
 
     setInput("");

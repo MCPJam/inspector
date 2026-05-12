@@ -4,8 +4,14 @@ import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
 import {
   validateHostedServer,
+  type HostedServerValidateContext,
   type HostedServerValidateResponse,
 } from "@/lib/apis/web/servers-api";
+import {
+  getHostedChatboxAccessVersion,
+  getHostedChatboxId,
+  getHostedOAuthToken,
+} from "@/lib/apis/web/context";
 import { BootstrapNotReadyError } from "@/lib/app-ready";
 import type { ConnectionDefaults } from "@/shared/connection-defaults";
 
@@ -45,16 +51,40 @@ function normalizeHostedValidationError(error: unknown): string {
   return "Hosted validation failed";
 }
 
+function buildHostedValidationContext(
+  serverId: string,
+  options?: {
+    projectId?: string;
+    serverName?: string;
+  },
+): HostedServerValidateContext | undefined {
+  if (!options?.projectId) return undefined;
+
+  const chatboxId = getHostedChatboxId();
+  return {
+    projectId: options.projectId,
+    serverId,
+    ...(options.serverName ? { serverName: options.serverName } : {}),
+    ...(chatboxId ? { accessScope: "chat_v2" } : {}),
+    ...(chatboxId ? { chatboxId } : {}),
+    ...(chatboxId ? { accessVersion: getHostedChatboxAccessVersion() } : {}),
+  };
+}
+
 async function safeValidateHostedServer(
   serverId: string,
   serverConfig: MCPServerConfig,
+  hostedContext?: HostedServerValidateContext,
 ): Promise<HostedServerValidateResponse & { error?: string }> {
   try {
+    const oauthToken =
+      extractOAuthToken(serverConfig) ?? getHostedOAuthToken(serverId);
     return await withTimeout(
       validateHostedServer(
         serverId,
-        extractOAuthToken(serverConfig),
+        oauthToken,
         serverConfig.capabilities as Record<string, unknown> | undefined,
+        hostedContext,
       ),
       HOSTED_VALIDATE_TIMEOUT_MS,
     );
@@ -86,7 +116,9 @@ async function authFetchWithTimeout(
     clearTimeout(timeoutId);
     if (error instanceof Error && error.name === "AbortError") {
       throw new Error(
-        `Connection attempt timed out after ${timeoutMs / 1000} seconds. The server may not exist or is not responding.`,
+        `Connection attempt timed out after ${
+          timeoutMs / 1000
+        } seconds. The server may not exist or is not responding.`,
       );
     }
     throw error;
@@ -101,7 +133,9 @@ async function withTimeout<T>(
     const timeoutId = window.setTimeout(() => {
       reject(
         new Error(
-          `Connection attempt timed out after ${timeoutMs / 1000} seconds. The server may not exist or is not responding.`,
+          `Connection attempt timed out after ${
+            timeoutMs / 1000
+          } seconds. The server may not exist or is not responding.`,
         ),
       );
     }, timeoutMs);
@@ -118,7 +152,6 @@ async function withTimeout<T>(
     );
   });
 }
-
 
 function buildResolverBody(
   serverId: string,
@@ -148,7 +181,11 @@ export async function testConnection(
   },
 ) {
   if (HOSTED_MODE) {
-    return safeValidateHostedServer(serverId, serverConfig);
+    return safeValidateHostedServer(
+      serverId,
+      serverConfig,
+      buildHostedValidationContext(serverId, options),
+    );
   }
 
   if (!options?.projectId) {
@@ -209,7 +246,11 @@ export async function reconnectServer(
   },
 ) {
   if (HOSTED_MODE) {
-    return safeValidateHostedServer(serverId, serverConfig);
+    return safeValidateHostedServer(
+      serverId,
+      serverConfig,
+      buildHostedValidationContext(serverId, options),
+    );
   }
 
   if (!options?.projectId) {

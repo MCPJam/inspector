@@ -52,6 +52,8 @@ interface SandboxedIframeProps {
   className?: string;
   /** Inline styles for the outer iframe */
   style?: React.CSSProperties;
+  /** Host color scheme used to keep transparent iframe canvas rendering aligned */
+  colorScheme?: "light" | "dark";
   /** Title for accessibility */
   title?: string;
 }
@@ -78,6 +80,7 @@ export const SandboxedIframe = forwardRef<
     onMessage,
     className,
     style,
+    colorScheme,
     title = "Sandboxed Content",
   },
   ref,
@@ -197,7 +200,7 @@ export const SandboxedIframe = forwardRef<
       {
         jsonrpc: "2.0",
         method: "ui/notifications/sandbox-resource-ready",
-        params: { html, sandbox, csp, permissions, permissive },
+        params: { html, sandbox, csp, permissions, permissive, colorScheme },
       },
       sandboxProxyOrigin,
     );
@@ -211,6 +214,22 @@ export const SandboxedIframe = forwardRef<
     sandboxProxyOrigin,
   ]);
 
+  // Keep iframe color-scheme in sync without reloading the widget document.
+  useEffect(() => {
+    if (!proxyReady || !colorScheme) return;
+
+    outerRef.current?.contentWindow?.postMessage(
+      {
+        jsonrpc: "2.0",
+        method: "ui/notifications/sandbox-color-scheme-changed",
+        params: { colorScheme },
+      },
+      sandboxProxyOrigin,
+    );
+  }, [proxyReady, colorScheme, sandboxProxyOrigin]);
+
+  const iframeStyle = colorScheme ? { ...style, colorScheme } : style;
+
   return (
     <iframe
       ref={outerRef}
@@ -219,7 +238,7 @@ export const SandboxedIframe = forwardRef<
       allow={outerAllowAttribute}
       title={title}
       className={className}
-      style={style}
+      style={iframeStyle}
     />
   );
 });

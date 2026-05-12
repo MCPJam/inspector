@@ -183,19 +183,23 @@ describe("ChatboxChatPage", () => {
     });
     mockAuthFetch.mockResolvedValue(
       createFetchResponse({
-        projectId: "ws_1",
         chatboxId: "sbx_1",
-        name: "Resolved Chatbox",
-        description: "Hosted chatbox",
-        hostStyle: "claude",
-        mode: "invited_only",
-        allowGuestAccess: false,
-        viewerIsProjectMember: true,
-        systemPrompt: "You are helpful.",
-        modelId: "openai/gpt-5-mini",
-        temperature: 0.4,
-        requireToolApproval: true,
-        servers: [],
+        accessVersion: 1,
+        bootstrap: {
+          projectId: "ws_1",
+          chatboxId: "sbx_1",
+          name: "Resolved Chatbox",
+          description: "Hosted chatbox",
+          hostStyle: "claude",
+          mode: "invited_only",
+          allowGuestAccess: false,
+          viewerIsProjectMember: true,
+          systemPrompt: "You are helpful.",
+          modelId: "openai/gpt-5-mini",
+          temperature: 0.4,
+          requireToolApproval: true,
+          servers: [],
+        },
       })
     );
   });
@@ -208,7 +212,8 @@ describe("ChatboxChatPage", () => {
 
   it("applies chatbox host style data attributes while keeping MCPJam branding", async () => {
     writeChatboxSession({
-      token: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 1,
       payload: {
         projectId: "ws_1",
         chatboxId: "sbx_1",
@@ -243,7 +248,8 @@ describe("ChatboxChatPage", () => {
 
   it("uses the Claude loading indicator variant for Claude-style hosted chatboxes", async () => {
     writeChatboxSession({
-      token: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 1,
       payload: {
         projectId: "ws_1",
         chatboxId: "sbx_1",
@@ -280,7 +286,8 @@ describe("ChatboxChatPage", () => {
 
     writePlaygroundSession({
       playgroundId: "pg_123",
-      token: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 1,
       surface: "preview",
       updatedAt: Date.now(),
       payload: {
@@ -378,7 +385,8 @@ describe("ChatboxChatPage", () => {
       expect.objectContaining({
         projectId: null,
         serverIdsByName: {},
-        chatboxToken: "token-workos",
+        chatboxId: undefined,
+        accessVersion: undefined,
         isAuthenticated: true,
         hasSession: true,
       })
@@ -392,9 +400,9 @@ describe("ChatboxChatPage", () => {
     expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
     expect(mockAuthFetch).toHaveBeenCalledTimes(1);
     expect(mockAuthFetch).toHaveBeenCalledWith(
-      "/api/web/chatboxes/bootstrap",
+      "/api/web/chatboxes/redeem",
       expect.objectContaining({
-        body: JSON.stringify({ token: "token-workos" }),
+        body: JSON.stringify({ chatboxToken: "token-workos" }),
       })
     );
     expect(mockPosthogCapture).toHaveBeenCalledWith(
@@ -429,9 +437,9 @@ describe("ChatboxChatPage", () => {
       await screen.findByRole("heading", { name: "Access Denied" })
     ).toBeInTheDocument();
     expect(mockAuthFetch).toHaveBeenCalledWith(
-      "/api/web/chatboxes/bootstrap",
+      "/api/web/chatboxes/redeem",
       expect.objectContaining({
-        body: JSON.stringify({ token: "token-stalled-convex" }),
+        body: JSON.stringify({ chatboxToken: "token-stalled-convex" }),
       })
     );
   });
@@ -586,7 +594,8 @@ describe("ChatboxChatPage", () => {
     );
 
     writeChatboxSession({
-      token: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 1,
       payload: {
         projectId: "ws_1",
         chatboxId: "sbx_1",
@@ -637,13 +646,13 @@ describe("ChatboxChatPage", () => {
       "srv_asana",
       undefined,
       undefined,
-      {
+      expect.objectContaining({
         projectId: "ws_1",
         serverId: "srv_asana",
         serverName: "asana",
         accessScope: "chat_v2",
-        chatboxToken: "chatbox-token",
-      }
+        chatboxId: "sbx_1",
+      }),
     );
     expect(mockValidateHostedServer).toHaveBeenCalledTimes(1);
   });
@@ -651,7 +660,8 @@ describe("ChatboxChatPage", () => {
   it("keeps guest chatbox OAuth in first-consent welcome before callback completion", async () => {
     mockConvexAuthState.isAuthenticated = false;
     writeChatboxSession({
-      token: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 1,
       payload: {
         projectId: "ws_1",
         chatboxId: "sbx_1",
@@ -675,9 +685,13 @@ describe("ChatboxChatPage", () => {
             oauthScopes: null,
           },
         ],
-        welcomeDialog: {
-          enabled: true,
-          body: "Connect Asana before chatting.",
+        chatUi: {
+          surfaces: {
+            welcome: {
+              enabled: true,
+              body: "Connect Asana before chatting.",
+            },
+          },
         },
       },
     });
@@ -714,7 +728,8 @@ describe("ChatboxChatPage", () => {
     );
 
     writeChatboxSession({
-      token: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 1,
       payload: {
         projectId: "ws_1",
         chatboxId: "sbx_1",
@@ -778,7 +793,8 @@ describe("ChatboxChatPage", () => {
     mockGetStoredTokens.mockReturnValue({ access_token: "chatbox-token" });
 
     writeChatboxSession({
-      token: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 1,
       payload: {
         projectId: "ws_1",
         chatboxId: "sbx_1",
@@ -836,7 +852,8 @@ describe("ChatboxChatPage", () => {
     });
 
     writeChatboxSession({
-      token: "chatbox-token",
+      chatboxId: "sbx_1",
+      accessVersion: 1,
       payload: {
         projectId: "ws_1",
         chatboxId: "sbx_1",
@@ -901,16 +918,17 @@ describe("ChatboxChatPage", () => {
       };
     }
 
-    it("shows welcome dialog when welcomeDialog is enabled and has content", async () => {
+    it("shows welcome dialog when chatUi welcome surface is enabled and has content", async () => {
       writeChatboxSession({
-        token: "chatbox-token",
+        chatboxId: "sbx_1",
+        accessVersion: 1,
         payload: {
           projectId: "ws_1",
           chatboxId: "sbx_welcome",
           name: "Welcome Chatbox",
           description: "",
           hostStyle: "claude",
-          mode: "any_signed_in_with_link",
+          mode: "anyone_with_link",
           allowGuestAccess: false,
           viewerIsProjectMember: true,
           systemPrompt: "You are helpful.",
@@ -918,9 +936,13 @@ describe("ChatboxChatPage", () => {
           temperature: 0.7,
           requireToolApproval: false,
           servers: [nonOAuthServer()],
-          welcomeDialog: {
-            enabled: true,
-            body: "Welcome — thanks for trying this out.",
+          chatUi: {
+            surfaces: {
+              welcome: {
+                enabled: true,
+                body: "Welcome — thanks for trying this out.",
+              },
+            },
           },
         },
       });
@@ -941,14 +963,15 @@ describe("ChatboxChatPage", () => {
 
     it("dismisses welcome and shows chat when Get Started is clicked", async () => {
       writeChatboxSession({
-        token: "chatbox-token",
+        chatboxId: "sbx_1",
+        accessVersion: 1,
         payload: {
           projectId: "ws_1",
           chatboxId: "sbx_dismiss",
           name: "Welcome Chatbox",
           description: "",
           hostStyle: "claude",
-          mode: "any_signed_in_with_link",
+          mode: "anyone_with_link",
           allowGuestAccess: false,
           viewerIsProjectMember: true,
           systemPrompt: "You are helpful.",
@@ -956,9 +979,13 @@ describe("ChatboxChatPage", () => {
           temperature: 0.7,
           requireToolApproval: false,
           servers: [nonOAuthServer()],
-          welcomeDialog: {
-            enabled: true,
-            body: "Welcome — thanks for trying this out.",
+          chatUi: {
+            surfaces: {
+              welcome: {
+                enabled: true,
+                body: "Welcome — thanks for trying this out.",
+              },
+            },
           },
         },
       });
@@ -975,16 +1002,17 @@ describe("ChatboxChatPage", () => {
       expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
     });
 
-    it("skips welcome and goes straight to chat when welcomeDialog.enabled is false", async () => {
+    it("skips welcome and goes straight to chat when chatUi welcome.enabled is false", async () => {
       writeChatboxSession({
-        token: "chatbox-token",
+        chatboxId: "sbx_1",
+        accessVersion: 1,
         payload: {
           projectId: "ws_1",
           chatboxId: "sbx_disabled",
           name: "No Welcome Chatbox",
           description: "",
           hostStyle: "claude",
-          mode: "any_signed_in_with_link",
+          mode: "anyone_with_link",
           allowGuestAccess: false,
           viewerIsProjectMember: true,
           systemPrompt: "You are helpful.",
@@ -992,9 +1020,13 @@ describe("ChatboxChatPage", () => {
           temperature: 0.7,
           requireToolApproval: false,
           servers: [nonOAuthServer()],
-          welcomeDialog: {
-            enabled: false,
-            body: "This should not appear.",
+          chatUi: {
+            surfaces: {
+              welcome: {
+                enabled: false,
+                body: "This should not appear.",
+              },
+            },
           },
         },
       });
@@ -1010,16 +1042,17 @@ describe("ChatboxChatPage", () => {
       ).not.toBeInTheDocument();
     });
 
-    it("skips welcome and goes straight to chat when welcomeDialog body is empty", async () => {
+    it("skips welcome and goes straight to chat when chatUi welcome body is empty", async () => {
       writeChatboxSession({
-        token: "chatbox-token",
+        chatboxId: "sbx_1",
+        accessVersion: 1,
         payload: {
           projectId: "ws_1",
           chatboxId: "sbx_emptybody",
           name: "Empty Body Chatbox",
           description: "",
           hostStyle: "claude",
-          mode: "any_signed_in_with_link",
+          mode: "anyone_with_link",
           allowGuestAccess: false,
           viewerIsProjectMember: true,
           systemPrompt: "You are helpful.",
@@ -1027,9 +1060,13 @@ describe("ChatboxChatPage", () => {
           temperature: 0.7,
           requireToolApproval: false,
           servers: [nonOAuthServer()],
-          welcomeDialog: {
-            enabled: true,
-            body: "",
+          chatUi: {
+            surfaces: {
+              welcome: {
+                enabled: true,
+                body: "",
+              },
+            },
           },
         },
       });

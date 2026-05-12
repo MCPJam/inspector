@@ -1,4 +1,5 @@
 import { Suspense, lazy, useEffect } from "react";
+import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
 import {
   getBillingUpsellCtaLabel,
@@ -17,6 +18,15 @@ interface ChatboxesTabProps {
   projectId: string | null;
   organizationId: string | null;
   isBillingContextPending?: boolean;
+  /**
+   * Same reconnect helper that EvalsTab uses. Threaded into the builder so
+   * the Preview tab can auto-connect the chatbox's MCP servers before the
+   * first message — without this, the LLM gets zero tools (the inspector's
+   * mcpClientManager has nothing registered for the configured servers).
+   */
+  ensureServersReady?: (
+    serverNames: string[],
+  ) => Promise<EnsureServersReadyResult>;
 }
 
 function ChatboxesLoadingState({
@@ -47,6 +57,7 @@ export function ChatboxesTab({
   projectId,
   organizationId,
   isBillingContextPending = false,
+  ensureServersReady,
 }: ChatboxesTabProps) {
   const resolvedOrganizationId = isBillingContextPending
     ? null
@@ -124,6 +135,7 @@ export function ChatboxesTab({
           isCreateChatboxDisabled={chatboxCreationGate.isDenied}
           isCreateChatboxLoading={chatboxCreationGate.isLoading}
           createChatboxUpsell={createChatboxUpsell}
+          ensureServersReady={ensureServersReady}
         />
       </Suspense>
     </BillingGateSurface>

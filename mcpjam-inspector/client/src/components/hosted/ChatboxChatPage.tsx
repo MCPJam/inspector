@@ -16,11 +16,13 @@ import {
   buildChatboxLink,
   clearChatboxSession,
   extractChatboxTokenFromPath,
+  normalizeChatboxSession,
   readPlaygroundSession,
   readChatboxSurfaceFromUrl,
   readChatboxSession,
   CHATBOX_OAUTH_PENDING_KEY,
   chatboxEnabledOptionalStorageKey,
+  slugify,
   type ChatboxSession,
   writeChatboxSession,
   writeChatboxSignInReturnPath,
@@ -28,7 +30,6 @@ import {
 import { bootstrapServerToHostedOAuthDescriptor } from "@/components/chatboxes/builder/chatbox-server-optional";
 import { isHostedOAuthBusy } from "@/lib/hosted-oauth-resume";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
-import { slugify } from "@/lib/shared-server-session";
 import { ChatboxHostStyleProvider } from "@/contexts/chatbox-host-style-context";
 import { ChatboxHostOnboardingOverlays } from "@/components/hosted/ChatboxHostOnboardingOverlays";
 import { useChatboxHostIntroGate } from "@/components/hosted/useChatboxHostIntroGate";
@@ -280,6 +281,15 @@ export function ChatboxChatPage({
   const [routeError, setRouteError] = useState<ChatboxRouteError | null>(null);
   const interactiveSignInEventKeyRef = useRef<string | null>(null);
   const tokenFromPath = useMemo(() => pathToken?.trim() || null, [pathToken]);
+  // Mirror `tokenFromPath` into a ref so async work (the silent re-redeem
+  // below) can detect a mid-flight navigation: when the user switches
+  // chatbox tokens before the in-flight `/api/web/chatboxes/redeem`
+  // response arrives, the resolved-but-stale session must not overwrite
+  // the new token's active session.
+  const tokenFromPathRef = useRef(tokenFromPath);
+  useEffect(() => {
+    tokenFromPathRef.current = tokenFromPath;
+  }, [tokenFromPath]);
   const isAuthSettling =
     Boolean(tokenFromPath) &&
     !playgroundParams &&
@@ -300,10 +310,10 @@ export function ChatboxChatPage({
   >([]);
 
   useEffect(() => {
-    if (!session?.token) return;
+    if (!session?.chatboxId) return;
     try {
       const raw = sessionStorage.getItem(
-        chatboxEnabledOptionalStorageKey(session.token)
+        chatboxEnabledOptionalStorageKey(session.chatboxId)
       );
       if (!raw) {
         setEnabledOptionalServerIds((prev) => (prev.length === 0 ? prev : []));
@@ -329,21 +339,21 @@ export function ChatboxChatPage({
     } catch {
       setEnabledOptionalServerIds((prev) => (prev.length === 0 ? prev : []));
     }
-    // Intentionally only re-hydrate when the share token changes — not when
+    // Intentionally only re-hydrate when the chatbox id changes — not when
     // `payload.servers` gets a new array identity on each render.
-  }, [session?.token]);
+  }, [session?.chatboxId]);
 
   useEffect(() => {
-    if (!session?.token) return;
+    if (!session?.chatboxId) return;
     try {
-      const key = chatboxEnabledOptionalStorageKey(session.token);
+      const key = chatboxEnabledOptionalStorageKey(session.chatboxId);
       const serialized = JSON.stringify(enabledOptionalServerIds);
       if (sessionStorage.getItem(key) === serialized) return;
       sessionStorage.setItem(key, serialized);
     } catch {
       // ignore
     }
-  }, [session?.token, enabledOptionalServerIds]);
+  }, [session?.chatboxId, enabledOptionalServerIds]);
 
   const sessionServersActive = useMemo(() => {
     if (!session) return [];
@@ -385,7 +395,8 @@ export function ChatboxChatPage({
     pendingKey: CHATBOX_OAUTH_PENDING_KEY,
     servers: oauthServers,
     projectId: session?.payload.projectId ?? null,
-    chatboxToken: session?.token,
+    chatboxId: session?.chatboxId,
+    accessVersion: session?.accessVersion,
     isAuthenticated,
   });
 
@@ -424,7 +435,11 @@ export function ChatboxChatPage({
     projectId: session?.payload.projectId ?? null,
     serverIdsByName: session ? hostedServerIdsByName : {},
     getAccessToken,
-    chatboxToken: tokenFromPath ?? session?.token,
+    // Resolved chatbox identity from /api/web/chatboxes/redeem. Both
+    // fields live at the top level of the session — the URL token is
+    // never threaded onto the read path.
+    chatboxId: session?.chatboxId,
+    accessVersion: session?.accessVersion,
     isAuthenticated: !!workOsUser,
     hasSession: !!workOsUser || isWorkOsLoading,
   });
@@ -465,26 +480,55 @@ export function ChatboxChatPage({
           status: "started",
         });
         try {
-          const response = await authFetch("/api/web/chatboxes/bootstrap", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
+          // /redeem exchanges the URL link token for a `chatboxId` +
+          // `accessVersion` grant plus the bootstrap payload, in one round
+          // trip. Every chatbox-aware backend call then keys on the resolved
+          // identity — the URL token is not threaded onto the read path.
+          const redeemResponse = await authFetch(
+            "/api/web/chatboxes/redeem",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ chatboxToken: tokenFromPath }),
             },
-            body: JSON.stringify({ token: tokenFromPath }),
-          });
+          );
 
-          if (!response.ok) {
-            throw await readRouteError(response);
+          if (!redeemResponse.ok) {
+            throw await readRouteError(redeemResponse);
           }
 
-          const payload = (await response.json()) as ChatboxSession["payload"];
+          const redeemed = (await redeemResponse.json()) as {
+            chatboxId?: unknown;
+            accessVersion?: unknown;
+            bootstrap?: unknown;
+          };
           if (cancelled) return;
 
-          const nextSession: ChatboxSession = {
-            token: tokenFromPath,
-            payload,
+          // The redeem response is treated as untrusted shape until validated
+          // — `normalizeChatboxSession` enforces every field
+          // `ChatboxBootstrapPayload` requires. Without this, a partial
+          // bootstrap (missing projectId/modelId/etc.) would be persisted
+          // and the API context downstream would initialize with `null`s.
+          const nextSession = normalizeChatboxSession({
+            chatboxId:
+              typeof redeemed.chatboxId === "string"
+                ? redeemed.chatboxId
+                : undefined,
+            accessVersion:
+              typeof redeemed.accessVersion === "number"
+                ? redeemed.accessVersion
+                : undefined,
+            payload: redeemed.bootstrap as ChatboxSession["payload"] | undefined,
             surface: readChatboxSurfaceFromUrl(window.location.search),
-          };
+            shareToken: tokenFromPath ?? undefined,
+          });
+          if (!nextSession) {
+            throw createChatboxRouteError(
+              502,
+              "Chatbox redeem returned an incomplete bootstrap payload.",
+            );
+          }
+
           writeCurrentSession(nextSession);
           setSession(nextSession);
           setRouteError(null);
@@ -570,6 +614,80 @@ export function ChatboxChatPage({
     writeCurrentSession,
   ]);
 
+  // Silent re-redeem path. The capture hook (or any chatbox-aware caller)
+  // calls this when the backend reports `chatbox_access_stale`. It re-runs
+  // /web/chatbox/redeem against the URL token and updates `session` in
+  // place, which propagates a fresh `accessVersion` to every downstream
+  // consumer. Errors are swallowed — the original error UI is owned by the
+  // primary bootstrap effect above, and a refresh failure should leave the
+  // already-mounted chat alone rather than tearing the UI down.
+  //
+  // The in-flight latch is keyed by *token*, not a plain boolean. A
+  // navigation that swaps `tokenFromPath` from A to B while A's redeem is
+  // still pending must not block B from starting its own refresh — A's
+  // response would be discarded by the token-staleness guards below
+  // anyway, so leaving B with no refresh in flight would strand the
+  // capture hook's queued stale snapshot until an unrelated stale event
+  // or page reload happens to retrigger the callback.
+  const refreshInFlightTokenRef = useRef<string | null>(null);
+  const requestRefreshAccessVersion = useCallback(() => {
+    const token = tokenFromPath;
+    if (!token) return;
+    // Same-token re-entry → drop. Different-token re-entry → allow; the
+    // older fetch will land in storage but its `setSession` is gated by
+    // `tokenFromPathRef`.
+    if (refreshInFlightTokenRef.current === token) return;
+    refreshInFlightTokenRef.current = token;
+    void (async () => {
+      try {
+        const redeemResponse = await authFetch("/api/web/chatboxes/redeem", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chatboxToken: token }),
+        });
+        if (!redeemResponse.ok) return;
+        if (tokenFromPathRef.current !== token) return;
+        const redeemed = (await redeemResponse.json()) as {
+          chatboxId?: unknown;
+          accessVersion?: unknown;
+          bootstrap?: unknown;
+        };
+        if (tokenFromPathRef.current !== token) return;
+        const nextSession = normalizeChatboxSession({
+          chatboxId:
+            typeof redeemed.chatboxId === "string"
+              ? redeemed.chatboxId
+              : undefined,
+          accessVersion:
+            typeof redeemed.accessVersion === "number"
+              ? redeemed.accessVersion
+              : undefined,
+          payload: redeemed.bootstrap as ChatboxSession["payload"] | undefined,
+          surface: readChatboxSurfaceFromUrl(window.location.search),
+          shareToken: token,
+        });
+        if (!nextSession) return;
+        // Final guard before mutating shared session state: a navigation
+        // between the JSON parse and now would still race.
+        if (tokenFromPathRef.current !== token) return;
+        writeCurrentSession(nextSession);
+        setSession(nextSession);
+      } catch (error) {
+        console.warn(
+          "[ChatboxChatPage] Silent chatbox re-redeem failed",
+          error,
+        );
+      } finally {
+        // Only clear the latch if we're still the active in-flight refresh.
+        // A newer token's refresh may have already overwritten it; don't
+        // stomp on that one.
+        if (refreshInFlightTokenRef.current === token) {
+          refreshInFlightTokenRef.current = null;
+        }
+      }
+    })();
+  }, [tokenFromPath, writeCurrentSession]);
+
   const displayError = useMemo(
     () => getChatboxDisplayError(routeError),
     [routeError]
@@ -627,8 +745,15 @@ export function ChatboxChatPage({
     };
   }, [session]);
 
+  const shareableToken =
+    tokenFromPath ?? session?.shareToken?.trim() ?? null;
+
   const handleCopyLink = useCallback(async () => {
-    const token = session?.token?.trim();
+    // Token preference: live URL → persisted `session.shareToken`. After
+    // redeem we strip the token from the address bar via replaceState,
+    // so `session.shareToken` (captured at redeem time) is what makes
+    // Copy link work across reloads.
+    const token = shareableToken;
     if (!session || !token) {
       toast.error("Chatbox link unavailable");
       return;
@@ -647,7 +772,7 @@ export function ChatboxChatPage({
     } catch {
       toast.error("Failed to copy chatbox link");
     }
-  }, [session]);
+  }, [session, shareableToken]);
 
   const handleOpenMcpJam = useCallback(() => {
     clearChatboxSession();
@@ -671,8 +796,8 @@ export function ChatboxChatPage({
   const shellStyle = getChatboxShellStyle(hostStyle, themeMode);
   const oauthPending = pendingOAuthServers.length > 0;
   const welcomeAvailable =
-    (session?.payload.welcomeDialog?.enabled ?? true) &&
-    !!session?.payload.welcomeDialog?.body?.trim();
+    (session?.payload.chatUi?.surfaces?.welcome?.enabled ?? true) &&
+    !!session?.payload.chatUi?.surfaces?.welcome?.body?.trim();
   const introGate = useChatboxHostIntroGate({
     chatboxId: session?.payload.chatboxId ?? "",
     servers: sessionServersRequired,
@@ -743,13 +868,15 @@ export function ChatboxChatPage({
           loadingIndicatorVariant={getLoadingIndicatorVariantForHostStyle(
             hostStyle
           )}
-          hostedProjectIdOverride={session.payload.projectId}
-          hostedSelectedServerIdsOverride={sessionServersActive.map(
-            (server) => server.serverId
-          )}
           hostedContext={{
-            chatboxToken: session.token,
+            chatboxId: session.chatboxId,
+            accessVersion: session.accessVersion,
             chatboxSurface: session.surface ?? "share_link",
+            projectId: session.payload.projectId,
+            selectedServerIds: sessionServersActive.map(
+              (server) => server.serverId
+            ),
+            requestRefreshAccessVersion,
           }}
           executionConfig={{
             modelId: session.payload.modelId,
@@ -766,7 +893,7 @@ export function ChatboxChatPage({
         <ChatboxHostOnboardingOverlays
           showWelcome={introGate.showWelcome}
           onGetStarted={introGate.dismissIntro}
-          welcomeBody={session.payload.welcomeDialog?.body}
+          welcomeBody={session.payload.chatUi?.surfaces?.welcome?.body}
           showAuthPanel={introGate.showAuthPanel}
           pendingOAuthServers={pendingOAuthServers}
           authorizeServer={authorizeServer}
@@ -803,7 +930,7 @@ export function ChatboxChatPage({
               />
             </button>
             <div className="flex flex-1 items-center justify-end gap-1.5">
-              {session ? (
+              {session && shareableToken ? (
                 <Button
                   variant="ghost"
                   size="sm"

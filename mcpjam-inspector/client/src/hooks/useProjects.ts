@@ -197,8 +197,12 @@ export function useProjectMutations() {
     "projects:ensureDefaultProject" as any
   );
   const updateProject = useMutation("projects:updateProject" as any);
-  const updateClientConfig = useMutation(
-    "projects:updateProjectClientConfig" as any
+  // Phase 4: write the project default's connection portion through the
+  // v2 owner pointer. The legacy `projects:updateProjectClientConfig`
+  // is still exported by the backend as a compat wrapper but the
+  // inspector no longer calls it.
+  const patchProjectDefaultConnection = useMutation(
+    "hostConfigsV2:patchProjectDefaultConnection" as any
   );
   const deleteProject = useMutation("projects:deleteProject" as any);
   const inviteProjectMember = useMutation(
@@ -218,7 +222,7 @@ export function useProjectMutations() {
     createProject,
     ensureDefaultProject,
     updateProject,
-    updateClientConfig,
+    patchProjectDefaultConnection,
     deleteProject,
     inviteProjectMember,
     removeProjectMember,
@@ -273,5 +277,47 @@ export function useProjectServers({
     serversRecord,
     isLoading,
     hasServers: (servers?.length ?? 0) > 0,
+  };
+}
+
+// Bulk-fetch servers for many projects in one call. Replaces the embedded
+// servers blob the project picker used to read off each `RemoteProject`.
+// The backend cap is 500 ids; we dedupe + slice here so the picker can pass
+// a raw project list without worrying about either constraint.
+export function useProjectsBulkServers({
+  projectIds,
+  isAuthenticated,
+}: {
+  projectIds: string[];
+  isAuthenticated: boolean;
+}) {
+  // Stable identity for the query args. Using a joined key in the dependency
+  // list avoids re-running the memo when the input array reference flips but
+  // the contents are the same.
+  const stableKey = projectIds.join("|");
+  const stableProjectIds = useMemo(() => {
+    if (projectIds.length === 0) return [] as string[];
+    return Array.from(new Set(projectIds)).slice(0, 500);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stableKey]);
+
+  const data = useQuery(
+    "servers:listForProjects" as any,
+    isAuthenticated && stableProjectIds.length > 0
+      ? ({ projectIds: stableProjectIds } as any)
+      : "skip"
+  ) as Record<string, RemoteServer[]> | undefined;
+
+  const isLoading =
+    isAuthenticated && stableProjectIds.length > 0 && data === undefined;
+
+  const serversByProject = useMemo<Record<string, RemoteServer[]>>(
+    () => data ?? {},
+    [data]
+  );
+
+  return {
+    serversByProject,
+    isLoading,
   };
 }
