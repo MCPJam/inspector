@@ -2627,9 +2627,12 @@ export async function completeHostedOAuthCallback(
     );
   let stopProgressPolling = false;
   let progressPollingPromise: Promise<void> | null = null;
-  let resolveTerminalProgressFailure:
-    | ((failure: { message: string; oauthTrace?: OAuthTrace }) => void)
-    | null = null;
+  type TerminalProgressFailureResolver = (failure: {
+    message: string;
+    oauthTrace?: OAuthTrace;
+  }) => void;
+  let resolveTerminalProgressFailure: TerminalProgressFailureResolver | null =
+    null;
 
   try {
     if (!serverName) {
@@ -2728,7 +2731,9 @@ export async function completeHostedOAuthCallback(
             if (progress?.success && progress.status === "failed") {
               stopProgressPolling = true;
               if (resolveTerminalProgressFailure) {
-                resolveTerminalProgressFailure({
+                (
+                  resolveTerminalProgressFailure as TerminalProgressFailureResolver
+                )({
                   message:
                     progress.lastError ||
                     progress.error ||

@@ -152,7 +152,7 @@ const {
     mockUseAppState: vi.fn(createAppStateMock),
     mockUseConvexAuth: vi.fn(),
     mockUseFeatureFlagEnabled: vi.fn(),
-    mockUseQuery: vi.fn(() => undefined),
+    mockUseQuery: vi.fn() as unknown as ReturnType<typeof vi.fn>,
     mockChatboxesTab: vi.fn(() => <div>Chatboxes Tab</div>),
     mockHeader: vi.fn((_props: unknown) => <div data-testid="app-header" />),
     mockWorkOsAuthState: {

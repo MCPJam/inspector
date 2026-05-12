@@ -172,7 +172,10 @@ export function HostContextHeader({
 
     return PRESET_DEVICE_CONFIGS[deviceType];
   }, [customViewport, deviceType]);
-  const DeviceIcon = deviceType === "custom" ? null : deviceConfig.icon;
+  const DeviceIcon =
+    deviceType === "custom" || !("icon" in deviceConfig)
+      ? null
+      : deviceConfig.icon;
 
   const locale = extractHostLocale(draftHostContext, fallbackLocale);
   const timeZone = extractHostTimeZone(draftHostContext, fallbackTimeZone);

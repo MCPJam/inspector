@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
 interface ErrorBoxProps {
   message: string;
   errorDetails?: string;
-  onResetChat: () => void;
+  onResetChat?: () => void;
   // New props for enhanced error display
   code?: string;
   statusCode?: number;
@@ -150,11 +150,13 @@ export function ErrorBox({
               to get back in.
             </p>
           </div>
-          <div className="ml-auto flex flex-shrink-0 flex-wrap items-center gap-2">
-            <Button type="button" variant="outline" onClick={onResetChat}>
-              Reset chat
-            </Button>
-          </div>
+          {onResetChat ? (
+            <div className="ml-auto flex flex-shrink-0 flex-wrap items-center gap-2">
+              <Button type="button" variant="outline" onClick={onResetChat}>
+                Reset chat
+              </Button>
+            </div>
+          ) : null}
         </div>
       </div>
     );
@@ -244,9 +246,11 @@ export function ErrorBox({
               Retry
             </Button>
           )}
-          <Button type="button" variant="outline" onClick={onResetChat}>
-            Reset chat
-          </Button>
+          {onResetChat ? (
+            <Button type="button" variant="outline" onClick={onResetChat}>
+              Reset chat
+            </Button>
+          ) : null}
         </div>
       </div>
       {errorDetails && (

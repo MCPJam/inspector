@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useQuery, useMutation } from "convex/react";
+import type { RemoteServer } from "./useProjects";
 
 // Type definitions matching backend
 export type ViewProtocol = "mcp-apps" | "openai-apps";
@@ -195,18 +196,7 @@ export function useProjectServers({
   const servers = useQuery(
     "servers:getProjectServers" as any,
     enableQuery ? ({ projectId } as any) : "skip",
-  ) as
-    | Array<{
-        _id: string;
-        name: string;
-        projectId: string;
-        transportType: "stdio" | "http";
-        url?: string;
-        useOAuth?: boolean;
-        oauthScopes?: string[];
-        clientId?: string;
-      }>
-    | undefined;
+  ) as RemoteServer[] | undefined;
 
   const isLoading = enableQuery && servers === undefined;
 

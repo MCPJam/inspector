@@ -39,6 +39,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { Loader2, Trash2 } from "lucide-react";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
+import type { RemoteServer } from "@/hooks/useProjects";
 import {
   normalizeDraftEvalCaseForExport,
   normalizeEvalCaseForExport,
@@ -178,11 +179,7 @@ export function SuiteIterationsView({
   ) => void;
   runningTestCaseId?: string | null;
   onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
-  projectServers?: Array<{
-    _id: string;
-    name: string;
-    transportType?: "stdio" | "http";
-  }>;
+  projectServers?: RemoteServer[];
   /** When true, this is rendering the direct-guest eval playground flow. */
   isDirectGuest?: boolean;
   /** Playground: connect suite MCP servers before compare run (same as per-case run). */

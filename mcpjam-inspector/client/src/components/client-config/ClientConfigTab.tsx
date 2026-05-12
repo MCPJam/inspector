@@ -27,7 +27,7 @@ function useContentSizedJsonHeight(
   const [vh, setVh] = useState(
     () =>
       (typeof globalThis !== "undefined" && "innerHeight" in globalThis
-        ? (globalThis as Window).innerHeight
+        ? (globalThis as unknown as Window).innerHeight
         : 900),
   );
   useEffect(() => {

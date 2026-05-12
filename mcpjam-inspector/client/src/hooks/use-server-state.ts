@@ -134,7 +134,7 @@ function mergeOAuthCallbackServerConfig(
       existingHttpConfig?.clientCapabilities ??
       callbackConfig.capabilities ??
       existingHttpConfig?.capabilities,
-  };
+  } as HttpServerConfig;
 }
 
 /**
@@ -688,7 +688,7 @@ export function useServerState({
           serverConfig.timeout ?? projectConnectionDefaults.requestTimeout,
         capabilities: effectiveClientCapabilities,
         clientCapabilities: effectiveClientCapabilities,
-      };
+      } as MCPServerConfig;
     },
     [activeProject?.clientConfig, projectConnectionDefaults]
   );
@@ -1438,10 +1438,7 @@ export function useServerState({
             readStoredClientCredentials(serverName);
           const resolvedOAuthProfile = buildResolvedOAuthProfile({
             serverName,
-            serverUrl:
-              mergedServerConfig.url instanceof URL
-                ? mergedServerConfig.url.href
-                : String(mergedServerConfig.url),
+            serverUrl: String(mergedServerConfig.url),
             existingProfile: existingServer?.oauthFlowProfile,
             storedOAuthConfig,
             storedClientCredentials,
