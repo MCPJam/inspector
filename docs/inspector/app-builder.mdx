@@ -75,6 +75,24 @@ Toggle between light and dark modes to test your widget's appearance in both the
 
 Switch between Claude and ChatGPT host styles and chat thread look in each host environment. For MCP Apps that use the MCP Apps style variables, the ChatGPT toggle translates the widget's styles to ChatGPT's design tokens.
 
+Each host style ships with a distinct `hostCapabilities` preset that reflects what that vendor's host actually supports. Switching from Claude to ChatGPT changes the capabilities advertised in the `ui/initialize` handshake, so widgets that gate on optional fields (such as `serverResources` or `logging`) will behave differently under each style — the same way they would against the real host.
+
+### Host Capabilities
+
+The **Host Capabilities** button in the toolbar (next to Host Context) lets you override the `hostCapabilities` blob advertised to MCP App widgets in the `ui/initialize` response.
+
+By default, the active host style's preset is used. Click **Host Capabilities** to open the editor and customize which capabilities the mock host claims to support. This is useful for testing how your widget behaves when specific capabilities are absent or present — for example, verifying that your widget degrades gracefully when `serverResources` is not advertised.
+
+- **No override** — the active host style's preset is used (shown as the placeholder in the editor)
+- **Custom override** — your JSON object is advertised verbatim; an "Override" badge appears on the button
+- **Clear override** — resets back to the host style preset
+
+The override persists across reloads for Direct Chat. For chatboxes and project defaults, the override is saved in the host config settings alongside `clientCapabilities` and `hostContext`.
+
+<Note>
+  Host Capabilities configures what the mock host *advertises*. Enforcement — rejecting widget requests for capabilities not in the blob — is a planned follow-up. Until then, the inspector will still service all widget requests regardless of what the handshake advertises.
+</Note>
+
 ### Locale Configuration
 
 Test your app's internationalization by selecting different locales from the locale selector. Choose from common BCP 47 locales (e.g., `en-US`, `es-ES`, `ja-JP`, `fr-FR`) to verify that your widget properly handles different languages and regions.
