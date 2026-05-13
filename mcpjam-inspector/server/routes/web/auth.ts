@@ -52,6 +52,22 @@ export const projectServerSchema = z.object({
   // accepts it.
   chatboxId: z.string().min(1).optional(),
   accessVersion: z.number().int().nonnegative().optional(),
+  // mcpProfile.initialize pins, resolved client-side from
+  // `hostConfig.mcpProfile.initialize.*` and forwarded on every hosted
+  // route call. Declared here (rather than per-route) so Zod doesn't
+  // strip them — the inspector client now ALWAYS includes them on
+  // /validate, /check-oauth, /doctor, /tools/*, /resources/*, /prompts/*
+  // when the active hostConfig has a profile pinned. `passthrough()` on
+  // clientInfo so forward-compat MCP spec additions (e.g. `title`,
+  // future fields) survive to `toHttpConfig` without a schema bump.
+  clientInfo: z
+    .object({
+      name: z.string().min(1).optional(),
+      version: z.string().min(1).optional(),
+    })
+    .passthrough()
+    .optional(),
+  supportedProtocolVersions: z.array(z.string().min(1)).optional(),
 });
 
 export const toolsListSchema = projectServerSchema.extend({
@@ -429,7 +445,23 @@ export function toHttpConfig(
   timeoutMs: number,
   oauthAccessToken?: string,
   clientCapabilities?: Record<string, unknown>,
-  onUnauthorized?: UnauthorizedRefreshHandler
+  onUnauthorized?: UnauthorizedRefreshHandler,
+  /**
+   * Per-connection MCP `initialize.params.clientInfo` and
+   * `supportedProtocolVersions` pins resolved from
+   * `hostConfig.mcpProfile.initialize.*`. Forwarded verbatim to the SDK
+   * Client config so hosted connects honor the same pin as the
+   * local-resolver path.
+   *
+   * Without this, the client was sending the pins on the wire but the
+   * hosted handler dropped them at the route boundary (codex P2): Zod
+   * stripped fields not declared on the schema, and `toHttpConfig`
+   * had no parameters that could place them on the SDK config.
+   */
+  initializePins?: {
+    clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
+    supportedProtocolVersions?: string[];
+  }
 ): HttpServerConfig {
   if (authResponse.serverConfig.transportType !== "http") {
     throw new WebRouteError(
@@ -464,6 +496,18 @@ export function toHttpConfig(
     },
     timeout: timeoutMs,
     ...(onUnauthorized ? { onUnauthorized } : {}),
+    // mcpProfile.initialize.* pins, forwarded to the SDK's
+    // `BaseServerConfig.clientInfo` / `.supportedProtocolVersions` per
+    // `sdk/src/mcp-client-manager/types.ts`. Undefined → SDK defaults.
+    ...(initializePins?.clientInfo
+      ? { clientInfo: initializePins.clientInfo }
+      : {}),
+    ...(initializePins?.supportedProtocolVersions &&
+    initializePins.supportedProtocolVersions.length > 0
+      ? {
+          supportedProtocolVersions: initializePins.supportedProtocolVersions,
+        }
+      : {}),
   };
 }
 
@@ -488,6 +532,20 @@ export async function createAuthorizedManager(
     accessVersion?: number;
     rpcLogger?: RpcLogger;
     serverNames?: string[];
+    /**
+     * mcpProfile.initialize.* pins, applied uniformly to every
+     * authorized server in this batch. The same pins flow into every
+     * HttpServerConfig because hosted batches resolve under one
+     * profile context — we don't currently support per-server
+     * mcpProfile overrides.
+     */
+    initializePins?: {
+      clientInfo?: { name?: string; version?: string } & Record<
+        string,
+        unknown
+      >;
+      supportedProtocolVersions?: string[];
+    };
   }
 ): Promise<AuthorizedManagerResult> {
   const serverNamesById = buildServerNamesById(serverIds, options?.serverNames);
@@ -581,7 +639,8 @@ export async function createAuthorizedManager(
         timeoutMs,
         oauthToken,
         clientCapabilities,
-        onUnauthorized
+        onUnauthorized,
+        options?.initializePins
       ),
     ] as const;
   });
@@ -743,6 +802,44 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
         ? raw.accessVersion
         : undefined;
 
+    // Extract mcpProfile.initialize.* pins so they flow into every
+    // HttpServerConfig created by createAuthorizedManager. The schema
+    // (projectServerSchema or any extension thereof) declares
+    // `clientInfo` / `supportedProtocolVersions` as optional fields —
+    // when present, the client has resolved them from the active
+    // hostConfig and wants the hosted route to honor them on
+    // `initialize`. Defensive shape gating: only forward an object
+    // `clientInfo` and only a non-empty string array for
+    // `supportedProtocolVersions`. A malformed payload silently falls
+    // back to SDK defaults rather than failing the whole route.
+    const rawClientInfo = raw.clientInfo;
+    const initializeClientInfo =
+      rawClientInfo &&
+      typeof rawClientInfo === "object" &&
+      !Array.isArray(rawClientInfo)
+        ? (rawClientInfo as { name?: string; version?: string } & Record<
+            string,
+            unknown
+          >)
+        : undefined;
+    const rawSupportedVersions = raw.supportedProtocolVersions;
+    const initializeSupportedVersions =
+      Array.isArray(rawSupportedVersions) &&
+      rawSupportedVersions.every((v) => typeof v === "string" && v.length > 0)
+        ? (rawSupportedVersions as string[])
+        : undefined;
+    const initializePins =
+      initializeClientInfo || initializeSupportedVersions
+        ? {
+            ...(initializeClientInfo
+              ? { clientInfo: initializeClientInfo }
+              : {}),
+            ...(initializeSupportedVersions
+              ? { supportedProtocolVersions: initializeSupportedVersions }
+              : {}),
+          }
+        : undefined;
+
     const result = await withManager(
       createAuthorizedManager(
         c,
@@ -761,6 +858,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
           accessVersion,
           rpcLogger: rpcCollector?.rpcLogger,
           serverNames,
+          initializePins,
         }
       ),
       (manager) => fn(manager, body as z.infer<S>)

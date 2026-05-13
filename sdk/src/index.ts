@@ -373,6 +373,26 @@ export {
 } from "./widget-helpers.js";
 export type { CspMode, WidgetCspMeta, CspConfig } from "./widget-helpers.js";
 
+// Host-side sandbox policy resolver (SEP-1865 + ChatGPT Apps). Pure
+// resolver consumed by both client-side renderers and server-side route
+// handlers that build CSP / permission policy for untrusted UI.
+export {
+  resolveSandboxCsp,
+  resolveSandboxPermissions,
+} from "./sandbox-policy.js";
+export type {
+  SandboxCspMode,
+  SandboxPermissionsMode,
+  SandboxCspDomainSet,
+  SandboxCspPolicy,
+  SandboxPermissionsPolicy,
+  ResourceDeclaredCsp,
+  EffectiveSandboxCsp,
+  EffectiveSandboxPermissions,
+  ResolveSandboxCspArgs,
+  ResolveSandboxPermissionsArgs,
+} from "./sandbox-policy.js";
+
 // OAuth proxy helpers (shared by inspector server routes and the CLI)
 export {
   OAuthProxyError,
