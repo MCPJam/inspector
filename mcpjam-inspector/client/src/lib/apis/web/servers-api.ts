@@ -8,6 +8,28 @@ export type HostedServerValidateContext = {
   accessScope?: "project_member" | "chat_v2";
   chatboxId?: string;
   accessVersion?: number;
+  /**
+   * Per-connection MCP `initialize.params.clientInfo` override resolved
+   * client-side from `hostConfig.mcpProfile.initialize.clientInfo`. The
+   * hosted backend serializes this verbatim into the MCP `initialize`
+   * call so hosted chatbox / inspector sessions honor the same identity
+   * pin as resolver-path local connects. Undefined → SDK defaults.
+   *
+   * Without this field the hosted path silently dropped `mcpProfile.
+   * initialize.*` pins (codex P2): `connectionDefaults` was built but
+   * never reached the validate context, so hosted connects always
+   * initialized with the SDK's hardcoded clientInfo.
+   */
+  clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
+  /**
+   * Per-connection MCP `initialize.params.supportedProtocolVersions`
+   * accept-list, resolved verbatim from
+   * `hostConfig.mcpProfile.initialize.supportedProtocolVersions`. First
+   * entry is what the SDK proposes; the full array is the accept-set
+   * (a server negotiating any listed version is accepted). Order is
+   * semantic.
+   */
+  supportedProtocolVersions?: string[];
 };
 
 export interface HostedServerValidateResponse {
@@ -53,6 +75,19 @@ export async function validateHostedServer(
         ...(hostedContext.chatboxId &&
         Number.isFinite(hostedContext.accessVersion)
           ? { accessVersion: hostedContext.accessVersion }
+          : {}),
+        // mcpProfile.initialize pins. Sent verbatim; the backend reads
+        // them when present and falls back to SDK defaults otherwise.
+        // Always optional so legacy callers keep working.
+        ...(hostedContext.clientInfo
+          ? { clientInfo: hostedContext.clientInfo }
+          : {}),
+        ...(hostedContext.supportedProtocolVersions &&
+        hostedContext.supportedProtocolVersions.length > 0
+          ? {
+              supportedProtocolVersions:
+                hostedContext.supportedProtocolVersions,
+            }
           : {}),
       }
     : buildServerRequest(serverNameOrId);

@@ -56,6 +56,7 @@ function buildHostedValidationContext(
   options?: {
     projectId?: string;
     serverName?: string;
+    connectionDefaults?: ConnectionDefaults;
   },
 ): HostedServerValidateContext | undefined {
   if (!options?.projectId) return undefined;
@@ -68,6 +69,25 @@ function buildHostedValidationContext(
     ...(chatboxId ? { accessScope: "chat_v2" } : {}),
     ...(chatboxId ? { chatboxId } : {}),
     ...(chatboxId ? { accessVersion: getHostedChatboxAccessVersion() } : {}),
+    // Surface the resolver-path `mcpProfile.initialize.*` pins to the
+    // hosted validate request. Without this the hosted branch dropped
+    // them silently: `connectionDefaults` was computed by
+    // `buildResolverConnectionDefaults` in `use-server-state.ts` and
+    // passed through `testConnection`/`reconnectServer`, but only the
+    // local-resolver path forwarded it (`buildResolverBody`). Hosted
+    // connects therefore always initialized with SDK defaults even
+    // when the active host profile pinned an explicit clientInfo /
+    // supportedProtocolVersions.
+    ...(options.connectionDefaults?.clientInfo
+      ? { clientInfo: options.connectionDefaults.clientInfo }
+      : {}),
+    ...(options.connectionDefaults?.supportedProtocolVersions &&
+    options.connectionDefaults.supportedProtocolVersions.length > 0
+      ? {
+          supportedProtocolVersions:
+            options.connectionDefaults.supportedProtocolVersions,
+        }
+      : {}),
   };
 }
 

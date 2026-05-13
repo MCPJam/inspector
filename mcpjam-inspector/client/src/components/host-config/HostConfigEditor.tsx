@@ -426,6 +426,27 @@ function McpProfileSection({
     clientInfoDraftRef.current = clientInfoDraft;
   }, [clientInfoDraft]);
 
+  // Local draft buffer for the supported-protocol-versions textarea.
+  // Same shape as `clientInfoDraft`: the persisted envelope holds a
+  // filtered/trimmed array, but the textarea must accept raw
+  // multi-line text including the trailing newline so the user can
+  // type a second version after pressing Enter. The previous shape
+  // recomputed the textarea value from the filtered array on every
+  // render, so pressing Enter after `2025-11-25` immediately stored
+  // `["2025-11-25"]` and re-rendered without the newline — making it
+  // impossible to construct a multi-version accept-list by typing
+  // (you'd have to paste all versions at once).
+  const persistedProtocolVersionsText = (
+    profile?.initialize?.supportedProtocolVersions ?? []
+  ).join("\n");
+  const [protocolVersionsDraft, setProtocolVersionsDraft] = useState<string>(
+    persistedProtocolVersionsText,
+  );
+  const protocolVersionsDraftRef = useRef(protocolVersionsDraft);
+  useEffect(() => {
+    protocolVersionsDraftRef.current = protocolVersionsDraft;
+  }, [protocolVersionsDraft]);
+
   // Sync the local draft from the persisted profile when the parent
   // overwrites it externally. Three scenarios this handles:
   //
@@ -485,6 +506,25 @@ function McpProfileSection({
       version: persistedVersion,
       title: persistedTitle,
     });
+  }, [profile]);
+
+  // Sync the protocol-versions draft on external profile changes. Same
+  // invariant as the clientInfo sync: if the persisted array equals the
+  // filtered/trimmed version of the current draft, persisted reflects
+  // our own write — keep the draft (including any trailing newline the
+  // user just typed). Otherwise mirror persisted into the draft.
+  useEffect(() => {
+    const persistedJoined = (
+      profile?.initialize?.supportedProtocolVersions ?? []
+    ).join("\n");
+    const draft = protocolVersionsDraftRef.current;
+    const draftFiltered = draft
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line !== "")
+      .join("\n");
+    if (persistedJoined === draftFiltered) return;
+    setProtocolVersionsDraft(persistedJoined);
   }, [profile]);
 
   const enable = useCallback(() => {
@@ -581,6 +621,14 @@ function McpProfileSection({
 
   const updateProtocolVersions = useCallback(
     (raw: string) => {
+      // Commit raw text to the local draft (preserves trailing newlines
+      // and whitespace mid-edit) and flush the filtered/trimmed array to
+      // the persisted envelope. The draft is the source of truth for the
+      // textarea value; the persisted envelope is the source of truth
+      // for the SDK wire shape.
+      protocolVersionsDraftRef.current = raw;
+      setProtocolVersionsDraft(raw);
+
       const versions = raw
         .split(/\r?\n/)
         .map((line) => line.trim())
@@ -610,13 +658,12 @@ function McpProfileSection({
     );
   }
 
-  // Inputs read from the local draft (which always reflects what the user
-  // typed); the persisted envelope only sees complete combos. See the
-  // `clientInfoDraft` state declaration above for rationale.
+  // Inputs read from the local drafts (which always reflect what the
+  // user typed); the persisted envelope only sees filtered/complete
+  // values. See the `clientInfoDraft` and `protocolVersionsDraft`
+  // declarations above for rationale.
   const clientInfo = clientInfoDraft;
-  const protocolVersionsText = (
-    profile?.initialize?.supportedProtocolVersions ?? []
-  ).join("\n");
+  const protocolVersionsText = protocolVersionsDraft;
 
   return (
     <div className="grid gap-3 rounded-md border border-border/50 p-3">
