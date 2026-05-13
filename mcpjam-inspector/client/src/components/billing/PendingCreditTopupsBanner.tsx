@@ -8,16 +8,7 @@ const formatUsd = (cents: number): string => {
   return Number.isInteger(dollars) ? `$${dollars}` : `$${dollars.toFixed(2)}`;
 };
 
-/**
- * Renders a small notice for any in-flight or recently-failed credit top-up.
- *
- * Backed by the server's `billing/pendingCreditTopups:listForCurrentUser`
- * query: a row is written when Stripe Checkout completes with an *unpaid*
- * payment_status (delayed payment methods like ACH/SEPA), flipped to
- * `failed` if the payment is rejected, and deleted once credits actually
- * land. Renders nothing for the common instant-card path because the
- * webhook never writes a row in that case.
- */
+/** Renders a small notice for any in-flight or recently-failed credit top-up. */
 export function PendingCreditTopupsBanner() {
   const { pending, failed } = usePendingCreditTopups();
 
@@ -89,7 +80,6 @@ function FailedNotice({ topup }: FailedNoticeProps) {
     <div
       role="alert"
       data-testid="pending-credit-topups-failed"
-      data-session-id={topup.stripeSessionId}
       className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive dark:border-destructive/60"
     >
       <CircleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
