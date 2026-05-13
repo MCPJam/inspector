@@ -642,7 +642,17 @@ export function MCPAppsRenderer({
           // Server consults this flag instead of hostStyle. Caller is the
           // dispatcher; never re-resolve here so advertise/enforce/banner
           // stay in lockstep with the renderer's actual injection.
-          injectOpenAiCompatRuntime: openAiCompatEnabled,
+          //
+          // Backwards-compat: for the MCP Apps discovery channel, keep
+          // the legacy unconditional `window.openai` injection. Only
+          // the new OpenAI-SDK-through-unified-renderer path gates on
+          // `openAiCompatEnabled` — otherwise enabling the
+          // `preferUnifiedWidgetRenderer` flag (or just landing this
+          // server change) would silently strip `window.openai` from
+          // existing MCP Apps widgets running under non-ChatGPT hosts.
+          // Stage 4 will revisit once all renderers consolidate.
+          injectOpenAiCompatRuntime:
+            discoveryChannel === "openai" ? openAiCompatEnabled : true,
         });
 
         if (!valid) {

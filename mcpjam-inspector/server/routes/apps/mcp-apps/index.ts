@@ -34,16 +34,26 @@ type CspMode = "permissive" | "widget-declared";
 
 interface WidgetContentRequest {
   serverId: string;
-  resourceUri: string;
+  // Stage 2.4 discriminator — mirrors the hosted route at
+  // server/routes/web/apps.ts so the same fetcher can drive either
+  // deployment. Exactly one of `resourceUri` (MCP Apps SEP-1865,
+  // `_meta.ui.*` discovery) or `openaiOutputTemplate` (OpenAI Apps SDK,
+  // `_meta["openai/*"]` discovery) must be set.
+  resourceUri?: string;
+  openaiOutputTemplate?: string;
   toolInput: Record<string, unknown>;
   toolOutput: unknown;
+  toolResponseMetadata?: Record<string, unknown> | null;
   toolId: string;
   toolName: string;
   theme?: "light" | "dark";
+  locale?: string;
+  deviceType?: "mobile" | "tablet" | "desktop";
   cspMode?: CspMode;
   template?: string;
   viewMode?: string;
   viewParams?: Record<string, unknown>;
+  injectOpenAiCompatRuntime?: boolean;
 }
 
 // UI Resource metadata per SEP-1865 (using SDK types)
@@ -61,25 +71,49 @@ apps.post("/widget-content", async (c) => {
     const {
       serverId,
       resourceUri,
+      openaiOutputTemplate,
       toolInput,
       toolOutput,
+      toolResponseMetadata,
       toolId,
       toolName,
       theme,
+      locale,
+      deviceType,
       cspMode,
       template: templateUri,
       viewMode,
       viewParams,
+      injectOpenAiCompatRuntime,
     } = body;
 
-    if (!serverId || !resourceUri || !toolId || !toolName) {
+    if (!serverId || !toolId || !toolName) {
       return c.json({ error: "Missing required fields" }, 400);
+    }
+    const hasResourceUri = !!(resourceUri || templateUri);
+    const hasOpenaiTemplate = !!openaiOutputTemplate;
+    if (hasResourceUri && hasOpenaiTemplate) {
+      return c.json(
+        {
+          error:
+            "Specify exactly one of resourceUri or openaiOutputTemplate, not both",
+        },
+        400,
+      );
+    }
+    if (!hasResourceUri && !hasOpenaiTemplate) {
+      return c.json(
+        { error: "Specify either resourceUri or openaiOutputTemplate" },
+        400,
+      );
     }
     if (templateUri && !templateUri.startsWith("ui://")) {
       return c.json({ error: "Template must use ui:// protocol" }, 400);
     }
 
-    const resolvedResourceUri = templateUri || resourceUri;
+    const isOpenAiDiscovery = hasOpenaiTemplate;
+    const resolvedResourceUri =
+      templateUri || resourceUri || openaiOutputTemplate!;
 
     const effectiveCspMode = cspMode ?? "permissive";
     const mcpClientManager = c.mcpClientManager;
@@ -104,13 +138,20 @@ apps.post("/widget-content", async (c) => {
     }
 
     // SEP-1865: Validate mimetype - MUST be "text/html;profile=mcp-app"
+    // for the MCP Apps discovery channel. OpenAI Apps SDK widgets ship
+    // `text/html+skybridge` or arbitrary `text/html` and aren't subject
+    // to the SEP-1865 mimetype profile — skip enforcement for them so
+    // those widgets don't surface as "invalid mimetype" on every load.
     const contentMimeType = (content as { mimeType?: string }).mimeType;
-    const mimeTypeValid = contentMimeType === MCP_APPS_MIMETYPE;
-    const mimeTypeWarning = !mimeTypeValid
-      ? contentMimeType
-        ? `Invalid mimetype "${contentMimeType}" - SEP-1865 requires "${MCP_APPS_MIMETYPE}"`
-        : `Missing mimetype - SEP-1865 requires "${MCP_APPS_MIMETYPE}"`
-      : null;
+    const mimeTypeValid = isOpenAiDiscovery
+      ? true
+      : contentMimeType === MCP_APPS_MIMETYPE;
+    const mimeTypeWarning =
+      !mimeTypeValid && !isOpenAiDiscovery
+        ? contentMimeType
+          ? `Invalid mimetype "${contentMimeType}" - SEP-1865 requires "${MCP_APPS_MIMETYPE}"`
+          : `Missing mimetype - SEP-1865 requires "${MCP_APPS_MIMETYPE}"`
+        : null;
 
     if (mimeTypeWarning) {
       logger.warn("[MCP Apps] Mimetype validation: " + mimeTypeWarning, {
@@ -133,11 +174,29 @@ apps.post("/widget-content", async (c) => {
       return c.json({ error: "No HTML content in resource" }, 404);
     }
 
-    // Extract CSP, permissions, and other UI metadata from resource _meta (SEP-1865)
-    const uiMeta = (content._meta as { ui?: UIResourceMeta } | undefined)?.ui;
-    const csp = uiMeta?.csp;
-    const permissions = uiMeta?.permissions;
-    const prefersBorder = uiMeta?.prefersBorder;
+    // Discovery branch split (Stage 2.4). MCP Apps reads `_meta.ui.*`;
+    // OpenAI Apps SDK reads flat `_meta["openai/*"]` keys. The sandbox
+    // proxy treats both as equivalent inputs — the discriminator only
+    // chooses where to look.
+    const rawMeta = (content as { _meta?: Record<string, unknown> })._meta;
+    const uiMeta = (rawMeta as { ui?: UIResourceMeta } | undefined)?.ui;
+    let csp: McpUiResourceCsp | undefined;
+    let permissions: McpUiResourcePermissions | undefined;
+    let prefersBorder: boolean | undefined;
+    if (isOpenAiDiscovery) {
+      csp = rawMeta?.["openai/widgetCSP"] as McpUiResourceCsp | undefined;
+      // OpenAI's metadata format has no permissions analogue; widgets
+      // declare capabilities via other channels. Leave undefined so the
+      // sandbox applies its restrictive default.
+      permissions = undefined;
+      prefersBorder = rawMeta?.["openai/widgetPrefersBorder"] as
+        | boolean
+        | undefined;
+    } else {
+      csp = uiMeta?.csp;
+      permissions = uiMeta?.permissions;
+      prefersBorder = uiMeta?.prefersBorder;
+    }
 
     // Log CSP and permissions configuration for security review (SEP-1865)
     logger.debug("[MCP Apps] Security configuration", {
@@ -165,16 +224,30 @@ apps.post("/widget-content", async (c) => {
     // When in widget-declared mode, use the widget's CSP metadata (or restrictive defaults)
     const isPermissive = effectiveCspMode === "permissive";
 
-    // Inject window.openai compat layer into every MCP App iframe
-    html = injectOpenAICompat(html, {
-      toolId,
-      toolName,
-      toolInput: toolInput ?? {},
-      toolOutput,
-      theme,
-      viewMode,
-      viewParams,
-    });
+    // Stage 2: gate on the client-supplied flag (resolved via
+    // `resolveOpenAiCompatEnabled` in the renderer). Server does not
+    // consult hostStyle. `useLocalStorageWidgetState: true` flips the
+    // Stage 1 flag default for any widget routed through here; the
+    // legacy `ui/update-model-context` path stays in
+    // `ChatGPTAppRenderer` until Stage 4. The fidelity fields are
+    // forwarded into the runtime config so widgets reading
+    // `window.openai.toolResponseMetadata/locale/deviceType` see the
+    // same values they did via the legacy ChatGPT inject path.
+    if (injectOpenAiCompatRuntime) {
+      html = injectOpenAICompat(html, {
+        toolId,
+        toolName,
+        toolInput: toolInput ?? {},
+        toolOutput,
+        toolResponseMetadata: toolResponseMetadata ?? null,
+        theme,
+        locale,
+        deviceType,
+        viewMode,
+        viewParams,
+        useLocalStorageWidgetState: true,
+      });
+    }
 
     // Return JSON with HTML and metadata for CSP enforcement
     getRequestLogger(c, "routes.apps.mcp-apps").event("widget.resource.served", {
@@ -195,6 +268,8 @@ apps.post("/widget-content", async (c) => {
       mimeType: contentMimeType,
       mimeTypeValid,
       mimeTypeWarning,
+      // Echoed for the dispatcher's debug overlay / Stage 3 telemetry.
+      discoveryChannel: isOpenAiDiscovery ? "openai" : "mcp-apps",
     });
   } catch (error) {
     getRequestLogger(c, "routes.apps.mcp-apps").event("widget.resource.failed", {

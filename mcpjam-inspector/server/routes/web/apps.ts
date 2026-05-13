@@ -273,7 +273,16 @@ apps.post("/mcp-apps/widget-content", async (c) =>
           toolName: body.toolName,
           toolInput: body.toolInput ?? {},
           toolOutput: body.toolOutput,
+          // Stage 2 fidelity fields. Forwarded into the runtime config
+          // so widgets that read `window.openai.toolResponseMetadata`,
+          // `window.openai.locale`, or `window.openai.deviceType` see
+          // the same values they did via the legacy ChatGPT inject path.
+          // The body schema accepts these so the unified renderer can
+          // pass them through regardless of discovery channel.
+          toolResponseMetadata: body.toolResponseMetadata ?? null,
           theme: body.theme,
+          locale: body.locale,
+          deviceType: body.deviceType,
           viewMode: body.viewMode,
           viewParams: body.viewParams,
           useLocalStorageWidgetState: true,

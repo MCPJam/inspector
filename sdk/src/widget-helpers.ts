@@ -41,6 +41,16 @@ export function injectOpenAICompat(
     viewMode?: string;
     viewParams?: Record<string, unknown>;
     useLocalStorageWidgetState?: boolean;
+    /**
+     * Stage 2 fidelity fields. Forwarded into the OpenAI compat runtime
+     * config so widgets that read `window.openai.toolResponseMetadata`,
+     * `window.openai.locale`, or `window.openai.deviceType` see the same
+     * values they did through the legacy ChatGPT injection path.
+     * Additive only (per SDK API-stability convention).
+     */
+    toolResponseMetadata?: Record<string, unknown> | null;
+    locale?: string;
+    deviceType?: "mobile" | "tablet" | "desktop";
   }
 ): string {
   if (html.includes('id="openai-compat-config"')) {
@@ -52,7 +62,10 @@ export function injectOpenAICompat(
     toolName: widgetData.toolName,
     toolInput: widgetData.toolInput,
     toolOutput: widgetData.toolOutput,
+    toolResponseMetadata: widgetData.toolResponseMetadata ?? null,
     theme: widgetData.theme ?? "dark",
+    locale: widgetData.locale ?? "en-US",
+    deviceType: widgetData.deviceType ?? "desktop",
     viewMode: widgetData.viewMode ?? "inline",
     viewParams: widgetData.viewParams ?? {},
     useLocalStorageWidgetState: widgetData.useLocalStorageWidgetState ?? false,

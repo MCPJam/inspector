@@ -609,8 +609,19 @@ function McpProfileOpenAiCompatEditor({
       // Collapse empty sub-trees as we patch so an explicit-then-cleared
       // edit doesn't leave a vacuous { compat: { openai: {} } } on the
       // wire (which would hash distinctly from the pre-feature baseline).
+      // Preserve any user-saved `openai.extensions` payload across
+      // toggles and resets — the editor only owns `enabled`, not the
+      // forward-compat extension slot.
+      const existingOpenaiExtras = base.apps?.compat?.openai?.extensions;
       const nextOpenai =
-        next === undefined ? undefined : { enabled: next };
+        next === undefined && existingOpenaiExtras === undefined
+          ? undefined
+          : {
+              ...(next !== undefined ? { enabled: next } : {}),
+              ...(existingOpenaiExtras !== undefined
+                ? { extensions: existingOpenaiExtras }
+                : {}),
+            };
       const existingCompatExtras = base.apps?.compat?.extensions;
       const nextCompat =
         nextOpenai === undefined && existingCompatExtras === undefined
