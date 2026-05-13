@@ -142,6 +142,29 @@ export function estimateTokensFromChars(text: string): number {
 }
 
 /**
+ * Detect Node/undici connection-level fetch failures
+ * (`TypeError: fetch failed` with a populated `cause`).
+ *
+ * These happen on the *client's* network — DNS miss, connection refused, TLS
+ * failure, etc. — so logging them as warnings to Sentry conflates user-side
+ * connectivity with backend issues. Callers should route these to a debug
+ * log instead while still surfacing backend HTTP/logical errors as warnings.
+ */
+export function isFetchConnectionFailure(error: unknown): boolean {
+  return error instanceof TypeError && /fetch failed/i.test(error.message);
+}
+
+/**
+ * Pull the underlying network error code (e.g. `ECONNREFUSED`, `ENOTFOUND`)
+ * out of a `fetch failed` TypeError. `error.cause` is where undici stashes
+ * the real reason; `error.message` is the useless generic wrapper.
+ */
+export function getFetchErrorCause(error: unknown): string | undefined {
+  const cause = (error as { cause?: { code?: unknown } })?.cause?.code;
+  return typeof cause === "string" ? cause : undefined;
+}
+
+/**
  * Count tokens for tools, using backend tokenizer or char fallback.
  * Shared by mcp/tools and web routes.
  */
@@ -177,9 +200,18 @@ export async function countToolsTokens(
 
     return estimateTokensFromChars(toolsText);
   } catch (error) {
-    logger.warn(`${logPrefix} Error counting tokens`, {
-      error: error instanceof Error ? error.message : String(error),
-    });
+    // Connection-level failures (DNS, ECONNREFUSED, TLS) come from the
+    // caller's network, not our backend. Log locally but don't page Sentry.
+    if (isFetchConnectionFailure(error)) {
+      logger.debug(`${logPrefix} Backend unreachable, falling back to estimate`, {
+        cause: getFetchErrorCause(error),
+      });
+    } else {
+      logger.warn(`${logPrefix} Error counting tokens`, {
+        error: error instanceof Error ? error.message : String(error),
+        cause: getFetchErrorCause(error),
+      });
+    }
     return 0;
   }
 }

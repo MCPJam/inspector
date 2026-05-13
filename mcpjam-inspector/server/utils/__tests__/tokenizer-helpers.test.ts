@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   mapModelIdToTokenizerBackend,
   estimateTokensFromChars,
+  isFetchConnectionFailure,
+  getFetchErrorCause,
 } from "../tokenizer-helpers.js";
 
 describe("mapModelIdToTokenizerBackend", () => {
@@ -144,5 +146,57 @@ describe("estimateTokensFromChars", () => {
   it("handles long text", () => {
     const longText = "a".repeat(1000);
     expect(estimateTokensFromChars(longText)).toBe(250);
+  });
+});
+
+describe("isFetchConnectionFailure", () => {
+  it("returns true for a Node fetch-failed TypeError", () => {
+    const err = new TypeError("fetch failed");
+    expect(isFetchConnectionFailure(err)).toBe(true);
+  });
+
+  it("is case-insensitive on the message", () => {
+    const err = new TypeError("Fetch failed");
+    expect(isFetchConnectionFailure(err)).toBe(true);
+  });
+
+  it("returns false for unrelated TypeErrors", () => {
+    expect(isFetchConnectionFailure(new TypeError("oops"))).toBe(false);
+  });
+
+  it("returns false for plain Errors with the same message", () => {
+    // Only undici raises this as a TypeError; a normal Error of the same
+    // text is something else (e.g. user code) and should still warn.
+    expect(isFetchConnectionFailure(new Error("fetch failed"))).toBe(false);
+  });
+
+  it("returns false for non-Error values", () => {
+    expect(isFetchConnectionFailure("fetch failed")).toBe(false);
+    expect(isFetchConnectionFailure(undefined)).toBe(false);
+    expect(isFetchConnectionFailure(null)).toBe(false);
+  });
+});
+
+describe("getFetchErrorCause", () => {
+  it("extracts cause.code from a fetch-failed TypeError", () => {
+    const err = new TypeError("fetch failed");
+    (err as { cause?: unknown }).cause = { code: "ECONNREFUSED" };
+    expect(getFetchErrorCause(err)).toBe("ECONNREFUSED");
+  });
+
+  it("returns undefined when cause is missing", () => {
+    expect(getFetchErrorCause(new TypeError("fetch failed"))).toBeUndefined();
+  });
+
+  it("returns undefined when cause.code is not a string", () => {
+    const err = new TypeError("fetch failed");
+    (err as { cause?: unknown }).cause = { code: 42 };
+    expect(getFetchErrorCause(err)).toBeUndefined();
+  });
+
+  it("handles non-object errors gracefully", () => {
+    expect(getFetchErrorCause("nope")).toBeUndefined();
+    expect(getFetchErrorCause(null)).toBeUndefined();
+    expect(getFetchErrorCause(undefined)).toBeUndefined();
   });
 });
