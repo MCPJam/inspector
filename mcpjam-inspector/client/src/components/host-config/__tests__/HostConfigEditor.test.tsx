@@ -132,6 +132,61 @@ describe("HostConfigEditor MCP profile clientInfo draft", () => {
     });
   });
 
+  it("preserves a trailing newline in the protocol-versions textarea (multi-line typing)", () => {
+    // Codex P2 regression: the textarea used to be fully controlled by
+    // the filtered persisted array. Pressing Enter after the first
+    // entry stripped the trailing newline on the next render, so the
+    // user couldn't manually type a multi-version accept-list one line
+    // at a time — they'd have to paste all versions in one change.
+    const onChange = vi.fn();
+    let current = emptyHostConfigInputV2({
+      mcpProfile: { profileVersion: 1 },
+    });
+    const handleChange = (next: HostConfigInputV2) => {
+      current = next;
+      onChange(next);
+      utils.rerender(
+        <HostConfigEditor
+          value={current}
+          onChange={handleChange}
+          availableServers={SERVERS}
+        />,
+      );
+    };
+    const utils = render(
+      <HostConfigEditor
+        value={current}
+        onChange={handleChange}
+        availableServers={SERVERS}
+      />,
+    );
+
+    // Find the textarea by its label.
+    const textarea = screen.getByLabelText(
+      /Supported protocol versions/i,
+    ) as HTMLTextAreaElement;
+
+    // Type the first version followed by a newline. The textarea must
+    // display the trailing newline so the user can type a second line.
+    fireEvent.change(textarea, { target: { value: "2025-11-25\n" } });
+    expect(textarea.value).toBe("2025-11-25\n");
+
+    // Persisted array filters out empty lines, so it's just the one
+    // entry — but the draft preserves what the user typed.
+    expect(
+      current.mcpProfile?.initialize?.supportedProtocolVersions,
+    ).toEqual(["2025-11-25"]);
+
+    // Now type the second version on the next line.
+    fireEvent.change(textarea, {
+      target: { value: "2025-11-25\n2025-06-18" },
+    });
+    expect(textarea.value).toBe("2025-11-25\n2025-06-18");
+    expect(
+      current.mcpProfile?.initialize?.supportedProtocolVersions,
+    ).toEqual(["2025-11-25", "2025-06-18"]);
+  });
+
   it("does not re-flush stale clientInfo after a Reset clears the envelope", async () => {
     // Drive the same flow Reset does — parent calls onChange(undefined) on
     // mcpProfile. The synced draft should clear so a subsequent edit

@@ -723,10 +723,15 @@ function McpProfileSection({
           </div>
 
           <div className="grid gap-2">
-            <Label className="text-xs font-medium">
+            <Label
+              htmlFor="mcp-profile-supported-protocol-versions"
+              className="text-xs font-medium"
+            >
               Supported protocol versions (one per line, first = proposed)
             </Label>
             <Textarea
+              id="mcp-profile-supported-protocol-versions"
+              aria-label="Supported protocol versions"
               rows={3}
               placeholder={"2025-11-25\n2025-06-18"}
               value={protocolVersionsText}
