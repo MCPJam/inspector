@@ -46,6 +46,7 @@ import {
   type HostConfigMcpProfileV1,
   type HostStyleId,
   DEFAULT_TEMPERATURE_V2,
+  resolveOpenAiCompatEnabled,
 } from "@/lib/host-config-v2";
 import {
   getHostCapabilitiesForStyle,
@@ -350,6 +351,7 @@ export function HostConfigEditor({
         {owner !== "connection-only" ? (
           <McpProfileSection
             profile={value.mcpProfile}
+            hostStyle={value.hostStyle}
             onChange={(mcpProfile) => update({ mcpProfile })}
           />
         ) : null}
@@ -380,9 +382,11 @@ export function HostConfigEditor({
  */
 function McpProfileSection({
   profile,
+  hostStyle,
   onChange,
 }: {
   profile: HostConfigMcpProfileV1 | undefined;
+  hostStyle: HostStyleId;
   onChange: (next: HostConfigMcpProfileV1 | undefined) => void;
 }) {
   const [expanded, setExpanded] = useState<boolean>(profile !== undefined);
@@ -565,6 +569,7 @@ function McpProfileSection({
 
           <McpProfileOpenAiCompatEditor
             profile={profile}
+            hostStyle={hostStyle}
             onChange={onChange}
           />
 
@@ -595,13 +600,24 @@ function McpProfileSection({
  */
 function McpProfileOpenAiCompatEditor({
   profile,
+  hostStyle,
   onChange,
 }: {
   profile: HostConfigMcpProfileV1 | undefined;
+  hostStyle: HostStyleId;
   onChange: (next: HostConfigMcpProfileV1 | undefined) => void;
 }) {
   // Persisted value: undefined (use hostStyle default) / true / false.
+  // The switch reflects the RESOLVED state — what the runtime will
+  // actually do — so for a ChatGPT-themed profile with `persisted ===
+  // undefined`, the switch is checked because the resolver defaults to
+  // `true`. Without this the user would see the toggle as "off" while
+  // `window.openai` is being injected.
   const persisted = profile?.apps?.compat?.openai?.enabled;
+  const resolved = resolveOpenAiCompatEnabled({
+    mcpProfile: profile,
+    hostStyle,
+  });
 
   const setEnabled = useCallback(
     (next: boolean | undefined) => {
@@ -662,11 +678,17 @@ function McpProfileOpenAiCompatEditor({
           </p>
         </div>
         <Switch
-          checked={persisted === true}
+          checked={resolved}
           onCheckedChange={(checked) => setEnabled(checked)}
         />
       </div>
-      {persisted !== undefined ? (
+      {persisted === undefined ? (
+        <p className="text-xs text-muted-foreground">
+          Inheriting the inspector default for this host style
+          ({resolved ? "on" : "off"}). Toggle the switch to set an
+          explicit value.
+        </p>
+      ) : (
         <div className="flex justify-end">
           <Button
             type="button"
@@ -677,7 +699,7 @@ function McpProfileOpenAiCompatEditor({
             Reset to inspector default
           </Button>
         </div>
-      ) : null}
+      )}
     </div>
   );
 }
@@ -709,9 +731,24 @@ function McpProfileSandboxEditor({
       const hasSandboxFields =
         nextSandbox.csp !== undefined ||
         nextSandbox.permissions !== undefined;
+      // Preserve any sibling sub-trees under `apps` (e.g. `apps.compat`
+      // set by McpProfileOpenAiCompatEditor). Otherwise a CSP/permissions
+      // edit after toggling OpenAI compat silently clobbers
+      // `apps.compat.openai.enabled` and the resolver falls back to the
+      // host-style default — losing the user's explicit choice.
+      const existingCompat = base.apps?.compat;
+      const nextApps =
+        hasSandboxFields || existingCompat !== undefined
+          ? {
+              ...(hasSandboxFields ? { sandbox: nextSandbox } : {}),
+              ...(existingCompat !== undefined
+                ? { compat: existingCompat }
+                : {}),
+            }
+          : undefined;
       onChange({
         ...base,
-        apps: hasSandboxFields ? { sandbox: nextSandbox } : undefined,
+        apps: nextApps,
       });
     },
     [profile, onChange],
