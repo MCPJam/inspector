@@ -3,6 +3,7 @@ const HASH_TAB_ALIASES = {
 } as const;
 
 export const HOSTED_SIDEBAR_ALLOWED_TABS = [
+  "hosts",
   "servers",
   "registry",
   "chat-v2",
