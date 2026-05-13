@@ -164,6 +164,12 @@ const navigationSections: NavSection[] = [
     id: "connection",
     items: [
       {
+        title: "Hosts",
+        url: "#hosts",
+        icon: MCPIcon,
+        featureFlag: "hosts-enabled",
+      },
+      {
         title: "Servers",
         url: "#servers",
         icon: MCPIcon,
@@ -550,6 +556,7 @@ export function MCPSidebar({
   const xaaEnabled = useFeatureFlagEnabled("xaa");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
+  const hostsEnabled = useFeatureFlagEnabled("hosts-enabled");
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
   const learningEnabled = !!learningFlagEnabled && isAuthenticated;
@@ -603,6 +610,7 @@ export function MCPSidebar({
       "sandboxes-enabled": !!sandboxesEnabled && isAuthenticated,
       "registry-enabled": registryEnabled === true,
       "mcpjam-conformance": conformanceEnabled === true,
+      "hosts-enabled": hostsEnabled === true && isAuthenticated,
       xaa: xaaEnabled === true,
     }),
     [
@@ -610,6 +618,7 @@ export function MCPSidebar({
       sandboxesEnabled,
       registryEnabled,
       conformanceEnabled,
+      hostsEnabled,
       xaaEnabled,
       isAuthenticated,
     ],

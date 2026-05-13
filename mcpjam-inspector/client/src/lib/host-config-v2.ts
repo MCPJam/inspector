@@ -125,6 +125,16 @@ export type HostConfigInputV2 = {
    * the two states distinctly.
    */
   mcpProfile?: HostConfigMcpProfileV1;
+  /**
+   * Per-server connection overrides scoped to this host config. Keys are
+   * server IDs. When present for a server, these win over host-wide
+   * connectionDefaults for that specific server. Included in the canonical
+   * hash so hosts that differ only in overrides get distinct rows.
+   */
+  serverConnectionOverrides?: Record<string, {
+    headersOverride?: Record<string, string>;
+    requestTimeoutOverride?: number;
+  }>;
 };
 
 /**
@@ -152,6 +162,11 @@ export type HostConfigDtoV2 = {
    * default empty envelope.
    */
   mcpProfile?: HostConfigMcpProfileV1;
+  /** Per-server connection overrides hydrated from hostConfigServerRefs. */
+  serverConnectionOverrides?: Record<string, {
+    headersOverride?: Record<string, string>;
+    requestTimeoutOverride?: number;
+  }>;
 };
 
 export const DEFAULT_HOST_STYLE_V2: HostStyleId = "claude";
@@ -240,6 +255,21 @@ export function hostConfigDtoToInput(
       ? deepCloneJsonRecord(dto.hostCapabilitiesOverride)
       : undefined,
     mcpProfile: dto.mcpProfile ? cloneMcpProfile(dto.mcpProfile) : undefined,
+    serverConnectionOverrides: dto.serverConnectionOverrides
+      ? Object.fromEntries(
+          Object.entries(dto.serverConnectionOverrides).map(([k, v]) => [
+            k,
+            {
+              ...(v.headersOverride !== undefined
+                ? { headersOverride: { ...v.headersOverride } }
+                : {}),
+              ...(v.requestTimeoutOverride !== undefined
+                ? { requestTimeoutOverride: v.requestTimeoutOverride }
+                : {}),
+            },
+          ])
+        )
+      : undefined,
   };
 }
 
@@ -374,6 +404,38 @@ export function hostConfigInputsEqual(
     return false;
   if (!optionalMcpProfileEq(a.mcpProfile, b.mcpProfile)) return false;
   return true;
+}
+
+/**
+ * Deep equality for serverConnectionOverrides maps. Normalizes empty/undefined
+ * entries so `undefined`, `{}`, and an entry with all undefined fields all
+ * compare equal (no override).
+ */
+export function serverConnectionOverridesEqual(
+  a: HostConfigInputV2["serverConnectionOverrides"],
+  b: HostConfigInputV2["serverConnectionOverrides"],
+): boolean {
+  const normalize = (
+    overrides: HostConfigInputV2["serverConnectionOverrides"],
+  ): Record<string, { headersOverride?: Record<string, string>; requestTimeoutOverride?: number }> => {
+    if (!overrides) return {};
+    const result: Record<string, { headersOverride?: Record<string, string>; requestTimeoutOverride?: number }> = {};
+    for (const [key, entry] of Object.entries(overrides)) {
+      if (!entry) continue;
+      const hasHeaders =
+        entry.headersOverride !== undefined &&
+        Object.keys(entry.headersOverride).length > 0;
+      const hasTimeout = entry.requestTimeoutOverride !== undefined;
+      if (hasHeaders || hasTimeout) {
+        result[key] = {
+          ...(hasHeaders ? { headersOverride: entry.headersOverride } : {}),
+          ...(hasTimeout ? { requestTimeoutOverride: entry.requestTimeoutOverride } : {}),
+        };
+      }
+    }
+    return result;
+  };
+  return stableStringifyJson(normalize(a)) === stableStringifyJson(normalize(b));
 }
 
 function optionalMcpProfileEq(

@@ -5,22 +5,33 @@ import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
+import { Label } from "@mcpjam/design-system/label";
 import {
   buildSuiteEnvironmentOptions,
   normalizeServerNames,
   type ProjectServerRecord,
 } from "./suite-environment-utils";
+import { useHost } from "@/hooks/useHosts";
+import { useConvexAuth } from "convex/react";
+import { HostPicker } from "@/components/hosts/HostPicker";
+import { hostConfigDtoToInput } from "@/lib/host-config-v2";
+
+export type CreateSuitePayload = {
+  name: string;
+  description?: string;
+  selectedServers: string[];
+  namedHostId?: string;
+  hostConfigInput?: ReturnType<typeof hostConfigDtoToInput>;
+};
 
 type CreateSuiteDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   projectServers: ProjectServerRecord[];
   connectedServerNames: ReadonlySet<string>;
-  onSubmit: (payload: {
-    name: string;
-    description?: string;
-    selectedServers: string[];
-  }) => Promise<void>;
+  onSubmit: (payload: CreateSuitePayload) => Promise<void>;
+  hostsEnabled?: boolean;
+  projectId?: string | null;
 };
 
 export function CreateSuiteDialog({
@@ -29,11 +40,19 @@ export function CreateSuiteDialog({
   projectServers,
   connectedServerNames,
   onSubmit,
+  hostsEnabled = false,
+  projectId = null,
 }: CreateSuiteDialogProps) {
+  const { isAuthenticated } = useConvexAuth();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [selectedServers, setSelectedServers] = useState<string[]>([]);
   const [isSaving, setIsSaving] = useState(false);
+  const [selectedHostId, setSelectedHostId] = useState<string | null>(null);
+  const { host: selectedHost } = useHost({
+    isAuthenticated: isAuthenticated && hostsEnabled,
+    hostId: selectedHostId,
+  });
 
   useEffect(() => {
     if (!open) {
@@ -41,8 +60,21 @@ export function CreateSuiteDialog({
       setDescription("");
       setSelectedServers([]);
       setIsSaving(false);
+      setSelectedHostId(null);
     }
   }, [open]);
+
+  // Seed server selection from selected host
+  useEffect(() => {
+    if (!selectedHost) return;
+    const serverNames = selectedHost.config.serverIds
+      .map((id) => {
+        const found = projectServers.find((s) => s._id === id);
+        return found?.name ?? null;
+      })
+      .filter((n): n is string => n !== null);
+    setSelectedServers(serverNames);
+  }, [selectedHost, projectServers]);
 
   const options = useMemo(
     () =>
@@ -76,6 +108,12 @@ export function CreateSuiteDialog({
         name: name.trim(),
         description: description.trim() || undefined,
         selectedServers: normalizeServerNames(selectedServers),
+        ...(selectedHost && selectedHostId
+          ? {
+              namedHostId: selectedHostId,
+              hostConfigInput: hostConfigDtoToInput(selectedHost.config),
+            }
+          : {}),
       });
     } catch {
       // onSubmit surfaces its own error toast; keep the dialog open so the
@@ -97,6 +135,26 @@ export function CreateSuiteDialog({
         </DialogHeader>
 
         <div className="space-y-5">
+          {hostsEnabled && projectId && (
+            <div className="grid gap-2">
+              <Label>Seed from host (optional)</Label>
+              <HostPicker
+                projectId={projectId}
+                value={selectedHostId}
+                onChange={setSelectedHostId}
+                placeholder="Choose a host to pre-fill servers"
+                includeNone={false}
+                noneLabel="No host"
+              />
+              {selectedHostId && (
+                <p className="text-xs text-muted-foreground">
+                  Server selection pre-filled from host. You can still adjust it
+                  below.
+                </p>
+              )}
+            </div>
+          )}
+
           <div className="grid gap-2">
             <label className="text-sm font-medium text-foreground">
               Suite name

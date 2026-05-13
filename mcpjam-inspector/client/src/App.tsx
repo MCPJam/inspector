@@ -43,6 +43,9 @@ import { BillingUpsellGate } from "./components/billing/BillingUpsellGate";
 import { OrganizationsTab } from "./components/OrganizationsTab";
 import { SupportTab } from "./components/SupportTab";
 import { RegistryTab } from "./components/RegistryTab";
+import { HostsTab } from "./components/HostsTab";
+import { HostPicker } from "./components/hosts/HostPicker";
+import { useHost } from "./hooks/useHosts";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
 import { MCPSidebar } from "./components/mcp-sidebar";
@@ -369,6 +372,7 @@ function AppChromeHeader({ hidden, ...props }: AppChromeHeaderProps) {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
+  const [chatTabHostId, setChatTabHostId] = useState<string | null>(null);
   const [evalChatHandoff, setEvalChatHandoff] =
     useState<EvalChatHandoff | null>(null);
   const [activeOrganizationSection, setActiveOrganizationSection] =
@@ -396,6 +400,7 @@ export default function App() {
   const learningEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
+  const hostsEnabled = useFeatureFlagEnabled("hosts-enabled");
   const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
@@ -971,6 +976,10 @@ export default function App() {
     activeProject?.clientConfig
   ) as Record<string, unknown>;
   const convexProjectId = activeProject?.sharedProjectId ?? null;
+  const { host: chatTabHost } = useHost({
+    isAuthenticated: isAuthenticated && hostsEnabled === true,
+    hostId: chatTabHostId,
+  });
   const routeScopedOrganizationId = hasRouteOrganization
     ? currentHashRoute.organizationId ?? null
     : null;
@@ -1586,6 +1595,8 @@ export default function App() {
         )} plan. Upgrade the organization to continue.`
       );
       applyNavigation("servers", { updateHash: true });
+    } else if (activeTab === "hosts" && (hostsEnabled !== true || !isAuthenticated)) {
+      applyNavigation("servers", { updateHash: true });
     } else if (activeTab === "registry" && registryEnabled !== true) {
       applyNavigation("servers", { updateHash: true });
     } else if (
@@ -1602,6 +1613,7 @@ export default function App() {
     }
   }, [
     conformanceEnabled,
+    hostsEnabled,
     registryEnabled,
     learningEnabled,
     evaluateRunsFlagsLoaded,
@@ -2049,6 +2061,12 @@ export default function App() {
               onSaveClientConfig={handleUpdateClientConfig}
             />
           )}
+          {activeTab === "hosts" && hostsEnabled === true && isAuthenticated && (
+            <HostsTab
+              projectId={convexProjectId}
+              isAuthenticated={isAuthenticated}
+            />
+          )}
           {activeTab === "registry" && registryEnabled === true && (
             <RegistryTab
               projectId={convexProjectId}
@@ -2300,31 +2318,57 @@ export default function App() {
             </ErrorBoundary>
           )}
           {activeTab === "chat-v2" && (
-            <HostStyledChatTabV2
-              connectedOrConnectingServerConfigs={
-                connectedOrConnectingServerConfigs
-              }
-              selectedServerNames={appState.selectedMultipleServers}
-              allServerConfigs={projectServers}
-              onServerToggle={toggleServerSelection}
-              onReconnectServer={handleReconnect}
-              onAddServer={handleConnect}
-              onSelectedServerNamesChange={setSelectedMCPConfigs}
-              enableMultiModelChat
-              showHostStyleSelector
-              // Active project default `mcpProfile`. Mounting the provider
-              // here is the in-inspector counterpart to ChatboxChatPage's
-              // hosted mount — without it, MCPAppsRenderer reads
-              // `undefined` from useActiveMcpProfile() and skips the
-              // sandbox-policy resolver entirely.
-              activeMcpProfile={activeMcpProfile}
-              evalChatHandoff={evalChatHandoff}
-              onEvalChatHandoffConsumed={(id) =>
-                setEvalChatHandoff((current) =>
-                  current?.id === id ? null : current
-                )
-              }
-            />
+            <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+              {hostsEnabled === true && isAuthenticated && convexProjectId && (
+                <div className="flex shrink-0 items-center gap-2 border-b px-4 py-2">
+                  <span className="text-xs text-muted-foreground">Host:</span>
+                  <div className="w-48">
+                    <HostPicker
+                      projectId={convexProjectId}
+                      value={chatTabHostId}
+                      onChange={setChatTabHostId}
+                      placeholder="Project default"
+                      noneLabel="Project default"
+                    />
+                  </div>
+                </div>
+              )}
+              <HostStyledChatTabV2
+                connectedOrConnectingServerConfigs={
+                  connectedOrConnectingServerConfigs
+                }
+                selectedServerNames={appState.selectedMultipleServers}
+                allServerConfigs={projectServers}
+                onServerToggle={toggleServerSelection}
+                onReconnectServer={handleReconnect}
+                onAddServer={handleConnect}
+                onSelectedServerNamesChange={setSelectedMCPConfigs}
+                enableMultiModelChat
+                showHostStyleSelector
+                executionConfig={
+                  chatTabHost
+                    ? {
+                        modelId: chatTabHost.config.modelId,
+                        systemPrompt: chatTabHost.config.systemPrompt,
+                        temperature: chatTabHost.config.temperature,
+                        requireToolApproval: chatTabHost.config.requireToolApproval,
+                      }
+                    : undefined
+                }
+                // Active project default `mcpProfile`. Mounting the provider
+                // here is the in-inspector counterpart to ChatboxChatPage's
+                // hosted mount — without it, MCPAppsRenderer reads
+                // `undefined` from useActiveMcpProfile() and skips the
+                // sandbox-policy resolver entirely.
+                activeMcpProfile={chatTabHost?.config.mcpProfile ?? activeMcpProfile}
+                evalChatHandoff={evalChatHandoff}
+                onEvalChatHandoffConsumed={(id) =>
+                  setEvalChatHandoff((current) =>
+                    current?.id === id ? null : current
+                  )
+                }
+              />
+            </div>
           )}
           {activeTab === "tracing" && <TracingTab />}
           {activeTab === "app-builder" && (

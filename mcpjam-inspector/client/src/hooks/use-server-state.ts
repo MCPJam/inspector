@@ -56,6 +56,8 @@ import {
 } from "@/lib/client-config";
 import { EXCALIDRAW_SERVER_NAME } from "@/lib/excalidraw-quick-connect";
 import { readOnboardingState } from "@/lib/onboarding-state";
+import type { HostConfigDtoV2 } from "@/lib/host-config-v2";
+import { resolveServerConnectionSettings } from "@/lib/host-connection-resolve";
 
 /** Skip noisy connect toast while first-run App Builder onboarding is in progress. */
 function shouldSuppressExcalidrawConnectToastForOnboarding(
@@ -483,6 +485,13 @@ interface UseServerStateParams {
    * clientInfo / supportedProtocolVersions accordingly.
    */
   activeMcpProfile?: import("@/lib/host-config-v2").HostConfigMcpProfileV1;
+  /**
+   * When a named host is active (e.g. selected in ChatTabV2 or HostBuilderView
+   * preview), its connectionDefaults replace the project-level connection
+   * defaults in `withProjectConnectionDefaults`. Per-server overrides are
+   * applied when the call site also supplies the `serverId`.
+   */
+  activeHostConfig?: HostConfigDtoV2;
   logger: LoggerLike;
 }
 
@@ -542,6 +551,7 @@ export function useServerState({
   effectiveActiveProjectId,
   activeProjectServersFlat,
   activeMcpProfile,
+  activeHostConfig,
   logger,
 }: UseServerStateParams) {
   const convex = useConvex();
@@ -727,7 +737,7 @@ export function useServerState({
   );
 
   const withProjectConnectionDefaults = useCallback(
-    (serverConfig: MCPServerConfig): MCPServerConfig => {
+    (serverConfig: MCPServerConfig, serverId?: string): MCPServerConfig => {
       const effectiveClientCapabilities =
         resolveEffectiveServerClientCapabilities({
           serverConfig,
@@ -736,10 +746,33 @@ export function useServerState({
 
       let nextRequestInit = serverConfig.requestInit;
       if ("url" in serverConfig) {
-        const mergedHeaders = mergeProjectConnectionHeaders(
-          projectConnectionDefaults.headers,
-          extractRequestHeaders(serverConfig.requestInit)
-        );
+        let mergedHeaders: Record<string, string>;
+        let effectiveTimeout: number;
+
+        if (activeHostConfig) {
+          // Use host-level connection defaults + optional per-server override
+          const serverBase = {
+            headers: extractRequestHeaders(serverConfig.requestInit),
+            timeout: serverConfig.timeout,
+          };
+          const perServerOverride = serverId
+            ? activeHostConfig.serverConnectionOverrides?.[serverId]
+            : undefined;
+          const resolved = resolveServerConnectionSettings(
+            serverBase,
+            activeHostConfig.connectionDefaults,
+            perServerOverride,
+          );
+          mergedHeaders = resolved.headers;
+          effectiveTimeout = resolved.timeout;
+        } else {
+          mergedHeaders = mergeProjectConnectionHeaders(
+            projectConnectionDefaults.headers,
+            extractRequestHeaders(serverConfig.requestInit)
+          );
+          effectiveTimeout =
+            serverConfig.timeout ?? projectConnectionDefaults.requestTimeout;
+        }
 
         if (Object.keys(mergedHeaders).length > 0) {
           nextRequestInit = {
@@ -747,20 +780,26 @@ export function useServerState({
             headers: mergedHeaders,
           };
         }
+
+        return {
+          ...serverConfig,
+          ...(nextRequestInit ? { requestInit: nextRequestInit } : {}),
+          timeout: effectiveTimeout,
+          capabilities: effectiveClientCapabilities,
+          clientCapabilities: effectiveClientCapabilities,
+        } as MCPServerConfig;
       }
 
       return {
         ...serverConfig,
-        ...("url" in serverConfig && nextRequestInit
-          ? { requestInit: nextRequestInit }
-          : {}),
-        timeout:
-          serverConfig.timeout ?? projectConnectionDefaults.requestTimeout,
+        timeout: activeHostConfig
+          ? activeHostConfig.connectionDefaults.requestTimeout
+          : serverConfig.timeout ?? projectConnectionDefaults.requestTimeout,
         capabilities: effectiveClientCapabilities,
         clientCapabilities: effectiveClientCapabilities,
       } as MCPServerConfig;
     },
-    [activeProject?.clientConfig, projectConnectionDefaults]
+    [activeProject?.clientConfig, projectConnectionDefaults, activeHostConfig]
   );
 
   const mergeWithProjectHeaders = useCallback(
@@ -917,11 +956,15 @@ export function useServerState({
       assertClientConfigSynced();
       const resolved = tryResolveProjectServer(serverName);
       if (resolved) {
-        return reconnectServer(resolved.serverId, serverConfig, {
+        const configWithDefaults = withProjectConnectionDefaults(
+          serverConfig,
+          resolved.serverId,
+        );
+        return reconnectServer(resolved.serverId, configWithDefaults, {
           projectId: resolved.projectId,
           serverName,
           connectionDefaults: buildResolverConnectionDefaults(
-            serverConfig,
+            configWithDefaults,
             activeMcpProfile,
           ),
         });
@@ -932,6 +975,7 @@ export function useServerState({
       assertClientConfigSynced,
       buildResolverConnectionDefaults,
       activeMcpProfile,
+      withProjectConnectionDefaults,
     ]
   );
 
