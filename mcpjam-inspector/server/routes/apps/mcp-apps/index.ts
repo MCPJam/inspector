@@ -18,6 +18,7 @@ import type {
 } from "@modelcontextprotocol/ext-apps";
 import { MCP_APPS_SANDBOX_PROXY_HTML } from "../SandboxProxyHtml.bundled";
 import { injectOpenAICompat } from "../../../utils/widget-helpers";
+import { readOpenAiDiscoveryMeta } from "../openai-meta-helpers";
 
 const apps = new Hono();
 
@@ -184,42 +185,16 @@ apps.post("/widget-content", async (c) => {
     let permissions: McpUiResourcePermissions | undefined;
     let prefersBorder: boolean | undefined;
     if (isOpenAiDiscovery) {
-      // Normalize `openai/widgetCSP` snake_case keys → camelCase
-      // `McpUiResourceCsp` the renderer + sandbox proxy expect. Same
-      // translation as the hosted route — otherwise widget-declared
-      // mode would drop the OpenAI widget's external domains.
-      const openaiCspRaw = rawMeta?.["openai/widgetCSP"] as
-        | {
-            connect_domains?: unknown;
-            resource_domains?: unknown;
-            frame_domains?: unknown;
-          }
-        | undefined;
-      const toStringArray = (v: unknown): string[] | undefined => {
-        if (!Array.isArray(v)) return undefined;
-        const out = v.filter((x): x is string => typeof x === "string");
-        return out.length > 0 ? out : undefined;
-      };
-      csp = openaiCspRaw
-        ? (() => {
-            const connect = toStringArray(openaiCspRaw.connect_domains);
-            const resource = toStringArray(openaiCspRaw.resource_domains);
-            const frame = toStringArray(openaiCspRaw.frame_domains);
-            if (!connect && !resource && !frame) return undefined;
-            return {
-              ...(connect ? { connectDomains: connect } : {}),
-              ...(resource ? { resourceDomains: resource } : {}),
-              ...(frame ? { frameDomains: frame } : {}),
-            };
-          })()
-        : undefined;
+      // Snake_case → camelCase translation lives in the shared
+      // `openai-meta-helpers` module — same path the hosted route
+      // uses, so the two deployments can't drift.
+      const openai = readOpenAiDiscoveryMeta(rawMeta);
+      csp = openai.csp;
       // OpenAI's metadata format has no permissions analogue; widgets
       // declare capabilities via other channels. Leave undefined so the
       // sandbox applies its restrictive default.
       permissions = undefined;
-      prefersBorder = rawMeta?.["openai/widgetPrefersBorder"] as
-        | boolean
-        | undefined;
+      prefersBorder = openai.prefersBorder;
     } else {
       csp = uiMeta?.csp;
       permissions = uiMeta?.permissions;

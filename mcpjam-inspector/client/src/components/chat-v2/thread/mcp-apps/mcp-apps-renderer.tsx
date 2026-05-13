@@ -456,6 +456,19 @@ export function MCPAppsRenderer({
     initialPrefersBorder ?? true,
   );
   const [loadedCspMode, setLoadedCspMode] = useState<CspMode | null>(null);
+  // Stage 2: track the inject-runtime gate value the currently-loaded
+  // HTML was fetched with so we can refetch if the user flips
+  // `mcpProfile.apps.compat.openai.enabled` on a live widget. Without
+  // this, the advisory banner could disappear after enabling compat
+  // while the iframe still holds the non-injected HTML — widgets would
+  // see `window.openai === undefined` until a remount.
+  const [loadedInjectOpenAiCompatRuntime, setLoadedInjectOpenAiCompatRuntime] =
+    useState<boolean | null>(null);
+  // Effective request flag — matches what the fetcher sends. MCP Apps
+  // widgets always request injection (legacy behavior); OpenAI-SDK
+  // widgets gate on the resolver.
+  const effectiveInjectOpenAiCompatRuntime =
+    discoveryChannel === "openai" ? openAiCompatEnabled : true;
   // Modal state
   const [modalOpen, setModalOpen] = useState(false);
   const [modalParams, setModalParams] = useState<Record<string, unknown>>({});
@@ -556,7 +569,15 @@ export function MCPAppsRenderer({
       toolState === "output-available";
     if (!isActiveToolState) return;
     // Re-fetch if CSP mode changed (widget needs to reload with new CSP policy)
-    if (widgetHtml && loadedCspMode === cspMode) return;
+    // OR if the compat gate flipped — toggling
+    // `mcpProfile.apps.compat.openai.enabled` while a widget is live
+    // must re-inject (or strip) `window.openai`, not just hide the banner.
+    if (
+      widgetHtml &&
+      loadedCspMode === cspMode &&
+      loadedInjectOpenAiCompatRuntime === effectiveInjectOpenAiCompatRuntime
+    )
+      return;
 
     const fetchWidgetHtml = async () => {
       try {
@@ -586,6 +607,13 @@ export function MCPAppsRenderer({
           setWidgetPermissive(true);
           setPrefersBorder(initialPrefersBorder ?? true);
           setLoadedCspMode(cspMode);
+          // Cached HTML was baked at save time with whatever inject
+          // value the snapshot held; mark the loaded gate as the
+          // current request value so we don't loop refetching when
+          // nothing has actually changed.
+          setLoadedInjectOpenAiCompatRuntime(
+            effectiveInjectOpenAiCompatRuntime,
+          );
           setWidgetHtmlStore(toolCallId, html);
           logWidgetDebug("host-to-ui", "debug/widget-content-ready", {
             cached: true,
@@ -676,6 +704,13 @@ export function MCPAppsRenderer({
         setWidgetPermissive(permissive ?? false);
         setPrefersBorder(prefersBorder ?? true);
         setLoadedCspMode(cspMode);
+        // Persist the inject value the server rendered against so a
+        // later toggle on `mcpProfile.apps.compat.openai.enabled`
+        // triggers a refetch (and the banner state stays in sync with
+        // the iframe HTML).
+        setLoadedInjectOpenAiCompatRuntime(
+          effectiveInjectOpenAiCompatRuntime,
+        );
 
         // Store widget HTML in debug store for save view feature
         setWidgetHtmlStore(toolCallId, html);
@@ -726,6 +761,11 @@ export function MCPAppsRenderer({
     toolCallId,
     widgetHtml,
     loadedCspMode,
+    // Stage 2: include the inject-runtime gate so the effect re-runs
+    // (and refetches) when the user flips
+    // `mcpProfile.apps.compat.openai.enabled` on a live widget.
+    loadedInjectOpenAiCompatRuntime,
+    effectiveInjectOpenAiCompatRuntime,
     serverId,
     resourceUri,
     toolName,

@@ -23,7 +23,20 @@ type OpenAICompatConfig = {
   toolName: string;
   toolInput: Record<string, unknown>;
   toolOutput: unknown;
+  // Stage 2 fidelity field — `_meta` from the tool result. Surfaced
+  // as `window.openai.toolResponseMetadata` so widgets that previously
+  // read it via the legacy ChatGPT runtime keep working under the
+  // unified renderer. `null` means the tool result carried no metadata.
+  toolResponseMetadata?: Record<string, unknown> | null;
   theme: string;
+  // Stage 2 fidelity. Forwarded into `window.openai.locale` /
+  // `window.openai.userAgent.device.type` as the initial values
+  // (overwritten by later ui/notifications/host-context-changed
+  // dispatches). Without these the unified runtime falls back to
+  // "en-US" / "desktop" even when the request body carried real
+  // viewport/locale data.
+  locale?: string;
+  deviceType?: "mobile" | "tablet" | "desktop";
   viewMode: string;
   viewParams: Record<string, unknown>;
   // One-release feature flag for the setWidgetState fix. When true, state
@@ -68,7 +81,10 @@ type PendingCall = {
     toolName,
     toolInput,
     toolOutput,
+    toolResponseMetadata,
     theme,
+    locale: configLocale,
+    deviceType: configDeviceType,
     viewMode,
     viewParams,
     useLocalStorageWidgetState = false,
@@ -208,6 +224,14 @@ type PendingCall = {
   const openaiAPI = {
     toolInput: toolInput ?? {},
     toolOutput: toolOutput ?? null,
+    // Stage 2 fidelity field exposed to widgets. Populated from the
+    // tool result's `_meta` block by the inspector dispatcher; widgets
+    // that authored against the legacy ChatGPT runtime read this
+    // directly (e.g. for citations, timestamps). `null` when the tool
+    // result carried no metadata.
+    toolResponseMetadata: (toolResponseMetadata ?? null) as
+      | Record<string, unknown>
+      | null,
     theme: theme ?? "dark",
     displayMode: "inline",
     viewMode: viewMode ?? "inline",
@@ -218,12 +242,15 @@ type PendingCall = {
     widgetState: null as unknown,
     // Host-context globals — populated by host-context-changed dispatches.
     // Shape mirrors ChatGptAppsRuntime so widgets authored against ChatGPT
-    // can read window.openai.* uniformly.
-    locale: "en-US" as string,
+    // can read window.openai.* uniformly. Seeded from the inline config
+    // (configLocale / configDeviceType) so widgets see real values on
+    // the very first paint rather than the "en-US" / "desktop" fallback;
+    // later ui/notifications/host-context-changed dispatches overwrite.
+    locale: (configLocale ?? "en-US") as string,
     maxHeight: null as number | null,
     safeArea: { insets: DEFAULT_SAFE_AREA },
     userAgent: {
-      device: { type: "desktop" as string },
+      device: { type: (configDeviceType ?? "desktop") as string },
       capabilities: DEFAULT_DEVICE_CAPABILITIES as Record<string, unknown>,
     },
 

@@ -18,6 +18,7 @@ import {
   buildChatGptRuntimeHead,
   type WidgetCspMeta,
 } from "../../utils/widget-helpers.js";
+import { readOpenAiDiscoveryMeta } from "../apps/openai-meta-helpers.js";
 import {
   projectServerSchema,
   withEphemeralConnection,
@@ -238,49 +239,17 @@ apps.post("/mcp-apps/widget-content", async (c) =>
       };
       let discovered: DiscoveredMeta;
       if (isOpenAiDiscovery) {
-        // OpenAI's `openai/widgetCSP` uses snake_case keys
-        // (`connect_domains`, `resource_domains`, `frame_domains`) per
-        // the OpenAI Apps SDK shape; the inspector renderer + sandbox
-        // proxy read camelCase `McpUiResourceCsp` (`connectDomains`,
-        // `resourceDomains`, `frameDomains`). Without this translation
-        // the OpenAI widget's declared domains are dropped under
-        // `cspMode: "widget-declared"` and external connects/images/
-        // frames are silently blocked.
-        const openaiCspRaw = rawMeta?.["openai/widgetCSP"] as
-          | {
-              connect_domains?: unknown;
-              resource_domains?: unknown;
-              frame_domains?: unknown;
-            }
-          | undefined;
-        const toStringArray = (v: unknown): string[] | undefined => {
-          if (!Array.isArray(v)) return undefined;
-          const out = v.filter((x): x is string => typeof x === "string");
-          return out.length > 0 ? out : undefined;
-        };
-        const openaiCsp: McpUiResourceCsp | undefined = openaiCspRaw
-          ? (() => {
-              const connect = toStringArray(openaiCspRaw.connect_domains);
-              const resource = toStringArray(openaiCspRaw.resource_domains);
-              const frame = toStringArray(openaiCspRaw.frame_domains);
-              if (!connect && !resource && !frame) return undefined;
-              return {
-                ...(connect ? { connectDomains: connect } : {}),
-                ...(resource ? { resourceDomains: resource } : {}),
-                ...(frame ? { frameDomains: frame } : {}),
-              };
-            })()
-          : undefined;
-        const openaiPrefersBorder = rawMeta?.["openai/widgetPrefersBorder"] as
-          | boolean
-          | undefined;
-        // OpenAI's metadata format has no permissions analogue; widgets
-        // declare capabilities via different channels. Pass through as
-        // undefined and let the sandbox apply its restrictive default.
+        // Snake_case → camelCase translation lives in
+        // `openai-meta-helpers` so a fix here can't drift from the
+        // local-dev route. OpenAI's metadata format has no permissions
+        // analogue (widgets declare capabilities via other channels);
+        // leave `permissions: undefined` so the sandbox applies its
+        // restrictive default.
+        const openai = readOpenAiDiscoveryMeta(rawMeta);
         discovered = {
-          csp: openaiCsp,
+          csp: openai.csp,
           permissions: undefined,
-          prefersBorder: openaiPrefersBorder,
+          prefersBorder: openai.prefersBorder,
         };
       } else {
         discovered = {
