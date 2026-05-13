@@ -90,6 +90,29 @@ export type HostConfigMcpProfileV1 = {
         extensions?: Record<string, unknown>;
       };
     };
+    /**
+     * Stage 2: OpenAI Apps compatibility runtime gate. Persisted on
+     * `mcpProfile` (not `HostStyleDefinition`) so the same value drives
+     * server `injectOpenAICompat`, in-iframe advertisement, the renderer
+     * dispatcher banner, and per-handler enforcement — one value, four
+     * consumers.
+     *
+     * Tri-state resolution (see {@link resolveOpenAiCompatEnabled}):
+     *   explicit boolean on the persisted record wins
+     *   → hostStyle default
+     *   → false.
+     *
+     * Backend hashes `undefined` / `false` / `true` distinctly. The editor
+     * MUST preserve `undefined` on save when the user selects "Reset to
+     * inspector default" — see Stage 2 hard constraint #4.
+     */
+    compat?: {
+      openai?: {
+        enabled?: boolean;
+        extensions?: Record<string, unknown>;
+      };
+      extensions?: Record<string, unknown>;
+    };
   };
   extensions?: Record<string, unknown>;
 };
@@ -294,6 +317,51 @@ export function resolveClientInfo(
   profile: HostConfigMcpProfileV1 | undefined,
 ): Record<string, unknown> | undefined {
   return profile?.initialize?.clientInfo;
+}
+
+/**
+ * Tri-state resolver for the OpenAI Apps compatibility runtime gate.
+ *
+ * Precedence:
+ *   1. Explicit boolean on the persisted record (`mcpProfile.apps.compat.openai.enabled`)
+ *   2. The hostStyle's default — `true` only for ChatGPT-family hosts
+ *   3. `false`
+ *
+ * `hostStyle` is **intentionally non-optional**. The renderer must always
+ * know which host style is active when it gates `window.openai` injection,
+ * banner display, and capability advertisement; a missing hostStyle would
+ * silently fall through to `false` and mask a wiring bug. Per Stage 2 hard
+ * constraint #4, every call site is expected to surface a real hostStyle —
+ * if your call site doesn't have one yet, see the bootstrap envelope
+ * tightening in 2.3 rather than passing `null` here.
+ *
+ * Per Stage 2 hard constraint #3, the default is NOT stored on
+ * `HostStyleDefinition`. It's encoded here so custom host styles registered
+ * via `registerHostStyle` can opt in by setting the field on their
+ * persisted `mcpProfile`, and so the four consumers (server injection,
+ * advertisement, banner, handlers) read one resolver rather than four
+ * scattered checks.
+ */
+export function resolveOpenAiCompatEnabled(args: {
+  mcpProfile: HostConfigMcpProfileV1 | undefined;
+  hostStyle: HostStyleId;
+}): boolean {
+  const explicit = args.mcpProfile?.apps?.compat?.openai?.enabled;
+  if (typeof explicit === "boolean") return explicit;
+  return getOpenAiCompatHostStyleDefault(args.hostStyle);
+}
+
+/**
+ * Default value of `mcpProfile.apps.compat.openai.enabled` for a given
+ * hostStyle when the persisted profile leaves it `undefined`.
+ *
+ * Kept narrow on purpose: only the ChatGPT built-in defaults to `true`.
+ * Custom host styles registered via `registerHostStyle` default to `false`
+ * unless their persisted profile opts in explicitly — Stage 2 doesn't
+ * extend `HostStyleDefinition` (hard constraint #3).
+ */
+function getOpenAiCompatHostStyleDefault(hostStyle: HostStyleId): boolean {
+  return hostStyle === "chatgpt";
 }
 
 /**

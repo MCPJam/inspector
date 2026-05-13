@@ -25,6 +25,7 @@ import {
   hostConfigDtoToInput,
   hostConfigInputsEqual,
   resolveClientInfo,
+  resolveOpenAiCompatEnabled,
   resolveSupportedProtocolVersions,
 } from "../host-config-v2";
 
@@ -270,5 +271,86 @@ describe("hostConfigInputsEqual mcpProfile semantics", () => {
       },
     };
     expect(hostConfigInputsEqual(a, b)).toBe(false);
+  });
+});
+
+describe("resolveOpenAiCompatEnabled (Stage 2 tri-state resolver)", () => {
+  // The four-consumer single source of truth (server inject, advertise,
+  // banner, handler gating). These tests pin the resolution order
+  // (explicit > hostStyle default > false) so the four call sites can
+  // never drift.
+
+  test("returns the explicit value when the persisted record sets it", () => {
+    expect(
+      resolveOpenAiCompatEnabled({
+        mcpProfile: {
+          profileVersion: 1,
+          apps: { compat: { openai: { enabled: true } } },
+        },
+        hostStyle: "claude",
+      }),
+    ).toBe(true);
+    expect(
+      resolveOpenAiCompatEnabled({
+        mcpProfile: {
+          profileVersion: 1,
+          apps: { compat: { openai: { enabled: false } } },
+        },
+        // Explicit false MUST win over chatgpt's default true. This is the
+        // editor's "opt out on a ChatGPT-themed profile" path.
+        hostStyle: "chatgpt",
+      }),
+    ).toBe(false);
+  });
+
+  test("falls back to hostStyle default when no explicit value is set", () => {
+    // ChatGPT-family host: default true.
+    expect(
+      resolveOpenAiCompatEnabled({
+        mcpProfile: undefined,
+        hostStyle: "chatgpt",
+      }),
+    ).toBe(true);
+    // Other hosts: default false.
+    expect(
+      resolveOpenAiCompatEnabled({
+        mcpProfile: undefined,
+        hostStyle: "claude",
+      }),
+    ).toBe(false);
+  });
+
+  test("treats a partial profile envelope as 'no explicit value'", () => {
+    // A user who set clientInfo but not the compat field must still
+    // resolve to the hostStyle default — the resolver must not interpret
+    // 'profileVersion: 1' as an opt-in or opt-out signal.
+    expect(
+      resolveOpenAiCompatEnabled({
+        mcpProfile: { profileVersion: 1 },
+        hostStyle: "chatgpt",
+      }),
+    ).toBe(true);
+    expect(
+      resolveOpenAiCompatEnabled({
+        mcpProfile: {
+          profileVersion: 1,
+          initialize: { clientInfo: { name: "x", version: "1" } },
+        },
+        hostStyle: "claude",
+      }),
+    ).toBe(false);
+  });
+
+  test("custom hostStyle ids default to false (HostStyleDefinition is not extended)", () => {
+    // Hard constraint #3: apps.compat.openai.enabled lives in the
+    // persisted mcpProfile, NOT on HostStyleDefinition. Custom hosts
+    // registered via registerHostStyle therefore default to false until
+    // their persisted profile opts in explicitly.
+    expect(
+      resolveOpenAiCompatEnabled({
+        mcpProfile: undefined,
+        hostStyle: "some-custom-host" as never,
+      }),
+    ).toBe(false);
   });
 });

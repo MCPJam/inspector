@@ -22,12 +22,25 @@ export type PreferencesState = {
    * HostConfig row instead.
    */
   hostCapabilitiesOverride: Record<string, unknown> | undefined;
+  /**
+   * Stage 2 dispatcher flag. When `true`, OpenAI Apps SDK widgets route
+   * through `MCPAppsRenderer` (with `window.openai` injection gated on
+   * `resolveOpenAiCompatEnabled`); when `false`, the legacy
+   * `ChatGPTAppRenderer` continues to handle them. Persisted so dev /
+   * staging can soak the unified path for at least one week before
+   * Stage 4 flips the default on and deletes the legacy renderer.
+   *
+   * Default `false` during Stage 2. The 2×2 verification matrix in the
+   * handoff requires this flag ON.
+   */
+  preferUnifiedWidgetRenderer: boolean;
   setThemeMode: (mode: ThemeMode) => void;
   setThemePreset: (preset: ThemePreset) => void;
   setHostStyle: (hostStyle: ChatboxHostStyle) => void;
   setHostCapabilitiesOverride: (
     next: Record<string, unknown> | undefined,
   ) => void;
+  setPreferUnifiedWidgetRenderer: (next: boolean) => void;
 };
 
 export const THEME_MODE_KEY = "themeMode";
@@ -35,6 +48,8 @@ export const THEME_PRESET_KEY = "themePreset";
 export const HOST_STYLE_KEY = "mcpjam-ui-playground-host-style";
 export const HOST_CAPABILITIES_OVERRIDE_KEY =
   "mcpjam-ui-playground-host-capabilities-override";
+export const PREFER_UNIFIED_WIDGET_RENDERER_KEY =
+  "mcpjam-prefer-unified-widget-renderer";
 
 function getStoredHostStyle(): ChatboxHostStyle {
   if (typeof window === "undefined") return DEFAULT_HOST_STYLE.id;
@@ -89,6 +104,19 @@ function getStoredHostCapabilitiesOverride():
   }
 }
 
+function getStoredPreferUnifiedWidgetRenderer(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return localStorage.getItem(PREFER_UNIFIED_WIDGET_RENDERER_KEY) === "1";
+  } catch (error) {
+    console.warn(
+      "Failed to read persisted prefer-unified-widget-renderer flag:",
+      error,
+    );
+    return false;
+  }
+}
+
 export const createPreferencesStore = (init?: Partial<PreferencesState>) =>
   createStore<PreferencesState>()((set) => ({
     themeMode: init?.themeMode ?? "light",
@@ -98,6 +126,9 @@ export const createPreferencesStore = (init?: Partial<PreferencesState>) =>
       init?.hostCapabilitiesOverride !== undefined
         ? init.hostCapabilitiesOverride
         : getStoredHostCapabilitiesOverride(),
+    preferUnifiedWidgetRenderer:
+      init?.preferUnifiedWidgetRenderer ??
+      getStoredPreferUnifiedWidgetRenderer(),
     setThemeMode: (mode) => {
       try {
         localStorage.setItem(THEME_MODE_KEY, mode);
@@ -144,5 +175,20 @@ export const createPreferencesStore = (init?: Partial<PreferencesState>) =>
         );
       }
       set({ hostCapabilitiesOverride: next });
+    },
+    setPreferUnifiedWidgetRenderer: (next) => {
+      try {
+        if (next) {
+          localStorage.setItem(PREFER_UNIFIED_WIDGET_RENDERER_KEY, "1");
+        } else {
+          localStorage.removeItem(PREFER_UNIFIED_WIDGET_RENDERER_KEY);
+        }
+      } catch (error) {
+        console.warn(
+          "Failed to persist prefer-unified-widget-renderer flag:",
+          error,
+        );
+      }
+      set({ preferUnifiedWidgetRenderer: next });
     },
   }));

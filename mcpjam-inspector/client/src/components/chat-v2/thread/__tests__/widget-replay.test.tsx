@@ -1,7 +1,23 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import type { ReactNode } from "react";
 import { render, screen } from "@testing-library/react";
 import { WidgetReplay } from "../widget-replay";
 import { ChatboxHostStyleProvider } from "@/contexts/chatbox-host-style-context";
+import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
+
+function withPreferences(children: ReactNode) {
+  // Stage 2: WidgetReplay reads `preferUnifiedWidgetRenderer` from the
+  // preferences store. Default `themePreset` / `themeMode` keep the rest
+  // of the store quiet — only the renderer-routing flag matters for these
+  // dispatch tests. With the flag off (default), OpenAI widgets keep
+  // going through `ChatGPTAppRenderer`, which preserves the pre-Stage-2
+  // behavior these tests pin.
+  return (
+    <PreferencesStoreProvider themeMode="light" themePreset="default">
+      {children}
+    </PreferencesStoreProvider>
+  );
+}
 
 const mockDetectUIType = vi.fn();
 
@@ -52,9 +68,11 @@ describe("WidgetReplay", () => {
 
   it("prefers the OpenAI renderer for ChatGPT chatboxes", () => {
     render(
-      <ChatboxHostStyleProvider value="chatgpt">
-        <WidgetReplay {...baseProps} />
-      </ChatboxHostStyleProvider>,
+      withPreferences(
+        <ChatboxHostStyleProvider value="chatgpt">
+          <WidgetReplay {...baseProps} />
+        </ChatboxHostStyleProvider>,
+      ),
     );
 
     expect(screen.getByTestId("chatgpt-renderer")).toBeInTheDocument();
@@ -63,9 +81,11 @@ describe("WidgetReplay", () => {
 
   it("prefers the MCP Apps renderer for Claude chatboxes", () => {
     render(
-      <ChatboxHostStyleProvider value="claude">
-        <WidgetReplay {...baseProps} />
-      </ChatboxHostStyleProvider>,
+      withPreferences(
+        <ChatboxHostStyleProvider value="claude">
+          <WidgetReplay {...baseProps} />
+        </ChatboxHostStyleProvider>,
+      ),
     );
 
     expect(screen.getByTestId("mcp-apps-renderer")).toBeInTheDocument();

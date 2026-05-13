@@ -35,7 +35,10 @@ import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-host
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
 import { ChatboxHostOnboardingOverlays } from "@/components/hosted/ChatboxHostOnboardingOverlays";
 import { useChatboxHostIntroGate } from "@/components/hosted/useChatboxHostIntroGate";
-import { getChatboxShellStyle } from "@/lib/chatbox-host-style";
+import {
+  getChatboxShellStyle,
+  type ChatboxHostStyle,
+} from "@/lib/chatbox-host-style";
 
 interface ChatboxChatPageProps {
   pathToken?: string | null;
@@ -794,8 +797,20 @@ export function ChatboxChatPage({
     [markOAuthRequired]
   );
 
-  const hostStyle = session?.payload.hostStyle ?? "claude";
-  const shellStyle = getChatboxShellStyle(hostStyle, themeMode);
+  // Stage 2 hard constraint #4: no `?? "claude"` fallback for hosted
+  // bootstrap hostStyle. `session.payload.hostStyle` is a required field on
+  // the bootstrap envelope (see `ChatboxBootstrapPayload` and
+  // `normalizeChatboxSession` — both reject a payload that's missing it),
+  // so null here ONLY happens while we're still in `resolvingAuth` /
+  // `bootstrapping` and `renderContent()` is rendering the loader, never
+  // when widgets mount. Functional consumers (renderer, OpenAI compat
+  // resolver, advisory banner) must read `session.payload.hostStyle`
+  // directly inside the `session != null` branch so the type system
+  // enforces the gate; this top-level value is only for the outer shell.
+  const hostStyle: ChatboxHostStyle | null = session?.payload.hostStyle ?? null;
+  const shellStyle = hostStyle
+    ? getChatboxShellStyle(hostStyle, themeMode)
+    : undefined;
   const oauthPending = pendingOAuthServers.length > 0;
   const welcomeAvailable =
     (session?.payload.chatUi?.surfaces?.welcome?.enabled ?? true) &&

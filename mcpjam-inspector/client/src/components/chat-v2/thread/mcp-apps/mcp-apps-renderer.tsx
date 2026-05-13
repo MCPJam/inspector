@@ -182,6 +182,34 @@ interface MCPAppsRendererProps {
   prefersBorder?: boolean;
   /** Minimal mode hides diagnostics and metadata surfaces */
   minimalMode?: boolean;
+  /**
+   * Stage 2: discovery channel for this widget. When `"openai"`, the
+   * `resourceUri` prop is actually an `openai/outputTemplate` URL (not a
+   * `ui://` URI), the server reads `_meta["openai/*"]` instead of
+   * `_meta.ui.*`, and OpenAI-compat runtime injection is gated on
+   * {@link MCPAppsRendererProps.openAiCompatEnabled}. Default `"mcp-apps"`
+   * for backwards compatibility.
+   */
+  discoveryChannel?: "mcp-apps" | "openai";
+  /**
+   * Stage 2: resolved value of `mcpProfile.apps.compat.openai.enabled`
+   * via {@link resolveOpenAiCompatEnabled}. When `true`, the server
+   * injects `window.openai` into the iframe HTML; when `false` (and
+   * `discoveryChannel === "openai"`), the advisory banner is shown
+   * above the widget but the widget still mounts. Caller is the
+   * dispatcher (`widget-replay.tsx`) — the renderer never resolves
+   * this itself so the four consumers stay aligned.
+   */
+  openAiCompatEnabled?: boolean;
+  /**
+   * Stage 2: fidelity fields forwarded into the OpenAI compat runtime
+   * for parity with the legacy ChatGPT renderer. `toolResponseMetadata`
+   * lands on `window.openai.toolResponseMetadata`; `locale` and
+   * `deviceType` populate the corresponding globals.
+   */
+  toolResponseMetadata?: Record<string, unknown> | null;
+  locale?: string;
+  deviceType?: "mobile" | "tablet" | "desktop";
 }
 
 export function MCPAppsRenderer({
@@ -215,6 +243,11 @@ export function MCPAppsRenderer({
   widgetPermissive: initialWidgetPermissive,
   prefersBorder: initialPrefersBorder,
   minimalMode = false,
+  discoveryChannel = "mcp-apps",
+  openAiCompatEnabled = false,
+  toolResponseMetadata,
+  locale: localeProp,
+  deviceType,
 }: MCPAppsRendererProps) {
   const sandboxRef = useRef<SandboxedIframeHandle>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -585,13 +618,31 @@ export function MCPAppsRenderer({
           prefersBorder,
         } = await fetchMcpAppsWidgetContent({
           serverId,
-          resourceUri,
+          // Stage 2 discriminator. For `discoveryChannel === "openai"`,
+          // the `resourceUri` prop carries an `openai/outputTemplate`
+          // URL; the server uses it to fetch the resource and reads
+          // OpenAI-specific `_meta` keys. Exactly one of these two
+          // fields must be set (server returns 400 if both are sent).
+          resourceUri:
+            discoveryChannel === "openai" ? undefined : resourceUri,
+          openaiOutputTemplate:
+            discoveryChannel === "openai" ? resourceUri : undefined,
           toolInput: toolInputRef.current,
           toolOutput: toolOutputRef.current,
+          toolResponseMetadata: toolResponseMetadata ?? null,
           toolId: toolCallId,
           toolName,
           theme: themeModeRef.current,
+          // Prefer the dispatcher-supplied locale/deviceType (for the
+          // Stage 2 OpenAI compat fidelity); fall back to the renderer's
+          // computed locale (host-context, playground, navigator.language).
+          locale: localeProp ?? locale,
+          deviceType,
           cspMode,
+          // Server consults this flag instead of hostStyle. Caller is the
+          // dispatcher; never re-resolve here so advertise/enforce/banner
+          // stay in lockstep with the renderer's actual injection.
+          injectOpenAiCompatRuntime: openAiCompatEnabled,
         });
 
         if (!valid) {

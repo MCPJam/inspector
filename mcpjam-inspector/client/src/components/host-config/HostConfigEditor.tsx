@@ -563,11 +563,109 @@ function McpProfileSection({
             </p>
           </div>
 
+          <McpProfileOpenAiCompatEditor
+            profile={profile}
+            onChange={onChange}
+          />
+
           <McpProfileSandboxEditor
             profile={profile}
             onChange={onChange}
           />
         </>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Stage 2.7 toggle: surfaces `mcpProfile.apps.compat.openai.enabled`.
+ *
+ * Tri-state UI ↔ persisted shape:
+ *   - "Reset to inspector default" → persisted `enabled` is `undefined`
+ *     (resolver falls back to the hostStyle default — true for ChatGPT,
+ *     false otherwise).
+ *   - Checkbox checked → persisted `true` (explicit opt-in).
+ *   - Checkbox unchecked → persisted `false` (explicit opt-out).
+ *
+ * Three states must hash distinctly (backend test pins this). The
+ * editor never synthesizes `{ profileVersion: 1, apps: { compat: { openai: {} } } }`
+ * — empty compat/openai sub-trees collapse so a default save dedupes
+ * back to the pre-feature baseline.
+ */
+function McpProfileOpenAiCompatEditor({
+  profile,
+  onChange,
+}: {
+  profile: HostConfigMcpProfileV1 | undefined;
+  onChange: (next: HostConfigMcpProfileV1 | undefined) => void;
+}) {
+  // Persisted value: undefined (use hostStyle default) / true / false.
+  const persisted = profile?.apps?.compat?.openai?.enabled;
+
+  const setEnabled = useCallback(
+    (next: boolean | undefined) => {
+      const base: HostConfigMcpProfileV1 = profile ?? { profileVersion: 1 };
+      // Collapse empty sub-trees as we patch so an explicit-then-cleared
+      // edit doesn't leave a vacuous { compat: { openai: {} } } on the
+      // wire (which would hash distinctly from the pre-feature baseline).
+      const nextOpenai =
+        next === undefined ? undefined : { enabled: next };
+      const existingCompatExtras = base.apps?.compat?.extensions;
+      const nextCompat =
+        nextOpenai === undefined && existingCompatExtras === undefined
+          ? undefined
+          : {
+              ...(nextOpenai !== undefined ? { openai: nextOpenai } : {}),
+              ...(existingCompatExtras !== undefined
+                ? { extensions: existingCompatExtras }
+                : {}),
+            };
+      const existingSandbox = base.apps?.sandbox;
+      const nextApps =
+        nextCompat === undefined && existingSandbox === undefined
+          ? undefined
+          : {
+              ...(existingSandbox !== undefined
+                ? { sandbox: existingSandbox }
+                : {}),
+              ...(nextCompat !== undefined ? { compat: nextCompat } : {}),
+            };
+      onChange({ ...base, apps: nextApps });
+    },
+    [profile, onChange],
+  );
+
+  return (
+    <div className="grid gap-2 rounded-md border border-border/30 p-3">
+      <Label className="text-xs font-medium">MCP Apps compatibility</Label>
+      <div className="flex items-start justify-between gap-3">
+        <div className="grid gap-1">
+          <Label className="text-xs">
+            Enable OpenAI compatibility (window.openai)
+          </Label>
+          <p className="text-xs text-muted-foreground">
+            When on, the inspector injects the OpenAI Apps SDK runtime into
+            MCP App widgets so legacy ChatGPT-style code paths keep working.
+            Default follows the host style (on for ChatGPT, off elsewhere).
+          </p>
+        </div>
+        <Switch
+          checked={persisted === true}
+          onCheckedChange={(checked) => setEnabled(checked)}
+        />
+      </div>
+      {persisted !== undefined ? (
+        <div className="flex justify-end">
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => setEnabled(undefined)}
+          >
+            Reset to inspector default
+          </Button>
+        </div>
       ) : null}
     </div>
   );

@@ -16,7 +16,6 @@ import {
   buildCspHeader,
   buildCspMetaContent,
   buildChatGptRuntimeHead,
-  type CspMode,
   type WidgetCspMeta,
 } from "../../utils/widget-helpers.js";
 import {
@@ -62,17 +61,42 @@ function extractHtmlFromResourceContent(content: unknown): string {
 
 // ── Schemas ─────────────────────────────────────────────────────────
 
+// Stage 2.4: extended schema accepts either an MCP Apps `resourceUri`
+// (existing path, `_meta.ui.*` discovery) OR an OpenAI Apps SDK
+// `openaiOutputTemplate` (`_meta["openai/*"]` discovery). Exactly one
+// must be set; sending both is a 400. The legacy `template` field is
+// kept for backwards-compat with old clients but ignored when either
+// discriminator field is present.
+//
+// `injectOpenAiCompatRuntime` is a host-side decision passed verbatim
+// from the client. The server intentionally does NOT resolve hostStyle
+// here — that's the client's job via `resolveOpenAiCompatEnabled`. This
+// keeps the four consumers (server inject / advertise / banner / handler
+// gating) reading from a single resolver.
+//
+// Fidelity fields (`toolResponseMetadata`, `locale`, `deviceType`) move
+// from the OpenAI-only endpoint to the unified one so the MCPAppsRenderer
+// can pass them through to widgets regardless of discovery channel.
 const mcpAppsWidgetContentSchema = projectServerSchema.extend({
-  resourceUri: z.string().min(1),
+  resourceUri: z.string().min(1).optional(),
+  openaiOutputTemplate: z.string().min(1).optional(),
   toolInput: z.record(z.string(), z.unknown()).default({}),
   toolOutput: z.unknown().optional(),
+  toolResponseMetadata: z.record(z.string(), z.unknown()).nullable().optional(),
   toolId: z.string().min(1),
   toolName: z.string().min(1),
   theme: z.enum(["light", "dark"]).optional(),
+  locale: z.string().optional(),
+  deviceType: z.enum(["mobile", "tablet", "desktop"]).optional(),
   cspMode: z.enum(["permissive", "widget-declared"]).optional(),
   template: z.string().optional(),
   viewMode: z.string().optional(),
   viewParams: z.record(z.string(), z.unknown()).optional(),
+  // Gate set by the client based on `resolveOpenAiCompatEnabled` —
+  // never inferred from hostStyle on the server. `undefined` is the
+  // legacy default ("don't inject"); the client always passes an
+  // explicit boolean from Stage 2 onward.
+  injectOpenAiCompatRuntime: z.boolean().optional(),
 });
 
 const chatgptAppsWidgetContentSchema = projectServerSchema.extend({
@@ -120,6 +144,26 @@ apps.post("/mcp-apps/widget-content", async (c) =>
     c,
     mcpAppsWidgetContentSchema,
     async (manager, body) => {
+      // Stage 2.4 discriminator. Exactly one of `resourceUri` /
+      // `openaiOutputTemplate` (or the legacy `template`) must be set.
+      // Sending both ambiguates the discovery channel — refuse loudly
+      // rather than silently picking one.
+      const hasResourceUri = !!(body.resourceUri || body.template);
+      const hasOpenaiTemplate = !!body.openaiOutputTemplate;
+      if (hasResourceUri && hasOpenaiTemplate) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          "Specify exactly one of resourceUri or openaiOutputTemplate, not both",
+        );
+      }
+      if (!hasResourceUri && !hasOpenaiTemplate) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          "Specify either resourceUri or openaiOutputTemplate",
+        );
+      }
       if (body.template && !body.template.startsWith("ui://")) {
         throw new WebRouteError(
           400,
@@ -128,7 +172,12 @@ apps.post("/mcp-apps/widget-content", async (c) =>
         );
       }
 
-      const resolvedResourceUri = body.template || body.resourceUri;
+      // `openaiOutputTemplate` is the OpenAI Apps SDK discovery channel
+      // (free-form URL string written into `_meta["openai/outputTemplate"]`);
+      // `resourceUri` is the MCP Apps SEP-1865 channel (`ui://...`).
+      const resolvedResourceUri =
+        body.template || body.resourceUri || body.openaiOutputTemplate!;
+      const isOpenAiDiscovery = hasOpenaiTemplate;
       const effectiveCspMode = body.cspMode ?? "permissive";
 
       const resourceResult = await manager.readResource(body.serverId, {
@@ -146,12 +195,19 @@ apps.post("/mcp-apps/widget-content", async (c) =>
       }
 
       const contentMimeType = (content as { mimeType?: string }).mimeType;
-      const mimeTypeValid = contentMimeType === MCP_APPS_MIMETYPE;
-      const mimeTypeWarning = !mimeTypeValid
-        ? contentMimeType
-          ? `Invalid mimetype "${contentMimeType}" - SEP-1865 requires "${MCP_APPS_MIMETYPE}"`
-          : `Missing mimetype - SEP-1865 requires "${MCP_APPS_MIMETYPE}"`
-        : null;
+      // OpenAI Apps SDK widgets ship `text/html+skybridge` or arbitrary
+      // text/html; only enforce the SEP-1865 mimetype for the MCP Apps
+      // discovery channel. Otherwise OpenAI-only widgets surface as
+      // "invalid mimetype" warnings on every load.
+      const mimeTypeValid = isOpenAiDiscovery
+        ? true
+        : contentMimeType === MCP_APPS_MIMETYPE;
+      const mimeTypeWarning =
+        !mimeTypeValid && !isOpenAiDiscovery
+          ? contentMimeType
+            ? `Invalid mimetype "${contentMimeType}" - SEP-1865 requires "${MCP_APPS_MIMETYPE}"`
+            : `Missing mimetype - SEP-1865 requires "${MCP_APPS_MIMETYPE}"`
+          : null;
 
       let html = extractHtmlFromResourceContent(content);
       if (!html) {
@@ -162,7 +218,12 @@ apps.post("/mcp-apps/widget-content", async (c) =>
         );
       }
 
-      const uiMeta = (content._meta as { ui?: any } | undefined)?.ui as
+      // Discovery branch split: MCP Apps reads `_meta.ui.*`; OpenAI Apps
+      // SDK reads flat `_meta["openai/*"]` keys (widget CSP, prefers-
+      // border). The renderer treats both as equivalent inputs to the
+      // sandbox proxy — the discriminator only chooses where to look.
+      const rawMeta = (content as { _meta?: Record<string, unknown> })._meta;
+      const uiMeta = (rawMeta as { ui?: unknown } | undefined)?.ui as
         | {
             csp?: McpUiResourceCsp;
             permissions?: McpUiResourcePermissions;
@@ -170,26 +231,70 @@ apps.post("/mcp-apps/widget-content", async (c) =>
           }
         | undefined;
 
-      html = injectOpenAICompat(html, {
-        toolId: body.toolId,
-        toolName: body.toolName,
-        toolInput: body.toolInput ?? {},
-        toolOutput: body.toolOutput,
-        theme: body.theme,
-        viewMode: body.viewMode,
-        viewParams: body.viewParams,
-      });
+      type DiscoveredMeta = {
+        csp?: McpUiResourceCsp;
+        permissions?: McpUiResourcePermissions;
+        prefersBorder?: boolean;
+      };
+      let discovered: DiscoveredMeta;
+      if (isOpenAiDiscovery) {
+        const openaiCsp = rawMeta?.["openai/widgetCSP"] as
+          | McpUiResourceCsp
+          | undefined;
+        const openaiPrefersBorder = rawMeta?.["openai/widgetPrefersBorder"] as
+          | boolean
+          | undefined;
+        // OpenAI's metadata format has no permissions analogue; widgets
+        // declare capabilities via different channels. Pass through as
+        // undefined and let the sandbox apply its restrictive default.
+        discovered = {
+          csp: openaiCsp,
+          permissions: undefined,
+          prefersBorder: openaiPrefersBorder,
+        };
+      } else {
+        discovered = {
+          csp: uiMeta?.csp,
+          permissions: uiMeta?.permissions,
+          prefersBorder: uiMeta?.prefersBorder,
+        };
+      }
+
+      // Gate is set by the client based on `resolveOpenAiCompatEnabled`.
+      // Server intentionally does not consult hostStyle — keeping the
+      // four consumers reading one resolver (see 2.2 docstring).
+      // `useLocalStorageWidgetState: true` flips the Stage 1 flag default
+      // on once the dispatcher routes OpenAI-SDK widgets through here;
+      // the legacy `ui/update-model-context` path is preserved only for
+      // the still-existing ChatGPTAppRenderer (deleted in Stage 4).
+      if (body.injectOpenAiCompatRuntime) {
+        html = injectOpenAICompat(html, {
+          toolId: body.toolId,
+          toolName: body.toolName,
+          toolInput: body.toolInput ?? {},
+          toolOutput: body.toolOutput,
+          theme: body.theme,
+          viewMode: body.viewMode,
+          viewParams: body.viewParams,
+          useLocalStorageWidgetState: true,
+        });
+      }
 
       return {
         html,
-        csp: effectiveCspMode === "permissive" ? undefined : uiMeta?.csp,
-        permissions: uiMeta?.permissions,
+        csp: effectiveCspMode === "permissive" ? undefined : discovered.csp,
+        permissions: discovered.permissions,
         permissive: effectiveCspMode === "permissive",
         cspMode: effectiveCspMode,
-        prefersBorder: uiMeta?.prefersBorder,
+        prefersBorder: discovered.prefersBorder,
         mimeType: contentMimeType,
         mimeTypeValid,
         mimeTypeWarning,
+        // Echoed back so the client can correlate which discovery channel
+        // produced this payload — useful for the dispatcher's debug
+        // overlay and for Stage 3 telemetry separating MCP_APPS vs
+        // OPENAI_SDK widgets in the unified renderer.
+        discoveryChannel: isOpenAiDiscovery ? "openai" : "mcp-apps",
       };
     },
   ),
