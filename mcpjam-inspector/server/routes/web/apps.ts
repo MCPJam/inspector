@@ -238,9 +238,39 @@ apps.post("/mcp-apps/widget-content", async (c) =>
       };
       let discovered: DiscoveredMeta;
       if (isOpenAiDiscovery) {
-        const openaiCsp = rawMeta?.["openai/widgetCSP"] as
-          | McpUiResourceCsp
+        // OpenAI's `openai/widgetCSP` uses snake_case keys
+        // (`connect_domains`, `resource_domains`, `frame_domains`) per
+        // the OpenAI Apps SDK shape; the inspector renderer + sandbox
+        // proxy read camelCase `McpUiResourceCsp` (`connectDomains`,
+        // `resourceDomains`, `frameDomains`). Without this translation
+        // the OpenAI widget's declared domains are dropped under
+        // `cspMode: "widget-declared"` and external connects/images/
+        // frames are silently blocked.
+        const openaiCspRaw = rawMeta?.["openai/widgetCSP"] as
+          | {
+              connect_domains?: unknown;
+              resource_domains?: unknown;
+              frame_domains?: unknown;
+            }
           | undefined;
+        const toStringArray = (v: unknown): string[] | undefined => {
+          if (!Array.isArray(v)) return undefined;
+          const out = v.filter((x): x is string => typeof x === "string");
+          return out.length > 0 ? out : undefined;
+        };
+        const openaiCsp: McpUiResourceCsp | undefined = openaiCspRaw
+          ? (() => {
+              const connect = toStringArray(openaiCspRaw.connect_domains);
+              const resource = toStringArray(openaiCspRaw.resource_domains);
+              const frame = toStringArray(openaiCspRaw.frame_domains);
+              if (!connect && !resource && !frame) return undefined;
+              return {
+                ...(connect ? { connectDomains: connect } : {}),
+                ...(resource ? { resourceDomains: resource } : {}),
+                ...(frame ? { frameDomains: frame } : {}),
+              };
+            })()
+          : undefined;
         const openaiPrefersBorder = rawMeta?.["openai/widgetPrefersBorder"] as
           | boolean
           | undefined;
@@ -267,7 +297,14 @@ apps.post("/mcp-apps/widget-content", async (c) =>
       // on once the dispatcher routes OpenAI-SDK widgets through here;
       // the legacy `ui/update-model-context` path is preserved only for
       // the still-existing ChatGPTAppRenderer (deleted in Stage 4).
-      if (body.injectOpenAiCompatRuntime) {
+      // Default to `true` when the client doesn't send the field, so
+      // any caller predating Stage 2 (or the dispatcher's legacy branch)
+      // keeps getting `window.openai` injection — matches the
+      // pre-Stage-2 unconditional behavior. The Stage 2 dispatcher sends
+      // explicit `false` only for OpenAI-discovery widgets with
+      // `enabled: false`; nothing else can accidentally trip into the
+      // skip branch.
+      if (body.injectOpenAiCompatRuntime !== false) {
         html = injectOpenAICompat(html, {
           toolId: body.toolId,
           toolName: body.toolName,

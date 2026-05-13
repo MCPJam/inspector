@@ -184,7 +184,35 @@ apps.post("/widget-content", async (c) => {
     let permissions: McpUiResourcePermissions | undefined;
     let prefersBorder: boolean | undefined;
     if (isOpenAiDiscovery) {
-      csp = rawMeta?.["openai/widgetCSP"] as McpUiResourceCsp | undefined;
+      // Normalize `openai/widgetCSP` snake_case keys → camelCase
+      // `McpUiResourceCsp` the renderer + sandbox proxy expect. Same
+      // translation as the hosted route — otherwise widget-declared
+      // mode would drop the OpenAI widget's external domains.
+      const openaiCspRaw = rawMeta?.["openai/widgetCSP"] as
+        | {
+            connect_domains?: unknown;
+            resource_domains?: unknown;
+            frame_domains?: unknown;
+          }
+        | undefined;
+      const toStringArray = (v: unknown): string[] | undefined => {
+        if (!Array.isArray(v)) return undefined;
+        const out = v.filter((x): x is string => typeof x === "string");
+        return out.length > 0 ? out : undefined;
+      };
+      csp = openaiCspRaw
+        ? (() => {
+            const connect = toStringArray(openaiCspRaw.connect_domains);
+            const resource = toStringArray(openaiCspRaw.resource_domains);
+            const frame = toStringArray(openaiCspRaw.frame_domains);
+            if (!connect && !resource && !frame) return undefined;
+            return {
+              ...(connect ? { connectDomains: connect } : {}),
+              ...(resource ? { resourceDomains: resource } : {}),
+              ...(frame ? { frameDomains: frame } : {}),
+            };
+          })()
+        : undefined;
       // OpenAI's metadata format has no permissions analogue; widgets
       // declare capabilities via other channels. Leave undefined so the
       // sandbox applies its restrictive default.
@@ -233,7 +261,11 @@ apps.post("/widget-content", async (c) => {
     // forwarded into the runtime config so widgets reading
     // `window.openai.toolResponseMetadata/locale/deviceType` see the
     // same values they did via the legacy ChatGPT inject path.
-    if (injectOpenAiCompatRuntime) {
+    // Default to `true` when omitted — matches the pre-Stage-2
+    // unconditional behavior so pre-Stage-2 callers don't silently lose
+    // `window.openai`. Stage 2 dispatcher sends explicit `false` only
+    // for OpenAI-discovery widgets with `enabled: false`.
+    if (injectOpenAiCompatRuntime !== false) {
       html = injectOpenAICompat(html, {
         toolId,
         toolName,

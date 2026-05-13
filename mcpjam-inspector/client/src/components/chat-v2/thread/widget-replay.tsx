@@ -256,6 +256,33 @@ export function WidgetReplay({
     // === OPENAI_SDK, prefer the openai template (per hard constraint #6,
     // protocolOverride chooses the _meta block when both exist).
     const isOpenAiDiscovery = shouldRouteOpenAiThroughUnifiedRenderer;
+    // Fidelity-field extraction for OpenAI-SDK widgets routed through the
+    // unified renderer. Mirrors the legacy `ChatGPTAppRenderer` derivation
+    // (chatgpt-app-renderer.tsx:193 for `toolResponseMetadata`,
+    // chatgpt-app-renderer.tsx:229 `getDeviceType()` for viewport-based
+    // device classification). MCP Apps widgets in the unified renderer
+    // continue to get these through the renderer's existing
+    // host-context flow, so we only feed the dispatcher-derived values
+    // for the OpenAI path.
+    let dispatchToolResponseMetadata: Record<string, unknown> | null = null;
+    if (isOpenAiDiscovery) {
+      const out = resolvedToolOutput;
+      if (out && typeof out === "object" && !Array.isArray(out)) {
+        const record = out as Record<string, unknown>;
+        const meta =
+          (record._meta as Record<string, unknown> | undefined) ??
+          (record.meta as Record<string, unknown> | undefined);
+        if (meta && typeof meta === "object" && !Array.isArray(meta)) {
+          dispatchToolResponseMetadata = meta;
+        }
+      }
+    }
+    let dispatchDeviceType: "mobile" | "tablet" | "desktop" | undefined;
+    if (isOpenAiDiscovery && typeof window !== "undefined") {
+      const width = window.innerWidth;
+      dispatchDeviceType =
+        width < 768 ? "mobile" : width < 1024 ? "tablet" : "desktop";
+    }
     const dispatchResourceUri = isOpenAiDiscovery
       ? // Always pull the OpenAI template here, even for dual-metadata
         // widgets — the renderer hands this verbatim to the server as
@@ -343,6 +370,15 @@ export function WidgetReplay({
         minimalMode={minimalMode}
           discoveryChannel={isOpenAiDiscovery ? "openai" : "mcp-apps"}
           openAiCompatEnabled={openAiCompatEnabled}
+          // Fidelity props derived from the tool result + viewport for
+          // OpenAI-SDK widgets so `window.openai.toolResponseMetadata`
+          // and `window.openai.deviceType` keep parity with the legacy
+          // ChatGPT path. MCP Apps widgets stay on the renderer's
+          // existing host-context flow (locale, deviceCapabilities,
+          // safe area, etc.) and get `null` / `undefined` here without
+          // any user-visible regression.
+          toolResponseMetadata={dispatchToolResponseMetadata}
+          deviceType={dispatchDeviceType}
         />
       </>
     );
