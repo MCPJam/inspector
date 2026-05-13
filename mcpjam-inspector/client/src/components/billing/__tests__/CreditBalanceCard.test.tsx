@@ -38,6 +38,12 @@ vi.mock("@/components/billing/TopupActionButton", () => ({
   ),
 }));
 
+// Banner has its own dedicated suite — stub here so we don't have to set up
+// the underlying Convex/auth hooks for every CreditBalanceCard test.
+vi.mock("@/components/billing/PendingCreditTopupsBanner", () => ({
+  PendingCreditTopupsBanner: () => null,
+}));
+
 describe("CreditBalanceCard", () => {
   beforeEach(() => {
     balanceState = {
