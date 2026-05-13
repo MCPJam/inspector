@@ -212,6 +212,13 @@ export async function countToolsTokens(
         cause: getFetchErrorCause(error),
       });
     }
-    return 0;
+    // Honor the "falling back to estimate" log above: compute a char-based
+    // estimate from the input. Only return 0 if even stringifying fails
+    // (e.g. circular references in `tools`).
+    try {
+      return estimateTokensFromChars(JSON.stringify(tools));
+    } catch {
+      return 0;
+    }
   }
 }

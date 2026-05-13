@@ -1,9 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   mapModelIdToTokenizerBackend,
   estimateTokensFromChars,
   isFetchConnectionFailure,
   getFetchErrorCause,
+  countToolsTokens,
 } from "../tokenizer-helpers.js";
 
 describe("mapModelIdToTokenizerBackend", () => {
@@ -198,5 +199,51 @@ describe("getFetchErrorCause", () => {
     expect(getFetchErrorCause("nope")).toBeUndefined();
     expect(getFetchErrorCause(null)).toBeUndefined();
     expect(getFetchErrorCause(undefined)).toBeUndefined();
+  });
+});
+
+describe("countToolsTokens fallback behavior", () => {
+  const originalFetch = global.fetch;
+  const originalUrl = process.env.CONVEX_HTTP_URL;
+
+  beforeEach(() => {
+    process.env.CONVEX_HTTP_URL = "http://nowhere.invalid";
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    if (originalUrl === undefined) {
+      delete process.env.CONVEX_HTTP_URL;
+    } else {
+      process.env.CONVEX_HTTP_URL = originalUrl;
+    }
+    vi.restoreAllMocks();
+  });
+
+  it("returns a char-based estimate (not 0) when fetch throws a connection error", async () => {
+    // Simulate the undici 'fetch failed' shape that fires on DNS/ECONNREFUSED/TLS.
+    global.fetch = vi.fn().mockImplementation(() => {
+      const err = new TypeError("fetch failed");
+      (err as { cause?: unknown }).cause = { code: "ECONNREFUSED" };
+      throw err;
+    });
+
+    const tools = [{ name: "search", description: "search the catalog" }];
+    const expected = estimateTokensFromChars(JSON.stringify(tools));
+
+    const result = await countToolsTokens(tools, "claude-opus-4-1");
+
+    expect(expected).toBeGreaterThan(0); // sanity
+    expect(result).toBe(expected);
+  });
+
+  it("returns 0 only when the input itself cannot be serialized", async () => {
+    // Circular reference -> JSON.stringify throws. The fetch never runs.
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+
+    const result = await countToolsTokens([circular], "claude-opus-4-1");
+
+    expect(result).toBe(0);
   });
 });
