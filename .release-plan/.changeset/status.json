@@ -5,21 +5,41 @@
         {
           "name": "@mcpjam/inspector",
           "type": "patch"
+        },
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
         }
       ],
-      "summary": "Inspector rollup since the last release:\n\n- Chatbox OAuth: attach the WorkOS bearer token on `/oauth/callback` to fix the 403 some users hit when finishing the chatbox auth flow.\n- Sidebar credit usage: clicking the progress bar now sends the user to billing.\n- Compare-plans table: removed the team seat-minimum label and finished the Projects row in the plan comparison.\n- Chatbox builder: removed the unused `allowGuestAccess` toggle.",
-      "id": "inspector-rollup-pre-soundcheck-deploy"
+      "summary": "Inspector + SDK rollup since the last release.\n\n**@mcpjam/sdk (new matchers + eval reporting types)**\n\n- Add `matchers` exports for the new SDK matchers used by evals (M1 phase 1).\n- Add layered match options and run-level validator override types (M1 evals).\n\n**@mcpjam/inspector**\n\n- Hot fix: resolves \"unknown IP\" guest-session bug.\n- Evals: layered match options + run-level validator overrides.\n- Evals M1: SDK matchers + diff rendering + p50/p95 percentiles.\n- Evals M1 phase 2: N-iterations picker and save-from-chat into tests.\n- MCP apps: profile-driven `hostCapabilities` with user-saved overrides; advertise MCP app message capabilities.\n- Electron: redirect OAuth flows to the system browser; include `@ngrok/ngrok` in the packaged app so tunnels work; guard `autoUpdater` renderer messaging against destroyed windows.\n- Billing: compare-plans table now reads \"Unlimited\" for servers-per-project on free; cleaner member/invite copy on the billing UI.\n- TypeScript hygiene: cleared all production `tsc` errors, enforce typecheck in CI, and added a `typecheck:client` script.",
+      "id": "release-rollup-2026-05-12"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
       "type": "patch",
-      "oldVersion": "2.4.8",
+      "oldVersion": "2.4.9",
       "changesets": [
-        "inspector-rollup-pre-soundcheck-deploy"
+        "release-rollup-2026-05-12"
       ],
-      "newVersion": "2.4.9"
+      "newVersion": "2.4.10"
+    },
+    {
+      "name": "@mcpjam/sdk",
+      "type": "minor",
+      "oldVersion": "1.4.0",
+      "changesets": [
+        "release-rollup-2026-05-12"
+      ],
+      "newVersion": "1.5.0"
+    },
+    {
+      "name": "@mcpjam/mcp",
+      "type": "none",
+      "oldVersion": "0.0.1",
+      "changesets": [],
+      "newVersion": "0.0.1"
     }
   ]
 }

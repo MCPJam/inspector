@@ -160,3 +160,24 @@ export type {
   ConformanceSuiteId,
   ConformanceSupport,
 } from "./mcp-conformance/transport-support.js";
+
+// Host-side sandbox policy resolver (SEP-1865 + ChatGPT Apps). Pure
+// resolver — DOM-free, React-free, Convex-free. Browser-safe by
+// construction. Re-exported here so client renderers can import it
+// without pulling in Node-only entrypoints.
+export {
+  resolveSandboxCsp,
+  resolveSandboxPermissions,
+} from "./sandbox-policy.js";
+export type {
+  SandboxCspMode,
+  SandboxPermissionsMode,
+  SandboxCspDomainSet,
+  SandboxCspPolicy,
+  SandboxPermissionsPolicy,
+  ResourceDeclaredCsp,
+  EffectiveSandboxCsp,
+  EffectiveSandboxPermissions,
+  ResolveSandboxCspArgs,
+  ResolveSandboxPermissionsArgs,
+} from "./sandbox-policy.js";

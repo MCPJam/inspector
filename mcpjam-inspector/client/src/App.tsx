@@ -784,6 +784,7 @@ export default function App() {
     pendingDashboardOAuth,
     isCloudSyncActive,
     persistRuntimeServerToProjectIfNeeded,
+    activeMcpProfile,
   } = useAppState({
     currentUserId: workOsUser?.id ?? null,
     currentActorKey: actorKey,
@@ -2311,6 +2312,12 @@ export default function App() {
               onSelectedServerNamesChange={setSelectedMCPConfigs}
               enableMultiModelChat
               showHostStyleSelector
+              // Active project default `mcpProfile`. Mounting the provider
+              // here is the in-inspector counterpart to ChatboxChatPage's
+              // hosted mount — without it, MCPAppsRenderer reads
+              // `undefined` from useActiveMcpProfile() and skips the
+              // sandbox-policy resolver entirely.
+              activeMcpProfile={activeMcpProfile}
               evalChatHandoff={evalChatHandoff}
               onEvalChatHandoffConsumed={(id) =>
                 setEvalChatHandoff((current) =>

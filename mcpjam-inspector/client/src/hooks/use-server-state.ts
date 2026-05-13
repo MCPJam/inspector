@@ -473,6 +473,16 @@ interface UseServerStateParams {
   effectiveProjects: Record<string, Project>;
   effectiveActiveProjectId: string;
   activeProjectServersFlat: RemoteServer[] | undefined;
+  /**
+   * The active project default hostConfig's mcpProfile envelope, when
+   * one is set. Supplied by `use-app-state` via the
+   * `hostConfigsV2.getProjectDefault` query. `undefined` means "use SDK
+   * defaults" — preserves historical wire behavior on /api/mcp/connect
+   * for users who haven't opted into mcpProfile. Forwarded by every
+   * resolver-path connect site into ConnectionDefaults so the SDK pins
+   * clientInfo / supportedProtocolVersions accordingly.
+   */
+  activeMcpProfile?: import("@/lib/host-config-v2").HostConfigMcpProfileV1;
   logger: LoggerLike;
 }
 
@@ -531,6 +541,7 @@ export function useServerState({
   effectiveProjects,
   effectiveActiveProjectId,
   activeProjectServersFlat,
+  activeMcpProfile,
   logger,
 }: UseServerStateParams) {
   const convex = useConvex();
@@ -812,11 +823,26 @@ export function useServerState({
   // omitted here — OAuth bearer is reattached server-side from the Convex
   // token store.
   const buildResolverConnectionDefaults = useCallback(
-    (serverConfig: MCPServerConfig) => {
+    (
+      serverConfig: MCPServerConfig,
+      // Optional mcpProfile (hostConfig.mcpProfile) that the caller has
+      // already resolved from a chatbox/project context. When provided,
+      // its `initialize.clientInfo` and first
+      // `initialize.supportedProtocolVersions` entry flow onto the
+      // ConnectionDefaults wire shape. Undefined preserves historical
+      // behavior — connect runs without an mcpProfile pin and the SDK
+      // falls back to its hardcoded defaults.
+      mcpProfile?: import("@/lib/host-config-v2").HostConfigMcpProfileV1
+    ) => {
       const defaults: {
         headers?: Record<string, string>;
         timeoutMs?: number;
         clientCapabilities?: Record<string, unknown>;
+        clientInfo?: { name?: string; version?: string } & Record<
+          string,
+          unknown
+        >;
+        supportedProtocolVersions?: string[];
       } = {};
       if ("url" in serverConfig) {
         const headers = omitAuthorizationHeader(
@@ -833,6 +859,22 @@ export function useServerState({
         | Record<string, unknown>
         | undefined;
       if (caps && typeof caps === "object") defaults.clientCapabilities = caps;
+      const ci = mcpProfile?.initialize?.clientInfo;
+      if (ci && typeof ci === "object" && !Array.isArray(ci)) {
+        defaults.clientInfo = ci;
+      }
+      const versions = mcpProfile?.initialize?.supportedProtocolVersions;
+      if (Array.isArray(versions) && versions.length > 0) {
+        // Forward the full accept-list. First entry is what the SDK
+        // proposes in `initialize.params.protocolVersion`; later entries
+        // are accepted if the server negotiates one of them. Collapsing
+        // to `[versions[0]]` was the prior shape and silently caused
+        // "server speaks a later listed version → connect fails," which
+        // defeats the point of letting users pin a multi-version list.
+        defaults.supportedProtocolVersions = versions.filter(
+          (v): v is string => typeof v === "string" && v.trim() !== "",
+        );
+      }
       return Object.keys(defaults).length > 0 ? defaults : undefined;
     },
     []
@@ -851,12 +893,23 @@ export function useServerState({
         return testConnection(serverConfig, resolved.serverId, {
           projectId: resolved.projectId,
           serverName,
-          connectionDefaults: buildResolverConnectionDefaults(serverConfig),
+          // Forward the active mcpProfile so the resolver path pins
+          // clientInfo / supportedProtocolVersions on this connect.
+          // Undefined preserves SDK defaults — no behavior change for
+          // users without an mcpProfile.
+          connectionDefaults: buildResolverConnectionDefaults(
+            serverConfig,
+            activeMcpProfile,
+          ),
         });
       }
       throw new Error(PROJECT_NOT_PROVISIONED_ERROR_MESSAGE);
     },
-    [assertClientConfigSynced, buildResolverConnectionDefaults]
+    [
+      assertClientConfigSynced,
+      buildResolverConnectionDefaults,
+      activeMcpProfile,
+    ]
   );
 
   const guardedReconnectServer = useCallback(
@@ -867,12 +920,19 @@ export function useServerState({
         return reconnectServer(resolved.serverId, serverConfig, {
           projectId: resolved.projectId,
           serverName,
-          connectionDefaults: buildResolverConnectionDefaults(serverConfig),
+          connectionDefaults: buildResolverConnectionDefaults(
+            serverConfig,
+            activeMcpProfile,
+          ),
         });
       }
       throw new Error(PROJECT_NOT_PROVISIONED_ERROR_MESSAGE);
     },
-    [assertClientConfigSynced, buildResolverConnectionDefaults]
+    [
+      assertClientConfigSynced,
+      buildResolverConnectionDefaults,
+      activeMcpProfile,
+    ]
   );
 
   const validateForm = (formData: ServerFormData): string | null => {
