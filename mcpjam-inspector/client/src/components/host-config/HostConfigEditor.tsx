@@ -1047,9 +1047,76 @@ function PermissionRow({
 }
 
 /**
+ * Reusable "string[] backed by a multi-line textarea" draft buffer.
+ *
+ * Same problem `protocolVersionsDraft` was introduced to fix: when a
+ * textarea's `value` is recomputed every render from a filtered+trimmed
+ * persisted array, pressing Enter after a non-empty line immediately
+ * strips the trailing newline on the next render, making multi-line
+ * entries impossible to type (only paste-all-at-once works).
+ *
+ * Returns `{ value, onChange }` ready to drop into a controlled
+ * `<Textarea>`. The draft string is the source of truth for the
+ * textarea; the persisted array is the source of truth for the wire
+ * shape. Sync effect mirrors persisted into the draft when an external
+ * write (reset, DTO reload, programmatic patch) diverges from the
+ * draft's filtered form.
+ *
+ * Future cleanup: the inline protocolVersionsDraft logic above could
+ * be migrated to this hook. Left alone in this commit so the rich
+ * scenario-comments there aren't lost in a refactor that doesn't
+ * change behavior.
+ */
+function useNewlineListDraft(
+  persistedList: ReadonlyArray<string>,
+  onPersistedChange: (next: string[]) => void,
+) {
+  const persistedJoined = persistedList.join("\n");
+  const [draft, setDraft] = useState<string>(persistedJoined);
+  const draftRef = useRef(draft);
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
+
+  useEffect(() => {
+    const draftFiltered = draftRef.current
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line !== "")
+      .join("\n");
+    if (persistedJoined === draftFiltered) return;
+    setDraft(persistedJoined);
+  }, [persistedJoined]);
+
+  const onChange = useCallback(
+    (raw: string) => {
+      // Commit raw text to the draft (preserves trailing newlines + in-
+      // progress whitespace) and flush the filtered/trimmed list to the
+      // persisted owner. Caller decides what to do with an empty list.
+      draftRef.current = raw;
+      setDraft(raw);
+      const next = raw
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line !== "");
+      onPersistedChange(next);
+    },
+    [onPersistedChange],
+  );
+
+  return { value: draft, onChange };
+}
+
+/**
  * Single editor for one CspDomainSet (four parallel directive lists).
  * One textarea per directive — JSON-array style — keeps the surface lean
  * while exposing all four directives the spec defines.
+ *
+ * Each per-directive textarea uses {@link useNewlineListDraft} so users
+ * can actually type a multi-line list. Without the draft buffer the
+ * filtered-from-persisted `value` would strip the trailing newline on
+ * every keystroke (cursor jumps to end of line; second line impossible
+ * to start). Same fix shape the protocol versions field already uses.
  */
 function McpProfileCspDomainSetEditor({
   label,
@@ -1097,55 +1164,108 @@ function McpProfileCspDomainSetEditor({
     },
   ];
 
-  const updateDirective = (
-    key: typeof directives[number]["key"],
-    raw: string,
-  ) => {
-    const items = raw
-      .split(/\r?\n/)
-      .map((s) => s.trim())
-      .filter((s) => s !== "");
-    const nextValue = { ...(value ?? {}) };
-    if (items.length === 0) {
-      delete nextValue[key];
-    } else {
-      nextValue[key] = items;
-    }
-    // Drop the whole set when every directive is empty so undefined
-    // round-trips cleanly through the backend canonicalizer (it
-    // distinguishes undefined from `{}` for hash purposes).
-    const hasAny = directives.some((d) => {
-      const list = nextValue[d.key];
-      return Array.isArray(list) && list.length > 0;
-    });
-    onChange(hasAny ? nextValue : undefined);
-  };
+  /**
+   * Commit a per-directive list to the parent's `value`, collapsing the
+   * whole set to `undefined` when every directive is empty. The collapse
+   * is critical: the backend canonicalizer distinguishes
+   * `undefined` from `{}` on the hash, so passing an empty object here
+   * would silently bump the hostConfig hash and create a duplicate row.
+   */
+  const commitDirective = useCallback(
+    (
+      key: typeof directives[number]["key"],
+      items: string[],
+    ) => {
+      const nextValue = { ...(value ?? {}) };
+      if (items.length === 0) {
+        delete nextValue[key];
+      } else {
+        nextValue[key] = items;
+      }
+      const hasAny = directives.some((d) => {
+        const list = nextValue[d.key];
+        return Array.isArray(list) && list.length > 0;
+      });
+      onChange(hasAny ? nextValue : undefined);
+    },
+    // `directives` is a module-local stable array literal; safe to omit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [value, onChange],
+  );
 
   return (
     <div className="grid gap-2" role="group" aria-label={label}>
       <Label className="text-xs">{label}</Label>
       {directives.map((d) => (
-        <div key={d.key} className="grid gap-1">
-          {/* Per-directive label is a real DOM <label> for screen readers.
-              The placeholder is illustrative, not the accessible name —
-              relying on placeholder text alone fails WCAG 1.3.1 / 4.1.2. */}
-          <Label
-            htmlFor={`mcp-profile-csp-${label}-${d.key}`}
-            className="text-[10px] font-mono uppercase text-muted-foreground"
-          >
-            {d.directiveLabel}
-          </Label>
-          <Textarea
-            id={`mcp-profile-csp-${label}-${d.key}`}
-            aria-label={`${label} ${d.directiveLabel}`}
-            rows={2}
-            className="font-mono text-xs"
-            placeholder={d.placeholder}
-            value={(value?.[d.key] ?? []).join("\n")}
-            onChange={(e) => updateDirective(d.key, e.target.value)}
-          />
-        </div>
+        <McpProfileCspDirectiveTextarea
+          key={d.key}
+          label={label}
+          directiveKey={d.key}
+          directiveLabel={d.directiveLabel}
+          placeholder={d.placeholder}
+          persistedList={value?.[d.key] ?? EMPTY_DIRECTIVE_LIST}
+          onPersistedChange={(next) => commitDirective(d.key, next)}
+        />
       ))}
+    </div>
+  );
+}
+
+/**
+ * Stable empty-array sentinel used as the default `persistedList` for
+ * unconfigured directives. Keeps the draft hook's `persistedJoined`
+ * memoization stable across renders that don't actually change the
+ * list — otherwise a fresh `[]` per render would invalidate the sync
+ * effect's `useEffect([persistedJoined])` dependency on every parent
+ * rerender and could clobber an in-progress edit.
+ */
+const EMPTY_DIRECTIVE_LIST: ReadonlyArray<string> = Object.freeze([]);
+
+/**
+ * One per-directive textarea inside a CspDomainSet. Lives at its own
+ * component scope so {@link useNewlineListDraft} runs at component top
+ * level (React's rules-of-hooks require this — can't call hooks inside
+ * a `.map()` callback in the parent).
+ */
+function McpProfileCspDirectiveTextarea({
+  label,
+  directiveKey,
+  directiveLabel,
+  placeholder,
+  persistedList,
+  onPersistedChange,
+}: {
+  label: string;
+  directiveKey: string;
+  directiveLabel: string;
+  placeholder: string;
+  persistedList: ReadonlyArray<string>;
+  onPersistedChange: (next: string[]) => void;
+}) {
+  const { value, onChange } = useNewlineListDraft(
+    persistedList,
+    onPersistedChange,
+  );
+  return (
+    <div className="grid gap-1">
+      {/* Per-directive label is a real DOM <label> for screen readers.
+          The placeholder is illustrative, not the accessible name —
+          relying on placeholder text alone fails WCAG 1.3.1 / 4.1.2. */}
+      <Label
+        htmlFor={`mcp-profile-csp-${label}-${directiveKey}`}
+        className="text-[10px] font-mono uppercase text-muted-foreground"
+      >
+        {directiveLabel}
+      </Label>
+      <Textarea
+        id={`mcp-profile-csp-${label}-${directiveKey}`}
+        aria-label={`${label} ${directiveLabel}`}
+        rows={2}
+        className="font-mono text-xs"
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
     </div>
   );
 }

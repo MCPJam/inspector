@@ -353,4 +353,139 @@ describe("web auth manager batching", () => {
       },
     });
   });
+
+  // Codex P2 regression: client now forwards
+  // `mcpProfile.initialize.clientInfo` and `supportedProtocolVersions`
+  // on every hosted route call. Verify `createAuthorizedManager`
+  // threads `initializePins` into the per-server HttpServerConfig so
+  // the SDK Client honors the pins on `initialize`. Without this,
+  // hosted connects silently fell back to SDK defaults even when the
+  // active profile pinned an explicit identity.
+  it("threads mcpProfile.initialize pins into the SDK Client config", async () => {
+    global.fetch = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          results: {
+            "server-1": {
+              ok: true,
+              role: "member",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              serverConfig: {
+                transportType: "http",
+                url: "https://server-1.example.com/mcp",
+                headers: {},
+                useOAuth: false,
+              },
+            },
+          },
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }) as typeof fetch;
+
+    await createAuthorizedManager(
+      mockContext,
+      "bearer-token",
+      "project-1",
+      ["server-1"],
+      10_000,
+      undefined,
+      undefined,
+      {
+        initializePins: {
+          clientInfo: {
+            name: "chatgpt",
+            version: "1.0.0",
+            // Forward-compat extras (e.g. SEP `title`) must survive.
+            title: "ChatGPT",
+          },
+          supportedProtocolVersions: ["2025-11-25", "2025-06-18"],
+        },
+      }
+    );
+
+    const config = mcpClientManagerMock.mock.calls[0]?.[0]?.["server-1"];
+    expect(config).toMatchObject({
+      url: "https://server-1.example.com/mcp",
+      clientInfo: {
+        name: "chatgpt",
+        version: "1.0.0",
+        title: "ChatGPT",
+      },
+      supportedProtocolVersions: ["2025-11-25", "2025-06-18"],
+    });
+  });
+
+  it("omits mcpProfile.initialize pins when no profile is set", async () => {
+    global.fetch = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          results: {
+            "server-1": {
+              ok: true,
+              role: "member",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              serverConfig: {
+                transportType: "http",
+                url: "https://server-1.example.com/mcp",
+                headers: {},
+                useOAuth: false,
+              },
+            },
+          },
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }) as typeof fetch;
+
+    await createAuthorizedManager(
+      mockContext,
+      "bearer-token",
+      "project-1",
+      ["server-1"],
+      10_000
+      // No options.initializePins → SDK Client uses its hardcoded
+      // `LATEST_PROTOCOL_VERSION` and default clientInfo.
+    );
+
+    const config = mcpClientManagerMock.mock.calls[0]?.[0]?.["server-1"];
+    expect(config).not.toHaveProperty("clientInfo");
+    expect(config).not.toHaveProperty("supportedProtocolVersions");
+  });
+
+  // Verify the public `projectServerSchema` declares the two new
+  // optional fields so Zod doesn't strip them at the route boundary.
+  // The earlier shape declared neither, which is exactly what dropped
+  // the wire payload before it reached toHttpConfig.
+  it("projectServerSchema accepts clientInfo and supportedProtocolVersions", async () => {
+    const { projectServerSchema } = await import("../auth.js");
+    const parsed = projectServerSchema.parse({
+      projectId: "project-1",
+      serverId: "server-1",
+      clientInfo: {
+        name: "chatgpt",
+        version: "1.0.0",
+        // passthrough extras (future spec fields) must survive
+        title: "ChatGPT",
+      },
+      supportedProtocolVersions: ["2025-11-25", "2025-06-18"],
+    });
+    expect(parsed.clientInfo).toEqual({
+      name: "chatgpt",
+      version: "1.0.0",
+      title: "ChatGPT",
+    });
+    expect(parsed.supportedProtocolVersions).toEqual([
+      "2025-11-25",
+      "2025-06-18",
+    ]);
+  });
 });

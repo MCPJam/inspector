@@ -141,6 +141,44 @@ describe("resolveSandboxCsp — restrictTo intersects in every mode", () => {
     expect(csp.connectDomains).toEqual(["a.com"]);
     expect(csp.resourceDomains).toEqual(["res.com"]);
   });
+
+  test("restrictTo matches case-insensitively (parity with deny)", () => {
+    // Regression for the case-mismatch class: restrictTo used to do
+    // strict Set.has() equality while deny did case-insensitive
+    // matching. A user who wrote `Api.Example.COM` (typo, copy-paste
+    // from a docs example with mixed case, etc.) would have their
+    // restrictTo entry silently fail to match a lowercased
+    // resource-declared `api.example.com` — domain dropped from the
+    // intersection without any signal. The two matching strategies
+    // within the same resolver must agree.
+    const csp = resolveSandboxCsp({
+      resourceCsp: { connectDomains: ["https://api.example.com"] },
+      policy: {
+        mode: "declared",
+        // Mixed-case restrictTo MUST match the lower-case baseline.
+        restrictTo: { connectDomains: ["HTTPS://API.EXAMPLE.COM"] },
+      },
+      hostedMode: false,
+    });
+    // Result keeps the baseline-cased original — restrictTo is just a
+    // lookup index, not the source of truth for the emitted CSP.
+    expect(csp.connectDomains).toEqual(["https://api.example.com"]);
+  });
+
+  test("restrictTo case-insensitive: mixed-case baseline + lower-case restrictTo also matches", () => {
+    // Symmetric direction of the previous test — verifies the lookup
+    // is case-insensitive regardless of which side has the casing
+    // variation.
+    const csp = resolveSandboxCsp({
+      resourceCsp: { connectDomains: ["HTTPS://Api.Example.COM"] },
+      policy: {
+        mode: "declared",
+        restrictTo: { connectDomains: ["https://api.example.com"] },
+      },
+      hostedMode: false,
+    });
+    expect(csp.connectDomains).toEqual(["HTTPS://Api.Example.COM"]);
+  });
 });
 
 describe("resolveSandboxCsp — deny subtracts in every mode", () => {
@@ -445,6 +483,65 @@ describe("resolveSandboxCsp — hostedClampExtraDeny (app-specific clamp)", () =
     });
     expect(csp.frameDomains).toEqual([]);
     expect(csp.connectDomains).toEqual(["https://app.mcpjam.com"]);
+  });
+
+  test("hosted-mode relaxed profile: extra-deny clamp STILL strips MCPJam origins", () => {
+    // P1 regression: a saved profile with mode="relaxed" used to bypass
+    // the resolver entirely in the renderer, silently dropping the
+    // hosted clamp's MCPJam-origin extra-deny. After the renderer-side
+    // fix, relaxed-in-hosted-mode falls through into resolveSandboxCsp,
+    // so the security contract here MUST hold:
+    //
+    //   "Hosted clamp is non-bypassable — saved profiles cannot opt out
+    //    of stripping MCPJam-origin access from widget-declared CSP."
+    //
+    // Without this guarantee a hosted user could save mode=relaxed +
+    // declare MCPJam origins in connectDomains and exfiltrate via the
+    // iframe's session.
+    const csp = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: [
+          "https://app.mcpjam.com",
+          "https://api.example.com",
+        ],
+      },
+      // Caller passes the resource as hostDefaultBaseline because
+      // relaxed mode's "permissive baseline" is conceptually unbounded
+      // (the renderer treats it as "use whatever the widget declared").
+      hostDefaultBaseline: {
+        connectDomains: [
+          "https://app.mcpjam.com",
+          "https://api.example.com",
+        ],
+      },
+      policy: { mode: "relaxed" },
+      hostedMode: true,
+      hostedClampExtraDeny: {
+        connectDomains: ["https://*.mcpjam.com"],
+      },
+    });
+    expect(csp.connectDomains).toEqual(["https://api.example.com"]);
+    expect(csp.trace.hostedClamp.stripped.connectDomains).toContain(
+      "https://app.mcpjam.com",
+    );
+  });
+
+  test("relaxed + restrictTo: restrictTo applies even though mode is relaxed", () => {
+    // The other half of the "deny always wins / restrictTo applies in
+    // every mode" guarantee: a saved relaxed profile that ALSO sets
+    // restrictTo should intersect, not bypass. Renderer treats
+    // resource-declared CSP as the baseline; restrictTo narrows.
+    const csp = resolveSandboxCsp({
+      hostDefaultBaseline: {
+        connectDomains: ["a.com", "b.com", "c.com"],
+      },
+      policy: {
+        mode: "relaxed",
+        restrictTo: { connectDomains: ["a.com", "b.com"] },
+      },
+      hostedMode: false,
+    });
+    expect(csp.connectDomains).toEqual(["a.com", "b.com"]);
   });
 
   test("extra deny survives all earlier precedence steps (resource+restrictTo+deny)", () => {

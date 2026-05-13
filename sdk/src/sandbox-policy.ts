@@ -289,6 +289,16 @@ export function resolveSandboxCsp(
 
   // Step 2 — intersect with restrictTo (when set). Never unions; never
   // adds undeclared domains. Applies in every mode.
+  //
+  // Case-insensitive match: CSP source expressions are case-insensitive
+  // on scheme and host per RFC 3986 / CSP3, and `matchesAnyDeny` (used
+  // for step 3) already lower-cases both sides. Without parity here a
+  // `restrictTo: ["Api.Example.COM"]` would silently drop a resource-
+  // declared `api.example.com` while the same string in `deny` would
+  // strip it — two inconsistent matching strategies in the same
+  // resolver. The lowercase Set is the lookup index; we still emit the
+  // baseline-cased original string so the resulting CSP header matches
+  // what the widget declared.
   const afterRestrictTo: ResourceDeclaredCsp = {};
   for (const key of CSP_DIRECTIVE_KEYS) {
     const baselineList = baselineLists[key] ?? [];
@@ -297,10 +307,10 @@ export function resolveSandboxCsp(
       // No restriction declared for this directive — pass baseline through.
       afterRestrictTo[key] = [...baselineList];
     } else {
-      // Intersect: keep only baseline entries that the restrictTo list
-      // also contains. Order from the baseline is preserved.
-      const restrictSet = new Set(restrictList);
-      afterRestrictTo[key] = baselineList.filter((d) => restrictSet.has(d));
+      const restrictSet = new Set(restrictList.map((d) => d.toLowerCase()));
+      afterRestrictTo[key] = baselineList.filter((d) =>
+        restrictSet.has(d.toLowerCase()),
+      );
     }
   }
 
