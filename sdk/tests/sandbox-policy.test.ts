@@ -365,6 +365,81 @@ describe("resolveSandboxCsp — hosted-mode clamp", () => {
     ]);
     expect(csp.trace.hostedClamp.stripped).toEqual({});
   });
+
+  test("hosted clamp strips bare WILDCARD loopback hosts (P1 regression)", () => {
+    // The exact bypass Codex flagged: `*.localhost` and friends used to
+    // hit the wildcard branch and return false WITHOUT any hostname
+    // check, while the URL form `https://*.localhost` was correctly
+    // stripped via `.endsWith(".localhost")`. A hosted widget could
+    // declare the bare wildcard syntax to keep loopback targets in
+    // the allowlist. Now both shapes are stripped via a two-pass
+    // wildcard check (parse with wildcard preserved + strip leading
+    // `*.` and recheck the suffix).
+    const csp = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: [
+          "*.localhost",
+          "*.localhost:3000",
+          "https://api.example.com",
+        ],
+      },
+      policy: { mode: "declared" },
+      hostedMode: true,
+    });
+    expect(csp.connectDomains).toEqual(["https://api.example.com"]);
+    const stripped =
+      csp.trace.hostedClamp.stripped.connectDomains ?? [];
+    expect(stripped).toContain("*.localhost");
+    expect(stripped).toContain("*.localhost:3000");
+  });
+
+  test("hosted clamp strips bare WILDCARD IPv4 private-network hosts", () => {
+    // Pass 1 of the two-pass check (wildcard-preserved hostname) misses
+    // `*.10.0.0.1` because the URL parser yields `*.10.0.0.1` and that
+    // doesn't match the IPv4 regex. Pass 2 strips the leading `*.` and
+    // rechecks `10.0.0.1` against the RFC1918 regex. Without pass 2,
+    // a hosted widget could pin `*.10.0.0.1` and keep internal-network
+    // exfiltration targets.
+    const csp = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: [
+          "*.10.0.0.1",
+          "*.192.168.1.1",
+          "*.172.16.0.1",
+          "*.169.254.1.1",
+          "https://api.example.com",
+        ],
+      },
+      policy: { mode: "declared" },
+      hostedMode: true,
+    });
+    expect(csp.connectDomains).toEqual(["https://api.example.com"]);
+  });
+
+  test("hosted clamp PRESERVES bare wildcards of public domains", () => {
+    // Counter-test: the two-pass wildcard check MUST NOT strip benign
+    // public-domain wildcards like `*.example.com`. The stripped
+    // suffix `example.com` is not loopback/private; the URL parser
+    // returns `*.example.com` as hostname, which also doesn't match
+    // any dangerous-hostname pattern.
+    const csp = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: [
+          "*.example.com",
+          "*.cdn.example.com",
+          "*.cloudflare.com",
+        ],
+      },
+      policy: { mode: "declared" },
+      hostedMode: true,
+    });
+    expect(csp.connectDomains).toEqual([
+      "*.example.com",
+      "*.cdn.example.com",
+      "*.cloudflare.com",
+    ]);
+    expect(csp.trace.hostedClamp.stripped.connectDomains ?? []).toEqual([]);
+  });
 });
 
 describe("resolveSandboxCsp — hostedClampExtraDeny (app-specific clamp)", () => {

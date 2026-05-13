@@ -582,6 +582,32 @@ function isHostedDangerousDomain(domain: string): boolean {
     ) {
       return true;
     }
+    // P1 regression: a bare wildcard pattern (`*.localhost`,
+    // `*.localhost:3000`, `*.10.0.0.1`) used to fall through to
+    // `return false` without ANY hostname check, while the
+    // equivalent URL form (`https://*.localhost`) was correctly
+    // stripped via `isDangerousHostname`'s `.endsWith(".localhost")`
+    // path. A hosted widget could keep loopback / private-network
+    // targets in the allowlist by switching to the bare wildcard
+    // syntax — exact bypass class the hosted clamp was meant to
+    // prevent.
+    //
+    // Two-pass defense:
+    //   1. Wildcard-preserved: parse `https://*.localhost` → hostname
+    //      `*.localhost` → `.endsWith(".localhost")` strips it. Also
+    //      handles port suffixes via the URL parser.
+    //   2. Wildcard-stripped: peel a leading `*.` (only wildcard shape
+    //      CSP defines) and recheck the suffix. Catches IP wildcards
+    //      like `*.10.0.0.1` where `*.<ip>` doesn't match the IP
+    //      regexes in pass 1.
+    const wildcardHost = extractHostname("https://" + trimmed);
+    if (isDangerousHostname(wildcardHost)) return true;
+    if (trimmed.startsWith("*.")) {
+      const suffix = trimmed.slice(2);
+      if (suffix && isDangerousHostname(extractHostname("https://" + suffix))) {
+        return true;
+      }
+    }
     return false;
   }
 
