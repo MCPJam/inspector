@@ -2,6 +2,7 @@ import {
   normalizeChatboxHostStyleId,
   type ChatboxHostStyle,
 } from "@/lib/chatbox-host-style";
+import type { HostConfigMcpProfileV1 } from "@/lib/host-config-v2";
 import { DEFAULT_HOST_STYLE } from "@/lib/host-styles";
 
 const MCPJAM_APP_ORIGIN = "https://app.mcpjam.com";
@@ -80,6 +81,15 @@ export interface ChatboxBootstrapPayload {
    * runtime falls back to the active `hostStyle`'s preset.
    */
   hostCapabilitiesOverride?: Record<string, unknown>;
+  /**
+   * Versioned envelope for host-level MCP state — see
+   * `HostConfigMcpProfileV1` in `client/src/lib/host-config-v2.ts`.
+   * When undefined the hosted runtime falls back to SDK-default
+   * `clientInfo` / `supportedProtocolVersions` and the resource-declared
+   * sandbox policy. The backend canonicalizer guarantees a non-undefined
+   * value here is a valid `{ profileVersion: 1, ... }` envelope.
+   */
+  mcpProfile?: HostConfigMcpProfileV1;
 }
 
 export interface ChatboxSession {
@@ -170,6 +180,24 @@ function normalizeHostCapabilitiesOverride(
     return undefined;
   }
   return input as Record<string, unknown>;
+}
+
+function normalizeMcpProfile(
+  input: unknown,
+): HostConfigMcpProfileV1 | undefined {
+  // Same untrusted-shape gate as normalizeHostCapabilitiesOverride: this
+  // is the boundary between the redeem-response JSON and the typed
+  // session. The backend canonicalizer (`canonicalizeMcpProfile` in
+  // `convex/lib/hostConfigV2.ts`) is the source of truth for structural
+  // validity — a value reaching this point is either undefined or a
+  // backend-validated `{ profileVersion: 1, ... }` envelope. We only
+  // reject obvious shape errors (non-object, array, null) so an upstream
+  // serialization bug can't slip a truthy garbage payload into typed
+  // code that assumes the envelope shape.
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return undefined;
+  }
+  return input as HostConfigMcpProfileV1;
 }
 
 function normalizeChatboxShareMode(mode: unknown): ChatboxShareMode {
@@ -279,6 +307,9 @@ export function normalizeChatboxSession(
       hostCapabilitiesOverride: normalizeHostCapabilitiesOverride(
         (payload as { hostCapabilitiesOverride?: unknown })
           .hostCapabilitiesOverride,
+      ),
+      mcpProfile: normalizeMcpProfile(
+        (payload as { mcpProfile?: unknown }).mcpProfile,
       ),
     },
     surface: parsed.surface === "preview" ? "preview" : "share_link",

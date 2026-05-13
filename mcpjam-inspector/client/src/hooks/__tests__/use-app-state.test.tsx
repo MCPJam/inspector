@@ -67,6 +67,10 @@ vi.mock("convex/react", () => ({
     isAuthenticated: true,
     isLoading: false,
   }),
+  // useQuery is invoked from useAppState to read hostConfigsV2.getProjectDefault.
+  // Tests don't exercise mcpProfile-driven behavior, so returning undefined
+  // matches the "guest / no profile" path.
+  useQuery: () => undefined,
 }));
 
 vi.mock("@/lib/config", () => ({
