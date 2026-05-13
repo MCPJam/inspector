@@ -238,12 +238,17 @@ describe("countToolsTokens fallback behavior", () => {
   });
 
   it("returns 0 only when the input itself cannot be serialized", async () => {
-    // Circular reference -> JSON.stringify throws. The fetch never runs.
+    // Circular reference -> JSON.stringify throws inside the try block before
+    // fetch is reached. Spy on fetch to lock in that contract.
+    const fetchSpy = vi.fn();
+    global.fetch = fetchSpy as unknown as typeof global.fetch;
+
     const circular: Record<string, unknown> = {};
     circular.self = circular;
 
     const result = await countToolsTokens([circular], "claude-opus-4-1");
 
     expect(result).toBe(0);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
