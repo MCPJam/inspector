@@ -40,6 +40,8 @@ import {
   type WidgetCspData,
 } from "./chatgpt-widget-loaders";
 import { useHostContextStore } from "@/stores/host-context-store";
+import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
+import type { HostConfigMcpProfileV1 } from "@/lib/host-config-v2";
 import {
   extractHostDeviceCapabilities,
   extractHostLocale,
@@ -47,6 +49,7 @@ import {
   extractHostTheme,
   extractHostTimeZone,
 } from "@/lib/client-config";
+import { stableStringifyJson } from "@/lib/client-config";
 
 type ToolState =
   | "input-streaming"
@@ -252,6 +255,8 @@ function useWidgetFetch(
   deviceType: string,
   capabilities: { hover: boolean; touch: boolean },
   safeAreaInsets: { top: number; bottom: number; left: number; right: number },
+  mcpProfile: HostConfigMcpProfileV1 | undefined,
+  mcpProfileKey: string,
   onCspConfigReceived?: (csp: WidgetCspData) => void,
   isOffline?: boolean,
   cachedWidgetHtmlUrl?: string,
@@ -339,6 +344,17 @@ function useWidgetFetch(
       setWidgetUrl(null);
     }
   }, [cspMode, prevCspMode, widgetUrl]);
+
+  // Reset widget URL when the active mcpProfile changes so a saved
+  // policy edit (deny rule, restrictTo intersection, etc.) takes effect
+  // without a manual refresh.
+  const prevMcpProfileKeyRef = useRef<string>(mcpProfileKey);
+  useEffect(() => {
+    if (prevMcpProfileKeyRef.current !== mcpProfileKey) {
+      prevMcpProfileKeyRef.current = mcpProfileKey;
+      if (widgetUrl) setWidgetUrl(null);
+    }
+  }, [mcpProfileKey, widgetUrl]);
 
   // Serialize data for stable comparison (avoids re-running effect on reference changes)
   const serializedData = useMemo(
@@ -471,6 +487,7 @@ function useWidgetFetch(
             locale,
             cspMode,
             deviceType,
+            mcpProfile,
           });
 
           if (hostedData.csp && onCspConfigReceivedRef.current) {
@@ -515,6 +532,7 @@ function useWidgetFetch(
           deviceType,
           capabilities,
           safeAreaInsets,
+          mcpProfile,
           onWidgetHtmlCaptured,
         });
         if (isCancelled) return;
@@ -573,6 +591,10 @@ function useWidgetFetch(
     deviceType,
     capabilities,
     safeAreaInsets,
+    // Track mcpProfile by stable key so a parent that hands us a freshly
+    // cloned envelope on each render doesn't trigger a refetch.
+    mcpProfileKey,
+    mcpProfile,
     isOffline,
     cachedWidgetHtmlUrl,
     onWidgetHtmlCaptured,
@@ -627,6 +649,16 @@ export function ChatGPTAppRenderer({
   const inlineWidthRef = useRef<number | undefined>(undefined);
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const draftHostContext = useHostContextStore((s) => s.draftHostContext);
+  // Active hostConfig.mcpProfile from the surrounding scope; drives the
+  // server-side CSP resolver via the widget-content routes. Stable JSON
+  // key is what the load effect tracks so identical envelopes with
+  // different object identity don't force a reload.
+  const activeMcpProfile = useActiveMcpProfile();
+  const mcpProfileKey = useMemo(
+    () =>
+      activeMcpProfile === undefined ? "" : stableStringifyJson(activeMcpProfile),
+    [activeMcpProfile],
+  );
   // Get locale and time zone from playground store, fallback to browser settings
   const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);
   const playgroundTimeZone = useUIPlaygroundStore((s) => s.globals.timeZone);
@@ -776,14 +808,20 @@ export function ChatGPTAppRenderer({
   const setWidgetHtml = useWidgetDebugStore((s) => s.setWidgetHtml);
   const clearCspViolations = useWidgetDebugStore((s) => s.clearCspViolations);
 
-  // Clear CSP violations when CSP mode changes (stale data from previous mode)
+  // Clear CSP violations when CSP mode or the active mcpProfile changes
+  // (stale data from the previous policy).
   const prevCspModeRef = useRef(cspMode);
+  const prevProfileKeyDebugRef = useRef(mcpProfileKey);
   useEffect(() => {
-    if (prevCspModeRef.current !== cspMode) {
+    if (
+      prevCspModeRef.current !== cspMode ||
+      prevProfileKeyDebugRef.current !== mcpProfileKey
+    ) {
       clearCspViolations(resolvedToolCallId);
       prevCspModeRef.current = cspMode;
+      prevProfileKeyDebugRef.current = mcpProfileKey;
     }
-  }, [cspMode, resolvedToolCallId, clearCspViolations]);
+  }, [cspMode, mcpProfileKey, resolvedToolCallId, clearCspViolations]);
 
   // Mobile playground mode detection
   const isMobilePlaygroundMode = isPlaygroundActive && deviceType === "mobile";
@@ -841,6 +879,8 @@ export function ChatGPTAppRenderer({
     deviceType,
     capabilities,
     safeAreaInsets,
+    activeMcpProfile,
+    mcpProfileKey,
     handleCspConfigReceived,
     isOffline,
     cachedWidgetHtmlUrl,

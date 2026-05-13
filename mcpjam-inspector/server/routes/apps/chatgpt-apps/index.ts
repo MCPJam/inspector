@@ -5,10 +5,11 @@ import { CHATGPT_APPS_SANDBOX_PROXY_HTML } from "../SandboxProxyHtml.bundled";
 import {
   buildChatGptRuntimeHead,
   injectScripts,
-  buildCspHeader,
   type CspMode,
   type WidgetCspMeta,
 } from "../../../utils/widget-helpers";
+import { resolveWidgetCspPolicy } from "../../../utils/widget-csp-policy";
+import type { SandboxCspPolicy } from "@mcpjam/sdk";
 
 const chatgpt = new Hono();
 
@@ -34,6 +35,24 @@ interface SafeAreaInsets {
   right: number;
 }
 
+/**
+ * Host-config `mcpProfile` envelope as stored alongside the widget data.
+ * Kept structurally compatible with `HostConfigMcpProfileV1` on the
+ * client; only `apps.sandbox.csp` is consumed below, the rest passes
+ * through verbatim so future fields don't require a server migration.
+ */
+interface StoredMcpProfile {
+  profileVersion: 1;
+  apps?: {
+    sandbox?: {
+      csp?: SandboxCspPolicy;
+      [key: string]: unknown;
+    };
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
 interface WidgetData {
   serverId: string;
   uri: string;
@@ -50,6 +69,12 @@ interface WidgetData {
   cspMode?: CspMode; // CSP enforcement mode
   capabilities?: DeviceCapabilities; // Device capabilities (hover, touch)
   safeAreaInsets?: SafeAreaInsets; // Safe area insets for device notches, etc.
+  /**
+   * Persisted `hostConfig.mcpProfile` envelope. Stored at `/widget/store`
+   * time so `/widget-html/:toolId` and `/widget-content/:toolId` resolve
+   * the same CSP policy.
+   */
+  mcpProfile?: StoredMcpProfile;
   timestamp: number;
 }
 
@@ -166,9 +191,31 @@ chatgpt.post("/widget/store", async (c) => {
       cspMode,
       capabilities,
       safeAreaInsets,
+      mcpProfile,
     } = await c.req.json();
     if (!serverId || !uri || !toolId || !toolName)
       return c.json({ success: false, error: "Missing required fields" }, 400);
+
+    // Preserve `undefined` exactly — do NOT synthesize an empty
+    // `{ profileVersion: 1 }`. The renderer key relies on the distinction.
+    let storedProfile: StoredMcpProfile | undefined;
+    if (mcpProfile !== undefined) {
+      if (
+        mcpProfile === null ||
+        typeof mcpProfile !== "object" ||
+        Array.isArray(mcpProfile) ||
+        (mcpProfile as { profileVersion?: unknown }).profileVersion !== 1
+      ) {
+        return c.json(
+          {
+            success: false,
+            error: "Invalid mcpProfile: profileVersion must be 1",
+          },
+          400,
+        );
+      }
+      storedProfile = mcpProfile as StoredMcpProfile;
+    }
 
     widgetDataStore.set(toolId, {
       serverId,
@@ -191,6 +238,7 @@ chatgpt.post("/widget/store", async (c) => {
         left: 0,
         right: 0,
       }, // Safe area insets
+      mcpProfile: storedProfile,
       timestamp: Date.now(),
     });
     return c.json({ success: true });
@@ -241,6 +289,7 @@ chatgpt.get("/widget-html/:toolId", async (c) => {
       cspMode,
       capabilities,
       safeAreaInsets,
+      mcpProfile,
     } = widgetData;
     const mcpClientManager = c.mcpClientManager;
     const availableServers = mcpClientManager
@@ -262,8 +311,13 @@ chatgpt.get("/widget-html/:toolId", async (c) => {
       | WidgetCspMeta
       | undefined;
 
-    // Build CSP configuration based on mode
-    const cspConfig = buildCspHeader(cspMode ?? "permissive", widgetCspRaw);
+    // Build CSP configuration based on mode + saved host-config profile.
+    const cspConfig = resolveWidgetCspPolicy({
+      cspMode: cspMode ?? "permissive",
+      widgetCsp: widgetCspRaw,
+      sandboxCspPolicy: mcpProfile?.apps?.sandbox?.csp,
+      hostedMode: false,
+    });
 
     const runtimeConfig: RuntimeConfig = {
       toolId,
@@ -387,6 +441,7 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
       cspMode: storedCspMode,
       capabilities,
       safeAreaInsets,
+      mcpProfile,
     } = widgetData;
 
     // Use query param override if provided, otherwise use stored mode
@@ -424,8 +479,13 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
       | WidgetCspMeta
       | undefined;
 
-    // Build CSP based on effective mode
-    const cspConfig = buildCspHeader(effectiveCspMode, widgetCspRaw);
+    // Build CSP based on effective mode + saved host-config profile.
+    const cspConfig = resolveWidgetCspPolicy({
+      cspMode: effectiveCspMode,
+      widgetCsp: widgetCspRaw,
+      sandboxCspPolicy: mcpProfile?.apps?.sandbox?.csp,
+      hostedMode: false,
+    });
 
     const runtimeConfig: RuntimeConfig = {
       toolId,
