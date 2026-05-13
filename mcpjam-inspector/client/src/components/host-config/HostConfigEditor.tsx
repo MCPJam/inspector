@@ -823,7 +823,174 @@ function McpProfileSandboxEditor({
           permission the resource didn't request.
         </p>
       </div>
+
+      <McpProfilePermissionsAllowDenyEditor
+        mode={permissions?.mode ?? "resource-declared"}
+        allow={permissions?.allow}
+        deny={permissions?.deny}
+        onChange={(next) =>
+          updateSandbox({
+            permissions: {
+              ...(permissions ?? {}),
+              allow: next.allow,
+              deny: next.deny,
+            },
+          })
+        }
+      />
     </div>
+  );
+}
+
+/**
+ * Per-permission allow/deny grid for the four MCP Apps permission keys
+ * spec'd by SEP-1865 (`camera`, `microphone`, `geolocation`,
+ * `clipboardWrite` — camelCase, matching the resource's `_meta.ui.
+ * permissions` declaration; the kebab-case `clipboard-write` form
+ * belongs at the iframe `allow=` boundary, not in profile state).
+ *
+ * - Allow column: only meaningful in `custom` mode (the resolver seeds
+ *   the candidate set from `policy.allow` in custom mode); rendered
+ *   disabled in resource-declared / deny-all so the user can see the
+ *   shape without it being a no-op trap.
+ * - Deny column: applies in every mode (resolver subtracts after the
+ *   mode-derived candidate is built), so always enabled.
+ *
+ * Resource declaration is still the ceiling — toggling `allow` on for a
+ * permission the resource didn't request yields nothing at runtime. The
+ * help text below the grid spells this out.
+ */
+function McpProfilePermissionsAllowDenyEditor({
+  mode,
+  allow,
+  deny,
+  onChange,
+}: {
+  mode: "resource-declared" | "deny-all" | "custom";
+  allow: Record<string, boolean> | undefined;
+  deny: string[] | undefined;
+  onChange: (next: {
+    allow: Record<string, boolean> | undefined;
+    deny: string[] | undefined;
+  }) => void;
+}) {
+  const PERMISSION_KEYS: ReadonlyArray<{ key: string; label: string }> = [
+    { key: "camera", label: "Camera" },
+    { key: "microphone", label: "Microphone" },
+    { key: "geolocation", label: "Geolocation" },
+    { key: "clipboardWrite", label: "Clipboard write" },
+  ];
+  const allowEnabled = mode === "custom";
+  const allowMap = allow ?? {};
+  const denySet = new Set(deny ?? []);
+
+  const emitChange = (
+    nextAllow: Record<string, boolean>,
+    nextDeny: string[],
+  ) => {
+    // Collapse empty objects/arrays to `undefined` so the persisted
+    // envelope stays minimal and round-trips identically (matches the
+    // mcpProfile hash-dedupe expectations enforced by the backend).
+    const hasAllowEntries = Object.keys(nextAllow).length > 0;
+    const hasDenyEntries = nextDeny.length > 0;
+    onChange({
+      allow: hasAllowEntries ? nextAllow : undefined,
+      deny: hasDenyEntries ? nextDeny : undefined,
+    });
+  };
+
+  const toggleAllow = (key: string, granted: boolean) => {
+    const next = { ...allowMap };
+    if (granted) {
+      next[key] = true;
+    } else {
+      delete next[key];
+    }
+    emitChange(next, deny ?? []);
+  };
+
+  const toggleDeny = (key: string, denied: boolean) => {
+    const next = new Set(denySet);
+    if (denied) {
+      next.add(key);
+    } else {
+      next.delete(key);
+    }
+    emitChange(allow ?? {}, Array.from(next));
+  };
+
+  return (
+    <div className="grid gap-2 rounded-md border border-border/20 p-2">
+      <div className="grid grid-cols-[1fr_auto_auto] items-center gap-x-3 gap-y-1 text-xs">
+        <span className="font-medium text-muted-foreground">Permission</span>
+        <span
+          className={`font-medium ${
+            allowEnabled ? "text-muted-foreground" : "text-muted-foreground/50"
+          }`}
+          title={
+            allowEnabled
+              ? "Allow grants the permission (only in custom mode; resource declaration is the ceiling)"
+              : "Allow is only used in custom mode"
+          }
+        >
+          Allow
+        </span>
+        <span
+          className="font-medium text-muted-foreground"
+          title="Deny always blocks the permission, regardless of mode"
+        >
+          Deny
+        </span>
+        {PERMISSION_KEYS.map(({ key, label }) => (
+          <PermissionRow
+            key={key}
+            label={label}
+            allowChecked={!!allowMap[key]}
+            allowEnabled={allowEnabled}
+            denyChecked={denySet.has(key)}
+            onToggleAllow={(v) => toggleAllow(key, v)}
+            onToggleDeny={(v) => toggleDeny(key, v)}
+          />
+        ))}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Resource declaration is the ceiling — toggling Allow for a
+        permission the resource didn't request has no runtime effect.
+      </p>
+    </div>
+  );
+}
+
+function PermissionRow({
+  label,
+  allowChecked,
+  allowEnabled,
+  denyChecked,
+  onToggleAllow,
+  onToggleDeny,
+}: {
+  label: string;
+  allowChecked: boolean;
+  allowEnabled: boolean;
+  denyChecked: boolean;
+  onToggleAllow: (v: boolean) => void;
+  onToggleDeny: (v: boolean) => void;
+}) {
+  return (
+    <>
+      <span className="text-xs">{label}</span>
+      <Switch
+        checked={allowChecked}
+        disabled={!allowEnabled}
+        onCheckedChange={onToggleAllow}
+        aria-label={`Allow ${label}`}
+      />
+      <Switch
+        checked={denyChecked}
+        onCheckedChange={onToggleDeny}
+        aria-label={`Deny ${label}`}
+      />
+    </>
   );
 }
 

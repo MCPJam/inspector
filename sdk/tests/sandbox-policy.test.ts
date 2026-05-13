@@ -260,6 +260,57 @@ describe("resolveSandboxCsp — hosted-mode clamp", () => {
     expect(csp.connectDomains).toEqual(["https://safe.com"]);
   });
 
+  test("hosted clamp strips bare host:port forms (no scheme)", () => {
+    // P1 regression: the bare-host fallback used to call
+    // `isDangerousHostname` directly on strings like "localhost:3000",
+    // which the loopback/private-network patterns wouldn't match (they
+    // expect a port-less hostname). A hosted widget could declare a
+    // bare loopback source and escape the clamp. The URL-prefixed and
+    // protocol-relative forms have always been stripped — only the bare
+    // form leaked through.
+    const csp = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: [
+          "localhost:3000",
+          "127.0.0.1:8080",
+          "[::1]:9000",
+          "10.0.0.5:5432",
+          "192.168.1.1:80",
+          "api.example.com:443",
+        ],
+      },
+      policy: { mode: "declared" },
+      hostedMode: true,
+    });
+    // Only the public domain (with port) survives.
+    expect(csp.connectDomains).toEqual(["api.example.com:443"]);
+    expect(csp.trace.hostedClamp.stripped.connectDomains).toEqual(
+      expect.arrayContaining([
+        "localhost:3000",
+        "127.0.0.1:8080",
+        "[::1]:9000",
+        "10.0.0.5:5432",
+        "192.168.1.1:80",
+      ]),
+    );
+  });
+
+  test("hosted clamp strips bare loopback hosts with path suffix", () => {
+    // Same family as the port case: CSP host-source allows a path
+    // component (`host:port path`). The URL parser drops paths just as
+    // it drops ports, so this lands on the same fix as :port — covered
+    // explicitly because the original predicate would have left these
+    // untouched.
+    const csp = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: ["localhost/api", "127.0.0.1/admin"],
+      },
+      policy: { mode: "declared" },
+      hostedMode: true,
+    });
+    expect(csp.connectDomains).toEqual([]);
+  });
+
   test("hosted clamp is a no-op when hostedMode=false (dev)", () => {
     const csp = resolveSandboxCsp({
       resourceCsp: {
@@ -519,16 +570,46 @@ describe("resolveSandboxPermissions", () => {
         camera: true,
         microphone: true,
         geolocation: true,
-        "clipboard-write": true,
+        clipboardWrite: true,
       },
       policy: { mode: "resource-declared" }, // user opted into resource-declared
       hostedMode: true,
     });
     // Default hostedClampDeny strips camera/microphone/geolocation.
-    expect(perms.granted).toEqual({ "clipboard-write": true });
+    expect(perms.granted).toEqual({ clipboardWrite: true });
     expect(perms.trace.deniedByHostedClamp).toEqual(
       expect.arrayContaining(["camera", "microphone", "geolocation"]),
     );
+  });
+
+  test("profile deny removes clipboardWrite by its camelCase MCP key", () => {
+    // P2 regression: the resolver does plain string-key matching against
+    // `resourcePermissions`, which is the spec's `_meta.ui.permissions`
+    // map (camelCase per SEP-1865). A profile that denied
+    // `"clipboard-write"` (kebab, the Permission-Policy spelling) used
+    // to silently no-op because no resource key by that name existed.
+    // The clamp doc and HostConfigEditor now both standardize on the
+    // camelCase MCP key — this test pins that semantics.
+    const perms = resolveSandboxPermissions({
+      resourcePermissions: { clipboardWrite: true, camera: true },
+      policy: { mode: "resource-declared", deny: ["clipboardWrite"] },
+      hostedMode: false,
+    });
+    expect(perms.granted).toEqual({ camera: true });
+    expect(perms.trace.deniedByProfile).toEqual(["clipboardWrite"]);
+  });
+
+  test("custom mode allows clipboardWrite by its camelCase MCP key", () => {
+    const perms = resolveSandboxPermissions({
+      resourcePermissions: { clipboardWrite: true, camera: true },
+      policy: {
+        mode: "custom",
+        allow: { clipboardWrite: true },
+      },
+      hostedMode: false,
+    });
+    // resource declaration is the ceiling; only the allow entry passes.
+    expect(perms.granted).toEqual({ clipboardWrite: true });
   });
 
   test("profile deny wins over allow", () => {
@@ -663,5 +744,82 @@ describe("resolveSandboxCsp — hosted clamp hostname normalization", () => {
       hostedMode: true,
     });
     expect(csp.connectDomains).toEqual(["https://good.com"]);
+  });
+
+  // Codex P1 finding: an earlier shape only caught IPv4-mapped IPv6 in
+  // the 127/8 loopback range, leaving RFC1918, link-local, and shared
+  // address space reachable via the mapped form. The URL parser
+  // canonicalizes `::ffff:192.168.1.1` to `::ffff:c0a8:101`, which
+  // bypasses dotted-IPv4 regexes. Unpack the hex form and re-run the
+  // full ruleset.
+  test("strips IPv4-mapped IPv6 representations of RFC1918 / link-local / shared ranges", () => {
+    const csp = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: [
+          "https://[::ffff:192.168.1.1]", // RFC1918 via mapped
+          "https://[::ffff:10.0.0.5]", // RFC1918 via mapped
+          "https://[::ffff:172.16.0.1]", // RFC1918 via mapped
+          "https://[::ffff:169.254.169.254]", // cloud metadata via mapped
+          "https://[::ffff:100.64.0.1]", // shared address via mapped
+          "https://[::ffff:0.0.0.0]", // unspecified via mapped
+          "https://safe.example.com",
+        ],
+      },
+      policy: { mode: "declared" },
+      hostedMode: true,
+    });
+    expect(csp.connectDomains).toEqual(["https://safe.example.com"]);
+  });
+
+  // CodeRabbit Major #5: bare host expressions with ports
+  // (`localhost:3000`, `127.0.0.1:8080`) used to bypass stripping because
+  // `isDangerousHostname` received the `host:port` literal. The
+  // fallback now synthesizes `https://...` and reuses the URL parser.
+  test("strips bare host expressions that include ports", () => {
+    const csp = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: [
+          "localhost:3000",
+          "127.0.0.1:8080",
+          "192.168.1.1:8443",
+          "safe.example.com:443",
+        ],
+      },
+      policy: { mode: "declared" },
+      hostedMode: true,
+    });
+    expect(csp.connectDomains).toEqual(["safe.example.com:443"]);
+  });
+});
+
+describe("matchesAnyDeny — case-insensitivity (CodeRabbit Major #4)", () => {
+  // CSP scheme + host matching is case-insensitive per the URL spec, and
+  // DNS hostnames are case-insensitive. A deny rule that compares raw
+  // strings lets a widget bypass with case variants (e.g. profile says
+  // `deny: ["evil.com"]`, widget declares `Evil.com` → not stripped).
+  test("exact match: pattern and domain differ only in case", () => {
+    const csp = resolveSandboxCsp({
+      resourceCsp: { connectDomains: ["Evil.com", "safe.com"] },
+      policy: {
+        mode: "declared",
+        deny: { connectDomains: ["evil.com"] },
+      },
+      hostedMode: false,
+    });
+    expect(csp.connectDomains).toEqual(["safe.com"]);
+  });
+
+  test("wildcard match: case-variant subdomain still matches deny pattern", () => {
+    const csp = resolveSandboxCsp({
+      resourceCsp: {
+        connectDomains: ["https://API.Evil.COM", "https://safe.com"],
+      },
+      policy: {
+        mode: "declared",
+        deny: { connectDomains: ["https://*.evil.com"] },
+      },
+      hostedMode: false,
+    });
+    expect(csp.connectDomains).toEqual(["https://safe.com"]);
   });
 });

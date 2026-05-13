@@ -83,6 +83,14 @@ export interface SandboxCspPolicy {
 /**
  * The `apps.sandbox.permissions` slice. Mirrors
  * `mcpProfile.apps.sandbox.permissions`.
+ *
+ * **Key shape:** `allow` keys and `deny` entries MUST use the same
+ * names as the MCP `_meta.ui.permissions` declaration (SEP-1865
+ * §UIResourceMeta — camelCase: `camera`, `microphone`, `geolocation`,
+ * `clipboardWrite`). The resolver does plain string-key matching
+ * against `resourcePermissions`, so any kebab-case entries (`clipboard-
+ * write`) will silently no-op — the spec's kebab form belongs at the
+ * iframe `allow=` attribute layer, not here.
  */
 export interface SandboxPermissionsPolicy {
   mode?: SandboxPermissionsMode;
@@ -190,9 +198,12 @@ export interface ResolveSandboxCspArgs {
 export interface ResolveSandboxPermissionsArgs {
   /**
    * Permissions the resource requested in its `_meta.ui.permissions`.
-   * Boolean map keyed by permission name (`camera`, `microphone`,
-   * `geolocation`, `clipboard-write`, ...). The resource declaration is
-   * the CEILING — host can't grant a permission the resource didn't
+   * Boolean map keyed by permission name as declared in SEP-1865
+   * (camelCase: `camera`, `microphone`, `geolocation`, `clipboardWrite`).
+   * The kebab-case forms (`clipboard-write`) are the browser
+   * Permission-Policy spelling and belong at the iframe `allow=`
+   * attribute layer — not here. The resource declaration is the
+   * CEILING: the host can't grant a permission the resource didn't
    * request.
    */
   resourcePermissions?: Record<string, boolean>;
@@ -459,14 +470,23 @@ function normalizeDomainSet(value: ResourceDeclaredCsp): {
  * `https://api.example.com` and `https://other.example.com`, but NOT
  * `https://example.com` itself (the wildcard requires a subdomain).
  * Exact match also wins.
+ *
+ * Matching is case-insensitive on the whole source expression: CSP
+ * source expressions normalize scheme + host per the URL spec, DNS
+ * hostnames are case-insensitive, and the deny rules in this codebase
+ * don't carry case-significant paths. Comparing raw strings let
+ * `deny: ["Evil.com"]` slip past a widget declaring `"evil.com"` — that
+ * inversion is exactly what deny rules exist to prevent.
  */
 function matchesAnyDeny(domain: string, denyList: string[]): boolean {
+  const domainLower = domain.toLowerCase();
   for (const pattern of denyList) {
-    if (pattern === domain) return true;
-    if (pattern.includes("*")) {
-      const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+    const patternLower = pattern.toLowerCase();
+    if (patternLower === domainLower) return true;
+    if (patternLower.includes("*")) {
+      const escaped = patternLower.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
       const regexPattern = "^" + escaped.replace(/\*/g, "[^/]+") + "$";
-      if (new RegExp(regexPattern).test(domain)) return true;
+      if (new RegExp(regexPattern).test(domainLower)) return true;
     }
   }
   return false;
@@ -555,7 +575,14 @@ function isHostedDangerousDomain(domain: string): boolean {
     return false;
   }
 
-  return isDangerousHostname(trimmed.toLowerCase());
+  // Bare host source expressions may include a port (`localhost:3000`,
+  // `[::1]:9000`) or a path. The hostname-pattern checks below don't
+  // accept either suffix — `host === "localhost"` would miss
+  // `"localhost:3000"`, letting a hosted widget declare a loopback
+  // origin and bypass the clamp. Synthesize a scheme so the URL parser
+  // strips port/path uniformly (same trick used for protocol-relative
+  // forms above).
+  return isDangerousHostname(extractHostname("https://" + trimmed));
 }
 
 /**
@@ -604,22 +631,60 @@ function isDangerousHostname(hostname: string): boolean {
     return true;
   }
 
-  // IPv6 loopback / link-local / IPv4-mapped loopback. The URL parser
-  // canonicalizes these to lower case + collapses zeros, so direct prefix
-  // checks suffice.
+  // IPv6 loopback / link-local. The URL parser canonicalizes these to
+  // lower case + collapses zeros, so direct prefix checks suffice.
   if (host === "::1") return true;
   if (host.startsWith("fe80:")) return true;
-  // IPv4-mapped IPv6 loopback. The URL parser canonicalizes
-  // `::ffff:127.0.0.1` to its hex form `::ffff:7f00:1` (and similar for
-  // other addresses in 127.0.0.0/8), so check both the canonical hex
-  // shape (`::ffff:7fXX:XXXX`) AND the dotted form (preserved when the
-  // string never round-tripped through `new URL`, e.g. bare host
-  // expressions). `7f00` is `127.0` in hex; the full prefix `::ffff:7f`
-  // covers every IPv4-mapped address in 127.0.0.0/8.
-  if (/^::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}$/.test(host)) return true;
-  if (/^::ffff:127(?:\.\d{1,3}){3}$/.test(host)) return true;
+
+  // IPv4-mapped IPv6 addresses (`::ffff:a.b.c.d`). The URL parser
+  // canonicalizes the dotted form to hex pairs (`::ffff:7f00:1` for
+  // `::ffff:127.0.0.1`, `::ffff:c0a8:101` for `::ffff:192.168.1.1`), so
+  // we MUST unpack the hex form and re-run the full IPv4 ruleset, not
+  // just the 127/8 prefix — otherwise a hosted widget could declare a
+  // RFC1918 origin via the mapped form and bypass the clamp entirely
+  // (the codex P1 finding). The dotted form is also accepted for
+  // strings that never round-tripped through `new URL`.
+  const mappedDotted = unpackIPv4MappedIPv6(host);
+  if (mappedDotted) {
+    // Recurse with the unpacked IPv4 — this hits every loopback /
+    // RFC1918 / link-local / shared rule above.
+    if (isDangerousHostname(mappedDotted)) return true;
+  }
   // IPv6 unique local addresses (fc00::/7).
   if (/^f[cd][0-9a-f]{2}:/.test(host)) return true;
 
   return false;
+}
+
+/**
+ * Unpack an IPv4-mapped IPv6 address into its dotted IPv4 form, or
+ * return `null` if the input isn't a mapped address. Accepts both:
+ *
+ *   - The canonical hex form the URL parser produces:
+ *     `::ffff:7f00:1` → `127.0.0.1`, `::ffff:c0a8:101` → `192.168.1.1`.
+ *   - The dotted form callers may pass directly (rare, but possible if
+ *     a string never went through `new URL`):
+ *     `::ffff:127.0.0.1` → `127.0.0.1`.
+ *
+ * The leading `::ffff:` prefix MUST be present; we don't accept
+ * compatibility-style mapped addresses (`::a.b.c.d`) — those are a
+ * deprecated form per RFC 4291 and the URL parser doesn't produce them.
+ */
+function unpackIPv4MappedIPv6(host: string): string | null {
+  // Dotted form: `::ffff:a.b.c.d`.
+  const dotted = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(host);
+  if (dotted) return dotted[1];
+
+  // Hex form: `::ffff:HHHH:HHHH` where each HHHH is one 16-bit group.
+  const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
+  if (!hex) return null;
+  const hi = parseInt(hex[1], 16);
+  const lo = parseInt(hex[2], 16);
+  if (!Number.isFinite(hi) || !Number.isFinite(lo)) return null;
+  return [
+    (hi >> 8) & 0xff,
+    hi & 0xff,
+    (lo >> 8) & 0xff,
+    lo & 0xff,
+  ].join(".");
 }
