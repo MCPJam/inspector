@@ -5,6 +5,7 @@
 import {
   type CallToolResult,
   Client,
+  type ClientOptions,
   type LoggingLevel,
   SSEClientTransport,
   type ServerCapabilities,
@@ -143,6 +144,21 @@ export class MCPClientManager {
   // Default options
   private readonly defaultClientName: string | undefined;
   private readonly defaultClientVersion: string;
+  /**
+   * Extra `clientInfo` fields (e.g. `title`) merged into the per-connection
+   * `clientInfo` object alongside name/version. Per-server `clientInfo`
+   * overrides individual keys. Lets the inspector pass forward-compat MCP
+   * spec additions (the `title` field, future fields) without an SDK bump.
+   */
+  private readonly defaultClientInfoExtras: Record<string, unknown>;
+  /**
+   * Default supported protocol versions accept-list. Forwarded to the
+   * upstream Client as `ClientOptions.supportedProtocolVersions`. Per-
+   * server `supportedProtocolVersions` overrides this. Undefined here
+   * preserves historical behavior (upstream Client's built-in
+   * `SUPPORTED_PROTOCOL_VERSIONS` default).
+   */
+  private readonly defaultSupportedProtocolVersions: string[] | undefined;
   private readonly defaultCapabilities: ClientCapabilityOptions;
   private readonly defaultTimeout: number;
   private readonly defaultLogJsonRpc: boolean;
@@ -167,6 +183,9 @@ export class MCPClientManager {
     this.defaultClientVersion =
       options.defaultClientVersion ?? DEFAULT_CLIENT_VERSION;
     this.defaultClientName = options.defaultClientName;
+    this.defaultClientInfoExtras = options.defaultClientInfoExtras ?? {};
+    this.defaultSupportedProtocolVersions =
+      options.defaultSupportedProtocolVersions;
     this.defaultCapabilities = mergeClientCapabilities(
       getDefaultClientCapabilities(),
       options.defaultCapabilities
@@ -1110,12 +1129,47 @@ export class MCPClientManager {
     let transport: Transport | undefined;
     const clientCapabilities = this.buildCapabilities(serverId, config);
     try {
+      // Resolve clientInfo from (in order): per-server `clientInfo` >
+      // per-server `version` (legacy) > manager defaults. Extras (e.g.
+      // `title` and future spec fields) merge through verbatim so the
+      // inspector can advertise them without an SDK bump.
+      const resolvedClientInfo: Record<string, unknown> = {
+        ...this.defaultClientInfoExtras,
+        ...(config.clientInfo ?? {}),
+        name:
+          config.clientInfo?.name ??
+          this.defaultClientName ??
+          serverId,
+        version:
+          config.clientInfo?.version ??
+          config.version ??
+          this.defaultClientVersion,
+      };
+      // Resolve the supported protocol versions accept-list. Per-server
+      // `supportedProtocolVersions` wins over
+      // `defaultSupportedProtocolVersions`; when neither is set we omit the
+      // option so the upstream Client uses its built-in
+      // `SUPPORTED_PROTOCOL_VERSIONS` default (preserves historical wire
+      // behavior byte-for-byte). The MCP SDK's Client accepts
+      // `supportedProtocolVersions: string[]` in ClientOptions —
+      // `supportedProtocolVersions[0]` is sent in
+      // `initialize.params.protocolVersion`; the full set is the accept-
+      // list used to validate the server's response. Forwarding the full
+      // array (rather than collapsing to a single entry) lets users pin a
+      // multi-version accept-list — e.g. `["2025-11-25", "2025-06-18"]`
+      // proposes the newer version but still accepts the older one.
+      const supportedProtocolVersions =
+        config.supportedProtocolVersions ??
+        this.defaultSupportedProtocolVersions;
+      const clientOptions: ClientOptions = {
+        capabilities: clientCapabilities,
+        ...(supportedProtocolVersions && supportedProtocolVersions.length > 0
+          ? { supportedProtocolVersions }
+          : {}),
+      };
       client = new Client(
-        {
-          name: this.defaultClientName ?? serverId,
-          version: config.version ?? this.defaultClientVersion,
-        },
-        { capabilities: clientCapabilities }
+        resolvedClientInfo as { name: string; version: string },
+        clientOptions
       );
 
       // Apply handlers

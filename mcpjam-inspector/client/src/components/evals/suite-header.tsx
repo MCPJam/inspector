@@ -38,6 +38,8 @@ import { toast } from "sonner";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { PassCriteriaBadge } from "./pass-criteria-badge";
+import { RunValidatorsPopover } from "./run-validators-popover";
+import { resolveMatchOptions, type EvalMatchOptions } from "@/shared/eval-matching";
 import { RunHeaderCompactStats } from "./run-header-compact-stats";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { getSuiteReplayEligibility } from "./replay-eligibility";
@@ -59,7 +61,13 @@ interface SuiteHeaderProps {
   viewMode: "overview" | "run-detail" | "test-detail" | "test-edit";
   selectedRunDetails: EvalSuiteRun | null;
   isEditMode: boolean;
-  onRerun: (suite: EvalSuite) => void;
+  onRerun: (
+    suite: EvalSuite,
+    opts?: {
+      matchOptionsOverride?: EvalMatchOptions;
+      iterationOverride?: number;
+    },
+  ) => void;
   onReplayRun?: (suite: EvalSuite, run: EvalSuiteRun) => void;
   onCancelRun: (runId: string) => void;
   onViewModeChange: (mode: "overview") => void;
@@ -157,6 +165,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState(suite.name);
+  const [runMatchOptionsOverride, setRunMatchOptionsOverride] = useState<
+    EvalMatchOptions | undefined
+  >(undefined);
   const updateSuite = useMutation("testSuites:updateTestSuite" as any);
 
   const latestRunForMetadata = useMemo(() => {
@@ -421,6 +432,15 @@ export function SuiteHeader(props: SuiteHeaderProps) {
           const runAllButton = (
             <div className="flex items-center gap-2">
               {iterationPicker}
+              <RunValidatorsPopover
+                persistedEffective={resolveMatchOptions(
+                  suite.defaultMatchOptions,
+                )}
+                runOverride={runMatchOptionsOverride}
+                onChange={setRunMatchOptionsOverride}
+                variant="icon"
+                disabled={isRerunning}
+              />
               <Button
                 type="button"
                 variant="default"
@@ -437,7 +457,14 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                     suite_id: suite._id,
                     iteration_override: iterationOverride ?? null,
                   });
-                  onRerun(suite);
+                  onRerun(suite, {
+                    ...(runMatchOptionsOverride
+                      ? { matchOptionsOverride: runMatchOptionsOverride }
+                      : {}),
+                    ...(iterationOverride !== undefined
+                      ? { iterationOverride }
+                      : {}),
+                  });
                 }}
               >
                 {isRerunning ? (
@@ -671,7 +698,17 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                       onClick={() =>
                         replayableLatestRun
                           ? onReplayRun?.(suite, replayableLatestRun)
-                          : onRerun(suite)
+                          : onRerun(suite, {
+                              ...(runMatchOptionsOverride
+                                ? {
+                                    matchOptionsOverride:
+                                      runMatchOptionsOverride,
+                                  }
+                                : {}),
+                              ...(iterationOverride !== undefined
+                                ? { iterationOverride }
+                                : {}),
+                            })
                       }
                       disabled={
                         replayableLatestRun

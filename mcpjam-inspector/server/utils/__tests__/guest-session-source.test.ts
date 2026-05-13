@@ -34,7 +34,7 @@ describe("guest-session-source", () => {
     delete process.env.MCPJAM_GUEST_JWKS_URL;
     mockProvisionGuestAuthConfigToConvex.mockResolvedValue(undefined);
     mockGetGuestSessionSharedSecret.mockReturnValue(
-      "test-guest-session-secret",
+      "test-guest-session-secret"
     );
     global.fetch = vi.fn();
   });
@@ -69,8 +69,8 @@ describe("guest-session-source", () => {
         {
           status: 200,
           headers: { "Content-Type": "application/json" },
-        },
-      ),
+        }
+      )
     );
 
     const { fetchRemoteGuestSession } = await import(
@@ -87,7 +87,7 @@ describe("guest-session-source", () => {
       expect.objectContaining({
         method: "POST",
         signal: expect.anything(),
-      }),
+      })
     );
   });
 
@@ -102,8 +102,8 @@ describe("guest-session-source", () => {
         {
           status: 200,
           headers: { "Content-Type": "application/json" },
-        },
-      ),
+        }
+      )
     );
 
     const { fetchConvexGuestSession } = await import(
@@ -120,13 +120,13 @@ describe("guest-session-source", () => {
       expect.objectContaining({
         method: "POST",
         signal: expect.anything(),
-      }),
+      })
     );
   });
 
   it("returns kind:miss for upstream 204 (lookup_only)", async () => {
     vi.mocked(global.fetch).mockResolvedValue(
-      new Response(null, { status: 204 }),
+      new Response(null, { status: 204 })
     );
     const { fetchConvexGuestSession } = await import(
       "../guest-session-source.js"
@@ -139,7 +139,7 @@ describe("guest-session-source", () => {
 
   it("returns kind:miss for upstream 404 in lookup_only mode", async () => {
     vi.mocked(global.fetch).mockResolvedValue(
-      new Response(null, { status: 404 }),
+      new Response(null, { status: 404 })
     );
     const { fetchConvexGuestSession } = await import(
       "../guest-session-source.js"
@@ -152,7 +152,7 @@ describe("guest-session-source", () => {
 
   it("returns kind:error for upstream 404 in lookup_or_create mode (not silent miss)", async () => {
     vi.mocked(global.fetch).mockResolvedValue(
-      new Response(null, { status: 404 }),
+      new Response(null, { status: 404 })
     );
     const { fetchConvexGuestSession } = await import(
       "../guest-session-source.js"
@@ -179,15 +179,17 @@ describe("guest-session-source", () => {
             "Content-Type": "application/json",
             "Set-Cookie": "__Host-mcpjam_guest_session=opaque; Path=/",
           },
-        },
-      ),
+        }
+      )
     );
     const { fetchConvexGuestSession } = await import(
       "../guest-session-source.js"
     );
     const result = await fetchConvexGuestSession();
     expect(result.setCookies.length).toBeGreaterThan(0);
-    expect(result.setCookies[0]).toContain("__Host-mcpjam_guest_session=opaque");
+    expect(result.setCookies[0]).toContain(
+      "__Host-mcpjam_guest_session=opaque"
+    );
   });
 
   it("forwards browser cookie/UA and omits spoofable IP headers upstream", async () => {
@@ -198,8 +200,8 @@ describe("guest-session-source", () => {
           token: "t",
           expiresAt: Date.now() + 60_000,
         }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      )
     );
     const { fetchConvexGuestSession } = await import(
       "../guest-session-source.js"
@@ -217,7 +219,7 @@ describe("guest-session-source", () => {
     expect(headers["X-Forwarded-For"]).toBeUndefined();
     expect(headers["X-Real-IP"]).toBeUndefined();
     expect(init.body).toBe(
-      JSON.stringify({ mode: "lookup_or_create", legacyToken: "legacy" }),
+      JSON.stringify({ mode: "lookup_or_create", legacyToken: "legacy" })
     );
   });
 
@@ -229,8 +231,8 @@ describe("guest-session-source", () => {
           token: "t",
           expiresAt: Date.now() + 60_000,
         }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      )
     );
     const { fetchConvexGuestSession } = await import(
       "../guest-session-source.js"
@@ -246,7 +248,7 @@ describe("guest-session-source", () => {
     expect(headers["x-mcpjam-guest-ip-hash"]).toBe("abc-hash");
   });
 
-  it("sends _unknown sentinel when ipHash is null but the field is set", async () => {
+  it("omits x-mcpjam-guest-ip-hash when ipHash is null", async () => {
     vi.mocked(global.fetch).mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -254,8 +256,8 @@ describe("guest-session-source", () => {
           token: "t",
           expiresAt: Date.now() + 60_000,
         }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      )
     );
     const { fetchConvexGuestSession } = await import(
       "../guest-session-source.js"
@@ -268,7 +270,7 @@ describe("guest-session-source", () => {
 
     const init = vi.mocked(global.fetch).mock.calls[0]![1] as RequestInit;
     const headers = init.headers as Record<string, string>;
-    expect(headers["x-mcpjam-guest-ip-hash"]).toBe("_unknown");
+    expect(headers["x-mcpjam-guest-ip-hash"]).toBeUndefined();
   });
 
   it("waits for provisioning before fetching Convex JWKS", async () => {
@@ -276,7 +278,7 @@ describe("guest-session-source", () => {
       new Response(JSON.stringify({ keys: [] }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
-      }),
+      })
     );
 
     const { fetchRemoteGuestJwks } = await import("../guest-session-source.js");
@@ -290,7 +292,7 @@ describe("guest-session-source", () => {
         method: "GET",
         headers: { Accept: "application/json" },
         signal: expect.anything(),
-      }),
+      })
     );
   });
 });

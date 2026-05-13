@@ -3,6 +3,8 @@ import "../../types/hono";
 import {
   mapModelIdToTokenizerBackend,
   estimateTokensFromChars,
+  isFetchConnectionFailure,
+  getFetchErrorCause,
 } from "../../utils/tokenizer-helpers";
 import { logger } from "../../utils/logger";
 
@@ -121,10 +123,20 @@ tokenizer.post("/count-tools", async (c) => {
             tokenCounts[serverId] = estimateTokensFromChars(toolsText);
           }
         } catch (error) {
-          logger.warn(`[tokenizer] Error counting tokens for server`, {
-            serverId,
-            error: error instanceof Error ? error.message : String(error),
-          });
+          // Connection-level failures reaching the Convex tokenizer come from
+          // the caller's network, not our backend — log locally and move on.
+          if (isFetchConnectionFailure(error)) {
+            logger.debug(
+              `[tokenizer] Backend unreachable for server, falling back to estimate`,
+              { serverId, cause: getFetchErrorCause(error) },
+            );
+          } else {
+            logger.warn(`[tokenizer] Error counting tokens for server`, {
+              serverId,
+              error: error instanceof Error ? error.message : String(error),
+              cause: getFetchErrorCause(error),
+            });
+          }
           // Fallback to character-based estimation on error
           try {
             const tools = await mcpClientManager.getToolsForAiSdk([serverId]);
@@ -247,9 +259,20 @@ tokenizer.post("/count-text", async (c) => {
           });
         }
       } catch (error) {
-        logger.warn(`[tokenizer] Error counting tokens for text`, {
-          error: error instanceof Error ? error.message : String(error),
-        });
+        // Connection-level failures (DNS, ECONNREFUSED, TLS) are user-network
+        // issues, not backend problems. Demote to debug so they don't page
+        // Sentry; backend HTTP/logical errors are already handled above as warnings.
+        if (isFetchConnectionFailure(error)) {
+          logger.debug(
+            `[tokenizer] Backend unreachable, falling back to estimate`,
+            { cause: getFetchErrorCause(error) },
+          );
+        } else {
+          logger.warn(`[tokenizer] Error counting tokens for text`, {
+            error: error instanceof Error ? error.message : String(error),
+            cause: getFetchErrorCause(error),
+          });
+        }
         // Fallback to character-based estimation on error
         return c.json({
           ok: true,

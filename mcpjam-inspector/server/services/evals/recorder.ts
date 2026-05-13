@@ -298,6 +298,7 @@ export const startSuiteRunWithRecorder = async ({
   toolSnapshot,
   toolSnapshotDebug,
   iterationOverride,
+  matchOptionsOverride,
 }: {
   convexClient: ConvexHttpClient;
   suiteId: string;
@@ -323,6 +324,12 @@ export const startSuiteRunWithRecorder = async ({
    * `testCase.runs` is untouched.
    */
   iterationOverride?: number;
+  /**
+   * One-off match-option override for this run only. Convex
+   * `precreateIterationsForRun` resolves it on top of suite default +
+   * case override into each iteration's `testCaseSnapshot.matchOptions`.
+   */
+  matchOptionsOverride?: import("@/shared/eval-matching").MatchOptionsDTO;
 }) => {
   const response = await convexClient.mutation(
     "testSuites:startTestSuiteRun" as any,
@@ -336,6 +343,7 @@ export const startSuiteRunWithRecorder = async ({
       toolSnapshot: sanitizeForConvexTransport(toolSnapshot),
       toolSnapshotDebug: sanitizeForConvexTransport(toolSnapshotDebug),
       iterationOverride,
+      matchOptionsOverride,
     },
   );
 
@@ -372,6 +380,7 @@ export const startSuiteRunWithRecorder = async ({
           expectedOutput: tc.expectedOutput,
           promptTurns: tc.promptTurns,
           advancedConfig: tc.advancedConfig,
+          matchOptions: tc.matchOptions,
           testCaseId: tc._id,
         }));
       }
@@ -389,6 +398,7 @@ export const startSuiteRunWithRecorder = async ({
             expectedOutput: tc.expectedOutput,
             promptTurns: tc.promptTurns,
             advancedConfig: tc.advancedConfig,
+            matchOptions: tc.matchOptions,
             testCaseId: tc.testCaseId ?? tc._id,
           },
         ];

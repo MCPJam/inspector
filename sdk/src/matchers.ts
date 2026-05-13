@@ -67,6 +67,41 @@ export type EvalToolCallMatchResult = {
   passed: boolean;
 };
 
+/**
+ * Canonical defaults for {@link EvalMatchOptions}. Exported so the
+ * inspector server, client, and tests share a single source of truth
+ * with `evaluateToolCalls` instead of redefining the same literals.
+ */
+export const MATCH_OPTIONS_DEFAULTS: Required<EvalMatchOptions> = {
+  toolCallOrder: "ignore",
+  allowExtraToolCalls: true,
+  argumentMatching: "partial",
+};
+
+/**
+ * Merge match options from suite → case → run-override layers on top of
+ * defaults. `undefined` fields inherit from the next layer; explicit
+ * values win at their layer. Returns a fully-populated options object
+ * suitable to snapshot or pass directly to `evaluateToolCalls`.
+ */
+export function resolveMatchOptions(
+  suite?: EvalMatchOptions,
+  testCase?: EvalMatchOptions,
+  runOverride?: EvalMatchOptions,
+): Required<EvalMatchOptions> {
+  const merged: Required<EvalMatchOptions> = { ...MATCH_OPTIONS_DEFAULTS };
+  for (const layer of [suite, testCase, runOverride]) {
+    if (!layer) continue;
+    if (layer.toolCallOrder !== undefined)
+      merged.toolCallOrder = layer.toolCallOrder;
+    if (layer.allowExtraToolCalls !== undefined)
+      merged.allowExtraToolCalls = layer.allowExtraToolCalls;
+    if (layer.argumentMatching !== undefined)
+      merged.argumentMatching = layer.argumentMatching;
+  }
+  return merged;
+}
+
 type ArgumentPlaceholder =
   | "any"
   | "string"
@@ -191,9 +226,12 @@ export function evaluateToolCalls(
   const normalizedExpected = Array.isArray(expected) ? expected : [];
   const normalizedActual = Array.isArray(actual) ? actual : [];
 
-  const toolCallOrder = options?.toolCallOrder ?? "ignore";
-  const allowExtraToolCalls = options?.allowExtraToolCalls ?? true;
-  const argumentMatching = options?.argumentMatching ?? "partial";
+  const toolCallOrder =
+    options?.toolCallOrder ?? MATCH_OPTIONS_DEFAULTS.toolCallOrder;
+  const allowExtraToolCalls =
+    options?.allowExtraToolCalls ?? MATCH_OPTIONS_DEFAULTS.allowExtraToolCalls;
+  const argumentMatching =
+    options?.argumentMatching ?? MATCH_OPTIONS_DEFAULTS.argumentMatching;
 
   if (options?.isNegativeTest) {
     return {

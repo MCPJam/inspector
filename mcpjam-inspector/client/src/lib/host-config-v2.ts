@@ -28,6 +28,73 @@ export type HostConfigConnectionDefaults = {
 };
 
 /**
+ * Four parallel allow/deny lists keyed by CSP directive family. Mirrors
+ * `CspDomainSet` in the backend (`convex/lib/hostConfigV2.ts`). Canonicalized
+ * server-side as a set (trimmed, deduped, sorted); the client may emit
+ * arrays in any order — the backend hash dedupes regardless.
+ */
+export type CspDomainSet = {
+  connectDomains?: string[];
+  resourceDomains?: string[];
+  frameDomains?: string[];
+  baseUriDomains?: string[];
+};
+
+/**
+ * Versioned envelope for host-level MCP state. Mirror of
+ * `HostConfigMcpProfileV1` in `convex/lib/hostConfigV2.ts` — kept in sync by
+ * hand so the inspector and backend speak one shape.
+ *
+ * `profileVersion: 1` is a forward-compat trip wire: a future incompatible
+ * shape will introduce `profileVersion: 2`. The backend rejects any other
+ * value at write time.
+ *
+ * Every field is optional; `undefined` at any nest depth means "use SDK
+ * defaults / no host-level override." `undefined` and `{ profileVersion: 1 }`
+ * (empty envelope) hash distinctly on the backend, so the inspector MUST NOT
+ * synthesize an empty envelope when the user hasn't opted in.
+ */
+export type HostConfigMcpProfileV1 = {
+  profileVersion: 1;
+  initialize?: {
+    /**
+     * Ordered accept-list. First entry is sent in
+     * `initialize.params.protocolVersion`; all entries form the accept-set.
+     * Order is semantic — do NOT sort on the client.
+     */
+    supportedProtocolVersions?: string[];
+    /**
+     * The exact `initialize.clientInfo` object the SDK should send. Backend
+     * soft-validates `name` and `version` (non-empty strings, required when
+     * `clientInfo` is set) and passes everything else through verbatim so
+     * future spec additions (e.g. `title`) land here without a schema
+     * migration.
+     */
+    clientInfo?: Record<string, unknown>;
+  };
+  apps?: {
+    sandbox?: {
+      csp?: {
+        /** Picks the starting baseline; restrictTo/deny apply on top regardless of mode. */
+        mode?: "host-default" | "declared" | "relaxed";
+        /** Intersection — never adds undeclared domains (SEP-1865). */
+        restrictTo?: CspDomainSet;
+        /** Always wins over restrictTo and the resource declaration. */
+        deny?: CspDomainSet;
+        extensions?: Record<string, unknown>;
+      };
+      permissions?: {
+        mode?: "resource-declared" | "deny-all" | "custom";
+        allow?: Record<string, boolean>;
+        deny?: string[];
+        extensions?: Record<string, unknown>;
+      };
+    };
+  };
+  extensions?: Record<string, unknown>;
+};
+
+/**
  * Mutable input shape. All fields are required at write time so the editor
  * can't accidentally erase a section.
  */
@@ -50,6 +117,14 @@ export type HostConfigInputV2 = {
    * value along, and "Reset to profile" is a one-line undefined write.
    */
   hostCapabilitiesOverride?: Record<string, unknown>;
+  /**
+   * Versioned envelope for host-level MCP state — see
+   * {@link HostConfigMcpProfileV1}. Optional; absent means "use SDK
+   * defaults / no host-level sandbox override." Must NOT be synthesized as
+   * `{ profileVersion: 1 }` when the user hasn't opted in — backend hashes
+   * the two states distinctly.
+   */
+  mcpProfile?: HostConfigMcpProfileV1;
 };
 
 /**
@@ -71,6 +146,12 @@ export type HostConfigDtoV2 = {
   hostContext: Record<string, unknown>;
   /** Optional user override (see HostConfigInputV2.hostCapabilitiesOverride). */
   hostCapabilitiesOverride?: Record<string, unknown>;
+  /**
+   * Optional versioned envelope (see HostConfigInputV2.mcpProfile). Surfaced
+   * verbatim — `undefined` means "use SDK defaults"; do NOT substitute a
+   * default empty envelope.
+   */
+  mcpProfile?: HostConfigMcpProfileV1;
 };
 
 export const DEFAULT_HOST_STYLE_V2: HostStyleId = "claude";
@@ -122,6 +203,13 @@ export function emptyHostConfigInputV2(
     hostCapabilitiesOverride: partial.hostCapabilitiesOverride
       ? deepCloneJsonRecord(partial.hostCapabilitiesOverride)
       : undefined,
+    // Same `undefined`-preservation rule as hostCapabilitiesOverride.
+    // Backend distinguishes `undefined` (use SDK defaults) from
+    // `{ profileVersion: 1 }` (empty envelope) on the hash, so a brand-new
+    // input MUST stay undefined until the user opts in via the editor.
+    mcpProfile: partial.mcpProfile
+      ? cloneMcpProfile(partial.mcpProfile)
+      : undefined,
   };
 }
 
@@ -151,6 +239,7 @@ export function hostConfigDtoToInput(
     hostCapabilitiesOverride: dto.hostCapabilitiesOverride
       ? deepCloneJsonRecord(dto.hostCapabilitiesOverride)
       : undefined,
+    mcpProfile: dto.mcpProfile ? cloneMcpProfile(dto.mcpProfile) : undefined,
   };
 }
 
@@ -192,6 +281,44 @@ export function resolveEffectiveHostCapabilities(args: {
     return rest as Omit<McpUiHostCapabilities, "sandbox">;
   }
   return getHostCapabilitiesForStyle(args.hostStyle);
+}
+
+/**
+ * Resolve the `clientInfo` the SDK should send in MCP `initialize` for a
+ * given host config. Returns `undefined` when the profile is unset — that
+ * sentinel signals the SDK to fall back to its hardcoded inspector
+ * defaults. Centralized here so the "undefined means SDK default" contract
+ * stays one-grep-able.
+ */
+export function resolveClientInfo(
+  profile: HostConfigMcpProfileV1 | undefined,
+): Record<string, unknown> | undefined {
+  return profile?.initialize?.clientInfo;
+}
+
+/**
+ * Resolve the supported protocol versions array for a given host config.
+ * First entry is what the SDK should propose in
+ * `initialize.params.protocolVersion`; the full set is the accept-list.
+ * `undefined` means "use SDK defaults"; an empty array would propose no
+ * version and is rejected by the backend canonicalizer at write time so
+ * callers never see it here.
+ */
+export function resolveSupportedProtocolVersions(
+  profile: HostConfigMcpProfileV1 | undefined,
+): string[] | undefined {
+  return profile?.initialize?.supportedProtocolVersions;
+}
+
+/**
+ * Deep-clone an mcpProfile so editor mutations can't alias the source.
+ * Goes through deepCloneJsonValue, but preserves the
+ * `HostConfigMcpProfileV1` type at the boundary.
+ */
+function cloneMcpProfile(
+  profile: HostConfigMcpProfileV1,
+): HostConfigMcpProfileV1 {
+  return deepCloneJsonValue(profile) as HostConfigMcpProfileV1;
 }
 
 function deepCloneJsonRecord(
@@ -245,7 +372,24 @@ export function hostConfigInputsEqual(
   if (!jsonRecordEq(a.hostContext, b.hostContext)) return false;
   if (!optionalJsonRecordEq(a.hostCapabilitiesOverride, b.hostCapabilitiesOverride))
     return false;
+  if (!optionalMcpProfileEq(a.mcpProfile, b.mcpProfile)) return false;
   return true;
+}
+
+function optionalMcpProfileEq(
+  a: HostConfigMcpProfileV1 | undefined,
+  b: HostConfigMcpProfileV1 | undefined,
+): boolean {
+  // Same undefined-vs-empty rule as optionalJsonRecordEq: backend hashes
+  // `undefined` and `{ profileVersion: 1 }` distinctly, so flipping
+  // between them must register as dirty even when no inner field changes.
+  if (a === undefined && b === undefined) return true;
+  if (a === undefined || b === undefined) return false;
+  // Compare the whole envelope as a canonicalized JSON tree. mcpProfile is
+  // nested (initialize, apps.sandbox.{csp,permissions}, extensions); the
+  // shared stableStringifyJson sorts keys at every level so semantically
+  // equal envelopes built in different orders compare equal.
+  return stableStringifyJson(a) === stableStringifyJson(b);
 }
 
 function optionalJsonRecordEq(

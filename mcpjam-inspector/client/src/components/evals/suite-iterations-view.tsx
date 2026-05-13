@@ -13,6 +13,9 @@ import {
 import { SuiteTestsConfig } from "./suite-tests-config";
 import { TestTemplateEditor } from "./test-template-editor";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
+import { ValidatorsSection } from "./validators-section";
+import type { EvalMatchOptions } from "@/shared/eval-matching";
+import { MATCH_OPTIONS_DEFAULTS } from "@/shared/eval-matching";
 import { TestCasesOverview } from "./test-cases-overview";
 import { TestCaseDetailView } from "./test-case-detail-view";
 import { SuiteDashboard } from "./suite-dashboard";
@@ -215,27 +218,34 @@ export function SuiteIterationsView({
     "model" | "test" | "result"
   >("model");
   /**
-   * Transient per-run iteration override (1-10) applied to Run-all-cases and
-   * per-case quick runs triggered from this suite view. `undefined` means
-   * "Auto":
-   *   - Suite reruns: each test uses its persisted `EvalCase.runs`.
-   *   - Per-case quick runs: a single iteration (the route defaults
-   *     `runs` to 1 when no override is sent — persisted `runs` is not
-   *     consulted here).
-   * Never written back to the persisted default; server enforces an
-   * absolute cap above 10.
+   * Transient per-run iteration count (1-10) applied to Run-all-cases and
+   * per-case quick runs triggered from this suite view. Defaults to
+   * `undefined` (Auto) so the per-case persisted `EvalCase.runs` is honored
+   * until the user picks an explicit value. Never written back to
+   * persistence. Server enforces an absolute cap above 10.
    */
   const [iterationOverride, setIterationOverride] = useState<
     number | undefined
   >(undefined);
 
   const onRerunWithOverride = useCallback(
-    (s: EvalSuite) =>
-      (onRerun as (suite: EvalSuite, opts?: { iterationOverride?: number }) => void)(
-        s,
-        { iterationOverride },
-      ),
-    [onRerun, iterationOverride],
+    (
+      s: EvalSuite,
+      opts?: {
+        matchOptionsOverride?: EvalMatchOptions;
+        iterationOverride?: number;
+      },
+    ) =>
+      (
+        onRerun as (
+          suite: EvalSuite,
+          opts?: {
+            matchOptionsOverride?: EvalMatchOptions;
+            iterationOverride?: number;
+          },
+        ) => void
+      )(s, opts),
+    [onRerun],
   );
 
   const onRunTestCaseWithOverride = useMemo<
@@ -971,6 +981,30 @@ export function SuiteIterationsView({
                     setDefaultMinimumPassRate(
                       suite.defaultPassCriteria?.minimumPassRate ?? 100
                     );
+                  }
+                }}
+              />
+            </div>
+
+            {/* Default Validators Section */}
+            <div className="space-y-3">
+              <ValidatorsSection
+                title="Default validators"
+                description="Applied to every run unless a test case or 'this run' popover changes them."
+                value={suite.defaultMatchOptions}
+                inheritedFrom={MATCH_OPTIONS_DEFAULTS}
+                onChange={async (next: EvalMatchOptions | undefined) => {
+                  try {
+                    await updateSuite({
+                      suiteId: suite._id,
+                      defaultMatchOptions: next ?? null,
+                    });
+                    toast.success("Default validators updated");
+                  } catch (error) {
+                    toast.error(
+                      getBillingErrorMessage(error, "Failed to update suite")
+                    );
+                    console.error("Failed to update default validators:", error);
                   }
                 }}
               />

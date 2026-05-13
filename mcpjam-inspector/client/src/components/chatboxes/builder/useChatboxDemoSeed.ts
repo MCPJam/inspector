@@ -124,6 +124,14 @@ export function useChatboxDemoSeed({
             clientCapabilities:
               projectDefaultInput?.clientCapabilities ?? {},
             hostContext: projectDefaultInput?.hostContext ?? {},
+            // Inherit the project default's mcpProfile so the demo
+            // chatbox connects with the project's pinned clientInfo /
+            // supported protocol versions / sandbox policy. Pass
+            // through verbatim — undefined stays undefined ("use SDK
+            // defaults"), and the backend canonicalizer is the only
+            // place that decides whether the envelope is structurally
+            // valid.
+            mcpProfile: projectDefaultInput?.mcpProfile,
           },
         })) as {
           chatbox: ChatboxSettings | null;

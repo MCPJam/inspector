@@ -159,4 +159,73 @@ describe("mcp-api hosted-mode reconnect hardening", () => {
     );
     expect(result).toEqual({ success: true, status: "ok" });
   });
+
+  // Codex P2 regression: the hosted branch used to drop
+  // `connectionDefaults` entirely, so `mcpProfile.initialize.clientInfo`
+  // and `supportedProtocolVersions` pins silently never made it into the
+  // upstream MCP `initialize` call. Guard that they now flow into the
+  // hosted validate context verbatim.
+  it("forwards mcpProfile clientInfo / supportedProtocolVersions on hosted connect", async () => {
+    validateHostedServerMock.mockResolvedValueOnce({
+      success: true,
+      status: "ok",
+    });
+
+    const config = {
+      url: "https://mcp.excalidraw.com/mcp",
+      capabilities: { roots: { listChanged: true } },
+    } as unknown as MCPServerConfig;
+
+    await testConnection(config, "server-doc-id", {
+      projectId: "project-1",
+      serverName: "Excalidraw (App)",
+      connectionDefaults: {
+        clientInfo: { name: "chatgpt", version: "1.0.0", title: "ChatGPT" },
+        supportedProtocolVersions: ["2025-11-25", "2025-06-18"],
+      },
+    });
+
+    expect(validateHostedServerMock).toHaveBeenCalledWith(
+      "server-doc-id",
+      undefined,
+      { roots: { listChanged: true } },
+      expect.objectContaining({
+        projectId: "project-1",
+        serverId: "server-doc-id",
+        serverName: "Excalidraw (App)",
+        clientInfo: { name: "chatgpt", version: "1.0.0", title: "ChatGPT" },
+        supportedProtocolVersions: ["2025-11-25", "2025-06-18"],
+      })
+    );
+  });
+
+  // Empty/missing pins must remain absent on the wire — the backend
+  // hashes `undefined` distinctly from `{}` and we don't want to flip
+  // hosted connects into "user opted in" without a real opt-in.
+  it("omits clientInfo / supportedProtocolVersions when connectionDefaults has none", async () => {
+    validateHostedServerMock.mockResolvedValueOnce({
+      success: true,
+      status: "ok",
+    });
+
+    const config = {
+      url: "https://mcp.excalidraw.com/mcp",
+      capabilities: { roots: { listChanged: true } },
+    } as unknown as MCPServerConfig;
+
+    await testConnection(config, "server-doc-id", {
+      projectId: "project-1",
+      serverName: "Excalidraw (App)",
+      connectionDefaults: {
+        headers: { "x-custom": "1" },
+        // No clientInfo, no supportedProtocolVersions.
+      },
+    });
+
+    const callArgs = validateHostedServerMock.mock.calls[0];
+    const ctx = callArgs?.[3] as Record<string, unknown> | undefined;
+    expect(ctx).toBeDefined();
+    expect(ctx).not.toHaveProperty("clientInfo");
+    expect(ctx).not.toHaveProperty("supportedProtocolVersions");
+  });
 });

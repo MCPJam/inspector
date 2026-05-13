@@ -97,6 +97,12 @@ export type EvalTestCase = {
     temperature?: number;
     toolChoice?: EvalToolChoice | string;
   } & Record<string, unknown>;
+  /**
+   * Effective per-iteration match options. Suite-level runs receive this
+   * pre-resolved from Convex `precreateIterationsForRun`; single-case
+   * runs resolve it in the route handler.
+   */
+  matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
   testCaseId?: string;
 };
 
@@ -883,6 +889,7 @@ async function createIterationDirectly(
       expectedOutput?: string;
       promptTurns?: PromptTurn[];
       advancedConfig?: Record<string, unknown>;
+      matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
     };
     iterationNumber: number;
     startedAt: number;
@@ -1133,6 +1140,7 @@ const runIterationWithAiSdk = async ({
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
+            test.matchOptions,
           ),
           iterationId: undefined,
         };
@@ -1150,6 +1158,7 @@ const runIterationWithAiSdk = async ({
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
+            test.matchOptions,
           ),
           iterationId: undefined,
         };
@@ -1202,6 +1211,7 @@ const runIterationWithAiSdk = async ({
       expectedOutput,
       promptTurns,
       advancedConfig,
+      matchOptions: test.matchOptions,
     },
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
@@ -1384,6 +1394,7 @@ const runIterationWithAiSdk = async ({
       promptTurns,
       toolsCalledByPrompt,
       test.isNegativeTest,
+      test.matchOptions,
     );
     const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
 
@@ -1455,6 +1466,7 @@ const runIterationWithAiSdk = async ({
           promptTurns,
           toolsCalledByPrompt,
           test.isNegativeTest,
+          test.matchOptions,
         ),
         iterationId: undefined,
       };
@@ -1504,6 +1516,7 @@ const runIterationWithAiSdk = async ({
       promptTurns,
       toolsCalledByPrompt,
       test.isNegativeTest,
+      test.matchOptions,
     );
     const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
     const widgetSnapshots = await captureEvalTraceWidgetSnapshots({
@@ -1579,6 +1592,7 @@ const runIterationViaBackend = async ({
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
+            test.matchOptions,
           ),
           iterationId: undefined,
         };
@@ -1596,6 +1610,7 @@ const runIterationViaBackend = async ({
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
+            test.matchOptions,
           ),
           iterationId: undefined,
         };
@@ -1644,6 +1659,7 @@ const runIterationViaBackend = async ({
       expectedOutput,
       promptTurns,
       advancedConfig,
+      matchOptions: test.matchOptions,
     },
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
@@ -1970,6 +1986,7 @@ const runIterationViaBackend = async ({
               promptTurns,
               toolsCalledByPrompt,
               test.isNegativeTest,
+              test.matchOptions,
             ),
             iterationId: undefined,
           };
@@ -2019,6 +2036,7 @@ const runIterationViaBackend = async ({
     promptTurns,
     toolsCalledByPrompt,
     test.isNegativeTest,
+    test.matchOptions,
   );
   const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
 
@@ -2148,6 +2166,7 @@ const runTestCase = async (params: {
             expectedOutput: resolvedTestForPrecreate.expectedOutput,
             promptTurns: resolvedTestForPrecreate.promptTurns,
             advancedConfig: resolvedTestForPrecreate.advancedConfig,
+            matchOptions: test.matchOptions,
           },
           iterationNumber: runIndex + 1,
           startedAt: precreatedAt,
@@ -2484,6 +2503,7 @@ const streamIterationWithAiSdk = async ({
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
+            test.matchOptions,
           ),
           iterationId: undefined,
         };
@@ -2500,6 +2520,7 @@ const streamIterationWithAiSdk = async ({
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
+            test.matchOptions,
           ),
           iterationId: undefined,
         };
@@ -2552,6 +2573,7 @@ const streamIterationWithAiSdk = async ({
       expectedOutput,
       promptTurns,
       advancedConfig,
+      matchOptions: test.matchOptions,
     },
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
@@ -2813,6 +2835,7 @@ const streamIterationWithAiSdk = async ({
       promptTurns,
       toolsCalledByPrompt,
       test.isNegativeTest,
+      test.matchOptions,
     );
     const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
 
@@ -2882,6 +2905,7 @@ const streamIterationWithAiSdk = async ({
           promptTurns,
           toolsCalledByPrompt,
           test.isNegativeTest,
+          test.matchOptions,
         ),
         iterationId: undefined,
       };
@@ -2931,6 +2955,7 @@ const streamIterationWithAiSdk = async ({
       promptTurns,
       toolsCalledByPrompt,
       test.isNegativeTest,
+      test.matchOptions,
     );
     const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
     const widgetSnapshots = await captureEvalTraceWidgetSnapshots({
@@ -3035,6 +3060,7 @@ const streamIterationViaBackend = async ({
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
+            test.matchOptions,
           ),
           iterationId: undefined,
         };
@@ -3051,6 +3077,7 @@ const streamIterationViaBackend = async ({
             resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
+            test.matchOptions,
           ),
           iterationId: undefined,
         };
@@ -3099,6 +3126,7 @@ const streamIterationViaBackend = async ({
       expectedOutput,
       promptTurns,
       advancedConfig,
+      matchOptions: test.matchOptions,
     },
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
@@ -3622,6 +3650,7 @@ const streamIterationViaBackend = async ({
               promptTurns,
               toolsCalledByPrompt,
               test.isNegativeTest,
+              test.matchOptions,
             ),
             iterationId: undefined,
           };
@@ -3703,6 +3732,7 @@ const streamIterationViaBackend = async ({
     promptTurns,
     toolsCalledByPrompt,
     test.isNegativeTest,
+    test.matchOptions,
   );
   const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
 
@@ -3837,6 +3867,7 @@ export const streamTestCase = async (params: {
             expectedOutput: resolvedTestForPrecreate.expectedOutput,
             promptTurns: resolvedTestForPrecreate.promptTurns,
             advancedConfig: resolvedTestForPrecreate.advancedConfig,
+            matchOptions: test.matchOptions,
           },
           iterationNumber: runIndex + 1,
           startedAt: precreatedAt,
