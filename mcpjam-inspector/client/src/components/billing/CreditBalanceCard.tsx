@@ -3,6 +3,7 @@ import { Card, CardContent } from "@mcpjam/design-system/card";
 import { Progress } from "@mcpjam/design-system/progress";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { CreditTopupDialog } from "@/components/billing/CreditTopupDialog";
+import { PendingCreditTopupsBanner } from "@/components/billing/PendingCreditTopupsBanner";
 import { TopupActionButton } from "@/components/billing/TopupActionButton";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { useCreditBalance } from "@/hooks/useCreditBalance";
@@ -89,6 +90,10 @@ export function CreditBalanceCard({
             <TopupActionButton onClick={handleManualTopup} />
           </ErrorBoundary>
         </div>
+
+        <ErrorBoundary fallback={null}>
+          <PendingCreditTopupsBanner />
+        </ErrorBoundary>
 
         <UsageRow
           label="Daily limit"
