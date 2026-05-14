@@ -1,7 +1,7 @@
-export interface UpdateInfo {
-  version: string;
-  releaseNotes?: string;
-}
+export type UpdateStatus =
+  | { kind: "idle" }
+  | { kind: "pending"; version?: string; installRequested: boolean }
+  | { kind: "downloaded"; version: string; releaseNotes?: string };
 
 export interface ElectronAPI {
   // App metadata
@@ -41,10 +41,15 @@ export interface ElectronAPI {
 
   // Update operations
   update: {
-    onUpdateReady: (callback: (info: UpdateInfo) => void) => void;
-    removeUpdateReadyListener: () => void;
+    onUpdateStatus: (callback: (status: UpdateStatus) => void) => void;
+    removeUpdateStatusListener: () => void;
+    onUpdateError: (callback: () => void) => void;
+    removeUpdateErrorListener: () => void;
+    getUpdateStatus: () => Promise<UpdateStatus>;
     restartAndInstall: () => void;
     simulateUpdate?: () => void;
+    simulateUpdateDownloaded?: () => void;
+    simulateUpdateError?: () => void;
   };
 }
 

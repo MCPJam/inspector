@@ -170,7 +170,9 @@ function createUnauthorizedMcpResponse(serverUrl: string): Response {
     status: 401,
     statusText: "Unauthorized",
     headers: {
-      "WWW-Authenticate": `Bearer resource_metadata="${createProtectedResourceMetadataUrl(serverUrl)}"`,
+      "WWW-Authenticate": `Bearer resource_metadata="${createProtectedResourceMetadataUrl(
+        serverUrl
+      )}"`,
     },
   });
 }
@@ -187,7 +189,7 @@ function createFetchFromRequestExecutor(
     headers: Record<string, string>;
     body: unknown;
     ok: boolean;
-  }>,
+  }>
 ): typeof fetch {
   return async (input, init) => {
     const response = await requestExecutor({
@@ -240,7 +242,7 @@ describe("mcp-oauth", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL) =>
         createUnauthorizedMcpResponse(getUrlString(input))
-      ),
+      )
     );
 
     mockDiscoverOAuthServerInfo.mockResolvedValue(createDiscoveryState());
@@ -295,9 +297,12 @@ describe("mcp-oauth", () => {
             }),
           });
 
-          const discovered = await mockDiscoverOAuthServerInfo(config.serverUrl, {
-            fetchFn,
-          });
+          const discovered = await mockDiscoverOAuthServerInfo(
+            config.serverUrl,
+            {
+              fetchFn,
+            }
+          );
           const preregistered = await config.loadPreregisteredCredentials?.({
             serverName: config.serverName,
             serverUrl: config.serverUrl,
@@ -322,7 +327,7 @@ describe("mcp-oauth", () => {
               clientInformation,
               redirectUri: config.redirectUrl,
               scope: config.customScopes,
-            },
+            }
           );
 
           updateState({
@@ -364,7 +369,7 @@ describe("mcp-oauth", () => {
         const resource = await mockSelectResourceURL(
           config.serverUrl,
           undefined,
-          state.resourceMetadata,
+          state.resourceMetadata
         );
         const clientInformation = {
           client_id: state.clientId,
@@ -380,7 +385,7 @@ describe("mcp-oauth", () => {
             redirectUri: config.redirectUrl,
             ...(resource ? { resource } : {}),
             fetchFn,
-          },
+          }
         );
 
         updateState({
@@ -399,8 +404,7 @@ describe("mcp-oauth", () => {
           state: getState(),
         };
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : String(error);
+        const message = error instanceof Error ? error.message : String(error);
         updateState({
           error: message,
         });
@@ -643,14 +647,14 @@ describe("mcp-oauth", () => {
       const metadataCall = authFetch.mock.calls.find(
         ([input]) =>
           typeof input === "string" &&
-          input.includes("/api/mcp/oauth/metadata?url="),
+          input.includes("/api/mcp/oauth/metadata?url=")
       );
       expect(metadataCall).toBeDefined();
       expect(metadataCall?.[1]).toMatchObject({
         method: "GET",
       });
       expect(
-        new Headers(metadataCall?.[1]?.headers as HeadersInit).get("X-Tenant"),
+        new Headers(metadataCall?.[1]?.headers as HeadersInit).get("X-Tenant")
       ).toBe("project-123");
     });
 
@@ -798,7 +802,7 @@ describe("mcp-oauth", () => {
       const oauthModule = await import("../mcp-oauth");
       vi.spyOn(
         oauthModule.MCPOAuthProvider.prototype,
-        "redirectToAuthorization",
+        "redirectToAuthorization"
       ).mockResolvedValue(undefined);
 
       const result = await oauthModule.initiateOAuth({
@@ -812,13 +816,13 @@ describe("mcp-oauth", () => {
       expect(localStorage.getItem("mcp-client-hosted")).toBe(
         JSON.stringify({
           client_id: "hosted-client-id",
-        }),
+        })
       );
       expect(localStorage.getItem("mcp-client-hosted")).not.toContain(
-        "client_secret",
+        "client_secret"
       );
       expect(localStorage.getItem("mcp-client-hosted")).not.toContain(
-        "hosted-client-secret",
+        "hosted-client-secret"
       );
     });
 
@@ -834,7 +838,9 @@ describe("mcp-oauth", () => {
           },
         })
       );
-      mockDiscoverOAuthServerInfo.mockResolvedValue(createLinearDiscoveryState());
+      mockDiscoverOAuthServerInfo.mockResolvedValue(
+        createLinearDiscoveryState()
+      );
       mockRegisterClient.mockImplementationOnce(
         async (_authServerUrl, options) => {
           const registrationBody = JSON.stringify({
@@ -890,13 +896,13 @@ describe("mcp-oauth", () => {
 
   describe("persisted discovery state", () => {
     it("tags Electron-started OAuth state for desktop callback recovery", async () => {
+      window.isElectron = true;
+
       const { MCPOAuthProvider } = await import("../mcp-oauth");
       const provider = new MCPOAuthProvider(
         "asana",
-        "https://mcp.asana.com/sse",
+        "https://mcp.asana.com/sse"
       );
-
-      window.isElectron = true;
 
       expect(provider.state()).toMatch(/^electron_mcp:mock-random-string$/);
     });
@@ -907,11 +913,11 @@ describe("mcp-oauth", () => {
       const { MCPOAuthProvider } = await import("../mcp-oauth");
       const provider = new MCPOAuthProvider(
         "asana",
-        "https://mcp.asana.com/sse",
+        "https://mcp.asana.com/sse"
       );
 
       expect(provider.redirectUrl).toBe(
-        `${window.location.origin}/oauth/callback`,
+        `${window.location.origin}/oauth/callback`
       );
       expect(provider.clientMetadata.redirect_uris).toEqual([
         `${window.location.origin}/oauth/callback`,
@@ -925,7 +931,7 @@ describe("mcp-oauth", () => {
         authorizationUrl.searchParams.set("state", "mock-state");
         authorizationUrl.searchParams.set(
           "redirect_uri",
-          String((options as { redirectUri?: string }).redirectUri),
+          String((options as { redirectUri?: string }).redirectUri)
         );
         return {
           authorizationUrl,
@@ -947,10 +953,10 @@ describe("mcp-oauth", () => {
       expect(result.success).toBe(true);
       const openedUrl = redirectSpy.mock.calls.at(-1)?.[0] as URL;
       expect(openedUrl.searchParams.get("state")).toBe(
-        "electron_mcp:mock-state",
+        "electron_mcp:mock-state"
       );
       expect(openedUrl.searchParams.get("redirect_uri")).toBe(
-        `${window.location.origin}/oauth/callback`,
+        `${window.location.origin}/oauth/callback`
       );
     });
 
@@ -958,7 +964,7 @@ describe("mcp-oauth", () => {
       const { MCPOAuthProvider } = await import("../mcp-oauth");
       const provider = new MCPOAuthProvider(
         "asana",
-        "https://mcp.asana.com/sse",
+        "https://mcp.asana.com/sse"
       );
 
       window.isElectron = false;
@@ -971,7 +977,7 @@ describe("mcp-oauth", () => {
       const { MCPOAuthProvider } = await import("../mcp-oauth");
       const provider = new MCPOAuthProvider(
         "asana",
-        "https://mcp.asana.com/sse",
+        "https://mcp.asana.com/sse"
       );
       const navigateSpy = vi
         .spyOn(provider, "navigateToUrl")
@@ -999,18 +1005,18 @@ describe("mcp-oauth", () => {
       });
 
       await provider.redirectToAuthorization(
-        new URL("https://auth.example.com/authorize"),
+        new URL("https://auth.example.com/authorize")
       );
 
       expect(openExternal).toHaveBeenCalledWith(
-        "https://auth.example.com/authorize",
+        "https://auth.example.com/authorize"
       );
       expect(navigateSpy).toHaveBeenCalledWith(
-        "https://auth.example.com/authorize",
+        "https://auth.example.com/authorize"
       );
       expect(consoleWarnSpy).toHaveBeenCalledWith(
         "Failed to open system browser for MCP OAuth; continuing inside MCPJam Desktop:",
-        expect.any(Error),
+        expect.any(Error)
       );
     });
 
@@ -1019,7 +1025,7 @@ describe("mcp-oauth", () => {
       const { MCPOAuthProvider } = await import("../mcp-oauth");
       const provider = new MCPOAuthProvider(
         "asana",
-        "https://mcp.asana.com/sse",
+        "https://mcp.asana.com/sse"
       );
       const navigateSpy = vi
         .spyOn(provider, "navigateToUrl")
@@ -1042,19 +1048,21 @@ describe("mcp-oauth", () => {
       });
 
       await provider.redirectToAuthorization(
-        new URL("https://auth.example.com/authorize"),
+        new URL("https://auth.example.com/authorize")
       );
 
       expect(navigateSpy).toHaveBeenCalledWith(
-        "https://auth.example.com/authorize",
+        "https://auth.example.com/authorize"
       );
       expect(consoleWarnSpy).toHaveBeenCalledWith(
-        "System browser opener is unavailable for MCP OAuth; continuing inside MCPJam Desktop.",
+        "System browser opener is unavailable for MCP OAuth; continuing inside MCPJam Desktop."
       );
     });
 
     it("explains why automatic mode resolved to DCR when CIMD support was not advertised", async () => {
-      mockDiscoverOAuthServerInfo.mockResolvedValue(createAsanaDiscoveryState());
+      mockDiscoverOAuthServerInfo.mockResolvedValue(
+        createAsanaDiscoveryState()
+      );
 
       const { initiateOAuth } = await import("../mcp-oauth");
       const result = await initiateOAuth({
@@ -1135,7 +1143,9 @@ describe("mcp-oauth", () => {
     });
 
     it("keeps live oauth traces in memory while preserving redirect resume state", async () => {
-      mockDiscoverOAuthServerInfo.mockResolvedValue(createAsanaDiscoveryState());
+      mockDiscoverOAuthServerInfo.mockResolvedValue(
+        createAsanaDiscoveryState()
+      );
       const { initiateOAuth } = await import("../mcp-oauth");
 
       const result = await initiateOAuth({
@@ -1311,7 +1321,9 @@ describe("mcp-oauth", () => {
       clearOAuthData("asana");
 
       expect(localStorage.getItem("mcp-discovery-asana")).toBeNull();
-      expect(sessionStorage.getItem("mcp-oauth-session-trace-asana")).toBeNull();
+      expect(
+        sessionStorage.getItem("mcp-oauth-session-trace-asana")
+      ).toBeNull();
       expect(provider.discoveryState()).toBeUndefined();
     });
 
@@ -1481,7 +1493,9 @@ describe("mcp-oauth", () => {
         throw new Error(`Unexpected direct fetch to ${url}`);
       });
 
-      mockDiscoverOAuthServerInfo.mockResolvedValue(createAsanaDiscoveryState());
+      mockDiscoverOAuthServerInfo.mockResolvedValue(
+        createAsanaDiscoveryState()
+      );
       mockFetchToken.mockImplementationOnce(
         async (_provider, authServerUrl, options) => {
           expect(authServerUrl).toBe("https://app.asana.com");
@@ -1560,7 +1574,9 @@ describe("mcp-oauth", () => {
         })
       );
 
-      mockDiscoverOAuthServerInfo.mockResolvedValue(createAsanaDiscoveryState());
+      mockDiscoverOAuthServerInfo.mockResolvedValue(
+        createAsanaDiscoveryState()
+      );
       mockRegisterClient.mockResolvedValueOnce({
         client_id: "new-client-id",
       });
@@ -1979,7 +1995,7 @@ describe("mcp-oauth", () => {
           serverId: "srv_abc",
           oauthResourceUrl: "https://mcp.asana.com",
           kind: "generic",
-        },
+        }
       );
 
       await provider.saveTokens({
@@ -1989,7 +2005,9 @@ describe("mcp-oauth", () => {
       });
 
       // localStorage still gets the write (still needed for tokens() refresh).
-      expect(localStorage.getItem("mcp-tokens-asana")).toContain("freshly-issued");
+      expect(localStorage.getItem("mcp-tokens-asana")).toContain(
+        "freshly-issued"
+      );
       expect(importSpy).toHaveBeenCalledTimes(1);
       expect(importSpy.mock.calls[0][0]).toMatchObject({
         projectId: "proj_xyz",
@@ -2014,7 +2032,7 @@ describe("mcp-oauth", () => {
           access_token: "freshly-issued",
           refresh_token: "refresh-1",
           token_type: "Bearer",
-        }),
+        })
       );
     });
 
@@ -2029,7 +2047,7 @@ describe("mcp-oauth", () => {
       const provider = new MCPOAuthProvider(
         "asana",
         "https://mcp.asana.com/sse",
-        "client-from-arg",
+        "client-from-arg"
       );
 
       await provider.saveTokens({
@@ -2059,7 +2077,7 @@ describe("mcp-oauth", () => {
           projectId: "proj_xyz",
           serverId: "srv_abc",
           kind: "generic",
-        },
+        }
       );
 
       await provider.saveTokens({
@@ -2148,9 +2166,7 @@ describe("mcp-oauth", () => {
       // re-OAuth doesn't reuse stale projectId/serverId after the user
       // moved the server to a different project.
       clearOAuthData("mcpjam local");
-      expect(
-        localStorage.getItem(`mcp-oauth-binding-mcpjam local`)
-      ).toBeNull();
+      expect(localStorage.getItem(`mcp-oauth-binding-mcpjam local`)).toBeNull();
     });
 
     it("threads registry kind through when both registryServerId and useRegistryOAuthProxy are set", async () => {
@@ -2174,7 +2190,7 @@ describe("mcp-oauth", () => {
           kind: "registry",
           registryServerId: "reg_123",
           useRegistryOAuthProxy: true,
-        },
+        }
       );
 
       await provider.saveTokens({

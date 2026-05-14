@@ -30,12 +30,12 @@ describe("OAuthAuthorizationModal", () => {
         open={true}
         onOpenChange={onOpenChange}
         authorizationUrl="https://auth.example.com/authorize"
-      />,
+      />
     );
 
     await waitFor(() => {
       expect(openExternal).toHaveBeenCalledWith(
-        "https://auth.example.com/authorize",
+        "https://auth.example.com/authorize"
       );
     });
     await waitFor(() => {
@@ -62,13 +62,13 @@ describe("OAuthAuthorizationModal", () => {
         open={true}
         onOpenChange={onOpenChange}
         authorizationUrl="https://auth.example.com/authorize"
-      />,
+      />
     );
 
     try {
       await waitFor(() => {
         expect(openExternal).toHaveBeenCalledWith(
-          "https://auth.example.com/authorize",
+          "https://auth.example.com/authorize"
         );
       });
       await waitFor(() => {
@@ -78,7 +78,7 @@ describe("OAuthAuthorizationModal", () => {
       expect(openSpy).toHaveBeenCalledWith(
         "https://auth.example.com/authorize",
         expect.stringMatching(/^oauth_authorization_/),
-        expect.any(String),
+        expect.any(String)
       );
       expect(consoleErrorSpy).toHaveBeenCalled();
       expect(onOpenChange).not.toHaveBeenCalled();
@@ -86,5 +86,29 @@ describe("OAuthAuthorizationModal", () => {
       unmount();
       consoleErrorSpy.mockRestore();
     }
+  });
+
+  it("resets modal state when the fallback popup is blocked", async () => {
+    const onOpenChange = vi.fn();
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    vi.spyOn(window, "open").mockImplementation(() => null);
+
+    openExternal.mockRejectedValue(new Error("system browser unavailable"));
+
+    render(
+      <OAuthAuthorizationModal
+        open={true}
+        onOpenChange={onOpenChange}
+        authorizationUrl="https://auth.example.com/authorize"
+      />
+    );
+
+    await waitFor(() => {
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
+
+    consoleErrorSpy.mockRestore();
   });
 });
