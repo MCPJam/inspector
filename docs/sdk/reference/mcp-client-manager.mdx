@@ -104,6 +104,22 @@ When `refreshToken` is provided, the SDK will exchange it for an access token du
 `refreshToken` is mutually exclusive with `accessToken`, `authProvider`, and `requestInit.headers.Authorization`.
 </Note>
 
+##### Client Identity Example
+
+Use `clientInfo` to pin the identity sent in MCP `initialize`. This is useful when testing how a server behaves for different clients (e.g., Claude, ChatGPT):
+
+```typescript
+{
+  remoteServer: {
+    url: "https://mcp.example.com/mcp",
+    clientInfo: { name: "claude-ai", version: "0.1.0" },
+    supportedProtocolVersions: ["2025-11-25", "2025-06-18"],
+  },
+}
+```
+
+The first entry in `supportedProtocolVersions` is proposed to the server; the full list is the accept-set. A server that negotiates any listed version is accepted.
+
 ### Example
 
 ```typescript
