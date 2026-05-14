@@ -56,8 +56,13 @@ export function useAggregatedTools(
   const serverNamesRef = useRef<string[]>([]);
   serverNamesRef.current = serversKey ? serversKey.split("\x00") : [];
 
+  // Monotonic token so a stale in-flight fetch can't clobber a fresher result
+  // when the server set toggles or `refetch` is called mid-request.
+  const fetchTokenRef = useRef(0);
+
   const fetchAll = useCallback(async () => {
     const names = serverNamesRef.current;
+    const token = ++fetchTokenRef.current;
     if (names.length === 0) {
       setToolsByServer({});
       setLoadingByServer({});
@@ -83,6 +88,8 @@ export function useAggregatedTools(
         }
       }),
     );
+
+    if (token !== fetchTokenRef.current) return;
 
     setToolsByServer(() => {
       const next: Record<string, Tool[]> = {};

@@ -101,6 +101,12 @@ export interface UseAppBuilderStateOptions {
    * Empty / undefined falls back to single-server mode driven by `serverName`.
    */
   selectedServerNames?: string[];
+  /**
+   * Which surface is hosting this hook. Tagged onto the view-event for
+   * PostHog so we can split Playground vs App Builder usage. The event name
+   * itself stays `app_builder_tab_viewed` for continuity.
+   */
+  surface?: "app-builder" | "playground";
 }
 
 /**
@@ -130,6 +136,7 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
     onConnect,
     onOnboardingChange,
     selectedServerNames,
+    surface = "app-builder",
   } = options;
 
   const activeServerNames = useMemo(() => {
@@ -218,10 +225,12 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
 
   // Log when the app-builder surface is viewed. The event name stays
   // `app_builder_tab_viewed` even for the Playground surface — telemetry
-  // continuity is more valuable than a name swap here.
+  // continuity is more valuable than a name swap here. `surface` lets PostHog
+  // split Playground vs App Builder usage.
   useEffect(() => {
     posthog.capture("app_builder_tab_viewed", {
       location: "app_builder_tab",
+      surface,
       platform: detectPlatform(),
       environment: detectEnvironment(),
     });

@@ -149,7 +149,17 @@ export function MultiServerToolsPaneInner({ activeServerNames }: InnerProps) {
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key !== "Enter" || e.metaKey || e.ctrlKey || e.altKey) return;
     const target = e.target as HTMLElement | null;
-    if (!target || target.tagName === "TEXTAREA") return;
+    if (!target) return;
+    // Don't hijack Enter while the user is typing in the search box, a
+    // parameter input, or any other editable surface — Enter there means
+    // "submit this field" or "newline", not "execute the tool".
+    if (
+      target.tagName === "TEXTAREA" ||
+      target.tagName === "INPUT" ||
+      target.isContentEditable
+    ) {
+      return;
+    }
     if (!selected || state.isExecuting) return;
     e.preventDefault();
     void handleExecute();

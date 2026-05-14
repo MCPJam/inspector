@@ -95,6 +95,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     onSaveHostContext: props.onSaveHostContext,
     ensureServersReady: props.ensureServersReady,
     onOnboardingChange: props.onOnboardingChange,
+    surface: "playground",
     // Playground supports multi-server tool selection — pass the active
     // multi-server set through so the docked tools pane aggregates across
     // all of them and execution routes to the right server per tool.
