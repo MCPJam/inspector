@@ -80,7 +80,10 @@ import {
   extractHostDisplayModes,
   extractHostTheme,
 } from "@/lib/client-config";
-import { resolveEffectiveHostCapabilities } from "@/lib/host-config-v2";
+import {
+  resolveEffectiveHostCapabilities,
+  resolveHostInfo,
+} from "@/lib/host-config-v2";
 
 // Injected by Vite at build time from package.json
 declare const __APP_VERSION__: string;
@@ -1407,9 +1410,17 @@ export function MCPAppsRenderer({
     // inline used to be the canonical correctness bug: the bridge got the
     // resolved policy while the iframe still got the raw resource
     // declaration, so the browser-enforced CSP didn't honor the host clamp.
+    // Host identity advertised in ui/initialize. Templates that emulate
+    // another host (e.g. ChatGPT) override this via
+    // `mcpProfile.apps.uiInitialize.hostInfo`; backend soft-validates
+    // name+version when set so the cast below is safe.
+    const resolvedHostInfo = (resolveHostInfo(activeMcpProfile) ?? {
+      name: "mcpjam-inspector",
+      version: __APP_VERSION__,
+    }) as { name: string; version: string };
     const bridge = new AppBridge(
       null,
-      { name: "mcpjam-inspector", version: __APP_VERSION__ },
+      resolvedHostInfo,
       {
         ...effectiveHostCapabilities,
         sandbox: {
@@ -1502,14 +1513,17 @@ export function MCPAppsRenderer({
     // Bridge must rebuild when the resolved sandbox policy changes — a host
     // toggling deny rules at runtime needs the new handshake. The memo
     // identity captures `widgetCsp`/`widgetPermissions`/`widgetPermissive`
-    // and the active mcpProfile transitively, so they don't need their own
-    // entries here.
+    // and the sandbox slice of mcpProfile transitively.
     effectiveSandbox,
     logWidgetDebug,
     // Bridge must rebuild when the advertised host capabilities change
     // (host style switch or override edit) so the new handshake reflects
     // the new contract.
     effectiveHostCapabilities,
+    // Bridge must rebuild when the host identity advertised in
+    // ui/initialize changes — switching to a template that overrides
+    // hostInfo (e.g. ChatGPT) is observable to the View.
+    activeMcpProfile,
   ]);
 
   useEffect(() => {

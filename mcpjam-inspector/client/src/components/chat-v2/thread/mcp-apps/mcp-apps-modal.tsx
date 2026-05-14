@@ -21,6 +21,8 @@ import type { CallToolResult } from "@modelcontextprotocol/client";
 import type { CspMode } from "@/stores/ui-playground-store";
 import { LoggingTransport } from "./mcp-apps-logging-transport";
 import { fetchMcpAppsWidgetContent } from "./fetch-widget-content";
+import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
+import { resolveHostInfo } from "@/lib/host-config-v2";
 
 // Injected by Vite at build time from package.json
 declare const __APP_VERSION__: string;
@@ -80,6 +82,9 @@ export function McpAppsModal({
   const [modalHtml, setModalHtml] = useState<string | null>(null);
   const modalSandboxRef = useRef<SandboxedIframeHandle>(null);
   const modalBridgeRef = useRef<AppBridge | null>(null);
+  // Same scope as the inline renderer — `ActiveMcpProfileProvider` wraps
+  // both. Used to resolve `hostInfo` for the modal's AppBridge handshake.
+  const activeMcpProfile = useActiveMcpProfile();
   const modalColorScheme =
     hostContextRef.current?.theme === "light" ||
     hostContextRef.current?.theme === "dark"
@@ -140,9 +145,16 @@ export function McpAppsModal({
     const iframe = modalSandboxRef.current?.getIframeElement();
     if (!iframe?.contentWindow) return;
 
+    // Match the inline renderer: ChatGPT-like templates override this
+    // via mcpProfile.apps.uiInitialize.hostInfo. Backend soft-validates
+    // name+version when set, so the cast below is safe.
+    const resolvedHostInfo = (resolveHostInfo(activeMcpProfile) ?? {
+      name: "mcpjam-inspector",
+      version: __APP_VERSION__,
+    }) as { name: string; version: string };
     const bridge = new AppBridge(
       null,
-      { name: "mcpjam-inspector", version: __APP_VERSION__ },
+      resolvedHostInfo,
       {
         openLinks: {},
         serverTools: {},
@@ -247,6 +259,7 @@ export function McpAppsModal({
     hostContextRef,
     toolInputRef,
     toolOutputRef,
+    activeMcpProfile,
   ]);
 
   const handleModalMessage = (event: MessageEvent) => {
