@@ -187,7 +187,6 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                       playgroundServerSelectorProps={
                         props.playgroundServerSelectorProps
                       }
-                      servers={props.servers}
                       evalChatHandoff={props.evalChatHandoff}
                       onEvalChatHandoffConsumed={
                         props.onEvalChatHandoffConsumed

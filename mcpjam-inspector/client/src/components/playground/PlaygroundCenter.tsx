@@ -18,10 +18,7 @@ import {
 import { getLoadingIndicatorVariantForHostStyle } from "@/components/chat-v2/shared/loading-indicator-content";
 import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSelector";
 import type { ProjectHostContextDraft } from "@/lib/client-config";
-import type {
-  EnsureServersReadyResult,
-  ServerWithName,
-} from "@/hooks/use-app-state";
+import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 
 interface PlaygroundCenterProps {
@@ -36,7 +33,6 @@ interface PlaygroundCenterProps {
     serverNames: string[],
   ) => Promise<EnsureServersReadyResult>;
   playgroundServerSelectorProps?: PlaygroundServerSelectorProps;
-  servers?: Record<string, ServerWithName>;
   evalChatHandoff?: EvalChatHandoff | null;
   onEvalChatHandoffConsumed?: (id: string) => void;
 }

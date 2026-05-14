@@ -70,8 +70,21 @@ export function useAggregatedTools(
       return;
     }
 
+    // Prune state to the new server set synchronously so tools from
+    // just-deselected servers disappear immediately rather than lingering
+    // until the new fetch returns.
+    const activeSet = new Set(names);
+    const pruneToActive = <V,>(prev: Record<string, V>): Record<string, V> => {
+      const next: Record<string, V> = {};
+      for (const key of Object.keys(prev)) {
+        if (activeSet.has(key)) next[key] = prev[key];
+      }
+      return next;
+    };
+    setToolsByServer((prev) => pruneToActive(prev));
+    setErrorByServer((prev) => pruneToActive(prev));
     setLoadingByServer((prev) => {
-      const next = { ...prev };
+      const next = pruneToActive(prev);
       for (const name of names) next[name] = true;
       return next;
     });

@@ -76,13 +76,25 @@ export function MultiServerToolsPaneInner({ activeServerNames }: InnerProps) {
     );
   }, [flat, selected]);
 
+  // Regenerate fields only when the user picks a different tool — not when
+  // `selectedEntry`'s object reference changes from a refetch. Otherwise
+  // hitting Refresh (or any background refetch) would blow away a
+  // partially-filled parameter form.
   useEffect(() => {
-    if (selectedEntry) {
-      setFormFields(generateFormFieldsFromSchema(selectedEntry.tool.inputSchema));
-    } else {
+    if (!selected) {
       setFormFields([]);
+      return;
     }
-  }, [selectedEntry]);
+    const entry = flat.find(
+      (e) =>
+        e.serverId === selected.serverId && e.toolName === selected.toolName,
+    );
+    if (entry) {
+      setFormFields(generateFormFieldsFromSchema(entry.tool.inputSchema));
+    }
+    // Intentionally not depending on `flat` — refetches shouldn't reset the form.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.serverId, selected?.toolName]);
 
   // Drop the selection if the user toggles off its server.
   useEffect(() => {
