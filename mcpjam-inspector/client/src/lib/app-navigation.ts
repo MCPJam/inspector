@@ -160,7 +160,31 @@ export function navigateApp(to: string, options?: AppNavigateOptions): void {
     const fragment = queryPart ? `${basePath}?${queryPart}` : basePath;
     const newHash = `#${fragment}`;
     if (window.location.hash !== newHash) {
-      window.location.hash = fragment;
+      // When the caller asked for `replace: true`, mutate the existing
+      // history entry instead of letting `window.location.hash = ...`
+      // push a new one — otherwise the user would have to back-button
+      // twice (once over the pushed-state path, once over the pushed
+      // hash) to leave the synthesized hash mirror. We still synthesize
+      // a `hashchange` event so listeners (the App migration shim,
+      // hash-driven test fallbacks) see the update — assigning to
+      // `window.location.hash` would have done that automatically, but
+      // `replaceState` does not.
+      if (options?.replace) {
+        const previousHash = window.location.hash;
+        const base =
+          window.location.pathname + window.location.search;
+        window.history.replaceState({}, "", `${base}${newHash}`);
+        if (typeof HashChangeEvent === "function") {
+          window.dispatchEvent(
+            new HashChangeEvent("hashchange", {
+              oldURL: `${window.location.origin}${base}${previousHash}`,
+              newURL: `${window.location.origin}${base}${newHash}`,
+            }),
+          );
+        }
+      } else {
+        window.location.hash = fragment;
+      }
     }
   }
 }
