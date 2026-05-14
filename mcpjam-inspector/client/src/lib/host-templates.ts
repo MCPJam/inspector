@@ -244,13 +244,18 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         message: { text: {} },
       };
       // Per-resource environment context claude.ai exposes to MCP apps.
-      // Skips `toolInfo` (per-invocation) and `containerDimensions`
-      // (claude.ai pins width: 720 / maxHeight: 5000, but pinning here
-      // would lie to apps about the inspector's actual viewport width).
+      // Skips `toolInfo` (per-invocation, fills at runtime).
+      // `containerDimensions` is verbatim from claude.ai — clean policy
+      // values (720px wide chat column, 5000px height cap). Per SEP-1865,
+      // Views interpret `width: 720` as "fill your container with width:
+      // 100vw" intent, not a literal claim about the inspector's iframe
+      // width; widgets render at whatever the iframe is, the value
+      // communicates Claude's layout policy.
       base.hostContext = {
         theme: "dark",
         displayMode: "inline",
         availableDisplayModes: ["inline", "fullscreen"],
+        containerDimensions: { width: 720, maxHeight: 5000 },
         locale: "en-US",
         timeZone: "America/Los_Angeles",
         userAgent:
@@ -345,12 +350,17 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         updateModelContext: {},
       };
       // Per-resource environment context ChatGPT exposes to MCP apps. Skips
-      // `toolInfo` (per-invocation) and `containerDimensions` (measured at
-      // resource mount); both are filled at runtime, not config time.
+      // `toolInfo` (per-invocation, fills at runtime). `containerDimensions`
+      // is included as host policy per SEP-1865 — Views interpret it as
+      // "fill your container" intent, not a literal viewport claim. Real
+      // ChatGPT publishes `maxWidth: 767.984375` (runtime-measured
+      // viewport-minus-padding); rounded to the md breakpoint (768) so the
+      // template communicates intent rather than freezing a snapshot.
       base.hostContext = {
         theme: "dark",
         displayMode: "inline",
         availableDisplayModes: ["inline", "fullscreen", "pip"],
+        containerDimensions: { height: 400, maxWidth: 768 },
         locale: "en-US",
         timeZone: "America/Los_Angeles",
         userAgent: "chatgpt",
