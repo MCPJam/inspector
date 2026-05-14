@@ -16,7 +16,7 @@ import {
   useLocation,
   useParams,
 } from "react-router";
-import { getAppRouter } from "../router";
+import { getAppRouter } from "../router-ref";
 import type { OrganizationRouteSection } from "./hosted-navigation";
 import type { EvalRoute } from "./eval-route-types";
 
@@ -244,4 +244,27 @@ export function legacyHashTargetToPath(rawTarget: string): string {
   const queryPart = query ? `?${query}` : "";
   if (!path) return "/servers";
   return `/${path}${queryPart}`;
+}
+
+/**
+ * Capture the user's current route as a legacy `#`-prefixed return target.
+ *
+ * OAuth flows (`use-server-state.ts`, `mcp-oauth.ts`,
+ * `hosted-oauth-callback.ts`) persist this string before redirecting and
+ * navigate the user back to it on success. Originally the call sites read
+ * `window.location.hash` directly; after the Phase 2 path migration, hash
+ * is usually empty in production, so we fall through to pathname+search.
+ *
+ * The returned string is intentionally still hash-prefixed so existing
+ * consumers (`resolveHostedOAuthReturnHash`, the App.tsx return handler)
+ * continue to work unchanged — they strip the leading `#`/`/` before
+ * converting to a path.
+ */
+export function captureCurrentReturnTarget(): string {
+  if (typeof window === "undefined") return "#servers";
+  if (window.location.hash) return window.location.hash;
+  const path = window.location.pathname.replace(/^\/+/, "");
+  const search = window.location.search || "";
+  if (!path) return "#servers";
+  return `#${path}${search}`;
 }

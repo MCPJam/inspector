@@ -1,6 +1,7 @@
 import * as React from "react";
 import { UNSAFE_LocationContext } from "react-router";
 import type { EvalRoute } from "./eval-route-types";
+import { navigateApp } from "./app-navigation";
 
 export type EvalRouterPrefix = "/evals" | "/ci-evals";
 
@@ -16,18 +17,20 @@ function normalizeHashForPrefix(
 }
 
 /**
- * Resolve the current eval route source. Prefers `window.location.pathname`
- * (path-based React Router URLs, set by `navigateApp` / sidebar nav) and
- * falls back to the legacy `window.location.hash` for inbound bookmarks
- * that have not yet been migrated by the App hash-migration shim.
+ * Resolve the current eval route source.
+ *
+ * If `window.location.hash` is set, prefer it — that's the legacy bookmark
+ * form, the hash-driven test contract, and the migration shim's intermediate
+ * state. Otherwise read from `window.location.pathname + search` (the
+ * production path-based form set by `navigateApp` / React Router).
  */
 function readCurrentEvalRouteSource(prefix: EvalRouterPrefix): string {
+  if (window.location.hash) {
+    return normalizeHashForPrefix(window.location.hash, prefix);
+  }
   const pathname = window.location.pathname || "";
   const search = window.location.search || "";
-  if (pathname.startsWith(prefix)) {
-    return `${pathname}${search}`;
-  }
-  return normalizeHashForPrefix(window.location.hash, prefix);
+  return `${pathname}${search}`;
 }
 
 export function createEvalRouter(prefix: EvalRouterPrefix) {
@@ -213,13 +216,14 @@ export function createEvalRouter(prefix: EvalRouterPrefix) {
   }
 
   function navigate(route: EvalRoute, options?: { replace?: boolean }) {
+    // `build(route)` returns the legacy hash form (e.g. `#/evals/suite/123`).
+    // Convert to a path-based URL and route through the central navigation
+    // API so React Router stays authoritative. Phase 5 will rip out this
+    // router entirely; callers will use `buildEvalsPath` / `buildCiEvalsPath`
+    // from `app-navigation` directly.
     const hash = build(route);
-    if (options?.replace && (prefix === "/ci-evals" || prefix === "/evals")) {
-      history.replaceState({}, "", `/${hash}`);
-      window.dispatchEvent(new HashChangeEvent("hashchange"));
-    } else {
-      window.location.hash = hash;
-    }
+    const path = `/${hash.replace(/^[#/]+/, "")}`;
+    navigateApp(path, { replace: options?.replace });
   }
 
   function useRoute(): EvalRoute {

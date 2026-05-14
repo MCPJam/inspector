@@ -1,19 +1,10 @@
 import { createBrowserRouter, RouterProvider } from "react-router";
 import App from "./App";
+import { getAppRouter, setAppRouter } from "./router-ref";
 
-/**
- * Module-level router reference. Used by non-React callers (IPC bridge,
- * OAuth callback) that need to navigate outside of hook contexts.
- *
- * Populated on first creation by createAppRouter().
- */
+export { getAppRouter };
+
 type AppRouter = ReturnType<typeof createBrowserRouter>;
-
-let routerRef: AppRouter | null = null;
-
-export function getAppRouter(): AppRouter | null {
-  return routerRef;
-}
 
 /**
  * Phase 1 router: a single catch-all route renders the existing App.
@@ -21,14 +12,16 @@ export function getAppRouter(): AppRouter | null {
  * (chrome layout + tab outlets + nested evals/orgs).
  */
 export function createAppRouter(): AppRouter {
-  if (routerRef) return routerRef;
-  routerRef = createBrowserRouter([
+  const existing = getAppRouter();
+  if (existing) return existing;
+  const router = createBrowserRouter([
     {
       path: "*",
       element: <App />,
     },
   ]);
-  return routerRef;
+  setAppRouter(router);
+  return router;
 }
 
 export function AppRouterProvider() {

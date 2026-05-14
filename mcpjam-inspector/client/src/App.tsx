@@ -1424,7 +1424,12 @@ export default function App() {
         return;
       }
       const path = `/${fragment}`;
-      if (window.location.pathname !== path) {
+      // Compare pathname against the path's pathname-only segment so a
+      // query-bearing hash (e.g. `#evals/suite/x?view=test-cases`) doesn't
+      // trigger a spurious replace when the user is already on the right
+      // pathname.
+      const [pathOnly] = path.split("?");
+      if (window.location.pathname !== pathOnly) {
         navigateApp(path, { replace: true });
       }
       applyNavigation(fragment, { enforceCanonicalHash: true });

@@ -44,6 +44,7 @@ import {
 } from "@/lib/apis/web/context";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import { authFetch } from "@/lib/session-token";
+import { captureCurrentReturnTarget } from "@/lib/app-navigation";
 import { useProjectClientConfigSyncPending } from "./use-project-client-config-sync-pending";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { useServerMutations, type RemoteServer } from "./useProjects";
@@ -633,7 +634,7 @@ export function useServerState({
         return false;
       }
 
-      const returnHash = window.location.hash || "#servers";
+      const returnHash = captureCurrentReturnTarget();
       const organizationId =
         effectiveProjects[effectiveActiveProjectId]?.organizationId ?? null;
       clearHostedOAuthPendingState();
