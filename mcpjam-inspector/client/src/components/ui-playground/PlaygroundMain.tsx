@@ -1353,6 +1353,13 @@ export function PlaygroundMain({
       return;
     }
 
+    // Still mid-stream (submitted ↔ streaming transition). The stream hasn't
+    // ended, so don't consume the baseline yet — otherwise the version-conflict
+    // check below will read `null` when the stream actually completes.
+    if (isNowStreaming) {
+      return;
+    }
+
     const resumedThreadSendBaseline = resumedThreadSendBaselineRef.current;
     resumedThreadSendBaselineRef.current = null;
     const hasCompletedStream = status === "ready";
