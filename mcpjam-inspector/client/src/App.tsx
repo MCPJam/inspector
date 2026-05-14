@@ -134,6 +134,11 @@ import {
   resolveHostedNavigation,
   type OrganizationRouteSection,
 } from "./lib/hosted-navigation";
+import {
+  HOSTED_HASH_ALLOWED_TABS,
+  HOSTED_HASH_BLOCKED_TABS,
+  normalizeHostedHashTab,
+} from "./lib/hosted-tab-policy";
 import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
 import type { OAuthTrace } from "./lib/oauth/oauth-trace";
 import {
@@ -199,6 +204,37 @@ function getHostedOAuthCallbackErrorMessage(): string {
     description || error,
     "Authorization could not be completed. Try again."
   );
+}
+
+/**
+ * Set of pathname segments the App's tab state recognizes as app navigation.
+ * Used by the hash-migration shim to avoid mistaking a chatbox session slug
+ * (e.g. `#my-cool-server`) for a tab name, and by the pathname sync to
+ * recognize known app routes.
+ */
+const KNOWN_APP_TAB_SEGMENTS = new Set<string>([
+  ...HOSTED_HASH_ALLOWED_TABS,
+  ...HOSTED_HASH_BLOCKED_TABS,
+  // Legacy hash alias targets (normalizeHostedHashTab maps these in too):
+  "chat",
+]);
+
+/**
+ * Special entry paths that have their own dedicated handlers
+ * (billing deep-link, OAuth callback). The pathname-sync effect must
+ * not feed these into `applyNavigation`, which would redirect the user
+ * away before the dedicated handler can claim them.
+ */
+const SPECIAL_ENTRY_PATHNAMES = new Set<string>([
+  "/billing",
+  "/billing/",
+  "/callback",
+  "/callback/",
+]);
+
+function isSpecialEntryPath(pathname: string): boolean {
+  if (SPECIAL_ENTRY_PATHNAMES.has(pathname)) return true;
+  return pathname.startsWith("/oauth/callback/debug");
 }
 
 function replaceHash(hash: string) {
@@ -1401,6 +1437,12 @@ export default function App() {
     }
     const pathname =
       locationForRoute?.pathname ?? window.location.pathname;
+    // Defer to dedicated handlers (billing deep-link, OAuth callback) on
+    // their entry paths so they get a chance to claim the URL before
+    // applyNavigation redirects an unrecognized tab back to /servers.
+    if (isSpecialEntryPath(pathname)) {
+      return;
+    }
     const pathTarget = pathname.replace(/^\/+/, "") || "servers";
     applyNavigation(pathTarget, { enforceCanonicalHash: true });
   }, [applyNavigation, isHostedChatRoute, locationForRoute?.pathname]);
@@ -1419,8 +1461,17 @@ export default function App() {
       if (!rawHash) return;
       const fragment = rawHash.replace(/^#\/?/, "");
       if (!fragment) return;
-      // Chatbox session hashes (slug fragments) are not app navigation.
-      if (!fragment.includes("/") && !/^[a-z0-9-]+$/i.test(fragment)) {
+      // Single-segment fragments are only treated as app navigation when
+      // they match a known tab. Chatbox session slugs (e.g.
+      // `#my-cool-server`) and other arbitrary slug bookmarks are left
+      // alone so their dedicated handlers (or stale-bookmark fallthrough)
+      // can claim them.
+      const firstSegment = fragment.split(/[/?]/)[0];
+      const isMultiSegment = fragment.includes("/");
+      const isKnownTab = KNOWN_APP_TAB_SEGMENTS.has(
+        normalizeHostedHashTab(firstSegment),
+      );
+      if (!isMultiSegment && !isKnownTab) {
         return;
       }
       const path = `/${fragment}`;

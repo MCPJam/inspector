@@ -19,10 +19,15 @@ function normalizeHashForPrefix(
 /**
  * Resolve the current eval route source.
  *
- * If `window.location.hash` is set, prefer it — that's the legacy bookmark
- * form, the hash-driven test contract, and the migration shim's intermediate
- * state. Otherwise read from `window.location.pathname + search` (the
- * production path-based form set by `navigateApp` / React Router).
+ * If `window.location.hash` is set, prefer it whether or not it matches
+ * the eval prefix — that's the legacy bookmark / test contract, and
+ * production never sets a non-eval hash on these pages (chatbox session
+ * hashes are guarded by `isChatboxChatRoute`). The non-matching case
+ * falls through `parse()`'s `!hash.startsWith(prefix)` check and returns
+ * null, which is the intended "not an eval route" signal.
+ *
+ * When `window.location.hash` is empty (production path-based URLs set by
+ * `navigateApp` / React Router), read `pathname + search` instead.
  */
 function readCurrentEvalRouteSource(prefix: EvalRouterPrefix): string {
   if (window.location.hash) {
