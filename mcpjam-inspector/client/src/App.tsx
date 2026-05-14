@@ -1529,7 +1529,11 @@ export default function App() {
     if (
       isFirstRunEligible(
         hasAnyFirstRunBlockingProjectServers,
-        window.location.hash,
+        // Pass the resolved tab so the eligibility check stays accurate
+        // under path-based routing (where `window.location.hash` is empty
+        // on `/tools`, `/resources`, etc.). The function only proceeds
+        // when the route is the default servers tab.
+        `#${currentHashRoute.normalizedTab}`,
         !!workOsUser,
         remoteFirstRunOnboardingShown
       )
