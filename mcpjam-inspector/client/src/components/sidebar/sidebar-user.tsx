@@ -30,6 +30,7 @@ import {
 import { useProfilePicture } from "@/hooks/useProfilePicture";
 import { HOSTED_MODE } from "@/lib/config";
 import { SidebarCreditUsage } from "@/components/sidebar/sidebar-credit-usage";
+import { useAppNavigate } from "@/lib/app-navigation";
 
 interface SidebarUserProps {
   activeOrganizationId?: string;
@@ -46,10 +47,11 @@ export function SidebarUser({ activeOrganizationId }: SidebarUserProps = {}) {
     useFeatureFlagEnabled("billing-entitlements-ui") === true;
   const canNavigateToBilling =
     billingUiEnabled && Boolean(activeOrganizationId);
+  const appNavigate = useAppNavigate();
 
   const handleCreditUsageClick = () => {
     setMenuOpen(false);
-    window.location.hash = `organizations/${activeOrganizationId}/billing`;
+    appNavigate(`/organizations/${activeOrganizationId}/billing`);
   };
 
   const workOsName = user
@@ -166,14 +168,14 @@ export function SidebarUser({ activeOrganizationId }: SidebarUserProps = {}) {
             />
             <DropdownMenuSeparator />
             <DropdownMenuItem
-              onClick={() => (window.location.hash = "profile")}
+              onClick={() => appNavigate("/profile")}
               className="cursor-pointer"
             >
               <User className="size-4" />
               Profile
             </DropdownMenuItem>
             <DropdownMenuItem
-              onClick={() => (window.location.hash = "settings")}
+              onClick={() => appNavigate("/settings")}
               className="cursor-pointer"
             >
               <Settings className="size-4" />

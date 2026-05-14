@@ -63,9 +63,12 @@ import {
   isHostedSidebarTabAllowed,
   normalizeHostedHashTab,
 } from "@/lib/hosted-tab-policy";
-import { buildEvalsHash } from "@/lib/evals-router";
-import { navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
-import { withTestingSurface } from "@/lib/testing-surface";
+import {
+  buildEvalsPath,
+  buildCiEvalsPath,
+  navigateApp,
+  useAppNavigate,
+} from "@/lib/app-navigation";
 import { HOSTED_LOCAL_ONLY_TOOLTIP } from "@/lib/hosted-ui";
 import { useLearnMore } from "@/hooks/use-learn-more";
 import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpandedPanel";
@@ -165,23 +168,23 @@ const navigationSections: NavSection[] = [
     items: [
       {
         title: "Servers",
-        url: "#servers",
+        url: "/servers",
         icon: MCPIcon,
       },
       {
         title: "Registry",
-        url: "#registry",
+        url: "/registry",
         icon: LayoutGrid,
         featureFlag: "registry-enabled",
       },
       {
         title: "Chat",
-        url: "#chat-v2",
+        url: "/chat-v2",
         icon: MessageCircle,
       },
       {
         title: "Chatboxes",
-        url: "#chatboxes",
+        url: "/chatboxes",
         icon: Box,
         featureFlag: "sandboxes-enabled",
       },
@@ -192,17 +195,17 @@ const navigationSections: NavSection[] = [
     items: [
       {
         title: "App Builder",
-        url: "#app-builder",
+        url: "/app-builder",
         icon: Anvil,
       },
       {
         title: "Views",
-        url: "#views",
+        url: "/views",
         icon: Layers,
       },
       {
         title: "Evaluate",
-        url: "#evals",
+        url: "/evals",
         icon: FlaskConical,
         billingFeature: "evals",
         evalsSubnav: true,
@@ -214,18 +217,18 @@ const navigationSections: NavSection[] = [
     items: [
       {
         title: "Skills",
-        url: "#skills",
+        url: "/skills",
         icon: SquareSlash,
       },
       {
         title: "Learning",
-        url: "#learning",
+        url: "/learning",
         icon: GraduationCap,
         featureFlag: "mcpjam-learning",
       },
       {
         title: "Conformance",
-        url: "#conformance",
+        url: "/conformance",
         icon: FlaskConical,
         // MCPJam-internal flag: rollout is restricted to the MCPJam team in
         // PostHog. Keep the `mcpjam-` prefix so it's obvious at a glance that
@@ -234,18 +237,18 @@ const navigationSections: NavSection[] = [
       },
       {
         title: "OAuth Debugger",
-        url: "#oauth-flow",
+        url: "/oauth-flow",
         icon: Workflow,
       },
       {
         title: "XAA Debugger",
-        url: "#xaa-flow",
+        url: "/xaa-flow",
         icon: ShieldCheck,
         featureFlag: "xaa",
       },
       // {
       //   title: "Tracing",
-      //   url: "#tracing",
+      //   url: "/tracing",
       //   icon: Activity,
       // },
     ],
@@ -255,22 +258,22 @@ const navigationSections: NavSection[] = [
     items: [
       {
         title: "Tools",
-        url: "#tools",
+        url: "/tools",
         icon: Hammer,
       },
       {
         title: "Resources",
-        url: "#resources",
+        url: "/resources",
         icon: BookOpen,
       },
       {
         title: "Prompts",
-        url: "#prompts",
+        url: "/prompts",
         icon: MessageSquareCode,
       },
       {
         title: "Tasks",
-        url: "#tasks",
+        url: "/tasks",
         icon: ListTodo,
       },
     ],
@@ -280,12 +283,12 @@ const navigationSections: NavSection[] = [
     items: [
       {
         title: "Support",
-        url: "#support",
+        url: "/support",
         icon: MessageCircleQuestionIcon,
       },
       {
         title: "Settings",
-        url: "#settings",
+        url: "/settings",
         icon: Settings,
       },
     ],
@@ -300,7 +303,7 @@ export function getHostedNavigationSections(
       ...section,
       items: section.items.flatMap((item) => {
         const normalizedTab = normalizeHostedHashTab(
-          item.url.startsWith("#") ? item.url.slice(1) : item.url,
+          item.url.replace(/^[#/]+/, ""),
         );
 
         if (isHostedSidebarTabAllowed(normalizedTab)) {
@@ -356,11 +359,11 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
 }
 
 function navigateToEvalsExploreList() {
-  window.location.hash = withTestingSurface(buildEvalsHash({ type: "list" }));
+  navigateApp(buildEvalsPath({ type: "list" }));
 }
 
 function navigateToEvalsRunsList() {
-  navigateToCiEvalsRoute({ type: "list" });
+  navigateApp(buildCiEvalsPath({ type: "list" }));
 }
 
 type EvalsSubnavItem = {
@@ -377,7 +380,7 @@ export function getEvalsSubnavItems(options: {
   const items: EvalsSubnavItem[] = [
     {
       title: "Playground",
-      href: withTestingSurface(buildEvalsHash({ type: "list" })),
+      href: buildEvalsPath({ type: "list" }),
       icon: Puzzle,
       isActive: (activeTab) => activeTab === "evals",
       onClick: navigateToEvalsExploreList,
@@ -387,7 +390,7 @@ export function getEvalsSubnavItems(options: {
   if (options.evaluateRunsEnabled) {
     items.push({
       title: "Runs",
-      href: "#/ci-evals",
+      href: "/ci-evals",
       icon: GitBranch,
       isActive: (activeTab) => activeTab === "ci-evals",
       onClick: navigateToEvalsRunsList,
@@ -557,6 +560,7 @@ export function MCPSidebar({
   const { updateReady, restartAndInstall } = useUpdateNotification();
   const [showInviteDialog, setShowInviteDialog] = useState(false);
   const learnMore = useLearnMore();
+  const appNavigate = useAppNavigate();
   const { state, isMobile } = useSidebar();
   const activeProject = projects[activeProjectId];
   const inviteableProjects = useMemo(() => {
@@ -582,12 +586,14 @@ export function MCPSidebar({
     !!trialBilling.trialEndsAt;
   const handleTrialUpgradeClick = () => {
     if (!activeProject?.organizationId) return;
-    window.location.hash = `#organizations/${activeProject.organizationId}/billing`;
+    appNavigate(
+      `/organizations/${activeProject.organizationId}/billing`,
+    );
   };
 
   const handleNavClick = (url: string) => {
-    if (onNavigate && url.startsWith("#")) {
-      const section = url.slice(1);
+    if (onNavigate && /^[#/]/.test(url)) {
+      const section = url.replace(/^[#/]+/, "");
       posthog.capture("sidebar_nav_clicked", {
         ...standardEventProps("mcp_sidebar"),
         section,
@@ -727,7 +733,7 @@ export function MCPSidebar({
                 <NavMain
                   items={flatItems.map((item) => ({
                     ...item,
-                    isActive: item.url === `#${activeTab}`,
+                    isActive: item.url === `/${activeTab}`,
                   }))}
                   onItemClick={handleNavClick}
                   learnMore={

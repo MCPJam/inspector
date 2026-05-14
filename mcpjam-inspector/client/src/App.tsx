@@ -172,6 +172,8 @@ import { buildElectronMcpCallbackUrl } from "./hooks/use-server-state";
 import { getEffectiveProjectClientCapabilities } from "./lib/client-config";
 import { buildEvalsHash } from "./lib/evals-router";
 import { withTestingSurface } from "./lib/testing-surface";
+import { navigateApp } from "./lib/app-navigation";
+import { useInRouterContext, useLocation } from "react-router";
 import { useProjectClientConfigSyncPending } from "./hooks/use-project-client-config-sync-pending";
 import { ingestOAuthTraceLogs } from "./stores/traffic-log-store";
 import { clearGuestSession, getGuestBearerToken } from "./lib/guest-session";
@@ -531,8 +533,8 @@ export default function App() {
       localStorage.removeItem("mcp-oauth-pending");
       localStorage.removeItem("mcp-oauth-return-hash");
       const returnHash = resolveHostedOAuthReturnHash(callbackContext);
-      window.history.replaceState({}, "", `/${returnHash}`);
-      window.dispatchEvent(new Event("hashchange"));
+      const returnPath = `/${returnHash.replace(/^[#/]+/, "")}`;
+      navigateApp(returnPath, { replace: true });
     };
 
     if (error || !code) {
@@ -1186,8 +1188,10 @@ export default function App() {
       }
 
       const resolved = resolveHostedNavigation(target, HOSTED_MODE);
+      const currentSource =
+        window.location.hash || `#${window.location.pathname.replace(/^\/+/, "")}`;
       const currentResolved = resolveHostedNavigation(
-        window.location.hash || "#servers",
+        currentSource || "#servers",
         HOSTED_MODE
       );
       const shouldPreserveCurrentRouteOrganization =
@@ -1198,12 +1202,14 @@ export default function App() {
           (organization) => organization._id === currentResolved.organizationId
         );
 
+      const canonicalPath = `/${resolved.normalizedSection}`;
+
       if (
         options?.enforceCanonicalHash &&
         resolved.rawSection !== resolved.normalizedSection
       ) {
-        if (window.location.hash !== `#${resolved.normalizedSection}`) {
-          window.location.hash = resolved.normalizedSection;
+        if (window.location.pathname !== canonicalPath) {
+          navigateApp(canonicalPath, { replace: true });
         }
         return;
       }
@@ -1214,8 +1220,8 @@ export default function App() {
         );
         setActiveOrganizationId(undefined);
         setActiveTab("servers");
-        if (window.location.hash !== "#servers") {
-          window.location.hash = "servers";
+        if (window.location.pathname !== "/servers") {
+          navigateApp("/servers", { replace: true });
         }
         return;
       }
@@ -1234,7 +1240,9 @@ export default function App() {
         setSelectedMultipleServersToAllServers();
       }
       if (options?.updateHash) {
-        window.location.hash = resolved.normalizedSection;
+        if (window.location.pathname !== canonicalPath) {
+          navigateApp(canonicalPath);
+        }
       }
       setActiveTab(resolved.normalizedTab);
     },
@@ -1256,7 +1264,11 @@ export default function App() {
         const command = rawCommand as NavigateInspectorCommand;
         const resolved = resolveHostedNavigation(command.payload.target, false);
 
-        applyNavigation(command.payload.target, { updateHash: true });
+        // IPC navigate command receives a hash-style target (e.g.
+        // "organizations/abc/billing"). Route it via the path-based API.
+        const target = command.payload.target.replace(/^[#/]+/, "");
+        navigateApp(`/${target}`);
+        applyNavigation(command.payload.target, { updateHash: false });
         await waitForUiCommit();
 
         return { activeTab: resolved.normalizedTab };
@@ -1355,19 +1367,49 @@ export default function App() {
     syncAgentStatus,
   ]);
 
-  // Sync tab with hash on mount and when hash changes
+  // Sync tab with the current React Router pathname.
+  // Phase 2 bridge: previously read window.location.hash on every hashchange.
+  // The remaining hashchange listener handles legacy bookmarks (#servers → /servers)
+  // until Phase 6 deletes it entirely.
+  const inRouter = useInRouterContext();
+  const location = inRouter ? useLocation() : null;
   useLayoutEffect(() => {
     if (isHostedChatRoute) {
       return;
     }
+    const pathname =
+      location?.pathname ?? window.location.pathname;
+    const pathTarget = pathname.replace(/^\/+/, "") || "servers";
+    applyNavigation(pathTarget, { enforceCanonicalHash: true });
+  }, [applyNavigation, isHostedChatRoute, location?.pathname]);
 
-    const applyHash = () => {
-      const currentHash = window.location.hash || "#servers";
-      applyNavigation(currentHash, { enforceCanonicalHash: true });
+  // Legacy hash bookmark migration: if a user arrives at "/#servers" or
+  // "/#evals/suite/X", convert the fragment to a real path-based URL and
+  // drive applyNavigation so state stays in sync. Also serves as the
+  // primary navigation driver for tests that render <App /> without a
+  // Router (and therefore without a useLocation pathname signal).
+  useLayoutEffect(() => {
+    if (isHostedChatRoute) {
+      return;
+    }
+    const migrateHash = () => {
+      const rawHash = window.location.hash;
+      if (!rawHash) return;
+      const fragment = rawHash.replace(/^#\/?/, "");
+      if (!fragment) return;
+      // Chatbox session hashes (slug fragments) are not app navigation.
+      if (!fragment.includes("/") && !/^[a-z0-9-]+$/i.test(fragment)) {
+        return;
+      }
+      const path = `/${fragment}`;
+      if (window.location.pathname !== path) {
+        navigateApp(path, { replace: true });
+      }
+      applyNavigation(fragment, { enforceCanonicalHash: true });
     };
-    applyHash();
-    window.addEventListener("hashchange", applyHash);
-    return () => window.removeEventListener("hashchange", applyHash);
+    migrateHash();
+    window.addEventListener("hashchange", migrateHash);
+    return () => window.removeEventListener("hashchange", migrateHash);
   }, [applyNavigation, isHostedChatRoute]);
 
   useLayoutEffect(() => {

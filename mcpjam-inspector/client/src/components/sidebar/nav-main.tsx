@@ -58,14 +58,14 @@ export function NavMain({ items, onItemClick, learnMore }: NavMainProps) {
 
   const shouldShowHoverCard = (item: NavMainItem): boolean => {
     if (!learnMore) return false;
-    const tabId = item.url.replace("#", "");
+    const tabId = item.url.replace(/^[#/]+/, "");
     const entry = learnMoreContent[tabId];
     return !!entry?.previewVideoUrl;
   };
 
   const wrapWithHoverCard = (item: NavMainItem, child: React.ReactNode) => {
     if (!shouldShowHoverCard(item) || !learnMore) return child;
-    const tabId = item.url.replace("#", "");
+    const tabId = item.url.replace(/^[#/]+/, "");
     return (
       <LearnMoreHoverCard
         tabId={tabId}

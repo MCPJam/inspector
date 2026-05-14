@@ -25,8 +25,7 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { cn } from "@/lib/utils";
 import { useCiEvalsRoute, navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
-import { buildEvalsHash } from "@/lib/evals-router";
-import { withTestingSurface } from "@/lib/testing-surface";
+import { navigateApp } from "@/lib/app-navigation";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
 import {
   aggregateSuite,
@@ -175,7 +174,7 @@ export function CiEvalsTab({
 
   useEffect(() => {
     if (route.type !== "create") return;
-    window.location.hash = withTestingSurface(buildEvalsHash({ type: "list" }));
+    navigateApp("/evals");
   }, [route.type]);
 
   useEffect(() => {

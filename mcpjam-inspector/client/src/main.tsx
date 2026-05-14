@@ -1,6 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import App from "./App.jsx";
+import { AppRouterProvider } from "./router";
 import "./index.css";
 import { getPostHogKey, getPostHogOptions } from "./lib/PosthogUtils.js";
 import { PostHogProvider } from "posthog-js/react";
@@ -153,7 +153,7 @@ if (isInIframe) {
       {...workosClientOptions}
     >
       <ConvexProviderWithAuthKit client={convex} useAuth={useUnifiedConvexAuth}>
-        <App />
+        <AppRouterProvider />
       </ConvexProviderWithAuthKit>
     </AuthKitProvider>
   );

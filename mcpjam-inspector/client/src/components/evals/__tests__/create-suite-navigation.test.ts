@@ -5,8 +5,7 @@ import {
   navigatePlaygroundEvalsRoute,
 } from "../create-suite-navigation";
 import * as ciEvalsRouter from "@/lib/ci-evals-router";
-import * as evalsRouter from "@/lib/evals-router";
-import * as testingSurface from "@/lib/testing-surface";
+import * as appNavigation from "@/lib/app-navigation";
 
 vi.spyOn(ciEvalsRouter, "navigateToCiEvalsRoute").mockImplementation(
   () => undefined as never,
@@ -47,26 +46,19 @@ describe("createCiSuiteNavigation", () => {
 });
 
 describe("createPlaygroundSuiteNavigation", () => {
+  let navigateSpy: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
-    vi.spyOn(evalsRouter, "buildEvalsHash").mockImplementation((r) =>
-      JSON.stringify(r),
-    );
-    vi.spyOn(testingSurface, "withTestingSurface").mockImplementation(
-      (h) => `wrapped:${h}`,
-    );
+    navigateSpy = vi
+      .spyOn(appNavigation, "navigateApp")
+      .mockImplementation(() => undefined);
   });
 
-  it("toSuiteOverview uses suite-overview with testing surface wrapper", () => {
+  it("toSuiteOverview navigates to /evals/suite/:id", () => {
     const nav = createPlaygroundSuiteNavigation();
     nav.toSuiteOverview("suite-1", "runs");
-    expect(evalsRouter.buildEvalsHash).toHaveBeenCalledWith({
-      type: "suite-overview",
-      suiteId: "suite-1",
-      view: "runs",
+    expect(navigateSpy).toHaveBeenCalledWith("/evals/suite/suite-1", {
+      replace: undefined,
     });
-    expect(testingSurface.withTestingSurface).toHaveBeenCalledWith(
-      '{"type":"suite-overview","suiteId":"suite-1","view":"runs"}',
-    );
   });
 
   it("toTestEdit emits compare links for results routes", () => {
@@ -75,50 +67,34 @@ describe("createPlaygroundSuiteNavigation", () => {
       openCompare: true,
       iteration: "iter-1",
     });
-    expect(evalsRouter.buildEvalsHash).toHaveBeenCalledWith({
-      type: "test-edit",
-      suiteId: "suite-1",
-      testId: "case-1",
-      openCompare: true,
-      iteration: "iter-1",
-    });
+    expect(navigateSpy).toHaveBeenCalledWith(
+      "/evals/suite/suite-1/test/case-1/edit?compare=1&iteration=iter-1",
+      { replace: undefined },
+    );
   });
 });
 
 describe("navigatePlaygroundEvalsRoute", () => {
+  let navigateSpy: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
-    vi.spyOn(evalsRouter, "buildEvalsHash").mockImplementation((r) =>
-      JSON.stringify(r),
-    );
-    vi.spyOn(testingSurface, "withTestingSurface").mockImplementation(
-      (h) => `#${h}`,
-    );
-  });
-
-  it("uses location hash navigation when replace is not set", () => {
-    const replaceSpy = vi.spyOn(history, "replaceState");
-    navigatePlaygroundEvalsRoute({ type: "list" });
-    expect(evalsRouter.buildEvalsHash).toHaveBeenCalledWith({ type: "list" });
-    expect(testingSurface.withTestingSurface).toHaveBeenCalled();
-    expect(replaceSpy).not.toHaveBeenCalled();
-    replaceSpy.mockRestore();
-  });
-
-  it("uses history.replaceState and hashchange when replace is true", () => {
-    const replaceSpy = vi
-      .spyOn(history, "replaceState")
+    navigateSpy = vi
+      .spyOn(appNavigation, "navigateApp")
       .mockImplementation(() => undefined);
-    const dispatchSpy = vi.spyOn(window, "dispatchEvent");
+  });
+
+  it("navigates to the playground evals list path", () => {
+    navigatePlaygroundEvalsRoute({ type: "list" });
+    expect(navigateSpy).toHaveBeenCalledWith("/evals", { replace: undefined });
+  });
+
+  it("passes the replace option through to navigateApp", () => {
     navigatePlaygroundEvalsRoute(
       { type: "run-detail", suiteId: "s1", runId: "r1" },
       { replace: true },
     );
-    expect(replaceSpy).toHaveBeenCalledWith(
-      {},
-      "",
-      '/#{"type":"run-detail","suiteId":"s1","runId":"r1"}',
+    expect(navigateSpy).toHaveBeenCalledWith(
+      "/evals/suite/s1/runs/r1",
+      { replace: true },
     );
-    expect(dispatchSpy).toHaveBeenCalledWith(expect.any(HashChangeEvent));
-    replaceSpy.mockRestore();
   });
 });

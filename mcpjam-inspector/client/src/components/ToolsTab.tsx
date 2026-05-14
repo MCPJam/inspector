@@ -8,6 +8,7 @@ import type {
 import { Wrench } from "lucide-react";
 import { ElicitationDialog } from "./ElicitationDialog";
 import { EmptyState } from "./ui/empty-state";
+import { navigateApp } from "@/lib/app-navigation";
 import { ThreePanelLayout } from "./ui/three-panel-layout";
 import { ResultsPanel } from "./tools/ResultsPanel";
 import { ToolsSidebar } from "./tools/ToolsSidebar";
@@ -412,7 +413,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       });
 
       // Navigate to Tasks tab to monitor the task
-      window.location.hash = "tasks";
+      navigateApp("/tasks");
       return;
     }
 

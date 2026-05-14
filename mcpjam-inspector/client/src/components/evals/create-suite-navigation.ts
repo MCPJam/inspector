@@ -1,20 +1,13 @@
 import type { EvalRoute } from "@/lib/eval-route-types";
 import { navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
-import { buildEvalsHash } from "@/lib/evals-router";
-import { withTestingSurface } from "@/lib/testing-surface";
+import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
 import type { SuiteNavigation } from "./suite-iterations-view";
 
 function applyPlaygroundEvalsHash(
-  route: Parameters<typeof buildEvalsHash>[0],
+  route: EvalRoute,
   options?: { replace?: boolean },
 ) {
-  const hash = withTestingSurface(buildEvalsHash(route));
-  if (options?.replace && typeof window !== "undefined") {
-    history.replaceState({}, "", `/${hash}`);
-    window.dispatchEvent(new HashChangeEvent("hashchange"));
-    return;
-  }
-  window.location.hash = hash;
+  navigateApp(buildEvalsPath(route), { replace: options?.replace });
 }
 
 /** Playground Explore: same hash shape as `navigateToEvalsRoute` but wrapped with `withTestingSurface`. */
