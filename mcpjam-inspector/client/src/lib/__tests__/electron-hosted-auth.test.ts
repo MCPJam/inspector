@@ -22,8 +22,8 @@ describe("electron hosted auth helpers", () => {
         JSON.stringify({
           [ELECTRON_HOSTED_AUTH_STATE_KEY]: true,
           foo: "bar",
-        }),
-      ),
+        })
+      )
     ).toEqual({
       [ELECTRON_HOSTED_AUTH_STATE_KEY]: true,
       foo: "bar",
@@ -41,7 +41,9 @@ describe("electron hosted auth helpers", () => {
 
     expect(isElectronHostedAuthCallback(location)).toBe(true);
     expect(buildElectronHostedAuthCallbackUrl(location)).toBe(
-      `mcpjam://oauth/callback?code=test-code&state=${encodeURIComponent(state)}`,
+      `mcpjam://oauth/callback?code=test-code&state=${encodeURIComponent(
+        state
+      )}`
     );
   });
 
@@ -56,7 +58,36 @@ describe("electron hosted auth helpers", () => {
           protocol: "http:",
           search: "",
         } as Pick<Location, "origin" | "pathname" | "protocol" | "search">,
-      }),
+      })
     ).toBe("http://localhost:5173/callback");
+  });
+
+  it("uses the configured redirect for non-http browser locations", () => {
+    expect(
+      resolveWorkosRedirectUri({
+        envRedirect: "https://app.mcpjam.com/callback",
+        isElectron: false,
+        location: {
+          origin: "file://",
+          pathname: "/index.html",
+          protocol: "file:",
+          search: "",
+        } as Pick<Location, "origin" | "pathname" | "protocol" | "search">,
+      })
+    ).toBe("https://app.mcpjam.com/callback");
+  });
+
+  it("rejects non-http browser locations without a configured redirect", () => {
+    expect(() =>
+      resolveWorkosRedirectUri({
+        isElectron: false,
+        location: {
+          origin: "file://",
+          pathname: "/index.html",
+          protocol: "file:",
+          search: "",
+        } as Pick<Location, "origin" | "pathname" | "protocol" | "search">,
+      })
+    ).toThrow("WorkOS redirect URI requires an HTTP(S) browser origin.");
   });
 });

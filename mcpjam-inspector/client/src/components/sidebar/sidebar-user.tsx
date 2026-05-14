@@ -60,7 +60,17 @@ export function SidebarUser({ activeOrganizationId }: SidebarUserProps = {}) {
   const initials = getInitials(displayName);
 
   const handleSignOut = () => {
-    signOut({ returnTo: window.location.origin });
+    const returnTo = window.location.origin;
+    if (window.isElectron) {
+      void Promise.resolve(signOut({ returnTo, navigate: false })).finally(
+        () => {
+          window.location.assign(returnTo);
+        }
+      );
+      return;
+    }
+
+    signOut({ returnTo });
   };
 
   const avatarUrl = profilePictureUrl;

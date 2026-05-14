@@ -105,5 +105,9 @@ export function resolveWorkosRedirectUri(options: {
     return `${location.origin}/callback`;
   }
 
-  return envRedirect ?? `${location.origin}/callback`;
+  if (envRedirect) {
+    return envRedirect;
+  }
+
+  throw new Error("WorkOS redirect URI requires an HTTP(S) browser origin.");
 }
