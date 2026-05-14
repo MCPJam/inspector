@@ -53,6 +53,7 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: mockCapture,
   }),
+  useFeatureFlagEnabled: () => false,
 }));
 
 vi.mock("@/lib/PosthogUtils", () => ({
