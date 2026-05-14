@@ -56,7 +56,8 @@ export type HostConfigEditorOwner =
   | "project-default"
   | "chatbox"
   | "eval-suite"
-  | "connection-only";
+  | "connection-only"
+  | "host";
 
 export interface HostConfigEditorProps {
   value: HostConfigInputV2;
@@ -136,8 +137,10 @@ export function HostConfigEditor({
   // editor surface for owner="eval-suite" therefore hides the server
   // picker entirely (and ignores `availableServers`) so users can't
   // type changes the backend would reject.
+  // For owner="host", server selection is managed via the canvas in
+  // HostBuilderView — hiding it here prevents double-entry confusion.
   const showServersSection =
-    owner !== "connection-only" && owner !== "eval-suite";
+    owner !== "connection-only" && owner !== "eval-suite" && owner !== "host";
 
   const hostStyleOptions = useMemo(() => listHostStyles(), []);
 

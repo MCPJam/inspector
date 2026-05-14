@@ -27,6 +27,10 @@ import { Switch } from "@mcpjam/design-system/switch";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Label } from "@mcpjam/design-system/label";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { useHost } from "@/hooks/useHosts";
+import { useConvexAuth } from "convex/react";
+import { HostPicker } from "@/components/hosts/HostPicker";
+import { hostConfigDtoToInput } from "@/lib/host-config-v2";
 
 interface ProjectServerOption {
   _id: string;
@@ -41,6 +45,7 @@ interface CreateChatboxDialogProps {
   projectServers: ProjectServerOption[];
   chatbox?: ChatboxSettings | null;
   onSaved?: (chatbox: ChatboxSettings) => void;
+  hostsEnabled?: boolean;
 }
 
 const DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant.";
@@ -52,7 +57,9 @@ export function CreateChatboxDialog({
   projectServers,
   chatbox,
   onSaved,
+  hostsEnabled = false,
 }: CreateChatboxDialogProps) {
+  const { isAuthenticated } = useConvexAuth();
   const { createChatbox, updateChatbox } = useChatboxMutations();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -62,7 +69,15 @@ export function CreateChatboxDialog({
   const [requireToolApproval, setRequireToolApproval] = useState(false);
   const [allowGuestAccess, setAllowGuestAccess] = useState(false);
   const [selectedServerIds, setSelectedServerIds] = useState<string[]>([]);
+  const [hostSeededOptionalIds, setHostSeededOptionalIds] = useState<string[]>(
+    [],
+  );
   const [isSaving, setIsSaving] = useState(false);
+  const [selectedHostId, setSelectedHostId] = useState<string | null>(null);
+  const { host: selectedHost } = useHost({
+    isAuthenticated: isAuthenticated && hostsEnabled,
+    hostId: selectedHostId,
+  });
 
   const availableServers = useMemo(
     () => projectServers.filter((server) => server.transportType === "http"),
@@ -81,6 +96,7 @@ export function CreateChatboxDialog({
       return;
     }
 
+    setSelectedHostId(null);
     setName(chatbox?.name ?? "");
     setDescription(chatbox?.description ?? "");
     setSystemPrompt(chatbox?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT);
@@ -95,7 +111,33 @@ export function CreateChatboxDialog({
     setSelectedServerIds(
       chatbox?.servers.map((server) => server.serverId) ?? [],
     );
+    setHostSeededOptionalIds([]);
   }, [hostedModels, isOpen, chatbox]);
+
+  // Seed form from selected host. Chatboxes only support HTTP servers, so
+  // filter the host's server list to ids that exist as HTTP project servers.
+  // De-dupe across serverIds/optionalServerIds (optionalServerIds is a subset
+  // of serverIds per the host config model). Re-runs only when the selected
+  // host identity changes — depending on the full host object would
+  // overwrite user edits on background data refreshes.
+  useEffect(() => {
+    if (!selectedHost) return;
+    const config = selectedHost.config;
+    const allowedHttpIds = new Set(availableServers.map((s) => s._id));
+    const seededIds = Array.from(
+      new Set([...config.serverIds, ...config.optionalServerIds]),
+    ).filter((id) => allowedHttpIds.has(id));
+    const seededOptional = config.optionalServerIds.filter((id) =>
+      allowedHttpIds.has(id),
+    );
+    setModelId(config.modelId);
+    setSystemPrompt(config.systemPrompt);
+    setTemperature(config.temperature);
+    setRequireToolApproval(config.requireToolApproval);
+    setSelectedServerIds(seededIds);
+    setHostSeededOptionalIds(seededOptional);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedHost?.hostId]);
 
   const handleToggleServer = (serverId: string, checked: boolean) => {
     setSelectedServerIds((current) => {
@@ -126,7 +168,7 @@ export function CreateChatboxDialog({
                 s.optional === true && selectedServerIds.includes(s.serverId),
             )
             .map((s) => s.serverId)
-        : [];
+        : hostSeededOptionalIds.filter((id) => selectedServerIds.includes(id));
 
       const payload = {
         name: trimmedName,
@@ -141,6 +183,14 @@ export function CreateChatboxDialog({
         optionalServerIds,
       };
 
+      const hostSnapshot =
+        !chatbox && selectedHost && selectedHostId
+          ? {
+              namedHostId: selectedHostId,
+              hostConfigInput: hostConfigDtoToInput(selectedHost.config),
+            }
+          : {};
+
       const next = (
         chatbox
           ? await updateChatbox({
@@ -150,6 +200,7 @@ export function CreateChatboxDialog({
           : await createChatbox({
               projectId,
               ...payload,
+              ...hostSnapshot,
             })
       ) as ChatboxSettings;
 
@@ -177,6 +228,26 @@ export function CreateChatboxDialog({
         </DialogHeader>
 
         <div className="space-y-5">
+          {hostsEnabled && !chatbox && (
+            <div className="grid gap-2">
+              <Label>Seed from host (optional)</Label>
+              <HostPicker
+                projectId={projectId}
+                value={selectedHostId}
+                onChange={setSelectedHostId}
+                placeholder="Choose a host to pre-fill settings"
+                includeNone={false}
+                noneLabel="No host"
+              />
+              {selectedHostId && (
+                <p className="text-xs text-muted-foreground">
+                  Model, prompt, and servers pre-filled from host. You can
+                  still adjust them below.
+                </p>
+              )}
+            </div>
+          )}
+
           <div className="grid gap-2">
             <Label htmlFor="chatbox-name">Name</Label>
             <Input

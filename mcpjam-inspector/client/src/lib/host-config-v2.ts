@@ -90,6 +90,24 @@ export type HostConfigMcpProfileV1 = {
         extensions?: Record<string, unknown>;
       };
     };
+    /**
+     * Overrides for the MCP Apps `ui/initialize` response advertised to
+     * the View iframe (SEP-1865). Sibling to `apps.sandbox` because the
+     * `ui/initialize` envelope is the MCP Apps extension's negotiation
+     * step — distinct from the base-protocol `initialize` whose overrides
+     * live under `mcpProfile.initialize`.
+     */
+    uiInitialize?: {
+      /**
+       * The exact `hostInfo` the inspector should report in the
+       * `ui/initialize` result. Backend soft-validates `name` and
+       * `version` (non-empty strings, required when `hostInfo` is set)
+       * and passes everything else through verbatim so future spec
+       * additions (e.g. `title`) land here without a schema migration.
+       * Mirror of `initialize.clientInfo`.
+       */
+      hostInfo?: Record<string, unknown>;
+    };
   };
   extensions?: Record<string, unknown>;
 };
@@ -125,6 +143,16 @@ export type HostConfigInputV2 = {
    * the two states distinctly.
    */
   mcpProfile?: HostConfigMcpProfileV1;
+  /**
+   * Per-server connection overrides scoped to this host config. Keys are
+   * server IDs. When present for a server, these win over host-wide
+   * connectionDefaults for that specific server. Included in the canonical
+   * hash so hosts that differ only in overrides get distinct rows.
+   */
+  serverConnectionOverrides?: Record<string, {
+    headersOverride?: Record<string, string>;
+    requestTimeoutOverride?: number;
+  }>;
 };
 
 /**
@@ -152,6 +180,11 @@ export type HostConfigDtoV2 = {
    * default empty envelope.
    */
   mcpProfile?: HostConfigMcpProfileV1;
+  /** Per-server connection overrides hydrated from hostConfigServerRefs. */
+  serverConnectionOverrides?: Record<string, {
+    headersOverride?: Record<string, string>;
+    requestTimeoutOverride?: number;
+  }>;
 };
 
 export const DEFAULT_HOST_STYLE_V2: HostStyleId = "claude";
@@ -210,6 +243,21 @@ export function emptyHostConfigInputV2(
     mcpProfile: partial.mcpProfile
       ? cloneMcpProfile(partial.mcpProfile)
       : undefined,
+    serverConnectionOverrides: partial.serverConnectionOverrides
+      ? Object.fromEntries(
+          Object.entries(partial.serverConnectionOverrides).map(([k, v]) => [
+            k,
+            {
+              ...(v.headersOverride !== undefined
+                ? { headersOverride: { ...v.headersOverride } }
+                : {}),
+              ...(v.requestTimeoutOverride !== undefined
+                ? { requestTimeoutOverride: v.requestTimeoutOverride }
+                : {}),
+            },
+          ]),
+        )
+      : undefined,
   };
 }
 
@@ -240,6 +288,21 @@ export function hostConfigDtoToInput(
       ? deepCloneJsonRecord(dto.hostCapabilitiesOverride)
       : undefined,
     mcpProfile: dto.mcpProfile ? cloneMcpProfile(dto.mcpProfile) : undefined,
+    serverConnectionOverrides: dto.serverConnectionOverrides
+      ? Object.fromEntries(
+          Object.entries(dto.serverConnectionOverrides).map(([k, v]) => [
+            k,
+            {
+              ...(v.headersOverride !== undefined
+                ? { headersOverride: { ...v.headersOverride } }
+                : {}),
+              ...(v.requestTimeoutOverride !== undefined
+                ? { requestTimeoutOverride: v.requestTimeoutOverride }
+                : {}),
+            },
+          ])
+        )
+      : undefined,
   };
 }
 
@@ -311,6 +374,21 @@ export function resolveSupportedProtocolVersions(
 }
 
 /**
+ * Resolve the `hostInfo` advertised in the MCP Apps `ui/initialize`
+ * response. `undefined` means "use the renderer's built-in default
+ * (mcpjam-inspector + __APP_VERSION__)" — preserves the historic value
+ * for hosts that haven't opted into the override.
+ *
+ * Sibling of {@link resolveClientInfo}: same shape, different protocol
+ * layer (base-protocol `initialize` vs. MCP Apps `ui/initialize`).
+ */
+export function resolveHostInfo(
+  profile: HostConfigMcpProfileV1 | undefined,
+): Record<string, unknown> | undefined {
+  return profile?.apps?.uiInitialize?.hostInfo;
+}
+
+/**
  * Deep-clone an mcpProfile so editor mutations can't alias the source.
  * Goes through deepCloneJsonValue, but preserves the
  * `HostConfigMcpProfileV1` type at the boundary.
@@ -373,7 +451,46 @@ export function hostConfigInputsEqual(
   if (!optionalJsonRecordEq(a.hostCapabilitiesOverride, b.hostCapabilitiesOverride))
     return false;
   if (!optionalMcpProfileEq(a.mcpProfile, b.mcpProfile)) return false;
+  if (
+    !serverConnectionOverridesEqual(
+      a.serverConnectionOverrides,
+      b.serverConnectionOverrides,
+    )
+  )
+    return false;
   return true;
+}
+
+/**
+ * Deep equality for serverConnectionOverrides maps. Normalizes empty/undefined
+ * entries so `undefined`, `{}`, and an entry with all undefined fields all
+ * compare equal (no override).
+ */
+export function serverConnectionOverridesEqual(
+  a: HostConfigInputV2["serverConnectionOverrides"],
+  b: HostConfigInputV2["serverConnectionOverrides"],
+): boolean {
+  const normalize = (
+    overrides: HostConfigInputV2["serverConnectionOverrides"],
+  ): Record<string, { headersOverride?: Record<string, string>; requestTimeoutOverride?: number }> => {
+    if (!overrides) return {};
+    const result: Record<string, { headersOverride?: Record<string, string>; requestTimeoutOverride?: number }> = {};
+    for (const [key, entry] of Object.entries(overrides)) {
+      if (!entry) continue;
+      const hasHeaders =
+        entry.headersOverride !== undefined &&
+        Object.keys(entry.headersOverride).length > 0;
+      const hasTimeout = entry.requestTimeoutOverride !== undefined;
+      if (hasHeaders || hasTimeout) {
+        result[key] = {
+          ...(hasHeaders ? { headersOverride: entry.headersOverride } : {}),
+          ...(hasTimeout ? { requestTimeoutOverride: entry.requestTimeoutOverride } : {}),
+        };
+      }
+    }
+    return result;
+  };
+  return stableStringifyJson(normalize(a)) === stableStringifyJson(normalize(b));
 }
 
 function optionalMcpProfileEq(
