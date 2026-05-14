@@ -5,12 +5,13 @@ import { z } from "zod";
  * The shape evolves over time; `payloadVersion` selects which Zod schema
  * to validate against. Adding a field is a new minor schema update;
  * removing/renaming a field requires a new `payloadVersion`.
+ *
+ * v2: drops the `layout` object. The IDE-style sortable-pane system was
+ * replaced with the chat-v2 fixed-rail layout (collapsible left/right
+ * panels driven by local React state, not persisted per view). Any
+ * persisted v1 rows are accepted and forward-migrated by stripping
+ * `layout` — see `parsePlaygroundViewPayload`.
  */
-
-export const PANE_IDS = ["tools", "chatHistory", "header"] as const;
-export type PaneId = (typeof PANE_IDS)[number];
-
-const PaneIdSchema = z.enum(PANE_IDS);
 
 const ServerToolRefSchema = z.object({
   serverId: z.string(),
@@ -32,16 +33,7 @@ const UITypeSchema = z.enum([
 ]);
 const TraceViewModeSchema = z.enum(["chat", "timeline", "raw"]);
 
-export const PlaygroundViewLayoutV1Schema = z.object({
-  leftPanes: z.array(PaneIdSchema),
-  rightPanes: z.array(PaneIdSchema),
-  leftWidth: z.number(),
-  rightWidth: z.number(),
-  centerPane: z.literal("thread"),
-});
-
-export const PlaygroundViewPayloadV1Schema = z.object({
-  layout: PlaygroundViewLayoutV1Schema,
+export const PlaygroundViewPayloadV2Schema = z.object({
   servers: z.object({
     selectedServerNames: z.array(z.string()),
     hostId: z.string().optional(),
@@ -61,30 +53,23 @@ export const PlaygroundViewPayloadV1Schema = z.object({
   }),
 });
 
-export type PlaygroundViewLayoutV1 = z.infer<
-  typeof PlaygroundViewLayoutV1Schema
->;
-export type PlaygroundViewPayloadV1 = z.infer<
-  typeof PlaygroundViewPayloadV1Schema
+export type PlaygroundViewPayloadV2 = z.infer<
+  typeof PlaygroundViewPayloadV2Schema
 >;
 
-export const PLAYGROUND_VIEW_PAYLOAD_VERSION = 1 as const;
+// Public alias — consumers reference the latest version through `V1`-style
+// naming. Keeping the alias avoids a churn-y rename across the inspector.
+export type PlaygroundViewPayloadV1 = PlaygroundViewPayloadV2;
+export const PlaygroundViewPayloadV1Schema = PlaygroundViewPayloadV2Schema;
+
+export const PLAYGROUND_VIEW_PAYLOAD_VERSION = 2 as const;
 
 /**
- * Default scratch workspace shown on first open — matches today's App Builder
- * layout (tools rail left, chat thread center). The docked `tools` pane
- * renders the legacy `PlaygroundLeft` via `AppBuilderStateContext`, so the
- * playground center is a clean `<PlaygroundMain/>` without an embedded tools
- * sidebar of its own.
+ * Default scratch workspace shown on first open — chat-v2-style fixed rails
+ * (Sessions/Tools on the left, optional logger on the right). Collapse state
+ * is local React state and not persisted per view in v2.
  */
-export const DEFAULT_PLAYGROUND_PAYLOAD: PlaygroundViewPayloadV1 = {
-  layout: {
-    leftPanes: ["tools"],
-    rightPanes: [],
-    leftWidth: 30,
-    rightWidth: 0,
-    centerPane: "thread",
-  },
+export const DEFAULT_PLAYGROUND_PAYLOAD: PlaygroundViewPayloadV2 = {
   servers: {
     selectedServerNames: [],
   },
@@ -95,7 +80,7 @@ export const DEFAULT_PLAYGROUND_PAYLOAD: PlaygroundViewPayloadV1 = {
   chat: {
     // Default-on so the flag-on Playground matches today's App Builder UX
     // (which is mounted with `enableMultiModelChat` from App.tsx). Users can
-    // toggle it off in the PlaygroundHeader.
+    // toggle it off in the model selector ("Multiple models").
     enableMultiModelChat: true,
     traceViewMode: "chat",
     isJsonRpcPanelVisible: false,
@@ -105,8 +90,18 @@ export const DEFAULT_PLAYGROUND_PAYLOAD: PlaygroundViewPayloadV1 = {
 export function parsePlaygroundViewPayload(
   payloadVersion: number,
   payload: unknown,
-): PlaygroundViewPayloadV1 | null {
-  if (payloadVersion !== PLAYGROUND_VIEW_PAYLOAD_VERSION) return null;
-  const result = PlaygroundViewPayloadV1Schema.safeParse(payload);
-  return result.success ? result.data : null;
+): PlaygroundViewPayloadV2 | null {
+  if (payloadVersion === PLAYGROUND_VIEW_PAYLOAD_VERSION) {
+    const result = PlaygroundViewPayloadV2Schema.safeParse(payload);
+    return result.success ? result.data : null;
+  }
+  if (payloadVersion === 1) {
+    // Forward-migrate v1 → v2 by stripping `layout`. The remaining keys
+    // already match v2 shape.
+    if (typeof payload !== "object" || payload === null) return null;
+    const { layout: _ignored, ...rest } = payload as Record<string, unknown>;
+    const result = PlaygroundViewPayloadV2Schema.safeParse(rest);
+    return result.success ? result.data : null;
+  }
+  return null;
 }

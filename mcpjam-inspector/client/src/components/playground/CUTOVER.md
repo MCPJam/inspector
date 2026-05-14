@@ -12,13 +12,21 @@ on for at least a week.
   flag is on; `App.tsx` redirects `#chat-v2` / `#app-builder` to `#playground`.
 - `playgroundViews` Convex table (`mcpjam-backend/convex/schema.ts`) +
   `playgroundViews.{list,get,create,update,remove,setDefault}` mutations.
-- IDE shell in `client/src/components/playground/`:
-  - `PlaygroundTab.tsx` — DndContext + left/center/right ResizablePanels,
-    host-style provider stack.
+- Fixed-rail shell in `client/src/components/playground/` (chat-v2 pattern,
+  no DnD, no per-view pane configurability):
+  - `PlaygroundTab.tsx` — three-slot ResizablePanelGroup. Left rail
+    (collapsible, `CollapsedPanelStrip` peek "Show sessions") hosts
+    `PlaygroundLeftRail`. Center hosts `PlaygroundCenter`. Right rail
+    (collapsible, peek "Show logs") hosts `LoggerView`.
+  - `PlaygroundLeftRail.tsx` — Sessions / Tools tab strip. Sessions tab
+    renders `ChatHistoryRail` via `playground-chat-history-bridge.ts`. Tools
+    tab renders `PlaygroundLeft` (single-server, with `showLogger={false}`)
+    or `MultiServerToolsPaneInner` (multi-server).
   - `PlaygroundHeader.tsx` — view picker, dirty dot, Save / Save As / Rename /
-    Delete / Set Default, HostPicker.
-  - `panes/{SortablePane,PaneSlot,registry,ToolsPane,types}.tsx` — pane
-    infrastructure. `tools` and `chatHistory` registered.
+    Delete / Set Default, HostPicker. No panel-toggle dropdown.
+  - `panes/MultiServerToolsPane.tsx` — only `MultiServerToolsPaneInner`
+    survives. `SortablePane`, `PaneSlot`, `registry`, `ToolsPane`, and
+    `types` were deleted in the rails rewrite.
 - `useViewState` + `ViewStateProvider` (`client/src/hooks/use-view-state.ts`)
   — in-memory payload with dirty tracking.
 - `usePlaygroundViews` (`client/src/hooks/use-playground-views.ts`) — Convex
@@ -47,26 +55,15 @@ Builder so dogfood doesn't risk regressions. The trade-offs that remain:
    `<Thread/>` + `<ChatInput/>` plus a `ToolsPane` driven by `useViewState`,
    extract the orchestration into a `useAppBuilderState()` hook so both
    `AppBuilderTab` (for the old route) and `PlaygroundTab` can consume it.
-2. **Switch default `leftPanes` to `["tools"]`** in
-   `shared/playground-view.ts:DEFAULT_PLAYGROUND_PAYLOAD` once the new
-   `ToolsPane` drives execution (today it's display-only, so we don't show it
-   alongside AppBuilderTab's internal tools rail to avoid double UI).
-3. **`evalChatHandoff` plumbing.** Chat Tab consumes
-   `evalChatHandoff` (`App.tsx:2376`). `AppBuilderTab` doesn't accept it;
-   wiring it requires the decomposition above.
-4. **`chatHistory` pane.** Registered as a placeholder
-   (`panes/registry.ts`); needs the existing `ChatHistoryRail`
-   (`components/chat-v2/history/ChatHistoryRail.tsx`) ported across with all
-   its session-coordination props.
-5. **Multi-model controls in header.** `enableMultiModelChat` is currently
-   passed in as a prop; the IDE-style toggle that lived in Chat Tab should
-   move into `PlaygroundHeader`.
-6. **`onUnload` / navigation guard.** Today saving is explicit but there is
-   no confirm-on-leave modal when the view is dirty. Hook into
-   `applyNavigation` in `App.tsx` to prompt.
-7. **`useUIPlaygroundStore.selectedTool` → tuple.** Once the new `ToolsPane`
-   becomes the source of truth, the store can carry `{ serverId, toolName }`
-   instead of a bare string. Touches every consumer of `selectedTool`.
+2. **`useUIPlaygroundStore.selectedTool` → tuple.** The store still carries a
+   bare string; multi-server tool selection lives in `MultiServerToolsPaneInner`'s
+   local state. Promote to a `{ serverId, toolName }` tuple if a non-playground
+   surface needs scoped selection.
+3. **`@dnd-kit/*` dependency removal.** No longer used after the rails rewrite.
+   Verify no other surface uses it before dropping the package.
+4. **Multi-server saved-requests + logger view.** Multi-server mode doesn't
+   render saved-requests inline (single-server PlaygroundLeft does). The right
+   rail provides the logger globally, so that gap closed.
 
 ## Files to DELETE during the final cutover
 

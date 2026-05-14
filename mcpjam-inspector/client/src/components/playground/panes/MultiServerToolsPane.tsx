@@ -1,25 +1,20 @@
 /**
- * MultiServerToolsPane
+ * MultiServerToolsPaneInner
  *
- * Docked Playground tools pane that aggregates tools across the currently
- * active set of servers (`useAppBuilderStateContext().activeServerNames`).
+ * Aggregates tools across an active set of servers, grouped by server, with
+ * a server badge on names that collide across servers (same convention as
+ * `tool-choice-picker.tsx:204`).
  *
- * Behavior:
- * - Lists tools grouped by server, with a server badge on names that collide
- *   across servers (matching the convention from `tool-choice-picker.tsx:204`).
  * - Clicking a tool sets a local `(serverId, toolName)` tuple — kept local
- *   so this doesn't fight `useUIPlaygroundStore.selectedTool` which the legacy
- *   `PlaygroundLeft` + AppBuilderTab path still uses.
+ *   so this doesn't fight `useUIPlaygroundStore.selectedTool`.
  * - Renders the selected tool's parameters form below the list. Form values
- *   live in local state for this pane (no persistence — view payload tracks
- *   the selection, not the parameter values).
+ *   are local to this pane (view payload tracks selection, not values).
  * - Execute calls `state.executeTool({ serverName, toolName, parameters })`,
  *   which routes to the right server and pushes the result into the chat
  *   thread via the same pending-execution slot AppBuilderTab uses.
  *
- * When `activeServerNames.length <= 1`, this pane falls back to the legacy
- * single-server PlaygroundLeft via context so users see the familiar UX
- * (with saved requests + logger view).
+ * The Playground left rail (`PlaygroundLeftRail`) chooses between this and
+ * the single-server `PlaygroundLeft` based on `activeServerNames.length`.
  */
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -40,7 +35,6 @@ import {
 } from "@mcpjam/design-system/accordion";
 import { useAggregatedTools } from "@/hooks/use-aggregated-tools";
 import { useAppBuilderStateContext } from "@/components/ui-playground/hooks/use-app-builder-state";
-import { PlaygroundLeft } from "@/components/ui-playground/PlaygroundLeft";
 import { ParametersForm } from "@/components/ui-playground/ParametersForm";
 import {
   generateFormFieldsFromSchema,
@@ -50,47 +44,11 @@ import { SchemaViewer } from "@/components/ui/schema-viewer";
 import { SearchInput } from "@/components/ui/search-input";
 import { cn } from "@/lib/utils";
 
-export function MultiServerToolsPane() {
-  const state = useAppBuilderStateContext();
-  const isMulti = state.activeServerNames.length > 1;
-
-  // Single-server: fall back to the legacy left-rail UX (which has saved
-  // requests + logger view that the multi-server flow doesn't replicate).
-  if (!isMulti) {
-    return (
-      <PlaygroundLeft
-        tools={state.tools}
-        selectedToolName={state.selectedTool}
-        fetchingTools={state.fetchingTools}
-        onRefresh={state.fetchTools}
-        onSelectTool={state.setSelectedTool}
-        formFields={state.formFields}
-        onFieldChange={state.updateFormField}
-        onToggleField={state.updateFormFieldIsSet}
-        isExecuting={state.isExecuting}
-        onExecute={state.executeTool}
-        onSave={state.savedRequestsHook.openSaveDialog}
-        savedRequests={state.savedRequestsHook.savedRequests}
-        highlightedRequestId={state.savedRequestsHook.highlightedRequestId}
-        onLoadRequest={state.savedRequestsHook.handleLoadRequest}
-        onRenameRequest={state.savedRequestsHook.handleRenameRequest}
-        onDuplicateRequest={state.savedRequestsHook.handleDuplicateRequest}
-        onDeleteRequest={state.savedRequestsHook.handleDeleteRequest}
-        onClose={undefined}
-      />
-    );
-  }
-
-  return (
-    <MultiServerToolsPaneInner activeServerNames={state.activeServerNames} />
-  );
-}
-
 interface InnerProps {
   activeServerNames: string[];
 }
 
-function MultiServerToolsPaneInner({ activeServerNames }: InnerProps) {
+export function MultiServerToolsPaneInner({ activeServerNames }: InnerProps) {
   const state = useAppBuilderStateContext();
   const { toolsByServer, flat, collidingNames, loadingByServer, errorByServer } =
     useAggregatedTools(activeServerNames);

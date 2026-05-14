@@ -36,6 +36,7 @@ import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
 import { ErrorBoundary } from "./components/ui/error-boundary";
 import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
 import { PlaygroundTab } from "./components/playground/PlaygroundTab";
+import { PlaygroundHeaderSlotProvider } from "./components/playground/playground-header-slot";
 import { isPlaygroundDirty } from "./lib/playground-navigation-guard";
 import { EmptyState } from "./components/ui/empty-state";
 import { EXCALIDRAW_SERVER_NAME } from "./lib/excalidraw-quick-connect";
@@ -2044,6 +2045,7 @@ export default function App() {
       : undefined;
 
   const appContent = (
+    <PlaygroundHeaderSlotProvider>
     <SidebarProvider defaultOpen={true}>
       <AppChromeSidebar
         hidden={appBuilderOnboarding}
@@ -2567,6 +2569,7 @@ export default function App() {
         </DialogContent>
       </Dialog>
     </SidebarProvider>
+    </PlaygroundHeaderSlotProvider>
   );
 
   return (

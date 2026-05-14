@@ -1,18 +1,5 @@
-import { useCallback, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { setPlaygroundDirty } from "@/lib/playground-navigation-guard";
-import {
-  DndContext,
-  PointerSensor,
-  KeyboardSensor,
-  closestCenter,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from "@dnd-kit/core";
-import {
-  arrayMove,
-  sortableKeyboardCoordinates,
-} from "@dnd-kit/sortable";
 import {
   AppBuilderStateProvider,
   useAppBuilderState,
@@ -31,11 +18,14 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { PaneSlot } from "./panes/PaneSlot";
+import type { ImperativePanelHandle } from "react-resizable-panels";
+import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
+import { LoggerView } from "@/components/logger-view";
 import { PlaygroundHeader } from "./PlaygroundHeader";
+import { PlaygroundHeaderSlotContent } from "./playground-header-slot";
 import { PlaygroundCenter } from "./PlaygroundCenter";
+import { PlaygroundLeftRail } from "./PlaygroundLeftRail";
 import type { ProjectId } from "@/hooks/use-playground-views";
-import type { PaneId, PaneSide } from "./panes/types";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import type { ProjectHostContextDraft } from "@/lib/client-config";
 import type { ServerFormData } from "@/shared/types.js";
@@ -72,15 +62,18 @@ interface PlaygroundTabProps {
 }
 
 /**
- * Playground tab — IDE-style replacement for Chat + App Builder.
+ * Playground tab — replacement for Chat + App Builder.
  *
- * Owns the single `useAppBuilderState()` call for the surface (Provider
- * exposes it to both the docked tools pane and the center pane). The docked
- * `tools` pane renders the legacy `PlaygroundLeft` via that context; the
- * center renders `<PlaygroundMain/>` directly. `AppBuilderTab` is no longer
- * embedded here — flag-on Playground composes from primitives.
+ * Layout mirrors `ChatTabV2`:
+ *   left rail (Sessions/Tools, collapsible)  │  center (chat)  │  right rail (logger, collapsible)
  *
- * The single `DndContext` orchestrates pane drag across left and right slots.
+ * Rail visibility is local React state — we don't persist it per saved view
+ * in v2. Chat-v2 also keeps these local, and matching that behavior keeps the
+ * mental model simple ("rails are workspace chrome, not part of a view").
+ *
+ * Owns the single `useAppBuilderState()` call for the surface; the
+ * `AppBuilderStateProvider` exposes it to both the left rail's Tools tab and
+ * the center pane.
  */
 export function PlaygroundTab(props: PlaygroundTabProps) {
   const themeMode = usePreferencesStore((state) => state.themeMode);
@@ -91,8 +84,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   const shellStyle = getChatboxShellStyle(hostStyle, themeMode);
 
   const viewState = useViewState();
-  const { payload, setPayload, isDirty } = viewState;
-  const { layout } = payload;
+  const { payload, isDirty } = viewState;
 
   // Mirror dirty state out to a module-level ref so `applyNavigation`
   // (App.tsx, outside this subtree) can prompt before leaving #playground.
@@ -125,90 +117,16 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
         : undefined,
   });
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    }),
-  );
+  // Rail collapse state — local to the workspace; not persisted per view.
+  // Defaults match the previous flag-on behavior (left rail showing tools,
+  // right rail collapsed).
+  const [isLeftRailVisible, setIsLeftRailVisible] = useState(true);
+  const [isRightRailVisible, setIsRightRailVisible] = useState(false);
 
-  const handleClosePane = useCallback(
-    (paneId: PaneId) => {
-      setPayload((current) => ({
-        ...current,
-        layout: {
-          ...current.layout,
-          leftPanes: current.layout.leftPanes.filter((id) => id !== paneId),
-          rightPanes: current.layout.rightPanes.filter((id) => id !== paneId),
-        },
-      }));
-    },
-    [setPayload],
-  );
-
-  const handleDragEnd = useCallback(
-    (event: DragEndEvent) => {
-      const { active, over } = event;
-      if (!over) return;
-
-      const activeId = active.id as PaneId;
-      const overId = over.id as PaneId;
-
-      setPayload((current) => {
-        const fromSide = locatePane(current.layout, activeId);
-        if (!fromSide) return current;
-
-        // Determine target side: prefer the over pane's slot; else infer
-        // from the SortableContext id encoded into `over.data.current`.
-        const toSide =
-          locatePane(current.layout, overId) ??
-          (over.data.current?.sortable?.containerId ===
-          "playground-pane-slot-right"
-            ? "right"
-            : "left");
-
-        if (activeId === overId && fromSide === toSide) return current;
-
-        const fromList = [...current.layout[sideKey(fromSide)]];
-        const toList =
-          fromSide === toSide ? fromList : [...current.layout[sideKey(toSide)]];
-
-        const fromIndex = fromList.indexOf(activeId);
-        if (fromIndex === -1) return current;
-        fromList.splice(fromIndex, 1);
-
-        const toIndex = toList.indexOf(overId);
-        const insertAt = toIndex === -1 ? toList.length : toIndex;
-        toList.splice(insertAt, 0, activeId);
-
-        if (fromSide === toSide) {
-          // arrayMove preserves ordering semantics from dnd-kit examples.
-          const reordered = arrayMove(
-            current.layout[sideKey(fromSide)],
-            current.layout[sideKey(fromSide)].indexOf(activeId),
-            insertAt,
-          );
-          return {
-            ...current,
-            layout: { ...current.layout, [sideKey(fromSide)]: reordered },
-          };
-        }
-
-        return {
-          ...current,
-          layout: {
-            ...current.layout,
-            [sideKey(fromSide)]: fromList,
-            [sideKey(toSide)]: toList,
-          },
-        };
-      });
-    },
-    [setPayload],
-  );
-
-  const hasLeftPanes = layout.leftPanes.length > 0;
-  const hasRightPanes = layout.rightPanes.length > 0;
+  // Panel handles let us programmatically expand a collapsed rail when the
+  // user clicks the corresponding `CollapsedPanelStrip` peek button.
+  const leftPanelRef = useRef<ImperativePanelHandle | null>(null);
+  const rightPanelRef = useRef<ImperativePanelHandle | null>(null);
 
   return (
     <ViewStateProvider value={viewState}>
@@ -226,88 +144,107 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                 data-host-style={hostStyle}
                 style={shellStyle}
               >
-                <PlaygroundHeader
-                  projectId={
-                    (props.activeProjectId as unknown as
-                      | ProjectId
-                      | undefined) ?? undefined
-                  }
-                />
-                <DndContext
-                  sensors={sensors}
-                  collisionDetection={closestCenter}
-                  onDragEnd={handleDragEnd}
+                <PlaygroundHeaderSlotContent>
+                  <PlaygroundHeader
+                    projectId={
+                      (props.activeProjectId as unknown as
+                        | ProjectId
+                        | undefined) ?? undefined
+                    }
+                  />
+                </PlaygroundHeaderSlotContent>
+                <ResizablePanelGroup
+                  direction="horizontal"
+                  className="min-h-0 flex-1"
                 >
-                  <ResizablePanelGroup
-                    direction="horizontal"
-                    className="min-h-0 flex-1"
+                  {isLeftRailVisible ? (
+                    <>
+                      <ResizablePanel
+                        ref={leftPanelRef}
+                        id="playground-left"
+                        order={1}
+                        defaultSize={22}
+                        minSize={15}
+                        maxSize={35}
+                        collapsible
+                        collapsedSize={0}
+                        onCollapse={() => setIsLeftRailVisible(false)}
+                        className="min-h-0 min-w-0 overflow-hidden"
+                      >
+                        <PlaygroundLeftRail />
+                      </ResizablePanel>
+                      <ResizableHandle withHandle />
+                    </>
+                  ) : (
+                    <CollapsedPanelStrip
+                      side="left"
+                      onOpen={() => {
+                        setIsLeftRailVisible(true);
+                        // The panel only remounts on the next paint; expand
+                        // imperatively once it has a ref to honor the click.
+                        requestAnimationFrame(() =>
+                          leftPanelRef.current?.expand(),
+                        );
+                      }}
+                      tooltipText="Show sessions"
+                    />
+                  )}
+                  <ResizablePanel
+                    id="playground-center"
+                    order={2}
+                    minSize={40}
+                    className="min-h-0 min-w-0 overflow-hidden"
                   >
-                    {hasLeftPanes ? (
-                      <>
-                        <ResizablePanel
-                          id="playground-left"
-                          order={1}
-                          defaultSize={layout.leftWidth || 25}
-                          minSize={15}
-                          maxSize={40}
-                        >
-                          <PaneSlot
-                            side="left"
-                            paneIds={layout.leftPanes}
-                            onClosePane={handleClosePane}
-                          />
-                        </ResizablePanel>
-                        <ResizableHandle withHandle />
-                      </>
-                    ) : null}
-                    <ResizablePanel
-                      id="playground-center"
-                      order={2}
-                      defaultSize={
-                        100 -
-                        (hasLeftPanes ? 25 : 0) -
-                        (hasRightPanes ? 25 : 0)
+                    <PlaygroundCenter
+                      activeProjectId={props.activeProjectId}
+                      serverName={props.serverName}
+                      enableMultiModelChat={payload.chat.enableMultiModelChat}
+                      onSaveHostContext={props.onSaveHostContext}
+                      ensureServersReady={props.ensureServersReady}
+                      playgroundServerSelectorProps={
+                        props.playgroundServerSelectorProps
                       }
-                      className="min-h-0 min-w-0 overflow-hidden"
-                    >
-                      <PlaygroundCenter
-                        activeProjectId={props.activeProjectId}
-                        serverName={props.serverName}
-                        enableMultiModelChat={
-                          payload.chat.enableMultiModelChat
-                        }
-                        onSaveHostContext={props.onSaveHostContext}
-                        ensureServersReady={props.ensureServersReady}
-                        playgroundServerSelectorProps={
-                          props.playgroundServerSelectorProps
-                        }
-                        servers={props.servers}
-                        evalChatHandoff={props.evalChatHandoff}
-                        onEvalChatHandoffConsumed={
-                          props.onEvalChatHandoffConsumed
-                        }
-                      />
-                    </ResizablePanel>
-                    {hasRightPanes ? (
-                      <>
-                        <ResizableHandle withHandle />
-                        <ResizablePanel
-                          id="playground-right"
-                          order={3}
-                          defaultSize={layout.rightWidth || 25}
-                          minSize={15}
-                          maxSize={40}
-                        >
-                          <PaneSlot
-                            side="right"
-                            paneIds={layout.rightPanes}
-                            onClosePane={handleClosePane}
+                      servers={props.servers}
+                      evalChatHandoff={props.evalChatHandoff}
+                      onEvalChatHandoffConsumed={
+                        props.onEvalChatHandoffConsumed
+                      }
+                    />
+                  </ResizablePanel>
+                  {isRightRailVisible ? (
+                    <>
+                      <ResizableHandle withHandle />
+                      <ResizablePanel
+                        ref={rightPanelRef}
+                        id="playground-right"
+                        order={3}
+                        defaultSize={30}
+                        minSize={4}
+                        maxSize={50}
+                        collapsible
+                        collapsedSize={0}
+                        onCollapse={() => setIsRightRailVisible(false)}
+                        className="min-h-0 overflow-hidden"
+                      >
+                        <div className="h-full min-h-0 overflow-hidden">
+                          <LoggerView
+                            onClose={() => setIsRightRailVisible(false)}
                           />
-                        </ResizablePanel>
-                      </>
-                    ) : null}
-                  </ResizablePanelGroup>
-                </DndContext>
+                        </div>
+                      </ResizablePanel>
+                    </>
+                  ) : (
+                    <CollapsedPanelStrip
+                      onOpen={() => {
+                        setIsRightRailVisible(true);
+                        requestAnimationFrame(() =>
+                          rightPanelRef.current?.expand(),
+                        );
+                      }}
+                      tooltipText="Show logs"
+                    />
+                  )}
+                </ResizablePanelGroup>
               </div>
             </ChatboxHostThemeProvider>
           </ChatboxHostCapabilitiesOverrideProvider>
@@ -315,17 +252,4 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
       </AppBuilderStateProvider>
     </ViewStateProvider>
   );
-}
-
-function sideKey(side: PaneSide): "leftPanes" | "rightPanes" {
-  return side === "left" ? "leftPanes" : "rightPanes";
-}
-
-function locatePane(
-  layout: { leftPanes: PaneId[]; rightPanes: PaneId[] },
-  paneId: PaneId,
-): PaneSide | null {
-  if (layout.leftPanes.includes(paneId)) return "left";
-  if (layout.rightPanes.includes(paneId)) return "right";
-  return null;
 }
