@@ -44,7 +44,7 @@ import {
 } from "@/lib/apis/web/context";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import { authFetch } from "@/lib/session-token";
-import { captureCurrentReturnTarget } from "@/lib/app-navigation";
+import { captureCurrentReturnTarget, navigateApp } from "@/lib/app-navigation";
 import { useProjectClientConfigSyncPending } from "./use-project-client-config-sync-pending";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { useServerMutations, type RemoteServer } from "./useProjects";
@@ -2520,8 +2520,15 @@ export function useServerState({
         .then((data) => {
           const cliConfig = data.config;
           if (cliConfig) {
-            if (cliConfig.initialTab && !window.location.hash) {
-              window.location.hash = cliConfig.initialTab;
+            if (
+              cliConfig.initialTab &&
+              (!window.location.pathname ||
+                window.location.pathname === "/")
+            ) {
+              const tab = cliConfig.initialTab.replace(/^[#/]+/, "");
+              if (tab) {
+                navigateApp(`/${tab}`, { replace: true });
+              }
             }
 
             if (

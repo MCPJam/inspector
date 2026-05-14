@@ -1,5 +1,6 @@
 import { PlusCircle, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { routePaths, useAppNavigate } from "@/lib/app-navigation";
 
 interface ConnectMcpServerCalloutProps {
   className?: string;
@@ -8,6 +9,7 @@ interface ConnectMcpServerCalloutProps {
 export function ConnectMcpServerCallout({
   className,
 }: ConnectMcpServerCalloutProps) {
+  const navigate = useAppNavigate();
   return (
     <div
       className={cn(
@@ -21,18 +23,20 @@ export function ConnectMcpServerCallout({
         </h2>
       </div>
       <div className="flex justify-center gap-2 text-xs text-muted-foreground">
-        <a
-          href="#servers"
+        <button
+          type="button"
+          onClick={() => navigate(routePaths.servers)}
           className="inline-flex items-center gap-1 rounded-full border px-3 py-1 transition hover:bg-muted/30"
         >
           <PlusCircle className="h-3 w-3" /> Add server
-        </a>
-        <a
-          href="#settings"
+        </button>
+        <button
+          type="button"
+          onClick={() => navigate(routePaths.settings)}
           className="inline-flex items-center gap-1 rounded-full border px-3 py-1 transition hover:bg-muted/30"
         >
           <Settings className="h-3 w-3" /> Settings
-        </a>
+        </button>
       </div>
     </div>
   );
