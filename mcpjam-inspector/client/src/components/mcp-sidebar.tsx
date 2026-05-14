@@ -10,6 +10,7 @@ import {
   Workflow,
   Anvil,
   Layers,
+  PanelsTopLeft,
   ListTodo,
   SquareSlash,
   MessageCircleQuestionIcon,
@@ -185,12 +186,19 @@ const navigationSections: NavSection[] = [
         title: "Chat",
         url: "#chat-v2",
         icon: MessageCircle,
+        hiddenByFlag: "playground-tab-enabled",
       },
       {
         title: "Chatboxes",
         url: "#chatboxes",
         icon: Box,
         featureFlag: "sandboxes-enabled",
+      },
+      {
+        title: "Playground",
+        url: "#playground",
+        icon: PanelsTopLeft,
+        featureFlag: "playground-tab-enabled",
       },
     ],
   },
@@ -201,6 +209,7 @@ const navigationSections: NavSection[] = [
         title: "App Builder",
         url: "#app-builder",
         icon: Anvil,
+        hiddenByFlag: "playground-tab-enabled",
       },
       {
         title: "Views",
@@ -554,6 +563,7 @@ export function MCPSidebar({
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
   const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
+  const playgroundTabEnabled = useFeatureFlagEnabled("playground-tab-enabled");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
@@ -612,6 +622,7 @@ export function MCPSidebar({
       "registry-enabled": registryEnabled === true,
       "mcpjam-conformance": conformanceEnabled === true,
       "hosts-enabled": hostsEnabled === true && isAuthenticated,
+      "playground-tab-enabled": playgroundTabEnabled === true,
       xaa: xaaEnabled === true,
     }),
     [
@@ -620,6 +631,7 @@ export function MCPSidebar({
       registryEnabled,
       conformanceEnabled,
       hostsEnabled,
+      playgroundTabEnabled,
       xaaEnabled,
       isAuthenticated,
     ],

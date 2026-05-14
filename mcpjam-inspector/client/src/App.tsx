@@ -35,6 +35,8 @@ import { ConformanceTab } from "./components/conformance/ConformancePanel";
 import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
 import { ErrorBoundary } from "./components/ui/error-boundary";
 import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
+import { PlaygroundTab } from "./components/playground/PlaygroundTab";
+import { isPlaygroundDirty } from "./lib/playground-navigation-guard";
 import { EmptyState } from "./components/ui/empty-state";
 import { EXCALIDRAW_SERVER_NAME } from "./lib/excalidraw-quick-connect";
 import { isFirstRunEligible } from "./lib/onboarding-state";
@@ -405,6 +407,7 @@ export default function App() {
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const hostsEnabled = useFeatureFlagEnabled("hosts-enabled");
   const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
+  const playgroundTabEnabled = useFeatureFlagEnabled("playground-tab-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
   const {
@@ -1217,6 +1220,20 @@ export default function App() {
         window.location.hash || "#servers",
         HOSTED_MODE
       );
+
+      // Playground dirty guard: prompt before leaving #playground with unsaved
+      // view edits. Skip the prompt when we're navigating *to* playground
+      // (e.g. flag-on redirect from chat-v2) or staying within playground.
+      if (
+        activeTab === "playground" &&
+        resolved.normalizedTab !== "playground" &&
+        isPlaygroundDirty()
+      ) {
+        const confirmed = window.confirm(
+          "You have unsaved changes in this Playground view. Leave without saving?"
+        );
+        if (!confirmed) return;
+      }
       const shouldPreserveCurrentRouteOrganization =
         options?.preserveCurrentOrganizationOnNonOrgTarget !== false &&
         !resolved.organizationId &&
@@ -1266,6 +1283,7 @@ export default function App() {
       setActiveTab(resolved.normalizedTab);
     },
     [
+      activeTab,
       effectiveOrganizations,
       isChatboxChatRoute,
       setSelectedMultipleServersToAllServers,
@@ -1628,6 +1646,13 @@ export default function App() {
       applyNavigation("servers", { updateHash: true });
     } else if (activeTab === "xaa-flow" && xaaEnabled !== true) {
       applyNavigation("servers", { updateHash: true });
+    } else if (activeTab === "playground" && playgroundTabEnabled !== true) {
+      applyNavigation("servers", { updateHash: true });
+    } else if (
+      (activeTab === "chat-v2" || activeTab === "app-builder") &&
+      playgroundTabEnabled === true
+    ) {
+      applyNavigation("playground", { updateHash: true });
     }
   }, [
     conformanceEnabled,
@@ -1637,6 +1662,7 @@ export default function App() {
     evaluateRunsFlagsLoaded,
     evaluateRunsEnabled,
     xaaEnabled,
+    playgroundTabEnabled,
     isAuthenticated,
     activeTab,
     applyNavigation,
@@ -1860,7 +1886,8 @@ export default function App() {
   const playgroundServerSelectorProps = useMemo(():
     | PlaygroundServerSelectorProps
     | undefined => {
-    if (activeTab !== "app-builder") return undefined;
+    if (activeTab !== "app-builder" && activeTab !== "playground")
+      return undefined;
     return {
       serverConfigs: projectServers,
       selectedServer: appState.selectedServer,
@@ -2398,6 +2425,31 @@ export default function App() {
             </div>
           )}
           {activeTab === "tracing" && <TracingTab />}
+          {activeTab === "playground" && playgroundTabEnabled === true && (
+            <PlaygroundTab
+              serverConfig={selectedMCPConfig}
+              serverName={appState.selectedServer}
+              servers={projectServers}
+              activeProjectId={activeProjectId}
+              isSignedInWithWorkOs={!!workOsUser}
+              isWorkOsAuthLoading={isWorkOsLoading}
+              isConvexAuthenticated={isAuthenticated}
+              isProjectProvisioned={Boolean(activeProject?.sharedProjectId)}
+              hasSeenFirstRunOnboarding={remoteFirstRunOnboardingShown}
+              isServerSyncing={isSelectedServerSyncing}
+              onConnect={handleConnect}
+              onSaveHostContext={handleUpdateHostContext}
+              ensureServersReady={ensureServersReady}
+              onOnboardingChange={setAppBuilderOnboarding}
+              playgroundServerSelectorProps={playgroundServerSelectorProps}
+              evalChatHandoff={evalChatHandoff}
+              onEvalChatHandoffConsumed={(id) =>
+                setEvalChatHandoff((current) =>
+                  current?.id === id ? null : current
+                )
+              }
+            />
+          )}
           {activeTab === "app-builder" && (
             <AppBuilderTab
               serverConfig={selectedMCPConfig}
