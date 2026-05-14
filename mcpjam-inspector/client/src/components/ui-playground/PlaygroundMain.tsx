@@ -428,6 +428,18 @@ export function PlaygroundMain({
 
   const handlePlaygroundServerToggle = useCallback(
     (name: string) => {
+      // Multi-server: toggle membership in the multi-server set so users can
+      // have several servers active at once (LLM sees the union of tools,
+      // docked tools pane aggregates across them).
+      if (
+        playgroundServerSelectorProps?.isMultiSelectEnabled &&
+        playgroundServerSelectorProps?.onMultiServerToggle
+      ) {
+        playgroundServerSelectorProps.onMultiServerToggle(name);
+        return;
+      }
+      // Single-server (App Builder, hosted): toggle clears if already selected,
+      // else switches to the clicked server.
       if (name === serverName) {
         playgroundServerSelectorProps?.onServerChange("none");
       } else {
