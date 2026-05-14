@@ -178,7 +178,12 @@ export async function respondToElicitationApi(
 
 export interface ToolsMetadataAggregate {
   metadata: Record<string, Record<string, any>>;
+  /** Bare-name → serverId. Collision-prone (last-seen wins) — see `scopedMetadata` for unambiguous lookups. */
   toolServerMap: ToolServerMap;
+  /** `${serverId}:${toolName}` → metadata. Multi-server collision-safe. */
+  scopedMetadata: Record<string, Record<string, unknown>>;
+  /** Bare tool names that appear on more than one server. */
+  collidingToolNames: string[];
   tokenCounts: Record<string, number> | null;
 }
 
@@ -189,6 +194,10 @@ export function getToolServerId(
   return map[toolName];
 }
 
+export function scopedToolKey(serverId: string, toolName: string): string {
+  return `${serverId}:${toolName}`;
+}
+
 export async function getToolsMetadata(
   serverIds: string[],
   modelId?: string,
@@ -196,8 +205,14 @@ export async function getToolsMetadata(
   const aggregate: ToolsMetadataAggregate = {
     metadata: {},
     toolServerMap: {},
+    scopedMetadata: {},
+    collidingToolNames: [],
     tokenCounts: modelId ? {} : null,
   };
+  // Track which servers have seen each tool name so we can surface collisions
+  // to callers (e.g. the Playground tools pane uses this to disambiguate via
+  // a server badge).
+  const seenOn = new Map<string, Set<string>>();
 
   await Promise.all(
     serverIds.map(async (serverId) => {
@@ -207,6 +222,11 @@ export async function getToolsMetadata(
       for (const [toolName, meta] of Object.entries(toolsMetadata)) {
         aggregate.metadata[toolName] = meta as Record<string, unknown>;
         aggregate.toolServerMap[toolName] = serverId;
+        aggregate.scopedMetadata[scopedToolKey(serverId, toolName)] =
+          meta as Record<string, unknown>;
+        const servers = seenOn.get(toolName) ?? new Set<string>();
+        servers.add(serverId);
+        seenOn.set(toolName, servers);
       }
 
       // Collect token counts if modelId was provided
@@ -215,6 +235,10 @@ export async function getToolsMetadata(
       }
     }),
   );
+
+  aggregate.collidingToolNames = Array.from(seenOn.entries())
+    .filter(([, servers]) => servers.size > 1)
+    .map(([name]) => name);
 
   return aggregate;
 }
