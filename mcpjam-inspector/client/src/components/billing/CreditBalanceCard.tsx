@@ -10,23 +10,37 @@ import { useCreditBalance } from "@/hooks/useCreditBalance";
 import { formatCreditResetText } from "@/lib/credit-usage";
 import type { CreditTopupSource } from "@/hooks/useCreditTopup";
 
-/** Pulls the limit-modal redirect flag out of the current hash and clears it
- * from the URL so the topup dialog opens exactly once on landing. The flag
- * lives after a `?` in the hash; the hosted hash router already strips
- * everything after `?` before route resolution, so removing it here doesn't
- * affect navigation. */
-function consumeTopupFlagFromHash(): boolean {
+/** Pulls the limit-modal redirect flag out of the current URL and clears it
+ * so the topup dialog opens exactly once on landing. The flag may live in
+ * either `window.location.search` (path-based React Router URLs) or after
+ * `?` in `window.location.hash` (legacy hash-based URLs / hash bookmarks).
+ * Either source clears its own flag without disturbing the other. */
+function consumeTopupFlag(): boolean {
   if (typeof window === "undefined") return false;
+
+  // Path-based URL: `/organizations/.../billing?topup=open`.
+  const searchParams = new URLSearchParams(window.location.search);
+  if (searchParams.get("topup") === "open") {
+    searchParams.delete("topup");
+    const remaining = searchParams.toString();
+    const nextSearch = remaining ? `?${remaining}` : "";
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${nextSearch}${window.location.hash}`,
+    );
+    return true;
+  }
+
+  // Legacy hash form: `#organizations/.../billing?topup=open`.
   const hash = window.location.hash;
   const queryStart = hash.indexOf("?");
   if (queryStart < 0) return false;
-  const params = new URLSearchParams(hash.slice(queryStart + 1));
-  if (params.get("topup") !== "open") return false;
-  params.delete("topup");
-  const remaining = params.toString();
+  const hashParams = new URLSearchParams(hash.slice(queryStart + 1));
+  if (hashParams.get("topup") !== "open") return false;
+  hashParams.delete("topup");
+  const remaining = hashParams.toString();
   const nextHash = hash.slice(0, queryStart) + (remaining ? `?${remaining}` : "");
-  // Use replaceState so we don't push an extra history entry the user has
-  // to back-button through.
   window.history.replaceState(
     null,
     "",
@@ -54,7 +68,7 @@ export function CreditBalanceCard({
   // Source is recorded as `limit_modal` so the funnel can attribute the
   // top-up back to the limit-hit that triggered the redirect.
   useEffect(() => {
-    if (consumeTopupFlagFromHash()) {
+    if (consumeTopupFlag()) {
       setTopupSource("limit_modal");
       setIsTopupOpen(true);
     }
