@@ -836,6 +836,31 @@ export default function App() {
     const server = runtimeServer ?? projectServer;
     return server ? { runtimeServer, projectServer, server } : null;
   }, []);
+  const handleSignOut = useCallback(
+    async (options?: { returnTo?: string; navigate?: boolean }) => {
+      // Local mode talks to the inspector backend via DELETE /api/mcp/servers/:id;
+      // without disconnecting first, that request races the page redirect and the
+      // backend is left holding a zombie connection. Hosted mode's deleteServer is
+      // a no-op, so this loop is harmless there.
+      const serverNamesToDisconnect = Object.entries(appState.servers)
+        .filter(([, server]) => server.connectionStatus !== "disconnected")
+        .map(([serverName]) => serverName);
+      await Promise.allSettled(
+        serverNamesToDisconnect.map((serverName) =>
+          handleDisconnect(serverName)
+        )
+      );
+      // WorkOS's signOut has two overloads keyed on `navigate`: `navigate: false`
+      // returns a promise (used by the Electron flow so we can manually assign
+      // window.location after), anything else navigates synchronously.
+      if (options?.navigate === false) {
+        await signOut({ returnTo: options.returnTo, navigate: false });
+        return;
+      }
+      signOut({ returnTo: options?.returnTo });
+    },
+    [appState.servers, handleDisconnect, signOut]
+  );
   useEffect(() => {
     return subscribeToOAuthDebuggerRequests(({ serverName }) => {
       const matchedServerName = Object.entries(
@@ -1459,6 +1484,23 @@ export default function App() {
     workOsUser,
   ]);
 
+  // When the active project changes (org switch, project delete, manual switch),
+  // snap to Servers — staying on App Builder/Chat would leave the user pointed
+  // at a project that no longer exists. Skip the initial "none" → real-id
+  // transition so deep-links into other tabs aren't yanked away on first load.
+  const previousActiveProjectIdRef = useRef(activeProjectId);
+  useEffect(() => {
+    const previousActiveProjectId = previousActiveProjectIdRef.current;
+    previousActiveProjectIdRef.current = activeProjectId;
+    if (
+      previousActiveProjectId === activeProjectId ||
+      previousActiveProjectId === "none"
+    ) {
+      return;
+    }
+    applyNavigation("servers", { updateHash: true });
+  }, [activeProjectId, applyNavigation]);
+
   const consumeCheckoutIntent = useCallback(() => {
     clearPersistedCheckoutIntent();
     clearBillingSignInReturnPath();
@@ -2046,6 +2088,7 @@ export default function App() {
         activeOrganizationName={activeOrganizationName}
         onSwitchOrganization={handleSidebarSwitchOrganization}
         onSwitchActiveOrganization={handleSwitchActiveOrganization}
+        onSignOut={handleSignOut}
         onProjectShared={handleProjectShared}
         billingUiEnabled={billingUiEnabled}
         billingGateDenied={sidebarGateDenied}
@@ -2599,7 +2642,7 @@ export default function App() {
               signIn();
             }}
             onSignOut={() => {
-              void signOut();
+              void handleSignOut();
             }}
           >
             {isChatboxChatRoute ? (

@@ -361,6 +361,10 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
     section?: OrganizationRouteSection,
   ) => void;
   onSwitchActiveOrganization?: (organizationId: string) => void;
+  onSignOut?: (options?: {
+    returnTo?: string;
+    navigate?: boolean;
+  }) => void | Promise<void>;
   onProjectShared?: (
     sharedProjectId: string,
     sourceProjectId?: string,
@@ -550,6 +554,7 @@ export function MCPSidebar({
   activeOrganizationName,
   onSwitchOrganization,
   onSwitchActiveOrganization,
+  onSignOut,
   onProjectShared,
   billingGateDenied = {},
   billingGateEnforcementActive = false,
@@ -823,7 +828,10 @@ export function MCPSidebar({
           {!user ? (
             <SidebarCreditUsage className="px-1" includeGuests />
           ) : null}
-          <SidebarUser activeOrganizationId={activeOrganizationId} />
+          <SidebarUser
+            activeOrganizationId={activeOrganizationId}
+            onSignOut={onSignOut}
+          />
         </SidebarFooter>
       </Sidebar>
       {shouldShowInviteCta && user && activeProject ? (

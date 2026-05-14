@@ -33,9 +33,16 @@ import { SidebarCreditUsage } from "@/components/sidebar/sidebar-credit-usage";
 
 interface SidebarUserProps {
   activeOrganizationId?: string;
+  onSignOut?: (options?: {
+    returnTo?: string;
+    navigate?: boolean;
+  }) => void | Promise<void>;
 }
 
-export function SidebarUser({ activeOrganizationId }: SidebarUserProps = {}) {
+export function SidebarUser({
+  activeOrganizationId,
+  onSignOut,
+}: SidebarUserProps = {}) {
   const { isLoading, isAuthenticated: _isAuthenticated } = useConvexAuth();
   const { user, signIn, signOut } = useAuth();
   const { profilePictureUrl } = useProfilePicture();
@@ -61,16 +68,17 @@ export function SidebarUser({ activeOrganizationId }: SidebarUserProps = {}) {
 
   const handleSignOut = () => {
     const returnTo = window.location.origin;
+    const performSignOut = onSignOut ?? signOut;
     if (window.isElectron) {
-      void Promise.resolve(signOut({ returnTo, navigate: false })).finally(
-        () => {
-          window.location.assign(returnTo);
-        }
-      );
+      void Promise.resolve(
+        performSignOut({ returnTo, navigate: false })
+      ).finally(() => {
+        window.location.assign(returnTo);
+      });
       return;
     }
 
-    signOut({ returnTo });
+    void performSignOut({ returnTo });
   };
 
   const avatarUrl = profilePictureUrl;
