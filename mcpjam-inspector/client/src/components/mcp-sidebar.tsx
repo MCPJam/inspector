@@ -173,6 +173,7 @@ const navigationSections: NavSection[] = [
         title: "Servers",
         url: "#servers",
         icon: MCPIcon,
+        hiddenByFlag: "hosts-enabled",
       },
       {
         title: "Registry",
