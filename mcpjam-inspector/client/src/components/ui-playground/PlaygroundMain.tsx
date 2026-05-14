@@ -121,6 +121,7 @@ import {
   type PlaygroundDeterministicExecutionRequest,
 } from "@/components/ui-playground/multi-model-playground-card";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
+import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 
 /** Custom device config - dimensions come from store */
 const CUSTOM_DEVICE_BASE = {
@@ -186,6 +187,15 @@ interface PlaygroundMainProps {
   pulseSubmit?: boolean;
   showPostConnectGuide?: boolean;
   onFirstMessageSent?: () => void;
+  /**
+   * When set, Playground consumes the handoff once `isSessionBootstrapComplete`
+   * flips true: applies executionConfig (model, system prompt, temperature,
+   * tool-approval), seeds the thread, and calls `onEvalChatHandoffConsumed`.
+   * Mirrors the ChatTabV2 behavior so eval "Continue in chat" lands here when
+   * `playground-tab-enabled` is on.
+   */
+  evalChatHandoff?: EvalChatHandoff | null;
+  onEvalChatHandoffConsumed?: (id: string) => void;
 }
 
 type PlaygroundTraceViewMode = "chat" | "timeline" | "raw";
@@ -251,6 +261,8 @@ export function PlaygroundMain({
   pulseSubmit = false,
   showPostConnectGuide = false,
   onFirstMessageSent,
+  evalChatHandoff = null,
+  onEvalChatHandoffConsumed,
 }: PlaygroundMainProps) {
   const { signUp } = useAuth();
   const posthog = usePostHog();
@@ -412,6 +424,7 @@ export function PlaygroundMain({
     requireToolApproval,
     setRequireToolApproval,
     addToolApprovalResponse,
+    isSessionBootstrapComplete,
   } = useChatSession({
     selectedServers,
     hostedContext: {
@@ -658,6 +671,66 @@ export function PlaygroundMain({
     selectedModelIds,
     setMultiModelEnabled,
     setSelectedModelIds,
+  ]);
+
+  // Eval "Continue in chat" handoff. Mirrors ChatTabV2:1283-1340 so that when
+  // `playground-tab-enabled` is on (and `#chat-v2` redirects to `#playground`)
+  // the handoff still seeds a chat with the eval's model + messages.
+  const appliedEvalChatHandoffIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!evalChatHandoff) return;
+    if (!isSessionBootstrapComplete) return;
+    if (appliedEvalChatHandoffIdRef.current === evalChatHandoff.id) return;
+
+    const { executionConfig: handoffExec } = evalChatHandoff;
+    let matchingModel = null;
+    if (handoffExec.modelId) {
+      matchingModel = availableModels.find(
+        (model) => String(model.id) === handoffExec.modelId,
+      );
+      // Wait for the model list to load — `availableModels.length === 0`
+      // means the catalog hasn't arrived yet; re-run when it does.
+      if (!matchingModel && availableModels.length === 0) return;
+    }
+
+    if (matchingModel) {
+      setMultiModelEnabled(false);
+      setSelectedModelIds([String(matchingModel.id)]);
+      setSelectedModel(matchingModel);
+    } else if (selectedModel) {
+      setMultiModelEnabled(false);
+      setSelectedModelIds([String(selectedModel.id)]);
+    }
+
+    startChatWithMessages(evalChatHandoff.messages);
+    appliedEvalChatHandoffIdRef.current = evalChatHandoff.id;
+
+    if (typeof handoffExec.systemPrompt === "string") {
+      setSystemPrompt(handoffExec.systemPrompt);
+    }
+    if (typeof handoffExec.temperature === "number") {
+      setTemperature(handoffExec.temperature);
+    }
+    if (typeof handoffExec.requireToolApproval === "boolean") {
+      setRequireToolApproval(handoffExec.requireToolApproval);
+    }
+
+    composer.setInput("");
+    onEvalChatHandoffConsumed?.(evalChatHandoff.id);
+  }, [
+    availableModels,
+    composer,
+    evalChatHandoff,
+    isSessionBootstrapComplete,
+    onEvalChatHandoffConsumed,
+    selectedModel,
+    setMultiModelEnabled,
+    setRequireToolApproval,
+    setSelectedModel,
+    setSelectedModelIds,
+    setSystemPrompt,
+    setTemperature,
+    startChatWithMessages,
   ]);
 
   useEffect(() => {

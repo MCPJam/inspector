@@ -18,3 +18,15 @@ export type {
   PendingExecution,
 } from "./useToolExecution";
 export { useToolExecution } from "./useToolExecution";
+export type {
+  AppBuilderLoadingState,
+  UseAppBuilderStateOptions,
+  UseAppBuilderStateReturn,
+} from "./use-app-builder-state";
+export {
+  APP_BUILDER_FIRST_RUN_PROMPT,
+  AppBuilderStateProvider,
+  useAppBuilderState,
+  useAppBuilderStateContext,
+  useOptionalAppBuilderStateContext,
+} from "./use-app-builder-state";
