@@ -312,14 +312,7 @@ export function PlaygroundMain({
   // follow-up. The rail re-fetches on initial mount + whenever signal changes.
   const historyRefreshSignal = 0;
   const historySelectionRequestIdRef = useRef(0);
-  const pendingHistoryServerSyncRef = useRef<string[] | null>(null);
   const resumedThreadSendBaselineRef = useRef<{
-    sessionId: string;
-    version: number;
-  } | null>(null);
-  const activeHistorySessionIdRef = useRef<string | null>(null);
-  const reactiveHistoryLoadRequestIdRef = useRef(0);
-  const lastAppliedReactiveVersionRef = useRef<{
     sessionId: string;
     version: number;
   } | null>(null);
@@ -857,6 +850,15 @@ export function PlaygroundMain({
     hasUnsavedDraftRef.current = hasUnsavedDraft;
   }, [hasUnsavedDraft]);
 
+  // Ref so `detachHistorySession` can read the latest messages without
+  // listing `messages` in its deps — `messages` churns every streaming
+  // token and would otherwise re-create the callback per token, cascading
+  // through the bridge into ChatHistoryRail and its rows.
+  const messagesRef = useRef(messages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
   const [discardDraftDialogOpen, setDiscardDraftDialogOpen] = useState(false);
   const discardDraftResolveRef = useRef<((allow: boolean) => void) | null>(
     null,
@@ -894,19 +896,11 @@ export function PlaygroundMain({
     setModelContextQueue([]);
   }, [composer, fileAttachments]);
 
-  const invalidatePendingReactiveHistoryLoad = useCallback(() => {
-    activeHistorySessionIdRef.current = null;
-    reactiveHistoryLoadRequestIdRef.current += 1;
-    lastAppliedReactiveVersionRef.current = null;
-  }, []);
-
   const cancelPendingHistorySelection = useCallback(() => {
     historySelectionRequestIdRef.current += 1;
-    pendingHistoryServerSyncRef.current = null;
     setLoadingHistorySessionId(null);
-    invalidatePendingReactiveHistoryLoad();
     setActiveHistorySessionId(null);
-  }, [invalidatePendingReactiveHistoryLoad]);
+  }, []);
 
   const markHistorySessionRead = useCallback(async (sessionId: string) => {
     try {
@@ -1014,10 +1008,6 @@ export function PlaygroundMain({
       setActiveHistorySessionId(detail._id);
       setPendingDirectVisibility(detail.directVisibility);
       syncResumedVersion(detail.version);
-      lastAppliedReactiveVersionRef.current = {
-        sessionId: detail._id,
-        version: detail.version,
-      };
       void markHistorySessionRead(detail._id);
     },
     [
@@ -1036,7 +1026,7 @@ export function PlaygroundMain({
       setPendingDirectVisibility("private");
       syncResumedVersion(null);
       if (effectiveHasMessages) {
-        startChatWithMessages(cloneUiMessages(messages), {
+        startChatWithMessages(cloneUiMessages(messagesRef.current), {
           toolRenderOverrides: restoredToolRenderOverrides,
         });
       }
@@ -1045,7 +1035,6 @@ export function PlaygroundMain({
     [
       cancelPendingHistorySelection,
       effectiveHasMessages,
-      messages,
       restoredToolRenderOverrides,
       startChatWithMessages,
       syncResumedVersion,
@@ -1153,7 +1142,6 @@ export function PlaygroundMain({
 
       const selectionRequestId = historySelectionRequestIdRef.current + 1;
       historySelectionRequestIdRef.current = selectionRequestId;
-      pendingHistoryServerSyncRef.current = null;
       setActiveHistorySessionId(session._id);
       setLoadingHistorySessionId(session._id);
 
@@ -1182,7 +1170,6 @@ export function PlaygroundMain({
         );
       } catch (err) {
         if (historySelectionRequestIdRef.current === selectionRequestId) {
-          invalidatePendingReactiveHistoryLoad();
           setActiveHistorySessionId(null);
         }
         console.error("[PlaygroundMain] Failed to load chat session", err);
@@ -1197,7 +1184,6 @@ export function PlaygroundMain({
       clearComposerDraft,
       convexProjectId,
       ensureDiscardDraftConfirmed,
-      invalidatePendingReactiveHistoryLoad,
       isStreaming,
       loadHistorySession,
       restoreHistoryServerSelection,
