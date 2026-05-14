@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   ChevronDown,
+  Columns2,
   Loader2,
   MoreVertical,
   Save,
@@ -11,12 +12,15 @@ import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
+import { listPanes } from "./panes/registry";
+import type { PaneId } from "./panes/types";
 import {
   Dialog,
   DialogContent,
@@ -175,6 +179,40 @@ export function PlaygroundHeader({ projectId }: PlaygroundHeaderProps) {
       </DropdownMenu>
 
       <div className="flex-1" />
+
+      <PanelsMenu
+        leftPanes={payload.layout.leftPanes}
+        rightPanes={payload.layout.rightPanes}
+        onToggle={(paneId, defaultSide) => {
+          setPayload((current) => {
+            const inLeft = current.layout.leftPanes.includes(paneId);
+            const inRight = current.layout.rightPanes.includes(paneId);
+            if (inLeft || inRight) {
+              return {
+                ...current,
+                layout: {
+                  ...current.layout,
+                  leftPanes: current.layout.leftPanes.filter(
+                    (id) => id !== paneId,
+                  ),
+                  rightPanes: current.layout.rightPanes.filter(
+                    (id) => id !== paneId,
+                  ),
+                },
+              };
+            }
+            const sideKey =
+              defaultSide === "right" ? "rightPanes" : "leftPanes";
+            return {
+              ...current,
+              layout: {
+                ...current.layout,
+                [sideKey]: [...current.layout[sideKey], paneId],
+              },
+            };
+          });
+        }}
+      />
 
       <Label className="flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
         <Switch
@@ -388,5 +426,59 @@ function RenameDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * Panel-toggle dropdown — modeled after the per-pane menu pattern in
+ * Claude/Cursor/Linear. Lists every registered pane with a checkbox; toggling
+ * adds the pane to its `defaultSide` or removes it from whichever side it's on.
+ * Gives users a way back to panes they closed via the SortablePane X button.
+ */
+function PanelsMenu({
+  leftPanes,
+  rightPanes,
+  onToggle,
+}: {
+  leftPanes: PaneId[];
+  rightPanes: PaneId[];
+  onToggle: (paneId: PaneId, defaultSide: "left" | "right") => void;
+}) {
+  const panes = listPanes();
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 w-7 p-0"
+          aria-label="Panels"
+          title="Panels"
+        >
+          <Columns2 className="h-3.5 w-3.5" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-44">
+        <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-muted-foreground">
+          Panels
+        </DropdownMenuLabel>
+        {panes.map((pane) => {
+          const PaneIcon = pane.icon;
+          const active =
+            leftPanes.includes(pane.id) || rightPanes.includes(pane.id);
+          return (
+            <DropdownMenuCheckboxItem
+              key={pane.id}
+              checked={active}
+              onCheckedChange={() => onToggle(pane.id, pane.defaultSide)}
+              className="gap-2"
+            >
+              <PaneIcon className="h-3.5 w-3.5 text-muted-foreground" />
+              <span>{pane.title}</span>
+            </DropdownMenuCheckboxItem>
+          );
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
