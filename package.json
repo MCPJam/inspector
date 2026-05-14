@@ -27,7 +27,6 @@
     "@types/dagre": "^0.7.54"
   },
   "dependencies": {
-    "react-force-graph-2d": "^1.29.1",
-    "react-router": "^7.0.0"
+    "react-force-graph-2d": "^1.29.1"
   }
 }
