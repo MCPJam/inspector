@@ -1585,7 +1585,7 @@ export function PlaygroundMain({
   );
 
   const ensureSelectedServerReadyForChat = useCallback(async () => {
-    if (!serverName || !ensureServersReady) {
+    if (!serverName || serverName === "none" || !ensureServersReady) {
       return true;
     }
 
@@ -2322,7 +2322,6 @@ export function PlaygroundMain({
           onSaveHostContext={onSaveHostContext}
           protocol={selectedProtocol}
           isMultiModelLayoutMode={isMultiModelLayoutMode}
-          effectiveHasMessages={effectiveHasMessages}
           trailing={
             effectiveHasMessages ? (
               <Tooltip>

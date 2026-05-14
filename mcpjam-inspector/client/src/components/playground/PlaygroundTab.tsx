@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState } from "react";
-import { setPlaygroundDirty } from "@/lib/playground-navigation-guard";
+import { useRef, useState } from "react";
 import {
   AppBuilderStateProvider,
   useAppBuilderState,
@@ -12,7 +11,6 @@ import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-host
 import { getChatboxShellStyle } from "@/lib/chatbox-host-style";
 import { cn } from "@/lib/utils";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { useViewState, ViewStateProvider } from "@/hooks/use-view-state";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -25,7 +23,6 @@ import { PlaygroundHeader } from "./PlaygroundHeader";
 import { PlaygroundHeaderSlotContent } from "./playground-header-slot";
 import { PlaygroundCenter } from "./PlaygroundCenter";
 import { PlaygroundLeftRail } from "./PlaygroundLeftRail";
-import type { ProjectId } from "@/hooks/use-playground-views";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import type { ProjectHostContextDraft } from "@/lib/client-config";
 import type { ServerFormData } from "@/shared/types.js";
@@ -83,16 +80,6 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   );
   const shellStyle = getChatboxShellStyle(hostStyle, themeMode);
 
-  const viewState = useViewState();
-  const { payload, isDirty } = viewState;
-
-  // Mirror dirty state out to a module-level ref so `applyNavigation`
-  // (App.tsx, outside this subtree) can prompt before leaving #playground.
-  useEffect(() => {
-    setPlaygroundDirty(isDirty);
-    return () => setPlaygroundDirty(false);
-  }, [isDirty]);
-
   const appBuilderState = useAppBuilderState({
     activeProjectId: props.activeProjectId,
     serverConfig: props.serverConfig,
@@ -129,8 +116,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   const rightPanelRef = useRef<ImperativePanelHandle | null>(null);
 
   return (
-    <ViewStateProvider value={viewState}>
-      <AppBuilderStateProvider value={appBuilderState}>
+    <AppBuilderStateProvider value={appBuilderState}>
         <ChatboxHostStyleProvider value={hostStyle}>
           <ChatboxHostCapabilitiesOverrideProvider
             value={hostCapabilitiesOverride}
@@ -146,11 +132,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
               >
                 <PlaygroundHeaderSlotContent>
                   <PlaygroundHeader
-                    projectId={
-                      (props.activeProjectId as unknown as
-                        | ProjectId
-                        | undefined) ?? undefined
-                    }
+                    projectId={props.activeProjectId ?? undefined}
                   />
                 </PlaygroundHeaderSlotContent>
                 <ResizablePanelGroup
@@ -198,7 +180,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                     <PlaygroundCenter
                       activeProjectId={props.activeProjectId}
                       serverName={props.serverName}
-                      enableMultiModelChat={payload.chat.enableMultiModelChat}
+                      enableMultiModelChat={true}
                       onSaveHostContext={props.onSaveHostContext}
                       ensureServersReady={props.ensureServersReady}
                       playgroundServerSelectorProps={
@@ -250,6 +232,5 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
           </ChatboxHostCapabilitiesOverrideProvider>
         </ChatboxHostStyleProvider>
       </AppBuilderStateProvider>
-    </ViewStateProvider>
   );
 }

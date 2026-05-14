@@ -37,7 +37,6 @@ import { ErrorBoundary } from "./components/ui/error-boundary";
 import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
 import { PlaygroundTab } from "./components/playground/PlaygroundTab";
 import { PlaygroundHeaderSlotProvider } from "./components/playground/playground-header-slot";
-import { isPlaygroundDirty } from "./lib/playground-navigation-guard";
 import { EmptyState } from "./components/ui/empty-state";
 import { EXCALIDRAW_SERVER_NAME } from "./lib/excalidraw-quick-connect";
 import { isFirstRunEligible } from "./lib/onboarding-state";
@@ -1222,19 +1221,6 @@ export default function App() {
         HOSTED_MODE
       );
 
-      // Playground dirty guard: prompt before leaving #playground with unsaved
-      // view edits. Skip the prompt when we're navigating *to* playground
-      // (e.g. flag-on redirect from chat-v2) or staying within playground.
-      if (
-        activeTab === "playground" &&
-        resolved.normalizedTab !== "playground" &&
-        isPlaygroundDirty()
-      ) {
-        const confirmed = window.confirm(
-          "You have unsaved changes in this Playground view. Leave without saving?"
-        );
-        if (!confirmed) return;
-      }
       const shouldPreserveCurrentRouteOrganization =
         options?.preserveCurrentOrganizationOnNonOrgTarget !== false &&
         !resolved.organizationId &&

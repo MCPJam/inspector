@@ -46,7 +46,6 @@ interface Props {
   ) => Promise<void>;
   protocol: UIType | null;
   isMultiModelLayoutMode: boolean;
-  effectiveHasMessages: boolean;
   trailing?: ReactNode;
 }
 
@@ -72,7 +71,6 @@ export function PlaygroundCenterHeaderBar({
   onSaveHostContext,
   protocol,
   isMultiModelLayoutMode,
-  effectiveHasMessages,
   trailing,
 }: Props) {
   const posthog = usePostHog();
@@ -92,12 +90,32 @@ export function PlaygroundCenterHeaderBar({
   return (
     <div
       className={cn(
-        "@container/playground-header relative flex h-11 min-w-0 w-full items-center justify-center border-b border-border px-3 text-xs text-muted-foreground flex-shrink-0",
+        "@container/playground-header flex h-11 min-w-0 w-full shrink-0 items-center gap-2 border-b border-border px-3 text-xs text-muted-foreground",
         isMultiModelLayoutMode ? "bg-background" : "bg-background/50",
-        effectiveHasMessages && "pr-10 sm:pr-11",
       )}
       data-testid="playground-main-header"
     >
+      {inHostView ? (
+        <div className="shrink-0">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={() => onHeaderViewChange("tabs")}
+                className="inline-flex h-7 items-center gap-1 rounded-md border border-border/40 bg-background px-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                data-testid="playground-header-host-back"
+              >
+                <ArrowLeft className="h-3 w-3" />
+                <span>Back</span>
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              <p>Back to chat tabs</p>
+            </TooltipContent>
+          </Tooltip>
+        </div>
+      ) : null}
+
       {showHostInline ? (
         <div className="flex min-w-0 flex-1 items-center justify-center overflow-hidden">
           <HostContextHeader
@@ -151,28 +169,7 @@ export function PlaygroundCenterHeaderBar({
         </div>
       )}
 
-      {inHostView ? (
-        <div className="absolute left-3">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                onClick={() => onHeaderViewChange("tabs")}
-                className="inline-flex h-7 items-center gap-1 rounded-md border border-border/40 bg-background px-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
-                data-testid="playground-header-host-back"
-              >
-                <ArrowLeft className="h-3 w-3" />
-                <span>Back</span>
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">
-              <p>Back to chat tabs</p>
-            </TooltipContent>
-          </Tooltip>
-        </div>
-      ) : null}
-
-      {trailing ? <div className="absolute right-3">{trailing}</div> : null}
+      {trailing ? <div className="shrink-0">{trailing}</div> : null}
     </div>
   );
 }

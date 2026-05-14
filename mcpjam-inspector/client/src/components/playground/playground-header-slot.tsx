@@ -7,16 +7,11 @@ import {
 import { createPortal } from "react-dom";
 
 /**
- * Portal slot so the Playground tab can render its own toolbar (view tabs +
- * controls) inside the top app header (`AuthUpperArea`) instead of as a
- * second strip below it. The top header owns the DOM node; the playground
- * tab "teleports" its header JSX into that node when mounted.
- *
- * Why a portal instead of lifting state up: `PlaygroundHeader` depends on
- * `ViewStateProvider` and `usePlaygroundViews`, both of which live inside
- * `PlaygroundTab`. Hoisting them to App.tsx would entangle App with
- * playground-only state; portaling keeps the providers scoped while still
- * letting the header render in the upper bar.
+ * Portal slot so the Playground tab can render its own toolbar inside the
+ * top app header (`AuthUpperArea`) instead of as a second strip below it.
+ * The top header owns the DOM node; the playground tab "teleports" its
+ * header JSX into that node when mounted. With no consumer portaling in,
+ * the target renders an empty div — fine.
  */
 
 interface SlotContextValue {

@@ -1,67 +1,71 @@
 /**
  * MultiServerToolsPaneInner
  *
- * Aggregates tools across an active set of servers, grouped by server, with
- * a server badge on names that collide across servers (same convention as
- * `tool-choice-picker.tsx:204`).
+ * Aggregates tools across an active set of servers and renders them as a
+ * single flat list — visually identical to the single-server `PlaygroundLeft`
+ * (TabHeader + ToolList + SelectedToolHeader + accordion). The only
+ * multi-server difference is a small server badge that appears on tools
+ * whose names collide across servers.
  *
- * - Clicking a tool sets a local `(serverId, toolName)` tuple — kept local
- *   so this doesn't fight `useUIPlaygroundStore.selectedTool`.
- * - Renders the selected tool's parameters form below the list. Form values
- *   are local to this pane (view payload tracks selection, not values).
- * - Execute calls `state.executeTool({ serverName, toolName, parameters })`,
- *   which routes to the right server and pushes the result into the chat
- *   thread via the same pending-execution slot AppBuilderTab uses.
+ * Selection is a `(serverId, toolName)` tuple kept local to this pane so it
+ * doesn't fight `useUIPlaygroundStore.selectedTool` (which is single-string).
+ * Execution routes through `state.executeTool({ serverName, toolName, … })`.
  *
- * The Playground left rail (`PlaygroundLeftRail`) chooses between this and
- * the single-server `PlaygroundLeft` based on `activeServerNames.length`.
+ * Saved requests are intentionally not supported here yet — single-server
+ * `useSavedRequests` is keyed by one `serverKey` and doesn't generalize.
+ * The Saved tab renders an empty state pointing this out.
  */
 import { useEffect, useMemo, useState } from "react";
-import {
-  ChevronDown,
-  ChevronRight,
-  Hammer,
-  Loader2,
-  Play,
-} from "lucide-react";
-import { Badge } from "@mcpjam/design-system/badge";
-import { Button } from "@mcpjam/design-system/button";
-import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import {
   Accordion,
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
 } from "@mcpjam/design-system/accordion";
+import { Badge } from "@mcpjam/design-system/badge";
+import { ScrollArea } from "@mcpjam/design-system/scroll-area";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@mcpjam/design-system/tooltip";
+import { RefreshCw } from "lucide-react";
 import { useAggregatedTools } from "@/hooks/use-aggregated-tools";
 import { useAppBuilderStateContext } from "@/components/ui-playground/hooks/use-app-builder-state";
 import { ParametersForm } from "@/components/ui-playground/ParametersForm";
+import { SelectedToolHeader } from "@/components/ui-playground/SelectedToolHeader";
+import { TabHeader } from "@/components/ui-playground/TabHeader";
+import { SchemaViewer } from "@/components/ui/schema-viewer";
+import { SearchInput } from "@/components/ui/search-input";
+import { detectUIType, UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
   generateFormFieldsFromSchema,
   type FormField,
 } from "@/lib/tool-form";
-import { SchemaViewer } from "@/components/ui/schema-viewer";
-import { SearchInput } from "@/components/ui/search-input";
 import { cn } from "@/lib/utils";
 
 interface InnerProps {
   activeServerNames: string[];
 }
 
+interface Selection {
+  serverId: string;
+  toolName: string;
+}
+
 export function MultiServerToolsPaneInner({ activeServerNames }: InnerProps) {
   const state = useAppBuilderStateContext();
-  const { toolsByServer, flat, collidingNames, loadingByServer, errorByServer } =
-    useAggregatedTools(activeServerNames);
+  const {
+    flat,
+    collidingNames,
+    loadingByServer,
+    errorByServer,
+    refetch,
+  } = useAggregatedTools(activeServerNames);
 
-  const [selected, setSelected] = useState<{
-    serverId: string;
-    toolName: string;
-  } | null>(null);
+  const [selected, setSelected] = useState<Selection | null>(null);
+  const [activeTab, setActiveTab] = useState<"tools" | "saved">("tools");
   const [searchQuery, setSearchQuery] = useState("");
   const [formFields, setFormFields] = useState<FormField[]>([]);
+  const [isListExpanded, setIsListExpanded] = useState(true);
 
-  // Selected tool reference (from the aggregated list).
-  const selectedTool = useMemo(() => {
+  const selectedEntry = useMemo(() => {
     if (!selected) return null;
     return (
       flat.find(
@@ -72,21 +76,36 @@ export function MultiServerToolsPaneInner({ activeServerNames }: InnerProps) {
     );
   }, [flat, selected]);
 
-  // Regenerate form fields whenever the selection changes.
   useEffect(() => {
-    if (selectedTool) {
-      setFormFields(generateFormFieldsFromSchema(selectedTool.tool.inputSchema));
+    if (selectedEntry) {
+      setFormFields(generateFormFieldsFromSchema(selectedEntry.tool.inputSchema));
     } else {
       setFormFields([]);
     }
-  }, [selectedTool]);
+  }, [selectedEntry]);
 
-  // Clear selection if the user toggles off the server it came from.
+  // Drop the selection if the user toggles off its server.
   useEffect(() => {
     if (selected && !activeServerNames.includes(selected.serverId)) {
       setSelected(null);
+      setIsListExpanded(true);
     }
   }, [activeServerNames, selected]);
+
+  const filteredEntries = useMemo(() => {
+    if (!searchQuery.trim()) return flat;
+    const query = searchQuery.trim().toLowerCase();
+    return flat.filter((entry) => {
+      const haystack =
+        `${entry.toolName} ${entry.tool.description ?? ""}`.toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [flat, searchQuery]);
+
+  const isLoadingAny = Object.values(loadingByServer).some(Boolean);
+  const errorMessages = Object.entries(errorByServer)
+    .filter(([, msg]) => Boolean(msg))
+    .map(([serverId, msg]) => ({ serverId, msg }));
 
   const handleFieldChange = (name: string, value: unknown) => {
     setFormFields((current) =>
@@ -104,7 +123,7 @@ export function MultiServerToolsPaneInner({ activeServerNames }: InnerProps) {
   };
 
   const handleExecute = async () => {
-    if (!selected || !selectedTool) return;
+    if (!selected || !selectedEntry) return;
     await state.executeTool({
       toolName: selected.toolName,
       formFields,
@@ -112,217 +131,349 @@ export function MultiServerToolsPaneInner({ activeServerNames }: InnerProps) {
     });
   };
 
-  const filteredToolsByServer = useMemo(() => {
-    if (!searchQuery.trim()) return toolsByServer;
-    const query = searchQuery.trim().toLowerCase();
-    const filtered: Record<string, typeof toolsByServer[string]> = {};
-    for (const [serverId, tools] of Object.entries(toolsByServer)) {
-      const matches = tools.filter((tool) => {
-        const haystack = `${tool.name} ${tool.description ?? ""}`.toLowerCase();
-        return haystack.includes(query);
-      });
-      if (matches.length > 0) filtered[serverId] = matches;
+  const handleSelect = (entry: Selection) => {
+    setSelected(entry);
+    setIsListExpanded(false);
+    setActiveTab("tools");
+  };
+
+  const handleTabChange = (tab: "tools" | "saved") => {
+    setActiveTab(tab);
+    if (tab === "tools" && selected) {
+      // Returning to Tools while a selection exists: keep selection but show
+      // the parameters view. Mirrors single-server behavior.
+      setIsListExpanded(false);
     }
-    return filtered;
-  }, [toolsByServer, searchQuery]);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "Enter" || e.metaKey || e.ctrlKey || e.altKey) return;
+    const target = e.target as HTMLElement | null;
+    if (!target || target.tagName === "TEXTAREA") return;
+    if (!selected || state.isExecuting) return;
+    e.preventDefault();
+    void handleExecute();
+  };
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
-      <div className="shrink-0 border-b px-2 py-2">
-        <SearchInput
-          value={searchQuery}
-          onValueChange={setSearchQuery}
-          placeholder="Search tools across servers…"
-        />
+    <div
+      className="h-full min-w-0 flex flex-col bg-background overflow-hidden"
+      onKeyDownCapture={handleKeyDown}
+    >
+      <TabHeader
+        activeTab={activeTab}
+        onTabChange={handleTabChange}
+        toolCount={flat.length}
+        savedCount={0}
+        isExecuting={state.isExecuting}
+        canExecute={!!selected}
+        canSave={false}
+        fetchingTools={isLoadingAny}
+        onExecute={() => void handleExecute()}
+        onSave={() => {}}
+        onRefresh={() => void refetch()}
+      />
+
+      <div className="flex-1 min-h-0">
+        {activeTab === "saved" ? (
+          <SavedRequestsPlaceholder />
+        ) : isListExpanded || !selectedEntry ? (
+          <FlatToolList
+            entries={filteredEntries}
+            totalCount={flat.length}
+            collidingNames={collidingNames}
+            loading={isLoadingAny}
+            errors={errorMessages}
+            searchQuery={searchQuery}
+            onSearchQueryChange={setSearchQuery}
+            selected={selected}
+            onSelect={handleSelect}
+            onToggleSelected={(entry) => {
+              if (
+                selected?.serverId === entry.serverId &&
+                selected?.toolName === entry.toolName
+              ) {
+                setIsListExpanded(false);
+              } else {
+                handleSelect(entry);
+              }
+            }}
+          />
+        ) : (
+          <SelectedToolView
+            entry={selectedEntry}
+            isColliding={collidingNames.includes(selectedEntry.toolName)}
+            formFields={formFields}
+            onExpand={() => setIsListExpanded(true)}
+            onFieldChange={handleFieldChange}
+            onToggleField={handleToggleField}
+          />
+        )}
       </div>
-
-      <ScrollArea className="flex-1 min-h-0">
-        <div className="p-2">
-          {activeServerNames.map((serverId) => {
-            const tools = filteredToolsByServer[serverId] ?? [];
-            const loading = loadingByServer[serverId];
-            const error = errorByServer[serverId];
-            return (
-              <ServerSection
-                key={serverId}
-                serverId={serverId}
-                tools={tools}
-                loading={loading}
-                error={error}
-                collidingNames={collidingNames}
-                selected={selected}
-                onSelectTool={(toolName) =>
-                  setSelected({ serverId, toolName })
-                }
-              />
-            );
-          })}
-        </div>
-      </ScrollArea>
-
-      {selectedTool ? (
-        <div className="flex shrink-0 max-h-[50%] flex-col border-t bg-card/30">
-          <div className="flex items-center gap-2 border-b px-2 py-1.5">
-            <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">
-              {selected!.serverId}
-            </Badge>
-            <span className="flex-1 truncate font-mono text-xs">
-              {selected!.toolName}
-            </span>
-            <Button
-              size="sm"
-              className="h-7 gap-1 px-2 text-xs"
-              onClick={handleExecute}
-              disabled={state.isExecuting}
-            >
-              {state.isExecuting ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              ) : (
-                <Play className="h-3 w-3" />
-              )}
-              Run
-            </Button>
-          </div>
-          <ScrollArea className="flex-1 min-h-0">
-            <Accordion
-              type="multiple"
-              defaultValue={["parameters"]}
-              className="px-3"
-            >
-              {selectedTool.tool.description && (
-                <AccordionItem value="description">
-                  <AccordionTrigger className="text-xs">
-                    Description
-                  </AccordionTrigger>
-                  <AccordionContent>
-                    <p className="text-xs text-muted-foreground leading-relaxed">
-                      {selectedTool.tool.description}
-                    </p>
-                  </AccordionContent>
-                </AccordionItem>
-              )}
-              {selectedTool.tool.inputSchema && (
-                <AccordionItem value="input-schema">
-                  <AccordionTrigger className="text-xs">
-                    Input Schema
-                  </AccordionTrigger>
-                  <AccordionContent>
-                    <SchemaViewer schema={selectedTool.tool.inputSchema} />
-                  </AccordionContent>
-                </AccordionItem>
-              )}
-              {formFields.length > 0 && (
-                <AccordionItem value="parameters">
-                  <AccordionTrigger className="text-xs">
-                    Parameters
-                  </AccordionTrigger>
-                  <AccordionContent>
-                    <ParametersForm
-                      fields={formFields}
-                      onFieldChange={handleFieldChange}
-                      onToggleField={handleToggleField}
-                    />
-                  </AccordionContent>
-                </AccordionItem>
-              )}
-            </Accordion>
-          </ScrollArea>
-        </div>
-      ) : null}
     </div>
   );
 }
 
-interface ServerSectionProps {
-  serverId: string;
-  tools: Array<{ name: string; description?: string }>;
-  loading?: boolean;
-  error?: string;
+interface FlatToolListProps {
+  entries: ReturnType<typeof useAggregatedTools>["flat"];
+  totalCount: number;
   collidingNames: string[];
-  selected: { serverId: string; toolName: string } | null;
-  onSelectTool: (toolName: string) => void;
+  loading: boolean;
+  errors: Array<{ serverId: string; msg: string }>;
+  searchQuery: string;
+  onSearchQueryChange: (q: string) => void;
+  selected: Selection | null;
+  onSelect: (entry: Selection) => void;
+  onToggleSelected: (entry: Selection) => void;
 }
 
-function ServerSection({
-  serverId,
-  tools,
-  loading,
-  error,
+function FlatToolList({
+  entries,
+  totalCount,
   collidingNames,
+  loading,
+  errors,
+  searchQuery,
+  onSearchQueryChange,
   selected,
-  onSelectTool,
-}: ServerSectionProps) {
-  const [expanded, setExpanded] = useState(true);
+  onToggleSelected,
+}: FlatToolListProps) {
   return (
-    <div className="mb-2">
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-xs font-medium hover:bg-accent"
-      >
-        {expanded ? (
-          <ChevronDown className="h-3.5 w-3.5 shrink-0" />
-        ) : (
-          <ChevronRight className="h-3.5 w-3.5 shrink-0" />
-        )}
-        <Hammer className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        <span className="truncate">{serverId}</span>
-        {loading ? (
-          <Loader2 className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />
-        ) : (
-          <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">
-            {tools.length}
-          </Badge>
-        )}
-      </button>
-      {expanded ? (
-        <div className="ml-3 mt-0.5 space-y-0.5">
-          {error ? (
-            <div className="rounded bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
-              {error}
-            </div>
-          ) : null}
-          {tools.length === 0 && !loading && !error ? (
-            <div className="px-2 py-1 text-[11px] text-muted-foreground">
-              No tools.
-            </div>
-          ) : null}
-          {tools.map((tool) => {
-            const isSelected =
-              selected?.serverId === serverId &&
-              selected?.toolName === tool.name;
-            const isColliding = collidingNames.includes(tool.name);
-            return (
-              <button
-                key={tool.name}
-                type="button"
-                onClick={() => onSelectTool(tool.name)}
-                className={cn(
-                  "flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-xs",
-                  isSelected
-                    ? "bg-accent text-accent-foreground"
-                    : "hover:bg-accent/50",
-                )}
-                title={tool.description}
+    <div className="h-full flex flex-col">
+      <div className="px-3 py-2 flex-shrink-0">
+        <SearchInput
+          value={searchQuery}
+          onValueChange={onSearchQueryChange}
+          placeholder="Search tools..."
+        />
+      </div>
+
+      <div className="flex-1 min-h-0 overflow-auto px-2 pb-2">
+        {errors.length > 0 ? (
+          <div className="mx-1 mb-2 space-y-1">
+            {errors.map(({ serverId, msg }) => (
+              <div
+                key={serverId}
+                className="rounded bg-destructive/10 px-2 py-1 text-[11px] text-destructive"
               >
-                <span className="flex-1 truncate font-mono text-[11px]">
-                  {tool.name}
-                </span>
-                {isColliding ? (
-                  <Badge
-                    variant="outline"
-                    className="h-4 px-1 text-[9px] uppercase"
-                  >
-                    {serverId.length > 10
-                      ? `${serverId.slice(0, 8)}…`
-                      : serverId}
-                  </Badge>
-                ) : null}
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
+                <span className="font-medium">{serverId}:</span> {msg}
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        {loading && entries.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-8 text-center">
+            <RefreshCw className="h-5 w-5 text-muted-foreground animate-spin mb-2" />
+            <p className="text-xs text-muted-foreground">Loading tools...</p>
+          </div>
+        ) : entries.length === 0 ? (
+          <div className="text-center py-8 px-4">
+            <p className="text-xs text-muted-foreground">
+              {totalCount === 0
+                ? "No tools found. Try refreshing and make sure the servers are running."
+                : "No tools match your search"}
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-0.5">
+            {entries.map((entry) => {
+              const isSelected =
+                selected?.serverId === entry.serverId &&
+                selected?.toolName === entry.toolName;
+              const isColliding = collidingNames.includes(entry.toolName);
+              const uiType = detectUIType(entry.tool._meta, undefined);
+              const key = `${entry.serverId}\x00${entry.toolName}`;
+
+              return (
+                <button
+                  key={key}
+                  onClick={() =>
+                    onToggleSelected({
+                      serverId: entry.serverId,
+                      toolName: entry.toolName,
+                    })
+                  }
+                  className={cn(
+                    "w-full text-left px-3 py-2 rounded-md border border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-1",
+                    isSelected
+                      ? "cursor-pointer bg-primary/10"
+                      : "cursor-pointer hover:bg-muted/50",
+                  )}
+                >
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <code className="text-xs font-mono font-medium truncate flex-1">
+                      {entry.toolName}
+                    </code>
+                    {isColliding ? (
+                      <Badge
+                        variant="outline"
+                        className="h-4 shrink-0 px-1 text-[9px] uppercase"
+                      >
+                        {entry.serverId.length > 10
+                          ? `${entry.serverId.slice(0, 8)}…`
+                          : entry.serverId}
+                      </Badge>
+                    ) : null}
+                  </div>
+                  {entry.tool.description && (
+                    <p className="text-[10px] text-muted-foreground mt-1 line-clamp-2">
+                      {entry.tool.description}
+                    </p>
+                  )}
+                  {uiType ? (
+                    <div className="flex items-center gap-1.5 mt-2">
+                      {(uiType === UIType.OPENAI_SDK ||
+                        uiType === UIType.OPENAI_SDK_AND_MCP_APPS) && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <div className="flex items-center">
+                              <img
+                                src="/openai_logo.png"
+                                alt="ChatGPT Apps"
+                                className="h-3.5 w-3.5 object-contain opacity-60"
+                              />
+                            </div>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p className="text-xs">ChatGPT Apps</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                      {(uiType === UIType.MCP_APPS ||
+                        uiType === UIType.OPENAI_SDK_AND_MCP_APPS ||
+                        uiType === UIType.MCP_UI) && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <div className="flex items-center">
+                              <img
+                                src="/mcp.svg"
+                                alt="MCP Apps"
+                                className="h-3.5 w-3.5 object-contain opacity-60"
+                              />
+                            </div>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p className="text-xs">
+                              {uiType === UIType.MCP_UI ? "MCP UI" : "MCP Apps"}
+                            </p>
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                    </div>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+interface SelectedToolViewProps {
+  entry: ReturnType<typeof useAggregatedTools>["flat"][number];
+  isColliding: boolean;
+  formFields: FormField[];
+  onExpand: () => void;
+  onFieldChange: (name: string, value: unknown) => void;
+  onToggleField: (name: string, isSet: boolean) => void;
+}
+
+function SelectedToolView({
+  entry,
+  isColliding,
+  formFields,
+  onExpand,
+  onFieldChange,
+  onToggleField,
+}: SelectedToolViewProps) {
+  const hasParameters = formFields.length > 0;
+  const [openSections, setOpenSections] = useState<string[]>(
+    hasParameters ? ["parameters"] : ["description"],
+  );
+
+  useEffect(() => {
+    setOpenSections(hasParameters ? ["parameters"] : ["description"]);
+  }, [entry.serverId, entry.toolName, hasParameters]);
+
+  // Tool name carries an inline server tag in the header when it collides.
+  // Single-server SelectedToolHeader shows just the tool name; we keep that
+  // visual but prepend a tiny server tag so the user always knows which
+  // server will run this.
+  const headerToolName = isColliding
+    ? `${entry.serverId} · ${entry.toolName}`
+    : entry.toolName;
+
+  return (
+    <div className="h-full flex flex-col">
+      <SelectedToolHeader toolName={headerToolName} onExpand={onExpand} />
+      <ScrollArea className="flex-1 min-h-0">
+        <Accordion
+          type="multiple"
+          value={openSections}
+          onValueChange={setOpenSections}
+          className="px-3"
+        >
+          {entry.tool.description && (
+            <AccordionItem value="description">
+              <AccordionTrigger className="text-xs">
+                Description
+              </AccordionTrigger>
+              <AccordionContent>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  {entry.tool.description}
+                </p>
+              </AccordionContent>
+            </AccordionItem>
+          )}
+          {entry.tool.inputSchema && (
+            <AccordionItem value="input-schema">
+              <AccordionTrigger className="text-xs">
+                Input Schema
+              </AccordionTrigger>
+              <AccordionContent>
+                <SchemaViewer schema={entry.tool.inputSchema} />
+              </AccordionContent>
+            </AccordionItem>
+          )}
+          {entry.tool.outputSchema && (
+            <AccordionItem value="output-schema">
+              <AccordionTrigger className="text-xs">
+                Output Schema
+              </AccordionTrigger>
+              <AccordionContent>
+                <SchemaViewer schema={entry.tool.outputSchema} />
+              </AccordionContent>
+            </AccordionItem>
+          )}
+          {hasParameters && (
+            <AccordionItem value="parameters">
+              <AccordionTrigger className="text-xs">
+                Parameters
+              </AccordionTrigger>
+              <AccordionContent>
+                <ParametersForm
+                  fields={formFields}
+                  onFieldChange={onFieldChange}
+                  onToggleField={onToggleField}
+                />
+              </AccordionContent>
+            </AccordionItem>
+          )}
+        </Accordion>
+      </ScrollArea>
+    </div>
+  );
+}
+
+function SavedRequestsPlaceholder() {
+  return (
+    <div className="h-full flex items-center justify-center px-4">
+      <p className="text-center text-xs text-muted-foreground">
+        Saved requests aren't supported in multi-server mode yet.
+      </p>
     </div>
   );
 }
