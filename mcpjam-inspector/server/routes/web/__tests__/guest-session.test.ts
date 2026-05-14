@@ -114,7 +114,10 @@ describe("POST /guest-session", () => {
     });
 
     it("returns a three-part JWT token (header.payload.signature)", async () => {
-      const res = await app.request("/guest-session", { method: "POST" });
+      const res = await app.request("/guest-session", {
+        method: "POST",
+        headers: { "x-forwarded-for": "203.0.113.11" },
+      });
       const data = await res.json();
 
       const parts = data.token.split(".");
@@ -128,6 +131,43 @@ describe("POST /guest-session", () => {
     expect(res.headers.get("set-cookie")).toContain(
       "__Host-mcpjam_guest_session=cookie-set-by-convex",
     );
+  });
+
+  it("also sets a local HTTP-compatible guest cookie", async () => {
+    const res = await app.request("/guest-session", { method: "POST" });
+    expect(res.status).toBe(200);
+
+    const setCookie = res.headers.get("set-cookie") ?? "";
+    expect(setCookie).toContain(
+      "__Host-mcpjam_guest_session=cookie-set-by-convex",
+    );
+    expect(setCookie).toContain("mcpjam_guest_session=cookie-set-by-convex");
+    expect(setCookie).toContain(
+      "mcpjam_guest_session=cookie-set-by-convex; HttpOnly; SameSite=Lax",
+    );
+  });
+
+  it("sets the local HTTP-compatible guest cookie on 127.0.0.1", async () => {
+    const res = await app.request("http://127.0.0.1/guest-session", {
+      method: "POST",
+    });
+    expect(res.status).toBe(200);
+
+    const setCookie = res.headers.get("set-cookie") ?? "";
+    expect(setCookie).toContain("mcpjam_guest_session=cookie-set-by-convex");
+  });
+
+  it("does not set the local HTTP-compatible guest cookie for HTTPS origins", async () => {
+    const res = await app.request("https://app.mcpjam.com/guest-session", {
+      method: "POST",
+    });
+    expect(res.status).toBe(200);
+
+    const setCookie = res.headers.get("set-cookie") ?? "";
+    expect(setCookie).toContain(
+      "__Host-mcpjam_guest_session=cookie-set-by-convex",
+    );
+    expect(setCookie).not.toMatch(/(?:^|,\s*)mcpjam_guest_session=/);
   });
 
   it("forwards browser Cookie/User-Agent but not spoofable IP headers upstream", async () => {
@@ -151,6 +191,39 @@ describe("POST /guest-session", () => {
     expect(headers["User-Agent"]).toBe("BrowserAgent/1.0");
     expect(headers["X-Forwarded-For"]).toBeUndefined();
     expect(headers["X-Real-IP"]).toBeUndefined();
+  });
+
+  it("maps the local HTTP-compatible guest cookie back to the upstream cookie name", async () => {
+    await app.request("/guest-session", {
+      method: "POST",
+      headers: {
+        cookie: "mcpjam_guest_session=local-cookie-id",
+      },
+    });
+
+    const upstreamCall = vi.mocked(global.fetch).mock.calls[0]!;
+    const init = upstreamCall[1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    expect(headers["Cookie"]).toBe(
+      "__Host-mcpjam_guest_session=local-cookie-id",
+    );
+  });
+
+  it("prefers the local HTTP-compatible guest cookie when both cookie names are present", async () => {
+    await app.request("/guest-session", {
+      method: "POST",
+      headers: {
+        cookie:
+          "__Host-mcpjam_guest_session=stale-cookie-id; mcpjam_guest_session=fresh-cookie-id",
+      },
+    });
+
+    const upstreamCall = vi.mocked(global.fetch).mock.calls[0]!;
+    const init = upstreamCall[1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    expect(headers["Cookie"]).toBe(
+      "__Host-mcpjam_guest_session=fresh-cookie-id",
+    );
   });
 
   it("forwards only the guest-session cookie upstream, not other origin cookies", async () => {
@@ -238,6 +311,31 @@ describe("POST /guest-session", () => {
     expect(res.headers.get("set-cookie")).toContain("Max-Age=0");
     const data = await res.json();
     expect(data.code).toBe("FORBIDDEN");
+  });
+
+  it("clears both upstream and local guest cookies on local HTTP revoke", async () => {
+    const expiredCookie =
+      "__Host-mcpjam_guest_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0";
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ revoked: true }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "Set-Cookie": expiredCookie,
+        },
+      }),
+    ) as typeof fetch;
+
+    const res = await app.request("http://127.0.0.1/guest-session/revoke", {
+      method: "POST",
+    });
+    expect(res.status).toBe(200);
+
+    const setCookie = res.headers.get("set-cookie") ?? "";
+    expect(setCookie).toContain(expiredCookie);
+    expect(setCookie).toContain(
+      "mcpjam_guest_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0",
+    );
   });
 
   it("returns 403 when non-prod lockdown is enabled", async () => {
