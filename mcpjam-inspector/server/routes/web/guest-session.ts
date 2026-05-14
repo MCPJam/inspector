@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import {
   fetchConvexGuestPromotionProof,
   fetchConvexGuestSession,
@@ -31,21 +31,85 @@ setInterval(() => {
 }, 5 * 60_000).unref();
 
 const GUEST_SESSION_COOKIE_NAME = "__Host-mcpjam_guest_session";
+const LOCAL_GUEST_SESSION_COOKIE_NAME = "mcpjam_guest_session";
+const LOCAL_GUEST_SESSION_HOSTNAMES = new Set(["localhost", "127.0.0.1"]);
 
 // Forward only the guest-session cookie to the upstream guest service.
 // Passing the entire Cookie header would leak unrelated auth/CSRF cookies
 // from the Inspector origin to Convex / hosted MCPJam.
-function extractGuestSessionCookie(
-  cookieHeader: string | null | undefined
+function extractCookieValue(
+  cookieHeader: string | null | undefined,
+  cookieName: string
 ): string | null {
   if (!cookieHeader) return null;
-  const prefix = `${GUEST_SESSION_COOKIE_NAME}=`;
+  const prefix = `${cookieName}=`;
   for (const part of cookieHeader.split(/;\s*/)) {
     if (part.startsWith(prefix)) {
-      return part;
+      return part.slice(prefix.length);
     }
   }
   return null;
+}
+
+function extractGuestSessionCookie(
+  cookieHeader: string | null | undefined
+): string | null {
+  const localCookie = extractCookieValue(
+    cookieHeader,
+    LOCAL_GUEST_SESSION_COOKIE_NAME
+  );
+  if (localCookie) {
+    return `${GUEST_SESSION_COOKIE_NAME}=${localCookie}`;
+  }
+
+  const upstreamCookie = extractCookieValue(
+    cookieHeader,
+    GUEST_SESSION_COOKIE_NAME
+  );
+  return upstreamCookie
+    ? `${GUEST_SESSION_COOKIE_NAME}=${upstreamCookie}`
+    : null;
+}
+
+function isLocalHttpRequest(requestUrl: string): boolean {
+  try {
+    const url = new URL(requestUrl);
+    return (
+      url.protocol === "http:" &&
+      LOCAL_GUEST_SESSION_HOSTNAMES.has(url.hostname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function rewriteGuestSessionCookieForLocalHttp(cookie: string): string {
+  const parts = cookie
+    .split(";")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const [nameValue, ...attributes] = parts;
+  if (!nameValue?.startsWith(`${GUEST_SESSION_COOKIE_NAME}=`)) {
+    return cookie;
+  }
+
+  return [
+    nameValue.replace(
+      `${GUEST_SESSION_COOKIE_NAME}=`,
+      `${LOCAL_GUEST_SESSION_COOKIE_NAME}=`
+    ),
+    ...attributes.filter((attribute) => !/^secure$/i.test(attribute)),
+  ].join("; ");
+}
+
+function appendGuestSessionSetCookie(c: Context, cookie: string): void {
+  c.header("Set-Cookie", cookie, { append: true });
+  if (isLocalHttpRequest(c.req.url)) {
+    const localCookie = rewriteGuestSessionCookieForLocalHttp(cookie);
+    if (localCookie !== cookie) {
+      c.header("Set-Cookie", localCookie, { append: true });
+    }
+  }
 }
 
 function shouldFetchGuestSessionFromConvex(): boolean {
@@ -85,7 +149,8 @@ function parseRequestBody(raw: unknown): GuestSessionRequestBody {
  * forwards browser cookie/UA context to the upstream guest service so the
  * server can resolve a stable guest from the HttpOnly cookie. Spoofable
  * client IP headers are intentionally not forwarded. Set-Cookie
- * headers from upstream are passed through unchanged.
+ * headers from upstream are passed through unchanged, with an additional
+ * local HTTP-compatible cookie emitted for localhost/127.0.0.1 runtimes.
  *
  * Inspector rate-limits this endpoint locally and either:
  * - proxies to Convex in hosted web and local dev
@@ -168,7 +233,7 @@ guestSession.post("/", async (c) => {
     : await fetchRemoteGuestSession(context);
 
   for (const cookie of result.setCookies) {
-    c.header("Set-Cookie", cookie, { append: true });
+    appendGuestSessionSetCookie(c, cookie);
   }
 
   if (result.kind === "session") {
@@ -253,10 +318,10 @@ guestSession.post("/revoke", async (c) => {
   // load-bearing part of the contract.
   if (result.setCookies.length > 0) {
     for (const cookie of result.setCookies) {
-      c.header("Set-Cookie", cookie, { append: true });
+      appendGuestSessionSetCookie(c, cookie);
     }
   } else {
-    c.header("Set-Cookie", buildExpiredGuestSessionCookie(), { append: true });
+    appendGuestSessionSetCookie(c, buildExpiredGuestSessionCookie());
   }
 
   if (result.status >= 200 && result.status < 300) {
@@ -356,7 +421,7 @@ guestSession.post("/promotion-proof", async (c) => {
 
   if (result.kind === "revoked") {
     for (const cookie of result.setCookies) {
-      c.header("Set-Cookie", cookie, { append: true });
+      appendGuestSessionSetCookie(c, cookie);
     }
     return c.json(
       {
