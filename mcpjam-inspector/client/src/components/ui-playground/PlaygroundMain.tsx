@@ -82,10 +82,7 @@ import {
   getChatboxHostFamily,
 } from "@/lib/chatbox-host-style";
 import { DEFAULT_HOST_STYLE } from "@/lib/host-styles";
-import {
-  HostContextHeader,
-  PRESET_DEVICE_CONFIGS,
-} from "@/components/shared/HostContextHeader";
+import { PRESET_DEVICE_CONFIGS } from "@/components/shared/HostContextHeader";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
@@ -117,7 +114,7 @@ import {
   useChatStopControls,
 } from "@/hooks/use-chat-stop-controls";
 import { HandDrawnSendHint } from "./HandDrawnSendHint";
-import { ChatTraceViewModeHeaderBar } from "@/components/evals/trace-view-mode-tabs";
+import { PlaygroundCenterHeaderBar } from "@/components/playground/PlaygroundCenterHeaderBar";
 import { SingleModelTraceDiagnosticsBody } from "@/components/evals/single-model-trace-diagnostics-body";
 import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSelector";
 import {
@@ -344,6 +341,7 @@ export function PlaygroundMain({
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [traceViewMode, setTraceViewMode] =
     useState<PlaygroundTraceViewMode>("chat");
+  const [headerView, setHeaderView] = useState<"tabs" | "host">("tabs");
   const [isWidgetFullscreen, setIsWidgetFullscreen] = useState(false);
   const [isFullscreenChatOpen, setIsFullscreenChatOpen] = useState(false);
   const [isPreparingServerForSend, setIsPreparingServerForSend] =
@@ -2309,64 +2307,47 @@ export function PlaygroundMain({
           <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
         </div>
       )}
-      {/* Device frame header — hidden during onboarding */}
+      {/* Center header strip — hidden during onboarding */}
       {!showPostConnectGuide && (
-        <>
-          <div
-            className={cn(
-              "@container/playground-header relative flex h-11 min-w-0 w-full items-center justify-center border-b border-border px-3 text-xs text-muted-foreground flex-shrink-0",
-              isMultiModelLayoutMode ? "bg-background" : "bg-background/50",
-              effectiveHasMessages && "pr-10 sm:pr-11"
-            )}
-            data-testid="playground-main-header"
-          >
-            <div className="flex min-w-0 flex-1 justify-center overflow-hidden">
-              <HostContextHeader
-                activeProjectId={activeProjectId}
-                onSaveHostContext={onSaveHostContext}
-                protocol={selectedProtocol}
-                showThemeToggle
-              />
-            </div>
-
-            {effectiveHasMessages && (
-              <div className="absolute right-3">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                      onClick={() => setShowClearConfirm(true)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>Clear chat</p>
-                    <p className="text-xs text-muted-foreground">
-                      {navigator.platform.includes("Mac")
-                        ? "⌘⇧K"
-                        : "Ctrl+Shift+K"}
-                    </p>
-                  </TooltipContent>
-                </Tooltip>
-              </div>
-            )}
-          </div>
-
-          {showTraceViewTabs ? (
-            <ChatTraceViewModeHeaderBar
-              mode={activeTraceViewMode}
-              onModeChange={(mode) => {
-                if (mode === "tools") {
-                  return;
-                }
-                setTraceViewMode(mode);
-              }}
-            />
-          ) : null}
-        </>
+        <PlaygroundCenterHeaderBar
+          showTraceTabs={showTraceViewTabs}
+          mode={activeTraceViewMode}
+          onModeChange={(mode) => {
+            if (mode === "tools") return;
+            setTraceViewMode(mode);
+          }}
+          headerView={headerView}
+          onHeaderViewChange={setHeaderView}
+          activeProjectId={activeProjectId}
+          onSaveHostContext={onSaveHostContext}
+          protocol={selectedProtocol}
+          isMultiModelLayoutMode={isMultiModelLayoutMode}
+          effectiveHasMessages={effectiveHasMessages}
+          trailing={
+            effectiveHasMessages ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                    onClick={() => setShowClearConfirm(true)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Clear chat</p>
+                  <p className="text-xs text-muted-foreground">
+                    {navigator.platform.includes("Mac")
+                      ? "⌘⇧K"
+                      : "Ctrl+Shift+K"}
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+            ) : null
+          }
+        />
       )}
 
       <ConfirmChatResetDialog
