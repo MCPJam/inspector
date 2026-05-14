@@ -708,24 +708,6 @@ export function MCPSidebar({
               />
             )}
           </div>
-          {showUpdateButton && (
-            <div className="px-3">
-              <Button
-                size="sm"
-                onClick={handleUpdateClick}
-                aria-disabled={updateInstalling}
-                className={cn(
-                  "h-5 w-full gap-1 rounded-full bg-primary px-2 text-[11px] font-medium text-primary-foreground hover:bg-primary/90",
-                  updateInstalling && "pointer-events-none hover:bg-primary",
-                )}
-              >
-                {updateInstalling && (
-                  <Loader2 className="size-2.5 animate-spin" aria-hidden />
-                )}
-                {updateInstalling ? "Updating…" : "Update"}
-              </Button>
-            </div>
-          )}
           <SidebarContextSwitcher
             activeProjectId={activeProjectId}
             projects={projects}
@@ -743,6 +725,24 @@ export function MCPSidebar({
             onSwitchOrganization={onSwitchOrganization}
             onSwitchActiveOrganization={onSwitchActiveOrganization}
           />
+          {showUpdateButton && (
+            <div className="px-3 pt-2">
+              <Button
+                size="sm"
+                onClick={handleUpdateClick}
+                aria-disabled={updateInstalling}
+                className={cn(
+                  "h-5 w-full gap-1 rounded-full bg-primary px-2 text-[11px] font-medium text-primary-foreground hover:bg-primary/90",
+                  updateInstalling && "pointer-events-none hover:bg-primary",
+                )}
+              >
+                {updateInstalling && (
+                  <Loader2 className="size-2.5 animate-spin" aria-hidden />
+                )}
+                {updateInstalling ? "Updating…" : "Update"}
+              </Button>
+            </div>
+          )}
         </SidebarHeader>
         <SidebarContent>
           {visibleNavigationSections.map((section, sectionIndex) => {

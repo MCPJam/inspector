@@ -127,6 +127,36 @@ describe("useUpdateNotification", () => {
       });
     });
 
+    it("does not let a slower initial snapshot overwrite a live status event", async () => {
+      const { mockGetUpdateStatus, mockOnUpdateStatus } = setupElectronMock();
+      let resolveInitialStatus!: (status: UpdateStatus) => void;
+      mockGetUpdateStatus.mockReturnValueOnce(
+        new Promise<UpdateStatus>((resolve) => {
+          resolveInitialStatus = resolve;
+        }),
+      );
+
+      const { result } = renderHook(() => useUpdateNotification());
+      const callback = mockOnUpdateStatus.mock.calls[0][0];
+
+      act(() => {
+        callback({ kind: "pending", installRequested: false });
+      });
+      expect(result.current.status).toEqual({
+        kind: "pending",
+        installRequested: false,
+      });
+
+      await act(async () => {
+        resolveInitialStatus({ kind: "idle" });
+      });
+
+      expect(result.current.status).toEqual({
+        kind: "pending",
+        installRequested: false,
+      });
+    });
+
     it("reflects installRequested flag from pending status", () => {
       const { mockOnUpdateStatus } = setupElectronMock();
 

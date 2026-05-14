@@ -8,6 +8,7 @@ export type UpdateStatus =
 
 let currentStatus: UpdateStatus = { kind: "idle" };
 let isQuittingForUpdate = false;
+let isCheckingOrDownloading = false;
 let trustedWindow: BrowserWindow | null = null;
 let updateListenersRegistered = false;
 
@@ -61,10 +62,12 @@ function setStatus(next: UpdateStatus): void {
 
 export function setupAutoUpdaterEvents(): void {
   autoUpdater.on("checking-for-update", () => {
+    isCheckingOrDownloading = true;
     log.info("Checking for updates...");
   });
 
   autoUpdater.on("update-available", () => {
+    isCheckingOrDownloading = true;
     log.info("Update available, downloading...");
     const installRequested =
       currentStatus.kind === "pending" ? currentStatus.installRequested : false;
@@ -72,21 +75,43 @@ export function setupAutoUpdaterEvents(): void {
   });
 
   autoUpdater.on("update-not-available", () => {
+    isCheckingOrDownloading = false;
     log.info("No updates available");
-    setStatus({ kind: "idle" });
+    if (currentStatus.kind === "idle") {
+      setStatus({ kind: "idle" });
+      return;
+    }
+    if (currentStatus.kind === "pending" && currentStatus.installRequested) {
+      setStatus({ ...currentStatus, installRequested: false });
+    }
+    log.info(
+      `Keeping visible update status after update-not-available: ${currentStatus.kind}`,
+    );
   });
 
   autoUpdater.on("error", (error) => {
+    isCheckingOrDownloading = false;
     log.error("Auto-updater error:", error);
     const shouldNotifyUser =
-      currentStatus.kind === "pending" && currentStatus.installRequested;
-    setStatus({ kind: "idle" });
+      (currentStatus.kind === "pending" && currentStatus.installRequested) ||
+      isQuittingForUpdate;
+
+    if (currentStatus.kind === "pending") {
+      setStatus({ ...currentStatus, installRequested: false });
+    } else if (currentStatus.kind === "downloaded") {
+      setStatus(currentStatus);
+    } else {
+      setStatus({ kind: "idle" });
+    }
+    isQuittingForUpdate = false;
+
     if (shouldNotifyUser) {
       broadcastUpdateError();
     }
   });
 
   autoUpdater.on("update-downloaded", (_event, releaseNotes, releaseName) => {
+    isCheckingOrDownloading = false;
     log.info(`Update downloaded: ${releaseName}`);
     const installRequested =
       currentStatus.kind === "pending" ? currentStatus.installRequested : false;
@@ -135,6 +160,17 @@ export function registerUpdateListeners(mainWindow: BrowserWindow): void {
     } else if (currentStatus.kind === "pending") {
       log.info("Update still downloading — queuing install for completion");
       setStatus({ ...currentStatus, installRequested: true });
+      if (!isCheckingOrDownloading) {
+        try {
+          isCheckingOrDownloading = true;
+          autoUpdater.checkForUpdates();
+        } catch (error) {
+          isCheckingOrDownloading = false;
+          log.error("Failed to retry update check:", error);
+          setStatus({ ...currentStatus, installRequested: false });
+          broadcastUpdateError();
+        }
+      }
     } else {
       log.info("Restart requested but no update is staged");
     }
@@ -182,7 +218,13 @@ export function registerUpdateListeners(mainWindow: BrowserWindow): void {
       log.error("Auto-updater error:", new Error("Simulated update failure"));
       const shouldNotifyUser =
         currentStatus.kind === "pending" && currentStatus.installRequested;
-      setStatus({ kind: "idle" });
+      if (currentStatus.kind === "pending") {
+        setStatus({ ...currentStatus, installRequested: false });
+      } else if (currentStatus.kind === "downloaded") {
+        setStatus(currentStatus);
+      } else {
+        setStatus({ kind: "idle" });
+      }
       if (shouldNotifyUser) {
         broadcastUpdateError();
       }
@@ -204,6 +246,7 @@ export function installUpdateOnQuit(): boolean {
 export function __resetUpdateStateForTests(): void {
   currentStatus = { kind: "idle" };
   isQuittingForUpdate = false;
+  isCheckingOrDownloading = false;
   trustedWindow = null;
   updateListenersRegistered = false;
 }

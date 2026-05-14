@@ -12,13 +12,22 @@ export function useUpdateNotification() {
     const api = window.electronAPI.update;
 
     let cancelled = false;
-    api.getUpdateStatus().then((initial) => {
-      if (!cancelled) setStatus(initial);
+    // Subscribe first so we don't miss broadcasts that arrive between the
+    // getUpdateStatus() call and its resolution.
+    let liveEventReceived = false;
+    api.onUpdateStatus((next) => {
+      liveEventReceived = true;
+      setStatus(next);
     });
-
-    api.onUpdateStatus((next) => setStatus(next));
     api.onUpdateError(() => {
       toast.error("Update failed. Try again later.");
+    });
+
+    // Initial snapshot — apply only if a live event hasn't already overtaken it.
+    // Avoids a startup race where an older idle snapshot overwrites a live
+    // pending/downloaded event and hides the button until the next broadcast.
+    api.getUpdateStatus().then((initial) => {
+      if (!cancelled && !liveEventReceived) setStatus(initial);
     });
 
     return () => {
