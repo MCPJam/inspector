@@ -39,7 +39,7 @@ export function PaneSlot({ side, paneIds, onClosePane }: PaneSlotProps) {
       strategy={verticalListSortingStrategy}
     >
       <div
-        className="flex h-full min-h-0 flex-col gap-2 overflow-hidden p-2"
+        className="flex h-full min-h-0 flex-col overflow-hidden"
         data-pane-slot={side}
       >
         {visiblePanes.map((pane) => (

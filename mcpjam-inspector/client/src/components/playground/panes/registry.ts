@@ -3,6 +3,8 @@ import { createElement } from "react";
 import type { PaneDescriptor, PaneId } from "./types";
 import { PlaygroundLeft } from "@/components/ui-playground/PlaygroundLeft";
 import { useAppBuilderStateContext } from "@/components/ui-playground/hooks/use-app-builder-state";
+import { ChatHistoryRail } from "@/components/chat-v2/history/ChatHistoryRail";
+import { usePlaygroundChatHistoryBridge } from "@/components/playground/playground-chat-history-bridge";
 
 /**
  * Playground pane registry.
@@ -16,7 +18,10 @@ import { useAppBuilderStateContext } from "@/components/ui-playground/hooks/use-
  *   This makes the docked tools pane behaviorally identical to the App Builder
  *   left sidebar — the multi-server-aware `ToolsPane` (display-only today)
  *   takes over once `useAppBuilderState` is extended to multi-server.
- * - `chatHistory`: placeholder; ChatHistoryRail port is a follow-up.
+ * - `chatHistory`: renders the `ChatHistoryRail` from chat-v2 via a bridge
+ *   `PlaygroundMain` publishes (it owns the chat session and history
+ *   handlers). When PlaygroundMain hasn't mounted yet, a placeholder shows
+ *   instead — usually only visible for one frame.
  * - `header`: layout-only concept, not a movable pane; not registered.
  */
 const REGISTRY = new Map<PaneId, PaneDescriptor>();
@@ -34,17 +39,7 @@ REGISTRY.set("chatHistory", {
   title: "Chat History",
   icon: History,
   defaultSide: "left",
-  // ChatHistoryRail port pending; placeholder so saved views can reference
-  // the id without crashing.
-  renderBody: () =>
-    createElement(
-      "div",
-      {
-        className:
-          "flex h-full items-center justify-center p-3 text-center text-xs text-muted-foreground",
-      },
-      "Chat history (coming soon)",
-    ),
+  renderBody: () => createElement(ChatHistoryPaneFromBridge),
 });
 
 function ToolsPaneFromContext() {
@@ -71,6 +66,35 @@ function ToolsPaneFromContext() {
     // from the layout; suppressing PlaygroundLeft's own close button keeps the
     // UX consistent.
     onClose: undefined,
+  });
+}
+
+function ChatHistoryPaneFromBridge() {
+  const bridge = usePlaygroundChatHistoryBridge();
+  if (!bridge) {
+    return createElement(
+      "div",
+      {
+        className:
+          "flex h-full items-center justify-center p-3 text-center text-xs text-muted-foreground",
+      },
+      "Loading chat history…",
+    );
+  }
+  return createElement(ChatHistoryRail, {
+    activeSessionId: bridge.activeSessionId,
+    hostStyle: bridge.hostStyle,
+    isAuthenticated: bridge.isAuthenticated,
+    isStreaming: bridge.isStreaming,
+    sharedThreadsEnabled: bridge.sharedThreadsEnabled,
+    projectId: bridge.projectId,
+    enabled: bridge.enabled,
+    refreshSignal: bridge.refreshSignal,
+    onSelectThread: bridge.onSelectThread,
+    onNewChat: bridge.onNewChat,
+    beforeResetChatAfterArchiveAll: bridge.beforeResetChatAfterArchiveAll,
+    onArchiveAllComplete: bridge.onArchiveAllComplete,
+    onSessionAction: bridge.onSessionAction,
   });
 }
 

@@ -122,6 +122,17 @@ import {
 } from "@/components/ui-playground/multi-model-playground-card";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
+import {
+  chatHistoryAction,
+  getChatHistoryDetail,
+  type ChatHistorySession,
+  type ChatHistoryDetailSession,
+  type ChatHistoryWidgetSnapshot,
+  type ChatHistoryTurnTrace,
+} from "@/lib/apis/web/chat-history-api";
+import { resolveRestorableServerNames } from "@/components/chat-v2/history/session-restore";
+import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 
 /** Custom device config - dimensions come from store */
 const CUSTOM_DEVICE_BASE = {
@@ -267,6 +278,35 @@ export function PlaygroundMain({
   const { signUp } = useAuth();
   const posthog = usePostHog();
   const clearLogs = useTrafficLogStore((s) => s.clear);
+  const sharedThreadsEnabled =
+    useFeatureFlagEnabled("shared-threads-enabled") === true;
+
+  // Chat-history coordination — Playground equivalent of ChatTabV2's history
+  // machinery, scoped down to what the docked rail actually needs.
+  const [activeHistorySessionId, setActiveHistorySessionId] = useState<
+    string | null
+  >(null);
+  const [loadingHistorySessionId, setLoadingHistorySessionId] = useState<
+    string | null
+  >(null);
+  const [pendingDirectVisibility, setPendingDirectVisibility] = useState<
+    "private" | "project"
+  >("private");
+  // ChatTabV2 holds this at 0 today; bumping after each completed turn is a
+  // follow-up. The rail re-fetches on initial mount + whenever signal changes.
+  const historyRefreshSignal = 0;
+  const historySelectionRequestIdRef = useRef(0);
+  const pendingHistoryServerSyncRef = useRef<string[] | null>(null);
+  const resumedThreadSendBaselineRef = useRef<{
+    sessionId: string;
+    version: number;
+  } | null>(null);
+  const activeHistorySessionIdRef = useRef<string | null>(null);
+  const reactiveHistoryLoadRequestIdRef = useRef(0);
+  const lastAppliedReactiveVersionRef = useRef<{
+    sessionId: string;
+    version: number;
+  } | null>(null);
 
   const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
     []
@@ -366,7 +406,7 @@ export function PlaygroundMain({
   // Hosted mode context (projectId, serverIds, OAuth tokens)
   const activeProject = appState.projects[appState.activeProjectId];
   const convexProjectId = activeProject?.sharedProjectId ?? null;
-  const { serversByName } = useProjectServers({
+  const { serversById, serversByName } = useProjectServers({
     isAuthenticated: isConvexAuthenticated,
     projectId: convexProjectId,
   });
@@ -425,6 +465,11 @@ export function PlaygroundMain({
     setRequireToolApproval,
     addToolApprovalResponse,
     isSessionBootstrapComplete,
+    loadChatSession,
+    syncResumedVersion,
+    resumedVersion,
+    restoredToolRenderOverrides,
+    status,
   } = useChatSession({
     selectedServers,
     hostedContext: {
@@ -732,6 +777,414 @@ export function PlaygroundMain({
     setTemperature,
     startChatWithMessages,
   ]);
+
+  // ------------------------------------------------------------------------
+  // Chat history coordination (docked `chatHistory` pane bridge)
+  //
+  // Ported from ChatTabV2:466-996 with the following intentional differences:
+  // - Draft-discard uses `window.confirm` instead of the full DiscardDraftDialog
+  //   port (matches PlaygroundHeader's existing window.confirm style).
+  // - `widgetStateQueue` is not part of `hasUnsavedDraft` (Playground doesn't
+  //   queue widget-state updates the way ChatTabV2 does).
+  // - Multi-server restoration: Playground is single-server in v1; if a saved
+  //   session selected N servers, we pick the first that maps to a connected
+  //   server and call `playgroundServerSelectorProps?.onServerChange(name)`.
+  //   If none match we leave the current server selection alone.
+  // - `historyRefreshSignal` stays at 0 like ChatTabV2 today; bumping after
+  //   completed turns is a follow-up.
+  // ------------------------------------------------------------------------
+
+  const hasUnsavedDraft =
+    composer.input.trim().length > 0 ||
+    mcpPromptResults.length > 0 ||
+    skillResults.length > 0 ||
+    fileAttachments.length > 0 ||
+    modelContextQueue.length > 0;
+
+  const hasUnsavedDraftRef = useRef(hasUnsavedDraft);
+  useEffect(() => {
+    hasUnsavedDraftRef.current = hasUnsavedDraft;
+  }, [hasUnsavedDraft]);
+
+  const ensureDiscardDraftConfirmed = useCallback((): Promise<boolean> => {
+    if (!hasUnsavedDraftRef.current) {
+      return Promise.resolve(true);
+    }
+    const confirmed = window.confirm(
+      "You have an unsaved draft in the chat composer. Discard it?",
+    );
+    return Promise.resolve(confirmed);
+  }, []);
+
+  const clearComposerDraft = useCallback(() => {
+    composer.setInput("");
+    setMcpPromptResults([]);
+    setSkillResults([]);
+    revokeFileAttachmentUrls(fileAttachments);
+    setFileAttachments([]);
+    setModelContextQueue([]);
+  }, [composer, fileAttachments]);
+
+  const invalidatePendingReactiveHistoryLoad = useCallback(() => {
+    activeHistorySessionIdRef.current = null;
+    reactiveHistoryLoadRequestIdRef.current += 1;
+    lastAppliedReactiveVersionRef.current = null;
+  }, []);
+
+  const cancelPendingHistorySelection = useCallback(() => {
+    historySelectionRequestIdRef.current += 1;
+    pendingHistoryServerSyncRef.current = null;
+    setLoadingHistorySessionId(null);
+    invalidatePendingReactiveHistoryLoad();
+    setActiveHistorySessionId(null);
+  }, [invalidatePendingReactiveHistoryLoad]);
+
+  const markHistorySessionRead = useCallback(async (sessionId: string) => {
+    try {
+      await chatHistoryAction("mark-read", sessionId);
+    } catch {
+      // Best-effort: unread state should not block chat usage.
+    }
+  }, []);
+
+  const restoreHistoryServerSelection = useCallback(
+    (savedServerNames: string[] | undefined) => {
+      if (!Array.isArray(savedServerNames) || savedServerNames.length === 0) {
+        return;
+      }
+      const onServerChange = playgroundServerSelectorProps?.onServerChange;
+      if (!onServerChange) return;
+      const desired = resolveRestorableServerNames(
+        savedServerNames,
+        serversById,
+        Object.keys(servers),
+      );
+      if (desired.length === 0) return;
+      const firstMatch = desired.find(
+        (name) => servers[name]?.connectionStatus === "connected",
+      );
+      const target = firstMatch ?? desired[0];
+      if (target && target !== serverName) {
+        onServerChange(target);
+      }
+    },
+    [
+      playgroundServerSelectorProps,
+      serverName,
+      servers,
+      serversById,
+    ],
+  );
+
+  const loadHistorySession = useCallback(
+    async (
+      detail: ChatHistoryDetailSession,
+      widgetSnapshots?: ChatHistoryWidgetSnapshot[],
+      options?: {
+        shouldRestoreComposerState?: () => boolean;
+        shouldApply?: () => boolean;
+        turnTraces?: ChatHistoryTurnTrace[];
+      },
+    ) => {
+      await loadChatSession(
+        {
+          chatSessionId: detail.chatSessionId,
+          messagesBlobUrl: detail.messagesBlobUrl,
+          resumeConfig: detail.resumeConfig,
+          version: detail.version,
+          widgetSnapshots,
+          turnTraces: options?.turnTraces,
+        },
+        {
+          shouldRestoreResumeConfig: options?.shouldRestoreComposerState,
+          shouldApply: options?.shouldApply,
+        },
+      );
+      if (options?.shouldApply && !options.shouldApply()) {
+        return;
+      }
+      const shouldRestoreComposerState =
+        options?.shouldRestoreComposerState?.() ?? true;
+      if (shouldRestoreComposerState && detail.modelId) {
+        const matchingModel = availableModels.find(
+          (model) => String(model.id) === detail.modelId,
+        );
+        if (matchingModel) {
+          setSelectedModel(matchingModel);
+        }
+      }
+      setActiveHistorySessionId(detail._id);
+      setPendingDirectVisibility(detail.directVisibility);
+      syncResumedVersion(detail.version);
+      lastAppliedReactiveVersionRef.current = {
+        sessionId: detail._id,
+        version: detail.version,
+      };
+      void markHistorySessionRead(detail._id);
+    },
+    [
+      availableModels,
+      loadChatSession,
+      markHistorySessionRead,
+      setSelectedModel,
+      syncResumedVersion,
+    ],
+  );
+
+  const detachHistorySession = useCallback(
+    (toastMessage: string) => {
+      resumedThreadSendBaselineRef.current = null;
+      cancelPendingHistorySelection();
+      setPendingDirectVisibility("private");
+      syncResumedVersion(null);
+      if (effectiveHasMessages) {
+        startChatWithMessages(cloneUiMessages(messages), {
+          toolRenderOverrides: restoredToolRenderOverrides,
+        });
+      }
+      toast.error(toastMessage);
+    },
+    [
+      cancelPendingHistorySelection,
+      effectiveHasMessages,
+      messages,
+      restoredToolRenderOverrides,
+      startChatWithMessages,
+      syncResumedVersion,
+    ],
+  );
+
+  const refreshCurrentHistorySession = useCallback(
+    async ({ retries = 0, markRead = false } = {}) => {
+      if (!activeHistorySessionId && !chatSessionId) return null;
+      for (let attempt = 0; attempt <= retries; attempt += 1) {
+        try {
+          const detail = await getChatHistoryDetail({
+            sessionId: activeHistorySessionId ?? undefined,
+            chatSessionId,
+            projectId: convexProjectId ?? undefined,
+          });
+          setActiveHistorySessionId(detail.session._id);
+          syncResumedVersion(detail.session.version);
+          if (markRead) {
+            void markHistorySessionRead(detail.session._id);
+          }
+          return detail.session;
+        } catch (error) {
+          if (attempt < retries) continue;
+          console.error(
+            "[PlaygroundMain] Failed to refresh history session",
+            error,
+          );
+          return null;
+        }
+      }
+      return null;
+    },
+    [
+      activeHistorySessionId,
+      chatSessionId,
+      convexProjectId,
+      markHistorySessionRead,
+      syncResumedVersion,
+    ],
+  );
+
+  const handleSelectThread = useCallback(
+    async (session: ChatHistorySession) => {
+      if (isStreaming) return;
+      if (!(await ensureDiscardDraftConfirmed())) return;
+      if (hasUnsavedDraftRef.current) {
+        clearComposerDraft();
+      }
+
+      const selectionRequestId = historySelectionRequestIdRef.current + 1;
+      historySelectionRequestIdRef.current = selectionRequestId;
+      pendingHistoryServerSyncRef.current = null;
+      setActiveHistorySessionId(session._id);
+      setLoadingHistorySessionId(session._id);
+
+      try {
+        const detail = await getChatHistoryDetail({
+          sessionId: session._id,
+          chatSessionId: session.chatSessionId,
+          projectId: convexProjectId ?? undefined,
+        });
+
+        if (historySelectionRequestIdRef.current !== selectionRequestId) {
+          return;
+        }
+
+        await loadHistorySession(detail.session, detail.widgetSnapshots, {
+          turnTraces: detail.turnTraces,
+        });
+
+        if (historySelectionRequestIdRef.current !== selectionRequestId) {
+          return;
+        }
+        restoreHistoryServerSelection(
+          detail.session.resumeConfig?.selectedServers,
+        );
+      } catch (err) {
+        if (historySelectionRequestIdRef.current === selectionRequestId) {
+          invalidatePendingReactiveHistoryLoad();
+          setActiveHistorySessionId(null);
+        }
+        console.error("[PlaygroundMain] Failed to load chat session", err);
+        toast.error("Failed to load chat history.");
+      } finally {
+        if (historySelectionRequestIdRef.current === selectionRequestId) {
+          setLoadingHistorySessionId(null);
+        }
+      }
+    },
+    [
+      clearComposerDraft,
+      convexProjectId,
+      ensureDiscardDraftConfirmed,
+      invalidatePendingReactiveHistoryLoad,
+      isStreaming,
+      loadHistorySession,
+      restoreHistoryServerSelection,
+    ],
+  );
+
+  const handleNewChat = useCallback(
+    async (options?: { shared?: boolean }) => {
+      if (isStreaming) return;
+      if (!(await ensureDiscardDraftConfirmed())) return;
+      if (hasUnsavedDraftRef.current) {
+        clearComposerDraft();
+      }
+      resumedThreadSendBaselineRef.current = null;
+      cancelPendingHistorySelection();
+      syncResumedVersion(null);
+      resetChat();
+      setPendingDirectVisibility(options?.shared ? "project" : "private");
+    },
+    [
+      cancelPendingHistorySelection,
+      clearComposerDraft,
+      ensureDiscardDraftConfirmed,
+      isStreaming,
+      resetChat,
+      syncResumedVersion,
+    ],
+  );
+
+  const handleArchiveAllComplete = useCallback(
+    (hadActiveHistorySelection: boolean) => {
+      if (!hadActiveHistorySelection) return;
+      if (hasUnsavedDraftRef.current) {
+        clearComposerDraft();
+      }
+      cancelPendingHistorySelection();
+      syncResumedVersion(null);
+      resetChat();
+      setPendingDirectVisibility("private");
+    },
+    [cancelPendingHistorySelection, clearComposerDraft, resetChat, syncResumedVersion],
+  );
+
+  const handleHistorySessionAction = useCallback(
+    async ({
+      action,
+      session,
+    }: {
+      action:
+        | "rename"
+        | "archive"
+        | "unarchive"
+        | "share"
+        | "unshare"
+        | "pin"
+        | "unpin";
+      session: ChatHistorySession;
+    }) => {
+      if (action === "unshare" && session._id === activeHistorySessionId) {
+        try {
+          const detail = await refreshCurrentHistorySession();
+          if (!detail) {
+            detachHistorySession(
+              "This chat is no longer shared with you. Continuing locally in a new thread.",
+            );
+          }
+        } catch (error) {
+          console.error(
+            "[PlaygroundMain] Failed to refresh unshared chat",
+            error,
+          );
+        }
+      }
+    },
+    [activeHistorySessionId, detachHistorySession, refreshCurrentHistorySession],
+  );
+
+  // Publish the chat-history bridge so the docked Playground pane (outside
+  // this subtree) can render `ChatHistoryRail`. Clear on unmount so a stale
+  // pane doesn't see a torn-down session after the Playground unmounts.
+  const setBridge = usePlaygroundChatHistoryBridgeStore((s) => s.setBridge);
+  useEffect(() => {
+    setBridge({
+      activeSessionId: activeHistorySessionId,
+      hostStyle,
+      isAuthenticated: isConvexAuthenticated,
+      isStreaming,
+      sharedThreadsEnabled,
+      projectId: convexProjectId,
+      enabled: isSessionBootstrapComplete,
+      refreshSignal: historyRefreshSignal,
+      onSelectThread: handleSelectThread,
+      onNewChat: handleNewChat,
+      onArchiveAllComplete: handleArchiveAllComplete,
+      onSessionAction: handleHistorySessionAction,
+    });
+    return () => setBridge(null);
+  }, [
+    activeHistorySessionId,
+    convexProjectId,
+    handleArchiveAllComplete,
+    handleHistorySessionAction,
+    handleNewChat,
+    handleSelectThread,
+    historyRefreshSignal,
+    hostStyle,
+    isConvexAuthenticated,
+    isSessionBootstrapComplete,
+    isStreaming,
+    setBridge,
+    sharedThreadsEnabled,
+  ]);
+
+  // Track streaming baseline + resumedVersion drift while a history session is
+  // active, mirroring ChatTabV2:1017-1080. Ensures that a turn started on a
+  // resumed thread is reconciled against its baseline version when it ends.
+  const previousStatusRef = useRef(status);
+  useEffect(() => {
+    const previousStatus = previousStatusRef.current;
+    previousStatusRef.current = status;
+    const wasStreaming =
+      previousStatus === "submitted" || previousStatus === "streaming";
+    const isNowStreaming = status === "submitted" || status === "streaming";
+    const hasStartedStream = !wasStreaming && isNowStreaming;
+
+    if (hasStartedStream) {
+      resumedThreadSendBaselineRef.current =
+        activeHistorySessionId && resumedVersion !== null
+          ? { sessionId: activeHistorySessionId, version: resumedVersion }
+          : null;
+      return;
+    }
+
+    if (status === "error") {
+      resumedThreadSendBaselineRef.current = null;
+    }
+  }, [activeHistorySessionId, resumedVersion, status]);
+
+  // Suppress unused-var noise; these values are reserved for follow-up
+  // history features (draft confirm dialog, optimistic resume after archive).
+  void loadingHistorySessionId;
+  void pendingDirectVisibility;
 
   useEffect(() => {
     const activeModelIds = new Set(

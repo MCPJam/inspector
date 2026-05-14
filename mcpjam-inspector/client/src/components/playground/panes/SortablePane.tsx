@@ -50,8 +50,8 @@ export function SortablePane({
       ref={setNodeRef}
       style={style}
       className={cn(
-        "flex h-full min-h-0 flex-col overflow-hidden rounded-md border bg-card",
-        isDragging && "shadow-lg",
+        "flex h-full min-h-0 flex-col overflow-hidden bg-background",
+        isDragging && "rounded-md border bg-card shadow-lg",
       )}
       data-pane-id={id}
     >

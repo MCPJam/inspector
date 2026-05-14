@@ -81,7 +81,7 @@ export const DEFAULT_PLAYGROUND_PAYLOAD: PlaygroundViewPayloadV1 = {
   layout: {
     leftPanes: ["tools"],
     rightPanes: [],
-    leftWidth: 28,
+    leftWidth: 30,
     rightWidth: 0,
     centerPane: "thread",
   },
