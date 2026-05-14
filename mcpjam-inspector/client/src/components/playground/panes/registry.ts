@@ -1,8 +1,7 @@
 import { Hammer, History } from "lucide-react";
 import { createElement } from "react";
 import type { PaneDescriptor, PaneId } from "./types";
-import { PlaygroundLeft } from "@/components/ui-playground/PlaygroundLeft";
-import { useAppBuilderStateContext } from "@/components/ui-playground/hooks/use-app-builder-state";
+import { MultiServerToolsPane } from "./MultiServerToolsPane";
 import { ChatHistoryRail } from "@/components/chat-v2/history/ChatHistoryRail";
 import { usePlaygroundChatHistoryBridge } from "@/components/playground/playground-chat-history-bridge";
 
@@ -31,7 +30,7 @@ REGISTRY.set("tools", {
   title: "Tools",
   icon: Hammer,
   defaultSide: "left",
-  renderBody: () => createElement(ToolsPaneFromContext),
+  renderBody: () => createElement(MultiServerToolsPane),
 });
 
 REGISTRY.set("chatHistory", {
@@ -41,33 +40,6 @@ REGISTRY.set("chatHistory", {
   defaultSide: "left",
   renderBody: () => createElement(ChatHistoryPaneFromBridge),
 });
-
-function ToolsPaneFromContext() {
-  const state = useAppBuilderStateContext();
-  return createElement(PlaygroundLeft, {
-    tools: state.tools,
-    selectedToolName: state.selectedTool,
-    fetchingTools: state.fetchingTools,
-    onRefresh: state.fetchTools,
-    onSelectTool: state.setSelectedTool,
-    formFields: state.formFields,
-    onFieldChange: state.updateFormField,
-    onToggleField: state.updateFormFieldIsSet,
-    isExecuting: state.isExecuting,
-    onExecute: state.executeTool,
-    onSave: state.savedRequestsHook.openSaveDialog,
-    savedRequests: state.savedRequestsHook.savedRequests,
-    highlightedRequestId: state.savedRequestsHook.highlightedRequestId,
-    onLoadRequest: state.savedRequestsHook.handleLoadRequest,
-    onRenameRequest: state.savedRequestsHook.handleRenameRequest,
-    onDuplicateRequest: state.savedRequestsHook.handleDuplicateRequest,
-    onDeleteRequest: state.savedRequestsHook.handleDeleteRequest,
-    // The pane wrapper (SortablePane) already exposes an X to remove the pane
-    // from the layout; suppressing PlaygroundLeft's own close button keeps the
-    // UX consistent.
-    onClose: undefined,
-  });
-}
 
 function ChatHistoryPaneFromBridge() {
   const bridge = usePlaygroundChatHistoryBridge();

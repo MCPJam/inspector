@@ -94,6 +94,13 @@ export interface UseAppBuilderStateOptions {
     serverNames: string[],
   ) => Promise<EnsureServersReadyResult>;
   onOnboardingChange?: (isOnboarding: boolean) => void;
+  /**
+   * Active multi-server selection. When non-empty, the Playground tools pane
+   * aggregates tools across these servers; tool execution routes to the
+   * server scoped to the clicked tool (see `executeTool({ serverName })`).
+   * Empty / undefined falls back to single-server mode driven by `serverName`.
+   */
+  selectedServerNames?: string[];
 }
 
 /**
@@ -122,7 +129,15 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
     isServerSyncing = false,
     onConnect,
     onOnboardingChange,
+    selectedServerNames,
   } = options;
+
+  const activeServerNames = useMemo(() => {
+    if (selectedServerNames && selectedServerNames.length > 0) {
+      return selectedServerNames;
+    }
+    return serverName ? [serverName] : [];
+  }, [selectedServerNames, serverName]);
 
   const posthog = usePostHog();
   const prefersReducedMotion = useReducedMotion();
@@ -849,6 +864,9 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
     // onboarding
     firstRunComposerSeed,
     onboarding,
+
+    // multi-server
+    activeServerNames,
 
     // misc
     hostStyle,

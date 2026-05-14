@@ -1892,7 +1892,11 @@ export default function App() {
       serverConfigs: projectServers,
       selectedServer: appState.selectedServer,
       selectedMultipleServers: appState.selectedMultipleServers,
-      isMultiSelectEnabled: false,
+      // Playground supports multi-server selection — the user can toggle
+      // several servers on simultaneously, the chat session sees their union,
+      // and the docked tools pane aggregates tools across all of them.
+      // App Builder stays single-server.
+      isMultiSelectEnabled: activeTab === "playground",
       onServerChange: setSelectedServer,
       onMultiServerToggle: toggleServerSelection,
       onConnect: handleConnect,

@@ -21,6 +21,16 @@ import {
   useRef,
 } from "react";
 import { Braces, Loader2, Trash2 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@mcpjam/design-system/alert-dialog";
 import { useAuth } from "@workos-inc/authkit-react";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { UIMessage } from "ai";
@@ -133,6 +143,11 @@ import {
 import { resolveRestorableServerNames } from "@/components/chat-v2/history/session-restore";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
 import { useFeatureFlagEnabled } from "posthog-js/react";
+import { WebApiError } from "@/lib/apis/web/base";
+
+// On post-stream reconcile, the Convex-side detail row may not yet reflect the
+// version bump from the turn that just finished. Retry a couple of times.
+const RESUMED_THREAD_REFRESH_RETRIES = 2;
 
 /** Custom device config - dimensions come from store */
 const CUSTOM_DEVICE_BASE = {
@@ -380,13 +395,32 @@ export function PlaygroundMain({
   const appState = useSharedAppState();
   const servers = appState.servers;
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
-  const selectedServers = useMemo(
-    () =>
-      serverName && servers[serverName]?.connectionStatus === "connected"
-        ? [serverName]
-        : [],
-    [serverName, servers]
-  );
+  // Multi-server: when the host has flipped `isMultiSelectEnabled` on (today
+  // only the Playground does), `playgroundServerSelectorProps.selectedMultipleServers`
+  // is the source of truth for which servers the chat session sees. Otherwise
+  // fall back to the single `serverName` prop (App Builder / hosted flows).
+  const multiSelectedServerNames = useMemo(() => {
+    const propsMulti = playgroundServerSelectorProps?.selectedMultipleServers;
+    if (
+      playgroundServerSelectorProps?.isMultiSelectEnabled &&
+      Array.isArray(propsMulti) &&
+      propsMulti.length > 0
+    ) {
+      return propsMulti.filter(
+        (name) => servers[name]?.connectionStatus === "connected",
+      );
+    }
+    return [];
+  }, [playgroundServerSelectorProps, servers]);
+
+  const selectedServers = useMemo(() => {
+    if (multiSelectedServerNames.length > 0) {
+      return multiSelectedServerNames;
+    }
+    return serverName && servers[serverName]?.connectionStatus === "connected"
+      ? [serverName]
+      : [];
+  }, [multiSelectedServerNames, serverName, servers]);
 
   const serverConnected = Boolean(
     serverName && servers[serverName]?.connectionStatus === "connected"
@@ -547,7 +581,10 @@ export function PlaygroundMain({
   }, [multiModelAvailableModels, selectedModel, selectedModelIds]);
   const canEnableMultiModel =
     enableMultiModelChat && availableModels.length > 1;
-  const isMultiModelMode = canEnableMultiModel && multiModelEnabled;
+  // When viewing a history session the transcript lives on the single chat
+  // session; compare layout would override that render. Matches ChatTabV2.
+  const isMultiModelMode =
+    canEnableMultiModel && multiModelEnabled && !activeHistorySessionId;
   const { isMultiModelLayoutMode, onModelSelectorOpenChange } =
     useModelSelectorLayoutLock(isMultiModelMode);
 
@@ -806,14 +843,32 @@ export function PlaygroundMain({
     hasUnsavedDraftRef.current = hasUnsavedDraft;
   }, [hasUnsavedDraft]);
 
+  const [discardDraftDialogOpen, setDiscardDraftDialogOpen] = useState(false);
+  const discardDraftResolveRef = useRef<((allow: boolean) => void) | null>(
+    null,
+  );
+  const discardDraftSettledRef = useRef(false);
+
+  const settleDiscardDraft = useCallback((confirmed: boolean) => {
+    if (discardDraftSettledRef.current) {
+      return;
+    }
+    discardDraftSettledRef.current = true;
+    const resolve = discardDraftResolveRef.current;
+    discardDraftResolveRef.current = null;
+    resolve?.(confirmed);
+    setDiscardDraftDialogOpen(false);
+  }, []);
+
   const ensureDiscardDraftConfirmed = useCallback((): Promise<boolean> => {
     if (!hasUnsavedDraftRef.current) {
       return Promise.resolve(true);
     }
-    const confirmed = window.confirm(
-      "You have an unsaved draft in the chat composer. Discard it?",
-    );
-    return Promise.resolve(confirmed);
+    return new Promise((resolve) => {
+      discardDraftSettledRef.current = false;
+      discardDraftResolveRef.current = resolve;
+      setDiscardDraftDialogOpen(true);
+    });
   }, []);
 
   const clearComposerDraft = useCallback(() => {
@@ -852,14 +907,35 @@ export function PlaygroundMain({
       if (!Array.isArray(savedServerNames) || savedServerNames.length === 0) {
         return;
       }
-      const onServerChange = playgroundServerSelectorProps?.onServerChange;
-      if (!onServerChange) return;
       const desired = resolveRestorableServerNames(
         savedServerNames,
         serversById,
         Object.keys(servers),
       );
       if (desired.length === 0) return;
+
+      // Multi-server: toggle on every saved server that's currently known
+      // (the toggle handler is a no-op for already-active servers). Skips
+      // anything that's not connected — the user can connect later.
+      const onMultiServerToggle =
+        playgroundServerSelectorProps?.onMultiServerToggle;
+      const currentlyActive =
+        playgroundServerSelectorProps?.selectedMultipleServers ?? [];
+      const isMulti =
+        playgroundServerSelectorProps?.isMultiSelectEnabled === true;
+
+      if (isMulti && onMultiServerToggle) {
+        for (const name of desired) {
+          if (!currentlyActive.includes(name)) {
+            onMultiServerToggle(name);
+          }
+        }
+        return;
+      }
+
+      // Single-server fallback: pick the first connected match.
+      const onServerChange = playgroundServerSelectorProps?.onServerChange;
+      if (!onServerChange) return;
       const firstMatch = desired.find(
         (name) => servers[name]?.connectionStatus === "connected",
       );
@@ -971,7 +1047,19 @@ export function PlaygroundMain({
           }
           return detail.session;
         } catch (error) {
-          if (attempt < retries) continue;
+          if (attempt < retries) {
+            await new Promise((resolve) => window.setTimeout(resolve, 250));
+            continue;
+          }
+          // 403/404 means the row is gone or no longer ours — treat as
+          // "session unavailable" so callers can detach rather than reporting
+          // a transient error.
+          if (
+            error instanceof WebApiError &&
+            (error.status === 403 || error.status === 404)
+          ) {
+            return null;
+          }
           console.error(
             "[PlaygroundMain] Failed to refresh history session",
             error,
@@ -988,6 +1076,49 @@ export function PlaygroundMain({
       markHistorySessionRead,
       syncResumedVersion,
     ],
+  );
+
+  // After a streaming turn ends we re-fetch the active session so the rail
+  // reflects the new version and the local resume cursor advances. If the
+  // turn was on a resumed thread, we additionally require that the new
+  // detail's version actually exceeds the baseline we sent against — that
+  // proves the server applied this turn rather than a concurrent edit.
+  const refreshHistorySessionAfterStream = useCallback(
+    async (
+      resumedThreadSendBaseline: {
+        sessionId: string;
+        version: number;
+      } | null,
+    ) => {
+      const maxAttempts = resumedThreadSendBaseline
+        ? RESUMED_THREAD_REFRESH_RETRIES + 1
+        : 2;
+
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        try {
+          const detail = await refreshCurrentHistorySession({
+            markRead: true,
+          });
+          if (
+            !resumedThreadSendBaseline ||
+            (detail &&
+              detail._id === resumedThreadSendBaseline.sessionId &&
+              detail.version > resumedThreadSendBaseline.version)
+          ) {
+            return detail;
+          }
+        } catch (error) {
+          if (attempt >= maxAttempts - 1) {
+            throw error;
+          }
+        }
+        if (attempt < maxAttempts - 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 250));
+        }
+      }
+      return null;
+    },
+    [refreshCurrentHistorySession],
   );
 
   const handleSelectThread = useCallback(
@@ -1129,13 +1260,18 @@ export function PlaygroundMain({
       activeSessionId: activeHistorySessionId,
       hostStyle,
       isAuthenticated: isConvexAuthenticated,
-      isStreaming,
+      // Use the multi-model-aware streaming flag so the rail disables New Chat
+      // / row selection while any broadcast lane is still streaming.
+      isStreaming: isStreamingActive,
       sharedThreadsEnabled,
       projectId: convexProjectId,
       enabled: isSessionBootstrapComplete,
       refreshSignal: historyRefreshSignal,
       onSelectThread: handleSelectThread,
       onNewChat: handleNewChat,
+      // Without this the rail's "Archive all" path would call resetChat
+      // through onArchiveAllComplete and blow away the user's unsaved draft.
+      beforeResetChatAfterArchiveAll: ensureDiscardDraftConfirmed,
       onArchiveAllComplete: handleArchiveAllComplete,
       onSessionAction: handleHistorySessionAction,
     });
@@ -1143,6 +1279,7 @@ export function PlaygroundMain({
   }, [
     activeHistorySessionId,
     convexProjectId,
+    ensureDiscardDraftConfirmed,
     handleArchiveAllComplete,
     handleHistorySessionAction,
     handleNewChat,
@@ -1151,14 +1288,19 @@ export function PlaygroundMain({
     hostStyle,
     isConvexAuthenticated,
     isSessionBootstrapComplete,
-    isStreaming,
+    isStreamingActive,
     setBridge,
     sharedThreadsEnabled,
   ]);
 
   // Track streaming baseline + resumedVersion drift while a history session is
-  // active, mirroring ChatTabV2:1017-1080. Ensures that a turn started on a
-  // resumed thread is reconciled against its baseline version when it ends.
+  // active. Ports ChatTabV2:1017-1088 so that a turn started on a resumed
+  // thread is reconciled against its baseline version when it ends:
+  //   - mark active session read on stream completion
+  //   - refresh the active session detail (with retry) so the rail picks up
+  //     the new version
+  //   - detach if the server's version doesn't advance past the baseline
+  //     (concurrent edit / fork / deletion)
   const previousStatusRef = useRef(status);
   useEffect(() => {
     const previousStatus = previousStatusRef.current;
@@ -1176,10 +1318,60 @@ export function PlaygroundMain({
       return;
     }
 
+    if (!wasStreaming) {
+      return;
+    }
+
     if (status === "error") {
       resumedThreadSendBaselineRef.current = null;
+      return;
     }
-  }, [activeHistorySessionId, resumedVersion, status]);
+
+    const resumedThreadSendBaseline = resumedThreadSendBaselineRef.current;
+    resumedThreadSendBaselineRef.current = null;
+    const hasCompletedStream = status === "ready";
+    if (!hasCompletedStream) {
+      return;
+    }
+
+    if (activeHistorySessionId) {
+      void markHistorySessionRead(activeHistorySessionId);
+    }
+
+    // Defer slightly so the server has a chance to flush the version bump
+    // before we ask for the new detail row.
+    const timerId = window.setTimeout(() => {
+      void (async () => {
+        const detail = await refreshHistorySessionAfterStream(
+          resumedThreadSendBaseline,
+        );
+        if (
+          resumedThreadSendBaseline &&
+          (!detail ||
+            detail._id !== resumedThreadSendBaseline.sessionId ||
+            detail.version <= resumedThreadSendBaseline.version)
+        ) {
+          detachHistorySession(
+            "This chat changed elsewhere. This reply stayed local, and your next send will continue in a new thread.",
+          );
+        }
+      })().catch((error) => {
+        console.error(
+          "[PlaygroundMain] Failed to refresh chat history",
+          error,
+        );
+      });
+    }, 250);
+
+    return () => window.clearTimeout(timerId);
+  }, [
+    activeHistorySessionId,
+    detachHistorySession,
+    markHistorySessionRead,
+    refreshHistorySessionAfterStream,
+    resumedVersion,
+    status,
+  ]);
 
   // Suppress unused-var noise; these values are reserved for follow-up
   // history features (draft confirm dialog, optimistic resume after archive).
@@ -2043,6 +2235,7 @@ export function PlaygroundMain({
 
   // Device frame container - display mode is passed to widgets via Thread
   return (
+    <>
     <div
       className={cn(
         "h-full flex flex-col overflow-hidden",
@@ -2384,5 +2577,46 @@ export function PlaygroundMain({
         )}
       </div>
     </div>
+    <AlertDialog
+      open={discardDraftDialogOpen}
+      onOpenChange={(open) => {
+        setDiscardDraftDialogOpen(open);
+        if (!open && !discardDraftSettledRef.current) {
+          discardDraftSettledRef.current = true;
+          const resolve = discardDraftResolveRef.current;
+          discardDraftResolveRef.current = null;
+          resolve?.(false);
+        }
+      }}
+    >
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Discard unsaved draft?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Your chat has text that has not been sent. Discard your current
+            draft and continue?
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel
+            onClick={(event) => {
+              event.preventDefault();
+              settleDiscardDraft(false);
+            }}
+          >
+            Cancel
+          </AlertDialogCancel>
+          <AlertDialogAction
+            onClick={(event) => {
+              event.preventDefault();
+              settleDiscardDraft(true);
+            }}
+          >
+            Discard and continue
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   );
 }
