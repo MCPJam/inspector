@@ -165,6 +165,7 @@ export function useAppState({
   hasOrganizations,
   isLoadingOrganizations,
   validOrganizations,
+  activeHostConfig,
 }: {
   currentUserId: string | null;
   /**
@@ -178,6 +179,13 @@ export function useAppState({
   hasOrganizations: boolean;
   isLoadingOrganizations: boolean;
   validOrganizations: Array<{ _id: string; myRole?: string }>;
+  /**
+   * When a named host is active in the Chat tab (or host preview), its
+   * connectionDefaults + per-server overrides drive reconnects via
+   * useServerState. App.tsx resolves this from the chat-tab HostPicker
+   * selection; useAppState forwards it untouched.
+   */
+  activeHostConfig?: HostConfigDtoV2;
 }) {
   const logger = useLogger("Connections");
   const [appState, dispatch] = useReducer(appReducer, initialAppState);
@@ -488,7 +496,9 @@ export function useAppState({
     effectiveProjects: projectState.effectiveProjects,
     effectiveActiveProjectId: projectState.effectiveActiveProjectId,
     activeProjectServersFlat: projectState.activeProjectServersFlat,
-    activeMcpProfile: activeProjectDefaultHostConfig?.mcpProfile,
+    activeMcpProfile:
+      activeHostConfig?.mcpProfile ?? activeProjectDefaultHostConfig?.mcpProfile,
+    activeHostConfig,
     logger,
   });
 

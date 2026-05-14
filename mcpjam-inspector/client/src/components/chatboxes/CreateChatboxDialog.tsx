@@ -69,6 +69,9 @@ export function CreateChatboxDialog({
   const [requireToolApproval, setRequireToolApproval] = useState(false);
   const [allowGuestAccess, setAllowGuestAccess] = useState(false);
   const [selectedServerIds, setSelectedServerIds] = useState<string[]>([]);
+  const [hostSeededOptionalIds, setHostSeededOptionalIds] = useState<string[]>(
+    [],
+  );
   const [isSaving, setIsSaving] = useState(false);
   const [selectedHostId, setSelectedHostId] = useState<string | null>(null);
   const { host: selectedHost } = useHost({
@@ -108,18 +111,33 @@ export function CreateChatboxDialog({
     setSelectedServerIds(
       chatbox?.servers.map((server) => server.serverId) ?? [],
     );
+    setHostSeededOptionalIds([]);
   }, [hostedModels, isOpen, chatbox]);
 
-  // Seed form from selected host
+  // Seed form from selected host. Chatboxes only support HTTP servers, so
+  // filter the host's server list to ids that exist as HTTP project servers.
+  // De-dupe across serverIds/optionalServerIds (optionalServerIds is a subset
+  // of serverIds per the host config model). Re-runs only when the selected
+  // host identity changes — depending on the full host object would
+  // overwrite user edits on background data refreshes.
   useEffect(() => {
     if (!selectedHost) return;
     const config = selectedHost.config;
+    const allowedHttpIds = new Set(availableServers.map((s) => s._id));
+    const seededIds = Array.from(
+      new Set([...config.serverIds, ...config.optionalServerIds]),
+    ).filter((id) => allowedHttpIds.has(id));
+    const seededOptional = config.optionalServerIds.filter((id) =>
+      allowedHttpIds.has(id),
+    );
     setModelId(config.modelId);
     setSystemPrompt(config.systemPrompt);
     setTemperature(config.temperature);
     setRequireToolApproval(config.requireToolApproval);
-    setSelectedServerIds([...config.serverIds, ...config.optionalServerIds]);
-  }, [selectedHost]);
+    setSelectedServerIds(seededIds);
+    setHostSeededOptionalIds(seededOptional);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedHost?.hostId]);
 
   const handleToggleServer = (serverId: string, checked: boolean) => {
     setSelectedServerIds((current) => {
@@ -150,7 +168,7 @@ export function CreateChatboxDialog({
                 s.optional === true && selectedServerIds.includes(s.serverId),
             )
             .map((s) => s.serverId)
-        : [];
+        : hostSeededOptionalIds.filter((id) => selectedServerIds.includes(id));
 
       const payload = {
         name: trimmedName,
@@ -166,11 +184,9 @@ export function CreateChatboxDialog({
       };
 
       const hostSnapshot =
-        !chatbox && selectedHost
+        !chatbox && selectedHost && selectedHostId
           ? {
-              namedHostId: selectedHost.config
-                ? selectedHostId
-                : undefined,
+              namedHostId: selectedHostId,
               hostConfigInput: hostConfigDtoToInput(selectedHost.config),
             }
           : {};

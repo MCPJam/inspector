@@ -793,7 +793,9 @@ export function useServerState({
       return {
         ...serverConfig,
         timeout: activeHostConfig
-          ? activeHostConfig.connectionDefaults.requestTimeout
+          ? activeHostConfig.connectionDefaults.requestTimeout ??
+            serverConfig.timeout ??
+            projectConnectionDefaults.requestTimeout
           : serverConfig.timeout ?? projectConnectionDefaults.requestTimeout,
         capabilities: effectiveClientCapabilities,
         clientCapabilities: effectiveClientCapabilities,

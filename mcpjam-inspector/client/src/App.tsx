@@ -416,6 +416,10 @@ export default function App() {
   } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const actorKey = useActorKey();
+  const { host: chatTabHost } = useHost({
+    isAuthenticated: isAuthenticated && hostsEnabled === true,
+    hostId: chatTabHostId,
+  });
   const currentUser = useQuery(
     "users:getCurrentUser" as any,
     isAuthenticated ? ({} as any) : "skip"
@@ -802,6 +806,7 @@ export default function App() {
     routeOrganizationId: hasRouteOrganization
       ? currentHashRoute.organizationId
       : undefined,
+    activeHostConfig: chatTabHost?.config,
   });
   useInspectorCommandBus();
   // One-time migration from legacy localStorage state to Convex. No-op in
@@ -979,10 +984,20 @@ export default function App() {
     activeProject?.clientConfig
   ) as Record<string, unknown>;
   const convexProjectId = activeProject?.sharedProjectId ?? null;
-  const { host: chatTabHost } = useHost({
-    isAuthenticated: isAuthenticated && hostsEnabled === true,
-    hostId: chatTabHostId,
-  });
+  // chatTabHostId/hostsTabSelectedHostId are project-scoped — drop them when
+  // the active project, auth, or feature flag changes so host-derived config
+  // can't bleed across projects (e.g. switching to project B while a project-A
+  // host is still selected in the Chat tab picker).
+  useEffect(() => {
+    if (!hostsEnabled || !isAuthenticated || !convexProjectId) {
+      setChatTabHostId(null);
+      setHostsTabSelectedHostId(null);
+    }
+  }, [hostsEnabled, isAuthenticated, convexProjectId]);
+  useEffect(() => {
+    setChatTabHostId(null);
+    setHostsTabSelectedHostId(null);
+  }, [convexProjectId]);
   const routeScopedOrganizationId = hasRouteOrganization
     ? currentHashRoute.organizationId ?? null
     : null;

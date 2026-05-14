@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { Label } from "@mcpjam/design-system/label";
 import { Input } from "@mcpjam/design-system/input";
@@ -35,6 +35,21 @@ function HeadersEditor({
 }) {
   const [rawJson, setRawJson] = useState(() => JSON.stringify(headers, null, 2));
   const [parseError, setParseError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const serialized = JSON.stringify(headers, null, 2);
+    setRawJson((prev) => {
+      try {
+        const parsed = JSON.parse(prev);
+        return JSON.stringify(parsed) === JSON.stringify(headers)
+          ? prev
+          : serialized;
+      } catch {
+        return serialized;
+      }
+    });
+    setParseError(null);
+  }, [headers]);
 
   const handleChange = (value: string) => {
     setRawJson(value);
@@ -193,28 +208,40 @@ export function ServerConnectionOverrideSection({
         <ServerOverrideRow
           key={server.id}
           server={server}
-          isRequired={serverIds.includes(server.id)}
+          isRequired={
+            serverIds.includes(server.id) &&
+            !optionalServerIds.includes(server.id)
+          }
           isOptional={optionalServerIds.includes(server.id)}
           override={overrides[server.id]}
           onRequiredChange={(checked) => {
+            // Selecting "required" picks the server (adds to serverIds) and
+            // clears any optional flag; unselecting removes it from both.
             const newRequired = checked
-              ? [...serverIds, server.id]
+              ? Array.from(new Set([...serverIds, server.id]))
               : serverIds.filter((id) => id !== server.id);
-            // can't be both required and optional
-            const newOptional = checked
-              ? optionalServerIds.filter((id) => id !== server.id)
-              : optionalServerIds;
+            const newOptional = optionalServerIds.filter(
+              (id) => id !== server.id,
+            );
             onServerSelectionChange(newRequired, newOptional);
           }}
           onOptionalChange={(checked) => {
-            const newOptional = checked
-              ? [...optionalServerIds, server.id]
-              : optionalServerIds.filter((id) => id !== server.id);
-            // can't be both required and optional
-            const newRequired = checked
-              ? serverIds.filter((id) => id !== server.id)
-              : serverIds;
-            onServerSelectionChange(newRequired, newOptional);
+            // optionalServerIds is a subset of serverIds — marking a server
+            // optional keeps it selected, it just becomes non-required.
+            if (checked) {
+              const newRequired = Array.from(
+                new Set([...serverIds, server.id]),
+              );
+              const newOptional = Array.from(
+                new Set([...optionalServerIds, server.id]),
+              );
+              onServerSelectionChange(newRequired, newOptional);
+            } else {
+              const newOptional = optionalServerIds.filter(
+                (id) => id !== server.id,
+              );
+              onServerSelectionChange(serverIds, newOptional);
+            }
           }}
           onOverrideChange={(override) => {
             const next = { ...overrides };

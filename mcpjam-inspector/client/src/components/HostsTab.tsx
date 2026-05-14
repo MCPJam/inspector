@@ -54,6 +54,11 @@ export function HostsTab({
 
   useEffect(() => {
     setPreviewedHostId(projectId ? loadPreviewedHostId(projectId) : null);
+    if (selectedHostId) onSelectHost(null);
+    // selectedHostId/onSelectHost intentionally omitted: this effect resets
+    // host context when the active project changes, not when the selection
+    // changes within the same project.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
   const handleChangePreviewedHostId = useCallback(

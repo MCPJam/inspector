@@ -25,6 +25,9 @@ export function resolveServerConnectionSettings(
       ...hostDefaults.headers,
       ...override?.headersOverride,
     },
-    timeout: override?.requestTimeoutOverride ?? hostDefaults.requestTimeout,
+    timeout:
+      override?.requestTimeoutOverride ??
+      hostDefaults.requestTimeout ??
+      serverBase.timeout,
   };
 }

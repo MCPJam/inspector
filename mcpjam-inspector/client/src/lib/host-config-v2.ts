@@ -243,6 +243,21 @@ export function emptyHostConfigInputV2(
     mcpProfile: partial.mcpProfile
       ? cloneMcpProfile(partial.mcpProfile)
       : undefined,
+    serverConnectionOverrides: partial.serverConnectionOverrides
+      ? Object.fromEntries(
+          Object.entries(partial.serverConnectionOverrides).map(([k, v]) => [
+            k,
+            {
+              ...(v.headersOverride !== undefined
+                ? { headersOverride: { ...v.headersOverride } }
+                : {}),
+              ...(v.requestTimeoutOverride !== undefined
+                ? { requestTimeoutOverride: v.requestTimeoutOverride }
+                : {}),
+            },
+          ]),
+        )
+      : undefined,
   };
 }
 
@@ -436,6 +451,13 @@ export function hostConfigInputsEqual(
   if (!optionalJsonRecordEq(a.hostCapabilitiesOverride, b.hostCapabilitiesOverride))
     return false;
   if (!optionalMcpProfileEq(a.mcpProfile, b.mcpProfile)) return false;
+  if (
+    !serverConnectionOverridesEqual(
+      a.serverConnectionOverrides,
+      b.serverConnectionOverrides,
+    )
+  )
+    return false;
   return true;
 }
 

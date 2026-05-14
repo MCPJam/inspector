@@ -64,17 +64,25 @@ export function CreateSuiteDialog({
     }
   }, [open]);
 
-  // Seed server selection from selected host
+  // Seed server selection from selected host. Includes optional servers too
+  // (optionalServerIds is a subset of serverIds per the host config model;
+  // we de-dupe defensively in case the host pre-dates that invariant).
+  // Re-runs only when the host selection changes — depending on
+  // projectServers would clobber user edits on background refreshes.
   useEffect(() => {
     if (!selectedHost) return;
-    const serverNames = selectedHost.config.serverIds
-      .map((id) => {
-        const found = projectServers.find((s) => s._id === id);
-        return found?.name ?? null;
-      })
+    const ids = Array.from(
+      new Set([
+        ...selectedHost.config.serverIds,
+        ...selectedHost.config.optionalServerIds,
+      ]),
+    );
+    const serverNames = ids
+      .map((id) => projectServers.find((s) => s._id === id)?.name ?? null)
       .filter((n): n is string => n !== null);
     setSelectedServers(serverNames);
-  }, [selectedHost, projectServers]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedHost?.hostId]);
 
   const options = useMemo(
     () =>

@@ -30,9 +30,12 @@ export function HostPicker({
   const { isAuthenticated } = useConvexAuth();
   const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
 
+  const selectValue =
+    value !== null ? value : includeNone ? "__none__" : undefined;
+
   return (
     <Select
-      value={value ?? "__none__"}
+      value={selectValue}
       onValueChange={(v) => onChange(v === "__none__" ? null : v)}
       disabled={disabled || isLoading}
     >
