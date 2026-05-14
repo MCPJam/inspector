@@ -217,6 +217,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                     </>
                   ) : (
                     <CollapsedPanelStrip
+                      side="right"
                       onOpen={() => {
                         setIsRightRailVisible(true);
                         requestAnimationFrame(() =>
