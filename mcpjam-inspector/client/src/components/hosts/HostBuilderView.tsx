@@ -55,14 +55,14 @@ function HostBuilderChrome({
   const saveDisabled = !canSave;
   const saveLabel = isDirty ? "Save changes" : "Save";
   return (
-    <div className="shrink-0 border-b border-border/70 px-6 py-3">
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:items-center md:gap-x-4 md:gap-y-0">
-        <div className="order-1 flex min-w-0 items-center gap-3">
+    <div className="shrink-0 border-b border-border/40 px-8 py-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
           <Button
             type="button"
             variant="ghost"
             size="icon"
-            className="size-8 shrink-0 rounded-xl"
+            className="size-8 shrink-0 text-muted-foreground hover:text-foreground"
             onClick={onBack}
             aria-label="Return to hosts"
             title="Return to hosts"
@@ -70,26 +70,29 @@ function HostBuilderChrome({
             <ArrowLeft className="size-4" aria-hidden />
           </Button>
           <Input
-            className="h-9 max-w-md border-transparent bg-transparent text-xl font-semibold shadow-none focus-visible:border-input focus-visible:bg-background"
+            className="h-8 min-w-0 max-w-md flex-1 border-0 bg-transparent px-1 text-base font-semibold tracking-tight shadow-none placeholder:text-muted-foreground focus-visible:border-transparent focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/45 md:text-base"
             value={draftName}
             onChange={(event) => onDraftNameChange(event.target.value)}
             placeholder="Host name"
           />
         </div>
 
-        <div className="hidden md:block" />
-
-        <div className="order-2 flex flex-wrap items-center justify-end gap-2 md:order-3">
+        <div className="flex shrink-0 items-center gap-2">
           <Button
+            size="sm"
             onClick={onSave}
             disabled={saveDisabled}
-            variant={!isDirty ? "ghost" : "default"}
-            className="rounded-xl"
+            variant={isDirty ? "default" : "ghost"}
+            className={
+              isDirty
+                ? undefined
+                : "text-muted-foreground hover:text-foreground disabled:opacity-40"
+            }
           >
             {isSaving ? (
-              <Loader2 className="mr-1.5 size-4 animate-spin" />
+              <Loader2 className="size-4 animate-spin" />
             ) : (
-              <Save className="mr-1.5 size-4" />
+              <Save className="size-4" />
             )}
             {saveLabel}
           </Button>

@@ -90,6 +90,24 @@ export type HostConfigMcpProfileV1 = {
         extensions?: Record<string, unknown>;
       };
     };
+    /**
+     * Overrides for the MCP Apps `ui/initialize` response advertised to
+     * the View iframe (SEP-1865). Sibling to `apps.sandbox` because the
+     * `ui/initialize` envelope is the MCP Apps extension's negotiation
+     * step — distinct from the base-protocol `initialize` whose overrides
+     * live under `mcpProfile.initialize`.
+     */
+    uiInitialize?: {
+      /**
+       * The exact `hostInfo` the inspector should report in the
+       * `ui/initialize` result. Backend soft-validates `name` and
+       * `version` (non-empty strings, required when `hostInfo` is set)
+       * and passes everything else through verbatim so future spec
+       * additions (e.g. `title`) land here without a schema migration.
+       * Mirror of `initialize.clientInfo`.
+       */
+      hostInfo?: Record<string, unknown>;
+    };
   };
   extensions?: Record<string, unknown>;
 };
@@ -338,6 +356,21 @@ export function resolveSupportedProtocolVersions(
   profile: HostConfigMcpProfileV1 | undefined,
 ): string[] | undefined {
   return profile?.initialize?.supportedProtocolVersions;
+}
+
+/**
+ * Resolve the `hostInfo` advertised in the MCP Apps `ui/initialize`
+ * response. `undefined` means "use the renderer's built-in default
+ * (mcpjam-inspector + __APP_VERSION__)" — preserves the historic value
+ * for hosts that haven't opted into the override.
+ *
+ * Sibling of {@link resolveClientInfo}: same shape, different protocol
+ * layer (base-protocol `initialize` vs. MCP Apps `ui/initialize`).
+ */
+export function resolveHostInfo(
+  profile: HostConfigMcpProfileV1 | undefined,
+): Record<string, unknown> | undefined {
+  return profile?.apps?.uiInitialize?.hostInfo;
 }
 
 /**

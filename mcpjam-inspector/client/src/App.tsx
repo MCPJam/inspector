@@ -373,6 +373,9 @@ function AppChromeHeader({ hidden, ...props }: AppChromeHeaderProps) {
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
   const [chatTabHostId, setChatTabHostId] = useState<string | null>(null);
+  const [hostsTabSelectedHostId, setHostsTabSelectedHostId] = useState<
+    string | null
+  >(null);
   const [evalChatHandoff, setEvalChatHandoff] =
     useState<EvalChatHandoff | null>(null);
   const [activeOrganizationSection, setActiveOrganizationSection] =
@@ -2036,37 +2039,46 @@ export default function App() {
             </div>
           ) : null}
           {/* Content Areas */}
-          {activeTab === "servers" && (
-            <ServersTab
-              projectServers={projectServers}
-              onConnect={handleConnect}
-              onDisconnect={handleDisconnect}
-              onReconnect={handleReconnect}
-              onUpdate={handleUpdate}
-              onRemove={handleRemoveServer}
-              projects={projects}
-              activeProjectId={activeProjectId}
-              organizationId={activeProjectBillingOrganizationId}
-              pendingDashboardOAuth={pendingDashboardOAuth}
-              isBillingContextPending={isBillingContextPending}
-              isLoadingProjects={isLoadingRemoteProjects}
-              onProjectShared={handleProjectShared}
-              onLeaveProject={() => handleLeaveProject(activeProjectId)}
-              isRegistryEnabled={registryEnabled === true}
-              onNavigateToRegistry={
-                registryEnabled === true
-                  ? () => handleNavigate("registry")
-                  : undefined
-              }
-              onSaveClientConfig={handleUpdateClientConfig}
-            />
-          )}
-          {activeTab === "hosts" && hostsEnabled === true && isAuthenticated && (
-            <HostsTab
-              projectId={convexProjectId}
-              isAuthenticated={isAuthenticated}
-            />
-          )}
+          {(activeTab === "servers" ||
+            (activeTab === "hosts" &&
+              hostsEnabled === true &&
+              isAuthenticated)) && (() => {
+            const serversTabElement = (
+              <ServersTab
+                projectServers={projectServers}
+                onConnect={handleConnect}
+                onDisconnect={handleDisconnect}
+                onReconnect={handleReconnect}
+                onUpdate={handleUpdate}
+                onRemove={handleRemoveServer}
+                projects={projects}
+                activeProjectId={activeProjectId}
+                organizationId={activeProjectBillingOrganizationId}
+                pendingDashboardOAuth={pendingDashboardOAuth}
+                isBillingContextPending={isBillingContextPending}
+                isLoadingProjects={isLoadingRemoteProjects}
+                onProjectShared={handleProjectShared}
+                onLeaveProject={() => handleLeaveProject(activeProjectId)}
+                isRegistryEnabled={registryEnabled === true}
+                onNavigateToRegistry={
+                  registryEnabled === true
+                    ? () => handleNavigate("registry")
+                    : undefined
+                }
+                onSaveClientConfig={handleUpdateClientConfig}
+              />
+            );
+            if (activeTab === "servers") return serversTabElement;
+            return (
+              <HostsTab
+                projectId={convexProjectId}
+                isAuthenticated={isAuthenticated}
+                selectedHostId={hostsTabSelectedHostId}
+                onSelectHost={setHostsTabSelectedHostId}
+                serversTabElement={serversTabElement}
+              />
+            );
+          })()}
           {activeTab === "registry" && registryEnabled === true && (
             <RegistryTab
               projectId={convexProjectId}

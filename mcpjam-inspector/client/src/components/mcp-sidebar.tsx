@@ -164,7 +164,7 @@ const navigationSections: NavSection[] = [
     id: "connection",
     items: [
       {
-        title: "Hosts",
+        title: "Connect",
         url: "#hosts",
         icon: MCPIcon,
         featureFlag: "hosts-enabled",
