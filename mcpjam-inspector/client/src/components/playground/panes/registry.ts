@@ -63,6 +63,7 @@ function ChatHistoryPaneFromBridge() {
     enabled: bridge.enabled,
     refreshSignal: bridge.refreshSignal,
     onSelectThread: bridge.onSelectThread,
+    onPrefetchThread: bridge.onPrefetchThread,
     onNewChat: bridge.onNewChat,
     beforeResetChatAfterArchiveAll: bridge.beforeResetChatAfterArchiveAll,
     onArchiveAllComplete: bridge.onArchiveAllComplete,

@@ -141,6 +141,10 @@ import {
   type ChatHistoryTurnTrace,
 } from "@/lib/apis/web/chat-history-api";
 import { resolveRestorableServerNames } from "@/components/chat-v2/history/session-restore";
+import {
+  getCachedChatHistoryDetail,
+  prefetchChatHistorySession,
+} from "@/components/chat-v2/history/chat-history-prefetch";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { WebApiError } from "@/lib/apis/web/base";
@@ -1148,7 +1152,9 @@ export function PlaygroundMain({
       setLoadingHistorySessionId(session._id);
 
       try {
-        const detail = await getChatHistoryDetail({
+        // Hit the dedup cache: if the user hovered first, this is the same
+        // promise the prefetch kicked off and will resolve immediately.
+        const detail = await getCachedChatHistoryDetail({
           sessionId: session._id,
           chatSessionId: session.chatSessionId,
           projectId: convexProjectId ?? undefined,
@@ -1263,6 +1269,20 @@ export function PlaygroundMain({
     [activeHistorySessionId, detachHistorySession, refreshCurrentHistorySession],
   );
 
+  // Hover prefetch — fires on row pointer-enter. Warms the detail + blob
+  // caches so the click path resolves against an in-flight or completed
+  // promise instead of starting fresh round-trips.
+  const handlePrefetchThread = useCallback(
+    (session: ChatHistorySession) => {
+      prefetchChatHistorySession({
+        sessionId: session._id,
+        chatSessionId: session.chatSessionId,
+        projectId: convexProjectId ?? undefined,
+      });
+    },
+    [convexProjectId],
+  );
+
   // Publish the chat-history bridge so the docked Playground pane (outside
   // this subtree) can render `ChatHistoryRail`. Clear on unmount so a stale
   // pane doesn't see a torn-down session after the Playground unmounts.
@@ -1280,6 +1300,7 @@ export function PlaygroundMain({
       enabled: isSessionBootstrapComplete,
       refreshSignal: historyRefreshSignal,
       onSelectThread: handleSelectThread,
+      onPrefetchThread: handlePrefetchThread,
       onNewChat: handleNewChat,
       // Without this the rail's "Archive all" path would call resetChat
       // through onArchiveAllComplete and blow away the user's unsaved draft.
@@ -1295,6 +1316,7 @@ export function PlaygroundMain({
     handleArchiveAllComplete,
     handleHistorySessionAction,
     handleNewChat,
+    handlePrefetchThread,
     handleSelectThread,
     historyRefreshSignal,
     hostStyle,
@@ -1385,10 +1407,22 @@ export function PlaygroundMain({
     status,
   ]);
 
-  // Suppress unused-var noise; these values are reserved for follow-up
-  // history features (draft confirm dialog, optimistic resume after archive).
-  void loadingHistorySessionId;
+  // Reserved for a follow-up (direct/project visibility toggle when starting
+  // a new chat from a shared row context).
   void pendingDirectVisibility;
+
+  // Delay the spinner so a hover-prefetched (instant) load doesn't flash an
+  // overlay for one frame. After ~120 ms the load is "slow enough" to warrant
+  // visible feedback.
+  const [showLoadingOverlay, setShowLoadingOverlay] = useState(false);
+  useEffect(() => {
+    if (!loadingHistorySessionId) {
+      setShowLoadingOverlay(false);
+      return;
+    }
+    const timerId = window.setTimeout(() => setShowLoadingOverlay(true), 120);
+    return () => window.clearTimeout(timerId);
+  }, [loadingHistorySessionId]);
 
   useEffect(() => {
     const activeModelIds = new Set(
@@ -1738,10 +1772,20 @@ export function PlaygroundMain({
 
   const mergedToolRenderOverrides = useMemo(
     () => ({
+      // `restoredToolRenderOverrides` carries widget snapshots hydrated by
+      // `loadChatSession` when a history session is opened. Without it the
+      // saved iframes/canvases render as plain attachment cards in the
+      // Thread. Live overrides from this turn (`injected*`) and the parent
+      // (`external*`) win over restored ones for the same toolCallId.
+      ...restoredToolRenderOverrides,
       ...injectedToolRenderOverrides,
       ...externalToolRenderOverrides,
     }),
-    [injectedToolRenderOverrides, externalToolRenderOverrides]
+    [
+      restoredToolRenderOverrides,
+      injectedToolRenderOverrides,
+      externalToolRenderOverrides,
+    ]
   );
 
   // Map UIMessage.id -> promptIndex (0-based ordinal among role: "user"
@@ -2250,12 +2294,21 @@ export function PlaygroundMain({
     <>
     <div
       className={cn(
-        "h-full flex flex-col overflow-hidden",
+        "relative h-full flex flex-col overflow-hidden",
         showPostConnectGuide || isMultiModelLayoutMode
           ? "bg-background"
           : "bg-muted/20"
       )}
     >
+      {showLoadingOverlay && (
+        <div
+          className="absolute inset-0 z-30 flex items-center justify-center bg-background/70 backdrop-blur-sm"
+          role="status"
+          aria-label="Loading chat"
+        >
+          <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
+        </div>
+      )}
       {/* Device frame header — hidden during onboarding */}
       {!showPostConnectGuide && (
         <>

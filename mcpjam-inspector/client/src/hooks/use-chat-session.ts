@@ -69,6 +69,7 @@ import {
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
 import { transcriptToUIMessages } from "@/lib/transcript-to-ui-messages";
+import { getCachedBlobJson } from "@/components/chat-v2/history/chat-history-prefetch";
 import type { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import {
   snapshotsToTraceWidgetSnapshots,
@@ -1759,13 +1760,11 @@ export function useChatSession({
       let uiMessages: UIMessage[] = [];
 
       if (session.messagesBlobUrl) {
-        const response = await fetch(session.messagesBlobUrl);
-        if (!response.ok) {
-          throw new Error(
-            `Failed to fetch chat transcript (${response.status})`
-          );
-        }
-        const transcript = await response.json();
+        // Goes through the dedup cache so a hover-prefetched blob is reused
+        // by the click path. Throws on non-OK responses internally.
+        const transcript = (await getCachedBlobJson(
+          session.messagesBlobUrl,
+        )) as unknown[];
         uiMessages = transcriptToUIMessages(transcript);
       }
 
