@@ -35,6 +35,8 @@ For subprocess-based MCP servers.
 | `command` | `string` | Yes | The command to run (e.g., `"node"`, `"python"`, `"npx"`) |
 | `args` | `string[]` | No | Command arguments |
 | `env` | `Record<string, string>` | No | Environment variables for the subprocess |
+| `clientInfo` | `{ name?: string; version?: string } & Record<string, unknown>` | No | Override the MCP `initialize.params.clientInfo` sent to this server. Useful for testing how servers respond to different client identities. |
+| `supportedProtocolVersions` | `string[]` | No | Ordered list of MCP protocol versions to advertise. The first entry is proposed in `initialize.params.protocolVersion`; the full list is the accept-set. |
 
 ```typescript
 {
