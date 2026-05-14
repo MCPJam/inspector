@@ -227,7 +227,7 @@ export function SidebarContextSwitcher({
           ? `Switch context: ${activeOrg.name} / ${projectName}`
           : `Switch project: ${projectName}`
       }
-      className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+      className="h-10 p-1.5 data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
     >
       <ProjectIconBadge
         icon={activeProject?.icon}

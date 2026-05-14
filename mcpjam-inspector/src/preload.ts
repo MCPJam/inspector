@@ -1,10 +1,10 @@
 import { contextBridge, ipcRenderer } from "electron";
 
-// Update info type
-interface UpdateInfo {
-  version: string;
-  releaseNotes?: string;
-}
+// Mirror of the main-process UpdateStatus union (kept inline to avoid a shared module).
+type UpdateStatus =
+  | { kind: "idle" }
+  | { kind: "pending"; version?: string; installRequested: boolean }
+  | { kind: "downloaded"; version: string; releaseNotes?: string };
 
 // Define the API interface
 interface ElectronAPI {
@@ -45,10 +45,15 @@ interface ElectronAPI {
 
   // Update operations
   update: {
-    onUpdateReady: (callback: (info: UpdateInfo) => void) => void;
-    removeUpdateReadyListener: () => void;
+    onUpdateStatus: (callback: (status: UpdateStatus) => void) => void;
+    removeUpdateStatusListener: () => void;
+    onUpdateError: (callback: () => void) => void;
+    removeUpdateErrorListener: () => void;
+    getUpdateStatus: () => Promise<UpdateStatus>;
     restartAndInstall: () => void;
     simulateUpdate?: () => void; // Dev only - for testing
+    simulateUpdateDownloaded?: () => void; // Dev only - for testing
+    simulateUpdateError?: () => void; // Dev only - for testing
   };
 }
 
@@ -89,12 +94,21 @@ const electronAPI: ElectronAPI = {
   },
 
   update: {
-    onUpdateReady: (callback: (info: UpdateInfo) => void) => {
-      ipcRenderer.on("update-ready", (_, info: UpdateInfo) => callback(info));
+    onUpdateStatus: (callback: (status: UpdateStatus) => void) => {
+      ipcRenderer.on("update-status", (_, status: UpdateStatus) =>
+        callback(status),
+      );
     },
-    removeUpdateReadyListener: () => {
-      ipcRenderer.removeAllListeners("update-ready");
+    removeUpdateStatusListener: () => {
+      ipcRenderer.removeAllListeners("update-status");
     },
+    onUpdateError: (callback: () => void) => {
+      ipcRenderer.on("update-error", () => callback());
+    },
+    removeUpdateErrorListener: () => {
+      ipcRenderer.removeAllListeners("update-error");
+    },
+    getUpdateStatus: () => ipcRenderer.invoke("app:get-update-status"),
     restartAndInstall: () => {
       ipcRenderer.send("app:restart-for-update");
     },
@@ -102,6 +116,12 @@ const electronAPI: ElectronAPI = {
       ? {
           simulateUpdate: () => {
             ipcRenderer.send("app:simulate-update");
+          },
+          simulateUpdateDownloaded: () => {
+            ipcRenderer.send("app:simulate-update-downloaded");
+          },
+          simulateUpdateError: () => {
+            ipcRenderer.send("app:simulate-update-error");
           },
         }
       : {}),
