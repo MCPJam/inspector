@@ -1,29 +1,33 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Loader2, Save, Server } from "lucide-react";
+import { ArrowLeft, Loader2, Save } from "lucide-react";
 import { toast } from "sonner";
 import { useConvexAuth } from "convex/react";
+import { ReactFlowProvider } from "@xyflow/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
+import { Skeleton } from "@mcpjam/design-system/skeleton";
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { HostConfigEditor } from "@/components/host-config/HostConfigEditor";
 import { useHost, useHostMutations } from "@/hooks/useHosts";
-import { useProjectServers } from "@/hooks/useProjects";
+import { useProjectServers, useServerMutations } from "@/hooks/useProjects";
 import {
   hostConfigDtoToInput,
   hostConfigInputsEqual,
   serverConnectionOverridesEqual,
   type HostConfigInputV2,
 } from "@/lib/host-config-v2";
-import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { AddServerModal } from "@/components/connection/AddServerModal";
-import { useServerMutations } from "@/hooks/useProjects";
 import type { ServerFormData } from "@/shared/types";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
-import { ServerConnectionOverrideSection } from "./ServerConnectionOverrideSection";
+import { buildHostCanvas } from "./hostCanvasBuilder";
+import { HostCanvas } from "./HostCanvas";
+import {
+  HostSetupChecklistPanel,
+} from "./HostSetupChecklistPanel";
+import type { HostSetupSectionId } from "./host-builder-types";
 
 interface HostBuilderViewProps {
   hostId: string;
@@ -31,7 +35,75 @@ interface HostBuilderViewProps {
   onBack: () => void;
 }
 
-export function HostBuilderView({ hostId, projectId, onBack }: HostBuilderViewProps) {
+function HostBuilderChrome({
+  draftName,
+  onDraftNameChange,
+  isDirty,
+  isSaving,
+  canSave,
+  onBack,
+  onSave,
+}: {
+  draftName: string;
+  onDraftNameChange: (value: string) => void;
+  isDirty: boolean;
+  isSaving: boolean;
+  canSave: boolean;
+  onBack: () => void;
+  onSave: () => void;
+}) {
+  const saveDisabled = !canSave;
+  const saveLabel = isDirty ? "Save changes" : "Save";
+  return (
+    <div className="shrink-0 border-b border-border/70 px-6 py-3">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:items-center md:gap-x-4 md:gap-y-0">
+        <div className="order-1 flex min-w-0 items-center gap-3">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-8 shrink-0 rounded-xl"
+            onClick={onBack}
+            aria-label="Return to hosts"
+            title="Return to hosts"
+          >
+            <ArrowLeft className="size-4" aria-hidden />
+          </Button>
+          <Input
+            className="h-9 max-w-md border-transparent bg-transparent text-xl font-semibold shadow-none focus-visible:border-input focus-visible:bg-background"
+            value={draftName}
+            onChange={(event) => onDraftNameChange(event.target.value)}
+            placeholder="Host name"
+          />
+        </div>
+
+        <div className="hidden md:block" />
+
+        <div className="order-2 flex flex-wrap items-center justify-end gap-2 md:order-3">
+          <Button
+            onClick={onSave}
+            disabled={saveDisabled}
+            variant={!isDirty ? "ghost" : "default"}
+            className="rounded-xl"
+          >
+            {isSaving ? (
+              <Loader2 className="mr-1.5 size-4 animate-spin" />
+            ) : (
+              <Save className="mr-1.5 size-4" />
+            )}
+            {saveLabel}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function HostBuilderView({
+  hostId,
+  projectId,
+  onBack,
+}: HostBuilderViewProps) {
   const { isAuthenticated } = useConvexAuth();
   const { host, isLoading: hostLoading } = useHost({ isAuthenticated, hostId });
   const { servers } = useProjectServers({ projectId, isAuthenticated });
@@ -39,11 +111,17 @@ export function HostBuilderView({ hostId, projectId, onBack }: HostBuilderViewPr
   const { createServer } = useServerMutations();
 
   const [draftName, setDraftName] = useState("");
-  const [draftConfig, setDraftConfig] = useState<HostConfigInputV2 | null>(null);
+  const [draftConfig, setDraftConfig] = useState<HostConfigInputV2 | null>(
+    null,
+  );
   const [isSaving, setIsSaving] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [showAddServer, setShowAddServer] = useState(false);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>("host");
+  const [focusedSetupSection, setFocusedSetupSection] =
+    useState<HostSetupSectionId | null>(null);
 
+  // Seed draft state from the loaded host.
   useEffect(() => {
     if (!host) return;
     setDraftName(host.name);
@@ -66,6 +144,60 @@ export function HostBuilderView({ hostId, projectId, onBack }: HostBuilderViewPr
       )
     );
   }, [host, draftName, draftConfig, savedConfig]);
+
+  const availableServers = useMemo(
+    () => servers?.map((s) => ({ id: s._id, name: s.name })) ?? [],
+    [servers],
+  );
+
+  const availableServersForCanvas = useMemo(
+    () =>
+      servers?.map((s) => ({
+        id: s._id,
+        name: s.name,
+        url: s.url ?? undefined,
+      })) ?? [],
+    [servers],
+  );
+
+  const viewModel = useMemo(
+    () =>
+      buildHostCanvas({
+        hostName: draftName,
+        draft:
+          draftConfig ??
+          ({
+            hostStyle: "claude",
+            modelId: "",
+            systemPrompt: "",
+            temperature: 0.7,
+            requireToolApproval: false,
+            serverIds: [],
+            optionalServerIds: [],
+            connectionDefaults: { headers: {}, requestTimeout: 30000 },
+            clientCapabilities: {},
+            hostContext: {},
+          } as HostConfigInputV2),
+        projectServers: availableServersForCanvas,
+      }),
+    [draftName, draftConfig, availableServersForCanvas],
+  );
+
+  const handleSelectNode = useCallback((nodeId: string) => {
+    if (nodeId === "host") {
+      setSelectedNodeId("host");
+      setFocusedSetupSection("basics");
+      return;
+    }
+    if (nodeId.startsWith("server:")) {
+      setSelectedNodeId(nodeId);
+      setFocusedSetupSection("servers");
+      return;
+    }
+    if (nodeId === "add-server") {
+      setShowAddServer(true);
+    }
+  }, []);
 
   const handleSave = useCallback(async () => {
     if (!draftConfig) return;
@@ -95,12 +227,13 @@ export function HostBuilderView({ hostId, projectId, onBack }: HostBuilderViewPr
           oauthScopes: formData.oauthScopes,
           clientId: formData.clientId,
         })) as string;
-        // auto-select newly added server
         setDraftConfig((prev) =>
           prev
             ? { ...prev, serverIds: [...(prev.serverIds ?? []), serverId] }
             : prev,
         );
+        setSelectedNodeId(`server:${serverId}`);
+        setFocusedSetupSection("servers");
         toast.success(`Server "${formData.name}" added`);
       } catch (err) {
         toast.error(getBillingErrorMessage(err, "Failed to add server"));
@@ -119,87 +252,54 @@ export function HostBuilderView({ hostId, projectId, onBack }: HostBuilderViewPr
     );
   }
 
-  const availableServers =
-    servers?.map((s) => ({ id: s._id, name: s.name })) ?? [];
+  const canSave = isDirty && !isSaving && !hasError;
 
   return (
-    <div className="flex h-full flex-col">
-      {/* Header */}
-      <div className="flex shrink-0 items-center gap-3 border-b px-4 py-3">
-        <Button variant="ghost" size="icon" onClick={onBack} className="h-8 w-8">
-          <ArrowLeft className="h-4 w-4" />
-        </Button>
-        <Input
-          className="h-8 max-w-xs border-transparent bg-transparent text-base font-semibold shadow-none focus-visible:border-input focus-visible:bg-background"
-          value={draftName}
-          onChange={(e) => setDraftName(e.target.value)}
-          placeholder="Host name"
-        />
-        <div className="flex-1" />
-        <Button
-          size="sm"
-          onClick={handleSave}
-          disabled={!isDirty || isSaving || hasError}
-        >
-          {isSaving ? (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          ) : (
-            <Save className="mr-2 h-4 w-4" />
-          )}
-          Save
-        </Button>
-      </div>
+    <div className="flex h-full min-h-0 flex-col">
+      <HostBuilderChrome
+        draftName={draftName}
+        onDraftNameChange={setDraftName}
+        isDirty={isDirty}
+        isSaving={isSaving}
+        canSave={canSave}
+        onBack={onBack}
+        onSave={() => void handleSave()}
+      />
 
-      {/* Body */}
-      <ResizablePanelGroup direction="horizontal" className="flex-1 overflow-hidden">
-        {/* Left: server list + overrides */}
-        <ResizablePanel defaultSize={50} minSize={30}>
-          <div className="flex h-full flex-col overflow-y-auto p-4 gap-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold">Servers</h2>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setShowAddServer(true)}
-              >
-                <Server className="mr-2 h-4 w-4" />
-                Add Server
-              </Button>
+      <div className="relative min-h-0 flex-1 p-4">
+        <ResizablePanelGroup direction="horizontal" className="h-full">
+          <ResizablePanel defaultSize={50} minSize={30}>
+            <div className="h-full min-h-0 pr-2">
+              <ReactFlowProvider>
+                <HostCanvas
+                  viewModel={viewModel}
+                  selectedNodeId={selectedNodeId}
+                  onSelectNode={handleSelectNode}
+                  onClearSelection={() => setSelectedNodeId(null)}
+                  onAddServer={() => setShowAddServer(true)}
+                />
+              </ReactFlowProvider>
             </div>
-            <ServerConnectionOverrideSection
-              serverIds={draftConfig.serverIds ?? []}
-              optionalServerIds={draftConfig.optionalServerIds ?? []}
-              projectServers={availableServers}
-              overrides={draftConfig.serverConnectionOverrides ?? {}}
-              onChange={(overrides) =>
-                setDraftConfig((prev) =>
-                  prev ? { ...prev, serverConnectionOverrides: overrides } : prev,
-                )
-              }
-              onServerSelectionChange={(serverIds, optionalServerIds) =>
-                setDraftConfig((prev) =>
-                  prev ? { ...prev, serverIds, optionalServerIds } : prev,
-                )
-              }
-            />
-          </div>
-        </ResizablePanel>
+          </ResizablePanel>
 
-        <ResizableHandle withHandle />
+          <ResizableHandle withHandle />
 
-        {/* Right: config editor */}
-        <ResizablePanel defaultSize={50} minSize={30}>
-          <div className="h-full overflow-y-auto p-4">
-            <HostConfigEditor
-              value={draftConfig}
-              onChange={(next) => setDraftConfig(next)}
-              owner="host"
-              availableServers={availableServers}
-              onValidityChange={setHasError}
-            />
-          </div>
-        </ResizablePanel>
-      </ResizablePanelGroup>
+          <ResizablePanel defaultSize={50} minSize={30}>
+            <div className="flex h-full min-h-0 flex-col border-l border-border/70">
+              <HostSetupChecklistPanel
+                draft={draftConfig}
+                onDraftChange={(updater) =>
+                  setDraftConfig((prev) => (prev ? updater(prev) : prev))
+                }
+                availableServers={availableServers}
+                focusedSection={focusedSetupSection}
+                onValidityChange={setHasError}
+                onOpenAddServer={() => setShowAddServer(true)}
+              />
+            </div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      </div>
 
       {showAddServer && (
         <AddServerModal
