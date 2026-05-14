@@ -928,9 +928,10 @@ export function PlaygroundMain({
       );
       if (desired.length === 0) return;
 
-      // Multi-server: toggle on every saved server that's currently known
-      // (the toggle handler is a no-op for already-active servers). Skips
-      // anything that's not connected — the user can connect later.
+      // Multi-server: reconcile the current selection to exactly match the
+      // restored set — add the missing, remove the extras. Without the remove
+      // step, restoring a session would leave behind any servers the user had
+      // active at restore time, contaminating tool context.
       const onMultiServerToggle =
         playgroundServerSelectorProps?.onMultiServerToggle;
       const currentlyActive =
@@ -939,8 +940,15 @@ export function PlaygroundMain({
         playgroundServerSelectorProps?.isMultiSelectEnabled === true;
 
       if (isMulti && onMultiServerToggle) {
+        const desiredSet = new Set(desired);
+        const activeSet = new Set(currentlyActive);
+        for (const name of currentlyActive) {
+          if (!desiredSet.has(name)) {
+            onMultiServerToggle(name);
+          }
+        }
         for (const name of desired) {
-          if (!currentlyActive.includes(name)) {
+          if (!activeSet.has(name)) {
             onMultiServerToggle(name);
           }
         }

@@ -69,7 +69,10 @@ import {
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
 import { transcriptToUIMessages } from "@/lib/transcript-to-ui-messages";
-import { getCachedBlobJson } from "@/components/chat-v2/history/chat-history-prefetch";
+import {
+  getCachedBlobJson,
+  invalidateChatHistoryPrefetch,
+} from "@/components/chat-v2/history/chat-history-prefetch";
 import type { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import {
   snapshotsToTraceWidgetSnapshots,
@@ -1912,6 +1915,7 @@ export function useChatSession({
           !areHostedSessionScopesEqual(previousHostedScope, currentHostedScope);
 
         if (authHeadersChanged || hostedScopeChanged) {
+          invalidateChatHistoryPrefetch();
           skipNextForkDetectionRef.current = true;
           clearPendingSessionHydration();
           setChatSessionId(generateId());

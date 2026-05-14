@@ -1270,7 +1270,6 @@ export default function App() {
       setActiveTab(resolved.normalizedTab);
     },
     [
-      activeTab,
       effectiveOrganizations,
       isChatboxChatRoute,
       setSelectedMultipleServersToAllServers,

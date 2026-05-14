@@ -197,7 +197,6 @@ export function MultiServerToolsPaneInner({ activeServerNames }: InnerProps) {
             searchQuery={searchQuery}
             onSearchQueryChange={setSearchQuery}
             selected={selected}
-            onSelect={handleSelect}
             onToggleSelected={(entry) => {
               if (
                 selected?.serverId === entry.serverId &&
@@ -233,7 +232,6 @@ interface FlatToolListProps {
   searchQuery: string;
   onSearchQueryChange: (q: string) => void;
   selected: Selection | null;
-  onSelect: (entry: Selection) => void;
   onToggleSelected: (entry: Selection) => void;
 }
 
