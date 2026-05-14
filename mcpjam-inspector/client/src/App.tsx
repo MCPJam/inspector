@@ -234,7 +234,10 @@ const SPECIAL_ENTRY_PATHNAMES = new Set<string>([
 
 function isSpecialEntryPath(pathname: string): boolean {
   if (SPECIAL_ENTRY_PATHNAMES.has(pathname)) return true;
-  return pathname.startsWith("/oauth/callback/debug");
+  // Both the standard MCP OAuth callback and the debug callback land on
+  // `/oauth/callback*`. Defer to the OAuth handlers in use-server-state /
+  // App's OAuth bootstrap before applyNavigation overwrites the URL.
+  return pathname.startsWith("/oauth/callback");
 }
 
 function replaceHash(hash: string) {

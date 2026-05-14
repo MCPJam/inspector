@@ -2116,7 +2116,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     localStorage.setItem("mcp-oauth-pending", this.serverName);
     // Store the current route (hash or path) to restore after OAuth callback.
     const returnTarget = captureCurrentReturnTarget();
-    if (returnTarget && returnTarget !== "#servers") {
+    if (returnTarget) {
       localStorage.setItem("mcp-oauth-return-hash", returnTarget);
     }
 
