@@ -56,6 +56,12 @@ export interface ExecuteToolInvocationOptions {
   toolName?: string;
   parameters?: Record<string, unknown>;
   formFields?: FormField[];
+  /**
+   * Override the hook-init `serverName` for this call. Used by the Playground
+   * multi-server tools pane to route execution to the correct server when the
+   * user selects a tool from a non-primary server.
+   */
+  serverName?: string;
 }
 
 export interface InjectToolResultOptions {
@@ -160,10 +166,11 @@ export function useToolExecution({
     ): Promise<ExecuteToolInvocationResult> => {
       const effectiveToolName = options?.toolName ?? selectedTool;
       const effectiveFormFields = options?.formFields ?? formFields;
+      const effectiveServerName = options?.serverName ?? serverName;
       const params =
         options?.parameters ?? buildParametersFromFields(effectiveFormFields);
 
-      if (!effectiveToolName || !serverName) {
+      if (!effectiveToolName || !effectiveServerName) {
         return {
           ok: false,
           error: "A connected server and tool selection are required.",
@@ -175,7 +182,7 @@ export function useToolExecution({
 
       try {
         const response = await executeToolApi(
-          serverName,
+          effectiveServerName,
           effectiveToolName,
           params,
         );

@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatSession } from "../use-chat-session";
+import { invalidateChatHistoryPrefetch } from "@/components/chat-v2/history/chat-history-prefetch";
 
 const mockState = vi.hoisted(() => ({
   sendMessage: vi.fn(),
@@ -197,6 +198,9 @@ describe("useChatSession fork preservation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.unstubAllGlobals();
+    // The blob/detail caches are module-level; clear between tests that reuse
+    // URLs like "https://storage.test/restored.json" with different responses.
+    invalidateChatHistoryPrefetch();
     mockState.sessionMessages.clear();
     mockState.sessionListeners.clear();
     mockState.nextSessionNumber = 1;

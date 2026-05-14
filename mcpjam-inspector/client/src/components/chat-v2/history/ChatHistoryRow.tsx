@@ -67,6 +67,8 @@ interface ChatHistoryRowProps {
   /** Which host aesthetic governs the active-row highlight (defaults to "claude"). */
   hostStyle?: ChatboxHostStyle;
   onSelect: (session: ChatHistorySession) => void;
+  /** Fired on pointer-enter so callers can warm caches for the click path. */
+  onPrefetch?: (session: ChatHistorySession) => void;
   onActionComplete?: (event: {
     action:
       | "rename"
@@ -101,6 +103,7 @@ export function ChatHistoryRow({
   sharedThreadsEnabled = true,
   hostStyle = "claude",
   onSelect,
+  onPrefetch,
   onActionComplete,
   canConvertToTestCase = false,
   onConvertToTestCase,
@@ -200,6 +203,10 @@ export function ChatHistoryRow({
     if (isStreaming || isRenaming) return;
     onSelect(session);
   };
+  const handlePointerEnter = () => {
+    if (isStreaming || isActive || isRenaming) return;
+    onPrefetch?.(session);
+  };
   const canManageProjectSharing = isAuthenticated && sharedThreadsEnabled;
 
   if (isRenaming) {
@@ -239,6 +246,7 @@ export function ChatHistoryRow({
           : "hover:bg-accent/50"
       } ${isStreaming ? "opacity-50 cursor-not-allowed" : ""}`}
       onClick={handleClick}
+      onPointerEnter={handlePointerEnter}
     >
       {hasProjectOwner ? (
         session.isPinned ? (

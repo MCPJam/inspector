@@ -35,6 +35,8 @@ import { ConformanceTab } from "./components/conformance/ConformancePanel";
 import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
 import { ErrorBoundary } from "./components/ui/error-boundary";
 import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
+import { PlaygroundTab } from "./components/playground/PlaygroundTab";
+import { PlaygroundHeaderSlotProvider } from "./components/playground/playground-header-slot";
 import { EmptyState } from "./components/ui/empty-state";
 import { EXCALIDRAW_SERVER_NAME } from "./lib/excalidraw-quick-connect";
 import { isFirstRunEligible } from "./lib/onboarding-state";
@@ -405,6 +407,7 @@ export default function App() {
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const hostsEnabled = useFeatureFlagEnabled("hosts-enabled");
   const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
+  const playgroundTabEnabled = useFeatureFlagEnabled("playground-tab-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
   const {
@@ -1217,6 +1220,7 @@ export default function App() {
         window.location.hash || "#servers",
         HOSTED_MODE
       );
+
       const shouldPreserveCurrentRouteOrganization =
         options?.preserveCurrentOrganizationOnNonOrgTarget !== false &&
         !resolved.organizationId &&
@@ -1628,6 +1632,13 @@ export default function App() {
       applyNavigation("servers", { updateHash: true });
     } else if (activeTab === "xaa-flow" && xaaEnabled !== true) {
       applyNavigation("servers", { updateHash: true });
+    } else if (activeTab === "playground" && playgroundTabEnabled !== true) {
+      applyNavigation("servers", { updateHash: true });
+    } else if (
+      (activeTab === "chat-v2" || activeTab === "app-builder") &&
+      playgroundTabEnabled === true
+    ) {
+      applyNavigation("playground", { updateHash: true });
     }
   }, [
     conformanceEnabled,
@@ -1637,6 +1648,7 @@ export default function App() {
     evaluateRunsFlagsLoaded,
     evaluateRunsEnabled,
     xaaEnabled,
+    playgroundTabEnabled,
     isAuthenticated,
     activeTab,
     applyNavigation,
@@ -1860,12 +1872,17 @@ export default function App() {
   const playgroundServerSelectorProps = useMemo(():
     | PlaygroundServerSelectorProps
     | undefined => {
-    if (activeTab !== "app-builder") return undefined;
+    if (activeTab !== "app-builder" && activeTab !== "playground")
+      return undefined;
     return {
       serverConfigs: projectServers,
       selectedServer: appState.selectedServer,
       selectedMultipleServers: appState.selectedMultipleServers,
-      isMultiSelectEnabled: false,
+      // Playground supports multi-server selection — the user can toggle
+      // several servers on simultaneously, the chat session sees their union,
+      // and the docked tools pane aggregates tools across all of them.
+      // App Builder stays single-server.
+      isMultiSelectEnabled: activeTab === "playground",
       onServerChange: setSelectedServer,
       onMultiServerToggle: toggleServerSelection,
       onConnect: handleConnect,
@@ -2013,6 +2030,7 @@ export default function App() {
       : undefined;
 
   const appContent = (
+    <PlaygroundHeaderSlotProvider>
     <SidebarProvider defaultOpen={true}>
       <AppChromeSidebar
         hidden={appBuilderOnboarding}
@@ -2398,6 +2416,31 @@ export default function App() {
             </div>
           )}
           {activeTab === "tracing" && <TracingTab />}
+          {activeTab === "playground" && playgroundTabEnabled === true && (
+            <PlaygroundTab
+              serverConfig={selectedMCPConfig}
+              serverName={appState.selectedServer}
+              servers={projectServers}
+              activeProjectId={activeProjectId}
+              isSignedInWithWorkOs={!!workOsUser}
+              isWorkOsAuthLoading={isWorkOsLoading}
+              isConvexAuthenticated={isAuthenticated}
+              isProjectProvisioned={Boolean(activeProject?.sharedProjectId)}
+              hasSeenFirstRunOnboarding={remoteFirstRunOnboardingShown}
+              isServerSyncing={isSelectedServerSyncing}
+              onConnect={handleConnect}
+              onSaveHostContext={handleUpdateHostContext}
+              ensureServersReady={ensureServersReady}
+              onOnboardingChange={setAppBuilderOnboarding}
+              playgroundServerSelectorProps={playgroundServerSelectorProps}
+              evalChatHandoff={evalChatHandoff}
+              onEvalChatHandoffConsumed={(id) =>
+                setEvalChatHandoff((current) =>
+                  current?.id === id ? null : current
+                )
+              }
+            />
+          )}
           {activeTab === "app-builder" && (
             <AppBuilderTab
               serverConfig={selectedMCPConfig}
@@ -2511,6 +2554,7 @@ export default function App() {
         </DialogContent>
       </Dialog>
     </SidebarProvider>
+    </PlaygroundHeaderSlotProvider>
   );
 
   return (

@@ -1,38 +1,7 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { HostBuilderView } from "./hosts/HostBuilderView";
 import { HostOverlayBar } from "./hosts/HostOverlayBar";
-
-const PREVIEWED_HOST_STORAGE_KEY = "mcp-previewed-host-id";
-
-function loadPreviewedHostId(projectId: string): string | null {
-  try {
-    const raw = localStorage.getItem(PREVIEWED_HOST_STORAGE_KEY);
-    if (!raw) return null;
-    const all = JSON.parse(raw) as Record<string, string | null>;
-    const value = all[projectId];
-    return typeof value === "string" && value.length > 0 ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-function savePreviewedHostId(
-  projectId: string,
-  hostId: string | null,
-): void {
-  try {
-    const raw = localStorage.getItem(PREVIEWED_HOST_STORAGE_KEY);
-    const all = raw ? JSON.parse(raw) : {};
-    if (hostId) {
-      all[projectId] = hostId;
-    } else {
-      delete all[projectId];
-    }
-    localStorage.setItem(PREVIEWED_HOST_STORAGE_KEY, JSON.stringify(all));
-  } catch {
-    // ignore
-  }
-}
+import { usePreviewedHostId } from "@/hooks/use-previewed-host-id";
 
 interface HostsTabProps {
   projectId: string | null;
@@ -48,26 +17,15 @@ export function HostsTab({
   onSelectHost,
   serversTabElement,
 }: HostsTabProps) {
-  const [previewedHostId, setPreviewedHostId] = useState<string | null>(() =>
-    projectId ? loadPreviewedHostId(projectId) : null,
-  );
+  const [previewedHostId, setPreviewedHostId] = usePreviewedHostId(projectId);
 
   useEffect(() => {
-    setPreviewedHostId(projectId ? loadPreviewedHostId(projectId) : null);
     if (selectedHostId) onSelectHost(null);
     // selectedHostId/onSelectHost intentionally omitted: this effect resets
     // host context when the active project changes, not when the selection
     // changes within the same project.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
-
-  const handleChangePreviewedHostId = useCallback(
-    (hostId: string | null) => {
-      setPreviewedHostId(hostId);
-      if (projectId) savePreviewedHostId(projectId, hostId);
-    },
-    [projectId],
-  );
 
   if (!projectId) return null;
 
@@ -87,7 +45,7 @@ export function HostsTab({
         <HostOverlayBar
           projectId={projectId}
           previewedHostId={previewedHostId}
-          onChangePreviewedHostId={handleChangePreviewedHostId}
+          onChangePreviewedHostId={setPreviewedHostId}
           onEditHost={(hostId) => onSelectHost(hostId)}
         />
       </div>

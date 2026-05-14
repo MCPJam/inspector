@@ -8,6 +8,7 @@ import {
   ActiveServerSelector,
   ActiveServerSelectorProps,
 } from "@/components/ActiveServerSelector";
+import { PlaygroundHeaderSlotTarget } from "@/components/playground/playground-header-slot";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 
@@ -41,13 +42,15 @@ export function AuthUpperArea({
 
   return (
     <div className="ml-auto flex h-full flex-1 items-center gap-2 no-drag min-w-0">
-      {activeServerSelectorProps && (
+      {activeServerSelectorProps ? (
         <div className="flex-1 min-w-0 h-full pr-2">
           <ActiveServerSelector
             {...activeServerSelectorProps}
             className="h-full"
           />
         </div>
+      ) : (
+        <PlaygroundHeaderSlotTarget className="flex-1 min-w-0 h-full pr-2" />
       )}
       <div className="ml-auto flex items-center gap-2 shrink-0">
         <Button

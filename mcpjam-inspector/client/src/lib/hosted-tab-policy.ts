@@ -9,6 +9,7 @@ export const HOSTED_SIDEBAR_ALLOWED_TABS = [
   "chat-v2",
   "chatboxes",
   "app-builder",
+  "playground",
   "views",
   "client-config",
   "evals",

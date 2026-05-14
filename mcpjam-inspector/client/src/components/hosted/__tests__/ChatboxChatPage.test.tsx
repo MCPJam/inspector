@@ -70,6 +70,7 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: mockPosthogCapture,
   }),
+  useFeatureFlagEnabled: () => false,
 }));
 
 vi.mock("@/lib/apis/web/servers-api", () => ({
