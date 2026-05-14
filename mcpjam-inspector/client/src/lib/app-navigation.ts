@@ -10,11 +10,10 @@
  * matching `react-router` semantics. Chatbox session hashes
  * (`#chatbox-slug`) are NOT app navigation and are preserved verbatim.
  */
-import { useCallback } from "react";
+import { useCallback, useContext } from "react";
 import {
-  useInRouterContext,
+  UNSAFE_NavigationContext,
   useLocation,
-  useNavigate,
   useParams,
 } from "react-router";
 import { getAppRouter } from "../router";
@@ -88,30 +87,30 @@ function buildEvalRoutePath(prefix: "/evals" | "/ci-evals", route: EvalRoute): s
       if (route.view && route.view !== "runs") params.set("view", route.view);
       if (route.fromCommit) params.set("fromCommit", route.fromCommit);
       const query = params.toString();
-      return `${prefix}/suite/${route.suiteId}${query ? `?${query}` : ""}`;
+      return `${prefix}/suite/${encodeURIComponent(route.suiteId)}${query ? `?${query}` : ""}`;
     }
     case "run-detail": {
       const params = new URLSearchParams();
       if (route.iteration) params.set("iteration", route.iteration);
       if (route.insightsFocus) params.set("insights", "1");
       const query = params.toString();
-      return `${prefix}/suite/${route.suiteId}/runs/${route.runId}${query ? `?${query}` : ""}`;
+      return `${prefix}/suite/${encodeURIComponent(route.suiteId)}/runs/${encodeURIComponent(route.runId)}${query ? `?${query}` : ""}`;
     }
     case "test-detail": {
       const params = new URLSearchParams();
       if (route.iteration) params.set("iteration", route.iteration);
       const query = params.toString();
-      return `${prefix}/suite/${route.suiteId}/test/${route.testId}${query ? `?${query}` : ""}`;
+      return `${prefix}/suite/${encodeURIComponent(route.suiteId)}/test/${encodeURIComponent(route.testId)}${query ? `?${query}` : ""}`;
     }
     case "test-edit": {
       const params = new URLSearchParams();
       if (route.openCompare) params.set("compare", "1");
       if (route.iteration) params.set("iteration", route.iteration);
       const query = params.toString();
-      return `${prefix}/suite/${route.suiteId}/test/${route.testId}/edit${query ? `?${query}` : ""}`;
+      return `${prefix}/suite/${encodeURIComponent(route.suiteId)}/test/${encodeURIComponent(route.testId)}/edit${query ? `?${query}` : ""}`;
     }
     case "suite-edit":
-      return `${prefix}/suite/${route.suiteId}/edit`;
+      return `${prefix}/suite/${encodeURIComponent(route.suiteId)}/edit`;
     case "commit-detail": {
       if (prefix !== "/ci-evals") return prefix;
       const params = new URLSearchParams();
@@ -148,7 +147,11 @@ export function navigateApp(to: string, options?: AppNavigateOptions): void {
   } else {
     window.history.pushState({}, "", to);
   }
-  const [pathPart, queryPart] = to.split("?");
+  // Safe split: take first `?` as the boundary so query strings containing
+  // additional `?` chars (e.g. encoded payloads) are preserved verbatim.
+  const questionIdx = to.indexOf("?");
+  const pathPart = questionIdx === -1 ? to : to.slice(0, questionIdx);
+  const queryPart = questionIdx === -1 ? "" : to.slice(questionIdx + 1);
   if (pathPart) {
     // Nested routes (ci-evals/evals) keep the leading slash in their legacy
     // hash form (`#/ci-evals/...`); flat tabs use `#tab`.
@@ -165,22 +168,28 @@ export function navigateApp(to: string, options?: AppNavigateOptions): void {
 /**
  * React hook returning a typed navigate function.
  *
- * Use in components instead of `applyNavigation` or `window.location.hash =`.
- * Falls back to `navigateApp` (history API) when rendered outside a Router
- * context, so component tests rendering with `<>` keep working.
+ * Reads the router's navigation context directly so the hook call shape is
+ * unconditional (Rules of Hooks compliant). When mounted outside a Router
+ * (e.g. component tests rendering without a `<MemoryRouter>`), the navigator
+ * context is undefined and the callback falls back to `navigateApp` (history
+ * API + legacy hash mirror).
  */
 export function useAppNavigate() {
-  const inRouter = useInRouterContext();
-  const navigate = inRouter ? useNavigate() : null;
+  const navigationContext = useContext(UNSAFE_NavigationContext);
+  const navigator = navigationContext?.navigator;
   return useCallback(
     (to: string, options?: AppNavigateOptions) => {
-      if (navigate) {
-        navigate(to, { replace: options?.replace });
-      } else {
-        navigateApp(to, options);
+      if (navigator) {
+        if (options?.replace) {
+          navigator.replace(to);
+        } else {
+          navigator.push(to);
+        }
+        return;
       }
+      navigateApp(to, options);
     },
-    [navigate],
+    [navigator],
   );
 }
 

@@ -1,6 +1,7 @@
 import { useConvexAuth, useQuery } from "convex/react";
 import {
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -173,7 +174,7 @@ import { getEffectiveProjectClientCapabilities } from "./lib/client-config";
 import { buildEvalsHash } from "./lib/evals-router";
 import { withTestingSurface } from "./lib/testing-surface";
 import { navigateApp } from "./lib/app-navigation";
-import { useInRouterContext, useLocation } from "react-router";
+import { UNSAFE_LocationContext } from "react-router";
 import { useProjectClientConfigSyncPending } from "./hooks/use-project-client-config-sync-pending";
 import { ingestOAuthTraceLogs } from "./stores/traffic-log-store";
 import { clearGuestSession, getGuestBearerToken } from "./lib/guest-session";
@@ -201,8 +202,11 @@ function getHostedOAuthCallbackErrorMessage(): string {
 }
 
 function replaceHash(hash: string) {
-  window.history.replaceState({}, "", `/${hash}`);
-  window.dispatchEvent(new HashChangeEvent("hashchange"));
+  // Convert a legacy hash-target (`#X` or `#/evals/...`) to a path-based URL
+  // via the navigation API so React Router stays authoritative. Phase 6 will
+  // delete the callers and this helper.
+  const path = `/${hash.replace(/^[#/]+/, "")}`;
+  navigateApp(path, { replace: true });
 }
 
 function clearHostedCallbackRetryState() {
@@ -453,10 +457,29 @@ export default function App() {
     });
   }, [posthog]);
   const isHostedChatRoute = isChatboxChatRoute;
-  const currentHash = window.location.hash || "#servers";
+  // Resolve the current route from the React Router pathname (Phase 2). The
+  // bridge to legacy hash bookmarks runs in a separate useLayoutEffect that
+  // migrates `#X` → `/X` before this memo recomputes. In tests rendered
+  // without a Router, the location context is undefined and we fall back to
+  // reading `window.location.{pathname,hash}` so the existing hash-driven
+  // test suite keeps working. Read via context directly (not useLocation)
+  // to keep the hook-call shape unconditional.
+  const locationContext = useContext(UNSAFE_LocationContext);
+  const locationForRoute = locationContext?.location ?? null;
+  const currentRouteTarget = useMemo(() => {
+    const pathname =
+      locationForRoute?.pathname ?? window.location.pathname ?? "/";
+    const search = locationForRoute?.search ?? window.location.search ?? "";
+    const trimmedPath = pathname.replace(/^\/+/, "");
+    if (trimmedPath) return `${trimmedPath}${search}`;
+    // No pathname segment: fall back to the legacy hash (#servers, etc.) so
+    // first paint before the hash-migration shim still resolves correctly.
+    const hash = window.location.hash || "#servers";
+    return hash;
+  }, [locationForRoute?.pathname, locationForRoute?.search]);
   const currentHashRoute = useMemo(
-    () => resolveHostedNavigation(currentHash, HOSTED_MODE),
-    [currentHash]
+    () => resolveHostedNavigation(currentRouteTarget, HOSTED_MODE),
+    [currentRouteTarget]
   );
   const { sortedOrganizations, isLoading: isLoadingOrganizations } =
     useOrganizationQueries({ isAuthenticated });
@@ -1188,8 +1211,9 @@ export default function App() {
       }
 
       const resolved = resolveHostedNavigation(target, HOSTED_MODE);
+      const pathSource = `${window.location.pathname.replace(/^\/+/, "")}${window.location.search}`;
       const currentSource =
-        window.location.hash || `#${window.location.pathname.replace(/^\/+/, "")}`;
+        window.location.hash || (pathSource ? `#${pathSource}` : "");
       const currentResolved = resolveHostedNavigation(
         currentSource || "#servers",
         HOSTED_MODE
@@ -1371,17 +1395,15 @@ export default function App() {
   // Phase 2 bridge: previously read window.location.hash on every hashchange.
   // The remaining hashchange listener handles legacy bookmarks (#servers → /servers)
   // until Phase 6 deletes it entirely.
-  const inRouter = useInRouterContext();
-  const location = inRouter ? useLocation() : null;
   useLayoutEffect(() => {
     if (isHostedChatRoute) {
       return;
     }
     const pathname =
-      location?.pathname ?? window.location.pathname;
+      locationForRoute?.pathname ?? window.location.pathname;
     const pathTarget = pathname.replace(/^\/+/, "") || "servers";
     applyNavigation(pathTarget, { enforceCanonicalHash: true });
-  }, [applyNavigation, isHostedChatRoute, location?.pathname]);
+  }, [applyNavigation, isHostedChatRoute, locationForRoute?.pathname]);
 
   // Legacy hash bookmark migration: if a user arrives at "/#servers" or
   // "/#evals/suite/X", convert the fragment to a real path-based URL and

@@ -28,7 +28,6 @@
   },
   "dependencies": {
     "react-force-graph-2d": "^1.29.1",
-    "react-router": "^7.0.0",
-    "react-router-dom": "^7.0.0"
+    "react-router": "^7.0.0"
   }
 }

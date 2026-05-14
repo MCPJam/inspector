@@ -1,4 +1,5 @@
 import * as React from "react";
+import { UNSAFE_LocationContext } from "react-router";
 import type { EvalRoute } from "./eval-route-types";
 
 export type EvalRouterPrefix = "/evals" | "/ci-evals";
@@ -14,9 +15,24 @@ function normalizeHashForPrefix(
   return hash;
 }
 
+/**
+ * Resolve the current eval route source. Prefers `window.location.pathname`
+ * (path-based React Router URLs, set by `navigateApp` / sidebar nav) and
+ * falls back to the legacy `window.location.hash` for inbound bookmarks
+ * that have not yet been migrated by the App hash-migration shim.
+ */
+function readCurrentEvalRouteSource(prefix: EvalRouterPrefix): string {
+  const pathname = window.location.pathname || "";
+  const search = window.location.search || "";
+  if (pathname.startsWith(prefix)) {
+    return `${pathname}${search}`;
+  }
+  return normalizeHashForPrefix(window.location.hash, prefix);
+}
+
 export function createEvalRouter(prefix: EvalRouterPrefix) {
   function parse(): EvalRoute | null {
-    const hash = normalizeHashForPrefix(window.location.hash, prefix);
+    const hash = readCurrentEvalRouteSource(prefix);
     if (!hash.startsWith(prefix)) {
       return null;
     }
@@ -207,9 +223,23 @@ export function createEvalRouter(prefix: EvalRouterPrefix) {
   }
 
   function useRoute(): EvalRoute {
+    // Read the router location via context so the hook call shape is
+    // unconditional (Rules of Hooks compliant). Outside a Router (tests),
+    // `locationCtx` is undefined and we still re-parse via the legacy
+    // hashchange listener below.
+    const locationCtx = React.useContext(UNSAFE_LocationContext);
+    const pathname = locationCtx?.location.pathname;
+    const search = locationCtx?.location.search;
     const [route, setRoute] = React.useState<EvalRoute>(
       () => parse() || { type: "list" },
     );
+
+    // Re-parse whenever React Router's pathname or search changes (production
+    // navigation), in addition to legacy hashchange events (inbound bookmarks
+    // and component tests rendered without a Router).
+    React.useEffect(() => {
+      setRoute(parse() || { type: "list" });
+    }, [pathname, search]);
 
     React.useEffect(() => {
       const handleHashChange = () => {
