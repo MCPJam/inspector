@@ -1219,6 +1219,7 @@ export function PlaygroundMain({
       if (hasUnsavedDraftRef.current) {
         clearComposerDraft();
       }
+      resumedThreadSendBaselineRef.current = null;
       cancelPendingHistorySelection();
       syncResumedVersion(null);
       resetChat();

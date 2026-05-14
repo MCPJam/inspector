@@ -912,9 +912,3 @@ export function useAppBuilderStateContext(): UseAppBuilderStateReturn {
   return ctx;
 }
 
-/** Like the above but returns null instead of throwing for optional consumers. */
-export function useOptionalAppBuilderStateContext():
-  | UseAppBuilderStateReturn
-  | null {
-  return useContext(AppBuilderStateContext);
-}

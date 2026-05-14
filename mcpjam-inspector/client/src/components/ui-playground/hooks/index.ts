@@ -28,5 +28,4 @@ export {
   AppBuilderStateProvider,
   useAppBuilderState,
   useAppBuilderStateContext,
-  useOptionalAppBuilderStateContext,
 } from "./use-app-builder-state";
