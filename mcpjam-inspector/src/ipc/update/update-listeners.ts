@@ -233,6 +233,9 @@ export function registerUpdateListeners(mainWindow: BrowserWindow): void {
 }
 
 export function installUpdateOnQuit(): boolean {
+  if (!app.isPackaged) {
+    return false;
+  }
   if (currentStatus.kind === "downloaded" && !isQuittingForUpdate) {
     log.info("Staged update found at quit — installing before exit");
     isQuittingForUpdate = true;

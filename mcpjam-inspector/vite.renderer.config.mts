@@ -31,9 +31,7 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       fs: {
-        // Allow serving the whole package: index.html lives at client/, and the
-        // @/shared alias points at ../shared. A single root entry covers both.
-        allow: [__dirname],
+        allow: [resolve(__dirname, "./client"), resolve(__dirname, "./shared")],
       },
       proxy: {
         "/api": {

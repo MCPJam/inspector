@@ -26,9 +26,13 @@ export function useUpdateNotification() {
     // Initial snapshot — apply only if a live event hasn't already overtaken it.
     // Avoids a startup race where an older idle snapshot overwrites a live
     // pending/downloaded event and hides the button until the next broadcast.
-    api.getUpdateStatus().then((initial) => {
-      if (!cancelled && !liveEventReceived) setStatus(initial);
-    });
+    api.getUpdateStatus()
+      .then((initial) => {
+        if (!cancelled && !liveEventReceived) setStatus(initial);
+      })
+      .catch((error) => {
+        console.warn("Failed to get update status", error);
+      });
 
     return () => {
       cancelled = true;

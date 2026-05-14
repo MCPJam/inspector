@@ -184,4 +184,18 @@ describe("update-listeners", () => {
     });
     expect(window.webContents.send).toHaveBeenCalledWith("update-error");
   });
+
+  it("does not try to install simulated downloaded updates on quit in dev", async () => {
+    appState.isPackaged = false;
+    const window = createWindow();
+    windows.push(window);
+    const { installUpdateOnQuit, registerUpdateListeners } =
+      await loadUpdateListeners();
+
+    registerUpdateListeners(window as any);
+    ipcListeners.get("app:simulate-update-downloaded")?.({ sender: { id: 1 } });
+
+    expect(installUpdateOnQuit()).toBe(false);
+    expect(quitAndInstallMock).not.toHaveBeenCalled();
+  });
 });
