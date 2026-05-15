@@ -1469,7 +1469,8 @@ export default function App() {
     previousActiveProjectIdRef.current = activeProjectId;
     if (
       previousActiveProjectId === activeProjectId ||
-      previousActiveProjectId === "none"
+      previousActiveProjectId === "none" ||
+      activeProjectId === "none"
     ) {
       return;
     }
