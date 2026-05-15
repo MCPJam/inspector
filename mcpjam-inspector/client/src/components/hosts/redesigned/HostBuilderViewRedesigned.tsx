@@ -40,7 +40,7 @@ import {
   serverConnectionOverridesEqual,
   type HostConfigInputV2,
 } from "@/lib/host-config-v2";
-import { getChatboxChatBackground } from "@/lib/chatbox-host-style";
+import { getChatboxShellStyle } from "@/lib/chatbox-host-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { RedesignedHostCanvas } from "./canvas/RedesignedHostCanvas";
 import { buildRedesignedHostCanvas } from "./canvas/canvasBuilder";
@@ -163,8 +163,14 @@ export function HostBuilderViewRedesigned({
   );
 
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const canvasChatBackground = useMemo(
-    () => getChatboxChatBackground(draftConfig?.hostStyle, themeMode),
+  // Full brand shell — sets `--background`, `--foreground`, `--card`,
+  // `--border`, etc. for the canvas subtree so sub-cards repaint to the
+  // host's brand instead of the app theme.
+  const canvasShellStyle = useMemo(
+    () =>
+      draftConfig?.hostStyle
+        ? getChatboxShellStyle(draftConfig.hostStyle, themeMode)
+        : undefined,
     [draftConfig?.hostStyle, themeMode],
   );
 
@@ -392,7 +398,7 @@ export function HostBuilderViewRedesigned({
                   onSelectNode={handleSelectNode}
                   onClearSelection={() => setSelectedNodeId(null)}
                   onAddServer={() => setShowAddServer(true)}
-                  chatBackground={canvasChatBackground}
+                  shellStyle={canvasShellStyle}
                 />
               </ReactFlowProvider>
             </div>

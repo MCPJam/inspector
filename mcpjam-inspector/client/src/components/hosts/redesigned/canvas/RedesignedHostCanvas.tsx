@@ -1,4 +1,4 @@
-import { memo, useMemo } from "react";
+import { memo, useMemo, type CSSProperties } from "react";
 import {
   Background,
   BackgroundVariant,
@@ -484,11 +484,13 @@ interface RedesignedHostCanvasProps {
   onClearSelection: () => void;
   onAddServer: () => void;
   /**
-   * Brand chat-surface color for the active host style. When provided the
-   * canvas wrapper paints with this color so the editor reads as a stand-in
-   * for the host's actual chat. Falls back to `bg-background` when omitted.
+   * Brand shell tokens for the active host style. Cascades brand
+   * `--background` / `--foreground` / `--card` / `--border` etc. into the
+   * subtree so descendants using design-system tokens (`bg-background`,
+   * `text-foreground`, `bg-muted`, `border-border`, …) repaint to brand
+   * automatically. Falls back to default theme tokens when omitted.
    */
-  chatBackground?: string;
+  shellStyle?: CSSProperties;
 }
 
 export function RedesignedHostCanvas({
@@ -497,7 +499,7 @@ export function RedesignedHostCanvas({
   onSelectNode,
   onClearSelection,
   onAddServer,
-  chatBackground,
+  shellStyle,
 }: RedesignedHostCanvasProps) {
   const nodes = useMemo(
     () =>
@@ -511,11 +513,8 @@ export function RedesignedHostCanvas({
 
   return (
     <div
-      className={cn(
-        "relative h-full w-full overflow-hidden rounded-[28px] border border-border/70",
-        chatBackground ? null : "bg-background",
-      )}
-      style={chatBackground ? { background: chatBackground } : undefined}
+      className="relative h-full w-full overflow-hidden rounded-[28px] border border-border/70 bg-background"
+      style={shellStyle}
     >
       <ReactFlow
         nodes={nodes}
