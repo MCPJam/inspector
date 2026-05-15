@@ -99,6 +99,7 @@ describe("SidebarUser", () => {
     authState.user = null;
     authState.signInMock.mockClear();
     authState.signOutMock.mockClear();
+    window.isElectron = false;
   });
 
   it("renders sign-in button when unauthenticated in hosted mode", () => {
@@ -145,6 +146,25 @@ describe("SidebarUser", () => {
 
     expect(authState.signOutMock).toHaveBeenCalledWith({
       returnTo: window.location.origin,
+    });
+  });
+
+  it("uses non-navigation logout in Electron", () => {
+    authState.user = {
+      email: "owner@example.com",
+      firstName: "Owner",
+      lastName: "Example",
+    };
+    window.isElectron = true;
+    authState.signOutMock.mockReturnValue(new Promise(() => {}));
+
+    render(<SidebarUser />);
+
+    fireEvent.click(screen.getByText("Log out"));
+
+    expect(authState.signOutMock).toHaveBeenCalledWith({
+      returnTo: window.location.origin,
+      navigate: false,
     });
   });
 });

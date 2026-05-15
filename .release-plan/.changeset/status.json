@@ -11,28 +11,28 @@
           "type": "minor"
         }
       ],
-      "summary": "Inspector + SDK rollup since the last release.\n\n**@mcpjam/sdk (new matchers + eval reporting types)**\n\n- Add `matchers` exports for the new SDK matchers used by evals (M1 phase 1).\n- Add layered match options and run-level validator override types (M1 evals).\n\n**@mcpjam/inspector**\n\n- Hot fix: resolves \"unknown IP\" guest-session bug.\n- Evals: layered match options + run-level validator overrides.\n- Evals M1: SDK matchers + diff rendering + p50/p95 percentiles.\n- Evals M1 phase 2: N-iterations picker and save-from-chat into tests.\n- MCP apps: profile-driven `hostCapabilities` with user-saved overrides; advertise MCP app message capabilities.\n- Electron: redirect OAuth flows to the system browser; include `@ngrok/ngrok` in the packaged app so tunnels work; guard `autoUpdater` renderer messaging against destroyed windows.\n- Billing: compare-plans table now reads \"Unlimited\" for servers-per-project on free; cleaner member/invite copy on the billing UI.\n- TypeScript hygiene: cleared all production `tsc` errors, enforce typecheck in CI, and added a `typecheck:client` script.",
-      "id": "release-rollup-2026-05-12"
+      "summary": "Inspector + SDK rollup since the last release.\n\n**@mcpjam/sdk**\n\n- Consume `hostConfig.mcpProfile` end-to-end: profile-aware connection in `MCPClientManager`, new sandbox-policy types, and supporting browser/index exports (#2103).\n\n**@mcpjam/inspector**\n\n- Named hosts UI: new Hosts tab, HostPicker, host builder, and consumer seeding (#2112).\n- Host config: consume `hostConfig.mcpProfile` end-to-end across chatbox, hosted chat, and server connection paths (#2103).\n- Billing: surface pending and failed credit top-ups in the credit balance card (#2111).\n- Electron OAuth: redirect-mixing fix between dev and local (#2116), plus an Electron fallback path for the OAuth modal/sidebar/auth flow (#2096).\n- Tokenizer: stop paging Sentry for client-side fetch failures (#2109).\n- Docs: desktop download links now point at the latest release URLs (#2093).\n- Misc sidebar nit.",
+      "id": "release-rollup-2026-05-14"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
       "type": "patch",
-      "oldVersion": "2.4.9",
+      "oldVersion": "2.4.10",
       "changesets": [
-        "release-rollup-2026-05-12"
+        "release-rollup-2026-05-14"
       ],
-      "newVersion": "2.4.10"
+      "newVersion": "2.4.11"
     },
     {
       "name": "@mcpjam/sdk",
       "type": "minor",
-      "oldVersion": "1.4.0",
+      "oldVersion": "1.5.0",
       "changesets": [
-        "release-rollup-2026-05-12"
+        "release-rollup-2026-05-14"
       ],
-      "newVersion": "1.5.0"
+      "newVersion": "1.6.0"
     },
     {
       "name": "@mcpjam/mcp",

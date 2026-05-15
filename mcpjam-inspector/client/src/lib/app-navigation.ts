@@ -42,6 +42,7 @@ export const routePaths = {
   chatV2: "/chat-v2",
   chatboxes: "/chatboxes",
   appBuilder: "/app-builder",
+  playground: "/playground",
   views: "/views",
   support: "/support",
   settings: "/settings",

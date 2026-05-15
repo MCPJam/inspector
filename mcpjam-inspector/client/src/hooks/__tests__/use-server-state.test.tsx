@@ -426,11 +426,11 @@ describe("useServerState OAuth callback failures", () => {
     window.history.replaceState(
       {},
       "",
-      "/oauth/callback?code=test-code&state=electron_mcp:test-state",
+      "/oauth/callback?code=test-code&state=electron_mcp:test-state"
     );
 
     expect(buildElectronMcpCallbackUrl()).toBe(
-      "mcpjam://oauth/callback?flow=mcp&code=test-code&state=electron_mcp%3Atest-state",
+      "mcpjam://oauth/callback?flow=mcp&code=test-code&state=electron_mcp%3Atest-state"
     );
   });
 
@@ -442,7 +442,7 @@ describe("useServerState OAuth callback failures", () => {
     window.history.replaceState(
       {},
       "",
-      "/oauth/callback?code=test-code&state=electron_mcp:test-state",
+      "/oauth/callback?code=test-code&state=electron_mcp:test-state"
     );
 
     try {
@@ -453,7 +453,7 @@ describe("useServerState OAuth callback failures", () => {
       expect(handleOAuthCallbackMock).not.toHaveBeenCalled();
       expect(dispatch).not.toHaveBeenCalled();
       expect(consoleErrorSpy).not.toHaveBeenCalledWith(
-        "Not implemented: navigation to another Document",
+        "Not implemented: navigation to another Document"
       );
     } finally {
       consoleErrorSpy.mockRestore();
@@ -475,7 +475,7 @@ describe("useServerState OAuth callback failures", () => {
     window.history.replaceState(
       {},
       "",
-      "/oauth/callback?code=test-code&state=electron_mcp:test-state",
+      "/oauth/callback?code=test-code&state=electron_mcp:test-state"
     );
 
     expect(buildElectronMcpCallbackUrl()).toBeNull();
@@ -488,12 +488,12 @@ describe("useServerState OAuth callback failures", () => {
         "test-code",
         expect.objectContaining({
           onTraceUpdate: expect.any(Function),
-        }),
+        })
       );
     });
     await waitFor(() => {
       expect(toastSuccess).toHaveBeenCalledWith(
-        "OAuth connection successful! Connected to demo-server.",
+        "OAuth connection successful! Connected to demo-server."
       );
     });
 
@@ -508,7 +508,7 @@ describe("useServerState OAuth callback failures", () => {
     window.history.replaceState(
       {},
       "",
-      "/oauth/callback?code=test-code&state=test-state",
+      "/oauth/callback?code=test-code&state=test-state"
     );
 
     expect(buildElectronMcpCallbackUrl()).toBeNull();
@@ -517,13 +517,18 @@ describe("useServerState OAuth callback failures", () => {
   it("detects retryable transport errors after OAuth", () => {
     expect(
       shouldRetryOAuthConnectionFailure(
-        "Streamable HTTP error: Request timed out. SSE error: SSE error: Non-200 status code (404).",
-      ),
+        "Streamable HTTP error: Request timed out. SSE error: SSE error: Non-200 status code (404)."
+      )
     ).toBe(true);
     expect(
       shouldRetryOAuthConnectionFailure(
-        "OAuth failed with invalid_client from the authorization server",
-      ),
+        "SSE error: Non-200 status code returned by server: 404"
+      )
+    ).toBe(true);
+    expect(
+      shouldRetryOAuthConnectionFailure(
+        "OAuth failed with invalid_client from the authorization server"
+      )
     ).toBe(false);
   });
 
@@ -533,7 +538,7 @@ describe("useServerState OAuth callback failures", () => {
     localStorage.setItem("mcp-oauth-pending", "demo-server");
     localStorage.setItem(
       "mcp-serverUrl-demo-server",
-      "https://example.com/mcp",
+      "https://example.com/mcp"
     );
     localStorage.setItem("mcp-oauth-return-hash", "#demo-server");
     window.history.replaceState({}, "", "/oauth/callback?code=test-code");
@@ -588,13 +593,13 @@ describe("useServerState OAuth callback failures", () => {
       expect(testConnectionMock).toHaveBeenCalledTimes(2);
 
       expect(toastSuccess).toHaveBeenCalledWith(
-        "OAuth connection successful! Connected to demo-server.",
+        "OAuth connection successful! Connected to demo-server."
       );
       expect(dispatch).toHaveBeenCalledWith(
         expect.objectContaining({
           type: "CONNECT_SUCCESS",
           name: "demo-server",
-        }),
+        })
       );
     } finally {
       vi.useRealTimers();

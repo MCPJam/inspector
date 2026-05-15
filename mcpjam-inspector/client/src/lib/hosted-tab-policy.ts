@@ -3,11 +3,13 @@ const HASH_TAB_ALIASES = {
 } as const;
 
 export const HOSTED_SIDEBAR_ALLOWED_TABS = [
+  "hosts",
   "servers",
   "registry",
   "chat-v2",
   "chatboxes",
   "app-builder",
+  "playground",
   "views",
   "client-config",
   "evals",

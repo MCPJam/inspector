@@ -27,7 +27,8 @@ import {
   PlaygroundSuitesExecutionsTabs,
   type PlaygroundProjectBrowse,
 } from "./evals/playground-suites-executions-tabs";
-import { CreateSuiteDialog } from "./evals/create-suite-dialog";
+import { CreateSuiteDialog, type CreateSuitePayload } from "./evals/create-suite-dialog";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { SuiteExecutionsOverview } from "./evals/suite-executions-overview";
 import { usePlaygroundProjectExecutions } from "./evals/use-playground-project-executions";
 import type { EvalIteration } from "./evals/types";
@@ -61,6 +62,8 @@ export function EvalsTab({
   const { isAuthenticated, isLoading } = useConvexAuth();
   const convex = useConvex();
   const { user, getAccessToken } = useAuth();
+  const hostsEnabled =
+    useFeatureFlagEnabled("hosts-enabled") === true && isAuthenticated;
   const route = useEvalsRouteFromUrl();
   const [projectBrowse, setProjectBrowse] =
     useState<PlaygroundProjectBrowse>("suites");
@@ -359,11 +362,7 @@ export function EvalsTab({
   );
 
   const handleCreateSuite = useCallback(
-    async (payload: {
-      name: string;
-      description?: string;
-      selectedServers: string[];
-    }) => {
+    async (payload: CreateSuitePayload) => {
       if (!projectId) {
         return;
       }
@@ -376,6 +375,8 @@ export function EvalsTab({
           environment: {
             servers: payload.selectedServers,
           },
+          ...(payload.namedHostId ? { namedHostId: payload.namedHostId } : {}),
+          ...(payload.hostConfigInput ? { hostConfigInput: payload.hostConfigInput } : {}),
         });
 
         if (!createdSuite?._id) {
@@ -821,6 +822,8 @@ export function EvalsTab({
           projectServers={projectServers}
           connectedServerNames={connectedServerNames}
           onSubmit={handleCreateSuite}
+          hostsEnabled={hostsEnabled}
+          projectId={projectId}
         />
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">

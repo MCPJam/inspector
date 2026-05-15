@@ -37,6 +37,8 @@ import { ConformanceTab } from "./components/conformance/ConformancePanel";
 import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
 import { ErrorBoundary } from "./components/ui/error-boundary";
 import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
+import { PlaygroundTab } from "./components/playground/PlaygroundTab";
+import { PlaygroundHeaderSlotProvider } from "./components/playground/playground-header-slot";
 import { EmptyState } from "./components/ui/empty-state";
 import { EXCALIDRAW_SERVER_NAME } from "./lib/excalidraw-quick-connect";
 import { isFirstRunEligible } from "./lib/onboarding-state";
@@ -45,6 +47,9 @@ import { BillingUpsellGate } from "./components/billing/BillingUpsellGate";
 import { OrganizationsTab } from "./components/OrganizationsTab";
 import { SupportTab } from "./components/SupportTab";
 import { RegistryTab } from "./components/RegistryTab";
+import { HostsTab } from "./components/HostsTab";
+import { HostPicker } from "./components/hosts/HostPicker";
+import { useHost } from "./hooks/useHosts";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
 import { MCPSidebar } from "./components/mcp-sidebar";
@@ -419,12 +424,16 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <XAAFlowRoute />;
     case "tracing":
       return <TracingRoute />;
+    case "hosts":
+      return <HostsRoute />;
     case "chat-v2":
       return <ChatV2Route />;
     case "chatboxes":
       return <ChatboxesRoute />;
     case "app-builder":
       return <AppBuilderRoute />;
+    case "playground":
+      return <PlaygroundRoute />;
     case "views":
       return <ViewsRoute />;
     case "support":
@@ -474,6 +483,10 @@ function ActiveBillingUpsellGate() {
 }
 
 export function ServersRoute() {
+  return <ServersTabBody />;
+}
+
+function ServersTabBody() {
   const {
     projectServers,
     handleConnect,
@@ -515,6 +528,30 @@ export function ServersRoute() {
         registryEnabled === true ? () => handleNavigate("registry") : undefined
       }
       onSaveClientConfig={handleUpdateClientConfig}
+    />
+  );
+}
+
+export function HostsRoute() {
+  const {
+    convexProjectId,
+    hostsEnabled,
+    hostsTabSelectedHostId,
+    isAuthenticated,
+    setHostsTabSelectedHostId,
+  } = useAppRouteContext();
+
+  if (hostsEnabled !== true || !isAuthenticated) {
+    return <ServersTabBody />;
+  }
+
+  return (
+    <HostsTab
+      projectId={convexProjectId}
+      isAuthenticated={isAuthenticated}
+      selectedHostId={hostsTabSelectedHostId}
+      onSelectHost={setHostsTabSelectedHostId}
+      serversTabElement={<ServersTabBody />}
     />
   );
 }
@@ -817,36 +854,68 @@ export function XAAFlowRoute() {
 export function ChatV2Route() {
   const {
     connectedOrConnectingServerConfigs,
-    appState,
-    projectServers,
-    toggleServerSelection,
-    handleReconnect,
-    handleConnect,
-    setSelectedMCPConfigs,
     activeMcpProfile,
+    appState,
+    chatTabHost,
+    chatTabHostId,
+    convexProjectId,
     evalChatHandoff,
+    handleConnect,
+    handleReconnect,
+    hostsEnabled,
+    isAuthenticated,
+    projectServers,
+    setChatTabHostId,
     setEvalChatHandoff,
+    setSelectedMCPConfigs,
+    toggleServerSelection,
   } = useAppRouteContext();
 
   return (
-    <HostStyledChatTabV2
-      connectedOrConnectingServerConfigs={connectedOrConnectingServerConfigs}
-      selectedServerNames={appState.selectedMultipleServers}
-      allServerConfigs={projectServers}
-      onServerToggle={toggleServerSelection}
-      onReconnectServer={handleReconnect}
-      onAddServer={handleConnect}
-      onSelectedServerNamesChange={setSelectedMCPConfigs}
-      enableMultiModelChat
-      showHostStyleSelector
-      activeMcpProfile={activeMcpProfile}
-      evalChatHandoff={evalChatHandoff}
-      onEvalChatHandoffConsumed={(id) =>
-        setEvalChatHandoff((current: EvalChatHandoff | null) =>
-          current?.id === id ? null : current
-        )
-      }
-    />
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+      {hostsEnabled === true && isAuthenticated && convexProjectId && (
+        <div className="flex shrink-0 items-center gap-2 border-b px-4 py-2">
+          <span className="text-xs text-muted-foreground">Host:</span>
+          <div className="w-48">
+            <HostPicker
+              projectId={convexProjectId}
+              value={chatTabHostId}
+              onChange={setChatTabHostId}
+              placeholder="Project default"
+              noneLabel="Project default"
+            />
+          </div>
+        </div>
+      )}
+      <HostStyledChatTabV2
+        connectedOrConnectingServerConfigs={connectedOrConnectingServerConfigs}
+        selectedServerNames={appState.selectedMultipleServers}
+        allServerConfigs={projectServers}
+        onServerToggle={toggleServerSelection}
+        onReconnectServer={handleReconnect}
+        onAddServer={handleConnect}
+        onSelectedServerNamesChange={setSelectedMCPConfigs}
+        enableMultiModelChat
+        showHostStyleSelector
+        executionConfig={
+          chatTabHost
+            ? {
+                modelId: chatTabHost.config.modelId,
+                systemPrompt: chatTabHost.config.systemPrompt,
+                temperature: chatTabHost.config.temperature,
+                requireToolApproval: chatTabHost.config.requireToolApproval,
+              }
+            : undefined
+        }
+        activeMcpProfile={chatTabHost?.config.mcpProfile ?? activeMcpProfile}
+        evalChatHandoff={evalChatHandoff}
+        onEvalChatHandoffConsumed={(id) =>
+          setEvalChatHandoff((current: EvalChatHandoff | null) =>
+            current?.id === id ? null : current
+          )
+        }
+      />
+    </div>
   );
 }
 
@@ -891,6 +960,54 @@ export function AppBuilderRoute() {
       onOnboardingChange={setAppBuilderOnboarding}
       playgroundServerSelectorProps={playgroundServerSelectorProps}
       enableMultiModelChat
+    />
+  );
+}
+
+export function PlaygroundRoute() {
+  const {
+    activeProject,
+    activeProjectId,
+    appState,
+    ensureServersReady,
+    evalChatHandoff,
+    handleConnect,
+    handleUpdateHostContext,
+    isAuthenticated,
+    isSelectedServerSyncing,
+    isWorkOsLoading,
+    playgroundServerSelectorProps,
+    projectServers,
+    remoteFirstRunOnboardingShown,
+    selectedMCPConfig,
+    setAppBuilderOnboarding,
+    setEvalChatHandoff,
+    workOsUser,
+  } = useAppRouteContext();
+
+  return (
+    <PlaygroundTab
+      serverConfig={selectedMCPConfig}
+      serverName={appState.selectedServer}
+      servers={projectServers}
+      activeProjectId={activeProjectId}
+      isSignedInWithWorkOs={!!workOsUser}
+      isWorkOsAuthLoading={isWorkOsLoading}
+      isConvexAuthenticated={isAuthenticated}
+      isProjectProvisioned={Boolean(activeProject?.sharedProjectId)}
+      hasSeenFirstRunOnboarding={remoteFirstRunOnboardingShown}
+      isServerSyncing={isSelectedServerSyncing}
+      onConnect={handleConnect}
+      onSaveHostContext={handleUpdateHostContext}
+      ensureServersReady={ensureServersReady}
+      onOnboardingChange={setAppBuilderOnboarding}
+      playgroundServerSelectorProps={playgroundServerSelectorProps}
+      evalChatHandoff={evalChatHandoff}
+      onEvalChatHandoffConsumed={(id) =>
+        setEvalChatHandoff((current: EvalChatHandoff | null) =>
+          current?.id === id ? null : current
+        )
+      }
     />
   );
 }
@@ -974,6 +1091,10 @@ export function ServersRedirectRoute() {
 export default function App() {
   const activeTab = useActiveTab();
   const currentOrgRoute = useCurrentOrgRoute();
+  const [chatTabHostId, setChatTabHostId] = useState<string | null>(null);
+  const [hostsTabSelectedHostId, setHostsTabSelectedHostId] = useState<
+    string | null
+  >(null);
   const [evalChatHandoff, setEvalChatHandoff] =
     useState<EvalChatHandoff | null>(null);
   const [
@@ -998,7 +1119,9 @@ export default function App() {
   const learningEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
+  const hostsEnabled = useFeatureFlagEnabled("hosts-enabled");
   const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
+  const playgroundTabEnabled = useFeatureFlagEnabled("playground-tab-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
   const {
@@ -1010,6 +1133,10 @@ export default function App() {
   } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const actorKey = useActorKey();
+  const { host: chatTabHost } = useHost({
+    isAuthenticated: isAuthenticated && hostsEnabled === true,
+    hostId: chatTabHostId,
+  });
   const currentUser = useQuery(
     "users:getCurrentUser" as any,
     isAuthenticated ? ({} as any) : "skip"
@@ -1401,6 +1528,7 @@ export default function App() {
     isLoadingOrganizations,
     validOrganizations: effectiveOrganizations,
     routeOrganizationId: hasRouteOrganization ? routeOrganizationId : undefined,
+    activeHostConfig: chatTabHost?.config,
   });
   useInspectorCommandBus();
   // One-time migration from legacy localStorage state to Convex. No-op in
@@ -1578,6 +1706,20 @@ export default function App() {
     activeProject?.clientConfig
   ) as Record<string, unknown>;
   const convexProjectId = activeProject?.sharedProjectId ?? null;
+  // chatTabHostId/hostsTabSelectedHostId are project-scoped — drop them when
+  // the active project, auth, or feature flag changes so host-derived config
+  // can't bleed across projects (e.g. switching to project B while a project-A
+  // host is still selected in the Chat tab picker).
+  useEffect(() => {
+    if (!hostsEnabled || !isAuthenticated || !convexProjectId) {
+      setChatTabHostId(null);
+      setHostsTabSelectedHostId(null);
+    }
+  }, [hostsEnabled, isAuthenticated, convexProjectId]);
+  useEffect(() => {
+    setChatTabHostId(null);
+    setHostsTabSelectedHostId(null);
+  }, [convexProjectId]);
   const routeScopedOrganizationId = hasRouteOrganization
     ? routeOrganizationId ?? null
     : null;
@@ -2135,6 +2277,11 @@ export default function App() {
         )} plan. Upgrade the organization to continue.`
       );
       navigateApp(routePaths.servers, { replace: true });
+    } else if (
+      activeTab === "hosts" &&
+      (hostsEnabled !== true || !isAuthenticated)
+    ) {
+      navigateApp(routePaths.servers, { replace: true });
     } else if (activeTab === "registry" && registryEnabled !== true) {
       navigateApp(routePaths.servers, { replace: true });
     } else if (
@@ -2148,14 +2295,23 @@ export default function App() {
       navigateApp(routePaths.servers, { replace: true });
     } else if (activeTab === "xaa-flow" && xaaEnabled !== true) {
       navigateApp(routePaths.servers, { replace: true });
+    } else if (activeTab === "playground" && playgroundTabEnabled !== true) {
+      navigateApp(routePaths.servers, { replace: true });
+    } else if (
+      (activeTab === "chat-v2" || activeTab === "app-builder") &&
+      playgroundTabEnabled === true
+    ) {
+      navigateApp(routePaths.playground, { replace: true });
     }
   }, [
     conformanceEnabled,
+    hostsEnabled,
     registryEnabled,
     learningEnabled,
     evaluateRunsFlagsLoaded,
     evaluateRunsEnabled,
     xaaEnabled,
+    playgroundTabEnabled,
     isAuthenticated,
     activeTab,
   ]);
@@ -2364,12 +2520,17 @@ export default function App() {
   const playgroundServerSelectorProps = useMemo(():
     | PlaygroundServerSelectorProps
     | undefined => {
-    if (activeTab !== "app-builder") return undefined;
+    if (activeTab !== "app-builder" && activeTab !== "playground")
+      return undefined;
     return {
       serverConfigs: projectServers,
       selectedServer: appState.selectedServer,
       selectedMultipleServers: appState.selectedMultipleServers,
-      isMultiSelectEnabled: false,
+      // Playground supports multi-server selection — the user can toggle
+      // several servers on simultaneously, the chat session sees their union,
+      // and the docked tools pane aggregates tools across all of them.
+      // App Builder stays single-server.
+      isMultiSelectEnabled: activeTab === "playground",
       onServerChange: setSelectedServer,
       onMultiServerToggle: toggleServerSelection,
       onConnect: handleConnect,
@@ -2529,6 +2690,8 @@ export default function App() {
     billingOrganizationId,
     billingProjectId,
     billingUiEnabled,
+    chatTabHost,
+    chatTabHostId,
     checkoutIntentForBilling,
     connectedOrConnectingServerConfigs,
     consumeCheckoutIntent,
@@ -2554,6 +2717,8 @@ export default function App() {
     handleUpdateClientConfig,
     handleUpdateHostContext,
     handleUpdateProject,
+    hostsEnabled,
+    hostsTabSelectedHostId,
     isAuthenticated,
     isBillingContextPending,
     isLoadingRemoteProjects,
@@ -2562,6 +2727,7 @@ export default function App() {
     navigateToTarget,
     pendingDashboardOAuth,
     playgroundEnabled,
+    playgroundTabEnabled,
     playgroundServerSelectorProps,
     posthog,
     projectServers,
@@ -2574,7 +2740,9 @@ export default function App() {
     selectedMCPConfig,
     selectedServerEntry,
     setAppBuilderOnboarding,
+    setChatTabHostId,
     setEvalChatHandoff,
+    setHostsTabSelectedHostId,
     setSelectedMCPConfigs,
     setSelectedServer,
     shellBillingStatus,
@@ -2585,6 +2753,7 @@ export default function App() {
   };
 
   const appContent = (
+    <PlaygroundHeaderSlotProvider>
     <SidebarProvider defaultOpen={true}>
       <AppChromeSidebar
         hidden={appBuilderOnboarding}
@@ -2688,6 +2857,7 @@ export default function App() {
         </DialogContent>
       </Dialog>
     </SidebarProvider>
+    </PlaygroundHeaderSlotProvider>
   );
 
   return (

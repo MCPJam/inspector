@@ -55,6 +55,12 @@ interface PlaygroundLeftProps {
   onDeleteRequest: (id: string) => void;
   // Panel visibility
   onClose?: () => void;
+  /**
+   * Whether to render the inline LoggerView in the bottom resizable slot.
+   * Defaults to true for backward compat with AppBuilderTab. The Playground
+   * left rail passes `false` because the logger lives in the right rail.
+   */
+  showLogger?: boolean;
 }
 
 export function PlaygroundLeft({
@@ -76,6 +82,7 @@ export function PlaygroundLeft({
   onDuplicateRequest,
   onDeleteRequest,
   onClose,
+  showLogger = true,
 }: PlaygroundLeftProps) {
   const [isListExpanded, setIsListExpanded] = useState(!selectedToolName);
   const [activeTab, setActiveTab] = useState<"tools" | "saved">("tools");
@@ -216,21 +223,25 @@ export function PlaygroundLeft({
       />
 
       {/* Middle Content Area + Logger */}
-      <ResizablePanelGroup
-        direction="vertical"
-        className="flex-1 min-h-0"
-        autoSaveId="ui-playground-left-logger"
-      >
-        <ResizablePanel defaultSize={65} minSize={10}>
-          {mainContent}
-        </ResizablePanel>
-        <ResizableHandle withHandle />
-        <ResizablePanel defaultSize={35} minSize={10} maxSize={70}>
-          <div className="h-full min-h-0 flex flex-col border-t border-border bg-background">
-            <LoggerView isCollapsable={false} />
-          </div>
-        </ResizablePanel>
-      </ResizablePanelGroup>
+      {showLogger ? (
+        <ResizablePanelGroup
+          direction="vertical"
+          className="flex-1 min-h-0"
+          autoSaveId="ui-playground-left-logger"
+        >
+          <ResizablePanel defaultSize={65} minSize={10}>
+            {mainContent}
+          </ResizablePanel>
+          <ResizableHandle withHandle />
+          <ResizablePanel defaultSize={35} minSize={10} maxSize={70}>
+            <div className="h-full min-h-0 flex flex-col border-t border-border bg-background">
+              <LoggerView isCollapsable={false} />
+            </div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      ) : (
+        <div className="flex-1 min-h-0">{mainContent}</div>
+      )}
     </div>
   );
 }

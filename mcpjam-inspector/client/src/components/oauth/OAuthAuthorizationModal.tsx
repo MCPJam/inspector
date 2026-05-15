@@ -30,6 +30,12 @@ export const OAuthAuthorizationModal = ({
       `width=${width},height=${height},left=${left},top=${top},toolbar=no,location=no,status=no,menubar=no,scrollbars=yes,resizable=yes`,
     );
 
+    if (!popupRef.current) {
+      onOpenChange(false);
+      hasOpenedRef.current = false;
+      return () => {};
+    }
+
     // Monitor popup closure
     const checkPopupClosed = setInterval(() => {
       if (popupRef.current?.closed) {

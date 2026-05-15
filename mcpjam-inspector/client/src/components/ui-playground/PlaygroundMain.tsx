@@ -21,6 +21,16 @@ import {
   useRef,
 } from "react";
 import { Braces, Loader2, Trash2 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@mcpjam/design-system/alert-dialog";
 import { useAuth } from "@workos-inc/authkit-react";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { UIMessage } from "ai";
@@ -72,10 +82,7 @@ import {
   getChatboxHostFamily,
 } from "@/lib/chatbox-host-style";
 import { DEFAULT_HOST_STYLE } from "@/lib/host-styles";
-import {
-  HostContextHeader,
-  PRESET_DEVICE_CONFIGS,
-} from "@/components/shared/HostContextHeader";
+import { PRESET_DEVICE_CONFIGS } from "@/components/shared/HostContextHeader";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
@@ -107,7 +114,7 @@ import {
   useChatStopControls,
 } from "@/hooks/use-chat-stop-controls";
 import { HandDrawnSendHint } from "./HandDrawnSendHint";
-import { ChatTraceViewModeHeaderBar } from "@/components/evals/trace-view-mode-tabs";
+import { PlaygroundCenterHeaderBar } from "@/components/playground/PlaygroundCenterHeaderBar";
 import { SingleModelTraceDiagnosticsBody } from "@/components/evals/single-model-trace-diagnostics-body";
 import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSelector";
 import {
@@ -121,6 +128,27 @@ import {
   type PlaygroundDeterministicExecutionRequest,
 } from "@/components/ui-playground/multi-model-playground-card";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
+import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
+import {
+  chatHistoryAction,
+  getChatHistoryDetail,
+  type ChatHistorySession,
+  type ChatHistoryDetailSession,
+  type ChatHistoryWidgetSnapshot,
+  type ChatHistoryTurnTrace,
+} from "@/lib/apis/web/chat-history-api";
+import { resolveRestorableServerNames } from "@/components/chat-v2/history/session-restore";
+import {
+  getCachedChatHistoryDetail,
+  prefetchChatHistorySession,
+} from "@/components/chat-v2/history/chat-history-prefetch";
+import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
+import { useFeatureFlagEnabled } from "posthog-js/react";
+import { WebApiError } from "@/lib/apis/web/base";
+
+// On post-stream reconcile, the Convex-side detail row may not yet reflect the
+// version bump from the turn that just finished. Retry a couple of times.
+const RESUMED_THREAD_REFRESH_RETRIES = 2;
 
 /** Custom device config - dimensions come from store */
 const CUSTOM_DEVICE_BASE = {
@@ -186,6 +214,15 @@ interface PlaygroundMainProps {
   pulseSubmit?: boolean;
   showPostConnectGuide?: boolean;
   onFirstMessageSent?: () => void;
+  /**
+   * When set, Playground consumes the handoff once `isSessionBootstrapComplete`
+   * flips true: applies executionConfig (model, system prompt, temperature,
+   * tool-approval), seeds the thread, and calls `onEvalChatHandoffConsumed`.
+   * Mirrors the ChatTabV2 behavior so eval "Continue in chat" lands here when
+   * `playground-tab-enabled` is on.
+   */
+  evalChatHandoff?: EvalChatHandoff | null;
+  onEvalChatHandoffConsumed?: (id: string) => void;
 }
 
 type PlaygroundTraceViewMode = "chat" | "timeline" | "raw";
@@ -251,10 +288,34 @@ export function PlaygroundMain({
   pulseSubmit = false,
   showPostConnectGuide = false,
   onFirstMessageSent,
+  evalChatHandoff = null,
+  onEvalChatHandoffConsumed,
 }: PlaygroundMainProps) {
   const { signUp } = useAuth();
   const posthog = usePostHog();
   const clearLogs = useTrafficLogStore((s) => s.clear);
+  const sharedThreadsEnabled =
+    useFeatureFlagEnabled("shared-threads-enabled") === true;
+
+  // Chat-history coordination — Playground equivalent of ChatTabV2's history
+  // machinery, scoped down to what the docked rail actually needs.
+  const [activeHistorySessionId, setActiveHistorySessionId] = useState<
+    string | null
+  >(null);
+  const [loadingHistorySessionId, setLoadingHistorySessionId] = useState<
+    string | null
+  >(null);
+  const [pendingDirectVisibility, setPendingDirectVisibility] = useState<
+    "private" | "project"
+  >("private");
+  // ChatTabV2 holds this at 0 today; bumping after each completed turn is a
+  // follow-up. The rail re-fetches on initial mount + whenever signal changes.
+  const historyRefreshSignal = 0;
+  const historySelectionRequestIdRef = useRef(0);
+  const resumedThreadSendBaselineRef = useRef<{
+    sessionId: string;
+    version: number;
+  } | null>(null);
 
   const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
     []
@@ -273,6 +334,7 @@ export function PlaygroundMain({
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [traceViewMode, setTraceViewMode] =
     useState<PlaygroundTraceViewMode>("chat");
+  const [headerView, setHeaderView] = useState<"tabs" | "host">("tabs");
   const [isWidgetFullscreen, setIsWidgetFullscreen] = useState(false);
   const [isFullscreenChatOpen, setIsFullscreenChatOpen] = useState(false);
   const [isPreparingServerForSend, setIsPreparingServerForSend] =
@@ -328,13 +390,32 @@ export function PlaygroundMain({
   const appState = useSharedAppState();
   const servers = appState.servers;
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
-  const selectedServers = useMemo(
-    () =>
-      serverName && servers[serverName]?.connectionStatus === "connected"
-        ? [serverName]
-        : [],
-    [serverName, servers]
-  );
+  // Multi-server: when the host has flipped `isMultiSelectEnabled` on (today
+  // only the Playground does), `playgroundServerSelectorProps.selectedMultipleServers`
+  // is the source of truth for which servers the chat session sees. Otherwise
+  // fall back to the single `serverName` prop (App Builder / hosted flows).
+  const multiSelectedServerNames = useMemo(() => {
+    const propsMulti = playgroundServerSelectorProps?.selectedMultipleServers;
+    if (
+      playgroundServerSelectorProps?.isMultiSelectEnabled &&
+      Array.isArray(propsMulti) &&
+      propsMulti.length > 0
+    ) {
+      return propsMulti.filter(
+        (name) => servers[name]?.connectionStatus === "connected",
+      );
+    }
+    return [];
+  }, [playgroundServerSelectorProps, servers]);
+
+  const selectedServers = useMemo(() => {
+    if (multiSelectedServerNames.length > 0) {
+      return multiSelectedServerNames;
+    }
+    return serverName && servers[serverName]?.connectionStatus === "connected"
+      ? [serverName]
+      : [];
+  }, [multiSelectedServerNames, serverName, servers]);
 
   const serverConnected = Boolean(
     serverName && servers[serverName]?.connectionStatus === "connected"
@@ -342,6 +423,18 @@ export function PlaygroundMain({
 
   const handlePlaygroundServerToggle = useCallback(
     (name: string) => {
+      // Multi-server: toggle membership in the multi-server set so users can
+      // have several servers active at once (LLM sees the union of tools,
+      // docked tools pane aggregates across them).
+      if (
+        playgroundServerSelectorProps?.isMultiSelectEnabled &&
+        playgroundServerSelectorProps?.onMultiServerToggle
+      ) {
+        playgroundServerSelectorProps.onMultiServerToggle(name);
+        return;
+      }
+      // Single-server (App Builder, hosted): toggle clears if already selected,
+      // else switches to the clicked server.
       if (name === serverName) {
         playgroundServerSelectorProps?.onServerChange("none");
       } else {
@@ -354,7 +447,7 @@ export function PlaygroundMain({
   // Hosted mode context (projectId, serverIds, OAuth tokens)
   const activeProject = appState.projects[appState.activeProjectId];
   const convexProjectId = activeProject?.sharedProjectId ?? null;
-  const { serversByName } = useProjectServers({
+  const { serversById, serversByName } = useProjectServers({
     isAuthenticated: isConvexAuthenticated,
     projectId: convexProjectId,
   });
@@ -412,6 +505,12 @@ export function PlaygroundMain({
     requireToolApproval,
     setRequireToolApproval,
     addToolApprovalResponse,
+    isSessionBootstrapComplete,
+    loadChatSession,
+    syncResumedVersion,
+    resumedVersion,
+    restoredToolRenderOverrides,
+    status,
   } = useChatSession({
     selectedServers,
     hostedContext: {
@@ -489,7 +588,10 @@ export function PlaygroundMain({
   }, [multiModelAvailableModels, selectedModel, selectedModelIds]);
   const canEnableMultiModel =
     enableMultiModelChat && availableModels.length > 1;
-  const isMultiModelMode = canEnableMultiModel && multiModelEnabled;
+  // When viewing a history session the transcript lives on the single chat
+  // session; compare layout would override that render. Matches ChatTabV2.
+  const isMultiModelMode =
+    canEnableMultiModel && multiModelEnabled && !activeHistorySessionId;
   const { isMultiModelLayoutMode, onModelSelectorOpenChange } =
     useModelSelectorLayoutLock(isMultiModelMode);
 
@@ -660,6 +762,668 @@ export function PlaygroundMain({
     setSelectedModelIds,
   ]);
 
+  // Eval "Continue in chat" handoff. Mirrors ChatTabV2:1283-1340 so that when
+  // `playground-tab-enabled` is on (and `#chat-v2` redirects to `#playground`)
+  // the handoff still seeds a chat with the eval's model + messages.
+  const appliedEvalChatHandoffIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!evalChatHandoff) return;
+    if (!isSessionBootstrapComplete) return;
+    if (appliedEvalChatHandoffIdRef.current === evalChatHandoff.id) return;
+
+    const { executionConfig: handoffExec } = evalChatHandoff;
+    let matchingModel = null;
+    if (handoffExec.modelId) {
+      matchingModel = availableModels.find(
+        (model) => String(model.id) === handoffExec.modelId,
+      );
+      // Wait for the model list to load — `availableModels.length === 0`
+      // means the catalog hasn't arrived yet; re-run when it does.
+      if (!matchingModel && availableModels.length === 0) return;
+    }
+
+    if (matchingModel) {
+      setMultiModelEnabled(false);
+      setSelectedModelIds([String(matchingModel.id)]);
+      setSelectedModel(matchingModel);
+    } else if (selectedModel) {
+      setMultiModelEnabled(false);
+      setSelectedModelIds([String(selectedModel.id)]);
+    }
+
+    startChatWithMessages(evalChatHandoff.messages);
+    appliedEvalChatHandoffIdRef.current = evalChatHandoff.id;
+
+    if (typeof handoffExec.systemPrompt === "string") {
+      setSystemPrompt(handoffExec.systemPrompt);
+    }
+    if (typeof handoffExec.temperature === "number") {
+      setTemperature(handoffExec.temperature);
+    }
+    if (typeof handoffExec.requireToolApproval === "boolean") {
+      setRequireToolApproval(handoffExec.requireToolApproval);
+    }
+
+    composer.setInput("");
+    onEvalChatHandoffConsumed?.(evalChatHandoff.id);
+  }, [
+    availableModels,
+    composer,
+    evalChatHandoff,
+    isSessionBootstrapComplete,
+    onEvalChatHandoffConsumed,
+    selectedModel,
+    setMultiModelEnabled,
+    setRequireToolApproval,
+    setSelectedModel,
+    setSelectedModelIds,
+    setSystemPrompt,
+    setTemperature,
+    startChatWithMessages,
+  ]);
+
+  // ------------------------------------------------------------------------
+  // Chat history coordination (docked `chatHistory` pane bridge)
+  //
+  // Ported from ChatTabV2:466-996 with the following intentional differences:
+  // - Draft-discard uses `window.confirm` instead of the full DiscardDraftDialog
+  //   port (matches PlaygroundHeader's existing window.confirm style).
+  // - `widgetStateQueue` is not part of `hasUnsavedDraft` (Playground doesn't
+  //   queue widget-state updates the way ChatTabV2 does).
+  // - Multi-server restoration: Playground is single-server in v1; if a saved
+  //   session selected N servers, we pick the first that maps to a connected
+  //   server and call `playgroundServerSelectorProps?.onServerChange(name)`.
+  //   If none match we leave the current server selection alone.
+  // - `historyRefreshSignal` stays at 0 like ChatTabV2 today; bumping after
+  //   completed turns is a follow-up.
+  // ------------------------------------------------------------------------
+
+  const hasUnsavedDraft =
+    composer.input.trim().length > 0 ||
+    mcpPromptResults.length > 0 ||
+    skillResults.length > 0 ||
+    fileAttachments.length > 0 ||
+    modelContextQueue.length > 0;
+
+  const hasUnsavedDraftRef = useRef(hasUnsavedDraft);
+  useEffect(() => {
+    hasUnsavedDraftRef.current = hasUnsavedDraft;
+  }, [hasUnsavedDraft]);
+
+  // Ref so `detachHistorySession` can read the latest messages without
+  // listing `messages` in its deps — `messages` churns every streaming
+  // token and would otherwise re-create the callback per token, cascading
+  // through the bridge into ChatHistoryRail and its rows.
+  const messagesRef = useRef(messages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  const [discardDraftDialogOpen, setDiscardDraftDialogOpen] = useState(false);
+  const discardDraftResolveRef = useRef<((allow: boolean) => void) | null>(
+    null,
+  );
+  const discardDraftSettledRef = useRef(false);
+
+  const settleDiscardDraft = useCallback((confirmed: boolean) => {
+    if (discardDraftSettledRef.current) {
+      return;
+    }
+    discardDraftSettledRef.current = true;
+    const resolve = discardDraftResolveRef.current;
+    discardDraftResolveRef.current = null;
+    resolve?.(confirmed);
+    setDiscardDraftDialogOpen(false);
+  }, []);
+
+  const ensureDiscardDraftConfirmed = useCallback((): Promise<boolean> => {
+    if (!hasUnsavedDraftRef.current) {
+      return Promise.resolve(true);
+    }
+    return new Promise((resolve) => {
+      discardDraftSettledRef.current = false;
+      discardDraftResolveRef.current = resolve;
+      setDiscardDraftDialogOpen(true);
+    });
+  }, []);
+
+  const clearComposerDraft = useCallback(() => {
+    composer.setInput("");
+    setMcpPromptResults([]);
+    setSkillResults([]);
+    revokeFileAttachmentUrls(fileAttachments);
+    setFileAttachments([]);
+    setModelContextQueue([]);
+  }, [composer, fileAttachments]);
+
+  const cancelPendingHistorySelection = useCallback(() => {
+    historySelectionRequestIdRef.current += 1;
+    setLoadingHistorySessionId(null);
+    setActiveHistorySessionId(null);
+  }, []);
+
+  const markHistorySessionRead = useCallback(async (sessionId: string) => {
+    try {
+      await chatHistoryAction("mark-read", sessionId);
+    } catch {
+      // Best-effort: unread state should not block chat usage.
+    }
+  }, []);
+
+  const restoreHistoryServerSelection = useCallback(
+    (savedServerNames: string[] | undefined) => {
+      if (!Array.isArray(savedServerNames) || savedServerNames.length === 0) {
+        return;
+      }
+      const desired = resolveRestorableServerNames(
+        savedServerNames,
+        serversById,
+        Object.keys(servers),
+      );
+      if (desired.length === 0) return;
+
+      // Multi-server: reconcile the current selection to exactly match the
+      // restored set — add the missing, remove the extras. Without the remove
+      // step, restoring a session would leave behind any servers the user had
+      // active at restore time, contaminating tool context.
+      const onMultiServerToggle =
+        playgroundServerSelectorProps?.onMultiServerToggle;
+      const currentlyActive =
+        playgroundServerSelectorProps?.selectedMultipleServers ?? [];
+      const isMulti =
+        playgroundServerSelectorProps?.isMultiSelectEnabled === true;
+
+      if (isMulti && onMultiServerToggle) {
+        const desiredSet = new Set(desired);
+        const activeSet = new Set(currentlyActive);
+        for (const name of currentlyActive) {
+          if (!desiredSet.has(name)) {
+            onMultiServerToggle(name);
+          }
+        }
+        for (const name of desired) {
+          if (!activeSet.has(name)) {
+            onMultiServerToggle(name);
+          }
+        }
+        return;
+      }
+
+      // Single-server fallback: pick the first connected match.
+      const onServerChange = playgroundServerSelectorProps?.onServerChange;
+      if (!onServerChange) return;
+      const firstMatch = desired.find(
+        (name) => servers[name]?.connectionStatus === "connected",
+      );
+      const target = firstMatch ?? desired[0];
+      if (target && target !== serverName) {
+        onServerChange(target);
+      }
+    },
+    [
+      playgroundServerSelectorProps,
+      serverName,
+      servers,
+      serversById,
+    ],
+  );
+
+  const loadHistorySession = useCallback(
+    async (
+      detail: ChatHistoryDetailSession,
+      widgetSnapshots?: ChatHistoryWidgetSnapshot[],
+      options?: {
+        shouldRestoreComposerState?: () => boolean;
+        shouldApply?: () => boolean;
+        turnTraces?: ChatHistoryTurnTrace[];
+      },
+    ) => {
+      await loadChatSession(
+        {
+          chatSessionId: detail.chatSessionId,
+          messagesBlobUrl: detail.messagesBlobUrl,
+          resumeConfig: detail.resumeConfig,
+          version: detail.version,
+          widgetSnapshots,
+          turnTraces: options?.turnTraces,
+        },
+        {
+          shouldRestoreResumeConfig: options?.shouldRestoreComposerState,
+          shouldApply: options?.shouldApply,
+        },
+      );
+      if (options?.shouldApply && !options.shouldApply()) {
+        return;
+      }
+      const shouldRestoreComposerState =
+        options?.shouldRestoreComposerState?.() ?? true;
+      if (shouldRestoreComposerState && detail.modelId) {
+        const matchingModel = availableModels.find(
+          (model) => String(model.id) === detail.modelId,
+        );
+        if (matchingModel) {
+          setSelectedModel(matchingModel);
+        }
+      }
+      setActiveHistorySessionId(detail._id);
+      setPendingDirectVisibility(detail.directVisibility);
+      syncResumedVersion(detail.version);
+      void markHistorySessionRead(detail._id);
+    },
+    [
+      availableModels,
+      loadChatSession,
+      markHistorySessionRead,
+      setSelectedModel,
+      syncResumedVersion,
+    ],
+  );
+
+  const detachHistorySession = useCallback(
+    (toastMessage: string) => {
+      resumedThreadSendBaselineRef.current = null;
+      cancelPendingHistorySelection();
+      setPendingDirectVisibility("private");
+      syncResumedVersion(null);
+      if (effectiveHasMessages) {
+        startChatWithMessages(cloneUiMessages(messagesRef.current), {
+          toolRenderOverrides: restoredToolRenderOverrides,
+        });
+      }
+      toast.error(toastMessage);
+    },
+    [
+      cancelPendingHistorySelection,
+      effectiveHasMessages,
+      restoredToolRenderOverrides,
+      startChatWithMessages,
+      syncResumedVersion,
+    ],
+  );
+
+  const refreshCurrentHistorySession = useCallback(
+    async ({ retries = 0, markRead = false } = {}) => {
+      if (!activeHistorySessionId && !chatSessionId) return null;
+      for (let attempt = 0; attempt <= retries; attempt += 1) {
+        try {
+          const detail = await getChatHistoryDetail({
+            sessionId: activeHistorySessionId ?? undefined,
+            chatSessionId,
+            projectId: convexProjectId ?? undefined,
+          });
+          setActiveHistorySessionId(detail.session._id);
+          syncResumedVersion(detail.session.version);
+          if (markRead) {
+            void markHistorySessionRead(detail.session._id);
+          }
+          return detail.session;
+        } catch (error) {
+          if (attempt < retries) {
+            await new Promise((resolve) => window.setTimeout(resolve, 250));
+            continue;
+          }
+          // 403/404 means the row is gone or no longer ours — treat as
+          // "session unavailable" so callers can detach rather than reporting
+          // a transient error.
+          if (
+            error instanceof WebApiError &&
+            (error.status === 403 || error.status === 404)
+          ) {
+            return null;
+          }
+          console.error(
+            "[PlaygroundMain] Failed to refresh history session",
+            error,
+          );
+          return null;
+        }
+      }
+      return null;
+    },
+    [
+      activeHistorySessionId,
+      chatSessionId,
+      convexProjectId,
+      markHistorySessionRead,
+      syncResumedVersion,
+    ],
+  );
+
+  // After a streaming turn ends we re-fetch the active session so the rail
+  // reflects the new version and the local resume cursor advances. If the
+  // turn was on a resumed thread, we additionally require that the new
+  // detail's version actually exceeds the baseline we sent against — that
+  // proves the server applied this turn rather than a concurrent edit.
+  const refreshHistorySessionAfterStream = useCallback(
+    async (
+      resumedThreadSendBaseline: {
+        sessionId: string;
+        version: number;
+      } | null,
+    ) => {
+      const maxAttempts = resumedThreadSendBaseline
+        ? RESUMED_THREAD_REFRESH_RETRIES + 1
+        : 2;
+
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        try {
+          const detail = await refreshCurrentHistorySession({
+            markRead: true,
+          });
+          if (
+            !resumedThreadSendBaseline ||
+            (detail &&
+              detail._id === resumedThreadSendBaseline.sessionId &&
+              detail.version > resumedThreadSendBaseline.version)
+          ) {
+            return detail;
+          }
+        } catch (error) {
+          if (attempt >= maxAttempts - 1) {
+            throw error;
+          }
+        }
+        if (attempt < maxAttempts - 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 250));
+        }
+      }
+      return null;
+    },
+    [refreshCurrentHistorySession],
+  );
+
+  const handleSelectThread = useCallback(
+    async (session: ChatHistorySession) => {
+      if (isStreaming) return;
+      if (!(await ensureDiscardDraftConfirmed())) return;
+      if (hasUnsavedDraftRef.current) {
+        clearComposerDraft();
+      }
+
+      const selectionRequestId = historySelectionRequestIdRef.current + 1;
+      historySelectionRequestIdRef.current = selectionRequestId;
+      setActiveHistorySessionId(session._id);
+      setLoadingHistorySessionId(session._id);
+
+      try {
+        // Hit the dedup cache: if the user hovered first, this is the same
+        // promise the prefetch kicked off and will resolve immediately.
+        const detail = await getCachedChatHistoryDetail({
+          sessionId: session._id,
+          chatSessionId: session.chatSessionId,
+          projectId: convexProjectId ?? undefined,
+        });
+
+        if (historySelectionRequestIdRef.current !== selectionRequestId) {
+          return;
+        }
+
+        await loadHistorySession(detail.session, detail.widgetSnapshots, {
+          turnTraces: detail.turnTraces,
+        });
+
+        if (historySelectionRequestIdRef.current !== selectionRequestId) {
+          return;
+        }
+        restoreHistoryServerSelection(
+          detail.session.resumeConfig?.selectedServers,
+        );
+      } catch (err) {
+        if (historySelectionRequestIdRef.current === selectionRequestId) {
+          setActiveHistorySessionId(null);
+        }
+        console.error("[PlaygroundMain] Failed to load chat session", err);
+        toast.error("Failed to load chat history.");
+      } finally {
+        if (historySelectionRequestIdRef.current === selectionRequestId) {
+          setLoadingHistorySessionId(null);
+        }
+      }
+    },
+    [
+      clearComposerDraft,
+      convexProjectId,
+      ensureDiscardDraftConfirmed,
+      isStreaming,
+      loadHistorySession,
+      restoreHistoryServerSelection,
+    ],
+  );
+
+  const handleNewChat = useCallback(
+    async (options?: { shared?: boolean }) => {
+      if (isStreaming) return;
+      if (!(await ensureDiscardDraftConfirmed())) return;
+      if (hasUnsavedDraftRef.current) {
+        clearComposerDraft();
+      }
+      resumedThreadSendBaselineRef.current = null;
+      cancelPendingHistorySelection();
+      syncResumedVersion(null);
+      resetChat();
+      setPendingDirectVisibility(options?.shared ? "project" : "private");
+    },
+    [
+      cancelPendingHistorySelection,
+      clearComposerDraft,
+      ensureDiscardDraftConfirmed,
+      isStreaming,
+      resetChat,
+      syncResumedVersion,
+    ],
+  );
+
+  const handleArchiveAllComplete = useCallback(
+    (hadActiveHistorySelection: boolean) => {
+      if (!hadActiveHistorySelection) return;
+      if (hasUnsavedDraftRef.current) {
+        clearComposerDraft();
+      }
+      resumedThreadSendBaselineRef.current = null;
+      cancelPendingHistorySelection();
+      syncResumedVersion(null);
+      resetChat();
+      setPendingDirectVisibility("private");
+    },
+    [cancelPendingHistorySelection, clearComposerDraft, resetChat, syncResumedVersion],
+  );
+
+  const handleHistorySessionAction = useCallback(
+    async ({
+      action,
+      session,
+    }: {
+      action:
+        | "rename"
+        | "archive"
+        | "unarchive"
+        | "share"
+        | "unshare"
+        | "pin"
+        | "unpin";
+      session: ChatHistorySession;
+    }) => {
+      if (action === "unshare" && session._id === activeHistorySessionId) {
+        try {
+          const detail = await refreshCurrentHistorySession();
+          if (!detail) {
+            detachHistorySession(
+              "This chat is no longer shared with you. Continuing locally in a new thread.",
+            );
+          }
+        } catch (error) {
+          console.error(
+            "[PlaygroundMain] Failed to refresh unshared chat",
+            error,
+          );
+        }
+      }
+    },
+    [activeHistorySessionId, detachHistorySession, refreshCurrentHistorySession],
+  );
+
+  // Hover prefetch — fires on row pointer-enter. Warms the detail + blob
+  // caches so the click path resolves against an in-flight or completed
+  // promise instead of starting fresh round-trips.
+  const handlePrefetchThread = useCallback(
+    (session: ChatHistorySession) => {
+      prefetchChatHistorySession({
+        sessionId: session._id,
+        chatSessionId: session.chatSessionId,
+        projectId: convexProjectId ?? undefined,
+      });
+    },
+    [convexProjectId],
+  );
+
+  // Publish the chat-history bridge so the docked Playground pane (outside
+  // this subtree) can render `ChatHistoryRail`. Clear on unmount so a stale
+  // pane doesn't see a torn-down session after the Playground unmounts.
+  const setBridge = usePlaygroundChatHistoryBridgeStore((s) => s.setBridge);
+  useEffect(() => {
+    setBridge({
+      activeSessionId: activeHistorySessionId,
+      hostStyle,
+      isAuthenticated: isConvexAuthenticated,
+      // Use the multi-model-aware streaming flag so the rail disables New Chat
+      // / row selection while any broadcast lane is still streaming.
+      isStreaming: isStreamingActive,
+      sharedThreadsEnabled,
+      projectId: convexProjectId,
+      enabled: isSessionBootstrapComplete,
+      refreshSignal: historyRefreshSignal,
+      onSelectThread: handleSelectThread,
+      onPrefetchThread: handlePrefetchThread,
+      onNewChat: handleNewChat,
+      // Without this the rail's "Archive all" path would call resetChat
+      // through onArchiveAllComplete and blow away the user's unsaved draft.
+      beforeResetChatAfterArchiveAll: ensureDiscardDraftConfirmed,
+      onArchiveAllComplete: handleArchiveAllComplete,
+      onSessionAction: handleHistorySessionAction,
+    });
+    return () => setBridge(null);
+  }, [
+    activeHistorySessionId,
+    convexProjectId,
+    ensureDiscardDraftConfirmed,
+    handleArchiveAllComplete,
+    handleHistorySessionAction,
+    handleNewChat,
+    handlePrefetchThread,
+    handleSelectThread,
+    historyRefreshSignal,
+    hostStyle,
+    isConvexAuthenticated,
+    isSessionBootstrapComplete,
+    isStreamingActive,
+    setBridge,
+    sharedThreadsEnabled,
+  ]);
+
+  // Track streaming baseline + resumedVersion drift while a history session is
+  // active. Ports ChatTabV2:1017-1088 so that a turn started on a resumed
+  // thread is reconciled against its baseline version when it ends:
+  //   - mark active session read on stream completion
+  //   - refresh the active session detail (with retry) so the rail picks up
+  //     the new version
+  //   - detach if the server's version doesn't advance past the baseline
+  //     (concurrent edit / fork / deletion)
+  const previousStatusRef = useRef(status);
+  useEffect(() => {
+    const previousStatus = previousStatusRef.current;
+    previousStatusRef.current = status;
+    const wasStreaming =
+      previousStatus === "submitted" || previousStatus === "streaming";
+    const isNowStreaming = status === "submitted" || status === "streaming";
+    const hasStartedStream = !wasStreaming && isNowStreaming;
+
+    if (hasStartedStream) {
+      resumedThreadSendBaselineRef.current =
+        activeHistorySessionId && resumedVersion !== null
+          ? { sessionId: activeHistorySessionId, version: resumedVersion }
+          : null;
+      return;
+    }
+
+    if (!wasStreaming) {
+      return;
+    }
+
+    if (status === "error") {
+      resumedThreadSendBaselineRef.current = null;
+      return;
+    }
+
+    // Still mid-stream (submitted ↔ streaming transition). The stream hasn't
+    // ended, so don't consume the baseline yet — otherwise the version-conflict
+    // check below will read `null` when the stream actually completes.
+    if (isNowStreaming) {
+      return;
+    }
+
+    const resumedThreadSendBaseline = resumedThreadSendBaselineRef.current;
+    resumedThreadSendBaselineRef.current = null;
+    const hasCompletedStream = status === "ready";
+    if (!hasCompletedStream) {
+      return;
+    }
+
+    if (activeHistorySessionId) {
+      void markHistorySessionRead(activeHistorySessionId);
+    }
+
+    // Defer slightly so the server has a chance to flush the version bump
+    // before we ask for the new detail row.
+    const timerId = window.setTimeout(() => {
+      void (async () => {
+        const detail = await refreshHistorySessionAfterStream(
+          resumedThreadSendBaseline,
+        );
+        if (
+          resumedThreadSendBaseline &&
+          (!detail ||
+            detail._id !== resumedThreadSendBaseline.sessionId ||
+            detail.version <= resumedThreadSendBaseline.version)
+        ) {
+          detachHistorySession(
+            "This chat changed elsewhere. This reply stayed local, and your next send will continue in a new thread.",
+          );
+        }
+      })().catch((error) => {
+        console.error(
+          "[PlaygroundMain] Failed to refresh chat history",
+          error,
+        );
+      });
+    }, 250);
+
+    return () => window.clearTimeout(timerId);
+  }, [
+    activeHistorySessionId,
+    detachHistorySession,
+    markHistorySessionRead,
+    refreshHistorySessionAfterStream,
+    resumedVersion,
+    status,
+  ]);
+
+  // Reserved for a follow-up (direct/project visibility toggle when starting
+  // a new chat from a shared row context).
+  void pendingDirectVisibility;
+
+  // Delay the spinner so a hover-prefetched (instant) load doesn't flash an
+  // overlay for one frame. After ~120 ms the load is "slow enough" to warrant
+  // visible feedback.
+  const [showLoadingOverlay, setShowLoadingOverlay] = useState(false);
+  useEffect(() => {
+    if (!loadingHistorySessionId) {
+      setShowLoadingOverlay(false);
+      return;
+    }
+    const timerId = window.setTimeout(() => setShowLoadingOverlay(true), 120);
+    return () => window.clearTimeout(timerId);
+  }, [loadingHistorySessionId]);
+
   useEffect(() => {
     const activeModelIds = new Set(
       resolvedSelectedModels.map((model) => String(model.id))
@@ -823,7 +1587,7 @@ export function PlaygroundMain({
   );
 
   const ensureSelectedServerReadyForChat = useCallback(async () => {
-    if (!serverName || !ensureServersReady) {
+    if (!serverName || serverName === "none" || !ensureServersReady) {
       return true;
     }
 
@@ -1008,10 +1772,20 @@ export function PlaygroundMain({
 
   const mergedToolRenderOverrides = useMemo(
     () => ({
+      // `restoredToolRenderOverrides` carries widget snapshots hydrated by
+      // `loadChatSession` when a history session is opened. Without it the
+      // saved iframes/canvases render as plain attachment cards in the
+      // Thread. Live overrides from this turn (`injected*`) and the parent
+      // (`external*`) win over restored ones for the same toolCallId.
+      ...restoredToolRenderOverrides,
       ...injectedToolRenderOverrides,
       ...externalToolRenderOverrides,
     }),
-    [injectedToolRenderOverrides, externalToolRenderOverrides]
+    [
+      restoredToolRenderOverrides,
+      injectedToolRenderOverrides,
+      externalToolRenderOverrides,
+    ]
   );
 
   // Map UIMessage.id -> promptIndex (0-based ordinal among role: "user"
@@ -1517,72 +2291,64 @@ export function PlaygroundMain({
 
   // Device frame container - display mode is passed to widgets via Thread
   return (
+    <>
     <div
       className={cn(
-        "h-full flex flex-col overflow-hidden",
+        "relative h-full flex flex-col overflow-hidden",
         showPostConnectGuide || isMultiModelLayoutMode
           ? "bg-background"
           : "bg-muted/20"
       )}
     >
-      {/* Device frame header — hidden during onboarding */}
+      {showLoadingOverlay && (
+        <div
+          className="absolute inset-0 z-30 flex items-center justify-center bg-background/70 backdrop-blur-sm"
+          role="status"
+          aria-label="Loading chat"
+        >
+          <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
+        </div>
+      )}
+      {/* Center header strip — hidden during onboarding */}
       {!showPostConnectGuide && (
-        <>
-          <div
-            className={cn(
-              "@container/playground-header relative flex h-11 min-w-0 w-full items-center justify-center border-b border-border px-3 text-xs text-muted-foreground flex-shrink-0",
-              isMultiModelLayoutMode ? "bg-background" : "bg-background/50",
-              effectiveHasMessages && "pr-10 sm:pr-11"
-            )}
-            data-testid="playground-main-header"
-          >
-            <div className="flex min-w-0 flex-1 justify-center overflow-hidden">
-              <HostContextHeader
-                activeProjectId={activeProjectId}
-                onSaveHostContext={onSaveHostContext}
-                protocol={selectedProtocol}
-                showThemeToggle
-              />
-            </div>
-
-            {effectiveHasMessages && (
-              <div className="absolute right-3">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                      onClick={() => setShowClearConfirm(true)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>Clear chat</p>
-                    <p className="text-xs text-muted-foreground">
-                      {navigator.platform.includes("Mac")
-                        ? "⌘⇧K"
-                        : "Ctrl+Shift+K"}
-                    </p>
-                  </TooltipContent>
-                </Tooltip>
-              </div>
-            )}
-          </div>
-
-          {showTraceViewTabs ? (
-            <ChatTraceViewModeHeaderBar
-              mode={activeTraceViewMode}
-              onModeChange={(mode) => {
-                if (mode === "tools") {
-                  return;
-                }
-                setTraceViewMode(mode);
-              }}
-            />
-          ) : null}
-        </>
+        <PlaygroundCenterHeaderBar
+          showTraceTabs={showTraceViewTabs}
+          mode={activeTraceViewMode}
+          onModeChange={(mode) => {
+            if (mode === "tools") return;
+            setTraceViewMode(mode);
+          }}
+          headerView={headerView}
+          onHeaderViewChange={setHeaderView}
+          activeProjectId={activeProjectId}
+          onSaveHostContext={onSaveHostContext}
+          protocol={selectedProtocol}
+          isMultiModelLayoutMode={isMultiModelLayoutMode}
+          trailing={
+            effectiveHasMessages ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                    onClick={() => setShowClearConfirm(true)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Clear chat</p>
+                  <p className="text-xs text-muted-foreground">
+                    {navigator.platform.includes("Mac")
+                      ? "⌘⇧K"
+                      : "Ctrl+Shift+K"}
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+            ) : null
+          }
+        />
       )}
 
       <ConfirmChatResetDialog
@@ -1858,5 +2624,46 @@ export function PlaygroundMain({
         )}
       </div>
     </div>
+    <AlertDialog
+      open={discardDraftDialogOpen}
+      onOpenChange={(open) => {
+        setDiscardDraftDialogOpen(open);
+        if (!open && !discardDraftSettledRef.current) {
+          discardDraftSettledRef.current = true;
+          const resolve = discardDraftResolveRef.current;
+          discardDraftResolveRef.current = null;
+          resolve?.(false);
+        }
+      }}
+    >
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Discard unsaved draft?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Your chat has text that has not been sent. Discard your current
+            draft and continue?
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel
+            onClick={(event) => {
+              event.preventDefault();
+              settleDiscardDraft(false);
+            }}
+          >
+            Cancel
+          </AlertDialogCancel>
+          <AlertDialogAction
+            onClick={(event) => {
+              event.preventDefault();
+              settleDiscardDraft(true);
+            }}
+          >
+            Discard and continue
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   );
 }

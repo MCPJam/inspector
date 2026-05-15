@@ -42,6 +42,8 @@ interface ChatHistoryRailProps {
   enabled?: boolean;
   refreshSignal?: number;
   onSelectThread: (session: ChatHistorySession) => void;
+  /** Fired on row pointer-enter so callers can warm caches for the click path. */
+  onPrefetchThread?: (session: ChatHistorySession) => void;
   onNewChat: (options?: { shared?: boolean }) => void;
   /** If the user has an active thread selected, run before archiving all (e.g. draft-confirm modal). */
   beforeResetChatAfterArchiveAll?: () => boolean | Promise<boolean>;
@@ -205,6 +207,7 @@ export function ChatHistoryRail({
   enabled = true,
   refreshSignal = 0,
   onSelectThread,
+  onPrefetchThread,
   onNewChat,
   beforeResetChatAfterArchiveAll,
   onArchiveAllComplete,
@@ -371,6 +374,7 @@ export function ChatHistoryRail({
                         sharedThreadsEnabled={sharedThreadsEnabled}
                         hostStyle={hostStyle}
                         onSelect={onSelectThread}
+                        onPrefetch={onPrefetchThread}
                         onActionComplete={onSessionAction}
                         canConvertToTestCase={canConvertToTestCase}
                         onConvertToTestCase={setSessionToConvert}
@@ -408,6 +412,7 @@ export function ChatHistoryRail({
                         sharedThreadsEnabled={sharedThreadsEnabled}
                         hostStyle={hostStyle}
                         onSelect={onSelectThread}
+                        onPrefetch={onPrefetchThread}
                         onActionComplete={onSessionAction}
                         canConvertToTestCase={canConvertToTestCase}
                         onConvertToTestCase={setSessionToConvert}

@@ -31,8 +31,9 @@ vi.mock("@/stores/preferences/preferences-provider", () => ({
 
 vi.mock("@/hooks/useUpdateNotification", () => ({
   useUpdateNotification: () => ({
-    updateReady: false,
+    status: { kind: "idle" },
     restartAndInstall: vi.fn(),
+    simulateUpdate: vi.fn(),
   }),
 }));
 
