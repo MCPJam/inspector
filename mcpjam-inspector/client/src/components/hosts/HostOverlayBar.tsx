@@ -24,6 +24,7 @@ interface HostOverlayBarProps {
   previewedHostId: string | null;
   onChangePreviewedHostId: (hostId: string | null) => void;
   onEditHost: (hostId: string) => void;
+  onCanvasReplaceHost?: (hostId: string) => void;
 }
 
 export function HostOverlayBar({
@@ -31,6 +32,7 @@ export function HostOverlayBar({
   previewedHostId,
   onChangePreviewedHostId,
   onEditHost,
+  onCanvasReplaceHost,
 }: HostOverlayBarProps) {
   const posthog = usePostHog();
   const { isAuthenticated } = useConvexAuth();
@@ -118,6 +120,7 @@ export function HostOverlayBar({
       host_count: hosts.length,
     });
     onChangePreviewedHostId(next);
+    onCanvasReplaceHost?.(next);
   };
 
   const handleDeleteCurrentHost = async () => {

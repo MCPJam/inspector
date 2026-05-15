@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Loader2, Save } from "lucide-react";
+import { Loader2, Save } from "lucide-react";
 import { toast } from "sonner";
 import { useConvexAuth } from "convex/react";
 import { ReactFlowProvider } from "@xyflow/react";
@@ -10,27 +10,10 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@mcpjam/design-system/alert-dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@mcpjam/design-system/select";
-import { cn } from "@/lib/utils";
-import { useHost, useHostList, useHostMutations } from "@/hooks/useHosts";
+import { useHost, useHostMutations } from "@/hooks/useHosts";
 import { useProjectServers, useServerMutations } from "@/hooks/useProjects";
 import { AddServerModal } from "@/components/connection/AddServerModal";
+import { ViewModeSelector } from "@/components/shared/view-mode-selector";
 import type { ServerFormData } from "@/shared/types";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import {
@@ -53,14 +36,10 @@ import {
   type HostFocusTabId,
 } from "./types";
 
-/** Matches the default host name seeded in `HostOverlayBar`. */
-const DEFAULT_PROJECT_HOST_NAME = "MCPJam";
-
 interface HostBuilderViewRedesignedProps {
   hostId: string;
   projectId: string;
   onBack: () => void;
-  onSwitchHost?: (hostId: string) => void;
 }
 
 const CLOSED_FOCUS: HostFocusState = {
@@ -73,16 +52,11 @@ export function HostBuilderViewRedesigned({
   hostId,
   projectId,
   onBack,
-  onSwitchHost,
 }: HostBuilderViewRedesignedProps) {
   const { isAuthenticated } = useConvexAuth();
   const { host, isLoading: hostLoading } = useHost({
     isAuthenticated,
     hostId,
-  });
-  const { hosts: projectHosts, isLoading: hostListLoading } = useHostList({
-    isAuthenticated,
-    projectId,
   });
   const { servers } = useProjectServers({ projectId, isAuthenticated });
   const { updateHost } = useHostMutations();
@@ -96,9 +70,6 @@ export function HostBuilderViewRedesigned({
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [showAddServer, setShowAddServer] = useState(false);
   const [focusState, setFocusState] = useState<HostFocusState>(CLOSED_FOCUS);
-  const [hostSwitchDialogOpen, setHostSwitchDialogOpen] = useState(false);
-  const pendingSwitchHostRef = useRef<string | null>(null);
-
   // Diff snapshot — populated for ONE render after a host switch so the
   // canvas can mark changed leaves/fields. Cleared after the flash
   // duration so subsequent in-place edits don't keep re-firing the
@@ -187,17 +158,6 @@ export function HostBuilderViewRedesigned({
     [servers],
   );
 
-  const sortedProjectHosts = useMemo(() => {
-    return [...projectHosts].sort((a, b) => {
-      if (a.name === DEFAULT_PROJECT_HOST_NAME) return -1;
-      if (b.name === DEFAULT_PROJECT_HOST_NAME) return 1;
-      return a.name.localeCompare(b.name);
-    });
-  }, [projectHosts]);
-
-  const showHostSwitcher =
-    Boolean(onSwitchHost) && sortedProjectHosts.length > 1;
-
   const availableServersForCanvas = useMemo(
     () =>
       (servers ?? []).map((s) => ({
@@ -284,28 +244,6 @@ export function HostBuilderViewRedesigned({
     }
   }, [hostId, draftName, draftConfig, host?.config?.id, updateHost]);
 
-  const requestSwitchToHost = useCallback(
-    (nextHostId: string) => {
-      if (!onSwitchHost || nextHostId === hostId) return;
-      if (isDirty) {
-        pendingSwitchHostRef.current = nextHostId;
-        setHostSwitchDialogOpen(true);
-        return;
-      }
-      onSwitchHost(nextHostId);
-    },
-    [hostId, isDirty, onSwitchHost],
-  );
-
-  const confirmPendingSwitchHost = useCallback(() => {
-    const next = pendingSwitchHostRef.current;
-    pendingSwitchHostRef.current = null;
-    setHostSwitchDialogOpen(false);
-    if (next && onSwitchHost) {
-      onSwitchHost(next);
-    }
-  }, [onSwitchHost]);
-
   const handleAddServer = useCallback(
     async (formData: ServerFormData) => {
       try {
@@ -354,51 +292,8 @@ export function HostBuilderViewRedesigned({
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* Chrome */}
-      <div className="shrink-0 border-b border-border/40 px-8 py-2.5">
-        <div className="flex min-w-0 items-center gap-2 sm:gap-3">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-8 shrink-0 text-muted-foreground hover:text-foreground"
-            onClick={onBack}
-            aria-label="Return to hosts"
-          >
-            <ArrowLeft className="size-4" aria-hidden />
-          </Button>
-          {showHostSwitcher ? (
-            <div className="min-w-[10rem] max-w-[14rem] shrink-0">
-              <Select
-                value={hostId}
-                onValueChange={requestSwitchToHost}
-                disabled={hostListLoading || sortedProjectHosts.length === 0}
-              >
-                <SelectTrigger
-                  aria-label="Switch host"
-                  size="sm"
-                  data-testid="host-builder-host-select"
-                  className={cn(
-                    "h-8 w-full justify-between gap-2 border-0 bg-transparent px-2.5 shadow-none",
-                    "text-sm font-medium text-foreground",
-                    "hover:bg-muted/60 data-[state=open]:bg-muted/60",
-                    "focus-visible:border-transparent focus-visible:ring-2 focus-visible:ring-ring/45",
-                    "[&_svg:not([class*='text-'])]:opacity-55",
-                  )}
-                >
-                  <SelectValue
-                    placeholder={hostListLoading ? "Loading..." : "Select host"}
-                  />
-                </SelectTrigger>
-                <SelectContent>
-                  {sortedProjectHosts.map((h) => (
-                    <SelectItem key={h.hostId} value={h.hostId}>
-                      {h.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          ) : null}
+      <div className="relative shrink-0 border-b border-border/40 px-8 py-2.5">
+        <div className="flex min-w-0 items-center justify-end gap-2 sm:gap-3">
           <Button
             size="sm"
             onClick={() => void handleSave()}
@@ -406,8 +301,8 @@ export function HostBuilderViewRedesigned({
             variant={isDirty ? "default" : "ghost"}
             className={
               isDirty
-                ? "ml-auto shrink-0"
-                : "ml-auto shrink-0 text-muted-foreground hover:text-foreground disabled:opacity-40"
+                ? "shrink-0"
+                : "shrink-0 text-muted-foreground hover:text-foreground disabled:opacity-40"
             }
           >
             {isSaving ? (
@@ -415,8 +310,23 @@ export function HostBuilderViewRedesigned({
             ) : (
               <Save className="size-4" />
             )}
-            {isDirty ? "Save snapshot" : "Saved"}
+            {isDirty ? "Save host" : "Saved"}
           </Button>
+        </div>
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <div className="pointer-events-auto">
+            <ViewModeSelector
+              value="host"
+              ariaLabel="Connect view"
+              onChange={(next) => {
+                if (next === "servers") onBack();
+              }}
+              options={[
+                { value: "servers", label: "Servers" },
+                { value: "host", label: "Host" },
+              ]}
+            />
+          </div>
         </div>
       </div>
 
@@ -490,39 +400,6 @@ export function HostBuilderViewRedesigned({
           onSubmit={handleAddServer}
         />
       )}
-
-      <AlertDialog
-        open={hostSwitchDialogOpen}
-        onOpenChange={(open) => {
-          setHostSwitchDialogOpen(open);
-          if (!open) {
-            window.setTimeout(() => {
-              pendingSwitchHostRef.current = null;
-            }, 0);
-          }
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Discard unsaved changes?</AlertDialogTitle>
-            <AlertDialogDescription>
-              You have edits that are not saved. Switching hosts will discard
-              them.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={(event) => {
-                event.preventDefault();
-                confirmPendingSwitchHost();
-              }}
-            >
-              Switch host
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }

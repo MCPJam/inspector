@@ -217,7 +217,12 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     seed: () => {
       const base = emptyHostConfigInputV2({
         hostStyle: "claude",
-        modelId: "claude-sonnet-4-5",
+        // Canonical id (anthropic/<slug>) so the chat-composer model
+        // picker resolves it. Bare "claude-sonnet-4-5" never matched a
+        // SUPPORTED_MODELS entry → silently fell back to default.
+        // Haiku 4.5 is in MCPJAM_GUEST_ALLOWED_MODEL_IDS, so guests
+        // pick it without an Anthropic key.
+        modelId: "anthropic/claude-haiku-4.5",
         temperature: 1.0,
         requireToolApproval: true,
       });
@@ -325,7 +330,12 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     seed: () => {
       const base = emptyHostConfigInputV2({
         hostStyle: "chatgpt",
-        modelId: "gpt-5",
+        // Canonical id (openai/<slug>) so the chat-composer model picker
+        // resolves it. Bare "gpt-5" never matched a SUPPORTED_MODELS
+        // entry → silently fell back. `gpt-5-nano` is the smallest free
+        // GPT-5 variant in MCPJAM_GUEST_ALLOWED_MODEL_IDS — guests get
+        // it without an OpenAI key. Bigger GPT-5s (5.4/5.5) are gated.
+        modelId: "openai/gpt-5-nano",
         temperature: 0.7,
         requireToolApproval: false,
       });
@@ -422,9 +432,13 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     seed: () => {
       const base = emptyHostConfigInputV2({
         hostStyle: "cursor",
-        // Anthropic-flavored default to match Cursor's typical chat
-        // configuration; users can swap in any model after seeding.
-        modelId: "claude-sonnet-4-5",
+        // Canonical id (anthropic/<slug>) so the chat-composer model
+        // picker resolves it. Bare "claude-sonnet-4-5" never matched a
+        // SUPPORTED_MODELS entry → silently fell back. Sonnet 4.5 is in
+        // MCPJAM_GUEST_ALLOWED_MODEL_IDS (4.6 is gated); guests get it
+        // without an Anthropic key. Anthropic-flavored default matches
+        // Cursor's typical chat config — users can swap any model after.
+        modelId: "anthropic/claude-sonnet-4.5",
         temperature: 0.7,
         requireToolApproval: false,
       });

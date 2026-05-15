@@ -59,10 +59,6 @@ export function HostFocusPanel({
         className={cn(hostFocusShellHeaderRowClass, "py-2")}
         hostDisplayName={hostDisplayName}
         onHostDisplayNameChange={onHostDisplayNameChange}
-        hostStyle={draft.hostStyle}
-        onHostStyleChange={(next) =>
-          onDraftChange((prev) => ({ ...prev, hostStyle: next }))
-        }
         hasNameIssue={generalIssues.has("hostDisplayName")}
       />
       <header

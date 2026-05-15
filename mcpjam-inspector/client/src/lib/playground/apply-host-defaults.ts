@@ -7,6 +7,11 @@ import {
   seedFromHostTemplate,
   type HostTemplateId,
 } from "@/lib/host-templates";
+import { saveSelectedModelId } from "@/lib/selected-model-storage";
+import {
+  getCanonicalModelId,
+  isMCPJamProvidedModel,
+} from "@/shared/types";
 import { useHostContextStore } from "@/stores/host-context-store";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 
@@ -17,8 +22,55 @@ import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
  */
 type HostConfigForPlayground = Pick<
   HostConfigInputV2,
-  "hostStyle" | "hostContext" | "mcpProfile" | "hostCapabilitiesOverride"
+  "hostStyle" | "modelId" | "hostContext" | "mcpProfile" | "hostCapabilitiesOverride"
 >;
+
+/**
+ * Resolve the model id to feed into the chat-composer picker.
+ *
+ * The picker silently falls back to its global default when the
+ * configured id isn't selectable. That hides stale persisted ids — a
+ * host saved before the templates were canonicalized may carry an id
+ * like `"gpt-5"` (bare, no provider prefix). That bare form does match
+ * a `SUPPORTED_MODELS` entry but is BYOK-only and almost always
+ * disabled in practice, so the picker silently falls through.
+ *
+ * The check uses `isMCPJamProvidedModel` (the canonical provider-
+ * prefixed list, e.g. `openai/gpt-5-nano`) — accept the configured id
+ * only when it's in that guest-friendly set. Otherwise fall back to
+ * the host style's template default (which is canonical + guest-
+ * allowed by construction). Returns `undefined` when nothing usable
+ * resolves — leaves the user's last picked model alone.
+ *
+ * Trade-off: BYOK users who had set a bare-id model on a custom host
+ * (e.g. `"gpt-4o"`) get snapped to the template default on host change
+ * instead of preserving their pick. They can re-pick from the model
+ * dropdown afterward — accepted because the named-host picker case is
+ * the primary failure mode and BYOK is rarer.
+ */
+function resolvePlaygroundModelId(
+  desiredModelId: string | undefined,
+  hostStyle: string,
+): string | undefined {
+  const trimmed = desiredModelId?.trim();
+  if (trimmed) {
+    const canonical = getCanonicalModelId(trimmed);
+    if (isMCPJamProvidedModel(canonical)) return canonical;
+  }
+  // Stale or empty id: try the host style's template default. For BYO
+  // host ids with no template entry, `seedFromHostTemplate` falls
+  // through to MCPJam, whose `modelId` is empty — that returns
+  // `undefined` here, which the caller treats as "leave the picker
+  // alone."
+  const fallback = seedFromHostTemplate(
+    hostStyle as HostTemplateId,
+  ).modelId?.trim();
+  if (!fallback) return undefined;
+  const canonicalFallback = getCanonicalModelId(fallback);
+  return isMCPJamProvidedModel(canonicalFallback)
+    ? canonicalFallback
+    : undefined;
+}
 
 /**
  * Setters the helper needs to write into the context-scoped preferences
@@ -72,30 +124,26 @@ export function applyHostConfigToPlayground(
   // active host before the chip stores are repainted.
   setters.setHostStyle(config.hostStyle);
 
+  // Lead model: persist + notify any subscribed `usePersistedModel`
+  // instance so the chat-composer model picker re-reads. Resolver maps
+  // stale persisted ids onto the host's template default before saving;
+  // returns undefined when nothing usable resolves (e.g. MCPJam host),
+  // and we leave the picker alone in that case.
+  const modelId = resolvePlaygroundModelId(config.modelId, config.hostStyle);
+  if (modelId) {
+    saveSelectedModelId(modelId);
+  }
+
   useHostContextStore.getState().applyHostTemplate(config.hostContext ?? {});
 
-  const dims = config.hostContext?.containerDimensions as
-    | {
-        width?: number;
-        maxWidth?: number;
-        height?: number;
-        maxHeight?: number;
-      }
-    | undefined;
-  if (
-    dims &&
-    (dims.width != null ||
-      dims.maxWidth != null ||
-      dims.height != null ||
-      dims.maxHeight != null)
-  ) {
-    useUIPlaygroundStore.getState().setCustomViewport({
-      width: dims.width ?? dims.maxWidth ?? 1280,
-      height: dims.height ?? dims.maxHeight ?? 800,
-    });
-  } else {
-    useUIPlaygroundStore.getState().setDeviceType("desktop");
-  }
+  // Per SEP-1865, `hostContext.containerDimensions` is policy for the View
+  // iframe (the MCP App widget), NOT the host's chat panel. It's already
+  // delivered to Views via `ui/initialize.hostContext` (see
+  // `applyHostTemplate` above). Don't project it onto the playground's
+  // device-frame viewport — that shrunk the entire chat to e.g. 720px when
+  // picking Claude. Keep the playground full-width; the View iframe sizes
+  // itself from the hostContext.
+  useUIPlaygroundStore.getState().setDeviceType("desktop");
 
   // Templates / configs encode their CSP intent under
   // `mcpProfile.apps.sandbox.csp.mode`; the only branded value today is

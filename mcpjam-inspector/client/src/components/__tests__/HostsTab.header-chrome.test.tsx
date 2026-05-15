@@ -10,10 +10,6 @@ vi.mock("@/components/hosts/HostBuilderView", () => ({
   HostBuilderView: () => <div data-testid="mock-host-builder" />,
 }));
 
-vi.mock("@/components/hosts/HostOverlayBar", () => ({
-  HostOverlayBar: () => <div data-testid="host-overlay-bar-stub" />,
-}));
-
 describe("HostsTab", () => {
   it("matches the redesigned host builder top chrome spacing and divider", () => {
     render(

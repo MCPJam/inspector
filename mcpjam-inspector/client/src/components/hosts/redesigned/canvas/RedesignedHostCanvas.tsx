@@ -230,9 +230,10 @@ AgentIdentityRenderer.displayName = "AgentIdentityRenderer";
 
 /* ============================================================
    Section hub — small puck for Protocol + Apps. Icon differs
-   per section; subtitle changes per host (e.g. "SDK defaults · 11
-   ctx fields" vs "pinned 2026-01-26 · 5 ctx fields"). The
-   subtitle change is the at-a-glance cue for section drift.
+   per section; subtitle changes per host (e.g. protocol "SDK
+   defaults" vs "pinned 2026-01-26"; apps "sandbox: declared · 11
+   ctx fields"). The subtitle change is the at-a-glance cue for
+   section drift.
    ============================================================ */
 const SectionHubRenderer = memo(
   (props: NodeProps<Node<SectionHubNodeData, "redesignSectionHub">>) => {

@@ -75,8 +75,9 @@ const APPS_CAP_ORDER: ReadonlyArray<{ key: AppsCapLeafKey; label: string }> = [
 
 /* ============================================================
    Protocol leaf descriptors — one per slice that's overridden
-   away from SDK defaults. hostContext + request timeout are
-   always emitted so they stay comparable across hosts.
+   away from SDK defaults. Request timeout is always emitted so
+   it stays comparable across hosts. hostContext belongs to the
+   Apps Extension (SEP-1865) and is rendered under the apps hub.
    ============================================================ */
 interface ProtocolLeafDescriptor {
   key: ProtocolLeafKey;
@@ -159,7 +160,6 @@ function buildProtocolLeaves(
     describeClientInfo(draft),
     describeProtocolVersion(draft),
     describeBaseCapabilities(draft),
-    describeHostContext(draft),
     describeTimeout(draft),
     describeHeaders(draft),
   ];
@@ -215,15 +215,15 @@ function agentChangedFields(
 
 function protocolSubtitle(draft: HostConfigInputV2): string {
   const versions = resolveSupportedProtocolVersions(draft.mcpProfile);
-  const ctxCount = Object.keys(draft.hostContext ?? {}).length;
-  const versionTag =
-    versions && versions.length > 0 ? `pinned ${versions[0]}` : "SDK defaults";
-  return `${versionTag} · ${ctxCount} ctx ${ctxCount === 1 ? "field" : "fields"}`;
+  return versions && versions.length > 0
+    ? `pinned ${versions[0]}`
+    : "SDK defaults";
 }
 
 function appsSubtitle(draft: HostConfigInputV2): string {
   const mode = draft.mcpProfile?.apps?.sandbox?.csp?.mode ?? "host-default";
-  return `sandbox: ${mode}`;
+  const ctxCount = Object.keys(draft.hostContext ?? {}).length;
+  return `sandbox: ${mode} · ${ctxCount} ctx ${ctxCount === 1 ? "field" : "fields"}`;
 }
 
 /* ============================================================
@@ -247,12 +247,16 @@ export function buildRedesignedHostCanvas(
 
   const protocolLeaves = buildProtocolLeaves(draft);
   const appsCapLeaves = buildAppsCapLeaves(draft);
+  const hostContextLeaf = describeHostContext(draft);
 
   // Section heights track leaf-row counts; the group then sizes to
   // fit. This is the geometric signal that makes a Cursor host look
   // smaller than a Claude host without the user reading a single value.
+  // The apps grid leads with the hostContext value leaf, then the cap
+  // leaves — so add 1 to the count.
   const protocolRows = Math.max(1, Math.ceil(protocolLeaves.length / LEAF_COLS));
-  const appsRows = Math.max(1, Math.ceil(appsCapLeaves.length / LEAF_COLS));
+  const appsLeafCount = 1 + appsCapLeaves.length;
+  const appsRows = Math.max(1, Math.ceil(appsLeafCount / LEAF_COLS));
   const protocolSectionH = Math.max(HUB_H, protocolRows * LEAF_ROW_H);
   const appsSectionH = Math.max(HUB_H, appsRows * LEAF_ROW_H);
   const rightColH = protocolSectionH + SECTION_INNER_GAP + appsSectionH;
@@ -411,7 +415,47 @@ export function buildRedesignedHostCanvas(
     for (const l of buildAppsCapLeaves(prevDraft)) prevAppsByKey[l.key] = l;
   }
   const appsGridTop = appsHubY + HUB_H / 2 - (appsRows * LEAF_ROW_H) / 2;
-  appsCapLeaves.forEach((leaf, i) => {
+
+  // 4a) hostContext value leaf — leads the apps grid. Same renderer as
+  // a protocol leaf (label + value), but parented under the apps hub
+  // because hostContext is part of the Apps Extension (SEP-1865).
+  {
+    const leafX = hubX + HUB_W + HUB_TO_LEAF_GAP;
+    const leafY = appsGridTop + (LEAF_ROW_H - LEAF_H) / 2;
+    const prevLeaf = prevDraft ? describeHostContext(prevDraft) : undefined;
+    nodes.push({
+      id: protocolLeafNodeId(hostContextLeaf.key),
+      type: "redesignProtocolLeaf",
+      parentId: HOST_GROUP_NODE_ID,
+      extent: "parent",
+      position: { x: leafX, y: leafY },
+      style: { width: LEAF_W, height: LEAF_H },
+      data: {
+        kind: "protocol-leaf",
+        leafKey: hostContextLeaf.key,
+        label: hostContextLeaf.label,
+        value: hostContextLeaf.value,
+        isChanged:
+          prevLeaf !== undefined && prevLeaf.value !== hostContextLeaf.value,
+        hasAttention: appsAttention.has(hostContextLeaf.key),
+      },
+      draggable: false,
+    });
+    edges.push({
+      id: `apps-hub-to-${hostContextLeaf.key}`,
+      source: APPS_HUB_NODE_ID,
+      target: protocolLeafNodeId(hostContextLeaf.key),
+      type: "default",
+      style: {
+        stroke: "oklch(0.68 0.11 40 / 0.45)",
+        strokeWidth: 1,
+      },
+    });
+  }
+
+  appsCapLeaves.forEach((leaf, idx) => {
+    // hostContext occupies slot 0; cap leaves start at slot 1.
+    const i = idx + 1;
     const col = i % LEAF_COLS;
     const row = Math.floor(i / LEAF_COLS);
     const leafX = hubX + HUB_W + HUB_TO_LEAF_GAP + col * (LEAF_W + LEAF_GAP_X);
@@ -455,9 +499,11 @@ export function buildRedesignedHostCanvas(
   });
 
   // 5) Servers hub — sibling of the host group, below it.
+  // Every project server is implicitly attached to every host in the
+  // project. The hub count reflects the project's server count, not
+  // host.config.serverIds (which is now a "required" classification list).
   const serversHubY = groupH + SERVERS_HUB_GAP;
-  const totalServers =
-    draft.serverIds.length + draft.optionalServerIds.length;
+  const totalServers = context.projectServers.length;
   const serversHubW = Math.max(
     SERVERS_HUB_W_BASE,
     180 + totalServers * SERVERS_HUB_W_PER_SERVER,
@@ -483,21 +529,17 @@ export function buildRedesignedHostCanvas(
     style: { stroke: "oklch(0.68 0.11 40 / 0.55)", strokeWidth: 1.5 },
   });
 
-  // 6) Server cards. Required first, optional appended; insecure
-  //    `http://` gets an amber stroke; optional gets dashed.
-  const seen = new Set<string>();
+  // 6) Server cards. Render every project server (all are implicitly
+  //    attached). Required (in draft.serverIds) come first with solid
+  //    edges; the rest follow as optional with dashed edges. Insecure
+  //    `http://` gets an amber stroke regardless.
+  const requiredSet = new Set(draft.serverIds);
   const orderedServerIds: string[] = [];
-  for (const id of draft.serverIds) {
-    if (!seen.has(id)) {
-      seen.add(id);
-      orderedServerIds.push(id);
-    }
+  for (const server of context.projectServers) {
+    if (requiredSet.has(server.id)) orderedServerIds.push(server.id);
   }
-  for (const id of draft.optionalServerIds) {
-    if (!seen.has(id)) {
-      seen.add(id);
-      orderedServerIds.push(id);
-    }
+  for (const server of context.projectServers) {
+    if (!requiredSet.has(server.id)) orderedServerIds.push(server.id);
   }
 
   const totalCardsW =
@@ -512,7 +554,7 @@ export function buildRedesignedHostCanvas(
     const server = context.projectServers.find((s) => s.id === serverId);
     const url = server?.url ?? null;
     const insecure = !!url && url.startsWith("http://");
-    const isOptional = draft.optionalServerIds.includes(serverId);
+    const isOptional = !requiredSet.has(serverId);
     const override = draft.serverConnectionOverrides?.[serverId];
     const hasOverride =
       !!override &&

@@ -19,8 +19,6 @@ import {
 import type { ImperativePanelHandle } from "react-resizable-panels";
 import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
 import { LoggerView } from "@/components/logger-view";
-import { PlaygroundHeader } from "./PlaygroundHeader";
-import { PlaygroundHeaderSlotContent } from "./playground-header-slot";
 import { PlaygroundCenter } from "./PlaygroundCenter";
 import { PlaygroundPreviewedHostSync } from "./PlaygroundPreviewedHostSync";
 import { PlaygroundLeftRail } from "./PlaygroundLeftRail";
@@ -132,13 +130,8 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                 data-host-style={hostStyle}
                 style={shellStyle}
               >
-                <PlaygroundHeaderSlotContent>
-                  <PlaygroundHeader
-                    projectId={props.activeProjectId ?? undefined}
-                  />
-                </PlaygroundHeaderSlotContent>
                 {/* Watches the project's previewed-host id (the named-host
-                    dropdown in PlaygroundHeader) and re-snapshots its
+                    dropdown in the global header) and re-snapshots its
                     persisted config into the chip stores when it changes.
                     Renders nothing. */}
                 <PlaygroundPreviewedHostSync

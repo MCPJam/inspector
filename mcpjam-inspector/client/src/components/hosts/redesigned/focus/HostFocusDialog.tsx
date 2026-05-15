@@ -227,7 +227,7 @@ export function HostFocusDialog({
               ) : (
                 <Save className="size-3" />
               )}
-              Save snapshot
+              Save host
             </Button>
             <kbd className="ml-1 hidden rounded border border-border bg-muted px-1 py-0.5 font-mono text-[9.5px] text-muted-foreground sm:inline">
               esc
@@ -241,10 +241,6 @@ export function HostFocusDialog({
             )}
             hostDisplayName={hostDisplayName}
             onHostDisplayNameChange={onHostDisplayNameChange}
-            hostStyle={draft.hostStyle}
-            onHostStyleChange={(next) =>
-              onDraftChange((prev) => ({ ...prev, hostStyle: next }))
-            }
             hasNameIssue={generalIssues.has("hostDisplayName")}
           />
 

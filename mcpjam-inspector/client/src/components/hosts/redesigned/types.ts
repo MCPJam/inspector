@@ -66,9 +66,9 @@ export interface AgentIdentityNodeData extends Record<string, unknown> {
  * Small puck node that anchors a section's fan-out (Protocol or Apps).
  * `kind` distinguishes the two so a single renderer can paint both with
  * the right icon/accent. `subtitle` is a one-line summary visible on the
- * hub itself; it changes per host (e.g., "SDK defaults · 11 ctx fields"
- * vs "pinned 2026-01-26 · 5 ctx fields"), which is the at-a-glance cue
- * for what the section overrides.
+ * hub itself; it changes per host (e.g., protocol "SDK defaults" vs
+ * "pinned 2026-01-26"; apps "sandbox: declared · 11 ctx fields"), which
+ * is the at-a-glance cue for what the section overrides.
  */
 export interface SectionHubNodeData extends Record<string, unknown> {
   kind: "section-hub";
@@ -237,6 +237,11 @@ export function focusTabForNodeId(
   }
   if (nodeId === AGENT_IDENTITY_NODE_ID) {
     return { tab: "behavior", selectedServerId: null };
+  }
+  // hostContext is a protocol-leaf-shaped node but lives under the
+  // apps hub, so route it to the apps tab.
+  if (nodeId === protocolLeafNodeId("hostContext")) {
+    return { tab: "apps", selectedServerId: null };
   }
   if (
     nodeId === PROTOCOL_HUB_NODE_ID ||

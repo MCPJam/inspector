@@ -1,7 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { HostBuilderView } from "./hosts/HostBuilderView";
-import { HostOverlayBar } from "./hosts/HostOverlayBar";
 import { HostsConnectAddServerSlotContext } from "./hosts/HostsConnectAddServerSlotContext";
 import { ViewModeSelector } from "./shared/view-mode-selector";
 import { usePreviewedHostId } from "@/hooks/use-previewed-host-id";
@@ -32,7 +31,7 @@ export function HostsTab({
   onSelectHost,
   serversTabElement,
 }: HostsTabProps) {
-  const [previewedHostId, setPreviewedHostId] = usePreviewedHostId(projectId);
+  const [previewedHostId] = usePreviewedHostId(projectId);
   const [addServerSlotEl, setAddServerSlotEl] = useState<HTMLDivElement | null>(
     null,
   );
@@ -63,7 +62,6 @@ export function HostsTab({
               hostId={selectedHostId}
               projectId={projectId}
               onBack={() => onSelectHost(null)}
-              onSwitchHost={(nextId) => onSelectHost(nextId)}
             />
           </motion.div>
         ) : (
@@ -80,13 +78,7 @@ export function HostsTab({
                 className="relative shrink-0 border-b border-border/40 px-8 py-2.5"
                 data-testid="hosts-tab-header-chrome"
               >
-                <div className="flex min-w-0 items-center justify-between gap-3">
-                  <HostOverlayBar
-                    projectId={projectId}
-                    previewedHostId={previewedHostId}
-                    onChangePreviewedHostId={setPreviewedHostId}
-                    onEditHost={(hostId) => onSelectHost(hostId)}
-                  />
+                <div className="flex min-w-0 items-center justify-end gap-3">
                   <div
                     ref={setAddServerSlotEl}
                     className="flex shrink-0 items-center gap-2"

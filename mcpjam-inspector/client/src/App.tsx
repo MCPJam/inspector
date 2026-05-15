@@ -36,7 +36,6 @@ import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
 import { ErrorBoundary } from "./components/ui/error-boundary";
 import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
 import { PlaygroundTab } from "./components/playground/PlaygroundTab";
-import { PlaygroundHeaderSlotProvider } from "./components/playground/playground-header-slot";
 import { EmptyState } from "./components/ui/empty-state";
 import { EXCALIDRAW_SERVER_NAME } from "./lib/excalidraw-quick-connect";
 import { isFirstRunEligible } from "./lib/onboarding-state";
@@ -2080,8 +2079,25 @@ export default function App() {
         }
       : undefined;
 
+  const globalHostBarProps =
+    hostsHubFlagEnabled && isAuthenticated && convexProjectId
+      ? {
+          projectId: convexProjectId,
+          onEditHost: (hostId: string) => {
+            setHostsTabSelectedHostId(hostId);
+            handleNavigate("hosts");
+          },
+          // Only present while the host canvas is open — re-targets it on
+          // dropdown change so the diagram tracks the selected host instead
+          // of stuck on whatever was first opened via Edit.
+          onCanvasReplaceHost:
+            activeTab === "hosts" && hostsTabSelectedHostId
+              ? (hostId: string) => setHostsTabSelectedHostId(hostId)
+              : undefined,
+        }
+      : undefined;
+
   const appContent = (
-    <PlaygroundHeaderSlotProvider>
     <SidebarProvider defaultOpen={true}>
       <AppChromeSidebar
         hidden={appBuilderOnboarding}
@@ -2108,6 +2124,7 @@ export default function App() {
         <AppChromeHeader
           hidden={appBuilderOnboarding}
           activeServerSelectorProps={activeServerSelectorProps}
+          globalHostBarProps={globalHostBarProps}
         />
         <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {showTrialDecisionNotice ? (
@@ -2604,7 +2621,6 @@ export default function App() {
         </DialogContent>
       </Dialog>
     </SidebarProvider>
-    </PlaygroundHeaderSlotProvider>
   );
 
   return (
