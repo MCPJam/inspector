@@ -48,6 +48,7 @@ import {
   captureCurrentReturnPath,
   navigateApp,
   normalizeReturnTargetPath,
+  routePaths,
 } from "@/lib/app-navigation";
 import { useProjectClientConfigSyncPending } from "./use-project-client-config-sync-pending";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
@@ -396,7 +397,9 @@ function restorePathAfterOAuthCallback(
   savedTarget: string
 ): string {
   const basePath =
-    currentPathname === "/oauth/callback" ? "/" : currentPathname;
+    currentPathname === "/oauth/callback"
+      ? routePaths.servers
+      : currentPathname;
   return savedTarget
     ? normalizeReturnTargetPath(savedTarget, basePath)
     : basePath;
@@ -662,9 +665,11 @@ export function useServerState({
         serverName: params.serverName,
         serverUrl: params.serverUrl,
         accessScope: "project_member",
-        returnHash: returnPath,
+        returnPath,
       });
-      localStorage.setItem("mcp-oauth-return-hash", returnPath);
+      if (returnPath) {
+        localStorage.setItem("mcp-oauth-return-hash", returnPath);
+      }
       return true;
     },
     [effectiveActiveProjectId, effectiveProjects, isAuthenticated]

@@ -224,6 +224,8 @@ export function pathnameToActiveTab(pathname: string): string {
   if (isSpecialEntryPathname(pathname)) return "servers";
   const firstSegment = pathname.replace(/^\/+/, "").split("/")[0] || "servers";
   const normalized = normalizeHostedHashTab(firstSegment);
+  // Unknown first segments include chatbox slugs; App handles those surfaces
+  // before route rendering, so the shell falls back to the safe servers body.
   return KNOWN_APP_TAB_SEGMENTS.has(normalized) ? normalized : "servers";
 }
 
@@ -264,7 +266,10 @@ function decodePathSegment(segment: string): string {
   }
 }
 
-export function navigationTargetToPath(rawTarget: string): string {
+export function navigationTargetToPath(
+  rawTarget: string,
+  fallback: string = routePaths.servers,
+): string {
   const stripped = rawTarget.replace(/^#/, "").replace(/^\/+/, "");
   const questionIndex = stripped.indexOf("?");
   const pathPart =
@@ -272,7 +277,7 @@ export function navigationTargetToPath(rawTarget: string): string {
   const queryPart = questionIndex === -1 ? "" : stripped.slice(questionIndex);
   const segments = pathPart.split("/").filter(Boolean);
   const normalizedTab = normalizeHostedHashTab(segments[0] || "servers");
-  if (!KNOWN_APP_TAB_SEGMENTS.has(normalizedTab)) return routePaths.servers;
+  if (!KNOWN_APP_TAB_SEGMENTS.has(normalizedTab)) return fallback;
   return `/${[normalizedTab, ...segments.slice(1)].join("/")}${queryPart}`;
 }
 
@@ -304,14 +309,14 @@ export function normalizeReturnTargetPath(
 ): string {
   const trimmed = target?.trim() ?? "";
   if (!trimmed) return fallback;
-  return navigationTargetToPath(trimmed);
+  return navigationTargetToPath(trimmed, fallback);
 }
 
-export function captureCurrentReturnPath(): string {
-  if (typeof window === "undefined") return routePaths.servers;
+export function captureCurrentReturnPath(): string | null {
+  if (typeof window === "undefined") return null;
   const pathname = window.location.pathname || routePaths.root;
   const search = window.location.search || "";
-  if (pathname === routePaths.root || pathname === "") return routePaths.servers;
+  if (pathname === routePaths.root || pathname === "") return null;
   return `${pathname}${search}`;
 }
 

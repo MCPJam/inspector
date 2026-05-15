@@ -438,7 +438,7 @@ export function useHostedOAuthGate({
           : undefined,
         chatboxId,
         accessVersion: Number.isFinite(accessVersion) ? accessVersion : null,
-        returnHash: returnPath,
+        returnPath,
       });
       localStorage.setItem(pendingKey, "true");
       localStorage.setItem("mcp-oauth-return-hash", returnPath);

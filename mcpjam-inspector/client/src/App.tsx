@@ -2100,7 +2100,7 @@ export default function App() {
     if (
       isFirstRunEligible(
         hasAnyFirstRunBlockingProjectServers,
-        `#${activeTab}`,
+        activeTab,
         !!workOsUser,
         remoteFirstRunOnboardingShown
       )

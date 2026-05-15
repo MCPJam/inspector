@@ -1,6 +1,7 @@
 import { Button } from "@mcpjam/design-system/button";
+import { Link } from "react-router";
 import { cn } from "@/lib/utils";
-import { routePaths, useAppNavigate } from "@/lib/app-navigation";
+import { routePaths } from "@/lib/app-navigation";
 
 interface MCPJamFreeModelsPromptProps {
   onSignUp: () => void;
@@ -11,7 +12,6 @@ export function MCPJamFreeModelsPrompt({
   onSignUp,
   className,
 }: MCPJamFreeModelsPromptProps) {
-  const navigate = useAppNavigate();
   return (
     <div
       className={cn(
@@ -73,13 +73,12 @@ export function MCPJamFreeModelsPrompt({
         </Button>
         <p className="text-xs text-muted-foreground">
           or bring your own API key in{" "}
-          <button
-            type="button"
-            onClick={() => navigate(routePaths.settings)}
+          <Link
+            to={routePaths.settings}
             className="underline hover:text-foreground transition-colors"
           >
             settings
-          </button>
+          </Link>
         </p>
       </div>
     </div>

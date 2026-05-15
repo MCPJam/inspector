@@ -537,7 +537,7 @@ describe("App hosted OAuth callback handling", () => {
       accessVersion: 1,
       serverName: "asana",
       serverUrl: "https://mcp.asana.com/sse",
-      returnHash: "#asaan",
+      returnPath: "#asaan",
     });
     localStorage.setItem("mcp-oauth-pending", "asana");
     localStorage.setItem("mcp-serverUrl-asana", "https://mcp.asana.com/sse");
@@ -644,7 +644,7 @@ describe("App hosted OAuth callback handling", () => {
       accessVersion: 1,
       serverName: "asana",
       serverUrl: "https://mcp.asana.com/sse",
-      returnHash: "#asaan",
+      returnPath: "#asaan",
     });
     localStorage.setItem("mcp-oauth-pending", "asana");
     localStorage.setItem("mcp-serverUrl-asana", "https://mcp.asana.com/sse");
@@ -724,7 +724,7 @@ describe("App hosted OAuth callback handling", () => {
       serverName: "asana",
       serverUrl: "https://mcp.asana.com/sse",
       accessScope: "project_member",
-      returnHash: "#servers",
+      returnPath: "#servers",
     });
     localStorage.setItem("mcp-oauth-pending", "asana");
     localStorage.setItem("mcp-serverUrl-asana", "https://mcp.asana.com/sse");
@@ -799,7 +799,7 @@ describe("App hosted OAuth callback handling", () => {
         serverName: "asana",
         serverUrl: "https://mcp.asana.com/sse",
         accessScope: "project_member",
-        returnHash: "#servers",
+        returnPath: "#servers",
       });
       writeHostedOAuthResumeMarker({
         surface: "project",
@@ -2289,7 +2289,7 @@ describe("App hosted OAuth callback handling", () => {
       accessVersion: 1,
       serverName: "asana",
       serverUrl: "https://mcp.asana.com/sse",
-      returnHash: "#chatboxes",
+      returnPath: "#chatboxes",
     });
     mockCompleteHostedOAuthCallback.mockResolvedValue({
       success: true,

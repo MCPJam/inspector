@@ -21,7 +21,7 @@ export interface HostedOAuthPendingMarker {
   accessScope?: "project_member" | "chat_v2";
   chatboxId?: string | null;
   accessVersion?: number | null;
-  returnHash: string | null;
+  returnPath: string | null;
   startedAt: number;
 }
 
@@ -101,8 +101,8 @@ export function writeHostedOAuthPendingMarker(
         accessScope: marker.accessScope ?? null,
         chatboxId: marker.chatboxId ?? null,
         accessVersion: marker.accessVersion ?? null,
-        returnHash: normalizeHostedOAuthReturnPath(
-          marker.returnHash,
+        returnPath: normalizeHostedOAuthReturnPath(
+          marker.returnPath,
           marker.surface,
         ),
         startedAt: Date.now(),
@@ -118,7 +118,9 @@ export function readHostedOAuthPendingMarker(): HostedOAuthPendingMarker | null 
     const raw = localStorage.getItem(HOSTED_OAUTH_PENDING_STORAGE_KEY);
     if (!raw) return null;
 
-    const parsed = JSON.parse(raw) as Partial<HostedOAuthPendingMarker> | null;
+    const parsed = JSON.parse(raw) as
+      | (Partial<HostedOAuthPendingMarker> & { returnHash?: unknown })
+      | null;
     if (
       !parsed ||
       typeof parsed !== "object" ||
@@ -159,8 +161,12 @@ export function readHostedOAuthPendingMarker(): HostedOAuthPendingMarker | null 
         Number.isFinite(parsed.accessVersion)
           ? parsed.accessVersion
           : null,
-      returnHash: normalizeHostedOAuthReturnPath(
-        parsed.returnHash,
+      returnPath: normalizeHostedOAuthReturnPath(
+        typeof parsed.returnPath === "string"
+          ? parsed.returnPath
+          : typeof parsed.returnHash === "string"
+            ? parsed.returnHash
+            : null,
         parsed.surface,
       ),
       startedAt: parsed.startedAt,
@@ -239,6 +245,10 @@ export function getHostedOAuthCallbackContext(): HostedOAuthCallbackContext | nu
     return null;
   }
 
+  // Storage key name is retained for in-flight migration compatibility; new
+  // values are normalized path targets, not hash routes.
+  const storedReturnTarget = localStorage.getItem("mcp-oauth-return-hash");
+
   return {
     surface,
     organizationId: null,
@@ -250,20 +260,17 @@ export function getHostedOAuthCallbackContext(): HostedOAuthCallbackContext | nu
     accessScope: undefined,
     chatboxId: null,
     accessVersion: null,
-    returnHash: normalizeHostedOAuthReturnPath(
-      localStorage.getItem("mcp-oauth-return-hash"),
-      surface,
-    ),
+    returnPath: normalizeHostedOAuthReturnPath(storedReturnTarget, surface),
     startedAt: Date.now(),
   };
 }
 
 export function resolveHostedOAuthReturnPath(
-  context: Pick<HostedOAuthCallbackContext, "surface" | "returnHash">
+  context: Pick<HostedOAuthCallbackContext, "surface" | "returnPath">
 ): string {
-  if (context.returnHash) {
+  if (context.returnPath) {
     return (
-      normalizeHostedOAuthReturnPath(context.returnHash, context.surface) ??
+      normalizeHostedOAuthReturnPath(context.returnPath, context.surface) ??
       routePaths.servers
     );
   }

@@ -102,5 +102,14 @@ describe("path navigation compatibility helpers", () => {
     expect(normalizeReturnTargetPath("#/evals")).toBe("/evals");
     expect(normalizeReturnTargetPath("/tools")).toBe("/tools");
     expect(normalizeReturnTargetPath("#unknown")).toBe("/servers");
+    expect(normalizeReturnTargetPath("#unknown", "/callback")).toBe(
+      "/callback",
+    );
+  });
+
+  it("does not persist a synthetic return target for root", () => {
+    window.history.replaceState({}, "", "/");
+
+    expect(captureCurrentReturnPath()).toBeNull();
   });
 });

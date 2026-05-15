@@ -84,15 +84,15 @@ export function clearOnboardingState(): void {
  */
 export function isFirstRunEligible(
   hasAnyBlockingServers: boolean,
-  currentHash: string,
+  currentRouteTab: string,
   isSignedInWithWorkOs = false,
   hasSeenRemoteOnboarding?: boolean,
 ): boolean {
   if (hasAnyBlockingServers) return false;
   if (isSignedInWithWorkOs) return false;
 
-  const hash = currentHash.replace(/^#\/?/, "");
-  if (hash && hash !== "servers") return false;
+  const routeTab = currentRouteTab.replace(/^#\/?/, "");
+  if (routeTab && routeTab !== "servers") return false;
 
   if (hasSeenRemoteOnboarding !== undefined) {
     return hasSeenRemoteOnboarding !== true;

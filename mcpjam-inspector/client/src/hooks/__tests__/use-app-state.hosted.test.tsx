@@ -158,7 +158,7 @@ describe("useAppState hosted OAuth browser back", () => {
         surface: "project",
         serverName: "demo-server",
         serverUrl: "https://example.com/mcp",
-        returnHash: "#servers",
+        returnPath: "#servers",
         startedAt: Date.now(),
       })
     );
@@ -234,7 +234,7 @@ describe("useAppState pending OAuth marker org preference", () => {
         serverId: "srv-1",
         serverName: "demo-server",
         serverUrl: "https://example.com/mcp",
-        returnHash: "#servers",
+        returnPath: "#servers",
         startedAt: Date.now(),
       })
     );

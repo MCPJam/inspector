@@ -15,14 +15,14 @@ describe("hosted OAuth return paths", () => {
       surface: "chatbox",
       serverName: "Asana",
       serverUrl: "https://example.com/mcp",
-      returnHash: "/asana",
+      returnPath: "/asana",
     });
 
-    expect(readHostedOAuthPendingMarker()?.returnHash).toBe("/asana");
+    expect(readHostedOAuthPendingMarker()?.returnPath).toBe("/asana");
     expect(
       resolveHostedOAuthReturnPath({
         surface: "chatbox",
-        returnHash: "/asana",
+        returnPath: "/asana",
       }),
     ).toBe("/asana");
   });
@@ -31,7 +31,7 @@ describe("hosted OAuth return paths", () => {
     expect(
       resolveHostedOAuthReturnPath({
         surface: "chatbox",
-        returnHash: "#asana",
+        returnPath: "#asana",
       }),
     ).toBe("/asana");
   });
@@ -40,14 +40,29 @@ describe("hosted OAuth return paths", () => {
     expect(
       resolveHostedOAuthReturnPath({
         surface: "project",
-        returnHash: "#/evals",
+        returnPath: "#/evals",
       }),
     ).toBe("/evals");
     expect(
       resolveHostedOAuthReturnPath({
         surface: "project",
-        returnHash: "/not-an-app-route",
+        returnPath: "/not-an-app-route",
       }),
     ).toBe("/servers");
+  });
+
+  it("reads in-flight pending markers that still use the old returnHash field", () => {
+    localStorage.setItem(
+      "mcp-hosted-oauth-pending",
+      JSON.stringify({
+        surface: "project",
+        serverName: "Asana",
+        serverUrl: "https://example.com/mcp",
+        returnHash: "#/evals",
+        startedAt: Date.now(),
+      }),
+    );
+
+    expect(readHostedOAuthPendingMarker()?.returnPath).toBe("/evals");
   });
 });

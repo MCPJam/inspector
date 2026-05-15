@@ -2117,6 +2117,8 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     // Store the current route to restore after OAuth callback.
     const returnTarget = captureCurrentReturnPath();
     if (returnTarget) {
+      // Key name is retained for in-flight migration compatibility; values are
+      // now path targets.
       localStorage.setItem("mcp-oauth-return-hash", returnTarget);
     }
 
