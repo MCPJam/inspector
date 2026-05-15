@@ -53,6 +53,10 @@ vi.mock("lucide-react", () => ({
   Maximize2: () => <span data-testid="icon-maximize" />,
   Minimize2: () => <span data-testid="icon-minimize" />,
   ChevronRight: () => <span data-testid="icon-chevron-right" />,
+  // Icons used by PlaygroundCenterHeaderBar
+  ArrowLeft: () => <span data-testid="icon-arrow-left" />,
+  Code2: () => <span data-testid="icon-code2" />,
+  MessageSquare: () => <span data-testid="icon-message-square" />,
 }));
 
 // Mock UI components
@@ -127,6 +131,7 @@ vi.mock("posthog-js/react", () => ({
 vi.mock("@/lib/PosthogUtils", () => ({
   detectEnvironment: vi.fn().mockReturnValue("test"),
   detectPlatform: vi.fn().mockReturnValue("web"),
+  standardEventProps: vi.fn().mockReturnValue({}),
 }));
 
 // Mock authkit
