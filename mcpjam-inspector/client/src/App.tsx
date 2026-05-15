@@ -1459,6 +1459,23 @@ export default function App() {
     workOsUser,
   ]);
 
+  // When the active project changes (org switch, project delete, manual switch),
+  // snap to Servers — staying on App Builder/Chat would leave the user pointed
+  // at a project that no longer exists. Skip the initial "none" → real-id
+  // transition so deep-links into other tabs aren't yanked away on first load.
+  const previousActiveProjectIdRef = useRef(activeProjectId);
+  useEffect(() => {
+    const previousActiveProjectId = previousActiveProjectIdRef.current;
+    previousActiveProjectIdRef.current = activeProjectId;
+    if (
+      previousActiveProjectId === activeProjectId ||
+      previousActiveProjectId === "none"
+    ) {
+      return;
+    }
+    applyNavigation("servers", { updateHash: true });
+  }, [activeProjectId, applyNavigation]);
+
   const consumeCheckoutIntent = useCallback(() => {
     clearPersistedCheckoutIntent();
     clearBillingSignInReturnPath();
