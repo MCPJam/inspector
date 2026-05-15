@@ -5,6 +5,68 @@ import type {
 } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 
+/**
+ * Persistable shape for a custom loading indicator. Built-in hosts ship
+ * bespoke React components (Claude's morphing strip, ChatGPT's dot, etc.);
+ * this is the data-shape an end user can declare on a host config without
+ * writing code, rendered by `<HostIndicatorDispatch>`.
+ *
+ * Keep this set minimal — adding new variants requires updating the
+ * dispatcher, the override editor, and the backend validator. The current
+ * pair covers "branded color dots" and "user-supplied image".
+ */
+export type IndicatorDef =
+  | {
+      kind: "dots";
+      /** CSS color (hex/rgb/oklch/var). Defaults to MCPJam orange. */
+      color?: string;
+      /** 1–3 dots. Defaults to 3. */
+      count?: 1 | 2 | 3;
+    }
+  | {
+      kind: "image";
+      /** Absolute or relative URL to the indicator image. */
+      src: string;
+      /** Animation applied to the image; defaults to "pulse". */
+      animation?: "spin" | "pulse" | "none";
+    };
+
+/**
+ * Persistable chat-UI override stored on `HostConfigInputV2.chatUiOverride`.
+ * Every field is optional — undefined values inherit from the preset
+ * resolved by the host config's `hostStyle` (claude | chatgpt | cursor |
+ * mcpjam). Mirrors the {@link HostChatUi} shape but with these differences:
+ *
+ * - `resolveChatBackground(theme)` → flat `chatBackground: { light, dark }`
+ * - `loadingIndicator: ComponentType` → data-shape `indicator: IndicatorDef`
+ *
+ * The resolver in `registry.ts` (`resolveEffectiveHostStyle`) merges this
+ * into a fully-resolved `HostStyleDefinition` so consumers stay unchanged.
+ *
+ * **Family is a discriminator, not a free string.** Custom hosts pick
+ * `"claude"` or `"chatgpt"` at create-time to inherit one of the two
+ * chat-v2 visual languages (bubble shapes, send hints, animation timing).
+ * Flattening family into per-host CSS tokens is intentionally deferred.
+ */
+export interface ChatUiOverride {
+  label?: string;
+  shortLabel?: string;
+  pickerDescription?: string;
+  logoSrc?: string;
+  family?: HostStyleFamily;
+  chatBackground?: { light: string; dark: string };
+  /**
+   * MCP Apps style variables passed to the View iframe in `ui/initialize`.
+   * When supplied, the override replaces the preset's full variable map
+   * for the matching theme — partial maps are NOT merged with the preset
+   * (avoids subtle "half a palette" rendering).
+   */
+  styleVariables?: { light: McpUiStyles; dark: McpUiStyles };
+  indicator?: IndicatorDef;
+  /** Inline @font-face / @import CSS injected into the View iframe. */
+  fontCss?: string;
+}
+
 export type HostStyleId = string;
 
 /**

@@ -1,4 +1,7 @@
-import { useChatboxHostStyle } from "@/contexts/chatbox-host-style-context";
+import {
+  useChatboxChatUiOverride,
+  useChatboxHostStyle,
+} from "@/contexts/chatbox-host-style-context";
 import { type ChatboxHostStyle } from "@/lib/chatbox-host-style";
 import { getLoadingIndicatorForStyle } from "@/lib/host-styles";
 import { cn } from "@/lib/utils";
@@ -43,9 +46,10 @@ export function LoadingIndicatorContent({
   modelProvider?: string | null;
 }) {
   const hostStyle = useResolvedHostStyleForIndicator(modelProvider);
+  const chatUiOverride = useChatboxChatUiOverride();
 
   if (hostStyle) {
-    const Indicator = getLoadingIndicatorForStyle(hostStyle);
+    const Indicator = getLoadingIndicatorForStyle(hostStyle, chatUiOverride);
     return <Indicator className={className} />;
   }
 

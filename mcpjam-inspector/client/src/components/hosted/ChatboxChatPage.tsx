@@ -29,7 +29,10 @@ import {
 import { bootstrapServerToHostedOAuthDescriptor } from "@/components/chatboxes/builder/chatbox-server-optional";
 import { isHostedOAuthBusy } from "@/lib/hosted-oauth-resume";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
-import { ChatboxHostStyleProvider } from "@/contexts/chatbox-host-style-context";
+import {
+  ChatboxChatUiOverrideProvider,
+  ChatboxHostStyleProvider,
+} from "@/contexts/chatbox-host-style-context";
 import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-host-capabilities-override-context";
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
 import { ChatboxHostOnboardingOverlays } from "@/components/hosted/ChatboxHostOnboardingOverlays";
@@ -794,7 +797,8 @@ export function ChatboxChatPage({
   );
 
   const hostStyle = session?.payload.hostStyle ?? "claude";
-  const shellStyle = getChatboxShellStyle(hostStyle, themeMode);
+  const chatUiOverride = session?.payload.chatUiOverride;
+  const shellStyle = getChatboxShellStyle(hostStyle, themeMode, chatUiOverride);
   const oauthPending = pendingOAuthServers.length > 0;
   const welcomeAvailable =
     (session?.payload.chatUi?.surfaces?.welcome?.enabled ?? true) &&
@@ -903,6 +907,7 @@ export function ChatboxChatPage({
 
   return (
     <ChatboxHostStyleProvider value={hostStyle}>
+      <ChatboxChatUiOverrideProvider value={chatUiOverride}>
       <ChatboxHostCapabilitiesOverrideProvider
         value={session?.payload.hostCapabilitiesOverride}
       >
@@ -950,6 +955,7 @@ export function ChatboxChatPage({
       </div>
       </ActiveMcpProfileProvider>
       </ChatboxHostCapabilitiesOverrideProvider>
+      </ChatboxChatUiOverrideProvider>
     </ChatboxHostStyleProvider>
   );
 }

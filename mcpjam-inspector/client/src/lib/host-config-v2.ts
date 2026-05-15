@@ -18,6 +18,7 @@ import {
   stableStringifyJson,
 } from "@/lib/client-config";
 import { getHostCapabilitiesForStyle } from "@/lib/host-styles";
+import type { ChatUiOverride } from "@/lib/host-styles";
 import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
 
 export type HostStyleId = ChatboxHostStyle;
@@ -136,6 +137,15 @@ export type HostConfigInputV2 = {
    */
   hostCapabilitiesOverride?: Record<string, unknown>;
   /**
+   * User override for the chat-UI chrome (logo, palette, indicator, fonts).
+   * Mirrors {@link hostCapabilitiesOverride}: undefined means "inherit from
+   * the preset resolved by `hostStyle`"; a partial object replaces only the
+   * fields it defines. Lets users bring their own host styling as
+   * persisted data without registering a new built-in. Resolution lives in
+   * `resolveEffectiveHostStyle` (lib/host-styles/registry.ts).
+   */
+  chatUiOverride?: ChatUiOverride;
+  /**
    * Versioned envelope for host-level MCP state — see
    * {@link HostConfigMcpProfileV1}. Optional; absent means "use SDK
    * defaults / no host-level sandbox override." Must NOT be synthesized as
@@ -174,6 +184,8 @@ export type HostConfigDtoV2 = {
   hostContext: Record<string, unknown>;
   /** Optional user override (see HostConfigInputV2.hostCapabilitiesOverride). */
   hostCapabilitiesOverride?: Record<string, unknown>;
+  /** Optional chat-UI override (see HostConfigInputV2.chatUiOverride). */
+  chatUiOverride?: ChatUiOverride;
   /**
    * Optional versioned envelope (see HostConfigInputV2.mcpProfile). Surfaced
    * verbatim — `undefined` means "use SDK defaults"; do NOT substitute a
@@ -236,6 +248,9 @@ export function emptyHostConfigInputV2(
     hostCapabilitiesOverride: partial.hostCapabilitiesOverride
       ? deepCloneJsonRecord(partial.hostCapabilitiesOverride)
       : undefined,
+    chatUiOverride: partial.chatUiOverride
+      ? cloneChatUiOverride(partial.chatUiOverride)
+      : undefined,
     // Same `undefined`-preservation rule as hostCapabilitiesOverride.
     // Backend distinguishes `undefined` (use SDK defaults) from
     // `{ profileVersion: 1 }` (empty envelope) on the hash, so a brand-new
@@ -286,6 +301,9 @@ export function hostConfigDtoToInput(
     hostContext: deepCloneJsonRecord(dto.hostContext),
     hostCapabilitiesOverride: dto.hostCapabilitiesOverride
       ? deepCloneJsonRecord(dto.hostCapabilitiesOverride)
+      : undefined,
+    chatUiOverride: dto.chatUiOverride
+      ? cloneChatUiOverride(dto.chatUiOverride)
       : undefined,
     mcpProfile: dto.mcpProfile ? cloneMcpProfile(dto.mcpProfile) : undefined,
     serverConnectionOverrides: dto.serverConnectionOverrides
@@ -399,6 +417,16 @@ function cloneMcpProfile(
   return deepCloneJsonValue(profile) as HostConfigMcpProfileV1;
 }
 
+/**
+ * Deep-clone a `ChatUiOverride` so the returned config can be mutated
+ * freely without aliasing the input. Same JSON-only round-trip as
+ * `cloneMcpProfile` — ChatUiOverride is JSON-serializable by design (no
+ * functions, no React component refs).
+ */
+function cloneChatUiOverride(override: ChatUiOverride): ChatUiOverride {
+  return deepCloneJsonValue(override) as ChatUiOverride;
+}
+
 function deepCloneJsonRecord(
   value: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -449,6 +477,8 @@ export function hostConfigInputsEqual(
   if (!jsonRecordEq(a.clientCapabilities, b.clientCapabilities)) return false;
   if (!jsonRecordEq(a.hostContext, b.hostContext)) return false;
   if (!optionalJsonRecordEq(a.hostCapabilitiesOverride, b.hostCapabilitiesOverride))
+    return false;
+  if (!optionalChatUiOverrideEq(a.chatUiOverride, b.chatUiOverride))
     return false;
   if (!optionalMcpProfileEq(a.mcpProfile, b.mcpProfile)) return false;
   if (
@@ -519,6 +549,21 @@ function optionalJsonRecordEq(
   if (a === undefined && b === undefined) return true;
   if (a === undefined || b === undefined) return false;
   return jsonRecordEq(a, b);
+}
+
+/**
+ * Equality on optional `ChatUiOverride`. Mirrors `optionalMcpProfileEq` —
+ * `undefined` and `{}` are distinct values (one inherits the preset, the
+ * other is an explicit empty override) and stable-stringify makes nested
+ * objects with reordered keys compare equal.
+ */
+function optionalChatUiOverrideEq(
+  a: ChatUiOverride | undefined,
+  b: ChatUiOverride | undefined,
+): boolean {
+  if (a === undefined && b === undefined) return true;
+  if (a === undefined || b === undefined) return false;
+  return stableStringifyJson(a) === stableStringifyJson(b);
 }
 
 function stringArrayEq(a: string[], b: string[]): boolean {

@@ -2,6 +2,8 @@ import type { CSSProperties } from "react";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
   getHostStyleOrDefault,
+  resolveEffectiveHostStyle,
+  type ChatUiOverride,
   type HostStyleFamily,
   type HostStyleId,
   type HostThemeMode,
@@ -24,19 +26,36 @@ export function normalizeChatboxHostStyleId(
   return trimmed.length > 0 ? trimmed : null;
 }
 
-export function getChatboxHostLabel(hostStyle: ChatboxHostStyle): string {
-  return getHostStyleOrDefault(hostStyle).chatUi.label;
+/**
+ * Each wrapper accepts an optional `chatUiOverride` and threads it through
+ * {@link resolveEffectiveHostStyle}. When the override is absent, the
+ * resolver returns the preset by id unchanged — behavior identical to
+ * `getHostStyleOrDefault(hostStyle).chatUi.*`. Callers that don't have an
+ * override (e.g. id-only chatbox rows from before BYO host styles landed)
+ * keep their current call signature.
+ */
+export function getChatboxHostLabel(
+  hostStyle: ChatboxHostStyle,
+  chatUiOverride?: ChatUiOverride,
+): string {
+  return resolveEffectiveHostStyle({ hostStyle, chatUiOverride }).chatUi.label;
 }
 
 /** User-facing label for chatbox builder surfaces (host style terminology). */
 export function getChatboxHostStyleShortLabel(
   hostStyle: ChatboxHostStyle,
+  chatUiOverride?: ChatUiOverride,
 ): string {
-  return getHostStyleOrDefault(hostStyle).chatUi.shortLabel;
+  return resolveEffectiveHostStyle({ hostStyle, chatUiOverride }).chatUi
+    .shortLabel;
 }
 
-export function getChatboxHostLogo(hostStyle: ChatboxHostStyle): string {
-  return getHostStyleOrDefault(hostStyle).chatUi.logoSrc;
+export function getChatboxHostLogo(
+  hostStyle: ChatboxHostStyle,
+  chatUiOverride?: ChatUiOverride,
+): string {
+  return resolveEffectiveHostStyle({ hostStyle, chatUiOverride }).chatUi
+    .logoSrc;
 }
 
 /**
@@ -64,24 +83,30 @@ export function getChatboxProtocolOverride(
  */
 export function getChatboxHostFamily(
   hostStyle: ChatboxHostStyle | null | undefined,
+  chatUiOverride?: ChatUiOverride,
 ): HostStyleFamily | null {
   if (!hostStyle) return null;
-  return getHostStyleOrDefault(hostStyle).chatUi.family;
+  return resolveEffectiveHostStyle({ hostStyle, chatUiOverride }).chatUi.family;
 }
 
 export function getChatboxChatBackground(
   hostStyle: ChatboxHostStyle | null | undefined,
   themeMode: HostThemeMode,
+  chatUiOverride?: ChatUiOverride,
 ): string | undefined {
   if (!hostStyle) return undefined;
-  return getHostStyleOrDefault(hostStyle).chatUi.resolveChatBackground(themeMode);
+  return resolveEffectiveHostStyle({
+    hostStyle,
+    chatUiOverride,
+  }).chatUi.resolveChatBackground(themeMode);
 }
 
 export function getChatboxShellStyle(
   hostStyle: ChatboxHostStyle,
   themeMode: HostThemeMode,
+  chatUiOverride?: ChatUiOverride,
 ): CSSProperties {
-  const definition = getHostStyleOrDefault(hostStyle);
+  const definition = resolveEffectiveHostStyle({ hostStyle, chatUiOverride });
   const styleVariables = definition.mcp.resolveStyleVariables(themeMode);
   const background = definition.chatUi.resolveChatBackground(themeMode);
   const resolvedStyleVariables = styleVariables as Record<
