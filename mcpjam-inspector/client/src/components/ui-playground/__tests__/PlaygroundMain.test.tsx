@@ -887,12 +887,19 @@ describe("PlaygroundMain", () => {
         <PlaygroundMain {...defaultProps} enableTraceViews={true} />,
       );
 
-      expect(screen.getByTestId("trace-view-tabs")).toBeInTheDocument();
+      // #2121: trace tabs now live inline in PlaygroundCenterHeaderBar.
+      // The host pill (only rendered when showTraceTabs is true) is a stable
+      // proxy for "trace mode tabs are visible".
+      expect(
+        screen.getByTestId("playground-header-host-tab"),
+      ).toBeInTheDocument();
 
       mockUseChatSession.traceViewsSupported = false;
       rerender(<PlaygroundMain {...defaultProps} enableTraceViews={true} />);
 
-      expect(screen.queryByTestId("trace-view-tabs")).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("playground-header-host-tab"),
+      ).not.toBeInTheDocument();
     });
 
     it("shows trace mode tabs on an empty thread when trace views are supported", () => {
@@ -901,7 +908,9 @@ describe("PlaygroundMain", () => {
 
       render(<PlaygroundMain {...defaultProps} enableTraceViews={true} />);
 
-      expect(screen.getByTestId("trace-view-tabs")).toBeInTheDocument();
+      expect(
+        screen.getByTestId("playground-header-host-tab"),
+      ).toBeInTheDocument();
     });
 
     it("renders the shared trace header tabs", () => {
@@ -910,10 +919,14 @@ describe("PlaygroundMain", () => {
 
       render(<PlaygroundMain {...defaultProps} enableTraceViews={true} />);
 
+      // #2121 collapsed the legacy ChatTraceViewModeHeaderBar +
+      // TraceViewModeTabs into the single PlaygroundCenterHeaderBar strip.
       expect(
-        screen.getByTestId("chat-trace-view-mode-header-bar"),
+        screen.getByTestId("playground-main-header"),
       ).toBeInTheDocument();
-      expect(screen.getByTestId("trace-view-tabs")).toBeInTheDocument();
+      expect(
+        screen.getByTestId("playground-header-host-tab"),
+      ).toBeInTheDocument();
     });
 
     it("shows the sample raw JSON empty state on an empty thread when Raw is selected", () => {
@@ -1127,7 +1140,9 @@ describe("PlaygroundMain", () => {
       expect(grid.className.includes("hidden")).toBe(false);
       expect(grid).toHaveClass("xl:grid-cols-3");
       expect(grid).not.toHaveClass("2xl:grid-cols-3");
-      expect(screen.getByTestId("trace-view-tabs")).toBeInTheDocument();
+      expect(
+        screen.getByTestId("playground-header-host-tab"),
+      ).toBeInTheDocument();
       expect(screen.getAllByTestId("chat-input")).not.toHaveLength(0);
       expect(
         screen.queryByText(
