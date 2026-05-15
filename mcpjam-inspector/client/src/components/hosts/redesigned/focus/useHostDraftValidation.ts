@@ -44,17 +44,19 @@ export function collectHostAttentionIssues(
   }
 
   // Apps tab: hostContext must be JSON-shaped (the editor enforces this,
-  // but defend the validation surface for non-editor mutators too).
-  if (
-    draft.hostContext &&
-    (typeof draft.hostContext !== "object" || Array.isArray(draft.hostContext))
-  ) {
-    issues.push({
-      level: "error",
-      tab: "apps",
-      field: "hostContext",
-      message: "Host context must be a JSON object",
-    });
+  // but defend the validation surface for non-editor mutators too). Test
+  // presence — not truthiness — so falsy non-object payloads (0, false,
+  // "") don't slip past as "absent".
+  if (draft.hostContext !== undefined && draft.hostContext !== null) {
+    const ctx = draft.hostContext;
+    if (typeof ctx !== "object" || Array.isArray(ctx)) {
+      issues.push({
+        level: "error",
+        tab: "apps",
+        field: "hostContext",
+        message: "Host context must be a JSON object",
+      });
+    }
   }
 
   if (
@@ -89,25 +91,48 @@ export function collectHostAttentionIssues(
     }
   }
 
-  // Apps Extension: sandbox permissions.allow values MUST be booleans —
-  // backend canonicalizer rejects anything else and the write would fail.
-  // Surface as a pre-submit warning so the user can fix it before save.
+  // Apps Extension: sandbox permissions.allow MUST be an object with
+  // boolean values — backend canonicalizer rejects anything else and the
+  // write would fail. Reject both non-object shapes (string/number/array)
+  // AND non-boolean values within an object form, so JSON-tab edits that
+  // get the type wrong surface here instead of failing at save time.
   const allow = draft.mcpProfile?.apps?.sandbox?.permissions?.allow;
-  if (allow && typeof allow === "object" && !Array.isArray(allow)) {
-    for (const v of Object.values(allow)) {
-      if (typeof v !== "boolean") {
-        issues.push({
-          level: "error",
-          tab: "apps",
-          field: "sandboxPermissionsAllow",
-          message: "Sandbox permission allow values must be true/false",
-        });
-        break;
+  if (allow !== undefined && allow !== null) {
+    const isObjectShape =
+      typeof allow === "object" && !Array.isArray(allow);
+    if (!isObjectShape) {
+      issues.push({
+        level: "error",
+        tab: "apps",
+        field: "sandboxPermissionsAllow",
+        message: "Sandbox permission allow values must be true/false",
+      });
+    } else {
+      for (const v of Object.values(allow)) {
+        if (typeof v !== "boolean") {
+          issues.push({
+            level: "error",
+            tab: "apps",
+            field: "sandboxPermissionsAllow",
+            message: "Sandbox permission allow values must be true/false",
+          });
+          break;
+        }
       }
     }
   }
 
   return issues;
+}
+
+/**
+ * Returns true when the draft has at least one `level: "error"` issue.
+ * Callers use this to gate "Save" — warnings don't block.
+ */
+export function hasBlockingErrors(
+  issues: ReadonlyArray<HostAttentionIssue>,
+): boolean {
+  return issues.some((issue) => issue.level === "error");
 }
 
 export function useHostDraftValidation(

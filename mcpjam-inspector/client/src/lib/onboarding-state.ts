@@ -92,7 +92,12 @@ export function isFirstRunEligible(
   if (hasAnyBlockingServers) return false;
   if (isSignedInWithWorkOs) return false;
 
-  const hash = currentHash.replace(/^#\/?/, "");
+  // Strip the leading `#`/`#/`, then drop query strings and trailing
+  // slashes so `#connect?foo=bar` and `#/connect/` still pass the
+  // allowlist — both land on the same hub route.
+  const rawHash = currentHash.replace(/^#\/?/, "");
+  const [hashPath = ""] = rawHash.split("?");
+  const hash = hashPath.replace(/\/+$/, "");
   if (
     hash !== "servers" &&
     hash !== "connect" &&

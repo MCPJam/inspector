@@ -17,7 +17,7 @@ import type { DisplayMode } from "@/stores/ui-playground-store";
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import type { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { cn } from "@/lib/utils";
-import { useChatboxHostStyle } from "@/contexts/chatbox-host-style-context";
+import { useResolvedHostStyleForIndicator } from "@/components/chat-v2/shared/loading-indicator-content";
 import { getChatboxHostFamily } from "@/lib/chatbox-host-style";
 
 const NOOP = (..._args: unknown[]) => {};
@@ -205,9 +205,13 @@ export function TranscriptThread({
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const shouldReduceMotion = useReducedMotion();
   // Claude paints its loading mark inline beneath the last assistant
-  // bubble (the "footer" treatment).
+  // bubble (the "footer" treatment). Direct Chat has no chatbox host
+  // context, so resolve via the same provider-aware helper Thread uses
+  // for `hasBrandIndicator` — otherwise the standalone indicator gets
+  // suppressed without a footer to replace it.
   const isClaudeFamily =
-    getChatboxHostFamily(useChatboxHostStyle()) === "claude";
+    getChatboxHostFamily(useResolvedHostStyleForIndicator(model.provider)) ===
+    "claude";
   const highlightedMessageIdSet = useMemo(
     () => new Set(highlightedMessageIds),
     [highlightedMessageIds],

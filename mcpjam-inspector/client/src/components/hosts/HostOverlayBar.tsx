@@ -96,11 +96,18 @@ export function HostOverlayBar({
     if (effectiveHostId == null) return;
     if (previewedHostId === effectiveHostId) return;
     onChangePreviewedHostId(effectiveHostId);
+    // When the active host is deleted out from under us (or reconciled
+    // away for any other reason) the canvas is still pointing at the
+    // dead id. handleChange would call this directly; the non-interactive
+    // path needs the same notification or App.hostsTabSelectedHostId
+    // stays stale and "Save" targets a deleted id.
+    onCanvasReplaceHost?.(effectiveHostId);
   }, [
     isLoading,
     effectiveHostId,
     previewedHostId,
     onChangePreviewedHostId,
+    onCanvasReplaceHost,
   ]);
 
   const activeIndex = useMemo(

@@ -136,10 +136,15 @@ function MessageBubble({
   );
 }
 
-function ThinkingRow() {
+function ThinkingRow({
+  modelProvider,
+}: {
+  modelProvider?: string | null;
+}) {
   // Branded indicators (Claude / ChatGPT) render bare so the brand art
   // owns the spacing; the generic "Thinking…" text gets the muted bubble.
-  const hasBrandIndicator = useResolvedHostStyleForIndicator() !== null;
+  const hasBrandIndicator =
+    useResolvedHostStyleForIndicator(modelProvider) !== null;
 
   return (
     <div
@@ -147,10 +152,10 @@ function ThinkingRow() {
       className="flex w-full justify-start"
     >
       {hasBrandIndicator ? (
-        <LoadingIndicatorContent />
+        <LoadingIndicatorContent modelProvider={modelProvider} />
       ) : (
         <div className="inline-flex items-center gap-2 rounded-2xl bg-muted px-3 py-2 text-sm text-muted-foreground/80">
-          <LoadingIndicatorContent />
+          <LoadingIndicatorContent modelProvider={modelProvider} />
         </div>
       )}
     </div>
@@ -190,17 +195,23 @@ function MessageList({
   messages,
   isThinking,
   open,
+  modelProvider,
 }: {
   messages: UIMessage[];
   isThinking: boolean;
   open: boolean;
+  modelProvider?: string | null;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
-  const hasBrandIndicator = useResolvedHostStyleForIndicator() !== null;
+  const resolvedIndicatorHostStyle =
+    useResolvedHostStyleForIndicator(modelProvider);
+  const hasBrandIndicator = resolvedIndicatorHostStyle !== null;
   // Claude paints its mark inline beneath the last assistant bubble
   // ("footer" treatment); other hosts use the standalone row only.
+  // Resolve through the provider-aware helper so Direct Chat (no chatbox
+  // host context) still gets the footer when model.provider is Anthropic.
   const isClaudeFamily =
-    getChatboxHostFamily(useChatboxHostStyle()) === "claude";
+    getChatboxHostFamily(resolvedIndicatorHostStyle) === "claude";
 
   const visibleMessages = useMemo(
     () =>
@@ -246,7 +257,9 @@ function MessageList({
             />
           );
         })}
-        {shouldShowStandaloneThinkingRow ? <ThinkingRow /> : null}
+        {shouldShowStandaloneThinkingRow ? (
+          <ThinkingRow modelProvider={modelProvider} />
+        ) : null}
         <div ref={bottomRef} />
       </div>
     </div>
@@ -372,6 +385,9 @@ type FullscreenChatOverlayProps = {
   isThinking: boolean;
   onStop?: () => void;
   onSend: () => void;
+  /** Provider id from the active chat model — feeds the indicator's
+   * fallback path for surfaces without a chatbox host context. */
+  modelProvider?: string | null;
 };
 export function FullscreenChatOverlay({
   messages,
@@ -385,6 +401,7 @@ export function FullscreenChatOverlay({
   isThinking,
   onStop,
   onSend,
+  modelProvider,
 }: FullscreenChatOverlayProps) {
   const chatboxHostStyle = useChatboxHostStyle();
   const chatboxHostTheme = useChatboxHostTheme();
@@ -411,6 +428,7 @@ export function FullscreenChatOverlay({
             messages={messages}
             isThinking={isThinking}
             open={open}
+            modelProvider={modelProvider}
           />
           <Composer
             value={input}

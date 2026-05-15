@@ -61,6 +61,16 @@ export function useJsonDraftBuffer({
       contentCanon = null;
     }
 
+    if (contentCanon === freshSer) {
+      // Buffer already canonically matches the incoming draft (user's
+      // edits were accepted upstream and round-tripped back). Advance the
+      // anchor so a *later* upstream swap can still be detected — without
+      // this, the ref stays pinned to a stale draft and the next
+      // legitimate reseed gets suppressed.
+      lastSeededDraftRef.current = draft;
+      return;
+    }
+
     if (contentCanon === lastSer) {
       // Buffer is in sync with what we last seeded from → safe to re-seed.
       lastSeededDraftRef.current = draft;

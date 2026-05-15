@@ -223,6 +223,7 @@ export function Thread({
       {showFullscreenChatOverlay && (
         <FullscreenChatOverlay
           messages={messages}
+          modelProvider={model.provider}
           open={isFullscreenChatOpen}
           onOpenChange={setIsFullscreenChatOpen}
           input={fullscreenChatInput}

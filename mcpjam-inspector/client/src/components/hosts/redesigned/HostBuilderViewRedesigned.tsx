@@ -28,10 +28,12 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { RedesignedHostCanvas } from "./canvas/RedesignedHostCanvas";
 import { buildRedesignedHostCanvas } from "./canvas/canvasBuilder";
 import { HostFocusPanel } from "./focus/HostFocusPanel";
-import { useHostDraftValidation } from "./focus/useHostDraftValidation";
+import {
+  hasBlockingErrors,
+  useHostDraftValidation,
+} from "./focus/useHostDraftValidation";
 import {
   focusTabForNodeId,
-  shortenSnapshotId,
   type HostFocusState,
   type HostFocusTabId,
 } from "./types";
@@ -240,9 +242,10 @@ export function HostBuilderViewRedesigned({
         name: draftName,
         input: draftConfig,
       });
-      toast.success(
-        `Snapshot saved · ${shortenSnapshotId(host?.config?.id ?? "")}`,
-      );
+      // The freshly persisted snapshot id arrives via the Convex
+      // subscription on the next tick; don't include it in this toast
+      // because `host?.config?.id` is still the *previous* snapshot here.
+      toast.success("Snapshot saved");
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Failed to save host",
@@ -300,7 +303,11 @@ export function HostBuilderViewRedesigned({
     );
   }
 
-  const canSave = isDirty && !isSaving;
+  // Block save on any blocking-level validation error. The user still sees
+  // attention badges on the offending sub-nodes/tabs; without this gate the
+  // Save button would happily submit (e.g. empty host name, blank model id,
+  // non-positive timeout) and the write would only fail at the backend.
+  const canSave = isDirty && !isSaving && !hasBlockingErrors(attention);
 
   return (
     <div className="flex h-full min-h-0 flex-col">

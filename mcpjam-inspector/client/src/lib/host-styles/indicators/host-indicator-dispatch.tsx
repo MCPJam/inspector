@@ -38,7 +38,11 @@ export function HostIndicatorDispatch({
 }) {
   if (def.kind === "dots") {
     const color = def.color ?? DEFAULT_DOTS_COLOR;
-    const count = def.count ?? 3;
+    // `IndicatorDef` is persisted data, not a closed enum at runtime —
+    // clamp to the 1..3 keys we actually index so a stale/malformed
+    // `count` falls back to 3 dots instead of throwing on `delays.map`.
+    const count: 1 | 2 | 3 =
+      def.count === 1 || def.count === 2 || def.count === 3 ? def.count : 3;
     const delays = STAGGER_DELAYS_MS[count];
     return (
       <span

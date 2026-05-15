@@ -24,7 +24,9 @@ interface SelectedModelChangedDetail {
 export function loadSelectedModelId(): string | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return typeof raw === "string" && raw.length > 0 ? raw : null;
+    if (typeof raw !== "string") return null;
+    const trimmed = raw.trim();
+    return trimmed.length > 0 ? trimmed : null;
   } catch {
     return null;
   }
@@ -32,12 +34,17 @@ export function loadSelectedModelId(): string | null {
 
 export function saveSelectedModelId(modelId: string | null): void {
   try {
-    if (modelId) {
-      localStorage.setItem(STORAGE_KEY, modelId);
+    // Treat whitespace-only ids as null so we don't persist
+    // semantically-empty values that would later rehydrate as invalid
+    // model picker selections.
+    const trimmed = modelId?.trim() ?? null;
+    const next = trimmed && trimmed.length > 0 ? trimmed : null;
+    if (next) {
+      localStorage.setItem(STORAGE_KEY, next);
     } else {
       localStorage.removeItem(STORAGE_KEY);
     }
-    const detail: SelectedModelChangedDetail = { modelId };
+    const detail: SelectedModelChangedDetail = { modelId: next };
     window.dispatchEvent(new CustomEvent(EVENT_NAME, { detail }));
   } catch {
     // ignore

@@ -1422,13 +1422,20 @@ export default function App() {
         hostsHubFlagEnabled &&
         isAuthenticated;
 
-      const effectiveHash =
-        hostsHubEligible && isBareServersHub
-          ? "#connect"
-          : isUnset
-            ? `#${defaultHubRoute}`
-            : raw || `#${defaultHubRoute}`;
-      applyNavigation(effectiveHash, { enforceCanonicalHash: true });
+      const isServersToConnectRedirect = hostsHubEligible && isBareServersHub;
+      const effectiveHash = isServersToConnectRedirect
+        ? "#connect"
+        : isUnset
+          ? `#${defaultHubRoute}`
+          : raw || `#${defaultHubRoute}`;
+      // enforceCanonicalHash only rewrites the address bar when raw and
+      // normalized differ — `#connect` already matches its canonical form,
+      // so the URL would stay on `#servers` while the tab flipped to hosts.
+      // Force the write here so the address bar tracks the redirect.
+      applyNavigation(effectiveHash, {
+        enforceCanonicalHash: true,
+        updateHash: isServersToConnectRedirect,
+      });
     };
     applyHash();
     window.addEventListener("hashchange", applyHash);

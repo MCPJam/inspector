@@ -52,7 +52,14 @@ export function PlaygroundPreviewedHostSync({
   );
 
   useEffect(() => {
-    if (!previewedHostId || !host) return;
+    // When the user clears the previewed host, drop the dedupe anchor so
+    // a later hostA → null → hostA flow re-applies the snapshot instead
+    // of being treated as a no-op against stale state.
+    if (!previewedHostId) {
+      lastAppliedRef.current = null;
+      return;
+    }
+    if (!host) return;
     const configId = host.config.id;
     const last = lastAppliedRef.current;
     if (

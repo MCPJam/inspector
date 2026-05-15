@@ -90,7 +90,11 @@ export function HostsTab({
     setPreviewedHostId,
   ]);
 
-  if (!projectId) return null;
+  // When the project id hasn't resolved yet (signed-out, between-project
+  // hydration, etc.) we still want to render *something* in the hub —
+  // the Servers list works without project state and is the natural
+  // fallback the user expects on `#connect`/`#servers`.
+  if (!projectId) return <>{serversTabElement}</>;
 
   return (
     <div className="relative h-full min-h-0 overflow-hidden">

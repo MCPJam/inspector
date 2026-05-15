@@ -1,11 +1,6 @@
 import { HostOverlayBar } from "@/components/hosts/HostOverlayBar";
+import type { GlobalHostBarProps } from "@/components/Header";
 import { usePreviewedHostId } from "@/hooks/use-previewed-host-id";
-
-interface GlobalHostBarProps {
-  projectId: string;
-  onEditHost: (hostId: string) => void;
-  onCanvasReplaceHost?: (hostId: string) => void;
-}
 
 export function GlobalHostBar({
   projectId,

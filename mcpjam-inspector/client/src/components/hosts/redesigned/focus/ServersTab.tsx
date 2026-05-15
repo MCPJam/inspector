@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronDown, ChevronRight, Plus } from "lucide-react";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
@@ -39,6 +39,14 @@ export function ServersTab({
   const [expandedServerId, setExpandedServerId] = useState<string | null>(
     initialSelectedServerId,
   );
+  // Sync expansion when the canvas selects a different server card while
+  // the panel is already open — without this the panel stays expanded on
+  // the previously-clicked server and the new one looks inert.
+  useEffect(() => {
+    if (initialSelectedServerId !== null) {
+      setExpandedServerId(initialSelectedServerId);
+    }
+  }, [initialSelectedServerId]);
 
   const overrides = draft.serverConnectionOverrides ?? {};
 
@@ -262,8 +270,13 @@ function ServerOverrideEditor({
                     onChange={(e) => {
                       const v = e.target.value;
                       const parsed = v === "" ? undefined : Number(v);
+                      // Reject non-positive values the same way we reject
+                      // empty/NaN — a 0 or negative connection timeout is
+                      // meaningless and the connector validator rejects it.
                       const nextTimeout =
-                        parsed === undefined || !Number.isFinite(parsed)
+                        parsed === undefined ||
+                        !Number.isFinite(parsed) ||
+                        parsed <= 0
                           ? undefined
                           : parsed;
                       const hasHeaders =
