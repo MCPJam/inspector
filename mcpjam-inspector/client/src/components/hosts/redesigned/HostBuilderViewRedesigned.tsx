@@ -348,10 +348,7 @@ export function HostBuilderViewRedesigned({
             defaultSize={focusState.open ? 55 : 100}
             minSize={30}
           >
-            <div
-              key={hostId}
-              className="h-full min-h-0 pr-2 animate-in fade-in-50 zoom-in-95 duration-300 ease-out"
-            >
+            <div className="h-full min-h-0 pr-2">
               <ReactFlowProvider>
                 <RedesignedHostCanvas
                   viewModel={viewModel}

@@ -65,10 +65,8 @@ export interface AgentIdentityNodeData extends Record<string, unknown> {
 /**
  * Small puck node that anchors a section's fan-out (Protocol or Apps).
  * `kind` distinguishes the two so a single renderer can paint both with
- * the right icon/accent. `subtitle` is a one-line summary visible on the
- * hub itself; it changes per host (e.g., protocol "SDK defaults" vs
- * "pinned 2026-01-26"; apps "sandbox: declared · 11 ctx fields"), which
- * is the at-a-glance cue for what the section overrides.
+ * the right icon/accent. `subtitle` is optional; currently used only on
+ * the protocol hub when versions are pinned (e.g. "pinned 2026-01-26").
  */
 export interface SectionHubNodeData extends Record<string, unknown> {
   kind: "section-hub";

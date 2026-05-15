@@ -49,22 +49,43 @@ describe("RedesignedHostCanvas", () => {
     );
     expect(agentNode).not.toBeNull();
     expect(within(agentNode as HTMLElement).getByText("Agent")).toBeInTheDocument();
+    expect(
+      (agentNode as HTMLElement).querySelector(".lucide-sliders-horizontal"),
+    ).toBeNull();
   });
 
-  it("renders the Protocol hub puck with title and a subtitle slot", () => {
+  it("renders the Protocol hub puck with title only when protocol is unpinned", () => {
     const { container } = renderCanvas({});
     const hub = container.querySelector(
       `.react-flow__node[data-id="${PROTOCOL_HUB_NODE_ID}"]`,
     );
     expect(hub).not.toBeNull();
     expect(within(hub as HTMLElement).getByText("MCP Protocol")).toBeInTheDocument();
-    // Subtitle defaults to "SDK defaults" + ctx count for an empty draft.
-    expect(
-      within(hub as HTMLElement).getByText(/SDK defaults/),
-    ).toBeInTheDocument();
+    expect(within(hub as HTMLElement).queryByText(/SDK defaults/)).toBeNull();
+    expect((hub as HTMLElement).querySelector(".size-7")).toBeNull();
   });
 
-  it("renders the Apps hub puck with title", () => {
+  it("shows pinned subtitle on Protocol hub without an icon", () => {
+    const draft = emptyHostConfigInputV2({
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2026-01-26"],
+        },
+      },
+    });
+    const { container } = renderCanvas({ draft });
+    const hub = container.querySelector(
+      `.react-flow__node[data-id="${PROTOCOL_HUB_NODE_ID}"]`,
+    );
+    expect(hub).not.toBeNull();
+    expect(
+      within(hub as HTMLElement).getByText(/pinned 2026-01-26/),
+    ).toBeInTheDocument();
+    expect((hub as HTMLElement).querySelector(".size-7")).toBeNull();
+  });
+
+  it("renders the Apps hub puck with title only (no sandbox subtitle)", () => {
     const { container } = renderCanvas({});
     const hub = container.querySelector(
       `.react-flow__node[data-id="${APPS_HUB_NODE_ID}"]`,
@@ -73,6 +94,8 @@ describe("RedesignedHostCanvas", () => {
     expect(
       within(hub as HTMLElement).getByText("Apps Extension"),
     ).toBeInTheDocument();
+    expect(within(hub as HTMLElement).queryByText(/sandbox:/)).toBeNull();
+    expect((hub as HTMLElement).querySelector(".size-7")).toBeNull();
   });
 
   it("renders an apps cap leaf with the canonical capability label", () => {

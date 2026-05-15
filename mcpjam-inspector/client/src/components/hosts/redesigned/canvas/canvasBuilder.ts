@@ -36,9 +36,9 @@ const AGENT_H = 252;
 const HUB_W = 188;
 const HUB_H = 52;
 const LEAF_W = 158;
-const LEAF_H = 42;
+const LEAF_H = 54;
 const LEAF_GAP_X = 12;
-const LEAF_ROW_H = 50;
+const LEAF_ROW_H = 62;
 const LEAF_COLS = 2;
 const HUB_TO_LEAF_GAP = 38;
 const AGENT_TO_HUB_GAP = 32;
@@ -107,17 +107,15 @@ function describeProtocolVersion(
 
 function describeBaseCapabilities(
   draft: HostConfigInputV2,
-): ProtocolLeafDescriptor | null {
+): ProtocolLeafDescriptor {
   const caps = draft.clientCapabilities ?? {};
-  const present: string[] = [];
-  if (caps.roots) present.push("roots");
-  if (caps.sampling) present.push("sampling");
-  if (caps.experimental) present.push("experimental");
-  if (present.length === 0) return null;
+  const present = Object.keys(caps).filter(
+    (k) => caps[k] !== undefined && caps[k] !== null,
+  );
   return {
     key: "capabilities",
     label: "capabilities",
-    value: present.join(" · "),
+    value: present.length === 0 ? "(none)" : present.join(" · "),
   };
 }
 
@@ -156,11 +154,16 @@ function describeHeaders(
 function buildProtocolLeaves(
   draft: HostConfigInputV2,
 ): ProtocolLeafDescriptor[] {
+  // Always-emitted leaves go first so they pin to fixed slots
+  // (capabilities = slot 0 / top-left, timeout = slot 1 / top-right).
+  // Optional leaves pack after, into row 1+. This makes the protocol
+  // grid positionally diffable across hosts — capabilities and timeout
+  // never move, so the eye can compare them at a glance.
   const leaves: (ProtocolLeafDescriptor | null)[] = [
-    describeClientInfo(draft),
-    describeProtocolVersion(draft),
     describeBaseCapabilities(draft),
     describeTimeout(draft),
+    describeClientInfo(draft),
+    describeProtocolVersion(draft),
     describeHeaders(draft),
   ];
   return leaves.filter((l): l is ProtocolLeafDescriptor => l !== null);
@@ -215,15 +218,7 @@ function agentChangedFields(
 
 function protocolSubtitle(draft: HostConfigInputV2): string {
   const versions = resolveSupportedProtocolVersions(draft.mcpProfile);
-  return versions && versions.length > 0
-    ? `pinned ${versions[0]}`
-    : "SDK defaults";
-}
-
-function appsSubtitle(draft: HostConfigInputV2): string {
-  const mode = draft.mcpProfile?.apps?.sandbox?.csp?.mode ?? "host-default";
-  const ctxCount = Object.keys(draft.hostContext ?? {}).length;
-  return `sandbox: ${mode} · ${ctxCount} ctx ${ctxCount === 1 ? "field" : "fields"}`;
+  return versions && versions.length > 0 ? `pinned ${versions[0]}` : "";
 }
 
 /* ============================================================
@@ -388,10 +383,6 @@ export function buildRedesignedHostCanvas(
   });
 
   // 4) Apps hub + cap leaves.
-  const appsSubtitleNext = appsSubtitle(draft);
-  const appsSubtitlePrev = prevDraft
-    ? appsSubtitle(prevDraft)
-    : appsSubtitleNext;
   nodes.push({
     id: APPS_HUB_NODE_ID,
     type: "redesignSectionHub",
@@ -403,8 +394,8 @@ export function buildRedesignedHostCanvas(
       kind: "section-hub",
       section: "apps",
       title: "Apps Extension",
-      subtitle: appsSubtitleNext,
-      subtitleChanged: appsSubtitleNext !== appsSubtitlePrev,
+      subtitle: "",
+      subtitleChanged: false,
       hasAttention: appsAttention.size > 0,
     },
     draggable: false,

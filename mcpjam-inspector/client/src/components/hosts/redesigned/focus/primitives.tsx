@@ -103,7 +103,6 @@ export function CapabilityToggleRow({
   subChip,
   onOverrideOn,
   onOverrideOff,
-  onResetToPreset,
 }: {
   icon: ReactNode;
   name: string;
@@ -113,11 +112,11 @@ export function CapabilityToggleRow({
   subChip?: ReactNode;
   onOverrideOn: () => void;
   onOverrideOff: () => void;
-  onResetToPreset: () => void;
 }) {
   const reactId = useId();
   const checked = state === "override-on";
-  const isOverride = state !== "inherits";
+  const advertisedByPreset = presetValueLabel === "advertised";
+  const advertised = state === "inherits" ? advertisedByPreset : checked;
   return (
     <div className="flex items-start gap-3 rounded-md border border-border/60 bg-card/60 px-3 py-2.5">
       <div className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md bg-muted/60 text-muted-foreground">
@@ -132,13 +131,9 @@ export function CapabilityToggleRow({
             {name}
           </label>
           {subChip ? <Chip tone="neutral">{subChip}</Chip> : null}
-          {state === "inherits" ? (
+          {advertised ? null : (
             <span className="text-[10px] uppercase tracking-[0.04em] text-muted-foreground/80">
-              {presetValueLabel}
-            </span>
-          ) : (
-            <span className="text-[10px] uppercase tracking-[0.04em] text-amber-700 dark:text-amber-300">
-              override
+              not advertised
             </span>
           )}
         </div>
@@ -147,21 +142,11 @@ export function CapabilityToggleRow({
         </p>
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        {isOverride ? (
-          <button
-            type="button"
-            onClick={onResetToPreset}
-            className="text-[10.5px] text-muted-foreground underline-offset-2 hover:underline"
-            title="Drop the override, fall back to host-style preset"
-          >
-            reset
-          </button>
-        ) : null}
         <Switch
           id={`${reactId}-toggle`}
-          checked={checked}
+          checked={advertised}
           onCheckedChange={(next) => (next ? onOverrideOn() : onOverrideOff())}
-          aria-label={`${name} override toggle`}
+          aria-label={`${name} toggle`}
         />
       </div>
     </div>

@@ -12,11 +12,8 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import {
-  AppWindow,
-  Plug,
   Plus,
   Server,
-  SlidersHorizontal,
 } from "lucide-react";
 import "@xyflow/react/dist/style.css";
 import { cn } from "@/lib/utils";
@@ -153,9 +150,6 @@ const AgentIdentityRenderer = memo(
         }}
       >
         <div className="flex items-center gap-2.5 rounded-t-[10px] border-b border-border/60 bg-muted/25 px-3 py-2.5">
-          <div className="flex size-6 items-center justify-center rounded-md bg-muted/50 text-muted-foreground">
-            <SlidersHorizontal className="size-3" />
-          </div>
           <div className="flex min-w-0 flex-col justify-center">
             <span className="truncate text-[13px] font-semibold leading-tight text-foreground">
               Agent
@@ -229,16 +223,13 @@ const AgentIdentityRenderer = memo(
 AgentIdentityRenderer.displayName = "AgentIdentityRenderer";
 
 /* ============================================================
-   Section hub — small puck for Protocol + Apps. Icon differs
-   per section; subtitle changes per host (e.g. protocol "SDK
-   defaults" vs "pinned 2026-01-26"; apps "sandbox: declared · 11
-   ctx fields"). The subtitle change is the at-a-glance cue for
-   section drift.
+   Section hub — small puck for Protocol + Apps (title + optional
+   protocol subtitle when versions are pinned; no icons).
    ============================================================ */
 const SectionHubRenderer = memo(
   (props: NodeProps<Node<SectionHubNodeData, "redesignSectionHub">>) => {
     const { data, selected } = props;
-    const Icon = data.section === "protocol" ? Plug : AppWindow;
+    const subtitle = data.subtitle.trim();
     return (
       <div
         className={cn(
@@ -247,29 +238,21 @@ const SectionHubRenderer = memo(
           data.hasAttention && "border-amber-500/60",
         )}
       >
-        <div
-          className={cn(
-            "flex size-7 items-center justify-center rounded-md bg-muted/60",
-            data.section === "protocol"
-              ? "text-sky-400/90"
-              : "text-amber-400/90",
-          )}
-        >
-          <Icon className="size-3.5" />
-        </div>
         <div className="flex min-w-0 flex-col">
           <span className="truncate text-[12.5px] font-semibold leading-tight">
             {data.title}
           </span>
-          <span
-            className={cn(
-              "truncate font-mono text-[10px] leading-tight text-muted-foreground",
-              data.subtitleChanged && "host-redesign-subtitle-flash",
-            )}
-            title={data.subtitle}
-          >
-            {data.subtitle}
-          </span>
+          {subtitle !== "" ? (
+            <span
+              className={cn(
+                "truncate font-mono text-[10px] leading-tight text-muted-foreground",
+                data.subtitleChanged && "host-redesign-subtitle-flash",
+              )}
+              title={subtitle}
+            >
+              {subtitle}
+            </span>
+          ) : null}
         </div>
         <Handle
           type="target"
@@ -308,7 +291,7 @@ const ProtocolLeafRenderer = memo(
           {data.label}
         </span>
         <span
-          className="truncate font-mono text-[11px] font-medium leading-tight"
+          className="line-clamp-2 break-words font-mono text-[11px] font-medium leading-[1.15]"
           title={data.value}
         >
           {data.value}
@@ -536,16 +519,25 @@ const CANVAS_STYLES = `
               stroke-dasharray 360ms ease, d 520ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 @keyframes hostRedesignDiffFlash {
-  0% { background-color: oklch(0.78 0.17 75 / 0.28); box-shadow: inset 2px 0 0 oklch(0.78 0.17 75); }
-  60% { background-color: oklch(0.78 0.17 75 / 0.10); box-shadow: inset 2px 0 0 oklch(0.78 0.17 75); }
-  100% { background-color: transparent; box-shadow: inset 2px 0 0 transparent; }
+  0% {
+    background-color: oklch(0.78 0.17 75 / 0.42);
+    box-shadow: inset 3px 0 0 oklch(0.78 0.17 75), 0 0 0 1px oklch(0.78 0.17 75 / 0.5);
+  }
+  70% {
+    background-color: oklch(0.78 0.17 75 / 0.18);
+    box-shadow: inset 3px 0 0 oklch(0.78 0.17 75), 0 0 0 1px oklch(0.78 0.17 75 / 0.25);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: inset 3px 0 0 transparent, 0 0 0 1px transparent;
+  }
 }
 .host-redesign-field-flash {
-  animation: hostRedesignDiffFlash 1.5s ease-out;
+  animation: hostRedesignDiffFlash 2.4s ease-out;
   border-radius: 4px;
 }
 .host-redesign-leaf-flash {
-  animation: hostRedesignDiffFlash 1.5s ease-out;
+  animation: hostRedesignDiffFlash 2.4s ease-out;
 }
 .host-redesign-subtitle-flash {
   color: oklch(0.78 0.17 75) !important;

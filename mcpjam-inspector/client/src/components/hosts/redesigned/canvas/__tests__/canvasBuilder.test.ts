@@ -31,6 +31,76 @@ describe("buildRedesignedHostCanvas", () => {
     });
   });
 
+  it("uses an empty protocol hub subtitle when protocol versions are unpinned", () => {
+    const viewModel = buildRedesignedHostCanvas(
+      {
+        hostName: "Host",
+        draft: emptyHostConfigInputV2(),
+        savedSnapshotId: "snap",
+        isDirty: false,
+        projectServers: [],
+      },
+      [],
+    );
+    const protocolHub = viewModel.nodes.find(
+      (n) => n.id === PROTOCOL_HUB_NODE_ID,
+    );
+    expect(
+      (protocolHub?.data as { subtitle: string }).subtitle,
+    ).toBe("");
+  });
+
+  it("shows pinned protocol version in the protocol hub subtitle", () => {
+    const draft = emptyHostConfigInputV2({
+      mcpProfile: {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2026-01-26"],
+        },
+      },
+    });
+    const viewModel = buildRedesignedHostCanvas(
+      {
+        hostName: "Host",
+        draft,
+        savedSnapshotId: "snap",
+        isDirty: false,
+        projectServers: [],
+      },
+      [],
+    );
+    const protocolHub = viewModel.nodes.find(
+      (n) => n.id === PROTOCOL_HUB_NODE_ID,
+    );
+    expect(
+      (protocolHub?.data as { subtitle: string }).subtitle,
+    ).toBe("pinned 2026-01-26");
+  });
+
+  it("uses an empty apps hub subtitle", () => {
+    const draft = emptyHostConfigInputV2({
+      mcpProfile: {
+        profileVersion: 1,
+        apps: {
+          sandbox: { csp: { mode: "declared" } },
+        },
+      },
+      hostContext: { foo: "bar", baz: "qux" },
+    });
+    const viewModel = buildRedesignedHostCanvas(
+      {
+        hostName: "Host",
+        draft,
+        savedSnapshotId: "snap",
+        isDirty: false,
+        projectServers: [],
+      },
+      [],
+    );
+    const appsHub = viewModel.nodes.find((n) => n.id === APPS_HUB_NODE_ID);
+    expect((appsHub?.data as { subtitle: string }).subtitle).toBe("");
+  });
+
   it("emits agent identity, protocol hub, and apps hub child nodes", () => {
     const viewModel = buildRedesignedHostCanvas(
       {
@@ -83,8 +153,8 @@ describe("buildRedesignedHostCanvas", () => {
 
   it("omits optional protocol leaves when not overridden", () => {
     // The default config has no mcpProfile + no custom headers, so
-    // clientInfo / protocolVersion / capabilities / headers should NOT
-    // emit leaves. hostContext + timeout always emit so they stay
+    // clientInfo / protocolVersion / headers should NOT emit leaves.
+    // hostContext + timeout + capabilities always emit so they stay
     // comparable across hosts.
     const viewModel = buildRedesignedHostCanvas(
       {
@@ -112,6 +182,11 @@ describe("buildRedesignedHostCanvas", () => {
     ).toBeDefined();
     expect(
       viewModel.nodes.find((n) => n.id === protocolLeafNodeId("timeout")),
+    ).toBeDefined();
+    expect(
+      viewModel.nodes.find(
+        (n) => n.id === protocolLeafNodeId("capabilities"),
+      ),
     ).toBeDefined();
   });
 

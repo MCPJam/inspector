@@ -434,7 +434,7 @@ export function AppsExtensionTab({
 
       <FocusBlock
         title="Host capabilities"
-        subtitle="Advertised in ui/initialize. Override a row to deviate from the host-style preset."
+        subtitle="Advertised in ui/initialize. Toggle a row to control what this host claims to support."
         action={
           draft.hostCapabilitiesOverride !== undefined ? (
             <Button
@@ -444,7 +444,7 @@ export function AppsExtensionTab({
               className="h-7 text-[11px]"
               onClick={resetOverrideToPreset}
             >
-              Reset to preset
+              Reset to {draft.hostStyle} preset
             </Button>
           ) : (
             <span className="text-[10.5px] text-muted-foreground">
@@ -505,24 +505,6 @@ export function AppsExtensionTab({
                 setOverrideKey(def.key, value);
               }}
               onOverrideOff={() => setOverrideKey(def.key, undefined)}
-              onResetToPreset={() => {
-                // Delete just this row's override entry. If that empties
-                // the override map, leave it as `{}` per the plan —
-                // "Reset to preset" on the BLOCK header is the only thing
-                // that writes the whole override to `undefined`.
-                onDraftChange((prev) => {
-                  const cur = (prev.hostCapabilitiesOverride ?? {}) as Record<
-                    string,
-                    unknown
-                  >;
-                  const next = { ...cur };
-                  delete next[def.key];
-                  return {
-                    ...prev,
-                    hostCapabilitiesOverride: next,
-                  };
-                });
-              }}
             />
           );
         })}

@@ -260,7 +260,6 @@ export function ProtocolTab({
           }
           onOverrideOn={() => setCap("roots", { listChanged: true })}
           onOverrideOff={() => setCap("roots", undefined)}
-          onResetToPreset={() => setCap("roots", undefined)}
         />
         <CapabilityToggleRow
           icon={<Sparkles className="size-3.5" />}
@@ -270,7 +269,6 @@ export function ProtocolTab({
           state={samplingCap ? "override-on" : "override-off"}
           onOverrideOn={() => setCap("sampling", {})}
           onOverrideOff={() => setCap("sampling", undefined)}
-          onResetToPreset={() => setCap("sampling", undefined)}
         />
         <CapabilityToggleRow
           icon={<Wrench className="size-3.5" />}
@@ -282,7 +280,6 @@ export function ProtocolTab({
           state={experimentalCap ? "override-on" : "override-off"}
           onOverrideOn={() => setCap("experimental", {})}
           onOverrideOff={() => setCap("experimental", undefined)}
-          onResetToPreset={() => setCap("experimental", undefined)}
         />
       </FocusBlock>
 
