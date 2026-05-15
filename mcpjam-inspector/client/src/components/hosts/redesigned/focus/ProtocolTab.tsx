@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { Input } from "@mcpjam/design-system/input";
-import { Textarea } from "@mcpjam/design-system/textarea";
 import {
   type HostConfigInputV2,
   type HostConfigMcpProfileV1,
@@ -172,44 +171,6 @@ export function ProtocolTab({
     });
   };
 
-  // hostContext textarea (JSON).
-  const [hostContextRaw, setHostContextRaw] = useState(() =>
-    JSON.stringify(draft.hostContext ?? {}, null, 2),
-  );
-  const [hostContextError, setHostContextError] = useState<string | null>(null);
-  useEffect(() => {
-    // Mirror external changes when the draft.hostContext reference changes.
-    const stringified = JSON.stringify(draft.hostContext ?? {}, null, 2);
-    try {
-      const reparsed = JSON.parse(hostContextRaw || "{}");
-      if (JSON.stringify(reparsed) !== JSON.stringify(draft.hostContext ?? {})) {
-        setHostContextRaw(stringified);
-        setHostContextError(null);
-      }
-    } catch {
-      // user is mid-edit with invalid JSON — leave the textarea alone.
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft.hostContext]);
-
-  const tryParseHostContext = (raw: string) => {
-    setHostContextRaw(raw);
-    try {
-      const parsed = JSON.parse(raw || "{}");
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        setHostContextError("Must be a JSON object");
-        return;
-      }
-      setHostContextError(null);
-      onDraftChange((prev) => ({
-        ...prev,
-        hostContext: parsed as Record<string, unknown>,
-      }));
-    } catch (err) {
-      setHostContextError(err instanceof Error ? err.message : "Invalid JSON");
-    }
-  };
-
   return (
     <div className="flex flex-col gap-4">
       <FocusBlock
@@ -323,23 +284,6 @@ export function ProtocolTab({
           onOverrideOff={() => setCap("experimental", undefined)}
           onResetToPreset={() => setCap("experimental", undefined)}
         />
-      </FocusBlock>
-
-      <FocusBlock
-        title="hostContext"
-        subtitle="Freeform JSON forwarded to MCP Apps host context."
-      >
-        <Textarea
-          rows={4}
-          value={hostContextRaw}
-          onChange={(e) => tryParseHostContext(e.target.value)}
-          spellCheck={false}
-          className="font-mono text-[12px]"
-          placeholder="{ }"
-        />
-        {hostContextError ? (
-          <p className="text-[11px] text-destructive">{hostContextError}</p>
-        ) : null}
       </FocusBlock>
 
       <FocusBlock

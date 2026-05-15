@@ -14,7 +14,8 @@ import {
   type HostAttentionIssue,
   type HostFocusTabId,
 } from "../types";
-import { countIssuesByTab } from "./useHostDraftValidation";
+import { countIssuesByTab, fieldsWithIssues } from "./useHostDraftValidation";
+import { HostIdentityRow } from "./HostIdentityRow";
 import { BehaviorTab } from "./BehaviorTab";
 import { GeneralTab } from "./GeneralTab";
 import { ProtocolTab } from "./ProtocolTab";
@@ -90,6 +91,7 @@ export function HostFocusDialog({
   onSave,
 }: HostFocusDialogProps) {
   const issuesByTab = countIssuesByTab(attention);
+  const generalIssues = fieldsWithIssues(attention, "general");
   const totalIssues = attention.length;
 
   // Click-out / Esc / X all route through this confirm path when the
@@ -232,6 +234,20 @@ export function HostFocusDialog({
             </kbd>
           </header>
 
+          <HostIdentityRow
+            className={cn(
+              hostFocusShellHeaderRowClass,
+              "border-t-0 px-4 py-2",
+            )}
+            hostDisplayName={hostDisplayName}
+            onHostDisplayNameChange={onHostDisplayNameChange}
+            hostStyle={draft.hostStyle}
+            onHostStyleChange={(next) =>
+              onDraftChange((prev) => ({ ...prev, hostStyle: next }))
+            }
+            hasNameIssue={generalIssues.has("hostDisplayName")}
+          />
+
           <div
             className={cn(
               hostFocusShellHeaderRowClass,
@@ -247,11 +263,7 @@ export function HostFocusDialog({
 
           <div className={cn(hostFocusShellScrollClass, "px-6 py-5")}>
             {tab === "general" ? (
-              <GeneralTab
-                hostDisplayName={hostDisplayName}
-                onHostDisplayNameChange={onHostDisplayNameChange}
-                attention={attention}
-              />
+              <GeneralTab attention={attention} />
             ) : null}
             {tab === "behavior" ? (
               <BehaviorTab

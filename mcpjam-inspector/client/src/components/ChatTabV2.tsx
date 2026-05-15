@@ -36,7 +36,6 @@ import { ChatInput } from "@/components/chat-v2/chat-input";
 import { Thread } from "@/components/chat-v2/thread";
 import { SaveAsTestCaseAction } from "@/components/chat-v2/shared/save-as-test-case-action";
 import { type ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/reasoning-part";
-import type { LoadingIndicatorVariant } from "@/components/chat-v2/shared/loading-indicator-content";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
@@ -131,7 +130,6 @@ interface ChatTabProps {
   hostedContext?: HostedRuntimeContext;
   executionConfig?: ExecutionConfig;
   reasoningDisplayMode?: ReasoningDisplayMode;
-  loadingIndicatorVariant?: LoadingIndicatorVariant;
   showHostStyleSelector?: boolean;
   hostStyle?: ChatboxHostStyle;
   onHostStyleChange?: (hostStyle: ChatboxHostStyle) => void;
@@ -167,7 +165,6 @@ export function ChatTabV2({
   hostedContext,
   executionConfig,
   reasoningDisplayMode = "inline",
-  loadingIndicatorVariant,
   showHostStyleSelector = false,
   hostStyle,
   onHostStyleChange,
@@ -2424,7 +2421,6 @@ export function ChatTabV2({
                           onToolApprovalResponse={addToolApprovalResponse}
                           toolRenderOverrides={restoredToolRenderOverrides}
                           minimalMode={minimalMode}
-                          loadingIndicatorVariant={loadingIndicatorVariant}
                           reasoningDisplayMode={reasoningDisplayMode}
                           renderUserMessageActions={
                             chatSessionId && effectiveHostedProjectId

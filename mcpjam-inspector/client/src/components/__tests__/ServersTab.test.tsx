@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { HostsConnectAddServerSlotContext } from "@/components/hosts/HostsConnectAddServerSlotContext";
 import { useState, type ReactNode } from "react";
 import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
 import type { ServerWithName, ServerUpdateResult } from "@/hooks/use-app-state";
@@ -139,14 +140,6 @@ vi.mock("posthog-js/react", () => ({
 vi.mock("@/hooks/use-app-ready", () => ({
   useAppReady: () => ({ status: "ready", projectId: "ws_local" }),
   useAppReadyMessage: () => null,
-}));
-
-vi.mock("../client-config/ClientConfigTab", () => ({
-  ClientConfigTab: ({ activeProjectId }: { activeProjectId: string }) => (
-    <div data-testid="client-config-tab-stub">
-      ClientConfigTab:{activeProjectId}
-    </div>
-  ),
 }));
 
 vi.mock("@/lib/billing-gates", async (importOriginal) => {
@@ -457,17 +450,12 @@ describe("ServersTab shared detail modal", () => {
     onLeaveProject: vi.fn(),
     isRegistryEnabled: true,
     onNavigateToRegistry: vi.fn(),
-    onSaveClientConfig: vi.fn().mockResolvedValue(undefined),
   };
 
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
     sessionStorage.clear();
-    useClientConfigStore.setState(
-      useClientConfigStore.getInitialState(),
-      true,
-    );
     mockIsAuthenticated = false;
     mockCatalogCards = [];
     mockRegistryLoading = false;
@@ -533,6 +521,23 @@ describe("ServersTab shared detail modal", () => {
         organizationId: null,
       })
     );
+  });
+
+  it("renders Add Server actions in the hosts connect header slot when a slot container is provided", () => {
+    const slotEl = document.createElement("div");
+    document.body.appendChild(slotEl);
+    try {
+      render(
+        <HostsConnectAddServerSlotContext.Provider value={slotEl}>
+          <ServersTab {...defaultProps} />
+        </HostsConnectAddServerSlotContext.Provider>,
+      );
+
+      expect(within(slotEl).getByText("Add Server")).toBeInTheDocument();
+      expect(screen.getAllByText("Add Server")).toHaveLength(1);
+    } finally {
+      document.body.removeChild(slotEl);
+    }
   });
 
   it("shows a no-project state when there is no selected project", () => {
@@ -1485,61 +1490,8 @@ describe("ServersTab shared detail modal", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows the Connection Settings button and opens the dialog", () => {
+  it("does not render a Connection Settings entry point", () => {
     render(<ServersTab {...defaultProps} />);
-
-    const button = screen.getByRole("button", { name: /connection settings/i });
-    expect(button).toBeInTheDocument();
-    expect(
-      screen.queryByTestId("client-config-tab-stub")
-    ).not.toBeInTheDocument();
-
-    fireEvent.click(button);
-
-    expect(screen.getByTestId("client-config-tab-stub")).toHaveTextContent(
-      "ClientConfigTab:project-1"
-    );
-  });
-
-  it("discards unsaved connection settings when the dialog is closed", () => {
-    const defaultConfig = {
-      version: 1 as const,
-      connectionDefaults: {
-        headers: {},
-        requestTimeout: 10000,
-      },
-      clientCapabilities: getDefaultClientCapabilities() as Record<
-        string,
-        unknown
-      >,
-    };
-    useClientConfigStore.getState().loadProjectConfig({
-      projectId: "project-1",
-      defaultConfig,
-      savedConfig: undefined,
-    });
-    useClientConfigStore.getState().setSectionText(
-      "connectionDefaults",
-      '{ "headers": { "x-test": "1" }, "requestTimeout": 1234 }',
-    );
-
-    expect(useClientConfigStore.getState().isDirty).toBe(true);
-
-    render(<ServersTab {...defaultProps} />);
-
-    fireEvent.click(
-      screen.getByRole("button", { name: /connection settings/i }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: /close/i }));
-
-    expect(useClientConfigStore.getState().isDirty).toBe(false);
-    expect(
-      useClientConfigStore.getState().draftConfig?.connectionDefaults,
-    ).toEqual(defaultConfig.connectionDefaults);
-  });
-
-  it("hides the Connection Settings button when no save handler is provided", () => {
-    render(<ServersTab {...defaultProps} onSaveClientConfig={undefined} />);
 
     expect(
       screen.queryByRole("button", { name: /connection settings/i })

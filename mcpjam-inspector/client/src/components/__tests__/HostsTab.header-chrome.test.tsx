@@ -26,7 +26,7 @@ describe("HostsTab", () => {
       />,
     );
 
-    const chrome = screen.getByTestId("host-overlay-bar-stub").parentElement;
+    const chrome = screen.getByTestId("hosts-tab-header-chrome");
     expect(chrome).toHaveClass(
       "shrink-0",
       "border-b",

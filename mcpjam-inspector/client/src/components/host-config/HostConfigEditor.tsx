@@ -220,7 +220,7 @@ export function HostConfigEditor({
                 <SelectContent>
                   {hostStyleOptions.map((style) => (
                     <SelectItem key={style.id} value={style.id}>
-                      {style.label}
+                      {style.chatUi.label}
                     </SelectItem>
                   ))}
                 </SelectContent>

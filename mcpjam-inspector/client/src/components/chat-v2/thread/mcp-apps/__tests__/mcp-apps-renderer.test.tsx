@@ -334,7 +334,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
     // Should advertise Claude's preset, not the old empty literal.
     expect(appBridgeArgsRef.current?.hostCapabilities).toEqual(
-      expect.objectContaining(CLAUDE_HOST_STYLE.hostCapabilities),
+      expect.objectContaining(CLAUDE_HOST_STYLE.mcp.hostCapabilities),
     );
   });
 
@@ -367,11 +367,11 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
 
     expect(appBridgeArgsRef.current?.hostCapabilities).toEqual(
-      expect.objectContaining(CHATGPT_HOST_STYLE.hostCapabilities),
+      expect.objectContaining(CHATGPT_HOST_STYLE.mcp.hostCapabilities),
     );
     // Sanity: profiles differ — switching is observable.
     expect(appBridgeArgsRef.current?.hostCapabilities).not.toEqual(
-      expect.objectContaining(CLAUDE_HOST_STYLE.hostCapabilities),
+      expect.objectContaining(CLAUDE_HOST_STYLE.mcp.hostCapabilities),
     );
   });
 
@@ -414,7 +414,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         "--color-background-primary"
       ],
     ).toBe(
-      CHATGPT_HOST_STYLE.resolveStyleVariables("dark")[
+      CHATGPT_HOST_STYLE.mcp.resolveStyleVariables("dark")[
         "--color-background-primary"
       ],
     );
@@ -431,7 +431,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
           styles: expect.objectContaining({
             variables: expect.objectContaining({
               "--color-background-primary":
-                CHATGPT_HOST_STYLE.resolveStyleVariables("dark")[
+                CHATGPT_HOST_STYLE.mcp.resolveStyleVariables("dark")[
                   "--color-background-primary"
                 ],
             }),
@@ -466,7 +466,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         "--color-background-primary"
       ],
     ).toBe(
-      CLAUDE_HOST_STYLE.resolveStyleVariables("dark")[
+      CLAUDE_HOST_STYLE.mcp.resolveStyleVariables("dark")[
         "--color-background-primary"
       ],
     );
@@ -483,7 +483,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
           styles: expect.objectContaining({
             variables: expect.objectContaining({
               "--color-background-primary":
-                CLAUDE_HOST_STYLE.resolveStyleVariables("dark")[
+                CLAUDE_HOST_STYLE.mcp.resolveStyleVariables("dark")[
                   "--color-background-primary"
                 ],
             }),
@@ -577,7 +577,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     ).toEqual(
       expect.objectContaining({
         "--color-background-primary":
-          CLAUDE_HOST_STYLE.resolveStyleVariables("light")[
+          CLAUDE_HOST_STYLE.mcp.resolveStyleVariables("light")[
             "--color-background-primary"
           ],
         "--font-sans": "Custom Sans",
@@ -601,7 +601,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
           styles: expect.objectContaining({
             variables: expect.objectContaining({
               "--color-background-primary":
-                CLAUDE_HOST_STYLE.resolveStyleVariables("light")[
+                CLAUDE_HOST_STYLE.mcp.resolveStyleVariables("light")[
                   "--color-background-primary"
                 ],
               "--font-sans": "Custom Sans",
@@ -620,14 +620,14 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
     expect(iframe.className).toContain("bg-transparent");
     expect(sandboxedIframePropsRef.current?.style?.backgroundColor).toBe(
-      CLAUDE_HOST_STYLE.resolveStyleVariables("light")[
+      CLAUDE_HOST_STYLE.mcp.resolveStyleVariables("light")[
         "--color-background-primary"
       ],
     );
     expect(sandboxedIframePropsRef.current?.colorScheme).toBe("light");
     expect(hostChrome).toHaveStyle({
       backgroundColor:
-        CLAUDE_HOST_STYLE.resolveStyleVariables("light")[
+        CLAUDE_HOST_STYLE.mcp.resolveStyleVariables("light")[
           "--color-background-primary"
         ],
     });
@@ -657,7 +657,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(iframe.className).toContain("bg-transparent");
     expect(iframe.className).not.toContain("border border-border/40");
     expect(sandboxedIframePropsRef.current?.style?.backgroundColor).toBe(
-      CLAUDE_HOST_STYLE.resolveChatBackground("light"),
+      CLAUDE_HOST_STYLE.chatUi.resolveChatBackground("light"),
     );
     expect(sandboxedIframePropsRef.current?.colorScheme).toBe("light");
   });

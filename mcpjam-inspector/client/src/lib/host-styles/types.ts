@@ -1,3 +1,4 @@
+import type { ComponentType } from "react";
 import type {
   McpUiHostCapabilities,
   McpUiStyles,
@@ -17,16 +18,45 @@ export type HostStyleFamily = "claude" | "chatgpt";
 export type HostThemeMode = "light" | "dark";
 
 /**
- * Single source of truth for one host style. Registered in
- * `@/lib/host-styles` and consumed by chatbox bootstrap, builder pickers,
- * shell theming, and the MCP Apps iframe bridge.
+ * Wire-bound half of a host style. Everything in here ends up traveling
+ * over the MCP Apps `ui/initialize` handshake (capabilities advertise,
+ * `hostContext.platform`, `hostContext.styles.variables`, `styles.css.fonts`).
  *
- * Adding a new built-in host is a matter of authoring one of these objects
- * and registering it; future project-defined hosts can use the same shape
- * once a scoped host layer exists.
+ * Sandbox is intentionally excluded — sandbox CSP/permissions are
+ * resource-derived at runtime per SEP-1865, not a static vendor trait.
  */
-export interface HostStyleDefinition {
-  id: HostStyleId;
+export interface HostMcpProfile {
+  /** MCP-Apps UIType the host emulates inside chat widgets. */
+  protocolOverride: UIType;
+  /** Platform string passed to the MCP Apps bridge. */
+  platform: "web" | "desktop" | "mobile";
+  /**
+   * `hostCapabilities` blob advertised in the `ui/initialize` response.
+   *
+   * NOTE: Advertising a capability is a runtime contract. Built-ins should
+   * only claim what the renderer actually services so widget authors are
+   * not misled when enforcement catches up.
+   */
+  hostCapabilities: Omit<McpUiHostCapabilities, "sandbox">;
+  resolveStyleVariables: (theme: HostThemeMode) => McpUiStyles;
+  /** Inline @font-face / @import CSS injected into MCP App iframes. */
+  fontCss: string;
+}
+
+/**
+ * Inspector-side chat chrome for a host style. None of this travels over
+ * the MCP wire — it drives the picker, the chat shell background, the
+ * loading indicator art, etc.
+ *
+ * The name `chatUi` deliberately mirrors the backend envelope on
+ * `chatboxes.chatUi` (see `mcpjam-backend/convex/lib/chatboxUxValidators.ts`,
+ * `chatUiValidator`). Backend stores per-chatbox overrides for this same
+ * conceptual category; the client uses the same name for per-host defaults
+ * so the vocabulary lines up across the stack. A future per-chatbox
+ * indicator override would land as `chatUi.indicator: string` on the
+ * chatbox row, mirroring how `chatUi.welcome` works today.
+ */
+export interface HostChatUi {
   /** Brand label, e.g. "Claude". */
   label: string;
   /** Builder picker copy, e.g. "Claude-style host". */
@@ -37,25 +67,30 @@ export interface HostStyleDefinition {
   logoSrc: string;
   /** Visual rendering family this host maps onto. */
   family: HostStyleFamily;
-  /** MCP-Apps UIType the host emulates inside chat widgets. */
-  protocolOverride: UIType;
-  /** Platform string passed to the MCP Apps bridge. */
-  platform: "web" | "desktop" | "mobile";
-  /** Inline @font-face CSS injected into MCP App iframes. */
-  fontCss: string;
-  /**
-   * MCP Apps `hostCapabilities` blob advertised in the `ui/initialize`
-   * response for this host. Excludes `sandbox` — sandbox CSP/permissions are
-   * approved per UI resource (widget-declared) at runtime, not as a static
-   * vendor trait, per SEP-1865.
-   *
-   * NOTE: Advertising a capability is a runtime contract. Until enforcement
-   * gates land in `registerBridgeHandlers`, behavior may still service methods
-   * that the handshake says are unsupported. Profiles should reflect what the
-   * vendor *actually* supports so widget authors testing against the mock are
-   * not misled when enforcement catches up.
-   */
-  hostCapabilities: Omit<McpUiHostCapabilities, "sandbox">;
-  resolveStyleVariables: (theme: HostThemeMode) => McpUiStyles;
   resolveChatBackground: (theme: HostThemeMode) => string;
+  /**
+   * Brand thinking/loading indicator. Honors `prefers-reduced-motion`
+   * internally — the registry contract intentionally does not surface a
+   * mode prop so adding a new host stays "register one component."
+   */
+  loadingIndicator: ComponentType<{ className?: string }>;
+}
+
+/**
+ * Single source of truth for one host style. Registered in
+ * `@/lib/host-styles` and consumed by chatbox bootstrap, builder pickers,
+ * shell theming, and the MCP Apps iframe bridge.
+ *
+ * Adding a new built-in host is a matter of authoring `mcp` + `chatUi`
+ * objects and registering them; future project-defined hosts can use the
+ * same shape once a scoped host layer exists.
+ *
+ * Only `id` is persisted to the DB (as `'claude' | 'chatgpt' | 'direct'`
+ * on `hostConfigs.hostStyle` / `chatboxes.hostStyle`); both `mcp` and
+ * `chatUi` are reconstituted client-side from the id at runtime.
+ */
+export interface HostStyleDefinition {
+  id: HostStyleId;
+  mcp: HostMcpProfile;
+  chatUi: HostChatUi;
 }

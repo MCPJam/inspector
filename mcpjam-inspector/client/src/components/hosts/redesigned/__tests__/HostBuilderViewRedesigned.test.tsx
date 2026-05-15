@@ -1,8 +1,18 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ReactElement } from "react";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { HostConfigDtoV2 } from "@/lib/host-config-v2";
+import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
 import { HostBuilderViewRedesigned } from "../HostBuilderViewRedesigned";
+
+function renderHostBuilder(ui: ReactElement) {
+  return render(
+    <PreferencesStoreProvider themeMode="light" themePreset="default">
+      {ui}
+    </PreferencesStoreProvider>,
+  );
+}
 
 const BASE_CONFIG: HostConfigDtoV2 = {
   id: "cfg-host-a",
@@ -104,7 +114,7 @@ describe("HostBuilderViewRedesigned", () => {
 
   it("renders a host switcher when onSwitchHost is set and multiple hosts exist", async () => {
     const user = userEvent.setup();
-    render(
+    renderHostBuilder(
       <HostBuilderViewRedesigned
         hostId="host-a"
         projectId="ws-1"
@@ -139,7 +149,7 @@ describe("HostBuilderViewRedesigned", () => {
       isLoading: false,
     });
 
-    render(
+    renderHostBuilder(
       <HostBuilderViewRedesigned
         hostId="host-a"
         projectId="ws-1"

@@ -5,11 +5,9 @@ import { Textarea } from "@mcpjam/design-system/textarea";
 import {
   DEFAULT_TEMPERATURE_V2,
   type HostConfigInputV2,
-  type HostStyleId,
 } from "@/lib/host-config-v2";
-import { listHostStyles } from "@/lib/host-styles";
 import { SUPPORTED_MODELS } from "@/shared/types";
-import { FieldRow, FocusBlock, SegmentedControl } from "./primitives";
+import { FieldRow, FocusBlock } from "./primitives";
 import { fieldsWithIssues } from "./useHostDraftValidation";
 import type { HostAttentionIssue } from "../types";
 
@@ -28,7 +26,6 @@ export function BehaviorTab({
 }: BehaviorTabProps) {
   const issues = fieldsWithIssues(attention, "behavior");
   const reactId = useId();
-  const styles = useMemo(() => listHostStyles(), []);
 
   // Group models by provider for the model dropdown — kept simple and
   // non-virtualized; SUPPORTED_MODELS is on the order of dozens.
@@ -53,7 +50,7 @@ export function BehaviorTab({
       >
         <FieldRow
           label="Model"
-          description="Provider × model that the host will call. The handoff names it the 'agent layer'."
+          description="Provider × model the host will call."
           control={
             <select
               id={`${reactId}-model`}
@@ -102,25 +99,10 @@ export function BehaviorTab({
             <span>1.00</span>
           </div>
         </div>
-      </FocusBlock>
 
-      <FocusBlock
-        title="Host style"
-        subtitle="Seeds the capability preset advertised in ui/initialize."
-      >
-        <SegmentedControl<HostStyleId>
-          ariaLabel="Host style"
-          value={draft.hostStyle}
-          onChange={(next) => update({ hostStyle: next })}
-          options={styles.map((s) => ({
-            value: s.id,
-            label: s.label,
-            hint: s.pickerDescription,
-          }))}
-        />
         <FieldRow
           label="Require tool approval"
-          description="When on, the host pauses before each tool call for user confirmation."
+          description="Pause before each tool call for user confirmation."
           control={
             <Switch
               checked={draft.requireToolApproval}
@@ -154,7 +136,6 @@ export function BehaviorTab({
           }
         />
       </FocusBlock>
-
     </div>
   );
 }

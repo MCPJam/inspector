@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { Card } from "@mcpjam/design-system/card";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -13,7 +14,6 @@ import {
   ChevronRight,
   MonitorSmartphone,
   MessageSquareText,
-  Settings,
 } from "lucide-react";
 import type {
   PendingDashboardOAuthState,
@@ -22,14 +22,6 @@ import type {
 } from "@/hooks/use-app-state";
 import { ServerConnectionCard } from "./connection/ServerConnectionCard";
 import { AddServerModal } from "./connection/AddServerModal";
-import { ClientConfigTab } from "./client-config/ClientConfigTab";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogTitle,
-} from "@mcpjam/design-system/dialog";
-import type { ProjectConnectionConfigDraft } from "@/lib/client-config";
 import {
   ServerDetailModal,
   type ServerDetailTab,
@@ -110,9 +102,9 @@ import {
   writeOpenServerDetailModalState,
 } from "@/lib/server-detail-modal-resume";
 import { cn } from "@/lib/utils";
+import { HostsConnectAddServerSlotContext } from "./hosts/HostsConnectAddServerSlotContext";
 import { compareQuickConnectCatalogCards } from "@/lib/quick-connect-catalog-sort";
 import { toast } from "sonner";
-import { useClientConfigStore } from "@/stores/client-config-store";
 
 const ORDER_STORAGE_KEY = "mcp-server-order";
 const LOGGER_FOCUS_STORAGE_KEY = "mcp-server-logger-focus";
@@ -517,10 +509,6 @@ interface ServersTabProps {
   onLeaveProject?: () => void;
   isRegistryEnabled?: boolean;
   onNavigateToRegistry?: () => void;
-  onSaveClientConfig?: (
-    projectId: string,
-    clientConfig: ProjectConnectionConfigDraft | undefined
-  ) => Promise<void>;
 }
 
 export function ServersTab({
@@ -539,9 +527,9 @@ export function ServersTab({
   onProjectShared: _onProjectShared,
   isRegistryEnabled = false,
   onNavigateToRegistry,
-  onSaveClientConfig,
 }: ServersTabProps) {
   const posthog = usePostHog();
+  const hostsConnectAddServerSlot = useContext(HostsConnectAddServerSlotContext);
   const { isAuthenticated } = useConvexAuth();
   const appReady = useAppReady();
   const appReadyMessage = useAppReadyMessage();
@@ -584,7 +572,6 @@ export function ServersTab({
   const [isAddingServer, setIsAddingServer] = useState(false);
   const [isImportingJson, setIsImportingJson] = useState(false);
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
-  const [isClientConfigOpen, setIsClientConfigOpen] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
   const persistedLoggerFocus = readPersistedLoggerFocus(activeProjectId);
   const [focusedLoggerServerIds, setFocusedLoggerServerIds] = useState<
@@ -786,6 +773,10 @@ export function ServersTab({
     pendingDashboardOAuthServer?.connectionStatus !== "connected" &&
     pendingDashboardOAuthServer?.connectionStatus !== "failed";
   const hasAnyServers = connectedCount > 0;
+  const shouldShowServerActionsInChrome =
+    !!selectedProject && !isLoadingProjects && !isBillingContextPending;
+  const showServerActionsInHostsHeader =
+    hostsConnectAddServerSlot != null && shouldShowServerActionsInChrome;
   const pendingQuickConnectServer =
     pendingQuickConnect?.sourceTab === "servers"
       ? projectServers[pendingQuickConnect.serverName]
@@ -1157,42 +1148,8 @@ export function ServersTab({
     setIsActionMenuOpen(false);
   };
 
-  const handleOpenClientConfig = () => {
-    posthog.capture("client_config_button_clicked", {
-      location: "servers_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
-    });
-    setIsClientConfigOpen(true);
-  };
-
-  const handleClientConfigOpenChange = (open: boolean) => {
-    if (!open) {
-      const clientConfigState = useClientConfigStore.getState();
-      if (
-        !clientConfigState.isSaving &&
-        !clientConfigState.isAwaitingRemoteEcho
-      ) {
-        clientConfigState.resetToBaseline();
-      }
-    }
-
-    setIsClientConfigOpen(open);
-  };
-
   const renderServerActionsMenu = () => (
     <>
-      {onSaveClientConfig ? (
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={handleOpenClientConfig}
-          className="cursor-pointer"
-        >
-          <Settings className="h-4 w-4 mr-2" />
-          Connection Settings
-        </Button>
-      ) : null}
       <HoverCard
         open={isActionMenuOpen}
         onOpenChange={setIsActionMenuOpen}
@@ -1389,7 +1346,7 @@ export function ServersTab({
                   <ArrowRight className="h-3.5 w-3.5 ml-1" />
                 </Button>
               ) : null}
-              {renderServerActionsMenu()}
+              {!showServerActionsInHostsHeader ? renderServerActionsMenu() : null}
             </div>
           </div>
 
@@ -1510,7 +1467,7 @@ export function ServersTab({
               <ArrowRight className="h-3.5 w-3.5 ml-1" />
             </Button>
           ) : null}
-          {renderServerActionsMenu()}
+          {!showServerActionsInHostsHeader ? renderServerActionsMenu() : null}
         </div>
       </div>
 
@@ -1593,28 +1550,6 @@ export function ServersTab({
         onImport={handleJsonImport}
       />
 
-      {/* Client Config Dialog */}
-      {onSaveClientConfig ? (
-        <Dialog
-          open={isClientConfigOpen}
-          onOpenChange={handleClientConfigOpenChange}
-        >
-          <DialogContent className="flex max-h-[88vh] w-[min(96vw,88rem)] max-w-[88rem] flex-col gap-0 overflow-hidden p-0 sm:max-w-[88rem]">
-            <DialogTitle className="sr-only">Connection Settings</DialogTitle>
-            <DialogDescription className="sr-only">
-              Edit project connection settings and client capabilities.
-            </DialogDescription>
-            <div className="min-h-0 overflow-hidden">
-              <ClientConfigTab
-                activeProjectId={activeProjectId}
-                project={selectedProject}
-                onSaveClientConfig={onSaveClientConfig}
-              />
-            </div>
-          </DialogContent>
-        </Dialog>
-      ) : null}
-
       {detailModalServer && (
         <ServerDetailModal
           key={detailModalState.sessionKey}
@@ -1632,6 +1567,10 @@ export function ServersTab({
           hostedServerId={detailModalHostedServerId}
         />
       )}
+
+      {showServerActionsInHostsHeader && hostsConnectAddServerSlot
+        ? createPortal(renderServerActionsMenu(), hostsConnectAddServerSlot)
+        : null}
     </div>
   );
 }

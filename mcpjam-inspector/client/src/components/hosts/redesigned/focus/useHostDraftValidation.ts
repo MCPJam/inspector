@@ -43,15 +43,15 @@ export function collectHostAttentionIssues(
     });
   }
 
-  // Protocol tab: hostContext must be JSON-shaped (the editor enforces
-  // this, but defend the validation surface for non-editor mutators too).
+  // Apps tab: hostContext must be JSON-shaped (the editor enforces this,
+  // but defend the validation surface for non-editor mutators too).
   if (
     draft.hostContext &&
     (typeof draft.hostContext !== "object" || Array.isArray(draft.hostContext))
   ) {
     issues.push({
       level: "error",
-      tab: "protocol",
+      tab: "apps",
       field: "hostContext",
       message: "Host context must be a JSON object",
     });
@@ -86,6 +86,24 @@ export function collectHostAttentionIssues(
         field: "mimeTypes",
         message: "Extension is on but no MIME types are advertised",
       });
+    }
+  }
+
+  // Apps Extension: sandbox permissions.allow values MUST be booleans —
+  // backend canonicalizer rejects anything else and the write would fail.
+  // Surface as a pre-submit warning so the user can fix it before save.
+  const allow = draft.mcpProfile?.apps?.sandbox?.permissions?.allow;
+  if (allow && typeof allow === "object" && !Array.isArray(allow)) {
+    for (const v of Object.values(allow)) {
+      if (typeof v !== "boolean") {
+        issues.push({
+          level: "error",
+          tab: "apps",
+          field: "sandboxPermissionsAllow",
+          message: "Sandbox permission allow values must be true/false",
+        });
+        break;
+      }
     }
   }
 

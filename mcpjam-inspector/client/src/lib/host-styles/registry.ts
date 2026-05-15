@@ -1,3 +1,4 @@
+import type { ComponentType } from "react";
 import type { McpUiHostCapabilities } from "@modelcontextprotocol/ext-apps/app-bridge";
 import { BUILT_IN_HOST_STYLES, CLAUDE_HOST_STYLE } from "./built-ins";
 import type { HostStyleDefinition, HostStyleId } from "./types";
@@ -71,7 +72,18 @@ export function getHostStyleOrDefault(
 export function getHostCapabilitiesForStyle(
   id: HostStyleId | null | undefined,
 ): Omit<McpUiHostCapabilities, "sandbox"> {
-  return findHostStyle(id)?.hostCapabilities ?? SPEC_DEFAULT_HOST_CAPABILITIES;
+  return findHostStyle(id)?.mcp.hostCapabilities ?? SPEC_DEFAULT_HOST_CAPABILITIES;
+}
+
+/**
+ * Resolve the brand loading indicator component for a host style. Falls
+ * back to the default host's indicator (Claude) when the id is unknown
+ * or absent — matches the rest of the chrome-resolution surface.
+ */
+export function getLoadingIndicatorForStyle(
+  id: HostStyleId | null | undefined,
+): ComponentType<{ className?: string }> {
+  return getHostStyleOrDefault(id).chatUi.loadingIndicator;
 }
 
 export function isKnownHostStyleId(id: unknown): id is HostStyleId {

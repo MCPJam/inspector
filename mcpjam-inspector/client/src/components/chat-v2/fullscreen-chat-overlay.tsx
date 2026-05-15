@@ -18,10 +18,9 @@ import { Button } from "@mcpjam/design-system/button";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import {
   LoadingIndicatorContent,
-  type LoadingIndicatorVariant,
-  useResolvedLoadingIndicatorVariant,
+  useResolvedHostStyleForIndicator,
 } from "@/components/chat-v2/shared/loading-indicator-content";
-import { ClaudeLoadingIndicator } from "@/components/chat-v2/shared/claude-loading-indicator";
+import { ClaudeLoadingIndicator } from "@/lib/host-styles/indicators/claude-mark";
 import { getRenderableConversationMessages } from "@/components/chat-v2/thread/thread-helpers";
 
 function getMessagePreviewText(message: UIMessage): string {
@@ -137,25 +136,22 @@ function MessageBubble({
   );
 }
 
-function ThinkingRow({
-  resolvedVariant,
-}: {
-  resolvedVariant?: LoadingIndicatorVariant;
-}) {
-  const shouldRenderDefaultBubble =
-    resolvedVariant !== "claude-mark" && resolvedVariant !== "chatgpt-dot";
+function ThinkingRow() {
+  // Branded indicators (Claude / ChatGPT) render bare so the brand art
+  // owns the spacing; the generic "Thinking…" text gets the muted bubble.
+  const hasBrandIndicator = useResolvedHostStyleForIndicator() !== null;
 
   return (
     <div
       data-testid="fullscreen-thinking-row"
       className="flex w-full justify-start"
     >
-      {shouldRenderDefaultBubble ? (
-        <div className="inline-flex items-center gap-2 rounded-2xl bg-muted px-3 py-2 text-sm text-muted-foreground/80">
-          <LoadingIndicatorContent variant={resolvedVariant} />
-        </div>
+      {hasBrandIndicator ? (
+        <LoadingIndicatorContent />
       ) : (
-        <LoadingIndicatorContent variant={resolvedVariant} />
+        <div className="inline-flex items-center gap-2 rounded-2xl bg-muted px-3 py-2 text-sm text-muted-foreground/80">
+          <LoadingIndicatorContent />
+        </div>
       )}
     </div>
   );
@@ -194,14 +190,17 @@ function MessageList({
   messages,
   isThinking,
   open,
-  resolvedLoadingIndicatorVariant,
 }: {
   messages: UIMessage[];
   isThinking: boolean;
   open: boolean;
-  resolvedLoadingIndicatorVariant?: LoadingIndicatorVariant;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const hasBrandIndicator = useResolvedHostStyleForIndicator() !== null;
+  // Claude paints its mark inline beneath the last assistant bubble
+  // ("footer" treatment); other hosts use the standalone row only.
+  const isClaudeFamily =
+    getChatboxHostFamily(useChatboxHostStyle()) === "claude";
 
   const visibleMessages = useMemo(
     () =>
@@ -215,11 +214,9 @@ function MessageList({
   );
   const lastVisibleMessage = visibleMessages.at(-1)?.message ?? null;
   const hasVisibleAssistantResponse = lastVisibleMessage?.role === "assistant";
-  const shouldShowStandaloneThinkingRow =
-    resolvedLoadingIndicatorVariant === "claude-mark" ||
-    resolvedLoadingIndicatorVariant === "chatgpt-dot"
-      ? isThinking && !hasVisibleAssistantResponse
-      : isThinking;
+  const shouldShowStandaloneThinkingRow = hasBrandIndicator
+    ? isThinking && !hasVisibleAssistantResponse
+    : isThinking;
 
   useEffect(() => {
     if (!open) return;
@@ -233,7 +230,7 @@ function MessageList({
       <div className="max-h-[45vh] overflow-y-auto px-4 py-3 space-y-3">
         {visibleMessages.map(({ message, text }, idx) => {
           const claudeFooterMode =
-            resolvedLoadingIndicatorVariant === "claude-mark" &&
+            isClaudeFamily &&
             message.role === "assistant" &&
             message.id === lastVisibleMessage?.id
               ? isThinking
@@ -249,9 +246,7 @@ function MessageList({
             />
           );
         })}
-        {shouldShowStandaloneThinkingRow ? (
-          <ThinkingRow resolvedVariant={resolvedLoadingIndicatorVariant} />
-        ) : null}
+        {shouldShowStandaloneThinkingRow ? <ThinkingRow /> : null}
         <div ref={bottomRef} />
       </div>
     </div>
@@ -375,7 +370,6 @@ type FullscreenChatOverlayProps = {
   disabled: boolean;
   canSend: boolean;
   isThinking: boolean;
-  loadingIndicatorVariant?: LoadingIndicatorVariant;
   onStop?: () => void;
   onSend: () => void;
 };
@@ -389,15 +383,11 @@ export function FullscreenChatOverlay({
   disabled,
   canSend,
   isThinking,
-  loadingIndicatorVariant,
   onStop,
   onSend,
 }: FullscreenChatOverlayProps) {
   const chatboxHostStyle = useChatboxHostStyle();
   const chatboxHostTheme = useChatboxHostTheme();
-  const resolvedLoadingIndicatorVariant = useResolvedLoadingIndicatorVariant(
-    loadingIndicatorVariant,
-  );
   const resolvedThemeMode = chatboxHostTheme ?? "light";
   const isDarkChatboxTheme = resolvedThemeMode === "dark";
   const appearance = useMemo(
@@ -421,7 +411,6 @@ export function FullscreenChatOverlay({
             messages={messages}
             isThinking={isThinking}
             open={open}
-            resolvedLoadingIndicatorVariant={resolvedLoadingIndicatorVariant}
           />
           <Composer
             value={input}

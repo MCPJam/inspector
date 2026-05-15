@@ -245,7 +245,6 @@ describe("ChatboxEditor preview", () => {
           temperature: 0.4,
           requireToolApproval: true,
         }),
-        loadingIndicatorVariant: "claude-mark",
       })
     );
   });

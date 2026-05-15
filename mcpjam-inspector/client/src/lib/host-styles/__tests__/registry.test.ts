@@ -50,17 +50,22 @@ describe("host-styles registry", () => {
   it("registers custom host styles for project-defined hosts", () => {
     const fakeStyle: HostStyleDefinition = {
       id: "test-host-registry",
-      label: "Test Host",
-      shortLabel: "Test-style host",
-      pickerDescription: "Test chrome",
-      logoSrc: "/test-logo.png",
-      family: "claude",
-      protocolOverride: CLAUDE_HOST_STYLE.protocolOverride,
-      platform: "web",
-      fontCss: "",
-      hostCapabilities: {},
-      resolveStyleVariables: CLAUDE_HOST_STYLE.resolveStyleVariables,
-      resolveChatBackground: () => "rgba(0, 0, 0, 1)",
+      mcp: {
+        protocolOverride: CLAUDE_HOST_STYLE.mcp.protocolOverride,
+        platform: "web",
+        fontCss: "",
+        hostCapabilities: {},
+        resolveStyleVariables: CLAUDE_HOST_STYLE.mcp.resolveStyleVariables,
+      },
+      chatUi: {
+        label: "Test Host",
+        shortLabel: "Test-style host",
+        pickerDescription: "Test chrome",
+        logoSrc: "/test-logo.png",
+        family: "claude",
+        resolveChatBackground: () => "rgba(0, 0, 0, 1)",
+        loadingIndicator: CLAUDE_HOST_STYLE.chatUi.loadingIndicator,
+      },
     };
 
     registerHostStyle(fakeStyle);
@@ -72,10 +77,10 @@ describe("host-styles registry", () => {
 
   it("returns the host style's hostCapabilities preset by id", () => {
     expect(getHostCapabilitiesForStyle("claude")).toBe(
-      CLAUDE_HOST_STYLE.hostCapabilities,
+      CLAUDE_HOST_STYLE.mcp.hostCapabilities,
     );
     expect(getHostCapabilitiesForStyle("chatgpt")).toBe(
-      CHATGPT_HOST_STYLE.hostCapabilities,
+      CHATGPT_HOST_STYLE.mcp.hostCapabilities,
     );
   });
 
@@ -97,8 +102,8 @@ describe("host-styles registry", () => {
     // Two profiles MUST differ in at least one observable key — otherwise
     // host-style switching is cosmetic only and provides no signal to
     // widget authors testing cross-client.
-    expect(CLAUDE_HOST_STYLE.hostCapabilities).not.toEqual(
-      CHATGPT_HOST_STYLE.hostCapabilities,
+    expect(CLAUDE_HOST_STYLE.mcp.hostCapabilities).not.toEqual(
+      CHATGPT_HOST_STYLE.mcp.hostCapabilities,
     );
   });
 

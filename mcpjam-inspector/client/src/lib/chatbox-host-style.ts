@@ -25,18 +25,18 @@ export function normalizeChatboxHostStyleId(
 }
 
 export function getChatboxHostLabel(hostStyle: ChatboxHostStyle): string {
-  return getHostStyleOrDefault(hostStyle).label;
+  return getHostStyleOrDefault(hostStyle).chatUi.label;
 }
 
 /** User-facing label for chatbox builder surfaces (host style terminology). */
 export function getChatboxHostStyleShortLabel(
   hostStyle: ChatboxHostStyle,
 ): string {
-  return getHostStyleOrDefault(hostStyle).shortLabel;
+  return getHostStyleOrDefault(hostStyle).chatUi.shortLabel;
 }
 
 export function getChatboxHostLogo(hostStyle: ChatboxHostStyle): string {
-  return getHostStyleOrDefault(hostStyle).logoSrc;
+  return getHostStyleOrDefault(hostStyle).chatUi.logoSrc;
 }
 
 /**
@@ -49,7 +49,7 @@ export function getChatboxProtocolOverride(
   hostStyle: ChatboxHostStyle | null | undefined,
 ): UIType | undefined {
   if (!hostStyle) return undefined;
-  return getHostStyleOrDefault(hostStyle).protocolOverride;
+  return getHostStyleOrDefault(hostStyle).mcp.protocolOverride;
 }
 
 /**
@@ -66,7 +66,7 @@ export function getChatboxHostFamily(
   hostStyle: ChatboxHostStyle | null | undefined,
 ): HostStyleFamily | null {
   if (!hostStyle) return null;
-  return getHostStyleOrDefault(hostStyle).family;
+  return getHostStyleOrDefault(hostStyle).chatUi.family;
 }
 
 export function getChatboxChatBackground(
@@ -74,7 +74,7 @@ export function getChatboxChatBackground(
   themeMode: HostThemeMode,
 ): string | undefined {
   if (!hostStyle) return undefined;
-  return getHostStyleOrDefault(hostStyle).resolveChatBackground(themeMode);
+  return getHostStyleOrDefault(hostStyle).chatUi.resolveChatBackground(themeMode);
 }
 
 export function getChatboxShellStyle(
@@ -82,14 +82,30 @@ export function getChatboxShellStyle(
   themeMode: HostThemeMode,
 ): CSSProperties {
   const definition = getHostStyleOrDefault(hostStyle);
-  const styleVariables = definition.resolveStyleVariables(themeMode);
-  const background = definition.resolveChatBackground(themeMode);
+  const styleVariables = definition.mcp.resolveStyleVariables(themeMode);
+  const background = definition.chatUi.resolveChatBackground(themeMode);
   const resolvedStyleVariables = styleVariables as Record<
     string,
     string | undefined
   >;
   const getStyleVar = (key: string, fallback: string) =>
     resolvedStyleVariables[key] ?? fallback;
+
+  // shadcn / Tailwind `primary` is not part of the MCP Apps token set. Map it
+  // from each host's semantic accents so builder chrome (e.g. `bg-primary`,
+  // `color-mix(..., var(--primary), ...)`) follows the emulated vendor instead
+  // of leaking the app-wide MCPJam primary.
+  const primary =
+    definition.chatUi.family === "chatgpt"
+      ? getStyleVar("--color-border-info", getStyleVar("--color-text-primary", background))
+      : getStyleVar(
+          "--color-border-warning",
+          getStyleVar("--color-text-primary", background),
+        );
+  const primaryForeground = getStyleVar(
+    "--color-text-inverse",
+    getStyleVar("--color-background-primary", background),
+  );
 
   const shellStyle: ChatboxShellStyle = {
     "--background": background,
@@ -104,6 +120,8 @@ export function getChatboxShellStyle(
     "--muted-foreground": getStyleVar("--color-text-secondary", background),
     "--accent": getStyleVar("--color-background-tertiary", background),
     "--accent-foreground": getStyleVar("--color-text-primary", background),
+    "--primary": primary,
+    "--primary-foreground": primaryForeground,
     "--border": getStyleVar("--color-border-secondary", background),
     "--input": getStyleVar("--color-border-primary", background),
     "--ring": getStyleVar("--color-ring-primary", background),

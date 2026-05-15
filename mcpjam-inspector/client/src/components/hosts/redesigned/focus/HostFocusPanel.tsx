@@ -3,13 +3,14 @@ import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 import type { HostConfigInputV2 } from "@/lib/host-config-v2";
 import type { HostAttentionIssue, HostFocusTabId } from "../types";
-import { countIssuesByTab } from "./useHostDraftValidation";
+import { countIssuesByTab, fieldsWithIssues } from "./useHostDraftValidation";
 import { BehaviorTab } from "./BehaviorTab";
 import { GeneralTab } from "./GeneralTab";
 import { ProtocolTab } from "./ProtocolTab";
 import { AppsExtensionTab } from "./AppsExtensionTab";
 import { ServersTab } from "./ServersTab";
 import { HostFocusTabBar } from "./HostFocusTabBar";
+import { HostIdentityRow } from "./HostIdentityRow";
 import {
   hostFocusShellHeaderRowClass,
   hostFocusShellRootClass,
@@ -50,9 +51,20 @@ export function HostFocusPanel({
   onClose,
 }: HostFocusPanelProps) {
   const issuesByTab = countIssuesByTab(attention);
+  const generalIssues = fieldsWithIssues(attention, "general");
 
   return (
     <div className={hostFocusShellRootClass}>
+      <HostIdentityRow
+        className={cn(hostFocusShellHeaderRowClass, "py-2")}
+        hostDisplayName={hostDisplayName}
+        onHostDisplayNameChange={onHostDisplayNameChange}
+        hostStyle={draft.hostStyle}
+        onHostStyleChange={(next) =>
+          onDraftChange((prev) => ({ ...prev, hostStyle: next }))
+        }
+        hasNameIssue={generalIssues.has("hostDisplayName")}
+      />
       <header
         className={cn(
           hostFocusShellHeaderRowClass,
@@ -78,11 +90,7 @@ export function HostFocusPanel({
 
       <div className={hostFocusShellScrollClass}>
         {tab === "general" ? (
-          <GeneralTab
-            hostDisplayName={hostDisplayName}
-            onHostDisplayNameChange={onHostDisplayNameChange}
-            attention={attention}
-          />
+          <GeneralTab attention={attention} />
         ) : null}
         {tab === "behavior" ? (
           <BehaviorTab

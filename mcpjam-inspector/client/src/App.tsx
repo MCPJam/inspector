@@ -798,7 +798,6 @@ export default function App() {
     handleCreateProject,
     handleLeaveProject,
     handleUpdateProject,
-    handleUpdateClientConfig,
     handleUpdateHostContext,
     handleDeleteProject,
     handleProjectShared,
@@ -2150,7 +2149,6 @@ export default function App() {
                     ? () => handleNavigate("registry")
                     : undefined
                 }
-                onSaveClientConfig={handleUpdateClientConfig}
               />
             );
             if (activeTab === "servers") return serversTabElement;

@@ -452,8 +452,8 @@ export function HostContextHeader({
                   className="h-6 w-6"
                 >
                   <img
-                    src={host.logoSrc}
-                    alt={host.label}
+                    src={host.chatUi.logoSrc}
+                    alt={host.chatUi.label}
                     className="h-3.5 w-3.5 object-contain"
                   />
                 </Button>

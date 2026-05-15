@@ -1,7 +1,9 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   AppWindow,
   ArrowDownToLine,
+  ChevronDown,
+  ChevronRight,
   ExternalLink,
   Languages,
   MessagesSquare,
@@ -10,7 +12,9 @@ import {
 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Dialog, DialogContent } from "@mcpjam/design-system/dialog";
+import { Input } from "@mcpjam/design-system/input";
 import { Switch } from "@mcpjam/design-system/switch";
+import { Textarea } from "@mcpjam/design-system/textarea";
 import {
   resolveEffectiveHostCapabilities,
   type HostConfigInputV2,
@@ -22,6 +26,7 @@ import {
   AddItemPill,
   CapabilityToggleRow,
   Chip,
+  FieldRow,
   FocusBlock,
   SegmentedControl,
 } from "./primitives";
@@ -83,63 +88,110 @@ function writeExtension(
   return { ...draft, clientCapabilities: existingCaps };
 }
 
+type CspBlock = NonNullable<
+  NonNullable<HostConfigMcpProfileV1["apps"]>["sandbox"]
+>["csp"];
+type PermsBlock = NonNullable<
+  NonNullable<HostConfigMcpProfileV1["apps"]>["sandbox"]
+>["permissions"];
+
 /**
- * Sandbox patch helper. Collapses to undefined when the resulting profile
- * has no live fields (matches the "undefined ≠ empty envelope" rule from
- * host-config-v2.ts:53).
+ * Apply a mutation to the mcpProfile envelope and collapse any empty
+ * sections back to `undefined`. Mirrors the "undefined ≠ empty envelope"
+ * rule in host-config-v2.ts so two states (no override vs. opted-in empty)
+ * hash distinctly on the backend.
  */
-function patchSandbox(
+function withMcpProfile(
   prev: HostConfigInputV2,
-  patch: (
-    csp: NonNullable<
-      NonNullable<HostConfigMcpProfileV1["apps"]>["sandbox"]
-    >["csp"],
-  ) => NonNullable<
-    NonNullable<HostConfigMcpProfileV1["apps"]>["sandbox"]
-  >["csp"],
+  mutate: (base: HostConfigMcpProfileV1) => HostConfigMcpProfileV1,
 ): HostConfigInputV2 {
   const base: HostConfigMcpProfileV1 =
     prev.mcpProfile ?? { profileVersion: 1 };
-  const sandbox = base.apps?.sandbox ?? {};
-  const csp = sandbox.csp ?? {};
-  const nextCsp = patch(csp);
-  const nextSandbox = {
-    ...sandbox,
-    csp: nextCsp,
-  };
-  // Collapse the next profile if everything emptied out.
-  const cspEmpty =
-    !nextCsp ||
-    (nextCsp.mode === undefined &&
-      !nextCsp.restrictTo &&
-      !nextCsp.deny &&
-      !nextCsp.extensions);
-  const permsEmpty = !nextSandbox.permissions;
-  const sandboxEmpty = cspEmpty && permsEmpty;
-  const appsEmpty = sandboxEmpty && !base.apps?.uiInitialize;
+  return { ...prev, mcpProfile: collapseProfile(mutate(base)) };
+}
+
+function collapseProfile(
+  profile: HostConfigMcpProfileV1,
+): HostConfigMcpProfileV1 | undefined {
+  const init = profile.initialize;
   const initEmpty =
-    !base.initialize ||
-    (base.initialize.clientInfo === undefined &&
-      (!base.initialize.supportedProtocolVersions ||
-        base.initialize.supportedProtocolVersions.length === 0));
-  const profileEmpty = appsEmpty && initEmpty && !base.extensions;
-  const nextProfile = profileEmpty
-    ? undefined
-    : {
-        ...base,
-        apps: appsEmpty
-          ? undefined
-          : {
-              ...base.apps,
-              sandbox: sandboxEmpty
-                ? undefined
-                : {
-                    ...nextSandbox,
-                    csp: cspEmpty ? undefined : nextCsp,
-                  },
-            },
-      };
-  return { ...prev, mcpProfile: nextProfile };
+    !init ||
+    (init.clientInfo === undefined &&
+      (!init.supportedProtocolVersions ||
+        init.supportedProtocolVersions.length === 0));
+
+  const apps = profile.apps;
+  const csp = apps?.sandbox?.csp;
+  const cspEmpty =
+    !csp ||
+    (csp.mode === undefined &&
+      !csp.restrictTo &&
+      !csp.deny &&
+      !csp.extensions);
+  const perms = apps?.sandbox?.permissions;
+  const permsEmpty =
+    !perms ||
+    (perms.mode === undefined &&
+      (!perms.allow || Object.keys(perms.allow).length === 0) &&
+      (!perms.deny || perms.deny.length === 0) &&
+      !perms.extensions);
+  const sandboxEmpty = cspEmpty && permsEmpty;
+  const uiHostInfo = apps?.uiInitialize?.hostInfo;
+  const uiEmpty = uiHostInfo === undefined;
+  const appsEmpty = sandboxEmpty && uiEmpty;
+
+  const profileEmpty = initEmpty && appsEmpty && !profile.extensions;
+  if (profileEmpty) return undefined;
+
+  const out: HostConfigMcpProfileV1 = { profileVersion: 1 };
+  if (!initEmpty) out.initialize = init;
+  if (!appsEmpty) {
+    const appsOut: NonNullable<HostConfigMcpProfileV1["apps"]> = {};
+    if (!sandboxEmpty) {
+      const sandOut: NonNullable<
+        NonNullable<HostConfigMcpProfileV1["apps"]>["sandbox"]
+      > = {};
+      if (!cspEmpty) sandOut.csp = csp;
+      if (!permsEmpty) sandOut.permissions = perms;
+      appsOut.sandbox = sandOut;
+    }
+    if (!uiEmpty) appsOut.uiInitialize = { hostInfo: uiHostInfo };
+    out.apps = appsOut;
+  }
+  if (profile.extensions) out.extensions = profile.extensions;
+  return out;
+}
+
+function patchCsp(
+  prev: HostConfigInputV2,
+  patch: (csp: NonNullable<CspBlock>) => NonNullable<CspBlock>,
+): HostConfigInputV2 {
+  return withMcpProfile(prev, (base) => ({
+    ...base,
+    apps: {
+      ...base.apps,
+      sandbox: {
+        ...base.apps?.sandbox,
+        csp: patch(base.apps?.sandbox?.csp ?? {}),
+      },
+    },
+  }));
+}
+
+function patchPermissions(
+  prev: HostConfigInputV2,
+  patch: (perms: NonNullable<PermsBlock>) => NonNullable<PermsBlock>,
+): HostConfigInputV2 {
+  return withMcpProfile(prev, (base) => ({
+    ...base,
+    apps: {
+      ...base.apps,
+      sandbox: {
+        ...base.apps?.sandbox,
+        permissions: patch(base.apps?.sandbox?.permissions ?? {}),
+      },
+    },
+  }));
 }
 
 const HOST_CAPABILITY_DEFS: ReadonlyArray<{
@@ -365,6 +417,21 @@ export function AppsExtensionTab({
         ) : null}
       </FocusBlock>
 
+      <HostInfoBlock
+        hostInfo={draft.mcpProfile?.apps?.uiInitialize?.hostInfo}
+        onChange={(next) =>
+          onDraftChange((prev) =>
+            withMcpProfile(prev, (base) => ({
+              ...base,
+              apps: {
+                ...base.apps,
+                uiInitialize: { hostInfo: next },
+              },
+            })),
+          )
+        }
+      />
+
       <FocusBlock
         title="Host capabilities"
         subtitle="Advertised in ui/initialize. Override a row to deviate from the host-style preset."
@@ -461,16 +528,23 @@ export function AppsExtensionTab({
         })}
       </FocusBlock>
 
+      <HostContextBlock
+        hostContext={draft.hostContext}
+        onChange={(next) =>
+          onDraftChange((prev) => ({ ...prev, hostContext: next }))
+        }
+      />
+
       <FocusBlock
         title="Sandbox CSP"
-        subtitle="Compiles to capabilities.extensions.sandbox.csp. restrictTo intersects with the chosen baseline; deny always wins."
+        subtitle="restrictTo intersects with the baseline; deny always wins."
       >
         <SegmentedControl<SandboxMode>
           ariaLabel="Sandbox CSP mode"
           value={sandboxMode}
           onChange={(next) => {
             onDraftChange((prev) =>
-              patchSandbox(prev, (csp) => ({
+              patchCsp(prev, (csp) => ({
                 ...csp,
                 mode: next === "host-default" ? undefined : next,
               })),
@@ -483,35 +557,45 @@ export function AppsExtensionTab({
           ]}
         />
 
-        <div className="mt-1 grid grid-cols-2 gap-3">
-          <CspDomainSetEditor
-            label="restrictTo"
-            hint="Intersect with the baseline."
-            value={sandboxCsp?.restrictTo}
-            onChange={(restrictTo) => {
-              onDraftChange((prev) =>
-                patchSandbox(prev, (csp) => ({
-                  ...csp,
-                  restrictTo,
-                })),
-              );
-            }}
-          />
-          <CspDomainSetEditor
-            label="deny"
-            hint="Always blocked."
-            value={sandboxCsp?.deny}
-            onChange={(deny) => {
-              onDraftChange((prev) =>
-                patchSandbox(prev, (csp) => ({
-                  ...csp,
-                  deny,
-                })),
-              );
-            }}
-          />
-        </div>
+        {sandboxMode !== "host-default" ? (
+          <div className="mt-1 grid grid-cols-2 gap-3">
+            <CspDomainSetEditor
+              label="restrictTo"
+              hint="Intersect with the baseline."
+              value={sandboxCsp?.restrictTo}
+              onChange={(restrictTo) => {
+                onDraftChange((prev) =>
+                  patchCsp(prev, (csp) => ({
+                    ...csp,
+                    restrictTo,
+                  })),
+                );
+              }}
+            />
+            <CspDomainSetEditor
+              label="deny"
+              hint="Always blocked."
+              value={sandboxCsp?.deny}
+              onChange={(deny) => {
+                onDraftChange((prev) =>
+                  patchCsp(prev, (csp) => ({
+                    ...csp,
+                    deny,
+                  })),
+                );
+              }}
+            />
+          </div>
+        ) : null}
       </FocusBlock>
+
+      <SandboxPermissionsBlock
+        permissions={draft.mcpProfile?.apps?.sandbox?.permissions}
+        onChange={(recipe) =>
+          onDraftChange((prev) => patchPermissions(prev, recipe))
+        }
+        attentionIssues={issues}
+      />
 
       <div className="flex items-center justify-end gap-2 text-[11px] text-muted-foreground">
         <span>
@@ -690,6 +774,456 @@ function CspDirectiveChipList({
             if (items.includes(t)) return "Already added";
             return validateOrigin(t);
           }}
+        />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * hostInfo block — name + version sent to Views in ui/initialize. Mirrors
+ * the clientInfo pattern in ProtocolTab. Flushes to
+ * `mcpProfile.apps.uiInitialize.hostInfo` only when both fields are
+ * non-empty; clears the field otherwise.
+ */
+function HostInfoBlock({
+  hostInfo,
+  onChange,
+}: {
+  hostInfo: Record<string, unknown> | undefined;
+  onChange: (next: Record<string, unknown> | undefined) => void;
+}) {
+  const persistedName =
+    typeof hostInfo?.name === "string" ? (hostInfo.name as string) : "";
+  const persistedVersion =
+    typeof hostInfo?.version === "string"
+      ? (hostInfo.version as string)
+      : "";
+
+  const [name, setName] = useState(persistedName);
+  const [version, setVersion] = useState(persistedVersion);
+  const nameRef = useRef(name);
+  const versionRef = useRef(version);
+  useEffect(() => {
+    nameRef.current = name;
+  }, [name]);
+  useEffect(() => {
+    versionRef.current = version;
+  }, [version]);
+
+  // Mirror external resets (template switch, revert).
+  useEffect(() => {
+    if (
+      persistedName !== nameRef.current ||
+      persistedVersion !== versionRef.current
+    ) {
+      const draftWouldFlush =
+        nameRef.current.trim() !== "" && versionRef.current.trim() !== "";
+      if (!draftWouldFlush || hostInfo === undefined) {
+        setName(persistedName);
+        setVersion(persistedVersion);
+      }
+    }
+  }, [persistedName, persistedVersion, hostInfo]);
+
+  const flush = (nextName: string, nextVersion: string) => {
+    const n = nextName.trim();
+    const v = nextVersion.trim();
+    onChange(n !== "" && v !== "" ? { name: n, version: v } : undefined);
+  };
+
+  return (
+    <FocusBlock title="hostInfo" subtitle="Sent to Views in ui/initialize.">
+      <div className="grid grid-cols-2 gap-2">
+        <Input
+          placeholder="claude-desktop"
+          aria-label="Host name"
+          value={name}
+          onChange={(e) => {
+            setName(e.target.value);
+            flush(e.target.value, version);
+          }}
+          className="font-mono text-[12px]"
+        />
+        <Input
+          placeholder="1.0.0"
+          aria-label="Host version"
+          value={version}
+          onChange={(e) => {
+            setVersion(e.target.value);
+            flush(name, e.target.value);
+          }}
+          className="font-mono text-[12px]"
+        />
+      </div>
+    </FocusBlock>
+  );
+}
+
+/**
+ * Structured hostContext editor. Surfaces the named SEP-1865 fields and
+ * tucks the bulky template-supplied bits (styles, containerDimensions,
+ * safeAreaInsets, deviceCapabilities, availableDisplayModes, userAgent,
+ * platform) into a collapsed Advanced JSON block.
+ */
+const STRUCTURED_HOST_CONTEXT_KEYS = new Set([
+  "theme",
+  "displayMode",
+  "locale",
+  "timeZone",
+]);
+
+type ThemeMode = "light" | "dark";
+type DisplayMode = "inline" | "fullscreen" | "pip";
+
+function HostContextBlock({
+  hostContext,
+  onChange,
+}: {
+  hostContext: Record<string, unknown>;
+  onChange: (next: Record<string, unknown>) => void;
+}) {
+  const theme =
+    hostContext.theme === "light" || hostContext.theme === "dark"
+      ? (hostContext.theme as ThemeMode)
+      : undefined;
+  const displayMode =
+    hostContext.displayMode === "inline" ||
+    hostContext.displayMode === "fullscreen" ||
+    hostContext.displayMode === "pip"
+      ? (hostContext.displayMode as DisplayMode)
+      : undefined;
+  const locale =
+    typeof hostContext.locale === "string"
+      ? (hostContext.locale as string)
+      : "";
+  const timeZone =
+    typeof hostContext.timeZone === "string"
+      ? (hostContext.timeZone as string)
+      : "";
+
+  const setKey = (key: string, value: unknown | undefined) => {
+    const next = { ...hostContext };
+    if (value === undefined || value === "") {
+      delete next[key];
+    } else {
+      next[key] = value;
+    }
+    onChange(next);
+  };
+
+  const advancedSubset = useMemo(() => {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(hostContext)) {
+      if (!STRUCTURED_HOST_CONTEXT_KEYS.has(k)) out[k] = v;
+    }
+    return out;
+  }, [hostContext]);
+
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [advancedRaw, setAdvancedRaw] = useState(() =>
+    JSON.stringify(advancedSubset, null, 2),
+  );
+  const [advancedErr, setAdvancedErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    const stringified = JSON.stringify(advancedSubset, null, 2);
+    try {
+      const reparsed = JSON.parse(advancedRaw || "{}");
+      if (JSON.stringify(reparsed) !== JSON.stringify(advancedSubset)) {
+        setAdvancedRaw(stringified);
+        setAdvancedErr(null);
+      }
+    } catch {
+      // mid-edit; leave alone
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [advancedSubset]);
+
+  const tryParseAdvanced = (raw: string) => {
+    setAdvancedRaw(raw);
+    try {
+      const parsed = JSON.parse(raw || "{}");
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        setAdvancedErr("Must be a JSON object");
+        return;
+      }
+      const cleaned: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+        if (!STRUCTURED_HOST_CONTEXT_KEYS.has(k)) cleaned[k] = v;
+      }
+      setAdvancedErr(null);
+      const merged: Record<string, unknown> = { ...cleaned };
+      for (const k of STRUCTURED_HOST_CONTEXT_KEYS) {
+        if (hostContext[k] !== undefined) merged[k] = hostContext[k];
+      }
+      onChange(merged);
+    } catch (err) {
+      setAdvancedErr(err instanceof Error ? err.message : "Invalid JSON");
+    }
+  };
+
+  return (
+    <FocusBlock
+      title="hostContext"
+      subtitle="Context the host advertises to Views in ui/initialize."
+    >
+      <FieldRow
+        label="Theme"
+        control={
+          <SegmentedControl<ThemeMode | "unset">
+            ariaLabel="Theme"
+            value={theme ?? "unset"}
+            onChange={(next) =>
+              setKey("theme", next === "unset" ? undefined : next)
+            }
+            options={[
+              { value: "unset", label: "unset" },
+              { value: "light", label: "light" },
+              { value: "dark", label: "dark" },
+            ]}
+          />
+        }
+      />
+      <FieldRow
+        label="Display mode"
+        control={
+          <SegmentedControl<DisplayMode | "unset">
+            ariaLabel="Display mode"
+            value={displayMode ?? "unset"}
+            onChange={(next) =>
+              setKey("displayMode", next === "unset" ? undefined : next)
+            }
+            options={[
+              { value: "unset", label: "unset" },
+              { value: "inline", label: "inline" },
+              { value: "fullscreen", label: "fullscreen" },
+              { value: "pip", label: "pip" },
+            ]}
+          />
+        }
+      />
+      <FieldRow
+        label="Locale"
+        description="BCP 47, e.g. en-US."
+        control={
+          <Input
+            value={locale}
+            placeholder="en-US"
+            aria-label="Locale"
+            onChange={(e) => setKey("locale", e.target.value)}
+            className="h-8 w-32 font-mono text-[11px]"
+          />
+        }
+      />
+      <FieldRow
+        label="Time zone"
+        description="IANA, e.g. America/New_York."
+        control={
+          <Input
+            value={timeZone}
+            placeholder="America/Los_Angeles"
+            aria-label="Time zone"
+            onChange={(e) => setKey("timeZone", e.target.value)}
+            className="h-8 w-48 font-mono text-[11px]"
+          />
+        }
+      />
+
+      <div className="rounded-md border border-border/50 bg-card/40">
+        <button
+          type="button"
+          onClick={() => setAdvancedOpen((o) => !o)}
+          aria-expanded={advancedOpen}
+          className="flex w-full items-center gap-2 px-3 py-1.5 text-left"
+        >
+          {advancedOpen ? (
+            <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+          ) : (
+            <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
+          )}
+          <span className="text-[11.5px] font-medium">Advanced</span>
+          <span className="ml-auto font-mono text-[10.5px] text-muted-foreground/70">
+            {Object.keys(advancedSubset).length === 0
+              ? "empty"
+              : `${Object.keys(advancedSubset).length} keys`}
+          </span>
+        </button>
+        {advancedOpen ? (
+          <div className="border-t border-border/40 px-3 py-2">
+            <Textarea
+              rows={8}
+              value={advancedRaw}
+              onChange={(e) => tryParseAdvanced(e.target.value)}
+              spellCheck={false}
+              className="font-mono text-[11.5px]"
+              placeholder="{ }"
+            />
+            {advancedErr ? (
+              <p className="mt-1 text-[11px] text-destructive">{advancedErr}</p>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </FocusBlock>
+  );
+}
+
+type PermissionsMode = "resource-declared" | "deny-all" | "custom";
+
+const SANDBOX_PERMISSION_KEYS = [
+  "camera",
+  "microphone",
+  "geolocation",
+  "clipboardWrite",
+] as const;
+
+/**
+ * Sandbox permissions block. Mirrors the CSP layout. Backend canonicalizer
+ * already validates this shape (mode union, allow:Record<string,boolean>,
+ * deny:string[]) so the UI is additive only.
+ */
+function SandboxPermissionsBlock({
+  permissions,
+  onChange,
+  attentionIssues,
+}: {
+  permissions: PermsBlock;
+  onChange: (
+    recipe: (perms: NonNullable<PermsBlock>) => NonNullable<PermsBlock>,
+  ) => void;
+  attentionIssues: ReadonlySet<string>;
+}) {
+  const mode = (permissions?.mode ?? "resource-declared") as PermissionsMode;
+  const allow = (permissions?.allow ?? {}) as Record<string, boolean>;
+  const deny = permissions?.deny ?? [];
+
+  const setMode = (next: PermissionsMode) =>
+    onChange((perms) => ({
+      ...perms,
+      mode: next === "resource-declared" ? undefined : next,
+    }));
+
+  const toggleAllow = (key: string, checked: boolean) =>
+    onChange((perms) => {
+      const nextAllow = { ...((perms.allow as Record<string, boolean>) ?? {}) };
+      if (checked) {
+        nextAllow[key] = true;
+      } else {
+        delete nextAllow[key];
+      }
+      return {
+        ...perms,
+        allow: Object.keys(nextAllow).length > 0 ? nextAllow : undefined,
+      };
+    });
+
+  const updateDeny = (next: string[]) =>
+    onChange((perms) => ({
+      ...perms,
+      deny: next.length > 0 ? next : undefined,
+    }));
+
+  return (
+    <FocusBlock
+      title="Sandbox permissions"
+      subtitle="Sandbox features the View may use."
+      action={
+        attentionIssues.has("sandboxPermissionsAllow") ? (
+          <span className="text-[10.5px] text-amber-700 dark:text-amber-300">
+            attention
+          </span>
+        ) : null
+      }
+    >
+      <SegmentedControl<PermissionsMode>
+        ariaLabel="Permissions mode"
+        value={mode}
+        onChange={setMode}
+        options={[
+          { value: "resource-declared", label: "resource-declared" },
+          { value: "deny-all", label: "deny-all" },
+          { value: "custom", label: "custom" },
+        ]}
+      />
+
+      {mode === "custom" ? (
+        <div className="flex flex-col gap-2 rounded-md border border-border/50 bg-card/40 p-2.5">
+          <span className="font-mono text-[11.5px] font-semibold">allow</span>
+          <div className="grid grid-cols-2 gap-1.5">
+            {SANDBOX_PERMISSION_KEYS.map((key) => (
+              <label
+                key={key}
+                className="flex items-center justify-between gap-2 text-[12px]"
+              >
+                <span className="font-mono">{key}</span>
+                <Switch
+                  checked={allow[key] === true}
+                  onCheckedChange={(c) => toggleAllow(key, c)}
+                  aria-label={`Allow ${key}`}
+                />
+              </label>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {mode !== "resource-declared" ? (
+        <PermissionsDenyList items={deny} onChange={updateDeny} />
+      ) : null}
+    </FocusBlock>
+  );
+}
+
+function PermissionsDenyList({
+  items,
+  onChange,
+}: {
+  items: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState("");
+  return (
+    <div className="flex flex-col gap-1.5 rounded-md border border-border/50 bg-card/40 p-2.5">
+      <span className="font-mono text-[11.5px] font-semibold">deny</span>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {items.length === 0 && !adding ? (
+          <span className="text-[10.5px] text-muted-foreground/70">—</span>
+        ) : null}
+        {items.map((item) => (
+          <Chip
+            key={item}
+            mono
+            tone="neutral"
+            onRemove={() => onChange(items.filter((x) => x !== item))}
+          >
+            {item}
+          </Chip>
+        ))}
+        <AddItemPill
+          label="Add permission"
+          placeholder="camera"
+          value={draft}
+          onValueChange={setDraft}
+          active={adding}
+          onActivate={() => setAdding(true)}
+          onCancel={() => {
+            setAdding(false);
+            setDraft("");
+          }}
+          onAdd={() => {
+            const t = draft.trim();
+            if (t === "" || items.includes(t)) return;
+            onChange([...items, t]);
+            setDraft("");
+            setAdding(false);
+          }}
+          validate={(raw) =>
+            raw.trim() !== "" && items.includes(raw.trim())
+              ? "Already added"
+              : null
+          }
         />
       </div>
     </div>

@@ -1,4 +1,6 @@
 export type {
+  HostChatUi,
+  HostMcpProfile,
   HostStyleDefinition,
   HostStyleFamily,
   HostStyleId,
@@ -15,6 +17,7 @@ export {
   findHostStyle,
   getHostCapabilitiesForStyle,
   getHostStyleOrDefault,
+  getLoadingIndicatorForStyle,
   isKnownHostStyleId,
   listHostStyles,
   registerHostStyle,

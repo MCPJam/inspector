@@ -205,7 +205,7 @@ export function buildRedesignedHostCanvas(
       modelProvider: modelInfo.provider,
       temperature: draft.temperature,
       hostStyle: draft.hostStyle,
-      hostStyleLabel: styleDef?.label ?? draft.hostStyle,
+      hostStyleLabel: styleDef?.chatUi.label ?? draft.hostStyle,
       toolApproval: draft.requireToolApproval,
       systemPromptEmpty: draft.systemPrompt.trim() === "",
       attentionFields: Array.from(behaviorAttention),

@@ -1,48 +1,20 @@
-import { Input } from "@mcpjam/design-system/input";
 import type { HostAttentionIssue } from "../types";
-import { FieldRow, FocusBlock } from "./primitives";
-import { fieldsWithIssues } from "./useHostDraftValidation";
+import { FocusBlock } from "./primitives";
 
 interface GeneralTabProps {
-  hostDisplayName: string;
-  onHostDisplayNameChange: (value: string) => void;
   attention: ReadonlyArray<HostAttentionIssue>;
 }
 
-export function GeneralTab({
-  hostDisplayName,
-  onHostDisplayNameChange,
-  attention,
-}: GeneralTabProps) {
-  const issues = fieldsWithIssues(attention, "general");
-
+// Name + style now live in the sticky identity header. This tab is the
+// home for host-wide settings that don't belong to a negotiation surface
+// (description, danger zone, etc.). Placeholder block until those land.
+export function GeneralTab(_: GeneralTabProps) {
   return (
     <div className="flex flex-col gap-4">
-      <FocusBlock
-        title="Host identity"
-        subtitle="Name shown in the Connect host picker and this editor."
-      >
-        <FieldRow
-          label="Name"
-          description="A label for this host configuration within your project."
-          control={
-            <Input
-              id="host-display-name"
-              value={hostDisplayName}
-              onChange={(event) =>
-                onHostDisplayNameChange(event.target.value)
-              }
-              placeholder="Host name"
-              aria-label="Host name"
-              className={
-                "h-8 w-[260px] rounded-md text-[13px] " +
-                (issues.has("hostDisplayName")
-                  ? "border-amber-500"
-                  : "border-input")
-              }
-            />
-          }
-        />
+      <FocusBlock title="General" subtitle="Host-wide settings.">
+        <p className="text-[11.5px] text-muted-foreground">
+          Nothing here yet — host name and style live in the header above.
+        </p>
       </FocusBlock>
     </div>
   );
