@@ -623,24 +623,11 @@ describe("PlaygroundMain", () => {
       expect(screen.getByTestId("host-context-theme-toggle")).toBeInTheDocument();
     });
 
-    it("passes the requested loading indicator variant to Thread", () => {
-      mockUseChatSession.messages = [
-        { id: "m1", role: "assistant", parts: [] },
-      ];
-
-      render(
-        <PlaygroundMain
-          {...defaultProps}
-          loadingIndicatorVariant="chatgpt-dot"
-        />,
-      );
-
-      expect(mockThread).toHaveBeenCalledWith(
-        expect.objectContaining({
-          loadingIndicatorVariant: "chatgpt-dot",
-        }),
-      );
-    });
+    // Removed: "passes the requested loading indicator variant to Thread".
+    // PlaygroundMain no longer accepts a `loadingIndicatorVariant` prop —
+    // the inner Thread reads the host id from `ChatboxHostStyleProvider`
+    // context. Brand-indicator behavior is covered in
+    // `LoadingIndicatorContent.test.tsx` and `Thread.test.tsx`.
   });
 
   describe("thread theme from host context", () => {

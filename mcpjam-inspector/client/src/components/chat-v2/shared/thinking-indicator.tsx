@@ -6,18 +6,13 @@ import {
   useChatboxHostStyle,
   useChatboxHostTheme,
 } from "@/contexts/chatbox-host-style-context";
-import {
-  LoadingIndicatorContent,
-  type LoadingIndicatorVariant,
-} from "./loading-indicator-content";
+import { LoadingIndicatorContent } from "./loading-indicator-content";
 import { getAssistantAvatarDescriptor } from "./assistant-avatar";
 
 export function ThinkingIndicator({
   model,
-  resolvedVariant,
 }: {
   model: ModelDefinition;
-  resolvedVariant: LoadingIndicatorVariant;
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const chatboxHostStyle = useChatboxHostStyle();
@@ -58,7 +53,7 @@ export function ThinkingIndicator({
       ) : null}
 
       <div className="inline-flex items-center gap-2 text-muted-foreground/80">
-        <LoadingIndicatorContent variant={resolvedVariant} />
+        <LoadingIndicatorContent modelProvider={model?.provider ?? null} />
       </div>
     </article>
   );

@@ -3,11 +3,24 @@ import { SidebarTrigger, useSidebar } from "./ui/sidebar";
 import { useHeaderIpc } from "./ipc/use-header-ipc";
 import { ActiveServerSelectorProps } from "./ActiveServerSelector";
 
-interface HeaderProps {
-  activeServerSelectorProps?: ActiveServerSelectorProps;
+export interface GlobalHostBarProps {
+  projectId: string;
+  onEditHost: (hostId: string) => void;
+  // Provided only while the host canvas is open. Re-targets it when the
+  // dropdown's active host changes, so picking a host updates the diagram
+  // instead of only the preview pointer used by chat/evals.
+  onCanvasReplaceHost?: (hostId: string) => void;
 }
 
-export const Header = ({ activeServerSelectorProps }: HeaderProps) => {
+interface HeaderProps {
+  activeServerSelectorProps?: ActiveServerSelectorProps;
+  globalHostBarProps?: GlobalHostBarProps;
+}
+
+export const Header = ({
+  activeServerSelectorProps,
+  globalHostBarProps,
+}: HeaderProps) => {
   const { activeIpc, dismissActiveIpc } = useHeaderIpc();
   const { isMobile } = useSidebar();
 
@@ -19,7 +32,10 @@ export const Header = ({ activeServerSelectorProps }: HeaderProps) => {
             <SidebarTrigger className="-ml-1" aria-label="Open menu" />
           </div>
         ) : null}
-        <AuthUpperArea activeServerSelectorProps={activeServerSelectorProps} />
+        <AuthUpperArea
+          activeServerSelectorProps={activeServerSelectorProps}
+          globalHostBarProps={globalHostBarProps}
+        />
       </div>
       {activeIpc && activeIpc.render({ dismiss: dismissActiveIpc })}
     </header>

@@ -140,6 +140,7 @@ export function draftToHostConfigInputV2(
     | "clientCapabilities"
     | "hostContext"
     | "hostCapabilitiesOverride"
+    | "chatUiOverride"
     | "mcpProfile"
   > | null,
 ): HostConfigInputV2 {
@@ -158,6 +159,11 @@ export function draftToHostConfigInputV2(
     // new/edited chatboxes match what the project-default editor saved.
     // Undefined here keeps "use the active host style preset" intact.
     hostCapabilitiesOverride: projectDefault?.hostCapabilitiesOverride,
+    // Inherit the project default's chat-UI override (custom logo,
+    // palette, indicator) so new chatboxes pick up the project's
+    // BYO host styling. Undefined keeps "use the active host style
+    // preset" intact, matching hostCapabilitiesOverride semantics.
+    chatUiOverride: projectDefault?.chatUiOverride,
     // Inherit the project default's mcpProfile envelope for the same
     // reason — a new chatbox should connect with the project's pinned
     // clientInfo / supportedProtocolVersions / sandbox policy out of the

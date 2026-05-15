@@ -1,28 +1,32 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Pencil, Plus } from "lucide-react";
+import { ChevronLeft, ChevronRight, Pencil, Plus, Trash2 } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
 import { useConvexAuth } from "convex/react";
-import { Button } from "@mcpjam/design-system/button";
-import { Separator } from "@mcpjam/design-system/separator";
+import { toast } from "sonner";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@mcpjam/design-system/select";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@mcpjam/design-system/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { useHostList, useHostMutations } from "@/hooks/useHosts";
 import { emptyHostConfigInputV2 } from "@/lib/host-config-v2";
 import { CreateHostDialog } from "./CreateHostDialog";
 
 const MCPJAM_HOST_NAME = "MCPJam";
+const LAST_HOST_DELETE_REASON =
+  "A project needs at least one host. Create another host first.";
 
 interface HostOverlayBarProps {
   projectId: string;
   previewedHostId: string | null;
   onChangePreviewedHostId: (hostId: string | null) => void;
   onEditHost: (hostId: string) => void;
+  onCanvasReplaceHost?: (hostId: string) => void;
 }
 
 export function HostOverlayBar({
@@ -30,27 +34,31 @@ export function HostOverlayBar({
   previewedHostId,
   onChangePreviewedHostId,
   onEditHost,
+  onCanvasReplaceHost,
 }: HostOverlayBarProps) {
   const posthog = usePostHog();
   const { isAuthenticated } = useConvexAuth();
   const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
-  const { createHost } = useHostMutations();
+  const { createHost, deleteHost } = useHostMutations();
   const [showCreate, setShowCreate] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const mcpjamHost = useMemo(
     () => hosts.find((h) => h.name === MCPJAM_HOST_NAME) ?? null,
     [hosts],
   );
 
-  // Lazily seed a "MCPJam" host with SDK defaults the first time a project
-  // opens Connect without one. Idempotent: only fires when the list has loaded
-  // and no MCPJam exists yet.
+  // Lazily seed a "MCPJam" host with SDK defaults only when the project has
+  // no hosts at all. Once any host exists (including after the user deletes
+  // MCPJam), we stop seeding — otherwise a deleted MCPJam respawns on every
+  // mount and duplicates accumulate.
   const seededRef = useRef(false);
   useEffect(() => {
     if (
       !isAuthenticated ||
       isLoading ||
-      mcpjamHost != null ||
+      hosts.length > 0 ||
       seededRef.current
     ) {
       return;
@@ -63,28 +71,16 @@ export function HostOverlayBar({
     }).catch(() => {
       seededRef.current = false;
     });
-  }, [isAuthenticated, isLoading, mcpjamHost, projectId, createHost]);
+  }, [isAuthenticated, isLoading, hosts.length, projectId, createHost]);
 
   const validPreviewedHostId =
     previewedHostId && hosts.some((h) => h.hostId === previewedHostId)
       ? previewedHostId
       : null;
-  const effectiveHostId = validPreviewedHostId ?? mcpjamHost?.hostId ?? null;
-
-  // Normalize parent state when the persisted previewedHostId is missing or
-  // stale (deleted host, fresh project). Fires once after MCPJam appears.
-  useEffect(() => {
-    if (isLoading) return;
-    if (effectiveHostId == null) return;
-    if (previewedHostId === effectiveHostId) return;
-    onChangePreviewedHostId(effectiveHostId);
-  }, [
-    isLoading,
-    effectiveHostId,
-    previewedHostId,
-    onChangePreviewedHostId,
-  ]);
-
+  // Fallback order: previewed → MCPJam (the seeded default) → any host.
+  // The third leg matters when the user deletes the MCPJam host while
+  // other hosts exist: without it the bar would render its pulsing
+  // skeleton indefinitely (seeding skips when `hosts.length > 0`).
   const sortedHosts = useMemo(() => {
     return [...hosts].sort((a, b) => {
       if (a.name === MCPJAM_HOST_NAME) return -1;
@@ -92,6 +88,37 @@ export function HostOverlayBar({
       return a.name.localeCompare(b.name);
     });
   }, [hosts]);
+  const effectiveHostId =
+    validPreviewedHostId ?? mcpjamHost?.hostId ?? sortedHosts[0]?.hostId ?? null;
+
+  useEffect(() => {
+    if (isLoading) return;
+    if (effectiveHostId == null) return;
+    if (previewedHostId === effectiveHostId) return;
+    onChangePreviewedHostId(effectiveHostId);
+    // When the active host is deleted out from under us (or reconciled
+    // away for any other reason) the canvas is still pointing at the
+    // dead id. handleChange would call this directly; the non-interactive
+    // path needs the same notification or App.hostsTabSelectedHostId
+    // stays stale and "Save" targets a deleted id.
+    onCanvasReplaceHost?.(effectiveHostId);
+  }, [
+    isLoading,
+    effectiveHostId,
+    previewedHostId,
+    onChangePreviewedHostId,
+    onCanvasReplaceHost,
+  ]);
+
+  const activeIndex = useMemo(
+    () =>
+      effectiveHostId == null
+        ? -1
+        : sortedHosts.findIndex((h) => h.hostId === effectiveHostId),
+    [sortedHosts, effectiveHostId],
+  );
+
+  const effectiveHost = activeIndex >= 0 ? sortedHosts[activeIndex] : null;
 
   const hasFiredOpened = useRef(false);
   useEffect(() => {
@@ -111,74 +138,165 @@ export function HostOverlayBar({
       host_count: hosts.length,
     });
     onChangePreviewedHostId(next);
+    onCanvasReplaceHost?.(next);
   };
+
+  // Cycle to the prev/next host. Wraps around so the arrows never dead-end —
+  // with 2 hosts this turns into a fast toggle.
+  const cycle = (direction: 1 | -1) => {
+    if (sortedHosts.length <= 1 || activeIndex < 0) return;
+    const nextIndex =
+      (activeIndex + direction + sortedHosts.length) % sortedHosts.length;
+    handleChange(sortedHosts[nextIndex].hostId);
+  };
+
+  const handleDelete = async (hostId: string) => {
+    const host = hosts.find((h) => h.hostId === hostId);
+    if (!host) return;
+    setIsDeleting(true);
+    try {
+      await deleteHost({ hostId });
+      toast.success(`Host "${host.name}" deleted`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to delete host";
+      if (msg.includes("consumer")) {
+        toast.error(
+          `${msg} — use force delete or remove dependent chatboxes/evals first`,
+        );
+      } else {
+        toast.error(msg);
+      }
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const canCycle = sortedHosts.length > 1;
+  const canDelete = sortedHosts.length > 1;
+  const arrowDisabled = isLoading || !canCycle;
 
   return (
     <div
-      className="flex flex-wrap items-center gap-x-4 gap-y-2"
+      className="flex min-w-0 flex-wrap items-center gap-1"
       data-testid="host-overlay-bar"
     >
-      <div className="min-w-[10rem] max-w-[18rem]">
-        <Select
-          value={effectiveHostId ?? ""}
-          onValueChange={handleChange}
-          disabled={isLoading || sortedHosts.length === 0}
-        >
-          <SelectTrigger
-            aria-label="Host used for preview"
-            size="sm"
+      {isLoading || !effectiveHost ? (
+        <div className="h-8 w-44 animate-pulse rounded-md bg-muted/50" />
+      ) : (
+        <div className="flex items-center rounded-md border border-border/40 bg-muted/30">
+          <button
+            type="button"
+            aria-label="Previous host"
+            data-testid="host-overlay-prev"
+            disabled={arrowDisabled}
+            onClick={() => cycle(-1)}
             className={cn(
-              "h-8 w-full justify-between gap-2 border-0 bg-transparent px-2.5 shadow-none",
-              "text-sm font-medium text-foreground",
-              "hover:bg-muted/60 data-[state=open]:bg-muted/60",
-              "focus-visible:border-transparent focus-visible:ring-2 focus-visible:ring-ring/45",
-              "[&_svg:not([class*='text-'])]:opacity-55",
+              "inline-flex h-8 w-7 items-center justify-center rounded-l-md text-muted-foreground transition-colors",
+              "hover:bg-muted/60 hover:text-foreground",
+              "focus-visible:ring-2 focus-visible:ring-ring/45 focus-visible:outline-none",
+              "disabled:cursor-not-allowed disabled:opacity-40",
             )}
           >
-            <SelectValue
-              placeholder={isLoading ? "Loading..." : "Select host"}
-            />
-          </SelectTrigger>
-          <SelectContent>
-            {sortedHosts.map((host) => (
-              <SelectItem key={host.hostId} value={host.hostId}>
-                {host.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+            <ChevronLeft className="size-4" />
+          </button>
 
-      <Separator
-        orientation="vertical"
-        className="hidden h-4 shrink-0 bg-border/70 sm:block"
-      />
+          <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label="Host used for preview"
+                data-testid="host-overlay-current"
+                className={cn(
+                  "flex h-8 min-w-[7rem] max-w-[14rem] items-center justify-center border-x border-border/40 bg-transparent px-3 text-sm font-medium text-foreground transition-colors outline-none",
+                  "hover:bg-muted/60 data-[state=open]:bg-muted/60",
+                  "focus-visible:ring-2 focus-visible:ring-ring/45",
+                )}
+              >
+                <span className="truncate">{effectiveHost.name}</span>
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="center"
+              className="min-w-[var(--radix-dropdown-menu-trigger-width)]"
+            >
+              <DropdownMenuRadioGroup
+                value={effectiveHostId ?? undefined}
+                onValueChange={handleChange}
+              >
+                {sortedHosts.map((host) => (
+                  <DropdownMenuRadioItem
+                    key={host.hostId}
+                    value={host.hostId}
+                    className="group pr-1.5"
+                  >
+                    <span className="flex-1 truncate">{host.name}</span>
+                    <span className="ml-2 flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 group-data-[highlighted]:opacity-100">
+                      <button
+                        type="button"
+                        aria-label={`Edit ${host.name}`}
+                        data-testid={`host-overlay-edit-${host.hostId}`}
+                        className="inline-flex size-6 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setMenuOpen(false);
+                          onEditHost(host.hostId);
+                        }}
+                      >
+                        <Pencil className="size-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Delete ${host.name}`}
+                        data-testid={`host-overlay-delete-${host.hostId}`}
+                        disabled={isDeleting || !canDelete}
+                        title={
+                          !canDelete ? LAST_HOST_DELETE_REASON : undefined
+                        }
+                        className="inline-flex size-6 items-center justify-center rounded-sm text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          void handleDelete(host.hostId);
+                        }}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    </span>
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                data-testid="host-overlay-save-as-new"
+                onSelect={() => setShowCreate(true)}
+              >
+                <Plus className="size-3.5" />
+                Add host
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
 
-      <div className="flex flex-wrap items-center gap-0.5">
-        <Button
-          size="sm"
-          variant="ghost"
-          className="text-muted-foreground hover:text-foreground"
-          onClick={() => {
-            if (effectiveHostId) onEditHost(effectiveHostId);
-          }}
-          disabled={!effectiveHostId}
-          data-testid="host-overlay-edit"
-        >
-          <Pencil className="size-3.5" />
-          Edit
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="text-muted-foreground hover:text-foreground"
-          onClick={() => setShowCreate(true)}
-          data-testid="host-overlay-save-as-new"
-        >
-          <Plus className="size-3.5" />
-          Save as new host…
-        </Button>
-      </div>
+          <button
+            type="button"
+            aria-label="Next host"
+            data-testid="host-overlay-next"
+            disabled={arrowDisabled}
+            onClick={() => cycle(1)}
+            className={cn(
+              "inline-flex h-8 w-7 items-center justify-center rounded-r-md text-muted-foreground transition-colors",
+              "hover:bg-muted/60 hover:text-foreground",
+              "focus-visible:ring-2 focus-visible:ring-ring/45 focus-visible:outline-none",
+              "disabled:cursor-not-allowed disabled:opacity-40",
+            )}
+          >
+            <ChevronRight className="size-4" />
+          </button>
+        </div>
+      )}
+
       <CreateHostDialog
         isOpen={showCreate}
         onClose={() => setShowCreate(false)}

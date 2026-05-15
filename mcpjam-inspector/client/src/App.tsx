@@ -36,7 +36,6 @@ import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
 import { ErrorBoundary } from "./components/ui/error-boundary";
 import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
 import { PlaygroundTab } from "./components/playground/PlaygroundTab";
-import { PlaygroundHeaderSlotProvider } from "./components/playground/playground-header-slot";
 import { EmptyState } from "./components/ui/empty-state";
 import { EXCALIDRAW_SERVER_NAME } from "./lib/excalidraw-quick-connect";
 import { isFirstRunEligible } from "./lib/onboarding-state";
@@ -81,7 +80,11 @@ import type { BillingFeatureName } from "./hooks/useOrganizationBilling";
 
 // Import global styles
 import "./index.css";
-import { detectEnvironment, detectPlatform } from "./lib/PosthogUtils";
+import {
+  detectEnvironment,
+  detectPlatform,
+  isPostHogBooleanFlagOn,
+} from "./lib/PosthogUtils";
 import {
   getInitialThemeMode,
   updateThemeMode,
@@ -407,6 +410,7 @@ export default function App() {
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const hostsEnabled = useFeatureFlagEnabled("hosts-enabled");
+  const hostsHubFlagEnabled = isPostHogBooleanFlagOn(hostsEnabled);
   const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
   const playgroundTabEnabled = useFeatureFlagEnabled("playground-tab-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
@@ -421,7 +425,7 @@ export default function App() {
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const actorKey = useActorKey();
   const { host: chatTabHost } = useHost({
-    isAuthenticated: isAuthenticated && hostsEnabled === true,
+    isAuthenticated: isAuthenticated && hostsHubFlagEnabled,
     hostId: chatTabHostId,
   });
   const currentUser = useQuery(
@@ -466,8 +470,16 @@ export default function App() {
       setEvaluateRunsFlagsLoaded(posthog.featureFlags?.hasLoadedFlags === true);
     });
   }, [posthog]);
+  const defaultHubRoute = useMemo((): "connect" | "servers" => {
+    if (!evaluateRunsFlagsLoaded) {
+      return "servers";
+    }
+    return hostsHubFlagEnabled && isAuthenticated ? "connect" : "servers";
+  }, [evaluateRunsFlagsLoaded, hostsHubFlagEnabled, isAuthenticated]);
   const isHostedChatRoute = isChatboxChatRoute;
-  const currentHash = window.location.hash || "#servers";
+  const currentHash =
+    window.location.hash ||
+    (isHostedChatRoute ? "#servers" : `#${defaultHubRoute}`);
   const currentHashRoute = useMemo(
     () => resolveHostedNavigation(currentHash, HOSTED_MODE),
     [currentHash]
@@ -786,7 +798,6 @@ export default function App() {
     handleCreateProject,
     handleLeaveProject,
     handleUpdateProject,
-    handleUpdateClientConfig,
     handleUpdateHostContext,
     handleDeleteProject,
     handleProjectShared,
@@ -914,7 +925,9 @@ export default function App() {
       : currentUser.hasSeenOnboarding === true ||
         currentUser.hasCompletedOnboarding === true;
   const hasSeenFirstRunOnboarding = remoteFirstRunOnboardingShown === true;
-  const isHostedDefaultRoute = currentHashRoute.normalizedTab === "servers";
+  const isHostedDefaultRoute =
+    currentHashRoute.normalizedTab === "servers" ||
+    currentHashRoute.normalizedTab === "hosts";
   const shouldHoldHostedDefaultRouteForAuth =
     HOSTED_MODE &&
     !isHostedChatRoute &&
@@ -935,7 +948,7 @@ export default function App() {
       connectedServers
     );
 
-    if (activeTab === "servers") {
+    if (activeTab === "servers" || activeTab === "hosts") {
       const firstVisitServer = newlyConnectedServers.find((serverName) => {
         try {
           return (
@@ -1005,11 +1018,11 @@ export default function App() {
   // can't bleed across projects (e.g. switching to project B while a project-A
   // host is still selected in the Chat tab picker).
   useEffect(() => {
-    if (!hostsEnabled || !isAuthenticated || !convexProjectId) {
+    if (!hostsHubFlagEnabled || !isAuthenticated || !convexProjectId) {
       setChatTabHostId(null);
       setHostsTabSelectedHostId(null);
     }
-  }, [hostsEnabled, isAuthenticated, convexProjectId]);
+  }, [hostsHubFlagEnabled, isAuthenticated, convexProjectId]);
   useEffect(() => {
     setChatTabHostId(null);
     setHostsTabSelectedHostId(null);
@@ -1230,7 +1243,7 @@ export default function App() {
 
       const resolved = resolveHostedNavigation(target, HOSTED_MODE);
       const currentResolved = resolveHostedNavigation(
-        window.location.hash || "#servers",
+        window.location.hash || `#${defaultHubRoute}`,
         HOSTED_MODE
       );
 
@@ -1257,10 +1270,10 @@ export default function App() {
           `${resolved.normalizedTab} is not available in hosted mode.`
         );
         setActiveOrganizationId(undefined);
-        setActiveTab("servers");
-        if (window.location.hash !== "#servers") {
-          window.location.hash = "servers";
-        }
+        applyNavigation(defaultHubRoute, {
+          updateHash: true,
+          preserveCurrentOrganizationOnNonOrgTarget: false,
+        });
         return;
       }
 
@@ -1283,6 +1296,7 @@ export default function App() {
       setActiveTab(resolved.normalizedTab);
     },
     [
+      defaultHubRoute,
       effectiveOrganizations,
       isChatboxChatRoute,
       setSelectedMultipleServersToAllServers,
@@ -1406,13 +1420,47 @@ export default function App() {
     }
 
     const applyHash = () => {
-      const currentHash = window.location.hash || "#servers";
-      applyNavigation(currentHash, { enforceCanonicalHash: true });
+      const raw = window.location.hash;
+      const isUnset =
+        raw === "" || raw === "#" || raw === "#/";
+      if (isUnset && !evaluateRunsFlagsLoaded) {
+        return;
+      }
+
+      const isBareServersHub =
+        raw === "#servers" || raw === "#/servers";
+
+      const hostsHubEligible =
+        evaluateRunsFlagsLoaded &&
+        hostsHubFlagEnabled &&
+        isAuthenticated;
+
+      const isServersToConnectRedirect = hostsHubEligible && isBareServersHub;
+      const effectiveHash = isServersToConnectRedirect
+        ? "#connect"
+        : isUnset
+          ? `#${defaultHubRoute}`
+          : raw || `#${defaultHubRoute}`;
+      // enforceCanonicalHash only rewrites the address bar when raw and
+      // normalized differ — `#connect` already matches its canonical form,
+      // so the URL would stay on `#servers` while the tab flipped to hosts.
+      // Force the write here so the address bar tracks the redirect.
+      applyNavigation(effectiveHash, {
+        enforceCanonicalHash: true,
+        updateHash: isServersToConnectRedirect,
+      });
     };
     applyHash();
     window.addEventListener("hashchange", applyHash);
     return () => window.removeEventListener("hashchange", applyHash);
-  }, [applyNavigation, isHostedChatRoute]);
+  }, [
+    applyNavigation,
+    defaultHubRoute,
+    evaluateRunsFlagsLoaded,
+    hostsHubFlagEnabled,
+    isAuthenticated,
+    isHostedChatRoute,
+  ]);
 
   useLayoutEffect(() => {
     if (isHostedChatRoute) {
@@ -1659,24 +1707,24 @@ export default function App() {
           shellBillingStatus?.plan
         )} plan. Upgrade the organization to continue.`
       );
-      applyNavigation("servers", { updateHash: true });
-    } else if (activeTab === "hosts" && (hostsEnabled !== true || !isAuthenticated)) {
-      applyNavigation("servers", { updateHash: true });
+      applyNavigation(defaultHubRoute, { updateHash: true });
+    } else if (activeTab === "hosts" && (!hostsHubFlagEnabled || !isAuthenticated)) {
+      applyNavigation(defaultHubRoute, { updateHash: true });
     } else if (activeTab === "registry" && registryEnabled !== true) {
-      applyNavigation("servers", { updateHash: true });
+      applyNavigation(defaultHubRoute, { updateHash: true });
     } else if (
       activeTab === "learning" &&
       (learningEnabled !== true || !isAuthenticated)
     ) {
-      applyNavigation("servers", { updateHash: true });
+      applyNavigation(defaultHubRoute, { updateHash: true });
     } else if (activeTab === "client-config") {
-      applyNavigation("servers", { updateHash: true });
+      applyNavigation(defaultHubRoute, { updateHash: true });
     } else if (activeTab === "conformance" && conformanceEnabled !== true) {
-      applyNavigation("servers", { updateHash: true });
+      applyNavigation(defaultHubRoute, { updateHash: true });
     } else if (activeTab === "xaa-flow" && xaaEnabled !== true) {
-      applyNavigation("servers", { updateHash: true });
+      applyNavigation(defaultHubRoute, { updateHash: true });
     } else if (activeTab === "playground" && playgroundTabEnabled !== true) {
-      applyNavigation("servers", { updateHash: true });
+      applyNavigation(defaultHubRoute, { updateHash: true });
     } else if (
       (activeTab === "chat-v2" || activeTab === "app-builder") &&
       playgroundTabEnabled === true
@@ -1685,7 +1733,8 @@ export default function App() {
     }
   }, [
     conformanceEnabled,
-    hostsEnabled,
+    defaultHubRoute,
+    hostsHubFlagEnabled,
     registryEnabled,
     learningEnabled,
     evaluateRunsFlagsLoaded,
@@ -1794,11 +1843,15 @@ export default function App() {
 
     setActiveOrganizationId(undefined);
     setActiveOrganizationSection("overview");
-    applyNavigation(navigationTarget, { updateHash: true });
+    applyNavigation(
+      navigationTarget === "servers" ? defaultHubRoute : navigationTarget,
+      { updateHash: true },
+    );
   }, [
     applyNavigation,
     currentHashRoute.normalizedTab,
     currentHashRoute.organizationId,
+    defaultHubRoute,
     hasRouteOrganization,
     isAuthenticated,
     isLoadingOrganizations,
@@ -1843,7 +1896,7 @@ export default function App() {
 
       setActiveOrganizationId(fallbackOrganizationId);
       setActiveOrganizationSection("overview");
-      applyNavigation("servers", {
+      applyNavigation(defaultHubRoute, {
         updateHash: true,
         preserveCurrentOrganizationOnNonOrgTarget: false,
       });
@@ -1871,13 +1924,17 @@ export default function App() {
         nextProjectOrganizationId: nextProject?.organizationId,
       });
       if (navigationTarget) {
-        applyNavigation(navigationTarget, { updateHash: true });
+        applyNavigation(
+          navigationTarget === "servers" ? defaultHubRoute : navigationTarget,
+          { updateHash: true },
+        );
       }
     },
     [
       activeOrganizationId,
       activeTab,
       applyNavigation,
+      defaultHubRoute,
       handleSwitchProject,
       projects,
     ]
@@ -2072,8 +2129,25 @@ export default function App() {
         }
       : undefined;
 
+  const globalHostBarProps =
+    hostsHubFlagEnabled && isAuthenticated && convexProjectId
+      ? {
+          projectId: convexProjectId,
+          onEditHost: (hostId: string) => {
+            setHostsTabSelectedHostId(hostId);
+            handleNavigate("hosts");
+          },
+          // Only present while the host canvas is open — re-targets it on
+          // dropdown change so the diagram tracks the selected host instead
+          // of stuck on whatever was first opened via Edit.
+          onCanvasReplaceHost:
+            activeTab === "hosts" && hostsTabSelectedHostId
+              ? (hostId: string) => setHostsTabSelectedHostId(hostId)
+              : undefined,
+        }
+      : undefined;
+
   const appContent = (
-    <PlaygroundHeaderSlotProvider>
     <SidebarProvider defaultOpen={true}>
       <AppChromeSidebar
         hidden={appBuilderOnboarding}
@@ -2101,6 +2175,7 @@ export default function App() {
         <AppChromeHeader
           hidden={appBuilderOnboarding}
           activeServerSelectorProps={activeServerSelectorProps}
+          globalHostBarProps={globalHostBarProps}
         />
         <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {showTrialDecisionNotice ? (
@@ -2118,7 +2193,7 @@ export default function App() {
           {/* Content Areas */}
           {(activeTab === "servers" ||
             (activeTab === "hosts" &&
-              hostsEnabled === true &&
+              hostsHubFlagEnabled &&
               isAuthenticated)) && (() => {
             const serversTabElement = (
               <ServersTab
@@ -2149,7 +2224,6 @@ export default function App() {
                     ? () => handleNavigate("registry")
                     : undefined
                 }
-                onSaveClientConfig={handleUpdateClientConfig}
               />
             );
             if (activeTab === "servers") return serversTabElement;
@@ -2415,7 +2489,7 @@ export default function App() {
           )}
           {activeTab === "chat-v2" && (
             <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
-              {hostsEnabled === true && isAuthenticated && convexProjectId && (
+              {hostsHubFlagEnabled && isAuthenticated && convexProjectId && (
                 <div className="flex shrink-0 items-center gap-2 border-b px-4 py-2">
                   <span className="text-xs text-muted-foreground">Host:</span>
                   <div className="w-48">
@@ -2522,7 +2596,7 @@ export default function App() {
               onUpdateProject={handleUpdateProject}
               onDeleteProject={handleDeleteProject}
               onProjectShared={handleProjectShared}
-              onNavigateAway={() => handleNavigate("servers")}
+              onNavigateAway={() => handleNavigate(defaultHubRoute)}
             />
           )}
           {activeTab === "settings" && (
@@ -2605,7 +2679,6 @@ export default function App() {
         </DialogContent>
       </Dialog>
     </SidebarProvider>
-    </PlaygroundHeaderSlotProvider>
   );
 
   return (

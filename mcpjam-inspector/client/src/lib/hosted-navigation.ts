@@ -97,8 +97,11 @@ export function resolveHostedNavigation(
   const [rawPathWithoutQuery] = rawWithoutPrefix.split("?");
   const rawSection = rawPathWithoutQuery || "servers";
   const normalizedParts = getNormalizedHashParts(target);
-  const normalizedSection = normalizedParts.join("/");
   const normalizedTab = normalizedParts[0] || "servers";
+  let normalizedSection = normalizedParts.join("/");
+  if (normalizedTab === "hosts") {
+    normalizedSection = "connect";
+  }
   const organizationId =
     normalizedTab === "organizations" && normalizedParts[1]
       ? normalizedParts[1]

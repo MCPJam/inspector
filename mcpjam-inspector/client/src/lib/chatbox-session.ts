@@ -3,7 +3,7 @@ import {
   type ChatboxHostStyle,
 } from "@/lib/chatbox-host-style";
 import type { HostConfigMcpProfileV1 } from "@/lib/host-config-v2";
-import { DEFAULT_HOST_STYLE } from "@/lib/host-styles";
+import { DEFAULT_HOST_STYLE, type ChatUiOverride } from "@/lib/host-styles";
 
 const MCPJAM_APP_ORIGIN = "https://app.mcpjam.com";
 
@@ -81,6 +81,14 @@ export interface ChatboxBootstrapPayload {
    * runtime falls back to the active `hostStyle`'s preset.
    */
   hostCapabilitiesOverride?: Record<string, unknown>;
+  /**
+   * User override for the chat-UI chrome (logo, palette, indicator, fonts).
+   * Mirrors `HostConfigInputV2.chatUiOverride`. When undefined the hosted
+   * runtime renders the active `hostStyle`'s preset chrome verbatim.
+   * Snapshotted at chatbox creation time — see comment on `hostStyle`
+   * for snapshot semantics.
+   */
+  chatUiOverride?: ChatUiOverride;
   /**
    * Versioned envelope for host-level MCP state — see
    * `HostConfigMcpProfileV1` in `client/src/lib/host-config-v2.ts`.
@@ -180,6 +188,24 @@ function normalizeHostCapabilitiesOverride(
     return undefined;
   }
   return input as Record<string, unknown>;
+}
+
+/**
+ * Defensive boundary check for `chatUiOverride` in redeem responses /
+ * playground snapshots. Same untrusted-shape gate as
+ * {@link normalizeHostCapabilitiesOverride}: reject obvious shape errors,
+ * pass anything object-shaped through as `ChatUiOverride`. The backend
+ * validator is the source of truth for structural correctness; this only
+ * guards against an upstream serialization bug slipping garbage into
+ * typed code.
+ */
+function normalizeChatUiOverride(
+  input: unknown,
+): ChatUiOverride | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return undefined;
+  }
+  return input as ChatUiOverride;
 }
 
 function normalizeMcpProfile(
@@ -307,6 +333,9 @@ export function normalizeChatboxSession(
       hostCapabilitiesOverride: normalizeHostCapabilitiesOverride(
         (payload as { hostCapabilitiesOverride?: unknown })
           .hostCapabilitiesOverride,
+      ),
+      chatUiOverride: normalizeChatUiOverride(
+        (payload as { chatUiOverride?: unknown }).chatUiOverride,
       ),
       mcpProfile: normalizeMcpProfile(
         (payload as { mcpProfile?: unknown }).mcpProfile,

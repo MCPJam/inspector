@@ -15,7 +15,6 @@ import {
   APP_BUILDER_FIRST_RUN_PROMPT,
   useAppBuilderStateContext,
 } from "@/components/ui-playground/hooks/use-app-builder-state";
-import { getLoadingIndicatorVariantForHostStyle } from "@/components/chat-v2/shared/loading-indicator-content";
 import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSelector";
 import type { ProjectHostContextDraft } from "@/lib/client-config";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
@@ -98,9 +97,6 @@ export function PlaygroundCenter({
         }
         initialInputTypewriter={state.firstRunComposerSeed}
         blockSubmitUntilServerConnected={state.firstRunComposerSeed}
-        loadingIndicatorVariant={getLoadingIndicatorVariantForHostStyle(
-          state.hostStyle,
-        )}
         ensureServersReady={ensureServersReady}
         pulseSubmit={state.firstRunComposerSeed}
         showPostConnectGuide={false}

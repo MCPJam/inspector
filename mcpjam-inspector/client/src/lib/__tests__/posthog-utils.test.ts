@@ -1,9 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { options } from "../PosthogUtils";
+import { isPostHogBooleanFlagOn, options } from "../PosthogUtils";
 
 describe("PosthogUtils", () => {
   beforeEach(() => {
     vi.stubGlobal("__APP_VERSION__", "2.0.13-test");
+  });
+
+  it("isPostHogBooleanFlagOn accepts PostHog quirks", () => {
+    expect(isPostHogBooleanFlagOn(true)).toBe(true);
+    expect(isPostHogBooleanFlagOn(false)).toBe(false);
+    expect(isPostHogBooleanFlagOn(undefined)).toBe(false);
+    expect(isPostHogBooleanFlagOn("true")).toBe(true);
+    expect(isPostHogBooleanFlagOn(" TRUE ")).toBe(true);
+    expect(isPostHogBooleanFlagOn("yes")).toBe(true);
+    expect(isPostHogBooleanFlagOn("control")).toBe(false);
   });
 
   afterEach(() => {

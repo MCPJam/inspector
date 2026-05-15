@@ -1,5 +1,7 @@
 const HASH_TAB_ALIASES = {
   chat: "chat-v2",
+  /** Public hash slug; in-app tab id remains `hosts`. */
+  connect: "hosts",
 } as const;
 
 export const HOSTED_SIDEBAR_ALLOWED_TABS = [
