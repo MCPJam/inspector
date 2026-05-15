@@ -1,9 +1,12 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { HostBuilderView } from "./hosts/HostBuilderView";
 import { HostsConnectAddServerSlotContext } from "./hosts/HostsConnectAddServerSlotContext";
 import { ViewModeSelector } from "./shared/view-mode-selector";
 import { usePreviewedHostId } from "@/hooks/use-previewed-host-id";
+import { useHost } from "@/hooks/useHosts";
+import { getChatboxShellStyle } from "@/lib/chatbox-host-style";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 interface HostsTabProps {
   projectId: string | null;
@@ -27,6 +30,7 @@ const TRANSITION = {
 
 export function HostsTab({
   projectId,
+  isAuthenticated,
   selectedHostId,
   onSelectHost,
   serversTabElement,
@@ -34,6 +38,24 @@ export function HostsTab({
   const [previewedHostId] = usePreviewedHostId(projectId);
   const [addServerSlotEl, setAddServerSlotEl] = useState<HTMLDivElement | null>(
     null,
+  );
+  // Match the Host canvas's brand-tinted backdrop on the Servers view: read
+  // the previewed host's style and cascade brand `--background`, `--primary`,
+  // `--card`, etc. into the subtree so the Servers chrome inherits the host's
+  // accent (orange for Claude, blue for ChatGPT, …) without per-component
+  // theming code. Mirrors `HostBuilderViewRedesigned.canvasShellStyle`.
+  const themeMode = usePreferencesStore((s) => s.themeMode);
+  const { host: previewedHost } = useHost({
+    isAuthenticated,
+    hostId: previewedHostId,
+  });
+  const previewedHostStyle = previewedHost?.config?.hostStyle ?? null;
+  const browseShellStyle = useMemo(
+    () =>
+      previewedHostStyle
+        ? getChatboxShellStyle(previewedHostStyle, themeMode)
+        : undefined,
+    [previewedHostStyle, themeMode],
   );
 
   useEffect(() => {
@@ -71,7 +93,9 @@ export function HostsTab({
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.42 }}
             transition={TRANSITION}
-            className="absolute inset-0 flex min-h-0 flex-col [transform-origin:50%_70%]"
+            data-host-style={previewedHostStyle ?? undefined}
+            style={browseShellStyle}
+            className="absolute inset-0 flex min-h-0 flex-col bg-background text-foreground [transform-origin:50%_70%]"
           >
             <HostsConnectAddServerSlotContext.Provider value={addServerSlotEl}>
               <div

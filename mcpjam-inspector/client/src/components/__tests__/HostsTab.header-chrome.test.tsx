@@ -6,6 +6,16 @@ vi.mock("@/hooks/use-previewed-host-id", () => ({
   usePreviewedHostId: vi.fn(() => [null as string | null, vi.fn()]),
 }));
 
+vi.mock("@/hooks/useHosts", () => ({
+  useHost: vi.fn(() => ({ host: null, isLoading: false })),
+}));
+
+vi.mock("@/stores/preferences/preferences-provider", () => ({
+  usePreferencesStore: vi.fn((selector: (state: any) => unknown) =>
+    selector({ themeMode: "dark" }),
+  ),
+}));
+
 vi.mock("@/components/hosts/HostBuilderView", () => ({
   HostBuilderView: () => <div data-testid="mock-host-builder" />,
 }));
