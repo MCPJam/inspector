@@ -2089,7 +2089,14 @@ export default function App() {
                 organizationId={activeProjectBillingOrganizationId}
                 pendingDashboardOAuth={pendingDashboardOAuth}
                 isBillingContextPending={isBillingContextPending}
-                isLoadingProjects={isLoadingRemoteProjects}
+                // Keep the spinner up across the sign-out → guest-resolved
+                // window: while WorkOS or Convex auth is mid-handshake,
+                // `useProjectServers` skips its Convex query, which lets the
+                // empty/cached fallback flash the previous actor's data for
+                // ~200ms.
+                isLoadingProjects={
+                  isLoadingRemoteProjects || isAuthLoading || isWorkOsLoading
+                }
                 onProjectShared={handleProjectShared}
                 onLeaveProject={() => handleLeaveProject(activeProjectId)}
                 isRegistryEnabled={registryEnabled === true}
