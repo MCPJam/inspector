@@ -1,6 +1,14 @@
 import { renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
-import { pathnameToActiveTab, useActiveTab } from "../app-navigation";
+import {
+  captureCurrentReturnPath,
+  legacyHashBookmarkToPath,
+  navigationTargetToPath,
+  normalizeInitialLegacyHashBookmark,
+  normalizeReturnTargetPath,
+  pathnameToActiveTab,
+  useActiveTab,
+} from "../app-navigation";
 
 describe("pathnameToActiveTab", () => {
   beforeEach(() => {
@@ -33,12 +41,12 @@ describe("pathnameToActiveTab", () => {
     expect(pathnameToActiveTab("/chatbox-session-slug")).toBe("servers");
   });
 
-  it("falls back to legacy hash navigation outside a Router", () => {
+  it("ignores legacy hashes outside a Router", () => {
     window.location.hash = "#oauth-flow";
 
     const { result } = renderHook(() => useActiveTab());
 
-    expect(result.current).toBe("oauth-flow");
+    expect(result.current).toBe("servers");
   });
 
   it("does not treat arbitrary chatbox session hashes as app tabs", () => {
@@ -47,5 +55,52 @@ describe("pathnameToActiveTab", () => {
     const { result } = renderHook(() => useActiveTab());
 
     expect(result.current).toBe("servers");
+  });
+});
+
+describe("path navigation compatibility helpers", () => {
+  beforeEach(() => {
+    window.history.replaceState({}, "", "/");
+    window.location.hash = "";
+  });
+
+  it("converts app navigation targets to paths", () => {
+    expect(navigationTargetToPath("servers")).toBe("/servers");
+    expect(navigationTargetToPath("#/evals/suite/s_1?view=test-cases")).toBe(
+      "/evals/suite/s_1?view=test-cases",
+    );
+    expect(navigationTargetToPath("chat")).toBe("/chat-v2");
+    expect(navigationTargetToPath("not-a-tab")).toBe("/servers");
+  });
+
+  it("recognizes old hash bookmarks without claiming chatbox slugs", () => {
+    expect(legacyHashBookmarkToPath("#servers")).toBe("/servers");
+    expect(legacyHashBookmarkToPath("#/evals/suite/s_1")).toBe(
+      "/evals/suite/s_1",
+    );
+    expect(legacyHashBookmarkToPath("#organizations/org-a/billing")).toBe(
+      "/organizations/org-a/billing",
+    );
+    expect(legacyHashBookmarkToPath("#chatbox-slug")).toBeNull();
+  });
+
+  it("normalizes the initial legacy hash bookmark before router mount", () => {
+    window.history.replaceState({}, "", "/#organizations/org-a/billing");
+
+    normalizeInitialLegacyHashBookmark();
+
+    expect(window.location.pathname).toBe("/organizations/org-a/billing");
+    expect(window.location.hash).toBe("");
+  });
+
+  it("captures and normalizes path-form return targets", () => {
+    window.history.replaceState({}, "", "/evals/suite/s_1?fromCommit=abc");
+
+    expect(captureCurrentReturnPath()).toBe(
+      "/evals/suite/s_1?fromCommit=abc",
+    );
+    expect(normalizeReturnTargetPath("#/evals")).toBe("/evals");
+    expect(normalizeReturnTargetPath("/tools")).toBe("/tools");
+    expect(normalizeReturnTargetPath("#unknown")).toBe("/servers");
   });
 });

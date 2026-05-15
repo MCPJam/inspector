@@ -1,28 +1,26 @@
 /**
  * Centralized navigation API for the inspector app.
  *
- * Phase 2 introduces a typed wrapper around React Router's navigate/location
- * primitives. The legacy `applyNavigation` in App.tsx delegates here for URL
- * updates; in Phase 6, `applyNavigation` and the hash-change listener are
- * deleted and call sites use `useAppNavigate()` / `navigateApp()` directly.
+ * Central wrapper around React Router's navigate/location primitives.
  *
  * URLs are path-based (`/servers`, `/organizations/:orgId/billing`, etc.)
  * matching `react-router` semantics. Chatbox session hashes
  * (`#chatbox-slug`) are NOT app navigation and are preserved verbatim.
  */
-import { useCallback, useContext, useEffect, useState } from "react";
+import { useCallback, useContext, useLayoutEffect, useState } from "react";
 import {
   UNSAFE_LocationContext,
   UNSAFE_NavigationContext,
 } from "react-router";
 import { getAppRouter } from "../router-ref";
-import type { OrganizationRouteSection } from "./hosted-navigation";
 import type { EvalRoute } from "./eval-route-types";
 import {
   HOSTED_HASH_ALLOWED_TABS,
   HOSTED_HASH_BLOCKED_TABS,
   normalizeHostedHashTab,
 } from "./hosted-tab-policy";
+
+export type OrganizationRouteSection = "overview" | "billing" | "models";
 
 /** Typed canonical paths used across the app. */
 export const routePaths = {
@@ -142,54 +140,12 @@ export function navigateApp(to: string, options?: AppNavigateOptions): void {
     void router.navigate(to, { replace: options?.replace });
     return;
   }
-  // Test/fallback path: no Router mounted. Mirror navigation to both pathname
-  // and the legacy hash so tests checking `window.location.hash` keep passing
-  // while production (with a Router) uses path-based URLs only.
   if (options?.replace) {
     window.history.replaceState({}, "", to);
   } else {
     window.history.pushState({}, "", to);
   }
-  // Safe split: take first `?` as the boundary so query strings containing
-  // additional `?` chars (e.g. encoded payloads) are preserved verbatim.
-  const questionIdx = to.indexOf("?");
-  const pathPart = questionIdx === -1 ? to : to.slice(0, questionIdx);
-  const queryPart = questionIdx === -1 ? "" : to.slice(questionIdx + 1);
-  if (pathPart) {
-    // Nested routes (ci-evals/evals) keep the leading slash in their legacy
-    // hash form (`#/ci-evals/...`); flat tabs use `#tab`.
-    const isNested = /^\/(ci-evals|evals)(\/|$)/.test(pathPart);
-    const basePath = isNested ? pathPart : pathPart.replace(/^\/+/, "");
-    const fragment = queryPart ? `${basePath}?${queryPart}` : basePath;
-    const newHash = `#${fragment}`;
-    if (window.location.hash !== newHash) {
-      // When the caller asked for `replace: true`, mutate the existing
-      // history entry instead of letting `window.location.hash = ...`
-      // push a new one — otherwise the user would have to back-button
-      // twice (once over the pushed-state path, once over the pushed
-      // hash) to leave the synthesized hash mirror. We still synthesize
-      // a `hashchange` event so listeners (the App migration shim,
-      // hash-driven test fallbacks) see the update — assigning to
-      // `window.location.hash` would have done that automatically, but
-      // `replaceState` does not.
-      if (options?.replace) {
-        const previousHash = window.location.hash;
-        const base =
-          window.location.pathname + window.location.search;
-        window.history.replaceState({}, "", `${base}${newHash}`);
-        if (typeof HashChangeEvent === "function") {
-          window.dispatchEvent(
-            new HashChangeEvent("hashchange", {
-              oldURL: `${window.location.origin}${base}${previousHash}`,
-              newURL: `${window.location.origin}${base}${newHash}`,
-            }),
-          );
-        }
-      } else {
-        window.location.hash = fragment;
-      }
-    }
-  }
+  window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
 /**
@@ -198,8 +154,7 @@ export function navigateApp(to: string, options?: AppNavigateOptions): void {
  * Reads the router's navigation context directly so the hook call shape is
  * unconditional (Rules of Hooks compliant). When mounted outside a Router
  * (e.g. component tests rendering without a `<MemoryRouter>`), the navigator
- * context is undefined and the callback falls back to `navigateApp` (history
- * API + legacy hash mirror).
+ * context is undefined and the callback falls back to `navigateApp`.
  */
 export function useAppNavigate() {
   const navigationContext = useContext(UNSAFE_NavigationContext);
@@ -233,16 +188,14 @@ export function useActiveTab(): string {
     getWindowFallbackPathname,
   );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (locationContext || typeof window === "undefined") return;
     const syncFallbackPathname = () => {
       setFallbackPathname(getWindowFallbackPathname());
     };
     window.addEventListener("popstate", syncFallbackPathname);
-    window.addEventListener("hashchange", syncFallbackPathname);
     return () => {
       window.removeEventListener("popstate", syncFallbackPathname);
-      window.removeEventListener("hashchange", syncFallbackPathname);
     };
   }, [locationContext]);
 
@@ -273,19 +226,9 @@ export function pathnameToActiveTab(pathname: string): string {
   return KNOWN_APP_TAB_SEGMENTS.has(normalized) ? normalized : "servers";
 }
 
-function hashToPathname(hash: string): string {
-  const target = hash.replace(/^#\/?/, "");
-  const [path = ""] = target.split(/[?#]/);
-  return `/${path}`;
-}
-
 function getWindowFallbackPathname(): string {
   if (typeof window === "undefined") return "/";
-  const pathname = window.location.pathname || "/";
-  if ((pathname === "/" || pathname === "") && window.location.hash) {
-    return hashToPathname(window.location.hash);
-  }
-  return pathname;
+  return window.location.pathname || "/";
 }
 
 export interface CurrentOrgRoute {
@@ -320,40 +263,99 @@ function decodePathSegment(segment: string): string {
   }
 }
 
-/**
- * Compatibility helper: convert a legacy hash-fragment target like
- * `"organizations/:id/billing"` or `"#servers"` into a path-based URL.
- *
- * Currently unused after Phases 3-5; keep with the other transition shims
- * until Phase 6 deletes the legacy navigation bridge.
- */
-export function legacyHashTargetToPath(rawTarget: string): string {
+export function navigationTargetToPath(rawTarget: string): string {
   const stripped = rawTarget.replace(/^#/, "").replace(/^\/+/, "");
-  const [path, query] = stripped.split("?");
-  const queryPart = query ? `?${query}` : "";
-  if (!path) return "/servers";
-  return `/${path}${queryPart}`;
+  const questionIndex = stripped.indexOf("?");
+  const pathPart =
+    questionIndex === -1 ? stripped : stripped.slice(0, questionIndex);
+  const queryPart = questionIndex === -1 ? "" : stripped.slice(questionIndex);
+  const segments = pathPart.split("/").filter(Boolean);
+  const normalizedTab = normalizeHostedHashTab(segments[0] || "servers");
+  if (!KNOWN_APP_TAB_SEGMENTS.has(normalizedTab)) return routePaths.servers;
+  return `/${[normalizedTab, ...segments.slice(1)].join("/")}${queryPart}`;
 }
 
-/**
- * Capture the user's current route as a legacy `#`-prefixed return target.
- *
- * OAuth flows (`use-server-state.ts`, `mcp-oauth.ts`,
- * `hosted-oauth-callback.ts`) persist this string before redirecting and
- * navigate the user back to it on success. Originally the call sites read
- * `window.location.hash` directly; after the Phase 2 path migration, hash
- * is usually empty in production, so we fall through to pathname+search.
- *
- * The returned string is intentionally still hash-prefixed so existing
- * consumers (`resolveHostedOAuthReturnHash`, the App.tsx return handler)
- * continue to work unchanged — they strip the leading `#`/`/` before
- * converting to a path.
- */
-export function captureCurrentReturnTarget(): string {
-  if (typeof window === "undefined") return "#servers";
-  if (window.location.hash) return window.location.hash;
-  const path = window.location.pathname.replace(/^\/+/, "");
+export function legacyHashBookmarkToPath(hash: string): string | null {
+  const fragment = hash.replace(/^#\/?/, "");
+  if (!fragment) return null;
+  const firstSegment = fragment.split(/[/?]/)[0] || "";
+  const normalizedFirstSegment = normalizeHostedHashTab(firstSegment);
+  if (!KNOWN_APP_TAB_SEGMENTS.has(normalizedFirstSegment)) return null;
+  const normalizedFragment =
+    normalizedFirstSegment === firstSegment
+      ? fragment
+      : `${normalizedFirstSegment}${fragment.slice(firstSegment.length)}`;
+  return navigationTargetToPath(normalizedFragment);
+}
+
+export function normalizeInitialLegacyHashBookmark(): void {
+  if (typeof window === "undefined") return;
+  const pathname = window.location.pathname || "/";
+  if (pathname !== "/" && pathname !== "") return;
+  const path = legacyHashBookmarkToPath(window.location.hash);
+  if (!path) return;
+  window.history.replaceState({}, "", path);
+}
+
+export function normalizeReturnTargetPath(
+  target?: string | null,
+  fallback: string = routePaths.servers,
+): string {
+  const trimmed = target?.trim() ?? "";
+  if (!trimmed) return fallback;
+  return navigationTargetToPath(trimmed);
+}
+
+export function captureCurrentReturnPath(): string {
+  if (typeof window === "undefined") return routePaths.servers;
+  const pathname = window.location.pathname || routePaths.root;
   const search = window.location.search || "";
-  if (!path) return "#servers";
-  return `#${path}${search}`;
+  if (pathname === routePaths.root || pathname === "") return routePaths.servers;
+  return `${pathname}${search}`;
+}
+
+export function getProjectSwitchNavigationTarget({
+  activeTab,
+  activeOrganizationId,
+  nextProjectOrganizationId,
+}: {
+  activeTab: string;
+  activeOrganizationId?: string;
+  nextProjectOrganizationId?: string;
+}): string | null {
+  if (activeTab !== "organizations") {
+    return null;
+  }
+
+  if (
+    !activeOrganizationId ||
+    !nextProjectOrganizationId ||
+    nextProjectOrganizationId !== activeOrganizationId
+  ) {
+    return routePaths.servers;
+  }
+
+  return null;
+}
+
+export function getInvalidOrganizationRouteNavigationTarget({
+  routeTab,
+  routeOrganizationId,
+  isLoadingOrganizations,
+  hasRouteOrganization,
+}: {
+  routeTab: string;
+  routeOrganizationId?: string;
+  isLoadingOrganizations: boolean;
+  hasRouteOrganization: boolean;
+}): string | null {
+  if (routeTab !== "organizations" || isLoadingOrganizations) {
+    return null;
+  }
+
+  if (!routeOrganizationId || !hasRouteOrganization) {
+    return routePaths.servers;
+  }
+
+  return null;
 }

@@ -139,7 +139,7 @@ describe("MCPJamLimitDialog", () => {
     );
 
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
-    expect(window.location.hash).toBe("#organizations/org-active/models");
+    expect(window.location.pathname).toBe("/organizations/org-active/models");
   });
 
   it("redirects to the active org's billing page with the topup flag on CTA click", async () => {
@@ -155,9 +155,8 @@ describe("MCPJamLimitDialog", () => {
     );
 
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
-    expect(window.location.hash).toBe(
-      "#organizations/org-active/billing?topup=open",
-    );
+    expect(window.location.pathname).toBe("/organizations/org-active/billing");
+    expect(window.location.search).toBe("?topup=open");
   });
 
   it("falls back to the most-recent membership org when no active org is stored", async () => {
@@ -171,9 +170,10 @@ describe("MCPJamLimitDialog", () => {
       screen.getByRole("button", { name: /^top up$/i }),
     );
 
-    expect(window.location.hash).toBe(
-      "#organizations/org-fallback/billing?topup=open",
+    expect(window.location.pathname).toBe(
+      "/organizations/org-fallback/billing",
     );
+    expect(window.location.search).toBe("?topup=open");
   });
 
   it("keeps the modal open when no org is resolvable yet (e.g. membership still loading)", async () => {

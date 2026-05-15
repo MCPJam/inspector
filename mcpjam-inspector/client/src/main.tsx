@@ -18,6 +18,7 @@ import {
 } from "./lib/electron-hosted-auth";
 import { useUnifiedConvexAuth } from "./lib/unified-convex-auth";
 import { getRuntimeConvexUrl } from "./lib/runtime-config";
+import { normalizeInitialLegacyHashBookmark } from "./lib/app-navigation";
 
 // Initialize Sentry before React mounts
 initSentry();
@@ -144,6 +145,7 @@ if (isInIframe) {
   })();
 
   const convex = new ConvexReactClient(convexUrl);
+  normalizeInitialLegacyHashBookmark();
 
   const Providers = (
     <AuthKitProvider

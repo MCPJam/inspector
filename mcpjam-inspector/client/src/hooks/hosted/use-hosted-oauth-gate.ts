@@ -29,7 +29,7 @@ import {
   type HostedServerValidateContext,
 } from "@/lib/apis/web/servers-api";
 import { slugify } from "@/lib/chatbox-session";
-import { captureCurrentReturnTarget } from "@/lib/app-navigation";
+import { captureCurrentReturnPath, routePaths } from "@/lib/app-navigation";
 import { ingestOAuthTraceLogs } from "@/stores/traffic-log-store";
 
 const INLINE_TOKEN_POLL_ATTEMPTS = 15;
@@ -420,17 +420,11 @@ export function useHostedOAuthGate({
         return;
       }
 
-      // Capture the route in a hash-prefixed form. On legacy hash URLs that's
-      // `window.location.hash`; on path-based URLs (`/chatboxes` etc.)
-      // `captureCurrentReturnTarget` synthesizes the hash from the pathname
-      // so the OAuth callback resumes on the right surface. The slug
-      // fallback covers the edge case where neither is meaningful (e.g.
-      // landing directly at root before navigation has resolved).
-      const captured = captureCurrentReturnTarget();
-      const returnHash =
-        captured && captured !== "#servers"
+      const captured = captureCurrentReturnPath();
+      const returnPath =
+        captured && captured !== routePaths.servers
           ? captured
-          : `#${slugify(server.serverName)}`;
+          : `/${slugify(server.serverName)}`;
       writeHostedOAuthPendingMarker({
         surface,
         projectId,
@@ -444,10 +438,10 @@ export function useHostedOAuthGate({
           : undefined,
         chatboxId,
         accessVersion: Number.isFinite(accessVersion) ? accessVersion : null,
-        returnHash,
+        returnHash: returnPath,
       });
       localStorage.setItem(pendingKey, "true");
-      localStorage.setItem("mcp-oauth-return-hash", returnHash);
+      localStorage.setItem("mcp-oauth-return-hash", returnPath);
 
       const result = await initiateOAuth({
         serverName: server.serverName,

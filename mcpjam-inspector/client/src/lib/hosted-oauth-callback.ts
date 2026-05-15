@@ -4,6 +4,11 @@ import {
   CHATBOX_OAUTH_PENDING_KEY,
   slugify,
 } from "@/lib/chatbox-session";
+import {
+  legacyHashBookmarkToPath,
+  normalizeReturnTargetPath,
+  routePaths,
+} from "@/lib/app-navigation";
 
 export interface HostedOAuthPendingMarker {
   surface: HostedOAuthSurface;
@@ -32,15 +37,33 @@ export function normalizeHostedOAuthServerName(
   return serverName?.trim().toLowerCase() ?? "";
 }
 
-function normalizeHostedOAuthReturnHash(
-  hashValue?: string | null
+function normalizeHostedOAuthReturnPath(
+  returnTarget?: string | null,
+  surface?: HostedOAuthSurface,
 ): string | null {
-  const trimmed = hashValue?.trim() ?? "";
+  const trimmed = returnTarget?.trim() ?? "";
   if (!trimmed) {
     return null;
   }
 
-  return trimmed.startsWith("#") ? trimmed : `#${trimmed.replace(/^\/+/, "")}`;
+  if (trimmed.startsWith("#")) {
+    const legacyPath = legacyHashBookmarkToPath(trimmed);
+    if (legacyPath) return legacyPath;
+    if (surface === "chatbox") {
+      const fragment = trimmed.replace(/^#\/?/, "");
+      return fragment ? `/${fragment}` : null;
+    }
+  }
+
+  if (
+    surface === "chatbox" &&
+    trimmed.startsWith("/") &&
+    !trimmed.startsWith("//")
+  ) {
+    return trimmed;
+  }
+
+  return normalizeReturnTargetPath(trimmed);
 }
 
 export function matchesHostedOAuthServerIdentity(
@@ -78,7 +101,10 @@ export function writeHostedOAuthPendingMarker(
         accessScope: marker.accessScope ?? null,
         chatboxId: marker.chatboxId ?? null,
         accessVersion: marker.accessVersion ?? null,
-        returnHash: normalizeHostedOAuthReturnHash(marker.returnHash),
+        returnHash: normalizeHostedOAuthReturnPath(
+          marker.returnHash,
+          marker.surface,
+        ),
         startedAt: Date.now(),
       })
     );
@@ -133,7 +159,10 @@ export function readHostedOAuthPendingMarker(): HostedOAuthPendingMarker | null 
         Number.isFinite(parsed.accessVersion)
           ? parsed.accessVersion
           : null,
-      returnHash: normalizeHostedOAuthReturnHash(parsed.returnHash),
+      returnHash: normalizeHostedOAuthReturnPath(
+        parsed.returnHash,
+        parsed.surface,
+      ),
       startedAt: parsed.startedAt,
     };
   } catch {
@@ -221,26 +250,30 @@ export function getHostedOAuthCallbackContext(): HostedOAuthCallbackContext | nu
     accessScope: undefined,
     chatboxId: null,
     accessVersion: null,
-    returnHash: normalizeHostedOAuthReturnHash(
-      localStorage.getItem("mcp-oauth-return-hash")
+    returnHash: normalizeHostedOAuthReturnPath(
+      localStorage.getItem("mcp-oauth-return-hash"),
+      surface,
     ),
     startedAt: Date.now(),
   };
 }
 
-export function resolveHostedOAuthReturnHash(
+export function resolveHostedOAuthReturnPath(
   context: Pick<HostedOAuthCallbackContext, "surface" | "returnHash">
 ): string {
   if (context.returnHash) {
-    return context.returnHash;
+    return (
+      normalizeHostedOAuthReturnPath(context.returnHash, context.surface) ??
+      routePaths.servers
+    );
   }
 
   if (context.surface === "chatbox") {
     const chatboxSession = readChatboxSession();
     return chatboxSession
-      ? `#${slugify(chatboxSession.payload.name)}`
-      : "#chatbox";
+      ? `/${slugify(chatboxSession.payload.name)}`
+      : "/chatbox";
   }
 
-  return "#servers";
+  return routePaths.servers;
 }

@@ -11,14 +11,10 @@ import { formatCreditResetText } from "@/lib/credit-usage";
 import type { CreditTopupSource } from "@/hooks/useCreditTopup";
 
 /** Pulls the limit-modal redirect flag out of the current URL and clears it
- * so the topup dialog opens exactly once on landing. The flag may live in
- * either `window.location.search` (path-based React Router URLs) or after
- * `?` in `window.location.hash` (legacy hash-based URLs / hash bookmarks).
- * Either source clears its own flag without disturbing the other. */
+ * so the topup dialog opens exactly once on landing. */
 function consumeTopupFlag(): boolean {
   if (typeof window === "undefined") return false;
 
-  // Path-based URL: `/organizations/.../billing?topup=open`.
   const searchParams = new URLSearchParams(window.location.search);
   if (searchParams.get("topup") === "open") {
     searchParams.delete("topup");
@@ -27,26 +23,12 @@ function consumeTopupFlag(): boolean {
     window.history.replaceState(
       null,
       "",
-      `${window.location.pathname}${nextSearch}${window.location.hash}`,
+      `${window.location.pathname}${nextSearch}`,
     );
     return true;
   }
 
-  // Legacy hash form: `#organizations/.../billing?topup=open`.
-  const hash = window.location.hash;
-  const queryStart = hash.indexOf("?");
-  if (queryStart < 0) return false;
-  const hashParams = new URLSearchParams(hash.slice(queryStart + 1));
-  if (hashParams.get("topup") !== "open") return false;
-  hashParams.delete("topup");
-  const remaining = hashParams.toString();
-  const nextHash = hash.slice(0, queryStart) + (remaining ? `?${remaining}` : "");
-  window.history.replaceState(
-    null,
-    "",
-    `${window.location.pathname}${window.location.search}${nextHash}`,
-  );
-  return true;
+  return false;
 }
 
 interface CreditBalanceCardProps {
@@ -63,7 +45,7 @@ export function CreditBalanceCard({
     useState<CreditTopupSource>("billing_page");
 
   // Auto-open the topup dialog when the user is redirected here from the
-  // global limit modal (`#organizations/{id}/billing?topup=open`). One-shot:
+  // global limit modal (`/organizations/{id}/billing?topup=open`). One-shot:
   // the flag is consumed from the URL so a subsequent reload doesn't reopen.
   // Source is recorded as `limit_modal` so the funnel can attribute the
   // top-up back to the limit-hit that triggered the redirect.

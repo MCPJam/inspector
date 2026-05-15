@@ -1,5 +1,32 @@
 import { createBrowserRouter, RouterProvider } from "react-router";
-import App from "./App";
+import App, {
+  AppBuilderRoute,
+  AuthRoute,
+  ChatAliasRoute,
+  ChatboxesRoute,
+  ChatV2Route,
+  CiEvalsRoute,
+  ConformanceRoute,
+  EvalsRoute,
+  LearningRoute,
+  OAuthFlowRoute,
+  OrganizationsRoute,
+  ProfileRoute,
+  ProjectSettingsRoute,
+  PromptsRoute,
+  RegistryRoute,
+  ResourcesRoute,
+  ServersRedirectRoute,
+  ServersRoute,
+  SettingsRoute,
+  SkillsRoute,
+  SupportRoute,
+  TasksRoute,
+  ToolsRoute,
+  TracingRoute,
+  ViewsRoute,
+  XAAFlowRoute,
+} from "./App";
 import { getAppRouter, setAppRouter } from "./router-ref";
 
 export { getAppRouter };
@@ -14,31 +41,86 @@ type AppRouter = ReturnType<typeof createBrowserRouter>;
 export function createAppRouter(): AppRouter {
   const existing = getAppRouter();
   if (existing) return existing;
-  // Flat route entries intentionally render the same App shell. App does not
-  // render an Outlet yet, so nested child routes would not make params visible.
   const router = createBrowserRouter([
-    { path: "/", element: <App /> },
-    { path: "organizations/:orgId", element: <App /> },
-    { path: "organizations/:orgId/billing", element: <App /> },
-    { path: "organizations/:orgId/models", element: <App /> },
-    { path: "evals", element: <App /> },
-    { path: "evals/create", element: <App /> },
-    { path: "evals/suite/:suiteId", element: <App /> },
-    { path: "evals/suite/:suiteId/runs/:runId", element: <App /> },
-    { path: "evals/suite/:suiteId/test/:testId", element: <App /> },
-    { path: "evals/suite/:suiteId/test/:testId/edit", element: <App /> },
-    { path: "evals/suite/:suiteId/edit", element: <App /> },
-    { path: "ci-evals", element: <App /> },
-    { path: "ci-evals/create", element: <App /> },
-    { path: "ci-evals/commit/:commitSha", element: <App /> },
-    { path: "ci-evals/suite/:suiteId", element: <App /> },
-    { path: "ci-evals/suite/:suiteId/runs/:runId", element: <App /> },
-    { path: "ci-evals/suite/:suiteId/test/:testId", element: <App /> },
-    { path: "ci-evals/suite/:suiteId/test/:testId/edit", element: <App /> },
-    { path: "ci-evals/suite/:suiteId/edit", element: <App /> },
     {
-      path: "*",
       element: <App />,
+      children: [
+        { index: true, element: <ServersRoute /> },
+        { path: "servers", element: <ServersRoute /> },
+        { path: "hosts", element: <ServersRoute /> },
+        { path: "registry", element: <RegistryRoute /> },
+        { path: "tools", element: <ToolsRoute /> },
+        { path: "resources", element: <ResourcesRoute /> },
+        { path: "prompts", element: <PromptsRoute /> },
+        { path: "tasks", element: <TasksRoute /> },
+        { path: "auth", element: <AuthRoute /> },
+        { path: "skills", element: <SkillsRoute /> },
+        { path: "learning", element: <LearningRoute /> },
+        { path: "conformance", element: <ConformanceRoute /> },
+        { path: "oauth-flow", element: <OAuthFlowRoute /> },
+        { path: "xaa-flow", element: <XAAFlowRoute /> },
+        { path: "tracing", element: <TracingRoute /> },
+        { path: "chat", element: <ChatAliasRoute /> },
+        { path: "chat-v2", element: <ChatV2Route /> },
+        { path: "chatboxes", element: <ChatboxesRoute /> },
+        { path: "app-builder", element: <AppBuilderRoute /> },
+        { path: "views", element: <ViewsRoute /> },
+        { path: "support", element: <SupportRoute /> },
+        { path: "settings", element: <SettingsRoute /> },
+        { path: "profile", element: <ProfileRoute /> },
+        { path: "project-settings", element: <ProjectSettingsRoute /> },
+        { path: "client-config", element: <ServersRedirectRoute /> },
+        { path: "organizations", element: <OrganizationsRoute /> },
+        { path: "organizations/:orgId", element: <OrganizationsRoute /> },
+        {
+          path: "organizations/:orgId/billing",
+          element: <OrganizationsRoute />,
+        },
+        {
+          path: "organizations/:orgId/models",
+          element: <OrganizationsRoute />,
+        },
+        { path: "evals", element: <EvalsRoute /> },
+        { path: "evals/create", element: <EvalsRoute /> },
+        { path: "evals/suite/:suiteId", element: <EvalsRoute /> },
+        {
+          path: "evals/suite/:suiteId/runs/:runId",
+          element: <EvalsRoute />,
+        },
+        {
+          path: "evals/suite/:suiteId/test/:testId",
+          element: <EvalsRoute />,
+        },
+        {
+          path: "evals/suite/:suiteId/test/:testId/edit",
+          element: <EvalsRoute />,
+        },
+        { path: "evals/suite/:suiteId/edit", element: <EvalsRoute /> },
+        { path: "ci-evals", element: <CiEvalsRoute /> },
+        { path: "ci-evals/create", element: <CiEvalsRoute /> },
+        {
+          path: "ci-evals/commit/:commitSha",
+          element: <CiEvalsRoute />,
+        },
+        { path: "ci-evals/suite/:suiteId", element: <CiEvalsRoute /> },
+        {
+          path: "ci-evals/suite/:suiteId/runs/:runId",
+          element: <CiEvalsRoute />,
+        },
+        {
+          path: "ci-evals/suite/:suiteId/test/:testId",
+          element: <CiEvalsRoute />,
+        },
+        {
+          path: "ci-evals/suite/:suiteId/test/:testId/edit",
+          element: <CiEvalsRoute />,
+        },
+        { path: "ci-evals/suite/:suiteId/edit", element: <CiEvalsRoute /> },
+        { path: "billing", element: <ServersRoute /> },
+        { path: "callback", element: <ServersRoute /> },
+        { path: "oauth/callback/*", element: <ServersRoute /> },
+        { path: "*", element: <ServersRoute /> },
+      ],
     },
   ]);
   setAppRouter(router);

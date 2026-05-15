@@ -52,7 +52,7 @@ import {
   isGateAccessDenied,
 } from "@/lib/billing-entitlements";
 import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
-import type { OrganizationRouteSection } from "@/lib/hosted-navigation";
+import type { OrganizationRouteSection } from "@/lib/app-navigation";
 import { BILLING_GATES, resolveBillingGateState } from "@/lib/billing-gates";
 import {
   getBillingUpsellCtaLabel,

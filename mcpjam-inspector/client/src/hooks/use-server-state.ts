@@ -44,7 +44,11 @@ import {
 } from "@/lib/apis/web/context";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import { authFetch } from "@/lib/session-token";
-import { captureCurrentReturnTarget, navigateApp } from "@/lib/app-navigation";
+import {
+  captureCurrentReturnPath,
+  navigateApp,
+  normalizeReturnTargetPath,
+} from "@/lib/app-navigation";
 import { useProjectClientConfigSyncPending } from "./use-project-client-config-sync-pending";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { useServerMutations, type RemoteServer } from "./useProjects";
@@ -387,11 +391,13 @@ function buildOAuthProfileFromFormData(
 
 function restorePathAfterOAuthCallback(
   currentPathname: string,
-  savedHash: string
+  savedTarget: string
 ): string {
   const basePath =
     currentPathname === "/oauth/callback" ? "/" : currentPathname;
-  return `${basePath}${savedHash}`;
+  return savedTarget
+    ? normalizeReturnTargetPath(savedTarget, basePath)
+    : basePath;
 }
 
 function requiresFreshOAuthAuthorization(error: unknown): boolean {
@@ -634,7 +640,7 @@ export function useServerState({
         return false;
       }
 
-      const returnHash = captureCurrentReturnTarget();
+      const returnPath = captureCurrentReturnPath();
       const organizationId =
         effectiveProjects[effectiveActiveProjectId]?.organizationId ?? null;
       clearHostedOAuthPendingState();
@@ -646,9 +652,9 @@ export function useServerState({
         serverName: params.serverName,
         serverUrl: params.serverUrl,
         accessScope: "project_member",
-        returnHash,
+        returnHash: returnPath,
       });
-      localStorage.setItem("mcp-oauth-return-hash", returnHash);
+      localStorage.setItem("mcp-oauth-return-hash", returnPath);
       return true;
     },
     [effectiveActiveProjectId, effectiveProjects, isAuthenticated]

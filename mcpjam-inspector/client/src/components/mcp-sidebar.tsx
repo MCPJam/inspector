@@ -77,7 +77,7 @@ import {
   type BillingFeatureName,
 } from "@/hooks/useOrganizationBilling";
 import type { Project } from "@/state/app-types";
-import type { OrganizationRouteSection } from "@/lib/hosted-navigation";
+import type { OrganizationRouteSection } from "@/lib/app-navigation";
 
 interface NavItem {
   title: string;

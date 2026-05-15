@@ -1,6 +1,7 @@
 import { useConvexAuth, useQuery } from "convex/react";
 import {
   useCallback,
+  createContext,
   useContext,
   useEffect,
   useLayoutEffect,
@@ -117,7 +118,6 @@ import {
   clearPersistedCheckoutIntent,
   hasInvalidCheckoutIntervalParam,
   hasInvalidCheckoutQueryParams,
-  hashMatchesOrganizationBilling,
   isBillingEntryPathname,
   persistCheckoutIntent,
   type CheckoutIntent,
@@ -129,14 +129,7 @@ import {
   writeBillingSignInReturnPath,
 } from "./lib/billing-deep-link";
 import {
-  getInvalidOrganizationRouteNavigationTarget,
-  getProjectSwitchNavigationTarget,
-  resolveHostedNavigation,
-  type OrganizationRouteSection,
-} from "./lib/hosted-navigation";
-import {
-  HOSTED_HASH_ALLOWED_TABS,
-  HOSTED_HASH_BLOCKED_TABS,
+  isHostedHashTabAllowed,
   normalizeHostedHashTab,
 } from "./lib/hosted-tab-policy";
 import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
@@ -156,13 +149,12 @@ import { getNewlyConnectedServers } from "./lib/connected-server-auto-open";
 import {
   clearHostedOAuthPendingState,
   getHostedOAuthCallbackContext,
-  resolveHostedOAuthReturnHash,
+  resolveHostedOAuthReturnPath,
 } from "./lib/hosted-oauth-callback";
 import {
   clearChatboxSignInReturnPath,
   readChatboxSession,
   readChatboxSignInReturnPath,
-  slugify,
   writeChatboxSignInReturnPath,
 } from "./lib/chatbox-session";
 import {
@@ -177,12 +169,24 @@ import {
 import { buildElectronMcpCallbackUrl } from "./hooks/use-server-state";
 import { getEffectiveProjectClientCapabilities } from "./lib/client-config";
 import {
+  buildOrganizationPath,
   buildEvalsPath,
+  getInvalidOrganizationRouteNavigationTarget,
+  getProjectSwitchNavigationTarget,
+  navigationTargetToPath,
   navigateApp,
+  pathnameToActiveTab,
+  routePaths,
+  type OrganizationRouteSection,
   useActiveTab,
   useCurrentOrgRoute,
 } from "./lib/app-navigation";
-import { UNSAFE_LocationContext } from "react-router";
+import {
+  Navigate,
+  Outlet,
+  UNSAFE_LocationContext,
+  useOutletContext,
+} from "react-router";
 import { useProjectClientConfigSyncPending } from "./hooks/use-project-client-config-sync-pending";
 import { ingestOAuthTraceLogs } from "./stores/traffic-log-store";
 import { clearGuestSession, getGuestBearerToken } from "./lib/guest-session";
@@ -209,38 +213,11 @@ function getHostedOAuthCallbackErrorMessage(): string {
   );
 }
 
-/**
- * Set of pathname segments the App's tab state recognizes as app navigation.
- * Used by the hash-migration shim to avoid mistaking a chatbox session slug
- * (e.g. `#my-cool-server`) for a tab name, and by the pathname sync to
- * recognize known app routes.
- */
-const KNOWN_APP_TAB_SEGMENTS = new Set<string>([
-  ...HOSTED_HASH_ALLOWED_TABS,
-  ...HOSTED_HASH_BLOCKED_TABS,
-  // Legacy hash alias targets (normalizeHostedHashTab maps these in too):
-  "chat",
-]);
-
-/**
- * Special entry paths that have their own dedicated handlers
- * (billing deep-link, OAuth callback). The pathname-sync effect must
- * not feed these into `applyNavigation`, which would redirect the user
- * away before the dedicated handler can claim them.
- */
-const SPECIAL_ENTRY_PATHNAMES = new Set<string>([
-  "/billing",
-  "/billing/",
-  "/callback",
-  "/callback/",
-]);
-
-function isSpecialEntryPath(pathname: string): boolean {
-  if (SPECIAL_ENTRY_PATHNAMES.has(pathname)) return true;
-  // Both the standard MCP OAuth callback and the debug callback land on
-  // `/oauth/callback*`. Defer to the OAuth handlers in use-server-state /
-  // App's OAuth bootstrap before applyNavigation overwrites the URL.
-  return pathname.startsWith("/oauth/callback");
+function getNormalizedPathParts(pathname: string): string[] {
+  const parts = pathname.replace(/^\/+/, "").split("/").filter(Boolean);
+  if (parts.length === 0) return ["servers"];
+  parts[0] = normalizeHostedHashTab(parts[0] || "servers");
+  return parts;
 }
 
 function clearHostedCallbackRetryState() {
@@ -407,6 +384,593 @@ function AppChromeHeader({ hidden, ...props }: AppChromeHeaderProps) {
   return <Header {...props} />;
 }
 
+type AppRouteContext = Record<string, any>;
+
+const AppRouteReactContext = createContext<AppRouteContext | null>(null);
+
+function useAppRouteContext() {
+  const context = useContext(AppRouteReactContext);
+  return context ?? useOutletContext<AppRouteContext>();
+}
+
+function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
+  switch (activeTab) {
+    case "registry":
+      return <RegistryRoute />;
+    case "tools":
+      return <ToolsRoute />;
+    case "resources":
+      return <ResourcesRoute />;
+    case "prompts":
+      return <PromptsRoute />;
+    case "tasks":
+      return <TasksRoute />;
+    case "auth":
+      return <AuthRoute />;
+    case "skills":
+      return <SkillsRoute />;
+    case "learning":
+      return <LearningRoute />;
+    case "conformance":
+      return <ConformanceRoute />;
+    case "oauth-flow":
+      return <OAuthFlowRoute />;
+    case "xaa-flow":
+      return <XAAFlowRoute />;
+    case "tracing":
+      return <TracingRoute />;
+    case "chat-v2":
+      return <ChatV2Route />;
+    case "chatboxes":
+      return <ChatboxesRoute />;
+    case "app-builder":
+      return <AppBuilderRoute />;
+    case "views":
+      return <ViewsRoute />;
+    case "support":
+      return <SupportRoute />;
+    case "settings":
+      return <SettingsRoute />;
+    case "profile":
+      return <ProfileRoute />;
+    case "project-settings":
+      return <ProjectSettingsRoute />;
+    case "organizations":
+      return <OrganizationsRoute />;
+    case "evals":
+      return <EvalsRoute />;
+    case "ci-evals":
+      return <CiEvalsRoute />;
+    case "servers":
+    default:
+      return <ServersRoute />;
+  }
+}
+
+function ActiveBillingUpsellGate() {
+  const {
+    activeTabBillingFeature,
+    shellBillingStatus,
+    upgradePlanForActiveTab,
+    billingOrganizationId,
+    navigateToTarget,
+  } = useAppRouteContext();
+
+  return (
+    <BillingUpsellGate
+      feature={activeTabBillingFeature}
+      currentPlan={
+        shellBillingStatus?.effectivePlan ?? shellBillingStatus?.plan ?? "free"
+      }
+      upgradePlan={upgradePlanForActiveTab}
+      canManageBilling={shellBillingStatus?.canManageBilling ?? false}
+      onNavigateToBilling={() => {
+        if (billingOrganizationId) {
+          navigateToTarget(`organizations/${billingOrganizationId}/billing`);
+        }
+      }}
+    />
+  );
+}
+
+export function ServersRoute() {
+  const {
+    projectServers,
+    handleConnect,
+    handleDisconnect,
+    handleReconnect,
+    handleUpdate,
+    handleRemoveServer,
+    projects,
+    activeProjectId,
+    activeProjectBillingOrganizationId,
+    pendingDashboardOAuth,
+    isBillingContextPending,
+    isLoadingRemoteProjects,
+    handleProjectShared,
+    handleLeaveProject,
+    registryEnabled,
+    handleNavigate,
+    handleUpdateClientConfig,
+  } = useAppRouteContext();
+
+  return (
+    <ServersTab
+      projectServers={projectServers}
+      onConnect={handleConnect}
+      onDisconnect={handleDisconnect}
+      onReconnect={handleReconnect}
+      onUpdate={handleUpdate}
+      onRemove={handleRemoveServer}
+      projects={projects}
+      activeProjectId={activeProjectId}
+      organizationId={activeProjectBillingOrganizationId}
+      pendingDashboardOAuth={pendingDashboardOAuth}
+      isBillingContextPending={isBillingContextPending}
+      isLoadingProjects={isLoadingRemoteProjects}
+      onProjectShared={handleProjectShared}
+      onLeaveProject={() => handleLeaveProject(activeProjectId)}
+      isRegistryEnabled={registryEnabled === true}
+      onNavigateToRegistry={
+        registryEnabled === true ? () => handleNavigate("registry") : undefined
+      }
+      onSaveClientConfig={handleUpdateClientConfig}
+    />
+  );
+}
+
+export function RegistryRoute() {
+  const {
+    registryEnabled,
+    convexProjectId,
+    isAuthenticated,
+    handleConnect,
+    handleDisconnect,
+    handleNavigate,
+    projectServers,
+  } = useAppRouteContext();
+
+  if (registryEnabled !== true) return null;
+
+  return (
+    <RegistryTab
+      projectId={convexProjectId}
+      isAuthenticated={isAuthenticated}
+      onConnect={handleConnect}
+      onDisconnect={handleDisconnect}
+      onNavigate={handleNavigate}
+      servers={projectServers}
+    />
+  );
+}
+
+export function ToolsRoute() {
+  const { selectedMCPConfig, appState } = useAppRouteContext();
+  return (
+    <div className="h-full overflow-hidden">
+      <ToolsTab
+        serverConfig={selectedMCPConfig}
+        serverName={appState.selectedServer}
+      />
+    </div>
+  );
+}
+
+export function EvalsRoute() {
+  const {
+    playgroundEnabled,
+    billingUiEnabled,
+    activeTabBillingLocked,
+    activeTabBillingFeature,
+    convexProjectId,
+    ensureServersReady,
+    handleContinueEvalInChat,
+  } = useAppRouteContext();
+
+  if (playgroundEnabled === false) {
+    return (
+      <EmptyState
+        icon={Construction}
+        title="Playground Coming Soon"
+        description="The Playground is under construction. Stay tuned!"
+      />
+    );
+  }
+
+  if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
+    return <ActiveBillingUpsellGate />;
+  }
+
+  return (
+    <EvalsTab
+      projectId={convexProjectId}
+      ensureServersReady={ensureServersReady}
+      onContinueInChat={handleContinueEvalInChat}
+    />
+  );
+}
+
+export function CiEvalsRoute() {
+  const {
+    evaluateRunsFlagsLoaded,
+    evaluateRunsEnabled,
+    billingUiEnabled,
+    activeTabBillingLocked,
+    activeTabBillingFeature,
+    convexProjectId,
+    ensureServersReady,
+  } = useAppRouteContext();
+
+  if (!evaluateRunsFlagsLoaded) {
+    return (
+      <div className="flex h-full min-h-[320px] items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
+          <p className="mt-4 text-sm text-muted-foreground">
+            Loading Runs...
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (evaluateRunsEnabled !== true) return null;
+
+  if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
+    return <ActiveBillingUpsellGate />;
+  }
+
+  return (
+    <CiEvalsTab
+      convexProjectId={convexProjectId}
+      ensureServersReady={ensureServersReady}
+    />
+  );
+}
+
+export function ViewsRoute() {
+  const { appState, activeProjectId, handleUpdateHostContext } =
+    useAppRouteContext();
+
+  return (
+    <ViewsTab
+      selectedServer={appState.selectedServer}
+      activeProjectId={activeProjectId}
+      onSaveHostContext={handleUpdateHostContext}
+    />
+  );
+}
+
+export function ConformanceRoute() {
+  const { selectedServerEntry } = useAppRouteContext();
+  return <ConformanceTab server={selectedServerEntry ?? null} />;
+}
+
+export function ChatboxesRoute() {
+  const {
+    billingUiEnabled,
+    activeTabBillingLocked,
+    activeTabBillingFeature,
+    billingProjectId,
+    activeProjectBillingOrganizationId,
+    isBillingContextPending,
+    ensureServersReady,
+  } = useAppRouteContext();
+
+  if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
+    return <ActiveBillingUpsellGate />;
+  }
+
+  return (
+    <ChatboxesTab
+      projectId={billingProjectId}
+      organizationId={activeProjectBillingOrganizationId}
+      isBillingContextPending={isBillingContextPending}
+      ensureServersReady={ensureServersReady}
+    />
+  );
+}
+
+export function ResourcesRoute() {
+  const { selectedMCPConfig, appState } = useAppRouteContext();
+  return (
+    <div className="h-full overflow-hidden">
+      <ResourcesTab
+        serverConfig={selectedMCPConfig}
+        serverName={appState.selectedServer}
+      />
+    </div>
+  );
+}
+
+export function PromptsRoute() {
+  const { selectedMCPConfig, appState } = useAppRouteContext();
+  return (
+    <div className="h-full overflow-hidden">
+      <PromptsTab
+        serverConfig={selectedMCPConfig}
+        serverName={appState.selectedServer}
+      />
+    </div>
+  );
+}
+
+export function SkillsRoute() {
+  return <SkillsTab />;
+}
+
+export function LearningRoute() {
+  return <LearningTab />;
+}
+
+export function TasksRoute() {
+  const { selectedMCPConfig, appState } = useAppRouteContext();
+  return (
+    <div className="h-full overflow-hidden">
+      <TasksTab
+        serverConfig={selectedMCPConfig}
+        serverName={appState.selectedServer}
+        isActive
+      />
+    </div>
+  );
+}
+
+export function AuthRoute() {
+  const { selectedMCPConfig, appState } = useAppRouteContext();
+  return (
+    <AuthTab
+      serverConfig={selectedMCPConfig}
+      serverEntry={appState.servers[appState.selectedServer]}
+      serverName={appState.selectedServer}
+    />
+  );
+}
+
+export function OAuthFlowRoute() {
+  const {
+    appState,
+    setSelectedServer,
+    saveServerConfigWithoutConnecting,
+    handleConnectWithTokensFromOAuthFlow,
+    handleRefreshTokensFromOAuthFlow,
+    posthog,
+  } = useAppRouteContext();
+
+  return (
+    <ErrorBoundary
+      fallback={({ error, reset }) => {
+        const copyDetails = () => {
+          const details = formatOAuthDebuggerErrorDetails(error);
+          void navigator.clipboard
+            ?.writeText(details)
+            .then(() => toast.success("Copied OAuth debugger error"))
+            .catch(() => toast.error("Could not copy OAuth debugger error"));
+        };
+
+        return (
+          <div className="flex h-full items-center justify-center p-6">
+            <div className="max-w-md space-y-4 text-center">
+              <AlertTriangle className="mx-auto size-10 text-destructive" />
+              <div className="space-y-2">
+                <h2 className="text-lg font-semibold">
+                  OAuth Debugger crashed
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  {sanitizeOAuthDebuggerError(error).message}
+                </p>
+              </div>
+              <div className="flex justify-center gap-2">
+                <Button variant="outline" onClick={reset}>
+                  Try again
+                </Button>
+                <Button variant="outline" onClick={copyDetails}>
+                  Copy details
+                </Button>
+              </div>
+            </div>
+          </div>
+        );
+      }}
+      onError={(error, errorInfo) => {
+        const sanitizedError = sanitizeOAuthDebuggerError(error);
+        posthog.capture("oauth_debugger_error_boundary", {
+          name: sanitizedError.name,
+          message: sanitizedError.message,
+          stack: sanitizedError.stack,
+          componentStack: sanitizeOAuthDebuggerText(errorInfo.componentStack),
+        });
+      }}
+    >
+      <OAuthFlowTab
+        serverConfigs={appState.servers}
+        selectedServerName={appState.selectedServer}
+        onSelectServer={setSelectedServer}
+        onSaveServerConfig={saveServerConfigWithoutConnecting}
+        onConnectWithTokens={handleConnectWithTokensFromOAuthFlow}
+        onRefreshTokens={handleRefreshTokensFromOAuthFlow}
+      />
+    </ErrorBoundary>
+  );
+}
+
+export function XAAFlowRoute() {
+  const { xaaEnabled, appState } = useAppRouteContext();
+  if (xaaEnabled !== true) return null;
+
+  return (
+    <ErrorBoundary
+      fallback={
+        <div className="flex items-center justify-center h-full text-muted-foreground">
+          Something went wrong in the XAA Debugger. Try refreshing the page.
+        </div>
+      }
+    >
+      <XAAFlowTab
+        serverConfigs={appState.servers}
+        selectedServerName={appState.selectedServer}
+      />
+    </ErrorBoundary>
+  );
+}
+
+export function ChatV2Route() {
+  const {
+    connectedOrConnectingServerConfigs,
+    appState,
+    projectServers,
+    toggleServerSelection,
+    handleReconnect,
+    handleConnect,
+    setSelectedMCPConfigs,
+    activeMcpProfile,
+    evalChatHandoff,
+    setEvalChatHandoff,
+  } = useAppRouteContext();
+
+  return (
+    <HostStyledChatTabV2
+      connectedOrConnectingServerConfigs={connectedOrConnectingServerConfigs}
+      selectedServerNames={appState.selectedMultipleServers}
+      allServerConfigs={projectServers}
+      onServerToggle={toggleServerSelection}
+      onReconnectServer={handleReconnect}
+      onAddServer={handleConnect}
+      onSelectedServerNamesChange={setSelectedMCPConfigs}
+      enableMultiModelChat
+      showHostStyleSelector
+      activeMcpProfile={activeMcpProfile}
+      evalChatHandoff={evalChatHandoff}
+      onEvalChatHandoffConsumed={(id) =>
+        setEvalChatHandoff((current: EvalChatHandoff | null) =>
+          current?.id === id ? null : current
+        )
+      }
+    />
+  );
+}
+
+export function TracingRoute() {
+  return <TracingTab />;
+}
+
+export function AppBuilderRoute() {
+  const {
+    selectedMCPConfig,
+    appState,
+    projectServers,
+    activeProjectId,
+    workOsUser,
+    isWorkOsLoading,
+    isAuthenticated,
+    activeProject,
+    remoteFirstRunOnboardingShown,
+    isSelectedServerSyncing,
+    handleConnect,
+    handleUpdateHostContext,
+    ensureServersReady,
+    setAppBuilderOnboarding,
+    playgroundServerSelectorProps,
+  } = useAppRouteContext();
+
+  return (
+    <AppBuilderTab
+      serverConfig={selectedMCPConfig}
+      serverName={appState.selectedServer}
+      servers={projectServers}
+      activeProjectId={activeProjectId}
+      isSignedInWithWorkOs={!!workOsUser}
+      isWorkOsAuthLoading={isWorkOsLoading}
+      isConvexAuthenticated={isAuthenticated}
+      isProjectProvisioned={Boolean(activeProject?.sharedProjectId)}
+      hasSeenFirstRunOnboarding={remoteFirstRunOnboardingShown}
+      isServerSyncing={isSelectedServerSyncing}
+      onConnect={handleConnect}
+      onSaveHostContext={handleUpdateHostContext}
+      ensureServersReady={ensureServersReady}
+      onOnboardingChange={setAppBuilderOnboarding}
+      playgroundServerSelectorProps={playgroundServerSelectorProps}
+      enableMultiModelChat
+    />
+  );
+}
+
+export function ProjectSettingsRoute() {
+  const {
+    activeProjectId,
+    activeProject,
+    convexProjectId,
+    projectServers,
+    activeOrganizationName,
+    handleUpdateProject,
+    handleDeleteProject,
+    handleProjectShared,
+    handleNavigate,
+  } = useAppRouteContext();
+
+  return (
+    <ProjectSettingsTab
+      activeProjectId={activeProjectId}
+      project={activeProject}
+      convexProjectId={convexProjectId}
+      projectServers={projectServers}
+      organizationName={activeOrganizationName}
+      onUpdateProject={handleUpdateProject}
+      onDeleteProject={handleDeleteProject}
+      onProjectShared={handleProjectShared}
+      onNavigateAway={() => handleNavigate("servers")}
+    />
+  );
+}
+
+export function SettingsRoute() {
+  const { activeOrganizationId, handleNavigate } = useAppRouteContext();
+  return (
+    <SettingsTab
+      activeOrganizationId={activeOrganizationId}
+      onNavigate={handleNavigate}
+    />
+  );
+}
+
+export function SupportRoute() {
+  return <SupportTab />;
+}
+
+export function ProfileRoute() {
+  return <ProfileTab />;
+}
+
+export function OrganizationsRoute() {
+  const {
+    routeOrganizationId,
+    routeOrganizationSection,
+    checkoutIntentForBilling,
+    consumeCheckoutIntent,
+    handleCheckoutIntentNavigationStarted,
+    handleOrganizationDeleted,
+  } = useAppRouteContext();
+
+  return (
+    <OrganizationsTab
+      organizationId={routeOrganizationId}
+      section={routeOrganizationSection ?? "overview"}
+      checkoutIntent={checkoutIntentForBilling}
+      onCheckoutIntentConsumed={consumeCheckoutIntent}
+      onCheckoutIntentNavigationStarted={handleCheckoutIntentNavigationStarted}
+      onOrganizationDeleted={handleOrganizationDeleted}
+    />
+  );
+}
+
+export function ChatAliasRoute() {
+  return <Navigate to={routePaths.chatV2} replace />;
+}
+
+export function ServersRedirectRoute() {
+  return <Navigate to={routePaths.servers} replace />;
+}
+
 export default function App() {
   const activeTab = useActiveTab();
   const currentOrgRoute = useCurrentOrgRoute();
@@ -424,7 +988,6 @@ export default function App() {
   const billingCheckoutQueryConsumedRef = useRef(false);
   const [pendingCheckoutIntent, setPendingCheckoutIntent] =
     useState<CheckoutIntent | null>(() => getInitialPendingCheckoutIntent());
-  const [billingPathSync, setBillingPathSync] = useState(0);
   const posthog = usePostHog();
   const [evaluateRunsFlagsLoaded, setEvaluateRunsFlagsLoaded] = useState(
     () => posthog.featureFlags?.hasLoadedFlags === true
@@ -490,34 +1053,18 @@ export default function App() {
     });
   }, [posthog]);
   const isHostedChatRoute = isChatboxChatRoute;
-  // Resolve the current route from the React Router pathname (Phase 2). The
-  // bridge to legacy hash bookmarks runs in a separate useLayoutEffect that
-  // migrates `#X` → `/X` before this memo recomputes. In tests rendered
-  // without a Router, the location context is undefined and we fall back to
-  // reading `window.location.{pathname,hash}` so the existing hash-driven
-  // test suite keeps working. Read via context directly (not useLocation)
-  // to keep the hook-call shape unconditional.
+  // Resolve the current route from the React Router pathname. Read via context
+  // directly (not useLocation) to keep the hook-call shape unconditional.
   const locationContext = useContext(UNSAFE_LocationContext);
   const locationForRoute = locationContext?.location ?? null;
-  const currentRouteTarget = useMemo(() => {
-    const pathname =
-      locationForRoute?.pathname ?? window.location.pathname ?? "/";
-    const search = locationForRoute?.search ?? window.location.search ?? "";
-    const trimmedPath = pathname.replace(/^\/+/, "");
-    if (trimmedPath) return `${trimmedPath}${search}`;
-    // No pathname segment: fall back to the legacy hash (#servers, etc.) so
-    // first paint before the hash-migration shim still resolves correctly.
-    const hash = window.location.hash || "#servers";
-    return hash;
-  }, [locationForRoute?.pathname, locationForRoute?.search]);
-  const currentHashRoute = useMemo(
-    () => resolveHostedNavigation(currentRouteTarget, HOSTED_MODE),
-    [currentRouteTarget]
+  const currentPathname =
+    locationForRoute?.pathname ?? window.location.pathname ?? "/";
+  const currentPathParts = useMemo(
+    () => getNormalizedPathParts(currentPathname),
+    [currentPathname]
   );
-  const routeOrganizationId =
-    currentOrgRoute?.orgId ?? currentHashRoute.organizationId;
-  const routeOrganizationSection =
-    currentOrgRoute?.orgSection ?? currentHashRoute.organizationSection;
+  const routeOrganizationId = currentOrgRoute?.orgId;
+  const routeOrganizationSection = currentOrgRoute?.orgSection;
   const { sortedOrganizations, isLoading: isLoadingOrganizations } =
     useOrganizationQueries({ isAuthenticated });
   useEffect(() => {
@@ -592,9 +1139,9 @@ export default function App() {
       clearHostedOAuthPendingState();
       localStorage.removeItem("mcp-oauth-pending");
       localStorage.removeItem("mcp-oauth-return-hash");
-      const returnHash = resolveHostedOAuthReturnHash(callbackContext);
-      const returnPath = `/${returnHash.replace(/^[#/]+/, "")}`;
-      navigateApp(returnPath, { replace: true });
+      navigateApp(resolveHostedOAuthReturnPath(callbackContext), {
+        replace: true,
+      });
     };
 
     if (error || !code) {
@@ -945,7 +1492,7 @@ export default function App() {
       : currentUser.hasSeenOnboarding === true ||
         currentUser.hasCompletedOnboarding === true;
   const hasSeenFirstRunOnboarding = remoteFirstRunOnboardingShown === true;
-  const isHostedDefaultRoute = currentHashRoute.normalizedTab === "servers";
+  const isHostedDefaultRoute = activeTab === "servers";
   const shouldHoldHostedDefaultRouteForAuth =
     HOSTED_MODE &&
     !isHostedChatRoute &&
@@ -1225,85 +1772,46 @@ export default function App() {
     return serverNames;
   }, [viewsByServer, serversById]);
 
-  const applyNavigation = useCallback(
-    (
-      target: string,
-      options?: {
-        updateHash?: boolean;
-        enforceCanonicalHash?: boolean;
-        preserveCurrentOrganizationOnNonOrgTarget?: boolean;
-      }
-    ) => {
-      if (isChatboxChatRoute) {
-        const storedSession = readChatboxSession();
-        if (storedSession) {
-          const expectedHash = slugify(storedSession.payload.name);
-          if (window.location.hash !== `#${expectedHash}`) {
-            window.location.hash = expectedHash;
-          }
-        }
-        return;
-      }
-
-      const resolved = resolveHostedNavigation(target, HOSTED_MODE);
-      const pathSource = `${window.location.pathname.replace(/^\/+/, "")}${window.location.search}`;
-      const currentSource =
-        window.location.hash || (pathSource ? `#${pathSource}` : "");
-      const currentResolved = resolveHostedNavigation(
-        currentSource || "#servers",
-        HOSTED_MODE
-      );
-      const shouldPreserveCurrentRouteOrganization =
-        options?.preserveCurrentOrganizationOnNonOrgTarget !== false &&
-        !resolved.organizationId &&
-        !!currentResolved.organizationId &&
-        effectiveOrganizations.some(
-          (organization) => organization._id === currentResolved.organizationId
-        );
-
-      const canonicalPath = `/${resolved.normalizedSection}`;
-
-      if (
-        options?.enforceCanonicalHash &&
-        resolved.rawSection !== resolved.normalizedSection
-      ) {
-        if (window.location.pathname !== canonicalPath) {
-          navigateApp(canonicalPath, { replace: true });
-        }
-        return;
-      }
-
-      if (resolved.isBlocked) {
-        toast.error(
-          `${resolved.normalizedTab} is not available in hosted mode.`
-        );
-        setActiveOrganizationId(undefined);
-        if (window.location.pathname !== "/servers") {
-          navigateApp("/servers", { replace: true });
-        }
-        return;
-      }
-
-      if (resolved.organizationId) {
-        setActiveOrganizationId(resolved.organizationId);
-      } else if (shouldPreserveCurrentRouteOrganization) {
-        setActiveOrganizationId(currentResolved.organizationId);
-      }
-      if (resolved.shouldSelectAllServers) {
-        setSelectedMultipleServersToAllServers();
-      }
-      if (options?.updateHash) {
-        if (window.location.pathname !== canonicalPath) {
-          navigateApp(canonicalPath);
-        }
-      }
+  const navigateToTarget = useCallback(
+    (target: string, options?: { replace?: boolean }) => {
+      navigateApp(navigationTargetToPath(target), options);
     },
-    [
-      effectiveOrganizations,
-      isChatboxChatRoute,
-      setSelectedMultipleServersToAllServers,
-    ]
+    []
   );
+
+  const previousActiveTabRef = useRef(activeTab);
+  useEffect(() => {
+    const previousActiveTab = previousActiveTabRef.current;
+    if (activeTab === "chat-v2" && previousActiveTab !== "chat-v2") {
+      setSelectedMultipleServersToAllServers();
+    }
+    previousActiveTabRef.current = activeTab;
+  }, [activeTab, setSelectedMultipleServersToAllServers]);
+
+  useEffect(() => {
+    if (!routeOrganizationId || !hasRouteOrganization) {
+      return;
+    }
+    if (activeOrganizationId !== routeOrganizationId) {
+      setActiveOrganizationId(routeOrganizationId);
+    }
+  }, [
+    activeOrganizationId,
+    hasRouteOrganization,
+    routeOrganizationId,
+    setActiveOrganizationId,
+  ]);
+
+  useEffect(() => {
+    if (!HOSTED_MODE || isHostedHashTabAllowed(activeTab)) {
+      return;
+    }
+    toast.error(`${activeTab} is not available in hosted mode.`);
+    setActiveOrganizationId(undefined);
+    if (window.location.pathname !== routePaths.servers) {
+      navigateApp(routePaths.servers, { replace: true });
+    }
+  }, [activeTab, setActiveOrganizationId]);
 
   useLayoutEffect(() => {
     if (HOSTED_MODE) {
@@ -1314,16 +1822,12 @@ export default function App() {
       "navigate",
       async (rawCommand) => {
         const command = rawCommand as NavigateInspectorCommand;
-        const resolved = resolveHostedNavigation(command.payload.target, false);
+        const path = navigationTargetToPath(command.payload.target);
 
-        // IPC navigate command receives a hash-style target (e.g.
-        // "organizations/abc/billing"). Route it via the path-based API.
-        const target = command.payload.target.replace(/^[#/]+/, "");
-        navigateApp(`/${target}`);
-        applyNavigation(command.payload.target, { updateHash: false });
+        navigateApp(path);
         await waitForUiCommit();
 
-        return { activeTab: resolved.normalizedTab };
+        return { activeTab: pathnameToActiveTab(path) };
       }
     );
 
@@ -1396,7 +1900,7 @@ export default function App() {
           }
         }
 
-        applyNavigation("app-builder", { updateHash: true });
+        navigateApp(routePaths.appBuilder);
         await waitForUiCommit();
 
         return {
@@ -1413,74 +1917,10 @@ export default function App() {
       unregisterOpenAppBuilder();
     };
   }, [
-    applyNavigation,
     getInspectorServerState,
     setSelectedServer,
     syncAgentStatus,
   ]);
-
-  // Sync tab with the current React Router pathname.
-  // Phase 2 bridge: previously read window.location.hash on every hashchange.
-  // The remaining hashchange listener handles legacy bookmarks (#servers → /servers)
-  // until Phase 6 deletes it entirely.
-  useLayoutEffect(() => {
-    if (isHostedChatRoute) {
-      return;
-    }
-    const pathname =
-      locationForRoute?.pathname ?? window.location.pathname;
-    // Defer to dedicated handlers (billing deep-link, OAuth callback) on
-    // their entry paths so they get a chance to claim the URL before
-    // applyNavigation redirects an unrecognized tab back to /servers.
-    if (isSpecialEntryPath(pathname)) {
-      return;
-    }
-    const pathTarget = pathname.replace(/^\/+/, "") || "servers";
-    applyNavigation(pathTarget, { enforceCanonicalHash: true });
-  }, [applyNavigation, isHostedChatRoute, locationForRoute?.pathname]);
-
-  // Legacy hash bookmark migration: if a user arrives at "/#servers" or
-  // "/#evals/suite/X", convert the fragment to a real path-based URL and
-  // drive applyNavigation so state stays in sync. Also serves as the
-  // primary navigation driver for tests that render <App /> without a
-  // Router (and therefore without a useLocation pathname signal).
-  useLayoutEffect(() => {
-    if (isHostedChatRoute) {
-      return;
-    }
-    const migrateHash = () => {
-      const rawHash = window.location.hash;
-      if (!rawHash) return;
-      const fragment = rawHash.replace(/^#\/?/, "");
-      if (!fragment) return;
-      // Single-segment fragments are only treated as app navigation when
-      // they match a known tab. Chatbox session slugs (e.g.
-      // `#my-cool-server`) and other arbitrary slug bookmarks are left
-      // alone so their dedicated handlers (or stale-bookmark fallthrough)
-      // can claim them.
-      const firstSegment = fragment.split(/[/?]/)[0];
-      const isMultiSegment = fragment.includes("/");
-      const isKnownTab = KNOWN_APP_TAB_SEGMENTS.has(
-        normalizeHostedHashTab(firstSegment),
-      );
-      if (!isMultiSegment && !isKnownTab) {
-        return;
-      }
-      const path = `/${fragment}`;
-      // Compare pathname against the path's pathname-only segment so a
-      // query-bearing hash (e.g. `#evals/suite/x?view=test-cases`) doesn't
-      // trigger a spurious replace when the user is already on the right
-      // pathname.
-      const [pathOnly] = path.split("?");
-      if (window.location.pathname !== pathOnly) {
-        navigateApp(path, { replace: true });
-      }
-      applyNavigation(fragment, { enforceCanonicalHash: true });
-    };
-    migrateHash();
-    window.addEventListener("hashchange", migrateHash);
-    return () => window.removeEventListener("hashchange", migrateHash);
-  }, [applyNavigation, isHostedChatRoute]);
 
   useLayoutEffect(() => {
     if (isHostedChatRoute) {
@@ -1518,20 +1958,16 @@ export default function App() {
     if (
       isFirstRunEligible(
         hasAnyFirstRunBlockingProjectServers,
-        // Pass the resolved tab so the eligibility check stays accurate
-        // under path-based routing (where `window.location.hash` is empty
-        // on `/tools`, `/resources`, etc.). The function only proceeds
-        // when the route is the default servers tab.
-        `#${currentHashRoute.normalizedTab}`,
+        `#${activeTab}`,
         !!workOsUser,
         remoteFirstRunOnboardingShown
       )
     ) {
-      applyNavigation("app-builder", { updateHash: true });
+      navigateApp(routePaths.appBuilder);
     }
   }, [
     activeProjectId,
-    applyNavigation,
+    activeTab,
     currentUser,
     effectiveHostedShellGateState,
     hasSeenFirstRunOnboarding,
@@ -1557,7 +1993,7 @@ export default function App() {
     consumeCheckoutIntent();
   }, [consumeCheckoutIntent]);
 
-  // `/billing?plan=&interval=` → auth (if needed) → org billing hash → auto-checkout when intent is valid.
+  // `/billing?plan=&interval=` → auth (if needed) → org billing path → auto-checkout when intent is valid.
   useEffect(() => {
     if (isDebugCallback) return;
     if (isHostedChatRoute) return;
@@ -1617,13 +2053,8 @@ export default function App() {
         return;
       }
 
-      if (path !== "/" && path !== "") {
-        window.history.replaceState(
-          {},
-          "",
-          `${window.location.origin}/${window.location.hash}`
-        );
-        setBillingPathSync((n) => n + 1);
+      if (path !== routePaths.root && path !== "") {
+        navigateApp(routePaths.root, { replace: true });
       }
     }
 
@@ -1652,8 +2083,10 @@ export default function App() {
       return;
     }
 
-    const h = window.location.hash || "";
-    if (hashMatchesOrganizationBilling(h, orgId)) {
+    if (
+      routeOrganizationId === orgId &&
+      routeOrganizationSection === "billing"
+    ) {
       return;
     }
 
@@ -1661,14 +2094,12 @@ export default function App() {
       return;
     }
 
-    applyNavigation(`organizations/${orgId}/billing`, { updateHash: true });
+    navigateApp(buildOrganizationPath(orgId, "billing"));
     billingDeepLinkNavRef.current = true;
   }, [
     activeOrganizationId,
     activeProject?.organizationId,
-    applyNavigation,
     billingEntitlementsUiEnabled,
-    billingPathSync,
     consumeCheckoutIntent,
     isAuthLoading,
     isAuthenticated,
@@ -1676,6 +2107,8 @@ export default function App() {
     isHostedChatRoute,
     isLoadingOrganizations,
     pendingCheckoutIntent,
+    routeOrganizationId,
+    routeOrganizationSection,
     signIn,
     effectiveOrganizations,
     workOsUser?.id,
@@ -1701,20 +2134,20 @@ export default function App() {
           shellBillingStatus?.plan
         )} plan. Upgrade the organization to continue.`
       );
-      applyNavigation("servers", { updateHash: true });
+      navigateApp(routePaths.servers, { replace: true });
     } else if (activeTab === "registry" && registryEnabled !== true) {
-      applyNavigation("servers", { updateHash: true });
+      navigateApp(routePaths.servers, { replace: true });
     } else if (
       activeTab === "learning" &&
       (learningEnabled !== true || !isAuthenticated)
     ) {
-      applyNavigation("servers", { updateHash: true });
+      navigateApp(routePaths.servers, { replace: true });
     } else if (activeTab === "client-config") {
-      applyNavigation("servers", { updateHash: true });
+      navigateApp(routePaths.servers, { replace: true });
     } else if (activeTab === "conformance" && conformanceEnabled !== true) {
-      applyNavigation("servers", { updateHash: true });
+      navigateApp(routePaths.servers, { replace: true });
     } else if (activeTab === "xaa-flow" && xaaEnabled !== true) {
-      applyNavigation("servers", { updateHash: true });
+      navigateApp(routePaths.servers, { replace: true });
     }
   }, [
     conformanceEnabled,
@@ -1725,11 +2158,10 @@ export default function App() {
     xaaEnabled,
     isAuthenticated,
     activeTab,
-    applyNavigation,
   ]);
 
   const handleNavigate = (section: string) => {
-    applyNavigation(section, { updateHash: true });
+    navigateToTarget(section);
   };
 
   const handleSidebarSwitchOrganization = useCallback(
@@ -1738,14 +2170,9 @@ export default function App() {
       section: OrganizationRouteSection = "overview"
     ) => {
       setActiveOrganizationId(organizationId);
-      applyNavigation(
-        section === "billing"
-          ? `organizations/${organizationId}/billing`
-          : `organizations/${organizationId}`,
-        { updateHash: true }
-      );
+      navigateApp(buildOrganizationPath(organizationId, section));
     },
-    [applyNavigation, setActiveOrganizationId]
+    [setActiveOrganizationId]
   );
 
   const handleSwitchActiveOrganization = useCallback(
@@ -1764,22 +2191,15 @@ export default function App() {
       // new org so the page they're looking at actually changes.
       if (routeOrganizationId) {
         const section = routeOrganizationSection ?? "overview";
-        applyNavigation(
-          section === "billing"
-            ? `organizations/${organizationId}/billing`
-            : section === "models"
-              ? `organizations/${organizationId}/models`
-              : `organizations/${organizationId}`,
-          { updateHash: true }
-        );
+        navigateApp(buildOrganizationPath(organizationId, section));
         return;
       }
-      // If the URL embeds an org-A resource id (e.g. `#evals/suite/abc`,
-      // `#chat-v2/threadId`, `#views/viewId`), strip the sub-path so the
+      // If the URL embeds an org-A resource id (e.g. `/evals/suite/abc`,
+      // `/chat-v2/threadId`, `/views/viewId`), strip the sub-path so the
       // user lands on the tab's clean root view for the new org instead of
       // a "not found" page.
-      if (currentHashRoute.normalizedParts.length > 1) {
-        applyNavigation(currentHashRoute.normalizedTab, { updateHash: true });
+      if (currentPathParts.length > 1) {
+        navigateToTarget(currentPathParts[0] ?? "servers");
       }
     },
     [
@@ -1787,9 +2207,8 @@ export default function App() {
       setActiveOrganizationId,
       routeOrganizationId,
       routeOrganizationSection,
-      currentHashRoute.normalizedParts,
-      currentHashRoute.normalizedTab,
-      applyNavigation,
+      currentPathParts,
+      navigateToTarget,
     ]
   );
 
@@ -1800,9 +2219,9 @@ export default function App() {
         ...handoff,
         id: `eval-chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       });
-      applyNavigation("chat-v2", { updateHash: true });
+      navigateApp(routePaths.chatV2);
     },
-    [applyNavigation, setSelectedMCPConfigs]
+    [setSelectedMCPConfigs]
   );
 
   useEffect(() => {
@@ -1818,7 +2237,7 @@ export default function App() {
     }
 
     const navigationTarget = getInvalidOrganizationRouteNavigationTarget({
-      routeTab: currentHashRoute.normalizedTab,
+      routeTab: activeTab,
       routeOrganizationId,
       isLoadingOrganizations,
       hasRouteOrganization,
@@ -1828,13 +2247,13 @@ export default function App() {
     }
 
     setActiveOrganizationId(undefined);
-    applyNavigation(navigationTarget, { updateHash: true });
+    navigateToTarget(navigationTarget, { replace: true });
   }, [
-    applyNavigation,
-    currentHashRoute.normalizedTab,
+    activeTab,
     hasRouteOrganization,
     isAuthenticated,
     isLoadingOrganizations,
+    navigateToTarget,
     optimisticallyDeletedOrganizationIds,
     routeOrganizationId,
     setActiveOrganizationId,
@@ -1877,15 +2296,11 @@ export default function App() {
       }
 
       setActiveOrganizationId(fallbackOrganizationId);
-      applyNavigation("servers", {
-        updateHash: true,
-        preserveCurrentOrganizationOnNonOrgTarget: false,
-      });
+      navigateApp(routePaths.servers);
     },
     [
       activeOrganizationId,
       activeProject?.organizationId,
-      applyNavigation,
       clearLocalFallbackProjectSelection,
       clearConvexActiveProjectSelection,
       effectiveOrganizations,
@@ -1905,14 +2320,14 @@ export default function App() {
         nextProjectOrganizationId: nextProject?.organizationId,
       });
       if (navigationTarget) {
-        applyNavigation(navigationTarget, { updateHash: true });
+        navigateToTarget(navigationTarget);
       }
     },
     [
       activeOrganizationId,
       activeTab,
-      applyNavigation,
       handleSwitchProject,
+      navigateToTarget,
       projects,
     ]
   );
@@ -2101,6 +2516,74 @@ export default function App() {
         }
       : undefined;
 
+  const routeContext: AppRouteContext = {
+    activeMcpProfile,
+    activeOrganizationId,
+    activeOrganizationName,
+    activeProject,
+    activeProjectBillingOrganizationId,
+    activeProjectId,
+    activeTabBillingFeature,
+    activeTabBillingLocked,
+    appState,
+    billingOrganizationId,
+    billingProjectId,
+    billingUiEnabled,
+    checkoutIntentForBilling,
+    connectedOrConnectingServerConfigs,
+    consumeCheckoutIntent,
+    convexProjectId,
+    ensureServersReady,
+    evalChatHandoff,
+    evaluateRunsEnabled,
+    evaluateRunsFlagsLoaded,
+    handleCheckoutIntentNavigationStarted,
+    handleConnect,
+    handleConnectWithTokensFromOAuthFlow,
+    handleContinueEvalInChat,
+    handleDeleteProject,
+    handleDisconnect,
+    handleLeaveProject,
+    handleNavigate,
+    handleOrganizationDeleted,
+    handleProjectShared,
+    handleReconnect,
+    handleRefreshTokensFromOAuthFlow,
+    handleRemoveServer,
+    handleUpdate,
+    handleUpdateClientConfig,
+    handleUpdateHostContext,
+    handleUpdateProject,
+    isAuthenticated,
+    isBillingContextPending,
+    isLoadingRemoteProjects,
+    isSelectedServerSyncing,
+    isWorkOsLoading,
+    navigateToTarget,
+    pendingDashboardOAuth,
+    playgroundEnabled,
+    playgroundServerSelectorProps,
+    posthog,
+    projectServers,
+    projects,
+    registryEnabled,
+    remoteFirstRunOnboardingShown,
+    routeOrganizationId,
+    routeOrganizationSection,
+    saveServerConfigWithoutConnecting,
+    selectedMCPConfig,
+    selectedServerEntry,
+    setAppBuilderOnboarding,
+    setEvalChatHandoff,
+    setSelectedMCPConfigs,
+    setSelectedServer,
+    shellBillingStatus,
+    toggleServerSelection,
+    upgradePlanForActiveTab,
+    workOsUser,
+    xaaEnabled,
+  };
+
   const appContent = (
     <SidebarProvider defaultOpen={true}>
       <AppChromeSidebar
@@ -2142,363 +2625,13 @@ export default function App() {
               </Alert>
             </div>
           ) : null}
-          {/* Content Areas */}
-          {activeTab === "servers" && (
-            <ServersTab
-              projectServers={projectServers}
-              onConnect={handleConnect}
-              onDisconnect={handleDisconnect}
-              onReconnect={handleReconnect}
-              onUpdate={handleUpdate}
-              onRemove={handleRemoveServer}
-              projects={projects}
-              activeProjectId={activeProjectId}
-              organizationId={activeProjectBillingOrganizationId}
-              pendingDashboardOAuth={pendingDashboardOAuth}
-              isBillingContextPending={isBillingContextPending}
-              isLoadingProjects={isLoadingRemoteProjects}
-              onProjectShared={handleProjectShared}
-              onLeaveProject={() => handleLeaveProject(activeProjectId)}
-              isRegistryEnabled={registryEnabled === true}
-              onNavigateToRegistry={
-                registryEnabled === true
-                  ? () => handleNavigate("registry")
-                  : undefined
-              }
-              onSaveClientConfig={handleUpdateClientConfig}
-            />
-          )}
-          {activeTab === "registry" && registryEnabled === true && (
-            <RegistryTab
-              projectId={convexProjectId}
-              isAuthenticated={isAuthenticated}
-              onConnect={handleConnect}
-              onDisconnect={handleDisconnect}
-              onNavigate={handleNavigate}
-              servers={projectServers}
-            />
-          )}
-          {activeTab === "tools" && (
-            <div className="h-full overflow-hidden">
-              <ToolsTab
-                serverConfig={selectedMCPConfig}
-                serverName={appState.selectedServer}
-              />
-            </div>
-          )}
-          {activeTab === "evals" &&
-            (playgroundEnabled === false ? (
-              <EmptyState
-                icon={Construction}
-                title="Playground Coming Soon"
-                description="The Playground is under construction. Stay tuned!"
-              />
-            ) : billingUiEnabled &&
-              activeTabBillingLocked &&
-              activeTabBillingFeature ? (
-              <BillingUpsellGate
-                feature={activeTabBillingFeature}
-                currentPlan={
-                  shellBillingStatus?.effectivePlan ??
-                  shellBillingStatus?.plan ??
-                  "free"
-                }
-                upgradePlan={upgradePlanForActiveTab}
-                canManageBilling={shellBillingStatus?.canManageBilling ?? false}
-                onNavigateToBilling={() => {
-                  if (billingOrganizationId) {
-                    applyNavigation(
-                      `organizations/${billingOrganizationId}/billing`,
-                      { updateHash: true }
-                    );
-                  }
-                }}
-              />
+          <AppRouteReactContext.Provider value={routeContext}>
+            {locationContext ? (
+              <Outlet context={routeContext} />
             ) : (
-              <EvalsTab
-                projectId={convexProjectId}
-                ensureServersReady={ensureServersReady}
-                onContinueInChat={handleContinueEvalInChat}
-              />
-            ))}
-          {activeTab === "ci-evals" &&
-            (!evaluateRunsFlagsLoaded ? (
-              <div className="flex h-full min-h-[320px] items-center justify-center">
-                <div className="text-center">
-                  <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
-                  <p className="mt-4 text-sm text-muted-foreground">
-                    Loading Runs...
-                  </p>
-                </div>
-              </div>
-            ) : evaluateRunsEnabled === true ? (
-              billingUiEnabled &&
-              activeTabBillingLocked &&
-              activeTabBillingFeature ? (
-                <BillingUpsellGate
-                  feature={activeTabBillingFeature}
-                  currentPlan={
-                    shellBillingStatus?.effectivePlan ??
-                    shellBillingStatus?.plan ??
-                    "free"
-                  }
-                  upgradePlan={upgradePlanForActiveTab}
-                  canManageBilling={
-                    shellBillingStatus?.canManageBilling ?? false
-                  }
-                  onNavigateToBilling={() => {
-                    if (billingOrganizationId) {
-                      applyNavigation(
-                        `organizations/${billingOrganizationId}/billing`,
-                        { updateHash: true }
-                      );
-                    }
-                  }}
-                />
-              ) : (
-                <CiEvalsTab
-                  convexProjectId={convexProjectId}
-                  ensureServersReady={ensureServersReady}
-                />
-              )
-            ) : null)}
-          {activeTab === "views" && (
-            <ViewsTab
-              selectedServer={appState.selectedServer}
-              activeProjectId={activeProjectId}
-              onSaveHostContext={handleUpdateHostContext}
-            />
-          )}
-          {activeTab === "conformance" && (
-            <ConformanceTab server={selectedServerEntry ?? null} />
-          )}
-          {activeTab === "chatboxes" &&
-            (billingUiEnabled &&
-            activeTabBillingLocked &&
-            activeTabBillingFeature ? (
-              <BillingUpsellGate
-                feature={activeTabBillingFeature}
-                currentPlan={
-                  shellBillingStatus?.effectivePlan ??
-                  shellBillingStatus?.plan ??
-                  "free"
-                }
-                upgradePlan={upgradePlanForActiveTab}
-                canManageBilling={shellBillingStatus?.canManageBilling ?? false}
-                onNavigateToBilling={() => {
-                  if (billingOrganizationId) {
-                    applyNavigation(
-                      `organizations/${billingOrganizationId}/billing`,
-                      { updateHash: true }
-                    );
-                  }
-                }}
-              />
-            ) : (
-              <ChatboxesTab
-                projectId={billingProjectId}
-                organizationId={activeProjectBillingOrganizationId}
-                isBillingContextPending={isBillingContextPending}
-                ensureServersReady={ensureServersReady}
-              />
-            ))}
-          {activeTab === "resources" && (
-            <div className="h-full overflow-hidden">
-              <ResourcesTab
-                serverConfig={selectedMCPConfig}
-                serverName={appState.selectedServer}
-              />
-            </div>
-          )}
-
-          {activeTab === "prompts" && (
-            <div className="h-full overflow-hidden">
-              <PromptsTab
-                serverConfig={selectedMCPConfig}
-                serverName={appState.selectedServer}
-              />
-            </div>
-          )}
-
-          {activeTab === "skills" && <SkillsTab />}
-
-          {activeTab === "learning" && <LearningTab />}
-
-          <div
-            className={
-              activeTab === "tasks" ? "h-full overflow-hidden" : "hidden"
-            }
-          >
-            <TasksTab
-              serverConfig={selectedMCPConfig}
-              serverName={appState.selectedServer}
-              isActive={activeTab === "tasks"}
-            />
-          </div>
-
-          {activeTab === "auth" && (
-            <AuthTab
-              serverConfig={selectedMCPConfig}
-              serverEntry={appState.servers[appState.selectedServer]}
-              serverName={appState.selectedServer}
-            />
-          )}
-
-          {activeTab === "oauth-flow" && (
-            <ErrorBoundary
-              fallback={({ error, reset }) => {
-                const copyDetails = () => {
-                  const details = formatOAuthDebuggerErrorDetails(error);
-                  void navigator.clipboard
-                    ?.writeText(details)
-                    .then(() => toast.success("Copied OAuth debugger error"))
-                    .catch(() =>
-                      toast.error("Could not copy OAuth debugger error"),
-                    );
-                };
-
-                return (
-                  <div className="flex h-full items-center justify-center p-6">
-                    <div className="max-w-md space-y-4 text-center">
-                      <AlertTriangle className="mx-auto size-10 text-destructive" />
-                      <div className="space-y-2">
-                        <h2 className="text-lg font-semibold">
-                          OAuth Debugger crashed
-                        </h2>
-                        <p className="text-sm text-muted-foreground">
-                          {sanitizeOAuthDebuggerError(error).message}
-                        </p>
-                      </div>
-                      <div className="flex justify-center gap-2">
-                        <Button variant="outline" onClick={reset}>
-                          Try again
-                        </Button>
-                        <Button variant="outline" onClick={copyDetails}>
-                          Copy details
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              }}
-              onError={(error, errorInfo) => {
-                const sanitizedError = sanitizeOAuthDebuggerError(error);
-                posthog.capture("oauth_debugger_error_boundary", {
-                  name: sanitizedError.name,
-                  message: sanitizedError.message,
-                  stack: sanitizedError.stack,
-                  componentStack: sanitizeOAuthDebuggerText(
-                    errorInfo.componentStack,
-                  ),
-                });
-              }}
-            >
-              <OAuthFlowTab
-                serverConfigs={appState.servers}
-                selectedServerName={appState.selectedServer}
-                onSelectServer={setSelectedServer}
-                onSaveServerConfig={saveServerConfigWithoutConnecting}
-                onConnectWithTokens={handleConnectWithTokensFromOAuthFlow}
-                onRefreshTokens={handleRefreshTokensFromOAuthFlow}
-              />
-            </ErrorBoundary>
-          )}
-          {activeTab === "xaa-flow" && xaaEnabled === true && (
-            <ErrorBoundary
-              fallback={
-                <div className="flex items-center justify-center h-full text-muted-foreground">
-                  Something went wrong in the XAA Debugger. Try refreshing the
-                  page.
-                </div>
-              }
-            >
-              <XAAFlowTab
-                serverConfigs={appState.servers}
-                selectedServerName={appState.selectedServer}
-              />
-            </ErrorBoundary>
-          )}
-          {activeTab === "chat-v2" && (
-            <HostStyledChatTabV2
-              connectedOrConnectingServerConfigs={
-                connectedOrConnectingServerConfigs
-              }
-              selectedServerNames={appState.selectedMultipleServers}
-              allServerConfigs={projectServers}
-              onServerToggle={toggleServerSelection}
-              onReconnectServer={handleReconnect}
-              onAddServer={handleConnect}
-              onSelectedServerNamesChange={setSelectedMCPConfigs}
-              enableMultiModelChat
-              showHostStyleSelector
-              // Active project default `mcpProfile`. Mounting the provider
-              // here is the in-inspector counterpart to ChatboxChatPage's
-              // hosted mount — without it, MCPAppsRenderer reads
-              // `undefined` from useActiveMcpProfile() and skips the
-              // sandbox-policy resolver entirely.
-              activeMcpProfile={activeMcpProfile}
-              evalChatHandoff={evalChatHandoff}
-              onEvalChatHandoffConsumed={(id) =>
-                setEvalChatHandoff((current) =>
-                  current?.id === id ? null : current
-                )
-              }
-            />
-          )}
-          {activeTab === "tracing" && <TracingTab />}
-          {activeTab === "app-builder" && (
-            <AppBuilderTab
-              serverConfig={selectedMCPConfig}
-              serverName={appState.selectedServer}
-              servers={projectServers}
-              activeProjectId={activeProjectId}
-              isSignedInWithWorkOs={!!workOsUser}
-              isWorkOsAuthLoading={isWorkOsLoading}
-              isConvexAuthenticated={isAuthenticated}
-              isProjectProvisioned={Boolean(activeProject?.sharedProjectId)}
-              hasSeenFirstRunOnboarding={remoteFirstRunOnboardingShown}
-              isServerSyncing={isSelectedServerSyncing}
-              onConnect={handleConnect}
-              onSaveHostContext={handleUpdateHostContext}
-              ensureServersReady={ensureServersReady}
-              onOnboardingChange={setAppBuilderOnboarding}
-              playgroundServerSelectorProps={playgroundServerSelectorProps}
-              enableMultiModelChat
-            />
-          )}
-          {activeTab === "project-settings" && (
-            <ProjectSettingsTab
-              activeProjectId={activeProjectId}
-              project={activeProject}
-              convexProjectId={convexProjectId}
-              projectServers={projectServers}
-              organizationName={activeOrganizationName}
-              onUpdateProject={handleUpdateProject}
-              onDeleteProject={handleDeleteProject}
-              onProjectShared={handleProjectShared}
-              onNavigateAway={() => handleNavigate("servers")}
-            />
-          )}
-          {activeTab === "settings" && (
-              <SettingsTab
-                activeOrganizationId={activeOrganizationId}
-                onNavigate={handleNavigate}
-              />
+              <NoRouterRouteBody activeTab={activeTab} />
             )}
-          {activeTab === "support" && <SupportTab />}
-          {activeTab === "profile" && <ProfileTab />}
-          {activeTab === "organizations" && (
-            <OrganizationsTab
-              organizationId={routeOrganizationId}
-              section={routeOrganizationSection ?? "overview"}
-              checkoutIntent={checkoutIntentForBilling}
-              onCheckoutIntentConsumed={consumeCheckoutIntent}
-              onCheckoutIntentNavigationStarted={
-                handleCheckoutIntentNavigationStarted
-              }
-              onOrganizationDeleted={handleOrganizationDeleted}
-            />
-          )}
+          </AppRouteReactContext.Provider>
         </div>
       </SidebarInset>
       <Dialog
@@ -2543,9 +2676,8 @@ export default function App() {
               onClick={() => {
                 setTrialModalDismissedForOrg(billingOrganizationId ?? null);
                 if (billingOrganizationId) {
-                  applyNavigation(
-                    `organizations/${billingOrganizationId}/billing`,
-                    { updateHash: true }
+                  navigateToTarget(
+                    `organizations/${billingOrganizationId}/billing`
                   );
                 }
               }}

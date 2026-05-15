@@ -182,9 +182,9 @@ describe("ToolPart approval expansion", () => {
       expect(onSaveView).toHaveBeenCalledTimes(1);
     });
     expect(localStorage.getItem("mcpjam-save-view-button-used")).toBe("true");
-    expect(window.location.hash).toBe("#views");
+    expect(window.location.pathname).toBe("/views");
 
-    window.location.hash = "#chat-v2";
+    window.history.replaceState({}, "", "/chat-v2");
     rerender(
       <ToolPart
         part={basePart as any}
@@ -205,7 +205,7 @@ describe("ToolPart approval expansion", () => {
     await waitFor(() => {
       expect(onSaveView).toHaveBeenCalledTimes(2);
     });
-    expect(window.location.hash).toBe("#chat-v2");
+    expect(window.location.pathname).toBe("/chat-v2");
   });
 
   it("keeps attached readable output collapsed until the header is clicked", async () => {

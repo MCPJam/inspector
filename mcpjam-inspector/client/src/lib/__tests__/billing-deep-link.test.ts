@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   clearBillingSignInReturnPath,
   clearPersistedCheckoutIntent,
-  hashMatchesOrganizationBilling,
   hasInvalidCheckoutIntervalParam,
   hasInvalidCheckoutQueryParams,
   isBillingEntryPathname,
@@ -96,26 +95,6 @@ describe("isBillingEntryPathname", () => {
   it("rejects other paths", () => {
     expect(isBillingEntryPathname("/billing/foo")).toBe(false);
     expect(isBillingEntryPathname("/")).toBe(false);
-  });
-});
-
-describe("hashMatchesOrganizationBilling", () => {
-  it("matches canonical hash", () => {
-    expect(
-      hashMatchesOrganizationBilling(
-        "#organizations/org_abc/billing",
-        "org_abc",
-      ),
-    ).toBe(true);
-  });
-
-  it("rejects wrong org", () => {
-    expect(
-      hashMatchesOrganizationBilling(
-        "#organizations/org_other/billing",
-        "org_abc",
-      ),
-    ).toBe(false);
   });
 });
 
