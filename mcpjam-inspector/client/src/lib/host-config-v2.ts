@@ -187,7 +187,7 @@ export type HostConfigDtoV2 = {
   }>;
 };
 
-export const DEFAULT_HOST_STYLE_V2: HostStyleId = "claude";
+export const DEFAULT_HOST_STYLE_V2: HostStyleId = "mcpjam";
 export const DEFAULT_TEMPERATURE_V2 = 0.7;
 
 export function emptyHostConfigInputV2(

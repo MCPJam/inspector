@@ -8,6 +8,7 @@ vi.mock("@/hooks/use-previewed-host-id", () => ({
 
 vi.mock("@/hooks/useHosts", () => ({
   useHost: vi.fn(() => ({ host: null, isLoading: false })),
+  useHostList: vi.fn(() => ({ hosts: [], isLoading: false })),
 }));
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({

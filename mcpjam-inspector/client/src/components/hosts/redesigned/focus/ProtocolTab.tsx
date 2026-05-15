@@ -1,18 +1,10 @@
-import { useEffect, useRef, useState } from "react";
-import { Input } from "@mcpjam/design-system/input";
+import { JsonEditor } from "@/components/ui/json-editor";
 import {
   type HostConfigInputV2,
   type HostConfigMcpProfileV1,
 } from "@/lib/host-config-v2";
-import {
-  AddItemPill,
-  CapabilityToggleRow,
-  Chip,
-  FieldRow,
-  FocusBlock,
-} from "./primitives";
 import type { HostAttentionIssue } from "../types";
-import { Network, Sparkles, Wrench } from "lucide-react";
+import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 
 interface ProtocolTabProps {
   draft: HostConfigInputV2;
@@ -23,425 +15,200 @@ interface ProtocolTabProps {
 }
 
 /**
- * Helper: produce a new `mcpProfile` envelope after applying a patch to
- * `initialize`. Collapses to `undefined` when every initialize subfield
- * AND every apps subfield is empty, preserving the "undefined ≠ empty
- * envelope" hash distinction from host-config-v2.ts:53.
+ * A compact JSON view over the editable subset of HostConfigInputV2.
+ * Only includes keys that are actually set on the draft — absence is
+ * semantic in MCP and must round-trip through this editor faithfully.
  */
-function patchProfile(
-  prev: HostConfigMcpProfileV1 | undefined,
-  patch: (
-    base: HostConfigMcpProfileV1,
-  ) => HostConfigMcpProfileV1 | undefined,
-): HostConfigMcpProfileV1 | undefined {
-  const base: HostConfigMcpProfileV1 = prev ?? { profileVersion: 1 };
-  return patch(base);
+type ProtocolDoc = {
+  clientInfo?: { name: string; version: string };
+  supportedProtocolVersions?: string[];
+  capabilities?: Record<string, unknown>;
+  connectionDefaults: {
+    requestTimeout: number;
+    headers?: Record<string, string>;
+  };
+};
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-function collapseProfile(
-  next: HostConfigMcpProfileV1,
-): HostConfigMcpProfileV1 | undefined {
-  const initEmpty =
-    !next.initialize ||
-    (next.initialize.clientInfo === undefined &&
-      (!next.initialize.supportedProtocolVersions ||
-        next.initialize.supportedProtocolVersions.length === 0));
-  const appsEmpty = !next.apps;
-  const extEmpty = !next.extensions;
-  if (initEmpty && appsEmpty && extEmpty) return undefined;
-  return next;
+function findAuthorizationKey(
+  headers: Record<string, string>,
+): string | undefined {
+  return Object.keys(headers).find((k) => k.toLowerCase() === "authorization");
 }
 
-export function ProtocolTab({
-  draft,
-  onDraftChange,
-}: ProtocolTabProps) {
-  const profile = draft.mcpProfile;
-  const persistedCi = profile?.initialize?.clientInfo;
-  const persistedVersions = profile?.initialize?.supportedProtocolVersions;
-
-  // Local draft buffer for clientInfo. Keeps mid-edit values stable;
-  // flushed to the persisted envelope only when both required fields are
-  // present (matches the partial-flush rule the legacy editor relies on).
-  const [ciName, setCiName] = useState(
-    typeof persistedCi?.name === "string" ? persistedCi.name : "",
-  );
-  const [ciVersion, setCiVersion] = useState(
-    typeof persistedCi?.version === "string" ? persistedCi.version : "",
-  );
-  const ciNameRef = useRef(ciName);
-  const ciVersionRef = useRef(ciVersion);
-  useEffect(() => {
-    ciNameRef.current = ciName;
-  }, [ciName]);
-  useEffect(() => {
-    ciVersionRef.current = ciVersion;
-  }, [ciVersion]);
-
-  // Mirror external changes (e.g. revert/load).
-  useEffect(() => {
-    const persistedName =
-      typeof persistedCi?.name === "string" ? persistedCi.name : "";
-    const persistedVersion =
-      typeof persistedCi?.version === "string" ? persistedCi.version : "";
-    if (
-      persistedName !== ciNameRef.current ||
-      persistedVersion !== ciVersionRef.current
-    ) {
-      const draftWouldFlush =
-        ciNameRef.current.trim() !== "" && ciVersionRef.current.trim() !== "";
-      if (!draftWouldFlush || persistedCi === undefined) {
-        setCiName(persistedName);
-        setCiVersion(persistedVersion);
-      }
-    }
-  }, [persistedCi]);
-
-  const flushClientInfo = (nextName: string, nextVersion: string) => {
-    const nameTrim = nextName.trim();
-    const versionTrim = nextVersion.trim();
-    onDraftChange((prev) => {
-      const newProfile = patchProfile(prev.mcpProfile, (base) => {
-        const init = base.initialize ?? {};
-        const hasRequired = nameTrim !== "" && versionTrim !== "";
-        const nextInit = {
-          ...init,
-          clientInfo: hasRequired
-            ? { name: nameTrim, version: versionTrim }
-            : undefined,
-        };
-        const initHasFields =
-          nextInit.clientInfo !== undefined ||
-          (nextInit.supportedProtocolVersions &&
-            nextInit.supportedProtocolVersions.length > 0);
-        return collapseProfile({
-          ...base,
-          initialize: initHasFields ? nextInit : undefined,
-        });
-      });
-      return { ...prev, mcpProfile: newProfile };
-    });
+function protocolToJson(draft: HostConfigInputV2): ProtocolDoc {
+  const doc: ProtocolDoc = {
+    connectionDefaults: {
+      requestTimeout: draft.connectionDefaults.requestTimeout,
+    },
   };
 
-  // Protocol versions chip list.
-  const versions = persistedVersions ?? [];
-  const [addingVersion, setAddingVersion] = useState(false);
-  const [versionDraft, setVersionDraft] = useState("");
+  const ci = draft.mcpProfile?.initialize?.clientInfo;
+  if (
+    ci &&
+    typeof ci.name === "string" &&
+    ci.name.trim() !== "" &&
+    typeof ci.version === "string" &&
+    ci.version.trim() !== ""
+  ) {
+    doc.clientInfo = { name: ci.name, version: ci.version };
+  }
 
-  const updateVersions = (next: string[]) => {
-    onDraftChange((prev) => {
-      const newProfile = patchProfile(prev.mcpProfile, (base) => {
-        const init = base.initialize ?? {};
-        const nextInit = {
-          ...init,
-          supportedProtocolVersions: next.length > 0 ? next : undefined,
-        };
-        const initHasFields =
-          nextInit.clientInfo !== undefined ||
-          (nextInit.supportedProtocolVersions &&
-            nextInit.supportedProtocolVersions.length > 0);
-        return collapseProfile({
-          ...base,
-          initialize: initHasFields ? nextInit : undefined,
-        });
-      });
-      return { ...prev, mcpProfile: newProfile };
-    });
-  };
+  const versions = draft.mcpProfile?.initialize?.supportedProtocolVersions;
+  if (versions && versions.length > 0) {
+    doc.supportedProtocolVersions = [...versions];
+  }
 
-  // Base capabilities — toggles over `clientCapabilities.{roots, sampling,
-  // experimental}`. Tri-state: a key that is `undefined` means "not
-  // advertised". `{}` is meaningful (advertise empty object).
-  const caps = draft.clientCapabilities ?? {};
-  const rootsCap = caps.roots as
-    | { listChanged?: boolean }
-    | undefined;
-  const samplingCap = caps.sampling;
-  const experimentalCap = caps.experimental;
+  if (
+    draft.clientCapabilities &&
+    Object.keys(draft.clientCapabilities).length > 0
+  ) {
+    doc.capabilities = draft.clientCapabilities;
+  }
 
-  const setCap = (key: string, next: unknown) => {
-    onDraftChange((prev) => {
-      const nextCaps = { ...prev.clientCapabilities };
-      if (next === undefined) {
-        delete nextCaps[key];
-      } else {
-        nextCaps[key] = next;
-      }
-      return { ...prev, clientCapabilities: nextCaps };
-    });
-  };
-
-  return (
-    <div className="flex flex-col gap-4">
-      <FocusBlock
-        title="clientInfo"
-        subtitle="Sent verbatim in the base-protocol initialize request. Leave blank to use SDK defaults."
-      >
-        <div className="grid grid-cols-2 gap-2">
-          <Input
-            placeholder="@mcpjam/inspector"
-            aria-label="Client name"
-            value={ciName}
-            onChange={(e) => {
-              setCiName(e.target.value);
-              flushClientInfo(e.target.value, ciVersion);
-            }}
-            className="font-mono text-[12px]"
-          />
-          <Input
-            placeholder="1.0.0"
-            aria-label="Client version"
-            value={ciVersion}
-            onChange={(e) => {
-              setCiVersion(e.target.value);
-              flushClientInfo(ciName, e.target.value);
-            }}
-            className="font-mono text-[12px]"
-          />
-        </div>
-      </FocusBlock>
-
-      <FocusBlock
-        title="Supported protocol versions"
-        subtitle="Order is semantic — the first entry is proposed in initialize.params.protocolVersion."
-      >
-        <div className="flex flex-wrap items-center gap-1.5">
-          {versions.map((v, idx) => (
-            <Chip
-              key={v}
-              mono
-              tone={idx === 0 ? "primary" : "neutral"}
-              onRemove={() =>
-                updateVersions(versions.filter((x) => x !== v))
-              }
-            >
-              {v}
-            </Chip>
-          ))}
-          <AddItemPill
-            label="Add version"
-            placeholder="2025-11-25"
-            value={versionDraft}
-            onValueChange={setVersionDraft}
-            active={addingVersion}
-            onActivate={() => setAddingVersion(true)}
-            onCancel={() => {
-              setAddingVersion(false);
-              setVersionDraft("");
-            }}
-            onAdd={() => {
-              const trimmed = versionDraft.trim();
-              if (trimmed === "" || versions.includes(trimmed)) return;
-              updateVersions([...versions, trimmed]);
-              setVersionDraft("");
-              setAddingVersion(false);
-            }}
-            validate={(raw) =>
-              raw.trim() !== "" && versions.includes(raw.trim())
-                ? "Already added"
-                : null
-            }
-          />
-        </div>
-      </FocusBlock>
-
-      <FocusBlock
-        title="Base capabilities"
-        subtitle="Advertised in clientCapabilities during the base-protocol initialize."
-      >
-        <CapabilityToggleRow
-          icon={<Network className="size-3.5" />}
-          name="roots"
-          description="Expose filesystem roots to the server."
-          presetValueLabel={rootsCap ? "advertised" : "not advertised"}
-          state={rootsCap ? "override-on" : "override-off"}
-          subChip={
-            rootsCap?.listChanged ? <span>listChanged</span> : undefined
-          }
-          onOverrideOn={() => setCap("roots", { listChanged: true })}
-          onOverrideOff={() => setCap("roots", undefined)}
-        />
-        <CapabilityToggleRow
-          icon={<Sparkles className="size-3.5" />}
-          name="sampling"
-          description="Let the server request LLM sampling from the host."
-          presetValueLabel={samplingCap ? "advertised" : "not advertised"}
-          state={samplingCap ? "override-on" : "override-off"}
-          onOverrideOn={() => setCap("sampling", {})}
-          onOverrideOff={() => setCap("sampling", undefined)}
-        />
-        <CapabilityToggleRow
-          icon={<Wrench className="size-3.5" />}
-          name="experimental"
-          description="Opt into non-standard experimental capability."
-          presetValueLabel={
-            experimentalCap ? "advertised" : "not advertised"
-          }
-          state={experimentalCap ? "override-on" : "override-off"}
-          onOverrideOn={() => setCap("experimental", {})}
-          onOverrideOff={() => setCap("experimental", undefined)}
-        />
-      </FocusBlock>
-
-      <FocusBlock
-        title="Connection defaults"
-        subtitle="Per-host fallback for server requests. Servers can override these in the Servers tab."
-      >
-        <FieldRow
-          label="Request timeout"
-          description="Per-request timeout in milliseconds."
-          control={
-            <div className="flex items-center gap-1.5">
-              <Input
-                type="number"
-                min={1}
-                step={500}
-                value={draft.connectionDefaults.requestTimeout}
-                onChange={(e) => {
-                  const parsed = Number(e.target.value);
-                  if (Number.isFinite(parsed) && parsed > 0) {
-                    onDraftChange((prev) => ({
-                      ...prev,
-                      connectionDefaults: {
-                        ...prev.connectionDefaults,
-                        requestTimeout: parsed,
-                      },
-                    }));
-                  }
-                }}
-                className="h-8 w-28 font-mono text-[12px]"
-                aria-label="Request timeout (ms)"
-              />
-              <span className="font-mono text-[11px] text-muted-foreground">
-                ms
-              </span>
-            </div>
-          }
-        />
-        <HeadersListEditor
-          headers={draft.connectionDefaults.headers ?? {}}
-          onChange={(headers) =>
-            onDraftChange((prev) => ({
-              ...prev,
-              connectionDefaults: {
-                ...prev.connectionDefaults,
-                headers,
-              },
-            }))
-          }
-        />
-      </FocusBlock>
-    </div>
-  );
-}
-
-/**
- * Headers editor as a list of name/value pairs with a per-row remove.
- * Backs the raw `Record<string, string>` shape but renders without raw
- * JSON. `Authorization` is reserved at the persistence boundary
- * (coerceHeadersToStringRecord in HostConfigEditor) so we mirror that
- * rule here: filtered out of the displayed list.
- */
-function HeadersListEditor({
-  headers,
-  onChange,
-}: {
-  headers: Record<string, string>;
-  onChange: (next: Record<string, string>) => void;
-}) {
-  const entries = Object.entries(headers).filter(
+  const headers = draft.connectionDefaults.headers ?? {};
+  const visibleEntries = Object.entries(headers).filter(
     ([k]) => k.trim() !== "" && k.toLowerCase() !== "authorization",
   );
-  const [adding, setAdding] = useState(false);
-  const [draftName, setDraftName] = useState("");
-  const [draftValue, setDraftValue] = useState("");
+  if (visibleEntries.length > 0) {
+    doc.connectionDefaults.headers = Object.fromEntries(visibleEntries);
+  }
+
+  return doc;
+}
+
+function patchProfile(
+  prev: HostConfigMcpProfileV1 | undefined,
+  patch: (base: HostConfigMcpProfileV1) => HostConfigMcpProfileV1 | undefined,
+): HostConfigMcpProfileV1 | undefined {
+  return patch(prev ?? { profileVersion: 1 });
+}
+
+function applyJsonToDraft(
+  parsed: unknown,
+  prev: HostConfigInputV2,
+): HostConfigInputV2 | null {
+  if (!isPlainObject(parsed)) return null;
+
+  // clientInfo — require both name and version, like the form did. A bare
+  // `{}` or partial object collapses to "not set", matching the persisted
+  // tri-state semantics.
+  let clientInfo: { name: string; version: string } | undefined;
+  if (isPlainObject(parsed.clientInfo)) {
+    const name = parsed.clientInfo.name;
+    const version = parsed.clientInfo.version;
+    if (
+      typeof name === "string" &&
+      name.trim() !== "" &&
+      typeof version === "string" &&
+      version.trim() !== ""
+    ) {
+      clientInfo = { name, version };
+    }
+  }
+
+  // supportedProtocolVersions — string array, drop blanks.
+  let supportedProtocolVersions: string[] | undefined;
+  if (Array.isArray(parsed.supportedProtocolVersions)) {
+    const cleaned = parsed.supportedProtocolVersions
+      .filter((v): v is string => typeof v === "string")
+      .map((v) => v.trim())
+      .filter((v) => v !== "");
+    if (cleaned.length > 0) supportedProtocolVersions = cleaned;
+  }
+
+  // capabilities — pass through verbatim as Record<string, unknown> only if
+  // the user supplied an object. Absence vs `{}` is preserved: missing key
+  // clears clientCapabilities; explicit `{}` advertises nothing but keeps
+  // the property addressable.
+  let nextCapabilities: Record<string, unknown> = {};
+  if (isPlainObject(parsed.capabilities)) {
+    nextCapabilities = parsed.capabilities;
+  }
+
+  // connectionDefaults — requestTimeout is required by the type. Keep prev
+  // value if missing or invalid. Headers preserve any Authorization that
+  // lived on the persisted record (managed elsewhere; not user-editable here).
+  const cd = isPlainObject(parsed.connectionDefaults)
+    ? parsed.connectionDefaults
+    : {};
+  const rawTimeout = cd.requestTimeout;
+  const requestTimeout =
+    typeof rawTimeout === "number" && Number.isFinite(rawTimeout) && rawTimeout > 0
+      ? rawTimeout
+      : prev.connectionDefaults.requestTimeout;
+
+  const prevHeaders = prev.connectionDefaults.headers ?? {};
+  const prevAuthKey = findAuthorizationKey(prevHeaders);
+  const incomingHeaders = isPlainObject(cd.headers) ? cd.headers : {};
+  const cleanIncoming: Record<string, string> = {};
+  for (const [k, v] of Object.entries(incomingHeaders)) {
+    if (k.trim() === "") continue;
+    if (k.toLowerCase() === "authorization") continue;
+    if (typeof v !== "string") continue;
+    cleanIncoming[k] = v;
+  }
+  const nextHeaders =
+    prevAuthKey !== undefined
+      ? { ...cleanIncoming, [prevAuthKey]: prevHeaders[prevAuthKey] }
+      : cleanIncoming;
+
+  // Build the new mcpProfile envelope, collapsing to undefined when empty so
+  // the canonical hash stays stable with the form-based editor's outputs.
+  const nextProfile = patchProfile(prev.mcpProfile, (base) => {
+    const initialize: HostConfigMcpProfileV1["initialize"] = {};
+    if (clientInfo) initialize.clientInfo = clientInfo;
+    if (supportedProtocolVersions)
+      initialize.supportedProtocolVersions = supportedProtocolVersions;
+    const initHasFields =
+      initialize.clientInfo !== undefined ||
+      (initialize.supportedProtocolVersions &&
+        initialize.supportedProtocolVersions.length > 0);
+
+    const next: HostConfigMcpProfileV1 = {
+      ...base,
+      initialize: initHasFields ? initialize : undefined,
+    };
+
+    const allEmpty =
+      next.initialize === undefined && !next.apps && !next.extensions;
+    return allEmpty ? undefined : next;
+  });
+
+  return {
+    ...prev,
+    clientCapabilities: nextCapabilities,
+    connectionDefaults: {
+      requestTimeout,
+      headers: nextHeaders,
+    },
+    mcpProfile: nextProfile,
+  };
+}
+
+export function ProtocolTab({ draft, onDraftChange }: ProtocolTabProps) {
+  const { content, onRawChange } = useJsonDraftBuffer({
+    draft,
+    serialize: protocolToJson,
+    applyParsedToDraft: applyJsonToDraft,
+    onDraftChange,
+  });
 
   return (
-    <div className="flex flex-col gap-1.5">
-      <span className="text-[12px] font-medium">Connection headers</span>
-      {entries.length === 0 && !adding ? (
-        <p className="text-[11px] text-muted-foreground">
-          No host-level headers configured.
-        </p>
-      ) : null}
-      {entries.map(([key, val]) => (
-        <div key={key} className="flex items-center gap-2">
-          <Input
-            value={key}
-            disabled
-            className="h-8 w-40 font-mono text-[11px]"
-          />
-          <Input
-            value={val}
-            onChange={(e) => {
-              const next = { ...headers, [key]: e.target.value };
-              onChange(next);
-            }}
-            className="h-8 flex-1 font-mono text-[11px]"
-          />
-          <button
-            type="button"
-            onClick={() => {
-              const next = { ...headers };
-              delete next[key];
-              onChange(next);
-            }}
-            className="text-[10.5px] text-muted-foreground underline-offset-2 hover:underline"
-          >
-            remove
-          </button>
-        </div>
-      ))}
-      {adding ? (
-        <div className="flex items-center gap-2">
-          <Input
-            placeholder="X-Header"
-            value={draftName}
-            onChange={(e) => setDraftName(e.target.value)}
-            className="h-8 w-40 font-mono text-[11px]"
-          />
-          <Input
-            placeholder="value"
-            value={draftValue}
-            onChange={(e) => setDraftValue(e.target.value)}
-            className="h-8 flex-1 font-mono text-[11px]"
-          />
-          <button
-            type="button"
-            onClick={() => {
-              const k = draftName.trim();
-              if (k === "" || k.toLowerCase() === "authorization") return;
-              onChange({ ...headers, [k]: draftValue });
-              setDraftName("");
-              setDraftValue("");
-              setAdding(false);
-            }}
-            className="text-[10.5px] underline-offset-2 hover:underline"
-          >
-            add
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setDraftName("");
-              setDraftValue("");
-              setAdding(false);
-            }}
-            className="text-[10.5px] text-muted-foreground underline-offset-2 hover:underline"
-          >
-            cancel
-          </button>
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={() => setAdding(true)}
-          className="inline-flex w-fit items-center gap-1 rounded-full border border-dashed border-border/70 px-2.5 py-0.5 text-[11px] text-muted-foreground hover:border-foreground/40 hover:text-foreground"
-        >
-          + Add header
-        </button>
-      )}
+    <div className="flex h-full min-h-[480px] flex-col">
+      <JsonEditor
+        rawContent={content}
+        onRawChange={onRawChange}
+        mode="edit"
+        showModeToggle
+        showToolbar
+        showLineNumbers
+        autoFormatOnEdit={false}
+        height="100%"
+      />
     </div>
   );
 }
-

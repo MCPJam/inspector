@@ -9,6 +9,7 @@ export type {
 export {
   CHATGPT_HOST_STYLE,
   CLAUDE_HOST_STYLE,
+  MCPJAM_HOST_STYLE,
   BUILT_IN_HOST_STYLES,
 } from "./built-ins";
 export {

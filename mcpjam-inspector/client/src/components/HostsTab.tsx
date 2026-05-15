@@ -4,7 +4,7 @@ import { HostBuilderView } from "./hosts/HostBuilderView";
 import { HostsConnectAddServerSlotContext } from "./hosts/HostsConnectAddServerSlotContext";
 import { ViewModeSelector } from "./shared/view-mode-selector";
 import { usePreviewedHostId } from "@/hooks/use-previewed-host-id";
-import { useHost } from "@/hooks/useHosts";
+import { useHost, useHostList } from "@/hooks/useHosts";
 import { getChatboxShellStyle } from "@/lib/chatbox-host-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
@@ -35,7 +35,11 @@ export function HostsTab({
   onSelectHost,
   serversTabElement,
 }: HostsTabProps) {
-  const [previewedHostId] = usePreviewedHostId(projectId);
+  const [previewedHostId, setPreviewedHostId] = usePreviewedHostId(projectId);
+  const { hosts, isLoading: isHostListLoading } = useHostList({
+    isAuthenticated,
+    projectId,
+  });
   const [addServerSlotEl, setAddServerSlotEl] = useState<HTMLDivElement | null>(
     null,
   );
@@ -65,6 +69,26 @@ export function HostsTab({
     // changes within the same project.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
+
+  // Reconcile stale selections against the live host list. If the host the
+  // user was viewing (or had previewed) was deleted elsewhere, drop the
+  // reference so the canvas doesn't get stuck on a missing id — without
+  // this, HostBuilderViewRedesigned's `!draftConfig` guard renders skeletons
+  // forever because the seed effect bails on a null host.
+  useEffect(() => {
+    if (isHostListLoading) return;
+    const exists = (id: string | null) =>
+      id !== null && hosts.some((h) => h.hostId === id);
+    if (selectedHostId && !exists(selectedHostId)) onSelectHost(null);
+    if (previewedHostId && !exists(previewedHostId)) setPreviewedHostId(null);
+  }, [
+    hosts,
+    isHostListLoading,
+    selectedHostId,
+    previewedHostId,
+    onSelectHost,
+    setPreviewedHostId,
+  ]);
 
   if (!projectId) return null;
 

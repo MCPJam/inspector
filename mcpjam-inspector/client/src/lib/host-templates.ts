@@ -2,10 +2,17 @@ import {
   emptyHostConfigInputV2,
   type HostConfigInputV2,
 } from "@/lib/host-config-v2";
+import {
+  MCPJAM_FONT_CSS,
+  MCPJAM_PLATFORM,
+  getMcpJamStyleVariables,
+} from "@/config/mcpjam-host-context";
 import mcpjamLogo from "/mcp_jam.svg";
 import claudeLogo from "/claude_logo.png";
 import openaiLogo from "/openai_logo.png";
 import cursorLogo from "/cursor_logo.png";
+
+declare const __APP_VERSION__: string;
 
 // Verbatim from a real claude.ai ui/initialize response. Kept out of the
 // template entry for readability. Updating these keeps the Claude template
@@ -207,7 +214,52 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     label: "MCPJam",
     description: "SDK defaults. Pick a model later.",
     logoSrc: mcpjamLogo,
-    seed: () => emptyHostConfigInputV2(),
+    // Explicit `hostStyle: "mcpjam"` so the template doesn't silently
+    // inherit the registry default — keeps MCPJam hosts visually distinct
+    // from Claude even if the default ever drifts.
+    seed: () => {
+      const base = emptyHostConfigInputV2({ hostStyle: "mcpjam" });
+      // Per-resource hostContext for MCPJam's own house chrome. Style
+      // variables come straight from the design-system tokens that
+      // `client/src/index.css` imports via `@mcpjam/design-system`, so
+      // a widget rendered in an MCPJam-styled host sees the same
+      // surfaces/text/border tokens as the inspector itself. Theme is
+      // resolved to "dark" here because the template hardcodes `theme:
+      // "dark"` below; switching theme requires re-seeding.
+      // MCPJAM_FONT_CSS is empty (system font stack, no @font-face), so
+      // `styles.css` is omitted entirely.
+      base.hostContext = {
+        theme: "dark",
+        displayMode: "inline",
+        availableDisplayModes: ["inline", "fullscreen"],
+        containerDimensions: { width: 720, maxHeight: 5000 },
+        locale: "en-US",
+        timeZone: "America/Los_Angeles",
+        userAgent: "mcpjam-inspector",
+        platform: MCPJAM_PLATFORM,
+        deviceCapabilities: { touch: false, hover: true },
+        safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
+        styles: {
+          variables: getMcpJamStyleVariables("dark"),
+          ...(MCPJAM_FONT_CSS ? { css: { fonts: MCPJAM_FONT_CSS } } : {}),
+        },
+      };
+      // Pin the inspector's identity in MCP `initialize.clientInfo`.
+      // Without this, MCPClientManager falls through `defaultClientName`
+      // (unset on the inspector's manager — see server/app.ts) all the
+      // way to `serverId`, leaking the Convex doc id (e.g.
+      // "mn73t86710zsv32exj7j4mxnbs86s52s") as the client name.
+      // `__APP_VERSION__` is the same Vite build constant
+      // mcp-apps-renderer.tsx uses for hostInfo.version, so the
+      // inspector's MCP-side and Apps-side identities stay in lockstep.
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          clientInfo: { name: "mcpjam-inspector", version: __APP_VERSION__ },
+        },
+      };
+      return base;
+    },
   },
   {
     id: "claude",

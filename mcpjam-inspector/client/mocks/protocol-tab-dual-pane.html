@@ -1,0 +1,1310 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MCP Protocol — dual-pane form ↔ JSON mock</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&display=swap"
+    rel="stylesheet"
+  />
+  <style>
+    /* ============================================================
+       Engineering console — mono everywhere, single accent.
+       The form pane and the JSON pane are two views of the same
+       document. Hovering / focusing anything in one side traces
+       the corresponding line in the other.
+       ============================================================ */
+    :root {
+      --bg:           oklch(0.16 0.008 250);
+      --panel:        oklch(0.195 0.010 250);
+      --panel-2:      oklch(0.225 0.012 250);
+      --row-hover:    oklch(0.25 0.014 250);
+      --border:       oklch(0.32 0.014 250 / 0.55);
+      --border-soft:  oklch(0.32 0.014 250 / 0.30);
+      --hairline:     oklch(0.32 0.014 250 / 0.22);
+
+      --fg:           oklch(0.94 0.012 100);
+      --fg-soft:      oklch(0.80 0.012 100);
+      --fg-muted:     oklch(0.60 0.012 100);
+      --fg-faint:     oklch(0.42 0.012 100);
+      --fg-ghost:     oklch(0.32 0.010 250);
+
+      --accent:       oklch(0.78 0.155 60);
+      --accent-soft:  oklch(0.78 0.155 60 / 0.18);
+      --accent-faint: oklch(0.78 0.155 60 / 0.08);
+      --accent-line:  oklch(0.78 0.155 60 / 0.55);
+
+      --ok:           oklch(0.78 0.15 155);
+      --warn:         oklch(0.80 0.16 85);
+      --err:          oklch(0.72 0.20 25);
+
+      /* JSON token palette — desaturated, distinct, comfortable */
+      --tk-key:       oklch(0.78 0.04 240);
+      --tk-string:    oklch(0.80 0.08 75);
+      --tk-number:    oklch(0.78 0.12 165);
+      --tk-bool:      oklch(0.78 0.12 305);
+      --tk-null:      oklch(0.56 0.02 250);
+      --tk-punct:     oklch(0.48 0.012 250);
+
+      --font: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+      --ease: cubic-bezier(0.32, 0.72, 0, 1);
+    }
+
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--font);
+      font-size: 12.5px;
+      line-height: 1.55;
+      font-feature-settings: "ss01", "zero", "cv11";
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+
+    /* Subtle grain so the dark panels don't look like flat png */
+    body::before {
+      content: "";
+      position: fixed; inset: 0;
+      background-image:
+        radial-gradient(circle at 20% 10%, oklch(0.78 0.155 60 / 0.04), transparent 40%),
+        radial-gradient(circle at 90% 90%, oklch(0.6 0.10 230 / 0.04), transparent 50%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .shell {
+      position: relative;
+      z-index: 1;
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+      max-width: 1480px;
+      margin: 0 auto;
+      padding: 24px;
+      gap: 14px;
+    }
+
+    /* ============================================================
+       Tab bar (mirrors existing host-builder focus dialog)
+       ============================================================ */
+    .tabbar {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      border-bottom: 1px solid var(--hairline);
+      padding-bottom: 0;
+    }
+    .tab {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px 12px;
+      font-size: 12.5px;
+      color: var(--fg-muted);
+      border-bottom: 1px solid transparent;
+      cursor: pointer;
+      transition: color 160ms var(--ease);
+      letter-spacing: 0.01em;
+    }
+    .tab:hover { color: var(--fg-soft); }
+    .tab[data-active="true"] {
+      color: var(--fg);
+      border-bottom-color: var(--accent);
+    }
+    .tab .glyph {
+      width: 14px; height: 14px;
+      display: inline-block;
+      color: var(--fg-faint);
+    }
+    .tab[data-active="true"] .glyph { color: var(--accent); }
+    .tab .count {
+      font-size: 10.5px;
+      color: var(--fg-faint);
+      background: var(--panel-2);
+      border: 1px solid var(--hairline);
+      padding: 1px 6px;
+      border-radius: 999px;
+    }
+    .tab-spacer { flex: 1; }
+    .tab-close {
+      color: var(--fg-faint);
+      padding: 8px 10px;
+      cursor: pointer;
+    }
+    .tab-close:hover { color: var(--fg); }
+
+    /* ============================================================
+       Toolbar
+       ============================================================ */
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 11.5px;
+      color: var(--fg-muted);
+    }
+    .toolbar .title {
+      color: var(--fg);
+      font-weight: 500;
+      letter-spacing: 0.02em;
+    }
+    .toolbar .breadcrumb {
+      color: var(--fg-faint);
+    }
+    .toolbar .breadcrumb b {
+      color: var(--fg-soft);
+      font-weight: 500;
+    }
+    .toolbar .right { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+
+    .segctl {
+      display: inline-flex;
+      border: 1px solid var(--border-soft);
+      border-radius: 4px;
+      overflow: hidden;
+      background: var(--panel);
+    }
+    .segctl button {
+      all: unset;
+      padding: 5px 10px;
+      font: inherit;
+      font-size: 11px;
+      color: var(--fg-muted);
+      cursor: pointer;
+      border-right: 1px solid var(--hairline);
+      transition: color 140ms, background 140ms;
+    }
+    .segctl button:last-child { border-right: 0; }
+    .segctl button:hover { color: var(--fg-soft); background: var(--row-hover); }
+    .segctl button[data-active="true"] {
+      color: var(--fg);
+      background: var(--accent-faint);
+      box-shadow: inset 0 -1px 0 var(--accent);
+    }
+
+    .btn {
+      all: unset;
+      cursor: pointer;
+      padding: 5px 10px;
+      font-size: 11px;
+      color: var(--fg-soft);
+      background: var(--panel);
+      border: 1px solid var(--border-soft);
+      border-radius: 4px;
+      transition: border-color 140ms, color 140ms;
+    }
+    .btn:hover { border-color: var(--accent-line); color: var(--fg); }
+    .btn .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--ok); margin-right: 6px; transform: translateY(-1px); }
+
+    /* ============================================================
+       Split layout
+       ============================================================ */
+    .split {
+      display: grid;
+      grid-template-columns: 1fr 6px 1fr;
+      gap: 0;
+      min-height: 0;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+      background: var(--panel);
+    }
+    .pane {
+      min-height: 0;
+      overflow: auto;
+      position: relative;
+    }
+    .pane-form {
+      padding: 22px 24px 80px;
+      background:
+        linear-gradient(180deg, transparent 0, transparent 40px, var(--hairline) 40px, var(--hairline) 41px, transparent 41px);
+      background-repeat: no-repeat;
+    }
+    .pane-json {
+      background: oklch(0.155 0.008 250);
+      border-left: 1px solid var(--border);
+    }
+    .splitter {
+      background: var(--border);
+      cursor: col-resize;
+      position: relative;
+    }
+    .splitter::before {
+      content: "";
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 1px; height: 24px;
+      background: var(--fg-faint);
+    }
+
+    /* Mode: form-only / json-only collapse */
+    .split[data-mode="form"]  .pane-json,    .split[data-mode="form"]  .splitter { display: none; }
+    .split[data-mode="json"]  .pane-form,    .split[data-mode="json"]  .splitter { display: none; }
+    .split[data-mode="form"]  { grid-template-columns: 1fr; }
+    .split[data-mode="json"]  { grid-template-columns: 1fr; }
+
+    /* ============================================================
+       Form pane
+       ============================================================ */
+    .pane-form .pane-head {
+      display: flex; align-items: baseline; gap: 12px;
+      margin-bottom: 18px;
+    }
+    .pane-form .pane-head h2 {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--fg);
+    }
+    .pane-form .pane-head .meta {
+      font-size: 11px;
+      color: var(--fg-faint);
+      letter-spacing: 0.05em;
+    }
+
+    .section {
+      margin: 0 0 22px;
+      padding: 0;
+      position: relative;
+    }
+    .section + .section { border-top: 1px dashed var(--hairline); padding-top: 18px; }
+    .section h3 {
+      margin: 0 0 4px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--fg);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .section h3::before {
+      content: "";
+      width: 4px; height: 4px;
+      background: var(--fg-faint);
+      transform: rotate(45deg);
+    }
+    .section h3[data-active="true"]::before { background: var(--accent); }
+    .section .help {
+      font-size: 11px;
+      color: var(--fg-muted);
+      margin: 0 0 12px;
+      max-width: 60ch;
+    }
+    .section .help code {
+      color: var(--fg-soft);
+      background: var(--panel-2);
+      padding: 0 4px;
+      border-radius: 2px;
+      font-size: 10.5px;
+    }
+
+    /* Form rows */
+    .row {
+      display: grid;
+      grid-template-columns: 140px 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 6px 8px;
+      margin: 0 -8px;
+      border-radius: 3px;
+      transition: background 140ms var(--ease);
+      cursor: default;
+    }
+    .row:hover, .row:focus-within {
+      background: var(--accent-faint);
+    }
+    .row label {
+      color: var(--fg-soft);
+      font-size: 11.5px;
+    }
+    .row .hint {
+      color: var(--fg-faint);
+      font-size: 10.5px;
+      text-align: right;
+      font-style: normal;
+    }
+    .row input[type="text"], .row input[type="number"], .row textarea {
+      all: unset;
+      width: 100%;
+      padding: 5px 8px;
+      background: var(--panel-2);
+      border: 1px solid var(--hairline);
+      border-radius: 3px;
+      color: var(--fg);
+      font: inherit;
+      font-size: 11.5px;
+      transition: border-color 140ms;
+    }
+    .row input:focus, .row textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px var(--accent-soft);
+    }
+
+    /* Capability card */
+    .cap {
+      border: 1px solid var(--hairline);
+      border-radius: 4px;
+      background: var(--panel-2);
+      margin: 6px -2px;
+      overflow: hidden;
+      transition: border-color 160ms var(--ease);
+    }
+    .cap[data-active="true"] {
+      border-color: var(--accent-line);
+    }
+    .cap[data-on="false"] {
+      background: oklch(0.205 0.010 250);
+    }
+    .cap[data-on="false"] .cap-head .name,
+    .cap[data-on="false"] .cap-head .desc { color: var(--fg-muted); }
+    .cap-head {
+      display: grid;
+      grid-template-columns: 16px 1fr auto auto;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      cursor: pointer;
+    }
+    .cap-head .glyph {
+      color: var(--fg-faint);
+      width: 14px; height: 14px;
+    }
+    .cap[data-on="true"]  .cap-head .glyph { color: var(--accent); }
+    .cap-head .name {
+      font-weight: 500;
+      color: var(--fg);
+      letter-spacing: 0.01em;
+    }
+    .cap-head .desc {
+      color: var(--fg-muted);
+      font-size: 11px;
+      grid-column: 2 / 3;
+      margin-top: 2px;
+    }
+    .cap-head .badge {
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--fg-faint);
+      padding: 2px 6px;
+      border: 1px solid var(--hairline);
+      border-radius: 2px;
+    }
+    .cap[data-on="true"] .cap-head .badge {
+      color: var(--accent);
+      border-color: var(--accent-line);
+    }
+
+    /* Toggle */
+    .toggle {
+      position: relative;
+      width: 28px; height: 16px;
+      border-radius: 999px;
+      background: var(--panel);
+      border: 1px solid var(--hairline);
+      cursor: pointer;
+      flex: none;
+      transition: background 160ms var(--ease), border-color 160ms var(--ease);
+    }
+    .toggle::after {
+      content: "";
+      position: absolute;
+      top: 1px; left: 1px;
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      background: var(--fg-faint);
+      transition: transform 200ms var(--ease), background 160ms var(--ease);
+    }
+    .cap[data-on="true"] .toggle {
+      background: var(--accent-soft);
+      border-color: var(--accent-line);
+    }
+    .cap[data-on="true"] .toggle::after {
+      transform: translateX(12px);
+      background: var(--accent);
+    }
+
+    /* Cap body — sub fields revealed when on */
+    .cap-body {
+      display: none;
+      padding: 4px 12px 12px;
+      border-top: 1px dashed var(--hairline);
+      background: oklch(0.21 0.010 250);
+    }
+    .cap[data-on="true"] .cap-body { display: block; }
+    .cap-body .sub {
+      display: grid;
+      grid-template-columns: 16px 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 6px 0;
+    }
+    .cap-body .sub:not(:last-child) { border-bottom: 1px dotted var(--hairline); }
+    .cap-body .sub .key {
+      color: var(--fg-soft);
+      font-size: 11.5px;
+    }
+    .cap-body .sub .key b { color: var(--fg); font-weight: 500; }
+    .cap-body .sub .info { color: var(--fg-faint); font-size: 10.5px; }
+
+    .check {
+      width: 14px; height: 14px;
+      border: 1px solid var(--hairline);
+      border-radius: 2px;
+      background: var(--panel);
+      cursor: pointer;
+      position: relative;
+      flex: none;
+    }
+    .check[data-on="true"] {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+    .check[data-on="true"]::after {
+      content: "";
+      position: absolute;
+      left: 3px; top: 0px;
+      width: 5px; height: 9px;
+      border-right: 1.5px solid var(--bg);
+      border-bottom: 1.5px solid var(--bg);
+      transform: rotate(45deg);
+    }
+
+    /* Raw-json sub editor (for deeply nested capabilities) */
+    .rawjson {
+      margin-top: 6px;
+      border-top: 1px dotted var(--hairline);
+      padding-top: 8px;
+    }
+    .rawjson .label {
+      font-size: 10.5px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--fg-faint);
+      margin-bottom: 4px;
+    }
+    .rawjson textarea {
+      all: unset;
+      display: block;
+      width: 100%;
+      min-height: 76px;
+      padding: 8px 10px;
+      background: oklch(0.155 0.008 250);
+      border: 1px solid var(--hairline);
+      border-radius: 3px;
+      color: var(--tk-key);
+      font-family: var(--font);
+      font-size: 11px;
+      white-space: pre;
+      tab-size: 2;
+      line-height: 1.5;
+    }
+    .rawjson textarea:focus {
+      border-color: var(--accent);
+    }
+
+    .pill-row {
+      display: flex; flex-wrap: wrap; gap: 6px;
+      margin: 4px 0 4px;
+    }
+    .pill {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 4px 8px 4px 10px;
+      background: var(--panel-2);
+      border: 1px solid var(--hairline);
+      border-radius: 3px;
+      font-size: 11px;
+      color: var(--fg-soft);
+    }
+    .pill[data-proposed="true"] {
+      border-color: var(--accent-line);
+      color: var(--fg);
+    }
+    .pill[data-proposed="true"] .marker {
+      color: var(--accent);
+      font-size: 9px;
+      letter-spacing: 0.12em;
+    }
+    .pill .x {
+      color: var(--fg-faint);
+      cursor: pointer;
+      padding: 0 2px;
+    }
+    .pill .x:hover { color: var(--err); }
+    .add-pill {
+      all: unset;
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 10px;
+      border: 1px dashed var(--hairline);
+      border-radius: 3px;
+      color: var(--fg-muted);
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .add-pill:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* ============================================================
+       JSON pane
+       ============================================================ */
+    .pane-json .json-head {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: oklch(0.17 0.008 250);
+      border-bottom: 1px solid var(--hairline);
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 11px;
+      color: var(--fg-muted);
+    }
+    .pane-json .json-head .title {
+      color: var(--fg);
+      letter-spacing: 0.03em;
+    }
+    .pane-json .json-head .path {
+      color: var(--fg-faint);
+      font-size: 10.5px;
+    }
+    .pane-json .json-head .right { margin-left: auto; display: flex; gap: 6px; }
+    .pane-json .json-head .icon-btn {
+      all: unset;
+      padding: 3px 6px;
+      font-size: 10.5px;
+      color: var(--fg-muted);
+      cursor: pointer;
+      border-radius: 2px;
+    }
+    .pane-json .json-head .icon-btn:hover { color: var(--fg); background: var(--row-hover); }
+
+    .json {
+      padding: 8px 0 80px;
+      font-size: 12.5px;
+      line-height: 1.7;
+      counter-reset: ln;
+    }
+    .jline {
+      display: grid;
+      grid-template-columns: 56px 14px 1fr;
+      align-items: baseline;
+      padding: 0;
+      cursor: default;
+      transition: background 140ms var(--ease);
+      position: relative;
+    }
+    .jline:hover { background: oklch(0.18 0.012 250); }
+    .jline[data-active="true"] {
+      background: var(--accent-faint);
+    }
+    .jline[data-active="true"]::before {
+      content: "";
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 2px;
+      background: var(--accent);
+    }
+    .jline .ln {
+      counter-increment: ln;
+      text-align: right;
+      padding-right: 12px;
+      color: var(--fg-ghost);
+      font-size: 11px;
+      user-select: none;
+    }
+    .jline .ln::after { content: counter(ln); }
+    .jline .gutter {
+      width: 14px;
+      text-align: center;
+      color: var(--fg-ghost);
+      font-size: 11px;
+    }
+    .jline[data-active="true"] .gutter {
+      color: var(--accent);
+    }
+    .jline[data-active="true"] .gutter::after { content: "◆"; }
+    .jline[data-error="true"] .gutter::after { content: "!"; color: var(--err); }
+    .jline[data-error="true"] { background: oklch(0.25 0.05 25 / 0.18); }
+
+    .jline .code {
+      white-space: pre;
+      color: var(--tk-punct);
+    }
+    .jline .code[data-clickable="true"] { cursor: pointer; }
+    .jline .code[data-clickable="true"]:hover .key { text-decoration: underline; text-decoration-color: var(--accent-line); }
+
+    .tok-key    { color: var(--tk-key); }
+    .tok-str    { color: var(--tk-string); }
+    .tok-num    { color: var(--tk-number); }
+    .tok-bool   { color: var(--tk-bool); }
+    .tok-null   { color: var(--tk-null); font-style: italic; }
+    .tok-punct  { color: var(--tk-punct); }
+
+    /* Ghost line (a hint that user could add this key) */
+    .jline[data-ghost="true"] .code { color: var(--fg-ghost); font-style: italic; }
+    .jline[data-ghost="true"] .gutter::after { content: "+"; color: var(--fg-ghost); }
+    .jline[data-ghost="true"] { cursor: pointer; }
+    .jline[data-ghost="true"]:hover { background: var(--accent-faint); }
+    .jline[data-ghost="true"]:hover .gutter::after { color: var(--accent); }
+    .jline[data-ghost="true"]:hover .code { color: var(--fg-soft); }
+
+    /* ============================================================
+       Status bar
+       ============================================================ */
+    .statusbar {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 6px 12px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--panel);
+      font-size: 11px;
+      color: var(--fg-muted);
+    }
+    .statusbar .item { display: inline-flex; align-items: center; gap: 6px; }
+    .statusbar .dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--fg-faint);
+    }
+    .statusbar .dot.ok   { background: var(--ok);   box-shadow: 0 0 0 3px oklch(0.78 0.15 155 / 0.12); }
+    .statusbar .dot.warn { background: var(--warn); }
+    .statusbar .dot.err  { background: var(--err); }
+    .statusbar .item.right { margin-left: auto; }
+    .statusbar b { color: var(--fg-soft); font-weight: 500; }
+
+    /* ============================================================
+       Misc detail
+       ============================================================ */
+    ::selection { background: var(--accent-soft); color: var(--fg); }
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb {
+      background: var(--hairline);
+      border-radius: 5px;
+      border: 2px solid transparent;
+      background-clip: padding-box;
+    }
+    ::-webkit-scrollbar-thumb:hover { background: var(--border); background-clip: padding-box; border: 2px solid transparent; }
+
+    @media (max-width: 900px) {
+      .split { grid-template-columns: 1fr; }
+      .splitter { display: none; }
+      .pane-json { border-left: 0; border-top: 1px solid var(--border); }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="shell">
+
+    <!-- ============================================================
+         Tab bar
+    ============================================================ -->
+    <div class="tabbar">
+      <div class="tab"><span class="glyph">⚙</span>Agent<span class="count">2</span></div>
+      <div class="tab" data-active="true"><span class="glyph">⏻</span>MCP Protocol</div>
+      <div class="tab"><span class="glyph">▤</span>Apps Extension</div>
+      <div class="tab"><span class="glyph">▣</span>Servers</div>
+      <div class="tab"><span class="glyph">◫</span>General</div>
+      <div class="tab-spacer"></div>
+      <div class="tab-close">✕</div>
+    </div>
+
+    <!-- ============================================================
+         Toolbar
+    ============================================================ -->
+    <div class="toolbar">
+      <div class="title">MCP Protocol</div>
+      <div class="breadcrumb">· edits the literal <b>initialize</b> request your host sends on connect</div>
+      <div class="right">
+        <div class="segctl" id="mode">
+          <button data-mode="both" data-active="true">Split</button>
+          <button data-mode="form">Form</button>
+          <button data-mode="json">JSON</button>
+        </div>
+        <button class="btn"><span class="dot"></span>Preset · custom</button>
+        <button class="btn">Copy</button>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         Split: form ↔ JSON
+    ============================================================ -->
+    <div class="split" id="split" data-mode="both">
+
+      <!-- ===== LEFT: Form ===== -->
+      <section class="pane pane-form" id="formPane">
+        <div class="pane-head">
+          <h2>initialize · clientCapabilities</h2>
+          <div class="meta">SOURCE OF TRUTH → JSON</div>
+        </div>
+
+        <!-- clientInfo -->
+        <div class="section" data-trace-section="clientInfo">
+          <h3>clientInfo</h3>
+          <p class="help">Sent verbatim in <code>initialize.params.clientInfo</code>. Leave blank to use SDK defaults.</p>
+          <div class="row" data-trace-path="clientInfo.name">
+            <label>name</label>
+            <input type="text" value="@mcpjam/inspector" data-bind="clientInfo.name" />
+            <span class="hint">string</span>
+          </div>
+          <div class="row" data-trace-path="clientInfo.version">
+            <label>version</label>
+            <input type="text" value="1.0.0" data-bind="clientInfo.version" />
+            <span class="hint">semver</span>
+          </div>
+          <div class="row" data-trace-path="clientInfo.title">
+            <label>title</label>
+            <input type="text" placeholder="optional display name" data-bind="clientInfo.title" />
+            <span class="hint">optional</span>
+          </div>
+        </div>
+
+        <!-- protocol versions -->
+        <div class="section" data-trace-section="protocolVersion">
+          <h3>Supported protocol versions</h3>
+          <p class="help">Order is semantic — the first entry becomes <code>initialize.params.protocolVersion</code>; subsequent entries are sent on retry if the server rejects the first.</p>
+          <div class="pill-row" id="versions">
+            <span class="pill" data-proposed="true" data-trace-path="protocolVersion">
+              <span class="marker">PROPOSED</span>
+              <span>2025-11-25</span>
+              <span class="x">✕</span>
+            </span>
+            <span class="pill" data-trace-path="protocolVersion.fallback.0">
+              <span>2025-06-18</span>
+              <span class="x">✕</span>
+            </span>
+          </div>
+          <button class="add-pill">+ add version</button>
+        </div>
+
+        <!-- capabilities -->
+        <div class="section" data-trace-section="capabilities">
+          <h3>Base capabilities</h3>
+          <p class="help">Advertised in <code>initialize.params.capabilities</code>. Each entry is a literal object in the wire payload — toggle to add the key, expand for sub-shape.</p>
+
+          <!-- roots -->
+          <div class="cap" data-on="true" data-trace-path="capabilities.roots" data-cap="roots">
+            <div class="cap-head">
+              <span class="glyph">⎘</span>
+              <div>
+                <div class="name">roots</div>
+                <div class="desc">Expose filesystem roots to the server.</div>
+              </div>
+              <div class="badge">ADV</div>
+              <div class="toggle" data-toggle="roots"></div>
+            </div>
+            <div class="cap-body">
+              <div class="sub" data-trace-path="capabilities.roots.listChanged">
+                <div class="check" data-on="true" data-check="roots.listChanged"></div>
+                <div class="key"><b>listChanged</b> &nbsp;<span class="info">notify server when roots list changes</span></div>
+                <div class="info">bool</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- sampling -->
+          <div class="cap" data-on="false" data-trace-path="capabilities.sampling" data-cap="sampling">
+            <div class="cap-head">
+              <span class="glyph">✶</span>
+              <div>
+                <div class="name">sampling</div>
+                <div class="desc">Let the server request LLM completions from this host.</div>
+              </div>
+              <div class="badge">OFF</div>
+              <div class="toggle" data-toggle="sampling"></div>
+            </div>
+            <div class="cap-body">
+              <div class="sub">
+                <div></div>
+                <div class="key"><span class="info">No sub-fields. Server reads presence of the key.</span></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- elicitation -->
+          <div class="cap" data-on="true" data-trace-path="capabilities.elicitation" data-cap="elicitation">
+            <div class="cap-head">
+              <span class="glyph">◉</span>
+              <div>
+                <div class="name">elicitation</div>
+                <div class="desc">Allow server to ask the user for structured input.</div>
+              </div>
+              <div class="badge">ADV</div>
+              <div class="toggle" data-toggle="elicitation"></div>
+            </div>
+            <div class="cap-body">
+              <div class="sub" data-trace-path="capabilities.elicitation.form">
+                <div class="check" data-on="true" data-check="elicitation.form"></div>
+                <div class="key"><b>form</b> &nbsp;<span class="info">render JSON-schema forms inline</span></div>
+                <div class="info">{}</div>
+              </div>
+              <div class="sub" data-trace-path="capabilities.elicitation.url">
+                <div class="check" data-on="true" data-check="elicitation.url"></div>
+                <div class="key"><b>url</b> &nbsp;<span class="info">open external URL for OAuth-like prompts</span></div>
+                <div class="info">{}</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- tasks -->
+          <div class="cap" data-on="false" data-trace-path="capabilities.tasks" data-cap="tasks">
+            <div class="cap-head">
+              <span class="glyph">⌗</span>
+              <div>
+                <div class="name">tasks</div>
+                <div class="desc">Task-augmented requests. Deep nesting — edit JSON for the inner shape.</div>
+              </div>
+              <div class="badge">OFF</div>
+              <div class="toggle" data-toggle="tasks"></div>
+            </div>
+            <div class="cap-body">
+              <div class="rawjson" data-trace-path="capabilities.tasks">
+                <div class="label">capabilities.tasks · raw JSON</div>
+                <textarea data-bind="capabilities.tasks.raw" spellcheck="false">{
+  "requests": {
+    "elicitation": { "create": {} },
+    "sampling":    { "createMessage": {} }
+  }
+}</textarea>
+              </div>
+            </div>
+          </div>
+
+          <!-- experimental -->
+          <div class="cap" data-on="false" data-trace-path="capabilities.experimental" data-cap="experimental">
+            <div class="cap-head">
+              <span class="glyph">⚗</span>
+              <div>
+                <div class="name">experimental</div>
+                <div class="desc">Free-form object for non-standard capability keys.</div>
+              </div>
+              <div class="badge">OFF</div>
+              <div class="toggle" data-toggle="experimental"></div>
+            </div>
+            <div class="cap-body">
+              <div class="rawjson" data-trace-path="capabilities.experimental">
+                <div class="label">capabilities.experimental · raw JSON</div>
+                <textarea data-bind="capabilities.experimental.raw" spellcheck="false">{
+  "openai/visibility": { "enabled": true }
+}</textarea>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Connection defaults -->
+        <div class="section" data-trace-section="connection">
+          <h3>Connection defaults</h3>
+          <p class="help">Per-host fallback for outbound requests. Servers can override in the Servers tab — these appear on the wire as transport-level config, not inside <code>initialize.params</code>.</p>
+          <div class="row" data-trace-path="connection.timeoutMs">
+            <label>request timeout</label>
+            <input type="number" value="10000" data-bind="connection.timeoutMs" />
+            <span class="hint">ms</span>
+          </div>
+          <div class="row" data-trace-path="connection.headers">
+            <label>headers</label>
+            <input type="text" placeholder="no host-level headers configured" />
+            <span class="hint">+ add</span>
+          </div>
+        </div>
+      </section>
+
+      <div class="splitter"></div>
+
+      <!-- ===== RIGHT: JSON ===== -->
+      <section class="pane pane-json" id="jsonPane">
+        <div class="json-head">
+          <span class="title">wire preview</span>
+          <span class="path">→ initialize.params</span>
+          <span class="right">
+            <button class="icon-btn">format</button>
+            <button class="icon-btn">copy</button>
+            <button class="icon-btn">⤴ open in editor</button>
+          </span>
+        </div>
+        <div class="json" id="json"></div>
+      </section>
+    </div>
+
+    <!-- ============================================================
+         Status bar
+    ============================================================ -->
+    <div class="statusbar">
+      <div class="item"><span class="dot ok"></span><b>valid</b> · matches spec 2025-11-25</div>
+      <div class="item">· <b id="bytes">312</b>&nbsp;bytes</div>
+      <div class="item">· <b id="capcount">3</b> capabilities advertised</div>
+      <div class="item">· wire protocol <b>2025-11-25</b></div>
+      <div class="item right">⌘ ↩ to commit · ⌘ ⇧ J to focus JSON pane</div>
+    </div>
+  </div>
+
+  <script>
+    /* ============================================================
+       State — one source of truth. The form pane mutates state,
+       state re-renders JSON. The JSON pane is read-only here for
+       brevity, but click-to-jump back to the form is wired up.
+       ============================================================ */
+    const state = {
+      clientInfo: { name: "@mcpjam/inspector", version: "1.0.0", title: "" },
+      protocolVersion: "2025-11-25",
+      protocolFallback: ["2025-06-18"],
+      capabilities: {
+        roots:        { on: true,  listChanged: true },
+        sampling:     { on: false },
+        elicitation:  { on: true,  form: true, url: true },
+        tasks:        { on: false, raw: '{"requests":{"elicitation":{"create":{}},"sampling":{"createMessage":{}}}}' },
+        experimental: { on: false, raw: '{"openai/visibility":{"enabled":true}}' },
+      },
+      connection: { timeoutMs: 10000, headers: [] },
+    };
+
+    /* ----------------------------------------------------------------
+       JSON renderer — builds a series of lines, each annotated with
+       the path it represents so we can light up the corresponding
+       form control on hover, and vice versa.
+       ---------------------------------------------------------------- */
+    function renderJSON() {
+      const lines = [];
+      const indent = (n) => "  ".repeat(n);
+
+      const k = (s) => `<span class="tok-key">"${s}"</span>`;
+      const s = (s) => `<span class="tok-str">"${s}"</span>`;
+      const n = (s) => `<span class="tok-num">${s}</span>`;
+      const b = (s) => `<span class="tok-bool">${s}</span>`;
+      const p = (s) => `<span class="tok-punct">${s}</span>`;
+
+      const push = (path, html, opts = {}) =>
+        lines.push({ path, html, ghost: !!opts.ghost, error: !!opts.error, clickable: !!opts.clickable });
+
+      push("", `${p("{")}`);
+      push("", `${indent(1)}${k("jsonrpc")}${p(":")} ${s("2.0")}${p(",")}`);
+      push("", `${indent(1)}${k("id")}${p(":")} ${n(1)}${p(",")}`);
+      push("", `${indent(1)}${k("method")}${p(":")} ${s("initialize")}${p(",")}`);
+      push("", `${indent(1)}${k("params")}${p(": {")}`);
+
+      // protocolVersion
+      push("protocolVersion",
+        `${indent(2)}${k("protocolVersion")}${p(":")} ${s(state.protocolVersion)}${p(",")}`,
+        { clickable: true });
+
+      // clientInfo
+      push("clientInfo",
+        `${indent(2)}${k("clientInfo")}${p(": {")}`, { clickable: true });
+      push("clientInfo.name",
+        `${indent(3)}${k("name")}${p(":")} ${s(state.clientInfo.name)}${p(",")}`,
+        { clickable: true });
+      push("clientInfo.version",
+        `${indent(3)}${k("version")}${p(":")} ${s(state.clientInfo.version)}` +
+          (state.clientInfo.title ? p(",") : ""),
+        { clickable: true });
+      if (state.clientInfo.title) {
+        push("clientInfo.title",
+          `${indent(3)}${k("title")}${p(":")} ${s(state.clientInfo.title)}`,
+          { clickable: true });
+      } else {
+        push("clientInfo.title",
+          `${indent(3)}${k("title")}${p(":")} ${s("…")}`,
+          { ghost: true, clickable: true });
+      }
+      push("clientInfo", `${indent(2)}${p("},")}`);
+
+      // capabilities
+      const caps = Object.entries(state.capabilities).filter(([, v]) => v.on);
+      push("capabilities", `${indent(2)}${k("capabilities")}${p(": {")}`, { clickable: true });
+
+      caps.forEach(([capKey, capVal], i) => {
+        const last = i === caps.length - 1;
+        const trailing = last ? "" : ",";
+        const path = `capabilities.${capKey}`;
+
+        if (capKey === "roots") {
+          push(path, `${indent(3)}${k("roots")}${p(": {")}`, { clickable: true });
+          push(`${path}.listChanged`,
+            `${indent(4)}${k("listChanged")}${p(":")} ${b(capVal.listChanged)}`,
+            { clickable: true });
+          push(path, `${indent(3)}${p("}" + trailing)}`);
+        } else if (capKey === "sampling") {
+          push(path, `${indent(3)}${k("sampling")}${p(": {}" + trailing)}`, { clickable: true });
+        } else if (capKey === "elicitation") {
+          push(path, `${indent(3)}${k("elicitation")}${p(": {")}`, { clickable: true });
+          const subs = [];
+          if (capVal.form) subs.push(["form",  `${indent(4)}${k("form")}${p(": {}")}`]);
+          if (capVal.url)  subs.push(["url",   `${indent(4)}${k("url")}${p(": {}")}`]);
+          subs.forEach(([subKey, line], j) => {
+            const subLast = j === subs.length - 1;
+            push(`${path}.${subKey}`, line + (subLast ? "" : p(",")), { clickable: true });
+          });
+          push(path, `${indent(3)}${p("}" + trailing)}`);
+        } else if (capKey === "tasks") {
+          // Inline the raw object compactly with light formatting
+          try {
+            const parsed = JSON.parse(capVal.raw);
+            const formatted = JSON.stringify(parsed, null, 2)
+              .split("\n")
+              .map((ln, idx) => idx === 0 ? ln : indent(3) + ln);
+            const innerLines = formatted.join("\n").split("\n");
+            innerLines.forEach((ln, idx) => {
+              const isFirst = idx === 0;
+              const isLast  = idx === innerLines.length - 1;
+              const prefix  = isFirst ? `${indent(3)}${k("tasks")}${p(": ")}` : "";
+              const suffix  = isLast ? trailing : "";
+              push(path, `${prefix}${escapeForToken(ln.replace(/^ +/, m => m))}${p(suffix)}`,
+                { clickable: true });
+            });
+          } catch {
+            push(path, `${indent(3)}${k("tasks")}${p(": ")}<span class="tok-str">${capVal.raw.replace(/</g, "&lt;")}</span>${p(trailing)}`,
+              { clickable: true, error: true });
+          }
+        } else if (capKey === "experimental") {
+          push(path, `${indent(3)}${k("experimental")}${p(": ")}${syntaxColor(capVal.raw)}${p(trailing)}`,
+            { clickable: true });
+        }
+      });
+
+      // Ghost lines for capabilities that are off — show the user what's available
+      const off = Object.entries(state.capabilities).filter(([, v]) => !v.on);
+      off.forEach(([capKey]) => {
+        push(`capabilities.${capKey}`,
+          `${indent(3)}<span class="tok-key">"${capKey}"</span>${p(": {…}")}`,
+          { ghost: true, clickable: true });
+      });
+
+      push("capabilities", `${indent(2)}${p("}")}`);
+      push("", `${indent(1)}${p("}")}`);
+      push("", `${p("}")}`);
+
+      // Render
+      const container = document.getElementById("json");
+      container.innerHTML = lines.map(line => `
+        <div class="jline"
+             data-path="${line.path}"
+             data-ghost="${line.ghost}"
+             data-error="${line.error}">
+          <div class="ln"></div>
+          <div class="gutter"></div>
+          <div class="code" data-clickable="${line.clickable}">${line.html}</div>
+        </div>
+      `).join("");
+
+      // Status bar
+      const json = buildOutputObject();
+      const serialized = JSON.stringify(json);
+      document.getElementById("bytes").textContent = serialized.length;
+      document.getElementById("capcount").textContent = Object.keys(json.params.capabilities).length;
+
+      // Re-wire interactions
+      wireJsonInteractions();
+    }
+
+    /* Small helpers — naive but enough for this mock */
+    function escapeForToken(line) {
+      // colorize a single pre-formatted JSON line
+      return syntaxColor(line);
+    }
+    function syntaxColor(text) {
+      return text
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+        .replace(/"([^"\\]+)"\s*:/g, (_, key) => `<span class="tok-key">"${key}"</span>:`)
+        .replace(/:\s*"([^"]*)"/g, (_, str) => `: <span class="tok-str">"${str}"</span>`)
+        .replace(/:\s*(true|false)/g, (_, bool) => `: <span class="tok-bool">${bool}</span>`)
+        .replace(/:\s*(null)/g, () => `: <span class="tok-null">null</span>`)
+        .replace(/:\s*(-?\d+(?:\.\d+)?)/g, (_, num) => `: <span class="tok-num">${num}</span>`);
+    }
+
+    function buildOutputObject() {
+      const caps = {};
+      const c = state.capabilities;
+      if (c.roots.on)        caps.roots = { listChanged: c.roots.listChanged };
+      if (c.sampling.on)     caps.sampling = {};
+      if (c.elicitation.on)  {
+        caps.elicitation = {};
+        if (c.elicitation.form) caps.elicitation.form = {};
+        if (c.elicitation.url)  caps.elicitation.url  = {};
+      }
+      if (c.tasks.on) {
+        try { caps.tasks = JSON.parse(c.tasks.raw); } catch { caps.tasks = "INVALID"; }
+      }
+      if (c.experimental.on) {
+        try { caps.experimental = JSON.parse(c.experimental.raw); } catch { caps.experimental = "INVALID"; }
+      }
+      return {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: state.protocolVersion,
+          clientInfo: state.clientInfo.title
+            ? state.clientInfo
+            : { name: state.clientInfo.name, version: state.clientInfo.version },
+          capabilities: caps,
+        }
+      };
+    }
+
+    /* ----------------------------------------------------------------
+       Trace highlight — the killer interaction. Hovering a form
+       node sets `data-active=true` on every JSON line that begins
+       with the same path; the JSON gutter shows a diamond.
+       ---------------------------------------------------------------- */
+    function clearActive() {
+      document.querySelectorAll('.jline[data-active="true"]').forEach(el => el.setAttribute("data-active", "false"));
+      document.querySelectorAll('.section h3[data-active="true"]').forEach(el => el.setAttribute("data-active", "false"));
+      document.querySelectorAll('.cap[data-active="true"]').forEach(el => el.setAttribute("data-active", "false"));
+    }
+    function highlightPath(path, opts = {}) {
+      if (!path) return;
+      clearActive();
+      // light up matching JSON lines (exact path OR descendants)
+      document.querySelectorAll(".jline").forEach(el => {
+        const p = el.getAttribute("data-path") || "";
+        if (p === path || p.startsWith(path + ".")) {
+          el.setAttribute("data-active", "true");
+        }
+      });
+      // also light up the matching form section h3
+      const segs = path.split(".");
+      const topSection = document.querySelector(`.section[data-trace-section="${segs[0]}"] h3`)
+        || document.querySelector(`.section[data-trace-section="${segs.slice(0, 2).join(".")}"] h3`);
+      if (topSection) topSection.setAttribute("data-active", "true");
+      // capability cards
+      if (segs[0] === "capabilities" && segs[1]) {
+        const cap = document.querySelector(`.cap[data-cap="${segs[1]}"]`);
+        if (cap) cap.setAttribute("data-active", "true");
+      }
+      // optionally scroll first match into view
+      if (opts.scroll) {
+        const first = document.querySelector('.jline[data-active="true"]');
+        if (first) first.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }
+    }
+
+    /* ----------------------------------------------------------------
+       Wire form pane
+       ---------------------------------------------------------------- */
+    function wireFormInteractions() {
+      // trace on hover/focus
+      document.querySelectorAll("[data-trace-path]").forEach(el => {
+        el.addEventListener("mouseenter", () => highlightPath(el.getAttribute("data-trace-path")));
+        el.addEventListener("focusin",    () => highlightPath(el.getAttribute("data-trace-path"), { scroll: true }));
+      });
+      document.getElementById("formPane").addEventListener("mouseleave", clearActive);
+
+      // toggle capability on/off
+      document.querySelectorAll("[data-toggle]").forEach(t => {
+        t.addEventListener("click", e => {
+          e.stopPropagation();
+          const key = t.getAttribute("data-toggle");
+          state.capabilities[key].on = !state.capabilities[key].on;
+          const card = t.closest(".cap");
+          card.setAttribute("data-on", state.capabilities[key].on);
+          card.querySelector(".badge").textContent = state.capabilities[key].on ? "ADV" : "OFF";
+          renderJSON();
+        });
+      });
+      // expand on header click (excluding toggle)
+      document.querySelectorAll(".cap-head").forEach(h => {
+        h.addEventListener("click", () => {
+          // future: pure expand. For mock, also toggles for one-click feel.
+          const toggle = h.querySelector(".toggle");
+          if (toggle) toggle.click();
+        });
+      });
+      // checkboxes for sub-capability flags
+      document.querySelectorAll("[data-check]").forEach(c => {
+        c.addEventListener("click", e => {
+          e.stopPropagation();
+          const [capKey, subKey] = c.getAttribute("data-check").split(".");
+          const next = !(state.capabilities[capKey][subKey]);
+          state.capabilities[capKey][subKey] = next;
+          c.setAttribute("data-on", next);
+          renderJSON();
+        });
+      });
+      // text/number inputs bound to state
+      document.querySelectorAll("[data-bind]").forEach(input => {
+        input.addEventListener("input", () => {
+          const path = input.getAttribute("data-bind").split(".");
+          let cursor = state;
+          for (let i = 0; i < path.length - 1; i++) cursor = cursor[path[i]];
+          cursor[path[path.length - 1]] = input.type === "number"
+            ? Number(input.value)
+            : input.value;
+          renderJSON();
+        });
+      });
+    }
+
+    /* ----------------------------------------------------------------
+       Wire JSON pane — click a line to scroll the form to it,
+       click a "ghost" line to turn the capability on.
+       ---------------------------------------------------------------- */
+    function wireJsonInteractions() {
+      document.querySelectorAll(".jline").forEach(el => {
+        const path = el.getAttribute("data-path");
+        if (!path) return;
+
+        el.addEventListener("mouseenter", () => highlightPath(path));
+
+        if (el.getAttribute("data-ghost") === "true") {
+          el.addEventListener("click", () => {
+            const segs = path.split(".");
+            if (segs[0] === "capabilities" && segs[1]) {
+              state.capabilities[segs[1]].on = true;
+              renderJSON();
+              const card = document.querySelector(`.cap[data-cap="${segs[1]}"]`);
+              if (card) {
+                card.setAttribute("data-on", "true");
+                card.querySelector(".badge").textContent = "ADV";
+                card.scrollIntoView({ block: "nearest", behavior: "smooth" });
+              }
+            }
+          });
+        } else if (el.querySelector(".code")?.getAttribute("data-clickable") === "true") {
+          el.addEventListener("click", () => {
+            // scroll the form section into view
+            const segs = path.split(".");
+            let target = document.querySelector(`[data-trace-path="${path}"]`);
+            if (!target) {
+              target = document.querySelector(`[data-trace-section="${segs[0]}"]`);
+            }
+            if (target) {
+              target.scrollIntoView({ block: "center", behavior: "smooth" });
+              highlightPath(path);
+            }
+          });
+        }
+      });
+      document.getElementById("jsonPane").addEventListener("mouseleave", clearActive);
+    }
+
+    /* ----------------------------------------------------------------
+       Mode toggle (Split / Form / JSON)
+       ---------------------------------------------------------------- */
+    document.getElementById("mode").addEventListener("click", e => {
+      const btn = e.target.closest("button");
+      if (!btn) return;
+      document.querySelectorAll("#mode button").forEach(b => b.removeAttribute("data-active"));
+      btn.setAttribute("data-active", "true");
+      document.getElementById("split").setAttribute("data-mode", btn.dataset.mode);
+    });
+
+    /* boot */
+    renderJSON();
+    wireFormInteractions();
+  </script>
+</body>
+</html>

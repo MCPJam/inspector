@@ -3,6 +3,7 @@ import {
   CHATGPT_HOST_STYLE,
   CLAUDE_HOST_STYLE,
   DEFAULT_HOST_STYLE,
+  MCPJAM_HOST_STYLE,
   SPEC_DEFAULT_HOST_CAPABILITIES,
   findHostStyle,
   getHostCapabilitiesForStyle,
@@ -14,7 +15,8 @@ import {
 } from "..";
 
 describe("host-styles registry", () => {
-  it("registers built-in claude and chatgpt hosts by id", () => {
+  it("registers built-in mcpjam, claude, and chatgpt hosts by id", () => {
+    expect(findHostStyle("mcpjam")).toBe(MCPJAM_HOST_STYLE);
     expect(findHostStyle("claude")).toBe(CLAUDE_HOST_STYLE);
     expect(findHostStyle("chatgpt")).toBe(CHATGPT_HOST_STYLE);
   });
@@ -25,14 +27,15 @@ describe("host-styles registry", () => {
     expect(findHostStyle(undefined)).toBeUndefined();
   });
 
-  it("falls back to claude when an id is unknown or absent", () => {
-    expect(DEFAULT_HOST_STYLE).toBe(CLAUDE_HOST_STYLE);
-    expect(getHostStyleOrDefault(null)).toBe(CLAUDE_HOST_STYLE);
-    expect(getHostStyleOrDefault("missing")).toBe(CLAUDE_HOST_STYLE);
+  it("falls back to mcpjam when an id is unknown or absent", () => {
+    expect(DEFAULT_HOST_STYLE).toBe(MCPJAM_HOST_STYLE);
+    expect(getHostStyleOrDefault(null)).toBe(MCPJAM_HOST_STYLE);
+    expect(getHostStyleOrDefault("missing")).toBe(MCPJAM_HOST_STYLE);
     expect(getHostStyleOrDefault("chatgpt")).toBe(CHATGPT_HOST_STYLE);
   });
 
   it("recognises only registered ids via the type guard", () => {
+    expect(isKnownHostStyleId("mcpjam")).toBe(true);
     expect(isKnownHostStyleId("claude")).toBe(true);
     expect(isKnownHostStyleId("chatgpt")).toBe(true);
     expect(isKnownHostStyleId("unknown")).toBe(false);
@@ -42,8 +45,12 @@ describe("host-styles registry", () => {
 
   it("includes the built-ins in listHostStyles in registration order", () => {
     const ids = listHostStyles().map((host) => host.id);
+    expect(ids).toContain("mcpjam");
     expect(ids).toContain("claude");
     expect(ids).toContain("chatgpt");
+    // MCPJam ships first so the default-fallback host appears at the top
+    // of pickers.
+    expect(ids.indexOf("mcpjam")).toBeLessThan(ids.indexOf("claude"));
     expect(ids.indexOf("claude")).toBeLessThan(ids.indexOf("chatgpt"));
   });
 

@@ -77,7 +77,19 @@ export function HostOverlayBar({
     previewedHostId && hosts.some((h) => h.hostId === previewedHostId)
       ? previewedHostId
       : null;
-  const effectiveHostId = validPreviewedHostId ?? mcpjamHost?.hostId ?? null;
+  // Fallback order: previewed → MCPJam (the seeded default) → any host.
+  // The third leg matters when the user deletes the MCPJam host while
+  // other hosts exist: without it the bar would render its pulsing
+  // skeleton indefinitely (seeding skips when `hosts.length > 0`).
+  const sortedHosts = useMemo(() => {
+    return [...hosts].sort((a, b) => {
+      if (a.name === MCPJAM_HOST_NAME) return -1;
+      if (b.name === MCPJAM_HOST_NAME) return 1;
+      return a.name.localeCompare(b.name);
+    });
+  }, [hosts]);
+  const effectiveHostId =
+    validPreviewedHostId ?? mcpjamHost?.hostId ?? sortedHosts[0]?.hostId ?? null;
 
   useEffect(() => {
     if (isLoading) return;
@@ -90,14 +102,6 @@ export function HostOverlayBar({
     previewedHostId,
     onChangePreviewedHostId,
   ]);
-
-  const sortedHosts = useMemo(() => {
-    return [...hosts].sort((a, b) => {
-      if (a.name === MCPJAM_HOST_NAME) return -1;
-      if (b.name === MCPJAM_HOST_NAME) return 1;
-      return a.name.localeCompare(b.name);
-    });
-  }, [hosts]);
 
   const activeIndex = useMemo(
     () =>

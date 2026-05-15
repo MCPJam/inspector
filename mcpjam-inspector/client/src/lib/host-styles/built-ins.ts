@@ -1,6 +1,7 @@
 import claudeLogo from "/claude_logo.png";
 import openaiLogo from "/openai_logo.png";
 import cursorLogo from "/cursor_logo.png";
+import mcpjamLogo from "/mcp_jam.svg";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
   CHATGPT_CHAT_BACKGROUND,
@@ -20,9 +21,16 @@ import {
   CURSOR_PLATFORM,
   getCursorStyleVariables,
 } from "@/config/cursor-host-context";
+import {
+  MCPJAM_CHAT_BACKGROUND,
+  MCPJAM_FONT_CSS,
+  MCPJAM_PLATFORM,
+  getMcpJamStyleVariables,
+} from "@/config/mcpjam-host-context";
 import { ClaudeMarkIndicator } from "./indicators/claude-mark";
 import { ChatGptDotIndicator } from "./indicators/chatgpt-dot";
 import { CursorBarIndicator } from "./indicators/cursor-bar";
+import { MCPJamMarkIndicator } from "./indicators/mcpjam-mark";
 import type { HostStyleDefinition } from "./types";
 
 // NOTE: capability presets are best-effort mocks of what each vendor publicly
@@ -130,7 +138,44 @@ export const CURSOR_HOST_STYLE: HostStyleDefinition = {
   },
 };
 
+/**
+ * MCPJam's own house chrome. Used as the inspector's default host style so
+ * "no host selected" doesn't silently render as Claude. Capability blob is
+ * the inspector's actual MCP Apps renderer support — same baseline as
+ * Claude minus `listChanged` notifications the renderer doesn't forward.
+ */
+export const MCPJAM_HOST_STYLE: HostStyleDefinition = {
+  id: "mcpjam",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: MCPJAM_PLATFORM,
+    fontCss: MCPJAM_FONT_CSS,
+    hostCapabilities: {
+      openLinks: {},
+      serverTools: {},
+      serverResources: {},
+      logging: {},
+      updateModelContext: { text: {} },
+      message: { text: {} },
+    },
+    resolveStyleVariables: getMcpJamStyleVariables,
+  },
+  chatUi: {
+    label: "MCPJam",
+    shortLabel: "MCPJam-style host",
+    pickerDescription: "Inspector's house chrome",
+    logoSrc: mcpjamLogo,
+    // Maps onto the claude visual family (warm bubble chat language) until
+    // MCPJam earns its own. Family controls bubble shape, send hint, etc.;
+    // colors and the loading mark are already MCPJam-branded above.
+    family: "claude",
+    resolveChatBackground: (theme) => MCPJAM_CHAT_BACKGROUND[theme],
+    loadingIndicator: MCPJamMarkIndicator,
+  },
+};
+
 export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
+  MCPJAM_HOST_STYLE,
   CLAUDE_HOST_STYLE,
   CHATGPT_HOST_STYLE,
   CURSOR_HOST_STYLE,

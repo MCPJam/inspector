@@ -7,6 +7,7 @@ describe("HostFocusPanel", () => {
   it("uses global theme shell classes for the panel root", () => {
     const { container } = render(
       <HostFocusPanel
+        hostId="host-test"
         tab="behavior"
         onTabChange={vi.fn()}
         initialSelectedServerId={null}
@@ -28,6 +29,7 @@ describe("HostFocusPanel", () => {
   it("shows Agent in the header tab bar with neutral icon chrome only", () => {
     render(
       <HostFocusPanel
+        hostId="host-test"
         tab="protocol"
         onTabChange={vi.fn()}
         initialSelectedServerId={null}
@@ -55,6 +57,7 @@ describe("HostFocusPanel", () => {
   it("shows Apps Extension in the header tab bar without SEP-1865 subtext", () => {
     render(
       <HostFocusPanel
+        hostId="host-test"
         tab="protocol"
         onTabChange={vi.fn()}
         initialSelectedServerId={null}
@@ -79,6 +82,7 @@ describe("HostFocusPanel", () => {
   it("shows MCP Protocol in the header tab bar without wire subtext", () => {
     render(
       <HostFocusPanel
+        hostId="host-test"
         tab="apps"
         onTabChange={vi.fn()}
         initialSelectedServerId={null}
@@ -103,6 +107,7 @@ describe("HostFocusPanel", () => {
   it("includes a General tab in the tab bar", () => {
     render(
       <HostFocusPanel
+        hostId="host-test"
         tab="general"
         onTabChange={vi.fn()}
         initialSelectedServerId={null}
@@ -126,6 +131,7 @@ describe("HostFocusPanel", () => {
   it("does not show a placeholder Advanced tab", () => {
     render(
       <HostFocusPanel
+        hostId="host-test"
         tab="servers"
         onTabChange={vi.fn()}
         initialSelectedServerId={null}

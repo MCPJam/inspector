@@ -18,6 +18,12 @@ import {
 } from "./host-focus-shell";
 
 interface HostFocusPanelProps {
+  /**
+   * Stable host identifier. Used as a React key on the JSON-native tabs so
+   * they hard-remount when the user switches hosts — otherwise the
+   * mount-time-only content buffer in those tabs goes stale.
+   */
+  hostId: string;
   tab: HostFocusTabId;
   onTabChange: (next: HostFocusTabId) => void;
   initialSelectedServerId: string | null;
@@ -38,6 +44,7 @@ interface HostFocusPanelProps {
 }
 
 export function HostFocusPanel({
+  hostId,
   tab,
   onTabChange,
   initialSelectedServerId,
@@ -97,6 +104,7 @@ export function HostFocusPanel({
         ) : null}
         {tab === "protocol" ? (
           <ProtocolTab
+            key={hostId}
             draft={draft}
             onDraftChange={onDraftChange}
             attention={attention}
@@ -104,6 +112,7 @@ export function HostFocusPanel({
         ) : null}
         {tab === "apps" ? (
           <AppsExtensionTab
+            key={hostId}
             draft={draft}
             onDraftChange={onDraftChange}
             attention={attention}

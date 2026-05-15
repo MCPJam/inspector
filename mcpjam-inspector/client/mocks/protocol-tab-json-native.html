@@ -1,0 +1,888 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MCP Protocol — structure-aware JSON editor mock</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&display=swap"
+    rel="stylesheet"
+  />
+  <style>
+    /* ============================================================
+       JSON-native editor — VS Code settings.json energy, applied
+       to the MCP initialize payload. The document IS the UI; we
+       add affordances around it: spec-aware tooltips on hover,
+       ghost completion lines, gutter quick-fixes, an outline rail.
+       Aesthetic stays in the same family as protocol-tab-dual-pane.
+       ============================================================ */
+    :root {
+      --bg:           oklch(0.155 0.008 250);
+      --panel:        oklch(0.185 0.010 250);
+      --panel-2:      oklch(0.215 0.012 250);
+      --rail:         oklch(0.175 0.010 250);
+      --row-hover:    oklch(0.235 0.014 250);
+      --border:       oklch(0.32 0.014 250 / 0.55);
+      --border-soft:  oklch(0.32 0.014 250 / 0.30);
+      --hairline:     oklch(0.32 0.014 250 / 0.22);
+
+      --fg:           oklch(0.94 0.012 100);
+      --fg-soft:      oklch(0.80 0.012 100);
+      --fg-muted:     oklch(0.60 0.012 100);
+      --fg-faint:     oklch(0.42 0.012 100);
+      --fg-ghost:     oklch(0.32 0.010 250);
+
+      --accent:       oklch(0.78 0.155 60);
+      --accent-soft:  oklch(0.78 0.155 60 / 0.18);
+      --accent-faint: oklch(0.78 0.155 60 / 0.08);
+      --accent-line:  oklch(0.78 0.155 60 / 0.55);
+
+      --ok:           oklch(0.78 0.15 155);
+      --warn:         oklch(0.80 0.16 85);
+      --err:          oklch(0.72 0.20 25);
+
+      --tk-key:       oklch(0.78 0.04 240);
+      --tk-string:    oklch(0.80 0.08 75);
+      --tk-number:    oklch(0.78 0.12 165);
+      --tk-bool:      oklch(0.78 0.12 305);
+      --tk-null:      oklch(0.56 0.02 250);
+      --tk-punct:     oklch(0.48 0.012 250);
+
+      --font: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+      --ease: cubic-bezier(0.32, 0.72, 0, 1);
+    }
+
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--font);
+      font-size: 12.5px;
+      line-height: 1.55;
+      font-feature-settings: "ss01", "zero", "cv11";
+      -webkit-font-smoothing: antialiased;
+    }
+    body::before {
+      content: "";
+      position: fixed; inset: 0;
+      background-image:
+        radial-gradient(circle at 14% 8%, oklch(0.78 0.155 60 / 0.045), transparent 40%),
+        radial-gradient(circle at 92% 92%, oklch(0.6 0.10 230 / 0.04), transparent 50%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .shell {
+      position: relative; z-index: 1;
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+      max-width: 1480px;
+      margin: 0 auto;
+      padding: 24px;
+      gap: 14px;
+    }
+
+    /* ============================================================
+       Tab bar
+    ============================================================ */
+    .tabbar {
+      display: flex; align-items: center; gap: 2px;
+      border-bottom: 1px solid var(--hairline);
+    }
+    .tab {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 10px 14px 12px;
+      font-size: 12.5px;
+      color: var(--fg-muted);
+      border-bottom: 1px solid transparent;
+      cursor: pointer;
+      transition: color 160ms var(--ease);
+    }
+    .tab:hover { color: var(--fg-soft); }
+    .tab[data-active="true"] { color: var(--fg); border-bottom-color: var(--accent); }
+    .tab .glyph { width: 14px; height: 14px; color: var(--fg-faint); }
+    .tab[data-active="true"] .glyph { color: var(--accent); }
+    .tab-spacer { flex: 1; }
+    .tab-close { color: var(--fg-faint); padding: 8px 10px; cursor: pointer; }
+    .tab-close:hover { color: var(--fg); }
+
+    /* ============================================================
+       Toolbar
+    ============================================================ */
+    .toolbar {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 11.5px; color: var(--fg-muted);
+    }
+    .toolbar .title { color: var(--fg); font-weight: 500; letter-spacing: 0.02em; }
+    .toolbar .breadcrumb {
+      display: inline-flex; align-items: center; gap: 6px;
+      color: var(--fg-faint);
+      padding: 4px 8px;
+      border: 1px solid var(--hairline);
+      border-radius: 3px;
+      background: var(--panel);
+      font-size: 11px;
+    }
+    .toolbar .breadcrumb b { color: var(--fg); font-weight: 500; }
+    .toolbar .breadcrumb .sep { color: var(--fg-ghost); }
+    .toolbar .right { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+
+    .btn {
+      all: unset;
+      cursor: pointer;
+      padding: 5px 10px;
+      font-size: 11px;
+      color: var(--fg-soft);
+      background: var(--panel);
+      border: 1px solid var(--border-soft);
+      border-radius: 4px;
+      transition: border-color 140ms, color 140ms;
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .btn:hover { border-color: var(--accent-line); color: var(--fg); }
+    .btn .caret { color: var(--fg-faint); font-size: 9px; }
+
+    .toggle-btn {
+      all: unset;
+      cursor: pointer;
+      padding: 4px 8px;
+      font-size: 11px;
+      color: var(--fg-muted);
+      border: 1px solid var(--hairline);
+      border-radius: 3px;
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .toggle-btn[data-on="true"] {
+      color: var(--accent);
+      border-color: var(--accent-line);
+      background: var(--accent-faint);
+    }
+
+    /* ============================================================
+       Workbench: outline rail + editor
+    ============================================================ */
+    .workbench {
+      display: grid;
+      grid-template-columns: 220px 1fr 280px;
+      min-height: 0;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+      background: var(--panel);
+    }
+
+    /* -- Outline rail (left) -- */
+    .outline {
+      background: var(--rail);
+      border-right: 1px solid var(--hairline);
+      padding: 14px 0 80px;
+      overflow: auto;
+    }
+    .outline .head {
+      padding: 0 14px 8px;
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--fg-faint);
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+    }
+    .outline .head .meta { color: var(--fg-ghost); font-size: 9.5px; }
+    .otree { padding: 4px 6px; }
+    .onode {
+      display: grid;
+      grid-template-columns: 14px 1fr auto;
+      gap: 6px;
+      align-items: center;
+      padding: 3px 8px 3px 6px;
+      font-size: 11.5px;
+      color: var(--fg-soft);
+      border-radius: 3px;
+      cursor: pointer;
+      transition: background 120ms;
+      position: relative;
+    }
+    .onode:hover { background: var(--row-hover); color: var(--fg); }
+    .onode[data-active="true"] {
+      color: var(--fg);
+      background: var(--accent-faint);
+    }
+    .onode[data-active="true"]::before {
+      content: "";
+      position: absolute;
+      left: 0; top: 4px; bottom: 4px;
+      width: 2px; border-radius: 1px;
+      background: var(--accent);
+    }
+    .onode[data-missing="true"] { color: var(--fg-faint); font-style: italic; }
+    .onode .ico { color: var(--fg-faint); font-size: 10px; text-align: center; }
+    .onode[data-active="true"] .ico { color: var(--accent); }
+    .onode .badge {
+      font-size: 9.5px;
+      color: var(--fg-faint);
+      letter-spacing: 0.06em;
+    }
+    .onode .badge.warn { color: var(--warn); }
+    .onode .badge.err  { color: var(--err);  }
+    .onode .badge.ok   { color: var(--ok);   }
+    .onode.depth-1 { padding-left: 22px; }
+    .onode.depth-2 { padding-left: 38px; }
+    .onode.depth-3 { padding-left: 54px; }
+    .onode.depth-1 .ico, .onode.depth-2 .ico, .onode.depth-3 .ico {
+      color: var(--fg-ghost);
+    }
+
+    /* -- Editor (center) -- */
+    .editor {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg);
+    }
+    .editor-tabs {
+      display: flex;
+      align-items: stretch;
+      border-bottom: 1px solid var(--hairline);
+      background: oklch(0.17 0.008 250);
+    }
+    .efile {
+      padding: 8px 14px;
+      font-size: 11.5px;
+      color: var(--fg-muted);
+      border-right: 1px solid var(--hairline);
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      cursor: pointer;
+    }
+    .efile[data-active="true"] {
+      color: var(--fg);
+      background: var(--bg);
+      box-shadow: inset 0 -1px 0 var(--bg), inset 0 2px 0 var(--accent);
+    }
+    .efile .ext { color: var(--fg-ghost); font-size: 10px; letter-spacing: 0.06em; }
+    .efile .modified {
+      width: 6px; height: 6px;
+      background: var(--accent);
+      border-radius: 50%;
+      margin-left: 2px;
+    }
+
+    .editor-area {
+      flex: 1; min-height: 0;
+      overflow: auto;
+      padding: 12px 0 100px;
+      position: relative;
+    }
+
+    /* JSON lines */
+    .jline {
+      display: grid;
+      grid-template-columns: 56px 24px 1fr;
+      align-items: baseline;
+      padding: 0;
+      cursor: text;
+      transition: background 120ms var(--ease);
+      position: relative;
+    }
+    .jline:hover { background: oklch(0.18 0.012 250); }
+    .jline[data-active="true"] { background: var(--accent-faint); }
+    .jline[data-active="true"]::before {
+      content: "";
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 2px;
+      background: var(--accent);
+    }
+    .jline .ln {
+      counter-increment: ln;
+      text-align: right;
+      padding-right: 12px;
+      color: var(--fg-ghost);
+      font-size: 11px;
+      user-select: none;
+    }
+    .jline .ln::after { content: counter(ln); }
+    .jline .gutter {
+      width: 24px;
+      text-align: center;
+      color: var(--fg-ghost);
+      font-size: 11px;
+      cursor: pointer;
+      position: relative;
+    }
+    .jline .gutter:hover { color: var(--fg); }
+    .jline[data-active="true"] .gutter::after { content: "◆"; color: var(--accent); }
+    .jline[data-status="ok"] .gutter::after        { content: "✓"; color: var(--ok); opacity: 0.55; }
+    .jline[data-status="warn"] .gutter::after      { content: "▲"; color: var(--warn); }
+    .jline[data-status="err"]  .gutter::after      { content: "!"; color: var(--err); font-weight: 700; }
+    .jline[data-status="fix"]  .gutter::after      { content: "💡"; font-size: 10px; filter: saturate(0.6); }
+
+    .jline[data-status="warn"] { background: oklch(0.25 0.05 85 / 0.10); }
+    .jline[data-status="err"]  { background: oklch(0.25 0.05 25 / 0.16); }
+
+    .editor-area { counter-reset: ln; }
+
+    .jline .code {
+      white-space: pre;
+      color: var(--tk-punct);
+      position: relative;
+    }
+    .jline .code .key,
+    .jline .code .str,
+    .jline .code .num,
+    .jline .code .bool,
+    .jline .code .null { cursor: help; }
+
+    .tok-key    { color: var(--tk-key); }
+    .tok-str    { color: var(--tk-string); }
+    .tok-num    { color: var(--tk-number); }
+    .tok-bool   { color: var(--tk-bool); }
+    .tok-null   { color: var(--tk-null); font-style: italic; }
+    .tok-punct  { color: var(--tk-punct); }
+
+    /* squiggly underline for spec violations */
+    .squiggle {
+      text-decoration: underline wavy var(--err);
+      text-decoration-thickness: 1px;
+      text-underline-offset: 3px;
+    }
+    .squiggle-warn {
+      text-decoration: underline wavy var(--warn);
+      text-decoration-thickness: 1px;
+      text-underline-offset: 3px;
+    }
+
+    /* "Add" affordance row — deliberately NOT JSON-shaped so users can't
+       mistake it for data the host or user actually provided. */
+    .jline[data-addable="true"] {
+      cursor: pointer;
+      grid-template-columns: 56px 24px 1fr;
+    }
+    .jline[data-addable="true"] .gutter::after { content: "+"; color: var(--fg-ghost); }
+    .jline[data-addable="true"]:hover .gutter::after { color: var(--accent); }
+    .jline[data-addable="true"]:hover { background: var(--accent-faint); }
+    .add-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 3px 10px 3px 8px;
+      margin-left: 0;
+      font-size: 10.5px;
+      color: var(--fg-muted);
+      border: 1px dashed var(--hairline);
+      border-radius: 999px;
+      background: transparent;
+      letter-spacing: 0.04em;
+      transition: color 140ms, border-color 140ms, background 140ms;
+    }
+    .add-chip .plus { color: var(--fg-faint); font-weight: 600; }
+    .add-chip .key  { color: var(--fg-soft);  font-weight: 500; }
+    .add-chip .type {
+      color: var(--fg-ghost);
+      font-size: 9.5px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      border-left: 1px solid var(--hairline);
+      padding-left: 8px;
+    }
+    .add-chip .desc { color: var(--fg-faint); font-size: 10.5px; font-style: italic; }
+    .jline[data-addable="true"]:hover .add-chip {
+      color: var(--fg);
+      border-color: var(--accent-line);
+      background: var(--accent-faint);
+    }
+    .jline[data-addable="true"]:hover .add-chip .plus,
+    .jline[data-addable="true"]:hover .add-chip .key { color: var(--accent); }
+
+    /* -- Sidekick panel (right) — context-sensitive doc / quick-fix -- */
+    .sidekick {
+      background: var(--panel);
+      border-left: 1px solid var(--hairline);
+      padding: 14px 16px 80px;
+      overflow: auto;
+    }
+    .sidekick .label {
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--fg-faint);
+      margin-bottom: 8px;
+    }
+    .sidekick .doc {
+      background: var(--panel-2);
+      border: 1px solid var(--hairline);
+      border-radius: 4px;
+      padding: 14px;
+    }
+    .sidekick .doc .path {
+      font-size: 11px;
+      color: var(--fg-soft);
+      display: flex;
+      gap: 4px;
+      align-items: baseline;
+      flex-wrap: wrap;
+    }
+    .sidekick .doc .path b { color: var(--fg); font-weight: 600; }
+    .sidekick .doc .path .sep { color: var(--fg-ghost); }
+    .sidekick .doc h4 {
+      margin: 10px 0 4px;
+      font-size: 13px;
+      letter-spacing: 0.02em;
+      color: var(--fg);
+    }
+    .sidekick .doc .since {
+      display: inline-block;
+      margin-top: 2px;
+      font-size: 10px;
+      color: var(--fg-faint);
+      letter-spacing: 0.04em;
+      padding: 1px 6px;
+      border: 1px solid var(--hairline);
+      border-radius: 2px;
+    }
+    .sidekick .doc p {
+      margin: 10px 0;
+      font-size: 11.5px;
+      color: var(--fg-soft);
+      line-height: 1.6;
+    }
+    .sidekick .doc code {
+      background: var(--bg);
+      color: var(--tk-key);
+      padding: 0 4px;
+      border-radius: 2px;
+      font-size: 11px;
+    }
+    .sidekick .doc .type {
+      display: flex;
+      gap: 8px;
+      font-size: 10.5px;
+      color: var(--fg-muted);
+      margin-top: 8px;
+    }
+    .sidekick .doc .type span b { color: var(--fg-soft); font-weight: 500; }
+    .sidekick .doc .actions {
+      margin-top: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .sidekick .doc .actions .action {
+      all: unset;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 10px;
+      border: 1px solid var(--hairline);
+      border-radius: 3px;
+      font-size: 11px;
+      color: var(--fg-soft);
+      transition: border-color 140ms, color 140ms, background 140ms;
+    }
+    .sidekick .doc .actions .action:hover {
+      border-color: var(--accent-line);
+      color: var(--fg);
+      background: var(--accent-faint);
+    }
+    .sidekick .doc .actions .action .key {
+      margin-left: auto;
+      color: var(--fg-ghost);
+      font-size: 10px;
+      letter-spacing: 0.06em;
+    }
+    .sidekick .doc .actions .action.primary {
+      border-color: var(--accent-line);
+      color: var(--accent);
+    }
+    .sidekick .doc .actions .action.primary:hover { background: var(--accent-faint); }
+
+    .sidekick .section + .section { margin-top: 18px; }
+    .sidekick .related {
+      display: grid;
+      gap: 4px;
+    }
+    .sidekick .related .item {
+      font-size: 11px;
+      color: var(--fg-soft);
+      padding: 5px 8px;
+      border-radius: 3px;
+      cursor: pointer;
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+    }
+    .sidekick .related .item:hover { background: var(--row-hover); color: var(--fg); }
+    .sidekick .related .item .glyph { color: var(--fg-faint); font-size: 10px; }
+    .sidekick .related .item .desc { color: var(--fg-faint); font-size: 10.5px; }
+
+    /* ============================================================
+       Status bar
+    ============================================================ */
+    .statusbar {
+      display: flex; align-items: center; gap: 14px;
+      padding: 6px 12px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--panel);
+      font-size: 11px;
+      color: var(--fg-muted);
+    }
+    .statusbar .item { display: inline-flex; align-items: center; gap: 6px; }
+    .statusbar .dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--fg-faint);
+    }
+    .statusbar .dot.ok   { background: var(--ok); box-shadow: 0 0 0 3px oklch(0.78 0.15 155 / 0.12); }
+    .statusbar .dot.warn { background: var(--warn); }
+    .statusbar .dot.err  { background: var(--err); }
+    .statusbar .item.right { margin-left: auto; }
+    .statusbar b { color: var(--fg-soft); font-weight: 500; }
+
+    ::selection { background: var(--accent-soft); color: var(--fg); }
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb {
+      background: var(--hairline);
+      border-radius: 5px;
+      border: 2px solid transparent;
+      background-clip: padding-box;
+    }
+    ::-webkit-scrollbar-thumb:hover { background: var(--border); background-clip: padding-box; border: 2px solid transparent; }
+
+    @media (max-width: 1100px) {
+      .workbench { grid-template-columns: 180px 1fr; }
+      .sidekick { display: none; }
+    }
+    @media (max-width: 800px) {
+      .workbench { grid-template-columns: 1fr; }
+      .outline { display: none; }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="shell">
+
+    <!-- ============================================================
+         Tab bar
+    ============================================================ -->
+    <div class="tabbar">
+      <div class="tab"><span class="glyph">⚙</span>Agent</div>
+      <div class="tab" data-active="true"><span class="glyph">⏻</span>MCP Protocol</div>
+      <div class="tab"><span class="glyph">▤</span>Apps Extension</div>
+      <div class="tab"><span class="glyph">▣</span>Servers</div>
+      <div class="tab"><span class="glyph">◫</span>General</div>
+      <div class="tab-spacer"></div>
+      <div class="tab-close">✕</div>
+    </div>
+
+    <!-- ============================================================
+         Toolbar
+    ============================================================ -->
+    <div class="toolbar">
+      <div class="title">MCP Protocol</div>
+      <span class="breadcrumb" id="bc">
+        <b>params</b><span class="sep">›</span>
+        <b>capabilities</b><span class="sep">›</span>
+        <b>elicitation</b><span class="sep">›</span>
+        <b>form</b>
+      </span>
+      <div class="right">
+        <button class="toggle-btn" data-on="true" id="ghostsToggle">⌖ ghosts</button>
+        <button class="toggle-btn" data-on="true" id="docsToggle">⌕ docs</button>
+        <button class="btn">↻ preset · custom <span class="caret">▾</span></button>
+        <button class="btn">format</button>
+        <button class="btn">copy</button>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         Workbench
+    ============================================================ -->
+    <div class="workbench">
+
+      <!-- ===== Outline rail ===== -->
+      <aside class="outline">
+        <div class="head">
+          <span>outline</span>
+          <span class="meta">12 keys</span>
+        </div>
+        <div class="otree" id="otree">
+          <div class="onode"               data-jump="params"><span class="ico">⟨⟩</span>params<span class="badge">obj</span></div>
+          <div class="onode depth-1"      data-jump="params.protocolVersion"><span class="ico">"</span>protocolVersion<span class="badge">str</span></div>
+          <div class="onode depth-1"      data-jump="params.clientInfo"><span class="ico">⟨⟩</span>clientInfo<span class="badge">obj</span></div>
+          <div class="onode depth-2"      data-jump="params.clientInfo.name"><span class="ico">"</span>name</div>
+          <div class="onode depth-2"      data-jump="params.clientInfo.version"><span class="ico">"</span>version</div>
+          <div class="onode depth-2"      data-jump="params.clientInfo.title" data-missing="true"><span class="ico">"</span>title<span class="badge">opt</span></div>
+          <div class="onode depth-1"      data-jump="params.capabilities" data-active="true"><span class="ico">⟨⟩</span>capabilities<span class="badge ok">3 adv</span></div>
+          <div class="onode depth-2"      data-jump="params.capabilities.roots"><span class="ico">⟨⟩</span>roots</div>
+          <div class="onode depth-3"      data-jump="params.capabilities.roots.listChanged"><span class="ico">b</span>listChanged</div>
+          <div class="onode depth-2"      data-jump="params.capabilities.elicitation"><span class="ico">⟨⟩</span>elicitation</div>
+          <div class="onode depth-3"      data-jump="params.capabilities.elicitation.form" data-active="true"><span class="ico">⟨⟩</span>form</div>
+          <div class="onode depth-3"      data-jump="params.capabilities.elicitation.url"><span class="ico">⟨⟩</span>url</div>
+          <div class="onode depth-2"      data-jump="params.capabilities.sampling"><span class="ico">⟨⟩</span>sampling</div>
+          <div class="onode depth-2"      data-jump="params.capabilities.tasks" data-missing="true"><span class="ico">⟨⟩</span>tasks<span class="badge">opt</span></div>
+          <div class="onode depth-2"      data-jump="params.capabilities.experimental" data-missing="true"><span class="ico">⟨⟩</span>experimental<span class="badge">opt</span></div>
+          <div class="onode depth-2"      data-jump="params.capabilities.extra"><span class="ico">⟨⟩</span>extra<span class="badge err">not in spec</span></div>
+        </div>
+      </aside>
+
+      <!-- ===== Editor ===== -->
+      <main class="editor">
+        <div class="editor-tabs">
+          <div class="efile" data-active="true">
+            <span>initialize.json</span>
+            <span class="ext">PARAMS</span>
+            <span class="modified"></span>
+          </div>
+          <div class="efile">
+            <span>response.json</span>
+            <span class="ext">SERVER</span>
+          </div>
+        </div>
+
+        <div class="editor-area" id="editor">
+          <!-- Lines rendered by JS below. We hand-author the JSON to keep
+               annotations precise (status, ghosts, tooltips). -->
+        </div>
+      </main>
+
+      <!-- ===== Sidekick (right) ===== -->
+      <aside class="sidekick" id="sidekick">
+        <div class="section">
+          <div class="label">spec doc · hover</div>
+          <div class="doc">
+            <div class="path">
+              <span>params</span><span class="sep">›</span>
+              <span>capabilities</span><span class="sep">›</span>
+              <span>elicitation</span><span class="sep">›</span>
+              <b>form</b>
+            </div>
+            <h4>capabilities.elicitation.form</h4>
+            <span class="since">since MCP 2025-06-18</span>
+            <p>
+              Declares that this client can render structured forms when the server
+              calls <code>elicitation/create</code>. Presence of the key (an empty
+              object <code>{}</code>) is enough — there are no sub-fields defined
+              in the current spec.
+            </p>
+            <div class="type">
+              <span><b>type</b> object</span>
+              <span><b>required</b> no</span>
+              <span><b>shape</b> {}</span>
+            </div>
+            <div class="actions">
+              <button class="action">
+                Open spec page
+                <span class="key">⌘ ↗</span>
+              </button>
+              <button class="action">
+                Insert sibling <code>url</code>
+                <span class="key">⌘ .</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="label">other capabilities</div>
+          <div class="related">
+            <div class="item"><span class="glyph">⟨⟩</span> roots <span class="desc">— filesystem roots</span></div>
+            <div class="item"><span class="glyph">⟨⟩</span> sampling <span class="desc">— server-requested LLM calls</span></div>
+            <div class="item"><span class="glyph">⟨⟩</span> tasks <span class="desc">— deferred / async requests</span></div>
+            <div class="item"><span class="glyph">⟨⟩</span> experimental <span class="desc">— vendor extensions</span></div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="label">problems · 2</div>
+          <div class="related">
+            <div class="item" style="color: var(--err)">
+              <span class="glyph">!</span> capabilities.extra
+              <span class="desc" style="color: var(--err)">— not defined in MCP 2025-11-25</span>
+            </div>
+            <div class="item" style="color: var(--warn)">
+              <span class="glyph">▲</span> protocolVersion
+              <span class="desc" style="color: var(--warn)">— recommend sending latest first</span>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <!-- ============================================================
+         Status bar
+    ============================================================ -->
+    <div class="statusbar">
+      <div class="item"><span class="dot warn"></span><b>1 error · 1 warning</b></div>
+      <div class="item">· cursor <b>L 14 : C 17</b></div>
+      <div class="item">· path <b>params.capabilities.elicitation.form</b></div>
+      <div class="item">· <b>412</b>&nbsp;bytes</div>
+      <div class="item">· wire <b>MCP 2025-11-25</b></div>
+      <div class="item right">⌘ . quick-fix · ⌘ O outline · ⌘ space completions</div>
+    </div>
+  </div>
+
+  <script>
+    /* ============================================================
+       The JSON document is hand-authored as an array of lines so we
+       can attach: path, status (ok/warn/err/fix), ghost flag, and a
+       tokenized html body. In production this comes from the existing
+       JsonEditor view; here we fake it just enough to show the shape.
+       ============================================================ */
+    const k = (s) => `<span class="tok-key key" data-tip="key:${s}">"${s}"</span>`;
+    const s = (v) => `<span class="tok-str str" data-tip="string">"${v}"</span>`;
+    const n = (v) => `<span class="tok-num num" data-tip="number">${v}</span>`;
+    const b = (v) => `<span class="tok-bool bool" data-tip="boolean">${v}</span>`;
+    const p = (x) => `<span class="tok-punct">${x}</span>`;
+    const I = (n) => "  ".repeat(n);
+
+    const lines = [
+      { path: "",                                   html: `${p("{")}` },
+      { path: "jsonrpc",                            html: `${I(1)}${k("jsonrpc")}${p(":")} ${s("2.0")}${p(",")}` },
+      { path: "id",                                 html: `${I(1)}${k("id")}${p(":")} ${n(1)}${p(",")}` },
+      { path: "method",                             html: `${I(1)}${k("method")}${p(":")} ${s("initialize")}${p(",")}` },
+      { path: "params",                             html: `${I(1)}${k("params")}${p(": {")}` },
+
+      { path: "params.protocolVersion",             html: `${I(2)}${k("protocolVersion")}${p(":")} ${s("2025-11-25")}${p(",")}`, status: "warn" },
+
+      { path: "params.clientInfo",                  html: `${I(2)}${k("clientInfo")}${p(": {")}` },
+      { path: "params.clientInfo.name",             html: `${I(3)}${k("name")}${p(":")} ${s("@mcpjam/inspector")}${p(",")}`, status: "ok" },
+      { path: "params.clientInfo.version",          html: `${I(3)}${k("version")}${p(":")} ${s("1.0.0")}`, status: "ok" },
+      { path: "params.clientInfo.+title",           addable: { key: "title", parent: "clientInfo", desc: "optional display name", type: "string" }, indent: 3 },
+      { path: "params.clientInfo",                  html: `${I(2)}${p("},")}` },
+
+      { path: "params.capabilities",                html: `${I(2)}${k("capabilities")}${p(": {")}` },
+
+      // roots
+      { path: "params.capabilities.roots",          html: `${I(3)}${k("roots")}${p(": {")}` },
+      { path: "params.capabilities.roots.listChanged", html: `${I(4)}${k("listChanged")}${p(":")} ${b("true")}`, status: "ok" },
+      { path: "params.capabilities.roots",          html: `${I(3)}${p("},")}` },
+
+      // elicitation  — active line: .form
+      { path: "params.capabilities.elicitation",    html: `${I(3)}${k("elicitation")}${p(": {")}` },
+      { path: "params.capabilities.elicitation.form",  html: `${I(4)}${k("form")}${p(": {}")}${p(",")}`, status: "ok", active: true },
+      { path: "params.capabilities.elicitation.url",   html: `${I(4)}${k("url")}${p(": {}")}` },
+      { path: "params.capabilities.elicitation",    html: `${I(3)}${p("},")}` },
+
+      // sampling
+      { path: "params.capabilities.sampling",       html: `${I(3)}${k("sampling")}${p(": {}")}${p(",")}` },
+
+      // extra — spec violation
+      { path: "params.capabilities.extra",
+        html: `${I(3)}<span class="tok-key key squiggle" data-tip="not-in-spec">"extra"</span>${p(": {")}`,
+        status: "err" },
+      { path: "params.capabilities.extra.foo",      html: `${I(4)}${k("foo")}${p(":")} ${s("bar")}` },
+      { path: "params.capabilities.extra",          html: `${I(3)}${p("}")}` },
+
+      { path: "params.capabilities.+tasks",         addable: { key: "tasks",        parent: "capabilities", desc: "async / deferred requests",  type: "object" }, indent: 3 },
+      { path: "params.capabilities.+experimental",  addable: { key: "experimental", parent: "capabilities", desc: "vendor extensions",         type: "object" }, indent: 3 },
+
+      { path: "params.capabilities",                html: `${I(2)}${p("}")}` },
+      { path: "params",                             html: `${I(1)}${p("}")}` },
+      { path: "",                                   html: `${p("}")}` },
+    ];
+
+    /* ---------------- render ---------------- */
+    function render() {
+      const showAddables = document.getElementById("ghostsToggle").dataset.on === "true";
+      const root = document.getElementById("editor");
+      root.innerHTML = lines
+        .filter(line => showAddables || !line.addable)
+        .map(line => {
+          if (line.addable) {
+            const { key, parent, desc, type } = line.addable;
+            return `
+              <div class="jline"
+                   data-path="${line.path}"
+                   data-addable="true">
+                <div class="ln"></div>
+                <div class="gutter"></div>
+                <div class="code">${"  ".repeat(line.indent || 0)}<span class="add-chip">
+                  <span class="plus">+</span>
+                  <span class="key">${key}</span>
+                  <span class="desc">${desc}</span>
+                  <span class="type">${type}</span>
+                </span></div>
+              </div>
+            `;
+          }
+          return `
+            <div class="jline"
+                 data-path="${line.path}"
+                 data-status="${line.status || ""}"
+                 data-active="${!!line.active}">
+              <div class="ln"></div>
+              <div class="gutter" title="${line.status || ""}"></div>
+              <div class="code">${line.html}</div>
+            </div>
+          `;
+        }).join("");
+      wireLines();
+    }
+
+    /* ---------------- interactions ---------------- */
+    function wireLines() {
+      document.querySelectorAll(".jline").forEach(el => {
+        const path = el.dataset.path;
+        if (!path) return;
+        el.addEventListener("mouseenter", () => {
+          document.querySelectorAll(".onode[data-active='true']").forEach(o => {
+            if (o.dataset.jump !== "params.capabilities" && o.dataset.jump !== "params.capabilities.elicitation.form") {
+              o.removeAttribute("data-active");
+            }
+          });
+          const match = document.querySelector(`.onode[data-jump="${path}"]`);
+          if (match) match.setAttribute("data-active", "true");
+        });
+        if (el.dataset.addable === "true") {
+          el.addEventListener("click", () => {
+            // In production this would mutate the JSON source. For the mock,
+            // just collapse the affordance — nothing is fabricated as a value.
+            el.remove();
+          });
+        }
+      });
+    }
+
+    /* Outline → editor scroll */
+    document.querySelectorAll(".onode").forEach(o => {
+      o.addEventListener("click", () => {
+        const path = o.dataset.jump;
+        const target = document.querySelector(`.jline[data-path="${path}"]`);
+        if (target) {
+          target.scrollIntoView({ behavior: "smooth", block: "center" });
+          document.querySelectorAll(".jline[data-active='true']").forEach(el => el.removeAttribute("data-active"));
+          target.setAttribute("data-active", "true");
+          document.querySelectorAll(".onode[data-active='true']").forEach(x => x.removeAttribute("data-active"));
+          o.setAttribute("data-active", "true");
+        }
+      });
+    });
+
+    /* Toolbar toggles */
+    document.getElementById("ghostsToggle").addEventListener("click", e => {
+      const on = e.currentTarget.dataset.on === "true";
+      e.currentTarget.dataset.on = String(!on);
+      render();
+    });
+    document.getElementById("docsToggle").addEventListener("click", e => {
+      const on = e.currentTarget.dataset.on === "true";
+      e.currentTarget.dataset.on = String(!on);
+      document.getElementById("sidekick").style.display = on ? "none" : "block";
+      document.querySelector(".workbench").style.gridTemplateColumns = on ? "220px 1fr" : "220px 1fr 280px";
+    });
+
+    render();
+  </script>
+</body>
+</html>

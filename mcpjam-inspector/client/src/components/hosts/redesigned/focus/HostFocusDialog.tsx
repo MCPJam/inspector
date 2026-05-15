@@ -30,6 +30,11 @@ import {
 
 interface HostFocusDialogProps {
   open: boolean;
+  /**
+   * Stable host identifier. Used as a React key on the JSON-native tabs so
+   * they hard-remount when the user switches hosts.
+   */
+  hostId: string;
   /** Active tab the dialog should display. */
   tab: HostFocusTabId;
   /** Tab change handler — keyboard nav + header tabs. */
@@ -71,6 +76,7 @@ interface HostFocusDialogProps {
 
 export function HostFocusDialog({
   open,
+  hostId,
   tab,
   onTabChange,
   initialSelectedServerId,
@@ -270,6 +276,7 @@ export function HostFocusDialog({
             ) : null}
             {tab === "protocol" ? (
               <ProtocolTab
+                key={hostId}
                 draft={draft}
                 onDraftChange={onDraftChange}
                 attention={attention}
@@ -277,6 +284,7 @@ export function HostFocusDialog({
             ) : null}
             {tab === "apps" ? (
               <AppsExtensionTab
+                key={hostId}
                 draft={draft}
                 onDraftChange={onDraftChange}
                 attention={attention}

@@ -54,7 +54,7 @@ export function HostBuilderViewRedesigned({
   onBack,
 }: HostBuilderViewRedesignedProps) {
   const { isAuthenticated } = useConvexAuth();
-  const { host, isLoading: hostLoading } = useHost({
+  const { host } = useHost({
     isAuthenticated,
     hostId,
   });
@@ -79,6 +79,10 @@ export function HostBuilderViewRedesigned({
     draft: HostConfigInputV2;
   } | null>(null);
   const lastSeededHostIdRef = useRef<string | null>(null);
+  // Carry the previous host's snapshot id across the brief window where
+  // `useHost(hostId)` re-fires and returns `undefined` — keeps the canvas
+  // chip from blinking blank during in-place host swaps.
+  const lastSnapshotIdRef = useRef<string>("");
 
   // Seed draft state from the loaded host. The `host` reference changes
   // whenever Convex re-emits the host doc — after a save, that's the signal
@@ -180,13 +184,17 @@ export function HostBuilderViewRedesigned({
     [draftConfig?.hostStyle, themeMode],
   );
 
+  const liveSnapshotId = host?.config?.id ?? "";
+  if (liveSnapshotId) lastSnapshotIdRef.current = liveSnapshotId;
+  const savedSnapshotId = liveSnapshotId || lastSnapshotIdRef.current;
+
   const viewModel = useMemo(() => {
     const draft = draftConfig ?? emptyHostConfigInputV2();
     return buildRedesignedHostCanvas(
       {
         hostName: draftName,
         draft,
-        savedSnapshotId: host?.config?.id ?? "",
+        savedSnapshotId,
         isDirty,
         projectServers: availableServersForCanvas,
         prev: prevHostSnapshot ?? undefined,
@@ -196,7 +204,7 @@ export function HostBuilderViewRedesigned({
   }, [
     draftName,
     draftConfig,
-    host?.config?.id,
+    savedSnapshotId,
     isDirty,
     availableServersForCanvas,
     attention,
@@ -277,7 +285,12 @@ export function HostBuilderViewRedesigned({
     [createServer, projectId, openFocus],
   );
 
-  if (hostLoading || !draftConfig) {
+  // Only show the skeleton on the very first mount when there's nothing
+  // to paint. On host swaps `useHost(hostId)` briefly returns `undefined`,
+  // but `draftConfig` still holds the previous host — keep rendering it so
+  // the canvas morphs in place instead of flashing a loader, and the diff
+  // animation has an old→new transition to play against.
+  if (!draftConfig) {
     return (
       <div className="flex flex-col gap-4 p-6">
         <Skeleton className="h-8 w-48" />
@@ -366,6 +379,7 @@ export function HostBuilderViewRedesigned({
               <ResizableHandle withHandle />
               <ResizablePanel defaultSize={45} minSize={35} maxSize={70}>
                 <HostFocusPanel
+                  hostId={hostId}
                   tab={focusState.tab}
                   onTabChange={(next) =>
                     setFocusState((prev) =>

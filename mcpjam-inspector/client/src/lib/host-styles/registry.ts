@@ -1,6 +1,6 @@
 import type { ComponentType } from "react";
 import type { McpUiHostCapabilities } from "@modelcontextprotocol/ext-apps/app-bridge";
-import { BUILT_IN_HOST_STYLES, CLAUDE_HOST_STYLE } from "./built-ins";
+import { BUILT_IN_HOST_STYLES, MCPJAM_HOST_STYLE } from "./built-ins";
 import type { HostStyleDefinition, HostStyleId } from "./types";
 
 /**
@@ -22,8 +22,10 @@ for (const definition of BUILT_IN_HOST_STYLES) {
   registry.set(definition.id, definition);
 }
 
-/** Host returned when an id is unknown or absent. */
-export const DEFAULT_HOST_STYLE: HostStyleDefinition = CLAUDE_HOST_STYLE;
+/** Host returned when an id is unknown or absent. The inspector's own
+ * chrome — keeps "no host selected" surfaces from silently impersonating
+ * Claude. */
+export const DEFAULT_HOST_STYLE: HostStyleDefinition = MCPJAM_HOST_STYLE;
 
 /**
  * Register an additional app-provided host style. Built-ins are registered
@@ -77,7 +79,7 @@ export function getHostCapabilitiesForStyle(
 
 /**
  * Resolve the brand loading indicator component for a host style. Falls
- * back to the default host's indicator (Claude) when the id is unknown
+ * back to the default host's indicator (MCPJam) when the id is unknown
  * or absent — matches the rest of the chrome-resolution surface.
  */
 export function getLoadingIndicatorForStyle(
