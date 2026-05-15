@@ -141,7 +141,7 @@ describe("chatbox-session", () => {
     expect(readChatboxSession()).toBeNull();
   });
 
-  it("defaults missing hostStyle to claude for legacy chatbox sessions", () => {
+  it("defaults missing hostStyle to mcpjam for legacy chatbox sessions", () => {
     sessionStorage.setItem(
       CHATBOX_SESSION_STORAGE_KEY,
       JSON.stringify({
@@ -171,7 +171,7 @@ describe("chatbox-session", () => {
         chatboxId: "sbx_1",
         name: "Legacy Chatbox",
         description: undefined,
-        hostStyle: "claude",
+        hostStyle: "mcpjam",
         mode: "invited_only",
         allowGuestAccess: false,
         viewerIsProjectMember: true,

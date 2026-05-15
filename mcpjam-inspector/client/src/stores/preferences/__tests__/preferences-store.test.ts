@@ -39,7 +39,7 @@ describe("preferences-store", () => {
     expect(store.getState().hostStyle).toBe("codex");
   });
 
-  it("falls back to claude when the persisted host style is blank", () => {
+  it("falls back to the default host style (mcpjam) when the persisted host style is blank", () => {
     localStorage.setItem(HOST_STYLE_KEY, "   ");
 
     const store = createPreferencesStore({
@@ -47,7 +47,7 @@ describe("preferences-store", () => {
       themePreset: "default",
     });
 
-    expect(store.getState().hostStyle).toBe("claude");
+    expect(store.getState().hostStyle).toBe("mcpjam");
   });
 
   it("continues persisting theme preferences alongside host style", () => {

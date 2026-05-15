@@ -451,9 +451,11 @@ describe("MCPAppsRenderer tool input streaming", () => {
     };
 
     render(
-      <ChatboxHostThemeProvider value="dark">
-        <MCPAppsRenderer {...baseProps} />
-      </ChatboxHostThemeProvider>,
+      <ChatboxHostStyleProvider value="claude">
+        <ChatboxHostThemeProvider value="dark">
+          <MCPAppsRenderer {...baseProps} />
+        </ChatboxHostThemeProvider>
+      </ChatboxHostStyleProvider>,
     );
 
     await vi.waitFor(() => {
@@ -566,7 +568,11 @@ describe("MCPAppsRenderer tool input streaming", () => {
       },
     };
 
-    render(<MCPAppsRenderer {...baseProps} />);
+    render(
+      <ChatboxHostStyleProvider value="claude">
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostStyleProvider>,
+    );
 
     await vi.waitFor(() => {
       expect(mockBridge.connect).toHaveBeenCalled();
@@ -613,7 +619,11 @@ describe("MCPAppsRenderer tool input streaming", () => {
   });
 
   it("aligns the sandbox iframe with the host surface while providing host chrome", async () => {
-    render(<MCPAppsRenderer {...baseProps} />);
+    render(
+      <ChatboxHostStyleProvider value="claude">
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostStyleProvider>,
+    );
 
     const iframe = await screen.findByTestId("sandboxed-iframe");
     const hostChrome = screen.getByTestId("mcp-app-host-chrome");
@@ -649,7 +659,11 @@ describe("MCPAppsRenderer tool input streaming", () => {
       headers: new Headers(),
     } as Response);
 
-    render(<MCPAppsRenderer {...baseProps} prefersBorder={false} />);
+    render(
+      <ChatboxHostStyleProvider value="claude">
+        <MCPAppsRenderer {...baseProps} prefersBorder={false} />
+      </ChatboxHostStyleProvider>,
+    );
 
     const iframe = await screen.findByTestId("sandboxed-iframe");
 

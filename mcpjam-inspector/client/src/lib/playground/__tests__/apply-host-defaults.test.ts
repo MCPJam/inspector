@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// host-templates references the Vite-injected __APP_VERSION__ global when
+// seeding template clientInfo. Provide a stable test value before importing.
+(globalThis as { __APP_VERSION__?: string }).__APP_VERSION__ = "0.0.0-test";
+
 import {
   applyHostConfigToPlayground,
   applyHostDefaultsToPlayground,
