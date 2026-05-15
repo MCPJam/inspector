@@ -1,0 +1,1327 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Host Viz — atomized hubs + leaves mock</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+    rel="stylesheet"
+  />
+  <style>
+    /* ============================================================
+       Tokens — OKLCH palette tuned to read alongside the live
+       inspector. Brand swaps per host; everything that should
+       retint references --brand / --brand-soft / --brand-faint.
+       ============================================================ */
+    :root {
+      --bg: oklch(0.18 0.012 250);
+      --bg-elev: oklch(0.22 0.014 250);
+      --card: oklch(0.245 0.016 250);
+      --card-strong: oklch(0.28 0.018 250);
+      --leaf: oklch(0.26 0.016 250);
+      --border: oklch(0.36 0.02 250 / 0.7);
+      --border-soft: oklch(0.36 0.02 250 / 0.4);
+      --fg: oklch(0.94 0.012 100);
+      --fg-soft: oklch(0.78 0.012 100);
+      --fg-muted: oklch(0.58 0.012 100);
+      --fg-faint: oklch(0.42 0.012 100);
+      --warn: oklch(0.78 0.17 75);
+      --insec: oklch(0.74 0.18 55);
+      --ok: oklch(0.78 0.15 155);
+      --info: oklch(0.78 0.14 230);
+
+      --brand: oklch(0.72 0.12 60);
+      --brand-soft: oklch(0.72 0.12 60 / 0.32);
+      --brand-faint: oklch(0.72 0.12 60 / 0.08);
+
+      --font-sans: "IBM Plex Sans", system-ui, sans-serif;
+      --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
+
+      --ease: cubic-bezier(0.32, 0.72, 0, 1);
+      --morph: 560ms;
+      --leaf-w: 158px;
+      --leaf-h: 42px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0; height: 100%;
+      background: var(--bg); color: var(--fg);
+      font-family: var(--font-sans); font-size: 14px;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: geometricPrecision;
+    }
+    button {
+      font-family: inherit; color: inherit; background: none;
+      border: none; cursor: pointer; padding: 0;
+    }
+
+    .app {
+      height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      overflow: hidden;
+    }
+
+    /* ============================================================
+       Topbar — host picker drives the morph.
+       ============================================================ */
+    .topbar {
+      display: flex; align-items: center; gap: 14px;
+      padding: 10px 22px;
+      border-bottom: 1px solid var(--border-soft);
+      background: linear-gradient(to bottom, oklch(0.21 0.014 250), oklch(0.18 0.012 250));
+    }
+    .topbar .back {
+      width: 30px; height: 30px; border-radius: 8px;
+      color: var(--fg-muted);
+      display: grid; place-items: center;
+      transition: background 120ms ease, color 120ms ease;
+    }
+    .topbar .back:hover { background: oklch(1 0 0 / 0.06); color: var(--fg); }
+
+    .host-picker {
+      position: relative; display: inline-flex; align-items: center;
+      background: oklch(0.22 0.014 250);
+      border: 1px solid var(--border-soft);
+      border-radius: 999px; padding: 3px;
+    }
+    .host-picker .indicator {
+      position: absolute; top: 3px; bottom: 3px;
+      border-radius: 999px;
+      background: var(--brand-faint);
+      border: 1px solid var(--brand-soft);
+      transition: transform var(--morph) var(--ease),
+                  width var(--morph) var(--ease),
+                  background 360ms ease,
+                  border-color 360ms ease;
+      pointer-events: none; z-index: 0;
+    }
+    .host-picker button {
+      position: relative; z-index: 1;
+      padding: 6px 14px;
+      font-size: 12.5px; font-weight: 500;
+      color: var(--fg-soft);
+      letter-spacing: 0.01em;
+      transition: color 240ms ease;
+    }
+    .host-picker button.active { color: var(--fg); }
+    .host-picker button .swatch {
+      display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+      margin-right: 8px; vertical-align: 1px;
+      box-shadow: 0 0 0 1px oklch(0 0 0 / 0.4) inset;
+    }
+
+    .snapshot-chip {
+      margin-left: auto;
+      font-family: var(--font-mono); font-size: 11px;
+      color: var(--fg-muted);
+      padding: 4px 9px;
+      border: 1px solid var(--border-soft);
+      border-radius: 6px;
+      background: oklch(0.22 0.014 250);
+      transition: color 360ms ease, border-color 360ms ease;
+    }
+    .snapshot-chip.changed {
+      color: var(--warn);
+      border-color: oklch(0.72 0.19 60 / 0.5);
+    }
+    .save {
+      font-size: 12.5px; color: var(--fg-muted);
+      padding: 6px 12px; border-radius: 8px;
+      transition: background 120ms ease;
+    }
+    .save:hover { background: oklch(1 0 0 / 0.05); color: var(--fg); }
+
+    /* ============================================================
+       Canvas + grid + SVG edge layer.
+       ============================================================ */
+    .canvas {
+      position: relative; overflow: hidden;
+      background: radial-gradient(1100px 700px at 50% 38%, oklch(0.24 0.018 250), var(--bg) 65%);
+    }
+    .grid {
+      position: absolute; inset: 0;
+      background-image: radial-gradient(oklch(0.55 0.02 250 / 0.22) 1px, transparent 1px);
+      background-size: 16px 16px;
+      mask-image: radial-gradient(1200px 800px at 50% 45%, oklch(0 0 0) 50%, transparent 100%);
+      pointer-events: none;
+    }
+    .stage { position: relative; width: 100%; height: 100%; }
+
+    .edges {
+      position: absolute; inset: 0;
+      width: 100%; height: 100%;
+      pointer-events: none; overflow: visible;
+    }
+    .edges path {
+      fill: none;
+      transition: d var(--morph) var(--ease),
+                  stroke var(--morph) var(--ease),
+                  stroke-width var(--morph) var(--ease),
+                  stroke-dasharray var(--morph) var(--ease),
+                  opacity var(--morph) var(--ease);
+    }
+    .edges .edge-spine { stroke: var(--brand-soft); }
+    .edges .edge-leaf { stroke: var(--brand-soft); stroke-width: 1; }
+    .edges .edge-pulse {
+      stroke: var(--brand);
+      stroke-width: 2.4;
+      stroke-dasharray: 6 10;
+      opacity: 0;
+    }
+    .pulsing .edge-pulse { animation: edgePulse 1.1s ease-out; }
+    @keyframes edgePulse {
+      0% { opacity: 0; stroke-dashoffset: 0; }
+      18% { opacity: 0.9; }
+      100% { opacity: 0; stroke-dashoffset: -140; }
+    }
+
+    /* ============================================================
+       Host group — dashed parent whose silhouette retunes per host.
+       ============================================================ */
+    .host-group {
+      position: absolute;
+      border-radius: 18px;
+      border: 1.5px dashed var(--brand-soft);
+      background: var(--brand-faint);
+      transition: left var(--morph) var(--ease),
+                  top var(--morph) var(--ease),
+                  width var(--morph) var(--ease),
+                  height var(--morph) var(--ease),
+                  border-color 360ms ease,
+                  background 360ms ease;
+    }
+    .host-group::before {
+      content: attr(data-name);
+      position: absolute; left: 18px; top: 11px;
+      font-size: 13px; font-weight: 600;
+      letter-spacing: -0.01em; color: var(--fg);
+    }
+    .host-group::after {
+      content: attr(data-meta);
+      position: absolute; right: 18px; top: 11px;
+      font-family: var(--font-mono); font-size: 10.5px;
+      color: var(--fg-muted); letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .ghost {
+      position: absolute;
+      border-radius: 18px;
+      border: 1px dashed oklch(1 0 0 / 0.16);
+      background: transparent; pointer-events: none;
+      transition: opacity 600ms ease;
+      opacity: 0;
+    }
+    .show-ghost .ghost { opacity: 0.55; }
+
+    /* ============================================================
+       Agent identity card — fixed footprint. Acts as the host's
+       "operator identity" and doesn't atomize, because its fields
+       aren't a list — they're a portrait.
+       ============================================================ */
+    .agent-card {
+      position: absolute;
+      width: 248px;
+      border-radius: 12px;
+      background: var(--card);
+      border: 1.5px solid oklch(from var(--brand) l c h / 0.55);
+      box-shadow: 0 14px 36px -22px oklch(0 0 0 / 0.7),
+                  0 1px 0 oklch(1 0 0 / 0.05) inset;
+      overflow: hidden;
+      transition: left var(--morph) var(--ease),
+                  top var(--morph) var(--ease),
+                  border-color 360ms ease;
+    }
+    .agent-card .head {
+      display: flex; align-items: center; gap: 10px;
+      padding: 11px 13px;
+      border-bottom: 1px solid var(--border-soft);
+      background: oklch(0.265 0.016 250);
+    }
+    .agent-card .head .icon {
+      width: 22px; height: 22px;
+      display: grid; place-items: center;
+      background: oklch(0.32 0.018 250);
+      color: var(--fg-soft);
+      border-radius: 6px; font-size: 12px;
+    }
+    .agent-card .head h3 {
+      margin: 0; font-size: 13px; font-weight: 600;
+      letter-spacing: -0.005em;
+    }
+    .agent-card .head .dot {
+      margin-left: auto;
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--brand);
+      box-shadow: 0 0 8px var(--brand);
+    }
+    .agent-card .body {
+      padding: 8px 13px 11px;
+      display: flex; flex-direction: column;
+    }
+    .agent-card .model-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 0 10px;
+      border-bottom: 1px dashed var(--border-soft);
+      margin-bottom: 6px;
+    }
+    .agent-card .glyph {
+      display: inline-grid; place-items: center;
+      width: 26px; height: 26px;
+      border-radius: 7px;
+      background: oklch(0.92 0 0);
+      color: oklch(0.18 0.012 250);
+      font-size: 13px; font-weight: 700;
+    }
+    .agent-card .model-name {
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      font-weight: 500;
+      transition: color 240ms ease;
+    }
+    .field {
+      display: grid;
+      grid-template-columns: 92px 1fr;
+      gap: 8px; align-items: baseline;
+      padding: 3px 0;
+      position: relative;
+    }
+    .field .label {
+      font-size: 10px; color: var(--fg-muted);
+      letter-spacing: 0.06em; text-transform: uppercase;
+    }
+    .field .value {
+      font-size: 11.5px; line-height: 1.35;
+      color: var(--fg);
+      min-width: 0; overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap;
+      transition: color 220ms ease;
+    }
+    .field .value.mono { font-family: var(--font-mono); }
+    .field .value.muted { color: var(--fg-muted); }
+    .field .value.warn { color: var(--warn); }
+
+    /* Diff flash — shared by fields and leaves. */
+    [data-changed="true"] {
+      animation: diffFlash 1.5s ease-out;
+    }
+    .field[data-changed="true"] .value {
+      box-shadow: inset 2px 0 0 var(--warn);
+    }
+    @keyframes diffFlash {
+      0% { background-color: oklch(from var(--warn) l c h / 0.25); }
+      100% { background-color: oklch(from var(--warn) l c h / 0); }
+    }
+
+    /* ============================================================
+       Hubs — small puck nodes that anchor each section's fan-out.
+       Color/border tuned per section so they aren't twins.
+       ============================================================ */
+    .hub {
+      position: absolute;
+      width: 188px; height: 52px;
+      border-radius: 10px;
+      background: var(--card-strong);
+      border: 1px solid var(--border);
+      box-shadow: 0 6px 22px -16px oklch(0 0 0 / 0.55);
+      display: flex; align-items: center; gap: 11px;
+      padding: 0 13px;
+      transition: left var(--morph) var(--ease),
+                  top var(--morph) var(--ease),
+                  border-color 320ms ease;
+    }
+    .hub .icon {
+      width: 28px; height: 28px;
+      display: grid; place-items: center;
+      border-radius: 7px;
+      background: oklch(0.32 0.018 250);
+      color: var(--fg-soft);
+      font-size: 13px;
+    }
+    .hub[data-kind="protocol"] .icon { color: var(--info); }
+    .hub[data-kind="apps"] .icon { color: var(--brand); }
+    .hub .meta {
+      display: flex; flex-direction: column; min-width: 0;
+    }
+    .hub .title {
+      font-size: 12.5px; font-weight: 600;
+      letter-spacing: -0.005em;
+    }
+    .hub .sub {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--fg-muted);
+      letter-spacing: 0.02em;
+      transition: color 240ms ease;
+    }
+    .hub[data-changed="true"] .sub { color: var(--warn); }
+
+    /* ============================================================
+       Leaves — the atomized nodes. Each protocol override / each
+       Apps capability gets its own leaf. Leaves bloom in/out on
+       morph; this is the host's "complexity silhouette."
+       ============================================================ */
+    .leaf {
+      position: absolute;
+      width: var(--leaf-w);
+      height: var(--leaf-h);
+      border-radius: 8px;
+      background: var(--leaf);
+      border: 1px solid var(--border-soft);
+      padding: 5px 9px;
+      display: flex; flex-direction: column;
+      gap: 1px; justify-content: center;
+      transition: left var(--morph) var(--ease),
+                  top var(--morph) var(--ease),
+                  transform var(--morph) var(--ease),
+                  opacity var(--morph) var(--ease),
+                  border-color 240ms ease,
+                  background 240ms ease;
+      transform-origin: left center;
+    }
+    .leaf.entering {
+      opacity: 0;
+      transform: translateX(-12px) scale(0.85);
+    }
+    .leaf.exiting {
+      opacity: 0;
+      transform: translateX(-6px) scale(0.9);
+      pointer-events: none;
+    }
+    .leaf .label {
+      font-size: 9px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--fg-muted);
+      line-height: 1;
+    }
+    .leaf .value {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--fg);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      line-height: 1.2;
+      transition: color 240ms ease;
+    }
+    .leaf .value.muted { color: var(--fg-muted); }
+    .leaf .value.warn { color: var(--warn); }
+
+    /* Capability-style leaves: badge + label, slimmer. */
+    .leaf.cap {
+      flex-direction: row;
+      align-items: center;
+      gap: 8px;
+    }
+    .leaf.cap .dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--brand);
+      box-shadow: 0 0 6px var(--brand);
+      flex-shrink: 0;
+      transition: background 240ms ease, box-shadow 240ms ease;
+    }
+    .leaf.cap.off .dot {
+      background: oklch(0.42 0.012 100);
+      box-shadow: none;
+    }
+    .leaf.cap.off .name { color: var(--fg-faint); text-decoration: line-through; }
+    .leaf.cap .name {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--fg);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 1;
+      transition: color 240ms ease;
+    }
+    .leaf.cap .qual {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      color: var(--fg-muted);
+      letter-spacing: 0.02em;
+      padding: 1px 5px;
+      border-radius: 3px;
+      background: oklch(1 0 0 / 0.05);
+      flex-shrink: 0;
+    }
+    /* Highlighted leaf state for changed-on-morph */
+    .leaf[data-changed="true"] {
+      border-color: oklch(from var(--warn) l c h / 0.6);
+      background: oklch(from var(--warn) l c h / 0.08);
+    }
+    .leaf[data-newly-on="true"] {
+      box-shadow: 0 0 0 1px oklch(from var(--warn) l c h / 0.45),
+                  0 0 16px -4px oklch(from var(--warn) l c h / 0.5);
+    }
+
+    /* ============================================================
+       Servers — hub width still scales with attached count; edge
+       stroke-width still carries timeout signal.
+       ============================================================ */
+    .servers-hub {
+      position: absolute;
+      height: 48px;
+      border-radius: 10px;
+      background: var(--card-strong);
+      border: 1px solid var(--border);
+      box-shadow: 0 6px 24px -16px oklch(0 0 0 / 0.5);
+      display: flex; align-items: center; gap: 10px;
+      padding: 0 14px;
+      transition: left var(--morph) var(--ease),
+                  top var(--morph) var(--ease),
+                  width var(--morph) var(--ease);
+    }
+    .servers-hub .icon {
+      width: 26px; height: 26px;
+      border-radius: 6px;
+      display: grid; place-items: center;
+      background: oklch(0.32 0.018 250);
+      color: var(--fg-soft);
+    }
+    .servers-hub .title {
+      font-size: 12.5px; font-weight: 600;
+    }
+    .servers-hub .count {
+      margin-left: auto;
+      font-family: var(--font-mono);
+      font-size: 11px; color: var(--fg-muted);
+      letter-spacing: 0.03em;
+    }
+    .servers-hub .count .num { color: var(--fg); font-weight: 600; }
+
+    .server-card {
+      position: absolute;
+      width: 188px; height: 76px;
+      border-radius: 8px;
+      background: var(--card-strong);
+      border: 1px solid var(--border);
+      padding: 9px 12px;
+      display: flex; flex-direction: column; gap: 4px;
+      transition: left var(--morph) var(--ease),
+                  top var(--morph) var(--ease),
+                  opacity var(--morph) var(--ease),
+                  transform var(--morph) var(--ease);
+    }
+    .server-card .head { display: flex; align-items: center; gap: 6px; }
+    .server-card .head .dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--ok);
+    }
+    .server-card.insecure .head .dot { background: var(--insec); }
+    .server-card .name {
+      font-size: 12px; font-weight: 600;
+      flex: 1; overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap;
+    }
+    .server-card .tag {
+      font-size: 9.5px; letter-spacing: 0.04em;
+      text-transform: uppercase; color: var(--fg-muted);
+    }
+    .server-card .url {
+      font-family: var(--font-mono); font-size: 10.5px;
+      color: var(--fg-muted); overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap;
+    }
+    .server-card .timeout {
+      margin-top: auto;
+      font-family: var(--font-mono); font-size: 10px;
+      color: var(--fg-faint); letter-spacing: 0.02em;
+    }
+    .add-server {
+      position: absolute;
+      width: 38px; height: 38px;
+      border-radius: 999px;
+      background: var(--card);
+      border: 1px dashed var(--border);
+      color: var(--fg-muted);
+      display: grid; place-items: center;
+      font-size: 18px;
+      transition: left var(--morph) var(--ease),
+                  top var(--morph) var(--ease);
+    }
+    .add-server:hover { color: var(--fg); border-style: solid; }
+
+    /* ============================================================
+       Legend.
+       ============================================================ */
+    .legend {
+      position: absolute; left: 18px; bottom: 18px;
+      background: oklch(0.22 0.014 250 / 0.92);
+      backdrop-filter: blur(8px);
+      border: 1px solid var(--border-soft);
+      border-radius: 10px;
+      padding: 12px 14px;
+      max-width: 280px;
+      font-size: 11.5px; line-height: 1.5;
+      color: var(--fg-soft);
+    }
+    .legend h4 {
+      margin: 0 0 8px;
+      font-size: 10.5px; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--fg-muted);
+      font-weight: 600;
+    }
+    .legend ul {
+      list-style: none; padding: 0; margin: 0 0 8px;
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    .legend li {
+      display: flex; align-items: baseline; gap: 8px;
+    }
+    .legend .swatch {
+      width: 14px; height: 8px; border-radius: 2px;
+      flex-shrink: 0; transform: translateY(1px);
+    }
+    .legend .swatch.diff {
+      background: oklch(from var(--warn) l c h / 0.35);
+      box-shadow: inset 2px 0 0 var(--warn);
+    }
+    .legend .swatch.leaf {
+      background: var(--brand-soft);
+      border: 1px solid var(--brand);
+    }
+    .legend .swatch.timeout {
+      background: var(--brand-soft);
+      height: 3px; transform: translateY(3px);
+    }
+    .legend label {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 11px; color: var(--fg-muted);
+      cursor: pointer; user-select: none;
+    }
+    .legend input[type="checkbox"] { accent-color: var(--brand); }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <button class="back" aria-label="Back">←</button>
+      <div class="host-picker" id="picker">
+        <span class="indicator" id="pickerIndicator"></span>
+        <button data-host="claude" class="active">
+          <span class="swatch" style="background: oklch(0.72 0.12 60)"></span>
+          Claude
+        </button>
+        <button data-host="chatgpt">
+          <span class="swatch" style="background: oklch(0.72 0.14 240)"></span>
+          ChatGPT
+        </button>
+        <button data-host="cursor">
+          <span class="swatch" style="background: oklch(0.74 0.08 200)"></span>
+          Cursor
+        </button>
+      </div>
+      <span class="snapshot-chip" id="snapshotChip">hc_a4f1</span>
+      <button class="save">Saved</button>
+    </header>
+
+    <main class="canvas" id="canvas">
+      <div class="grid"></div>
+      <div class="stage" id="stage">
+        <div class="ghost" id="ghost"></div>
+
+        <svg class="edges" id="edges" preserveAspectRatio="none">
+          <path class="edge-spine" id="edgeGroupToHubServers"></path>
+          <path class="edge-pulse" id="edgePulse"></path>
+          <g id="edgesProtocolLeaves"></g>
+          <g id="edgesAppsLeaves"></g>
+          <g id="edgesServers"></g>
+        </svg>
+
+        <div class="host-group" id="hostGroup" data-name="Claude" data-meta=""></div>
+
+        <!-- Agent identity card stays single — it's a portrait, not a list. -->
+        <div class="agent-card" id="agentCard">
+          <div class="head">
+            <span class="icon">⚙</span>
+            <h3>Agent</h3>
+            <span class="dot"></span>
+          </div>
+          <div class="body">
+            <div class="model-row">
+              <span class="glyph" id="agentGlyph">A</span>
+              <span class="model-name" id="agentModel">Claude Sonnet 4.5</span>
+            </div>
+            <div id="agentFields"></div>
+          </div>
+        </div>
+
+        <!-- MCP Protocol hub. Leaves fan out to its right. -->
+        <div class="hub" id="hubProtocol" data-kind="protocol">
+          <span class="icon">⌁</span>
+          <div class="meta">
+            <span class="title">MCP Protocol</span>
+            <span class="sub" id="hubProtocolSub">SDK defaults</span>
+          </div>
+        </div>
+
+        <!-- Apps Extension hub. Leaves fan out for capabilities. -->
+        <div class="hub" id="hubApps" data-kind="apps">
+          <span class="icon">▣</span>
+          <div class="meta">
+            <span class="title">Apps Extension</span>
+            <span class="sub" id="hubAppsSub">sandbox: declared</span>
+          </div>
+        </div>
+
+        <!-- Leaf containers. Children created/destroyed by JS. -->
+        <div id="protocolLeaves"></div>
+        <div id="appsLeaves"></div>
+
+        <div class="servers-hub" id="serversHub">
+          <span class="icon">▦</span>
+          <span class="title">Servers</span>
+          <span class="count"><span class="num" id="serverCount">0</span> attached</span>
+        </div>
+
+        <div id="serverCards"></div>
+        <button class="add-server" id="addServer">+</button>
+      </div>
+
+      <div class="legend">
+        <h4>Reading the diff</h4>
+        <ul>
+          <li><span class="swatch diff"></span> Field or leaf changed from previous host</li>
+          <li><span class="swatch leaf"></span> Leaf — one node per capability/override</li>
+          <li><span class="swatch timeout"></span> Edge thickness scales with timeout</li>
+        </ul>
+        <label>
+          <input type="checkbox" id="ghostToggle" checked />
+          Show previous-host ghost silhouette
+        </label>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    /* ============================================================
+       Host data. Each section that *is* a list (protocol overrides,
+       Apps capabilities) becomes an array of leaf descriptors —
+       so Cursor's thinner cap set visibly produces fewer nodes
+       than Claude's full set, instead of just smaller text.
+       ============================================================ */
+    const HOSTS = {
+      claude: {
+        name: "Claude",
+        snapshot: "hc_a4f1",
+        brand: {
+          base: "oklch(0.72 0.12 60)",
+          soft: "oklch(0.72 0.12 60 / 0.32)",
+          faint: "oklch(0.72 0.12 60 / 0.07)",
+        },
+        agent: {
+          model: "Claude Sonnet 4.5",
+          provider: "A",
+          temperature: "1.00",
+          hostStyle: "Claude",
+          toolApproval: "on",
+          systemPrompt: { value: "(empty)", warn: true },
+        },
+        // Hub subtitle + leaves. Each leaf shows up only when the
+        // host actually overrides that slice; SDK defaults stay
+        // collapsed into the hub so the canvas earns its complexity.
+        protocolSub: "SDK defaults · 11 ctx fields",
+        protocolLeaves: [
+          { key: "clientInfo", label: "clientInfo", value: "claude-ai 0.1.0" },
+          { key: "hostContext", label: "hostContext", value: "{ 11 fields }" },
+          { key: "timeout", label: "request timeout", value: "30s" },
+        ],
+        appsSandboxCsp: "declared",
+        appsCapLeaves: [
+          { id: "openLinks", label: "openLinks", on: true },
+          { id: "serverTools", label: "serverTools", on: true },
+          { id: "serverResources", label: "serverResources", on: true },
+          { id: "logging", label: "logging", on: true },
+          { id: "updateModelContext", label: "updateModelContext", on: true, qual: "text" },
+          { id: "message", label: "message", on: true, qual: "text" },
+        ],
+        servers: [
+          { name: "github-mcp", url: "https://api.github.com/mcp", timeoutSecs: 30, insecure: false, optional: false },
+          { name: "linear", url: "https://mcp.linear.app", timeoutSecs: 45, insecure: false, optional: false },
+          { name: "filesystem", url: "stdio://local", timeoutSecs: 15, insecure: false, optional: false },
+          { name: "scratchpad", url: "http://localhost:7300", timeoutSecs: 5, insecure: true, optional: true },
+        ],
+      },
+      chatgpt: {
+        name: "ChatGPT",
+        snapshot: "hc_2b7e",
+        brand: {
+          base: "oklch(0.72 0.14 240)",
+          soft: "oklch(0.72 0.14 240 / 0.32)",
+          faint: "oklch(0.72 0.14 240 / 0.07)",
+        },
+        agent: {
+          model: "GPT-5",
+          provider: "O",
+          temperature: "0.70",
+          hostStyle: "ChatGPT",
+          toolApproval: "off",
+          systemPrompt: { value: "(empty)", warn: true },
+        },
+        protocolSub: "experimental caps · 10 ctx fields",
+        protocolLeaves: [
+          { key: "clientInfo", label: "clientInfo", value: "openai-mcp 1.0.0" },
+          { key: "capabilities", label: "capabilities", value: "experimental" },
+          { key: "hostContext", label: "hostContext", value: "{ 10 fields }" },
+          { key: "timeout", label: "request timeout", value: "10s" },
+        ],
+        appsSandboxCsp: "declared",
+        appsCapLeaves: [
+          { id: "openLinks", label: "openLinks", on: true },
+          { id: "serverTools", label: "serverTools", on: true },
+          { id: "serverResources", label: "serverResources", on: false },
+          { id: "logging", label: "logging", on: false },
+          { id: "updateModelContext", label: "updateModelContext", on: true, qual: "text" },
+          { id: "message", label: "message", on: true, qual: "text" },
+        ],
+        servers: [
+          { name: "github-mcp", url: "https://api.github.com/mcp", timeoutSecs: 30, insecure: false, optional: false },
+          { name: "linear", url: "https://mcp.linear.app", timeoutSecs: 45, insecure: false, optional: false },
+        ],
+      },
+      cursor: {
+        name: "Cursor",
+        snapshot: "hc_91d3",
+        brand: {
+          base: "oklch(0.74 0.08 200)",
+          soft: "oklch(0.74 0.08 200 / 0.32)",
+          faint: "oklch(0.74 0.08 200 / 0.07)",
+        },
+        agent: {
+          model: "gpt-5-codex",
+          provider: "O",
+          temperature: "0.20",
+          hostStyle: "Cursor",
+          toolApproval: "off",
+          systemPrompt: { value: "configured", warn: false },
+        },
+        protocolSub: "pinned 2026-01-26 · 5 ctx fields",
+        protocolLeaves: [
+          { key: "clientInfo", label: "clientInfo", value: "cursor-vscode 3.4.17" },
+          { key: "protocolVersion", label: "protocol pin", value: "2026-01-26" },
+          { key: "hostContext", label: "hostContext", value: "{ 5 fields }" },
+          { key: "timeout", label: "request timeout", value: "60s" },
+          { key: "headers", label: "default headers", value: "1 set" },
+        ],
+        appsSandboxCsp: "host-default",
+        // Cursor advertises a thinner cap set captured from a real
+        // probe: openLinks + serverTools/serverResources (both with
+        // listChanged: false) + logging. NO updateModelContext, NO
+        // message. The atomized layout makes this absence visible.
+        appsCapLeaves: [
+          { id: "openLinks", label: "openLinks", on: true },
+          { id: "serverTools", label: "serverTools", on: true, qual: "lc:false" },
+          { id: "serverResources", label: "serverResources", on: true, qual: "lc:false" },
+          { id: "logging", label: "logging", on: true },
+          { id: "updateModelContext", label: "updateModelContext", on: false },
+          { id: "message", label: "message", on: false },
+        ],
+        servers: [
+          { name: "filesystem", url: "stdio://local", timeoutSecs: 15, insecure: false, optional: false },
+        ],
+      },
+    };
+
+    const stage = document.getElementById("stage");
+    const root = document.documentElement;
+    const hostGroup = document.getElementById("hostGroup");
+    const ghost = document.getElementById("ghost");
+    const canvas = document.getElementById("canvas");
+    const picker = document.getElementById("picker");
+    const indicator = document.getElementById("pickerIndicator");
+    const snapshotChip = document.getElementById("snapshotChip");
+    const serverCount = document.getElementById("serverCount");
+    const edgeGroupToHubServers = document.getElementById("edgeGroupToHubServers");
+    const edgePulse = document.getElementById("edgePulse");
+    const edgesProtocolLeaves = document.getElementById("edgesProtocolLeaves");
+    const edgesAppsLeaves = document.getElementById("edgesAppsLeaves");
+    const edgesServers = document.getElementById("edgesServers");
+    const protocolLeaves = document.getElementById("protocolLeaves");
+    const appsLeaves = document.getElementById("appsLeaves");
+    const serverCards = document.getElementById("serverCards");
+    const addServer = document.getElementById("addServer");
+    const ghostToggle = document.getElementById("ghostToggle");
+
+    let activeId = "claude";
+    let prevId = null;
+
+    /* ============================================================
+       Agent identity card render. Single card, no atomization.
+       ============================================================ */
+    function buildField(label, value, opts = {}) {
+      const row = document.createElement("div");
+      row.className = "field";
+      row.dataset.field = opts.key ?? label;
+      row.innerHTML = `
+        <span class="label">${label}</span>
+        <span class="value ${opts.mono ? "mono" : ""} ${opts.warn ? "warn" : ""} ${opts.muted ? "muted" : ""}">${value}</span>
+      `;
+      return row;
+    }
+
+    let lastAgent = null;
+
+    function renderAgent(h) {
+      const a = h.agent;
+      const glyph = document.getElementById("agentGlyph");
+      const modelEl = document.getElementById("agentModel");
+      const next = {
+        model: a.model,
+        provider: a.provider,
+        temperature: a.temperature,
+        hostStyle: a.hostStyle,
+        toolApproval: a.toolApproval,
+        systemPrompt: a.systemPrompt.value,
+      };
+      glyph.textContent = a.provider;
+      modelEl.textContent = a.model;
+
+      const fields = document.getElementById("agentFields");
+      fields.innerHTML = "";
+      fields.appendChild(buildField("Temperature", a.temperature, { mono: true, key: "temperature" }));
+      fields.appendChild(buildField("Host style", a.hostStyle, { key: "hostStyle" }));
+      fields.appendChild(buildField("Tool approval", a.toolApproval, { key: "toolApproval" }));
+      fields.appendChild(buildField("System prompt", a.systemPrompt.value, {
+        warn: a.systemPrompt.warn, key: "systemPrompt",
+      }));
+
+      // Diff flash on changed fields.
+      if (lastAgent) {
+        fields.querySelectorAll(".field").forEach((row) => {
+          const key = row.dataset.field;
+          if (lastAgent[key] !== next[key]) {
+            void row.offsetWidth;
+            row.dataset.changed = "true";
+            setTimeout(() => row.removeAttribute("data-changed"), 1500);
+          }
+        });
+        // Model row diff (handled separately because its DOM is custom)
+        if (lastAgent.model !== a.model) {
+          modelEl.dataset.changed = "true";
+          void modelEl.offsetWidth;
+          modelEl.style.color = "var(--warn)";
+          setTimeout(() => { modelEl.style.color = ""; }, 1500);
+        }
+      }
+      lastAgent = next;
+    }
+
+    /* ============================================================
+       Leaves — the atomized nodes. We keep a stable map keyed by
+       id so leaves present in both hosts MOVE rather than rebuild,
+       while leaves added/removed bloom or fade.
+       ============================================================ */
+    function renderLeaves({
+      container, edgeLayer, leaves, hubRect, layoutCols, layoutRowH,
+      hubAnchor, prevLeavesById, leafBuilder, isCapStyle = false,
+    }) {
+      const existing = new Map();
+      container.querySelectorAll(".leaf").forEach((el) => existing.set(el.dataset.key, el));
+      edgeLayer.innerHTML = "";
+
+      const wantedKeys = new Set(leaves.map((l) => l.key ?? l.id));
+
+      // Drop leaves no longer wanted.
+      existing.forEach((el, key) => {
+        if (!wantedKeys.has(key)) {
+          el.classList.add("exiting");
+          setTimeout(() => el.remove(), 520);
+        }
+      });
+
+      leaves.forEach((leaf, i) => {
+        const key = leaf.key ?? leaf.id;
+        const col = i % layoutCols;
+        const row = Math.floor(i / layoutCols);
+        // Position relative to the hub's right edge.
+        const x = hubAnchor.x + hubAnchor.w + 38 + col * (parseInt(getComputedStyle(root).getPropertyValue("--leaf-w")) + 12);
+        const y = hubAnchor.y + (row * layoutRowH) - ((Math.ceil(leaves.length / layoutCols) - 1) * layoutRowH) / 2 + hubAnchor.h / 2 - parseInt(getComputedStyle(root).getPropertyValue("--leaf-h")) / 2;
+
+        let el = existing.get(key);
+        const isNew = !el;
+        if (!el) {
+          el = leafBuilder(leaf);
+          el.dataset.key = key;
+          el.classList.add("entering");
+          container.appendChild(el);
+          // Trigger entrance.
+          requestAnimationFrame(() => {
+            el.classList.remove("entering");
+          });
+        } else {
+          // Update in place.
+          leafBuilder(leaf, el);
+        }
+        el.style.left = x + "px";
+        el.style.top = y + "px";
+
+        // Diff flash. For cap leaves, "newly on" gets a special
+        // halo; "newly off" also flashes (state changed).
+        const prev = prevLeavesById?.[key];
+        if (prev) {
+          let changed = false;
+          if (isCapStyle) {
+            if (prev.on !== leaf.on) changed = true;
+            if (prev.qual !== leaf.qual) changed = true;
+          } else {
+            if (prev.value !== leaf.value) changed = true;
+          }
+          if (changed) {
+            void el.offsetWidth;
+            el.dataset.changed = "true";
+            if (isCapStyle && leaf.on && !prev.on) {
+              el.dataset.newlyOn = "true";
+            }
+            setTimeout(() => {
+              el.removeAttribute("data-changed");
+              el.removeAttribute("data-newly-on");
+            }, 1500);
+          }
+        } else if (!isNew) {
+          // New leaf from previous host's perspective.
+          void el.offsetWidth;
+          el.dataset.changed = "true";
+          setTimeout(() => el.removeAttribute("data-changed"), 1500);
+        } else if (prevId) {
+          // Truly new leaf this morph — also flash.
+          el.dataset.changed = "true";
+          setTimeout(() => el.removeAttribute("data-changed"), 1500);
+        }
+
+        // Edge from hub to leaf (L-shaped path).
+        const leafLeft = x;
+        const leafCenterY = y + parseInt(getComputedStyle(root).getPropertyValue("--leaf-h")) / 2;
+        const hubRightX = hubAnchor.x + hubAnchor.w;
+        const hubCenterY = hubAnchor.y + hubAnchor.h / 2;
+        const midX = (hubRightX + leafLeft) / 2;
+        const d = `M ${hubRightX} ${hubCenterY} C ${midX} ${hubCenterY}, ${midX} ${leafCenterY}, ${leafLeft} ${leafCenterY}`;
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", d);
+        path.setAttribute("class", "edge-leaf");
+        path.setAttribute("fill", "none");
+        // Fade off-state edges to reflect that the cap is muted.
+        if (isCapStyle && !leaf.on) {
+          path.setAttribute("stroke-dasharray", "3 4");
+          path.setAttribute("opacity", "0.5");
+        }
+        edgeLayer.appendChild(path);
+      });
+    }
+
+    function buildProtocolLeaf(leaf, existing) {
+      const el = existing ?? document.createElement("div");
+      el.className = "leaf";
+      el.innerHTML = `
+        <span class="label">${leaf.label}</span>
+        <span class="value">${leaf.value}</span>
+      `;
+      return el;
+    }
+
+    function buildCapLeaf(leaf, existing) {
+      const el = existing ?? document.createElement("div");
+      el.className = "leaf cap" + (leaf.on ? "" : " off");
+      el.innerHTML = `
+        <span class="dot"></span>
+        <span class="name">${leaf.label}</span>
+        ${leaf.qual ? `<span class="qual">${leaf.qual}</span>` : ""}
+      `;
+      return el;
+    }
+
+    /* ============================================================
+       Layout. Drives positions for everything; sub-section heights
+       are computed from leaf counts so the host group resizes to
+       fit. This is where "complexity = silhouette" lives.
+       ============================================================ */
+    const AGENT_W = 248;
+    const AGENT_H = 252;
+    const HUB_W = 188;
+    const HUB_H = 52;
+    const LEAF_ROW_H = 50;
+    const SECTION_GAP = 32;
+    const GROUP_PAD = 22;
+    const GROUP_PAD_TOP = 56;
+
+    function applyLayout(h, animate = true) {
+      // Brand tokens cascade.
+      root.style.setProperty("--brand", h.brand.base);
+      root.style.setProperty("--brand-soft", h.brand.soft);
+      root.style.setProperty("--brand-faint", h.brand.faint);
+
+      // How many leaf-rows does each section need?
+      const protocolRows = Math.ceil(h.protocolLeaves.length / 2);
+      const appsRows = Math.ceil(h.appsCapLeaves.length / 2);
+      const protocolSectionH = Math.max(HUB_H, protocolRows * LEAF_ROW_H);
+      const appsSectionH = Math.max(HUB_H, appsRows * LEAF_ROW_H);
+
+      // Group width = agent + section-gap + (hub + leaf-fan width).
+      const leafW = parseInt(getComputedStyle(root).getPropertyValue("--leaf-w"));
+      const fanW = HUB_W + 38 + leafW * 2 + 12;
+      const groupW = GROUP_PAD * 2 + AGENT_W + SECTION_GAP + fanW;
+      const rightColH = protocolSectionH + 28 + appsSectionH;
+      const groupH = GROUP_PAD_TOP + Math.max(AGENT_H, rightColH) + GROUP_PAD;
+
+      const stageW = canvas.clientWidth;
+      const groupX = (stageW - groupW) / 2;
+      const groupY = 70;
+
+      // Ghost = outgoing host's group rect, so resize is visible.
+      if (animate && prevId) {
+        const p = HOSTS[prevId];
+        const pProtocolRows = Math.ceil(p.protocolLeaves.length / 2);
+        const pAppsRows = Math.ceil(p.appsCapLeaves.length / 2);
+        const pProtocolH = Math.max(HUB_H, pProtocolRows * LEAF_ROW_H);
+        const pAppsH = Math.max(HUB_H, pAppsRows * LEAF_ROW_H);
+        const pRightH = pProtocolH + 28 + pAppsH;
+        const pGroupH = GROUP_PAD_TOP + Math.max(AGENT_H, pRightH) + GROUP_PAD;
+        ghost.style.left = groupX + "px";
+        ghost.style.top = groupY + "px";
+        ghost.style.width = groupW + "px";
+        ghost.style.height = pGroupH + "px";
+      }
+
+      hostGroup.style.left = groupX + "px";
+      hostGroup.style.top = groupY + "px";
+      hostGroup.style.width = groupW + "px";
+      hostGroup.style.height = groupH + "px";
+      hostGroup.dataset.name = h.name;
+      const totalLeaves = h.protocolLeaves.length + h.appsCapLeaves.filter((c) => c.on).length;
+      hostGroup.dataset.meta = `${h.snapshot} · ${totalLeaves} active · ${h.servers.length} srv`;
+
+      // Agent card — left column, vertically centered within the
+      // right column's content height so the visual mass balances.
+      const innerTopY = groupY + GROUP_PAD_TOP;
+      const agentCard = document.getElementById("agentCard");
+      const rightColCenterY = innerTopY + rightColH / 2;
+      const agentY = rightColCenterY - AGENT_H / 2;
+      agentCard.style.left = groupX + GROUP_PAD + "px";
+      agentCard.style.top = agentY + "px";
+
+      // Right column hubs.
+      const hubX = groupX + GROUP_PAD + AGENT_W + SECTION_GAP;
+      const hubProtocol = document.getElementById("hubProtocol");
+      const hubProtocolY = innerTopY + protocolSectionH / 2 - HUB_H / 2;
+      hubProtocol.style.left = hubX + "px";
+      hubProtocol.style.top = hubProtocolY + "px";
+
+      const hubApps = document.getElementById("hubApps");
+      const hubAppsY = innerTopY + protocolSectionH + 28 + appsSectionH / 2 - HUB_H / 2;
+      hubApps.style.left = hubX + "px";
+      hubApps.style.top = hubAppsY + "px";
+
+      // Hub subtitle change flash.
+      const protocolSub = document.getElementById("hubProtocolSub");
+      const appsSub = document.getElementById("hubAppsSub");
+      const prevH = prevId ? HOSTS[prevId] : null;
+      protocolSub.textContent = h.protocolSub;
+      appsSub.textContent = `sandbox: ${h.appsSandboxCsp}`;
+      if (prevH && prevH.protocolSub !== h.protocolSub) {
+        hubProtocol.dataset.changed = "true";
+        setTimeout(() => hubProtocol.removeAttribute("data-changed"), 1500);
+      }
+      if (prevH && prevH.appsSandboxCsp !== h.appsSandboxCsp) {
+        hubApps.dataset.changed = "true";
+        setTimeout(() => hubApps.removeAttribute("data-changed"), 1500);
+      }
+
+      // Render leaves.
+      const protocolPrevById = {};
+      if (prevH) for (const l of prevH.protocolLeaves) protocolPrevById[l.key] = l;
+      renderLeaves({
+        container: protocolLeaves,
+        edgeLayer: edgesProtocolLeaves,
+        leaves: h.protocolLeaves,
+        hubAnchor: { x: hubX, y: hubProtocolY, w: HUB_W, h: HUB_H },
+        layoutCols: 2,
+        layoutRowH: LEAF_ROW_H,
+        prevLeavesById: protocolPrevById,
+        leafBuilder: buildProtocolLeaf,
+      });
+      const appsPrevById = {};
+      if (prevH) for (const l of prevH.appsCapLeaves) appsPrevById[l.id] = l;
+      renderLeaves({
+        container: appsLeaves,
+        edgeLayer: edgesAppsLeaves,
+        leaves: h.appsCapLeaves,
+        hubAnchor: { x: hubX, y: hubAppsY, w: HUB_W, h: HUB_H },
+        layoutCols: 2,
+        layoutRowH: LEAF_ROW_H,
+        prevLeavesById: appsPrevById,
+        leafBuilder: buildCapLeaf,
+        isCapStyle: true,
+      });
+
+      // Servers hub width scales with attached count.
+      const hubServerW = Math.max(220, 180 + h.servers.length * 38);
+      const hubServerX = groupX + (groupW - hubServerW) / 2;
+      const hubServerY = groupY + groupH + 56;
+      const hubServers = document.getElementById("serversHub");
+      hubServers.style.left = hubServerX + "px";
+      hubServers.style.top = hubServerY + "px";
+      hubServers.style.width = hubServerW + "px";
+      animateNumber(serverCount, parseInt(serverCount.textContent || "0", 10), h.servers.length, 400);
+
+      // Spine edge: group bottom-center → servers hub top-center.
+      const groupBottomX = groupX + groupW / 2;
+      const groupBottomY = groupY + groupH;
+      const hubServerTopX = hubServerX + hubServerW / 2;
+      const hubServerTopY = hubServerY;
+      const midY = (groupBottomY + hubServerTopY) / 2;
+      const dSpine = `M ${groupBottomX} ${groupBottomY} C ${groupBottomX} ${midY}, ${hubServerTopX} ${midY}, ${hubServerTopX} ${hubServerTopY}`;
+      edgeGroupToHubServers.setAttribute("d", dSpine);
+      edgeGroupToHubServers.setAttribute("stroke-width", "1.6");
+      edgePulse.setAttribute("d", dSpine);
+
+      // Server cards.
+      const SERVER_CARD_W = 188;
+      const SERVER_CARD_GAP = 16;
+      const SERVER_CARD_H = 76;
+      const rowY = hubServerY + 48 + 56;
+      const totalRowW = h.servers.length === 0
+        ? 0
+        : h.servers.length * SERVER_CARD_W + (h.servers.length - 1) * SERVER_CARD_GAP;
+      const rowX = groupX + (groupW - totalRowW) / 2;
+
+      const existingCards = new Map();
+      serverCards.querySelectorAll(".server-card").forEach((el) => existingCards.set(el.dataset.name, el));
+      edgesServers.innerHTML = "";
+
+      const wantedNames = new Set(h.servers.map((s) => s.name));
+      existingCards.forEach((el, key) => {
+        if (!wantedNames.has(key)) {
+          el.style.opacity = "0";
+          el.style.transform = "translateY(8px) scale(0.96)";
+          setTimeout(() => el.remove(), 520);
+        }
+      });
+
+      h.servers.forEach((s, i) => {
+        const x = rowX + i * (SERVER_CARD_W + SERVER_CARD_GAP);
+        let card = existingCards.get(s.name);
+        if (!card) {
+          card = document.createElement("div");
+          card.className = "server-card";
+          card.dataset.name = s.name;
+          card.style.opacity = "0";
+          card.style.transform = "translateY(8px) scale(0.96)";
+          card.innerHTML = `
+            <div class="head">
+              <span class="dot"></span>
+              <span class="name">${s.name}</span>
+              <span class="tag">${s.optional ? "optional" : "required"}</span>
+            </div>
+            <div class="url">${s.url}</div>
+            <div class="timeout">timeout ${s.timeoutSecs}s</div>
+          `;
+          serverCards.appendChild(card);
+          requestAnimationFrame(() => {
+            card.style.opacity = "1";
+            card.style.transform = "translateY(0) scale(1)";
+          });
+        } else {
+          card.querySelector(".name").textContent = s.name;
+          card.querySelector(".tag").textContent = s.optional ? "optional" : "required";
+          card.querySelector(".url").textContent = s.url;
+          card.querySelector(".timeout").textContent = `timeout ${s.timeoutSecs}s`;
+        }
+        card.classList.toggle("insecure", !!s.insecure);
+        card.style.left = x + "px";
+        card.style.top = rowY + "px";
+
+        const cardCenterX = x + SERVER_CARD_W / 2;
+        const cardTopY = rowY;
+        const hubBottomY = hubServerY + 48;
+        const hubCenterX = hubServerX + hubServerW / 2;
+        const mid = (hubBottomY + cardTopY) / 2;
+        const d = `M ${hubCenterX} ${hubBottomY} C ${hubCenterX} ${mid}, ${cardCenterX} ${mid}, ${cardCenterX} ${cardTopY}`;
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", d);
+        path.setAttribute("fill", "none");
+        // log-scale stroke width carries the timeout signal.
+        const sw = (Math.log(Math.max(s.timeoutSecs, 1)) / Math.log(60)) * 2.2 + 0.8;
+        path.setAttribute("stroke-width", sw.toFixed(2));
+        path.setAttribute("stroke", s.insecure ? "var(--insec)" : "var(--brand-soft)");
+        if (s.optional) path.setAttribute("stroke-dasharray", "5 5");
+        path.style.transition = "all var(--morph) var(--ease)";
+        edgesServers.appendChild(path);
+      });
+
+      const addX = h.servers.length === 0
+        ? hubServerX + (hubServerW - 38) / 2
+        : rowX + totalRowW + SERVER_CARD_GAP - 8;
+      addServer.style.left = addX + "px";
+      addServer.style.top = rowY + (SERVER_CARD_H - 38) / 2 + "px";
+    }
+
+    function animateNumber(el, from, to, duration) {
+      const start = performance.now();
+      function tick(now) {
+        const t = Math.min(1, (now - start) / duration);
+        const eased = 1 - Math.pow(1 - t, 3);
+        const v = Math.round(from + (to - from) * eased);
+        el.textContent = String(v);
+        if (t < 1) requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    }
+
+    function positionPickerIndicator(activeBtn) {
+      const rect = activeBtn.getBoundingClientRect();
+      const parentRect = picker.getBoundingClientRect();
+      indicator.style.width = rect.width + "px";
+      indicator.style.transform = `translateX(${rect.left - parentRect.left - 3}px)`;
+    }
+
+    function setHost(id, animate = true) {
+      if (id === activeId && animate) return;
+      prevId = activeId;
+      activeId = id;
+      const h = HOSTS[id];
+
+      picker.querySelectorAll("button").forEach((b) => {
+        b.classList.toggle("active", b.dataset.host === id);
+      });
+      positionPickerIndicator(picker.querySelector("button.active"));
+      const snapshotChanged = snapshotChip.textContent !== h.snapshot;
+      snapshotChip.classList.toggle("changed", snapshotChanged);
+      setTimeout(() => snapshotChip.classList.remove("changed"), 1500);
+      snapshotChip.textContent = h.snapshot;
+
+      // Spine pulse.
+      canvas.classList.remove("pulsing");
+      void canvas.offsetWidth;
+      canvas.classList.add("pulsing");
+
+      renderAgent(h);
+      applyLayout(h, animate);
+    }
+
+    picker.addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-host]");
+      if (!btn) return;
+      setHost(btn.dataset.host);
+    });
+    ghostToggle.addEventListener("change", () => {
+      stage.classList.toggle("show-ghost", ghostToggle.checked);
+    });
+    window.addEventListener("resize", () => {
+      applyLayout(HOSTS[activeId], false);
+      positionPickerIndicator(picker.querySelector("button.active"));
+    });
+
+    setHost("claude", false);
+    stage.classList.add("show-ghost");
+  </script>
+</body>
+</html>

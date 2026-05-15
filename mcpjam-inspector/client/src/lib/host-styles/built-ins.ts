@@ -1,5 +1,6 @@
 import claudeLogo from "/claude_logo.png";
 import openaiLogo from "/openai_logo.png";
+import cursorLogo from "/cursor_logo.png";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
   CHATGPT_CHAT_BACKGROUND,
@@ -13,8 +14,15 @@ import {
   CLAUDE_DESKTOP_PLATFORM,
   getClaudeDesktopStyleVariables,
 } from "@/config/claude-desktop-host-context";
+import {
+  CURSOR_CHAT_BACKGROUND,
+  CURSOR_FONT_CSS,
+  CURSOR_PLATFORM,
+  getCursorStyleVariables,
+} from "@/config/cursor-host-context";
 import { ClaudeMarkIndicator } from "./indicators/claude-mark";
 import { ChatGptDotIndicator } from "./indicators/chatgpt-dot";
+import { CursorBarIndicator } from "./indicators/cursor-bar";
 import type { HostStyleDefinition } from "./types";
 
 // NOTE: capability presets are best-effort mocks of what each vendor publicly
@@ -86,7 +94,44 @@ export const CHATGPT_HOST_STYLE: HostStyleDefinition = {
   },
 };
 
+export const CURSOR_HOST_STYLE: HostStyleDefinition = {
+  id: "cursor",
+  mcp: {
+    // Cursor advertises only `text/html;profile=mcp-app` (per probe
+    // clientCapabilities.extensions["io.modelcontextprotocol/ui"]).
+    protocolOverride: UIType.MCP_APPS,
+    platform: CURSOR_PLATFORM,
+    fontCss: CURSOR_FONT_CSS,
+    // Capability blob captured verbatim from a Cursor 3.4.17 probe. Notably
+    // Cursor does NOT advertise `updateModelContext` or `message`, and it
+    // explicitly disables `listChanged` notifications on serverTools /
+    // serverResources. Don't widen this without evidence — apps that gate
+    // on `listChanged: true` need to know real Cursor doesn't send them.
+    hostCapabilities: {
+      openLinks: {},
+      serverTools: { listChanged: false },
+      serverResources: { listChanged: false },
+      logging: {},
+    },
+    resolveStyleVariables: getCursorStyleVariables,
+  },
+  chatUi: {
+    label: "Cursor",
+    shortLabel: "Cursor-style host",
+    pickerDescription: "Cursor IDE chat panel chrome",
+    logoSrc: cursorLogo,
+    // Visual family: Cursor's chat panel is a dark, flat, IDE-like surface
+    // — closer to ChatGPT than to Claude's warm bubbles. Routes
+    // family-keyed branches (bubble shape, send hint, etc.) to the
+    // chatgpt visual until Cursor earns its own family.
+    family: "chatgpt",
+    resolveChatBackground: (theme) => CURSOR_CHAT_BACKGROUND[theme],
+    loadingIndicator: CursorBarIndicator,
+  },
+};
+
 export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
   CLAUDE_HOST_STYLE,
   CHATGPT_HOST_STYLE,
+  CURSOR_HOST_STYLE,
 ];

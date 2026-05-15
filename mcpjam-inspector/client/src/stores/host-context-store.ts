@@ -24,6 +24,21 @@ interface HostContextStoreState {
   }) => void;
   setHostContextText: (text: string) => void;
   patchHostContext: (patch: Record<string, unknown>) => void;
+  /**
+   * Session-scoped reset: replace `defaultHostContext` and `draftHostContext`
+   * with the supplied snapshot (e.g. a host template's `hostContext`).
+   *
+   * Intentionally untouched: `savedHostContext`, `activeProjectId`, and the
+   * pending-remote-echo state. This is a "the user picked a different host
+   * pill in the playground" path — it is NOT a project save/load and must
+   * not pretend to be one.
+   *
+   * `isDirty` is recomputed via the existing `computeDirtyState`. When the
+   * project has no `savedHostContext`, isDirty becomes false (clean baseline);
+   * when it does, isDirty stays/goes true (honestly — the snapshot diverges
+   * from what's persisted on the project).
+   */
+  applyHostTemplate: (hostContext: ProjectHostContextDraft) => void;
   resetToBaseline: () => void;
   beginSave: (input: {
     projectId: string;
@@ -45,6 +60,7 @@ function createInitialState(): Omit<
   | "loadProjectHostContext"
   | "setHostContextText"
   | "patchHostContext"
+  | "applyHostTemplate"
   | "resetToBaseline"
   | "beginSave"
   | "markSaved"
@@ -238,6 +254,26 @@ export const useHostContextStore = create<HostContextStoreState>((set, get) => (
           defaultHostContext: state.defaultHostContext,
           savedHostContext: state.savedHostContext,
           draftHostContext: nextHostContext,
+        }),
+      };
+    });
+  },
+
+  applyHostTemplate: (hostContext) => {
+    set((state) => {
+      const normalized = pickProjectHostContext(
+        { version: 1, clientCapabilities: {}, hostContext },
+        {},
+      );
+      return {
+        defaultHostContext: normalized,
+        draftHostContext: normalized,
+        hostContextText: stringifyJson(normalized),
+        hostContextError: null,
+        isDirty: computeDirtyState({
+          defaultHostContext: normalized,
+          savedHostContext: state.savedHostContext,
+          draftHostContext: normalized,
         }),
       };
     });

@@ -9,173 +9,279 @@ import {
 } from "@/lib/host-config-v2";
 import {
   ADD_SERVER_NODE_ID,
-  APPS_NODE_ID,
-  BEHAVIOR_NODE_ID,
+  AGENT_IDENTITY_NODE_ID,
+  APPS_HUB_NODE_ID,
   HOST_GROUP_NODE_ID,
-  PROTOCOL_NODE_ID,
+  PROTOCOL_HUB_NODE_ID,
   SERVERS_HUB_NODE_ID,
+  appsCapLeafNodeId,
+  protocolLeafNodeId,
+  type AppsCapLeafKey,
+  type HostAttentionIssue,
   type HostRedesignContext,
   type HostRedesignFlowNode,
   type HostRedesignViewModel,
-  type HostAttentionIssue,
+  type ProtocolLeafKey,
 } from "../types";
 import { fieldsWithIssues } from "../focus/useHostDraftValidation";
 
-/**
- * Layout constants. The host group is a parent React Flow node with three
- * children laid out horizontally inside it. The servers hub + cards live
- * below the group as sibling nodes.
- *
- * Sub-node positions inside the parent group are HAND-TUNED constants —
- * we don't run auto-layout. Auto-layout libs (dagre/elk) don't traverse
- * RF's parent/child relationship cleanly and would lay out group and
- * children separately, leading to collisions.
- */
-const GROUP_X = 0;
-const GROUP_Y = 0;
-const GROUP_PADDING_X = 16;
-const GROUP_PADDING_TOP = 56;
-const GROUP_PADDING_BOTTOM = 16;
-const SUB_NODE_WIDTH = 268;
-const SUB_NODE_HEIGHT = 232;
-const SUB_NODE_GAP = 16;
+/* ============================================================
+   Layout constants. The host group's size is now derived from
+   how many leaves each section emits, so per-host silhouette
+   varies — that's the whole point of atomization. Numbers match
+   the mock (host-viz-morph.html) so design and code stay in sync.
+   ============================================================ */
+const AGENT_W = 248;
+const AGENT_H = 252;
+const HUB_W = 188;
+const HUB_H = 52;
+const LEAF_W = 158;
+const LEAF_H = 42;
+const LEAF_GAP_X = 12;
+const LEAF_ROW_H = 50;
+const LEAF_COLS = 2;
+const HUB_TO_LEAF_GAP = 38;
+const AGENT_TO_HUB_GAP = 32;
+const SECTION_INNER_GAP = 28;
+const GROUP_PAD = 22;
+const GROUP_PAD_TOP = 56;
 
-const GROUP_WIDTH =
-  GROUP_PADDING_X * 2 + SUB_NODE_WIDTH * 3 + SUB_NODE_GAP * 2;
-const GROUP_HEIGHT = GROUP_PADDING_TOP + SUB_NODE_HEIGHT + GROUP_PADDING_BOTTOM;
+const RIGHT_COL_W =
+  HUB_W + HUB_TO_LEAF_GAP + LEAF_COLS * LEAF_W + (LEAF_COLS - 1) * LEAF_GAP_X;
+const GROUP_W = GROUP_PAD * 2 + AGENT_W + AGENT_TO_HUB_GAP + RIGHT_COL_W;
 
-const SERVERS_HUB_Y = GROUP_Y + GROUP_HEIGHT + 64;
-const SERVERS_HUB_HEIGHT = 64;
-const SERVER_CARD_WIDTH = 220;
-const SERVER_CARD_HEIGHT = 88;
+const SERVERS_HUB_GAP = 64;
+const SERVERS_HUB_W_BASE = 220;
+const SERVERS_HUB_W_PER_SERVER = 38;
+const SERVERS_HUB_H = 48;
+const SERVER_CARD_W = 220;
+const SERVER_CARD_H = 88;
 const SERVER_CARD_GAP_X = 16;
-const SERVER_ROW_Y = SERVERS_HUB_Y + SERVERS_HUB_HEIGHT + 56;
+const SERVERS_ROW_GAP = 56;
 
-function formatModelLabel(modelId: string): {
+/* ============================================================
+   Stable cap order. Cursor's probe-derived list is the smallest;
+   keeping the order stable lets leaves morph in place rather
+   than rebuild when switching hosts.
+   ============================================================ */
+const APPS_CAP_ORDER: ReadonlyArray<{ key: AppsCapLeafKey; label: string }> = [
+  { key: "openLinks", label: "openLinks" },
+  { key: "serverTools", label: "serverTools" },
+  { key: "serverResources", label: "serverResources" },
+  { key: "logging", label: "logging" },
+  { key: "updateModelContext", label: "updateModelContext" },
+  { key: "message", label: "message" },
+];
+
+/* ============================================================
+   Protocol leaf descriptors — one per slice that's overridden
+   away from SDK defaults. hostContext + request timeout are
+   always emitted so they stay comparable across hosts.
+   ============================================================ */
+interface ProtocolLeafDescriptor {
+  key: ProtocolLeafKey;
   label: string;
-  provider: string | null;
-} {
-  if (!modelId) return { label: "No model selected", provider: null };
-  const def = getModelById(modelId);
-  if (def) return { label: def.name, provider: def.provider };
-  return { label: modelId, provider: null };
+  value: string;
 }
 
-function formatProtocolVersionsSummary(
+function describeClientInfo(
   draft: HostConfigInputV2,
-): string {
-  const versions = resolveSupportedProtocolVersions(draft.mcpProfile);
-  if (!versions || versions.length === 0) return "SDK defaults";
-  if (versions.length === 1) return versions[0];
-  return `${versions[0]} + ${versions.length - 1} more`;
-}
-
-function formatClientInfoSummary(draft: HostConfigInputV2): string {
+): ProtocolLeafDescriptor | null {
   const ci = resolveClientInfo(draft.mcpProfile);
-  if (!ci) return "@mcpjam/inspector (default)";
+  if (!ci) return null;
   const name = typeof ci.name === "string" ? ci.name : "(unnamed)";
   const version = typeof ci.version === "string" ? ci.version : "0.0.0";
-  return `${name} ${version}`;
+  return { key: "clientInfo", label: "clientInfo", value: `${name} ${version}` };
 }
 
-function formatBaseCapabilitiesSummary(
+function describeProtocolVersion(
   draft: HostConfigInputV2,
-): string {
+): ProtocolLeafDescriptor | null {
+  const versions = resolveSupportedProtocolVersions(draft.mcpProfile);
+  if (!versions || versions.length === 0) return null;
+  const head = versions[0];
+  const value = versions.length === 1 ? head : `${head} +${versions.length - 1}`;
+  return { key: "protocolVersion", label: "protocol pin", value };
+}
+
+function describeBaseCapabilities(
+  draft: HostConfigInputV2,
+): ProtocolLeafDescriptor | null {
   const caps = draft.clientCapabilities ?? {};
   const present: string[] = [];
   if (caps.roots) present.push("roots");
   if (caps.sampling) present.push("sampling");
   if (caps.experimental) present.push("experimental");
-  if (present.length === 0) return "none";
-  return present.join(" · ");
+  if (present.length === 0) return null;
+  return {
+    key: "capabilities",
+    label: "capabilities",
+    value: present.join(" · "),
+  };
 }
 
-function formatHostContextSummary(draft: HostConfigInputV2): string {
-  const hc = draft.hostContext ?? {};
-  const keyCount = Object.keys(hc).length;
-  if (keyCount === 0) return "{ }";
-  return `{ ${keyCount} ${keyCount === 1 ? "field" : "fields"} }`;
-}
-
-function formatConnectionSummary(draft: HostConfigInputV2): string {
-  const timeoutSecs = Math.round(
-    draft.connectionDefaults.requestTimeout / 1000,
-  );
-  const headerCount = Object.keys(draft.connectionDefaults.headers ?? {})
-    .length;
-  return `${timeoutSecs}s · ${headerCount}`;
-}
-
-function formatMimeTypesSummary(draft: HostConfigInputV2): string {
-  const ext = (draft.clientCapabilities?.extensions as
-    | Record<string, unknown>
-    | undefined)?.["io.modelcontextprotocol/ui"] as
-    | { mimeTypes?: unknown }
-    | undefined;
-  if (!ext) return "off";
-  const mimeTypes = Array.isArray(ext.mimeTypes)
-    ? (ext.mimeTypes as unknown[]).filter(
-        (m): m is string => typeof m === "string",
-      )
-    : [];
-  if (mimeTypes.length === 0) return "On — no MIME types";
-  if (mimeTypes.length === 1) return `On — ${mimeTypes[0]}`;
-  return `On — ${mimeTypes[0]} + ${mimeTypes.length - 1}`;
-}
-
-function formatSandboxModeLabel(draft: HostConfigInputV2): string {
-  const mode = draft.mcpProfile?.apps?.sandbox?.csp?.mode;
-  if (!mode) return "host-default";
-  return mode;
-}
-
-function isAppsExtensionEnabled(draft: HostConfigInputV2): boolean {
-  const ext = (draft.clientCapabilities?.extensions as
-    | Record<string, unknown>
-    | undefined)?.["io.modelcontextprotocol/ui"];
-  return ext !== undefined;
-}
-
-function countAdvertisedHostCapabilities(
+function describeHostContext(
   draft: HostConfigInputV2,
-): number {
+): ProtocolLeafDescriptor {
+  const count = Object.keys(draft.hostContext ?? {}).length;
+  return {
+    key: "hostContext",
+    label: "hostContext",
+    value: `{ ${count} ${count === 1 ? "field" : "fields"} }`,
+  };
+}
+
+function describeTimeout(draft: HostConfigInputV2): ProtocolLeafDescriptor {
+  const secs = Math.round(draft.connectionDefaults.requestTimeout / 1000);
+  return {
+    key: "timeout",
+    label: "request timeout",
+    value: `${secs}s`,
+  };
+}
+
+function describeHeaders(
+  draft: HostConfigInputV2,
+): ProtocolLeafDescriptor | null {
+  const count = Object.keys(draft.connectionDefaults.headers ?? {}).length;
+  if (count === 0) return null;
+  return {
+    key: "headers",
+    label: "default headers",
+    value: `${count} set`,
+  };
+}
+
+function buildProtocolLeaves(
+  draft: HostConfigInputV2,
+): ProtocolLeafDescriptor[] {
+  const leaves: (ProtocolLeafDescriptor | null)[] = [
+    describeClientInfo(draft),
+    describeProtocolVersion(draft),
+    describeBaseCapabilities(draft),
+    describeHostContext(draft),
+    describeTimeout(draft),
+    describeHeaders(draft),
+  ];
+  return leaves.filter((l): l is ProtocolLeafDescriptor => l !== null);
+}
+
+interface AppsCapLeafDescriptor {
+  key: AppsCapLeafKey;
+  label: string;
+  on: boolean;
+  qualifier: string | null;
+}
+
+function buildAppsCapLeaves(
+  draft: HostConfigInputV2,
+): AppsCapLeafDescriptor[] {
   const blob = resolveEffectiveHostCapabilities({
     hostStyle: draft.hostStyle,
     hostCapabilitiesOverride: draft.hostCapabilitiesOverride,
-  });
-  // Number of top-level keys present in the advertised blob.
-  return Object.keys(blob).length;
-}
-
-function resolvedHostCapabilities(draft: HostConfigInputV2) {
-  return resolveEffectiveHostCapabilities({
-    hostStyle: draft.hostStyle,
-    hostCapabilitiesOverride: draft.hostCapabilitiesOverride,
   }) as Record<string, unknown>;
+
+  return APPS_CAP_ORDER.map(({ key, label }) => {
+    const value = blob[key];
+    const on = value !== undefined && value !== null;
+    let qualifier: string | null = null;
+    if (on && typeof value === "object" && !Array.isArray(value)) {
+      const v = value as Record<string, unknown>;
+      // `listChanged: false` is the load-bearing signal from Cursor's
+      // probe; `text: {}` is the load-bearing signal for Claude/ChatGPT
+      // (vs. arbitrary structured content).
+      if (v.listChanged === false) qualifier = "lc:false";
+      else if (v.text !== undefined) qualifier = "text";
+    }
+    return { key, label, on, qualifier };
+  });
 }
 
+function agentChangedFields(
+  draft: HostConfigInputV2,
+  prev: HostConfigInputV2 | undefined,
+): string[] {
+  if (!prev) return [];
+  const changed: string[] = [];
+  if (prev.modelId !== draft.modelId) changed.push("modelId");
+  if (prev.temperature !== draft.temperature) changed.push("temperature");
+  if (prev.hostStyle !== draft.hostStyle) changed.push("hostStyle");
+  if (prev.requireToolApproval !== draft.requireToolApproval)
+    changed.push("toolApproval");
+  if (prev.systemPrompt.trim() !== draft.systemPrompt.trim())
+    changed.push("systemPrompt");
+  return changed;
+}
+
+function protocolSubtitle(draft: HostConfigInputV2): string {
+  const versions = resolveSupportedProtocolVersions(draft.mcpProfile);
+  const ctxCount = Object.keys(draft.hostContext ?? {}).length;
+  const versionTag =
+    versions && versions.length > 0 ? `pinned ${versions[0]}` : "SDK defaults";
+  return `${versionTag} · ${ctxCount} ctx ${ctxCount === 1 ? "field" : "fields"}`;
+}
+
+function appsSubtitle(draft: HostConfigInputV2): string {
+  const mode = draft.mcpProfile?.apps?.sandbox?.csp?.mode ?? "host-default";
+  return `sandbox: ${mode}`;
+}
+
+/* ============================================================
+   Builder. Emits the host-group with all children + the servers
+   subgraph as siblings. Leaves are children of the group so the
+   dashed border wraps the whole network and resizes with it.
+   ============================================================ */
 export function buildRedesignedHostCanvas(
   context: HostRedesignContext,
   attention: ReadonlyArray<HostAttentionIssue>,
 ): HostRedesignViewModel {
-  const { draft, hostName } = context;
+  const { draft, hostName, prev } = context;
+  const prevDraft = prev?.draft;
 
   const behaviorAttention = fieldsWithIssues(attention, "behavior");
   const protocolAttention = fieldsWithIssues(attention, "protocol");
   const appsAttention = fieldsWithIssues(attention, "apps");
-  const modelInfo = formatModelLabel(draft.modelId);
+
+  const modelDef = draft.modelId ? getModelById(draft.modelId) : null;
   const styleDef = findHostStyle(draft.hostStyle);
-  const hostCaps = resolvedHostCapabilities(draft);
+
+  const protocolLeaves = buildProtocolLeaves(draft);
+  const appsCapLeaves = buildAppsCapLeaves(draft);
+
+  // Section heights track leaf-row counts; the group then sizes to
+  // fit. This is the geometric signal that makes a Cursor host look
+  // smaller than a Claude host without the user reading a single value.
+  const protocolRows = Math.max(1, Math.ceil(protocolLeaves.length / LEAF_COLS));
+  const appsRows = Math.max(1, Math.ceil(appsCapLeaves.length / LEAF_COLS));
+  const protocolSectionH = Math.max(HUB_H, protocolRows * LEAF_ROW_H);
+  const appsSectionH = Math.max(HUB_H, appsRows * LEAF_ROW_H);
+  const rightColH = protocolSectionH + SECTION_INNER_GAP + appsSectionH;
+  const innerH = Math.max(AGENT_H, rightColH);
+  const groupH = GROUP_PAD_TOP + innerH + GROUP_PAD;
+
+  // Y-center the shorter column inside the inner content area so the
+  // visual mass balances. The taller column anchors the height.
+  const rightColTopY = GROUP_PAD_TOP + (innerH - rightColH) / 2;
+  const agentY = GROUP_PAD_TOP + (innerH - AGENT_H) / 2;
+
+  const agentX = GROUP_PAD;
+  const hubX = GROUP_PAD + AGENT_W + AGENT_TO_HUB_GAP;
+  const protocolHubY = rightColTopY + (protocolSectionH - HUB_H) / 2;
+  const appsHubY =
+    rightColTopY +
+    protocolSectionH +
+    SECTION_INNER_GAP +
+    (appsSectionH - HUB_H) / 2;
 
   const nodes: HostRedesignFlowNode[] = [];
   const edges: Edge[] = [];
 
-  // 1. The dashed parent group container.
+  // 1) Dashed parent group, sized to fit.
   nodes.push({
     id: HOST_GROUP_NODE_ID,
     type: "redesignHostGroup",
-    position: { x: GROUP_X, y: GROUP_Y },
-    style: { width: GROUP_WIDTH, height: GROUP_HEIGHT },
+    position: { x: 0, y: 0 },
+    style: { width: GROUP_W, height: groupH },
     data: {
       kind: "host-group",
       hostName: hostName.trim() || "Untitled host",
@@ -184,94 +290,184 @@ export function buildRedesignedHostCanvas(
     selectable: false,
   });
 
-  // 2. Three sub-nodes laid out horizontally inside the group.
-  const subNodeY = GROUP_PADDING_TOP;
-  const subNodeXs = [
-    GROUP_PADDING_X,
-    GROUP_PADDING_X + SUB_NODE_WIDTH + SUB_NODE_GAP,
-    GROUP_PADDING_X + (SUB_NODE_WIDTH + SUB_NODE_GAP) * 2,
-  ];
-
+  // 2) Agent identity card — left column, vertically centered.
   nodes.push({
-    id: BEHAVIOR_NODE_ID,
-    type: "redesignBehavior",
+    id: AGENT_IDENTITY_NODE_ID,
+    type: "redesignAgentIdentity",
     parentId: HOST_GROUP_NODE_ID,
     extent: "parent",
-    position: { x: subNodeXs[0], y: subNodeY },
+    position: { x: agentX, y: agentY },
+    style: { width: AGENT_W },
     data: {
-      kind: "behavior",
+      kind: "agent-identity",
       modelId: draft.modelId,
-      modelLabel: modelInfo.label,
-      modelProvider: modelInfo.provider,
+      modelLabel: modelDef?.name ?? draft.modelId ?? "No model selected",
+      modelProvider: modelDef?.provider ?? null,
       temperature: draft.temperature,
       hostStyle: draft.hostStyle,
       hostStyleLabel: styleDef?.chatUi.label ?? draft.hostStyle,
       toolApproval: draft.requireToolApproval,
       systemPromptEmpty: draft.systemPrompt.trim() === "",
       attentionFields: Array.from(behaviorAttention),
+      changedFields: agentChangedFields(draft, prevDraft),
     },
     draggable: false,
   });
 
+  // 3) Protocol hub + leaves.
+  const protocolSubtitleNext = protocolSubtitle(draft);
+  const protocolSubtitlePrev = prevDraft
+    ? protocolSubtitle(prevDraft)
+    : protocolSubtitleNext;
   nodes.push({
-    id: PROTOCOL_NODE_ID,
-    type: "redesignProtocol",
+    id: PROTOCOL_HUB_NODE_ID,
+    type: "redesignSectionHub",
     parentId: HOST_GROUP_NODE_ID,
     extent: "parent",
-    position: { x: subNodeXs[1], y: subNodeY },
+    position: { x: hubX, y: protocolHubY },
+    style: { width: HUB_W, height: HUB_H },
     data: {
-      kind: "protocol",
-      clientInfoSummary: formatClientInfoSummary(draft),
-      protocolVersionsSummary: formatProtocolVersionsSummary(draft),
-      capabilitiesSummary: formatBaseCapabilitiesSummary(draft),
-      hostContextSummary: formatHostContextSummary(draft),
-      connectionSummary: formatConnectionSummary(draft),
-      attentionFields: Array.from(protocolAttention),
+      kind: "section-hub",
+      section: "protocol",
+      title: "MCP Protocol",
+      subtitle: protocolSubtitleNext,
+      subtitleChanged: protocolSubtitleNext !== protocolSubtitlePrev,
+      hasAttention: protocolAttention.size > 0,
     },
     draggable: false,
   });
 
-  const openLinksOn = !!hostCaps.openLinks;
-  const messageOn = !!hostCaps.message;
-  const updateModelContext = hostCaps.updateModelContext as
-    | Record<string, unknown>
-    | undefined;
-  const updateModelContextLabel = updateModelContext
-    ? updateModelContext.text
-      ? "text only"
-      : "on"
-    : "off";
+  const prevProtocolByKey: Record<string, ProtocolLeafDescriptor> = {};
+  if (prevDraft) {
+    for (const l of buildProtocolLeaves(prevDraft)) {
+      prevProtocolByKey[l.key] = l;
+    }
+  }
+  const protocolGridTop =
+    protocolHubY + HUB_H / 2 - (protocolRows * LEAF_ROW_H) / 2;
+  protocolLeaves.forEach((leaf, i) => {
+    const col = i % LEAF_COLS;
+    const row = Math.floor(i / LEAF_COLS);
+    const leafX = hubX + HUB_W + HUB_TO_LEAF_GAP + col * (LEAF_W + LEAF_GAP_X);
+    const leafY =
+      protocolGridTop + row * LEAF_ROW_H + (LEAF_ROW_H - LEAF_H) / 2;
+    const prevLeaf = prevProtocolByKey[leaf.key];
+    nodes.push({
+      id: protocolLeafNodeId(leaf.key),
+      type: "redesignProtocolLeaf",
+      parentId: HOST_GROUP_NODE_ID,
+      extent: "parent",
+      position: { x: leafX, y: leafY },
+      style: { width: LEAF_W, height: LEAF_H },
+      data: {
+        kind: "protocol-leaf",
+        leafKey: leaf.key,
+        label: leaf.label,
+        value: leaf.value,
+        // No prev → first paint or no host switch yet; don't flash.
+        // Existing-but-different prev → flash on morph.
+        isChanged: prevLeaf !== undefined && prevLeaf.value !== leaf.value,
+        hasAttention: protocolAttention.has(leaf.key),
+      },
+      draggable: false,
+    });
+    edges.push({
+      id: `protocol-hub-to-${leaf.key}`,
+      source: PROTOCOL_HUB_NODE_ID,
+      target: protocolLeafNodeId(leaf.key),
+      type: "default",
+      style: {
+        stroke: "oklch(0.68 0.11 40 / 0.45)",
+        strokeWidth: 1,
+      },
+    });
+  });
 
+  // 4) Apps hub + cap leaves.
+  const appsSubtitleNext = appsSubtitle(draft);
+  const appsSubtitlePrev = prevDraft
+    ? appsSubtitle(prevDraft)
+    : appsSubtitleNext;
   nodes.push({
-    id: APPS_NODE_ID,
-    type: "redesignApps",
+    id: APPS_HUB_NODE_ID,
+    type: "redesignSectionHub",
     parentId: HOST_GROUP_NODE_ID,
     extent: "parent",
-    position: { x: subNodeXs[2], y: subNodeY },
+    position: { x: hubX, y: appsHubY },
+    style: { width: HUB_W, height: HUB_H },
     data: {
-      kind: "apps",
-      enabled: isAppsExtensionEnabled(draft),
-      mimeTypesSummary: formatMimeTypesSummary(draft),
-      hostCapabilitiesCount: countAdvertisedHostCapabilities(draft),
-      hasOverride: draft.hostCapabilitiesOverride !== undefined,
-      sandboxModeLabel: formatSandboxModeLabel(draft),
-      openLinksOn,
-      messageOn,
-      updateModelContextLabel,
-      attentionFields: Array.from(appsAttention),
+      kind: "section-hub",
+      section: "apps",
+      title: "Apps Extension",
+      subtitle: appsSubtitleNext,
+      subtitleChanged: appsSubtitleNext !== appsSubtitlePrev,
+      hasAttention: appsAttention.size > 0,
     },
     draggable: false,
   });
 
-  // 3. Servers hub centered below the host group.
-  const hubX = GROUP_X + (GROUP_WIDTH - 220) / 2;
+  const prevAppsByKey: Record<string, AppsCapLeafDescriptor> = {};
+  if (prevDraft) {
+    for (const l of buildAppsCapLeaves(prevDraft)) prevAppsByKey[l.key] = l;
+  }
+  const appsGridTop = appsHubY + HUB_H / 2 - (appsRows * LEAF_ROW_H) / 2;
+  appsCapLeaves.forEach((leaf, i) => {
+    const col = i % LEAF_COLS;
+    const row = Math.floor(i / LEAF_COLS);
+    const leafX = hubX + HUB_W + HUB_TO_LEAF_GAP + col * (LEAF_W + LEAF_GAP_X);
+    const leafY = appsGridTop + row * LEAF_ROW_H + (LEAF_ROW_H - LEAF_H) / 2;
+    const prevLeaf = prevAppsByKey[leaf.key];
+    const onChanged =
+      prevLeaf !== undefined &&
+      (prevLeaf.on !== leaf.on || prevLeaf.qualifier !== leaf.qualifier);
+    const newlyOn = prevLeaf !== undefined && !prevLeaf.on && leaf.on;
+    nodes.push({
+      id: appsCapLeafNodeId(leaf.key),
+      type: "redesignAppsCapLeaf",
+      parentId: HOST_GROUP_NODE_ID,
+      extent: "parent",
+      position: { x: leafX, y: leafY },
+      style: { width: LEAF_W, height: LEAF_H },
+      data: {
+        kind: "apps-cap-leaf",
+        capKey: leaf.key,
+        label: leaf.label,
+        on: leaf.on,
+        qualifier: leaf.qualifier,
+        isChanged: onChanged,
+        isNewlyOn: newlyOn,
+      },
+      draggable: false,
+    });
+    edges.push({
+      id: `apps-hub-to-${leaf.key}`,
+      source: APPS_HUB_NODE_ID,
+      target: appsCapLeafNodeId(leaf.key),
+      type: "default",
+      style: {
+        stroke: leaf.on
+          ? "oklch(0.68 0.11 40 / 0.45)"
+          : "oklch(0.55 0.02 250 / 0.32)",
+        strokeWidth: 1,
+        strokeDasharray: leaf.on ? undefined : "3 4",
+      },
+    });
+  });
+
+  // 5) Servers hub — sibling of the host group, below it.
+  const serversHubY = groupH + SERVERS_HUB_GAP;
   const totalServers =
     draft.serverIds.length + draft.optionalServerIds.length;
+  const serversHubW = Math.max(
+    SERVERS_HUB_W_BASE,
+    180 + totalServers * SERVERS_HUB_W_PER_SERVER,
+  );
+  const serversHubX = (GROUP_W - serversHubW) / 2;
   nodes.push({
     id: SERVERS_HUB_NODE_ID,
     type: "redesignServersHub",
-    position: { x: hubX, y: SERVERS_HUB_Y },
-    style: { width: 220 },
+    position: { x: serversHubX, y: serversHubY },
+    style: { width: serversHubW, height: SERVERS_HUB_H },
     data: {
       kind: "servers-hub",
       totalCount: totalServers,
@@ -279,7 +475,6 @@ export function buildRedesignedHostCanvas(
     draggable: false,
   });
 
-  // Connector from host group → servers hub.
   edges.push({
     id: "host-group-to-hub",
     source: HOST_GROUP_NODE_ID,
@@ -288,30 +483,32 @@ export function buildRedesignedHostCanvas(
     style: { stroke: "oklch(0.68 0.11 40 / 0.55)", strokeWidth: 1.5 },
   });
 
-  // 4. Server cards in a horizontal row beneath the hub.
-  // Required servers first (solid edges), optional appended (dashed).
+  // 6) Server cards. Required first, optional appended; insecure
+  //    `http://` gets an amber stroke; optional gets dashed.
   const seen = new Set<string>();
   const orderedServerIds: string[] = [];
   for (const id of draft.serverIds) {
-    if (seen.has(id)) continue;
-    seen.add(id);
-    orderedServerIds.push(id);
+    if (!seen.has(id)) {
+      seen.add(id);
+      orderedServerIds.push(id);
+    }
   }
   for (const id of draft.optionalServerIds) {
-    if (seen.has(id)) continue;
-    seen.add(id);
-    orderedServerIds.push(id);
+    if (!seen.has(id)) {
+      seen.add(id);
+      orderedServerIds.push(id);
+    }
   }
 
-  const totalCardsWidth =
+  const totalCardsW =
     orderedServerIds.length === 0
       ? 0
-      : orderedServerIds.length * SERVER_CARD_WIDTH +
+      : orderedServerIds.length * SERVER_CARD_W +
         (orderedServerIds.length - 1) * SERVER_CARD_GAP_X;
-  const cardsStartX =
-    GROUP_X + (GROUP_WIDTH - totalCardsWidth) / 2;
+  const cardsStartX = (GROUP_W - totalCardsW) / 2;
+  const serverRowY = serversHubY + SERVERS_HUB_H + SERVERS_ROW_GAP;
 
-  orderedServerIds.forEach((serverId, index) => {
+  orderedServerIds.forEach((serverId, i) => {
     const server = context.projectServers.find((s) => s.id === serverId);
     const url = server?.url ?? null;
     const insecure = !!url && url.startsWith("http://");
@@ -319,7 +516,7 @@ export function buildRedesignedHostCanvas(
     const override = draft.serverConnectionOverrides?.[serverId];
     const hasOverride =
       !!override &&
-      ((override.headersOverride &&
+      ((!!override.headersOverride &&
         Object.keys(override.headersOverride).length > 0) ||
         override.requestTimeoutOverride !== undefined);
 
@@ -327,10 +524,10 @@ export function buildRedesignedHostCanvas(
       id: `server-card:${serverId}`,
       type: "redesignServerCard",
       position: {
-        x: cardsStartX + index * (SERVER_CARD_WIDTH + SERVER_CARD_GAP_X),
-        y: SERVER_ROW_Y,
+        x: cardsStartX + i * (SERVER_CARD_W + SERVER_CARD_GAP_X),
+        y: serverRowY,
       },
-      style: { width: SERVER_CARD_WIDTH, height: SERVER_CARD_HEIGHT },
+      style: { width: SERVER_CARD_W, height: SERVER_CARD_H },
       data: {
         kind: "server-card",
         serverId,
@@ -358,19 +555,19 @@ export function buildRedesignedHostCanvas(
     });
   });
 
-  // 5. Add server pill — positioned to the right of the last card (or
-  // centered under the hub when no servers exist).
+  // 7) Add-server pill — right of the last card, or centered under
+  //    the hub when no servers exist.
   const addServerX =
     orderedServerIds.length === 0
-      ? hubX + (220 - 36) / 2
+      ? serversHubX + (serversHubW - 36) / 2
       : cardsStartX +
-        orderedServerIds.length * (SERVER_CARD_WIDTH + SERVER_CARD_GAP_X);
+        orderedServerIds.length * (SERVER_CARD_W + SERVER_CARD_GAP_X);
   nodes.push({
     id: ADD_SERVER_NODE_ID,
     type: "redesignAddServer",
     position: {
       x: addServerX,
-      y: SERVER_ROW_Y + (SERVER_CARD_HEIGHT - 36) / 2,
+      y: serverRowY + (SERVER_CARD_H - 36) / 2,
     },
     data: { kind: "add-server", label: "Add server" },
     draggable: false,

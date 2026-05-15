@@ -5,6 +5,7 @@ import {
 import mcpjamLogo from "/mcp_jam.svg";
 import claudeLogo from "/claude_logo.png";
 import openaiLogo from "/openai_logo.png";
+import cursorLogo from "/cursor_logo.png";
 
 // Verbatim from a real claude.ai ui/initialize response. Kept out of the
 // template entry for readability. Updating these keeps the Claude template
@@ -190,7 +191,7 @@ const CLAUDE_FONTS_CSS = `
 }
 `;
 
-export type HostTemplateId = "mcpjam" | "claude" | "chatgpt";
+export type HostTemplateId = "mcpjam" | "claude" | "chatgpt" | "cursor";
 
 export interface HostTemplate {
   id: HostTemplateId;
@@ -406,6 +407,98 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             permissions: {
               mode: "custom",
               allow: { microphone: true },
+            },
+          },
+        },
+      };
+      return base;
+    },
+  },
+  {
+    id: "cursor",
+    label: "Cursor",
+    description: "Cursor IDE chat panel. MCP UI extension on, no message/updateModelContext.",
+    logoSrc: cursorLogo,
+    seed: () => {
+      const base = emptyHostConfigInputV2({
+        hostStyle: "cursor",
+        // Anthropic-flavored default to match Cursor's typical chat
+        // configuration; users can swap in any model after seeding.
+        modelId: "claude-sonnet-4-5",
+        temperature: 0.7,
+        requireToolApproval: false,
+      });
+      // clientCapabilities: matches what real Cursor publishes during MCP
+      // `initialize` — declares MCP UI support plus its own elicitation
+      // and roots flags. We keep the SDK-default UI extension entry
+      // (`mimeTypes: ["text/html;profile=mcp-app"]`) and layer the
+      // cursor-specific `elicitation` / `roots` declarations on top.
+      base.clientCapabilities = {
+        ...base.clientCapabilities,
+        elicitation: { form: {} },
+        roots: { listChanged: false },
+      };
+      // hostCapabilities override: captured verbatim from a Cursor 3.4.17
+      // probe. Notably no `updateModelContext` and no `message` (Cursor
+      // doesn't surface a way for widgets to push text back to the model
+      // turn or seed the next user message). `listChanged: false` is
+      // explicit — apps that gate on it need to know real Cursor doesn't
+      // forward those notifications.
+      base.hostCapabilitiesOverride = {
+        openLinks: {},
+        serverTools: { listChanged: false },
+        serverResources: { listChanged: false },
+        logging: {},
+      };
+      // Per-resource environment context Cursor exposes to MCP apps.
+      // `containerDimensions` and theming come straight from the probe;
+      // `availableDisplayModes` is a single-element list because Cursor
+      // currently only renders inline (no fullscreen / pip).
+      base.hostContext = {
+        theme: "dark",
+        displayMode: "inline",
+        availableDisplayModes: ["inline"],
+        containerDimensions: { width: 748, maxHeight: 800 },
+        locale: "en-US",
+        timeZone: "America/Los_Angeles",
+        userAgent: "cursor",
+        platform: "desktop",
+      };
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          // Base MCP protocol: clientInfo sent to MCP servers during
+          // `initialize`. Matches Cursor's outer-IDE identity.
+          clientInfo: { name: "cursor-vscode", version: "1.0.0" },
+        },
+        apps: {
+          uiInitialize: {
+            // MCP Apps extension: hostInfo sent to the View iframe in
+            // `ui/initialize`. Apps that branch on `hostInfo.name === "Cursor"`
+            // need this to take that path. Version pinned to a real probed
+            // build; bump when capturing a fresh probe.
+            hostInfo: { name: "Cursor", version: "3.4.17" },
+          },
+          sandbox: {
+            csp: {
+              // `restrictTo` matches the CSP Cursor's webview actually
+              // installs (verified from the probe's `policies.metaCsp`).
+              // `mode: "declared"` keeps each resource's own CSP
+              // authoritative; we only intersect on top.
+              mode: "declared",
+              restrictTo: {
+                connectDomains: [
+                  "https://api.openai.com",
+                  "https://api.anthropic.com",
+                  "https://cdn.jsdelivr.net",
+                ],
+                resourceDomains: ["https://cdn.jsdelivr.net"],
+              },
+            },
+            permissions: {
+              // Only clipboardWrite per probe; everything else stays off.
+              mode: "custom",
+              allow: { clipboardWrite: true },
             },
           },
         },

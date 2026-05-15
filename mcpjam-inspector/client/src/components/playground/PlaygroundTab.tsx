@@ -22,6 +22,7 @@ import { LoggerView } from "@/components/logger-view";
 import { PlaygroundHeader } from "./PlaygroundHeader";
 import { PlaygroundHeaderSlotContent } from "./playground-header-slot";
 import { PlaygroundCenter } from "./PlaygroundCenter";
+import { PlaygroundPreviewedHostSync } from "./PlaygroundPreviewedHostSync";
 import { PlaygroundLeftRail } from "./PlaygroundLeftRail";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import type { ProjectHostContextDraft } from "@/lib/client-config";
@@ -136,6 +137,13 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                     projectId={props.activeProjectId ?? undefined}
                   />
                 </PlaygroundHeaderSlotContent>
+                {/* Watches the project's previewed-host id (the named-host
+                    dropdown in PlaygroundHeader) and re-snapshots its
+                    persisted config into the chip stores when it changes.
+                    Renders nothing. */}
+                <PlaygroundPreviewedHostSync
+                  projectId={props.activeProjectId ?? null}
+                />
                 <ResizablePanelGroup
                   direction="horizontal"
                   className="min-h-0 flex-1"

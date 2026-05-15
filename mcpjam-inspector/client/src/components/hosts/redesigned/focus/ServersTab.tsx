@@ -58,42 +58,19 @@ export function ServersTab({
     });
   };
 
+  // Every project server is implicitly attached to every host. The only
+  // per-host decision is required vs not-required — `serverIds` is the
+  // explicit "required" list; everything else is optional. `optionalServerIds`
+  // is retired under this model; we always write `[]`.
   const setRequired = (serverId: string, checked: boolean) => {
     onDraftChange((prev) => {
       const required = checked
         ? Array.from(new Set([...prev.serverIds, serverId]))
         : prev.serverIds.filter((id) => id !== serverId);
-      const optional = prev.optionalServerIds.filter((id) =>
-        new Set(required).has(id),
-      );
       return {
         ...prev,
         serverIds: required,
-        optionalServerIds: optional,
-      };
-    });
-  };
-
-  const setOptional = (serverId: string, checked: boolean) => {
-    onDraftChange((prev) => {
-      if (checked) {
-        const newRequired = Array.from(
-          new Set([...prev.serverIds, serverId]),
-        );
-        const newOptional = Array.from(
-          new Set([...prev.optionalServerIds, serverId]),
-        );
-        return {
-          ...prev,
-          serverIds: newRequired,
-          optionalServerIds: newOptional,
-        };
-      }
-      return {
-        ...prev,
-        optionalServerIds: prev.optionalServerIds.filter(
-          (id) => id !== serverId,
-        ),
+        optionalServerIds: [],
       };
     });
   };
@@ -102,7 +79,7 @@ export function ServersTab({
     <div className="flex flex-col gap-4">
       <FocusBlock
         title="Attached servers"
-        subtitle="The host can call any selected server. Optional servers can be disabled at runtime."
+        subtitle="Every project server attaches to this host. Mark the ones the host depends on as required — the rest are optional."
         action={
           <Button
             type="button"
@@ -123,11 +100,8 @@ export function ServersTab({
         ) : (
           <div className="flex flex-col gap-1.5">
             {availableServers.map((srv) => {
-              const isRequired =
-                draft.serverIds.includes(srv.id) &&
-                !draft.optionalServerIds.includes(srv.id);
-              const isOptional = draft.optionalServerIds.includes(srv.id);
-              const isAttached = draft.serverIds.includes(srv.id);
+              const isRequired = draft.serverIds.includes(srv.id);
+              const isOptional = !isRequired;
               const override = overrides[srv.id];
               const expanded = expandedServerId === srv.id;
               const overrideCount =
@@ -169,14 +143,12 @@ export function ServersTab({
                         {srv.url ?? "Project server"}
                       </span>
                     </div>
-                    {isAttached ? (
-                      <Chip
-                        tone={isOptional ? "info" : "primary"}
-                        mono={false}
-                      >
-                        {isOptional ? "optional" : "required"}
-                      </Chip>
-                    ) : null}
+                    <Chip
+                      tone={isOptional ? "info" : "primary"}
+                      mono={false}
+                    >
+                      {isOptional ? "optional" : "required"}
+                    </Chip>
                     {overrideCount > 0 ? (
                       <Badge
                         variant="outline"
@@ -208,10 +180,7 @@ export function ServersTab({
                   </div>
                   {expanded ? (
                     <ServerOverrideEditor
-                      isAttached={isAttached}
-                      isOptional={isOptional}
                       override={override}
-                      onToggleOptional={(c) => setOptional(srv.id, c)}
                       onChange={(next) => setOverride(srv.id, next)}
                     />
                   ) : null}
@@ -226,16 +195,10 @@ export function ServersTab({
 }
 
 function ServerOverrideEditor({
-  isAttached,
-  isOptional,
   override,
-  onToggleOptional,
   onChange,
 }: {
-  isAttached: boolean;
-  isOptional: boolean;
   override: Override | undefined;
-  onToggleOptional: (checked: boolean) => void;
   onChange: (next: Override | null) => void;
 }) {
   const hasOverride = override !== undefined;
@@ -266,29 +229,7 @@ function ServerOverrideEditor({
 
   return (
     <div className="border-t border-border/50 px-3 py-3">
-      {!isAttached ? (
-        <p className="text-[11.5px] text-muted-foreground">
-          Server isn't attached. Check the box above to attach it before
-          configuring overrides.
-        </p>
-      ) : (
-        <div className="flex flex-col gap-3">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[12px] font-medium">
-              Role
-            </span>
-            <div className="flex items-center gap-1.5">
-              <Switch
-                checked={isOptional}
-                onCheckedChange={onToggleOptional}
-                aria-label="Optional"
-              />
-              <span className="text-[11px] text-muted-foreground">
-                Optional
-              </span>
-            </div>
-          </div>
-
+      <div className="flex flex-col gap-3">
           <div className="flex items-center justify-between gap-2">
             <span className="text-[12px] font-medium">Overrides</span>
             <div className="flex items-center gap-1.5">
@@ -437,8 +378,7 @@ function ServerOverrideEditor({
               </div>
             </>
           ) : null}
-        </div>
-      )}
+      </div>
     </div>
   );
 }

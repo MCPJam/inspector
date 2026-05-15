@@ -99,17 +99,63 @@ export function HostBuilderViewRedesigned({
   const [hostSwitchDialogOpen, setHostSwitchDialogOpen] = useState(false);
   const pendingSwitchHostRef = useRef<string | null>(null);
 
+  // Diff snapshot — populated for ONE render after a host switch so the
+  // canvas can mark changed leaves/fields. Cleared after the flash
+  // duration so subsequent in-place edits don't keep re-firing the
+  // animation. Captured from the outgoing draft *before* it's reseeded.
+  const [prevHostSnapshot, setPrevHostSnapshot] = useState<{
+    hostName: string;
+    draft: HostConfigInputV2;
+  } | null>(null);
+  const lastSeededHostIdRef = useRef<string | null>(null);
+
   // Seed draft state from the loaded host. The `host` reference changes
   // whenever Convex re-emits the host doc — after a save, that's the signal
   // that aligns draft state with persistence so `isDirty` resets.
+  //
+  // `optionalServerIds` is retired under the "all project servers attach"
+  // rule. Normalize to `[]` on both the draft and the saved comparison so
+  // existing hosts (saved with a non-empty optional list under the old model)
+  // don't surface a phantom unsaved diff.
   useEffect(() => {
     if (!host) return;
+    if (
+      lastSeededHostIdRef.current &&
+      lastSeededHostIdRef.current !== hostId &&
+      draftConfig
+    ) {
+      // Host switch — capture the OUTGOING draft as the diff baseline
+      // before we overwrite it. Reset to null first so React schedules a
+      // commit even when the same outgoing host reappears (back-and-forth
+      // toggles between two hosts should still flash each time).
+      setPrevHostSnapshot({ hostName: draftName, draft: draftConfig });
+    }
+    lastSeededHostIdRef.current = hostId;
     setDraftName(host.name);
-    setDraftConfig(hostConfigDtoToInput(host.config));
-  }, [host]);
+    setDraftConfig({
+      ...hostConfigDtoToInput(host.config),
+      optionalServerIds: [],
+    });
+    // draftName / draftConfig intentionally excluded: keying the effect on
+    // them would re-fire the diff capture on every keystroke and mark the
+    // user's own edits as "diff from previous host," which is wrong.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [host, hostId]);
+
+  // Clear the diff snapshot ~1.5s after a host switch so subsequent
+  // in-place edits don't keep re-firing the morph animation. Matches the
+  // CSS flash duration in RedesignedHostCanvas.
+  useEffect(() => {
+    if (!prevHostSnapshot) return;
+    const t = window.setTimeout(() => setPrevHostSnapshot(null), 1500);
+    return () => window.clearTimeout(t);
+  }, [prevHostSnapshot]);
 
   const savedConfig = useMemo(
-    () => (host ? hostConfigDtoToInput(host.config) : null),
+    () =>
+      host
+        ? { ...hostConfigDtoToInput(host.config), optionalServerIds: [] }
+        : null,
     [host],
   );
 
@@ -183,6 +229,7 @@ export function HostBuilderViewRedesigned({
         savedSnapshotId: host?.config?.id ?? "",
         isDirty,
         projectServers: availableServersForCanvas,
+        prev: prevHostSnapshot ?? undefined,
       },
       attention,
     );
@@ -193,6 +240,7 @@ export function HostBuilderViewRedesigned({
     isDirty,
     availableServersForCanvas,
     attention,
+    prevHostSnapshot,
   ]);
 
   const openFocus = useCallback(
@@ -390,7 +438,10 @@ export function HostBuilderViewRedesigned({
             defaultSize={focusState.open ? 55 : 100}
             minSize={30}
           >
-            <div className="h-full min-h-0 pr-2">
+            <div
+              key={hostId}
+              className="h-full min-h-0 pr-2 animate-in fade-in-50 zoom-in-95 duration-300 ease-out"
+            >
               <ReactFlowProvider>
                 <RedesignedHostCanvas
                   viewModel={viewModel}

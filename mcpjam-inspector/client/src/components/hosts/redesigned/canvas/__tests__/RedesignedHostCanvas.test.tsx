@@ -2,132 +2,121 @@ import { describe, expect, it } from "vitest";
 import { render, within } from "@testing-library/react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { emptyHostConfigInputV2 } from "@/lib/host-config-v2";
-import { APPS_NODE_ID, BEHAVIOR_NODE_ID, PROTOCOL_NODE_ID } from "../../types";
+import {
+  AGENT_IDENTITY_NODE_ID,
+  APPS_HUB_NODE_ID,
+  PROTOCOL_HUB_NODE_ID,
+  appsCapLeafNodeId,
+  protocolLeafNodeId,
+} from "../../types";
 import { RedesignedHostCanvas } from "../RedesignedHostCanvas";
 import { buildRedesignedHostCanvas } from "../canvasBuilder";
 
+function renderCanvas(viewModelOpts: {
+  draft?: ReturnType<typeof emptyHostConfigInputV2>;
+  hostName?: string;
+}) {
+  const viewModel = buildRedesignedHostCanvas(
+    {
+      hostName: viewModelOpts.hostName ?? "Test",
+      draft: viewModelOpts.draft ?? emptyHostConfigInputV2(),
+      savedSnapshotId: "snap",
+      isDirty: false,
+      projectServers: [],
+    },
+    [],
+  );
+  return render(
+    <ReactFlowProvider>
+      <div style={{ width: 800, height: 600 }}>
+        <RedesignedHostCanvas
+          viewModel={viewModel}
+          selectedNodeId={null}
+          onSelectNode={() => {}}
+          onClearSelection={() => {}}
+          onAddServer={() => {}}
+        />
+      </div>
+    </ReactFlowProvider>,
+  );
+}
+
 describe("RedesignedHostCanvas", () => {
-  it("renders Agent as the behavior sub-node title without a secondary eyebrow", () => {
-    const viewModel = buildRedesignedHostCanvas(
-      {
-        hostName: "Test",
-        draft: emptyHostConfigInputV2(),
-        savedSnapshotId: "snap",
-        isDirty: false,
-        projectServers: [],
-      },
-      [],
+  it("renders the Agent identity card with the section title", () => {
+    const { container } = renderCanvas({});
+    const agentNode = container.querySelector(
+      `.react-flow__node[data-id="${AGENT_IDENTITY_NODE_ID}"]`,
     );
+    expect(agentNode).not.toBeNull();
+    expect(within(agentNode as HTMLElement).getByText("Agent")).toBeInTheDocument();
+  });
 
-    const { container } = render(
-      <ReactFlowProvider>
-        <div style={{ width: 400, height: 400 }}>
-          <RedesignedHostCanvas
-            viewModel={viewModel}
-            selectedNodeId={BEHAVIOR_NODE_ID}
-            onSelectNode={() => {}}
-            onClearSelection={() => {}}
-            onAddServer={() => {}}
-          />
-        </div>
-      </ReactFlowProvider>,
+  it("renders the Protocol hub puck with title and a subtitle slot", () => {
+    const { container } = renderCanvas({});
+    const hub = container.querySelector(
+      `.react-flow__node[data-id="${PROTOCOL_HUB_NODE_ID}"]`,
     );
-
-    const behaviorNode = container.querySelector(
-      `.react-flow__node[data-id="${BEHAVIOR_NODE_ID}"]`,
-    );
-    expect(behaviorNode).not.toBeNull();
-
-    const header = behaviorNode?.querySelector(".host-redesign-subnode > div");
-    expect(header).not.toBeNull();
-    const headerEl = header as HTMLElement;
-
-    expect(within(headerEl).getByText("Agent")).toBeInTheDocument();
-    const titleCol = headerEl.querySelector(".flex.min-w-0.flex-col");
-    expect(titleCol?.querySelectorAll("span")).toHaveLength(1);
-
+    expect(hub).not.toBeNull();
+    expect(within(hub as HTMLElement).getByText("MCP Protocol")).toBeInTheDocument();
+    // Subtitle defaults to "SDK defaults" + ctx count for an empty draft.
     expect(
-      headerEl.className.includes("_5%") &&
-        headerEl.className.includes("var(--primary)"),
-    ).toBe(false);
+      within(hub as HTMLElement).getByText(/SDK defaults/),
+    ).toBeInTheDocument();
   });
 
-  it("renders a minimal MCP Protocol sub-node header without wire eyebrow", () => {
-    const viewModel = buildRedesignedHostCanvas(
-      {
-        hostName: "Test",
-        draft: emptyHostConfigInputV2(),
-        savedSnapshotId: "snap",
-        isDirty: false,
-        projectServers: [],
-      },
-      [],
+  it("renders the Apps hub puck with title", () => {
+    const { container } = renderCanvas({});
+    const hub = container.querySelector(
+      `.react-flow__node[data-id="${APPS_HUB_NODE_ID}"]`,
     );
-
-    const { container } = render(
-      <ReactFlowProvider>
-        <div style={{ width: 400, height: 400 }}>
-          <RedesignedHostCanvas
-            viewModel={viewModel}
-            selectedNodeId={PROTOCOL_NODE_ID}
-            onSelectNode={() => {}}
-            onClearSelection={() => {}}
-            onAddServer={() => {}}
-          />
-        </div>
-      </ReactFlowProvider>,
-    );
-
-    const protocolNode = container.querySelector(
-      `.react-flow__node[data-id="${PROTOCOL_NODE_ID}"]`,
-    );
-    expect(protocolNode).not.toBeNull();
-
-    const header = protocolNode?.querySelector(".host-redesign-subnode > div");
-    expect(header).not.toBeNull();
-    const headerEl = header as HTMLElement;
-
-    expect(within(headerEl).getByText("MCP Protocol")).toBeInTheDocument();
-    expect(within(headerEl).queryByText(/^wire$/i)).toBeNull();
+    expect(hub).not.toBeNull();
+    expect(
+      within(hub as HTMLElement).getByText("Apps Extension"),
+    ).toBeInTheDocument();
   });
 
-  it("renders a minimal Apps Extension sub-node header without SEP-1865 eyebrow or info tint", () => {
-    const viewModel = buildRedesignedHostCanvas(
-      {
-        hostName: "Test",
-        draft: emptyHostConfigInputV2(),
-        savedSnapshotId: "snap",
-        isDirty: false,
-        projectServers: [],
+  it("renders an apps cap leaf with the canonical capability label", () => {
+    const { container } = renderCanvas({});
+    const leaf = container.querySelector(
+      `.react-flow__node[data-id="${appsCapLeafNodeId("openLinks")}"]`,
+    );
+    expect(leaf).not.toBeNull();
+    expect(
+      within(leaf as HTMLElement).getByText("openLinks"),
+    ).toBeInTheDocument();
+  });
+
+  it("strikes through cap leaves when the resolved blob omits them", () => {
+    // Override that explicitly leaves out updateModelContext.
+    const draft = emptyHostConfigInputV2({
+      hostCapabilitiesOverride: {
+        openLinks: {},
+        logging: {},
       },
-      [],
+    });
+    const { container } = renderCanvas({ draft });
+    const updateLeaf = container.querySelector(
+      `.react-flow__node[data-id="${appsCapLeafNodeId("updateModelContext")}"]`,
     );
-
-    const { container } = render(
-      <ReactFlowProvider>
-        <div style={{ width: 400, height: 400 }}>
-          <RedesignedHostCanvas
-            viewModel={viewModel}
-            selectedNodeId={APPS_NODE_ID}
-            onSelectNode={() => {}}
-            onClearSelection={() => {}}
-            onAddServer={() => {}}
-          />
-        </div>
-      </ReactFlowProvider>,
+    expect(updateLeaf).not.toBeNull();
+    // The name span carries `line-through` when on=false.
+    const nameSpan = (updateLeaf as HTMLElement).querySelector(
+      ".line-through",
     );
+    expect(nameSpan).not.toBeNull();
+  });
 
-    const appsNode = container.querySelector(
-      `.react-flow__node[data-id="${APPS_NODE_ID}"]`,
-    );
-    expect(appsNode).not.toBeNull();
-
-    const header = appsNode?.querySelector(".host-redesign-subnode > div");
-    expect(header).not.toBeNull();
-    const headerEl = header as HTMLElement;
-
-    expect(within(headerEl).getByText("Apps Extension")).toBeInTheDocument();
-    expect(within(headerEl).queryByText(/SEP-1865/)).toBeNull();
-    expect(headerEl.className.includes("var(--info")).toBe(false);
+  it("renders the always-emitted hostContext and timeout protocol leaves", () => {
+    const { container } = renderCanvas({});
+    expect(
+      container.querySelector(
+        `.react-flow__node[data-id="${protocolLeafNodeId("hostContext")}"]`,
+      ),
+    ).not.toBeNull();
+    expect(
+      container.querySelector(
+        `.react-flow__node[data-id="${protocolLeafNodeId("timeout")}"]`,
+      ),
+    ).not.toBeNull();
   });
 });
