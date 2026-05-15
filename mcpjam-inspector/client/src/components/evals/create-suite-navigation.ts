@@ -1,31 +1,34 @@
 import type { EvalRoute } from "@/lib/eval-route-types";
-import { navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
-import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
+import { buildCiEvalsPath, buildEvalsPath, navigateApp } from "@/lib/app-navigation";
 import type { SuiteNavigation } from "./suite-iterations-view";
 
-function applyPlaygroundEvalsHash(
+function applyPlaygroundEvalsPath(
   route: EvalRoute,
   options?: { replace?: boolean },
 ) {
   navigateApp(buildEvalsPath(route), { replace: options?.replace });
 }
 
-/** Playground Explore: same hash shape as `navigateToEvalsRoute` but wrapped with `withTestingSurface`. */
+function applyCiEvalsPath(route: EvalRoute, options?: { replace?: boolean }) {
+  navigateApp(buildCiEvalsPath(route), { replace: options?.replace });
+}
+
+/** Playground Explore: same path shape as `buildEvalsPath`. */
 export function navigatePlaygroundEvalsRoute(
   route: EvalRoute,
   options?: { replace?: boolean },
 ) {
-  applyPlaygroundEvalsHash(route, options);
+  applyPlaygroundEvalsPath(route, options);
 }
 
-/** Playground: same suite-overview / drill-down hash shapes as CI, wrapped with `withTestingSurface`. */
+/** Playground: same suite-overview / drill-down path shapes as CI. */
 export function createPlaygroundSuiteNavigation(): SuiteNavigation {
   return {
     toSuiteOverview: (suiteId, view) => {
-      applyPlaygroundEvalsHash({ type: "suite-overview", suiteId, view });
+      applyPlaygroundEvalsPath({ type: "suite-overview", suiteId, view });
     },
     toRunDetail: (suiteId, runId, iteration, options) => {
-      applyPlaygroundEvalsHash(
+      applyPlaygroundEvalsPath(
         {
           type: "run-detail",
           suiteId,
@@ -37,7 +40,7 @@ export function createPlaygroundSuiteNavigation(): SuiteNavigation {
       );
     },
     toTestDetail: (suiteId, testId, iteration) => {
-      applyPlaygroundEvalsHash({
+      applyPlaygroundEvalsPath({
         type: "test-detail",
         suiteId,
         testId,
@@ -45,7 +48,7 @@ export function createPlaygroundSuiteNavigation(): SuiteNavigation {
       });
     },
     toTestEdit: (suiteId, testId, options) => {
-      applyPlaygroundEvalsHash(
+      applyPlaygroundEvalsPath(
         {
           type: "test-edit",
           suiteId,
@@ -57,7 +60,7 @@ export function createPlaygroundSuiteNavigation(): SuiteNavigation {
       );
     },
     toSuiteEdit: (suiteId) => {
-      applyPlaygroundEvalsHash({ type: "suite-edit", suiteId });
+      applyPlaygroundEvalsPath({ type: "suite-edit", suiteId });
     },
   };
 }
@@ -66,7 +69,7 @@ export function createPlaygroundSuiteNavigation(): SuiteNavigation {
 export function createCiSuiteNavigation(route: EvalRoute): SuiteNavigation {
   return {
     toSuiteOverview: (suiteId, view) =>
-      navigateToCiEvalsRoute({
+      applyCiEvalsPath({
         type: "suite-overview",
         suiteId,
         view,
@@ -75,7 +78,7 @@ export function createCiSuiteNavigation(route: EvalRoute): SuiteNavigation {
           : {}),
       }),
     toRunDetail: (suiteId, runId, iteration, options) =>
-      navigateToCiEvalsRoute({
+      applyCiEvalsPath({
         type: "run-detail",
         suiteId,
         runId,
@@ -83,14 +86,14 @@ export function createCiSuiteNavigation(route: EvalRoute): SuiteNavigation {
         insightsFocus: options?.insightsFocus,
       }),
     toTestDetail: (suiteId, testId, iteration) =>
-      navigateToCiEvalsRoute({
+      applyCiEvalsPath({
         type: "test-detail",
         suiteId,
         testId,
         iteration,
       }),
     toTestEdit: (suiteId, testId, options) =>
-      navigateToCiEvalsRoute(
+      applyCiEvalsPath(
         {
           type: "test-edit",
           suiteId,
@@ -101,6 +104,6 @@ export function createCiSuiteNavigation(route: EvalRoute): SuiteNavigation {
         { replace: options?.replace },
       ),
     toSuiteEdit: (suiteId) =>
-      navigateToCiEvalsRoute({ type: "suite-edit", suiteId }),
+      applyCiEvalsPath({ type: "suite-edit", suiteId }),
   };
 }

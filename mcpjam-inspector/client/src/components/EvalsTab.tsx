@@ -7,7 +7,7 @@ import posthog from "posthog-js";
 import { Button } from "@mcpjam/design-system/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useProjectServers } from "@/hooks/useViews";
-import { useEvalsRoute } from "@/lib/evals-router";
+import { useEvalsRouteFromUrl } from "@/lib/eval-route-url";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
 import { useIsDirectGuest } from "@/hooks/use-is-direct-guest";
 import { aggregateSuite } from "./evals/helpers";
@@ -61,7 +61,7 @@ export function EvalsTab({
   const { isAuthenticated, isLoading } = useConvexAuth();
   const convex = useConvex();
   const { user, getAccessToken } = useAuth();
-  const route = useEvalsRoute();
+  const route = useEvalsRouteFromUrl();
   const [projectBrowse, setProjectBrowse] =
     useState<PlaygroundProjectBrowse>("suites");
   const isDirectGuest = useIsDirectGuest({ projectId });

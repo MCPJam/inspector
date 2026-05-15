@@ -10,15 +10,19 @@
  * matching `react-router` semantics. Chatbox session hashes
  * (`#chatbox-slug`) are NOT app navigation and are preserved verbatim.
  */
-import { useCallback, useContext } from "react";
+import { useCallback, useContext, useEffect, useState } from "react";
 import {
+  UNSAFE_LocationContext,
   UNSAFE_NavigationContext,
-  useLocation,
-  useParams,
 } from "react-router";
 import { getAppRouter } from "../router-ref";
 import type { OrganizationRouteSection } from "./hosted-navigation";
 import type { EvalRoute } from "./eval-route-types";
+import {
+  HOSTED_HASH_ALLOWED_TABS,
+  HOSTED_HASH_BLOCKED_TABS,
+  normalizeHostedHashTab,
+} from "./hosted-tab-policy";
 
 /** Typed canonical paths used across the app. */
 export const routePaths = {
@@ -66,7 +70,6 @@ export function buildOrganizationPath(
 
 /**
  * Build an eval (Playground) route path from a typed EvalRoute.
- * Mirrors `eval-router-core.ts:build` but produces path-based URLs.
  */
 export function buildEvalsPath(route: EvalRoute): string {
   return buildEvalRoutePath("/evals", route);
@@ -221,17 +224,68 @@ export function useAppNavigate() {
  * Strip the leading slash from the first pathname segment so `useActiveTab()`
  * returns `"servers"` (matching the legacy `activeTab` state shape).
  *
- * Phases 3-6: this is the single source of truth for `activeTab`; the
- * useState in App.tsx is deleted in Phase 6.
+ * Phase 3: this is the single source of truth for `activeTab`; App.tsx keeps
+ * the old render tree but reads the tab from the URL.
  */
 export function useActiveTab(): string {
-  const { pathname } = useLocation();
+  const locationContext = useContext(UNSAFE_LocationContext);
+  const [fallbackPathname, setFallbackPathname] = useState(
+    getWindowFallbackPathname,
+  );
+
+  useEffect(() => {
+    if (locationContext || typeof window === "undefined") return;
+    const syncFallbackPathname = () => {
+      setFallbackPathname(getWindowFallbackPathname());
+    };
+    window.addEventListener("popstate", syncFallbackPathname);
+    window.addEventListener("hashchange", syncFallbackPathname);
+    return () => {
+      window.removeEventListener("popstate", syncFallbackPathname);
+      window.removeEventListener("hashchange", syncFallbackPathname);
+    };
+  }, [locationContext]);
+
+  const pathname = locationContext?.location.pathname ?? fallbackPathname;
   return pathnameToActiveTab(pathname);
 }
 
+const KNOWN_APP_TAB_SEGMENTS = new Set<string>([
+  ...HOSTED_HASH_ALLOWED_TABS,
+  ...HOSTED_HASH_BLOCKED_TABS,
+  "chat",
+]);
+
+function isSpecialEntryPathname(pathname: string): boolean {
+  return (
+    pathname === "/billing" ||
+    pathname === "/billing/" ||
+    pathname === "/callback" ||
+    pathname === "/callback/" ||
+    pathname.startsWith("/oauth/callback")
+  );
+}
+
 export function pathnameToActiveTab(pathname: string): string {
-  const trimmed = pathname.replace(/^\/+/, "").split("/")[0] || "servers";
-  return trimmed;
+  if (isSpecialEntryPathname(pathname)) return "servers";
+  const firstSegment = pathname.replace(/^\/+/, "").split("/")[0] || "servers";
+  const normalized = normalizeHostedHashTab(firstSegment);
+  return KNOWN_APP_TAB_SEGMENTS.has(normalized) ? normalized : "servers";
+}
+
+function hashToPathname(hash: string): string {
+  const target = hash.replace(/^#\/?/, "");
+  const [path = ""] = target.split(/[?#]/);
+  return `/${path}`;
+}
+
+function getWindowFallbackPathname(): string {
+  if (typeof window === "undefined") return "/";
+  const pathname = window.location.pathname || "/";
+  if ((pathname === "/" || pathname === "") && window.location.hash) {
+    return hashToPathname(window.location.hash);
+  }
+  return pathname;
 }
 
 export interface CurrentOrgRoute {
@@ -240,11 +294,13 @@ export interface CurrentOrgRoute {
 }
 
 export function useCurrentOrgRoute(): CurrentOrgRoute | null {
-  const params = useParams();
-  const { pathname } = useLocation();
+  const locationContext = useContext(UNSAFE_LocationContext);
+  const pathname =
+    locationContext?.location.pathname ??
+    (typeof window === "undefined" ? "/" : window.location.pathname);
   const segments = pathname.replace(/^\/+/, "").split("/");
   if (segments[0] !== "organizations") return null;
-  const orgId = params.orgId ?? segments[1];
+  const orgId = segments[1];
   if (!orgId) return null;
   const sectionSegment = segments[2];
   const orgSection: OrganizationRouteSection =
@@ -253,14 +309,23 @@ export function useCurrentOrgRoute(): CurrentOrgRoute | null {
       : sectionSegment === "models"
         ? "models"
         : "overview";
-  return { orgId, orgSection };
+  return { orgId: decodePathSegment(orgId), orgSection };
+}
+
+function decodePathSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
 }
 
 /**
  * Compatibility helper: convert a legacy hash-fragment target like
  * `"organizations/:id/billing"` or `"#servers"` into a path-based URL.
  *
- * Used by the navigate IPC command bridge during Phase 6.
+ * Currently unused after Phases 3-5; keep with the other transition shims
+ * until Phase 6 deletes the legacy navigation bridge.
  */
 export function legacyHashTargetToPath(rawTarget: string): string {
   const stripped = rawTarget.replace(/^#/, "").replace(/^\/+/, "");

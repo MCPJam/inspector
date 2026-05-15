@@ -176,9 +176,12 @@ import {
 } from "./lib/oauth/mcp-oauth";
 import { buildElectronMcpCallbackUrl } from "./hooks/use-server-state";
 import { getEffectiveProjectClientCapabilities } from "./lib/client-config";
-import { buildEvalsHash } from "./lib/evals-router";
-import { withTestingSurface } from "./lib/testing-surface";
-import { navigateApp } from "./lib/app-navigation";
+import {
+  buildEvalsPath,
+  navigateApp,
+  useActiveTab,
+  useCurrentOrgRoute,
+} from "./lib/app-navigation";
 import { UNSAFE_LocationContext } from "react-router";
 import { useProjectClientConfigSyncPending } from "./hooks/use-project-client-config-sync-pending";
 import { ingestOAuthTraceLogs } from "./stores/traffic-log-store";
@@ -238,14 +241,6 @@ function isSpecialEntryPath(pathname: string): boolean {
   // `/oauth/callback*`. Defer to the OAuth handlers in use-server-state /
   // App's OAuth bootstrap before applyNavigation overwrites the URL.
   return pathname.startsWith("/oauth/callback");
-}
-
-function replaceHash(hash: string) {
-  // Convert a legacy hash-target (`#X` or `#/evals/...`) to a path-based URL
-  // via the navigation API so React Router stays authoritative. Phase 6 will
-  // delete the callers and this helper.
-  const path = `/${hash.replace(/^[#/]+/, "")}`;
-  navigateApp(path, { replace: true });
 }
 
 function clearHostedCallbackRetryState() {
@@ -413,11 +408,10 @@ function AppChromeHeader({ hidden, ...props }: AppChromeHeaderProps) {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState("servers");
+  const activeTab = useActiveTab();
+  const currentOrgRoute = useCurrentOrgRoute();
   const [evalChatHandoff, setEvalChatHandoff] =
     useState<EvalChatHandoff | null>(null);
-  const [activeOrganizationSection, setActiveOrganizationSection] =
-    useState<OrganizationRouteSection>("overview");
   const [
     optimisticallyDeletedOrganizationIds,
     setOptimisticallyDeletedOrganizationIds,
@@ -520,6 +514,10 @@ export default function App() {
     () => resolveHostedNavigation(currentRouteTarget, HOSTED_MODE),
     [currentRouteTarget]
   );
+  const routeOrganizationId =
+    currentOrgRoute?.orgId ?? currentHashRoute.organizationId;
+  const routeOrganizationSection =
+    currentOrgRoute?.orgSection ?? currentHashRoute.organizationSection;
   const { sortedOrganizations, isLoading: isLoadingOrganizations } =
     useOrganizationQueries({ isAuthenticated });
   useEffect(() => {
@@ -547,9 +545,9 @@ export default function App() {
       ),
     [optimisticallyDeletedOrganizationIds, sortedOrganizations]
   );
-  const hasRouteOrganization = !!currentHashRoute.organizationId
+  const hasRouteOrganization = !!routeOrganizationId
     ? effectiveOrganizations.some(
-        (org) => org._id === currentHashRoute.organizationId
+        (org) => org._id === routeOrganizationId
       )
     : false;
 
@@ -855,9 +853,7 @@ export default function App() {
     hasOrganizations: effectiveOrganizations.length > 0,
     isLoadingOrganizations,
     validOrganizations: effectiveOrganizations,
-    routeOrganizationId: hasRouteOrganization
-      ? currentHashRoute.organizationId
-      : undefined,
+    routeOrganizationId: hasRouteOrganization ? routeOrganizationId : undefined,
   });
   useInspectorCommandBus();
   // One-time migration from legacy localStorage state to Convex. No-op in
@@ -1036,7 +1032,7 @@ export default function App() {
   ) as Record<string, unknown>;
   const convexProjectId = activeProject?.sharedProjectId ?? null;
   const routeScopedOrganizationId = hasRouteOrganization
-    ? currentHashRoute.organizationId ?? null
+    ? routeOrganizationId ?? null
     : null;
   const rawBillingOrganizationId =
     routeScopedOrganizationId ??
@@ -1059,7 +1055,7 @@ export default function App() {
     isAuthenticated &&
     isLoadingOrganizations &&
     !!(
-      currentHashRoute.organizationId ||
+      routeOrganizationId ||
       activeOrganizationId ||
       activeProject?.organizationId ||
       convexProjectId
@@ -1282,7 +1278,6 @@ export default function App() {
           `${resolved.normalizedTab} is not available in hosted mode.`
         );
         setActiveOrganizationId(undefined);
-        setActiveTab("servers");
         if (window.location.pathname !== "/servers") {
           navigateApp("/servers", { replace: true });
         }
@@ -1294,11 +1289,6 @@ export default function App() {
       } else if (shouldPreserveCurrentRouteOrganization) {
         setActiveOrganizationId(currentResolved.organizationId);
       }
-      if (resolved.organizationSection) {
-        setActiveOrganizationSection(resolved.organizationSection);
-      } else if (resolved.normalizedTab !== "organizations") {
-        setActiveOrganizationSection("overview");
-      }
       if (resolved.shouldSelectAllServers) {
         setSelectedMultipleServersToAllServers();
       }
@@ -1307,7 +1297,6 @@ export default function App() {
           navigateApp(canonicalPath);
         }
       }
-      setActiveTab(resolved.normalizedTab);
     },
     [
       effectiveOrganizations,
@@ -1699,7 +1688,7 @@ export default function App() {
       }
 
       if (evaluateRunsEnabled !== true) {
-        replaceHash(withTestingSurface(buildEvalsHash({ type: "list" })));
+        navigateApp(buildEvalsPath({ type: "list" }), { replace: true });
         return;
       }
     }
@@ -1749,7 +1738,6 @@ export default function App() {
       section: OrganizationRouteSection = "overview"
     ) => {
       setActiveOrganizationId(organizationId);
-      setActiveOrganizationSection(section);
       applyNavigation(
         section === "billing"
           ? `organizations/${organizationId}/billing`
@@ -1774,9 +1762,8 @@ export default function App() {
       // If the user is currently on an org-scoped route (e.g. the org's
       // overview or billing page), redirect to the same section under the
       // new org so the page they're looking at actually changes.
-      if (currentHashRoute.organizationId) {
-        const section = currentHashRoute.organizationSection ?? "overview";
-        setActiveOrganizationSection(section);
+      if (routeOrganizationId) {
+        const section = routeOrganizationSection ?? "overview";
         applyNavigation(
           section === "billing"
             ? `organizations/${organizationId}/billing`
@@ -1798,11 +1785,10 @@ export default function App() {
     [
       activeOrganizationId,
       setActiveOrganizationId,
-      currentHashRoute.organizationId,
-      currentHashRoute.organizationSection,
+      routeOrganizationId,
+      routeOrganizationSection,
       currentHashRoute.normalizedParts,
       currentHashRoute.normalizedTab,
-      setActiveOrganizationSection,
       applyNavigation,
     ]
   );
@@ -1824,9 +1810,16 @@ export default function App() {
       return;
     }
 
+    if (
+      routeOrganizationId &&
+      optimisticallyDeletedOrganizationIds.includes(routeOrganizationId)
+    ) {
+      return;
+    }
+
     const navigationTarget = getInvalidOrganizationRouteNavigationTarget({
       routeTab: currentHashRoute.normalizedTab,
-      routeOrganizationId: currentHashRoute.organizationId,
+      routeOrganizationId,
       isLoadingOrganizations,
       hasRouteOrganization,
     });
@@ -1835,15 +1828,15 @@ export default function App() {
     }
 
     setActiveOrganizationId(undefined);
-    setActiveOrganizationSection("overview");
     applyNavigation(navigationTarget, { updateHash: true });
   }, [
     applyNavigation,
     currentHashRoute.normalizedTab,
-    currentHashRoute.organizationId,
     hasRouteOrganization,
     isAuthenticated,
     isLoadingOrganizations,
+    optimisticallyDeletedOrganizationIds,
+    routeOrganizationId,
     setActiveOrganizationId,
   ]);
 
@@ -1863,7 +1856,7 @@ export default function App() {
       );
       const isDeletedCurrentOrganization =
         activeOrganizationId === deletedOrganizationId ||
-        currentHashRoute.organizationId === deletedOrganizationId ||
+        routeOrganizationId === deletedOrganizationId ||
         activeProject?.organizationId === deletedOrganizationId;
 
       clearLocalFallbackProjectSelection(
@@ -1884,7 +1877,6 @@ export default function App() {
       }
 
       setActiveOrganizationId(fallbackOrganizationId);
-      setActiveOrganizationSection("overview");
       applyNavigation("servers", {
         updateHash: true,
         preserveCurrentOrganizationOnNonOrgTarget: false,
@@ -1896,8 +1888,8 @@ export default function App() {
       applyNavigation,
       clearLocalFallbackProjectSelection,
       clearConvexActiveProjectSelection,
-      currentHashRoute.organizationId,
       effectiveOrganizations,
+      routeOrganizationId,
       setActiveOrganizationId,
     ]
   );
@@ -1934,8 +1926,8 @@ export default function App() {
       if (
         !billingUiEnabled ||
         activeTab !== "organizations" ||
-        !currentHashRoute.organizationId ||
-        currentHashRoute.organizationSection !== "billing" ||
+        !routeOrganizationId ||
+        routeOrganizationSection !== "billing" ||
         !pendingCheckoutIntent
       ) {
         return null;
@@ -1943,13 +1935,13 @@ export default function App() {
       return {
         plan: pendingCheckoutIntent.plan,
         interval: pendingCheckoutIntent.interval,
-        organizationId: currentHashRoute.organizationId,
+        organizationId: routeOrganizationId,
       };
     }, [
       billingUiEnabled,
       activeTab,
-      currentHashRoute.organizationId,
-      currentHashRoute.organizationSection,
+      routeOrganizationId,
+      routeOrganizationSection,
       pendingCheckoutIntent?.interval,
       pendingCheckoutIntent?.plan,
     ]);
@@ -2497,11 +2489,8 @@ export default function App() {
           {activeTab === "profile" && <ProfileTab />}
           {activeTab === "organizations" && (
             <OrganizationsTab
-              organizationId={currentHashRoute.organizationId}
-              section={
-                currentHashRoute.organizationSection ??
-                activeOrganizationSection
-              }
+              organizationId={routeOrganizationId}
+              section={routeOrganizationSection ?? "overview"}
               checkoutIntent={checkoutIntentForBilling}
               onCheckoutIntentConsumed={consumeCheckoutIntent}
               onCheckoutIntentNavigationStarted={

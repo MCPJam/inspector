@@ -25,7 +25,7 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
 import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
-import { navigateToEvalsRoute } from "@/lib/evals-router";
+import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
 import type { EvalCase, EvalSuite } from "./types";
 import {
   formatCaseTitleForSidebar,
@@ -127,7 +127,7 @@ export function TestCaseListSidebar({
         onNavigateToOverview(suiteId);
         return;
       }
-      navigateToEvalsRoute({ type: "suite-overview", suiteId });
+      navigateApp(buildEvalsPath({ type: "suite-overview", suiteId }));
     }
   };
 
@@ -368,11 +368,11 @@ export function TestCaseListSidebar({
                               onSelectTestCase(suiteId, testCase._id);
                               return;
                             }
-                            navigateToEvalsRoute({
+                            navigateApp(buildEvalsPath({
                               type: "test-edit",
                               suiteId: suiteId,
                               testId: testCase._id,
-                            });
+                            }));
                           }
                         }}
                         className={cn(

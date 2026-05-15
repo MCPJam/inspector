@@ -64,11 +64,11 @@ import {
   normalizeHostedHashTab,
 } from "@/lib/hosted-tab-policy";
 import {
+  buildCiEvalsPath,
   buildEvalsPath,
   navigateApp,
   useAppNavigate,
 } from "@/lib/app-navigation";
-import { navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
 import { HOSTED_LOCAL_ONLY_TOOLTIP } from "@/lib/hosted-ui";
 import { useLearnMore } from "@/hooks/use-learn-more";
 import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpandedPanel";
@@ -363,9 +363,7 @@ function navigateToEvalsExploreList() {
 }
 
 function navigateToEvalsRunsList() {
-  // Route through ci-evals-router's navigate so any future side effects added
-  // there fire for the sidebar entry point too.
-  navigateToCiEvalsRoute({ type: "list" });
+  navigateApp(buildCiEvalsPath({ type: "list" }));
 }
 
 type EvalsSubnavItem = {

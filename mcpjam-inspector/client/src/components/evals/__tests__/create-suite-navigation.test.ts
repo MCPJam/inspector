@@ -4,16 +4,15 @@ import {
   createPlaygroundSuiteNavigation,
   navigatePlaygroundEvalsRoute,
 } from "../create-suite-navigation";
-import * as ciEvalsRouter from "@/lib/ci-evals-router";
 import * as appNavigation from "@/lib/app-navigation";
 
-vi.spyOn(ciEvalsRouter, "navigateToCiEvalsRoute").mockImplementation(
-  () => undefined as never,
-);
-
 describe("createCiSuiteNavigation", () => {
+  let navigateSpy: ReturnType<typeof vi.spyOn>;
+
   beforeEach(() => {
-    vi.mocked(ciEvalsRouter.navigateToCiEvalsRoute).mockClear();
+    navigateSpy = vi
+      .spyOn(appNavigation, "navigateApp")
+      .mockImplementation(() => undefined);
   });
 
   it("preserves fromCommit on toSuiteOverview when drill-down route has fromCommit", () => {
@@ -23,12 +22,10 @@ describe("createCiSuiteNavigation", () => {
       fromCommit: "abc123",
     });
     nav.toSuiteOverview("s2", "runs");
-    expect(ciEvalsRouter.navigateToCiEvalsRoute).toHaveBeenCalledWith({
-      type: "suite-overview",
-      suiteId: "s2",
-      view: "runs",
-      fromCommit: "abc123",
-    });
+    expect(navigateSpy).toHaveBeenCalledWith(
+      "/ci-evals/suite/s2?fromCommit=abc123",
+      { replace: undefined },
+    );
   });
 
   it("does not add fromCommit when current route is not suite-overview with fromCommit", () => {
@@ -37,11 +34,10 @@ describe("createCiSuiteNavigation", () => {
       suiteId: "s1",
     });
     nav.toSuiteOverview("s2", "test-cases");
-    expect(ciEvalsRouter.navigateToCiEvalsRoute).toHaveBeenCalledWith({
-      type: "suite-overview",
-      suiteId: "s2",
-      view: "test-cases",
-    });
+    expect(navigateSpy).toHaveBeenCalledWith(
+      "/ci-evals/suite/s2?view=test-cases",
+      { replace: undefined },
+    );
   });
 });
 

@@ -87,16 +87,16 @@ vi.mock("sonner", () => ({
   },
 }));
 
-// Mock evals-router
-vi.mock("@/lib/evals-router", () => ({
-  navigateToEvalsRoute: vi.fn(),
-}));
-
-const mockNavigateToCiEvalsRoute = vi.fn();
-vi.mock("@/lib/ci-evals-router", () => ({
-  navigateToCiEvalsRoute: (...args: unknown[]) =>
-    mockNavigateToCiEvalsRoute(...args),
-}));
+const mockNavigateApp = vi.fn();
+vi.mock("@/lib/app-navigation", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/app-navigation")>(
+    "@/lib/app-navigation",
+  );
+  return {
+    ...actual,
+    navigateApp: (...args: unknown[]) => mockNavigateApp(...args),
+  };
+});
 
 const mockIsHostedMode = {
   mockReturnValue(next: boolean) {
@@ -532,12 +532,9 @@ describe("useEvalHandlers", () => {
       });
       expect(requestBody.convexAuthToken).toBeUndefined();
 
-      expect(mockNavigateToCiEvalsRoute).toHaveBeenCalledWith({
-        type: "run-detail",
-        suiteId: "suite-123",
-        runId: "run-replay",
-        insightsFocus: true,
-      });
+      expect(mockNavigateApp).toHaveBeenCalledWith(
+        "/ci-evals/suite/suite-123/runs/run-replay?insights=1",
+      );
     });
 
     it("replays the latest run when suite server metadata is empty but replay is available", async () => {
@@ -595,12 +592,9 @@ describe("useEvalHandlers", () => {
         passCriteria: { minimumPassRate: 92 },
       });
 
-      expect(mockNavigateToCiEvalsRoute).toHaveBeenCalledWith({
-        type: "run-detail",
-        suiteId: "suite-123",
-        runId: "run-replay",
-        insightsFocus: true,
-      });
+      expect(mockNavigateApp).toHaveBeenCalledWith(
+        "/ci-evals/suite/suite-123/runs/run-replay?insights=1",
+      );
     });
 
     it("uses the normal rerun path when live servers are connected", async () => {
@@ -1184,12 +1178,9 @@ describe("useEvalHandlers", () => {
       });
       expect(requestBody.convexAuthToken).toBeUndefined();
 
-      expect(mockNavigateToCiEvalsRoute).toHaveBeenCalledWith({
-        type: "run-detail",
-        suiteId: "suite-456",
-        runId: "run-new",
-        insightsFocus: true,
-      });
+      expect(mockNavigateApp).toHaveBeenCalledWith(
+        "/ci-evals/suite/suite-456/runs/run-new?insights=1",
+      );
     });
   });
 
