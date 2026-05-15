@@ -40,6 +40,8 @@ import {
   serverConnectionOverridesEqual,
   type HostConfigInputV2,
 } from "@/lib/host-config-v2";
+import { getChatboxChatBackground } from "@/lib/chatbox-host-style";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { RedesignedHostCanvas } from "./canvas/RedesignedHostCanvas";
 import { buildRedesignedHostCanvas } from "./canvas/canvasBuilder";
 import { HostFocusPanel } from "./focus/HostFocusPanel";
@@ -158,6 +160,12 @@ export function HostBuilderViewRedesigned({
         url: s.url ?? undefined,
       })),
     [servers],
+  );
+
+  const themeMode = usePreferencesStore((s) => s.themeMode);
+  const canvasChatBackground = useMemo(
+    () => getChatboxChatBackground(draftConfig?.hostStyle, themeMode),
+    [draftConfig?.hostStyle, themeMode],
   );
 
   const viewModel = useMemo(() => {
@@ -384,6 +392,7 @@ export function HostBuilderViewRedesigned({
                   onSelectNode={handleSelectNode}
                   onClearSelection={() => setSelectedNodeId(null)}
                   onAddServer={() => setShowAddServer(true)}
+                  chatBackground={canvasChatBackground}
                 />
               </ReactFlowProvider>
             </div>

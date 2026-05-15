@@ -483,6 +483,12 @@ interface RedesignedHostCanvasProps {
   onSelectNode: (nodeId: string) => void;
   onClearSelection: () => void;
   onAddServer: () => void;
+  /**
+   * Brand chat-surface color for the active host style. When provided the
+   * canvas wrapper paints with this color so the editor reads as a stand-in
+   * for the host's actual chat. Falls back to `bg-background` when omitted.
+   */
+  chatBackground?: string;
 }
 
 export function RedesignedHostCanvas({
@@ -491,6 +497,7 @@ export function RedesignedHostCanvas({
   onSelectNode,
   onClearSelection,
   onAddServer,
+  chatBackground,
 }: RedesignedHostCanvasProps) {
   const nodes = useMemo(
     () =>
@@ -503,7 +510,13 @@ export function RedesignedHostCanvas({
   );
 
   return (
-    <div className="relative h-full w-full overflow-hidden rounded-[28px] border border-border/70 bg-background">
+    <div
+      className={cn(
+        "relative h-full w-full overflow-hidden rounded-[28px] border border-border/70",
+        chatBackground ? null : "bg-background",
+      )}
+      style={chatBackground ? { background: chatBackground } : undefined}
+    >
       <ReactFlow
         nodes={nodes}
         edges={viewModel.edges}
