@@ -798,6 +798,7 @@ export function useProjectState({
     if (!isAuthenticated) {
       return;
     }
+    if (isGuestActor) return;
     if (shouldTreatRemoteProjectsAsEmpty) return;
     if (shouldUseLocalFallback) return;
     if (!hasResolvedProjectOrganizationSelection) return;
@@ -868,6 +869,7 @@ export function useProjectState({
     Promise.all(migratableLocalProjects.map(migrateProject));
   }, [
     isAuthenticated,
+    isGuestActor,
     shouldUseLocalFallback,
     allRemoteProjects,
     migratableLocalProjects,
@@ -886,6 +888,7 @@ export function useProjectState({
     if (!isAuthenticated) {
       return;
     }
+    if (isGuestActor) return;
     if (shouldTreatRemoteProjectsAsEmpty) return;
     if (shouldUseLocalFallback) return;
     if (!hasResolvedProjectOrganizationSelection) return;
@@ -920,6 +923,7 @@ export function useProjectState({
       });
   }, [
     isAuthenticated,
+    isGuestActor,
     shouldUseLocalFallback,
     remoteProjects,
     hasCurrentOrganizationProjects,
@@ -932,10 +936,11 @@ export function useProjectState({
     shouldTreatRemoteProjectsAsEmpty,
   ]);
 
-  // Guest project provisioning. Guests have no organization, so the
-  // organization-keyed effect above never fires. Instead, when remoteProjects
-  // resolves to an empty list for a guest actor, lazily create a default
-  // guest-owned project so the rest of the app sees a normal projectId.
+  // Guest project provisioning. Guests can have a personal organization row,
+  // but they must not call the org-scoped ensureDefaultProject path with an
+  // explicit organizationId. When remoteProjects resolves to an empty list for
+  // a guest actor, lazily create the guest default with no org argument so the
+  // rest of the app sees a normal projectId.
   useEffect(() => {
     if (!isGuestActor) return;
     if (shouldUseLocalFallback) return;
