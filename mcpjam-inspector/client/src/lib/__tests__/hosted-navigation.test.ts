@@ -10,7 +10,19 @@ describe("hosted-navigation", () => {
   it("normalizes hash aliases and strips hash prefix", () => {
     expect(getNormalizedHashParts("#registry")).toEqual(["registry"]);
     expect(getNormalizedHashParts("#/chat")).toEqual(["chat-v2"]);
+    expect(getNormalizedHashParts("#connect")).toEqual(["hosts"]);
     expect(getNormalizedHashParts("prompts")).toEqual(["prompts"]);
+  });
+
+  it("uses connect as the canonical hosts hub hash", () => {
+    const fromConnect = resolveHostedNavigation("#connect", false);
+    expect(fromConnect.normalizedTab).toBe("hosts");
+    expect(fromConnect.normalizedSection).toBe("connect");
+
+    const fromHosts = resolveHostedNavigation("#hosts", false);
+    expect(fromHosts.normalizedTab).toBe("hosts");
+    expect(fromHosts.normalizedSection).toBe("connect");
+    expect(fromHosts.rawSection).toBe("hosts");
   });
 
   it("marks blocked tabs in hosted mode", () => {

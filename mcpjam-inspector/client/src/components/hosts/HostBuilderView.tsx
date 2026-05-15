@@ -3,6 +3,7 @@ import { ArrowLeft, Loader2, Save } from "lucide-react";
 import { toast } from "sonner";
 import { useConvexAuth } from "convex/react";
 import { ReactFlowProvider } from "@xyflow/react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
@@ -28,11 +29,14 @@ import {
   HostSetupChecklistPanel,
 } from "./HostSetupChecklistPanel";
 import type { HostSetupSectionId } from "./host-builder-types";
+import { HostBuilderViewRedesigned } from "./redesigned/HostBuilderViewRedesigned";
 
 interface HostBuilderViewProps {
   hostId: string;
   projectId: string;
   onBack: () => void;
+  /** When set, the redesigned builder shows a host switcher in the header. */
+  onSwitchHost?: (hostId: string) => void;
 }
 
 function HostBuilderChrome({
@@ -102,7 +106,15 @@ function HostBuilderChrome({
   );
 }
 
-export function HostBuilderView({
+export function HostBuilderView(props: HostBuilderViewProps) {
+  const hostsEnabled = useFeatureFlagEnabled("hosts-enabled");
+  if (hostsEnabled) {
+    return <HostBuilderViewRedesigned {...props} />;
+  }
+  return <HostBuilderViewLegacy {...props} />;
+}
+
+function HostBuilderViewLegacy({
   hostId,
   projectId,
   onBack,

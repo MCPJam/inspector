@@ -74,7 +74,8 @@ export function clearOnboardingState(): void {
 
 /**
  * Returns true when the user is eligible for first-run onboarding:
- * - No explicit hash route (empty, "#", "#/", or "#servers" which is the default)
+ * - No explicit hash route (empty, "#", "#/", or the default hub hash:
+ *   `#servers`, `#connect`, or legacy `#hosts`)
  * - No saved servers that block first-run onboarding
  * - Onboarding has never been shown for the current identity. When a remote
  *   user row is available, that row is the source of truth; localStorage is
@@ -92,7 +93,13 @@ export function isFirstRunEligible(
   if (isSignedInWithWorkOs) return false;
 
   const hash = currentHash.replace(/^#\/?/, "");
-  if (hash && hash !== "servers") return false;
+  if (
+    hash !== "servers" &&
+    hash !== "connect" &&
+    hash !== "hosts" &&
+    hash
+  )
+    return false;
 
   if (hasSeenRemoteOnboarding !== undefined) {
     return hasSeenRemoteOnboarding !== true;

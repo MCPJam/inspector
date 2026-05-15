@@ -35,13 +35,14 @@ export function HostsTab({
         hostId={selectedHostId}
         projectId={projectId}
         onBack={() => onSelectHost(null)}
+        onSwitchHost={(nextId) => onSelectHost(nextId)}
       />
     );
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="shrink-0 px-8 pt-6 pb-3">
+      <div className="shrink-0 border-b border-border/40 px-8 py-2.5">
         <HostOverlayBar
           projectId={projectId}
           previewedHostId={previewedHostId}

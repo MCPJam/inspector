@@ -24,7 +24,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { isPostHogBooleanFlagOn, standardEventProps } from "@/lib/PosthogUtils";
 
 import { NavMain } from "@/components/sidebar/nav-main";
 import {
@@ -167,7 +167,7 @@ const navigationSections: NavSection[] = [
     items: [
       {
         title: "Connect",
-        url: "#hosts",
+        url: "#connect",
         icon: MCPIcon,
         featureFlag: "hosts-enabled",
       },
@@ -631,7 +631,7 @@ export function MCPSidebar({
       "sandboxes-enabled": !!sandboxesEnabled && isAuthenticated,
       "registry-enabled": registryEnabled === true,
       "mcpjam-conformance": conformanceEnabled === true,
-      "hosts-enabled": hostsEnabled === true && isAuthenticated,
+      "hosts-enabled": isPostHogBooleanFlagOn(hostsEnabled) && isAuthenticated,
       "playground-tab-enabled": playgroundTabEnabled === true,
       xaa: xaaEnabled === true,
     }),
@@ -646,6 +646,10 @@ export function MCPSidebar({
       isAuthenticated,
     ],
   );
+  const hubNavHash =
+    isPostHogBooleanFlagOn(hostsEnabled) && isAuthenticated
+      ? "#connect"
+      : "#servers";
   const visibleNavigationSections = filterByFeatureFlags(
     HOSTED_MODE ? hostedNavigationSections : navigationSections,
     featureFlags,
@@ -664,7 +668,7 @@ export function MCPSidebar({
             {isMobile ? (
               <button
                 type="button"
-                onClick={() => handleNavClick("#servers")}
+                onClick={() => handleNavClick(hubNavHash)}
                 className="flex w-full cursor-pointer items-center justify-center px-4 py-3 transition-opacity hover:opacity-80"
               >
                 <img
@@ -681,7 +685,7 @@ export function MCPSidebar({
               <div className="relative isolate w-full">
                 <button
                   type="button"
-                  onClick={() => handleNavClick("#servers")}
+                  onClick={() => handleNavClick(hubNavHash)}
                   className={cn(
                     "relative z-0 flex w-full cursor-pointer items-center justify-center py-2 transition-opacity duration-200",
                     /* Reserve space for the collapse control so the logo stays visually centered and
@@ -766,7 +770,12 @@ export function MCPSidebar({
                 <NavMain
                   items={flatItems.map((item) => ({
                     ...item,
-                    isActive: item.url === `#${activeTab}`,
+                    isActive:
+                      normalizeHostedHashTab(
+                        item.url.startsWith("#")
+                          ? item.url.slice(1).split("/")[0]!
+                          : item.url.split("/")[0]!,
+                      ) === activeTab,
                   }))}
                   onItemClick={handleNavClick}
                   learnMore={

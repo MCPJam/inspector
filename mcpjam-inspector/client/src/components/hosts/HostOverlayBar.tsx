@@ -1,16 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Pencil, Plus } from "lucide-react";
+import { ChevronDown, Pencil, Plus, Trash2 } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
 import { useConvexAuth } from "convex/react";
-import { Button } from "@mcpjam/design-system/button";
-import { Separator } from "@mcpjam/design-system/separator";
+import { toast } from "sonner";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@mcpjam/design-system/select";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@mcpjam/design-system/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { useHostList, useHostMutations } from "@/hooks/useHosts";
 import { emptyHostConfigInputV2 } from "@/lib/host-config-v2";
@@ -34,8 +35,9 @@ export function HostOverlayBar({
   const posthog = usePostHog();
   const { isAuthenticated } = useConvexAuth();
   const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
-  const { createHost } = useHostMutations();
+  const { createHost, deleteHost } = useHostMutations();
   const [showCreate, setShowCreate] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const mcpjamHost = useMemo(
     () => hosts.find((h) => h.name === MCPJAM_HOST_NAME) ?? null,
@@ -93,6 +95,11 @@ export function HostOverlayBar({
     });
   }, [hosts]);
 
+  const effectiveHost = useMemo(
+    () => sortedHosts.find((h) => h.hostId === effectiveHostId) ?? null,
+    [sortedHosts, effectiveHostId],
+  );
+
   const hasFiredOpened = useRef(false);
   useEffect(() => {
     if (hasFiredOpened.current) return;
@@ -113,72 +120,107 @@ export function HostOverlayBar({
     onChangePreviewedHostId(next);
   };
 
+  const handleDeleteCurrentHost = async () => {
+    if (!effectiveHostId) return;
+    const host = hosts.find((h) => h.hostId === effectiveHostId);
+    if (!host) return;
+    setIsDeleting(true);
+    try {
+      await deleteHost({ hostId: effectiveHostId });
+      toast.success(`Host "${host.name}" deleted`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to delete host";
+      if (msg.includes("consumer")) {
+        toast.error(
+          `${msg} — use force delete or remove dependent chatboxes/evals first`,
+        );
+      } else {
+        toast.error(msg);
+      }
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const menuDisabled = isLoading || sortedHosts.length === 0;
+
   return (
     <div
-      className="flex flex-wrap items-center gap-x-4 gap-y-2"
+      className="flex min-w-0 flex-wrap items-center gap-2 gap-y-2 sm:gap-3"
       data-testid="host-overlay-bar"
     >
-      <div className="min-w-[10rem] max-w-[18rem]">
-        <Select
-          value={effectiveHostId ?? ""}
-          onValueChange={handleChange}
-          disabled={isLoading || sortedHosts.length === 0}
-        >
-          <SelectTrigger
-            aria-label="Host used for preview"
-            size="sm"
-            className={cn(
-              "h-8 w-full justify-between gap-2 border-0 bg-transparent px-2.5 shadow-none",
-              "text-sm font-medium text-foreground",
-              "hover:bg-muted/60 data-[state=open]:bg-muted/60",
-              "focus-visible:border-transparent focus-visible:ring-2 focus-visible:ring-ring/45",
-              "[&_svg:not([class*='text-'])]:opacity-55",
-            )}
+      <div className="min-w-[10rem] max-w-[14rem] shrink-0">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label="Host used for preview"
+              disabled={menuDisabled}
+              className={cn(
+                "border-input flex h-8 w-full items-center justify-between gap-2 rounded-md border-0 bg-transparent px-2.5 py-2 text-sm font-medium whitespace-nowrap text-foreground shadow-none transition-[color,box-shadow] outline-none",
+                "hover:bg-muted/60 data-[state=open]:bg-muted/60",
+                "focus-visible:border-transparent focus-visible:ring-2 focus-visible:ring-ring/45",
+                "disabled:cursor-not-allowed disabled:opacity-50",
+              )}
+            >
+              <span className="truncate">
+                {isLoading
+                  ? "Loading..."
+                  : (effectiveHost?.name ?? "Select host")}
+              </span>
+              <ChevronDown className="size-4 shrink-0 opacity-55" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="start"
+            className="min-w-[var(--radix-dropdown-menu-trigger-width)]"
           >
-            <SelectValue
-              placeholder={isLoading ? "Loading..." : "Select host"}
-            />
-          </SelectTrigger>
-          <SelectContent>
-            {sortedHosts.map((host) => (
-              <SelectItem key={host.hostId} value={host.hostId}>
-                {host.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+            <DropdownMenuRadioGroup
+              value={effectiveHostId ?? undefined}
+              onValueChange={handleChange}
+            >
+              {sortedHosts.map((host) => (
+                <DropdownMenuRadioItem
+                  key={host.hostId}
+                  value={host.hostId}
+                >
+                  {host.name}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              disabled={!effectiveHostId}
+              data-testid="host-overlay-edit"
+              onSelect={() => {
+                if (effectiveHostId) onEditHost(effectiveHostId);
+              }}
+            >
+              <Pencil className="size-3.5" />
+              Edit
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              data-testid="host-overlay-save-as-new"
+              onSelect={() => setShowCreate(true)}
+            >
+              <Plus className="size-3.5" />
+              Add
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              variant="destructive"
+              disabled={!effectiveHostId || isDeleting}
+              data-testid="host-overlay-delete"
+              onSelect={() => {
+                void handleDeleteCurrentHost();
+              }}
+            >
+              <Trash2 className="size-3.5" />
+              Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
-      <Separator
-        orientation="vertical"
-        className="hidden h-4 shrink-0 bg-border/70 sm:block"
-      />
-
-      <div className="flex flex-wrap items-center gap-0.5">
-        <Button
-          size="sm"
-          variant="ghost"
-          className="text-muted-foreground hover:text-foreground"
-          onClick={() => {
-            if (effectiveHostId) onEditHost(effectiveHostId);
-          }}
-          disabled={!effectiveHostId}
-          data-testid="host-overlay-edit"
-        >
-          <Pencil className="size-3.5" />
-          Edit
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="text-muted-foreground hover:text-foreground"
-          onClick={() => setShowCreate(true)}
-          data-testid="host-overlay-save-as-new"
-        >
-          <Plus className="size-3.5" />
-          Save as new host…
-        </Button>
-      </div>
       <CreateHostDialog
         isOpen={showCreate}
         onClose={() => setShowCreate(false)}
