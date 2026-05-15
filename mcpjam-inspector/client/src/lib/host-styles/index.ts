@@ -1,12 +1,17 @@
 export type {
+  ChatUiOverride,
+  HostChatUi,
+  HostMcpProfile,
   HostStyleDefinition,
   HostStyleFamily,
   HostStyleId,
   HostThemeMode,
+  IndicatorDef,
 } from "./types";
 export {
   CHATGPT_HOST_STYLE,
   CLAUDE_HOST_STYLE,
+  MCPJAM_HOST_STYLE,
   BUILT_IN_HOST_STYLES,
 } from "./built-ins";
 export {
@@ -15,7 +20,10 @@ export {
   findHostStyle,
   getHostCapabilitiesForStyle,
   getHostStyleOrDefault,
+  getLoadingIndicatorForStyle,
   isKnownHostStyleId,
   listHostStyles,
   registerHostStyle,
+  resolveEffectiveHostStyle,
 } from "./registry";
+export { HostIndicatorDispatch } from "./indicators/host-indicator-dispatch";

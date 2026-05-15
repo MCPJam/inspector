@@ -122,8 +122,8 @@ type HostStyleVariables = NonNullable<
 // to it both honors the protocol and strips any extra keys a runtime-registered
 // host might smuggle in via `as any`, which the SDK would reject downstream.
 const SEP_HOST_STYLE_VARIABLE_KEYS: ReadonlySet<string> = new Set([
-  ...Object.keys(DEFAULT_HOST_STYLE.resolveStyleVariables("light")),
-  ...Object.keys(DEFAULT_HOST_STYLE.resolveStyleVariables("dark")),
+  ...Object.keys(DEFAULT_HOST_STYLE.mcp.resolveStyleVariables("light")),
+  ...Object.keys(DEFAULT_HOST_STYLE.mcp.resolveStyleVariables("dark")),
 ]);
 
 function sanitizeHostStyleVariables(
@@ -835,14 +835,14 @@ export function MCPAppsRenderer({
   );
   themeModeRef.current = resolvedTheme;
   const styleVariables = useMemo(
-    () => hostStyleDefinition.resolveStyleVariables(resolvedTheme),
+    () => hostStyleDefinition.mcp.resolveStyleVariables(resolvedTheme),
     [resolvedTheme, hostStyleDefinition],
   );
   const hostChatBackground = useMemo(
-    () => hostStyleDefinition.resolveChatBackground(resolvedTheme),
+    () => hostStyleDefinition.chatUi.resolveChatBackground(resolvedTheme),
     [hostStyleDefinition, resolvedTheme],
   );
-  const defaultFontCss = hostStyleDefinition.fontCss;
+  const defaultFontCss = hostStyleDefinition.mcp.fontCss;
   const configuredStyles =
     baseHostContext.styles &&
     typeof baseHostContext.styles === "object" &&
@@ -893,7 +893,7 @@ export function MCPAppsRenderer({
         baseHostContext.platform === "desktop" ||
         baseHostContext.platform === "mobile"
           ? baseHostContext.platform
-          : hostStyleDefinition.platform,
+          : hostStyleDefinition.mcp.platform,
       userAgent: navigator.userAgent,
       deviceCapabilities,
       safeAreaInsets,

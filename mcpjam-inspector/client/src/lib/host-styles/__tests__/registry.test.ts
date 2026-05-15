@@ -3,6 +3,7 @@ import {
   CHATGPT_HOST_STYLE,
   CLAUDE_HOST_STYLE,
   DEFAULT_HOST_STYLE,
+  MCPJAM_HOST_STYLE,
   SPEC_DEFAULT_HOST_CAPABILITIES,
   findHostStyle,
   getHostCapabilitiesForStyle,
@@ -14,7 +15,8 @@ import {
 } from "..";
 
 describe("host-styles registry", () => {
-  it("registers built-in claude and chatgpt hosts by id", () => {
+  it("registers built-in mcpjam, claude, and chatgpt hosts by id", () => {
+    expect(findHostStyle("mcpjam")).toBe(MCPJAM_HOST_STYLE);
     expect(findHostStyle("claude")).toBe(CLAUDE_HOST_STYLE);
     expect(findHostStyle("chatgpt")).toBe(CHATGPT_HOST_STYLE);
   });
@@ -25,14 +27,15 @@ describe("host-styles registry", () => {
     expect(findHostStyle(undefined)).toBeUndefined();
   });
 
-  it("falls back to claude when an id is unknown or absent", () => {
-    expect(DEFAULT_HOST_STYLE).toBe(CLAUDE_HOST_STYLE);
-    expect(getHostStyleOrDefault(null)).toBe(CLAUDE_HOST_STYLE);
-    expect(getHostStyleOrDefault("missing")).toBe(CLAUDE_HOST_STYLE);
+  it("falls back to mcpjam when an id is unknown or absent", () => {
+    expect(DEFAULT_HOST_STYLE).toBe(MCPJAM_HOST_STYLE);
+    expect(getHostStyleOrDefault(null)).toBe(MCPJAM_HOST_STYLE);
+    expect(getHostStyleOrDefault("missing")).toBe(MCPJAM_HOST_STYLE);
     expect(getHostStyleOrDefault("chatgpt")).toBe(CHATGPT_HOST_STYLE);
   });
 
   it("recognises only registered ids via the type guard", () => {
+    expect(isKnownHostStyleId("mcpjam")).toBe(true);
     expect(isKnownHostStyleId("claude")).toBe(true);
     expect(isKnownHostStyleId("chatgpt")).toBe(true);
     expect(isKnownHostStyleId("unknown")).toBe(false);
@@ -42,25 +45,34 @@ describe("host-styles registry", () => {
 
   it("includes the built-ins in listHostStyles in registration order", () => {
     const ids = listHostStyles().map((host) => host.id);
+    expect(ids).toContain("mcpjam");
     expect(ids).toContain("claude");
     expect(ids).toContain("chatgpt");
+    // MCPJam ships first so the default-fallback host appears at the top
+    // of pickers.
+    expect(ids.indexOf("mcpjam")).toBeLessThan(ids.indexOf("claude"));
     expect(ids.indexOf("claude")).toBeLessThan(ids.indexOf("chatgpt"));
   });
 
   it("registers custom host styles for project-defined hosts", () => {
     const fakeStyle: HostStyleDefinition = {
       id: "test-host-registry",
-      label: "Test Host",
-      shortLabel: "Test-style host",
-      pickerDescription: "Test chrome",
-      logoSrc: "/test-logo.png",
-      family: "claude",
-      protocolOverride: CLAUDE_HOST_STYLE.protocolOverride,
-      platform: "web",
-      fontCss: "",
-      hostCapabilities: {},
-      resolveStyleVariables: CLAUDE_HOST_STYLE.resolveStyleVariables,
-      resolveChatBackground: () => "rgba(0, 0, 0, 1)",
+      mcp: {
+        protocolOverride: CLAUDE_HOST_STYLE.mcp.protocolOverride,
+        platform: "web",
+        fontCss: "",
+        hostCapabilities: {},
+        resolveStyleVariables: CLAUDE_HOST_STYLE.mcp.resolveStyleVariables,
+      },
+      chatUi: {
+        label: "Test Host",
+        shortLabel: "Test-style host",
+        pickerDescription: "Test chrome",
+        logoSrc: "/test-logo.png",
+        family: "claude",
+        resolveChatBackground: () => "rgba(0, 0, 0, 1)",
+        loadingIndicator: CLAUDE_HOST_STYLE.chatUi.loadingIndicator,
+      },
     };
 
     registerHostStyle(fakeStyle);
@@ -72,10 +84,10 @@ describe("host-styles registry", () => {
 
   it("returns the host style's hostCapabilities preset by id", () => {
     expect(getHostCapabilitiesForStyle("claude")).toBe(
-      CLAUDE_HOST_STYLE.hostCapabilities,
+      CLAUDE_HOST_STYLE.mcp.hostCapabilities,
     );
     expect(getHostCapabilitiesForStyle("chatgpt")).toBe(
-      CHATGPT_HOST_STYLE.hostCapabilities,
+      CHATGPT_HOST_STYLE.mcp.hostCapabilities,
     );
   });
 
@@ -97,8 +109,8 @@ describe("host-styles registry", () => {
     // Two profiles MUST differ in at least one observable key — otherwise
     // host-style switching is cosmetic only and provides no signal to
     // widget authors testing cross-client.
-    expect(CLAUDE_HOST_STYLE.hostCapabilities).not.toEqual(
-      CHATGPT_HOST_STYLE.hostCapabilities,
+    expect(CLAUDE_HOST_STYLE.mcp.hostCapabilities).not.toEqual(
+      CHATGPT_HOST_STYLE.mcp.hostCapabilities,
     );
   });
 

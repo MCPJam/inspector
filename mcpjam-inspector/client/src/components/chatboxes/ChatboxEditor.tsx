@@ -61,7 +61,6 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@mcpjam/design-system/popover";
-import { getLoadingIndicatorVariantForHostStyle } from "@/components/chat-v2/shared/loading-indicator-content";
 import { ChatboxHostStyleProvider } from "@/contexts/chatbox-host-style-context";
 import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-host-capabilities-override-context";
 import { ChatboxHostOnboardingOverlays } from "@/components/hosted/ChatboxHostOnboardingOverlays";
@@ -926,14 +925,14 @@ export function ChatboxEditor({
                   onClick={() => setHostStyle(host.id)}
                 >
                   <img
-                    src={host.logoSrc}
-                    alt={host.label}
+                    src={host.chatUi.logoSrc}
+                    alt={host.chatUi.label}
                     className="h-5 w-5 object-contain"
                   />
                   <div className="flex min-w-0 flex-col items-start">
-                    <span className="text-sm font-medium">{host.label}</span>
+                    <span className="text-sm font-medium">{host.chatUi.label}</span>
                     <span className="text-xs text-muted-foreground">
-                      {host.pickerDescription}
+                      {host.chatUi.pickerDescription}
                     </span>
                   </div>
                 </Button>
@@ -1269,9 +1268,6 @@ export function ChatboxEditor({
                         temperature,
                         requireToolApproval,
                       }}
-                      loadingIndicatorVariant={getLoadingIndicatorVariantForHostStyle(
-                        hostStyle
-                      )}
                       onOAuthRequired={handlePreviewOAuthRequired}
                       chatboxComposerBlocked={introGate.composerBlocked}
                       chatboxComposerBlockedReason="Get started or authorize to send messages…"

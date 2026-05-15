@@ -45,7 +45,6 @@ import { copyToClipboard } from "@/lib/clipboard";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { getChatboxHostStyleShortLabel } from "@/lib/chatbox-host-style";
 import { ChatTabV2 } from "@/components/ChatTabV2";
-import { getLoadingIndicatorVariantForHostStyle } from "@/components/chat-v2/shared/loading-indicator-content";
 import type {
   EnsureServersReadyResult,
   ServerWithName,
@@ -1325,9 +1324,6 @@ export function ChatboxBuilderView({
                                     requireToolApproval:
                                       draftChatboxConfig.requireToolApproval,
                                   }}
-                                  loadingIndicatorVariant={getLoadingIndicatorVariantForHostStyle(
-                                    draftChatboxConfig.hostStyle
-                                  )}
                                   onOAuthRequired={handlePreviewOAuthRequired}
                                   chatboxComposerBlocked={composerBlocked}
                                   chatboxComposerBlockedReason={

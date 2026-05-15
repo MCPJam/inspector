@@ -9,18 +9,53 @@ import {
 } from "@/contexts/chatbox-host-style-context";
 import { FullscreenChatOverlay } from "../fullscreen-chat-overlay";
 
-vi.mock("../shared/loading-indicator-content", () => ({
-  LoadingIndicatorContent: ({ variant }: { variant?: string }) => (
-    <div data-testid={`loading-indicator-${variant ?? "default"}`} />
-  ),
-  useResolvedLoadingIndicatorVariant: (variant?: string) =>
-    variant ?? "default",
-}));
+// Mock loading-indicator-content so the test can assert which brand path
+// LoadingIndicatorContent took without depending on the registry's actual
+// indicator markup. The mock renders the host-style id from context (via a
+// shared helper) or falls back to "default".
+vi.mock("../shared/loading-indicator-content", async () => {
+  const { useChatboxHostStyle } = await import(
+    "@/contexts/chatbox-host-style-context"
+  );
+  return {
+    LoadingIndicatorContent: ({
+      modelProvider,
+    }: {
+      className?: string;
+      modelProvider?: string | null;
+    }) => {
+      const hostStyle = useChatboxHostStyle();
+      let resolved: string | null = hostStyle;
+      if (!resolved && modelProvider) {
+        const normalized = modelProvider.toLowerCase();
+        if (normalized === "openai") resolved = "chatgpt";
+        else if (normalized === "anthropic") resolved = "claude";
+      }
+      const variant =
+        resolved === "claude"
+          ? "claude-mark"
+          : resolved === "chatgpt"
+            ? "chatgpt-dot"
+            : "default";
+      return <div data-testid={`loading-indicator-${variant}`} />;
+    },
+    useResolvedHostStyleForIndicator: (modelProvider?: string | null) => {
+      const hostStyle = useChatboxHostStyle();
+      if (hostStyle) return hostStyle;
+      if (!modelProvider) return null;
+      const normalized = modelProvider.toLowerCase();
+      if (normalized === "openai") return "chatgpt";
+      if (normalized === "anthropic") return "claude";
+      return null;
+    },
+  };
+});
 
-vi.mock("../shared/claude-loading-indicator", () => ({
+vi.mock("@/lib/host-styles/indicators/claude-mark", () => ({
   ClaudeLoadingIndicator: ({ mode = "animated" }: { mode?: string }) => (
     <div data-testid={`claude-indicator-${mode}`} />
   ),
+  ClaudeMarkIndicator: () => <div data-testid="claude-indicator-animated" />,
 }));
 
 describe("FullscreenChatOverlay", () => {
@@ -58,12 +93,13 @@ describe("FullscreenChatOverlay", () => {
 
   it("shows a standalone Claude placeholder row before the first assistant token appears", () => {
     render(
-      <FullscreenChatOverlay
-        {...defaultProps}
-        messages={[createMessage({ id: "msg-1", role: "user" })]}
-        isThinking={true}
-        loadingIndicatorVariant="claude-mark"
-      />,
+      <ChatboxHostStyleProvider value="claude">
+        <FullscreenChatOverlay
+          {...defaultProps}
+          messages={[createMessage({ id: "msg-1", role: "user" })]}
+          isThinking={true}
+        />
+      </ChatboxHostStyleProvider>,
     );
 
     expect(screen.getByTestId("fullscreen-thinking-row")).toBeInTheDocument();
@@ -77,12 +113,13 @@ describe("FullscreenChatOverlay", () => {
 
   it("shows a standalone GPT pulse before the first assistant token appears", () => {
     render(
-      <FullscreenChatOverlay
-        {...defaultProps}
-        messages={[createMessage({ id: "msg-1", role: "user" })]}
-        isThinking={true}
-        loadingIndicatorVariant="chatgpt-dot"
-      />,
+      <ChatboxHostStyleProvider value="chatgpt">
+        <FullscreenChatOverlay
+          {...defaultProps}
+          messages={[createMessage({ id: "msg-1", role: "user" })]}
+          isThinking={true}
+        />
+      </ChatboxHostStyleProvider>,
     );
 
     expect(screen.getByTestId("fullscreen-thinking-row")).toBeInTheDocument();
@@ -93,19 +130,20 @@ describe("FullscreenChatOverlay", () => {
 
   it("hides the GPT pulse once assistant preview text is visible while streaming", () => {
     render(
-      <FullscreenChatOverlay
-        {...defaultProps}
-        messages={[
-          createMessage({ id: "msg-1", role: "user" }),
-          createMessage({
-            id: "msg-2",
-            role: "assistant",
-            parts: [{ type: "text", text: "Streaming..." }],
-          }),
-        ]}
-        isThinking={true}
-        loadingIndicatorVariant="chatgpt-dot"
-      />,
+      <ChatboxHostStyleProvider value="chatgpt">
+        <FullscreenChatOverlay
+          {...defaultProps}
+          messages={[
+            createMessage({ id: "msg-1", role: "user" }),
+            createMessage({
+              id: "msg-2",
+              role: "assistant",
+              parts: [{ type: "text", text: "Streaming..." }],
+            }),
+          ]}
+          isThinking={true}
+        />
+      </ChatboxHostStyleProvider>,
     );
 
     expect(
@@ -118,19 +156,20 @@ describe("FullscreenChatOverlay", () => {
 
   it("keeps the GPT pulse hidden after the response finishes", () => {
     render(
-      <FullscreenChatOverlay
-        {...defaultProps}
-        messages={[
-          createMessage({ id: "msg-1", role: "user" }),
-          createMessage({
-            id: "msg-2",
-            role: "assistant",
-            parts: [{ type: "text", text: "Done." }],
-          }),
-        ]}
-        isThinking={false}
-        loadingIndicatorVariant="chatgpt-dot"
-      />,
+      <ChatboxHostStyleProvider value="chatgpt">
+        <FullscreenChatOverlay
+          {...defaultProps}
+          messages={[
+            createMessage({ id: "msg-1", role: "user" }),
+            createMessage({
+              id: "msg-2",
+              role: "assistant",
+              parts: [{ type: "text", text: "Done." }],
+            }),
+          ]}
+          isThinking={false}
+        />
+      </ChatboxHostStyleProvider>,
     );
 
     expect(
@@ -143,19 +182,20 @@ describe("FullscreenChatOverlay", () => {
 
   it("moves the Claude mascot onto the latest assistant bubble while streaming", () => {
     render(
-      <FullscreenChatOverlay
-        {...defaultProps}
-        messages={[
-          createMessage({ id: "msg-1", role: "user" }),
-          createMessage({
-            id: "msg-2",
-            role: "assistant",
-            parts: [{ type: "text", text: "Streaming..." }],
-          }),
-        ]}
-        isThinking={true}
-        loadingIndicatorVariant="claude-mark"
-      />,
+      <ChatboxHostStyleProvider value="claude">
+        <FullscreenChatOverlay
+          {...defaultProps}
+          messages={[
+            createMessage({ id: "msg-1", role: "user" }),
+            createMessage({
+              id: "msg-2",
+              role: "assistant",
+              parts: [{ type: "text", text: "Streaming..." }],
+            }),
+          ]}
+          isThinking={true}
+        />
+      </ChatboxHostStyleProvider>,
     );
 
     expect(
@@ -169,24 +209,25 @@ describe("FullscreenChatOverlay", () => {
 
   it("keeps only one static Claude footer on the latest assistant bubble after loading", () => {
     render(
-      <FullscreenChatOverlay
-        {...defaultProps}
-        messages={[
-          createMessage({
-            id: "msg-1",
-            role: "assistant",
-            parts: [{ type: "text", text: "Older answer" }],
-          }),
-          createMessage({ id: "msg-2", role: "user" }),
-          createMessage({
-            id: "msg-3",
-            role: "assistant",
-            parts: [{ type: "text", text: "Latest answer" }],
-          }),
-        ]}
-        isThinking={false}
-        loadingIndicatorVariant="claude-mark"
-      />,
+      <ChatboxHostStyleProvider value="claude">
+        <FullscreenChatOverlay
+          {...defaultProps}
+          messages={[
+            createMessage({
+              id: "msg-1",
+              role: "assistant",
+              parts: [{ type: "text", text: "Older answer" }],
+            }),
+            createMessage({ id: "msg-2", role: "user" }),
+            createMessage({
+              id: "msg-3",
+              role: "assistant",
+              parts: [{ type: "text", text: "Latest answer" }],
+            }),
+          ]}
+          isThinking={false}
+        />
+      </ChatboxHostStyleProvider>,
     );
 
     expect(

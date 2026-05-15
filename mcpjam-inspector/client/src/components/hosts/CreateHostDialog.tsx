@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -40,6 +40,12 @@ export function CreateHostDialog({
   );
   const [isSaving, setIsSaving] = useState(false);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const template = HOST_TEMPLATES.find((t) => t.id === selectedTemplateId);
+    setName(template?.label ?? "");
+  }, [isOpen, selectedTemplateId]);
+
   const handleClose = () => {
     setName("");
     setSelectedTemplateId(DEFAULT_HOST_TEMPLATE_ID);
@@ -74,7 +80,7 @@ export function CreateHostDialog({
         </DialogHeader>
         <div className="flex flex-col gap-4 py-2">
           <div className="flex flex-col gap-2">
-            <Label>Start from</Label>
+            <Label>Start from template</Label>
             <div className="grid grid-cols-3 gap-2">
               {HOST_TEMPLATES.map((template) => {
                 const isSelected = template.id === selectedTemplateId;
@@ -96,14 +102,9 @@ export function CreateHostDialog({
                       alt=""
                       className="h-6 w-6 object-contain"
                     />
-                    <div className="flex flex-col gap-0.5">
-                      <span className="text-sm font-medium leading-none">
-                        {template.label}
-                      </span>
-                      <span className="text-xs text-muted-foreground leading-snug">
-                        {template.description}
-                      </span>
-                    </div>
+                    <span className="text-sm font-medium leading-none">
+                      {template.label}
+                    </span>
                   </button>
                 );
               })}
