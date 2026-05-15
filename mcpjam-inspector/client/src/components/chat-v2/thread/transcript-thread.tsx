@@ -17,7 +17,8 @@ import type { DisplayMode } from "@/stores/ui-playground-store";
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import type { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { cn } from "@/lib/utils";
-import { type LoadingIndicatorVariant } from "@/components/chat-v2/shared/loading-indicator-content";
+import { useResolvedHostStyleForIndicator } from "@/components/chat-v2/shared/loading-indicator-content";
+import { getChatboxHostFamily } from "@/lib/chatbox-host-style";
 
 const NOOP = (..._args: unknown[]) => {};
 const TRANSCRIPT_SCROLL_SETTLE_MS = 120;
@@ -76,7 +77,6 @@ export interface TranscriptThreadProps extends MessageViewPassthroughProps {
   transcriptRef?: Ref<HTMLDivElement>;
   contentClassName?: string;
   isLoading?: boolean;
-  resolvedLoadingIndicatorVariant?: LoadingIndicatorVariant;
   lastRenderableMessageId?: string | null;
   getMessageWrapperProps?: (
     args: MessageWrapperArgs,
@@ -197,7 +197,6 @@ export function TranscriptThread({
   transcriptRef,
   contentClassName,
   isLoading = false,
-  resolvedLoadingIndicatorVariant,
   lastRenderableMessageId = null,
   getMessageWrapperProps,
   renderUserMessageActions,
@@ -205,6 +204,14 @@ export function TranscriptThread({
   const contentRef = useRef<HTMLDivElement | null>(null);
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const shouldReduceMotion = useReducedMotion();
+  // Claude paints its loading mark inline beneath the last assistant
+  // bubble (the "footer" treatment). Direct Chat has no chatbox host
+  // context, so resolve via the same provider-aware helper Thread uses
+  // for `hasBrandIndicator` — otherwise the standalone indicator gets
+  // suppressed without a footer to replace it.
+  const isClaudeFamily =
+    getChatboxHostFamily(useResolvedHostStyleForIndicator(model.provider)) ===
+    "claude";
   const highlightedMessageIdSet = useMemo(
     () => new Set(highlightedMessageIds),
     [highlightedMessageIds],
@@ -361,7 +368,7 @@ export function TranscriptThread({
           }) ?? {};
         const { className, ...restWrapperProps } = wrapperProps;
         const claudeFooterMode =
-          resolvedLoadingIndicatorVariant === "claude-mark" &&
+          isClaudeFamily &&
           message.role === "assistant" &&
           message.id === lastRenderableMessageId
             ? isLoading

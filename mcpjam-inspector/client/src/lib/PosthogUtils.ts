@@ -21,6 +21,17 @@ export const options = {
 export const isPostHogDisabled =
   import.meta.env.VITE_DISABLE_POSTHOG_LOCAL === "true";
 
+/** Normalize PostHog boolean flags (`useFeatureFlagEnabled` may not be strict `true` in dev). */
+export function isPostHogBooleanFlagOn(value: unknown): boolean {
+  if (value === true) return true;
+  if (value === false || value === undefined || value === null) return false;
+  if (typeof value === "string") {
+    const v = value.trim().toLowerCase();
+    return v === "true" || v === "1" || v === "yes" || v === "on";
+  }
+  return false;
+}
+
 // Conditional PostHog key and options
 // Always use the real PostHog key so feature flags evaluate properly via /decide
 export const getPostHogKey = () => VITE_PUBLIC_POSTHOG_KEY;

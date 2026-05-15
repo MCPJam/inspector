@@ -530,14 +530,14 @@ export function SetupChecklistPanel({
                             }
                           >
                             <img
-                              src={host.logoSrc}
+                              src={host.chatUi.logoSrc}
                               alt=""
                               className="size-6 rounded-md object-contain"
                             />
                             <div>
-                              <p className="font-medium">{host.shortLabel}</p>
+                              <p className="font-medium">{host.chatUi.shortLabel}</p>
                               <p className="text-xs text-muted-foreground">
-                                {host.pickerDescription}
+                                {host.chatUi.pickerDescription}
                               </p>
                             </div>
                           </button>

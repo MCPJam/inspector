@@ -132,6 +132,11 @@ export function useChatboxDemoSeed({
             // place that decides whether the envelope is structurally
             // valid.
             mcpProfile: projectDefaultInput?.mcpProfile,
+            // Inherit the project default's chat-UI override so the demo
+            // chatbox renders the same custom chrome (logo/palette/
+            // indicator) the project default declares. Same `undefined`
+            // semantics as mcpProfile.
+            chatUiOverride: projectDefaultInput?.chatUiOverride,
           },
         })) as {
           chatbox: ChatboxSettings | null;

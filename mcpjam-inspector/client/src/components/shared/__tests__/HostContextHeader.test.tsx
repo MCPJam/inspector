@@ -7,6 +7,8 @@ const {
   mockUIPlaygroundStore,
   mockHostContextState,
   mockPatchHostContext,
+  mockApplyHostTemplate,
+  mockApplyHostDefaultsToPlayground,
 } = vi.hoisted(() => ({
   mockPreferencesState: {
     themeMode: "light",
@@ -42,6 +44,8 @@ const {
     isDirty: false,
   },
   mockPatchHostContext: vi.fn(),
+  mockApplyHostTemplate: vi.fn(),
+  mockApplyHostDefaultsToPlayground: vi.fn(),
 }));
 
 vi.mock("lucide-react", () => ({
@@ -123,10 +127,14 @@ vi.mock("@/stores/preferences/preferences-provider", () => ({
     selector ? selector(mockPreferencesState) : mockPreferencesState,
 }));
 
-vi.mock("@/stores/ui-playground-store", () => ({
-  useUIPlaygroundStore: (selector: any) =>
-    selector ? selector(mockUIPlaygroundStore) : mockUIPlaygroundStore,
-}));
+vi.mock("@/stores/ui-playground-store", () => {
+  const useUIPlaygroundStore: any = (selector: any) =>
+    selector ? selector(mockUIPlaygroundStore) : mockUIPlaygroundStore;
+  // `applyHostDefaultsToPlayground` reads via `.getState()` — expose the
+  // same shape as the hook selector consumers.
+  useUIPlaygroundStore.getState = () => mockUIPlaygroundStore;
+  return { useUIPlaygroundStore };
+});
 
 vi.mock("@/stores/widget-debug-store", () => ({
   useWidgetDebugStore: (selector: any) =>
@@ -137,20 +145,20 @@ vi.mock("@/stores/widget-debug-store", () => ({
         },
 }));
 
-vi.mock("@/stores/host-context-store", () => ({
-  useHostContextStore: (selector: any) =>
-    selector
-      ? selector({
-          draftHostContext: mockHostContextState.draftHostContext,
-          patchHostContext: mockPatchHostContext,
-          isDirty: mockHostContextState.isDirty,
-        })
-      : {
-          draftHostContext: mockHostContextState.draftHostContext,
-          patchHostContext: mockPatchHostContext,
-          isDirty: mockHostContextState.isDirty,
-        },
-}));
+vi.mock("@/stores/host-context-store", () => {
+  const buildState = () => ({
+    draftHostContext: mockHostContextState.draftHostContext,
+    patchHostContext: mockPatchHostContext,
+    applyHostTemplate: mockApplyHostTemplate,
+    isDirty: mockHostContextState.isDirty,
+  });
+  const useHostContextStore: any = (selector: any) =>
+    selector ? selector(buildState()) : buildState();
+  // `applyHostDefaultsToPlayground` reads `applyHostTemplate` via
+  // `.getState()`; expose the same shape.
+  useHostContextStore.getState = buildState;
+  return { useHostContextStore };
+});
 
 vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
   UIType: {
@@ -158,6 +166,14 @@ vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
     MCP_APPS: "mcp-apps",
     OPENAI_SDK_AND_MCP_APPS: "both",
   },
+}));
+
+// Stub the helper so the test verifies the wire (pill onClick → helper)
+// without pulling in the helper's full dependency graph (host-templates →
+// host-config-v2 → ...). The helper's behavior is covered by its own unit
+// test at lib/playground/__tests__/apply-host-defaults.test.ts.
+vi.mock("@/lib/playground/apply-host-defaults", () => ({
+  applyHostDefaultsToPlayground: mockApplyHostDefaultsToPlayground,
 }));
 
 vi.mock("@/lib/client-config", () => ({
@@ -218,7 +234,7 @@ describe("HostContextHeader", () => {
     expect(mockPreferencesState.setThemeMode).not.toHaveBeenCalled();
   });
 
-  it("writes Claude and ChatGPT host-style selections through shared preferences", () => {
+  it("invokes the playground snapshot helper for each pill click with the right host id", () => {
     render(
       <HostContextHeader activeProjectId="project-1" protocol={null} />,
     );
@@ -226,14 +242,38 @@ describe("HostContextHeader", () => {
     fireEvent.click(screen.getByRole("button", { name: "Claude" }));
     fireEvent.click(screen.getByRole("button", { name: "ChatGPT" }));
 
-    expect(mockPreferencesState.setHostStyle).toHaveBeenNthCalledWith(
-      1,
+    // setHostStyle is no longer called directly from the pill onClick —
+    // the helper owns it (so a single seam writes the brand-pill id +
+    // chip stores together). Assert via the helper instead.
+    expect(mockPreferencesState.setHostStyle).not.toHaveBeenCalled();
+    expect(mockApplyHostDefaultsToPlayground).toHaveBeenCalledTimes(2);
+    expect(mockApplyHostDefaultsToPlayground.mock.calls[0]?.[0]).toBe(
       "claude",
     );
-    expect(mockPreferencesState.setHostStyle).toHaveBeenNthCalledWith(
-      2,
+    expect(mockApplyHostDefaultsToPlayground.mock.calls[1]?.[0]).toBe(
       "chatgpt",
     );
+  });
+
+  it("calls the playground snapshot helper with both preferences setters in a bag", () => {
+    render(
+      <HostContextHeader activeProjectId="project-1" protocol={null} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "ChatGPT" }));
+
+    expect(mockApplyHostDefaultsToPlayground).toHaveBeenCalledTimes(1);
+    expect(mockApplyHostDefaultsToPlayground.mock.calls[0]?.[0]).toBe(
+      "chatgpt",
+    );
+    // Second arg is the setters bag — the preferences-store setters that
+    // the helper writes through (preferences store is context-scoped, so
+    // the helper can't `getState()` on it).
+    expect(mockApplyHostDefaultsToPlayground.mock.calls[0]?.[1]).toEqual({
+      setHostStyle: mockPreferencesState.setHostStyle,
+      setHostCapabilitiesOverride:
+        mockPreferencesState.setHostCapabilitiesOverride,
+    });
   });
 
   it("surfaces unsaved state and opens the raw host context dialog", () => {

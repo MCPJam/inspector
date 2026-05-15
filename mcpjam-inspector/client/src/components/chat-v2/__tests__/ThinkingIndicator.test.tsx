@@ -17,7 +17,7 @@ vi.mock("framer-motion", async (importOriginal) => {
 });
 
 describe("ThinkingIndicator", () => {
-  const defaultModel: ModelDefinition = {
+  const openaiModel: ModelDefinition = {
     id: "gpt-4",
     name: "GPT-4",
     provider: "openai",
@@ -26,6 +26,15 @@ describe("ThinkingIndicator", () => {
     supportsTools: true,
     supportsVision: false,
     supportsStreaming: true,
+  };
+
+  // Provider that doesn't map to any registered host — exercises the
+  // generic "Thinking…" fallback path.
+  const unmappedProviderModel: ModelDefinition = {
+    ...openaiModel,
+    id: "mistral-7b",
+    name: "Mistral 7B",
+    provider: "mistral",
   };
 
   beforeEach(() => {
@@ -40,9 +49,7 @@ describe("ThinkingIndicator", () => {
     );
 
   it("renders a leading assistant avatar outside host-style contexts", () => {
-    renderThinkingIndicator(
-      <ThinkingIndicator model={defaultModel} resolvedVariant="default" />,
-    );
+    renderThinkingIndicator(<ThinkingIndicator model={openaiModel} />);
 
     expect(screen.getByRole("img")).toBeInTheDocument();
     expect(screen.getByLabelText("GPT-4 assistant")).toBeInTheDocument();
@@ -51,7 +58,7 @@ describe("ThinkingIndicator", () => {
   it("hides the leading assistant avatar in chatbox host-style contexts", () => {
     renderThinkingIndicator(
       <ChatboxHostStyleProvider value="claude">
-        <ThinkingIndicator model={defaultModel} resolvedVariant="default" />
+        <ThinkingIndicator model={openaiModel} />
       </ChatboxHostStyleProvider>,
     );
 
@@ -59,9 +66,9 @@ describe("ThinkingIndicator", () => {
     expect(screen.queryByLabelText("GPT-4 assistant")).not.toBeInTheDocument();
   });
 
-  it("keeps the default visible thinking label", () => {
+  it("renders the generic 'Thinking…' label when neither host nor provider resolves", () => {
     renderThinkingIndicator(
-      <ThinkingIndicator model={defaultModel} resolvedVariant="default" />,
+      <ThinkingIndicator model={unmappedProviderModel} />,
     );
 
     expect(screen.getByText(/Thinking/)).toBeInTheDocument();
@@ -70,10 +77,8 @@ describe("ThinkingIndicator", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("renders the pulsing dot variant with hidden accessible text", () => {
-    renderThinkingIndicator(
-      <ThinkingIndicator model={defaultModel} resolvedVariant="chatgpt-dot" />,
-    );
+  it("renders the pulsing dot for OpenAI models when no host context is set", () => {
+    renderThinkingIndicator(<ThinkingIndicator model={openaiModel} />);
 
     expect(screen.getByTestId("loading-indicator-dot")).toBeInTheDocument();
     expect(
@@ -81,9 +86,11 @@ describe("ThinkingIndicator", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders the animated Claude mark variant with hidden accessible text", () => {
+  it("renders the animated Claude mark inside a Claude chatbox host context", () => {
     renderThinkingIndicator(
-      <ThinkingIndicator model={defaultModel} resolvedVariant="claude-mark" />,
+      <ChatboxHostStyleProvider value="claude">
+        <ThinkingIndicator model={openaiModel} />
+      </ChatboxHostStyleProvider>,
     );
 
     expect(screen.getByTestId("loading-indicator-claude")).toBeInTheDocument();

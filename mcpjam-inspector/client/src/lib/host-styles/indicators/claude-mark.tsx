@@ -126,3 +126,14 @@ export function ClaudeLoadingIndicator({
     </span>
   );
 }
+
+/**
+ * Registry-shaped wrapper for the host-styles registry. Adapts
+ * `ClaudeLoadingIndicator` to the `ComponentType<{ className?: string }>`
+ * contract by defaulting `mode` to "animated". Call sites that need
+ * static-mode (Claude footer in fullscreen overlay etc.) continue to
+ * import `ClaudeLoadingIndicator` directly and pass `mode` themselves.
+ */
+export function ClaudeMarkIndicator({ className }: { className?: string }) {
+  return <ClaudeLoadingIndicator className={className} />;
+}

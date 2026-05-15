@@ -329,51 +329,10 @@ describe("ChatboxBuilderView", () => {
     ).toBeInTheDocument();
   });
 
-  it("passes the pulsing dot loading variant for ChatGPT builder previews", () => {
-    const chatbox = createSavedChatbox("chatgpt");
-    mockUseChatbox.mockReturnValue({ chatbox });
-
-    render(
-      <ChatboxBuilderView
-        projectId="ws-1"
-        projectServers={[httpsServer]}
-        chatboxId={chatbox.chatboxId}
-        initialViewMode="preview"
-        onBack={() => {}}
-        onSavedDraft={() => {}}
-      />,
-    );
-
-    expect(screen.getByTestId("chat-tab")).toBeInTheDocument();
-    expect(mockChatTabV2).toHaveBeenCalledWith(
-      expect.objectContaining({
-        loadingIndicatorVariant: "chatgpt-dot",
-      }),
-    );
-  });
-
-  it("passes the Claude mark variant to Claude builder previews", () => {
-    const chatbox = createSavedChatbox("claude");
-    mockUseChatbox.mockReturnValue({ chatbox });
-
-    render(
-      <ChatboxBuilderView
-        projectId="ws-1"
-        projectServers={[httpsServer]}
-        chatboxId={chatbox.chatboxId}
-        initialViewMode="preview"
-        onBack={() => {}}
-        onSavedDraft={() => {}}
-      />,
-    );
-
-    expect(screen.getByTestId("chat-tab")).toBeInTheDocument();
-    expect(mockChatTabV2).toHaveBeenCalledWith(
-      expect.objectContaining({
-        loadingIndicatorVariant: "claude-mark",
-      }),
-    );
-  });
+  // Loading-indicator selection no longer flows through a
+  // `loadingIndicatorVariant` prop on ChatTabV2 — the inner thread reads
+  // it from `ChatboxHostStyleProvider` context. Coverage moved to
+  // `LoadingIndicatorContent.test.tsx` and `Thread.test.tsx`.
 
   // Auto-connect: the builder Preview tab reuses the eval-style
   // ensureServersReady so the local mcpClientManager actually has the

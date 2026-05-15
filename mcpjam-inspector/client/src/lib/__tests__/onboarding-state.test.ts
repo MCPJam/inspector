@@ -83,6 +83,14 @@ describe("onboarding-state", () => {
       expect(isFirstRunEligible(false, "#servers")).toBe(true);
     });
 
+    it("returns true when hash is #connect (hosts hub slug)", () => {
+      expect(isFirstRunEligible(false, "#connect")).toBe(true);
+    });
+
+    it("returns true when hash is legacy #hosts", () => {
+      expect(isFirstRunEligible(false, "#hosts")).toBe(true);
+    });
+
     it("returns false when hash points to a specific tab", () => {
       expect(isFirstRunEligible(false, "#tools")).toBe(false);
     });

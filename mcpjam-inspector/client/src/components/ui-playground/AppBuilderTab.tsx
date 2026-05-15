@@ -17,6 +17,7 @@ import { EmptyState } from "../ui/empty-state";
 import { CollapsedPanelStrip } from "../ui/collapsed-panel-strip";
 import { PlaygroundLeft } from "./PlaygroundLeft";
 import { PlaygroundMain } from "./PlaygroundMain";
+import { ChatboxHostStyleProvider } from "@/contexts/chatbox-host-style-context";
 import SaveRequestDialog from "../tools/SaveRequestDialog";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import type { ProjectHostContextDraft } from "@/lib/client-config";
@@ -29,7 +30,6 @@ import type {
   EnsureServersReadyResult,
   ServerWithName,
 } from "@/hooks/use-app-state";
-import { getLoadingIndicatorVariantForHostStyle } from "@/components/chat-v2/shared/loading-indicator-content";
 import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSelector";
 import {
   APP_BUILDER_FIRST_RUN_PROMPT,
@@ -210,44 +210,47 @@ export function AppBuilderTab({
           minSize={PANEL_SIZES.CENTER.MIN}
           className="min-h-0 min-w-0 overflow-hidden"
         >
-          <PlaygroundMain
-            activeProjectId={activeProjectId}
-            serverName={serverName || ""}
-            onSaveHostContext={onSaveHostContext}
-            enableMultiModelChat={enableMultiModelChat}
-            isExecuting={state.isExecuting}
-            executingToolName={state.selectedTool}
-            invokingMessage={state.invokingMessage}
-            pendingExecution={state.pendingExecution}
-            onExecutionInjected={state.handleExecutionInjected}
-            onWidgetStateChange={(_toolCallId, widgetState) =>
-              state.setWidgetState(widgetState)
-            }
-            deviceType={state.deviceType}
-            onDeviceTypeChange={state.setDeviceType}
-            playgroundServerSelectorProps={playgroundServerSelectorProps}
-            initialInput={
-              state.firstRunComposerSeed
-                ? APP_BUILDER_FIRST_RUN_PROMPT
-                : undefined
-            }
-            initialInputTypewriter={state.firstRunComposerSeed}
-            blockSubmitUntilServerConnected={state.firstRunComposerSeed}
-            loadingIndicatorVariant={getLoadingIndicatorVariantForHostStyle(
-              state.hostStyle,
-            )}
-            ensureServersReady={ensureServersReady}
-            pulseSubmit={state.firstRunComposerSeed}
-            showPostConnectGuide={false}
-            onFirstMessageSent={
-              state.onboarding.isGuidedPostConnect
-                ? () => {
-                    state.setSidebarVisible(true);
-                    state.onboarding.completeOnboarding();
-                  }
-                : undefined
-            }
-          />
+          {/* Provide chatbox host style context so the brand loading
+              indicator and family-keyed chrome resolve correctly without
+              tunneling props. PlaygroundTab uses the same wrapping
+              pattern. */}
+          <ChatboxHostStyleProvider value={state.hostStyle}>
+            <PlaygroundMain
+              activeProjectId={activeProjectId}
+              serverName={serverName || ""}
+              onSaveHostContext={onSaveHostContext}
+              enableMultiModelChat={enableMultiModelChat}
+              isExecuting={state.isExecuting}
+              executingToolName={state.selectedTool}
+              invokingMessage={state.invokingMessage}
+              pendingExecution={state.pendingExecution}
+              onExecutionInjected={state.handleExecutionInjected}
+              onWidgetStateChange={(_toolCallId, widgetState) =>
+                state.setWidgetState(widgetState)
+              }
+              deviceType={state.deviceType}
+              onDeviceTypeChange={state.setDeviceType}
+              playgroundServerSelectorProps={playgroundServerSelectorProps}
+              initialInput={
+                state.firstRunComposerSeed
+                  ? APP_BUILDER_FIRST_RUN_PROMPT
+                  : undefined
+              }
+              initialInputTypewriter={state.firstRunComposerSeed}
+              blockSubmitUntilServerConnected={state.firstRunComposerSeed}
+              ensureServersReady={ensureServersReady}
+              pulseSubmit={state.firstRunComposerSeed}
+              showPostConnectGuide={false}
+              onFirstMessageSent={
+                state.onboarding.isGuidedPostConnect
+                  ? () => {
+                      state.setSidebarVisible(true);
+                      state.onboarding.completeOnboarding();
+                    }
+                  : undefined
+              }
+            />
+          </ChatboxHostStyleProvider>
         </ResizablePanel>
       </ResizablePanelGroup>
 

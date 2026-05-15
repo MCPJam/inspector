@@ -46,6 +46,7 @@ import {
 } from "@/lib/client-config";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { listHostStyles } from "@/lib/host-styles";
+import { applyHostDefaultsToPlayground } from "@/lib/playground/apply-host-defaults";
 import { cn } from "@/lib/utils";
 import { useHostContextStore } from "@/stores/host-context-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -448,12 +449,19 @@ export function HostContextHeader({
                   key={host.id}
                   variant={hostStyle === host.id ? "secondary" : "ghost"}
                   size="icon"
-                  onClick={() => setHostStyle(host.id)}
+                  onClick={() => {
+                    // Helper writes the pill id first (via setHostStyle),
+                    // then fans out to the chip stores.
+                    applyHostDefaultsToPlayground(host.id, {
+                      setHostStyle,
+                      setHostCapabilitiesOverride,
+                    });
+                  }}
                   className="h-6 w-6"
                 >
                   <img
-                    src={host.logoSrc}
-                    alt={host.label}
+                    src={host.chatUi.logoSrc}
+                    alt={host.chatUi.label}
                     className="h-3.5 w-3.5 object-contain"
                   />
                 </Button>

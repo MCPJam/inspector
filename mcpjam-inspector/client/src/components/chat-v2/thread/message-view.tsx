@@ -17,7 +17,7 @@ import { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { type ReasoningDisplayMode } from "./parts/reasoning-part";
-import { ClaudeLoadingIndicator } from "@/components/chat-v2/shared/claude-loading-indicator";
+import { ClaudeLoadingIndicator } from "@/lib/host-styles/indicators/claude-mark";
 import { getAssistantAvatarDescriptor } from "@/components/chat-v2/shared/assistant-avatar";
 
 type ClaudeFooterMode = "none" | "animated" | "static";
