@@ -174,6 +174,7 @@ import {
   handleOAuthCallback,
 } from "./lib/oauth/mcp-oauth";
 import { buildElectronMcpCallbackUrl } from "./hooks/use-server-state";
+import { disconnectAllRuntimeServers } from "./state/mcp-api";
 import { getEffectiveProjectClientCapabilities } from "./lib/client-config";
 import { buildEvalsHash } from "./lib/evals-router";
 import { withTestingSurface } from "./lib/testing-surface";
@@ -811,6 +812,18 @@ export default function App() {
       : undefined,
     activeHostConfig: chatTabHost?.config,
   });
+  // Keep this explicit sign-out cleanup even though useAppState also cleans up
+  // on auth-scope changes: WorkOS navigation can redirect before that effect
+  // gets a chance to run.
+  const disconnectRuntimeServersForAuthExit = useCallback(async () => {
+    const serverNames = Object.keys(appState.servers);
+    await Promise.allSettled([
+      Promise.allSettled(
+        serverNames.map((serverName) => handleDisconnect(serverName)),
+      ),
+      disconnectAllRuntimeServers(),
+    ]);
+  }, [appState.servers, handleDisconnect]);
   useInspectorCommandBus();
   // One-time migration from legacy localStorage state to Convex. No-op in
   // hosted mode and after the first successful run; safe to keep in the tree.
@@ -1461,13 +1474,19 @@ export default function App() {
 
   // When the active project changes (org switch, project delete, manual switch),
   // snap to Servers — staying on App Builder/Chat would leave the user pointed
-  // at a project that no longer exists. Skip the initial "none" → real-id
-  // transition so deep-links into other tabs aren't yanked away on first load.
-  const previousActiveProjectIdRef = useRef(activeProjectId);
+  // at a project that no longer exists. Start tracking only after auth/project
+  // loading settles so the initial local-default → Convex-project hydration
+  // doesn't yank deep-links away on first load.
+  const previousActiveProjectIdRef = useRef<string | null>(null);
   useEffect(() => {
+    if (isLoadingRemoteProjects || isAuthLoading || isWorkOsLoading) {
+      return;
+    }
+
     const previousActiveProjectId = previousActiveProjectIdRef.current;
     previousActiveProjectIdRef.current = activeProjectId;
     if (
+      previousActiveProjectId == null ||
       previousActiveProjectId === activeProjectId ||
       previousActiveProjectId === "none" ||
       activeProjectId === "none"
@@ -1475,7 +1494,13 @@ export default function App() {
       return;
     }
     applyNavigation("servers", { updateHash: true });
-  }, [activeProjectId, applyNavigation]);
+  }, [
+    activeProjectId,
+    applyNavigation,
+    isAuthLoading,
+    isLoadingRemoteProjects,
+    isWorkOsLoading,
+  ]);
 
   const consumeCheckoutIntent = useCallback(() => {
     clearPersistedCheckoutIntent();
@@ -2070,6 +2095,7 @@ export default function App() {
         billingGateEnforcementActive={billingGateEnforcementActive}
         isCreateProjectDisabled={isCreateProjectDisabled}
         createProjectDisabledReason={createProjectDisabledReason}
+        onBeforeSignOut={disconnectRuntimeServersForAuthExit}
       />
       <SidebarInset className="flex flex-col min-h-0">
         <AppChromeHeader
@@ -2624,7 +2650,10 @@ export default function App() {
               signIn();
             }}
             onSignOut={() => {
-              void signOut();
+              void (async () => {
+                await disconnectRuntimeServersForAuthExit();
+                await signOut();
+              })();
             }}
           >
             {isChatboxChatRoute ? (

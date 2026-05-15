@@ -1289,6 +1289,43 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
+  it("does not snap initial project hydration back to servers", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    window.history.replaceState({}, "", "/#settings");
+
+    mockUseAppState.mockImplementation(() => {
+      const [hydrated, setHydrated] = useState(false);
+
+      useLayoutEffect(() => {
+        setHydrated(true);
+      }, []);
+
+      return {
+        ...createAppStateMock(),
+        isLoadingRemoteProjects: !hydrated,
+        activeProjectId: hydrated ? "convex-project" : "local-default",
+        projects: hydrated
+          ? {
+              "convex-project": {
+                id: "convex-project",
+                name: "Convex Project",
+                servers: {},
+              },
+            }
+          : {},
+      };
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockUseAppState.mock.calls.length).toBeGreaterThan(1);
+    });
+
+    expect(window.location.hash).toBe("#settings");
+  });
+
   it("preserves the org models section when switching active organization", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();

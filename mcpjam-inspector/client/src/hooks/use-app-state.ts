@@ -6,9 +6,11 @@ import { useLogger } from "./use-logger";
 import {
   createLocalDefaultProject,
   initialAppState,
+  type AppState,
   type ServerWithName,
 } from "@/state/app-types";
 import { appReducer } from "@/state/app-reducer";
+import { disconnectAllRuntimeServers } from "@/state/mcp-api";
 import { useProjectState } from "./use-project-state";
 import { useServerState } from "./use-server-state";
 import {
@@ -512,6 +514,86 @@ export function useAppState({
     effectiveActiveProjectId,
   } = projectState;
   const { handleDisconnect } = serverState;
+
+  const disconnectRuntimeServersForScopeReset = useCallback(
+    (servers: AppState["servers"], reason: string) => {
+      const serverNames = Object.keys(servers);
+
+      if (serverNames.length > 0) {
+        logger.info("Disconnecting runtime servers before auth scope reset", {
+          reason,
+          serverNames,
+        });
+      }
+
+      void Promise.allSettled([
+        Promise.allSettled(
+          serverNames.map((serverName) => handleDisconnect(serverName)),
+        ),
+        disconnectAllRuntimeServers(),
+      ]);
+    },
+    [handleDisconnect, logger],
+  );
+
+  const previousRuntimeScopeRef = useRef<{
+    actorKey: string | null;
+    organizationId?: string;
+    projectId: string;
+  } | null>(null);
+
+  // This intentionally overlaps with App.tsx's pre-sign-out cleanup. That
+  // path runs before WorkOS redirects; this effect covers auth/session changes,
+  // guest handoffs, org switches, and project switches that happen without a
+  // direct logout click.
+  useEffect(() => {
+    if (!isAuthenticated || useLocalFallback) {
+      if (previousRuntimeScopeRef.current) {
+        disconnectRuntimeServersForScopeReset(
+          appState.servers,
+          "leaving-authenticated-scope",
+        );
+        dispatch({ type: "CLEAR_RUNTIME_STATE" });
+      }
+      previousRuntimeScopeRef.current = null;
+      return;
+    }
+
+    const nextScope = {
+      actorKey: currentActorKey,
+      organizationId: activeOrganizationId,
+      projectId: effectiveActiveProjectId,
+    };
+    const previousScope = previousRuntimeScopeRef.current;
+    previousRuntimeScopeRef.current = nextScope;
+
+    if (!previousScope) {
+      return;
+    }
+
+    if (
+      previousScope.actorKey === nextScope.actorKey &&
+      previousScope.organizationId === nextScope.organizationId &&
+      previousScope.projectId === nextScope.projectId
+    ) {
+      return;
+    }
+
+    disconnectRuntimeServersForScopeReset(
+      appState.servers,
+      "authenticated-scope-changed",
+    );
+    dispatch({ type: "CLEAR_RUNTIME_STATE" });
+  }, [
+    activeOrganizationId,
+    appState.servers,
+    currentActorKey,
+    disconnectRuntimeServersForScopeReset,
+    dispatch,
+    effectiveActiveProjectId,
+    isAuthenticated,
+    useLocalFallback,
+  ]);
 
   const handleSwitchProject = useCallback(
     async (projectId: string) => {

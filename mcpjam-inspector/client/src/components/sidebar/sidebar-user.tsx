@@ -33,9 +33,13 @@ import { SidebarCreditUsage } from "@/components/sidebar/sidebar-credit-usage";
 
 interface SidebarUserProps {
   activeOrganizationId?: string;
+  onBeforeSignOut?: () => void | Promise<void>;
 }
 
-export function SidebarUser({ activeOrganizationId }: SidebarUserProps = {}) {
+export function SidebarUser({
+  activeOrganizationId,
+  onBeforeSignOut,
+}: SidebarUserProps = {}) {
   const { isLoading, isAuthenticated: _isAuthenticated } = useConvexAuth();
   const { user, signIn, signOut } = useAuth();
   const { profilePictureUrl } = useProfilePicture();
@@ -59,7 +63,7 @@ export function SidebarUser({ activeOrganizationId }: SidebarUserProps = {}) {
   const email = user?.email ?? "";
   const initials = getInitials(displayName);
 
-  const handleSignOut = () => {
+  const finishSignOut = () => {
     const returnTo = window.location.origin;
     if (window.isElectron) {
       void Promise.resolve(signOut({ returnTo, navigate: false })).finally(
@@ -71,6 +75,30 @@ export function SidebarUser({ activeOrganizationId }: SidebarUserProps = {}) {
     }
 
     signOut({ returnTo });
+  };
+
+  const handleSignOut = () => {
+    setMenuOpen(false);
+
+    let cleanupResult: void | Promise<void>;
+    try {
+      cleanupResult = onBeforeSignOut?.();
+    } catch {
+      finishSignOut();
+      return;
+    }
+
+    if (
+      cleanupResult &&
+      typeof (cleanupResult as Promise<void>).finally === "function"
+    ) {
+      void (cleanupResult as Promise<void>)
+        .catch(() => undefined)
+        .finally(finishSignOut);
+      return;
+    }
+
+    finishSignOut();
   };
 
   const avatarUrl = profilePictureUrl;
