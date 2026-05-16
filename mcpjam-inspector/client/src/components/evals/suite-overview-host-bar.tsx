@@ -1,0 +1,277 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@mcpjam/design-system/dropdown-menu";
+import { Globe, MoreHorizontal, Plus, X } from "lucide-react";
+import { useConvexAuth } from "convex/react";
+import { useHostList, type HostListItem } from "@/hooks/useHosts";
+import { navigateApp, routePaths } from "@/lib/app-navigation";
+import { cn } from "@/lib/utils";
+import type { HostAttachmentDraft } from "./host-attachments-editor";
+import type { EvalSuite } from "./types";
+
+export interface SuiteOverviewHostBarProps {
+  suite: EvalSuite;
+  projectId: string | null;
+  readOnly?: boolean;
+  onUpdate?: (attachments: HostAttachmentDraft[]) => Promise<void>;
+  /** Merged with the outer bar container (e.g. tighter padding in {@link SuiteHeader}). */
+  className?: string;
+  /**
+   * `panel` = card surface (default). `inline` = no card chrome for embedding
+   * in a header row.
+   */
+  containerVariant?: "panel" | "inline";
+}
+
+export function SuiteOverviewHostBar({
+  suite,
+  projectId,
+  readOnly = false,
+  onUpdate,
+  className,
+  containerVariant = "panel",
+}: SuiteOverviewHostBarProps) {
+  const { isAuthenticated } = useConvexAuth();
+  const { hosts: projectHosts } = useHostList({
+    isAuthenticated,
+    projectId,
+  });
+  const initialAttachments = useMemo<HostAttachmentDraft[]>(
+    () =>
+      (suite.hostAttachments ?? []).map((attachment) => ({
+        namedHostId: attachment.namedHostId,
+        enabledOptionalServerIds: attachment.enabledOptionalServerIds,
+      })),
+    [suite.hostAttachments],
+  );
+
+  const [attachments, setAttachments] =
+    useState<HostAttachmentDraft[]>(initialAttachments);
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+
+  // Keep optimistic local state in sync with server-resolved suite data.
+  useEffect(() => {
+    setAttachments(initialAttachments);
+  }, [initialAttachments]);
+
+  const hostNameByAttachment = useMemo(() => {
+    const map = new Map<string, string | null>();
+    for (const attachment of suite.hostAttachments ?? []) {
+      map.set(attachment.namedHostId, attachment.hostName);
+    }
+    return map;
+  }, [suite.hostAttachments]);
+
+  const persist = useCallback(
+    async (next: HostAttachmentDraft[]) => {
+      if (!onUpdate) return;
+      const previous = attachments;
+      setAttachments(next);
+      try {
+        await onUpdate(next);
+      } catch (error) {
+        // Roll the optimistic write back so the pills match the server. The
+        // mutation surfaces its own toast; we just log here for debugging.
+        setAttachments(previous);
+        console.error("Failed to update suite host attachments", error);
+      }
+    },
+    [attachments, onUpdate],
+  );
+
+  const handleAddHost = async (host: HostListItem) => {
+    if (readOnly || !onUpdate) return;
+    if (attachments.some((a) => a.namedHostId === host.hostId)) {
+      setAddMenuOpen(false);
+      return;
+    }
+    await persist([
+      ...attachments,
+      { namedHostId: host.hostId, enabledOptionalServerIds: [] },
+    ]);
+    setAddMenuOpen(false);
+  };
+
+  const handleRemove = async (namedHostId: string) => {
+    if (readOnly || !onUpdate) return;
+    await persist(attachments.filter((a) => a.namedHostId !== namedHostId));
+  };
+
+  const openHostsPage = () => {
+    // No per-host deep-link route exists today; the Hosts page is index-style.
+    // When a host-detail route lands, swap this for `buildHostsPath(hostId)`.
+    navigateApp(routePaths.hosts);
+  };
+
+  const editable = Boolean(onUpdate) && !readOnly;
+  const attachableHosts = useMemo(
+    () =>
+      projectHosts.filter(
+        (host) => !attachments.some((a) => a.namedHostId === host.hostId),
+      ),
+    [projectHosts, attachments],
+  );
+  const canAdd = editable && attachableHosts.length > 0;
+
+  const addHostMenu = (align: "start" | "end") => (
+    <DropdownMenu open={addMenuOpen} onOpenChange={setAddMenuOpen}>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className="flex h-8 shrink-0 items-center gap-1 rounded-full border border-border/60 bg-background px-2.5 text-xs font-medium text-foreground outline-none transition-colors hover:bg-muted/45 focus-visible:ring-2 focus-visible:ring-ring dark:bg-background"
+          aria-label="Attach host"
+          disabled={!canAdd}
+        >
+          <Plus className="h-3.5 w-3.5" />
+          <span>Attach host</span>
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align={align}
+        className="w-[240px] max-h-64 overflow-y-auto"
+        sideOffset={4}
+      >
+        {attachableHosts.length === 0 ? (
+          <div className="px-2 py-1.5 text-xs text-muted-foreground">
+            All hosts attached
+          </div>
+        ) : (
+          attachableHosts.map((host) => (
+            <DropdownMenuItem
+              key={host.hostId}
+              className="flex cursor-pointer items-center gap-2 text-sm"
+              onSelect={() => void handleAddHost(host)}
+            >
+              <Globe className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <span className="truncate font-medium">{host.name}</span>
+            </DropdownMenuItem>
+          ))
+        )}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          className="cursor-pointer text-sm"
+          onSelect={() => {
+            setAddMenuOpen(false);
+            openHostsPage();
+          }}
+        >
+          Manage hosts…
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
+  // The bar always renders (per the empty-state decision in the plan) so the
+  // "Attach host" affordance is discoverable even on suites with no hosts.
+  return (
+    <div
+      className={cn(
+        containerVariant === "panel"
+          ? "rounded-lg bg-card py-2.5 text-card-foreground"
+          : "bg-transparent py-0 text-card-foreground",
+        className,
+      )}
+    >
+      <div
+        className={cn(
+          "flex min-h-9 items-center gap-2 px-1 sm:px-2",
+          containerVariant === "inline" &&
+            "w-full min-w-0 max-w-full overflow-hidden",
+        )}
+      >
+        <div
+          className={cn(
+            "flex min-w-0 items-center gap-2",
+            containerVariant === "panel" ? "flex-1" : "w-full flex-1",
+          )}
+        >
+          <div
+            className={cn(
+              "flex min-w-0 items-center gap-1.5 overflow-x-auto py-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+              containerVariant === "panel" ? "flex-1" : "min-w-0 flex-1",
+            )}
+          >
+            {attachments.length === 0 ? (
+              <span className="shrink-0 text-[13px] font-normal text-muted-foreground">
+                No hosts attached
+              </span>
+            ) : null}
+
+            {attachments.map((attachment) => {
+              // Prefer the server-resolved name (catches host renames) and
+              // fall back to the project-host-list name, then the id, so the
+              // pill never renders empty even during initial load.
+              const label =
+                hostNameByAttachment.get(attachment.namedHostId) ??
+                projectHosts.find((h) => h.hostId === attachment.namedHostId)
+                  ?.name ??
+                attachment.namedHostId;
+              return (
+                <div
+                  key={attachment.namedHostId}
+                  className="flex h-8 max-w-[200px] shrink-0 items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-2 text-foreground"
+                >
+                  <Globe className="size-3.5 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
+                    {label}
+                  </span>
+                  {editable ? (
+                    <>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            type="button"
+                            className="shrink-0 rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+                            aria-label={`Host options (${label})`}
+                          >
+                            <MoreHorizontal className="h-3.5 w-3.5" />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent
+                          align="start"
+                          className="w-52"
+                        >
+                          <DropdownMenuItem
+                            onSelect={() => openHostsPage()}
+                          >
+                            Open in Hosts page
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive"
+                            onSelect={() =>
+                              void handleRemove(attachment.namedHostId)
+                            }
+                          >
+                            Remove from suite
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                      <button
+                        type="button"
+                        className="shrink-0 rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+                        aria-label={`Remove ${label}`}
+                        onClick={() =>
+                          void handleRemove(attachment.namedHostId)
+                        }
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </>
+                  ) : null}
+                </div>
+              );
+            })}
+
+            {editable ? addHostMenu("end") : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

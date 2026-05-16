@@ -35,6 +35,14 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case "HYDRATE_STATE":
       return action.payload;
 
+    case "CLEAR_RUNTIME_STATE":
+      return {
+        ...state,
+        servers: {},
+        selectedServer: "none",
+        selectedMultipleServers: [],
+      };
+
     case "UPSERT_SERVER":
       return {
         ...state,

@@ -5,6 +5,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { detectUIType, UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { extractDisplayFromToolResult } from "@/components/chat-v2/shared/tool-result-text";
+import { navigateApp } from "@/lib/app-navigation";
 
 interface ResultsPanelProps {
   error: string;
@@ -88,7 +89,7 @@ export function ResultsPanel({
                 size="sm"
                 className="h-6 text-xs px-2"
                 onClick={() => {
-                  window.location.hash = "app-builder";
+                  navigateApp("/app-builder");
                 }}
               >
                 <ExternalLink className="h-3 w-3 mr-1" />

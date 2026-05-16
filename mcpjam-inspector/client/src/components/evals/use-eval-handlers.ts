@@ -5,12 +5,12 @@ import { toast } from "sonner";
 import posthog from "posthog-js";
 import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 import { isMCPJamProvidedModel } from "@/shared/types";
-import { navigateToEvalsRoute, type EvalsRoute } from "@/lib/evals-router";
 import {
-  navigateToCiEvalsRoute,
-  type CiEvalsRoute,
-} from "@/lib/ci-evals-router";
-import type { SuiteOverviewView } from "@/lib/eval-route-types";
+  buildCiEvalsPath,
+  buildEvalsPath,
+  navigateApp,
+} from "@/lib/app-navigation";
+import type { EvalRoute, SuiteOverviewView } from "@/lib/eval-route-types";
 import type {
   EvalCase,
   EvalSuite,
@@ -39,6 +39,15 @@ import {
   prepareSingleTestCaseRun,
 } from "./single-test-case-runner";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
+
+function navigateEvalRoute(
+  route: EvalRoute,
+  context: "evals" | "ci-evals",
+) {
+  navigateApp(
+    context === "ci-evals" ? buildCiEvalsPath(route) : buildEvalsPath(route),
+  );
+}
 import type { RemoteServer } from "@/hooks/useProjects";
 import {
   formatMcpConnectServerPrompt,
@@ -229,11 +238,7 @@ export function useEvalHandlers({
             view?: SuiteOverviewView;
           },
     ) => {
-      if (evalsNavigationContext === "ci-evals") {
-        navigateToCiEvalsRoute(route as CiEvalsRoute);
-      } else {
-        navigateToEvalsRoute(route as EvalsRoute);
-      }
+      navigateEvalRoute(route as EvalRoute, evalsNavigationContext);
     },
     [evalsNavigationContext]
   );
@@ -432,12 +437,15 @@ export function useEvalHandlers({
         });
 
         if (result?.suiteId && result?.runId) {
-          navigateToCiEvalsRoute({
-            type: "run-detail",
-            suiteId: result.suiteId,
-            runId: result.runId,
-            insightsFocus: true,
-          });
+          navigateEvalRoute(
+            {
+              type: "run-detail",
+              suiteId: result.suiteId,
+              runId: result.runId,
+              insightsFocus: true,
+            },
+            "ci-evals",
+          );
         }
 
         toast.success("Replay completed!", {
@@ -988,7 +996,7 @@ export function useEvalHandlers({
 
       // If we're viewing this suite, go back to the list
       if (selectedSuiteId === suiteToDelete._id) {
-        navigateToEvalsRoute({ type: "list" });
+        navigateEvalRoute({ type: "list" }, "evals");
       }
 
       setSuiteToDelete(null);
@@ -1031,10 +1039,13 @@ export function useEvalHandlers({
 
         // Navigate to the new duplicated suite
         if (newSuite && newSuite._id) {
-          navigateToEvalsRoute({
-            type: "suite-overview",
-            suiteId: newSuite._id,
-          });
+          navigateEvalRoute(
+            {
+              type: "suite-overview",
+              suiteId: newSuite._id,
+            },
+            "evals",
+          );
         }
       } catch (error) {
         console.error("Failed to duplicate suite:", error);

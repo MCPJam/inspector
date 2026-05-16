@@ -423,6 +423,29 @@ export function SuiteIterationsView({
     }
   };
 
+  const handleUpdateHostAttachments = async (
+    attachments: Array<{
+      namedHostId: string;
+      enabledOptionalServerIds: string[];
+    }>,
+  ) => {
+    try {
+      await updateSuite({
+        suiteId: suite._id,
+        hostAttachments: attachments,
+      });
+      toast.success(
+        attachments.length === 0
+          ? "Hosts cleared"
+          : "Hosts updated",
+      );
+    } catch (error) {
+      toast.error(getBillingErrorMessage(error, "Failed to update hosts"));
+      console.error("Failed to update host attachments:", error);
+      throw error;
+    }
+  };
+
   const handleRunClick = (runId: string) => {
     navigation.toRunDetail(suite._id, runId, undefined, {
       insightsFocus: true,
@@ -545,6 +568,9 @@ export function SuiteIterationsView({
             availableModels={availableModels}
             onSuiteModelsUpdate={
               readOnlyConfig ? undefined : handleUpdateTests
+            }
+            onSuiteHostAttachmentsUpdate={
+              readOnlyConfig ? undefined : handleUpdateHostAttachments
             }
             runDetailKpiStrip={
               showSuiteHeader &&

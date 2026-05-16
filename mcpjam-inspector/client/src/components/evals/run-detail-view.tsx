@@ -28,7 +28,7 @@ import { CiMetadataDisplay } from "./ci-metadata-display";
 import { useRunInsights } from "./use-run-insights";
 import { useServerQuality } from "./use-server-quality";
 import { InsightPrimaryBlock } from "./insight-primary-block";
-import { navigateToEvalsRoute } from "@/lib/evals-router";
+import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
 import { ArrowUpDown, ExternalLink } from "lucide-react";
 import { getSidebarRunInsightsPassRateLabel } from "./run-header-compact-stats";
 import { RunInsightsSidebarSummary } from "./run-insights-sidebar";
@@ -488,11 +488,13 @@ export function RunDetailView({
   const handleEditTestCase =
     onEditTestCaseProp ??
     ((testCaseId: string) =>
-      navigateToEvalsRoute({
-        type: "test-edit",
-        suiteId: selectedRunDetails.suiteId,
-        testId: testCaseId,
-      }));
+      navigateApp(
+        buildEvalsPath({
+          type: "test-edit",
+          suiteId: selectedRunDetails.suiteId,
+          testId: testCaseId,
+        }),
+      ));
   useRunInsights(selectedRunDetails, { autoRequest: true });
 
   const {

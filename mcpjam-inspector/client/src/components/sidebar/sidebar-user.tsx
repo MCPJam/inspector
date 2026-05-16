@@ -30,12 +30,17 @@ import {
 import { useProfilePicture } from "@/hooks/useProfilePicture";
 import { HOSTED_MODE } from "@/lib/config";
 import { SidebarCreditUsage } from "@/components/sidebar/sidebar-credit-usage";
+import { useAppNavigate } from "@/lib/app-navigation";
 
 interface SidebarUserProps {
   activeOrganizationId?: string;
+  onBeforeSignOut?: () => void | Promise<void>;
 }
 
-export function SidebarUser({ activeOrganizationId }: SidebarUserProps = {}) {
+export function SidebarUser({
+  activeOrganizationId,
+  onBeforeSignOut,
+}: SidebarUserProps = {}) {
   const { isLoading, isAuthenticated: _isAuthenticated } = useConvexAuth();
   const { user, signIn, signOut } = useAuth();
   const { profilePictureUrl } = useProfilePicture();
@@ -46,10 +51,11 @@ export function SidebarUser({ activeOrganizationId }: SidebarUserProps = {}) {
     useFeatureFlagEnabled("billing-entitlements-ui") === true;
   const canNavigateToBilling =
     billingUiEnabled && Boolean(activeOrganizationId);
+  const appNavigate = useAppNavigate();
 
   const handleCreditUsageClick = () => {
     setMenuOpen(false);
-    window.location.hash = `organizations/${activeOrganizationId}/billing`;
+    appNavigate(`/organizations/${activeOrganizationId}/billing`);
   };
 
   const workOsName = user
@@ -59,7 +65,7 @@ export function SidebarUser({ activeOrganizationId }: SidebarUserProps = {}) {
   const email = user?.email ?? "";
   const initials = getInitials(displayName);
 
-  const handleSignOut = () => {
+  const finishSignOut = () => {
     const returnTo = window.location.origin;
     if (window.isElectron) {
       void Promise.resolve(signOut({ returnTo, navigate: false })).finally(
@@ -71,6 +77,30 @@ export function SidebarUser({ activeOrganizationId }: SidebarUserProps = {}) {
     }
 
     signOut({ returnTo });
+  };
+
+  const handleSignOut = () => {
+    setMenuOpen(false);
+
+    let cleanupResult: void | Promise<void>;
+    try {
+      cleanupResult = onBeforeSignOut?.();
+    } catch {
+      finishSignOut();
+      return;
+    }
+
+    if (
+      cleanupResult &&
+      typeof (cleanupResult as Promise<void>).finally === "function"
+    ) {
+      void (cleanupResult as Promise<void>)
+        .catch(() => undefined)
+        .finally(finishSignOut);
+      return;
+    }
+
+    finishSignOut();
   };
 
   const avatarUrl = profilePictureUrl;
@@ -176,14 +206,14 @@ export function SidebarUser({ activeOrganizationId }: SidebarUserProps = {}) {
             />
             <DropdownMenuSeparator />
             <DropdownMenuItem
-              onClick={() => (window.location.hash = "profile")}
+              onClick={() => appNavigate("/profile")}
               className="cursor-pointer"
             >
               <User className="size-4" />
               Profile
             </DropdownMenuItem>
             <DropdownMenuItem
-              onClick={() => (window.location.hash = "settings")}
+              onClick={() => appNavigate("/settings")}
               className="cursor-pointer"
             >
               <Settings className="size-4" />

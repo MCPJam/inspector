@@ -14,7 +14,6 @@ import {
 } from "@mcpjam/design-system/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { useHostList, useHostMutations } from "@/hooks/useHosts";
-import { useProjectServers } from "@/hooks/useViews";
 import { emptyHostConfigInputV2 } from "@/lib/host-config-v2";
 import { CreateHostDialog } from "./CreateHostDialog";
 
@@ -40,7 +39,6 @@ export function HostOverlayBar({
   const posthog = usePostHog();
   const { isAuthenticated } = useConvexAuth();
   const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
-  const { servers } = useProjectServers({ isAuthenticated, projectId });
   const { createHost, deleteHost } = useHostMutations();
   const [showCreate, setShowCreate] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -55,18 +53,12 @@ export function HostOverlayBar({
   // no hosts at all. Once any host exists (including after the user deletes
   // MCPJam), we stop seeding — otherwise a deleted MCPJam respawns on every
   // mount and duplicates accumulate.
-  //
-  // Wait for the servers query to resolve (servers !== undefined) before
-  // seeding so the new host's serverIds includes everything already in the
-  // project. Seeding before servers load would create an MCPJam host with
-  // every server reading "optional".
   const seededRef = useRef(false);
   useEffect(() => {
     if (
       !isAuthenticated ||
       isLoading ||
       hosts.length > 0 ||
-      servers === undefined ||
       seededRef.current
     ) {
       return;
@@ -75,21 +67,11 @@ export function HostOverlayBar({
     createHost({
       projectId,
       name: MCPJAM_HOST_NAME,
-      input: {
-        ...emptyHostConfigInputV2(),
-        serverIds: servers.map((s) => s._id),
-      },
+      input: emptyHostConfigInputV2(),
     }).catch(() => {
       seededRef.current = false;
     });
-  }, [
-    isAuthenticated,
-    isLoading,
-    hosts.length,
-    servers,
-    projectId,
-    createHost,
-  ]);
+  }, [isAuthenticated, isLoading, hosts.length, projectId, createHost]);
 
   const validPreviewedHostId =
     previewedHostId && hosts.some((h) => h.hostId === previewedHostId)

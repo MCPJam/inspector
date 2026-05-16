@@ -200,7 +200,7 @@ describe("useServerState hosted OAuth callback guards", () => {
   beforeEach(() => {
     localStorage.clear();
     sessionStorage.clear();
-    window.history.replaceState({}, "", "/?code=oauth-code");
+    window.history.replaceState({}, "", "/oauth/callback?code=oauth-code");
     mockHandleOAuthCallback.mockReset();
     mockListServers.mockReset();
     mockReconnectServer.mockReset();
@@ -230,7 +230,7 @@ describe("useServerState hosted OAuth callback guards", () => {
       surface: "chatbox",
       serverName: "asana",
       serverUrl: "https://mcp.asana.com/sse",
-      returnHash: "#asaan",
+      returnPath: "#asaan",
     });
     localStorage.setItem("mcp-oauth-pending", "asana");
     localStorage.setItem("mcp-serverUrl-asana", "https://mcp.asana.com/sse");
@@ -283,7 +283,7 @@ describe("useServerState hosted OAuth callback guards", () => {
       serverName: "asana",
       serverUrl: "https://mcp.asana.com/sse",
       accessScope: "project_member",
-      returnHash: "#servers",
+      returnPath: "#servers",
     });
     localStorage.setItem("mcp-oauth-pending", "asana");
     localStorage.setItem("mcp-serverUrl-asana", "https://mcp.asana.com/sse");
@@ -363,7 +363,7 @@ describe("useServerState hosted OAuth callback guards", () => {
     window.history.replaceState(
       {},
       "",
-      "/?code=oauth-code&state=expected-state-token",
+      "/oauth/callback?code=oauth-code&state=expected-state-token",
     );
     writeHostedOAuthPendingMarker({
       surface: "project",
@@ -372,7 +372,7 @@ describe("useServerState hosted OAuth callback guards", () => {
       serverName: "asana",
       serverUrl: "https://mcp.asana.com/sse",
       accessScope: "project_member",
-      returnHash: "#servers",
+      returnPath: "#servers",
     });
     localStorage.setItem("mcp-oauth-pending", "asana");
     localStorage.setItem("mcp-serverUrl-asana", "https://mcp.asana.com/sse");

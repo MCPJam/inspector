@@ -65,14 +65,7 @@ import { LoggerView } from "./logger-view";
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { ServersLoadingSkeleton } from "@mcpjam/design-system/servers-loading-skeleton";
-import { Switch } from "@mcpjam/design-system/switch";
-import { Label } from "@mcpjam/design-system/label";
 import { useConvexAuth } from "convex/react";
-import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { useAutoConnectProjectServers } from "@/hooks/useAutoConnectProjectServers";
-import { useHost } from "@/hooks/useHosts";
-import { usePreviewedHostId } from "@/hooks/use-previewed-host-id";
-import { useProjectServers as useViewProjectServers } from "@/hooks/useViews";
 import { Project } from "@/state/app-types";
 import {
   clearPendingQuickConnect,
@@ -538,44 +531,6 @@ export function ServersTab({
   const posthog = usePostHog();
   const hostsConnectAddServerSlot = useContext(HostsConnectAddServerSlotContext);
   const { isAuthenticated } = useConvexAuth();
-
-  // Auto-connect the previewed host's REQUIRED servers once per session.
-  // The Servers tab is host-aware via `usePreviewedHostId`; if there is
-  // no previewed host (or it has no required servers), nothing
-  // auto-connects and the user opts in per server via the per-card
-  // toggle. Module-level dedupe (in the hook) means navigating between
-  // Servers / Host / Playground does not re-trigger the batch, and a
-  // permanently failing OAuth refresh cannot loop.
-  const [previewedHostId] = usePreviewedHostId(activeProjectId || null);
-  const { host: previewedHost } = useHost({
-    isAuthenticated,
-    hostId: previewedHostId,
-  });
-  const { servers: viewProjectServersList } = useViewProjectServers({
-    projectId: activeProjectId || null,
-    isAuthenticated,
-  });
-  const previewedHostRequiredNames = useMemo(() => {
-    const requiredIds = previewedHost?.config?.serverIds ?? [];
-    if (requiredIds.length === 0 || !viewProjectServersList) return [];
-    const byId = new Map(
-      viewProjectServersList.map((s) => [s._id, s.name] as const),
-    );
-    return requiredIds
-      .map((id) => byId.get(id))
-      .filter((name): name is string => !!name);
-  }, [previewedHost?.config?.serverIds, viewProjectServersList]);
-  useAutoConnectProjectServers({
-    projectId: activeProjectId || null,
-    requiredServerNames: previewedHostRequiredNames,
-  });
-  const autoConnectEnabled = usePreferencesStore(
-    (s) => s.autoConnectServersEnabled,
-  );
-  const setAutoConnectEnabled = usePreferencesStore(
-    (s) => s.setAutoConnectServersEnabled,
-  );
-
   const appReady = useAppReady();
   const appReadyMessage = useAppReadyMessage();
   const isAppBootstrapping = appReady.status !== "ready";
@@ -1193,29 +1148,8 @@ export function ServersTab({
     setIsActionMenuOpen(false);
   };
 
-  const renderAutoConnectToggle = () => (
-    <div
-      className="flex items-center gap-1.5 rounded-md border border-border/50 bg-muted/40 px-2 py-1"
-      data-testid="servers-tab-auto-connect-toggle"
-    >
-      <Switch
-        id="servers-auto-connect"
-        checked={autoConnectEnabled}
-        onCheckedChange={(next) => setAutoConnectEnabled(!!next)}
-        aria-label="Auto-connect servers on open"
-      />
-      <Label
-        htmlFor="servers-auto-connect"
-        className="cursor-pointer text-[11px] text-muted-foreground"
-      >
-        Auto-connect
-      </Label>
-    </div>
-  );
-
   const renderServerActionsMenu = () => (
     <>
-      {renderAutoConnectToggle()}
       <HoverCard
         open={isActionMenuOpen}
         onOpenChange={setIsActionMenuOpen}

@@ -55,6 +55,8 @@ import {
   SuiteOverviewModelBar,
   type SuiteOverviewModelRow,
 } from "./suite-overview-model-bar";
+import { SuiteOverviewHostBar } from "./suite-overview-host-bar";
+import type { HostAttachmentDraft } from "./host-attachments-editor";
 
 interface SuiteHeaderProps {
   suite: EvalSuite;
@@ -110,6 +112,10 @@ interface SuiteHeaderProps {
   availableModels?: ModelDefinition[];
   /** Persists suite models for all cases (same flow as suite settings → Models). */
   onSuiteModelsUpdate?: (models: SuiteOverviewModelRow[]) => Promise<void>;
+  /** Persists the suite's host attachments (multi-host fan-out target list). */
+  onSuiteHostAttachmentsUpdate?: (
+    attachments: HostAttachmentDraft[],
+  ) => Promise<void>;
   /** Playground run detail: compact KPI strip rendered beside the run title. */
   runDetailKpiStrip?: ReactNode;
   /**
@@ -156,6 +162,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     runsViewMode = "runs",
     availableModels = [],
     onSuiteModelsUpdate,
+    onSuiteHostAttachmentsUpdate,
     runDetailKpiStrip,
   } = props;
 
@@ -385,6 +392,20 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     />
   ) : null;
 
+  // Hosts bar is rendered whenever the suite overview is visible, regardless
+  // of whether any cases exist yet — the empty "Attach host" affordance is
+  // the whole point of surfacing the axis up front.
+  const suiteOverviewHostBar = (
+    <SuiteOverviewHostBar
+      containerVariant="inline"
+      className="py-1.5 md:py-2"
+      suite={suite}
+      projectId={suite.projectId ?? null}
+      readOnly={readOnlyConfig}
+      onUpdate={onSuiteHostAttachmentsUpdate}
+    />
+  );
+
   const overviewRunAllCta =
     hideRunActions && showTestCaseCtas
       ? (() => {
@@ -576,12 +597,18 @@ export function SuiteHeader(props: SuiteHeaderProps) {
         ) : null}
         </div>
       </div>
-      {hasSuiteModelBar && isMobile ? (
-        <div className="row-start-2 col-span-2 min-w-0">{suiteOverviewModelBar}</div>
+      {isMobile ? (
+        <div className="row-start-2 col-span-2 flex min-w-0 flex-col gap-1">
+          {hasSuiteModelBar ? suiteOverviewModelBar : null}
+          {suiteOverviewHostBar}
+        </div>
       ) : null}
       <div className="row-start-1 col-start-2 flex min-w-0 max-w-full shrink-0 flex-wrap items-center justify-end gap-x-4 gap-y-2">
-        {hasSuiteModelBar && !isMobile ? (
-          <div className="min-w-0 max-w-full shrink">{suiteOverviewModelBar}</div>
+        {!isMobile ? (
+          <div className="flex min-w-0 max-w-full shrink flex-col items-end gap-1">
+            {hasSuiteModelBar ? suiteOverviewModelBar : null}
+            {suiteOverviewHostBar}
+          </div>
         ) : null}
         {overviewHasSuiteNav ? (
           <div className="flex items-center gap-2">

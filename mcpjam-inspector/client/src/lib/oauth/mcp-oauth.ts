@@ -42,6 +42,7 @@ import {
 } from "@/lib/apis/hosted-oauth-import-tokens-api";
 import { tryResolveProjectServer } from "@/lib/apis/web/context";
 import { captureServerDetailModalOAuthResume } from "@/lib/server-detail-modal-resume";
+import { captureCurrentReturnPath } from "@/lib/app-navigation";
 import {
   matchesHostedOAuthServerIdentity,
   readHostedOAuthPendingMarker,
@@ -2113,9 +2114,12 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     captureServerDetailModalOAuthResume(this.serverName);
     // Store server name for callback recovery
     localStorage.setItem("mcp-oauth-pending", this.serverName);
-    // Store current hash to restore after OAuth callback
-    if (window.location.hash) {
-      localStorage.setItem("mcp-oauth-return-hash", window.location.hash);
+    // Store the current route to restore after OAuth callback.
+    const returnTarget = captureCurrentReturnPath();
+    if (returnTarget) {
+      // Key name is retained for in-flight migration compatibility; values are
+      // now path targets.
+      localStorage.setItem("mcp-oauth-return-hash", returnTarget);
     }
 
     if (window.isElectron) {

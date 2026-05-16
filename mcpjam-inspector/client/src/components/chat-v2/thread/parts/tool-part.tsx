@@ -42,6 +42,7 @@ import { TextPart } from "./text-part";
 import { useHostContextStore } from "@/stores/host-context-store";
 import { extractHostDisplayModes } from "@/lib/client-config";
 import { useChatboxHostTheme } from "@/contexts/chatbox-host-style-context";
+import { navigateApp } from "@/lib/app-navigation";
 
 type ApprovalVisualState = "pending" | "approved" | "denied";
 type TraceDisplayMode = "markdown" | "json-markdown";
@@ -276,7 +277,7 @@ export function ToolPart({
     void Promise.resolve(onSaveView()).then(() => {
       if (!shouldRedirectAfterSave) return;
       localStorage.setItem(SAVE_VIEW_REDIRECTED_KEY, "true");
-      window.location.hash = "views";
+      navigateApp("/views");
     });
   };
 

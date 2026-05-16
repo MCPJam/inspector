@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
 const authState = vi.hoisted(() => ({
@@ -147,6 +147,29 @@ describe("SidebarUser", () => {
     expect(authState.signOutMock).toHaveBeenCalledWith({
       returnTo: window.location.origin,
     });
+  });
+
+  it("runs sign-out cleanup before WorkOS signOut", async () => {
+    authState.user = {
+      email: "owner@example.com",
+      firstName: "Owner",
+      lastName: "Example",
+    };
+    const onBeforeSignOut = vi.fn().mockResolvedValue(undefined);
+
+    render(<SidebarUser onBeforeSignOut={onBeforeSignOut} />);
+
+    fireEvent.click(screen.getByText("Log out"));
+
+    expect(onBeforeSignOut).toHaveBeenCalled();
+    await waitFor(() => {
+      expect(authState.signOutMock).toHaveBeenCalledWith({
+        returnTo: window.location.origin,
+      });
+    });
+    expect(onBeforeSignOut.mock.invocationCallOrder[0]).toBeLessThan(
+      authState.signOutMock.mock.invocationCallOrder[0],
+    );
   });
 
   it("uses non-navigation logout in Electron", () => {

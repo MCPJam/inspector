@@ -29,6 +29,7 @@ import {
   type HostedServerValidateContext,
 } from "@/lib/apis/web/servers-api";
 import { slugify } from "@/lib/chatbox-session";
+import { captureCurrentReturnPath, routePaths } from "@/lib/app-navigation";
 import { ingestOAuthTraceLogs } from "@/stores/traffic-log-store";
 
 const INLINE_TOKEN_POLL_ATTEMPTS = 15;
@@ -419,8 +420,11 @@ export function useHostedOAuthGate({
         return;
       }
 
-      const returnHash =
-        window.location.hash || `#${slugify(server.serverName)}`;
+      const captured = captureCurrentReturnPath();
+      const returnPath =
+        captured && captured !== routePaths.servers
+          ? captured
+          : `/${slugify(server.serverName)}`;
       writeHostedOAuthPendingMarker({
         surface,
         projectId,
@@ -434,10 +438,10 @@ export function useHostedOAuthGate({
           : undefined,
         chatboxId,
         accessVersion: Number.isFinite(accessVersion) ? accessVersion : null,
-        returnHash,
+        returnPath,
       });
       localStorage.setItem(pendingKey, "true");
-      localStorage.setItem("mcp-oauth-return-hash", returnHash);
+      localStorage.setItem("mcp-oauth-return-hash", returnPath);
 
       const result = await initiateOAuth({
         serverName: server.serverName,

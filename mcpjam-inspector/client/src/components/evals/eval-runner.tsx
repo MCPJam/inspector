@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
+import { navigateApp } from "@/lib/app-navigation";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
@@ -631,7 +632,7 @@ export function EvalRunner({
     // Switch view immediately before starting the API call
     if (!inline) {
       setOpen(false);
-      window.location.hash = "evals";
+      navigateApp("/evals");
     } else {
       // In inline mode, call the callback to switch view immediately
       onSuccess?.();

@@ -4,6 +4,11 @@ import {
   CHATBOX_OAUTH_PENDING_KEY,
   slugify,
 } from "@/lib/chatbox-session";
+import {
+  legacyHashBookmarkToPath,
+  normalizeReturnTargetPath,
+  routePaths,
+} from "@/lib/app-navigation";
 
 export interface HostedOAuthPendingMarker {
   surface: HostedOAuthSurface;
@@ -16,7 +21,7 @@ export interface HostedOAuthPendingMarker {
   accessScope?: "project_member" | "chat_v2";
   chatboxId?: string | null;
   accessVersion?: number | null;
-  returnHash: string | null;
+  returnPath: string | null;
   startedAt: number;
 }
 
@@ -32,15 +37,33 @@ export function normalizeHostedOAuthServerName(
   return serverName?.trim().toLowerCase() ?? "";
 }
 
-function normalizeHostedOAuthReturnHash(
-  hashValue?: string | null
+function normalizeHostedOAuthReturnPath(
+  returnTarget?: string | null,
+  surface?: HostedOAuthSurface,
 ): string | null {
-  const trimmed = hashValue?.trim() ?? "";
+  const trimmed = returnTarget?.trim() ?? "";
   if (!trimmed) {
     return null;
   }
 
-  return trimmed.startsWith("#") ? trimmed : `#${trimmed.replace(/^\/+/, "")}`;
+  if (trimmed.startsWith("#")) {
+    const legacyPath = legacyHashBookmarkToPath(trimmed);
+    if (legacyPath) return legacyPath;
+    if (surface === "chatbox") {
+      const fragment = trimmed.replace(/^#\/?/, "");
+      return fragment ? `/${fragment}` : null;
+    }
+  }
+
+  if (
+    surface === "chatbox" &&
+    trimmed.startsWith("/") &&
+    !trimmed.startsWith("//")
+  ) {
+    return trimmed;
+  }
+
+  return normalizeReturnTargetPath(trimmed);
 }
 
 export function matchesHostedOAuthServerIdentity(
@@ -78,7 +101,10 @@ export function writeHostedOAuthPendingMarker(
         accessScope: marker.accessScope ?? null,
         chatboxId: marker.chatboxId ?? null,
         accessVersion: marker.accessVersion ?? null,
-        returnHash: normalizeHostedOAuthReturnHash(marker.returnHash),
+        returnPath: normalizeHostedOAuthReturnPath(
+          marker.returnPath,
+          marker.surface,
+        ),
         startedAt: Date.now(),
       })
     );
@@ -92,7 +118,9 @@ export function readHostedOAuthPendingMarker(): HostedOAuthPendingMarker | null 
     const raw = localStorage.getItem(HOSTED_OAUTH_PENDING_STORAGE_KEY);
     if (!raw) return null;
 
-    const parsed = JSON.parse(raw) as Partial<HostedOAuthPendingMarker> | null;
+    const parsed = JSON.parse(raw) as
+      | (Partial<HostedOAuthPendingMarker> & { returnHash?: unknown })
+      | null;
     if (
       !parsed ||
       typeof parsed !== "object" ||
@@ -133,7 +161,14 @@ export function readHostedOAuthPendingMarker(): HostedOAuthPendingMarker | null 
         Number.isFinite(parsed.accessVersion)
           ? parsed.accessVersion
           : null,
-      returnHash: normalizeHostedOAuthReturnHash(parsed.returnHash),
+      returnPath: normalizeHostedOAuthReturnPath(
+        typeof parsed.returnPath === "string"
+          ? parsed.returnPath
+          : typeof parsed.returnHash === "string"
+            ? parsed.returnHash
+            : null,
+        parsed.surface,
+      ),
       startedAt: parsed.startedAt,
     };
   } catch {
@@ -189,6 +224,15 @@ export function getHostedOAuthCallbackContext(): HostedOAuthCallbackContext | nu
     return null;
   }
 
+  // Scope MCP-OAuth callback detection to /oauth/callback (the MCP redirect_uri
+  // from getRedirectUri()). WorkOS sign-in lands on /callback?code=… which
+  // would otherwise be misread here and pair with a stale mcp-oauth-pending
+  // marker, producing a ghost "Finishing OAuth…" gate after sign-in.
+  const pathname = window.location.pathname;
+  if (pathname !== "/oauth/callback" && !pathname.startsWith("/oauth/callback/")) {
+    return null;
+  }
+
   const urlParams = new URLSearchParams(window.location.search);
   if (!urlParams.get("code") && !urlParams.get("error")) {
     return null;
@@ -210,6 +254,10 @@ export function getHostedOAuthCallbackContext(): HostedOAuthCallbackContext | nu
     return null;
   }
 
+  // Storage key name is retained for in-flight migration compatibility; new
+  // values are normalized path targets, not hash routes.
+  const storedReturnTarget = localStorage.getItem("mcp-oauth-return-hash");
+
   return {
     surface,
     organizationId: null,
@@ -221,26 +269,27 @@ export function getHostedOAuthCallbackContext(): HostedOAuthCallbackContext | nu
     accessScope: undefined,
     chatboxId: null,
     accessVersion: null,
-    returnHash: normalizeHostedOAuthReturnHash(
-      localStorage.getItem("mcp-oauth-return-hash")
-    ),
+    returnPath: normalizeHostedOAuthReturnPath(storedReturnTarget, surface),
     startedAt: Date.now(),
   };
 }
 
-export function resolveHostedOAuthReturnHash(
-  context: Pick<HostedOAuthCallbackContext, "surface" | "returnHash">
+export function resolveHostedOAuthReturnPath(
+  context: Pick<HostedOAuthCallbackContext, "surface" | "returnPath">
 ): string {
-  if (context.returnHash) {
-    return context.returnHash;
+  if (context.returnPath) {
+    return (
+      normalizeHostedOAuthReturnPath(context.returnPath, context.surface) ??
+      routePaths.servers
+    );
   }
 
   if (context.surface === "chatbox") {
     const chatboxSession = readChatboxSession();
     return chatboxSession
-      ? `#${slugify(chatboxSession.payload.name)}`
-      : "#chatbox";
+      ? `/${slugify(chatboxSession.payload.name)}`
+      : "/chatbox";
   }
 
-  return "#servers";
+  return routePaths.servers;
 }
