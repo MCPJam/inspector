@@ -66,6 +66,10 @@ import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { ServersLoadingSkeleton } from "@mcpjam/design-system/servers-loading-skeleton";
 import { useConvexAuth } from "convex/react";
+import { useAutoConnectProjectServers } from "@/hooks/useAutoConnectProjectServers";
+import { useHost } from "@/hooks/useHosts";
+import { usePreviewedHostId } from "@/hooks/use-previewed-host-id";
+import { useProjectServers as useViewProjectServers } from "@/hooks/useViews";
 import { Project } from "@/state/app-types";
 import {
   clearPendingQuickConnect,
@@ -531,6 +535,38 @@ export function ServersTab({
   const posthog = usePostHog();
   const hostsConnectAddServerSlot = useContext(HostsConnectAddServerSlotContext);
   const { isAuthenticated } = useConvexAuth();
+
+  // Auto-connect the previewed host's REQUIRED servers once per host scope.
+  // Mirrors the wiring on the host builder + Playground so /servers, /hosts,
+  // and the Playground all behave the same way. The hook dedupes by
+  // (projectId, hostScopeKey, sortedNames) so navigating between these
+  // surfaces does not re-fire, but switching to a different host (or
+  // saving the host's required set) re-attempts for that scope.
+  const [previewedHostId] = usePreviewedHostId(activeProjectId || null);
+  const { host: previewedHost } = useHost({
+    isAuthenticated,
+    hostId: previewedHostId,
+  });
+  const { servers: viewProjectServersList } = useViewProjectServers({
+    projectId: activeProjectId || null,
+    isAuthenticated,
+  });
+  const previewedHostRequiredNames = useMemo(() => {
+    const requiredIds = previewedHost?.config?.serverIds ?? [];
+    if (requiredIds.length === 0 || !viewProjectServersList) return [];
+    const byId = new Map(
+      viewProjectServersList.map((s) => [s._id, s.name] as const),
+    );
+    return requiredIds
+      .map((id) => byId.get(id))
+      .filter((name): name is string => !!name);
+  }, [previewedHost?.config?.serverIds, viewProjectServersList]);
+  useAutoConnectProjectServers({
+    projectId: activeProjectId || null,
+    hostScopeKey: previewedHostId,
+    requiredServerNames: previewedHostRequiredNames,
+  });
+
   const appReady = useAppReady();
   const appReadyMessage = useAppReadyMessage();
   const isAppBootstrapping = appReady.status !== "ready";

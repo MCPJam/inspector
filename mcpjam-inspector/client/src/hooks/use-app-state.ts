@@ -799,6 +799,7 @@ export function useAppState({
 
     handleConnect: serverState.handleConnect,
     handleDisconnect: serverState.handleDisconnect,
+    handleRuntimeDisconnect: serverState.handleRuntimeDisconnect,
     handleReconnect: serverState.handleReconnect,
     ensureServersReady: serverState.ensureServersReady,
     syncAgentStatus: serverState.syncAgentStatus,

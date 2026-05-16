@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router";
 import { Loader2, Save } from "lucide-react";
 import { toast } from "sonner";
 import { useConvexAuth } from "convex/react";
@@ -57,6 +58,7 @@ export function HostBuilderViewRedesigned({
   projectId,
   onBack,
 }: HostBuilderViewRedesignedProps) {
+  const navigate = useNavigate();
   const { isAuthenticated } = useConvexAuth();
   const { host } = useHost({
     isAuthenticated,
@@ -179,7 +181,11 @@ export function HostBuilderViewRedesigned({
       .map((id) => byId.get(id))
       .filter((name): name is string => !!name);
   }, [host?.config?.serverIds, servers]);
-  useAutoConnectProjectServers({ projectId, requiredServerNames });
+  useAutoConnectProjectServers({
+    projectId,
+    hostScopeKey: hostId,
+    requiredServerNames,
+  });
 
   const availableServers = useMemo(
     () =>
@@ -374,7 +380,10 @@ export function HostBuilderViewRedesigned({
               value="host"
               ariaLabel="Connect view"
               onChange={(next) => {
-                if (next === "servers") onBack();
+                if (next === "servers") {
+                  onBack();
+                  navigate("/servers");
+                }
               }}
               options={[
                 { value: "servers", label: "Servers" },

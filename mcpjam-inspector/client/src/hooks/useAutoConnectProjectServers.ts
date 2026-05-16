@@ -6,30 +6,51 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 /**
  * Module-level memo of "we already kicked off ensureServersReady for this
- * (project, server-name set)". Lives outside React state on purpose:
- * navigating Servers → Host → Playground re-mounts the hook three times
- * but should only fire one batch per session. Cleared per-project on entry
- * so switching projects starts fresh.
+ * (project, host-scope, server-name set)". Lives outside React state on
+ * purpose: navigating Servers → Host → Playground re-mounts the hook
+ * three times but should only fire one batch per scope. Cleared per-project
+ * on entry so switching projects starts fresh.
  *
  * Concretely: this is the "refresh-keeps-failing" guard. Once a batch has
  * been attempted — regardless of whether it succeeded, failed, or stalled
- * on a bad refresh token — we never retry it automatically. The user's
- * manual click on the per-card connect toggle in the Servers tab is the
- * only retry path, matching the existing chatbox behavior.
+ * on a bad refresh token — we never retry it automatically for the SAME
+ * host. Switching to a different host counts as a different scope, so the
+ * user can recover from a transient failure by switching hosts. Otherwise
+ * the per-card connect toggle in the Servers tab is the manual retry path,
+ * matching the existing chatbox behavior.
  */
 const attemptedByProject = new Map<string, Set<string>>();
 
-function markAttempted(projectId: string, serverNamesKey: string) {
+function buildAttemptKey(
+  hostScopeKey: string,
+  serverNamesKey: string,
+): string {
+  return `${hostScopeKey}${serverNamesKey}`;
+}
+
+function markAttempted(
+  projectId: string,
+  hostScopeKey: string,
+  serverNamesKey: string,
+) {
   let set = attemptedByProject.get(projectId);
   if (!set) {
     set = new Set();
     attemptedByProject.set(projectId, set);
   }
-  set.add(serverNamesKey);
+  set.add(buildAttemptKey(hostScopeKey, serverNamesKey));
 }
 
-function isAttempted(projectId: string, serverNamesKey: string): boolean {
-  return attemptedByProject.get(projectId)?.has(serverNamesKey) ?? false;
+function isAttempted(
+  projectId: string,
+  hostScopeKey: string,
+  serverNamesKey: string,
+): boolean {
+  return (
+    attemptedByProject
+      .get(projectId)
+      ?.has(buildAttemptKey(hostScopeKey, serverNamesKey)) ?? false
+  );
 }
 
 /**
@@ -70,15 +91,48 @@ interface UseAutoConnectProjectServersResult {
  */
 export function useAutoConnectProjectServers({
   projectId,
+  hostScopeKey,
   requiredServerNames,
 }: {
   projectId: string | null;
+  /**
+   * Identifies the scope this batch belongs to — typically the previewed
+   * host id. Switching to a different host changes this key, so a batch
+   * that already failed on one host gets a fresh shot on the next one.
+   * Pass `null` when no host is active; the hook still dedupes within
+   * that "no host" scope.
+   */
+  hostScopeKey: string | null;
   requiredServerNames: ReadonlyArray<string>;
 }): UseAutoConnectProjectServersResult {
   const enabled = usePreferencesStore((s) => s.autoConnectServersEnabled);
   const sharedAppState = useSharedAppState();
-  const { ensureServersReady } = useServerActions();
+  const {
+    ensureServersReady,
+    runtimeDisconnectServer,
+    setSelectedServerNames,
+  } = useServerActions();
   const lastResultRef = useRef<EnsureServersReadyResult | null>(null);
+
+  // Names currently in a "connected" runtime state that the active host
+  // does NOT require — these get torn down on host switch so the runtime
+  // matches what the active host actually declares it needs. We compute
+  // this separately from the connect candidates so the dedupe key can
+  // cover both directions of reconciliation. Skipped when no project is
+  // active or when auto-connect is toggled off (the toggle gates both
+  // directions — it's "auto-reconcile to host", not just "auto-connect").
+  const excessConnectedNamesKey = useMemo(() => {
+    if (!enabled || !projectId) return null;
+    const requiredSet = new Set(requiredServerNames);
+    const excess: string[] = [];
+    for (const [name, server] of Object.entries(sharedAppState.servers)) {
+      if (requiredSet.has(name)) continue;
+      if (server?.connectionStatus !== "connected") continue;
+      excess.push(name);
+    }
+    if (excess.length === 0) return null;
+    return excess.slice().sort().join("\0");
+  }, [enabled, projectId, requiredServerNames, sharedAppState.servers]);
 
   // Build the candidate name list. Skip servers that are already connected,
   // currently connecting, or in an OAuth flow — connecting/oauth-flow would
@@ -105,10 +159,56 @@ export function useAutoConnectProjectServers({
     return candidates.slice().sort().join("\0");
   }, [enabled, projectId, requiredServerNames, sharedAppState.servers]);
 
+  const scopeKey = hostScopeKey ?? "-";
+  // Stable key for "what the active host wants selected". Drives the
+  // playground/chat multi-select sync below, independent of connect /
+  // disconnect dedupe — so switching from one zero-required host to
+  // another still clears the previous selection.
+  const requiredNamesKey = useMemo(
+    () => requiredServerNames.slice().sort().join("\0"),
+    [requiredServerNames],
+  );
+
+  // Sync the playground/chat multi-select to the host's required set
+  // whenever the (project, hostScope, required-names) tuple changes.
+  // React's dep comparison deduplicates re-renders that don't actually
+  // change the tuple, so this fires once per host switch (and once per
+  // edit to the host's required set after save).
   useEffect(() => {
-    if (!enabled || !projectId || !candidateNamesKey) return;
-    if (isAttempted(projectId, candidateNamesKey)) return;
-    markAttempted(projectId, candidateNamesKey);
+    if (!enabled || !projectId) return;
+    setSelectedServerNames(requiredNamesKey ? requiredNamesKey.split("\0") : []);
+  }, [
+    enabled,
+    projectId,
+    scopeKey,
+    requiredNamesKey,
+    setSelectedServerNames,
+  ]);
+
+  // Compose the reconciliation key from both connect and disconnect sets.
+  // Same scopeKey with the same connect+disconnect intent = skip; any
+  // change in either side counts as a fresh reconciliation. The `c:` / `d:`
+  // prefixes prevent accidental cross-talk when one side is null.
+  const reconciliationKey = useMemo(() => {
+    if (!enabled || !projectId) return null;
+    if (!candidateNamesKey && !excessConnectedNamesKey) return null;
+    return `c:${candidateNamesKey ?? ""}|d:${excessConnectedNamesKey ?? ""}`;
+  }, [enabled, projectId, candidateNamesKey, excessConnectedNamesKey]);
+
+  useEffect(() => {
+    if (!enabled || !projectId || !reconciliationKey) return;
+    if (isAttempted(projectId, scopeKey, reconciliationKey)) return;
+    markAttempted(projectId, scopeKey, reconciliationKey);
+
+    // Tear down anything connected the host doesn't require. Fire-and-
+    // forget — `runtimeDisconnectServer` is a synchronous dispatch.
+    if (excessConnectedNamesKey) {
+      for (const name of excessConnectedNamesKey.split("\0")) {
+        runtimeDisconnectServer(name);
+      }
+    }
+
+    if (!candidateNamesKey) return;
     let cancelled = false;
     const names = candidateNamesKey.split("\0");
     ensureServersReady(names).then(
@@ -128,7 +228,16 @@ export function useAutoConnectProjectServers({
     return () => {
       cancelled = true;
     };
-  }, [enabled, projectId, candidateNamesKey, ensureServersReady]);
+  }, [
+    enabled,
+    projectId,
+    scopeKey,
+    reconciliationKey,
+    candidateNamesKey,
+    excessConnectedNamesKey,
+    ensureServersReady,
+    runtimeDisconnectServer,
+  ]);
 
   return { enabled, lastResult: lastResultRef.current };
 }

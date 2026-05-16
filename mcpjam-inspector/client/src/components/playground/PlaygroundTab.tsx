@@ -119,6 +119,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   }, [previewedHost?.config?.serverIds, projectServersList]);
   useAutoConnectProjectServers({
     projectId: props.activeProjectId ?? null,
+    hostScopeKey: previewedHostId,
     requiredServerNames: previewedHostRequiredNames,
   });
 

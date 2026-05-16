@@ -7,8 +7,7 @@ import {
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import { Globe, MoreHorizontal, Plus, X } from "lucide-react";
-import { useConvexAuth } from "convex/react";
-import { useHostList, type HostListItem } from "@/hooks/useHosts";
+import { type HostListItem } from "@/hooks/useHosts";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { cn } from "@/lib/utils";
 import type { HostAttachmentDraft } from "./host-attachments-editor";
@@ -16,7 +15,13 @@ import type { EvalSuite } from "./types";
 
 export interface SuiteOverviewHostBarProps {
   suite: EvalSuite;
-  projectId: string | null;
+  /**
+   * Hosts available in the suite's project. The parent owns the Convex
+   * query (via {@link useHostList}) so this component stays renderable in
+   * test environments that don't mount a Convex provider — same pattern
+   * as {@link SuiteOverviewModelBar}'s `availableModels` prop.
+   */
+  projectHosts: HostListItem[];
   readOnly?: boolean;
   onUpdate?: (attachments: HostAttachmentDraft[]) => Promise<void>;
   /** Merged with the outer bar container (e.g. tighter padding in {@link SuiteHeader}). */
@@ -30,17 +35,12 @@ export interface SuiteOverviewHostBarProps {
 
 export function SuiteOverviewHostBar({
   suite,
-  projectId,
+  projectHosts,
   readOnly = false,
   onUpdate,
   className,
   containerVariant = "panel",
 }: SuiteOverviewHostBarProps) {
-  const { isAuthenticated } = useConvexAuth();
-  const { hosts: projectHosts } = useHostList({
-    isAuthenticated,
-    projectId,
-  });
   const initialAttachments = useMemo<HostAttachmentDraft[]>(
     () =>
       (suite.hostAttachments ?? []).map((attachment) => ({

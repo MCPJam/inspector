@@ -1,5 +1,6 @@
 import { useMemo, useState, useEffect, useCallback } from "react";
-import { useMutation } from "convex/react";
+import { useMutation, useConvexAuth } from "convex/react";
+import { useHostList } from "@/hooks/useHosts";
 import { toast } from "sonner";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { SuiteHeader } from "./suite-header";
@@ -273,6 +274,14 @@ export function SuiteIterationsView({
 
   const updateSuite = useMutation("testSuites:updateTestSuite" as any);
   const updateSuiteModels = useMutation("testSuites:updateSuiteModels" as any);
+  const { isAuthenticated } = useConvexAuth();
+  // Hosts available to attach in the header's "+ Attach host" picker. The
+  // query is owned here (not inside SuiteOverviewHostBar) so the bar stays
+  // pure-props and renderable in test environments without a Convex provider.
+  const { hosts: projectHosts } = useHostList({
+    isAuthenticated,
+    projectId: projectId ?? null,
+  });
 
   // Use custom hooks for data calculations
   const { runTrendData, modelStats } = useSuiteData(
@@ -572,6 +581,7 @@ export function SuiteIterationsView({
             onSuiteHostAttachmentsUpdate={
               readOnlyConfig ? undefined : handleUpdateHostAttachments
             }
+            projectHosts={projectHosts}
             runDetailKpiStrip={
               showSuiteHeader &&
               viewMode === "run-detail" &&

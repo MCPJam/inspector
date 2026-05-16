@@ -76,6 +76,8 @@ import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
 import { AppStateProvider } from "./state/app-state-context";
+import { ServerActionsProvider } from "./state/server-actions-context";
+import { usePreviewedHostId } from "./hooks/use-previewed-host-id";
 import { useOrganizationQueries } from "./hooks/useOrganizations";
 import { useOrganizationBilling } from "./hooks/useOrganizationBilling";
 import type { BillingFeatureName } from "./hooks/useOrganizationBilling";
@@ -488,7 +490,26 @@ function ActiveBillingUpsellGate() {
 }
 
 export function ServersRoute() {
-  return <ServersTabBody />;
+  const {
+    convexProjectId,
+    hostsHubFlagEnabled,
+    isAuthenticated,
+    setHostsTabSelectedHostId,
+  } = useAppRouteContext();
+
+  if (!hostsHubFlagEnabled || !isAuthenticated) {
+    return <ServersTabBody />;
+  }
+
+  return (
+    <HostsTab
+      projectId={convexProjectId}
+      isAuthenticated={isAuthenticated}
+      selectedHostId={null}
+      onSelectHost={setHostsTabSelectedHostId}
+      serversTabElement={<ServersTabBody />}
+    />
+  );
 }
 
 function ServersTabBody() {
@@ -547,6 +568,7 @@ export function HostsRoute() {
     isAuthenticated,
     setHostsTabSelectedHostId,
   } = useAppRouteContext();
+  const [previewedHostId] = usePreviewedHostId(convexProjectId);
 
   if (!hostsHubFlagEnabled || !isAuthenticated) {
     return <ServersTabBody />;
@@ -556,7 +578,7 @@ export function HostsRoute() {
     <HostsTab
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
-      selectedHostId={hostsTabSelectedHostId}
+      selectedHostId={hostsTabSelectedHostId ?? previewedHostId}
       onSelectHost={setHostsTabSelectedHostId}
       serversTabElement={<ServersTabBody />}
     />
@@ -1502,6 +1524,7 @@ export default function App() {
     isSelectedServerSyncing,
     handleConnect,
     handleDisconnect,
+    handleRuntimeDisconnect,
     handleReconnect,
     ensureServersReady,
     syncAgentStatus,
@@ -2983,6 +3006,13 @@ export default function App() {
         savedClientConfig={activeProject?.clientConfig}
       />
       <AppStateProvider appState={effectiveAppState}>
+        <ServerActionsProvider
+        actions={{
+          ensureServersReady,
+          runtimeDisconnectServer: handleRuntimeDisconnect,
+          setSelectedServerNames: setSelectedMCPConfigs,
+        }}
+      >
         <AppReadyProvider
           isLoadingAppState={isLoading}
           isConvexAuthLoading={isAuthLoading}
@@ -3038,6 +3068,7 @@ export default function App() {
             <BillingHandoffLoading overlay />
           ) : null}
         </AppReadyProvider>
+        </ServerActionsProvider>
       </AppStateProvider>
     </PreferencesStoreProvider>
   );

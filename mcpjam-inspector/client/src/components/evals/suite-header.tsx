@@ -57,6 +57,7 @@ import {
 } from "./suite-overview-model-bar";
 import { SuiteOverviewHostBar } from "./suite-overview-host-bar";
 import type { HostAttachmentDraft } from "./host-attachments-editor";
+import type { HostListItem } from "@/hooks/useHosts";
 
 interface SuiteHeaderProps {
   suite: EvalSuite;
@@ -116,6 +117,8 @@ interface SuiteHeaderProps {
   onSuiteHostAttachmentsUpdate?: (
     attachments: HostAttachmentDraft[],
   ) => Promise<void>;
+  /** Hosts available to attach (from `useHostList`). Optional for legacy callers. */
+  projectHosts?: HostListItem[];
   /** Playground run detail: compact KPI strip rendered beside the run title. */
   runDetailKpiStrip?: ReactNode;
   /**
@@ -163,6 +166,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     availableModels = [],
     onSuiteModelsUpdate,
     onSuiteHostAttachmentsUpdate,
+    projectHosts = [],
     runDetailKpiStrip,
   } = props;
 
@@ -400,7 +404,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
       containerVariant="inline"
       className="py-1.5 md:py-2"
       suite={suite}
-      projectId={suite.projectId ?? null}
+      projectHosts={projectHosts}
       readOnly={readOnlyConfig}
       onUpdate={onSuiteHostAttachmentsUpdate}
     />

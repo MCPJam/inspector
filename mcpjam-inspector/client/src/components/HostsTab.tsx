@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { useNavigate } from "react-router";
 import { HostBuilderView } from "./hosts/HostBuilderView";
 import { HostsConnectAddServerSlotContext } from "./hosts/HostsConnectAddServerSlotContext";
 import { ViewModeSelector } from "./shared/view-mode-selector";
@@ -35,6 +36,7 @@ export function HostsTab({
   onSelectHost,
   serversTabElement,
 }: HostsTabProps) {
+  const navigate = useNavigate();
   const [previewedHostId, setPreviewedHostId] = usePreviewedHostId(projectId);
   const { hosts, isLoading: isHostListLoading } = useHostList({
     isAuthenticated,
@@ -145,6 +147,9 @@ export function HostsTab({
                       onChange={(next) => {
                         if (next === "host" && previewedHostId) {
                           onSelectHost(previewedHostId);
+                          navigate("/hosts");
+                        } else if (next === "servers") {
+                          navigate("/servers");
                         }
                       }}
                       options={[

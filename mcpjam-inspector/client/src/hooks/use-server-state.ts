@@ -2722,6 +2722,19 @@ export function useServerState({
     [dispatch, logger]
   );
 
+  // Runtime-only counterpart to `handleDisconnect`. Just flips the in-memory
+  // connection state to "disconnected" without going through `deleteServer`,
+  // which in local mode would also remove the server's persisted config.
+  // Used by host-switch auto-disconnect, where we want to drop the runtime
+  // connection but keep the server entry intact so the user can re-connect
+  // (or another host can require it) without re-adding the server.
+  const handleRuntimeDisconnect = useCallback(
+    (serverName: string) => {
+      dispatch({ type: "DISCONNECT", name: serverName });
+    },
+    [dispatch],
+  );
+
   const cleanupServerLocalArtifacts = useCallback((serverName: string) => {
     // Slice 5: env removal handled by Convex deleteServer; only OAuth local
     // scratchpad remains and is cleaned up here. Once Slice 2's OAuth purge
@@ -3716,6 +3729,7 @@ export function useServerState({
     isMultiSelectMode: appState.isMultiSelectMode,
     handleConnect,
     handleDisconnect,
+    handleRuntimeDisconnect,
     handleReconnect,
     ensureServersReady,
     syncAgentStatus,

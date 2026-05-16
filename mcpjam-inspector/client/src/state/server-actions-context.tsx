@@ -11,6 +11,21 @@ export interface ServerActions {
   ensureServersReady: (
     serverNames: string[],
   ) => Promise<EnsureServersReadyResult>;
+  /**
+   * Flip a server's runtime state to "disconnected" WITHOUT going through
+   * the delete-server side effect that `handleDisconnect` does in local
+   * mode. Used by host-switch auto-disconnect to tear down connections the
+   * new host doesn't require, while keeping the server config intact.
+   */
+  runtimeDisconnectServer: (serverName: string) => void;
+  /**
+   * Replace the global playground/chat multi-select set. Used by the
+   * host-switch reconciliation so the chat composer's per-server toggles
+   * match what the active host actually requires — without this, the
+   * playground keeps the previous host's selection and the user has to
+   * flip each toggle by hand after every switch.
+   */
+  setSelectedServerNames: (names: string[]) => void;
 }
 
 const ServerActionsContext = createContext<ServerActions | null>(null);

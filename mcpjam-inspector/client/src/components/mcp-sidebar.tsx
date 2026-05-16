@@ -91,6 +91,8 @@ interface NavItem {
   featureFlag?: string;
   /** Hide this item when the named feature flag is enabled */
   hiddenByFlag?: string;
+  /** Extra tab ids that should also highlight this item as active */
+  matchTabs?: string[];
   /** Hide this item when billing enforcement is active and the org lacks this feature */
   billingFeature?: BillingFeatureName;
   /** Nested Playground / Runs entries; omit from the flat main menu */
@@ -170,9 +172,10 @@ const navigationSections: NavSection[] = [
     items: [
       {
         title: "Connect",
-        url: "/hosts",
+        url: "/servers",
         icon: MCPIcon,
         featureFlag: "hosts-enabled",
+        matchTabs: ["hosts"],
       },
       {
         title: "Servers",
@@ -776,7 +779,9 @@ export function MCPSidebar({
                       normalizeHostedHashTab(
                         item.url.replace(/^[#/]+/, "").split("/")[0] ||
                           "servers"
-                      ) === activeTab,
+                      ) === activeTab ||
+                      (activeTab !== undefined &&
+                        (item.matchTabs?.includes(activeTab) ?? false)),
                   }))}
                   onItemClick={handleNavClick}
                   learnMore={

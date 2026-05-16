@@ -24,6 +24,8 @@ function wrapper({
   children,
   ensureServersReady,
   appState,
+  runtimeDisconnectServer = () => {},
+  setSelectedServerNames = () => {},
 }: {
   children: ReactNode;
   ensureServersReady: (
@@ -35,11 +37,19 @@ function wrapper({
     reauthServerNames: string[];
   }>;
   appState: ReturnType<typeof makeAppState>;
+  runtimeDisconnectServer?: (name: string) => void;
+  setSelectedServerNames?: (names: string[]) => void;
 }) {
   return (
     <PreferencesStoreProvider themeMode="light" themePreset="default">
       <AppStateProvider appState={appState}>
-        <ServerActionsProvider actions={{ ensureServersReady }}>
+        <ServerActionsProvider
+          actions={{
+            ensureServersReady,
+            runtimeDisconnectServer,
+            setSelectedServerNames,
+          }}
+        >
           {children}
         </ServerActionsProvider>
       </AppStateProvider>
@@ -68,6 +78,7 @@ describe("useAutoConnectProjectServers", () => {
       () =>
         useAutoConnectProjectServers({
           projectId: "proj-1",
+          hostScopeKey: "host-a",
           requiredServerNames: ["alpha", "beta"],
         }),
       {
@@ -94,6 +105,7 @@ describe("useAutoConnectProjectServers", () => {
       () =>
         useAutoConnectProjectServers({
           projectId: "proj-empty",
+          hostScopeKey: "host-a",
           requiredServerNames: [],
         }),
       {
@@ -115,6 +127,7 @@ describe("useAutoConnectProjectServers", () => {
       () =>
         useAutoConnectProjectServers({
           projectId: "proj-disabled",
+          hostScopeKey: "host-a",
           requiredServerNames: ["alpha"],
         }),
       {
@@ -147,6 +160,7 @@ describe("useAutoConnectProjectServers", () => {
       () =>
         useAutoConnectProjectServers({
           projectId: "proj-2",
+          hostScopeKey: "host-a",
           requiredServerNames: ["alpha", "beta", "gamma", "delta"],
         }),
       {
@@ -168,6 +182,7 @@ describe("useAutoConnectProjectServers", () => {
       () =>
         useAutoConnectProjectServers({
           projectId: "proj-3",
+          hostScopeKey: "host-a",
           requiredServerNames: ["alpha"],
         }),
       {
@@ -183,5 +198,171 @@ describe("useAutoConnectProjectServers", () => {
     await flushMicrotasks();
 
     expect(ensureServersReady).toHaveBeenCalledTimes(1);
+  });
+
+  it("disconnects connected servers the active host does NOT require", async () => {
+    const ensureServersReady = vi.fn().mockResolvedValue({
+      readyServerNames: [],
+      failedServerNames: [],
+      missingServerNames: [],
+      reauthServerNames: [],
+    });
+    const runtimeDisconnectServer = vi.fn();
+    // Two servers connected from a prior host; current host requires only "alpha".
+    const appState = {
+      servers: {
+        alpha: { name: "alpha", connectionStatus: "connected" },
+        beta: { name: "beta", connectionStatus: "connected" },
+        gamma: { name: "gamma", connectionStatus: "connected" },
+      },
+    } as any;
+
+    renderHook(
+      () =>
+        useAutoConnectProjectServers({
+          projectId: "proj-reconcile",
+          hostScopeKey: "host-mcpjam-no-required",
+          requiredServerNames: ["alpha"],
+        }),
+      {
+        wrapper: ({ children }) =>
+          wrapper({
+            children,
+            ensureServersReady,
+            appState,
+            runtimeDisconnectServer,
+          }),
+      },
+    );
+
+    await flushMicrotasks();
+    // Connect side: nothing to do — alpha is already connected.
+    expect(ensureServersReady).not.toHaveBeenCalled();
+    // Disconnect side: beta and gamma (connected but not required) come down.
+    expect(runtimeDisconnectServer).toHaveBeenCalledTimes(2);
+    const disconnected = runtimeDisconnectServer.mock.calls.map((c) => c[0]);
+    expect(disconnected.sort()).toEqual(["beta", "gamma"]);
+  });
+
+  it("disconnects ALL connected servers when the active host requires none (e.g. MCPJam default)", async () => {
+    const ensureServersReady = vi.fn();
+    const runtimeDisconnectServer = vi.fn();
+    const appState = {
+      servers: {
+        alpha: { name: "alpha", connectionStatus: "connected" },
+        beta: { name: "beta", connectionStatus: "connected" },
+      },
+    } as any;
+
+    renderHook(
+      () =>
+        useAutoConnectProjectServers({
+          projectId: "proj-empty-required",
+          hostScopeKey: "host-mcpjam",
+          requiredServerNames: [],
+        }),
+      {
+        wrapper: ({ children }) =>
+          wrapper({
+            children,
+            ensureServersReady,
+            appState,
+            runtimeDisconnectServer,
+          }),
+      },
+    );
+
+    await flushMicrotasks();
+    expect(ensureServersReady).not.toHaveBeenCalled();
+    expect(runtimeDisconnectServer).toHaveBeenCalledTimes(2);
+    const disconnected = runtimeDisconnectServer.mock.calls.map((c) => c[0]);
+    expect(disconnected.sort()).toEqual(["alpha", "beta"]);
+  });
+
+  it("syncs setSelectedServerNames to the host's required set on each new scope", async () => {
+    const ensureServersReady = vi.fn().mockResolvedValue({
+      readyServerNames: [],
+      failedServerNames: [],
+      missingServerNames: [],
+      reauthServerNames: [],
+    });
+    const setSelectedServerNames = vi.fn();
+    const appState = makeAppState(["alpha", "beta"]);
+
+    const { rerender } = renderHook(
+      ({
+        hostScopeKey,
+        requiredServerNames,
+      }: {
+        hostScopeKey: string;
+        requiredServerNames: ReadonlyArray<string>;
+      }) =>
+        useAutoConnectProjectServers({
+          projectId: "proj-selection",
+          hostScopeKey,
+          requiredServerNames,
+        }),
+      {
+        initialProps: {
+          hostScopeKey: "host-claude",
+          requiredServerNames: ["alpha", "beta"],
+        },
+        wrapper: ({ children }) =>
+          wrapper({
+            children,
+            ensureServersReady,
+            appState,
+            setSelectedServerNames,
+          }),
+      },
+    );
+
+    await flushMicrotasks();
+    expect(setSelectedServerNames).toHaveBeenLastCalledWith(["alpha", "beta"]);
+
+    // Switch to a host with empty required set → playground selection clears.
+    rerender({ hostScopeKey: "host-mcpjam", requiredServerNames: [] });
+    await flushMicrotasks();
+    expect(setSelectedServerNames).toHaveBeenLastCalledWith([]);
+  });
+
+  it("re-attempts when the hostScopeKey changes (switching hosts retries the same servers)", async () => {
+    const ensureServersReady = vi.fn().mockResolvedValue({
+      readyServerNames: [],
+      failedServerNames: ["alpha"],
+      missingServerNames: [],
+      reauthServerNames: [],
+    });
+    const appState = makeAppState(["alpha"]);
+
+    const { rerender } = renderHook(
+      ({ hostScopeKey }: { hostScopeKey: string }) =>
+        useAutoConnectProjectServers({
+          projectId: "proj-switch",
+          hostScopeKey,
+          requiredServerNames: ["alpha"],
+        }),
+      {
+        initialProps: { hostScopeKey: "host-a" },
+        wrapper: ({ children }) =>
+          wrapper({ children, ensureServersReady, appState }),
+      },
+    );
+
+    await flushMicrotasks();
+    expect(ensureServersReady).toHaveBeenCalledTimes(1);
+
+    // Switch hosts: same project, same required names, different scope key.
+    // We expect a fresh attempt so the new host can try to connect even
+    // though the previous host's attempt failed.
+    rerender({ hostScopeKey: "host-b" });
+    await flushMicrotasks();
+    expect(ensureServersReady).toHaveBeenCalledTimes(2);
+
+    // Switching back to host-a is still skipped (already attempted for
+    // that host) — only NEW hosts trigger a fresh batch.
+    rerender({ hostScopeKey: "host-a" });
+    await flushMicrotasks();
+    expect(ensureServersReady).toHaveBeenCalledTimes(2);
   });
 });

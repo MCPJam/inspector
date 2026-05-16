@@ -400,22 +400,27 @@ export function ChatboxBuilderView({
     });
   }, [projectId, chatboxId, draftChatboxConfig, viewMode]);
 
+  // Host-owned fields (hostStyle / systemPrompt / modelId / temperature /
+  // requireToolApproval) are projected live from the referenced host's
+  // hostConfig DTO into `chatbox.*` — the chatbox save path never persists
+  // them. Watching them on `chatbox` (not the draft) is what lets host
+  // edits in another surface restart the preview here.
   const behaviorFingerprint = useMemo(
     () =>
       JSON.stringify({
         name: draftChatboxConfig.name,
-        hostStyle: draftChatboxConfig.hostStyle,
-        systemPrompt: draftChatboxConfig.systemPrompt,
-        modelId: draftChatboxConfig.modelId,
-        temperature: draftChatboxConfig.temperature,
-        requireToolApproval: draftChatboxConfig.requireToolApproval,
+        hostStyle: chatbox?.hostStyle ?? null,
+        systemPrompt: chatbox?.systemPrompt ?? null,
+        modelId: chatbox?.modelId ?? null,
+        temperature: chatbox?.temperature ?? null,
+        requireToolApproval: chatbox?.requireToolApproval ?? null,
         mode: draftChatboxConfig.mode,
         allowGuestAccess: draftChatboxConfig.allowGuestAccess,
         chatUi: draftChatboxConfig.chatUi,
         selectedServerIds: [...draftChatboxConfig.selectedServerIds].sort(),
         optionalServerIds: [...draftChatboxConfig.optionalServerIds].sort(),
       }),
-    [draftChatboxConfig]
+    [draftChatboxConfig, chatbox]
   );
 
   const setupHasBlockingSections = useMemo(() => {
@@ -504,19 +509,24 @@ export function ChatboxBuilderView({
         ];
       });
 
+    // Host-owned fields come off `chatbox.*` (projected live from the
+    // referenced host's hostConfig DTO), not the draft. The draft never
+    // persists these — see `saveChatbox` — so reading them from the draft
+    // would just freeze the preview at whatever value was captured when
+    // the draft first hydrated.
     const payload: ChatboxBootstrapPayload = {
       projectId: chatbox.projectId,
       chatboxId: chatbox.chatboxId,
       name: draftChatboxConfig.name,
       description: draftChatboxConfig.description || undefined,
-      hostStyle: draftChatboxConfig.hostStyle,
+      hostStyle: chatbox.hostStyle,
       mode: draftChatboxConfig.mode,
       allowGuestAccess: draftChatboxConfig.allowGuestAccess,
       viewerIsProjectMember: true,
-      systemPrompt: draftChatboxConfig.systemPrompt,
-      modelId: draftChatboxConfig.modelId,
-      temperature: draftChatboxConfig.temperature,
-      requireToolApproval: draftChatboxConfig.requireToolApproval,
+      systemPrompt: chatbox.systemPrompt,
+      modelId: chatbox.modelId,
+      temperature: chatbox.temperature,
+      requireToolApproval: chatbox.requireToolApproval,
       servers,
       chatUi: draftChatboxConfig.chatUi,
     };
@@ -1296,7 +1306,7 @@ export function ChatboxBuilderView({
                           {chatbox?.link?.token ? (
                             <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
                               <ChatboxHostStyleProvider
-                                value={draftChatboxConfig.hostStyle}
+                                value={chatbox.hostStyle}
                               >
                               <ChatboxHostCapabilitiesOverrideProvider
                                 value={undefined}
@@ -1319,13 +1329,21 @@ export function ChatboxBuilderView({
                                       (s) => s.serverId
                                     ),
                                   }}
+                                  // Host-owned execution config (model /
+                                  // prompt / temperature / requireToolApproval)
+                                  // is projected live from the referenced
+                                  // host's hostConfig DTO into `chatbox.*`.
+                                  // The chatbox save path never persists
+                                  // these fields, so reading from the draft
+                                  // would just freeze the preview at the
+                                  // value captured when the draft first
+                                  // hydrated.
                                   executionConfig={{
-                                    modelId: draftChatboxConfig.modelId,
-                                    systemPrompt:
-                                      draftChatboxConfig.systemPrompt,
-                                    temperature: draftChatboxConfig.temperature,
+                                    modelId: chatbox.modelId,
+                                    systemPrompt: chatbox.systemPrompt,
+                                    temperature: chatbox.temperature,
                                     requireToolApproval:
-                                      draftChatboxConfig.requireToolApproval,
+                                      chatbox.requireToolApproval,
                                   }}
                                   onOAuthRequired={handlePreviewOAuthRequired}
                                   chatboxComposerBlocked={composerBlocked}
