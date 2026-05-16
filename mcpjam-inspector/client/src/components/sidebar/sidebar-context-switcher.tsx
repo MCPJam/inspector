@@ -108,8 +108,7 @@ function getOrgTint(orgId: string): { bg: string; fg: string } {
   return ORG_TINTS[Math.abs(hash) % ORG_TINTS.length];
 }
 
-const SECTION_LABEL_CLASS =
-  "text-[10px] font-medium uppercase tracking-wider text-muted-foreground/80";
+const SECTION_LABEL_CLASS = "text-[11px] font-semibold text-foreground";
 
 export function SidebarContextSwitcher({
   activeProjectId,
@@ -261,7 +260,7 @@ export function SidebarContextSwitcher({
               <DropdownMenuTrigger asChild>{triggerButton}</DropdownMenuTrigger>
             )}
             <DropdownMenuContent
-              className="w-[300px] rounded-xl p-0 shadow-md !overflow-x-visible !overflow-y-visible"
+              className="w-[300px] rounded-xl p-0 shadow-md bg-sidebar !overflow-x-visible !overflow-y-visible"
               side={isMobile ? "bottom" : "right"}
               align="start"
               sideOffset={4}
@@ -341,23 +340,6 @@ export function SidebarContextSwitcher({
                       />
                     ) : null}
                   </button>
-                  {activeOrg &&
-                  onSwitchOrganization &&
-                  (activeOrg.myRole === "owner" ||
-                    activeOrg.myRole === "admin") ? (
-                    <button
-                      type="button"
-                      aria-label={`Open ${activeOrg.name} settings`}
-                      title={`Open ${activeOrg.name} settings`}
-                      onClick={() => {
-                        onSwitchOrganization(activeOrg._id, "overview");
-                        setMenuOpen(false);
-                      }}
-                      className="p-1 mr-1 rounded text-muted-foreground/70 hover:text-foreground hover:bg-muted/60 transition-colors"
-                    >
-                      <Settings className="size-3.5" />
-                    </button>
-                  ) : null}
                 </div>
                 {chipPopoverOpen ? (
                   <div
@@ -367,7 +349,7 @@ export function SidebarContextSwitcher({
                       isMobile ? undefined : scheduleCloseOrgPopover
                     }
                     className={cn(
-                      "absolute z-10 rounded-lg border border-border bg-popover shadow-lg p-1",
+                      "absolute z-10 rounded-lg border border-border bg-sidebar shadow-lg p-1",
                       // On mobile the dropdown lives at the screen edge, so expanding
                       // to the side would be clipped. Drop the popover below the chip
                       // instead — it overlays the projects list while open.
@@ -435,7 +417,7 @@ export function SidebarContextSwitcher({
                                   onSwitchOrganization(org._id, "overview");
                                   setMenuOpen(false);
                                 }}
-                                className="p-0.5 rounded text-muted-foreground/70 hover:text-foreground hover:bg-muted transition-colors"
+                                className="p-0.5 rounded text-muted-foreground/70 hover:text-foreground hover:bg-muted transition-colors opacity-0 group-hover/org:opacity-100 group-focus-within/org:opacity-100"
                               >
                                 <Settings className="size-3.5" />
                               </button>
@@ -576,7 +558,7 @@ function ProjectRow({
         projectId={project.sharedProjectId ?? null}
         isAuthenticated={isAuthenticated}
       />
-      <div className="flex items-center gap-0.5 shrink-0">
+      <div className="hidden group-hover/proj:flex group-focus-within/proj:flex items-center gap-0.5 shrink-0">
         {onOpenSettings ? (
           <button
             type="button"
