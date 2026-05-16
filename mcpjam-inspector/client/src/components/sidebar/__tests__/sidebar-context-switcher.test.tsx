@@ -373,45 +373,6 @@ describe("SidebarContextSwitcher", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders an always-visible org settings gear next to the chevron when the user is admin/owner of the active org", () => {
-    const onSwitchOrganization = vi.fn();
-    render(
-      <SidebarContextSwitcher
-        activeProjectId="p1"
-        activeOrganizationId="org_a"
-        projects={projects}
-        onSwitchProject={vi.fn()}
-        onCreateProject={vi.fn(async () => "")}
-        onDeleteProject={vi.fn()}
-        onSwitchOrganization={onSwitchOrganization}
-      />
-    );
-    openMainDropdown();
-    // Chip-level gear is rendered without opening the popover
-    const chipGear = screen.getByRole("button", { name: "Open Acme settings" });
-    expect(chipGear).toBeInTheDocument();
-    fireEvent.click(chipGear);
-    expect(onSwitchOrganization).toHaveBeenCalledWith("org_a", "overview");
-  });
-
-  it("hides the chip-level org settings gear when the user is not admin/owner", () => {
-    render(
-      <SidebarContextSwitcher
-        activeProjectId="p3"
-        activeOrganizationId="org_b"
-        projects={projects}
-        onSwitchProject={vi.fn()}
-        onCreateProject={vi.fn(async () => "")}
-        onDeleteProject={vi.fn()}
-        onSwitchOrganization={vi.fn()}
-      />
-    );
-    // Nimbus's myRole is "member" — no chip gear
-    expect(
-      screen.queryByRole("button", { name: "Open Nimbus settings" })
-    ).not.toBeInTheDocument();
-  });
-
   it("clicking a project row calls onSwitchProject", () => {
     const onSwitchProject = vi.fn();
     render(

@@ -1844,14 +1844,28 @@ export default function App() {
     isAuthenticated &&
     !isLoadingOrganizations &&
     effectiveOrganizations.length === 0;
+  const activeOrgMyRole = activeOrganizationId
+    ? effectiveOrganizations.find((org) => org._id === activeOrganizationId)
+        ?.myRole
+    : undefined;
+  const insufficientOrgRoleForCreate =
+    isAuthenticated &&
+    !!activeOrganizationId &&
+    activeOrgMyRole !== undefined &&
+    activeOrgMyRole !== "owner" &&
+    activeOrgMyRole !== "admin" &&
+    activeOrgMyRole !== "member";
   const isCreateProjectDisabled =
     projectCreationGate.isDenied ||
     guestProjectLimitReached ||
-    noOrganizationsAvailable;
+    noOrganizationsAvailable ||
+    insufficientOrgRoleForCreate;
   const createProjectDisabledReason = guestProjectLimitReached
     ? "Sign in to create more projects"
     : noOrganizationsAvailable
     ? "Create or join an organization to create projects"
+    : insufficientOrgRoleForCreate
+    ? "You don't have permission to create projects"
     : projectCreationGate.denialMessage ?? undefined;
   const [trialModalDismissedForOrg, setTrialModalDismissedForOrg] = useState<
     string | null
