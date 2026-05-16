@@ -61,6 +61,14 @@ function createDefaultProject() {
 
 function hasHostedOAuthCallbackParams(): boolean {
   if (typeof window === "undefined") return false;
+  // WorkOS sign-in lands on /callback?code=…; MCP server OAuth lands on
+  // /oauth/callback?code=…. Without this path scope a WorkOS sign-in is
+  // misread as an in-flight MCP OAuth callback, resurfacing a stale
+  // "Finishing OAuth sign-in for X…" gate from leftover localStorage markers.
+  const pathname = window.location.pathname;
+  if (pathname !== "/oauth/callback" && !pathname.startsWith("/oauth/callback/")) {
+    return false;
+  }
   const params = new URLSearchParams(window.location.search);
   return params.has("code") || params.has("error");
 }

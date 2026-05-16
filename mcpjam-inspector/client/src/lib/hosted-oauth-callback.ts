@@ -189,6 +189,15 @@ export function getHostedOAuthCallbackContext(): HostedOAuthCallbackContext | nu
     return null;
   }
 
+  // Scope MCP-OAuth callback detection to /oauth/callback (the MCP redirect_uri
+  // from getRedirectUri()). WorkOS sign-in lands on /callback?code=… which
+  // would otherwise be misread here and pair with a stale mcp-oauth-pending
+  // marker, producing a ghost "Finishing OAuth…" gate after sign-in.
+  const pathname = window.location.pathname;
+  if (pathname !== "/oauth/callback" && !pathname.startsWith("/oauth/callback/")) {
+    return null;
+  }
+
   const urlParams = new URLSearchParams(window.location.search);
   if (!urlParams.get("code") && !urlParams.get("error")) {
     return null;

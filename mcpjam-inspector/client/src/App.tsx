@@ -191,6 +191,7 @@ import type {
 } from "@/shared/inspector-command.js";
 
 const OCCUPATION_GATE_ROLLOUT_MS = Date.parse("2026-04-29T00:00:00.000Z");
+const AUTH_EXIT_RUNTIME_CLEANUP_TIMEOUT_MS = 2_500;
 
 function getHostedOAuthCallbackErrorMessage(): string {
   const params = new URLSearchParams(window.location.search);
@@ -828,12 +829,27 @@ export default function App() {
   // gets a chance to run.
   const disconnectRuntimeServersForAuthExit = useCallback(async () => {
     const serverNames = Object.keys(appState.servers);
-    await Promise.allSettled([
+    const cleanupPromise = Promise.allSettled([
       Promise.allSettled(
         serverNames.map((serverName) => handleDisconnect(serverName)),
       ),
       disconnectAllRuntimeServers(),
     ]);
+    let timeoutId: number | undefined;
+    const timeoutPromise = new Promise<void>((resolve) => {
+      timeoutId = window.setTimeout(
+        resolve,
+        AUTH_EXIT_RUNTIME_CLEANUP_TIMEOUT_MS,
+      );
+    });
+
+    try {
+      await Promise.race([cleanupPromise, timeoutPromise]);
+    } finally {
+      if (timeoutId !== undefined) {
+        window.clearTimeout(timeoutId);
+      }
+    }
   }, [appState.servers, handleDisconnect]);
   useInspectorCommandBus();
   // One-time migration from legacy localStorage state to Convex. No-op in
@@ -2724,8 +2740,11 @@ export default function App() {
             }}
             onSignOut={() => {
               void (async () => {
-                await disconnectRuntimeServersForAuthExit();
-                await signOut();
+                try {
+                  await disconnectRuntimeServersForAuthExit();
+                } finally {
+                  await signOut();
+                }
               })();
             }}
           >
