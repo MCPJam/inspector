@@ -2402,6 +2402,7 @@ export function TestTemplateEditor({
                             sessionMode: "reuse",
                           })
                         }
+                        baselineHostStyle={hostConfigBaseline?.hostStyle}
                       />
                     </div>
                   );
@@ -2426,6 +2427,7 @@ function RunColumn({
   activeTab,
   onTabChange,
   onRetry,
+  baselineHostStyle,
 }: {
   record: CompareRunRecord;
   allRecords: CompareRunRecord[];
@@ -2437,9 +2439,34 @@ function RunColumn({
   activeTab: RunColumnTab;
   onTabChange: (tab: RunColumnTab) => void;
   onRetry: () => void;
+  /**
+   * The suite's baseline hostStyle (from `hostConfigsV2:getSuiteConfig`),
+   * used as the fallback when the iteration's snapshot doesn't carry an
+   * override. May be undefined when the suite hostConfig hasn't loaded.
+   */
+  baselineHostStyle: string | undefined;
 }) {
   const themeMode = usePreferencesStore((state) => state.themeMode);
-  const hostStyle = usePreferencesStore((state) => state.hostStyle);
+  const globalPreferenceHostStyle = usePreferencesStore(
+    (state) => state.hostStyle,
+  );
+  /**
+   * Effective hostStyle for this iteration's result chrome:
+   *   1. iteration snapshot's per-Run override (authoritative — what
+   *      the run actually ran with);
+   *   2. suite baseline (the suite's saved default);
+   *   3. global preference (last resort — old leaky behavior, kept
+   *      so multi-pane views still have a value while data loads).
+   *
+   * Index into the snapshot is loose (`any`) because the schema treats
+   * `hostConfigOverride` as `v.any()` — the Convex validator doesn't
+   * pin the shape of the per-Run override.
+   */
+  const snapshotHostStyle =
+    (record.iteration?.testCaseSnapshot as { hostConfigOverride?: { hostStyle?: string } } | undefined)
+      ?.hostConfigOverride?.hostStyle;
+  const hostStyle =
+    snapshotHostStyle ?? baselineHostStyle ?? globalPreferenceHostStyle;
   const { toolsMetadata, toolServerMap, connectedServerIds } =
     useEvalTraceToolContext({
       serverNames,

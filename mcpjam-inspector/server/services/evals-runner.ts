@@ -72,6 +72,7 @@ import {
   stripPromptTurnsFromAdvancedConfig,
   type PromptTurn,
 } from "@/shared/prompt-turns";
+import { withHostContextSystemPrompt } from "@/shared/host-context-prompt";
 import { normalizeToolChoice, type EvalToolChoice } from "@/shared/tool-choice";
 import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
 import type {
@@ -103,6 +104,17 @@ export type EvalTestCase = {
    * runs resolve it in the route handler.
    */
   matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
+  /**
+   * Per-Run override layered on top of the suite's hostConfig. Carries
+   * the editor's in-place tweaks (locale, timezone, hostContext,
+   * hostCapabilitiesOverride, hostStyle, etc.) for this iteration only.
+   * NOT a property of the test case — present on this type only because
+   * it rides alongside the case through the runner, the same way
+   * `matchOptions` does. Stamped onto `testCaseSnapshot.hostConfigOverride`
+   * for the iteration row. Single-case runs populate it from the
+   * request; suite runs leave it undefined.
+   */
+  hostConfigOverride?: Record<string, unknown>;
   testCaseId?: string;
 };
 
@@ -1173,10 +1185,14 @@ const runIterationWithAiSdk = async ({
     expectedOutput,
     promptTurns,
   } = resolvedTest;
-  const system =
+  const system = withHostContextSystemPrompt(
     typeof advancedConfig?.system === "string"
       ? advancedConfig.system
-      : undefined;
+      : undefined,
+    test.hostConfigOverride?.hostContext as
+      | Record<string, unknown>
+      | undefined,
+  );
   const temperature =
     typeof advancedConfig?.temperature === "number"
       ? advancedConfig.temperature
@@ -1212,6 +1228,7 @@ const runIterationWithAiSdk = async ({
       promptTurns,
       advancedConfig,
       matchOptions: test.matchOptions,
+      hostConfigOverride: test.hostConfigOverride,
     },
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
@@ -1625,10 +1642,14 @@ const runIterationViaBackend = async ({
     promptTurns,
     advancedConfig,
   } = resolvedTest;
-  const systemPrompt =
+  const systemPrompt = withHostContextSystemPrompt(
     typeof advancedConfig?.system === "string"
       ? advancedConfig.system
-      : undefined;
+      : undefined,
+    test.hostConfigOverride?.hostContext as
+      | Record<string, unknown>
+      | undefined,
+  );
   const temperature =
     typeof advancedConfig?.temperature === "number"
       ? advancedConfig.temperature
@@ -1660,6 +1681,7 @@ const runIterationViaBackend = async ({
       promptTurns,
       advancedConfig,
       matchOptions: test.matchOptions,
+      hostConfigOverride: test.hostConfigOverride,
     },
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
@@ -2167,6 +2189,7 @@ const runTestCase = async (params: {
             promptTurns: resolvedTestForPrecreate.promptTurns,
             advancedConfig: resolvedTestForPrecreate.advancedConfig,
             matchOptions: test.matchOptions,
+            hostConfigOverride: test.hostConfigOverride,
           },
           iterationNumber: runIndex + 1,
           startedAt: precreatedAt,
@@ -2535,10 +2558,14 @@ const streamIterationWithAiSdk = async ({
     expectedOutput,
     promptTurns,
   } = resolvedTest;
-  const system =
+  const system = withHostContextSystemPrompt(
     typeof advancedConfig?.system === "string"
       ? advancedConfig.system
-      : undefined;
+      : undefined,
+    test.hostConfigOverride?.hostContext as
+      | Record<string, unknown>
+      | undefined,
+  );
   const temperature =
     typeof advancedConfig?.temperature === "number"
       ? advancedConfig.temperature
@@ -2574,6 +2601,7 @@ const streamIterationWithAiSdk = async ({
       promptTurns,
       advancedConfig,
       matchOptions: test.matchOptions,
+      hostConfigOverride: test.hostConfigOverride,
     },
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
@@ -3092,10 +3120,14 @@ const streamIterationViaBackend = async ({
     promptTurns,
     advancedConfig,
   } = resolvedTest;
-  const systemPrompt =
+  const systemPrompt = withHostContextSystemPrompt(
     typeof advancedConfig?.system === "string"
       ? advancedConfig.system
-      : undefined;
+      : undefined,
+    test.hostConfigOverride?.hostContext as
+      | Record<string, unknown>
+      | undefined,
+  );
   const temperature =
     typeof advancedConfig?.temperature === "number"
       ? advancedConfig.temperature
@@ -3127,6 +3159,7 @@ const streamIterationViaBackend = async ({
       promptTurns,
       advancedConfig,
       matchOptions: test.matchOptions,
+      hostConfigOverride: test.hostConfigOverride,
     },
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
@@ -3868,6 +3901,7 @@ export const streamTestCase = async (params: {
             promptTurns: resolvedTestForPrecreate.promptTurns,
             advancedConfig: resolvedTestForPrecreate.advancedConfig,
             matchOptions: test.matchOptions,
+            hostConfigOverride: test.hostConfigOverride,
           },
           iterationNumber: runIndex + 1,
           startedAt: precreatedAt,

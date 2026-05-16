@@ -813,17 +813,6 @@ export async function runEvalTestCaseWithManager(
     matchOptionsOverride,
     hostConfigOverride,
   } = request;
-  // TODO(host-config-override): persist `hostConfigOverride` on the
-  // iteration's `testCaseSnapshot` so the trace records which hostConfig
-  // the run actually used. Blocked on extending the
-  // `testIteration.testCaseSnapshot` validator in
-  // `mcpjam-backend/convex/schema.ts:655` to allow a
-  // `hostConfigOverride: v.optional(v.any())` field. Until that lands,
-  // the override is accepted at the API boundary (validated by zod) but
-  // has no runtime / persistence effect. Same gap exists for the suite's
-  // own hostConfig; both will be plumbed into the iteration snapshot +
-  // LLM run in a follow-up.
-  void hostConfigOverride;
 
   const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
   const { convexClient, convexHttpUrl } = createConvexClients(convexAuthToken);
@@ -868,6 +857,7 @@ export async function runEvalTestCaseWithManager(
         | undefined,
       matchOptionsOverride,
     ),
+    hostConfigOverride: hostConfigOverride as Record<string, unknown> | undefined,
     testCaseId: testCase._id,
   };
 
@@ -1074,17 +1064,6 @@ export async function streamEvalTestCaseWithManager(
     matchOptionsOverride,
     hostConfigOverride,
   } = request;
-  // TODO(host-config-override): persist `hostConfigOverride` on the
-  // iteration's `testCaseSnapshot` so the trace records which hostConfig
-  // the run actually used. Blocked on extending the
-  // `testIteration.testCaseSnapshot` validator in
-  // `mcpjam-backend/convex/schema.ts:655` to allow a
-  // `hostConfigOverride: v.optional(v.any())` field. Until that lands,
-  // the override is accepted at the API boundary (validated by zod) but
-  // has no runtime / persistence effect. Same gap exists for the suite's
-  // own hostConfig; both will be plumbed into the iteration snapshot +
-  // LLM run in a follow-up.
-  void hostConfigOverride;
 
   const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
   const { convexClient, convexHttpUrl } = createConvexClients(convexAuthToken);
@@ -1129,6 +1108,7 @@ export async function streamEvalTestCaseWithManager(
         | undefined,
       matchOptionsOverride,
     ),
+    hostConfigOverride: hostConfigOverride as Record<string, unknown> | undefined,
     testCaseId: testCase._id,
   };
 

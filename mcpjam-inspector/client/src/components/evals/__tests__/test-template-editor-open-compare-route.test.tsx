@@ -1182,7 +1182,26 @@ describe("TestTemplateEditor run view from route", () => {
         };
       }
       if (name === "hostConfigsV2:getSuiteConfig") {
-        return null;
+        // Stamp the suite hostConfig with `hostStyle: "claude"` so the
+        // result-column baseline matches what this test asserts about
+        // the chat shell. Result column priority is
+        // snapshot.hostConfigOverride → baseline → global preference;
+        // before this hostConfig-aware path landed, the global
+        // preference was the source.
+        return {
+          id: "hostconfig-1",
+          schemaVersion: 1,
+          hostStyle: "claude",
+          modelId: "",
+          systemPrompt: "",
+          temperature: 0.7,
+          requireToolApproval: false,
+          serverIds: [],
+          optionalServerIds: [],
+          connectionDefaults: { headers: {}, requestTimeout: 10000 },
+          clientCapabilities: {},
+          hostContext: {},
+        };
       }
       if (name === "testSuites:listTestIterations" && args !== "skip") {
         return [baseIteration];
