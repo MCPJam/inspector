@@ -686,25 +686,31 @@ export function useServerState({
       };
     }
 
-    // Surface runtime-only servers (e.g. registered via the CLI's
-    // /api/mcp/connect before they have been persisted to a project) so they
-    // participate in selection, status display, and command routing. Without
-    // this, the App.tsx auto-select effect would override an explicit
-    // setSelectedServer because effectiveServers[<runtime-only>]?.config is
-    // undefined.
-    for (const [name, runtime] of Object.entries(appState.servers)) {
-      if (serversWithRuntime[name]) continue;
-      if (
-        runtime.connectionStatus !== "connected" &&
-        runtime.connectionStatus !== "connecting"
-      ) {
-        continue;
+    if (!isAuthenticated || useLocalFallback) {
+      // Surface runtime-only servers only in local/fallback state. For
+      // Convex-backed projects the server list must come from the Convex
+      // project-server queries, otherwise runtime state can leak across
+      // logout, guest handoff, or organization switches.
+      for (const [name, runtime] of Object.entries(appState.servers)) {
+        if (serversWithRuntime[name]) continue;
+        if (
+          runtime.connectionStatus !== "connected" &&
+          runtime.connectionStatus !== "connecting"
+        ) {
+          continue;
+        }
+        serversWithRuntime[name] = runtime;
       }
-      serversWithRuntime[name] = runtime;
     }
 
     return { ...project, servers: serversWithRuntime };
-  }, [effectiveProjects, effectiveActiveProjectId, appState.servers]);
+  }, [
+    effectiveProjects,
+    effectiveActiveProjectId,
+    appState.servers,
+    isAuthenticated,
+    useLocalFallback,
+  ]);
 
   const effectiveServers = useMemo(() => {
     return activeProject?.servers || {};

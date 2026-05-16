@@ -85,6 +85,7 @@ export type AgentServerInfo = {
 
 export type AppAction =
   | { type: "HYDRATE_STATE"; payload: AppState }
+  | { type: "CLEAR_RUNTIME_STATE" }
   | { type: "UPSERT_SERVER"; name: string; server: ServerWithName }
   | {
       type: "CONNECT_REQUEST";

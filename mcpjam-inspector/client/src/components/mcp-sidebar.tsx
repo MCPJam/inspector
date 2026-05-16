@@ -370,6 +370,7 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   billingUiEnabled?: boolean;
   isCreateProjectDisabled?: boolean;
   createProjectDisabledReason?: string;
+  onBeforeSignOut?: () => void | Promise<void>;
 }
 
 function navigateToEvalsExploreList() {
@@ -556,6 +557,7 @@ export function MCPSidebar({
   billingUiEnabled = false,
   isCreateProjectDisabled = false,
   createProjectDisabledReason,
+  onBeforeSignOut,
   ...props
 }: MCPSidebarProps) {
   const posthog = usePostHog();
@@ -832,7 +834,10 @@ export function MCPSidebar({
           {!user ? (
             <SidebarCreditUsage className="px-1" includeGuests />
           ) : null}
-          <SidebarUser activeOrganizationId={activeOrganizationId} />
+          <SidebarUser
+            activeOrganizationId={activeOrganizationId}
+            onBeforeSignOut={onBeforeSignOut}
+          />
         </SidebarFooter>
       </Sidebar>
       {shouldShowInviteCta && user && activeProject ? (

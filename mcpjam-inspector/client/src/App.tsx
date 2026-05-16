@@ -177,6 +177,7 @@ import {
   handleOAuthCallback,
 } from "./lib/oauth/mcp-oauth";
 import { buildElectronMcpCallbackUrl } from "./hooks/use-server-state";
+import { disconnectAllRuntimeServers } from "./state/mcp-api";
 import { getEffectiveProjectClientCapabilities } from "./lib/client-config";
 import { buildEvalsHash } from "./lib/evals-router";
 import { withTestingSurface } from "./lib/testing-surface";
@@ -190,6 +191,7 @@ import type {
 } from "@/shared/inspector-command.js";
 
 const OCCUPATION_GATE_ROLLOUT_MS = Date.parse("2026-04-29T00:00:00.000Z");
+const AUTH_EXIT_RUNTIME_CLEANUP_TIMEOUT_MS = 2_500;
 
 function getHostedOAuthCallbackErrorMessage(): string {
   const params = new URLSearchParams(window.location.search);
@@ -822,6 +824,33 @@ export default function App() {
       : undefined,
     activeHostConfig: chatTabHost?.config,
   });
+  // Keep this explicit sign-out cleanup even though useAppState also cleans up
+  // on auth-scope changes: WorkOS navigation can redirect before that effect
+  // gets a chance to run.
+  const disconnectRuntimeServersForAuthExit = useCallback(async () => {
+    const serverNames = Object.keys(appState.servers);
+    const cleanupPromise = Promise.allSettled([
+      Promise.allSettled(
+        serverNames.map((serverName) => handleDisconnect(serverName)),
+      ),
+      disconnectAllRuntimeServers(),
+    ]);
+    let timeoutId: number | undefined;
+    const timeoutPromise = new Promise<void>((resolve) => {
+      timeoutId = window.setTimeout(
+        resolve,
+        AUTH_EXIT_RUNTIME_CLEANUP_TIMEOUT_MS,
+      );
+    });
+
+    try {
+      await Promise.race([cleanupPromise, timeoutPromise]);
+    } finally {
+      if (timeoutId !== undefined) {
+        window.clearTimeout(timeoutId);
+      }
+    }
+  }, [appState.servers, handleDisconnect]);
   useInspectorCommandBus();
   // One-time migration from legacy localStorage state to Convex. No-op in
   // hosted mode and after the first successful run; safe to keep in the tree.
@@ -1507,6 +1536,36 @@ export default function App() {
     workOsUser,
   ]);
 
+  // When the active project changes (org switch, project delete, manual switch),
+  // snap to Servers — staying on App Builder/Chat would leave the user pointed
+  // at a project that no longer exists. Start tracking only after auth/project
+  // loading settles so the initial local-default → Convex-project hydration
+  // doesn't yank deep-links away on first load.
+  const previousActiveProjectIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (isLoadingRemoteProjects || isAuthLoading || isWorkOsLoading) {
+      return;
+    }
+
+    const previousActiveProjectId = previousActiveProjectIdRef.current;
+    previousActiveProjectIdRef.current = activeProjectId;
+    if (
+      previousActiveProjectId == null ||
+      previousActiveProjectId === activeProjectId ||
+      previousActiveProjectId === "none" ||
+      activeProjectId === "none"
+    ) {
+      return;
+    }
+    applyNavigation("servers", { updateHash: true });
+  }, [
+    activeProjectId,
+    applyNavigation,
+    isAuthLoading,
+    isLoadingRemoteProjects,
+    isWorkOsLoading,
+  ]);
+
   const consumeCheckoutIntent = useCallback(() => {
     clearPersistedCheckoutIntent();
     clearBillingSignInReturnPath();
@@ -2126,6 +2185,7 @@ export default function App() {
         billingGateEnforcementActive={billingGateEnforcementActive}
         isCreateProjectDisabled={isCreateProjectDisabled}
         createProjectDisabledReason={createProjectDisabledReason}
+        onBeforeSignOut={disconnectRuntimeServersForAuthExit}
       />
       <SidebarInset className="flex flex-col min-h-0">
         <AppChromeHeader
@@ -2164,7 +2224,14 @@ export default function App() {
                 organizationId={activeProjectBillingOrganizationId}
                 pendingDashboardOAuth={pendingDashboardOAuth}
                 isBillingContextPending={isBillingContextPending}
-                isLoadingProjects={isLoadingRemoteProjects}
+                // Keep the spinner up across the sign-out → guest-resolved
+                // window: while WorkOS or Convex auth is mid-handshake,
+                // `useProjectServers` skips its Convex query, which lets the
+                // empty/cached fallback flash the previous actor's data for
+                // ~200ms.
+                isLoadingProjects={
+                  isLoadingRemoteProjects || isAuthLoading || isWorkOsLoading
+                }
                 onProjectShared={handleProjectShared}
                 onLeaveProject={() => handleLeaveProject(activeProjectId)}
                 isRegistryEnabled={registryEnabled === true}
@@ -2672,7 +2739,13 @@ export default function App() {
               signIn();
             }}
             onSignOut={() => {
-              void signOut();
+              void (async () => {
+                try {
+                  await disconnectRuntimeServersForAuthExit();
+                } finally {
+                  await signOut();
+                }
+              })();
             }}
           >
             {isChatboxChatRoute ? (

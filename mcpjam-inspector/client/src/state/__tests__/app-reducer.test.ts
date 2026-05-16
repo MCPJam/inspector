@@ -59,6 +59,27 @@ describe("appReducer", () => {
     });
   });
 
+  describe("CLEAR_RUNTIME_STATE", () => {
+    it("clears runtime servers and selections without changing projects", () => {
+      const state = createInitialState({
+        servers: {
+          "old-server": createServer("old-server", {
+            connectionStatus: "connected",
+          }),
+        },
+        selectedServer: "old-server",
+        selectedMultipleServers: ["old-server"],
+      });
+
+      const result = appReducer(state, { type: "CLEAR_RUNTIME_STATE" });
+
+      expect(result.projects).toBe(state.projects);
+      expect(result.servers).toEqual({});
+      expect(result.selectedServer).toBe("none");
+      expect(result.selectedMultipleServers).toEqual([]);
+    });
+  });
+
   describe("UPSERT_SERVER", () => {
     it("adds a new server to state", () => {
       const state = createInitialState();
