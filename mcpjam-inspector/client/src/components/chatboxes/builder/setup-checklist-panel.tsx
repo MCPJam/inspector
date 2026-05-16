@@ -18,15 +18,6 @@ import {
   PopoverTrigger,
 } from "@mcpjam/design-system/popover";
 import { RadioGroup, RadioGroupItem } from "@mcpjam/design-system/radio-group";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@mcpjam/design-system/select";
-import { Separator } from "@mcpjam/design-system/separator";
-import { Slider } from "@mcpjam/design-system/slider";
 import { Switch } from "@mcpjam/design-system/switch";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
@@ -38,14 +29,10 @@ import {
   type ChatboxAccessPreset,
 } from "@/lib/chatbox-access-presets";
 import type { RemoteServer } from "@/hooks/useProjects";
-import { listHostStyles } from "@/lib/host-styles";
-import { isMCPJamProvidedModel, SUPPORTED_MODELS } from "@/shared/types";
 import { cn } from "@/lib/utils";
 import type { ChatboxDraftConfig } from "./types";
 
 export type SetupSectionId =
-  | "basics"
-  | "servers"
   | "access"
   | "welcome"
   | "feedback"
@@ -320,22 +307,11 @@ export function ServerSelectionEditor({
 
 export function computeSectionStatuses(
   draft: ChatboxDraftConfig,
-  projectServers: RemoteServer[],
+  // projectServers retained on the signature so existing callers compile
+  // unchanged, but the chatbox-side server-status calc was retired —
+  // server validity now lives on the host config.
+  _projectServers: RemoteServer[],
 ): Record<SetupSectionId, SectionStatusKind> {
-  const nameOk = draft.name.trim().length > 0;
-  const modelOk = Boolean(draft.modelId);
-  const basics: SectionStatusKind =
-    nameOk && modelOk ? "complete" : "attention";
-
-  const optionalServerSet = new Set(draft.optionalServerIds);
-  const validServerCount = draft.selectedServerIds.filter((id) => {
-    if (optionalServerSet.has(id)) return false;
-    const s = projectServers.find((w) => w._id === id);
-    return s && !isInsecureUrl(s.url);
-  }).length;
-  const servers: SectionStatusKind =
-    validServerCount > 0 ? "complete" : "attention";
-
   const access: SectionStatusKind = draft.mode ? "complete" : "attention";
 
   const welcomeSurface = draft.chatUi.surfaces.welcome;
@@ -354,8 +330,6 @@ export function computeSectionStatuses(
       : "optional";
 
   return {
-    basics,
-    servers,
     access,
     welcome,
     feedback,
@@ -371,8 +345,11 @@ export function SetupChecklistPanel({
   /** True when creating a chatbox that has never been saved (no chatbox id yet). */
   isUnsavedNewDraft,
   onDraftChange,
-  onOpenAddServer,
-  onToggleServer,
+  // onOpenAddServer / onToggleServer kept on the prop interface for
+  // callers, but are now no-ops here — the Servers section was deleted
+  // (host viz handles servers).
+  onOpenAddServer: _onOpenAddServer,
+  onToggleServer: _onToggleServer,
   onCloseMobile,
   /** When the chatbox is saved, invite by email from the Access section (invite-only draft). */
   inviteChatboxMember,
@@ -411,8 +388,6 @@ export function SetupChecklistPanel({
   useEffect(() => {
     if (!isUnsavedNewDraft || didAutoExpandRef.current) return;
     const order: SetupSectionId[] = [
-      "basics",
-      "servers",
       "access",
       "welcome",
       "feedback",
@@ -431,14 +406,6 @@ export function SetupChecklistPanel({
     const el = sectionRefs.current[focusedSection];
     el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [focusedSection]);
-
-  const hostedModels = useMemo(
-    () =>
-      SUPPORTED_MODELS.filter((model) =>
-        isMCPJamProvidedModel(String(model.id)),
-      ),
-    [],
-  );
 
   const setSectionOpen = (id: SetupSectionId, open: boolean) => {
     setOpenMap((prev) => ({ ...prev, [id]: open }));
@@ -475,136 +442,6 @@ export function SetupChecklistPanel({
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="space-y-2 p-4 pb-28">
-          {/* Basics */}
-          <div
-            ref={(el) => {
-              sectionRefs.current.basics = el;
-            }}
-          >
-            <Collapsible
-              open={openMap.basics ?? false}
-              onOpenChange={(o) => setSectionOpen("basics", o)}
-            >
-              <SetupSectionCollapsibleTrigger
-                step={1}
-                title="Basics"
-                statusKind={statuses.basics}
-              />
-              <CollapsibleContent className="pt-3 pb-1">
-                <div className="space-y-4 rounded-xl border border-border/50 bg-card/40 p-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="setup-chatbox-name">Chatbox name</Label>
-                    <Input
-                      id="setup-chatbox-name"
-                      value={chatboxDraft.name}
-                      onChange={(event) =>
-                        onDraftChange((draft) => ({
-                          ...draft,
-                          name: event.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-
-                  <Separator />
-
-                  <div className="space-y-2">
-                    <Label>Host style</Label>
-                    <div className="grid gap-2">
-                      {listHostStyles().map((host) => {
-                        const selected = chatboxDraft.hostStyle === host.id;
-                        return (
-                          <button
-                            key={host.id}
-                            type="button"
-                            className={`flex items-center gap-3 rounded-2xl border px-4 py-4 text-left transition-colors ${
-                              selected
-                                ? "border-primary/50 bg-primary/10"
-                                : "border-border/70 bg-card/60 hover:bg-muted/20"
-                            }`}
-                            onClick={() =>
-                              onDraftChange((draft) => ({
-                                ...draft,
-                                hostStyle: host.id,
-                              }))
-                            }
-                          >
-                            <img
-                              src={host.chatUi.logoSrc}
-                              alt=""
-                              className="size-6 rounded-md object-contain"
-                            />
-                            <div>
-                              <p className="font-medium">{host.chatUi.shortLabel}</p>
-                              <p className="text-xs text-muted-foreground">
-                                {host.chatUi.pickerDescription}
-                              </p>
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Model</Label>
-                    <Select
-                      value={chatboxDraft.modelId}
-                      onValueChange={(value) =>
-                        onDraftChange((draft) => ({
-                          ...draft,
-                          modelId: value,
-                        }))
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select a model" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {hostedModels.map((model) => (
-                          <SelectItem
-                            key={String(model.id)}
-                            value={String(model.id)}
-                          >
-                            {model.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
-          </div>
-
-          {/* Servers */}
-          <div
-            ref={(el) => {
-              sectionRefs.current.servers = el;
-            }}
-          >
-            <Collapsible
-              open={openMap.servers ?? false}
-              onOpenChange={(o) => setSectionOpen("servers", o)}
-            >
-              <SetupSectionCollapsibleTrigger
-                step={2}
-                title="Servers"
-                statusKind={statuses.servers}
-              />
-              <CollapsibleContent className="pt-3 pb-1">
-                <div className="rounded-xl border border-border/50 bg-card/40 p-4">
-                  <ServerSelectionEditor
-                    projectServers={projectServers}
-                    selectedServerIds={chatboxDraft.selectedServerIds}
-                    onToggleSelection={onToggleServer}
-                    onOpenAdd={onOpenAddServer}
-                  />
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
-          </div>
-
           {/* Access */}
           <div
             ref={(el) => {
@@ -967,7 +804,13 @@ export function SetupChecklistPanel({
             </Collapsible>
           </div>
 
-          {/* Advanced */}
+          {/* Advanced — under live-reference, system prompt /
+              temperature / tool approval belong to the host. The
+              chatbox's "advanced" surface currently has nothing
+              chatbox-owned to expose here (delete + rotate-link live in
+              the host overflow elsewhere). Section retained as a no-op
+              shell so the section index stays stable for any callers
+              that still reference SetupSectionId="advanced". */}
           <div
             ref={(el) => {
               sectionRefs.current.advanced = el;
@@ -983,60 +826,11 @@ export function SetupChecklistPanel({
                 statusKind="collapsed"
               />
               <CollapsibleContent className="pt-3 pb-1">
-                <div className="space-y-4 rounded-xl border border-border/50 bg-card/40 p-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="setup-prompt">System prompt</Label>
-                    <Textarea
-                      id="setup-prompt"
-                      rows={8}
-                      value={chatboxDraft.systemPrompt}
-                      onChange={(event) =>
-                        onDraftChange((draft) => ({
-                          ...draft,
-                          systemPrompt: event.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <Label>Temperature</Label>
-                      <span className="text-sm text-muted-foreground">
-                        {chatboxDraft.temperature.toFixed(2)}
-                      </span>
-                    </div>
-                    <Slider
-                      min={0}
-                      max={2}
-                      step={0.05}
-                      value={[chatboxDraft.temperature]}
-                      onValueChange={(values) =>
-                        onDraftChange((draft) => ({
-                          ...draft,
-                          temperature: values[0] ?? 0.7,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div className="flex items-center justify-between gap-3 rounded-2xl border border-border/70 bg-card/60 px-4 py-4">
-                    <div>
-                      <p className="text-sm font-medium">
-                        Require tool approval
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        Visitors must approve tool calls before execution.
-                      </p>
-                    </div>
-                    <Switch
-                      checked={chatboxDraft.requireToolApproval}
-                      onCheckedChange={(checked) =>
-                        onDraftChange((draft) => ({
-                          ...draft,
-                          requireToolApproval: checked,
-                        }))
-                      }
-                    />
-                  </div>
+                <div className="rounded-xl border border-border/50 bg-card/40 p-4 text-xs text-muted-foreground">
+                  Model, system prompt, temperature, and tool approval
+                  live on this chatbox's host. Open the Hosts tab to
+                  edit them — changes propagate to every chatbox using
+                  the same host.
                 </div>
               </CollapsibleContent>
             </Collapsible>

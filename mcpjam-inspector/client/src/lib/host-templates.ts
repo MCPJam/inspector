@@ -11,6 +11,7 @@ import mcpjamLogo from "/mcp_jam.svg";
 import claudeLogo from "/claude_logo.png";
 import openaiLogo from "/openai_logo.png";
 import cursorLogo from "/cursor_logo.png";
+import codexLogo from "/codex-logo.svg";
 
 declare const __APP_VERSION__: string;
 
@@ -198,7 +199,12 @@ const CLAUDE_FONTS_CSS = `
 }
 `;
 
-export type HostTemplateId = "mcpjam" | "claude" | "chatgpt" | "cursor";
+export type HostTemplateId =
+  | "mcpjam"
+  | "claude"
+  | "chatgpt"
+  | "cursor"
+  | "codex";
 
 export interface HostTemplate {
   id: HostTemplateId;
@@ -276,7 +282,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // pick it without an Anthropic key.
         modelId: "anthropic/claude-haiku-4.5",
         temperature: 1.0,
-        requireToolApproval: true,
+        requireToolApproval: false,
       });
       // clientCapabilities: Real claude.ai publishes only the SDK-default
       // MCP UI extension (no `experimental` flag). emptyHostConfigInputV2
@@ -566,6 +572,55 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               mode: "custom",
               allow: { clipboardWrite: true },
             },
+          },
+        },
+      };
+      return base;
+    },
+  },
+  {
+    id: "codex",
+    label: "Codex",
+    description: "OpenAI Codex CLI. Terminal client — elicitation only, no UI.",
+    logoSrc: codexLogo,
+    seed: () => {
+      const base = emptyHostConfigInputV2({
+        // Codex doesn't render an iframe chrome of its own; borrow the
+        // OpenAI visual family for any in-inspector chat preview. If/when
+        // we add a dedicated codex HostStyleDefinition, swap this to "codex".
+        hostStyle: "chatgpt",
+        // Codex defaults to GPT-5; pick the smallest variant that's in
+        // MCPJAM_GUEST_ALLOWED_MODEL_IDS so guests can use the template
+        // without an OpenAI key.
+        modelId: "openai/gpt-5-nano",
+        temperature: 0.7,
+        requireToolApproval: false,
+      });
+      // clientCapabilities: real codex-mcp-client publishes ONLY
+      // `elicitation` — no MCP UI extension, no roots, no sampling.
+      // Replace the SDK-default block (which seeds the UI extension)
+      // outright; merging would re-introduce capabilities Codex doesn't
+      // actually advertise.
+      base.clientCapabilities = {
+        elicitation: {},
+      };
+      // Codex is a CLI — no iframe, no widgets, nothing to advertise on
+      // the host side. An empty override means "advertise nothing" rather
+      // than inheriting the chatgpt preset's openLinks/serverTools/etc.
+      base.hostCapabilitiesOverride = {};
+      // No hostContext: a terminal client doesn't expose theme,
+      // displayMode, containerDimensions, or fonts.
+      base.hostContext = {};
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          // clientInfo verbatim from a real codex-mcp-client initialize
+          // request. `title` is non-standard but preserved as-is; the
+          // backend passes the clientInfo record through unchanged.
+          clientInfo: {
+            name: "codex-mcp-client",
+            title: "Codex",
+            version: "0.131.0-alpha.9",
           },
         },
       };

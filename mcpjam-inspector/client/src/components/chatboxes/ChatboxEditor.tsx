@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useConvexAuth, useQuery } from "convex/react";
+import { useConvexAuth } from "convex/react";
 import {
   ArrowLeft,
   Check,
@@ -87,12 +87,6 @@ import {
   bootstrapServerToHostedOAuthDescriptor,
   countRequiredServers,
 } from "./builder/chatbox-server-optional";
-import { draftToHostConfigInputV2 } from "./builder/drafts";
-import type { ChatboxDraftConfig } from "./builder/types";
-import {
-  hostConfigDtoToInput,
-  type HostConfigDtoV2,
-} from "@/lib/host-config-v2";
 
 interface ProjectServerOption {
   _id: string;
@@ -146,32 +140,11 @@ export function ChatboxEditor({
   onDeleted,
 }: ChatboxEditorProps) {
   const { isAuthenticated } = useConvexAuth();
-  const { createChatbox, updateChatbox, deleteChatbox, setChatboxMode } =
+  const { updateChatbox, deleteChatbox, setChatboxMode } =
     useChatboxMutations();
   const { createServer } = useServerMutations();
   const isCreateMode = !chatbox;
 
-  // Round-trip the chatbox's own hostConfig (edit mode) so the v2 save
-  // path preserves the connection portion (connectionDefaults /
-  // clientCapabilities / hostContext) the editor UI doesn't surface.
-  // mintV2ChatboxHostConfigFromV2Input persists those fields verbatim,
-  // so we MUST feed them or they get clobbered.
-  const chatboxHostConfig = useQuery(
-    "hostConfigsV2:getChatboxConfig" as any,
-    isAuthenticated && chatbox?.chatboxId
-      ? ({ chatboxId: chatbox.chatboxId } as any)
-      : "skip"
-  ) as HostConfigDtoV2 | null | undefined;
-
-  // Project default seeds the connection portion for new chatboxes
-  // and is the fallback for legacy edit-mode rows that resolve null
-  // from getChatboxConfig — without it, draftToHostConfigInputV2 would
-  // fall back to v2 empty shape and silently drop the project's
-  // configured headers / capabilities / hostContext on next save.
-  const projectDefaultHostConfig = useQuery(
-    "hostConfigsV2:getProjectDefault" as any,
-    isAuthenticated && projectId ? ({ projectId } as any) : "skip"
-  ) as HostConfigDtoV2 | null | undefined;
   const isMobile = useIsMobile();
 
   const hostedModels = useMemo(
@@ -596,84 +569,32 @@ export function ChatboxEditor({
       return;
     }
 
-    // The backend's v2 hostConfig path persists connection fields
-    // verbatim. Block save until a seed has resolved so we don't ship
-    // empty connectionDefaults / clientCapabilities / hostContext and
-    // clobber the existing values. For edit-mode chatboxes prefer the
-    // chatbox's own config; only fall back to the project default
-    // when the chatbox config has *resolved* null (legacy rows) — not
-    // while it's still undefined (loading), which would let the
-    // project default overwrite an existing chatbox's own connection
-    // fields if the project query resolves first. For create mode,
-    // use the project default directly.
-    const chatboxSeed =
-      chatboxHostConfig === null
-        ? projectDefaultHostConfig
-        : chatboxHostConfig;
-    const seedDto = isCreateMode ? projectDefaultHostConfig : chatboxSeed;
-    if (seedDto === undefined) {
-      toast.error("Loading chatbox config — try again in a moment");
-      return;
-    }
-    const seedInput = seedDto ? hostConfigDtoToInput(seedDto) : null;
-    const synthDraft: ChatboxDraftConfig = {
-      name: trimmedName,
-      description: description.trim(),
-      hostStyle,
-      systemPrompt: systemPrompt.trim() || DEFAULT_SYSTEM_PROMPT,
-      modelId,
-      temperature,
-      requireToolApproval,
-      allowGuestAccess,
-      mode,
-      selectedServerIds,
-      optionalServerIds,
-      chatUi: {
-        surfaces: {
-          welcome: {
-            enabled: chatbox?.chatUi?.surfaces?.welcome?.enabled ?? true,
-            body: chatbox?.chatUi?.surfaces?.welcome?.body ?? "",
-          },
-          feedback: {
-            enabled: chatbox?.chatUi?.surfaces?.feedback?.enabled ?? true,
-            everyNToolCalls:
-              chatbox?.chatUi?.surfaces?.feedback?.everyNToolCalls ?? 1,
-            promptHint: chatbox?.chatUi?.surfaces?.feedback?.promptHint ?? "",
-          },
-        },
-      },
-    };
-    const hostConfigInput = draftToHostConfigInputV2(synthDraft, seedInput);
-
     setIsSaving(true);
     try {
-      const payload = {
-        name: trimmedName,
-        description: description.trim() || undefined,
-        hostConfig: hostConfigInput,
-      };
-
+      // Live-reference: chatbox writes only carry metadata. Execution
+      // config (model / prompt / servers / etc.) lives on the host the
+      // chatbox references; edits go through hosts.updateHost. Create
+      // mode in this editor is currently unused in production — the
+      // builder + dialog are the live paths — but tests still render
+      // it, so we reject loudly rather than crash.
       let result;
       if (isCreateMode) {
-        result = await createChatbox({ projectId, ...payload });
-        // Backend defaults to 'invited_only', so set mode if different
-        if (mode !== "invited_only") {
-          result = await setChatboxMode({
-            chatboxId: (result as ChatboxSettings).chatboxId,
-            mode,
-          });
-        }
-      } else {
-        result = await updateChatbox({
-          chatboxId: chatbox!.chatboxId,
-          ...payload,
+        toast.error(
+          "Create-mode editor is being replaced by the builder host picker (track #12)."
+        );
+        return;
+      }
+      const existing = chatbox!;
+      result = await updateChatbox({
+        chatboxId: existing.chatboxId,
+        name: trimmedName,
+        description: description.trim() || undefined,
+      });
+      if (mode !== existing.mode) {
+        result = await setChatboxMode({
+          chatboxId: existing.chatboxId,
+          mode,
         });
-        if (mode !== chatbox!.mode) {
-          result = await setChatboxMode({
-            chatboxId: chatbox!.chatboxId,
-            mode,
-          });
-        }
       }
 
       toast.success(isCreateMode ? "Chatbox created" : "Chatbox updated");
@@ -1240,7 +1161,7 @@ export function ChatboxEditor({
               <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
                 <ChatboxHostStyleProvider value={hostStyle}>
                   <ChatboxHostCapabilitiesOverrideProvider
-                    value={chatboxHostConfig?.hostCapabilitiesOverride}
+                    value={undefined}
                   >
                   <div
                     className="flex min-h-0 flex-1 overflow-hidden"

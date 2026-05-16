@@ -52,6 +52,7 @@ export interface ChatboxSettings {
   projectId: string;
   name: string;
   description?: string;
+  /** Projected from the resolved host's hostConfig DTO. */
   hostStyle: ChatboxHostStyle;
   systemPrompt: string;
   modelId: string;
@@ -62,6 +63,9 @@ export interface ChatboxSettings {
   /** Chat UI config envelope: welcome / feedback dialog surfaces (and future surfaces / branding). */
   chatUi?: ChatUiSettings | null;
   servers: ChatboxServerSettings[];
+  /** The named host this chatbox resolves through. */
+  namedHostId: string;
+  namedHostName: string;
   link: {
     token: string;
     path: string;
@@ -82,6 +86,9 @@ export interface ChatboxListItem {
   allowGuestAccess: boolean;
   serverCount: number;
   serverNames: string[];
+  /** The named host this chatbox resolves through. */
+  namedHostId: string;
+  namedHostName: string;
   createdAt: number;
   updatedAt: number;
 }

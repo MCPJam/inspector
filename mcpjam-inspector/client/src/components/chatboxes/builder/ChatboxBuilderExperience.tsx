@@ -23,7 +23,7 @@ import { ChatboxIndexPage, type ChatboxOpenOptions } from "./ChatboxIndexPage";
 import { ChatboxBuilderView } from "./ChatboxBuilderView";
 import { ChatboxLauncher } from "./ChatboxLauncher";
 import { getDefaultHostedModelId, migrateBuilderDraft } from "./drafts";
-import type { ChatboxDraftConfig, ChatboxStarterDefinition } from "./types";
+import type { ChatboxDraftConfig } from "./types";
 import { useChatboxDemoSeed } from "./useChatboxDemoSeed";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 
@@ -182,91 +182,21 @@ export default function ChatboxBuilderExperience({
     projectId,
   ]);
 
-  // Block re-entry: the seed loop below awaits one createServer call per
-  // serverSeed, during which the launcher (and the empty-state starter
-  // picker) stay visible and clickable. Without this guard a second click
-  // — same starter or different — would race against the first call and
-  // mint duplicate RemoteServer rows.
-  const isApplyingStarterRef = useRef(false);
-
-  const applyStarterDraft = useCallback(
-    async (starter: ChatboxStarterDefinition) => {
-      if (isCreateChatboxDisabled || isCreateChatboxLoading) {
-        return;
-      }
-      if (isApplyingStarterRef.current) return;
-      isApplyingStarterRef.current = true;
-      // Close the launcher synchronously before any await so the user
-      // sees their click register and can't fire a second one.
-      setStarterLauncherOpen(false);
-
-      try {
-        // Resolve any pre-attached server seeds against the project: reuse a
-        // server with a matching URL when present, otherwise mint a new
-        // RemoteServer row so the saved chatbox is usable on first save.
-        // Failure to seed is non-fatal — fall through to a server-less draft.
-        const seededServerIds: string[] = [];
-        if (projectId && starter.serverSeeds?.length) {
-          for (const seed of starter.serverSeeds) {
-            const existing = servers.find(
-              (s) => s.transportType === "http" && s.url === seed.url,
-            );
-            if (existing) {
-              seededServerIds.push(existing._id);
-              continue;
-            }
-            try {
-              const id = (await createServer({
-                projectId,
-                name: seed.name,
-                enabled: true,
-                transportType: "http",
-                url: seed.url,
-              } as any)) as string;
-              if (id) seededServerIds.push(id);
-            } catch (error) {
-              toast.error(
-                error instanceof Error
-                  ? error.message
-                  : `Failed to attach ${seed.name} to the demo`,
-              );
-            }
-          }
-        }
-
-        const baseDraft = starter.createDraft(getDefaultHostedModelId());
-        const nextDraft: ChatboxDraftConfig = seededServerIds.length
-          ? { ...baseDraft, selectedServerIds: seededServerIds }
-          : baseDraft;
-
-        startTransition(() => {
-          setSelectedChatboxId(null);
-          setDraft(nextDraft);
-          setRestoredViewMode(undefined);
-        });
-      } finally {
-        isApplyingStarterRef.current = false;
-      }
-    },
-    [
-      createServer,
-      isCreateChatboxDisabled,
-      isCreateChatboxLoading,
-      projectId,
-      servers,
-    ],
-  );
+  // Under live-reference, "starter drafts" no longer exist — the
+  // launcher creates the chatbox directly against a picked host. The
+  // legacy applyStarterDraft helper that minted seed servers + a draft
+  // ChatboxConfig was removed. The hooks that used to flow through it
+  // (servers, createServer, getDefaultHostedModelId) stay for adjacent
+  // host-create flows we may add later.
+  void servers;
+  void createServer;
+  void getDefaultHostedModelId;
+  void setDraft;
+  void setRestoredViewMode;
 
   const handleOpenStarterLauncher = useCallback(() => {
     setStarterLauncherOpen(true);
   }, []);
-
-  const handleSelectStarterFromLauncher = useCallback(
-    (starter: ChatboxStarterDefinition) => {
-      applyStarterDraft(starter);
-    },
-    [applyStarterDraft],
-  );
 
   const handleSavedDraft = useCallback((chatbox: ChatboxSettings) => {
     startTransition(() => {
@@ -345,7 +275,8 @@ export default function ChatboxBuilderExperience({
       <ChatboxLauncher
         open={starterLauncherOpen}
         onOpenChange={setStarterLauncherOpen}
-        onSelectStarter={handleSelectStarterFromLauncher}
+        projectId={projectId}
+        onChatboxCreated={handleSavedDraft}
       />
       {isBuilderOpen ? (
         <ChatboxBuilderView
@@ -381,7 +312,6 @@ export default function ChatboxBuilderExperience({
           deletingChatboxId={deletingChatboxId}
           duplicatingChatboxId={duplicatingChatboxId}
           onOpenStarterLauncher={handleOpenStarterLauncher}
-          onSelectStarter={applyStarterDraft}
           isCreateChatboxDisabled={isCreateChatboxDisabled}
           isCreateChatboxLoading={isCreateChatboxLoading}
           createChatboxUpsell={createChatboxUpsell}

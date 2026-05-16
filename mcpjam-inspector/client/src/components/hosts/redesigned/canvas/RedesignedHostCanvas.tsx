@@ -1,4 +1,4 @@
-import { memo, useMemo, type CSSProperties } from "react";
+import { createContext, memo, useContext, useMemo, type CSSProperties } from "react";
 import {
   Background,
   BackgroundVariant,
@@ -11,110 +11,55 @@ import {
   type Node,
   type NodeProps,
 } from "@xyflow/react";
-import {
-  Plus,
-  Server,
-} from "lucide-react";
+import { Plus, Server } from "lucide-react";
 import "@xyflow/react/dist/style.css";
 import { cn } from "@/lib/utils";
 import {
   type AddServerPillNodeData,
-  type AgentIdentityNodeData,
-  type AppsCapLeafNodeData,
-  type HostGroupNodeData,
+  type HostMatrixNodeData,
   type HostRedesignViewModel,
-  type ProtocolLeafNodeData,
-  type SectionHubNodeData,
   type ServerCardNodeData,
   type ServersHubNodeData,
 } from "../types";
-
-const WARNING_COLOR = "oklch(0.5 0.13 70)";
-
-/* ============================================================
-   Field rendering primitives — used by the agent identity card.
-   ============================================================ */
-function FieldRow({
-  label,
-  value,
-  mono,
-  attention,
-  changed,
-}: {
-  label: string;
-  value: React.ReactNode;
-  mono?: boolean;
-  attention?: boolean;
-  changed?: boolean;
-}) {
-  return (
-    <div
-      className={cn(
-        "flex items-baseline gap-2 py-[3px] text-[11.5px] leading-tight",
-        // Per-field diff flash. Triggered when changed flips true; the
-        // animation plays once via CSS keyframes on mount/data change.
-        changed && "host-redesign-field-flash",
-      )}
-    >
-      <span className="w-[92px] shrink-0 text-[10.5px] uppercase tracking-[0.04em] text-muted-foreground/80">
-        {label}
-      </span>
-      <span
-        className={cn(
-          "min-w-0 flex-1 truncate",
-          mono && "font-mono",
-          attention && "font-semibold",
-        )}
-        style={attention ? { color: WARNING_COLOR } : undefined}
-        title={typeof value === "string" ? value : undefined}
-      >
-        {value}
-      </span>
-    </div>
-  );
-}
-
-function ProviderGlyph({ provider }: { provider: string | null }) {
-  if (!provider) {
-    return (
-      <span className="inline-flex size-[26px] items-center justify-center rounded-md border border-border/60 bg-muted/40 text-[10px] font-semibold uppercase text-muted-foreground">
-        ?
-      </span>
-    );
-  }
-  const letter = provider.charAt(0).toUpperCase();
-  return (
-    <span className="inline-flex size-[26px] items-center justify-center rounded-md bg-foreground/90 text-[12px] font-semibold uppercase text-background">
-      {letter}
-    </span>
-  );
-}
+import { HostMatrixCard } from "./HostCapabilityMatrix";
 
 const decorativeHandleClass = "!opacity-0 !w-2 !h-2";
 
 /* ============================================================
-   Host group — the dashed parent. Empty render; just paints the
-   container and floats the host name strip on top. Its size is
-   data-driven from the builder so each host's silhouette differs.
+   Sub-region click dispatch. The matrix is a single ReactFlow
+   node, but its inner buttons (Agent stats, Protocol band, Apps
+   banner, individual cap rows) need to dispatch their OWN ids
+   to `onSelectNode` so the focus panel opens the right tab.
+   Context threads that callback from the canvas down through
+   the node renderer without making it a renderer prop.
    ============================================================ */
-const HostGroupNodeRenderer = memo(
-  (props: NodeProps<Node<HostGroupNodeData, "redesignHostGroup">>) => {
+const HostMatrixContext = createContext<{
+  selectedNodeId: string | null;
+  onSelectNode: (id: string) => void;
+} | null>(null);
+
+/* ============================================================
+   Host matrix node — the entire host surface in one ReactFlow
+   node. Connects to the servers hub below it via the standard
+   smooth-step edge.
+   ============================================================ */
+const HostMatrixNodeRenderer = memo(
+  (props: NodeProps<Node<HostMatrixNodeData, "redesignHostMatrix">>) => {
     const { data } = props;
+    const ctx = useContext(HostMatrixContext);
     return (
-      <div
-        className="relative h-full w-full rounded-[16px] border-2 border-dashed"
-        style={{
-          borderColor: "color-mix(in oklch, var(--primary) 50%, transparent)",
-          backgroundColor:
-            "color-mix(in oklch, var(--primary) 3.5%, transparent)",
-        }}
-      >
-        <span
-          className="pointer-events-none absolute left-3.5 top-2 block max-w-[min(840px,calc(100%-1.75rem))] truncate text-[13px] font-semibold leading-tight tracking-tight text-foreground"
-          title={data.hostName}
-        >
-          {data.hostName}
-        </span>
+      <div className="w-full">
+        <HostMatrixCard
+          hostName={data.hostName}
+          agent={data.agent}
+          protocolBand={data.protocolBand}
+          clientCaps={data.clientCaps}
+          appsCaps={data.appsCaps}
+          appsExtensionAdvertised={data.appsExtensionAdvertised}
+          hostContext={data.hostContext}
+          selectedNodeId={ctx?.selectedNodeId ?? null}
+          onSelectNode={ctx?.onSelectNode ?? (() => {})}
+        />
         <Handle
           type="source"
           position={Position.Bottom}
@@ -125,249 +70,13 @@ const HostGroupNodeRenderer = memo(
     );
   },
 );
-HostGroupNodeRenderer.displayName = "HostGroupNodeRenderer";
+HostMatrixNodeRenderer.displayName = "HostMatrixNodeRenderer";
 
 /* ============================================================
-   Agent identity — portrait card with prominent model badge.
-   This is the host's "operator identity" and stays a single
-   card because its fields form a portrait, not a list.
-   ============================================================ */
-const AgentIdentityRenderer = memo(
-  (props: NodeProps<Node<AgentIdentityNodeData, "redesignAgentIdentity">>) => {
-    const { data, selected } = props;
-    const attention = new Set(data.attentionFields);
-    const changed = new Set(data.changedFields);
-    const modelChanged = changed.has("modelId");
-    return (
-      <div
-        className={cn(
-          "group flex w-full flex-col overflow-hidden rounded-[12px] bg-background shadow-sm transition-all hover:shadow-md",
-          "border-[1.5px]",
-          selected && "ring-2 ring-primary/45",
-        )}
-        style={{
-          borderColor: "color-mix(in oklch, var(--primary) 55%, transparent)",
-        }}
-      >
-        <div className="flex items-center gap-2.5 rounded-t-[10px] border-b border-border/60 bg-muted/25 px-3 py-2.5">
-          <div className="flex min-w-0 flex-col justify-center">
-            <span className="truncate text-[13px] font-semibold leading-tight text-foreground">
-              Agent
-            </span>
-          </div>
-          <span
-            className="ml-auto size-1.5 rounded-full"
-            style={{
-              backgroundColor:
-                "color-mix(in oklch, var(--primary) 80%, transparent)",
-              boxShadow:
-                "0 0 8px color-mix(in oklch, var(--primary) 60%, transparent)",
-            }}
-            aria-hidden
-          />
-        </div>
-        <div className="flex flex-col px-3 pb-3 pt-2">
-          {/* Model row — the visual hero of the identity card. The
-              provider letter glyph + monospace model name makes the
-              host's "engine" the dominant cue, with the rest of the
-              fields living as supporting context below. */}
-          <div
-            className={cn(
-              "flex items-center gap-2 border-b border-dashed border-border/60 pb-2.5 pt-1.5",
-              modelChanged && "host-redesign-field-flash",
-            )}
-          >
-            <ProviderGlyph provider={data.modelProvider} />
-            <span
-              className="min-w-0 flex-1 truncate font-mono text-[12.5px] font-medium"
-              title={data.modelLabel}
-            >
-              {data.modelLabel}
-            </span>
-          </div>
-          <div className="mt-1.5 flex flex-col">
-            <FieldRow
-              label="Temperature"
-              value={data.temperature.toFixed(2)}
-              mono
-              changed={changed.has("temperature")}
-            />
-            <FieldRow
-              label="Host style"
-              value={data.hostStyleLabel}
-              changed={changed.has("hostStyle")}
-            />
-            <FieldRow
-              label="Tool approval"
-              value={data.toolApproval ? "on" : "off"}
-              changed={changed.has("toolApproval")}
-            />
-            <FieldRow
-              label="System prompt"
-              value={data.systemPromptEmpty ? "(empty)" : "configured"}
-              attention={attention.has("systemPrompt")}
-              changed={changed.has("systemPrompt")}
-            />
-          </div>
-        </div>
-        <Handle
-          type="target"
-          position={Position.Top}
-          id="top"
-          className={decorativeHandleClass}
-        />
-      </div>
-    );
-  },
-);
-AgentIdentityRenderer.displayName = "AgentIdentityRenderer";
-
-/* ============================================================
-   Section hub — small puck for Protocol + Apps (title + optional
-   protocol subtitle when versions are pinned; no icons).
-   ============================================================ */
-const SectionHubRenderer = memo(
-  (props: NodeProps<Node<SectionHubNodeData, "redesignSectionHub">>) => {
-    const { data, selected } = props;
-    const subtitle = data.subtitle.trim();
-    return (
-      <div
-        className={cn(
-          "flex h-full w-full items-center gap-3 rounded-[10px] border border-border/70 bg-card/95 px-3 shadow-sm transition-all hover:shadow-md",
-          selected && "ring-2 ring-primary/40",
-          data.hasAttention && "border-amber-500/60",
-        )}
-      >
-        <div className="flex min-w-0 flex-col">
-          <span className="truncate text-[12.5px] font-semibold leading-tight">
-            {data.title}
-          </span>
-          {subtitle !== "" ? (
-            <span
-              className={cn(
-                "truncate font-mono text-[10px] leading-tight text-muted-foreground",
-                data.subtitleChanged && "host-redesign-subtitle-flash",
-              )}
-              title={subtitle}
-            >
-              {subtitle}
-            </span>
-          ) : null}
-        </div>
-        <Handle
-          type="target"
-          position={Position.Top}
-          id="top"
-          className={decorativeHandleClass}
-        />
-        <Handle
-          type="source"
-          position={Position.Right}
-          id="right"
-          className={decorativeHandleClass}
-        />
-      </div>
-    );
-  },
-);
-SectionHubRenderer.displayName = "SectionHubRenderer";
-
-/* ============================================================
-   Protocol leaf — uppercase label + monospace value.
-   ============================================================ */
-const ProtocolLeafRenderer = memo(
-  (props: NodeProps<Node<ProtocolLeafNodeData, "redesignProtocolLeaf">>) => {
-    const { data, selected } = props;
-    return (
-      <div
-        className={cn(
-          "flex h-full w-full flex-col justify-center gap-[1px] rounded-[8px] border border-border/60 bg-card/95 px-2.5 py-1 shadow-sm transition-colors",
-          selected && "ring-2 ring-primary/40",
-          data.hasAttention && "border-amber-500/60",
-          data.isChanged && "host-redesign-leaf-flash",
-        )}
-      >
-        <span className="text-[9px] uppercase leading-tight tracking-[0.08em] text-muted-foreground">
-          {data.label}
-        </span>
-        <span
-          className="line-clamp-2 break-words font-mono text-[11px] font-medium leading-[1.15]"
-          title={data.value}
-        >
-          {data.value}
-        </span>
-        <Handle
-          type="target"
-          position={Position.Left}
-          id="left"
-          className={decorativeHandleClass}
-        />
-      </div>
-    );
-  },
-);
-ProtocolLeafRenderer.displayName = "ProtocolLeafRenderer";
-
-/* ============================================================
-   Apps cap leaf — dot + monospace capability name + qualifier.
-   Off-state renders as dimmed + struck-through so the *absence*
-   of a cap is visually load-bearing.
-   ============================================================ */
-const AppsCapLeafRenderer = memo(
-  (props: NodeProps<Node<AppsCapLeafNodeData, "redesignAppsCapLeaf">>) => {
-    const { data, selected } = props;
-    return (
-      <div
-        className={cn(
-          "group flex h-full w-full items-center gap-2 rounded-[8px] border border-border/60 bg-card/95 px-2.5 py-1 shadow-sm transition-colors",
-          selected && "ring-2 ring-primary/40",
-          !data.on && "opacity-60",
-          data.isChanged && "host-redesign-leaf-flash",
-          data.isNewlyOn && "host-redesign-leaf-newly-on",
-        )}
-      >
-        <span
-          aria-hidden
-          className={cn(
-            "size-[7px] shrink-0 rounded-full",
-            data.on ? "bg-emerald-400" : "bg-muted-foreground/40",
-          )}
-          style={
-            data.on
-              ? { boxShadow: "0 0 6px color-mix(in oklch, currentColor 60%, transparent)" }
-              : undefined
-          }
-        />
-        <span
-          className={cn(
-            "min-w-0 flex-1 truncate font-mono text-[11px] font-medium leading-tight",
-            !data.on && "text-muted-foreground line-through",
-          )}
-          title={data.label}
-        >
-          {data.label}
-        </span>
-        {data.qualifier ? (
-          <span className="shrink-0 rounded-[3px] bg-white/[0.04] px-1 py-[1px] font-mono text-[9px] text-muted-foreground">
-            {data.qualifier}
-          </span>
-        ) : null}
-        <Handle
-          type="target"
-          position={Position.Left}
-          id="left"
-          className={decorativeHandleClass}
-        />
-      </div>
-    );
-  },
-);
-AppsCapLeafRenderer.displayName = "AppsCapLeafRenderer";
-
-/* ============================================================
-   Servers hub + cards + add-server pill — unchanged from the
-   previous design; their geometry already responded to server
-   count, which the redesign keeps.
+   Servers hub + server cards + add-server pill. Unchanged from
+   the previous design — geometry already scales with server
+   count and the canvas-level edges still describe the host's
+   dependency on each server.
    ============================================================ */
 const ServersHubNodeRenderer = memo(
   (props: NodeProps<Node<ServersHubNodeData, "redesignServersHub">>) => {
@@ -406,9 +115,46 @@ const ServersHubNodeRenderer = memo(
 );
 ServersHubNodeRenderer.displayName = "ServersHubNodeRenderer";
 
+/**
+ * Map server runtime state + insecure-URL signal to the indicator dot
+ * shown next to the server name. Insecure http URLs intentionally win over
+ * runtime status — a successfully-connected http server is still worth
+ * flagging. "unknown" falls back to muted so the dot doesn't lie when the
+ * builder is rendered without runtime context (e.g. in canvas tests).
+ */
+export function getServerStatusDot(data: {
+  insecure: boolean;
+  connectionStatus: ServerCardNodeData["connectionStatus"];
+}): { dotClass: string; statusLabel: string } {
+  if (data.insecure) {
+    return { dotClass: "bg-amber-500", statusLabel: "Insecure (http)" };
+  }
+  switch (data.connectionStatus) {
+    case "connected":
+      return { dotClass: "bg-emerald-500", statusLabel: "Connected" };
+    case "connecting":
+    case "oauth-flow":
+      return {
+        dotClass: "bg-amber-500 animate-pulse",
+        statusLabel:
+          data.connectionStatus === "oauth-flow"
+            ? "OAuth in progress"
+            : "Connecting",
+      };
+    case "failed":
+      return { dotClass: "bg-red-500", statusLabel: "Connection failed" };
+    case "disconnected":
+      return { dotClass: "bg-muted-foreground/40", statusLabel: "Disconnected" };
+    case "unknown":
+    default:
+      return { dotClass: "bg-muted-foreground/30", statusLabel: "Unknown" };
+  }
+}
+
 const ServerCardNodeRenderer = memo(
   (props: NodeProps<Node<ServerCardNodeData, "redesignServerCard">>) => {
     const { data, selected } = props;
+    const { dotClass, statusLabel } = getServerStatusDot(data);
     return (
       <div
         className={cn(
@@ -418,11 +164,9 @@ const ServerCardNodeRenderer = memo(
       >
         <div className="flex items-center gap-1.5">
           <span
-            className={cn(
-              "size-1.5 rounded-full",
-              data.insecure ? "bg-amber-500" : "bg-emerald-500",
-            )}
-            aria-hidden
+            className={cn("size-1.5 rounded-full", dotClass)}
+            aria-label={statusLabel}
+            title={statusLabel}
           />
           <span
             className="flex-1 truncate text-[12.5px] font-semibold"
@@ -469,11 +213,7 @@ const AddServerPillRenderer = memo(
 AddServerPillRenderer.displayName = "AddServerPillRenderer";
 
 const nodeTypes = {
-  redesignHostGroup: HostGroupNodeRenderer,
-  redesignAgentIdentity: AgentIdentityRenderer,
-  redesignSectionHub: SectionHubRenderer,
-  redesignProtocolLeaf: ProtocolLeafRenderer,
-  redesignAppsCapLeaf: AppsCapLeafRenderer,
+  redesignHostMatrix: HostMatrixNodeRenderer,
   redesignServersHub: ServersHubNodeRenderer,
   redesignServerCard: ServerCardNodeRenderer,
   redesignAddServer: AddServerPillRenderer,
@@ -494,74 +234,26 @@ interface RedesignedHostCanvasProps {
   onSelectNode: (nodeId: string) => void;
   onClearSelection: () => void;
   onAddServer: () => void;
-  /**
-   * Brand shell tokens for the active host style. Cascades brand
-   * `--background` / `--foreground` / `--card` / `--border` etc. into the
-   * subtree so descendants using design-system tokens (`bg-background`,
-   * `text-foreground`, `bg-muted`, `border-border`, …) repaint to brand
-   * automatically. Falls back to default theme tokens when omitted.
-   */
   shellStyle?: CSSProperties;
+  /**
+   * Read-only mode: rendered identically but inert.
+   *
+   * - The "add server" pill node is filtered out of the view model so
+   *   the user can't request an add.
+   * - Node clicks no longer dispatch `onSelectNode` (the focus panel
+   *   never opens). Instead, if `onRequestEdit` is supplied, a single
+   *   click anywhere in the canvas calls it so the host surface can
+   *   route the user to a writable editor (e.g. "open this host in
+   *   the Hosts tab").
+   * - Selection state is suppressed visually so the canvas reads as
+   *   a static summary rather than an interactive picker.
+   *
+   * Used by the chatbox builder to embed the host viz as a live but
+   * uneditable summary of the chatbox's referenced host.
+   */
+  readOnly?: boolean;
+  onRequestEdit?: () => void;
 }
-
-/**
- * Inline CSS — keeps the diff/morph animation contract co-located
- * with the renderers that depend on it. Scoped to `.host-redesign-canvas`
- * so the `.react-flow__node` transform transition doesn't leak into
- * other canvases on the same page.
- */
-const CANVAS_STYLES = `
-.host-redesign-canvas .react-flow__node {
-  transition: transform 520ms cubic-bezier(0.32, 0.72, 0, 1);
-}
-.host-redesign-canvas .react-flow__edge-path {
-  transition: stroke 360ms ease, stroke-width 360ms ease,
-              stroke-dasharray 360ms ease, d 520ms cubic-bezier(0.32, 0.72, 0, 1);
-}
-@keyframes hostRedesignDiffFlash {
-  0% {
-    background-color: oklch(0.78 0.17 75 / 0.42);
-    box-shadow: inset 3px 0 0 oklch(0.78 0.17 75), 0 0 0 1px oklch(0.78 0.17 75 / 0.5);
-  }
-  70% {
-    background-color: oklch(0.78 0.17 75 / 0.18);
-    box-shadow: inset 3px 0 0 oklch(0.78 0.17 75), 0 0 0 1px oklch(0.78 0.17 75 / 0.25);
-  }
-  100% {
-    background-color: transparent;
-    box-shadow: inset 3px 0 0 transparent, 0 0 0 1px transparent;
-  }
-}
-.host-redesign-field-flash {
-  animation: hostRedesignDiffFlash 2.4s ease-out;
-  border-radius: 4px;
-}
-.host-redesign-leaf-flash {
-  animation: hostRedesignDiffFlash 2.4s ease-out;
-}
-.host-redesign-subtitle-flash {
-  color: oklch(0.78 0.17 75) !important;
-  animation: hostRedesignSubtitleFade 1.5s ease-out forwards;
-}
-@keyframes hostRedesignSubtitleFade {
-  0% { color: oklch(0.78 0.17 75); }
-  100% { color: var(--muted-foreground, oklch(0.58 0.012 100)); }
-}
-.host-redesign-leaf-newly-on {
-  box-shadow: 0 0 0 1px oklch(0.78 0.17 75 / 0.55),
-              0 0 16px -4px oklch(0.78 0.17 75 / 0.6);
-  animation: hostRedesignNewlyOn 1.5s ease-out;
-}
-@keyframes hostRedesignNewlyOn {
-  0% {
-    box-shadow: 0 0 0 1px oklch(0.78 0.17 75 / 0.75),
-                0 0 24px -4px oklch(0.78 0.17 75 / 0.7);
-  }
-  100% {
-    box-shadow: 0 0 0 1px transparent, 0 0 0 0 transparent;
-  }
-}
-`;
 
 export function RedesignedHostCanvas({
   viewModel,
@@ -570,16 +262,47 @@ export function RedesignedHostCanvas({
   onClearSelection,
   onAddServer,
   shellStyle,
+  readOnly = false,
+  onRequestEdit,
 }: RedesignedHostCanvasProps) {
+  const filteredNodes = useMemo(
+    () =>
+      readOnly
+        ? viewModel.nodes.filter((node) => node.type !== "redesignAddServer")
+        : viewModel.nodes,
+    [viewModel.nodes, readOnly],
+  );
+  const filteredEdges = useMemo(
+    () =>
+      readOnly
+        ? viewModel.edges.filter(
+            (edge) => edge.source !== "add-server" && edge.target !== "add-server",
+          )
+        : viewModel.edges,
+    [viewModel.edges, readOnly],
+  );
   const nodes = useMemo(
     () =>
-      viewModel.nodes.map((node) =>
-        node.type === "redesignHostGroup" ||
-        node.type === "redesignAddServer"
+      filteredNodes.map((node) =>
+        node.type === "redesignAddServer" || node.type === "redesignHostMatrix"
           ? node
-          : { ...node, selected: node.id === selectedNodeId },
+          : {
+              ...node,
+              selected: readOnly ? false : node.id === selectedNodeId,
+            },
       ),
-    [viewModel.nodes, selectedNodeId],
+    [filteredNodes, selectedNodeId, readOnly],
+  );
+
+  // In read-only mode the matrix sub-nodes shouldn't dispatch selection
+  // either; pass a no-op so internal click handlers fall through to the
+  // canvas-level onNodeClick (which we redirect to onRequestEdit).
+  const matrixCtx = useMemo(
+    () =>
+      readOnly
+        ? { selectedNodeId: null, onSelectNode: () => {} }
+        : { selectedNodeId, onSelectNode },
+    [selectedNodeId, onSelectNode, readOnly],
   );
 
   return (
@@ -587,45 +310,50 @@ export function RedesignedHostCanvas({
       className="host-redesign-canvas relative h-full w-full overflow-hidden rounded-[28px] border border-border/70 bg-background"
       style={shellStyle}
     >
-      <style>{CANVAS_STYLES}</style>
-      <ReactFlow
-        nodes={nodes}
-        edges={viewModel.edges}
-        nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
-        minZoom={0.55}
-        maxZoom={1.35}
-        proOptions={{ hideAttribution: true }}
-        panOnDrag
-        panOnScroll
-        zoomOnScroll
-        nodesDraggable={false}
-        nodesConnectable={false}
-        elementsSelectable
-        fitView
-        fitViewOptions={{ padding: 0.18 }}
-        onNodeClick={(_, node) => {
-          if (node.id === "add-server") {
-            onAddServer();
-            return;
-          }
-          onSelectNode(node.id);
-        }}
-        onPaneClick={onClearSelection}
-      >
-        <Background
-          id="host-redesign-dots"
-          variant={BackgroundVariant.Dots}
-          gap={16}
-          size={0.9}
-          color="oklch(0.55 0.02 250 / 0.22)"
-          patternClassName="opacity-[0.45]"
-        />
-        <Controls
-          showInteractive={false}
-          className="!rounded-xl !border !border-border/70 !bg-card/95"
-        />
-      </ReactFlow>
+      <HostMatrixContext.Provider value={matrixCtx}>
+        <ReactFlow
+          nodes={nodes}
+          edges={filteredEdges}
+          nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
+          minZoom={0.55}
+          maxZoom={1.35}
+          proOptions={{ hideAttribution: true }}
+          panOnDrag
+          panOnScroll
+          zoomOnScroll
+          nodesDraggable={false}
+          nodesConnectable={false}
+          elementsSelectable={!readOnly}
+          fitView
+          fitViewOptions={{ padding: 0.18 }}
+          onNodeClick={(_, node) => {
+            if (readOnly) {
+              onRequestEdit?.();
+              return;
+            }
+            if (node.id === "add-server") {
+              onAddServer();
+              return;
+            }
+            onSelectNode(node.id);
+          }}
+          onPaneClick={readOnly ? onRequestEdit : onClearSelection}
+        >
+          <Background
+            id="host-redesign-dots"
+            variant={BackgroundVariant.Dots}
+            gap={16}
+            size={0.9}
+            color="oklch(0.55 0.02 250 / 0.22)"
+            patternClassName="opacity-[0.45]"
+          />
+          <Controls
+            showInteractive={false}
+            className="!rounded-xl !border !border-border/70 !bg-card/95"
+          />
+        </ReactFlow>
+      </HostMatrixContext.Provider>
     </div>
   );
 }

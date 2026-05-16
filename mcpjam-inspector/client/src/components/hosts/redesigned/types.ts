@@ -7,11 +7,11 @@ import type { HostConfigInputV2, HostStyleId } from "@/lib/host-config-v2";
  * Servers → General).
  */
 export type HostFocusTabId =
-  | "general"
   | "behavior"
   | "protocol"
   | "apps"
-  | "servers";
+  | "servers"
+  | "appearance";
 
 /** Where the user clicked to open the focus overlay. Drives return-focus. */
 export type HostFocusOriginNodeId = string | null;
@@ -127,6 +127,52 @@ export interface AppsCapLeafNodeData extends Record<string, unknown> {
   isNewlyOn: boolean;
 }
 
+/**
+ * MCP client-capability row. One per base-protocol cap declared in the
+ * `initialize` handshake (roots / sampling / elicitation / tasks /
+ * experimental). Diff bits drive the matrix's "M" / "+" gutter so a
+ * host switch reads the same way as the Apps cap matrix.
+ */
+export type ClientCapKey =
+  | "roots"
+  | "sampling"
+  | "elicitation"
+  | "tasks"
+  | "experimental";
+
+export interface ClientCapRow {
+  key: ClientCapKey;
+  on: boolean;
+  /** Short, mono tags rendered on the right (e.g. "listChanged", "form", "url"). */
+  subs: string[];
+  isChanged: boolean;
+  isNewlyOn: boolean;
+}
+
+/**
+ * The host's entire surface, packed into one ReactFlow node. Replaces
+ * the previous atomized layout (agent + protocol hub + protocol leaves
+ * + apps hub + cap leaves + hostContext leaf). Servers stay as their
+ * own subgraph so the hub→servers edges remain.
+ */
+export interface HostMatrixNodeData extends Record<string, unknown> {
+  kind: "host-matrix";
+  hostName: string;
+  agent: AgentIdentityNodeData | null;
+  protocolBand: ProtocolLeafNodeData[];
+  clientCaps: ClientCapRow[];
+  appsCaps: AppsCapLeafNodeData[];
+  /**
+   * Whether the client advertises `io.modelcontextprotocol/ui` in its
+   * `clientCapabilities.extensions`. When false, the host-side Apps caps
+   * (openLinks / serverTools / message / etc.) are inert — the client
+   * can't render iframes regardless of what the host claims — so the
+   * matrix hides the entire Apps section to avoid implying support.
+   */
+  appsExtensionAdvertised: boolean;
+  hostContext: ProtocolLeafNodeData | null;
+}
+
 export interface ServersHubNodeData extends Record<string, unknown> {
   kind: "servers-hub";
   totalCount: number;
@@ -140,6 +186,19 @@ export interface ServerCardNodeData extends Record<string, unknown> {
   isOptional: boolean;
   insecure: boolean;
   hasOverride: boolean;
+  /**
+   * Runtime connection state surfaced from `appState.servers[name]`. Drives
+   * the indicator dot so the host canvas matches the Connect/Servers tab
+   * instead of unconditionally painting every server emerald. `unknown` is
+   * used when the host builder has no runtime data (e.g. tests).
+   */
+  connectionStatus:
+    | "connected"
+    | "connecting"
+    | "failed"
+    | "disconnected"
+    | "oauth-flow"
+    | "unknown";
 }
 
 export interface AddServerPillNodeData extends Record<string, unknown> {
@@ -148,31 +207,19 @@ export interface AddServerPillNodeData extends Record<string, unknown> {
 }
 
 export type HostRedesignNodeData =
-  | HostGroupNodeData
-  | AgentIdentityNodeData
-  | SectionHubNodeData
-  | ProtocolLeafNodeData
-  | AppsCapLeafNodeData
+  | HostMatrixNodeData
   | ServersHubNodeData
   | ServerCardNodeData
   | AddServerPillNodeData;
 
 export type HostRedesignNodeType =
-  | "redesignHostGroup"
-  | "redesignAgentIdentity"
-  | "redesignSectionHub"
-  | "redesignProtocolLeaf"
-  | "redesignAppsCapLeaf"
+  | "redesignHostMatrix"
   | "redesignServersHub"
   | "redesignServerCard"
   | "redesignAddServer";
 
 export type HostRedesignFlowNode =
-  | Node<HostGroupNodeData, "redesignHostGroup">
-  | Node<AgentIdentityNodeData, "redesignAgentIdentity">
-  | Node<SectionHubNodeData, "redesignSectionHub">
-  | Node<ProtocolLeafNodeData, "redesignProtocolLeaf">
-  | Node<AppsCapLeafNodeData, "redesignAppsCapLeaf">
+  | Node<HostMatrixNodeData, "redesignHostMatrix">
   | Node<ServersHubNodeData, "redesignServersHub">
   | Node<ServerCardNodeData, "redesignServerCard">
   | Node<AddServerPillNodeData, "redesignAddServer">;
@@ -197,7 +244,12 @@ export interface HostRedesignContext {
   draft: HostConfigInputV2;
   savedSnapshotId: string;
   isDirty: boolean;
-  projectServers: ReadonlyArray<{ id: string; name: string; url?: string }>;
+  projectServers: ReadonlyArray<{
+    id: string;
+    name: string;
+    url?: string;
+    connectionStatus?: ServerCardNodeData["connectionStatus"];
+  }>;
   /**
    * Previous host's config + display name, captured by the builder view
    * on host switch. When present, the builder marks leaves/fields whose
@@ -211,10 +263,17 @@ export interface HostRedesignContext {
 }
 
 /** Stable ids for the canvas-level nodes. */
-export const HOST_GROUP_NODE_ID = "host-group";
-export const AGENT_IDENTITY_NODE_ID = "host-group:agent";
-export const PROTOCOL_HUB_NODE_ID = "host-group:protocol-hub";
-export const APPS_HUB_NODE_ID = "host-group:apps-hub";
+export const HOST_MATRIX_NODE_ID = "host-matrix";
+/** @deprecated alias retained for focusTabForNodeId — same id as the matrix. */
+export const HOST_GROUP_NODE_ID = HOST_MATRIX_NODE_ID;
+/**
+ * Sub-region ids — these no longer correspond to discrete ReactFlow nodes
+ * (the host renders as a single matrix node) but are still used by
+ * `focusTabForNodeId` to route region clicks to the right focus tab.
+ */
+export const AGENT_IDENTITY_NODE_ID = "host-matrix:agent";
+export const PROTOCOL_HUB_NODE_ID = "host-matrix:protocol";
+export const APPS_HUB_NODE_ID = "host-matrix:apps";
 export const SERVERS_HUB_NODE_ID = "servers-hub";
 export const ADD_SERVER_NODE_ID = "add-server";
 
@@ -231,7 +290,10 @@ export function focusTabForNodeId(
   nodeId: string,
 ): { tab: HostFocusTabId; selectedServerId: string | null } | null {
   if (nodeId === HOST_GROUP_NODE_ID) {
-    return { tab: "general", selectedServerId: null };
+    // After the General tab was removed, host-group clicks land on
+    // Behavior — it's the most active settings tab and the natural
+    // entry point for "I clicked the host bubble, show me settings".
+    return { tab: "behavior", selectedServerId: null };
   }
   if (nodeId === AGENT_IDENTITY_NODE_ID) {
     return { tab: "behavior", selectedServerId: null };

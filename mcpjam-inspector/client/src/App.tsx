@@ -74,6 +74,7 @@ import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
 import { AppStateProvider } from "./state/app-state-context";
+import { ServerActionsProvider } from "./state/server-actions-context";
 import { useOrganizationQueries } from "./hooks/useOrganizations";
 import { useOrganizationBilling } from "./hooks/useOrganizationBilling";
 import type { BillingFeatureName } from "./hooks/useOrganizationBilling";
@@ -1942,6 +1943,7 @@ export default function App() {
       isMultiSelectEnabled: activeTab === "playground",
       onServerChange: setSelectedServer,
       onMultiServerToggle: toggleServerSelection,
+      onSelectMultipleServers: setSelectedMCPConfigs,
       onConnect: handleConnect,
       onReconnect: handleReconnect,
       showOnlyOAuthServers: false,
@@ -1954,6 +1956,7 @@ export default function App() {
     appState.selectedMultipleServers,
     setSelectedServer,
     toggleServerSelection,
+    setSelectedMCPConfigs,
     handleConnect,
     handleReconnect,
   ]);
@@ -2086,8 +2089,20 @@ export default function App() {
         }
       : undefined;
 
+  // The global host bar lives in the chrome above the active tab and
+  // doubles as a "currently viewing host X" picker. It only makes sense
+  // on tabs whose primary view *is* a host (connect = host canvas;
+  // hosts = host editor). Other surfaces (chatboxes, evaluate, learning,
+  // etc.) pin themselves to a specific host via their own row's
+  // `namedHostId`, so showing a global host picker there is misleading
+  // — switching it doesn't (and shouldn't) affect what's rendered.
+  const isHostBarRelevantTab =
+    activeTab === "connect" || activeTab === "hosts";
   const globalHostBarProps =
-    hostsHubFlagEnabled && isAuthenticated && convexProjectId
+    hostsHubFlagEnabled &&
+    isAuthenticated &&
+    convexProjectId &&
+    isHostBarRelevantTab
       ? {
           projectId: convexProjectId,
           onEditHost: (hostId: string) => {
@@ -2640,6 +2655,7 @@ export default function App() {
         savedClientConfig={activeProject?.clientConfig}
       />
       <AppStateProvider appState={effectiveAppState}>
+      <ServerActionsProvider actions={{ ensureServersReady }}>
       <AppReadyProvider
         isLoadingAppState={isLoading}
         isConvexAuthLoading={isAuthLoading}
@@ -2689,6 +2705,7 @@ export default function App() {
           <BillingHandoffLoading overlay />
         ) : null}
       </AppReadyProvider>
+      </ServerActionsProvider>
       </AppStateProvider>
     </PreferencesStoreProvider>
   );

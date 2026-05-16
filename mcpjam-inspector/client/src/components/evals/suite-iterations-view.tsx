@@ -297,6 +297,16 @@ export function SuiteIterationsView({
     return run ?? null;
   }, [selectedRunId, runs]);
 
+  // Resolve namedHostId → display name for any run-detail / list views
+  // that want to surface which host a run was triggered against.
+  const hostNamesById = useMemo(() => {
+    const map = new Map<string, string | null>();
+    for (const attachment of suite.hostAttachments ?? []) {
+      map.set(attachment.namedHostId, attachment.hostName);
+    }
+    return map;
+  }, [suite.hostAttachments]);
+
   // Derive selectedIterationId from route
   const selectedIterationId =
     route.type === "run-detail" ? route.iteration ?? null : null;
@@ -839,6 +849,7 @@ export function SuiteIterationsView({
                   serverNames={suite.environment?.servers || []}
                   selectedIterationId={selectedIterationId}
                   onSelectIteration={handleSelectIteration}
+                  hostNamesById={hostNamesById}
                   kpiPlacement={
                     showSuiteHeader && viewMode === "run-detail"
                       ? "header"

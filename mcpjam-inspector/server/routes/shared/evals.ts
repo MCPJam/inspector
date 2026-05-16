@@ -120,6 +120,13 @@ export const RunEvalsRequestSchema = z.object({
    * does NOT mutate persisted suite/case records.
    */
   matchOptionsOverride: matchOptionsSchema.optional(),
+  /**
+   * Scope this run to a single host attached to the suite. The Convex
+   * `startTestSuiteRun` mutation snapshots the host's current config and
+   * derives the run's server environment from it. When the suite has
+   * multiple host attachments, the client makes one request per host.
+   */
+  namedHostId: z.string().optional(),
 });
 
 export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
@@ -405,6 +412,7 @@ export async function runEvalsWithManager(
     suiteRerun,
     iterationOverride,
     matchOptionsOverride,
+    namedHostId,
   } = request;
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
@@ -664,6 +672,7 @@ export async function runEvalsWithManager(
     toolSnapshotDebug,
     iterationOverride,
     matchOptionsOverride,
+    namedHostId,
   });
 
   const replayConfigsToStore = filterAndRemapReplayConfigs(

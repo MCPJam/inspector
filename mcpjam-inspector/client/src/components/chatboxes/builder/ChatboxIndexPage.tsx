@@ -4,7 +4,6 @@ import {
   LayoutGrid,
   List,
   Loader2,
-  Pencil,
   Plus,
   Search,
 } from "lucide-react";
@@ -18,8 +17,6 @@ import type { ChatboxListItem } from "@/hooks/useChatboxes";
 import { getChatboxHostStyleShortLabel } from "@/lib/chatbox-host-style";
 import { ChatboxDeleteConfirmDialog } from "@/components/chatboxes/ChatboxDeleteConfirmDialog";
 import { ChatboxIndexRowActionsMenu } from "./chatbox-index-row-actions";
-import { CHATBOX_BLANK_STARTER, CHATBOX_TEMPLATE_STARTERS } from "./drafts";
-import type { ChatboxStarterDefinition } from "./types";
 
 export type ChatboxOpenOptions = {
   initialViewMode?: "setup" | "preview" | "usage" | "insights";
@@ -93,10 +90,8 @@ interface ChatboxIndexPageProps {
   deletingChatboxId?: string | null;
   /** Chatbox id currently being duplicated. */
   duplicatingChatboxId?: string | null;
-  /** Opens the starter chooser (e.g. Command dialog). */
+  /** Opens the host-picker dialog (used by both the empty state CTA and the "New chatbox" button). */
   onOpenStarterLauncher: () => void;
-  /** Creates a builder draft from a starter (inline tiles or launcher). */
-  onSelectStarter: (starter: ChatboxStarterDefinition) => void;
   isCreateChatboxDisabled?: boolean;
   isCreateChatboxLoading?: boolean;
   createChatboxUpsell?: {
@@ -118,7 +113,6 @@ export function ChatboxIndexPage({
   deletingChatboxId = null,
   duplicatingChatboxId = null,
   onOpenStarterLauncher,
-  onSelectStarter,
   isCreateChatboxDisabled = false,
   isCreateChatboxLoading = false,
   createChatboxUpsell = null,
@@ -269,61 +263,27 @@ export function ChatboxIndexPage({
           </div>
         ) : isFirstRunEmpty ? (
           <div className="flex min-h-full flex-col items-center justify-center px-2 py-4 sm:py-8">
-            <div className="w-full max-w-xl">
-              <h4 className="text-center text-[11px] font-semibold tracking-[0.22em] text-muted-foreground uppercase animate-in fade-in slide-in-from-bottom-2 duration-500 motion-reduce:animate-none motion-reduce:opacity-100">
+            <div className="w-full max-w-md text-center animate-in fade-in slide-in-from-bottom-2 duration-500 motion-reduce:animate-none motion-reduce:opacity-100">
+              <h4 className="text-[11px] font-semibold tracking-[0.22em] text-muted-foreground uppercase">
                 Get started
               </h4>
-              <div className="mt-6 grid gap-4 sm:grid-cols-2">
-                {[
-                  ...CHATBOX_TEMPLATE_STARTERS.map((starter) => ({
-                    key: starter.id,
-                    starter,
-                    icon: "pencil" as const,
-                  })),
-                  {
-                    key: CHATBOX_BLANK_STARTER.id,
-                    starter: CHATBOX_BLANK_STARTER,
-                    icon: "plus" as const,
-                  },
-                ].map(({ key, starter, icon }, tileIndex) => {
-                  const staggerDelay =
-                    tileIndex === 0
-                      ? ""
-                      : tileIndex === 1
-                        ? "delay-75"
-                        : "delay-150";
-                  return (
-                    <button
-                      key={key}
-                      type="button"
-                      onClick={() => onSelectStarter(starter)}
-                      className={`group flex w-full flex-col gap-4 rounded-2xl border border-border/70 bg-card/70 p-6 text-left shadow-sm outline-none ring-offset-background transition-[transform,box-shadow,border-color,background-color] [transition-duration:200ms] ease-out animate-in fade-in slide-in-from-bottom-3 duration-500 hover:-translate-y-0.5 hover:border-primary/35 hover:bg-card hover:shadow-md focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 motion-reduce:animate-none motion-reduce:opacity-100 ${staggerDelay}`}
-                    >
-                      <span className="inline-flex size-11 items-center justify-center rounded-2xl border border-border/60 bg-muted/35 transition-colors duration-200 group-hover:border-primary/20 group-hover:bg-muted/55">
-                        {icon === "pencil" ? (
-                          <Pencil
-                            className="size-5 text-muted-foreground transition-colors duration-200 group-hover:text-foreground/80"
-                            aria-hidden
-                          />
-                        ) : (
-                          <Plus
-                            className="size-5 text-muted-foreground transition-colors duration-200 group-hover:text-foreground/80"
-                            aria-hidden
-                          />
-                        )}
-                      </span>
-                      <span className="text-base font-semibold tracking-tight text-foreground">
-                        {starter.id === CHATBOX_BLANK_STARTER.id
-                          ? "Start from scratch"
-                          : starter.title}
-                      </span>
-                      <span className="line-clamp-3 text-sm leading-relaxed text-muted-foreground">
-                        {starter.description}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
+              <h2 className="mt-3 text-2xl font-semibold tracking-tight">
+                Create your first chatbox
+              </h2>
+              <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+                A chatbox is a shareable window onto one of your project's
+                hosts. Pick a host to use its model, prompt, and servers — you
+                can re-point the chatbox at a different host any time.
+              </p>
+              <Button
+                size="lg"
+                className="mt-6 gap-2 rounded-xl"
+                onClick={onOpenStarterLauncher}
+                disabled={isCreateChatboxDisabled || isCreateChatboxLoading}
+              >
+                <Plus className="size-4" />
+                Pick a host
+              </Button>
             </div>
           </div>
         ) : isSearchEmpty ? (

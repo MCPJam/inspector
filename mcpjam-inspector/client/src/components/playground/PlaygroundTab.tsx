@@ -1,16 +1,23 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { useConvexAuth } from "convex/react";
 import {
   AppBuilderStateProvider,
   useAppBuilderState,
 } from "@/components/ui-playground/hooks/use-app-builder-state";
 import {
+  ChatboxChatUiOverrideProvider,
   ChatboxHostStyleProvider,
   ChatboxHostThemeProvider,
 } from "@/contexts/chatbox-host-style-context";
 import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-host-capabilities-override-context";
+import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
 import { getChatboxShellStyle } from "@/lib/chatbox-host-style";
 import { cn } from "@/lib/utils";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { useHost } from "@/hooks/useHosts";
+import { usePreviewedHostId } from "@/hooks/use-previewed-host-id";
+import { useAutoConnectProjectServers } from "@/hooks/useAutoConnectProjectServers";
+import { useProjectServers } from "@/hooks/useViews";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -19,6 +26,7 @@ import {
 import type { ImperativePanelHandle } from "react-resizable-panels";
 import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
 import { LoggerView } from "@/components/logger-view";
+import { HostPicker } from "@/components/hosts/HostPicker";
 import { PlaygroundCenter } from "./PlaygroundCenter";
 import { PlaygroundPreviewedHostSync } from "./PlaygroundPreviewedHostSync";
 import { PlaygroundLeftRail } from "./PlaygroundLeftRail";
@@ -77,7 +85,45 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   const hostCapabilitiesOverride = usePreferencesStore(
     (state) => state.hostCapabilitiesOverride,
   );
+  const chatUiOverride = usePreferencesStore((state) => state.chatUiOverride);
   const shellStyle = getChatboxShellStyle(hostStyle, themeMode);
+
+  // Resolve the previewed host once at the tab root so the host-config-
+  // derived providers (Active MCP Profile, etc.) share a single Convex
+  // subscription with PlaygroundPreviewedHostSync below. `useHost`
+  // short-circuits on null hostId, so this is cheap when no host is
+  // picked yet.
+  const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
+  const [previewedHostId, setPreviewedHostId] = usePreviewedHostId(
+    props.activeProjectId ?? null,
+  );
+  const { host: previewedHost } = useHost({
+    isAuthenticated: isConvexAuthenticated,
+    hostId: previewedHostId,
+  });
+  const activeMcpProfile = previewedHost?.config.mcpProfile;
+
+  // Auto-connect the previewed host's REQUIRED servers once per session.
+  // No previewed host = no auto-connect. Optional servers stay
+  // disconnected until the user manually toggles them in the Servers tab.
+  const { servers: projectServersList } = useProjectServers({
+    projectId: props.activeProjectId ?? null,
+    isAuthenticated: isConvexAuthenticated,
+  });
+  const previewedHostRequiredNames = useMemo(() => {
+    const requiredIds = previewedHost?.config?.serverIds ?? [];
+    if (requiredIds.length === 0 || !projectServersList) return [];
+    const byId = new Map(
+      projectServersList.map((s) => [s._id, s.name] as const),
+    );
+    return requiredIds
+      .map((id) => byId.get(id))
+      .filter((name): name is string => !!name);
+  }, [previewedHost?.config?.serverIds, projectServersList]);
+  useAutoConnectProjectServers({
+    projectId: props.activeProjectId ?? null,
+    requiredServerNames: previewedHostRequiredNames,
+  });
 
   const appBuilderState = useAppBuilderState({
     activeProjectId: props.activeProjectId,
@@ -117,10 +163,12 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
 
   return (
     <AppBuilderStateProvider value={appBuilderState}>
+      <ActiveMcpProfileProvider value={activeMcpProfile}>
         <ChatboxHostStyleProvider value={hostStyle}>
           <ChatboxHostCapabilitiesOverrideProvider
             value={hostCapabilitiesOverride}
           >
+          <ChatboxChatUiOverrideProvider value={chatUiOverride}>
             <ChatboxHostThemeProvider value={themeMode}>
               <div
                 className={cn(
@@ -137,6 +185,20 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                 <PlaygroundPreviewedHostSync
                   projectId={props.activeProjectId ?? null}
                 />
+                {isConvexAuthenticated && props.activeProjectId ? (
+                  <div className="flex shrink-0 items-center gap-2 border-b px-4 py-2">
+                    <span className="text-xs text-muted-foreground">Host:</span>
+                    <div className="w-48">
+                      <HostPicker
+                        projectId={props.activeProjectId}
+                        value={previewedHostId}
+                        onChange={setPreviewedHostId}
+                        placeholder="Project default"
+                        noneLabel="Project default"
+                      />
+                    </div>
+                  </div>
+                ) : null}
                 <ResizablePanelGroup
                   direction="horizontal"
                   className="min-h-0 flex-1"
@@ -231,8 +293,10 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                 </ResizablePanelGroup>
               </div>
             </ChatboxHostThemeProvider>
+          </ChatboxChatUiOverrideProvider>
           </ChatboxHostCapabilitiesOverrideProvider>
         </ChatboxHostStyleProvider>
-      </AppBuilderStateProvider>
+      </ActiveMcpProfileProvider>
+    </AppBuilderStateProvider>
   );
 }

@@ -4,6 +4,7 @@ import { Copy, Loader2, MessageSquare } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { copyToClipboard } from "@/lib/clipboard";
+import { SessionHostConfigChip } from "@/components/chatboxes/SessionHostConfigChip";
 import type { ModelDefinition, ModelProvider } from "@/shared/types";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { TranscriptThread } from "@/components/chat-v2/thread/transcript-thread";
@@ -281,7 +282,8 @@ export function ShareUsageThreadDetail({
               </span>
             </div>
           </div>
-          <div className="flex shrink-0 flex-wrap gap-2">
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <SessionHostConfigChip sessionId={thread._id} />
             <Button
               type="button"
               variant="outline"

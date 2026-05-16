@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { isMCPJamProvidedModel, SUPPORTED_MODELS } from "@/shared/types";
 import type { ChatboxSettings } from "@/hooks/useChatboxes";
 import { useChatboxMutations } from "@/hooks/useChatboxes";
 import {
@@ -15,138 +14,46 @@ import {
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Textarea } from "@mcpjam/design-system/textarea";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@mcpjam/design-system/select";
-import { Slider } from "@mcpjam/design-system/slider";
-import { Switch } from "@mcpjam/design-system/switch";
-import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Label } from "@mcpjam/design-system/label";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
-import { useHost } from "@/hooks/useHosts";
-import { useConvexAuth } from "convex/react";
 import { HostPicker } from "@/components/hosts/HostPicker";
-import { hostConfigDtoToInput } from "@/lib/host-config-v2";
-
-interface ProjectServerOption {
-  _id: string;
-  name: string;
-  transportType: "stdio" | "http";
-}
 
 interface CreateChatboxDialogProps {
   isOpen: boolean;
   onClose: () => void;
   projectId: string;
-  projectServers: ProjectServerOption[];
   chatbox?: ChatboxSettings | null;
   onSaved?: (chatbox: ChatboxSettings) => void;
-  hostsEnabled?: boolean;
 }
 
-const DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant.";
-
+/**
+ * Create / edit a chatbox. Live-reference model: the chatbox owns only
+ * its name, description, and a pointer to a named host. All execution
+ * config (model, prompt, servers, capabilities, sandbox) lives on the
+ * referenced host and is edited through the hosts surface.
+ */
 export function CreateChatboxDialog({
   isOpen,
   onClose,
   projectId,
-  projectServers,
   chatbox,
   onSaved,
-  hostsEnabled = false,
 }: CreateChatboxDialogProps) {
-  const { isAuthenticated } = useConvexAuth();
   const { createChatbox, updateChatbox } = useChatboxMutations();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
-  const [modelId, setModelId] = useState("openai/gpt-5-mini");
-  const [temperature, setTemperature] = useState(0.7);
-  const [requireToolApproval, setRequireToolApproval] = useState(false);
-  const [allowGuestAccess, setAllowGuestAccess] = useState(false);
-  const [selectedServerIds, setSelectedServerIds] = useState<string[]>([]);
-  const [hostSeededOptionalIds, setHostSeededOptionalIds] = useState<string[]>(
-    [],
-  );
+  const [namedHostId, setNamedHostId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const [selectedHostId, setSelectedHostId] = useState<string | null>(null);
-  const { host: selectedHost } = useHost({
-    isAuthenticated: isAuthenticated && hostsEnabled,
-    hostId: selectedHostId,
-  });
-
-  const availableServers = useMemo(
-    () => projectServers.filter((server) => server.transportType === "http"),
-    [projectServers],
-  );
-  const hostedModels = useMemo(
-    () =>
-      SUPPORTED_MODELS.filter((model) =>
-        isMCPJamProvidedModel(String(model.id)),
-      ),
-    [],
-  );
 
   useEffect(() => {
-    if (!isOpen) {
-      return;
-    }
-
-    setSelectedHostId(null);
+    if (!isOpen) return;
     setName(chatbox?.name ?? "");
     setDescription(chatbox?.description ?? "");
-    setSystemPrompt(chatbox?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT);
-    setModelId(
-      chatbox?.modelId ??
-        hostedModels[0]?.id?.toString() ??
-        "openai/gpt-5-mini",
-    );
-    setTemperature(chatbox?.temperature ?? 0.7);
-    setRequireToolApproval(chatbox?.requireToolApproval ?? false);
-    setAllowGuestAccess(chatbox?.allowGuestAccess ?? false);
-    setSelectedServerIds(
-      chatbox?.servers.map((server) => server.serverId) ?? [],
-    );
-    setHostSeededOptionalIds([]);
-  }, [hostedModels, isOpen, chatbox]);
-
-  // Seed form from selected host. Chatboxes only support HTTP servers, so
-  // filter the host's server list to ids that exist as HTTP project servers.
-  // De-dupe across serverIds/optionalServerIds (optionalServerIds is a subset
-  // of serverIds per the host config model). Re-runs only when the selected
-  // host identity changes — depending on the full host object would
-  // overwrite user edits on background data refreshes.
-  useEffect(() => {
-    if (!selectedHost) return;
-    const config = selectedHost.config;
-    const allowedHttpIds = new Set(availableServers.map((s) => s._id));
-    const seededIds = Array.from(
-      new Set([...config.serverIds, ...config.optionalServerIds]),
-    ).filter((id) => allowedHttpIds.has(id));
-    const seededOptional = config.optionalServerIds.filter((id) =>
-      allowedHttpIds.has(id),
-    );
-    setModelId(config.modelId);
-    setSystemPrompt(config.systemPrompt);
-    setTemperature(config.temperature);
-    setRequireToolApproval(config.requireToolApproval);
-    setSelectedServerIds(seededIds);
-    setHostSeededOptionalIds(seededOptional);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedHost?.hostId]);
-
-  const handleToggleServer = (serverId: string, checked: boolean) => {
-    setSelectedServerIds((current) => {
-      if (checked) {
-        return current.includes(serverId) ? current : [...current, serverId];
-      }
-      return current.filter((id) => id !== serverId);
-    });
-  };
+    // For edits, preselect the chatbox's current host so the picker
+    // shows "Change host" rather than appearing unset. The backend
+    // response now includes `namedHostId` on the settings envelope.
+    setNamedHostId(chatbox?.namedHostId ?? null);
+  }, [isOpen, chatbox]);
 
   const handleSave = async () => {
     const trimmedName = name.trim();
@@ -154,53 +61,26 @@ export function CreateChatboxDialog({
       toast.error("Chatbox name is required");
       return;
     }
-    if (selectedServerIds.length === 0) {
-      toast.error("Select at least one HTTP server");
+    if (!namedHostId) {
+      toast.error("Pick a host before saving");
       return;
     }
 
     setIsSaving(true);
     try {
-      const optionalServerIds = chatbox
-        ? chatbox.servers
-            .filter(
-              (s) =>
-                s.optional === true && selectedServerIds.includes(s.serverId),
-            )
-            .map((s) => s.serverId)
-        : hostSeededOptionalIds.filter((id) => selectedServerIds.includes(id));
-
-      const payload = {
-        name: trimmedName,
-        description: description.trim() || undefined,
-        systemPrompt: systemPrompt.trim() || DEFAULT_SYSTEM_PROMPT,
-        modelId,
-        temperature,
-        hostStyle: chatbox?.hostStyle ?? "claude",
-        requireToolApproval,
-        allowGuestAccess,
-        serverIds: selectedServerIds,
-        optionalServerIds,
-      };
-
-      const hostSnapshot =
-        !chatbox && selectedHost && selectedHostId
-          ? {
-              namedHostId: selectedHostId,
-              hostConfigInput: hostConfigDtoToInput(selectedHost.config),
-            }
-          : {};
-
       const next = (
         chatbox
           ? await updateChatbox({
               chatboxId: chatbox.chatboxId,
-              ...payload,
+              name: trimmedName,
+              description: description.trim() || undefined,
+              namedHostId,
             })
           : await createChatbox({
               projectId,
-              ...payload,
-              ...hostSnapshot,
+              name: trimmedName,
+              description: description.trim() || undefined,
+              namedHostId,
             })
       ) as ChatboxSettings;
 
@@ -216,38 +96,18 @@ export function CreateChatboxDialog({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>
             {chatbox ? "Edit Chatbox" : "Create Chatbox"}
           </DialogTitle>
           <DialogDescription>
-            Configure a hosted chat environment with a fixed model, prompt, and
-            server set.
+            Chatboxes reuse a project host for their execution config. To
+            change the model, prompt, or servers, edit the host.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-5">
-          {hostsEnabled && !chatbox && (
-            <div className="grid gap-2">
-              <Label>Seed from host (optional)</Label>
-              <HostPicker
-                projectId={projectId}
-                value={selectedHostId}
-                onChange={setSelectedHostId}
-                placeholder="Choose a host to pre-fill settings"
-                includeNone={false}
-                noneLabel="No host"
-              />
-              {selectedHostId && (
-                <p className="text-xs text-muted-foreground">
-                  Model, prompt, and servers pre-filled from host. You can
-                  still adjust them below.
-                </p>
-              )}
-            </div>
-          )}
-
           <div className="grid gap-2">
             <Label htmlFor="chatbox-name">Name</Label>
             <Input
@@ -269,107 +129,19 @@ export function CreateChatboxDialog({
           </div>
 
           <div className="grid gap-2">
-            <Label htmlFor="chatbox-system-prompt">System prompt</Label>
-            <Textarea
-              id="chatbox-system-prompt"
-              value={systemPrompt}
-              onChange={(event) => setSystemPrompt(event.target.value)}
-              className="min-h-32"
+            <Label>Host</Label>
+            <HostPicker
+              projectId={projectId}
+              value={namedHostId}
+              onChange={setNamedHostId}
+              placeholder="Pick a host for this chatbox"
+              includeNone={false}
+              noneLabel="No host"
             />
-          </div>
-
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="grid gap-2">
-              <Label>Model</Label>
-              <Select value={modelId} onValueChange={setModelId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select a model" />
-                </SelectTrigger>
-                <SelectContent>
-                  {hostedModels.map((model) => (
-                    <SelectItem key={String(model.id)} value={String(model.id)}>
-                      {model.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="grid gap-2">
-              <div className="flex items-center justify-between">
-                <Label>Temperature</Label>
-                <span className="text-xs text-muted-foreground">
-                  {temperature.toFixed(2)}
-                </span>
-              </div>
-              <Slider
-                min={0}
-                max={2}
-                step={0.05}
-                value={[temperature]}
-                onValueChange={(values) => setTemperature(values[0] ?? 0.7)}
-              />
-            </div>
-          </div>
-
-          <div className="grid gap-3 rounded-lg border p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-medium">Require tool approval</p>
-                <p className="text-xs text-muted-foreground">
-                  Visitors must approve tool calls before execution continues.
-                </p>
-              </div>
-              <Switch
-                checked={requireToolApproval}
-                onCheckedChange={setRequireToolApproval}
-              />
-            </div>
-
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-medium">Allow guest access</p>
-                <p className="text-xs text-muted-foreground">
-                  Unauthenticated visitors can open the link when the chatbox
-                  mode allows it.
-                </p>
-              </div>
-              <Switch
-                checked={allowGuestAccess}
-                onCheckedChange={setAllowGuestAccess}
-              />
-            </div>
-          </div>
-
-          <div className="grid gap-3">
-            <div>
-              <p className="text-sm font-medium">Servers</p>
-              <p className="text-xs text-muted-foreground">
-                Only HTTP servers can be used in chatboxes.
-              </p>
-            </div>
-            <div className="max-h-56 space-y-2 overflow-y-auto rounded-lg border p-3">
-              {availableServers.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  No HTTP servers are available in this project yet.
-                </p>
-              ) : (
-                availableServers.map((server) => (
-                  <label
-                    key={server._id}
-                    className="flex items-center gap-3 rounded-md px-2 py-1.5 hover:bg-muted/50"
-                  >
-                    <Checkbox
-                      checked={selectedServerIds.includes(server._id)}
-                      onCheckedChange={(checked) =>
-                        handleToggleServer(server._id, checked === true)
-                      }
-                    />
-                    <span className="text-sm">{server.name}</span>
-                  </label>
-                ))
-              )}
-            </div>
+            <p className="text-xs text-muted-foreground">
+              Model, system prompt, and servers come from the host. Open the
+              Hosts tab to edit them.
+            </p>
           </div>
         </div>
 

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  AUTO_CONNECT_SERVERS_KEY,
   createPreferencesStore,
   HOST_CAPABILITIES_OVERRIDE_KEY,
   HOST_STYLE_KEY,
@@ -143,5 +144,29 @@ describe("preferences-store", () => {
       themePreset: "default",
     });
     expect(store.getState().hostCapabilitiesOverride).toBeUndefined();
+  });
+
+  it("defaults autoConnectServersEnabled to true and persists toggles", () => {
+    const store = createPreferencesStore({
+      themeMode: "light",
+      themePreset: "default",
+    });
+    expect(store.getState().autoConnectServersEnabled).toBe(true);
+
+    store.getState().setAutoConnectServersEnabled(false);
+    expect(store.getState().autoConnectServersEnabled).toBe(false);
+    expect(localStorage.getItem(AUTO_CONNECT_SERVERS_KEY)).toBe("false");
+
+    store.getState().setAutoConnectServersEnabled(true);
+    expect(localStorage.getItem(AUTO_CONNECT_SERVERS_KEY)).toBe("true");
+  });
+
+  it("hydrates autoConnectServersEnabled=false from localStorage", () => {
+    localStorage.setItem(AUTO_CONNECT_SERVERS_KEY, "false");
+    const store = createPreferencesStore({
+      themeMode: "light",
+      themePreset: "default",
+    });
+    expect(store.getState().autoConnectServersEnabled).toBe(false);
   });
 });

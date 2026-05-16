@@ -299,6 +299,7 @@ export const startSuiteRunWithRecorder = async ({
   toolSnapshotDebug,
   iterationOverride,
   matchOptionsOverride,
+  namedHostId,
 }: {
   convexClient: ConvexHttpClient;
   suiteId: string;
@@ -330,6 +331,13 @@ export const startSuiteRunWithRecorder = async ({
    * case override into each iteration's `testCaseSnapshot.matchOptions`.
    */
   matchOptionsOverride?: import("@/shared/eval-matching").MatchOptionsDTO;
+  /**
+   * Scope this run to a single host attached to the suite. The Convex
+   * mutation snapshots the host's current config and uses the snapshot's
+   * server set as the run's environment. The runner is unchanged — it
+   * just receives the host's servers like any other run.
+   */
+  namedHostId?: string;
 }) => {
   const response = await convexClient.mutation(
     "testSuites:startTestSuiteRun" as any,
@@ -344,6 +352,7 @@ export const startSuiteRunWithRecorder = async ({
       toolSnapshotDebug: sanitizeForConvexTransport(toolSnapshotDebug),
       iterationOverride,
       matchOptionsOverride,
+      ...(namedHostId ? { namedHostId } : {}),
     },
   );
 

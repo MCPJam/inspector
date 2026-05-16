@@ -92,6 +92,8 @@ import { useSharedAppState } from "@/state/app-state-context";
 import { Settings2 } from "lucide-react";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { useConvexAuth } from "convex/react";
+import { useHost } from "@/hooks/useHosts";
+import { usePreviewedHostId } from "@/hooks/use-previewed-host-id";
 import { useProjectServers } from "@/hooks/useViews";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import { useHostContextStore } from "@/stores/host-context-store";
@@ -465,6 +467,24 @@ export function PlaygroundMain({
     [selectedServers, serversByName, appState.servers]
   );
 
+  // Mirror the previewed host's chat-execution fields (system prompt,
+  // temperature, tool approval, selected servers) into the chat session
+  // whenever the resolved (hostId, configId) tuple changes. Imperative
+  // setters — not `executionConfig` — so the user can tweak any field
+  // in-session without being locked out, and a later host switch
+  // re-snapshots from the host config (discarding tweaks).
+  //
+  // `applyHostConfigToPlayground` (via PlaygroundPreviewedHostSync)
+  // covers chip-level fields (hostStyle, capabilities, hostContext, CSP,
+  // chatUiOverride, and the model id via localStorage). The fields
+  // re-seeded here live inside `useChatSession`'s own state, so they
+  // need imperative setters.
+  const [previewedHostId] = usePreviewedHostId(convexProjectId);
+  const { host: previewedHost } = useHost({
+    isAuthenticated: isConvexAuthenticated,
+    hostId: previewedHostId,
+  });
+
   // Use shared chat session hook
   const composerOnResetRef = useRef<() => void>(() => {});
   const {
@@ -534,6 +554,85 @@ export function PlaygroundMain({
     setPlaygroundActive(true);
     return () => setPlaygroundActive(false);
   }, [setPlaygroundActive]);
+
+  // Re-seed chat-session fields from the previewed host on host change.
+  // Dedup-key on `(hostId, configId)` so a stable Convex echo doesn't
+  // stomp the user's in-session tweaks every render. Re-firing on configId
+  // means saving from the host editor (with the playground open) snaps the
+  // composer to the saved values too.
+  const onSelectMultipleServers =
+    playgroundServerSelectorProps?.onSelectMultipleServers;
+  const previewedHostConfigId = previewedHost?.config.id;
+  const lastSeededHostRef = useRef<{ hostId: string; configId: string } | null>(
+    null
+  );
+  useEffect(() => {
+    if (!previewedHostId || !previewedHost) return;
+    const configId = previewedHost.config.id;
+    const last = lastSeededHostRef.current;
+    if (
+      last &&
+      last.hostId === previewedHostId &&
+      last.configId === configId
+    ) {
+      return;
+    }
+    lastSeededHostRef.current = { hostId: previewedHostId, configId };
+
+    const cfg = previewedHost.config;
+    setSystemPrompt(cfg.systemPrompt);
+    setTemperature(cfg.temperature);
+    setRequireToolApproval(cfg.requireToolApproval);
+
+    // Map host's required + optional server ids to project server names.
+    // Servers the host references but the project no longer has are
+    // dropped — selectedMultipleServers must contain valid names.
+    if (onSelectMultipleServers) {
+      const ids = [
+        ...(cfg.serverIds ?? []),
+        ...(cfg.optionalServerIds ?? []),
+      ];
+      const seen = new Set<string>();
+      const names: string[] = [];
+      for (const id of ids) {
+        const name = serversById.get(id);
+        if (name && !seen.has(name)) {
+          seen.add(name);
+          names.push(name);
+        }
+      }
+      onSelectMultipleServers(names);
+    }
+
+    // Resolve the host's modelId against the picker's available list and
+    // call setSelectedModel so the composer re-renders. The localStorage
+    // path in applyHostConfigToPlayground covers cross-tab + cold-start;
+    // this covers in-tab host switches without waiting for the storage
+    // event round-trip.
+    const desiredModelId = cfg.modelId?.trim();
+    if (desiredModelId) {
+      const match = availableModels.find(
+        (m) => String(m.id) === desiredModelId
+      );
+      if (match) {
+        setSelectedModel(match);
+      }
+    }
+    // availableModels intentionally omitted: re-seeding when the model
+    // catalog changes (e.g. a BYOK key gets added) would clobber user
+    // tweaks. The (hostId, configId) tuple is the seed trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    previewedHostId,
+    previewedHostConfigId,
+    previewedHost,
+    serversById,
+    onSelectMultipleServers,
+    setSystemPrompt,
+    setTemperature,
+    setRequireToolApproval,
+    setSelectedModel,
+  ]);
 
   // Currently selected protocol (detected from tool metadata)
   const selectedProtocol = useUIPlaygroundStore((s) => s.selectedProtocol);

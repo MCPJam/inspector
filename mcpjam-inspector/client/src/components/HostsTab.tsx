@@ -17,11 +17,9 @@ interface HostsTabProps {
 }
 
 /**
- * Camera-style transition between the browsing state (server list) and the
- * host architecture canvas. Servers shrink toward where the canvas's "Servers
- * hub" will sit (≈70% down, horizontally centered) so the swap reads as a
- * zoom-out reveal of the bigger machine. Canvas exits by pushing past the
- * camera (scale > 1) to feel like the camera is moving back in.
+ * Camera-style enter/exit for the host canvas. The Servers browse view stays
+ * static (so landing on Connect doesn't animate) and the canvas overlays on
+ * top, zooming in on enter and pushing past the camera on exit.
  */
 const TRANSITION = {
   duration: 0.7,
@@ -54,12 +52,17 @@ export function HostsTab({
     hostId: previewedHostId,
   });
   const previewedHostStyle = previewedHost?.config?.hostStyle ?? null;
+  const previewedChatUiOverride = previewedHost?.config?.chatUiOverride;
   const browseShellStyle = useMemo(
     () =>
       previewedHostStyle
-        ? getChatboxShellStyle(previewedHostStyle, themeMode)
+        ? getChatboxShellStyle(
+            previewedHostStyle,
+            themeMode,
+            previewedChatUiOverride,
+          )
         : undefined,
-    [previewedHostStyle, themeMode],
+    [previewedHostStyle, themeMode, previewedChatUiOverride],
   );
 
   useEffect(() => {
@@ -98,7 +101,51 @@ export function HostsTab({
 
   return (
     <div className="relative h-full min-h-0 overflow-hidden">
-      <AnimatePresence initial={false} mode="sync">
+      {selectedHostId ? null : (
+        <div
+          data-host-style={previewedHostStyle ?? undefined}
+          style={browseShellStyle}
+          className="absolute inset-0 flex min-h-0 flex-col bg-background text-foreground"
+        >
+          <HostsConnectAddServerSlotContext.Provider value={addServerSlotEl}>
+            <div
+              className="relative shrink-0 border-b border-border/40 px-8 py-2.5"
+              data-testid="hosts-tab-header-chrome"
+            >
+              <div className="flex min-w-0 items-center justify-end gap-3">
+                <div
+                  ref={setAddServerSlotEl}
+                  className="flex shrink-0 items-center gap-2"
+                  data-testid="hosts-tab-add-server-slot"
+                />
+              </div>
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                <div className="pointer-events-auto">
+                  <ViewModeSelector
+                    value="servers"
+                    ariaLabel="Connect view"
+                    onChange={(next) => {
+                      if (next === "host" && previewedHostId) {
+                        onSelectHost(previewedHostId);
+                      }
+                    }}
+                    options={[
+                      { value: "servers", label: "Servers" },
+                      {
+                        value: "host",
+                        label: "Host",
+                        disabled: !previewedHostId,
+                      },
+                    ]}
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="min-h-0 flex-1">{serversTabElement}</div>
+          </HostsConnectAddServerSlotContext.Provider>
+        </div>
+      )}
+      <AnimatePresence initial={false}>
         {selectedHostId ? (
           <motion.div
             key="host-canvas"
@@ -114,55 +161,7 @@ export function HostsTab({
               onBack={() => onSelectHost(null)}
             />
           </motion.div>
-        ) : (
-          <motion.div
-            key="host-browse"
-            initial={{ opacity: 0, scale: 1.04 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.42 }}
-            transition={TRANSITION}
-            data-host-style={previewedHostStyle ?? undefined}
-            style={browseShellStyle}
-            className="absolute inset-0 flex min-h-0 flex-col bg-background text-foreground [transform-origin:50%_70%]"
-          >
-            <HostsConnectAddServerSlotContext.Provider value={addServerSlotEl}>
-              <div
-                className="relative shrink-0 border-b border-border/40 px-8 py-2.5"
-                data-testid="hosts-tab-header-chrome"
-              >
-                <div className="flex min-w-0 items-center justify-end gap-3">
-                  <div
-                    ref={setAddServerSlotEl}
-                    className="flex shrink-0 items-center gap-2"
-                    data-testid="hosts-tab-add-server-slot"
-                  />
-                </div>
-                <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                  <div className="pointer-events-auto">
-                    <ViewModeSelector
-                      value="servers"
-                      ariaLabel="Connect view"
-                      onChange={(next) => {
-                        if (next === "host" && previewedHostId) {
-                          onSelectHost(previewedHostId);
-                        }
-                      }}
-                      options={[
-                        { value: "servers", label: "Servers" },
-                        {
-                          value: "host",
-                          label: "Host",
-                          disabled: !previewedHostId,
-                        },
-                      ]}
-                    />
-                  </div>
-                </div>
-              </div>
-              <div className="min-h-0 flex-1">{serversTabElement}</div>
-            </HostsConnectAddServerSlotContext.Provider>
-          </motion.div>
-        )}
+        ) : null}
       </AnimatePresence>
     </div>
   );

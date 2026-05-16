@@ -23,6 +23,10 @@ vi.mock("@/hooks/useHosts", () => ({
   }),
 }));
 
+vi.mock("@/hooks/useViews", () => ({
+  useProjectServers: () => ({ servers: [] }),
+}));
+
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({ capture: vi.fn() }),
 }));

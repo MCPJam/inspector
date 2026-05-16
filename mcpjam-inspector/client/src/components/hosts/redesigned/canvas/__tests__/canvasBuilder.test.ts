@@ -1,330 +1,144 @@
 import { describe, expect, it } from "vitest";
 import { emptyHostConfigInputV2 } from "@/lib/host-config-v2";
 import {
-  AGENT_IDENTITY_NODE_ID,
-  APPS_HUB_NODE_ID,
-  HOST_GROUP_NODE_ID,
-  PROTOCOL_HUB_NODE_ID,
-  appsCapLeafNodeId,
-  protocolLeafNodeId,
+  ADD_SERVER_NODE_ID,
+  HOST_MATRIX_NODE_ID,
+  SERVERS_HUB_NODE_ID,
+  type HostMatrixNodeData,
 } from "../../types";
 import { buildRedesignedHostCanvas } from "../canvasBuilder";
 
+function buildVm(
+  overrides: Partial<Parameters<typeof buildRedesignedHostCanvas>[0]> = {},
+) {
+  return buildRedesignedHostCanvas(
+    {
+      hostName: "Test host",
+      draft: emptyHostConfigInputV2(),
+      savedSnapshotId: "snap",
+      isDirty: false,
+      projectServers: [],
+      ...overrides,
+    },
+    [],
+  );
+}
+
+function matrixData(
+  vm: ReturnType<typeof buildRedesignedHostCanvas>,
+): HostMatrixNodeData {
+  const node = vm.nodes.find((n) => n.id === HOST_MATRIX_NODE_ID);
+  if (!node || node.type !== "redesignHostMatrix") {
+    throw new Error("Matrix node missing");
+  }
+  return node.data;
+}
+
 describe("buildRedesignedHostCanvas", () => {
-  it("stores only hostName on host-group canvas node data", () => {
+  it("emits a single host matrix node packing the full host surface", () => {
+    const vm = buildVm({ hostName: "My Host" });
+    const data = matrixData(vm);
+    expect(data.kind).toBe("host-matrix");
+    expect(data.hostName).toBe("My Host");
+    expect(data.agent?.kind).toBe("agent-identity");
+    expect(data.appsCaps).toHaveLength(6);
+    expect(data.clientCaps).toHaveLength(5);
+    expect(data.hostContext?.leafKey).toBe("hostContext");
+  });
+
+  it("falls back to 'Untitled host' when name is whitespace", () => {
+    const data = matrixData(buildVm({ hostName: "   " }));
+    expect(data.hostName).toBe("Untitled host");
+  });
+
+  it("emits all five base-protocol client capabilities in stable order", () => {
+    const data = matrixData(buildVm());
+    expect(data.clientCaps.map((c) => c.key)).toEqual([
+      "roots",
+      "sampling",
+      "elicitation",
+      "tasks",
+      "experimental",
+    ]);
+  });
+
+  it("flags a client capability as on with sub-tags when the draft declares it", () => {
     const draft = emptyHostConfigInputV2();
-    const viewModel = buildRedesignedHostCanvas(
-      {
-        hostName: "My Host",
-        draft,
-        savedSnapshotId: "snap",
-        isDirty: true,
-        projectServers: [],
-      },
-      [],
-    );
-    const groupNode = viewModel.nodes.find((n) => n.id === HOST_GROUP_NODE_ID);
-    expect(groupNode?.type).toBe("redesignHostGroup");
-    expect(groupNode?.data).toEqual({
-      kind: "host-group",
-      hostName: "My Host",
-    });
+    draft.clientCapabilities = {
+      roots: { listChanged: true },
+      elicitation: { form: {}, url: {} },
+    };
+    const data = matrixData(buildVm({ draft }));
+    const roots = data.clientCaps.find((c) => c.key === "roots");
+    const elicit = data.clientCaps.find((c) => c.key === "elicitation");
+    const sampling = data.clientCaps.find((c) => c.key === "sampling");
+    expect(roots?.on).toBe(true);
+    expect(roots?.subs).toEqual(["listChanged"]);
+    expect(elicit?.on).toBe(true);
+    expect(elicit?.subs).toEqual(["form", "url"]);
+    expect(sampling?.on).toBe(false);
   });
 
-  it("uses an empty protocol hub subtitle when protocol versions are unpinned", () => {
-    const viewModel = buildRedesignedHostCanvas(
-      {
-        hostName: "Host",
-        draft: emptyHostConfigInputV2(),
-        savedSnapshotId: "snap",
-        isDirty: false,
-        projectServers: [],
-      },
-      [],
-    );
-    const protocolHub = viewModel.nodes.find(
-      (n) => n.id === PROTOCOL_HUB_NODE_ID,
-    );
-    expect(
-      (protocolHub?.data as { subtitle: string }).subtitle,
-    ).toBe("");
+  it("always emits the capabilities and timeout cells in the protocol band", () => {
+    const data = matrixData(buildVm());
+    const keys = data.protocolBand.map((p) => p.leafKey);
+    expect(keys).toContain("capabilities");
+    expect(keys).toContain("timeout");
   });
 
-  it("shows pinned protocol version in the protocol hub subtitle", () => {
-    const draft = emptyHostConfigInputV2({
-      mcpProfile: {
-        profileVersion: 1,
-        initialize: {
-          supportedProtocolVersions: ["2026-01-26"],
-        },
-      },
-    });
-    const viewModel = buildRedesignedHostCanvas(
-      {
-        hostName: "Host",
-        draft,
-        savedSnapshotId: "snap",
-        isDirty: false,
-        projectServers: [],
-      },
-      [],
-    );
-    const protocolHub = viewModel.nodes.find(
-      (n) => n.id === PROTOCOL_HUB_NODE_ID,
-    );
-    expect(
-      (protocolHub?.data as { subtitle: string }).subtitle,
-    ).toBe("pinned 2026-01-26");
+  it("reports the hostContext field count in the footer leaf", () => {
+    const draft = emptyHostConfigInputV2();
+    draft.hostContext = { theme: "dark", locale: "en-US", timeZone: "UTC" };
+    const data = matrixData(buildVm({ draft }));
+    expect(data.hostContext?.value).toContain("3");
   });
 
-  it("uses an empty apps hub subtitle", () => {
-    const draft = emptyHostConfigInputV2({
-      mcpProfile: {
-        profileVersion: 1,
-        apps: {
-          sandbox: { csp: { mode: "declared" } },
-        },
-      },
-      hostContext: { foo: "bar", baz: "qux" },
-    });
-    const viewModel = buildRedesignedHostCanvas(
-      {
-        hostName: "Host",
-        draft,
-        savedSnapshotId: "snap",
-        isDirty: false,
-        projectServers: [],
-      },
-      [],
-    );
-    const appsHub = viewModel.nodes.find((n) => n.id === APPS_HUB_NODE_ID);
-    expect((appsHub?.data as { subtitle: string }).subtitle).toBe("");
-  });
-
-  it("emits agent identity, protocol hub, and apps hub child nodes", () => {
-    const viewModel = buildRedesignedHostCanvas(
-      {
-        hostName: "Host",
-        draft: emptyHostConfigInputV2(),
-        savedSnapshotId: "snap",
-        isDirty: false,
-        projectServers: [],
-      },
-      [],
-    );
-
-    expect(
-      viewModel.nodes.find((n) => n.id === AGENT_IDENTITY_NODE_ID)?.type,
-    ).toBe("redesignAgentIdentity");
-    expect(
-      viewModel.nodes.find((n) => n.id === PROTOCOL_HUB_NODE_ID)?.type,
-    ).toBe("redesignSectionHub");
-    expect(viewModel.nodes.find((n) => n.id === APPS_HUB_NODE_ID)?.type).toBe(
-      "redesignSectionHub",
-    );
-  });
-
-  it("emits the full 6-cap apps leaf set with stable ids in canonical order", () => {
-    const viewModel = buildRedesignedHostCanvas(
-      {
-        hostName: "Host",
-        draft: emptyHostConfigInputV2(),
-        savedSnapshotId: "snap",
-        isDirty: false,
-        projectServers: [],
-      },
-      [],
-    );
-
-    const expectedCaps = [
-      "openLinks",
-      "serverTools",
-      "serverResources",
-      "logging",
-      "updateModelContext",
-      "message",
-    ] as const;
-    for (const cap of expectedCaps) {
-      const node = viewModel.nodes.find((n) => n.id === appsCapLeafNodeId(cap));
-      expect(node, `expected cap leaf for ${cap}`).toBeDefined();
-      expect(node?.type).toBe("redesignAppsCapLeaf");
-    }
-  });
-
-  it("omits optional protocol leaves when not overridden", () => {
-    // The default config has no mcpProfile + no custom headers, so
-    // clientInfo / protocolVersion / headers should NOT emit leaves.
-    // hostContext + timeout + capabilities always emit so they stay
-    // comparable across hosts.
-    const viewModel = buildRedesignedHostCanvas(
-      {
-        hostName: "Host",
-        draft: emptyHostConfigInputV2(),
-        savedSnapshotId: "snap",
-        isDirty: false,
-        projectServers: [],
-      },
-      [],
-    );
-    expect(
-      viewModel.nodes.find((n) => n.id === protocolLeafNodeId("clientInfo")),
-    ).toBeUndefined();
-    expect(
-      viewModel.nodes.find(
-        (n) => n.id === protocolLeafNodeId("protocolVersion"),
-      ),
-    ).toBeUndefined();
-    expect(
-      viewModel.nodes.find((n) => n.id === protocolLeafNodeId("headers")),
-    ).toBeUndefined();
-    expect(
-      viewModel.nodes.find((n) => n.id === protocolLeafNodeId("hostContext")),
-    ).toBeDefined();
-    expect(
-      viewModel.nodes.find((n) => n.id === protocolLeafNodeId("timeout")),
-    ).toBeDefined();
-    expect(
-      viewModel.nodes.find(
-        (n) => n.id === protocolLeafNodeId("capabilities"),
-      ),
-    ).toBeDefined();
-  });
-
-  it("emits clientInfo and protocolVersion leaves when mcpProfile pins them", () => {
-    const draft = emptyHostConfigInputV2({
-      mcpProfile: {
-        profileVersion: 1,
-        initialize: {
-          clientInfo: { name: "cursor-vscode", version: "3.4.17" },
-          supportedProtocolVersions: ["2026-01-26"],
-        },
-      },
-    });
-    const viewModel = buildRedesignedHostCanvas(
-      {
-        hostName: "Cursor",
-        draft,
-        savedSnapshotId: "snap",
-        isDirty: false,
-        projectServers: [],
-      },
-      [],
-    );
-    const clientInfo = viewModel.nodes.find(
-      (n) => n.id === protocolLeafNodeId("clientInfo"),
-    );
-    const protocolVersion = viewModel.nodes.find(
-      (n) => n.id === protocolLeafNodeId("protocolVersion"),
-    );
-    expect(clientInfo).toBeDefined();
-    expect(protocolVersion).toBeDefined();
-    expect((clientInfo?.data as { value: string })?.value).toBe(
-      "cursor-vscode 3.4.17",
-    );
-    expect((protocolVersion?.data as { value: string })?.value).toBe(
-      "2026-01-26",
-    );
-  });
-
-  it("marks an apps cap as off when the resolved blob omits it", () => {
-    // Cursor's probe-captured override omits updateModelContext and
-    // message. The leaves still render — on=false — so the *absence*
-    // of a cap is visually load-bearing.
-    const draft = emptyHostConfigInputV2({
-      hostCapabilitiesOverride: {
-        openLinks: {},
-        serverTools: { listChanged: false },
-        serverResources: { listChanged: false },
-        logging: {},
-      },
-    });
-    const viewModel = buildRedesignedHostCanvas(
-      {
-        hostName: "Cursor",
-        draft,
-        savedSnapshotId: "snap",
-        isDirty: false,
-        projectServers: [],
-      },
-      [],
-    );
-    const updateCap = viewModel.nodes.find(
-      (n) => n.id === appsCapLeafNodeId("updateModelContext"),
-    );
-    const messageCap = viewModel.nodes.find(
-      (n) => n.id === appsCapLeafNodeId("message"),
-    );
-    expect((updateCap?.data as { on: boolean })?.on).toBe(false);
-    expect((messageCap?.data as { on: boolean })?.on).toBe(false);
-
-    const toolsCap = viewModel.nodes.find(
-      (n) => n.id === appsCapLeafNodeId("serverTools"),
-    );
-    expect((toolsCap?.data as { on: boolean })?.on).toBe(true);
-    expect(
-      (toolsCap?.data as { qualifier: string | null })?.qualifier,
-    ).toBe("lc:false");
-  });
-
-  it("flags leaves whose value differs from the previous host as isChanged", () => {
-    // Switching from a Claude-like draft (no protocol pin, default
-    // timeout) to a Cursor-like draft (pinned + 60s timeout) marks the
-    // new leaves as changed against the prev draft.
-    const prev = emptyHostConfigInputV2();
-    const next = emptyHostConfigInputV2({
-      mcpProfile: {
-        profileVersion: 1,
-        initialize: {
-          clientInfo: { name: "cursor-vscode", version: "3.4.17" },
-          supportedProtocolVersions: ["2026-01-26"],
-        },
-      },
-      connectionDefaults: { headers: {}, requestTimeout: 60000 },
-    });
-    const viewModel = buildRedesignedHostCanvas(
-      {
-        hostName: "Cursor",
-        draft: next,
-        savedSnapshotId: "snap",
-        isDirty: false,
-        projectServers: [],
-        prev: { hostName: "Claude", draft: prev },
-      },
-      [],
-    );
-    const timeoutLeaf = viewModel.nodes.find(
-      (n) => n.id === protocolLeafNodeId("timeout"),
-    );
-    expect((timeoutLeaf?.data as { isChanged: boolean })?.isChanged).toBe(true);
-  });
-
-  it("flags apps cap leaves as isNewlyOn when prev was off and current is on", () => {
+  it("flags an apps cap as newly-on when the previous host did not advertise it", () => {
     const prev = emptyHostConfigInputV2({
       hostCapabilitiesOverride: { openLinks: {} },
     });
     const next = emptyHostConfigInputV2({
       hostCapabilitiesOverride: {
         openLinks: {},
-        message: { text: {} },
+        updateModelContext: { text: {} },
       },
     });
-    const viewModel = buildRedesignedHostCanvas(
-      {
-        hostName: "ChatGPT",
-        draft: next,
-        savedSnapshotId: "snap",
-        isDirty: false,
-        projectServers: [],
-        prev: { hostName: "Cursor", draft: prev },
-      },
-      [],
+    const data = matrixData(
+      buildVm({ draft: next, prev: { hostName: "Prev", draft: prev } }),
     );
-    const messageCap = viewModel.nodes.find(
-      (n) => n.id === appsCapLeafNodeId("message"),
+    const updated = data.appsCaps.find((c) => c.capKey === "updateModelContext");
+    expect(updated?.on).toBe(true);
+    expect(updated?.isNewlyOn).toBe(true);
+  });
+
+  it("flags a client cap as newly-on when the previous host did not declare it", () => {
+    const prev = emptyHostConfigInputV2();
+    prev.clientCapabilities = {};
+    const next = emptyHostConfigInputV2();
+    next.clientCapabilities = { roots: { listChanged: true } };
+    const data = matrixData(
+      buildVm({ draft: next, prev: { hostName: "Prev", draft: prev } }),
     );
-    expect(
-      (messageCap?.data as { isNewlyOn: boolean })?.isNewlyOn,
-    ).toBe(true);
-    expect((messageCap?.data as { on: boolean })?.on).toBe(true);
+    const roots = data.clientCaps.find((c) => c.key === "roots");
+    expect(roots?.isNewlyOn).toBe(true);
+  });
+
+  it("emits the servers hub + add-server pill even with no project servers", () => {
+    const vm = buildVm();
+    expect(vm.nodes.find((n) => n.id === SERVERS_HUB_NODE_ID)).toBeDefined();
+    expect(vm.nodes.find((n) => n.id === ADD_SERVER_NODE_ID)).toBeDefined();
+  });
+
+  it("emits one server card per project server with a hub→card edge", () => {
+    const vm = buildVm({
+      projectServers: [
+        { id: "s1", name: "Excalidraw", url: "https://example.com" },
+        { id: "s2", name: "bench", url: "http://localhost:3000" },
+      ],
+    });
+    expect(vm.nodes.find((n) => n.id === "server-card:s1")).toBeDefined();
+    expect(vm.nodes.find((n) => n.id === "server-card:s2")).toBeDefined();
+    expect(vm.edges.find((e) => e.id === "hub-to-server-s1")).toBeDefined();
+    expect(vm.edges.find((e) => e.id === "hub-to-server-s2")).toBeDefined();
   });
 });

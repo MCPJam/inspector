@@ -13,6 +13,26 @@ import { toast } from "sonner";
 import { RESULT_STATUS } from "./constants";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 
+/**
+ * Union of the suite's flat `environment.servers` and every attached
+ * host's resolved server names. This is what "what servers can this suite
+ * see?" means in a host-aware world — generate, rerun-eligibility, and
+ * any other "does this suite have any servers?" gates should consult this
+ * instead of `environment.servers` alone, otherwise host-only suites
+ * (created via `hostAttachments` with no flat list) read as empty.
+ */
+export function getEffectiveSuiteServers(
+  suite: Pick<EvalSuite, "environment" | "hostAttachments">,
+): string[] {
+  const flatServers = suite.environment?.servers ?? [];
+  const attachmentServers =
+    suite.hostAttachments?.flatMap(
+      (attachment) => attachment.resolvedServerNames ?? [],
+    ) ?? [];
+  if (attachmentServers.length === 0) return flatServers;
+  return Array.from(new Set([...flatServers, ...attachmentServers]));
+}
+
 export function formatTime(ts?: number) {
   return ts ? new Date(ts).toLocaleString() : "—";
 }

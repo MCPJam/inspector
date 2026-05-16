@@ -20,10 +20,12 @@ describe("applyHostDefaultsToPlayground", () => {
   let setMcpAppsCspModeSpy: ReturnType<typeof vi.fn>;
   let setHostStyle: ReturnType<typeof vi.fn>;
   let setHostCapabilitiesOverride: ReturnType<typeof vi.fn>;
+  let setChatUiOverride: ReturnType<typeof vi.fn>;
   let saveSelectedModelIdSpy: ReturnType<typeof vi.spyOn>;
   let setters: {
     setHostStyle: typeof setHostStyle;
     setHostCapabilitiesOverride: typeof setHostCapabilitiesOverride;
+    setChatUiOverride: typeof setChatUiOverride;
   };
 
   beforeEach(() => {
@@ -34,7 +36,12 @@ describe("applyHostDefaultsToPlayground", () => {
     setMcpAppsCspModeSpy = vi.fn();
     setHostStyle = vi.fn();
     setHostCapabilitiesOverride = vi.fn();
-    setters = { setHostStyle, setHostCapabilitiesOverride };
+    setChatUiOverride = vi.fn();
+    setters = {
+      setHostStyle,
+      setHostCapabilitiesOverride,
+      setChatUiOverride,
+    };
 
     vi.spyOn(useHostContextStore, "getState").mockReturnValue({
       applyHostTemplate: applyHostTemplateSpy,
@@ -159,7 +166,7 @@ describe("applyHostDefaultsToPlayground", () => {
   });
 
   describe("applyHostConfigToPlayground (used by named-host picker sync)", () => {
-    it("snapshots a named host's persisted config: hostStyle + model (canonical id passes through) + hostContext + container + CSP + override", () => {
+    it("snapshots a named host's persisted config: hostStyle + model (canonical id passes through) + hostContext + container + CSP + override + chatUiOverride", () => {
       const namedHostConfig = {
         hostStyle: "claude",
         // Canonical id that exists in SUPPORTED_MODELS — passes through
@@ -176,6 +183,7 @@ describe("applyHostDefaultsToPlayground", () => {
           apps: { sandbox: { csp: { mode: "declared" as const } } },
         },
         hostCapabilitiesOverride: { openLinks: {} },
+        chatUiOverride: { palette: { accent: "#ff00aa" } },
       };
 
       applyHostConfigToPlayground(namedHostConfig, setters);
@@ -200,15 +208,20 @@ describe("applyHostDefaultsToPlayground", () => {
       expect(setHostCapabilitiesOverride).toHaveBeenCalledWith({
         openLinks: {},
       });
+      // chatUiOverride is snapshotted into preferences so the playground's
+      // ChatboxChatUiOverrideProvider picks up the host's custom palette /
+      // logo / indicator without per-surface wiring.
+      expect(setChatUiOverride).toHaveBeenCalledWith({
+        palette: { accent: "#ff00aa" },
+      });
     });
 
-    it("falls back to the host style's template default when the persisted modelId is stale (e.g. legacy 'gpt-5' on a ChatGPT host)", () => {
-      // The exact bug: a named ChatGPT host saved before templates were
-      // canonicalized has modelId "gpt-5" (no provider prefix, no dot).
-      // That id doesn't resolve in SUPPORTED_MODELS → without the
-      // resolver, the picker silently fell back to its global default.
-      // Now: we detect the unresolvable id and snap to the ChatGPT
-      // template's canonical default (`openai/gpt-5-nano`).
+    it("passes a BYOK bare id straight through when it resolves in SUPPORTED_MODELS (host is source of truth)", () => {
+      // "gpt-5" is a valid SUPPORTED_MODELS entry (BYOK; openai/gpt-5-nano
+      // is the MCPJam-provided cousin). Pre-everything-from-host behavior
+      // snapped this to the ChatGPT template default; that hides the
+      // host's actual saved pick. Trust the host: surface "gpt-5" and let
+      // the picker decide whether to render it as disabled (no key).
       applyHostConfigToPlayground(
         {
           hostStyle: "chatgpt",
@@ -220,7 +233,7 @@ describe("applyHostDefaultsToPlayground", () => {
         setters,
       );
 
-      expect(saveSelectedModelIdSpy).toHaveBeenCalledWith("openai/gpt-5-nano");
+      expect(saveSelectedModelIdSpy).toHaveBeenCalledWith("gpt-5");
     });
 
     it("falls back to the template default when the persisted modelId is whitespace-only", () => {

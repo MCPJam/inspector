@@ -5,11 +5,11 @@ import type { HostFocusTabId } from "../../types";
 import { HostFocusTabBar } from "../HostFocusTabBar";
 
 const emptyIssues = {
-  general: 0,
   behavior: 0,
   protocol: 0,
   apps: 0,
   servers: 0,
+  appearance: 0,
 } as const;
 
 describe("HostFocusTabBar", () => {
@@ -34,6 +34,8 @@ describe("HostFocusTabBar", () => {
 
     onTabChange.mockClear();
     await user.keyboard("{ArrowLeft}");
-    expect(onTabChange).toHaveBeenCalledWith("general" satisfies HostFocusTabId);
+    // Arrow-left from the first tab (Agent) wraps to the last tab,
+    // which is Appearance after the General tab was removed.
+    expect(onTabChange).toHaveBeenCalledWith("appearance" satisfies HostFocusTabId);
   });
 });

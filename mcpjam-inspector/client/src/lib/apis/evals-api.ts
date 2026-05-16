@@ -81,6 +81,13 @@ type RunEvalsRequest = EvalRequestWithServers & {
    * persisted suite/case records.
    */
   matchOptionsOverride?: EvalMatchOptions;
+  /**
+   * Scope this run to a single host attached to the suite. The backend
+   * snapshots the host's current config and derives the run's server
+   * environment from it. When the suite has multiple host attachments,
+   * the UI makes one parallel request per host.
+   */
+  namedHostId?: string;
 };
 
 type RunTestCaseRequest = EvalRequestWithServers & {

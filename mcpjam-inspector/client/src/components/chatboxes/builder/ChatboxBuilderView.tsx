@@ -16,7 +16,7 @@ import {
   Save,
 } from "lucide-react";
 import { ReactFlowProvider } from "@xyflow/react";
-import { useConvexAuth, useQuery } from "convex/react";
+import { useConvexAuth } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Card } from "@mcpjam/design-system/card";
 import {
@@ -68,18 +68,15 @@ import {
 import { ChatboxHostStyleProvider } from "@/contexts/chatbox-host-style-context";
 import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-host-capabilities-override-context";
 import type { ServerFormData } from "@/shared/types";
-import { buildChatboxCanvas } from "./chatboxCanvasBuilder";
-import { ChatboxCanvas } from "./ChatboxCanvas";
+import { useHost } from "@/hooks/useHosts";
+import { hostConfigDtoToInput } from "@/lib/host-config-v2";
+import { RedesignedHostCanvas } from "@/components/hosts/redesigned/canvas/RedesignedHostCanvas";
+import { buildRedesignedHostCanvas } from "@/components/hosts/redesigned/canvas/canvasBuilder";
 import {
   DEFAULT_SYSTEM_PROMPT,
-  draftToHostConfigInputV2,
   toChatUiFromChatbox,
   toDraftConfig,
 } from "./drafts";
-import {
-  hostConfigDtoToInput,
-  type HostConfigDtoV2,
-} from "@/lib/host-config-v2";
 import {
   computeSectionStatuses,
   SetupChecklistPanel,
@@ -87,7 +84,7 @@ import {
   updateSelectedServerIds,
   type SetupSectionId,
 } from "./setup-checklist-panel";
-import type { ChatboxBuilderContext, ChatboxDraftConfig } from "./types";
+import type { ChatboxDraftConfig } from "./types";
 import {
   bootstrapServerToHostedOAuthDescriptor,
   countRequiredServers,
@@ -136,13 +133,6 @@ function normalizeInitialViewMode(
   }
   if (mode === "builder") return "setup";
   return undefined;
-}
-
-function getSetupSectionForNode(nodeId: string | null): SetupSectionId {
-  if (nodeId?.startsWith("server:")) {
-    return "servers";
-  }
-  return "basics";
 }
 
 function ChatboxPreviewActionButtons({
@@ -316,29 +306,16 @@ export function ChatboxBuilderView({
     isAuthenticated,
     chatboxId: chatboxId ?? null,
   });
+  // Resolve the chatbox's referenced host. Under live-reference, the host
+  // owns model / prompt / servers / etc., so the builder reads them from
+  // here and renders them in the read-only host viz on the left.
+  const { host: namedHost } = useHost({
+    isAuthenticated,
+    hostId: chatbox?.namedHostId ?? null,
+  });
   const { createChatbox, updateChatbox, setChatboxMode, upsertChatboxMember } =
     useChatboxMutations();
   const { createServer } = useServerMutations();
-
-  // Round-trip the chatbox's own hostConfig (edit mode). The save path
-  // sends a complete HostConfigInputV2 to the backend; the backend's
-  // mintV2ChatboxHostConfigFromV2Input persists the connection portion
-  // (connectionDefaults / clientCapabilities / hostContext) verbatim,
-  // so we MUST feed it the existing values or they'll be clobbered.
-  const chatboxHostConfig = useQuery(
-    "hostConfigsV2:getChatboxConfig" as any,
-    isAuthenticated && chatboxId ? ({ chatboxId } as any) : "skip"
-  ) as HostConfigDtoV2 | null | undefined;
-
-  // Project default seeds the connection portion for new chatboxes and
-  // is also the fallback for legacy edit-mode rows that resolve null
-  // from getChatboxConfig — without it, draftToHostConfigInputV2 would
-  // fall back to v2 empty shape and silently drop the project's
-  // configured headers / capabilities / hostContext on next save.
-  const projectDefaultHostConfig = useQuery(
-    "hostConfigsV2:getProjectDefault" as any,
-    isAuthenticated && projectId ? ({ projectId } as any) : "skip"
-  ) as HostConfigDtoV2 | null | undefined;
 
   const [draftChatboxConfig, setDraftChatboxConfig] =
     useState<ChatboxDraftConfig>(() => {
@@ -358,6 +335,11 @@ export function ChatboxBuilderView({
               allowGuestAccess: false,
               mode: "anyone_with_link",
               servers: [],
+              // Placeholder host pointer for the unsaved-draft skeleton.
+              // The real namedHostId is populated when the user picks a
+              // host and createChatbox returns the persisted row.
+              namedHostId: "",
+              namedHostName: "",
               link: null,
               members: [],
               chatUi: {
@@ -383,7 +365,11 @@ export function ChatboxBuilderView({
   const [chatKey, setChatKey] = useState(0);
   const [playgroundId, setPlaygroundId] = useState(() => crypto.randomUUID());
   const [isSetupSheetOpen, setIsSetupSheetOpen] = useState(true);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>("host");
+  // `selectedNodeId` is no longer read after the canvas swap to the
+  // read-only host viz — but the setter is still called from server
+  // create / toggle handlers below to drive other side effects. Keep
+  // the state, suppress the unused-value warning.
+  const [, setSelectedNodeId] = useState<string | null>("host");
   const [focusedSetupSection, setFocusedSetupSection] =
     useState<SetupSectionId | null>(null);
   const [desktopSettingsPaneSize, setDesktopSettingsPaneSize] = useState(
@@ -391,7 +377,11 @@ export function ChatboxBuilderView({
   );
   const [isSaving, setIsSaving] = useState(false);
   const [isAddServerOpen, setIsAddServerOpen] = useState(false);
-  const [canvasViewportRefitNonce, setCanvasViewportRefitNonce] = useState(0);
+  // Refit nonce is still bumped on view-mode and mobile-sheet changes
+  // even though the read-only host canvas auto-fits on mount; leave the
+  // bumps in place so other consumers (preview rail layout effects) stay
+  // accurate.
+  const [, setCanvasViewportRefitNonce] = useState(0);
   const panelGroupContainerRef = useRef<HTMLDivElement | null>(null);
   const rightPanelRef = useRef<ImperativePanelHandle | null>(null);
   const isInitialMountRef = useRef(true);
@@ -553,15 +543,40 @@ export function ChatboxBuilderView({
     }
   }, [viewMode, isMobile]);
 
-  const context = useMemo<ChatboxBuilderContext>(
-    () => ({
-      chatbox: chatbox ?? null,
-      draft: draftChatboxConfig,
-      projectServers,
-    }),
-    [draftChatboxConfig, chatbox, projectServers]
+  // Live host viz: rebuilt every time `namedHost` re-emits, which is what
+  // makes the canvas track host edits live (Convex subscription pushes
+  // the new hostConfig DTO; we hydrate it back to the input shape the
+  // canvas expects). `null` while the host query is in flight or if the
+  // chatbox row hasn't loaded yet — guarded at render time.
+  //
+  // `projectServers` MUST be the project's actual server list — the
+  // canvas builder both reads `totalCount` from its length AND iterates
+  // it to render the per-server cards (matching against the host's
+  // serverIds). Passing [] gave "0 attached" with no cards, even though
+  // the host had three servers.
+  const projectServersForHostCanvas = useMemo(
+    () =>
+      projectServers.map((s) => ({
+        id: s._id,
+        name: s.name,
+        url: s.url ?? undefined,
+      })),
+    [projectServers],
   );
-  const viewModel = useMemo(() => buildChatboxCanvas(context), [context]);
+  const hostViewModel = useMemo(() => {
+    if (!namedHost) return null;
+    return buildRedesignedHostCanvas(
+      {
+        hostName: namedHost.name,
+        draft: hostConfigDtoToInput(namedHost.config),
+        // Read-only embed: no save / dirty semantics, no diff flash.
+        savedSnapshotId: "",
+        isDirty: false,
+        projectServers: projectServersForHostCanvas,
+      },
+      [],
+    );
+  }, [namedHost, projectServersForHostCanvas]);
   const desktopRightPanelDefaultSize = desktopSettingsPaneSize;
   const desktopLeftPanelDefaultSize = 100 - desktopRightPanelDefaultSize;
 
@@ -930,48 +945,32 @@ export function ChatboxBuilderView({
       return false;
     }
 
-    // The backend's v2 hostConfig path persists connection fields
-    // verbatim. Block save until a seed has resolved so we don't ship
-    // empty connectionDefaults / clientCapabilities / hostContext and
-    // clobber the existing values. For edit-mode chatboxes prefer the
-    // chatbox's own config; only fall back to the project default
-    // when the chatbox config has *resolved* null (legacy rows) — not
-    // while it's still undefined (loading), which would let the
-    // project default overwrite an existing chatbox's own connection
-    // fields if the project query resolves first. For create mode,
-    // use the project default directly.
-    const chatboxSeed =
-      chatboxHostConfig === null
-        ? projectDefaultHostConfig
-        : chatboxHostConfig;
-    const seedDto = chatboxId ? chatboxSeed : projectDefaultHostConfig;
-    if (seedDto === undefined) {
-      toast.error("Loading chatbox config — try again in a moment");
-      return false;
-    }
-    const seedInput = seedDto ? hostConfigDtoToInput(seedDto) : null;
-    const draftWithTrimmedSystemPrompt: ChatboxDraftConfig = {
-      ...draftChatboxConfig,
-      systemPrompt:
-        draftChatboxConfig.systemPrompt.trim() || DEFAULT_SYSTEM_PROMPT,
-    };
-    const hostConfigInput = draftToHostConfigInputV2(
-      draftWithTrimmedSystemPrompt,
-      seedInput
-    );
-
     setIsSaving(true);
     try {
+      // Live-reference: chatbox writes carry only metadata + chatUi.
+      // Execution config lives on the chatbox's referenced host and is
+      // edited through hosts.updateHost. The draft fields the builder
+      // surfaces (modelId / systemPrompt / serverIds / etc.) still
+      // render but no longer persist back through the chatbox path —
+      // they're a follow-up rewrite (#12) once the host-picker UI
+      // lands here.
       const payload = {
         name: trimmedName,
         description: draftChatboxConfig.description.trim() || undefined,
         chatUi: draftChatboxConfig.chatUi,
-        hostConfig: hostConfigInput,
       };
 
       if (!chatboxId) {
+        const seedHostId = chatbox?.namedHostId;
+        if (!seedHostId) {
+          toast.error(
+            "Pick a host before creating a chatbox (open the Hosts tab)."
+          );
+          return false;
+        }
         let created = (await createChatbox({
           projectId,
+          namedHostId: seedHostId,
           ...payload,
         })) as ChatboxSettings;
         if (draftChatboxConfig.mode !== "invited_only") {
@@ -1010,12 +1009,9 @@ export function ChatboxBuilderView({
     onSavedDraft,
     chatbox,
     chatboxId,
-    chatboxHostConfig,
-    projectDefaultHostConfig,
     setChatboxMode,
     updateChatbox,
     projectId,
-    projectServers,
   ]);
 
   const saveAndOpenPreview = useCallback(async () => {
@@ -1083,7 +1079,10 @@ export function ChatboxBuilderView({
           ),
         }));
         setSelectedNodeId(`server:${serverId}`);
-        setFocusedSetupSection("servers");
+        // Focus on the access section as a no-op fallback — the
+        // servers section was removed when the host viz took over the
+        // server display surface.
+        setFocusedSetupSection("access");
         setIsSetupSheetOpen(true);
         toast.success(`Server "${formData.name}" added`);
       } catch (error) {
@@ -1119,7 +1118,10 @@ export function ChatboxBuilderView({
 
       if (checked) {
         setSelectedNodeId(`server:${serverId}`);
-        setFocusedSetupSection("servers");
+        // Focus on the access section as a no-op fallback — the
+        // servers section was removed when the host viz took over the
+        // server display surface.
+        setFocusedSetupSection("access");
         setIsSetupSheetOpen(true);
         return;
       }
@@ -1169,8 +1171,9 @@ export function ChatboxBuilderView({
     onDraftChange: (updater: (d: ChatboxDraftConfig) => ChatboxDraftConfig) =>
       setDraftChatboxConfig((current) => updater(current)),
     onOpenAddServer: () => {
-      setFocusedSetupSection("servers");
-      setIsSetupSheetOpen(true);
+      // Adding a server is now a host concern; the chatbox surface no
+      // longer has a Servers section to focus. Just open the modal in
+      // place — it still mints the project-level server row.
       setIsAddServerOpen(true);
     },
     onToggleServer: handleToggleServer,
@@ -1205,7 +1208,7 @@ export function ChatboxBuilderView({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ChatboxBuilderChrome
-        title={viewModel.title}
+        title={chatbox?.name ?? draftChatboxConfig.name}
         isDirty={isDirty}
         isSaving={isSaving}
         hasSavedChatbox={hasSavedChatbox}
@@ -1296,7 +1299,7 @@ export function ChatboxBuilderView({
                                 value={draftChatboxConfig.hostStyle}
                               >
                               <ChatboxHostCapabilitiesOverrideProvider
-                                value={chatboxHostConfig?.hostCapabilitiesOverride}
+                                value={undefined}
                               >
                                 <ChatTabV2
                                   key={chatKey}
@@ -1438,33 +1441,29 @@ export function ChatboxBuilderView({
                     <div className="flex h-full min-h-0 flex-col">
                       <div className="min-h-0 flex-1">
                         <ReactFlowProvider>
-                          <ChatboxCanvas
-                            viewModel={viewModel}
-                            selectedNodeId={selectedNodeId}
-                            canvasViewportRefitNonce={canvasViewportRefitNonce}
-                            builderModelId={draftChatboxConfig.modelId}
-                            canvasServerPicker={{
-                              projectServers,
-                              selectedServerIds:
-                                draftChatboxConfig.selectedServerIds,
-                              onToggleServer: handleToggleServer,
-                              onOpenAddProjectServer: () => {
-                                setFocusedSetupSection("servers");
-                                setIsSetupSheetOpen(true);
-                                setIsAddServerOpen(true);
-                              },
-                            }}
-                            onSelectNode={(nodeId) => {
-                              setSelectedNodeId(nodeId);
-                              setFocusedSetupSection(
-                                getSetupSectionForNode(nodeId)
-                              );
-                              setIsSetupSheetOpen(true);
-                            }}
-                            onClearSelection={() => {
-                              setSelectedNodeId(null);
-                            }}
-                          />
+                          {hostViewModel ? (
+                            <RedesignedHostCanvas
+                              viewModel={hostViewModel}
+                              selectedNodeId={null}
+                              onSelectNode={() => {}}
+                              onClearSelection={() => {}}
+                              onAddServer={() => {}}
+                              readOnly
+                              onRequestEdit={() => {
+                                // Navigate to the Hosts tab. The host this
+                                // chatbox uses is identified by namedHostId;
+                                // App.tsx watches the hash and the Hosts tab
+                                // remembers the last selected host. A deeper
+                                // deep-link (preselect a specific host) is a
+                                // follow-up.
+                                window.location.hash = "hosts";
+                              }}
+                            />
+                          ) : (
+                            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                              Loading host…
+                            </div>
+                          )}
                         </ReactFlowProvider>
                       </div>
                     </div>

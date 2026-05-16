@@ -50,8 +50,9 @@ describe("HostFocusPanel", () => {
     const agentTab = screen.getByRole("tab", { name: /^Agent$/ });
     expect(agentTab).toBeInTheDocument();
     expect(within(agentTab).queryByText("AGENT")).toBeNull();
-    const iconWell = agentTab.querySelector(".rounded-md");
-    expect(iconWell?.className.includes("var(--primary)")).toBe(false);
+    // Tab bar is text-only after the icon-well simplification — there
+    // should be no primary-tinted decoration on inactive tabs.
+    expect(agentTab.className).not.toMatch(/var\(--primary\)|bg-primary\b/);
   });
 
   it("shows Apps Extension in the header tab bar without SEP-1865 subtext", () => {
@@ -75,8 +76,9 @@ describe("HostFocusPanel", () => {
     const appsTab = screen.getByRole("tab", { name: /^Apps Extension$/ });
     expect(appsTab).toBeInTheDocument();
     expect(within(appsTab).queryByText(/SEP-1865/)).toBeNull();
-    const appsIconWell = appsTab.querySelector(".rounded-md");
-    expect(appsIconWell?.className.includes("var(--info")).toBe(false);
+    // Tab bar is text-only after the icon-well simplification — there
+    // should be no info-tinted decoration on inactive tabs.
+    expect(appsTab.className).not.toMatch(/var\(--info|bg-info\b/);
   });
 
   it("shows MCP Protocol in the header tab bar without wire subtext", () => {
@@ -104,11 +106,11 @@ describe("HostFocusPanel", () => {
     expect(within(protocolTab).queryByText(/^wire$/i)).toBeNull();
   });
 
-  it("includes a General tab in the tab bar", () => {
+  it("does not include a General tab; host name input still lives in the identity header", () => {
     render(
       <HostFocusPanel
         hostId="host-test"
-        tab="general"
+        tab="behavior"
         onTabChange={vi.fn()}
         initialSelectedServerId={null}
         hostDisplayName="My Host"
@@ -122,7 +124,13 @@ describe("HostFocusPanel", () => {
       />,
     );
 
-    expect(screen.getByRole("tab", { name: /^General$/ })).toBeInTheDocument();
+    // General tab was removed; Appearance is the new home for host-wide
+    // chrome settings.
+    expect(screen.queryByRole("tab", { name: /^General$/ })).toBeNull();
+    expect(
+      screen.getByRole("tab", { name: /^Appearance$/ }),
+    ).toBeInTheDocument();
+    // The host-name textbox lives in the always-visible identity header.
     expect(screen.getByRole("textbox", { name: "Host name" })).toHaveValue(
       "My Host",
     );
