@@ -326,7 +326,7 @@ describe("useAutoConnectProjectServers", () => {
     expect(setSelectedServerNames).toHaveBeenLastCalledWith([]);
   });
 
-  it("re-attempts when the hostScopeKey changes (switching hosts retries the same servers)", async () => {
+  it("re-attempts on every host transition, including returning to a previously-visited host", async () => {
     const ensureServersReady = vi.fn().mockResolvedValue({
       readyServerNames: [],
       failedServerNames: ["alpha"],
@@ -353,16 +353,45 @@ describe("useAutoConnectProjectServers", () => {
     expect(ensureServersReady).toHaveBeenCalledTimes(1);
 
     // Switch hosts: same project, same required names, different scope key.
-    // We expect a fresh attempt so the new host can try to connect even
-    // though the previous host's attempt failed.
+    // Fresh attempt for the new host.
     rerender({ hostScopeKey: "host-b" });
     await flushMicrotasks();
     expect(ensureServersReady).toHaveBeenCalledTimes(2);
 
-    // Switching back to host-a is still skipped (already attempted for
-    // that host) — only NEW hosts trigger a fresh batch.
+    // Switching BACK to host-a should re-fire reconciliation — leaving and
+    // returning is a user-intent signal to try again, not "already tried
+    // forever." This is the bug the user hit: after going through several
+    // hosts and coming back, auto-connect stopped firing.
     rerender({ hostScopeKey: "host-a" });
     await flushMicrotasks();
-    expect(ensureServersReady).toHaveBeenCalledTimes(2);
+    expect(ensureServersReady).toHaveBeenCalledTimes(3);
+  });
+
+  it("does NOT re-fire while sitting on the same host (refresh-keeps-failing guard preserved)", async () => {
+    const ensureServersReady = vi.fn().mockRejectedValue(new Error("boom"));
+    const appState = makeAppState(["alpha"]);
+
+    const { rerender } = renderHook(
+      () =>
+        useAutoConnectProjectServers({
+          projectId: "proj-sit",
+          hostScopeKey: "host-a",
+          requiredServerNames: ["alpha"],
+        }),
+      {
+        wrapper: ({ children }) =>
+          wrapper({ children, ensureServersReady, appState }),
+      },
+    );
+
+    await flushMicrotasks();
+    rerender();
+    await flushMicrotasks();
+    rerender();
+    await flushMicrotasks();
+
+    // Still only one attempt — re-renders without a scope change don't
+    // re-fire, so a permanently-failing connection won't loop.
+    expect(ensureServersReady).toHaveBeenCalledTimes(1);
   });
 });

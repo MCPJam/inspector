@@ -21,6 +21,17 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
  */
 const attemptedByProject = new Map<string, Set<string>>();
 
+/**
+ * The hostScopeKey we most recently saw for each project. Used to detect a
+ * scope-change transition (e.g. user switched hosts) so we can clear the
+ * project's prior attempts. Without this, returning to a host you've
+ * already visited in the same session would skip reconciliation forever —
+ * the dedupe would say "already tried this exact (scope, set) combo" even
+ * though the user's host switch is a strong signal they want a fresh
+ * attempt.
+ */
+const lastSeenScopeByProject = new Map<string, string>();
+
 function buildAttemptKey(
   hostScopeKey: string,
   serverNamesKey: string,
@@ -61,8 +72,10 @@ function isAttempted(
 export function resetAutoConnectAttempts(projectId?: string): void {
   if (projectId === undefined) {
     attemptedByProject.clear();
+    lastSeenScopeByProject.clear();
   } else {
     attemptedByProject.delete(projectId);
+    lastSeenScopeByProject.delete(projectId);
   }
 }
 
@@ -184,6 +197,21 @@ export function useAutoConnectProjectServers({
     requiredNamesKey,
     setSelectedServerNames,
   ]);
+
+  // Detect a scope transition (user switched the previewed host) and
+  // clear the prior attempt log so revisiting a previously-tried host
+  // re-fires reconciliation. Without this, the dedupe set would say
+  // "already tried (Claude, [E,b,l])" and skip the second visit forever,
+  // even though leaving and coming back is a clear user-intent signal to
+  // try again. Sitting on the same host doesn't trigger this — only the
+  // actual scope change does.
+  useEffect(() => {
+    if (!projectId) return;
+    if (lastSeenScopeByProject.get(projectId) !== scopeKey) {
+      attemptedByProject.delete(projectId);
+      lastSeenScopeByProject.set(projectId, scopeKey);
+    }
+  }, [projectId, scopeKey]);
 
   // Compose the reconciliation key from both connect and disconnect sets.
   // Same scopeKey with the same connect+disconnect intent = skip; any
