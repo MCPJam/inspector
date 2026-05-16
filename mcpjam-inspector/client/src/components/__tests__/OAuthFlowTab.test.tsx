@@ -114,4 +114,38 @@ describe("OAuthFlowTab", () => {
 
     expect(onSelectServer).not.toHaveBeenCalled();
   });
+
+  it("renders HTTP servers with partial saved OAuth profiles", () => {
+    const serverConfigs = {
+      "oauth-server": createServer({
+        name: "oauth-server",
+        useOAuth: true,
+        config: {
+          url: "https://example.com/mcp",
+        },
+        oauthFlowProfile: {
+          serverUrl: "",
+          clientId: "client-from-profile",
+          scopes: "read",
+          protocolVersion: "2025-11-25",
+          registrationStrategy: "dcr",
+        } as ServerWithName["oauthFlowProfile"],
+      }),
+    };
+
+    render(
+      <OAuthFlowTab
+        serverConfigs={serverConfigs}
+        selectedServerName="oauth-server"
+        onSelectServer={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("oauth-flow-logger")).toHaveTextContent(
+      "oauth-server",
+    );
+    expect(screen.getByTestId("oauth-flow-logger")).toHaveTextContent(
+      "https://example.com/mcp",
+    );
+  });
 });
