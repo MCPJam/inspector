@@ -47,9 +47,7 @@ export function useCreditTopupReturnFlow({
     params.delete("session_id");
     const search = params.toString();
     const cleanedUrl =
-      window.location.pathname +
-      (search ? `?${search}` : "") +
-      window.location.hash;
+      window.location.pathname + (search ? `?${search}` : "");
     window.history.replaceState(null, "", cleanedUrl);
 
     if (topupParam === "cancelled") {

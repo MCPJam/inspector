@@ -117,19 +117,24 @@ describe("CreditBalanceCard", () => {
     expect(dialog.getAttribute("data-source")).toBe("billing_page");
   });
 
-  it("auto-opens the top-up dialog with limit_modal source when the topup hash flag is present", () => {
-    window.location.hash = "organizations/org-1/billing?topup=open";
+  it("auto-opens the top-up dialog with limit_modal source when the topup query flag is present", () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/organizations/org-1/billing?topup=open",
+    );
     render(<CreditBalanceCard />);
 
     const dialog = screen.getByTestId("topup-dialog");
     expect(dialog).toBeInTheDocument();
     expect(dialog.getAttribute("data-source")).toBe("limit_modal");
     // The flag should be consumed so a reload doesn't reopen the dialog.
-    expect(window.location.hash).toBe("#organizations/org-1/billing");
+    expect(window.location.pathname).toBe("/organizations/org-1/billing");
+    expect(window.location.search).toBe("");
   });
 
-  it("does not auto-open when the topup hash flag is absent", () => {
-    window.location.hash = "organizations/org-1/billing";
+  it("does not auto-open when the topup query flag is absent", () => {
+    window.history.replaceState({}, "", "/organizations/org-1/billing");
     render(<CreditBalanceCard />);
 
     expect(screen.queryByTestId("topup-dialog")).not.toBeInTheDocument();

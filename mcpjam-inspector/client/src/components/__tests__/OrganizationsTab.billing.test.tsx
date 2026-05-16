@@ -1115,7 +1115,7 @@ describe("OrganizationsTab billing", () => {
 
     await waitFor(() => {
       expect(startPlanChange).toHaveBeenCalledWith(
-        expect.stringContaining("#organizations/org-1/billing"),
+        expect.stringContaining("/organizations/org-1/billing"),
         "team",
         "monthly",
         { confirmPaidPlanChange: true },
@@ -1206,7 +1206,7 @@ describe("OrganizationsTab billing", () => {
 
     await waitFor(() => {
       expect(openCancellationPortal).toHaveBeenCalledWith(
-        expect.stringContaining("#organizations/org-1/billing"),
+        expect.stringContaining("/organizations/org-1/billing"),
       );
     });
     expect(startPlanChange).not.toHaveBeenCalled();
@@ -1249,7 +1249,7 @@ describe("OrganizationsTab billing", () => {
 
     await waitFor(() => {
       expect(startPlanChange).toHaveBeenCalledWith(
-        expect.stringContaining("#organizations/org-1/billing"),
+        expect.stringContaining("/organizations/org-1/billing"),
         "team",
         "annual",
         { confirmPaidPlanChange: false },
@@ -1359,7 +1359,7 @@ describe("OrganizationsTab billing", () => {
 
     await waitFor(() => {
       expect(startPlanChange).toHaveBeenCalledWith(
-        expect.stringContaining("#organizations/org-1/billing"),
+        expect.stringContaining("/organizations/org-1/billing"),
         "team",
         "annual",
         { confirmPaidPlanChange: false },
@@ -1411,7 +1411,7 @@ describe("OrganizationsTab billing", () => {
 
     await waitFor(() => {
       expect(startPlanChange).toHaveBeenCalledWith(
-        expect.stringContaining("#organizations/org-1/billing"),
+        expect.stringContaining("/organizations/org-1/billing"),
         "team",
         "monthly",
         { confirmPaidPlanChange: false },
@@ -1556,7 +1556,7 @@ describe("OrganizationsTab billing", () => {
 
     await waitFor(() => {
       expect(startPlanChange).toHaveBeenCalledWith(
-        expect.stringContaining("#organizations/org-1/billing"),
+        expect.stringContaining("/organizations/org-1/billing"),
         "team",
         "annual",
         { confirmPaidPlanChange: false },
@@ -1601,7 +1601,7 @@ describe("OrganizationsTab billing", () => {
 
     await waitFor(() => {
       expect(openIntervalChangePortal).toHaveBeenCalledWith(
-        expect.stringContaining("#organizations/org-1/billing"),
+        expect.stringContaining("/organizations/org-1/billing"),
         "annual",
       );
     });
@@ -1638,7 +1638,7 @@ describe("OrganizationsTab billing", () => {
 
     await waitFor(() => {
       expect(openPortal).toHaveBeenCalledWith(
-        expect.stringContaining("#organizations/org-1/billing"),
+        expect.stringContaining("/organizations/org-1/billing"),
       );
     });
     expect(openSpy).toHaveBeenCalledWith(
@@ -1769,7 +1769,7 @@ describe("OrganizationsTab billing", () => {
   });
 
   it("calls onOrganizationDeleted and skips the fallback redirect when provided", async () => {
-    window.history.replaceState({}, "", "/#organizations/org-1");
+    window.history.replaceState({}, "", "/organizations/org-1");
     const onOrganizationDeleted = vi.fn();
     deleteOrganizationMock.mockResolvedValue(undefined);
     mockUseOrganizationBilling.mockReturnValue(
@@ -1803,6 +1803,7 @@ describe("OrganizationsTab billing", () => {
       expect(onOrganizationDeleted).toHaveBeenCalledWith("org-1");
     });
 
-    expect(window.location.hash).toBe("#organizations/org-1");
+    expect(window.location.pathname).toBe("/organizations/org-1");
+    expect(window.location.hash).toBe("");
   });
 });

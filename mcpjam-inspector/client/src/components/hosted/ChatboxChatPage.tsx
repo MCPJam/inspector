@@ -26,6 +26,7 @@ import {
   writeChatboxSession,
   writeChatboxSignInReturnPath,
 } from "@/lib/chatbox-session";
+import { navigateApp } from "@/lib/app-navigation";
 import { bootstrapServerToHostedOAuthDescriptor } from "@/components/chatboxes/builder/chatbox-server-optional";
 import { isHostedOAuthBusy } from "@/lib/hosted-oauth-resume";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
@@ -780,7 +781,12 @@ export function ChatboxChatPage({
 
   const handleOpenMcpJam = useCallback(() => {
     clearChatboxSession();
-    window.history.replaceState({}, "", "/#chatboxes");
+    // Route via the navigation API so React Router's `useLocation`
+    // (consumed by App's pathname-sync effect) sees the new pathname.
+    // A bare `window.history.replaceState` would leave `locationForRoute`
+    // stale on `/chatbox/...`, and the sync effect would then redirect
+    // back to `/servers` before the hash-migration shim could pivot.
+    navigateApp("/chatboxes", { replace: true });
     onExitChatboxChat?.();
   }, [onExitChatboxChat]);
 

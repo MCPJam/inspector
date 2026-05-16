@@ -14,6 +14,7 @@ import { useEffect } from "react";
 import { useOrganizationQueries } from "@/hooks/useOrganizations";
 import { readStoredActiveOrganizationId } from "@/lib/active-organization-storage";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
+import { useAppNavigate } from "@/lib/app-navigation";
 
 export function MCPJamLimitDialog() {
   const isOpen = useMCPJamLimitDialogStore((s) => s.isOpen);
@@ -32,6 +33,7 @@ export function MCPJamLimitDialog() {
   // isn't wired up yet.
   const billingUiEnabled =
     useFeatureFlagEnabled("billing-entitlements-ui") === true;
+  const appNavigate = useAppNavigate();
 
   useEffect(() => {
     setAuthStatus(isLoading ? "loading" : user ? "signedIn" : "guest");
@@ -60,17 +62,17 @@ export function MCPJamLimitDialog() {
     // case closing now would drop them out of the upsell silently.
     if (!orgId) return;
     close();
-    // The hash router strips ?... before resolving the route, so the
+    // The router strips ?... before resolving the route, so the
     // `topup=open` flag is invisible to navigation but visible to the
     // billing page on mount.
-    window.location.hash = `organizations/${orgId}/billing?topup=open`;
+    appNavigate(`/organizations/${orgId}/billing?topup=open`);
   };
 
   const handleBYOK = () => {
     const orgId = resolveBillingOrgId();
     if (!orgId) return;
     close();
-    window.location.hash = `organizations/${orgId}/models`;
+    appNavigate(`/organizations/${orgId}/models`);
   };
 
   // Guest variant — only renders for unauthenticated users.

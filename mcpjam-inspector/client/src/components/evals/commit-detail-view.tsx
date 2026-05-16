@@ -14,8 +14,8 @@ import {
 } from "./helpers";
 import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { RunHeaderCompactStats } from "./run-header-compact-stats";
-import { navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
-import type { CiEvalsRoute } from "@/lib/ci-evals-router";
+import { buildCiEvalsPath, navigateApp } from "@/lib/app-navigation";
+import type { EvalRoute } from "@/lib/eval-route-types";
 import { useRunDetailData } from "./use-suite-data";
 import { RunDetailView } from "./run-detail-view";
 
@@ -23,7 +23,7 @@ interface CommitDetailViewProps {
   commitGroup: CommitGroup;
   allCommitGroups?: CommitGroup[];
   onRerunRun?: (suiteId: string, runId: string) => void;
-  route: CiEvalsRoute;
+  route: EvalRoute;
 }
 
 function getRunDuration(run: EvalSuiteRun): number | null {
@@ -77,12 +77,14 @@ export function CommitDetailView({
 
   const handleSelectIteration = (iterationId: string) => {
     if (selectedSuiteId) {
-      navigateToCiEvalsRoute({
-        type: "commit-detail",
-        commitSha: commitGroup.commitSha,
-        suite: selectedSuiteId,
-        iteration: iterationId,
-      });
+      navigateApp(
+        buildCiEvalsPath({
+          type: "commit-detail",
+          commitSha: commitGroup.commitSha,
+          suite: selectedSuiteId,
+          iteration: iterationId,
+        }),
+      );
     }
   };
 

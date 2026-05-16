@@ -85,24 +85,23 @@ export function clearOnboardingState(): void {
  */
 export function isFirstRunEligible(
   hasAnyBlockingServers: boolean,
-  currentHash: string,
+  currentRouteTab: string,
   isSignedInWithWorkOs = false,
-  hasSeenRemoteOnboarding?: boolean,
+  hasSeenRemoteOnboarding?: boolean
 ): boolean {
   if (hasAnyBlockingServers) return false;
   if (isSignedInWithWorkOs) return false;
 
-  // Strip the leading `#`/`#/`, then drop query strings and trailing
-  // slashes so `#connect?foo=bar` and `#/connect/` still pass the
-  // allowlist — both land on the same hub route.
-  const rawHash = currentHash.replace(/^#\/?/, "");
-  const [hashPath = ""] = rawHash.split("?");
-  const hash = hashPath.replace(/\/+$/, "");
+  // Drop query strings and trailing slashes so `connect?foo=bar` and
+  // `/connect/` still pass the allowlist — both land on the same hub route.
+  const rawRoute = currentRouteTab.replace(/^#?\/?/, "");
+  const [routePath = ""] = rawRoute.split("?");
+  const routeTab = routePath.replace(/\/+$/, "");
   if (
-    hash !== "servers" &&
-    hash !== "connect" &&
-    hash !== "hosts" &&
-    hash
+    routeTab !== "servers" &&
+    routeTab !== "connect" &&
+    routeTab !== "hosts" &&
+    routeTab
   )
     return false;
 

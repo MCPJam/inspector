@@ -444,9 +444,9 @@ describe("useServerState OAuth callback failures", () => {
       "OAuth authorization failed: access_denied: User denied access"
     );
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
-    expect(window.location.pathname).toBe("/");
+    expect(window.location.pathname).toBe("/servers");
     expect(window.location.search).toBe("");
-    expect(window.location.hash).toBe("#demo-server");
+    expect(window.location.hash).toBe("");
   });
 
   it("marks the pending server as failed when token exchange fails after redirect", async () => {
@@ -551,9 +551,9 @@ describe("useServerState OAuth callback failures", () => {
       );
     });
 
-    expect(window.location.pathname).toBe("/");
+    expect(window.location.pathname).toBe("/servers");
     expect(window.location.search).toBe("");
-    expect(window.location.hash).toBe("#demo-server");
+    expect(window.location.hash).toBe("");
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
   });
 
@@ -682,9 +682,9 @@ describe("useServerState OAuth callback failures", () => {
       );
     });
 
-    expect(window.location.pathname).toBe("/");
+    expect(window.location.pathname).toBe("/servers");
     expect(window.location.search).toBe("");
-    expect(window.location.hash).toBe("#demo-server");
+    expect(window.location.hash).toBe("");
   });
 
   it("preserves existing HTTP config when OAuth callback returns a bearer token config", async () => {

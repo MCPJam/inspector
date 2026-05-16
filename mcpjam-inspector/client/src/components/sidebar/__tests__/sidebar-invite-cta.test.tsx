@@ -299,7 +299,7 @@ describe("sidebar invite CTA", () => {
 
   it("shows disabled Playground with a beta tooltip when the flag is off", () => {
     mockFeatureFlags["playground-enabled"] = false;
-    window.location.hash = "#servers";
+    window.history.replaceState({}, "", "/servers");
 
     renderSidebar();
 
@@ -317,7 +317,8 @@ describe("sidebar invite CTA", () => {
 
     fireEvent.click(playground);
 
-    expect(window.location.hash).toBe("#servers");
+    expect(window.location.pathname).toBe("/servers");
+    expect(window.location.hash).toBe("");
   });
 
   it("enables Playground without a beta badge when the flag is on", () => {

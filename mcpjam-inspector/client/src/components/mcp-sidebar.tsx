@@ -65,9 +65,12 @@ import {
   isHostedSidebarTabAllowed,
   normalizeHostedHashTab,
 } from "@/lib/hosted-tab-policy";
-import { buildEvalsHash } from "@/lib/evals-router";
-import { navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
-import { withTestingSurface } from "@/lib/testing-surface";
+import {
+  buildCiEvalsPath,
+  buildEvalsPath,
+  navigateApp,
+  useAppNavigate,
+} from "@/lib/app-navigation";
 import { HOSTED_LOCAL_ONLY_TOOLTIP } from "@/lib/hosted-ui";
 import { useLearnMore } from "@/hooks/use-learn-more";
 import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpandedPanel";
@@ -76,7 +79,7 @@ import {
   type BillingFeatureName,
 } from "@/hooks/useOrganizationBilling";
 import type { Project } from "@/state/app-types";
-import type { OrganizationRouteSection } from "@/lib/hosted-navigation";
+import type { OrganizationRouteSection } from "@/lib/app-navigation";
 
 interface NavItem {
   title: string;
@@ -106,7 +109,7 @@ interface NavSection {
  */
 export function filterByFeatureFlags(
   sections: NavSection[],
-  flags: Record<string, boolean>,
+  flags: Record<string, boolean>
 ): NavSection[] {
   return sections
     .map((section) => ({
@@ -134,7 +137,7 @@ export function applyBillingGateNavState(
     /** When true, feature is denied by premiumness (locked). */
     gateDenied: Partial<Record<BillingFeatureName, boolean>>;
     enforcementActive: boolean;
-  },
+  }
 ): NavSection[] {
   const { billingUiEnabled, gateDenied, enforcementActive } = options;
   if (!billingUiEnabled || !enforcementActive) {
@@ -167,37 +170,37 @@ const navigationSections: NavSection[] = [
     items: [
       {
         title: "Connect",
-        url: "#connect",
+        url: "/hosts",
         icon: MCPIcon,
         featureFlag: "hosts-enabled",
       },
       {
         title: "Servers",
-        url: "#servers",
+        url: "/servers",
         icon: MCPIcon,
         hiddenByFlag: "hosts-enabled",
       },
       {
         title: "Registry",
-        url: "#registry",
+        url: "/registry",
         icon: LayoutGrid,
         featureFlag: "registry-enabled",
       },
       {
         title: "Chat",
-        url: "#chat-v2",
+        url: "/chat-v2",
         icon: MessageCircle,
         hiddenByFlag: "playground-tab-enabled",
       },
       {
         title: "Chatboxes",
-        url: "#chatboxes",
+        url: "/chatboxes",
         icon: Box,
         featureFlag: "sandboxes-enabled",
       },
       {
         title: "Playground",
-        url: "#playground",
+        url: "/playground",
         icon: PanelsTopLeft,
         featureFlag: "playground-tab-enabled",
       },
@@ -208,18 +211,18 @@ const navigationSections: NavSection[] = [
     items: [
       {
         title: "App Builder",
-        url: "#app-builder",
+        url: "/app-builder",
         icon: Anvil,
         hiddenByFlag: "playground-tab-enabled",
       },
       {
         title: "Views",
-        url: "#views",
+        url: "/views",
         icon: Layers,
       },
       {
         title: "Evaluate",
-        url: "#evals",
+        url: "/evals",
         icon: FlaskConical,
         billingFeature: "evals",
         evalsSubnav: true,
@@ -231,18 +234,18 @@ const navigationSections: NavSection[] = [
     items: [
       {
         title: "Skills",
-        url: "#skills",
+        url: "/skills",
         icon: SquareSlash,
       },
       {
         title: "Learning",
-        url: "#learning",
+        url: "/learning",
         icon: GraduationCap,
         featureFlag: "mcpjam-learning",
       },
       {
         title: "Conformance",
-        url: "#conformance",
+        url: "/conformance",
         icon: FlaskConical,
         // MCPJam-internal flag: rollout is restricted to the MCPJam team in
         // PostHog. Keep the `mcpjam-` prefix so it's obvious at a glance that
@@ -251,18 +254,18 @@ const navigationSections: NavSection[] = [
       },
       {
         title: "OAuth Debugger",
-        url: "#oauth-flow",
+        url: "/oauth-flow",
         icon: Workflow,
       },
       {
         title: "XAA Debugger",
-        url: "#xaa-flow",
+        url: "/xaa-flow",
         icon: ShieldCheck,
         featureFlag: "xaa",
       },
       // {
       //   title: "Tracing",
-      //   url: "#tracing",
+      //   url: "/tracing",
       //   icon: Activity,
       // },
     ],
@@ -272,22 +275,22 @@ const navigationSections: NavSection[] = [
     items: [
       {
         title: "Tools",
-        url: "#tools",
+        url: "/tools",
         icon: Hammer,
       },
       {
         title: "Resources",
-        url: "#resources",
+        url: "/resources",
         icon: BookOpen,
       },
       {
         title: "Prompts",
-        url: "#prompts",
+        url: "/prompts",
         icon: MessageSquareCode,
       },
       {
         title: "Tasks",
-        url: "#tasks",
+        url: "/tasks",
         icon: ListTodo,
       },
     ],
@@ -297,12 +300,12 @@ const navigationSections: NavSection[] = [
     items: [
       {
         title: "Support",
-        url: "#support",
+        url: "/support",
         icon: MessageCircleQuestionIcon,
       },
       {
         title: "Settings",
-        url: "#settings",
+        url: "/settings",
         icon: Settings,
       },
     ],
@@ -310,14 +313,14 @@ const navigationSections: NavSection[] = [
 ];
 
 export function getHostedNavigationSections(
-  sections: NavSection[],
+  sections: NavSection[]
 ): NavSection[] {
   return sections
     .map((section) => ({
       ...section,
       items: section.items.flatMap((item) => {
         const normalizedTab = normalizeHostedHashTab(
-          item.url.startsWith("#") ? item.url.slice(1) : item.url,
+          item.url.replace(/^[#/]+/, "")
         );
 
         if (isHostedSidebarTabAllowed(normalizedTab)) {
@@ -358,13 +361,10 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   activeOrganizationName?: string;
   onSwitchOrganization?: (
     organizationId: string,
-    section?: OrganizationRouteSection,
+    section?: OrganizationRouteSection
   ) => void;
   onSwitchActiveOrganization?: (organizationId: string) => void;
-  onProjectShared?: (
-    sharedProjectId: string,
-    sourceProjectId?: string,
-  ) => void;
+  onProjectShared?: (sharedProjectId: string, sourceProjectId?: string) => void;
   billingGateDenied?: Partial<Record<BillingFeatureName, boolean>>;
   billingGateEnforcementActive?: boolean;
   billingUiEnabled?: boolean;
@@ -374,11 +374,11 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
 }
 
 function navigateToEvalsExploreList() {
-  window.location.hash = withTestingSurface(buildEvalsHash({ type: "list" }));
+  navigateApp(buildEvalsPath({ type: "list" }));
 }
 
 function navigateToEvalsRunsList() {
-  navigateToCiEvalsRoute({ type: "list" });
+  navigateApp(buildCiEvalsPath({ type: "list" }));
 }
 
 type EvalsSubnavItem = {
@@ -395,7 +395,7 @@ export function getEvalsSubnavItems(options: {
   const items: EvalsSubnavItem[] = [
     {
       title: "Playground",
-      href: withTestingSurface(buildEvalsHash({ type: "list" })),
+      href: buildEvalsPath({ type: "list" }),
       icon: Puzzle,
       isActive: (activeTab) => activeTab === "evals",
       onClick: navigateToEvalsExploreList,
@@ -405,7 +405,7 @@ export function getEvalsSubnavItems(options: {
   if (options.evaluateRunsEnabled) {
     items.push({
       title: "Runs",
-      href: "#/ci-evals",
+      href: "/ci-evals",
       icon: GitBranch,
       isActive: (activeTab) => activeTab === "ci-evals",
       onClick: navigateToEvalsRunsList,
@@ -452,8 +452,8 @@ export function SidebarEvalsNavGroup({
         disabled || isPlaygroundLocked
           ? "cursor-not-allowed text-muted-foreground opacity-50 hover:bg-transparent hover:text-muted-foreground active:bg-transparent active:text-muted-foreground"
           : isEvalsFamily
-            ? "[&[data-active=true]]:bg-accent cursor-pointer"
-            : "cursor-pointer"
+          ? "[&[data-active=true]]:bg-accent cursor-pointer"
+          : "cursor-pointer"
       }
     >
       <Icon className="h-4 w-4" />
@@ -507,7 +507,7 @@ export function SidebarEvalsNavGroup({
                         "cursor-not-allowed text-muted-foreground opacity-50 hover:bg-transparent hover:text-muted-foreground active:bg-transparent active:text-muted-foreground",
                       isItemPlaygroundLocked &&
                         "aria-disabled:pointer-events-auto",
-                      disabled && "pointer-events-none",
+                      disabled && "pointer-events-none"
                     )}
                   >
                     <ItemIcon className="h-4 w-4" />
@@ -587,6 +587,7 @@ export function MCPSidebar({
   };
   const [showInviteDialog, setShowInviteDialog] = useState(false);
   const learnMore = useLearnMore();
+  const appNavigate = useAppNavigate();
   const { state, isMobile } = useSidebar();
   const activeProject = projects[activeProjectId];
   const inviteableProjects = useMemo(() => {
@@ -596,15 +597,14 @@ export function MCPSidebar({
 
     return Object.fromEntries(
       Object.entries(projects).filter(
-        ([, project]) =>
-          project.organizationId === activeProject.organizationId,
-      ),
+        ([, project]) => project.organizationId === activeProject.organizationId
+      )
     );
   }, [activeProject?.organizationId, projects]);
   const shouldShowInviteCta = isAuthenticated && !!user && !!activeProject;
   const trialBilling = useOrganizationBillingStatus(
     activeProject?.organizationId ?? null,
-    { enabled: billingUiEnabled && !!activeProject?.organizationId },
+    { enabled: billingUiEnabled && !!activeProject?.organizationId }
   );
   const trialActive =
     billingUiEnabled &&
@@ -612,12 +612,12 @@ export function MCPSidebar({
     !!trialBilling.trialEndsAt;
   const handleTrialUpgradeClick = () => {
     if (!activeProject?.organizationId) return;
-    window.location.hash = `#organizations/${activeProject.organizationId}/billing`;
+    appNavigate(`/organizations/${activeProject.organizationId}/billing`);
   };
 
   const handleNavClick = (url: string) => {
-    if (onNavigate && url.startsWith("#")) {
-      const section = url.slice(1);
+    if (onNavigate && /^[#/]/.test(url)) {
+      const section = url.replace(/^[#/]+/, "");
       posthog.capture("sidebar_nav_clicked", {
         ...standardEventProps("mcp_sidebar"),
         section,
@@ -646,7 +646,7 @@ export function MCPSidebar({
       playgroundTabEnabled,
       xaaEnabled,
       isAuthenticated,
-    ],
+    ]
   );
   const hubNavHash =
     isPostHogBooleanFlagOn(hostsEnabled) && isAuthenticated
@@ -654,7 +654,7 @@ export function MCPSidebar({
       : "#servers";
   const visibleNavigationSections = filterByFeatureFlags(
     HOSTED_MODE ? hostedNavigationSections : navigationSections,
-    featureFlags,
+    featureFlags
   );
 
   return (
@@ -664,7 +664,7 @@ export function MCPSidebar({
           <div
             className={cn(
               "no-drag",
-              state === "collapsed" && !isMobile && "flex justify-center px-0",
+              state === "collapsed" && !isMobile && "flex justify-center px-0"
             )}
           >
             {isMobile ? (
@@ -692,7 +692,7 @@ export function MCPSidebar({
                     "relative z-0 flex w-full cursor-pointer items-center justify-center py-2 transition-opacity duration-200",
                     /* Reserve space for the collapse control so the logo stays visually centered and
                        clicks on the logo never compete with the invisible hit target. */
-                    "px-2 pr-10 hover:opacity-80",
+                    "px-2 pr-10 hover:opacity-80"
                   )}
                 >
                   <img
@@ -714,7 +714,7 @@ export function MCPSidebar({
                     "pointer-events-auto opacity-0 transition-opacity duration-200",
                     /* Named group avoids ambiguous group-hover when SidebarProvider also uses group/sidebar-wrapper */
                     "group-hover/sidebar-rail:opacity-100 focus-visible:opacity-100",
-                    "[@media(hover:none)]:opacity-100",
+                    "[@media(hover:none)]:opacity-100"
                   )}
                   aria-label="Collapse sidebar"
                 />
@@ -751,7 +751,7 @@ export function MCPSidebar({
                 aria-disabled={updateInstalling}
                 className={cn(
                   "h-5 w-full gap-1 rounded-full bg-primary px-2 text-[11px] font-medium text-primary-foreground hover:bg-primary/90",
-                  updateInstalling && "pointer-events-none hover:bg-primary",
+                  updateInstalling && "pointer-events-none hover:bg-primary"
                 )}
               >
                 {updateInstalling && (
@@ -774,9 +774,8 @@ export function MCPSidebar({
                     ...item,
                     isActive:
                       normalizeHostedHashTab(
-                        item.url.startsWith("#")
-                          ? item.url.slice(1).split("/")[0]!
-                          : item.url.split("/")[0]!,
+                        item.url.replace(/^[#/]+/, "").split("/")[0] ||
+                          "servers"
                       ) === activeTab,
                   }))}
                   onItemClick={handleNavClick}
@@ -831,9 +830,7 @@ export function MCPSidebar({
               className="mt-1"
             />
           ) : null}
-          {!user ? (
-            <SidebarCreditUsage className="px-1" includeGuests />
-          ) : null}
+          {!user ? <SidebarCreditUsage className="px-1" includeGuests /> : null}
           <SidebarUser
             activeOrganizationId={activeOrganizationId}
             onBeforeSignOut={onBeforeSignOut}

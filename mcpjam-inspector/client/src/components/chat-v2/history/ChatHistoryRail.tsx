@@ -18,8 +18,7 @@ import { useChatHistory } from "./use-chat-history";
 import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
 import { useProjectMembers } from "@/hooks/useProjects";
 import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
-import { buildEvalsHash } from "@/lib/evals-router";
-import { withTestingSurface } from "@/lib/testing-surface";
+import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
 import {
   buildProjectOwnerProfileByUserId,
   resolveProjectThreadOwnerAvatar,
@@ -444,8 +443,8 @@ export function ChatHistoryRail({
         }}
         onImported={({ suiteId, testCaseId }) => {
           setSessionToConvert(null);
-          window.location.hash = withTestingSurface(
-            buildEvalsHash({
+          navigateApp(
+            buildEvalsPath({
               type: "test-edit",
               suiteId,
               testId: testCaseId,

@@ -44,6 +44,12 @@ import {
 } from "@/lib/apis/web/context";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import { authFetch } from "@/lib/session-token";
+import {
+  captureCurrentReturnPath,
+  navigateApp,
+  normalizeReturnTargetPath,
+  routePaths,
+} from "@/lib/app-navigation";
 import { useProjectClientConfigSyncPending } from "./use-project-client-config-sync-pending";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { useServerMutations, type RemoteServer } from "./useProjects";
@@ -388,11 +394,15 @@ function buildOAuthProfileFromFormData(
 
 function restorePathAfterOAuthCallback(
   currentPathname: string,
-  savedHash: string
+  savedTarget: string
 ): string {
   const basePath =
-    currentPathname === "/oauth/callback" ? "/" : currentPathname;
-  return `${basePath}${savedHash}`;
+    currentPathname === "/oauth/callback"
+      ? routePaths.servers
+      : currentPathname;
+  return savedTarget
+    ? normalizeReturnTargetPath(savedTarget, basePath)
+    : basePath;
 }
 
 function requiresFreshOAuthAuthorization(error: unknown): boolean {
@@ -643,7 +653,7 @@ export function useServerState({
         return false;
       }
 
-      const returnHash = window.location.hash || "#servers";
+      const returnPath = captureCurrentReturnPath();
       const organizationId =
         effectiveProjects[effectiveActiveProjectId]?.organizationId ?? null;
       clearHostedOAuthPendingState();
@@ -655,9 +665,11 @@ export function useServerState({
         serverName: params.serverName,
         serverUrl: params.serverUrl,
         accessScope: "project_member",
-        returnHash,
+        returnPath,
       });
-      localStorage.setItem("mcp-oauth-return-hash", returnHash);
+      if (returnPath) {
+        localStorage.setItem("mcp-oauth-return-hash", returnPath);
+      }
       return true;
     },
     [effectiveActiveProjectId, effectiveProjects, isAuthenticated]
@@ -2571,8 +2583,15 @@ export function useServerState({
         .then((data) => {
           const cliConfig = data.config;
           if (cliConfig) {
-            if (cliConfig.initialTab && !window.location.hash) {
-              window.location.hash = cliConfig.initialTab;
+            if (
+              cliConfig.initialTab &&
+              (!window.location.pathname ||
+                window.location.pathname === "/")
+            ) {
+              const tab = cliConfig.initialTab.replace(/^[#/]+/, "");
+              if (tab) {
+                navigateApp(`/${tab}`, { replace: true });
+              }
             }
 
             if (
