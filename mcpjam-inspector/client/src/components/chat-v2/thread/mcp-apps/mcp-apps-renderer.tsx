@@ -1140,13 +1140,12 @@ export function MCPAppsRenderer({
     onAppSupportedDisplayModesChange,
   ]);
 
-  // ENFORCEMENT LANDING PAD (deferred):
-  // `effectiveHostCapabilities` (above) is the contract advertised in
-  // ui/initialize. The handlers bound below SHOULD eventually gate their work
-  // on it so that "advertise" and "enforce" stay in lockstep, otherwise the
-  // handshake lies (advertised "unsupported" + behavior "supported") — which
-  // is worse than no mock at all for conformance testing. Mapping for the
-  // follow-up PR:
+  // Advertise == enforce. Each handler below short-circuits with an
+  // "unsupported capability" error when the corresponding key is absent
+  // from `effectiveHostCapabilities`. Without this, the ui/initialize
+  // handshake would lie ("advertised unsupported, behaved supported")
+  // which is worse than no mock at all for conformance testing.
+  //
   //   • bridge.onopenlink            ← effectiveHostCapabilities.openLinks
   //   • bridge.onmessage             ← effectiveHostCapabilities.message
   //   • bridge.onupdatemodelcontext  ← effectiveHostCapabilities.updateModelContext
@@ -1155,11 +1154,17 @@ export function MCPAppsRenderer({
   //     onlistresources /
   //     onlistresourcetemplates      ← effectiveHostCapabilities.serverResources
   //   • bridge.onloggingmessage      ← effectiveHostCapabilities.logging
-  //   • (downloadFile handler)       ← effectiveHostCapabilities.downloadFile
-  // When enforcement lands, add `effectiveHostCapabilities` to this
-  // useCallback's dep array.
+  //
+  // `downloadFile` stays unconditional in this pass — none of the
+  // built-in presets advertise it today, so gating it here would only
+  // break code paths that already work without a capability claim.
+  const advertisedHostCapabilities = effectiveHostCapabilities;
   const registerBridgeHandlers = useCallback(
     (bridge: AppBridge) => {
+      const unsupportedCapabilityError = (capability: string) =>
+        new Error(
+          `Host has not advertised the "${capability}" capability; request refused.`,
+        );
       bridge.oninitialized = () => {
         const wasReady = isReadyRef.current;
         setIsReady(true);
@@ -1183,6 +1188,9 @@ export function MCPAppsRenderer({
       };
 
       bridge.onmessage = async ({ content }) => {
+        if (!advertisedHostCapabilities.message) {
+          throw unsupportedCapabilityError("message");
+        }
         const textContent = content.find((item) => item.type === "text")?.text;
         if (textContent) {
           onSendFollowUpRef.current?.(textContent);
@@ -1191,6 +1199,9 @@ export function MCPAppsRenderer({
       };
 
       bridge.onopenlink = async ({ url }) => {
+        if (!advertisedHostCapabilities.openLinks) {
+          throw unsupportedCapabilityError("openLinks");
+        }
         if (url) {
           window.open(url, "_blank", "noopener,noreferrer");
         }
@@ -1198,6 +1209,11 @@ export function MCPAppsRenderer({
       };
 
       bridge.oncalltool = async ({ name, arguments: args }, _extra) => {
+        if (!advertisedHostCapabilities.serverTools) {
+          const error = unsupportedCapabilityError("serverTools");
+          bridge.sendToolCancelled({ reason: error.message });
+          throw error;
+        }
         // Check if tool is model-only (not callable by apps) per SEP-1865
         const calledToolMeta = toolsMetadataRef.current?.[name];
         if (isVisibleToModelOnly(calledToolMeta)) {
@@ -1230,11 +1246,17 @@ export function MCPAppsRenderer({
       };
 
       bridge.onreadresource = async ({ uri }) => {
+        if (!advertisedHostCapabilities.serverResources) {
+          throw unsupportedCapabilityError("serverResources");
+        }
         const result = await readResource(serverIdRef.current, uri);
         return result.content;
       };
 
       bridge.onlistresources = async (params) => {
+        if (!advertisedHostCapabilities.serverResources) {
+          throw unsupportedCapabilityError("serverResources");
+        }
         return listResources(
           serverIdRef.current,
           (params as { cursor?: string } | undefined)?.cursor,
@@ -1242,6 +1264,9 @@ export function MCPAppsRenderer({
       };
 
       bridge.onlistresourcetemplates = async (_params) => {
+        if (!advertisedHostCapabilities.serverResources) {
+          throw unsupportedCapabilityError("serverResources");
+        }
         if (HOSTED_MODE) {
           throw new Error(
             "Resource templates are not supported in hosted mode",
@@ -1270,6 +1295,19 @@ export function MCPAppsRenderer({
       };
 
       bridge.onloggingmessage = ({ level, data, logger }) => {
+        // When `logging` is not advertised, drop the notification locally —
+        // SEP-1865 logging is a one-way notification (no JSON-RPC error
+        // surface). Surface the drop in the console once so it's
+        // diagnosable without falsely advertising support to the widget.
+        if (!advertisedHostCapabilities.logging) {
+          if (!minimalMode) {
+            console.debug(
+              "[MCP Apps] Dropping logging notification — `logging` capability not advertised",
+              { level, logger },
+            );
+          }
+          return;
+        }
         if (minimalMode) return;
         const prefix = logger ? `[${logger}]` : "[MCP Apps]";
         const message = `${prefix} ${level.toUpperCase()}:`;
@@ -1355,6 +1393,9 @@ export function MCPAppsRenderer({
       };
 
       bridge.onupdatemodelcontext = async ({ content, structuredContent }) => {
+        if (!advertisedHostCapabilities.updateModelContext) {
+          throw unsupportedCapabilityError("updateModelContext");
+        }
         // Store in debug store for UI display
         setWidgetModelContext(toolCallId, {
           content,
@@ -1370,7 +1411,19 @@ export function MCPAppsRenderer({
         return {};
       };
     },
-    [setIsReady, toolCallId, setWidgetModelContext, logWidgetDebug],
+    // `advertisedHostCapabilities` reflects the resolved
+    // `effectiveHostCapabilities`; rebuilding the bridge when it changes is
+    // already handled by the dep entry on the outer effect. Keeping the
+    // dependency here is what makes "swap hostCapabilitiesOverride at
+    // runtime → new handlers gate on the new contract" actually fire.
+    [
+      setIsReady,
+      toolCallId,
+      setWidgetModelContext,
+      logWidgetDebug,
+      advertisedHostCapabilities,
+      minimalMode,
+    ],
   );
 
   useEffect(() => {

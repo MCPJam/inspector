@@ -1297,6 +1297,133 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(screen.queryByText(baseProps.resourceUri)).toBeNull();
   });
 
+  it("refuses every gated handler when advertised capabilities is empty {}", async () => {
+    render(
+      <ChatboxHostCapabilitiesOverrideProvider value={{}}>
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostCapabilitiesOverrideProvider>,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+
+    // tools/call → unsupported + sendToolCancelled fired
+    await expect(
+      mockBridge.oncalltool?.(
+        { name: "tool", arguments: {} } as any,
+        {} as any,
+      ),
+    ).rejects.toThrow(/serverTools/);
+    expect(mockBridge.sendToolCancelled).toHaveBeenCalled();
+
+    // ui/open-link
+    await expect(
+      mockBridge.onopenlink?.({ url: "https://example.com" } as any),
+    ).rejects.toThrow(/openLinks/);
+
+    // ui/message
+    await expect(
+      mockBridge.onmessage?.({
+        content: [{ type: "text", text: "hi" }],
+      } as any),
+    ).rejects.toThrow(/message/);
+
+    // ui/update-model-context
+    await expect(
+      mockBridge.onupdatemodelcontext?.({} as any),
+    ).rejects.toThrow(/updateModelContext/);
+
+    // resources/read + list + templates
+    await expect(
+      mockBridge.onreadresource?.({ uri: "ui://foo" } as any),
+    ).rejects.toThrow(/serverResources/);
+    await expect(
+      mockBridge.onlistresources?.({} as any),
+    ).rejects.toThrow(/serverResources/);
+    await expect(
+      mockBridge.onlistresourcetemplates?.({} as any),
+    ).rejects.toThrow(/serverResources/);
+
+    // logging — silently dropped, never surfaced as supported
+    const debugSpy = vi.spyOn(console, "debug").mockImplementation(() => {});
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+    act(() => {
+      mockBridge.onloggingmessage?.({
+        level: "info",
+        data: { message: "hi" },
+        logger: "widget",
+      });
+    });
+    expect(infoSpy).not.toHaveBeenCalled();
+    expect(debugSpy).toHaveBeenCalled();
+    debugSpy.mockRestore();
+    infoSpy.mockRestore();
+  });
+
+  it("allows only the single advertised capability", async () => {
+    render(
+      <ChatboxHostCapabilitiesOverrideProvider value={{ openLinks: {} }}>
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostCapabilitiesOverrideProvider>,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+
+    // openLinks is allowed — opens window
+    const openSpy = vi
+      .spyOn(window, "open")
+      .mockImplementation(() => null);
+    await expect(
+      mockBridge.onopenlink?.({ url: "https://example.com" } as any),
+    ).resolves.toEqual({});
+    expect(openSpy).toHaveBeenCalled();
+    openSpy.mockRestore();
+
+    // Everything else is still gated
+    await expect(
+      mockBridge.onmessage?.({
+        content: [{ type: "text", text: "hi" }],
+      } as any),
+    ).rejects.toThrow(/message/);
+  });
+
+  it("rebuilds the bridge when hostCapabilitiesOverride flips", async () => {
+    const { rerender } = render(
+      <ChatboxHostCapabilitiesOverrideProvider value={{ openLinks: {} }}>
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostCapabilitiesOverrideProvider>,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+    const firstCalls = mockAppBridgeCtor.mock.calls.length;
+
+    rerender(
+      <ChatboxHostCapabilitiesOverrideProvider value={{ message: { text: {} } }}>
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostCapabilitiesOverrideProvider>,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockAppBridgeCtor.mock.calls.length).toBeGreaterThan(firstCalls);
+    });
+
+    // After rebuild the new bridge gates on the new contract: openLinks
+    // is gone, message is allowed.
+    await expect(
+      mockBridge.onopenlink?.({ url: "https://example.com" } as any),
+    ).rejects.toThrow(/openLinks/);
+    await expect(
+      mockBridge.onmessage?.({
+        content: [{ type: "text", text: "hi" }],
+      } as any),
+    ).resolves.toEqual({});
+  });
+
   it("suppresses bridge diagnostic logs in minimal mode", async () => {
     const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});

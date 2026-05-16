@@ -13,12 +13,12 @@ import {
 import {
   injectOpenAICompat,
   injectScripts,
-  buildCspHeader,
   buildCspMetaContent,
   buildChatGptRuntimeHead,
-  type CspMode,
   type WidgetCspMeta,
 } from "../../utils/widget-helpers.js";
+import { resolveWidgetCspPolicy } from "../../utils/widget-csp-policy.js";
+import { mcpProfileSchema } from "./mcp-profile-schema.js";
 import {
   projectServerSchema,
   withEphemeralConnection,
@@ -86,6 +86,10 @@ const chatgptAppsWidgetContentSchema = projectServerSchema.extend({
   cspMode: z.enum(["permissive", "widget-declared"]).optional(),
   locale: z.string().optional(),
   deviceType: z.enum(["mobile", "tablet", "desktop"]).optional(),
+  // Optional host-config sandbox CSP envelope. Forwarded verbatim through
+  // the schema so route-level validation rejects malformed payloads
+  // without us having to mirror the entire profile shape server-side.
+  mcpProfile: mcpProfileSchema.optional(),
 });
 
 // ── Sandbox Proxy Routes ─────────────────────────────────────────────
@@ -233,7 +237,14 @@ apps.post("/chatgpt-apps/widget-content", async (c) =>
         | WidgetCspMeta
         | undefined;
       const effectiveCspMode = body.cspMode ?? "permissive";
-      const cspConfig = buildCspHeader(effectiveCspMode, widgetCspRaw, {
+      // `mcpProfile.apps.sandbox.csp` wins over `cspMode` when present;
+      // when absent the adapter delegates to the legacy buildCspHeader so
+      // the response shape (and behavior) is unchanged.
+      const cspConfig = resolveWidgetCspPolicy({
+        cspMode: effectiveCspMode,
+        widgetCsp: widgetCspRaw,
+        sandboxCspPolicy: body.mcpProfile?.apps?.sandbox?.csp,
+        hostedMode: true,
         frameAncestors: buildFrameAncestors(),
       });
 

@@ -1,6 +1,7 @@
 import { authFetch } from "@/lib/session-token";
 import { buildServerRequest } from "@/lib/apis/web/context";
 import type { CspMode } from "@/stores/ui-playground-store";
+import type { HostConfigMcpProfileV1 } from "@/lib/host-config-v2";
 
 export interface WidgetCspData {
   mode: CspMode;
@@ -27,6 +28,13 @@ interface BaseWidgetLoaderOptions {
   locale: string;
   cspMode: CspMode;
   deviceType: string;
+  /**
+   * Active hostConfig.mcpProfile from the surrounding scope (chatbox
+   * session, project default, eval suite). Forwarded to the widget
+   * routes so saved sandbox CSP overrides legacy `cspMode`.
+   * `undefined` preserves widget-derived behavior.
+   */
+  mcpProfile?: HostConfigMcpProfileV1;
 }
 
 interface LocalChatGptWidgetLoadOptions extends BaseWidgetLoaderOptions {
@@ -71,6 +79,11 @@ export async function loadHostedChatGptWidget(
         deviceType: options.deviceType,
         userLocation: null,
         cspMode: options.cspMode,
+        // Preserve `undefined` verbatim — JSON.stringify drops the key.
+        // Backend distinguishes `undefined` from `{ profileVersion: 1 }`.
+        ...(options.mcpProfile !== undefined
+          ? { mcpProfile: options.mcpProfile }
+          : {}),
       }),
     },
   );
@@ -123,6 +136,12 @@ export async function loadLocalChatGptWidget(
       cspMode: options.cspMode,
       capabilities: options.capabilities,
       safeAreaInsets: options.safeAreaInsets,
+      // Persist mcpProfile alongside the rest of the widget state so
+      // /widget-html/:toolId and /widget-content/:toolId resolve the
+      // same CSP policy.
+      ...(options.mcpProfile !== undefined
+        ? { mcpProfile: options.mcpProfile }
+        : {}),
     }),
   });
 
