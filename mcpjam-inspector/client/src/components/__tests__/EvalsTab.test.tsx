@@ -76,8 +76,8 @@ vi.mock("@/state/app-state-context", () => ({
   }),
 }));
 
-vi.mock("@/lib/evals-router", () => ({
-  useEvalsRoute: () => mocks.route.current,
+vi.mock("@/lib/eval-route-url", () => ({
+  useEvalsRouteFromUrl: () => mocks.route.current,
 }));
 
 vi.mock("../evals/helpers", () => ({

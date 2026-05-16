@@ -9,6 +9,7 @@ import { Loader2 } from "lucide-react";
 import { BillingGateSurface } from "@/components/billing/BillingGateSurface";
 import { BILLING_GATES, useProjectBillingGate } from "@/lib/billing-gates";
 import { clearBuilderSession } from "@/lib/chatbox-session";
+import { useAppNavigate } from "@/lib/app-navigation";
 
 const ChatboxBuilderExperience = lazy(
   () => import("@/components/chatboxes/builder/ChatboxBuilderExperience"),
@@ -59,6 +60,7 @@ export function ChatboxesTab({
   isBillingContextPending = false,
   ensureServersReady,
 }: ChatboxesTabProps) {
+  const appNavigate = useAppNavigate();
   const resolvedOrganizationId = isBillingContextPending
     ? null
     : organizationId;
@@ -90,7 +92,9 @@ export function ChatboxesTab({
           ctaLabel: getBillingUpsellCtaLabel(chatboxCreationGate.upgradePlan),
           onNavigateToBilling: () => {
             if (chatboxCreationGate.organizationId) {
-              window.location.hash = `organizations/${chatboxCreationGate.organizationId}/billing`;
+              appNavigate(
+                `/organizations/${chatboxCreationGate.organizationId}/billing`,
+              );
             }
           },
         }
@@ -126,7 +130,7 @@ export function ChatboxesTab({
       gate={chatboxGate}
       loadingFallback={<ChatboxesLoadingState />}
       onNavigateToBilling={(organizationId) => {
-        window.location.hash = `organizations/${organizationId}/billing`;
+        appNavigate(`/organizations/${organizationId}/billing`);
       }}
     >
       <Suspense fallback={<ChatboxesLoadingState />}>

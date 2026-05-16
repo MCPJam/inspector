@@ -43,6 +43,7 @@ import {
 import { resolveProjectIcon } from "@/components/project/ProjectEmojiPicker";
 import type { Project, ProjectVisibility } from "@/state/app-types";
 import type { User } from "@workos-inc/authkit-js";
+import { useAppNavigate } from "@/lib/app-navigation";
 
 interface ShareProjectDialogProps {
   isOpen: boolean;
@@ -139,6 +140,7 @@ export function ShareProjectDialog({
   availableProjects,
   activeProjectId,
 }: ShareProjectDialogProps) {
+  const appNavigate = useAppNavigate();
   const posthog = usePostHog();
   const [email, setEmail] = useState("");
   const [isInviting, setIsInviting] = useState(false);
@@ -614,7 +616,9 @@ export function ShareProjectDialog({
                         className="mt-1"
                         onClick={() => {
                           if (selectedProject.organizationId) {
-                            window.location.hash = `organizations/${selectedProject.organizationId}/billing`;
+                            appNavigate(
+                              `/organizations/${selectedProject.organizationId}/billing`,
+                            );
                             onClose();
                           }
                         }}

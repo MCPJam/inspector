@@ -1,6 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import App from "./App.jsx";
+import { AppRouterProvider } from "./router";
 import "./index.css";
 import { getPostHogKey, getPostHogOptions } from "./lib/PosthogUtils.js";
 import { PostHogProvider } from "posthog-js/react";
@@ -18,6 +18,7 @@ import {
 } from "./lib/electron-hosted-auth";
 import { useUnifiedConvexAuth } from "./lib/unified-convex-auth";
 import { getRuntimeConvexUrl } from "./lib/runtime-config";
+import { normalizeInitialLegacyHashBookmark } from "./lib/app-navigation";
 
 // Initialize Sentry before React mounts
 initSentry();
@@ -144,6 +145,7 @@ if (isInIframe) {
   })();
 
   const convex = new ConvexReactClient(convexUrl);
+  normalizeInitialLegacyHashBookmark();
 
   const Providers = (
     <AuthKitProvider
@@ -153,7 +155,7 @@ if (isInIframe) {
       {...workosClientOptions}
     >
       <ConvexProviderWithAuthKit client={convex} useAuth={useUnifiedConvexAuth}>
-        <App />
+        <AppRouterProvider />
       </ConvexProviderWithAuthKit>
     </AuthKitProvider>
   );

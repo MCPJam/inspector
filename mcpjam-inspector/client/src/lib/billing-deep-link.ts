@@ -232,22 +232,6 @@ export function isBillingEntryPathname(pathname: string): boolean {
   return pathname === "/billing" || pathname === "/billing/";
 }
 
-export function hashMatchesOrganizationBilling(
-  hash: string,
-  organizationId: string,
-): boolean {
-  const parts = hash
-    .replace(/^#/, "")
-    .replace(/^\/+/, "")
-    .split("/")
-    .filter(Boolean);
-  return (
-    parts[0] === "organizations" &&
-    parts[1] === organizationId &&
-    parts[2] === "billing"
-  );
-}
-
 export function resolveCheckoutOrganizationId(
   sortedOrganizations: readonly { _id: string }[],
   activeOrganizationId: string | undefined,

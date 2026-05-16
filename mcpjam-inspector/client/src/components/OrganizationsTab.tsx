@@ -52,7 +52,7 @@ import {
   isGateAccessDenied,
 } from "@/lib/billing-entitlements";
 import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
-import type { OrganizationRouteSection } from "@/lib/hosted-navigation";
+import type { OrganizationRouteSection } from "@/lib/app-navigation";
 import { BILLING_GATES, resolveBillingGateState } from "@/lib/billing-gates";
 import {
   getBillingUpsellCtaLabel,
@@ -64,6 +64,7 @@ import { OrganizationBillingSection } from "./organization/OrganizationBillingSe
 import { OrganizationCurrentPlanPanel } from "./organization/OrganizationCurrentPlanPanel";
 import { OrganizationMemberRow } from "./organization/OrganizationMemberRow";
 import { OrganizationModelsSection } from "./organization/OrganizationModelsSection";
+import { useAppNavigate, buildOrganizationPath } from "@/lib/app-navigation";
 
 interface OrganizationsTabProps {
   organizationId?: string;
@@ -75,14 +76,6 @@ interface OrganizationsTabProps {
   onOrganizationDeleted?: (organizationId: string) => void;
 }
 
-function getOrganizationRouteHash(
-  organizationId: string,
-  section: OrganizationRouteSection,
-): string {
-  if (section === "billing") return `organizations/${organizationId}/billing`;
-  if (section === "models") return `organizations/${organizationId}/models`;
-  return `organizations/${organizationId}`;
-}
 
 interface PendingDowngradeConfirmation {
   targetPlan: "free";
@@ -194,6 +187,7 @@ export function OrganizationsTab({
   navigateBillingInSameTab,
   onOrganizationDeleted,
 }: OrganizationsTabProps) {
+  const appNavigate = useAppNavigate();
   const { user, signIn } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
 
@@ -253,7 +247,7 @@ export function OrganizationsTab({
             This organization may have been deleted or you don't have access to
             it.
           </p>
-          <Button onClick={() => (window.location.hash = "servers")}>
+          <Button onClick={() => (appNavigate("/servers"))}>
             Go to Servers
           </Button>
         </div>
@@ -274,7 +268,7 @@ export function OrganizationsTab({
             You don't have permission to view organization settings. Contact an
             admin or owner for access.
           </p>
-          <Button onClick={() => (window.location.hash = "servers")}>
+          <Button onClick={() => (appNavigate("/servers"))}>
             Go to Servers
           </Button>
         </div>
@@ -323,6 +317,7 @@ function OrganizationPage({
   navigateBillingInSameTab,
   onOrganizationDeleted,
 }: OrganizationPageProps) {
+  const appNavigate = useAppNavigate();
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
   const currentUserEmail = user?.email;
@@ -643,7 +638,7 @@ function OrganizationPage({
       setDeleteConfirmOpen(false);
       onOrganizationDeleted?.(organization._id);
       if (!onOrganizationDeleted) {
-        window.location.hash = "servers";
+        appNavigate("/servers");
       }
     } catch (error) {
       toast.error((error as Error).message || "Failed to delete organization");
@@ -663,7 +658,7 @@ function OrganizationPage({
       });
       toast.success("You have left the organization");
       setLeaveConfirmOpen(false);
-      window.location.hash = "servers";
+      appNavigate("/servers");
     } catch (error) {
       toast.error((error as Error).message || "Failed to leave organization");
     } finally {
@@ -675,10 +670,7 @@ function OrganizationPage({
   const auditLogLocked =
     billingUiEnabled && isGateAccessDenied(organizationPremiumness, "auditLog");
   const navigateToSection = (nextSection: OrganizationRouteSection) => {
-    window.location.hash = getOrganizationRouteHash(
-      organization._id,
-      nextSection,
-    );
+    appNavigate(buildOrganizationPath(organization._id, nextSection));
   };
   const handleViewBilling = () => navigateToSection("billing");
 
@@ -699,7 +691,7 @@ function OrganizationPage({
 
   const getBillingReturnUrl = useCallback(
     () =>
-      `${window.location.origin}${window.location.pathname}#${getOrganizationRouteHash(
+      `${window.location.origin}${buildOrganizationPath(
         organization._id,
         "billing",
       )}`,

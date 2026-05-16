@@ -11,7 +11,11 @@ vi.mock("@/lib/session-token", () => ({
   authFetch: (...args: unknown[]) => authFetchMock(...args),
 }));
 
-import { reconnectServer, testConnection } from "../mcp-api";
+import {
+  disconnectAllRuntimeServers,
+  reconnectServer,
+  testConnection,
+} from "../mcp-api";
 
 function readBody(): Record<string, unknown> {
   expect(authFetchMock).toHaveBeenCalledTimes(1);
@@ -81,5 +85,38 @@ describe("mcp-api local-mode resolver-only path", () => {
       reconnectServer("mcpjam local", config),
     ).rejects.toThrow(/projectId is required/);
     expect(authFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("disconnectAllRuntimeServers removes every listed local runtime server", async () => {
+    authFetchMock
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            success: true,
+            servers: [{ id: "server-1" }, { name: "server-2" }],
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockImplementation(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ success: true }), { status: 200 }),
+        ),
+      );
+
+    const result = await disconnectAllRuntimeServers();
+
+    expect(result.success).toBe(true);
+    expect(authFetchMock).toHaveBeenNthCalledWith(1, "/api/mcp/servers");
+    expect(authFetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/mcp/servers/server-1",
+      { method: "DELETE" },
+    );
+    expect(authFetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/api/mcp/servers/server-2",
+      { method: "DELETE" },
+    );
   });
 });

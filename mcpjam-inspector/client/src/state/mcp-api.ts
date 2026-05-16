@@ -247,6 +247,51 @@ export async function deleteServer(serverId: string) {
   return res.json();
 }
 
+export async function disconnectAllRuntimeServers() {
+  if (HOSTED_MODE) {
+    return { success: true, servers: [] };
+  }
+
+  const result = await listServers();
+  if (!result?.success || !Array.isArray(result.servers)) {
+    return result;
+  }
+
+  const listedServers = result.servers as Array<{
+    id?: unknown;
+    name?: unknown;
+  }>;
+  const serverIds: string[] = listedServers.reduce(
+    (ids: string[], server) => {
+      if (typeof server.id === "string" && server.id) {
+        ids.push(server.id);
+      } else if (typeof server.name === "string" && server.name) {
+        ids.push(server.name);
+      }
+      return ids;
+    },
+    [] as string[],
+  );
+
+  const disconnectResults = await Promise.allSettled(
+    serverIds.map((serverId) => deleteServer(serverId)),
+  );
+  const failures = disconnectResults.filter((disconnectResult) => {
+    if (disconnectResult.status === "rejected") {
+      return true;
+    }
+    return disconnectResult.value?.success === false;
+  });
+
+  return {
+    success: failures.length === 0,
+    servers: result.servers,
+    ...(failures.length > 0
+      ? { error: `Failed to disconnect ${failures.length} server(s)` }
+      : {}),
+  };
+}
+
 export async function listServers() {
   if (HOSTED_MODE) {
     return { success: true, servers: [] };

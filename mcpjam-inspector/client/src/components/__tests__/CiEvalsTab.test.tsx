@@ -14,7 +14,6 @@ const mocks = vi.hoisted(() => ({
   useEvalQueries: vi.fn(),
   deleteSuiteMutation: vi.fn(),
   directDeleteRun: vi.fn().mockResolvedValue(undefined),
-  navigateToCiEvalsRoute: vi.fn(),
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -41,10 +40,8 @@ vi.mock("@/lib/config", () => ({
   HOSTED_MODE: false,
 }));
 
-vi.mock("@/lib/ci-evals-router", () => ({
-  useCiEvalsRoute: () => mocks.route.current,
-  navigateToCiEvalsRoute: (...args: unknown[]) =>
-    mocks.navigateToCiEvalsRoute(...args),
+vi.mock("@/lib/eval-route-url", () => ({
+  useCiEvalsRouteFromUrl: () => mocks.route.current,
 }));
 
 vi.mock("@/components/ui/resizable", () => ({

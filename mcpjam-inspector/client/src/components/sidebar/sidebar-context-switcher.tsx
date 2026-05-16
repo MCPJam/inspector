@@ -37,7 +37,7 @@ import { useConvexAuth } from "convex/react";
 import type { Project } from "@/state/app-types";
 import { resolveProjectIcon } from "@/components/project/ProjectEmojiPicker";
 import { CreateOrganizationDialog } from "@/components/organization/CreateOrganizationDialog";
-import type { OrganizationRouteSection } from "@/lib/hosted-navigation";
+import type { OrganizationRouteSection } from "@/lib/app-navigation";
 
 interface SidebarContextSwitcherProps {
   activeProjectId: string;

@@ -518,35 +518,11 @@ export function useProjectState({
   const localFallbackProjects: Record<string, Project> = appState.projects;
 
   const authenticatedMergedProjects = useMemo((): Record<string, Project> => {
-    // Guests don't see local-fallback projects — Convex is the only source
-    // of truth for their data. Including the synthetic local "default" here
-    // would shadow the real Convex guest project in resolution.
-    if (isGuestActor) {
-      return convexProjects;
-    }
-
-    const projectsWithoutRemoteMatch = Object.fromEntries(
-      Object.entries(scopedLocalProjects).filter(([localProjectId, project]) => {
-        if (convexProjects[localProjectId]) {
-          return false;
-        }
-
-        if (
-          project.sharedProjectId &&
-          convexProjects[project.sharedProjectId]
-        ) {
-          return false;
-        }
-
-        return true;
-      }),
-    );
-
-    return {
-      ...convexProjects,
-      ...projectsWithoutRemoteMatch,
-    };
-  }, [convexProjects, scopedLocalProjects, isGuestActor]);
+    // Convex is the only source of truth for authenticated project lists.
+    // Local app-state projects may still be inspected by the migration path
+    // below, but they must not render after actor or organization changes.
+    return convexProjects;
+  }, [convexProjects]);
 
   const activeScopedLocalProject = useMemo(
     () => scopedLocalProjects[appState.activeProjectId],
@@ -556,16 +532,10 @@ export function useProjectState({
   const activeScopedRemoteProjectId =
     activeScopedLocalProject?.sharedProjectId ?? null;
 
-  // Guests never keep a synthetic local-fallback project: their canonical
-  // project lives in Convex (provisioned by ensureDefaultGuestProject) and
-  // any local "default" row hydrated from localStorage would otherwise
-  // shadow it, leaving syncServerToConvex calling Convex with a fake id.
-  const shouldKeepLocalActiveProject = Boolean(
-    !isGuestActor &&
-      activeScopedLocalProject &&
-      (!activeScopedRemoteProjectId ||
-        !convexProjects[activeScopedRemoteProjectId]),
-  );
+  // Authenticated users never keep local-fallback projects in the rendered
+  // project list. Their canonical project set lives in Convex; local rows are
+  // only inputs to migration/import paths.
+  const shouldKeepLocalActiveProject = false;
 
   const effectiveProjects = useMemo((): Record<string, Project> => {
     if (shouldTreatRemoteProjectsAsEmpty) {

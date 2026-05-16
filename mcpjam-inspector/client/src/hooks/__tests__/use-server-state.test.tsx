@@ -306,6 +306,60 @@ describe("useServerState effective server projection", () => {
       })
     );
   });
+
+  it("does not surface runtime-only servers for Convex-backed projects", () => {
+    const appState = createAppState();
+    const persistedServer: ServerWithName = {
+      name: "persisted-server",
+      config: {
+        type: "http",
+        url: "https://persisted.example.com/mcp",
+      } as any,
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    };
+    const runtimeConnected: ServerWithName = {
+      name: "runtime-connected",
+      config: {
+        type: "http",
+        url: "https://runtime-connected.example.com/mcp",
+      } as any,
+      lastConnectionTime: new Date(),
+      connectionStatus: "connected",
+      retryCount: 0,
+      enabled: true,
+    };
+
+    appState.projects.default.servers = {
+      "persisted-server": persistedServer,
+    };
+    appState.servers = {
+      "runtime-connected": runtimeConnected,
+    };
+    appState.selectedServer = "runtime-connected";
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      useLocalFallback: false,
+      effectiveProjects: appState.projects,
+      effectiveActiveProjectId: "default",
+      activeProjectServersFlat: [{ _id: "srv_1", name: "persisted-server" }],
+    });
+
+    expect(result.current.projectServers).toEqual({
+      "persisted-server": expect.objectContaining({
+        name: "persisted-server",
+      }),
+    });
+    expect(result.current.projectServers).not.toHaveProperty(
+      "runtime-connected",
+    );
+    expect(result.current.selectedMCPConfig).toBeUndefined();
+  });
 });
 
 describe("useServerState OAuth callback failures", () => {
@@ -390,9 +444,9 @@ describe("useServerState OAuth callback failures", () => {
       "OAuth authorization failed: access_denied: User denied access"
     );
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
-    expect(window.location.pathname).toBe("/");
+    expect(window.location.pathname).toBe("/servers");
     expect(window.location.search).toBe("");
-    expect(window.location.hash).toBe("#demo-server");
+    expect(window.location.hash).toBe("");
   });
 
   it("marks the pending server as failed when token exchange fails after redirect", async () => {
@@ -497,9 +551,9 @@ describe("useServerState OAuth callback failures", () => {
       );
     });
 
-    expect(window.location.pathname).toBe("/");
+    expect(window.location.pathname).toBe("/servers");
     expect(window.location.search).toBe("");
-    expect(window.location.hash).toBe("#demo-server");
+    expect(window.location.hash).toBe("");
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
   });
 
@@ -628,9 +682,9 @@ describe("useServerState OAuth callback failures", () => {
       );
     });
 
-    expect(window.location.pathname).toBe("/");
+    expect(window.location.pathname).toBe("/servers");
     expect(window.location.search).toBe("");
-    expect(window.location.hash).toBe("#demo-server");
+    expect(window.location.hash).toBe("");
   });
 
   it("preserves existing HTTP config when OAuth callback returns a bearer token config", async () => {
