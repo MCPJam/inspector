@@ -26,7 +26,6 @@ import {
 import type { ImperativePanelHandle } from "react-resizable-panels";
 import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
 import { LoggerView } from "@/components/logger-view";
-import { HostPicker } from "@/components/hosts/HostPicker";
 import { PlaygroundCenter } from "./PlaygroundCenter";
 import { PlaygroundPreviewedHostSync } from "./PlaygroundPreviewedHostSync";
 import { PlaygroundLeftRail } from "./PlaygroundLeftRail";
@@ -94,9 +93,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   // short-circuits on null hostId, so this is cheap when no host is
   // picked yet.
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
-  const [previewedHostId, setPreviewedHostId] = usePreviewedHostId(
-    props.activeProjectId ?? null,
-  );
+  const [previewedHostId] = usePreviewedHostId(props.activeProjectId ?? null);
   const { host: previewedHost } = useHost({
     isAuthenticated: isConvexAuthenticated,
     hostId: previewedHostId,
@@ -185,20 +182,6 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                 <PlaygroundPreviewedHostSync
                   projectId={props.activeProjectId ?? null}
                 />
-                {isConvexAuthenticated && props.activeProjectId ? (
-                  <div className="flex shrink-0 items-center gap-2 border-b px-4 py-2">
-                    <span className="text-xs text-muted-foreground">Host:</span>
-                    <div className="w-48">
-                      <HostPicker
-                        projectId={props.activeProjectId}
-                        value={previewedHostId}
-                        onChange={setPreviewedHostId}
-                        placeholder="Project default"
-                        noneLabel="Project default"
-                      />
-                    </div>
-                  </div>
-                ) : null}
                 <ResizablePanelGroup
                   direction="horizontal"
                   className="min-h-0 flex-1"

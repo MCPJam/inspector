@@ -2097,7 +2097,9 @@ export default function App() {
   // `namedHostId`, so showing a global host picker there is misleading
   // — switching it doesn't (and shouldn't) affect what's rendered.
   const isHostBarRelevantTab =
-    activeTab === "connect" || activeTab === "hosts";
+    activeTab === "connect" ||
+    activeTab === "hosts" ||
+    activeTab === "playground";
   const globalHostBarProps =
     hostsHubFlagEnabled &&
     isAuthenticated &&
