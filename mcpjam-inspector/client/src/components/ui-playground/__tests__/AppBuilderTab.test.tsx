@@ -540,43 +540,12 @@ describe("AppBuilderTab", () => {
       });
     });
 
-    it("passes the Claude mark variant to PlaygroundMain when Claude host style is selected", async () => {
-      const serverConfig = createServerConfig();
-      mockPreferencesState.hostStyle = "claude";
-
-      render(
-        <AppBuilderTab
-          serverConfig={serverConfig}
-          serverName="my-server"
-          servers={connectedServer("my-server")}
-        />,
-      );
-
-      await waitFor(() => {
-        expect(screen.getByTestId("loading-variant")).toHaveTextContent(
-          "claude-mark",
-        );
-      });
-    });
-
-    it("passes the pulsing dot variant to PlaygroundMain when ChatGPT host style is selected", async () => {
-      const serverConfig = createServerConfig();
-      mockPreferencesState.hostStyle = "chatgpt";
-
-      render(
-        <AppBuilderTab
-          serverConfig={serverConfig}
-          serverName="my-server"
-          servers={connectedServer("my-server")}
-        />,
-      );
-
-      await waitFor(() => {
-        expect(screen.getByTestId("loading-variant")).toHaveTextContent(
-          "chatgpt-dot",
-        );
-      });
-    });
+    // Removed: "passes the X mark variant to PlaygroundMain when X host
+    // style is selected". The indicator no longer flows through a
+    // `loadingIndicatorVariant` prop — AppBuilderTab now wraps PlaygroundMain
+    // in `ChatboxHostStyleProvider value={state.hostStyle}` and the inner
+    // thread reads the host id from context. Brand-indicator behavior is
+    // covered in `LoadingIndicatorContent.test.tsx`.
   });
 
   describe("tool selection", () => {

@@ -200,7 +200,7 @@ describe("useServerState hosted OAuth callback guards", () => {
   beforeEach(() => {
     localStorage.clear();
     sessionStorage.clear();
-    window.history.replaceState({}, "", "/?code=oauth-code");
+    window.history.replaceState({}, "", "/oauth/callback?code=oauth-code");
     mockHandleOAuthCallback.mockReset();
     mockListServers.mockReset();
     mockReconnectServer.mockReset();
@@ -363,7 +363,7 @@ describe("useServerState hosted OAuth callback guards", () => {
     window.history.replaceState(
       {},
       "",
-      "/?code=oauth-code&state=expected-state-token",
+      "/oauth/callback?code=oauth-code&state=expected-state-token",
     );
     writeHostedOAuthPendingMarker({
       surface: "project",

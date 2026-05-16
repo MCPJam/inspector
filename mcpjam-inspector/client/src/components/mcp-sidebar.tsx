@@ -24,7 +24,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { isPostHogBooleanFlagOn, standardEventProps } from "@/lib/PosthogUtils";
 
 import { NavMain } from "@/components/sidebar/nav-main";
 import {
@@ -109,7 +109,7 @@ interface NavSection {
  */
 export function filterByFeatureFlags(
   sections: NavSection[],
-  flags: Record<string, boolean>,
+  flags: Record<string, boolean>
 ): NavSection[] {
   return sections
     .map((section) => ({
@@ -137,7 +137,7 @@ export function applyBillingGateNavState(
     /** When true, feature is denied by premiumness (locked). */
     gateDenied: Partial<Record<BillingFeatureName, boolean>>;
     enforcementActive: boolean;
-  },
+  }
 ): NavSection[] {
   const { billingUiEnabled, gateDenied, enforcementActive } = options;
   if (!billingUiEnabled || !enforcementActive) {
@@ -170,7 +170,7 @@ const navigationSections: NavSection[] = [
     items: [
       {
         title: "Connect",
-        url: "#hosts",
+        url: "/hosts",
         icon: MCPIcon,
         featureFlag: "hosts-enabled",
       },
@@ -200,7 +200,7 @@ const navigationSections: NavSection[] = [
       },
       {
         title: "Playground",
-        url: "#playground",
+        url: "/playground",
         icon: PanelsTopLeft,
         featureFlag: "playground-tab-enabled",
       },
@@ -313,14 +313,14 @@ const navigationSections: NavSection[] = [
 ];
 
 export function getHostedNavigationSections(
-  sections: NavSection[],
+  sections: NavSection[]
 ): NavSection[] {
   return sections
     .map((section) => ({
       ...section,
       items: section.items.flatMap((item) => {
         const normalizedTab = normalizeHostedHashTab(
-          item.url.replace(/^[#/]+/, ""),
+          item.url.replace(/^[#/]+/, "")
         );
 
         if (isHostedSidebarTabAllowed(normalizedTab)) {
@@ -361,18 +361,16 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   activeOrganizationName?: string;
   onSwitchOrganization?: (
     organizationId: string,
-    section?: OrganizationRouteSection,
+    section?: OrganizationRouteSection
   ) => void;
   onSwitchActiveOrganization?: (organizationId: string) => void;
-  onProjectShared?: (
-    sharedProjectId: string,
-    sourceProjectId?: string,
-  ) => void;
+  onProjectShared?: (sharedProjectId: string, sourceProjectId?: string) => void;
   billingGateDenied?: Partial<Record<BillingFeatureName, boolean>>;
   billingGateEnforcementActive?: boolean;
   billingUiEnabled?: boolean;
   isCreateProjectDisabled?: boolean;
   createProjectDisabledReason?: string;
+  onBeforeSignOut?: () => void | Promise<void>;
 }
 
 function navigateToEvalsExploreList() {
@@ -454,8 +452,8 @@ export function SidebarEvalsNavGroup({
         disabled || isPlaygroundLocked
           ? "cursor-not-allowed text-muted-foreground opacity-50 hover:bg-transparent hover:text-muted-foreground active:bg-transparent active:text-muted-foreground"
           : isEvalsFamily
-            ? "[&[data-active=true]]:bg-accent cursor-pointer"
-            : "cursor-pointer"
+          ? "[&[data-active=true]]:bg-accent cursor-pointer"
+          : "cursor-pointer"
       }
     >
       <Icon className="h-4 w-4" />
@@ -509,7 +507,7 @@ export function SidebarEvalsNavGroup({
                         "cursor-not-allowed text-muted-foreground opacity-50 hover:bg-transparent hover:text-muted-foreground active:bg-transparent active:text-muted-foreground",
                       isItemPlaygroundLocked &&
                         "aria-disabled:pointer-events-auto",
-                      disabled && "pointer-events-none",
+                      disabled && "pointer-events-none"
                     )}
                   >
                     <ItemIcon className="h-4 w-4" />
@@ -559,6 +557,7 @@ export function MCPSidebar({
   billingUiEnabled = false,
   isCreateProjectDisabled = false,
   createProjectDisabledReason,
+  onBeforeSignOut,
   ...props
 }: MCPSidebarProps) {
   const posthog = usePostHog();
@@ -598,15 +597,14 @@ export function MCPSidebar({
 
     return Object.fromEntries(
       Object.entries(projects).filter(
-        ([, project]) =>
-          project.organizationId === activeProject.organizationId,
-      ),
+        ([, project]) => project.organizationId === activeProject.organizationId
+      )
     );
   }, [activeProject?.organizationId, projects]);
   const shouldShowInviteCta = isAuthenticated && !!user && !!activeProject;
   const trialBilling = useOrganizationBillingStatus(
     activeProject?.organizationId ?? null,
-    { enabled: billingUiEnabled && !!activeProject?.organizationId },
+    { enabled: billingUiEnabled && !!activeProject?.organizationId }
   );
   const trialActive =
     billingUiEnabled &&
@@ -614,9 +612,7 @@ export function MCPSidebar({
     !!trialBilling.trialEndsAt;
   const handleTrialUpgradeClick = () => {
     if (!activeProject?.organizationId) return;
-    appNavigate(
-      `/organizations/${activeProject.organizationId}/billing`,
-    );
+    appNavigate(`/organizations/${activeProject.organizationId}/billing`);
   };
 
   const handleNavClick = (url: string) => {
@@ -637,7 +633,7 @@ export function MCPSidebar({
       "sandboxes-enabled": !!sandboxesEnabled && isAuthenticated,
       "registry-enabled": registryEnabled === true,
       "mcpjam-conformance": conformanceEnabled === true,
-      "hosts-enabled": hostsEnabled === true && isAuthenticated,
+      "hosts-enabled": isPostHogBooleanFlagOn(hostsEnabled) && isAuthenticated,
       "playground-tab-enabled": playgroundTabEnabled === true,
       xaa: xaaEnabled === true,
     }),
@@ -650,11 +646,15 @@ export function MCPSidebar({
       playgroundTabEnabled,
       xaaEnabled,
       isAuthenticated,
-    ],
+    ]
   );
+  const hubNavHash =
+    isPostHogBooleanFlagOn(hostsEnabled) && isAuthenticated
+      ? "#connect"
+      : "#servers";
   const visibleNavigationSections = filterByFeatureFlags(
     HOSTED_MODE ? hostedNavigationSections : navigationSections,
-    featureFlags,
+    featureFlags
   );
 
   return (
@@ -664,13 +664,13 @@ export function MCPSidebar({
           <div
             className={cn(
               "no-drag",
-              state === "collapsed" && !isMobile && "flex justify-center px-0",
+              state === "collapsed" && !isMobile && "flex justify-center px-0"
             )}
           >
             {isMobile ? (
               <button
                 type="button"
-                onClick={() => handleNavClick("#servers")}
+                onClick={() => handleNavClick(hubNavHash)}
                 className="flex w-full cursor-pointer items-center justify-center px-4 py-3 transition-opacity hover:opacity-80"
               >
                 <img
@@ -687,12 +687,12 @@ export function MCPSidebar({
               <div className="relative isolate w-full">
                 <button
                   type="button"
-                  onClick={() => handleNavClick("#servers")}
+                  onClick={() => handleNavClick(hubNavHash)}
                   className={cn(
                     "relative z-0 flex w-full cursor-pointer items-center justify-center py-2 transition-opacity duration-200",
                     /* Reserve space for the collapse control so the logo stays visually centered and
                        clicks on the logo never compete with the invisible hit target. */
-                    "px-2 pr-10 hover:opacity-80",
+                    "px-2 pr-10 hover:opacity-80"
                   )}
                 >
                   <img
@@ -714,7 +714,7 @@ export function MCPSidebar({
                     "pointer-events-auto opacity-0 transition-opacity duration-200",
                     /* Named group avoids ambiguous group-hover when SidebarProvider also uses group/sidebar-wrapper */
                     "group-hover/sidebar-rail:opacity-100 focus-visible:opacity-100",
-                    "[@media(hover:none)]:opacity-100",
+                    "[@media(hover:none)]:opacity-100"
                   )}
                   aria-label="Collapse sidebar"
                 />
@@ -751,7 +751,7 @@ export function MCPSidebar({
                 aria-disabled={updateInstalling}
                 className={cn(
                   "h-5 w-full gap-1 rounded-full bg-primary px-2 text-[11px] font-medium text-primary-foreground hover:bg-primary/90",
-                  updateInstalling && "pointer-events-none hover:bg-primary",
+                  updateInstalling && "pointer-events-none hover:bg-primary"
                 )}
               >
                 {updateInstalling && (
@@ -772,7 +772,11 @@ export function MCPSidebar({
                 <NavMain
                   items={flatItems.map((item) => ({
                     ...item,
-                    isActive: item.url === `/${activeTab}`,
+                    isActive:
+                      normalizeHostedHashTab(
+                        item.url.replace(/^[#/]+/, "").split("/")[0] ||
+                          "servers"
+                      ) === activeTab,
                   }))}
                   onItemClick={handleNavClick}
                   learnMore={
@@ -826,10 +830,11 @@ export function MCPSidebar({
               className="mt-1"
             />
           ) : null}
-          {!user ? (
-            <SidebarCreditUsage className="px-1" includeGuests />
-          ) : null}
-          <SidebarUser activeOrganizationId={activeOrganizationId} />
+          {!user ? <SidebarCreditUsage className="px-1" includeGuests /> : null}
+          <SidebarUser
+            activeOrganizationId={activeOrganizationId}
+            onBeforeSignOut={onBeforeSignOut}
+          />
         </SidebarFooter>
       </Sidebar>
       {shouldShowInviteCta && user && activeProject ? (

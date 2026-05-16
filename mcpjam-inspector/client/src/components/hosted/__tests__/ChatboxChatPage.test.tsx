@@ -242,41 +242,15 @@ describe("ChatboxChatPage", () => {
     expect(mockChatTabV2).toHaveBeenCalledWith(
       expect.objectContaining({
         reasoningDisplayMode: "hidden",
-        loadingIndicatorVariant: "chatgpt-dot",
       })
     );
   });
 
-  it("uses the Claude loading indicator variant for Claude-style hosted chatboxes", async () => {
-    writeChatboxSession({
-      chatboxId: "sbx_1",
-      accessVersion: 1,
-      payload: {
-        projectId: "ws_1",
-        chatboxId: "sbx_1",
-        name: "Claude Chatbox",
-        description: "Hosted chatbox",
-        hostStyle: "claude",
-        mode: "invited_only",
-        allowGuestAccess: false,
-        viewerIsProjectMember: true,
-        systemPrompt: "You are helpful.",
-        modelId: "anthropic/claude-sonnet-4-5",
-        temperature: 0.4,
-        requireToolApproval: true,
-        servers: [],
-      },
-    });
-
-    render(<ChatboxChatPage />);
-
-    expect(await screen.findByTestId("chatbox-chat-tab")).toBeInTheDocument();
-    expect(mockChatTabV2).toHaveBeenCalledWith(
-      expect.objectContaining({
-        loadingIndicatorVariant: "claude-mark",
-      })
-    );
-  });
+  // Removed: "uses the Claude loading indicator variant for Claude-style
+  // hosted chatboxes". The indicator no longer flows through a
+  // `loadingIndicatorVariant` prop on ChatTabV2 — the inner thread reads
+  // it from `ChatboxHostStyleProvider` context. Behavior is covered in
+  // `LoadingIndicatorContent.test.tsx` and `Thread.test.tsx`.
 
   it("loads playground sessions from local storage and skips bootstrap", async () => {
     window.history.replaceState(

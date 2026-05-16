@@ -91,7 +91,6 @@ import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-over
 import { useSharedAppState } from "@/state/app-state-context";
 import { Settings2 } from "lucide-react";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
-import type { LoadingIndicatorVariant } from "@/components/chat-v2/shared/loading-indicator-content";
 import { useConvexAuth } from "convex/react";
 import { useProjectServers } from "@/hooks/useViews";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
@@ -204,7 +203,6 @@ interface PlaygroundMainProps {
   disableChatInput?: boolean;
   hideSaveViewButton?: boolean;
   disabledInputPlaceholder?: string;
-  loadingIndicatorVariant?: LoadingIndicatorVariant;
   // Onboarding
   initialInput?: string;
   /** When true with `initialInput`, reveals the string with a typewriter effect (App Builder NUX). */
@@ -281,7 +279,6 @@ export function PlaygroundMain({
   disableChatInput = false,
   hideSaveViewButton = false,
   disabledInputPlaceholder = "Input disabled in Views",
-  loadingIndicatorVariant,
   initialInput,
   initialInputTypewriter = false,
   blockSubmitUntilServerConnected = false,
@@ -555,7 +552,7 @@ export function PlaygroundMain({
   const hostStyleFamily = getChatboxHostFamily(hostStyle) ?? "claude";
   const hostBackgroundColor =
     getChatboxChatBackground(hostStyle, effectiveThreadTheme) ??
-    DEFAULT_HOST_STYLE.resolveChatBackground(effectiveThreadTheme);
+    DEFAULT_HOST_STYLE.chatUi.resolveChatBackground(effectiveThreadTheme);
   const displayMode =
     extractEffectiveHostDisplayMode(hostContext) ?? displayModeProp;
 
@@ -2198,7 +2195,6 @@ export function PlaygroundMain({
                 onToolApprovalResponse={addToolApprovalResponse}
                 toolRenderOverrides={mergedToolRenderOverrides}
                 showSaveViewButton={!hideSaveViewButton}
-                loadingIndicatorVariant={loadingIndicatorVariant}
                 renderUserMessageActions={
                   chatSessionId && convexProjectId
                     ? (message) => {
@@ -2269,7 +2265,6 @@ export function PlaygroundMain({
           disabled={composerDisabled}
           canSend={!sendBlocked && composer.input.trim().length > 0}
           isThinking={isStreamingActive}
-          loadingIndicatorVariant={loadingIndicatorVariant}
           onStop={stopActiveChat}
           onSend={() => {
             void (async () => {

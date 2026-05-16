@@ -15,10 +15,7 @@ import { ThinkingIndicator } from "@/components/chat-v2/shared/thinking-indicato
 import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-overlay";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
-import {
-  type LoadingIndicatorVariant,
-  useResolvedLoadingIndicatorVariant,
-} from "@/components/chat-v2/shared/loading-indicator-content";
+import { useResolvedHostStyleForIndicator } from "@/components/chat-v2/shared/loading-indicator-content";
 import { getChatboxHostFamily } from "@/lib/chatbox-host-style";
 import { type ReasoningDisplayMode } from "./thread/parts/reasoning-part";
 import { TranscriptThread } from "./thread/transcript-thread";
@@ -56,7 +53,6 @@ interface ThreadProps {
   showSaveViewButton?: boolean;
   minimalMode?: boolean;
   interactive?: boolean;
-  loadingIndicatorVariant?: LoadingIndicatorVariant;
   reasoningDisplayMode?: ReasoningDisplayMode;
   focusMessageId?: string | null;
   highlightedMessageIds?: string[];
@@ -95,7 +91,6 @@ export function Thread({
   showSaveViewButton = true,
   minimalMode = false,
   interactive = true,
-  loadingIndicatorVariant,
   reasoningDisplayMode = "inline",
   focusMessageId = null,
   highlightedMessageIds = [],
@@ -151,12 +146,8 @@ export function Thread({
 
   const chatboxHostStyle = useChatboxHostStyle();
   const chatboxHostTheme = useChatboxHostTheme();
-  const resolvedLoadingIndicatorVariant = useResolvedLoadingIndicatorVariant(
-    loadingIndicatorVariant,
-    {
-      modelProvider: model.provider,
-    },
-  );
+  const hasBrandIndicator =
+    useResolvedHostStyleForIndicator(model.provider) !== null;
   const isChatgptDark =
     getChatboxHostFamily(chatboxHostStyle) === "chatgpt" &&
     chatboxHostTheme === "dark";
@@ -170,11 +161,9 @@ export function Thread({
   const lastRenderableMessageId = hasVisibleAssistantResponse
     ? lastRenderableMessage.id
     : null;
-  const shouldShowStandaloneThinkingIndicator =
-    resolvedLoadingIndicatorVariant === "claude-mark" ||
-    resolvedLoadingIndicatorVariant === "chatgpt-dot"
-      ? isLoading && !hasVisibleAssistantResponse
-      : isLoading;
+  const shouldShowStandaloneThinkingIndicator = hasBrandIndicator
+    ? isLoading && !hasVisibleAssistantResponse
+    : isLoading;
 
   return (
     <div
@@ -217,7 +206,6 @@ export function Thread({
         navigationKey={navigationKey}
         viewportRef={viewportRef}
         isLoading={isLoading}
-        resolvedLoadingIndicatorVariant={resolvedLoadingIndicatorVariant}
         lastRenderableMessageId={lastRenderableMessageId}
         contentClassName={
           contentClassName ??
@@ -228,16 +216,14 @@ export function Thread({
       />
       {shouldShowStandaloneThinkingIndicator && (
         <div className="min-w-0 w-full max-w-4xl mx-auto px-4">
-          <ThinkingIndicator
-            model={model}
-            resolvedVariant={resolvedLoadingIndicatorVariant}
-          />
+          <ThinkingIndicator model={model} />
         </div>
       )}
 
       {showFullscreenChatOverlay && (
         <FullscreenChatOverlay
           messages={messages}
+          modelProvider={model.provider}
           open={isFullscreenChatOpen}
           onOpenChange={setIsFullscreenChatOpen}
           input={fullscreenChatInput}
@@ -246,7 +232,6 @@ export function Thread({
           disabled={fullscreenChatDisabled}
           canSend={canSendFullscreenChat}
           isThinking={isLoading}
-          loadingIndicatorVariant={resolvedLoadingIndicatorVariant}
           onStop={onFullscreenChatStop}
           onSend={() => {
             if (!canSendFullscreenChat) return;

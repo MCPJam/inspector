@@ -306,6 +306,60 @@ describe("useServerState effective server projection", () => {
       })
     );
   });
+
+  it("does not surface runtime-only servers for Convex-backed projects", () => {
+    const appState = createAppState();
+    const persistedServer: ServerWithName = {
+      name: "persisted-server",
+      config: {
+        type: "http",
+        url: "https://persisted.example.com/mcp",
+      } as any,
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    };
+    const runtimeConnected: ServerWithName = {
+      name: "runtime-connected",
+      config: {
+        type: "http",
+        url: "https://runtime-connected.example.com/mcp",
+      } as any,
+      lastConnectionTime: new Date(),
+      connectionStatus: "connected",
+      retryCount: 0,
+      enabled: true,
+    };
+
+    appState.projects.default.servers = {
+      "persisted-server": persistedServer,
+    };
+    appState.servers = {
+      "runtime-connected": runtimeConnected,
+    };
+    appState.selectedServer = "runtime-connected";
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      useLocalFallback: false,
+      effectiveProjects: appState.projects,
+      effectiveActiveProjectId: "default",
+      activeProjectServersFlat: [{ _id: "srv_1", name: "persisted-server" }],
+    });
+
+    expect(result.current.projectServers).toEqual({
+      "persisted-server": expect.objectContaining({
+        name: "persisted-server",
+      }),
+    });
+    expect(result.current.projectServers).not.toHaveProperty(
+      "runtime-connected",
+    );
+    expect(result.current.selectedMCPConfig).toBeUndefined();
+  });
 });
 
 describe("useServerState OAuth callback failures", () => {

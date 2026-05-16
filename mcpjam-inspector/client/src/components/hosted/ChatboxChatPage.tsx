@@ -6,7 +6,6 @@ import { Loader2, Link2Off, ShieldX } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { ChatTabV2 } from "@/components/ChatTabV2";
-import { getLoadingIndicatorVariantForHostStyle } from "@/components/chat-v2/shared/loading-indicator-content";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import { useApiContext } from "@/hooks/hosted/use-hosted-api-context";
 import { useHostedOAuthGate } from "@/hooks/hosted/use-hosted-oauth-gate";
@@ -31,7 +30,10 @@ import { navigateApp } from "@/lib/app-navigation";
 import { bootstrapServerToHostedOAuthDescriptor } from "@/components/chatboxes/builder/chatbox-server-optional";
 import { isHostedOAuthBusy } from "@/lib/hosted-oauth-resume";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
-import { ChatboxHostStyleProvider } from "@/contexts/chatbox-host-style-context";
+import {
+  ChatboxChatUiOverrideProvider,
+  ChatboxHostStyleProvider,
+} from "@/contexts/chatbox-host-style-context";
 import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-host-capabilities-override-context";
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
 import { ChatboxHostOnboardingOverlays } from "@/components/hosted/ChatboxHostOnboardingOverlays";
@@ -801,7 +803,8 @@ export function ChatboxChatPage({
   );
 
   const hostStyle = session?.payload.hostStyle ?? "claude";
-  const shellStyle = getChatboxShellStyle(hostStyle, themeMode);
+  const chatUiOverride = session?.payload.chatUiOverride;
+  const shellStyle = getChatboxShellStyle(hostStyle, themeMode, chatUiOverride);
   const oauthPending = pendingOAuthServers.length > 0;
   const welcomeAvailable =
     (session?.payload.chatUi?.surfaces?.welcome?.enabled ?? true) &&
@@ -873,9 +876,6 @@ export function ChatboxChatPage({
           )}
           minimalMode
           reasoningDisplayMode="hidden"
-          loadingIndicatorVariant={getLoadingIndicatorVariantForHostStyle(
-            hostStyle
-          )}
           hostedContext={{
             chatboxId: session.chatboxId,
             accessVersion: session.accessVersion,
@@ -913,6 +913,7 @@ export function ChatboxChatPage({
 
   return (
     <ChatboxHostStyleProvider value={hostStyle}>
+      <ChatboxChatUiOverrideProvider value={chatUiOverride}>
       <ChatboxHostCapabilitiesOverrideProvider
         value={session?.payload.hostCapabilitiesOverride}
       >
@@ -960,6 +961,7 @@ export function ChatboxChatPage({
       </div>
       </ActiveMcpProfileProvider>
       </ChatboxHostCapabilitiesOverrideProvider>
+      </ChatboxChatUiOverrideProvider>
     </ChatboxHostStyleProvider>
   );
 }

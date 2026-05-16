@@ -17,6 +17,9 @@ export const mockMcpApi = {
   deleteServer: vi
     .fn()
     .mockResolvedValue({ success: true, message: "Disconnected" }),
+  disconnectAllRuntimeServers: vi
+    .fn()
+    .mockResolvedValue({ success: true, servers: [] }),
   listServers: vi.fn().mockResolvedValue({ success: true, servers: [] }),
   reconnectServer: vi
     .fn()
@@ -43,6 +46,9 @@ export function createMockMcpApi() {
     deleteServer: vi
       .fn()
       .mockResolvedValue({ success: true, message: "Disconnected" }),
+    disconnectAllRuntimeServers: vi
+      .fn()
+      .mockResolvedValue({ success: true, servers: [] }),
     listServers: vi.fn().mockResolvedValue({ success: true, servers: [] }),
     reconnectServer: vi
       .fn()
@@ -84,6 +90,9 @@ export const mcpApiPresets = {
     ...createMockMcpApi(),
     testConnection: vi.fn().mockRejectedValue(new Error(errorMessage)),
     deleteServer: vi.fn().mockRejectedValue(new Error(errorMessage)),
+    disconnectAllRuntimeServers: vi
+      .fn()
+      .mockRejectedValue(new Error(errorMessage)),
     listServers: vi.fn().mockRejectedValue(new Error(errorMessage)),
     reconnectServer: vi.fn().mockRejectedValue(new Error(errorMessage)),
     getInitializationInfo: vi.fn().mockRejectedValue(new Error(errorMessage)),

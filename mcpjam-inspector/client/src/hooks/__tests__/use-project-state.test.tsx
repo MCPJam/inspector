@@ -1048,6 +1048,47 @@ describe("useProjectState automatic project creation", () => {
     );
   });
 
+  it("does not render local app-state projects for authenticated Convex orgs", () => {
+    projectQueryState.allProjects = [
+      {
+        _id: "convex-org-a",
+        name: "Convex Org A",
+        servers: {},
+        ownerId: "user-1",
+        organizationId: "org-a",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      {
+        _id: "convex-org-b",
+        name: "Convex Org B",
+        servers: {},
+        ownerId: "user-1",
+        organizationId: "org-b",
+        createdAt: 2,
+        updatedAt: 2,
+      },
+    ];
+    projectQueryState.projects = [projectQueryState.allProjects[1]];
+
+    const appState = createAppState({
+      "local-org-b": createLocalProject("local-org-b", {
+        organizationId: "org-b",
+      }),
+    });
+
+    const { result } = renderUseProjectState({
+      appState,
+      activeOrganizationId: "org-b",
+      validOrganizationIds: ["org-a", "org-b"],
+    });
+
+    expect(Object.keys(result.current.effectiveProjects)).toEqual([
+      "convex-org-b",
+    ]);
+    expect(result.current.effectiveProjects["local-org-b"]).toBeUndefined();
+  });
+
   it("does not migrate local projects from another org into the current organization", async () => {
     projectQueryState.allProjects = [];
     projectQueryState.projects = [];

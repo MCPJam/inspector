@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UIMessage } from "@ai-sdk/react";
 import type { ModelDefinition } from "@/shared/types";
 import { TranscriptThread } from "../thread/transcript-thread";
+import { ChatboxHostStyleProvider } from "@/contexts/chatbox-host-style-context";
 
 const mockMessageView = vi.fn();
 
@@ -298,14 +299,15 @@ describe("TranscriptThread", () => {
     expect(wrapper?.style.containIntrinsicSize).toBe("");
   });
 
-  it("uses the resolved Claude variant to attach an animated footer to the latest assistant message", () => {
+  it("attaches an animated Claude footer to the latest assistant message in a Claude host context", () => {
     render(
-      <TranscriptThread
-        {...defaultProps}
-        isLoading={true}
-        resolvedLoadingIndicatorVariant="claude-mark"
-        lastRenderableMessageId="assistant-1"
-      />,
+      <ChatboxHostStyleProvider value="claude">
+        <TranscriptThread
+          {...defaultProps}
+          isLoading={true}
+          lastRenderableMessageId="assistant-1"
+        />
+      </ChatboxHostStyleProvider>,
     );
 
     expect(mockMessageView).toHaveBeenCalledWith(
@@ -322,14 +324,15 @@ describe("TranscriptThread", () => {
     );
   });
 
-  it("uses the resolved Claude variant to keep the latest assistant footer static after loading", () => {
+  it("keeps the latest Claude assistant footer static after loading completes", () => {
     render(
-      <TranscriptThread
-        {...defaultProps}
-        isLoading={false}
-        resolvedLoadingIndicatorVariant="claude-mark"
-        lastRenderableMessageId="assistant-1"
-      />,
+      <ChatboxHostStyleProvider value="claude">
+        <TranscriptThread
+          {...defaultProps}
+          isLoading={false}
+          lastRenderableMessageId="assistant-1"
+        />
+      </ChatboxHostStyleProvider>,
     );
 
     expect(mockMessageView).toHaveBeenCalledWith(

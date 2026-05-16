@@ -8,6 +8,8 @@ const {
   saveAppStateMock,
   useProjectStateMock,
   useServerStateMock,
+  disconnectAllRuntimeServersMock,
+  convexAuthState,
   projectStateValue,
   serverStateValue,
 } = vi.hoisted(() => ({
@@ -15,6 +17,11 @@ const {
   saveAppStateMock: vi.fn(),
   useProjectStateMock: vi.fn(),
   useServerStateMock: vi.fn(),
+  disconnectAllRuntimeServersMock: vi.fn(),
+  convexAuthState: {
+    isAuthenticated: true,
+    isLoading: false,
+  },
   projectStateValue: {
     effectiveProjects: {},
     setConvexActiveProjectId: vi.fn(),
@@ -63,10 +70,7 @@ const {
 }));
 
 vi.mock("convex/react", () => ({
-  useConvexAuth: () => ({
-    isAuthenticated: true,
-    isLoading: false,
-  }),
+  useConvexAuth: () => convexAuthState,
   // useQuery is invoked from useAppState to read hostConfigsV2.getProjectDefault.
   // Tests don't exercise mcpProfile-driven behavior, so returning undefined
   // matches the "guest / no profile" path.
@@ -88,6 +92,11 @@ vi.mock("../use-logger", () => ({
 vi.mock("@/state/storage", () => ({
   loadAppState: (...args: unknown[]) => loadAppStateMock(...args),
   saveAppState: (...args: unknown[]) => saveAppStateMock(...args),
+}));
+
+vi.mock("@/state/mcp-api", () => ({
+  disconnectAllRuntimeServers: (...args: unknown[]) =>
+    disconnectAllRuntimeServersMock(...args),
 }));
 
 vi.mock("../use-project-state", () => ({
@@ -164,6 +173,12 @@ describe("useAppState active organization recovery", () => {
     localStorage.clear();
     window.history.replaceState({}, "", "/");
     loadAppStateMock.mockReturnValue(initialAppState);
+    disconnectAllRuntimeServersMock.mockResolvedValue({
+      success: true,
+      servers: [],
+    });
+    convexAuthState.isAuthenticated = true;
+    convexAuthState.isLoading = false;
     Object.assign(projectStateValue, {
       effectiveProjects: {},
       useLocalFallback: false,
@@ -303,6 +318,57 @@ describe("useAppState active organization recovery", () => {
         connectionStatus: "disconnected",
       }),
     });
+  });
+
+  it("disconnects runtime servers when leaving authenticated Convex scope", async () => {
+    let capturedDispatch:
+      | ((action: {
+          type: "CONNECT_SUCCESS";
+          name: string;
+          config: { type: "http"; url: string };
+        }) => void)
+      | undefined;
+    useServerStateMock.mockImplementation((args: any) => {
+      capturedDispatch = args.dispatch;
+      return serverStateValue;
+    });
+    Object.assign(projectStateValue, {
+      effectiveActiveProjectId: "project-1",
+      useLocalFallback: false,
+    });
+
+    const hookProps = {
+      currentUserId: "user-1",
+      currentActorKey: "user-1",
+      routeOrganizationId: undefined,
+      hasOrganizations: true,
+      isLoadingOrganizations: false,
+      validOrganizations: [{ _id: "org-1", myRole: "owner" }],
+    };
+
+    const { rerender } = renderHook((props) => useAppState(props), {
+      initialProps: hookProps,
+    });
+
+    act(() => {
+      capturedDispatch?.({
+        type: "CONNECT_SUCCESS",
+        name: "demo-server",
+        config: { type: "http", url: "https://example.com/mcp" },
+      });
+    });
+
+    expect(serverStateValue.handleDisconnect).not.toHaveBeenCalled();
+
+    convexAuthState.isAuthenticated = false;
+    rerender(hookProps);
+
+    await waitFor(() => {
+      expect(serverStateValue.handleDisconnect).toHaveBeenCalledWith(
+        "demo-server",
+      );
+    });
+    expect(disconnectAllRuntimeServersMock).toHaveBeenCalled();
   });
 
   // Removed in Slice 5: the legacy `loadAppState` → `patchStateForPendingOAuth`

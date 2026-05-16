@@ -210,7 +210,7 @@ describe("useAppState pending OAuth marker org preference", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
-    window.history.replaceState({}, "", "/callback?code=xyz");
+    window.history.replaceState({}, "", "/oauth/callback?code=xyz");
     loadAppStateMock.mockReturnValue(createLoadedAppState());
     saveAppStateMock.mockResolvedValue(undefined);
     useProjectStateMock.mockImplementation(({ appState }) => ({
@@ -314,6 +314,34 @@ describe("useAppState pending OAuth marker org preference", () => {
 
     // Without ?code/?error in the URL, the marker is inert; resolution falls
     // back to the first owned org rather than restoring the marker's choice.
+    expect(result.current.activeOrganizationId).toBe("org-other");
+  });
+
+  it("ignores the marker on the WorkOS sign-in callback path (/callback?code=…)", async () => {
+    // Regression: WorkOS sign-in lands on /callback?code=… and used to
+    // collide with MCP-OAuth detection, surfacing a stale marker (and the
+    // "Finishing OAuth sign-in for X…" gate). MCP OAuth always uses
+    // /oauth/callback, so the marker must not influence resolution here.
+    window.history.replaceState({}, "", "/callback?code=workos-code");
+    writePendingMarker("org-from-marker");
+
+    const { result } = renderHook(() =>
+      useAppState({
+        currentUserId: "user-1",
+        routeOrganizationId: undefined,
+        hasOrganizations: true,
+        isLoadingOrganizations: false,
+        validOrganizations: [
+          { _id: "org-other", myRole: "owner" },
+          { _id: "org-from-marker", myRole: "owner" },
+        ],
+      })
+    );
+
+    await waitFor(() => {
+      expect(useProjectStateMock).toHaveBeenCalled();
+    });
+
     expect(result.current.activeOrganizationId).toBe("org-other");
   });
 });

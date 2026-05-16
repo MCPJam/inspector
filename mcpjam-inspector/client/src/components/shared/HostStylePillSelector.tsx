@@ -39,16 +39,16 @@ export function HostStylePillSelector({
             value={host.id}
             size="sm"
             className="h-[22px] min-w-0 flex-1 rounded-full border-0 bg-transparent px-2 text-[10px] font-medium text-muted-foreground/90 first:rounded-full last:rounded-full hover:bg-transparent hover:text-foreground data-[state=on]:bg-background data-[state=on]:font-semibold data-[state=on]:text-foreground data-[state=on]:shadow-[0_1px_2px_rgba(0,0,0,0.08),0_0_0_1px_rgba(0,0,0,0.04)] dark:data-[state=on]:shadow-[0_1px_2px_rgba(0,0,0,0.28),0_0_0_1px_rgba(255,255,255,0.06)]"
-            aria-label={host.label}
+            aria-label={host.chatUi.label}
           >
             <span className="inline-flex min-w-0 items-center gap-1">
               <img
-                src={host.logoSrc}
+                src={host.chatUi.logoSrc}
                 alt=""
                 aria-hidden="true"
                 className="h-3 w-3 shrink-0 object-contain"
               />
-              <span className="truncate">{host.label}</span>
+              <span className="truncate">{host.chatUi.label}</span>
             </span>
           </ToggleGroupItem>
         ))}

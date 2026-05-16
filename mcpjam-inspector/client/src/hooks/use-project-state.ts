@@ -518,35 +518,11 @@ export function useProjectState({
   const localFallbackProjects: Record<string, Project> = appState.projects;
 
   const authenticatedMergedProjects = useMemo((): Record<string, Project> => {
-    // Guests don't see local-fallback projects — Convex is the only source
-    // of truth for their data. Including the synthetic local "default" here
-    // would shadow the real Convex guest project in resolution.
-    if (isGuestActor) {
-      return convexProjects;
-    }
-
-    const projectsWithoutRemoteMatch = Object.fromEntries(
-      Object.entries(scopedLocalProjects).filter(([localProjectId, project]) => {
-        if (convexProjects[localProjectId]) {
-          return false;
-        }
-
-        if (
-          project.sharedProjectId &&
-          convexProjects[project.sharedProjectId]
-        ) {
-          return false;
-        }
-
-        return true;
-      }),
-    );
-
-    return {
-      ...convexProjects,
-      ...projectsWithoutRemoteMatch,
-    };
-  }, [convexProjects, scopedLocalProjects, isGuestActor]);
+    // Convex is the only source of truth for authenticated project lists.
+    // Local app-state projects may still be inspected by the migration path
+    // below, but they must not render after actor or organization changes.
+    return convexProjects;
+  }, [convexProjects]);
 
   const activeScopedLocalProject = useMemo(
     () => scopedLocalProjects[appState.activeProjectId],
@@ -556,16 +532,10 @@ export function useProjectState({
   const activeScopedRemoteProjectId =
     activeScopedLocalProject?.sharedProjectId ?? null;
 
-  // Guests never keep a synthetic local-fallback project: their canonical
-  // project lives in Convex (provisioned by ensureDefaultGuestProject) and
-  // any local "default" row hydrated from localStorage would otherwise
-  // shadow it, leaving syncServerToConvex calling Convex with a fake id.
-  const shouldKeepLocalActiveProject = Boolean(
-    !isGuestActor &&
-      activeScopedLocalProject &&
-      (!activeScopedRemoteProjectId ||
-        !convexProjects[activeScopedRemoteProjectId]),
-  );
+  // Authenticated users never keep local-fallback projects in the rendered
+  // project list. Their canonical project set lives in Convex; local rows are
+  // only inputs to migration/import paths.
+  const shouldKeepLocalActiveProject = false;
 
   const effectiveProjects = useMemo((): Record<string, Project> => {
     if (shouldTreatRemoteProjectsAsEmpty) {
@@ -798,6 +768,7 @@ export function useProjectState({
     if (!isAuthenticated) {
       return;
     }
+    if (isGuestActor) return;
     if (shouldTreatRemoteProjectsAsEmpty) return;
     if (shouldUseLocalFallback) return;
     if (!hasResolvedProjectOrganizationSelection) return;
@@ -868,6 +839,7 @@ export function useProjectState({
     Promise.all(migratableLocalProjects.map(migrateProject));
   }, [
     isAuthenticated,
+    isGuestActor,
     shouldUseLocalFallback,
     allRemoteProjects,
     migratableLocalProjects,
@@ -886,6 +858,7 @@ export function useProjectState({
     if (!isAuthenticated) {
       return;
     }
+    if (isGuestActor) return;
     if (shouldTreatRemoteProjectsAsEmpty) return;
     if (shouldUseLocalFallback) return;
     if (!hasResolvedProjectOrganizationSelection) return;
@@ -920,6 +893,7 @@ export function useProjectState({
       });
   }, [
     isAuthenticated,
+    isGuestActor,
     shouldUseLocalFallback,
     remoteProjects,
     hasCurrentOrganizationProjects,
@@ -932,10 +906,11 @@ export function useProjectState({
     shouldTreatRemoteProjectsAsEmpty,
   ]);
 
-  // Guest project provisioning. Guests have no organization, so the
-  // organization-keyed effect above never fires. Instead, when remoteProjects
-  // resolves to an empty list for a guest actor, lazily create a default
-  // guest-owned project so the rest of the app sees a normal projectId.
+  // Guest project provisioning. Guests can have a personal organization row,
+  // but they must not call the org-scoped ensureDefaultProject path with an
+  // explicit organizationId. When remoteProjects resolves to an empty list for
+  // a guest actor, lazily create the guest default with no org argument so the
+  // rest of the app sees a normal projectId.
   useEffect(() => {
     if (!isGuestActor) return;
     if (shouldUseLocalFallback) return;
