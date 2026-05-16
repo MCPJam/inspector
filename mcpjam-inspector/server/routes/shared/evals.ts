@@ -171,6 +171,28 @@ export const RunTestCaseRequestSchema = z.object({
    * NOT mutate the persisted case's `matchOptions`.
    */
   matchOptionsOverride: matchOptionsSchema.optional(),
+  /**
+   * One-off hostConfig override for this single-case run. Subset of
+   * `HostConfigInputV2`; recorded on the iteration snapshot so the trace
+   * shows which config the run actually used. Does NOT mutate the suite
+   * hostConfig.
+   */
+  hostConfigOverride: z
+    .object({
+      hostStyle: z.string().optional(),
+      hostContext: z.record(z.string(), z.unknown()).optional(),
+      clientCapabilities: z.record(z.string(), z.unknown()).optional(),
+      hostCapabilitiesOverride: z.record(z.string(), z.unknown()).optional(),
+      chatUiOverride: z.record(z.string(), z.unknown()).optional(),
+      mcpProfile: z.record(z.string(), z.unknown()).optional(),
+      connectionDefaults: z
+        .object({
+          headers: z.record(z.string(), z.string()).optional(),
+          requestTimeout: z.number().optional(),
+        })
+        .optional(),
+    })
+    .optional(),
 });
 
 export type RunTestCaseRequest = z.infer<typeof RunTestCaseRequestSchema>;
@@ -789,7 +811,19 @@ export async function runEvalTestCaseWithManager(
     convexAuthToken,
     testCaseOverrides,
     matchOptionsOverride,
+    hostConfigOverride,
   } = request;
+  // TODO(host-config-override): persist `hostConfigOverride` on the
+  // iteration's `testCaseSnapshot` so the trace records which hostConfig
+  // the run actually used. Blocked on extending the
+  // `testIteration.testCaseSnapshot` validator in
+  // `mcpjam-backend/convex/schema.ts:655` to allow a
+  // `hostConfigOverride: v.optional(v.any())` field. Until that lands,
+  // the override is accepted at the API boundary (validated by zod) but
+  // has no runtime / persistence effect. Same gap exists for the suite's
+  // own hostConfig; both will be plumbed into the iteration snapshot +
+  // LLM run in a follow-up.
+  void hostConfigOverride;
 
   const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
   const { convexClient, convexHttpUrl } = createConvexClients(convexAuthToken);
@@ -1038,7 +1072,19 @@ export async function streamEvalTestCaseWithManager(
     convexAuthToken,
     testCaseOverrides,
     matchOptionsOverride,
+    hostConfigOverride,
   } = request;
+  // TODO(host-config-override): persist `hostConfigOverride` on the
+  // iteration's `testCaseSnapshot` so the trace records which hostConfig
+  // the run actually used. Blocked on extending the
+  // `testIteration.testCaseSnapshot` validator in
+  // `mcpjam-backend/convex/schema.ts:655` to allow a
+  // `hostConfigOverride: v.optional(v.any())` field. Until that lands,
+  // the override is accepted at the API boundary (validated by zod) but
+  // has no runtime / persistence effect. Same gap exists for the suite's
+  // own hostConfig; both will be plumbed into the iteration snapshot +
+  // LLM run in a follow-up.
+  void hostConfigOverride;
 
   const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
   const { convexClient, convexHttpUrl } = createConvexClients(convexAuthToken);

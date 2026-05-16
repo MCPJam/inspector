@@ -45,6 +45,7 @@ import {
   buildTestCaseModelOptions,
   getPersistedTestCaseModelValue,
   prepareSingleTestCaseRun,
+  projectHostConfigRunOverride,
   resolveSelectedTestCaseModelValue,
   setPersistedTestCaseModelValue,
 } from "./single-test-case-runner";
@@ -61,6 +62,12 @@ import {
   resolveMatchOptions,
   type EvalMatchOptions,
 } from "@/shared/eval-matching";
+import {
+  emptyHostConfigInputV2,
+  hostConfigDtoToInput,
+  type HostConfigDtoV2,
+  type HostConfigInputV2,
+} from "@/lib/host-config-v2";
 import { cn } from "@/lib/utils";
 import { computeIterationResult } from "./pass-criteria";
 import { ValidatorsSection } from "./validators-section";
@@ -112,8 +119,8 @@ import {
   type TraceEnvelope,
 } from "./trace-viewer-adapter";
 import { getChatboxShellStyle } from "@/lib/chatbox-host-style";
-import { HostStylePillSelector } from "@/components/shared/HostStylePillSelector";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { TestCaseHostHeader } from "./TestCaseHostHeader";
 
 interface TestTemplate {
   title: string;
@@ -332,12 +339,17 @@ export function TestTemplateEditor({
   projectServers,
 }: TestTemplateEditorProps) {
   const { getAccessToken } = useAuth();
-  const hostStyle = usePreferencesStore((state) => state.hostStyle);
-  const setHostStyle = usePreferencesStore((state) => state.setHostStyle);
   const [editForm, setEditForm] = useState<TestTemplate | null>(null);
   const [runMatchOptionsOverride, setRunMatchOptionsOverride] = useState<
     EvalMatchOptions | undefined
   >(undefined);
+  /**
+   * Per-case in-place tweak to the suite's hostConfig. `null` = no tweak,
+   * the suite baseline is used as-is. Mirrors `runMatchOptionsOverride`:
+   * never persists, resets on case switch, consumed by the next Run.
+   */
+  const [hostConfigOverride, setHostConfigOverride] =
+    useState<HostConfigInputV2 | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editorMode, setEditorMode] = useState<EditorMode>(
     openCompareFromRoute ? "run" : "config"
@@ -429,6 +441,38 @@ export function TestTemplateEditor({
 
   const suite = useQuery("testSuites:getTestSuite" as any, { suiteId }) as any;
 
+  /**
+   * Suite-level hostConfig (v2). The same query SuiteExecutionConfigEditor
+   * uses — single source of truth for model / system / temperature /
+   * hostContext / capabilities / style at the suite level. Per-case Run
+   * tweaks are layered on top as `hostConfigOverride` (added in Phase 2).
+   */
+  const suiteHostConfigDto = useQuery(
+    "hostConfigsV2:getSuiteConfig" as any,
+    { suiteId } as any,
+  ) as HostConfigDtoV2 | null | undefined;
+
+  /**
+   * Editable shape derived from the suite DTO. When the suite has no v2 row
+   * yet, seed from the legacy `suite.defaultConfig.{modelId,systemPrompt,
+   * temperature}` mirror so the header isn't blank on suites that pre-date
+   * the v2 schema. Mirrors `SuiteExecutionConfigEditor` line 97-107.
+   */
+  const hostConfigBaseline = useMemo<HostConfigInputV2 | null>(() => {
+    if (suiteHostConfigDto === undefined) return null; // still loading
+    if (suiteHostConfigDto) return hostConfigDtoToInput(suiteHostConfigDto);
+    return emptyHostConfigInputV2({
+      modelId: suite?.defaultConfig?.modelId,
+      systemPrompt: suite?.defaultConfig?.systemPrompt,
+      temperature: suite?.defaultConfig?.temperature,
+    });
+  }, [
+    suiteHostConfigDto,
+    suite?.defaultConfig?.modelId,
+    suite?.defaultConfig?.systemPrompt,
+    suite?.defaultConfig?.temperature,
+  ]);
+
   useEffect(() => {
     setEditorMode(openCompareFromRoute ? "run" : "config");
     setCompareRunRecords({});
@@ -437,6 +481,8 @@ export function TestTemplateEditor({
     setMobileVisibleModelValue(null);
     setExpandedPromptTurnIds([]);
     initializedSelectionCaseRef.current = null;
+    // Per-case ephemeral tweak; switching cases starts fresh.
+    setHostConfigOverride(null);
   }, [openCompareFromRoute, selectedTestCaseId]);
 
   useEffect(() => {
@@ -1271,6 +1317,9 @@ export function TestTemplateEditor({
             matchOptions: savePayload.matchOptions,
           },
           matchOptionsOverride: runMatchOptionsOverride,
+          hostConfigOverride: hostConfigOverride
+            ? projectHostConfigRunOverride(hostConfigOverride)
+            : undefined,
         });
 
         return {
@@ -2092,19 +2141,18 @@ export function TestTemplateEditor({
               </div>
             </div>
 
-            <div
-              data-testid="test-template-host-style-row"
-              className="flex items-center justify-start gap-2 px-1 pt-2"
-            >
-              <p className="shrink-0 text-[11px] font-medium text-muted-foreground">
-                Host style
-              </p>
-              <HostStylePillSelector
-                className="w-[164px] shrink-0"
-                value={hostStyle}
-                onValueChange={setHostStyle}
-              />
-            </div>
+            {hostConfigBaseline ? (
+              <div
+                data-testid="test-template-host-header-row"
+                className="px-1 pt-2"
+              >
+                <TestCaseHostHeader
+                  baseline={hostConfigBaseline}
+                  value={hostConfigOverride}
+                  onChange={setHostConfigOverride}
+                />
+              </div>
+            ) : null}
 
             <div className="space-y-4 pt-1">
               {editForm ? (
