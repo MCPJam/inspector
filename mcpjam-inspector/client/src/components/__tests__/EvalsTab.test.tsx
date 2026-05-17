@@ -82,6 +82,10 @@ vi.mock("@/lib/eval-route-url", () => ({
 
 vi.mock("../evals/helpers", () => ({
   aggregateSuite: () => null,
+  // EvalsTab's `generateState` memo calls this to compute the effective
+  // server set across the suite's flat list + host attachments. Tests
+  // don't care about the result; return an empty list so the memo runs.
+  getEffectiveSuiteServers: () => [],
 }));
 
 vi.mock("../evals/create-suite-navigation", () => ({
