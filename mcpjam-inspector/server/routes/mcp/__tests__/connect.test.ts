@@ -275,7 +275,13 @@ describe("POST /api/mcp/connect", () => {
     });
 
     it("returns 401 when server requires OAuth but no token resolved", async () => {
-      mockBatchAuthorizeFetch({
+      // The resolver now falls back to /web/oauth/force-refresh when the
+      // authorize batch returns no access token, so we have to mock both
+      // fetches: authorize returns the OAuth-required config, and the
+      // force-refresh call reports the refresh token as invalid (the only
+      // path that surfaces as a user-facing 401; transient refresh errors
+      // bubble up as 502 by design).
+      const authorizeBody = {
         results: {
           [SERVER_ID]: {
             ok: true,
@@ -291,7 +297,32 @@ describe("POST /api/mcp/connect", () => {
             // no oauthAccessToken
           },
         },
-      });
+      };
+      const forceRefreshBody = {
+        code: "refresh_token_invalid",
+        message: "Hosted OAuth refresh token is no longer valid",
+      };
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL) => {
+          const url =
+            typeof input === "string"
+              ? input
+              : input instanceof URL
+                ? input.toString()
+                : input.url;
+          if (url.includes("/web/oauth/force-refresh")) {
+            return new Response(JSON.stringify(forceRefreshBody), {
+              status: 401,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          return new Response(JSON.stringify(authorizeBody), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }),
+      );
 
       const res = await app.request("/api/mcp/connect", {
         method: "POST",
@@ -300,8 +331,12 @@ describe("POST /api/mcp/connect", () => {
       });
 
       expect(res.status).toBe(401);
-      const data = (await res.json()) as { oauthRequired?: boolean };
+      const data = (await res.json()) as {
+        oauthRequired?: boolean;
+        refreshTokenInvalid?: boolean;
+      };
       expect(data.oauthRequired).toBe(true);
+      expect(data.refreshTokenInvalid).toBe(true);
     });
   });
 

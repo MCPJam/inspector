@@ -931,7 +931,7 @@ export function ChatV2Route() {
               }
             : undefined
         }
-        activeHost={activeHost}
+        activeMcpProfile={activeHost?.mcpProfile}
         evalChatHandoff={evalChatHandoff}
         onEvalChatHandoffConsumed={(id) =>
           setEvalChatHandoff((current: EvalChatHandoff | null) =>

@@ -200,7 +200,7 @@ describe("useAutoConnectProjectServers", () => {
     expect(ensureServersReady).toHaveBeenCalledTimes(1);
   });
 
-  it("disconnects connected servers the active host does NOT require", async () => {
+  it("disconnects EVERY connected server on host switch (incl. ones the new host still requires)", async () => {
     const ensureServersReady = vi.fn().mockResolvedValue({
       readyServerNames: [],
       failedServerNames: [],
@@ -208,7 +208,11 @@ describe("useAutoConnectProjectServers", () => {
       reauthServerNames: [],
     });
     const runtimeDisconnectServer = vi.fn();
-    // Two servers connected from a prior host; current host requires only "alpha".
+    // Three servers connected from a prior host; current host requires only
+    // "alpha". With the reconnect-on-host-switch policy, alpha gets torn
+    // down alongside beta/gamma; its reconnect fires on the next render
+    // once the DISCONNECT dispatch propagates and it re-enters the
+    // candidate set (see ensureServersReady call path in use-server-state).
     const appState = {
       servers: {
         alpha: { name: "alpha", connectionStatus: "connected" },
@@ -236,12 +240,14 @@ describe("useAutoConnectProjectServers", () => {
     );
 
     await flushMicrotasks();
-    // Connect side: nothing to do — alpha is already connected.
+    // Connect side: alpha still looks "connected" in this render's app
+    // state, so it's filtered out of the candidate set. In production the
+    // next render (after DISCONNECT lands) would pick it up.
     expect(ensureServersReady).not.toHaveBeenCalled();
-    // Disconnect side: beta and gamma (connected but not required) come down.
-    expect(runtimeDisconnectServer).toHaveBeenCalledTimes(2);
+    // Disconnect side: every connected server comes down, alpha included.
+    expect(runtimeDisconnectServer).toHaveBeenCalledTimes(3);
     const disconnected = runtimeDisconnectServer.mock.calls.map((c) => c[0]);
-    expect(disconnected.sort()).toEqual(["beta", "gamma"]);
+    expect(disconnected.sort()).toEqual(["alpha", "beta", "gamma"]);
   });
 
   it("disconnects ALL connected servers when the active host requires none (e.g. MCPJam default)", async () => {
@@ -370,8 +376,8 @@ describe("useAutoConnectProjectServers", () => {
   it("does NOT disconnect a server the user manually connects after the scope's tear-down pass already ran", async () => {
     // Regression: when the user adds a new server from the Servers tab
     // while sitting on a host, the reconciler used to see the freshly-
-    // connected server as "excess" (not in the host's required list) and
-    // tear it down. Disconnect-excess must fire AT MOST ONCE per scope.
+    // connected server as a fresh disconnect target and tear it down.
+    // The host-switch tear-down must fire AT MOST ONCE per scope.
     const ensureServersReady = vi.fn().mockResolvedValue({
       readyServerNames: ["learn"],
       failedServerNames: [],
@@ -409,10 +415,10 @@ describe("useAutoConnectProjectServers", () => {
     );
 
     await flushMicrotasks();
-    // First pass: learn is already connected and required — nothing to do
-    // on either side. Disconnect-excess marks the scope attempted anyway.
-    expect(runtimeDisconnectServer).not.toHaveBeenCalled();
-    expect(ensureServersReady).not.toHaveBeenCalled();
+    // First pass: every connected server is torn down (including the
+    // required `learn`, which will reconnect once its DISCONNECT lands).
+    expect(runtimeDisconnectServer).toHaveBeenCalledTimes(1);
+    expect(runtimeDisconnectServer).toHaveBeenCalledWith("learn");
 
     // User manually connects "bench" from the Servers tab — it's not in
     // the host's required list, but the user explicitly wants it connected.
@@ -426,8 +432,9 @@ describe("useAutoConnectProjectServers", () => {
     rerender();
     await flushMicrotasks();
 
-    // Disconnect-excess must NOT re-fire — bench stays connected.
-    expect(runtimeDisconnectServer).not.toHaveBeenCalled();
+    // Tear-down must NOT re-fire — bench stays connected, and `learn`
+    // isn't double-disconnected.
+    expect(runtimeDisconnectServer).toHaveBeenCalledTimes(1);
   });
 
   it("does NOT re-fire while sitting on the same host (refresh-keeps-failing guard preserved)", async () => {

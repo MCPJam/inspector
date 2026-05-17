@@ -408,6 +408,10 @@ vi.mock("../stores/preferences/preferences-provider", () => ({
   PreferencesStoreProvider: ({ children }: { children?: ReactNode }) => (
     <div>{children}</div>
   ),
+  usePreferencesStore: () => true,
+}));
+vi.mock("../components/ActiveHostServerReconciler", () => ({
+  ActiveHostServerReconciler: () => null,
 }));
 vi.mock("@mcpjam/design-system/sonner", () => ({
   Toaster: () => <div />,
