@@ -116,7 +116,7 @@ export const HostMatrixCard = memo(function HostMatrixCard({
         />
         <Stat
           label="prompt"
-          value={agent?.systemPromptEmpty ? "∅" : "set"}
+          value={agent ? (agent.systemPromptEmpty ? "∅" : "set") : "—"}
           empty={agent?.systemPromptEmpty}
           changed={agent?.changedFields.includes("systemPrompt")}
         />

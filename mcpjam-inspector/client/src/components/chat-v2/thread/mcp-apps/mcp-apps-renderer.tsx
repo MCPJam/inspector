@@ -289,25 +289,6 @@ export function MCPAppsRenderer({
         ? playgroundCspMode
         : "widget-declared";
 
-  // TEMP debug: prints once per renderer mount so we can verify in the
-  // browser console which branch the chatbox-preview iframe is taking.
-  // Remove once the chatbox CSP fix is confirmed in the wild.
-  useEffect(() => {
-    // eslint-disable-next-line no-console
-    console.log("[mcp-apps-renderer cspMode]", {
-      cspMode,
-      isChatboxSurface,
-      minimalMode,
-      isPlaygroundActive,
-      playgroundCspMode,
-      resourceUri,
-      toolCallId,
-    });
-    // Intentional one-shot on mount; cspMode-change re-fetches are logged
-    // by the existing widget-content-requested event below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   // Get locale and timeZone from playground store when active, fallback to browser defaults
   const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);
   const playgroundTimeZone = useUIPlaygroundStore((s) => s.globals.timeZone);

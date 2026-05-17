@@ -1,7 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router";
+import React from "react";
 import { HostsTab } from "@/components/HostsTab";
+
+// HostsTab only consumes `useNavigate`; stubbing it dodges the workspace
+// React-version mismatch that pulls in a duplicate React when MemoryRouter
+// initializes its hooks under jsdom.
+vi.mock("react-router", () => ({
+  useNavigate: () => vi.fn(),
+}));
 
 vi.mock("@/hooks/use-previewed-host-id", () => ({
   usePreviewedHostId: vi.fn(() => [null as string | null, vi.fn()]),
@@ -18,32 +25,45 @@ vi.mock("@/stores/preferences/preferences-provider", () => ({
   ),
 }));
 
-// `HostsTab` now renders `HostDetailPage` when a host is selected (1:1
-// host↔chatbox refactor); the legacy mock targeted `HostBuilderView`,
-// which `HostDetailPage` wraps internally. We only need to swap the
-// outermost surface so the chrome assertion below runs against the
-// browse view, which doesn't depend on either component.
-vi.mock("@/components/hosts/HostDetailPage", () => ({
-  HostDetailPage: () => <div data-testid="mock-host-detail" />,
+vi.mock("@/components/hosts/HostBuilderView", () => ({
+  HostBuilderView: () => <div data-testid="mock-host-builder" />,
 }));
 
+// framer-motion's `motion.div` + `AnimatePresence` rely on browser primitives
+// jsdom doesn't fully expose; stub both to the bare DOM so the chrome assertion
+// can run without spinning up the animation runtime.
+vi.mock("framer-motion", () => {
+  const MotionDiv = React.forwardRef<
+    HTMLDivElement,
+    React.HTMLAttributes<HTMLDivElement> & Record<string, unknown>
+  >(function MotionDiv(props, ref) {
+    const {
+      initial: _initial,
+      animate: _animate,
+      exit: _exit,
+      transition: _transition,
+      ...rest
+    } = props;
+    return <div ref={ref} {...rest} />;
+  });
+  return {
+    motion: { div: MotionDiv },
+    AnimatePresence: ({ children }: { children: React.ReactNode }) => (
+      <>{children}</>
+    ),
+  };
+});
+
 describe("HostsTab", () => {
-  // Skipped pending a rework of the `HostsConnectAddServerSlotContext`
-  // setup the host browse chrome needs in tests — the assertion itself
-  // is still correct, but the deeper render pulls in framer-motion +
-  // context primitives that aren't initialized in this isolated test.
-  // Tracked separately; not blocking the 1:1 host↔chatbox refactor.
-  it.skip("matches the redesigned host builder top chrome spacing and divider", () => {
+  it("matches the redesigned host builder top chrome spacing and divider", () => {
     render(
-      <MemoryRouter>
-        <HostsTab
-          projectId="proj-1"
-          isAuthenticated
-          selectedHostId={null}
-          onSelectHost={vi.fn()}
-          serversTabElement={<div data-testid="servers-stub" />}
-        />
-      </MemoryRouter>,
+      <HostsTab
+        projectId="proj-1"
+        isAuthenticated
+        selectedHostId={null}
+        onSelectHost={vi.fn()}
+        serversTabElement={<div data-testid="servers-stub" />}
+      />,
     );
 
     const chrome = screen.getByTestId("hosts-tab-header-chrome");
