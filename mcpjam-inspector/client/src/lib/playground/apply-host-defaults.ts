@@ -7,10 +7,11 @@ import {
   seedFromHostTemplate,
   type HostTemplateId,
 } from "@/lib/host-templates";
+import type { ChatUiOverride } from "@/lib/host-styles";
 import { saveSelectedModelId } from "@/lib/selected-model-storage";
 import {
   getCanonicalModelId,
-  isMCPJamProvidedModel,
+  isModelSupported,
 } from "@/shared/types";
 import { useHostContextStore } from "@/stores/host-context-store";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
@@ -22,31 +23,29 @@ import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
  */
 type HostConfigForPlayground = Pick<
   HostConfigInputV2,
-  "hostStyle" | "modelId" | "hostContext" | "mcpProfile" | "hostCapabilitiesOverride"
+  | "hostStyle"
+  | "modelId"
+  | "hostContext"
+  | "mcpProfile"
+  | "hostCapabilitiesOverride"
+  | "chatUiOverride"
 >;
 
 /**
  * Resolve the model id to feed into the chat-composer picker.
  *
- * The picker silently falls back to its global default when the
- * configured id isn't selectable. That hides stale persisted ids — a
- * host saved before the templates were canonicalized may carry an id
- * like `"gpt-5"` (bare, no provider prefix). That bare form does match
- * a `SUPPORTED_MODELS` entry but is BYOK-only and almost always
- * disabled in practice, so the picker silently falls through.
+ * Accept any id that canonicalizes to a real `SUPPORTED_MODELS` entry —
+ * MCPJam-provided AND BYOK. The picker decides at render time whether
+ * to disable a row (e.g. BYOK without a key); silently mapping BYOK
+ * ids away here is wrong for the "playground reads everything from the
+ * host" contract — if the host's `modelId` is `"openai/gpt-4o"`, the
+ * picker should show GPT-4o, not snap to a template default.
  *
- * The check uses `isMCPJamProvidedModel` (the canonical provider-
- * prefixed list, e.g. `openai/gpt-5-nano`) — accept the configured id
- * only when it's in that guest-friendly set. Otherwise fall back to
- * the host style's template default (which is canonical + guest-
- * allowed by construction). Returns `undefined` when nothing usable
- * resolves — leaves the user's last picked model alone.
- *
- * Trade-off: BYOK users who had set a bare-id model on a custom host
- * (e.g. `"gpt-4o"`) get snapped to the template default on host change
- * instead of preserving their pick. They can re-pick from the model
- * dropdown afterward — accepted because the named-host picker case is
- * the primary failure mode and BYOK is rarer.
+ * Fall through to the host style's template default only when the
+ * configured id is empty/whitespace or doesn't resolve at all. BYO
+ * host ids with no template entry land on MCPJam, whose `modelId` is
+ * empty — returns `undefined`, which the caller treats as "leave the
+ * picker alone."
  */
 function resolvePlaygroundModelId(
   desiredModelId: string | undefined,
@@ -55,21 +54,14 @@ function resolvePlaygroundModelId(
   const trimmed = desiredModelId?.trim();
   if (trimmed) {
     const canonical = getCanonicalModelId(trimmed);
-    if (isMCPJamProvidedModel(canonical)) return canonical;
+    if (isModelSupported(canonical)) return canonical;
   }
-  // Stale or empty id: try the host style's template default. For BYO
-  // host ids with no template entry, `seedFromHostTemplate` falls
-  // through to MCPJam, whose `modelId` is empty — that returns
-  // `undefined` here, which the caller treats as "leave the picker
-  // alone."
   const fallback = seedFromHostTemplate(
     hostStyle as HostTemplateId,
   ).modelId?.trim();
   if (!fallback) return undefined;
   const canonicalFallback = getCanonicalModelId(fallback);
-  return isMCPJamProvidedModel(canonicalFallback)
-    ? canonicalFallback
-    : undefined;
+  return isModelSupported(canonicalFallback) ? canonicalFallback : undefined;
 }
 
 /**
@@ -83,6 +75,7 @@ export interface ApplyHostPlaygroundSetters {
   setHostCapabilitiesOverride: (
     next: Record<string, unknown> | undefined,
   ) => void;
+  setChatUiOverride: (next: ChatUiOverride | undefined) => void;
 }
 
 /**
@@ -162,6 +155,12 @@ export function applyHostConfigToPlayground(
   // back to the host-style preset — the desired behavior for MCPJam (and
   // any host without an explicit override).
   setters.setHostCapabilitiesOverride(config.hostCapabilitiesOverride);
+
+  // Same shape as hostCapabilitiesOverride: undefined means "preset wins"
+  // (see ChatboxChatUiOverrideContext). Snapshotting here lets the
+  // playground show the host's custom logo / palette / indicator without
+  // a separate provider per surface.
+  setters.setChatUiOverride(config.chatUiOverride);
 }
 
 /**

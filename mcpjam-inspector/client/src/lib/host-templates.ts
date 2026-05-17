@@ -345,24 +345,15 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           },
           sandbox: {
             csp: {
+              // Trust the resource's own _meta.ui.csp declaration. Real
+              // claude.ai does the same — it honors what the widget asks
+              // for. A hardcoded restrictTo here turns into an empty
+              // INTERSECTION (not union) for any widget reaching a domain
+              // outside the list, silently producing connect-src 'none' /
+              // font-src data: blob:. Host-injected fonts that need
+              // assets.claude.ai must be unioned in at the renderer layer,
+              // not via restrictTo.
               mode: "declared",
-              restrictTo: {
-                connectDomains: [
-                  "https://api.openai.com",
-                  "https://api.anthropic.com",
-                  "https://cdn.jsdelivr.net",
-                ],
-                // claude.ai *advertises* only cdn.jsdelivr.net in
-                // hostCapabilities.sandbox.csp.resourceDomains but the
-                // *enforced* sandbox URL adds assets.claude.ai so the
-                // Anthropic Sans @font-face URLs above can load. We
-                // honor the enforced set; otherwise fonts 404 inside the
-                // sandbox.
-                resourceDomains: [
-                  "https://cdn.jsdelivr.net",
-                  "https://assets.claude.ai",
-                ],
-              },
             },
             permissions: {
               mode: "custom",
@@ -456,15 +447,12 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           },
           sandbox: {
             csp: {
+              // Trust the resource's own _meta.ui.csp declaration. Real
+              // ChatGPT honors what the widget asks for; a hardcoded
+              // restrictTo intersects to empty for any widget reaching
+              // domains outside the list. See Claude template for the
+              // full rationale.
               mode: "declared",
-              restrictTo: {
-                connectDomains: [
-                  "https://api.openai.com",
-                  "https://api.anthropic.com",
-                  "https://cdn.jsdelivr.net",
-                ],
-                resourceDomains: ["https://cdn.jsdelivr.net"],
-              },
             },
             permissions: {
               mode: "custom",
@@ -547,19 +535,12 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           },
           sandbox: {
             csp: {
-              // `restrictTo` matches the CSP Cursor's webview actually
-              // installs (verified from the probe's `policies.metaCsp`).
-              // `mode: "declared"` keeps each resource's own CSP
-              // authoritative; we only intersect on top.
+              // Trust the resource's own _meta.ui.csp declaration. Cursor's
+              // webview does ship a tight CSP, but it derives from what
+              // the resource declared — adding a hardcoded restrictTo here
+              // intersects to empty for any widget outside the small set.
+              // See Claude template for the full rationale.
               mode: "declared",
-              restrictTo: {
-                connectDomains: [
-                  "https://api.openai.com",
-                  "https://api.anthropic.com",
-                  "https://cdn.jsdelivr.net",
-                ],
-                resourceDomains: ["https://cdn.jsdelivr.net"],
-              },
             },
             permissions: {
               // Only clipboardWrite per probe; everything else stays off.

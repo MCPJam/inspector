@@ -20,7 +20,12 @@ export function collectHostAttentionIssues(
   if (hostDisplayName !== undefined && hostDisplayName.trim() === "") {
     issues.push({
       level: "error",
-      tab: "general",
+      // Host name lives in the sticky identity header above the tab
+      // bar (see HostIdentityRow's `hasNameIssue` indicator), not in any
+      // tab. After the General tab was removed, attribute the issue to
+      // the most-active tab (Behavior) so it still shows a badge, even
+      // though the input itself is in the header.
+      tab: "behavior",
       field: "hostDisplayName",
       message: "Host name is required",
     });
@@ -150,11 +155,11 @@ export function countIssuesByTab(
   issues: ReadonlyArray<HostAttentionIssue>,
 ): Record<HostFocusTabId, number> {
   const out: Record<HostFocusTabId, number> = {
-    general: 0,
     behavior: 0,
     protocol: 0,
     apps: 0,
     servers: 0,
+    appearance: 0,
   };
   for (const issue of issues) out[issue.tab]++;
   return out;

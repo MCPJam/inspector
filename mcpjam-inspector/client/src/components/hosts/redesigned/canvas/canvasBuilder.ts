@@ -9,47 +9,39 @@ import {
 } from "@/lib/host-config-v2";
 import {
   ADD_SERVER_NODE_ID,
-  AGENT_IDENTITY_NODE_ID,
-  APPS_HUB_NODE_ID,
-  HOST_GROUP_NODE_ID,
-  PROTOCOL_HUB_NODE_ID,
+  HOST_MATRIX_NODE_ID,
   SERVERS_HUB_NODE_ID,
-  appsCapLeafNodeId,
-  protocolLeafNodeId,
+  type AgentIdentityNodeData,
   type AppsCapLeafKey,
+  type AppsCapLeafNodeData,
+  type ClientCapKey,
+  type ClientCapRow,
   type HostAttentionIssue,
   type HostRedesignContext,
   type HostRedesignFlowNode,
   type HostRedesignViewModel,
   type ProtocolLeafKey,
+  type ProtocolLeafNodeData,
+  type SandboxConfigNodeData,
+  type SandboxConfigSubKey,
 } from "../types";
 import { fieldsWithIssues } from "../focus/useHostDraftValidation";
 
 /* ============================================================
-   Layout constants. The host group's size is now derived from
-   how many leaves each section emits, so per-host silhouette
-   varies — that's the whole point of atomization. Numbers match
-   the mock (host-viz-morph.html) so design and code stay in sync.
+   Layout constants. The host renders as a single matrix node;
+   servers stay as their own subgraph below so the hub→server
+   edges remain a recognizable signal.
    ============================================================ */
-const AGENT_W = 248;
-const AGENT_H = 252;
-const HUB_W = 188;
-const HUB_H = 52;
-const LEAF_W = 158;
-const LEAF_H = 54;
-const LEAF_GAP_X = 12;
-const LEAF_ROW_H = 62;
-const LEAF_COLS = 2;
-const HUB_TO_LEAF_GAP = 38;
-const AGENT_TO_HUB_GAP = 32;
-const SECTION_INNER_GAP = 28;
-const GROUP_PAD = 22;
-const GROUP_PAD_TOP = 56;
-
-const RIGHT_COL_W =
-  HUB_W + HUB_TO_LEAF_GAP + LEAF_COLS * LEAF_W + (LEAF_COLS - 1) * LEAF_GAP_X;
-const GROUP_W = GROUP_PAD * 2 + AGENT_W + AGENT_TO_HUB_GAP + RIGHT_COL_W;
-
+const MATRIX_W = 580;
+// Matrix renders auto-height; these constants only feed the servers hub
+// y-position downstream. Two heights so the servers hub doesn't float in
+// a dead zone when the Apps Extension section is hidden (Codex et al).
+//   - BASE: identity + stats + protocol + client-caps sub-matrix + footer
+//   - APPS_SECTION: banner + head + 6 cap rows
+const MATRIX_H_BASE = 400;
+const MATRIX_H_APPS_SECTION = 240;
+// Sandbox section: banner + head + 4 fixed rows (mode/restrictTo/deny/permissions)
+const MATRIX_H_SANDBOX_SECTION = 160;
 const SERVERS_HUB_GAP = 64;
 const SERVERS_HUB_W_BASE = 220;
 const SERVERS_HUB_W_PER_SERVER = 38;
@@ -60,9 +52,8 @@ const SERVER_CARD_GAP_X = 16;
 const SERVERS_ROW_GAP = 56;
 
 /* ============================================================
-   Stable cap order. Cursor's probe-derived list is the smallest;
-   keeping the order stable lets leaves morph in place rather
-   than rebuild when switching hosts.
+   Stable cap orders. Keeping order stable lets row diffs morph
+   in place when switching hosts.
    ============================================================ */
 const APPS_CAP_ORDER: ReadonlyArray<{ key: AppsCapLeafKey; label: string }> = [
   { key: "openLinks", label: "openLinks" },
@@ -73,11 +64,19 @@ const APPS_CAP_ORDER: ReadonlyArray<{ key: AppsCapLeafKey; label: string }> = [
   { key: "message", label: "message" },
 ];
 
+const CLIENT_CAP_ORDER: ReadonlyArray<ClientCapKey> = [
+  "roots",
+  "sampling",
+  "elicitation",
+  "tasks",
+  "experimental",
+];
+
 /* ============================================================
-   Protocol leaf descriptors — one per slice that's overridden
-   away from SDK defaults. Request timeout is always emitted so
-   it stays comparable across hosts. hostContext belongs to the
-   Apps Extension (SEP-1865) and is rendered under the apps hub.
+   Protocol band descriptors. Request timeout is always emitted
+   so it stays comparable across hosts. hostContext is part of
+   the Apps Extension (SEP-1865) and is rendered as the matrix
+   footer; everything else fills the protocol cells.
    ============================================================ */
 interface ProtocolLeafDescriptor {
   key: ProtocolLeafKey;
@@ -108,15 +107,21 @@ function describeProtocolVersion(
 function describeBaseCapabilities(
   draft: HostConfigInputV2,
 ): ProtocolLeafDescriptor {
-  const caps = draft.clientCapabilities ?? {};
-  const present = Object.keys(caps).filter(
-    (k) => caps[k] !== undefined && caps[k] !== null,
-  );
-  return {
-    key: "capabilities",
-    label: "capabilities",
-    value: present.length === 0 ? "(none)" : present.join(" · "),
-  };
+  // The five base-protocol caps already render in the Client-capabilities
+  // sub-matrix below; this cell is dedicated to *which extensions* the host
+  // advertises (the inner keys of `clientCapabilities.extensions`). Showing
+  // top-level keys instead would hide the only piece of info this cell can
+  // surface that the matrix below doesn't.
+  const exts = draft.clientCapabilities?.extensions;
+  const ids =
+    exts && typeof exts === "object" && !Array.isArray(exts)
+      ? Object.keys(exts as Record<string, unknown>)
+      : [];
+  let value: string;
+  if (ids.length === 0) value = "(none)";
+  else if (ids.length === 1) value = ids[0];
+  else value = `${ids[0]} +${ids.length - 1}`;
+  return { key: "capabilities", label: "extensions", value };
 }
 
 function describeHostContext(
@@ -151,34 +156,28 @@ function describeHeaders(
   };
 }
 
-function buildProtocolLeaves(
+function buildProtocolBand(
   draft: HostConfigInputV2,
 ): ProtocolLeafDescriptor[] {
-  // Always-emitted leaves go first so they pin to fixed slots
-  // (capabilities = slot 0 / top-left, timeout = slot 1 / top-right).
-  // Optional leaves pack after, into row 1+. This makes the protocol
-  // grid positionally diffable across hosts — capabilities and timeout
-  // never move, so the eye can compare them at a glance.
-  const leaves: (ProtocolLeafDescriptor | null)[] = [
+  // capabilities + timeout are always emitted (stable slots); optional
+  // descriptors pack after them so position diffability is preserved.
+  return [
     describeBaseCapabilities(draft),
     describeTimeout(draft),
     describeClientInfo(draft),
     describeProtocolVersion(draft),
     describeHeaders(draft),
-  ];
-  return leaves.filter((l): l is ProtocolLeafDescriptor => l !== null);
+  ].filter((l): l is ProtocolLeafDescriptor => l !== null);
 }
 
-interface AppsCapLeafDescriptor {
+interface AppsCapDescriptor {
   key: AppsCapLeafKey;
   label: string;
   on: boolean;
   qualifier: string | null;
 }
 
-function buildAppsCapLeaves(
-  draft: HostConfigInputV2,
-): AppsCapLeafDescriptor[] {
+function buildAppsCaps(draft: HostConfigInputV2): AppsCapDescriptor[] {
   const blob = resolveEffectiveHostCapabilities({
     hostStyle: draft.hostStyle,
     hostCapabilitiesOverride: draft.hostCapabilitiesOverride,
@@ -190,9 +189,6 @@ function buildAppsCapLeaves(
     let qualifier: string | null = null;
     if (on && typeof value === "object" && !Array.isArray(value)) {
       const v = value as Record<string, unknown>;
-      // `listChanged: false` is the load-bearing signal from Cursor's
-      // probe; `text: {}` is the load-bearing signal for Claude/ChatGPT
-      // (vs. arbitrary structured content).
       if (v.listChanged === false) qualifier = "lc:false";
       else if (v.text !== undefined) qualifier = "text";
     }
@@ -200,6 +196,167 @@ function buildAppsCapLeaves(
   });
 }
 
+/* ============================================================
+   Sandbox config rows. The sandbox slice
+   (mcpProfile.apps.sandbox) decides whether widget CSP
+   declarations are honored, narrowed, or overridden — a hardcoded
+   `restrictTo` here was silently dropping every widget-declared
+   domain that wasn't in our 3-item allowlist (intersection went to
+   empty → connect-src 'none', all fetches blocked). The matrix
+   surfaces these four slices so "why isn't my widget working?"
+   stops being invisible state.
+
+   Severity contract (drives row tint in HostMatrixCard):
+     - `danger`: silently NARROWS what widgets can do (restrictTo
+       populated — the intersection trap).
+     - `warn`: deviates from default but doesn't silently narrow
+       (mode "relaxed", deny populated).
+     - `neutral`: default or empty.
+   ============================================================ */
+interface SandboxConfigDescriptor {
+  subKey: SandboxConfigSubKey;
+  label: string;
+  summary: string;
+  qualifier: string | null;
+  severity: "neutral" | "warn" | "danger";
+}
+
+function countDirectives(
+  set:
+    | {
+        connectDomains?: string[];
+        resourceDomains?: string[];
+        frameDomains?: string[];
+        baseUriDomains?: string[];
+      }
+    | undefined,
+): { total: number; breakdown: string } {
+  const c = set?.connectDomains?.length ?? 0;
+  const r = set?.resourceDomains?.length ?? 0;
+  const f = set?.frameDomains?.length ?? 0;
+  const b = set?.baseUriDomains?.length ?? 0;
+  return {
+    total: c + r + f + b,
+    breakdown: `c:${c} r:${r} f:${f} b:${b}`,
+  };
+}
+
+function buildSandboxConfig(
+  draft: HostConfigInputV2,
+): SandboxConfigDescriptor[] {
+  const sandbox = draft.mcpProfile?.apps?.sandbox;
+  const csp = sandbox?.csp;
+  const perms = sandbox?.permissions;
+
+  // mode — default per resolver is "declared". Surface that explicitly
+  // when undefined so users see what's actually applied at runtime.
+  const mode = csp?.mode ?? "declared";
+  const modeDescriptor: SandboxConfigDescriptor = {
+    subKey: "mode",
+    label: "mode",
+    summary: mode,
+    qualifier: csp?.mode === undefined ? "default" : null,
+    // "relaxed" opens the iframe up — not silent narrowing, but worth a
+    // tint so users notice they're not getting host-default protection.
+    severity: mode === "relaxed" ? "warn" : "neutral",
+  };
+
+  const restrict = countDirectives(csp?.restrictTo);
+  const restrictDescriptor: SandboxConfigDescriptor = {
+    subKey: "restrictTo",
+    label: "restrictTo",
+    summary: restrict.total === 0 ? "—" : `${restrict.total} domains`,
+    qualifier: restrict.total === 0 ? null : restrict.breakdown,
+    // restrictTo is the intersection trap — any non-zero count means
+    // widget-declared domains outside this set get silently dropped.
+    severity: restrict.total === 0 ? "neutral" : "danger",
+  };
+
+  const deny = countDirectives(csp?.deny);
+  const denyDescriptor: SandboxConfigDescriptor = {
+    subKey: "deny",
+    label: "deny",
+    summary: deny.total === 0 ? "—" : `${deny.total} domains`,
+    qualifier: deny.total === 0 ? null : deny.breakdown,
+    // deny does narrow, but explicitly — the user opted in. Warn rather
+    // than danger so danger stays reserved for the silent restrictTo trap.
+    severity: deny.total === 0 ? "neutral" : "warn",
+  };
+
+  const permsMode = perms?.mode ?? "resource-declared";
+  const granted: string[] = [];
+  if (perms?.allow) {
+    for (const [name, on] of Object.entries(perms.allow)) {
+      if (on) granted.push(name);
+    }
+  }
+  const permsDescriptor: SandboxConfigDescriptor = {
+    subKey: "permissions",
+    label: "permissions",
+    summary: permsMode,
+    qualifier: granted.length === 0 ? null : granted.join(", "),
+    // "deny-all" is a tightening, not loosening — neutral. Anything that
+    // grants beyond default ("custom" with allow entries) we still leave
+    // neutral; permissions are explicit user grants, not silent traps.
+    severity: "neutral",
+  };
+
+  return [modeDescriptor, restrictDescriptor, denyDescriptor, permsDescriptor];
+}
+
+/* ============================================================
+   Client (base-protocol) capability detection. Mirrors the
+   2025-11-25 initialize handshake shape — roots / sampling /
+   elicitation / tasks / experimental.
+   ============================================================ */
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function describeClientCap(
+  key: ClientCapKey,
+  blob: Record<string, unknown>,
+): { on: boolean; subs: string[] } {
+  const v = blob[key];
+  if (v === undefined || v === null) return { on: false, subs: [] };
+  if (!isRecord(v)) return { on: true, subs: [] };
+  const subs: string[] = [];
+  if (key === "roots") {
+    if (v.listChanged === true) subs.push("listChanged");
+  } else if (key === "elicitation") {
+    if (isRecord(v.form)) subs.push("form");
+    if (isRecord(v.url)) subs.push("url");
+  } else if (key === "tasks") {
+    const req = isRecord(v.requests) ? v.requests : null;
+    if (req && isRecord(req.elicitation) && isRecord(req.elicitation.create))
+      subs.push("elicit·create");
+    if (req && isRecord(req.sampling) && isRecord(req.sampling.createMessage))
+      subs.push("sample·createMsg");
+  }
+  return { on: true, subs };
+}
+
+function buildClientCaps(
+  draft: HostConfigInputV2,
+  prev: HostConfigInputV2 | undefined,
+): ClientCapRow[] {
+  const blob = draft.clientCapabilities ?? {};
+  const prevBlob = prev?.clientCapabilities ?? null;
+  return CLIENT_CAP_ORDER.map((key) => {
+    const { on, subs } = describeClientCap(key, blob);
+    const prevDesc = prevBlob ? describeClientCap(key, prevBlob) : null;
+    const isChanged =
+      prevDesc !== null &&
+      (prevDesc.on !== on || prevDesc.subs.join("|") !== subs.join("|"));
+    const isNewlyOn = prevDesc !== null && !prevDesc.on && on;
+    return { key, on, subs, isChanged, isNewlyOn };
+  });
+}
+
+/* ============================================================
+   Diff helpers — return the same shape the renderers expect on
+   the individual data fields (isChanged / isNewlyOn / etc.).
+   ============================================================ */
 function agentChangedFields(
   draft: HostConfigInputV2,
   prev: HostConfigInputV2 | undefined,
@@ -216,15 +373,9 @@ function agentChangedFields(
   return changed;
 }
 
-function protocolSubtitle(draft: HostConfigInputV2): string {
-  const versions = resolveSupportedProtocolVersions(draft.mcpProfile);
-  return versions && versions.length > 0 ? `pinned ${versions[0]}` : "";
-}
-
 /* ============================================================
-   Builder. Emits the host-group with all children + the servers
-   subgraph as siblings. Leaves are children of the group so the
-   dashed border wraps the whole network and resizes with it.
+   Builder. Emits ONE matrix node packing the entire host surface
+   plus the servers subgraph as siblings.
    ============================================================ */
 export function buildRedesignedHostCanvas(
   context: HostRedesignContext,
@@ -234,296 +385,175 @@ export function buildRedesignedHostCanvas(
   const prevDraft = prev?.draft;
 
   const behaviorAttention = fieldsWithIssues(attention, "behavior");
-  const protocolAttention = fieldsWithIssues(attention, "protocol");
-  const appsAttention = fieldsWithIssues(attention, "apps");
 
   const modelDef = draft.modelId ? getModelById(draft.modelId) : null;
   const styleDef = findHostStyle(draft.hostStyle);
 
-  const protocolLeaves = buildProtocolLeaves(draft);
-  const appsCapLeaves = buildAppsCapLeaves(draft);
-  const hostContextLeaf = describeHostContext(draft);
+  // ---- Agent identity (single object, matches AgentIdentityNodeData) ----
+  const agent: AgentIdentityNodeData = {
+    kind: "agent-identity",
+    modelId: draft.modelId,
+    modelLabel: modelDef?.name ?? draft.modelId ?? "No model selected",
+    modelProvider: modelDef?.provider ?? null,
+    temperature: draft.temperature,
+    hostStyle: draft.hostStyle,
+    hostStyleLabel: styleDef?.chatUi.label ?? draft.hostStyle,
+    toolApproval: draft.requireToolApproval,
+    systemPromptEmpty: draft.systemPrompt.trim() === "",
+    attentionFields: Array.from(behaviorAttention),
+    changedFields: agentChangedFields(draft, prevDraft),
+  };
 
-  // Section heights track leaf-row counts; the group then sizes to
-  // fit. This is the geometric signal that makes a Cursor host look
-  // smaller than a Claude host without the user reading a single value.
-  // The apps grid leads with the hostContext value leaf, then the cap
-  // leaves — so add 1 to the count.
-  const protocolRows = Math.max(1, Math.ceil(protocolLeaves.length / LEAF_COLS));
-  const appsLeafCount = 1 + appsCapLeaves.length;
-  const appsRows = Math.max(1, Math.ceil(appsLeafCount / LEAF_COLS));
-  const protocolSectionH = Math.max(HUB_H, protocolRows * LEAF_ROW_H);
-  const appsSectionH = Math.max(HUB_H, appsRows * LEAF_ROW_H);
-  const rightColH = protocolSectionH + SECTION_INNER_GAP + appsSectionH;
-  const innerH = Math.max(AGENT_H, rightColH);
-  const groupH = GROUP_PAD_TOP + innerH + GROUP_PAD;
-
-  // Y-center the shorter column inside the inner content area so the
-  // visual mass balances. The taller column anchors the height.
-  const rightColTopY = GROUP_PAD_TOP + (innerH - rightColH) / 2;
-  const agentY = GROUP_PAD_TOP + (innerH - AGENT_H) / 2;
-
-  const agentX = GROUP_PAD;
-  const hubX = GROUP_PAD + AGENT_W + AGENT_TO_HUB_GAP;
-  const protocolHubY = rightColTopY + (protocolSectionH - HUB_H) / 2;
-  const appsHubY =
-    rightColTopY +
-    protocolSectionH +
-    SECTION_INNER_GAP +
-    (appsSectionH - HUB_H) / 2;
-
-  const nodes: HostRedesignFlowNode[] = [];
-  const edges: Edge[] = [];
-
-  // 1) Dashed parent group, sized to fit.
-  nodes.push({
-    id: HOST_GROUP_NODE_ID,
-    type: "redesignHostGroup",
-    position: { x: 0, y: 0 },
-    style: { width: GROUP_W, height: groupH },
-    data: {
-      kind: "host-group",
-      hostName: hostName.trim() || "Untitled host",
-    },
-    draggable: false,
-    selectable: false,
-  });
-
-  // 2) Agent identity card — left column, vertically centered.
-  nodes.push({
-    id: AGENT_IDENTITY_NODE_ID,
-    type: "redesignAgentIdentity",
-    parentId: HOST_GROUP_NODE_ID,
-    extent: "parent",
-    position: { x: agentX, y: agentY },
-    style: { width: AGENT_W },
-    data: {
-      kind: "agent-identity",
-      modelId: draft.modelId,
-      modelLabel: modelDef?.name ?? draft.modelId ?? "No model selected",
-      modelProvider: modelDef?.provider ?? null,
-      temperature: draft.temperature,
-      hostStyle: draft.hostStyle,
-      hostStyleLabel: styleDef?.chatUi.label ?? draft.hostStyle,
-      toolApproval: draft.requireToolApproval,
-      systemPromptEmpty: draft.systemPrompt.trim() === "",
-      attentionFields: Array.from(behaviorAttention),
-      changedFields: agentChangedFields(draft, prevDraft),
-    },
-    draggable: false,
-  });
-
-  // 3) Protocol hub + leaves.
-  const protocolSubtitleNext = protocolSubtitle(draft);
-  const protocolSubtitlePrev = prevDraft
-    ? protocolSubtitle(prevDraft)
-    : protocolSubtitleNext;
-  nodes.push({
-    id: PROTOCOL_HUB_NODE_ID,
-    type: "redesignSectionHub",
-    parentId: HOST_GROUP_NODE_ID,
-    extent: "parent",
-    position: { x: hubX, y: protocolHubY },
-    style: { width: HUB_W, height: HUB_H },
-    data: {
-      kind: "section-hub",
-      section: "protocol",
-      title: "MCP Protocol",
-      subtitle: protocolSubtitleNext,
-      subtitleChanged: protocolSubtitleNext !== protocolSubtitlePrev,
-      hasAttention: protocolAttention.size > 0,
-    },
-    draggable: false,
-  });
-
+  // ---- Protocol band ----
+  const protocolDescs = buildProtocolBand(draft);
   const prevProtocolByKey: Record<string, ProtocolLeafDescriptor> = {};
   if (prevDraft) {
-    for (const l of buildProtocolLeaves(prevDraft)) {
-      prevProtocolByKey[l.key] = l;
-    }
+    for (const l of buildProtocolBand(prevDraft)) prevProtocolByKey[l.key] = l;
   }
-  const protocolGridTop =
-    protocolHubY + HUB_H / 2 - (protocolRows * LEAF_ROW_H) / 2;
-  protocolLeaves.forEach((leaf, i) => {
-    const col = i % LEAF_COLS;
-    const row = Math.floor(i / LEAF_COLS);
-    const leafX = hubX + HUB_W + HUB_TO_LEAF_GAP + col * (LEAF_W + LEAF_GAP_X);
-    const leafY =
-      protocolGridTop + row * LEAF_ROW_H + (LEAF_ROW_H - LEAF_H) / 2;
+  const protocolBand: ProtocolLeafNodeData[] = protocolDescs.map((leaf) => {
     const prevLeaf = prevProtocolByKey[leaf.key];
-    nodes.push({
-      id: protocolLeafNodeId(leaf.key),
-      type: "redesignProtocolLeaf",
-      parentId: HOST_GROUP_NODE_ID,
-      extent: "parent",
-      position: { x: leafX, y: leafY },
-      style: { width: LEAF_W, height: LEAF_H },
-      data: {
-        kind: "protocol-leaf",
-        leafKey: leaf.key,
-        label: leaf.label,
-        value: leaf.value,
-        // No prev → first paint or no host switch yet; don't flash.
-        // Existing-but-different prev → flash on morph.
-        isChanged: prevLeaf !== undefined && prevLeaf.value !== leaf.value,
-        hasAttention: protocolAttention.has(leaf.key),
-      },
-      draggable: false,
-    });
-    edges.push({
-      id: `protocol-hub-to-${leaf.key}`,
-      source: PROTOCOL_HUB_NODE_ID,
-      target: protocolLeafNodeId(leaf.key),
-      type: "default",
-      style: {
-        stroke: "oklch(0.68 0.11 40 / 0.45)",
-        strokeWidth: 1,
-      },
-    });
+    return {
+      kind: "protocol-leaf",
+      leafKey: leaf.key,
+      label: leaf.label,
+      value: leaf.value,
+      isChanged: prevLeaf !== undefined && prevLeaf.value !== leaf.value,
+      hasAttention: false,
+    };
   });
 
-  // 4) Apps hub + cap leaves.
-  nodes.push({
-    id: APPS_HUB_NODE_ID,
-    type: "redesignSectionHub",
-    parentId: HOST_GROUP_NODE_ID,
-    extent: "parent",
-    position: { x: hubX, y: appsHubY },
-    style: { width: HUB_W, height: HUB_H },
-    data: {
-      kind: "section-hub",
-      section: "apps",
-      title: "Apps Extension",
-      subtitle: "",
-      subtitleChanged: false,
-      hasAttention: appsAttention.size > 0,
-    },
-    draggable: false,
-  });
-
-  const prevAppsByKey: Record<string, AppsCapLeafDescriptor> = {};
+  // ---- Apps caps ----
+  const appsDescs = buildAppsCaps(draft);
+  const prevAppsByKey: Record<string, AppsCapDescriptor> = {};
   if (prevDraft) {
-    for (const l of buildAppsCapLeaves(prevDraft)) prevAppsByKey[l.key] = l;
+    for (const l of buildAppsCaps(prevDraft)) prevAppsByKey[l.key] = l;
   }
-  const appsGridTop = appsHubY + HUB_H / 2 - (appsRows * LEAF_ROW_H) / 2;
-
-  // 4a) hostContext value leaf — leads the apps grid. Same renderer as
-  // a protocol leaf (label + value), but parented under the apps hub
-  // because hostContext is part of the Apps Extension (SEP-1865).
-  {
-    const leafX = hubX + HUB_W + HUB_TO_LEAF_GAP;
-    const leafY = appsGridTop + (LEAF_ROW_H - LEAF_H) / 2;
-    const prevLeaf = prevDraft ? describeHostContext(prevDraft) : undefined;
-    nodes.push({
-      id: protocolLeafNodeId(hostContextLeaf.key),
-      type: "redesignProtocolLeaf",
-      parentId: HOST_GROUP_NODE_ID,
-      extent: "parent",
-      position: { x: leafX, y: leafY },
-      style: { width: LEAF_W, height: LEAF_H },
-      data: {
-        kind: "protocol-leaf",
-        leafKey: hostContextLeaf.key,
-        label: hostContextLeaf.label,
-        value: hostContextLeaf.value,
-        isChanged:
-          prevLeaf !== undefined && prevLeaf.value !== hostContextLeaf.value,
-        hasAttention: appsAttention.has(hostContextLeaf.key),
-      },
-      draggable: false,
-    });
-    edges.push({
-      id: `apps-hub-to-${hostContextLeaf.key}`,
-      source: APPS_HUB_NODE_ID,
-      target: protocolLeafNodeId(hostContextLeaf.key),
-      type: "default",
-      style: {
-        stroke: "oklch(0.68 0.11 40 / 0.45)",
-        strokeWidth: 1,
-      },
-    });
-  }
-
-  appsCapLeaves.forEach((leaf, idx) => {
-    // hostContext occupies slot 0; cap leaves start at slot 1.
-    const i = idx + 1;
-    const col = i % LEAF_COLS;
-    const row = Math.floor(i / LEAF_COLS);
-    const leafX = hubX + HUB_W + HUB_TO_LEAF_GAP + col * (LEAF_W + LEAF_GAP_X);
-    const leafY = appsGridTop + row * LEAF_ROW_H + (LEAF_ROW_H - LEAF_H) / 2;
+  const appsCaps: AppsCapLeafNodeData[] = appsDescs.map((leaf) => {
     const prevLeaf = prevAppsByKey[leaf.key];
     const onChanged =
       prevLeaf !== undefined &&
       (prevLeaf.on !== leaf.on || prevLeaf.qualifier !== leaf.qualifier);
     const newlyOn = prevLeaf !== undefined && !prevLeaf.on && leaf.on;
-    nodes.push({
-      id: appsCapLeafNodeId(leaf.key),
-      type: "redesignAppsCapLeaf",
-      parentId: HOST_GROUP_NODE_ID,
-      extent: "parent",
-      position: { x: leafX, y: leafY },
-      style: { width: LEAF_W, height: LEAF_H },
-      data: {
-        kind: "apps-cap-leaf",
-        capKey: leaf.key,
-        label: leaf.label,
-        on: leaf.on,
-        qualifier: leaf.qualifier,
-        isChanged: onChanged,
-        isNewlyOn: newlyOn,
-      },
-      draggable: false,
-    });
-    edges.push({
-      id: `apps-hub-to-${leaf.key}`,
-      source: APPS_HUB_NODE_ID,
-      target: appsCapLeafNodeId(leaf.key),
-      type: "default",
-      style: {
-        stroke: leaf.on
-          ? "oklch(0.68 0.11 40 / 0.45)"
-          : "oklch(0.55 0.02 250 / 0.32)",
-        strokeWidth: 1,
-        strokeDasharray: leaf.on ? undefined : "3 4",
-      },
-    });
+    return {
+      kind: "apps-cap-leaf",
+      capKey: leaf.key,
+      label: leaf.label,
+      on: leaf.on,
+      qualifier: leaf.qualifier,
+      isChanged: onChanged,
+      isNewlyOn: newlyOn,
+    };
   });
 
-  // 5) Servers hub — sibling of the host group, below it.
-  // Every project server is implicitly attached to every host in the
-  // project. The hub count reflects the project's server count, not
-  // host.config.serverIds (which is now a "required" classification list).
-  const serversHubY = groupH + SERVERS_HUB_GAP;
+  // ---- Sandbox config rows ----
+  const sandboxDescs = buildSandboxConfig(draft);
+  const prevSandboxByKey: Record<SandboxConfigSubKey, SandboxConfigDescriptor> =
+    {} as Record<SandboxConfigSubKey, SandboxConfigDescriptor>;
+  if (prevDraft) {
+    for (const l of buildSandboxConfig(prevDraft)) prevSandboxByKey[l.subKey] = l;
+  }
+  const sandbox: SandboxConfigNodeData[] = sandboxDescs.map((leaf) => {
+    const prevLeaf = prevDraft ? prevSandboxByKey[leaf.subKey] : undefined;
+    const isChanged =
+      prevLeaf !== undefined &&
+      (prevLeaf.summary !== leaf.summary ||
+        prevLeaf.qualifier !== leaf.qualifier);
+    return {
+      kind: "sandbox-config-leaf",
+      subKey: leaf.subKey,
+      label: leaf.label,
+      summary: leaf.summary,
+      qualifier: leaf.qualifier,
+      severity: leaf.severity,
+      isChanged,
+    };
+  });
+
+  // ---- hostContext (footer) ----
+  const hostContextDesc = describeHostContext(draft);
+  const prevHostContext = prevDraft ? describeHostContext(prevDraft) : null;
+  const hostContext: ProtocolLeafNodeData = {
+    kind: "protocol-leaf",
+    leafKey: "hostContext",
+    label: hostContextDesc.label,
+    value: hostContextDesc.value,
+    isChanged:
+      prevHostContext !== null && prevHostContext.value !== hostContextDesc.value,
+    hasAttention: false,
+  };
+
+  // ---- Client (base-protocol) caps ----
+  const clientCaps = buildClientCaps(draft, prevDraft);
+
+  // Whether the client advertises the MCP UI extension. Host-side Apps
+  // capabilities only matter when the client opts in to rendering iframes;
+  // a CLI like codex-mcp-client publishes neither the extension nor any
+  // UI ext block, so the matrix should hide the Apps section entirely.
+  const appsExtensionAdvertised = (() => {
+    const exts = draft.clientCapabilities?.extensions;
+    if (!isRecord(exts)) return false;
+    return isRecord(exts["io.modelcontextprotocol/ui"]);
+  })();
+
+  // ---- Nodes / edges ----
+  const nodes: HostRedesignFlowNode[] = [];
+  const edges: Edge[] = [];
+
+  // 1) Matrix node — the entire host surface in one ReactFlow node.
+  nodes.push({
+    id: HOST_MATRIX_NODE_ID,
+    type: "redesignHostMatrix",
+    position: { x: 0, y: 0 },
+    style: { width: MATRIX_W },
+    data: {
+      kind: "host-matrix",
+      hostName: hostName.trim() || "Untitled host",
+      agent,
+      protocolBand,
+      clientCaps,
+      appsCaps,
+      sandbox,
+      appsExtensionAdvertised,
+      hostContext,
+    },
+    draggable: false,
+    selectable: false,
+  });
+
+  // 2) Servers hub — sibling, below the matrix. Y tracks whether the
+  // Apps section actually renders so there's no dead zone between the
+  // footer and the hub when the section is hidden.
+  const matrixH =
+    MATRIX_H_BASE +
+    (appsExtensionAdvertised
+      ? MATRIX_H_APPS_SECTION + MATRIX_H_SANDBOX_SECTION
+      : 0);
+  const serversHubY = matrixH + SERVERS_HUB_GAP;
   const totalServers = context.projectServers.length;
   const serversHubW = Math.max(
     SERVERS_HUB_W_BASE,
     180 + totalServers * SERVERS_HUB_W_PER_SERVER,
   );
-  const serversHubX = (GROUP_W - serversHubW) / 2;
+  const serversHubX = (MATRIX_W - serversHubW) / 2;
   nodes.push({
     id: SERVERS_HUB_NODE_ID,
     type: "redesignServersHub",
     position: { x: serversHubX, y: serversHubY },
     style: { width: serversHubW, height: SERVERS_HUB_H },
-    data: {
-      kind: "servers-hub",
-      totalCount: totalServers,
-    },
+    data: { kind: "servers-hub", totalCount: totalServers },
     draggable: false,
   });
 
   edges.push({
-    id: "host-group-to-hub",
-    source: HOST_GROUP_NODE_ID,
+    id: "host-matrix-to-hub",
+    source: HOST_MATRIX_NODE_ID,
     target: SERVERS_HUB_NODE_ID,
     type: "default",
     style: { stroke: "oklch(0.68 0.11 40 / 0.55)", strokeWidth: 1.5 },
   });
 
-  // 6) Server cards. Render every project server (all are implicitly
-  //    attached). Required (in draft.serverIds) come first with solid
-  //    edges; the rest follow as optional with dashed edges. Insecure
-  //    `http://` gets an amber stroke regardless.
+  // 3) Server cards — required first, then optional. Insecure http
+  //    URLs render an amber stroke regardless of required/optional.
   const requiredSet = new Set(draft.serverIds);
   const orderedServerIds: string[] = [];
   for (const server of context.projectServers) {
@@ -538,7 +568,7 @@ export function buildRedesignedHostCanvas(
       ? 0
       : orderedServerIds.length * SERVER_CARD_W +
         (orderedServerIds.length - 1) * SERVER_CARD_GAP_X;
-  const cardsStartX = (GROUP_W - totalCardsW) / 2;
+  const cardsStartX = (MATRIX_W - totalCardsW) / 2;
   const serverRowY = serversHubY + SERVERS_HUB_H + SERVERS_ROW_GAP;
 
   orderedServerIds.forEach((serverId, i) => {
@@ -569,6 +599,7 @@ export function buildRedesignedHostCanvas(
         isOptional,
         insecure,
         hasOverride: !!hasOverride,
+        connectionStatus: server?.connectionStatus ?? "unknown",
       },
       draggable: false,
     });
@@ -588,8 +619,7 @@ export function buildRedesignedHostCanvas(
     });
   });
 
-  // 7) Add-server pill — right of the last card, or centered under
-  //    the hub when no servers exist.
+  // 4) Add-server pill.
   const addServerX =
     orderedServerIds.length === 0
       ? serversHubX + (serversHubW - 36) / 2

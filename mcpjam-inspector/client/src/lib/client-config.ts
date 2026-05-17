@@ -314,16 +314,12 @@ export function getEffectiveServerClientCapabilities(args: {
 }
 
 /**
- * Single source of truth for "what clientCapabilities should this server be
- * initialized with?" Used by both the connect path (to build the resolver
- * payload) and the reconnect-warning indicators (to detect when settings
- * have drifted from what's running). Both sides MUST call this to stay in
- * sync — recomputing with a different recipe makes the indicator fire on
- * unchanged servers.
+ * @deprecated Use `resolveEffectiveClientCapabilities` from
+ * `lib/effective-host.ts` instead. This shim only exists to keep older call
+ * sites compiling during the migration; new code MUST go through the host.
  *
- * Precedence (matches MCPClientManager.buildCapabilities):
- *   1. Per-server explicit `clientCapabilities` override, verbatim
- *   2. Project clientConfig defaults merged with per-server `capabilities`
+ * Behavior is preserved: per-server explicit > project clientConfig (which
+ * is itself a shadow-mirror of the project default host).
  */
 export function resolveEffectiveServerClientCapabilities(args: {
   serverConfig?: {

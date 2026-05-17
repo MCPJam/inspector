@@ -4,7 +4,7 @@ import {
   normalizeChatboxHostStyleId,
   type ChatboxHostStyle,
 } from "@/lib/chatbox-host-style";
-import { DEFAULT_HOST_STYLE } from "@/lib/host-styles";
+import { DEFAULT_HOST_STYLE, type ChatUiOverride } from "@/lib/host-styles";
 import type { ThemeMode, ThemePreset } from "@/types/preferences/theme";
 
 export type PreferencesState = {
@@ -22,12 +22,30 @@ export type PreferencesState = {
    * HostConfig row instead.
    */
   hostCapabilitiesOverride: Record<string, unknown> | undefined;
+  /**
+   * Snapshot of the active host config's `chatUiOverride` (logo, palette,
+   * indicator, fonts). Wired into `ChatboxChatUiOverrideProvider` so
+   * playground / chat surfaces render with the host's customizations on
+   * top of its host style preset. Undefined means "no override; preset
+   * wins" — same semantics as `HostConfigInputV2.chatUiOverride`.
+   */
+  chatUiOverride: ChatUiOverride | undefined;
+  /**
+   * When true (default), entering the Servers tab, a host page, or the
+   * Playground triggers a one-shot batch connect of all project servers.
+   * The toggle in the Servers tab header writes here. Disabling it leaves
+   * every server untouched until the user manually flips its per-card
+   * connect switch.
+   */
+  autoConnectServersEnabled: boolean;
   setThemeMode: (mode: ThemeMode) => void;
   setThemePreset: (preset: ThemePreset) => void;
   setHostStyle: (hostStyle: ChatboxHostStyle) => void;
   setHostCapabilitiesOverride: (
     next: Record<string, unknown> | undefined,
   ) => void;
+  setChatUiOverride: (next: ChatUiOverride | undefined) => void;
+  setAutoConnectServersEnabled: (next: boolean) => void;
 };
 
 export const THEME_MODE_KEY = "themeMode";
@@ -35,6 +53,8 @@ export const THEME_PRESET_KEY = "themePreset";
 export const HOST_STYLE_KEY = "mcpjam-ui-playground-host-style";
 export const HOST_CAPABILITIES_OVERRIDE_KEY =
   "mcpjam-ui-playground-host-capabilities-override";
+export const CHAT_UI_OVERRIDE_KEY = "mcpjam-ui-playground-chat-ui-override";
+export const AUTO_CONNECT_SERVERS_KEY = "mcpjam-auto-connect-servers";
 
 function getStoredHostStyle(): ChatboxHostStyle {
   if (typeof window === "undefined") return DEFAULT_HOST_STYLE.id;
@@ -50,6 +70,40 @@ function getStoredHostStyle(): ChatboxHostStyle {
   }
 
   return DEFAULT_HOST_STYLE.id;
+}
+
+function getStoredAutoConnectServersEnabled(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    const raw = localStorage.getItem(AUTO_CONNECT_SERVERS_KEY);
+    if (raw === null) return true;
+    return raw !== "false";
+  } catch (error) {
+    console.warn("Failed to read persisted auto-connect setting:", error);
+    return true;
+  }
+}
+
+function getStoredChatUiOverride(): ChatUiOverride | undefined {
+  if (typeof window === "undefined") return undefined;
+  let raw: string | null;
+  try {
+    raw = localStorage.getItem(CHAT_UI_OVERRIDE_KEY);
+  } catch (error) {
+    console.warn("Failed to read persisted chat UI override:", error);
+    return undefined;
+  }
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as ChatUiOverride;
+    }
+    return undefined;
+  } catch (error) {
+    console.warn("Failed to parse persisted chat UI override:", error);
+    return undefined;
+  }
 }
 
 function getStoredHostCapabilitiesOverride():
@@ -98,6 +152,12 @@ export const createPreferencesStore = (init?: Partial<PreferencesState>) =>
       init?.hostCapabilitiesOverride !== undefined
         ? init.hostCapabilitiesOverride
         : getStoredHostCapabilitiesOverride(),
+    chatUiOverride:
+      init?.chatUiOverride !== undefined
+        ? init.chatUiOverride
+        : getStoredChatUiOverride(),
+    autoConnectServersEnabled:
+      init?.autoConnectServersEnabled ?? getStoredAutoConnectServersEnabled(),
     setThemeMode: (mode) => {
       try {
         localStorage.setItem(THEME_MODE_KEY, mode);
@@ -144,5 +204,25 @@ export const createPreferencesStore = (init?: Partial<PreferencesState>) =>
         );
       }
       set({ hostCapabilitiesOverride: next });
+    },
+    setChatUiOverride: (next) => {
+      try {
+        if (next === undefined) {
+          localStorage.removeItem(CHAT_UI_OVERRIDE_KEY);
+        } else {
+          localStorage.setItem(CHAT_UI_OVERRIDE_KEY, JSON.stringify(next));
+        }
+      } catch (error) {
+        console.warn("Failed to persist chat UI override:", error);
+      }
+      set({ chatUiOverride: next });
+    },
+    setAutoConnectServersEnabled: (next) => {
+      try {
+        localStorage.setItem(AUTO_CONNECT_SERVERS_KEY, next ? "true" : "false");
+      } catch (error) {
+        console.warn("Failed to persist auto-connect setting:", error);
+      }
+      set({ autoConnectServersEnabled: next });
     },
   }));

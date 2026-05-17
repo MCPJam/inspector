@@ -149,12 +149,18 @@ vi.mock("convex/react", () => ({
     isAuthenticated: false,
     isLoading: false,
   }),
+  // `useHost` (and any other Convex-backed hook PlaygroundMain pulls in)
+  // calls useQuery. The test doesn't exercise auth flows, so a static
+  // null is enough — the consumer treats it as "no host resolved yet".
+  useQuery: () => null,
+  useMutation: () => () => Promise.resolve(),
 }));
 
 // Mock useViews (useProjectServers)
 vi.mock("@/hooks/useViews", () => ({
   useProjectServers: () => ({
     serversByName: new Map(),
+    serversById: new Map(),
   }),
 }));
 
