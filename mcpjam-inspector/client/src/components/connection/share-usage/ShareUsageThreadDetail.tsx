@@ -4,9 +4,11 @@ import { Copy, Loader2, MessageSquare } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { copyToClipboard } from "@/lib/clipboard";
+import { SessionHostConfigChip } from "@/components/chatboxes/SessionHostConfigChip";
 import type { ModelDefinition, ModelProvider } from "@/shared/types";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { TranscriptThread } from "@/components/chat-v2/thread/transcript-thread";
+import { ChatboxSurfaceProvider } from "@/contexts/chatbox-surface-context";
 import {
   adaptTraceToUiMessages,
   snapshotsToTraceWidgetSnapshots,
@@ -281,7 +283,8 @@ export function ShareUsageThreadDetail({
               </span>
             </div>
           </div>
-          <div className="flex shrink-0 flex-wrap gap-2">
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <SessionHostConfigChip sessionId={thread._id} />
             <Button
               type="button"
               variant="outline"
@@ -307,25 +310,27 @@ export function ShareUsageThreadDetail({
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {viewMode === "chat" ? (
           <div className="min-h-0 flex-1 overflow-y-auto">
-            <TranscriptThread
-              messages={adaptedTrace.messages}
-              model={resolvedModel}
-              sendFollowUpMessage={NOOP}
-              toolsMetadata={{}}
-              toolServerMap={{}}
-              pipWidgetId={null}
-              fullscreenWidgetId={null}
-              onRequestPip={NOOP}
-              onExitPip={NOOP}
-              onRequestFullscreen={NOOP}
-              onExitFullscreen={NOOP}
-              toolRenderOverrides={adaptedTrace.toolRenderOverrides}
-              showSaveViewButton={false}
-              minimalMode={!isChatboxThread}
-              interactive={false}
-              reasoningDisplayMode={reasoningDisplayMode}
-              contentClassName="max-w-4xl space-y-8 px-4 py-4"
-            />
+            <ChatboxSurfaceProvider value={isChatboxThread}>
+              <TranscriptThread
+                messages={adaptedTrace.messages}
+                model={resolvedModel}
+                sendFollowUpMessage={NOOP}
+                toolsMetadata={{}}
+                toolServerMap={{}}
+                pipWidgetId={null}
+                fullscreenWidgetId={null}
+                onRequestPip={NOOP}
+                onExitPip={NOOP}
+                onRequestFullscreen={NOOP}
+                onExitFullscreen={NOOP}
+                toolRenderOverrides={adaptedTrace.toolRenderOverrides}
+                showSaveViewButton={false}
+                minimalMode={!isChatboxThread}
+                interactive={false}
+                reasoningDisplayMode={reasoningDisplayMode}
+                contentClassName="max-w-4xl space-y-8 px-4 py-4"
+              />
+            </ChatboxSurfaceProvider>
           </div>
         ) : (
           <TraceViewer

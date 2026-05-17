@@ -36,6 +36,7 @@ import {
 } from "@/contexts/chatbox-host-style-context";
 import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-host-capabilities-override-context";
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
+import { ChatboxSurfaceProvider } from "@/contexts/chatbox-surface-context";
 import { ChatboxHostOnboardingOverlays } from "@/components/hosted/ChatboxHostOnboardingOverlays";
 import { useChatboxHostIntroGate } from "@/components/hosted/useChatboxHostIntroGate";
 import { getChatboxShellStyle } from "@/lib/chatbox-host-style";
@@ -918,6 +919,7 @@ export function ChatboxChatPage({
         value={session?.payload.hostCapabilitiesOverride}
       >
       <ActiveMcpProfileProvider value={session?.payload.mcpProfile}>
+      <ChatboxSurfaceProvider value={true}>
       <div
         className="chatbox-host-shell flex h-svh min-h-0 flex-col overflow-hidden"
         data-host-style={hostStyle}
@@ -959,6 +961,7 @@ export function ChatboxChatPage({
 
         {renderContent()}
       </div>
+      </ChatboxSurfaceProvider>
       </ActiveMcpProfileProvider>
       </ChatboxHostCapabilitiesOverrideProvider>
       </ChatboxChatUiOverrideProvider>

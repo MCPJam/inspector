@@ -7,7 +7,7 @@ import {
 import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-host-capabilities-override-context";
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
 import { getChatboxShellStyle } from "@/lib/chatbox-host-style";
-import type { HostConfigMcpProfileV1 } from "@/lib/host-config-v2";
+import type { HostConfigDtoV2 } from "@/lib/host-config-v2";
 import { cn } from "@/lib/utils";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
@@ -16,28 +16,30 @@ type HostStyledChatTabV2Props = Omit<
   "hostStyle" | "onHostStyleChange"
 > & {
   /**
-   * Active project default `mcpProfile` envelope. Forwarded into
-   * `ActiveMcpProfileProvider` so `MCPAppsRenderer` (mounted deep in
-   * `ChatTabV2`'s thread) can read sandbox policy + clientInfo /
-   * supportedProtocolVersions pins. The hosted-chat path uses its own
-   * provider in `ChatboxChatPage`; this is the in-inspector counterpart.
-   * Undefined means "no opt-in" — the renderer falls back to widget-
-   * derived sandbox behavior, byte-identical to historical.
+   * Currently active host — top-bar selection resolved to the project
+   * default when no explicit pick exists. Drives every widget-runtime
+   * value below; preferences store is the fallback editing surface for
+   * the bootstrap window before the host hydrates.
    */
-  activeMcpProfile?: HostConfigMcpProfileV1;
+  activeHost?: HostConfigDtoV2;
 };
 
 export function HostStyledChatTabV2({
   showHostStyleSelector = false,
-  activeMcpProfile,
+  activeHost,
   ...props
 }: HostStyledChatTabV2Props) {
   const themeMode = usePreferencesStore((state) => state.themeMode);
-  const hostStyle = usePreferencesStore((state) => state.hostStyle);
+  const prefHostStyle = usePreferencesStore((state) => state.hostStyle);
   const setHostStyle = usePreferencesStore((state) => state.setHostStyle);
-  const hostCapabilitiesOverride = usePreferencesStore(
+  const prefHostCapabilitiesOverride = usePreferencesStore(
     (state) => state.hostCapabilitiesOverride,
   );
+
+  const hostStyle = activeHost?.hostStyle ?? prefHostStyle;
+  const hostCapabilitiesOverride =
+    activeHost?.hostCapabilitiesOverride ?? prefHostCapabilitiesOverride;
+  const activeMcpProfile = activeHost?.mcpProfile;
   const shellStyle = getChatboxShellStyle(hostStyle, themeMode);
 
   return (

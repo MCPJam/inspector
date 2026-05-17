@@ -17,6 +17,7 @@ import type { ModelProvider } from "@/shared/types";
 import { getClientIp } from "../../utils/client-ip.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
+import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config";
 import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler";
 import { handleHostedOrgChatModel } from "../../utils/org-model-stream-handler.js";
 import { deriveOrgProviderKey } from "../../utils/org-model-config.js";
@@ -465,11 +466,11 @@ chatV2.post("/", async (c) => {
       messages,
       apiKey,
       model,
-      systemPrompt,
-      temperature,
+      systemPrompt: bodySystemPrompt,
+      temperature: bodyTemperature,
       selectedServers,
       selectedServerIds: bodySelectedServerIds,
-      requireToolApproval,
+      requireToolApproval: bodyRequireToolApproval,
       chatboxId: bodyChatboxId,
       accessVersion: bodyAccessVersion,
       surface: bodySurface,
@@ -480,6 +481,42 @@ chatV2.post("/", async (c) => {
       : "direct";
     const chatSessionSurface: "preview" | "share_link" | undefined =
       isChatboxSession ? bodySurface ?? "preview" : undefined;
+
+    // Chatbox-bound turns re-resolve execution config from Convex so the
+    // host's hostConfigs row is the source of truth (model / prompt /
+    // temperature / requireToolApproval). Mirrors the web/chat-v2 path.
+    // Soft-fall-through on Convex blip — chat keeps running with body
+    // values, matching pre-rollout behavior.
+    let resolvedSystemPrompt = bodySystemPrompt;
+    let resolvedTemperatureOverride = bodyTemperature;
+    let resolvedRequireToolApproval = bodyRequireToolApproval;
+    if (isChatboxSession && bodyChatboxId) {
+      const bearer = c.req.header("authorization") ?? "";
+      if (bearer) {
+        const runtime = await fetchChatboxRuntimeConfig({
+          chatboxId: bodyChatboxId,
+          bearer,
+        });
+        if (runtime.ok) {
+          const cfg = runtime.config;
+          resolvedSystemPrompt = cfg.systemPrompt;
+          resolvedTemperatureOverride = cfg.temperature;
+          resolvedRequireToolApproval = cfg.requireToolApproval;
+        } else {
+          logger.warn(
+            "[mcp/chat-v2] runtime-config fetch failed; using body values",
+            {
+              chatboxId: bodyChatboxId,
+              status: runtime.status,
+              error: runtime.error,
+            },
+          );
+        }
+      }
+    }
+    const systemPrompt = resolvedSystemPrompt;
+    const temperature = resolvedTemperatureOverride;
+    const requireToolApproval = resolvedRequireToolApproval;
 
     // Local-mode `selectedServers` is server *names*, not Convex Ids. The
     // backend's `hostConfigPayloadValidator` requires `v.array(v.id('servers'))`,
