@@ -18,6 +18,7 @@ import type {
   EvalSuiteRun,
 } from "./types";
 import { getSuiteReplayEligibility } from "./replay-eligibility";
+import { getEffectiveSuiteServers } from "./helpers";
 import type { useEvalMutations } from "./use-eval-mutations";
 import { authFetch } from "@/lib/session-token";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
@@ -491,7 +492,13 @@ export function useEvalHandlers({
     ) => {
       if (rerunningSuiteId) return;
 
-      const suiteServers = normalizeSuiteServerRefs(suite.environment?.servers);
+      // Effective servers = flat env.servers ∪ resolved servers across all
+      // host attachments. Without this union, a host-only suite would fail
+      // the "no servers configured" gate even though the runner can derive
+      // servers from each attachment's snapshot at fan-out time.
+      const suiteServers = normalizeSuiteServerRefs(
+        getEffectiveSuiteServers(suite),
+      );
       const latestRun =
         latestRunBySuiteId?.get(suite._id) ??
         (selectedSuiteEntry?.suite._id === suite._id
@@ -508,7 +515,7 @@ export function useEvalHandlers({
           await handleReplayRun(suite, rerunEligibility.replayableLatestRun);
           return;
         }
-        toast.error("No MCP servers are configured for this suite.");
+        toast.error("Attach a host to this suite before running it.");
         return;
       }
 
@@ -548,8 +555,34 @@ export function useEvalHandlers({
 
       setRerunningSuiteId(suite._id);
 
+      // Host-bound fan-out: when the suite has hostAttachments we fire one
+      // run request per host so each gets its own snapshot. Otherwise we
+      // run the suite's flat server list once as before.
+      const attachments = suite.hostAttachments ?? [];
+      const runPlans =
+        attachments.length > 0
+          ? attachments.map((attachment) => ({
+              namedHostId: attachment.namedHostId,
+              hostName: attachment.hostName ?? "host",
+              serverIds:
+                attachment.resolvedServerNames.length > 0
+                  ? attachment.resolvedServerNames
+                  : executionContext.suiteServers,
+            }))
+          : [
+              {
+                namedHostId: undefined as string | undefined,
+                hostName: null as string | null,
+                serverIds: executionContext.suiteServers,
+              },
+            ];
+
       // Show toast immediately when user clicks rerun
-      toast.success("Run started successfully! Results will appear shortly.");
+      toast.success(
+        runPlans.length > 1
+          ? `Starting ${runPlans.length} runs across hosts…`
+          : "Run started successfully! Results will appear shortly.",
+      );
 
       try {
         const accessToken = await getAccessToken();
@@ -560,44 +593,60 @@ export function useEvalHandlers({
           suiteDefault ?? latestRun?.passCriteria?.minimumPassRate ?? 100;
         const criteriaNote = `Pass Criteria: Min ${minimumPassRate}% Accuracy`;
 
-        await runEvals({
-          projectId,
-          suiteId: suite._id,
-          suiteName: suite.name,
-          suiteDescription: suite.description,
-          tests: executionContext.tests.map((test) => ({
-            title: test.title,
-            query: test.query,
-            runs: test.runs ?? 1,
-            model: test.model,
-            provider: test.provider,
-            expectedToolCalls: test.expectedToolCalls,
-            isNegativeTest: test.isNegativeTest,
-            scenario: test.scenario,
-            expectedOutput: test.expectedOutput,
-            promptTurns: test.promptTurns,
-            advancedConfig: test.advancedConfig,
-            matchOptions: (test as { matchOptions?: unknown }).matchOptions,
-          })),
-          serverIds: executionContext.suiteServers,
-          modelApiKeys:
-            Object.keys(executionContext.modelApiKeys).length > 0
-              ? executionContext.modelApiKeys
-              : undefined,
-          convexAuthToken: accessToken,
-          passCriteria: {
-            minimumPassRate: minimumPassRate,
-          },
-          notes: criteriaNote,
-          // Cases are already persisted; tell the server to skip the
-          // per-case upsert so suite-default-derived wire fields don't
-          // get baked into per-case overrides.
-          suiteRerun: true,
-          iterationOverride: options?.iterationOverride,
-          matchOptionsOverride: options?.matchOptionsOverride,
-        });
+        const testsPayload = executionContext.tests.map((test) => ({
+          title: test.title,
+          query: test.query,
+          runs: test.runs ?? 1,
+          model: test.model,
+          provider: test.provider,
+          expectedToolCalls: test.expectedToolCalls,
+          isNegativeTest: test.isNegativeTest,
+          scenario: test.scenario,
+          expectedOutput: test.expectedOutput,
+          promptTurns: test.promptTurns,
+          advancedConfig: test.advancedConfig,
+          matchOptions: (test as { matchOptions?: unknown }).matchOptions,
+        }));
 
-        // Track suite run started
+        // Partial-failure tolerant: a failure on one host shouldn't cancel
+        // runs already started against other hosts. We collect failures
+        // and toast a summary at the end.
+        const settled = await Promise.allSettled(
+          runPlans.map((plan) =>
+            runEvals({
+              projectId,
+              suiteId: suite._id,
+              suiteName: suite.name,
+              suiteDescription: suite.description,
+              tests: testsPayload,
+              serverIds: plan.serverIds,
+              modelApiKeys:
+                Object.keys(executionContext.modelApiKeys).length > 0
+                  ? executionContext.modelApiKeys
+                  : undefined,
+              convexAuthToken: accessToken,
+              passCriteria: { minimumPassRate },
+              notes: criteriaNote,
+              suiteRerun: true,
+              iterationOverride: options?.iterationOverride,
+              matchOptionsOverride: options?.matchOptionsOverride,
+              ...(plan.namedHostId ? { namedHostId: plan.namedHostId } : {}),
+            }),
+          ),
+        );
+
+        const failures = settled
+          .map((result, index) =>
+            result.status === "rejected"
+              ? { plan: runPlans[index], reason: result.reason }
+              : null,
+          )
+          .filter((entry): entry is { plan: (typeof runPlans)[number]; reason: unknown } =>
+            entry !== null,
+          );
+
+        // Track suite run started (once per fan-out batch; per-host
+        // multiplicity is captured in the iteration data).
         posthog.capture("eval_suite_run_started", {
           location: "evals_tab",
           platform: detectPlatform(),
@@ -607,10 +656,29 @@ export function useEvalHandlers({
           num_tests: executionContext.tests.length,
           num_models: executionContext.providersNeeded.size,
           minimum_pass_rate: minimumPassRate,
+          num_hosts: runPlans.length,
         });
 
-        // Optionally show completion toast
-        toast.success("Eval run completed!");
+        if (failures.length === 0) {
+          toast.success(
+            runPlans.length > 1
+              ? `All ${runPlans.length} host runs started.`
+              : "Eval run completed!",
+          );
+        } else if (failures.length < runPlans.length) {
+          const failedHostNames = failures
+            .map((failure) => failure.plan.hostName ?? "(unnamed host)")
+            .join(", ");
+          toast.error(
+            `${failures.length} of ${runPlans.length} host runs failed: ${failedHostNames}`,
+          );
+        } else {
+          // All failed — surface the first error for actionable detail.
+          const firstError = failures[0]?.reason;
+          throw firstError instanceof Error
+            ? firstError
+            : new Error(String(firstError ?? "All host runs failed"));
+        }
       } catch (error) {
         console.error("Failed to rerun evals:", error);
         toast.error(getBillingErrorMessage(error, "Failed to start eval run"));
@@ -666,13 +734,15 @@ export function useEvalHandlers({
 
       const isMultiModelRun =
         !options?.selectedModel && modelValuesToRun.length > 1;
-      const suiteServers = normalizeSuiteServerRefs(suite.environment?.servers);
+      const suiteServers = normalizeSuiteServerRefs(
+        getEffectiveSuiteServers(suite),
+      );
       const disconnectedSuiteServers = suiteServers.filter(
         (serverName) => !connectedServerNames?.has(serverName),
       );
 
       if (suiteServers.length === 0) {
-        toast.error("No MCP servers are configured for this suite.");
+        toast.error("Attach a host to this suite before running it.");
         return null;
       }
 

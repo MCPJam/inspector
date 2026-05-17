@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import posthog from "posthog-js";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
-import { formatRunId } from "./helpers";
+import { formatRunId, getEffectiveSuiteServers } from "./helpers";
 import {
   EvalSuite,
   EvalSuiteRun,
@@ -48,13 +48,11 @@ import {
   type ProviderTokens,
 } from "@/hooks/use-ai-provider-keys";
 import { RunDetailPlaygroundActions } from "./run-detail-playground-actions";
-import type { ModelDefinition } from "@/shared/types";
 import { cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-mobile";
-import {
-  SuiteOverviewModelBar,
-  type SuiteOverviewModelRow,
-} from "./suite-overview-model-bar";
+import { SuiteOverviewHostBar } from "./suite-overview-host-bar";
+import type { HostAttachmentDraft } from "./host-attachments-editor";
+import type { HostListItem } from "@/hooks/useHosts";
 
 interface SuiteHeaderProps {
   suite: EvalSuite;
@@ -106,10 +104,12 @@ interface SuiteHeaderProps {
    * Playground: block suite-level Run all while a single case quick-run is in flight.
    */
   runningTestCaseId?: string | null;
-  /** Models catalog for the suite overview model bar (same source as suite settings). */
-  availableModels?: ModelDefinition[];
-  /** Persists suite models for all cases (same flow as suite settings → Models). */
-  onSuiteModelsUpdate?: (models: SuiteOverviewModelRow[]) => Promise<void>;
+  /** Persists the suite's host attachments (multi-host fan-out target list). */
+  onSuiteHostAttachmentsUpdate?: (
+    attachments: HostAttachmentDraft[],
+  ) => Promise<void>;
+  /** Hosts available to attach (from `useHostList`). Optional for legacy callers. */
+  projectHosts?: HostListItem[];
   /** Playground run detail: compact KPI strip rendered beside the run title. */
   runDetailKpiStrip?: ReactNode;
   /**
@@ -154,8 +154,8 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     blockTestCaseRuns: _blockTestCaseRuns = false,
     runningTestCaseId = null,
     runsViewMode = "runs",
-    availableModels = [],
-    onSuiteModelsUpdate,
+    onSuiteHostAttachmentsUpdate,
+    projectHosts = [],
     runDetailKpiStrip,
   } = props;
 
@@ -221,8 +221,12 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     [handleNameBlur, suite.name],
   );
 
-  // Calculate suite server status
-  const suiteServers = suite.environment?.servers || [];
+  // Calculate suite server status from the EFFECTIVE server list —
+  // legacy `environment.servers` merged with any host attachments'
+  // resolvedServerNames. Without the merge, attachment-only suites
+  // (the current model) read as empty and Run all stayed disabled
+  // with "Configure suite servers" forever.
+  const suiteServers = getEffectiveSuiteServers(suite);
   const replayEligibility = getSuiteReplayEligibility({
     suiteServers,
     connectedServerNames,
@@ -371,19 +375,21 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     return null;
   }
 
-  // Overview: model bar sits with primary actions on md+; on narrow viewports it spans below the title row.
-  const hasSuiteModelBar = testCases.length > 0;
-
-  const suiteOverviewModelBar = hasSuiteModelBar ? (
-    <SuiteOverviewModelBar
+  // Hosts bar is rendered whenever the suite overview is visible, regardless
+  // of whether any cases exist yet — the empty "Attach host" affordance is
+  // the whole point of surfacing the axis up front. The model-axis bar was
+  // removed: a host's `modelId` is the source of truth for what each run
+  // runs against, so a separate suite-wide model selector is just noise.
+  const suiteOverviewHostBar = (
+    <SuiteOverviewHostBar
       containerVariant="inline"
       className="py-1.5 md:py-2"
-      testCases={testCases}
-      availableModels={availableModels}
+      suite={suite}
+      projectHosts={projectHosts}
       readOnly={readOnlyConfig}
-      onUpdate={onSuiteModelsUpdate}
+      onUpdate={onSuiteHostAttachmentsUpdate}
     />
-  ) : null;
+  );
 
   const overviewRunAllCta =
     hideRunActions && showTestCaseCtas
@@ -576,12 +582,16 @@ export function SuiteHeader(props: SuiteHeaderProps) {
         ) : null}
         </div>
       </div>
-      {hasSuiteModelBar && isMobile ? (
-        <div className="row-start-2 col-span-2 min-w-0">{suiteOverviewModelBar}</div>
+      {isMobile ? (
+        <div className="row-start-2 col-span-2 min-w-0">
+          {suiteOverviewHostBar}
+        </div>
       ) : null}
       <div className="row-start-1 col-start-2 flex min-w-0 max-w-full shrink-0 flex-wrap items-center justify-end gap-x-4 gap-y-2">
-        {hasSuiteModelBar && !isMobile ? (
-          <div className="min-w-0 max-w-full shrink">{suiteOverviewModelBar}</div>
+        {!isMobile ? (
+          <div className="min-w-0 max-w-full shrink">
+            {suiteOverviewHostBar}
+          </div>
         ) : null}
         {overviewHasSuiteNav ? (
           <div className="flex items-center gap-2">

@@ -81,6 +81,13 @@ type RunEvalsRequest = EvalRequestWithServers & {
    * persisted suite/case records.
    */
   matchOptionsOverride?: EvalMatchOptions;
+  /**
+   * Scope this run to a single host attached to the suite. The backend
+   * snapshots the host's current config and derives the run's server
+   * environment from it. When the suite has multiple host attachments,
+   * the UI makes one parallel request per host.
+   */
+  namedHostId?: string;
 };
 
 type RunTestCaseRequest = EvalRequestWithServers & {
@@ -111,6 +118,27 @@ type RunTestCaseRequest = EvalRequestWithServers & {
   };
   /** One-off run override; does not persist on the case. */
   matchOptionsOverride?: EvalMatchOptions;
+  /**
+   * One-off, per-Run override for the suite's hostConfig. Edited live in
+   * the test case editor's host header. Recorded on the iteration
+   * snapshot so the trace shows which config the run actually used.
+   *
+   * Subset of HostConfigInputV2 — only the fields the run uses (or could
+   * use). model / system prompt / temperature stay routed via
+   * `advancedConfig` to avoid two paths to the same field.
+   */
+  hostConfigOverride?: {
+    hostStyle?: string;
+    hostContext?: Record<string, unknown>;
+    clientCapabilities?: Record<string, unknown>;
+    hostCapabilitiesOverride?: Record<string, unknown>;
+    chatUiOverride?: Record<string, unknown>;
+    mcpProfile?: Record<string, unknown>;
+    connectionDefaults?: {
+      headers?: Record<string, string>;
+      requestTimeout?: number;
+    };
+  };
 };
 
 type GenerateTestsRequest = EvalRequestWithServers & {

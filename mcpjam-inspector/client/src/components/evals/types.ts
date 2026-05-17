@@ -56,6 +56,19 @@ export type EvalSuite = {
     systemPrompt: string;
     temperature: number;
   };
+  /**
+   * Multi-host fan-out. When non-empty, "Run all hosts" fires one run per
+   * attachment with that host's snapshot. Server names are resolved at
+   * read time so the UI doesn't have to fetch each host's config to fan
+   * out. Legacy suites (no attachments) keep the flat `environment.servers`
+   * path.
+   */
+  hostAttachments?: Array<{
+    namedHostId: string;
+    enabledOptionalServerIds: string[];
+    hostName: string | null;
+    resolvedServerNames: string[];
+  }>;
 };
 
 export type EvalCase = {
@@ -243,6 +256,13 @@ export type EvalSuiteRun = {
   /** Legacy field from Convex; no longer used for UI gating or trends. */
   isActive?: boolean;
   expectedIterations?: number;
+  /**
+   * The named host this run was triggered against, when the suite has
+   * host attachments. Absent for legacy single-environment runs. Used by
+   * the run list / run-detail UI to group concurrent host fan-out into a
+   * "host matrix" view.
+   */
+  namedHostId?: string;
   _creationTime?: number;
   runInsightsJobId?: number;
   runInsightsStatus?: "pending" | "completed" | "failed";

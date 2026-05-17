@@ -314,6 +314,12 @@ describe("TestTemplateEditor run view from route", () => {
           environment: { servers: ["srv"] },
         };
       }
+      if (name === "hostConfigsV2:getSuiteConfig") {
+        // Returning `null` (vs `undefined`) lets the editor build a
+        // baseline from `emptyHostConfigInputV2(...)`; `undefined` means
+        // "still loading" and would suppress the header row entirely.
+        return null;
+      }
       if (name === "testSuites:listTestIterations" && args !== "skip") {
         return [baseIteration];
       }
@@ -422,6 +428,9 @@ describe("TestTemplateEditor run view from route", () => {
           environment: { servers: ["srv"] },
         };
       }
+      if (name === "hostConfigsV2:getSuiteConfig") {
+        return null;
+      }
       if (name === "testSuites:listTestIterations" && args !== "skip") {
         return [baseIteration];
       }
@@ -508,6 +517,9 @@ describe("TestTemplateEditor run view from route", () => {
           _id: "suite-1",
           environment: { servers: ["srv"] },
         };
+      }
+      if (name === "hostConfigsV2:getSuiteConfig") {
+        return null;
       }
       if (name === "testSuites:listTestIterations" && args !== "skip") {
         return [newerQuickIteration, clickedIteration];
@@ -968,30 +980,44 @@ describe("TestTemplateEditor run view from route", () => {
     });
 
     const modelBar = screen.getByTestId("test-template-model-bar");
-    const hostStyleRow = screen.getByTestId("test-template-host-style-row");
+    const hostHeaderRow = screen.getByTestId("test-template-host-header-row");
     const scenarioHeading = screen.getByText("Test scenario");
 
     expect(
-      modelBar.compareDocumentPosition(hostStyleRow) &
+      modelBar.compareDocumentPosition(hostHeaderRow) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).not.toBe(0);
     expect(
-      hostStyleRow.compareDocumentPosition(scenarioHeading) &
+      hostHeaderRow.compareDocumentPosition(scenarioHeading) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).not.toBe(0);
+    // The new TestCaseHostHeader sources its baseline from suite
+    // hostConfigsV2 — the mock returns null → seeded empty input →
+    // `DEFAULT_HOST_STYLE_V2` ("mcpjam"). The `renderWithProviders`
+    // `hostStyle: "claude"` only seeds the GLOBAL preferences store,
+    // which the new header intentionally no longer reads (per-case
+    // tweaks must not leak across views).
     expect(
-      hostStyleRow.querySelector('[data-selected-host-style="claude"]'),
-    ).not.toBeNull();
+      within(hostHeaderRow).getByTestId("test-case-host-style-mcpjam"),
+    ).toHaveAttribute("data-selected", "true");
   });
 
-  it("updates the pre-run host-style control and carries it across compare columns", async () => {
+  it("treats host-style pill clicks as per-case tweaks that don't leak to other surfaces", async () => {
+    // Replaces the prior "carries it across compare columns" test. The
+    // old test locked in cross-view leak behavior: clicking a host pill
+    // in the test case editor mutated `usePreferencesStore.hostStyle`,
+    // which downstream surfaces (CompareResultColumn, playground, chat
+    // UI) all read. The new TestCaseHostHeader writes to a per-case
+    // local override; the global preference store is untouched. A
+    // follow-up will plumb the override into the iteration snapshot so
+    // result cards can read it from there.
     const user = userEvent.setup();
 
     streamEvalTestCaseMock.mockImplementation(
       async () => new Promise<void>(() => {}),
     );
 
-    const view = renderWithProviders(
+    renderWithProviders(
       <TestTemplateEditor
         suiteId="suite-1"
         selectedTestCaseId="case-1"
@@ -1005,13 +1031,6 @@ describe("TestTemplateEditor run view from route", () => {
             name: "GPT-4",
             label: "GPT-4",
           } as any,
-          {
-            provider: "anthropic",
-            id: "claude-4.5-sonnet",
-            model: "claude-4.5-sonnet",
-            name: "Claude 4.5 Sonnet",
-            label: "Claude 4.5 Sonnet",
-          } as any,
         ]}
       />,
       { hostStyle: "claude" },
@@ -1021,32 +1040,31 @@ describe("TestTemplateEditor run view from route", () => {
       expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
     });
 
-    const hostStyleRow = screen.getByTestId("test-template-host-style-row");
+    const hostHeaderRow = screen.getByTestId("test-template-host-header-row");
+
+    // Baseline starts on the v2 default ("mcpjam") — the suite hostConfig
+    // mock returns null, so emptyHostConfigInputV2 wins. No "Tweaked"
+    // badge until the user makes a tweak.
+    expect(
+      within(hostHeaderRow).getByTestId("test-case-host-style-mcpjam"),
+    ).toHaveAttribute("data-selected", "true");
+    expect(
+      screen.queryByTestId("test-case-host-tweaked-badge"),
+    ).not.toBeInTheDocument();
 
     await user.click(
-      within(hostStyleRow).getByRole("radio", {
-        name: "ChatGPT",
-      }),
+      within(hostHeaderRow).getByTestId("test-case-host-style-chatgpt"),
     );
 
+    // The tweak applies locally and surfaces the Tweaked badge.
     await waitFor(() => {
       expect(
-        hostStyleRow.querySelector('[data-selected-host-style="chatgpt"]'),
-      ).not.toBeNull();
+        within(hostHeaderRow).getByTestId("test-case-host-style-chatgpt"),
+      ).toHaveAttribute("data-selected", "true");
     });
-
-    await addCompareModels(user, ["Claude 4.5 Sonnet"]);
-    await user.click(screen.getByRole("button", { name: /run compare/i }));
-
-    await waitFor(() => {
-      expect(streamEvalTestCaseMock).toHaveBeenCalledTimes(2);
-    });
-
-    await waitFor(() => {
-      expect(
-        view.container.querySelectorAll('[data-host-style="chatgpt"]'),
-      ).toHaveLength(2);
-    });
+    expect(
+      screen.getByTestId("test-case-host-tweaked-badge"),
+    ).toBeInTheDocument();
   });
 
   it("defaults to Results tab when expected tool calls are on a non-first prompt turn (multi-turn case)", async () => {
@@ -1079,6 +1097,9 @@ describe("TestTemplateEditor run view from route", () => {
           _id: "suite-1",
           environment: { servers: ["srv"] },
         };
+      }
+      if (name === "hostConfigsV2:getSuiteConfig") {
+        return null;
       }
       if (name === "testSuites:listTestIterations" && args !== "skip") {
         return [baseIteration];
@@ -1160,6 +1181,28 @@ describe("TestTemplateEditor run view from route", () => {
           environment: { servers: ["srv"] },
         };
       }
+      if (name === "hostConfigsV2:getSuiteConfig") {
+        // Stamp the suite hostConfig with `hostStyle: "claude"` so the
+        // result-column baseline matches what this test asserts about
+        // the chat shell. Result column priority is
+        // snapshot.hostConfigOverride → baseline → global preference;
+        // before this hostConfig-aware path landed, the global
+        // preference was the source.
+        return {
+          id: "hostconfig-1",
+          schemaVersion: 1,
+          hostStyle: "claude",
+          modelId: "",
+          systemPrompt: "",
+          temperature: 0.7,
+          requireToolApproval: false,
+          serverIds: [],
+          optionalServerIds: [],
+          connectionDefaults: { headers: {}, requestTimeout: 10000 },
+          clientCapabilities: {},
+          hostContext: {},
+        };
+      }
       if (name === "testSuites:listTestIterations" && args !== "skip") {
         return [baseIteration];
       }
@@ -1200,7 +1243,9 @@ describe("TestTemplateEditor run view from route", () => {
       expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
     });
 
-    expect(screen.getByTestId("test-template-host-style-row")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("test-template-host-header-row"),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /run$/i }));
 
@@ -1208,11 +1253,14 @@ describe("TestTemplateEditor run view from route", () => {
       expect(streamEvalTestCaseMock).toHaveBeenCalledTimes(1);
     });
 
+    // The header lives in the config view only; flipping to the run /
+    // compare view removes it. No `[data-selected]` host-style markers
+    // should remain in the result tree.
     expect(
-      screen.queryByTestId("test-template-host-style-row"),
+      screen.queryByTestId("test-template-host-header-row"),
     ).not.toBeInTheDocument();
     expect(
-      view.container.querySelector("[data-selected-host-style]"),
+      view.container.querySelector('[data-testid^="test-case-host-style-"]'),
     ).toBeNull();
 
     const card = getCompareCard("GPT-4");

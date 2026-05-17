@@ -336,34 +336,4 @@ describe("SuiteHeader", () => {
     expect(onRerun).toHaveBeenCalledWith(baseSuite, { iterationOverride: 3 });
   });
 
-  it("shows the suite model bar on overview when test cases exist", () => {
-    renderWithProviders(
-      <SuiteHeader
-        {...baseProps}
-        viewMode="overview"
-        selectedRunDetails={null}
-        readOnlyConfig={false}
-        testCases={[
-          {
-            _id: "c1",
-            title: "Case",
-            models: [{ provider: "openai", model: "gpt-4" }],
-          } as any,
-        ]}
-        availableModels={
-          [
-            { id: "gpt-4", name: "GPT-4", provider: "openai" },
-            { id: "gpt-5-nano", name: "GPT-5 Nano", provider: "openai" },
-          ] as any
-        }
-        onSuiteModelsUpdate={vi.fn()}
-      />,
-    );
-
-    expect(screen.getByText("GPT-4")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Add model" }),
-    ).toBeInTheDocument();
-  });
-
 });

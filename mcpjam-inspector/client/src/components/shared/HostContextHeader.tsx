@@ -135,6 +135,9 @@ export function HostContextHeader({
   const setHostCapabilitiesOverride = usePreferencesStore(
     (state) => state.setHostCapabilitiesOverride,
   );
+  const setChatUiOverride = usePreferencesStore(
+    (state) => state.setChatUiOverride,
+  );
 
   const usesMcpAppsCsp =
     protocol === UIType.MCP_APPS ||
@@ -455,6 +458,7 @@ export function HostContextHeader({
                     applyHostDefaultsToPlayground(host.id, {
                       setHostStyle,
                       setHostCapabilitiesOverride,
+                      setChatUiOverride,
                     });
                   }}
                   className="h-6 w-6"
