@@ -30,6 +30,8 @@ import { ChatboxesTab } from "./components/ChatboxesTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { ProjectSettingsTab } from "./components/ProjectSettingsTab";
 import { ProjectClientConfigSync } from "./components/client-config/ProjectClientConfigSync";
+import { ActiveHostServerReconciler } from "./components/ActiveHostServerReconciler";
+import { ChatboxBackfillForProject } from "./components/ChatboxBackfillForProject";
 import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
@@ -48,7 +50,6 @@ import { SupportTab } from "./components/SupportTab";
 import { RegistryTab } from "./components/RegistryTab";
 import { HostsTab } from "./components/HostsTab";
 import { HostPicker } from "./components/hosts/HostPicker";
-import { useHost } from "./hooks/useHosts";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
 import { MCPSidebar } from "./components/mcp-sidebar";
@@ -76,6 +77,8 @@ import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
 import { AppStateProvider } from "./state/app-state-context";
+import { ServerActionsProvider } from "./state/server-actions-context";
+import { usePreviewedHostId } from "./hooks/use-previewed-host-id";
 import { useOrganizationQueries } from "./hooks/useOrganizations";
 import { useOrganizationBilling } from "./hooks/useOrganizationBilling";
 import type { BillingFeatureName } from "./hooks/useOrganizationBilling";
@@ -177,6 +180,7 @@ import {
 import { buildElectronMcpCallbackUrl } from "./hooks/use-server-state";
 import { disconnectAllRuntimeServers } from "./state/mcp-api";
 import { getEffectiveProjectClientCapabilities } from "./lib/client-config";
+import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
 import {
   buildOrganizationPath,
   buildEvalsPath,
@@ -488,7 +492,26 @@ function ActiveBillingUpsellGate() {
 }
 
 export function ServersRoute() {
-  return <ServersTabBody />;
+  const {
+    convexProjectId,
+    hostsHubFlagEnabled,
+    isAuthenticated,
+    setHostsTabSelectedHostId,
+  } = useAppRouteContext();
+
+  if (!hostsHubFlagEnabled || !isAuthenticated) {
+    return <ServersTabBody />;
+  }
+
+  return (
+    <HostsTab
+      projectId={convexProjectId}
+      isAuthenticated={isAuthenticated}
+      selectedHostId={null}
+      onSelectHost={setHostsTabSelectedHostId}
+      serversTabElement={<ServersTabBody />}
+    />
+  );
 }
 
 function ServersTabBody() {
@@ -547,6 +570,7 @@ export function HostsRoute() {
     isAuthenticated,
     setHostsTabSelectedHostId,
   } = useAppRouteContext();
+  const [previewedHostId] = usePreviewedHostId(convexProjectId);
 
   if (!hostsHubFlagEnabled || !isAuthenticated) {
     return <ServersTabBody />;
@@ -556,7 +580,7 @@ export function HostsRoute() {
     <HostsTab
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
-      selectedHostId={hostsTabSelectedHostId}
+      selectedHostId={hostsTabSelectedHostId ?? previewedHostId}
       onSelectHost={setHostsTabSelectedHostId}
       serversTabElement={<ServersTabBody />}
     />
@@ -688,27 +712,17 @@ export function ConformanceRoute() {
   return <ConformanceTab server={selectedServerEntry ?? null} />;
 }
 
+// `/chatboxes` is the publish surface (link / mode / members / sessions /
+// clusters) for the chatbox bound 1:1 to the currently-selected host.
+// Navigation between chatboxes flows through the global host bar — pick
+// a host, manage its chatbox here. There is no chatbox list; the host
+// list lives in Connect.
 export function ChatboxesRoute() {
-  const {
-    billingUiEnabled,
-    activeTabBillingLocked,
-    activeTabBillingFeature,
-    billingProjectId,
-    activeProjectBillingOrganizationId,
-    isBillingContextPending,
-    ensureServersReady,
-  } = useAppRouteContext();
-
-  if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
-    return <ActiveBillingUpsellGate />;
-  }
-
+  const { convexProjectId, isAuthenticated } = useAppRouteContext();
   return (
     <ChatboxesTab
-      projectId={billingProjectId}
-      organizationId={activeProjectBillingOrganizationId}
-      isBillingContextPending={isBillingContextPending}
-      ensureServersReady={ensureServersReady}
+      projectId={convexProjectId}
+      isAuthenticated={isAuthenticated}
     />
   );
 }
@@ -859,10 +873,9 @@ export function XAAFlowRoute() {
 export function ChatV2Route() {
   const {
     connectedOrConnectingServerConfigs,
-    activeMcpProfile,
     appState,
-    chatTabHost,
-    chatTabHostId,
+    activeHost,
+    activeHostId,
     convexProjectId,
     evalChatHandoff,
     handleConnect,
@@ -870,7 +883,7 @@ export function ChatV2Route() {
     hostsHubFlagEnabled,
     isAuthenticated,
     projectServers,
-    setChatTabHostId,
+    setActiveHostId,
     setEvalChatHandoff,
     setSelectedMCPConfigs,
     toggleServerSelection,
@@ -884,8 +897,8 @@ export function ChatV2Route() {
           <div className="w-48">
             <HostPicker
               projectId={convexProjectId}
-              value={chatTabHostId}
-              onChange={setChatTabHostId}
+              value={activeHostId}
+              onChange={setActiveHostId}
               placeholder="Project default"
               noneLabel="Project default"
             />
@@ -903,16 +916,16 @@ export function ChatV2Route() {
         enableMultiModelChat
         showHostStyleSelector
         executionConfig={
-          chatTabHost
+          activeHost
             ? {
-                modelId: chatTabHost.config.modelId,
-                systemPrompt: chatTabHost.config.systemPrompt,
-                temperature: chatTabHost.config.temperature,
-                requireToolApproval: chatTabHost.config.requireToolApproval,
+                modelId: activeHost.modelId,
+                systemPrompt: activeHost.systemPrompt,
+                temperature: activeHost.temperature,
+                requireToolApproval: activeHost.requireToolApproval,
               }
             : undefined
         }
-        activeMcpProfile={chatTabHost?.config.mcpProfile ?? activeMcpProfile}
+        activeHost={activeHost}
         evalChatHandoff={evalChatHandoff}
         onEvalChatHandoffConsumed={(id) =>
           setEvalChatHandoff((current: EvalChatHandoff | null) =>
@@ -1097,10 +1110,14 @@ export function ServersRedirectRoute() {
 export default function App() {
   const activeTab = useActiveTab();
   const currentOrgRoute = useCurrentOrgRoute();
-  const [chatTabHostId, setChatTabHostId] = useState<string | null>(null);
   const [hostsTabSelectedHostId, setHostsTabSelectedHostId] = useState<
     string | null
   >(null);
+  // The "active host" is unified: one selection drives the Chat tab, the
+  // Servers/Playground/Hosts top-bar preview, and every MCP `initialize`
+  // handshake the inspector performs. `usePreviewedHostId` is the canonical
+  // storage (localStorage-backed, project-scoped) — useAppState resolves the
+  // hydrated config from it internally so consumers see one source of truth.
   const [evalChatHandoff, setEvalChatHandoff] =
     useState<EvalChatHandoff | null>(null);
   const [
@@ -1140,10 +1157,6 @@ export default function App() {
   } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const actorKey = useActorKey();
-  const { host: chatTabHost } = useHost({
-    isAuthenticated: isAuthenticated && hostsHubFlagEnabled,
-    hostId: chatTabHostId,
-  });
   const currentUser = useQuery(
     "users:getCurrentUser" as any,
     isAuthenticated ? ({} as any) : "skip"
@@ -1502,6 +1515,7 @@ export default function App() {
     isSelectedServerSyncing,
     handleConnect,
     handleDisconnect,
+    handleRuntimeDisconnect,
     handleReconnect,
     ensureServersReady,
     syncAgentStatus,
@@ -1531,6 +1545,9 @@ export default function App() {
     isCloudSyncActive,
     persistRuntimeServerToProjectIfNeeded,
     activeMcpProfile,
+    activeHost,
+    activeHostId,
+    setActiveHostId,
   } = useAppState({
     currentUserId: workOsUser?.id ?? null,
     currentActorKey: actorKey,
@@ -1538,7 +1555,7 @@ export default function App() {
     isLoadingOrganizations,
     validOrganizations: effectiveOrganizations,
     routeOrganizationId: hasRouteOrganization ? routeOrganizationId : undefined,
-    activeHostConfig: chatTabHost?.config,
+    hostsHubFlagEnabled,
   });
   // Keep this explicit sign-out cleanup even though useAppState also cleans up
   // on auth-scope changes: WorkOS navigation can redirect before that effect
@@ -1739,22 +1756,24 @@ export default function App() {
   const activeProject = projects[activeProjectId];
   const isClientConfigSyncPending =
     useProjectClientConfigSyncPending(activeProjectId);
-  const hostedClientCapabilities = getEffectiveProjectClientCapabilities(
-    activeProject?.clientConfig
-  ) as Record<string, unknown>;
+  // Fallback chain: active named host (top-bar selection or project default
+  // resolved inside useAppState) → project clientConfig shadow → SDK defaults.
+  // The host is the authoritative source once `activeHost` hydrates; the
+  // shadow path only matters during the bootstrap window before
+  // `hostConfigsV2:getProjectDefault` returns.
+  const hostedClientCapabilities = (activeHost?.clientCapabilities ??
+    getEffectiveProjectClientCapabilities(activeProject?.clientConfig) ??
+    getDefaultClientCapabilities()) as Record<string, unknown>;
   const convexProjectId = activeProject?.sharedProjectId ?? null;
-  // chatTabHostId/hostsTabSelectedHostId are project-scoped — drop them when
-  // the active project, auth, or feature flag changes so host-derived config
-  // can't bleed across projects (e.g. switching to project B while a project-A
-  // host is still selected in the Chat tab picker).
+  // hostsTabSelectedHostId is a Hosts-tab-local cursor; drop it when scope
+  // changes so it can't bleed across projects. `activeHostId` is owned by
+  // useAppState (project-keyed in localStorage) and self-resets.
   useEffect(() => {
     if (!hostsHubFlagEnabled || !isAuthenticated || !convexProjectId) {
-      setChatTabHostId(null);
       setHostsTabSelectedHostId(null);
     }
   }, [hostsHubFlagEnabled, isAuthenticated, convexProjectId]);
   useEffect(() => {
-    setChatTabHostId(null);
     setHostsTabSelectedHostId(null);
   }, [convexProjectId]);
   const routeScopedOrganizationId = hasRouteOrganization
@@ -2801,8 +2820,8 @@ export default function App() {
     billingOrganizationId,
     billingProjectId,
     billingUiEnabled,
-    chatTabHost,
-    chatTabHostId,
+    activeHost,
+    activeHostId,
     checkoutIntentForBilling,
     connectedOrConnectingServerConfigs,
     consumeCheckoutIntent,
@@ -2853,7 +2872,7 @@ export default function App() {
     selectedMCPConfig,
     selectedServerEntry,
     setAppBuilderOnboarding,
-    setChatTabHostId,
+    setActiveHostId,
     setEvalChatHandoff,
     setHostsTabSelectedHostId,
     setSelectedMCPConfigs,
@@ -2983,6 +3002,23 @@ export default function App() {
         savedClientConfig={activeProject?.clientConfig}
       />
       <AppStateProvider appState={effectiveAppState}>
+        <ServerActionsProvider
+        actions={{
+          ensureServersReady,
+          runtimeDisconnectServer: handleRuntimeDisconnect,
+          setSelectedServerNames: setSelectedMCPConfigs,
+        }}
+      >
+        <ActiveHostServerReconciler
+          projectId={convexProjectId}
+          isAuthenticated={isAuthenticated}
+          activeHost={activeHost}
+          activeHostId={activeHostId}
+        />
+        <ChatboxBackfillForProject
+          projectId={convexProjectId}
+          isAuthenticated={isAuthenticated}
+        />
         <AppReadyProvider
           isLoadingAppState={isLoading}
           isConvexAuthLoading={isAuthLoading}
@@ -3038,6 +3074,7 @@ export default function App() {
             <BillingHandoffLoading overlay />
           ) : null}
         </AppReadyProvider>
+        </ServerActionsProvider>
       </AppStateProvider>
     </PreferencesStoreProvider>
   );

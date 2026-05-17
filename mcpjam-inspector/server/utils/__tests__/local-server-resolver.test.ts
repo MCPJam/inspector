@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { toMCPServerConfig } from "../local-server-resolver.js";
+import {
+  resolveLocalServerForConnect,
+  toMCPServerConfig,
+} from "../local-server-resolver.js";
 
 const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;
 
@@ -196,6 +199,213 @@ describe("toMCPServerConfig — onUnauthorized wiring", () => {
         serverId: "server-1",
         serverName: "Asana",
       },
+    });
+  });
+});
+
+describe("resolveLocalServerForConnect — refresh on missing access token", () => {
+  beforeEach(() => {
+    process.env.CONVEX_HTTP_URL = "https://example.convex.site";
+  });
+
+  afterEach(() => {
+    if (ORIGINAL_CONVEX_HTTP_URL === undefined) {
+      delete process.env.CONVEX_HTTP_URL;
+    } else {
+      process.env.CONVEX_HTTP_URL = ORIGINAL_CONVEX_HTTP_URL;
+    }
+    vi.unstubAllGlobals();
+  });
+
+  // Minimal hono-like context used by the resolver's setRequestLogContext
+  // calls; we don't assert on log routing here.
+  const fakeContext = { set: () => {}, get: () => undefined } as any;
+
+  function authorizeBatchLocalResponse(payload: {
+    serverId: string;
+    serverConfig: {
+      transportType: "http";
+      url: string;
+      useOAuth?: boolean;
+      headers?: Record<string, string>;
+    };
+    oauthAccessToken: string | null;
+  }) {
+    return new Response(
+      JSON.stringify({
+        results: {
+          [payload.serverId]: {
+            ok: true,
+            role: "owner",
+            accessLevel: "project_member",
+            permissions: { chatOnly: false },
+            serverConfig: payload.serverConfig,
+            oauthAccessToken: payload.oauthAccessToken,
+          },
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  it("calls /web/oauth/force-refresh when authorize-batch-local returns no token, and uses the refreshed token", async () => {
+    const fetchMock = vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.endsWith("/web/authorize-batch-local")) {
+        return authorizeBatchLocalResponse({
+          serverId: "srv-1",
+          serverConfig: {
+            transportType: "http",
+            url: "https://hosted.example.com/mcp",
+            useOAuth: true,
+          },
+          oauthAccessToken: null,
+        });
+      }
+      if (url.endsWith("/web/oauth/force-refresh")) {
+        return new Response(
+          JSON.stringify({ accessToken: "refreshed-token" }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { config }: any = await resolveLocalServerForConnect(
+      fakeContext,
+      "bearer-xyz",
+      "proj-1",
+      "srv-1",
+      { serverDisplayName: "Excalidraw" },
+    );
+
+    expect(config.requestInit.headers).toMatchObject({
+      Authorization: "Bearer refreshed-token",
+    });
+    expect(config.onUnauthorized).toEqual(expect.any(Function));
+    // Two outbound calls: authorize-batch-local, then force-refresh.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does NOT call force-refresh when authorize-batch-local already returned a token", async () => {
+    const fetchMock = vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.endsWith("/web/authorize-batch-local")) {
+        return authorizeBatchLocalResponse({
+          serverId: "srv-2",
+          serverConfig: {
+            transportType: "http",
+            url: "https://hosted.example.com/mcp",
+            useOAuth: true,
+          },
+          oauthAccessToken: "fresh-token",
+        });
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { config }: any = await resolveLocalServerForConnect(
+      fakeContext,
+      "bearer-xyz",
+      "proj-1",
+      "srv-2",
+      { serverDisplayName: "Excalidraw" },
+    );
+
+    expect(config.requestInit.headers).toMatchObject({
+      Authorization: "Bearer fresh-token",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws 401 with refreshTokenInvalid when force-refresh reports refresh_token_invalid", async () => {
+    const fetchMock = vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.endsWith("/web/authorize-batch-local")) {
+        return authorizeBatchLocalResponse({
+          serverId: "srv-3",
+          serverConfig: {
+            transportType: "http",
+            url: "https://hosted.example.com/mcp",
+            useOAuth: true,
+          },
+          oauthAccessToken: null,
+        });
+      }
+      if (url.endsWith("/web/oauth/force-refresh")) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            code: "refresh_token_invalid",
+            message: "Reconnect required.",
+          }),
+          { status: 401, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      resolveLocalServerForConnect(
+        fakeContext,
+        "bearer-xyz",
+        "proj-1",
+        "srv-3",
+        { serverDisplayName: "Excalidraw" },
+      ),
+    ).rejects.toMatchObject({
+      status: 401,
+      code: "UNAUTHORIZED",
+      details: {
+        oauthRequired: true,
+        refreshTokenInvalid: true,
+        serverId: "srv-3",
+      },
+    });
+  });
+
+  it("bubbles up transient force-refresh errors instead of telling the user to reconnect", async () => {
+    const fetchMock = vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.endsWith("/web/authorize-batch-local")) {
+        return authorizeBatchLocalResponse({
+          serverId: "srv-4",
+          serverConfig: {
+            transportType: "http",
+            url: "https://hosted.example.com/mcp",
+            useOAuth: true,
+          },
+          oauthAccessToken: null,
+        });
+      }
+      if (url.endsWith("/web/oauth/force-refresh")) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            code: "rate_limited",
+            message: "Too many refresh requests.",
+          }),
+          { status: 429, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      resolveLocalServerForConnect(
+        fakeContext,
+        "bearer-xyz",
+        "proj-1",
+        "srv-4",
+        { serverDisplayName: "Excalidraw" },
+      ),
+    ).rejects.toMatchObject({
+      status: 429,
+      code: "rate_limited",
     });
   });
 });

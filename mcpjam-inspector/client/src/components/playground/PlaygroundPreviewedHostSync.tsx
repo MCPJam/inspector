@@ -41,6 +41,9 @@ export function PlaygroundPreviewedHostSync({
   const setHostCapabilitiesOverride = usePreferencesStore(
     (state) => state.setHostCapabilitiesOverride,
   );
+  const setChatUiOverride = usePreferencesStore(
+    (state) => state.setChatUiOverride,
+  );
 
   // Track the last (id, configId) tuple we applied so the effect only
   // fires on actual host changes — not on every re-render or on
@@ -72,9 +75,16 @@ export function PlaygroundPreviewedHostSync({
     applyHostConfigToPlayground(host.config, {
       setHostStyle,
       setHostCapabilitiesOverride,
+      setChatUiOverride,
     });
     lastAppliedRef.current = { hostId: previewedHostId, configId };
-  }, [previewedHostId, host, setHostStyle, setHostCapabilitiesOverride]);
+  }, [
+    previewedHostId,
+    host,
+    setHostStyle,
+    setHostCapabilitiesOverride,
+    setChatUiOverride,
+  ]);
 
   return null;
 }

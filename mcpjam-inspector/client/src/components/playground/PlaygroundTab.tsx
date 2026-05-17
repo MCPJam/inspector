@@ -1,16 +1,23 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { useConvexAuth } from "convex/react";
 import {
   AppBuilderStateProvider,
   useAppBuilderState,
 } from "@/components/ui-playground/hooks/use-app-builder-state";
 import {
+  ChatboxChatUiOverrideProvider,
   ChatboxHostStyleProvider,
   ChatboxHostThemeProvider,
 } from "@/contexts/chatbox-host-style-context";
 import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-host-capabilities-override-context";
+import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
 import { getChatboxShellStyle } from "@/lib/chatbox-host-style";
 import { cn } from "@/lib/utils";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { useHost } from "@/hooks/useHosts";
+import { usePreviewedHostId } from "@/hooks/use-previewed-host-id";
+import { useAutoConnectProjectServers } from "@/hooks/useAutoConnectProjectServers";
+import { useProjectServers } from "@/hooks/useViews";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -73,11 +80,61 @@ interface PlaygroundTabProps {
  */
 export function PlaygroundTab(props: PlaygroundTabProps) {
   const themeMode = usePreferencesStore((state) => state.themeMode);
-  const hostStyle = usePreferencesStore((state) => state.hostStyle);
-  const hostCapabilitiesOverride = usePreferencesStore(
+
+  // Resolve the previewed host once at the tab root so the host-config-
+  // derived providers (Active MCP Profile, hostStyle, capabilities override,
+  // chatUiOverride) share a single Convex subscription with
+  // PlaygroundPreviewedHostSync below. `useHost` short-circuits on null
+  // hostId, so this is cheap when no host is picked yet.
+  const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
+  const [previewedHostId] = usePreviewedHostId(props.activeProjectId ?? null);
+  const { host: previewedHost } = useHost({
+    isAuthenticated: isConvexAuthenticated,
+    hostId: previewedHostId,
+  });
+  const activeMcpProfile = previewedHost?.config.mcpProfile;
+
+  // Host-derived widget runtime values. The preferences store is the
+  // editing surface for ad-hoc previews; once a host is selected its
+  // persisted fields win so "select a host" actually means "operate under
+  // its properties" everywhere.
+  const prefHostStyle = usePreferencesStore((state) => state.hostStyle);
+  const prefHostCapabilitiesOverride = usePreferencesStore(
     (state) => state.hostCapabilitiesOverride,
   );
+  const prefChatUiOverride = usePreferencesStore(
+    (state) => state.chatUiOverride,
+  );
+  const hostStyle = previewedHost?.config.hostStyle ?? prefHostStyle;
+  const hostCapabilitiesOverride =
+    previewedHost?.config.hostCapabilitiesOverride ??
+    prefHostCapabilitiesOverride;
+  const chatUiOverride =
+    previewedHost?.config.chatUiOverride ?? prefChatUiOverride;
   const shellStyle = getChatboxShellStyle(hostStyle, themeMode);
+
+  // Auto-connect the previewed host's REQUIRED servers once per session.
+  // No previewed host = no auto-connect. Optional servers stay
+  // disconnected until the user manually toggles them in the Servers tab.
+  const { servers: projectServersList } = useProjectServers({
+    projectId: props.activeProjectId ?? null,
+    isAuthenticated: isConvexAuthenticated,
+  });
+  const previewedHostRequiredNames = useMemo(() => {
+    const requiredIds = previewedHost?.config?.serverIds ?? [];
+    if (requiredIds.length === 0 || !projectServersList) return [];
+    const byId = new Map(
+      projectServersList.map((s) => [s._id, s.name] as const),
+    );
+    return requiredIds
+      .map((id) => byId.get(id))
+      .filter((name): name is string => !!name);
+  }, [previewedHost?.config?.serverIds, projectServersList]);
+  useAutoConnectProjectServers({
+    projectId: props.activeProjectId ?? null,
+    hostScopeKey: previewedHostId,
+    requiredServerNames: previewedHostRequiredNames,
+  });
 
   const appBuilderState = useAppBuilderState({
     activeProjectId: props.activeProjectId,
@@ -117,10 +174,12 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
 
   return (
     <AppBuilderStateProvider value={appBuilderState}>
+      <ActiveMcpProfileProvider value={activeMcpProfile}>
         <ChatboxHostStyleProvider value={hostStyle}>
           <ChatboxHostCapabilitiesOverrideProvider
             value={hostCapabilitiesOverride}
           >
+          <ChatboxChatUiOverrideProvider value={chatUiOverride}>
             <ChatboxHostThemeProvider value={themeMode}>
               <div
                 className={cn(
@@ -231,8 +290,10 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                 </ResizablePanelGroup>
               </div>
             </ChatboxHostThemeProvider>
+          </ChatboxChatUiOverrideProvider>
           </ChatboxHostCapabilitiesOverrideProvider>
         </ChatboxHostStyleProvider>
-      </AppBuilderStateProvider>
+      </ActiveMcpProfileProvider>
+    </AppBuilderStateProvider>
   );
 }

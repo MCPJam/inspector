@@ -64,6 +64,10 @@ export function createAppRouter(): AppRouter {
         { path: "tracing", element: <TracingRoute /> },
         { path: "chat", element: <ChatAliasRoute /> },
         { path: "chat-v2", element: <ChatV2Route /> },
+        // `/chatboxes` — the publish-surface tab. Shows
+        // Publish / Sessions / Clusters for the chatbox bound 1:1 to
+        // the currently-selected host. Navigation between chatboxes
+        // flows through the global host bar.
         { path: "chatboxes", element: <ChatboxesRoute /> },
         { path: "app-builder", element: <AppBuilderRoute /> },
         { path: "playground", element: <PlaygroundRoute /> },
