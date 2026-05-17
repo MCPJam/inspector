@@ -10,7 +10,7 @@ import { useProjectServers } from "@/hooks/useViews";
 import { useEvalsRouteFromUrl } from "@/lib/eval-route-url";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
 import { useIsDirectGuest } from "@/hooks/use-is-direct-guest";
-import { aggregateSuite } from "./evals/helpers";
+import { aggregateSuite, getEffectiveSuiteServers } from "./evals/helpers";
 import { EvalTabGate } from "./evals/EvalTabGate";
 import {
   createPlaygroundSuiteNavigation,
@@ -372,11 +372,14 @@ export function EvalsTab({
           projectId,
           name: payload.name,
           description: payload.description,
-          environment: {
-            servers: payload.selectedServers,
-          },
-          ...(payload.namedHostId ? { namedHostId: payload.namedHostId } : {}),
-          ...(payload.hostConfigInput ? { hostConfigInput: payload.hostConfigInput } : {}),
+          // environment.servers is left empty: hosts own server selection
+          // now, and the runner derives the per-run server set from each
+          // attachment's snapshot. Suites with zero attachments are valid
+          // skeletons — they just can't run until a host is attached.
+          environment: { servers: [] },
+          ...(payload.hostAttachments && payload.hostAttachments.length > 0
+            ? { hostAttachments: payload.hostAttachments }
+            : {}),
         });
 
         if (!createdSuite?._id) {
@@ -416,18 +419,20 @@ export function EvalsTab({
 
   const handleGenerateMore = useCallback(async () => {
     if (!selectedSuite) return;
-    const suiteServers = selectedSuite.environment?.servers ?? [];
+    const suiteServers = getEffectiveSuiteServers(selectedSuite);
     if (suiteServers.length === 0) return;
     await handlers.handleGenerateTests(selectedSuite._id, suiteServers);
   }, [handlers, selectedSuite]);
 
   const generateState = useMemo(() => {
-    const suiteServers = selectedSuite?.environment?.servers ?? [];
+    const suiteServers = selectedSuite
+      ? getEffectiveSuiteServers(selectedSuite)
+      : [];
     if (suiteServers.length === 0) {
       return {
         canGenerate: false,
         disabledReason:
-          "Add at least one server to this suite in Edit suite before generating cases.",
+          "Attach a host in the suite header before generating cases.",
       };
     }
 
@@ -819,8 +824,6 @@ export function EvalsTab({
         <CreateSuiteDialog
           open={route.type === "create"}
           onOpenChange={handleCreateDialogChange}
-          projectServers={projectServers}
-          connectedServerNames={connectedServerNames}
           onSubmit={handleCreateSuite}
           hostsEnabled={hostsEnabled}
           projectId={projectId}

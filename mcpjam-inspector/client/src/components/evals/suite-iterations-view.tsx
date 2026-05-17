@@ -1,5 +1,6 @@
 import { useMemo, useState, useEffect, useCallback } from "react";
-import { useMutation } from "convex/react";
+import { useMutation, useConvexAuth } from "convex/react";
+import { useHostList } from "@/hooks/useHosts";
 import { toast } from "sonner";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { SuiteHeader } from "./suite-header";
@@ -10,7 +11,6 @@ import {
   computeRunDashboardKpis,
   RunDetailKpiStrip,
 } from "./run-detail-kpis";
-import { SuiteTestsConfig } from "./suite-tests-config";
 import { TestTemplateEditor } from "./test-template-editor";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
 import { ValidatorsSection } from "./validators-section";
@@ -20,7 +20,6 @@ import { TestCasesOverview } from "./test-cases-overview";
 import { TestCaseDetailView } from "./test-case-detail-view";
 import { SuiteDashboard } from "./suite-dashboard";
 import { EvalExportModal } from "./eval-export-modal";
-import { SuiteEnvironmentEditor } from "./suite-environment-editor";
 import { SuiteExecutionConfigEditor } from "./suite-execution-config-editor";
 import { useSuiteData, useRunDetailData } from "./use-suite-data";
 import type {
@@ -272,7 +271,14 @@ export function SuiteIterationsView({
   } | null>(null);
 
   const updateSuite = useMutation("testSuites:updateTestSuite" as any);
-  const updateSuiteModels = useMutation("testSuites:updateSuiteModels" as any);
+  const { isAuthenticated } = useConvexAuth();
+  // Hosts available to attach in the header's "+ Attach host" picker. The
+  // query is owned here (not inside SuiteOverviewHostBar) so the bar stays
+  // pure-props and renderable in test environments without a Convex provider.
+  const { hosts: projectHosts } = useHostList({
+    isAuthenticated,
+    projectId: projectId ?? null,
+  });
 
   // Use custom hooks for data calculations
   const { runTrendData, modelStats } = useSuiteData(
@@ -296,6 +302,16 @@ export function SuiteIterationsView({
     const run = runs.find((r) => r._id === selectedRunId);
     return run ?? null;
   }, [selectedRunId, runs]);
+
+  // Resolve namedHostId → display name for any run-detail / list views
+  // that want to surface which host a run was triggered against.
+  const hostNamesById = useMemo(() => {
+    const map = new Map<string, string | null>();
+    for (const attachment of suite.hostAttachments ?? []) {
+      map.set(attachment.namedHostId, attachment.hostName);
+    }
+    return map;
+  }, [suite.hostAttachments]);
 
   // Derive selectedIterationId from route
   const selectedIterationId =
@@ -396,19 +412,25 @@ export function SuiteIterationsView({
     [suite.description]
   );
 
-  const handleUpdateTests = async (models: any[]) => {
+  const handleUpdateHostAttachments = async (
+    attachments: Array<{
+      namedHostId: string;
+      enabledOptionalServerIds: string[];
+    }>,
+  ) => {
     try {
-      await updateSuiteModels({
+      await updateSuite({
         suiteId: suite._id,
-        models: models.map((m) => ({
-          model: m.model,
-          provider: m.provider,
-        })),
+        hostAttachments: attachments,
       });
-      toast.success("Models updated successfully");
+      toast.success(
+        attachments.length === 0
+          ? "Hosts cleared"
+          : "Hosts updated",
+      );
     } catch (error) {
-      toast.error(getBillingErrorMessage(error, "Failed to update models"));
-      console.error("Failed to update models:", error);
+      toast.error(getBillingErrorMessage(error, "Failed to update hosts"));
+      console.error("Failed to update host attachments:", error);
       throw error;
     }
   };
@@ -532,10 +554,10 @@ export function SuiteIterationsView({
             onRunTestCase={onRunTestCaseWithOverride}
             blockTestCaseRuns={Boolean(rerunningSuiteId || replayingRunId)}
             runningTestCaseId={runningTestCaseId}
-            availableModels={availableModels}
-            onSuiteModelsUpdate={
-              readOnlyConfig ? undefined : handleUpdateTests
+            onSuiteHostAttachmentsUpdate={
+              readOnlyConfig ? undefined : handleUpdateHostAttachments
             }
+            projectHosts={projectHosts}
             runDetailKpiStrip={
               showSuiteHeader &&
               viewMode === "run-detail" &&
@@ -839,6 +861,7 @@ export function SuiteIterationsView({
                   serverNames={suite.environment?.servers || []}
                   selectedIterationId={selectedIterationId}
                   onSelectIteration={handleSelectIteration}
+                  hostNamesById={hostNamesById}
                   kpiPlacement={
                     showSuiteHeader && viewMode === "run-detail"
                       ? "header"
@@ -874,32 +897,6 @@ export function SuiteIterationsView({
       {isEditMode && (
         <div className="flex-1 min-h-0 overflow-auto">
           <div className="p-6 max-w-5xl mx-auto space-y-8">
-            {projectServers ? (
-              <SuiteEnvironmentEditor
-                suite={suite}
-                projectServers={projectServers}
-                connectedServerNames={connectedServerNames}
-                onSave={async (environment) => {
-                  try {
-                    await updateSuite({
-                      suiteId: suite._id,
-                      environment,
-                    });
-                    toast.success("Suite servers updated");
-                  } catch (error) {
-                    toast.error(
-                      getBillingErrorMessage(
-                        error,
-                        "Failed to update suite servers",
-                      ),
-                    );
-                    console.error("Failed to update suite servers:", error);
-                    throw error;
-                  }
-                }}
-              />
-            ) : null}
-
             <SuiteExecutionConfigEditor
               suite={suite}
               availableModels={availableModels}
@@ -1009,14 +1006,6 @@ export function SuiteIterationsView({
                 }}
               />
             </div>
-
-            {/* Models Section */}
-            <SuiteTestsConfig
-              suite={suite}
-              testCases={cases}
-              onUpdate={handleUpdateTests}
-              availableModels={availableModels}
-            />
 
             {canDeleteSuite ? (
               <div className="border-t border-border pt-8 space-y-3">

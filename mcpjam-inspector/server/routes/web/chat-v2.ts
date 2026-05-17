@@ -14,7 +14,7 @@ import {
   resolveOrgProviderRuntime,
   type OrgProviderRuntime,
 } from "../../utils/org-model-config.js";
-import { isMCPJamProvidedModel } from "@/shared/types";
+import { getModelById, isMCPJamProvidedModel } from "@/shared/types";
 import type { ModelDefinition } from "@/shared/types";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
@@ -40,6 +40,8 @@ import {
   createHostedRpcLogCollector,
 } from "./hosted-rpc-logs.js";
 import { getClientIp } from "../../utils/client-ip.js";
+import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
+import { logger } from "../../utils/logger.js";
 
 function deriveOrgProviderKey(modelDefinition: ModelDefinition): string {
   const result = deriveOrgProviderKeyResult(modelDefinition);
@@ -86,9 +88,9 @@ chatV2.post("/", async (c) => {
     const {
       messages,
       model,
-      systemPrompt,
-      temperature,
-      requireToolApproval,
+      systemPrompt: bodySystemPrompt,
+      temperature: bodyTemperature,
+      requireToolApproval: bodyRequireToolApproval,
       selectedServerIds,
       selectedServerNames,
       chatboxId,
@@ -107,7 +109,7 @@ chatV2.post("/", async (c) => {
       );
     }
 
-    const modelDefinition = model;
+    let modelDefinition = model;
     if (!modelDefinition) {
       throw new WebRouteError(
         400,
@@ -115,6 +117,73 @@ chatV2.post("/", async (c) => {
         "model is not supported"
       );
     }
+
+    // Host config is owned by the chatbox's host, not the request body.
+    // When this turn is chatbox-bound, re-resolve the live values from
+    // Convex so a stale client snapshot or tampered body can't route the
+    // session through a different model or skip tool approval. The
+    // helper is a no-op (returns body values) for non-chatbox surfaces.
+    let resolvedSystemPrompt = bodySystemPrompt;
+    let resolvedTemperatureOverride = bodyTemperature;
+    let resolvedRequireToolApproval = bodyRequireToolApproval;
+    if (isChatboxSession && chatboxId) {
+      const runtime = await fetchChatboxRuntimeConfig({
+        chatboxId,
+        bearer: bearerToken,
+      });
+      if (runtime.ok) {
+        const cfg = runtime.config;
+        if (
+          bodyRequireToolApproval !== undefined &&
+          cfg.requireToolApproval !== bodyRequireToolApproval
+        ) {
+          logger.warn(
+            "[chat-v2] client requireToolApproval differs from host; using host value",
+            { chatboxId, body: bodyRequireToolApproval, host: cfg.requireToolApproval }
+          );
+        }
+        // Model is part of the host-owned contract: a tampered body
+        // mustn't be able to route a chatbox session through a different
+        // model than the host's hostConfigs row specifies. When the
+        // host's modelId is in our built-in catalog we substitute the
+        // full ModelDefinition (correct provider routing); otherwise
+        // (custom provider unknown to backend) we swap just the id and
+        // keep the body's provider fields, then warn.
+        if (cfg.modelId && cfg.modelId !== modelDefinition.id) {
+          const hostModel = getModelById(cfg.modelId);
+          if (hostModel) {
+            logger.warn(
+              "[chat-v2] client model differs from host; using host model",
+              { chatboxId, body: modelDefinition.id, host: cfg.modelId }
+            );
+            modelDefinition = hostModel;
+          } else {
+            logger.warn(
+              "[chat-v2] host model not in catalog; swapping id only",
+              { chatboxId, body: modelDefinition.id, host: cfg.modelId }
+            );
+            modelDefinition = { ...modelDefinition, id: cfg.modelId };
+          }
+        }
+        resolvedSystemPrompt = cfg.systemPrompt;
+        resolvedTemperatureOverride = cfg.temperature;
+        resolvedRequireToolApproval = cfg.requireToolApproval;
+      } else {
+        // Don't fail the chat send on a transient Convex blip — fall
+        // through to client-supplied values and warn. The chat will run
+        // with potentially stale config, which is the current behavior;
+        // the host-side override is best-effort hardening, not a
+        // hard gate.
+        logger.warn("[chat-v2] runtime-config fetch failed; using body values", {
+          chatboxId,
+          status: runtime.status,
+          error: runtime.error,
+        });
+      }
+    }
+    const systemPrompt = resolvedSystemPrompt;
+    const temperature = resolvedTemperatureOverride;
+    const requireToolApproval = resolvedRequireToolApproval;
 
     // Membership chat (no share/chatbox token) is the default — the backend
     // authorizes via project ownership for both guest and authed users.

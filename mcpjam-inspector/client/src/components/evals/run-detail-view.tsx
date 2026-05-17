@@ -84,6 +84,13 @@ interface RunDetailViewProps {
    * `body` = KPI row stays in this view (CI / commit detail).
    */
   kpiPlacement?: "header" | "body";
+  /**
+   * `namedHostId` → host display name. When the run was triggered against
+   * a specific attached host (multi-host fan-out), the run header surfaces
+   * which host this run is for. Pass the suite's `hostAttachments` to feed
+   * it.
+   */
+  hostNamesById?: Map<string, string | null>;
 }
 
 function runDetailSortLabel(sortBy: "model" | "test" | "result"): string {
@@ -476,6 +483,7 @@ export function RunDetailView({
   onEditTestCase: onEditTestCaseProp,
   alwaysShowEditIterationRows = false,
   kpiPlacement = "body",
+  hostNamesById,
 }: RunDetailViewProps) {
   const handleEditTestCase =
     onEditTestCaseProp ??
@@ -653,6 +661,19 @@ export function RunDetailView({
               <CiMetadataDisplay ciMetadata={selectedRunDetails.ciMetadata} />
             </div>
           )}
+
+        {selectedRunDetails.namedHostId ? (
+          <p
+            className="mb-4 text-xs text-muted-foreground"
+            title={selectedRunDetails.namedHostId}
+          >
+            Host:{" "}
+            <span className="rounded-full bg-primary/10 px-2 py-0.5 font-medium text-primary">
+              {hostNamesById?.get(selectedRunDetails.namedHostId) ??
+                formatRunId(selectedRunDetails.namedHostId)}
+            </span>
+          </p>
+        ) : null}
 
         {!hideReplayLineage && selectedRunDetails.replayedFromRunId ? (
           <p

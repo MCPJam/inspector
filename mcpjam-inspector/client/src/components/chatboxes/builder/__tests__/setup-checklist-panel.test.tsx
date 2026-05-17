@@ -89,12 +89,10 @@ describe("SetupChecklistPanel", () => {
     const feedbackRow = screen.getByRole("button", { name: /Feedback Default on/i });
     expect(within(feedbackRow).getByText("Default on")).toBeInTheDocument();
     expect(feedbackRow.querySelector('[data-slot="badge"]')).toBeNull();
-
-    const advancedRow = screen.getByRole("button", {
-      name: /Advanced Collapsed/i,
-    });
-    expect(within(advancedRow).getByText("Collapsed")).toBeInTheDocument();
-    expect(advancedRow.querySelector('[data-slot="badge"]')).toBeNull();
+    // The legacy "Advanced" section (host-style / model / system prompt /
+    // temperature / requireToolApproval) was removed with the 1:1
+    // host↔chatbox consolidation — those fields are host-owned and edit
+    // through the Host detail page's Definition tab now.
   });
 
   it("renders mobile Done header when onCloseMobile is provided", () => {

@@ -29,6 +29,12 @@ export interface SuiteRunsListProps {
   /** Optional cap; when set, list shows at most N rows with a footer count. */
   maxVisibleRuns?: number;
   runsLoading?: boolean;
+  /**
+   * Resolves `namedHostId` → display name for runs that were triggered
+   * against a specific attached host. When omitted, host badges show
+   * truncated IDs instead. Pass the suite's `hostAttachments` to feed it.
+   */
+  hostNamesById?: Map<string, string | null>;
 }
 
 /**
@@ -45,6 +51,7 @@ export function SuiteRunsList({
   userMap,
   maxVisibleRuns,
   runsLoading = false,
+  hostNamesById,
 }: SuiteRunsListProps) {
   const isSdk = suiteSource === "sdk";
   const accuracyLabel = isSdk ? "Pass" : "Acc";
@@ -162,6 +169,17 @@ export function SuiteRunsList({
                     <span className="truncate text-xs font-medium">
                       Run {formatRunId(run._id)}
                     </span>
+                    {run.namedHostId ? (
+                      <span
+                        className="shrink-0 truncate rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary"
+                        title={
+                          hostNamesById?.get(run.namedHostId) ?? run.namedHostId
+                        }
+                      >
+                        {hostNamesById?.get(run.namedHostId) ??
+                          formatRunId(run.namedHostId)}
+                      </span>
+                    ) : null}
                     {creator ? (
                       <Tooltip>
                         <TooltipTrigger asChild>

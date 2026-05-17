@@ -56,6 +56,15 @@ export function CreateHostDialog({
     onClose();
   };
 
+  // `useProjectServers` returns `undefined` while loading and `[]` for a
+  // truly empty project. Collapsing both into `[]` at create-time would
+  // silently seed the host with zero attachments whenever the user
+  // clicked Create before the query resolved — the host never self-
+  // corrects, so the only fix is a manual edit in the host tab. Gate the
+  // Create button on `servers !== undefined` so the loading window
+  // disables the action instead of producing a wrong host. The auth gate
+  // matches `useProjectServers`'s own skip rule: unauthenticated users
+  // never fire the query, so "loading" can't apply to them.
   const isServersLoading = isAuthenticated && servers === undefined;
 
   const handleCreate = async () => {
@@ -71,7 +80,10 @@ export function CreateHostDialog({
       // host's Servers tab opens with checkboxes filled in instead of
       // every server reading "optional / uses defaults".
       const seed = seedFromHostTemplate(selectedTemplateId);
-      const projectServerIds = (servers ?? []).map((s) => s._id);
+      // `isServersLoading` already guards the authenticated-loading case;
+      // for unauthenticated callers the query is skipped so `servers` is
+      // undefined and we seed with no attachments.
+      const projectServerIds = servers?.map((s) => s._id) ?? [];
       const { hostId } = await createHost({
         projectId,
         name: trimmed,

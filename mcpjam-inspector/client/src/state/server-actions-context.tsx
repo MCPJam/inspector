@@ -21,7 +21,9 @@ export interface ServerActions {
   /**
    * Replace the global playground/chat multi-select set. Used by the
    * host-switch reconciliation so the chat composer's per-server toggles
-   * match what the active host actually requires.
+   * match what the active host actually requires — without this, the
+   * playground keeps the previous host's selection and the user has to
+   * flip each toggle by hand after every switch.
    */
   setSelectedServerNames: (names: string[]) => void;
 }

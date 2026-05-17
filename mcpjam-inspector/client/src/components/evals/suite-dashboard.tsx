@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { SuiteRunsChartGrid } from "./suite-runs-chart-grid";
 import { SuiteInsightsCollapsible } from "./suite-insights-collapsible";
 import { SuiteRunsList } from "./suite-runs-list";
@@ -72,6 +73,13 @@ export function SuiteDashboard({
   userMap,
 }: SuiteDashboardProps) {
   const hasRuns = runs.length > 0;
+  const hostNamesById = useMemo(() => {
+    const map = new Map<string, string | null>();
+    for (const attachment of suite.hostAttachments ?? []) {
+      map.set(attachment.namedHostId, attachment.hostName);
+    }
+    return map;
+  }, [suite.hostAttachments]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
@@ -111,6 +119,7 @@ export function SuiteDashboard({
           onRunClick={onRunClick}
           userMap={userMap}
           runsLoading={runsLoading}
+          hostNamesById={hostNamesById}
         />
       </div>
     </div>

@@ -9,6 +9,13 @@ export type SuiteReplayEligibility = {
   canRunNow: boolean;
 };
 
+/**
+ * `suiteServers` is the EFFECTIVE server list — callers must pre-merge
+ * legacy `suite.environment.servers` with `suite.hostAttachments[*].
+ * resolvedServerNames` via {@link getEffectiveSuiteServers}. The helper
+ * here doesn't introspect the suite shape so it stays focused on the
+ * connection / replay decision.
+ */
 export function getSuiteReplayEligibility({
   suiteServers,
   connectedServerNames,

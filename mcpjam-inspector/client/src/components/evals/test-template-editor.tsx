@@ -45,6 +45,7 @@ import {
   buildTestCaseModelOptions,
   getPersistedTestCaseModelValue,
   prepareSingleTestCaseRun,
+  projectHostConfigRunOverride,
   resolveSelectedTestCaseModelValue,
   setPersistedTestCaseModelValue,
 } from "./single-test-case-runner";
@@ -61,7 +62,14 @@ import {
   resolveMatchOptions,
   type EvalMatchOptions,
 } from "@/shared/eval-matching";
+import {
+  emptyHostConfigInputV2,
+  hostConfigDtoToInput,
+  type HostConfigDtoV2,
+  type HostConfigInputV2,
+} from "@/lib/host-config-v2";
 import { cn } from "@/lib/utils";
+import { getEffectiveSuiteServers } from "./helpers";
 import { computeIterationResult } from "./pass-criteria";
 import { ValidatorsSection } from "./validators-section";
 import { RunValidatorsPopover } from "./run-validators-popover";
@@ -112,8 +120,8 @@ import {
   type TraceEnvelope,
 } from "./trace-viewer-adapter";
 import { getChatboxShellStyle } from "@/lib/chatbox-host-style";
-import { HostStylePillSelector } from "@/components/shared/HostStylePillSelector";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { TestCaseHostHeader } from "./TestCaseHostHeader";
 
 interface TestTemplate {
   title: string;
@@ -332,12 +340,17 @@ export function TestTemplateEditor({
   projectServers,
 }: TestTemplateEditorProps) {
   const { getAccessToken } = useAuth();
-  const hostStyle = usePreferencesStore((state) => state.hostStyle);
-  const setHostStyle = usePreferencesStore((state) => state.setHostStyle);
   const [editForm, setEditForm] = useState<TestTemplate | null>(null);
   const [runMatchOptionsOverride, setRunMatchOptionsOverride] = useState<
     EvalMatchOptions | undefined
   >(undefined);
+  /**
+   * Per-case in-place tweak to the suite's hostConfig. `null` = no tweak,
+   * the suite baseline is used as-is. Mirrors `runMatchOptionsOverride`:
+   * never persists, resets on case switch, consumed by the next Run.
+   */
+  const [hostConfigOverride, setHostConfigOverride] =
+    useState<HostConfigInputV2 | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editorMode, setEditorMode] = useState<EditorMode>(
     openCompareFromRoute ? "run" : "config"
@@ -429,6 +442,38 @@ export function TestTemplateEditor({
 
   const suite = useQuery("testSuites:getTestSuite" as any, { suiteId }) as any;
 
+  /**
+   * Suite-level hostConfig (v2). The same query SuiteExecutionConfigEditor
+   * uses — single source of truth for model / system / temperature /
+   * hostContext / capabilities / style at the suite level. Per-case Run
+   * tweaks are layered on top as `hostConfigOverride` (added in Phase 2).
+   */
+  const suiteHostConfigDto = useQuery(
+    "hostConfigsV2:getSuiteConfig" as any,
+    { suiteId } as any,
+  ) as HostConfigDtoV2 | null | undefined;
+
+  /**
+   * Editable shape derived from the suite DTO. When the suite has no v2 row
+   * yet, seed from the legacy `suite.defaultConfig.{modelId,systemPrompt,
+   * temperature}` mirror so the header isn't blank on suites that pre-date
+   * the v2 schema. Mirrors `SuiteExecutionConfigEditor` line 97-107.
+   */
+  const hostConfigBaseline = useMemo<HostConfigInputV2 | null>(() => {
+    if (suiteHostConfigDto === undefined) return null; // still loading
+    if (suiteHostConfigDto) return hostConfigDtoToInput(suiteHostConfigDto);
+    return emptyHostConfigInputV2({
+      modelId: suite?.defaultConfig?.modelId,
+      systemPrompt: suite?.defaultConfig?.systemPrompt,
+      temperature: suite?.defaultConfig?.temperature,
+    });
+  }, [
+    suiteHostConfigDto,
+    suite?.defaultConfig?.modelId,
+    suite?.defaultConfig?.systemPrompt,
+    suite?.defaultConfig?.temperature,
+  ]);
+
   useEffect(() => {
     setEditorMode(openCompareFromRoute ? "run" : "config");
     setCompareRunRecords({});
@@ -437,6 +482,8 @@ export function TestTemplateEditor({
     setMobileVisibleModelValue(null);
     setExpandedPromptTurnIds([]);
     initializedSelectionCaseRef.current = null;
+    // Per-case ephemeral tweak; switching cases starts fresh.
+    setHostConfigOverride(null);
   }, [openCompareFromRoute, selectedTestCaseId]);
 
   useEffect(() => {
@@ -487,17 +534,27 @@ export function TestTemplateEditor({
     );
   }, [currentTestCase?._id]);
 
-  const missingServers = useMemo(() => {
-    if (!suite) return [];
-    const suiteServers = suite.environment?.servers || [];
-    return suiteServers.filter(
-      (server: string) => !connectedServerNames.has(server)
-    );
-  }, [suite, connectedServerNames]);
-
-  const hasConfiguredSuiteServers = Boolean(
-    suite?.environment?.servers?.length,
+  /**
+   * Effective server list for the suite — legacy `environment.servers`
+   * merged with `hostAttachments[*].resolvedServerNames`. All run / tool
+   * gates downstream consult this; reading `suite.environment.servers`
+   * directly here would treat attachment-only suites (the current model)
+   * as having no servers and disable Run / hide tool autocomplete.
+   */
+  const effectiveSuiteServers = useMemo(
+    () => (suite ? getEffectiveSuiteServers(suite) : []),
+    [suite],
   );
+
+  const missingServers = useMemo(
+    () =>
+      effectiveSuiteServers.filter(
+        (server: string) => !connectedServerNames.has(server),
+      ),
+    [effectiveSuiteServers, connectedServerNames],
+  );
+
+  const hasConfiguredSuiteServers = effectiveSuiteServers.length > 0;
   // Guests rely on the local persistent MCP manager; don't block Run on the
   // connected-servers check — the runner surfaces a connection error if the
   // server is genuinely missing.
@@ -509,7 +566,7 @@ export function TestTemplateEditor({
     async function fetchTools() {
       if (!suite) return;
 
-      const serverIds = suite.environment?.servers || [];
+      const serverIds = effectiveSuiteServers;
       if (serverIds.length === 0) {
         setAvailableTools([]);
         return;
@@ -536,7 +593,7 @@ export function TestTemplateEditor({
     return () => {
       cancelled = true;
     };
-  }, [suite, projectId]);
+  }, [suite, projectId, effectiveSuiteServers]);
 
   const handleTitleClick = () => {
     setIsEditingTitle(true);
@@ -1169,7 +1226,9 @@ export function TestTemplateEditor({
       return;
     }
 
-    const suiteServers = normalizeSuiteServerRefs(suite.environment?.servers);
+    // Use the effective list (legacy + host-attachment merged). Without
+    // this, attachment-only suites failed at Run with "No MCP servers".
+    const suiteServers = normalizeSuiteServerRefs(effectiveSuiteServers);
     if (suiteServers.length === 0) {
       toast.error("No MCP servers are configured for this suite.");
       return;
@@ -1271,6 +1330,9 @@ export function TestTemplateEditor({
             matchOptions: savePayload.matchOptions,
           },
           matchOptionsOverride: runMatchOptionsOverride,
+          hostConfigOverride: hostConfigOverride
+            ? projectHostConfigRunOverride(hostConfigOverride)
+            : undefined,
         });
 
         return {
@@ -1715,8 +1777,8 @@ export function TestTemplateEditor({
     );
   }
 
-  const connectedServerList = (suite?.environment?.servers || []).filter(
-    (name: string) => connectedServerNames.has(name)
+  const connectedServerList = effectiveSuiteServers.filter((name: string) =>
+    connectedServerNames.has(name),
   );
   const runGridClassName =
     selectedCompareRecords.length <= 1
@@ -2092,19 +2154,18 @@ export function TestTemplateEditor({
               </div>
             </div>
 
-            <div
-              data-testid="test-template-host-style-row"
-              className="flex items-center justify-start gap-2 px-1 pt-2"
-            >
-              <p className="shrink-0 text-[11px] font-medium text-muted-foreground">
-                Host style
-              </p>
-              <HostStylePillSelector
-                className="w-[164px] shrink-0"
-                value={hostStyle}
-                onValueChange={setHostStyle}
-              />
-            </div>
+            {hostConfigBaseline ? (
+              <div
+                data-testid="test-template-host-header-row"
+                className="px-1 pt-2"
+              >
+                <TestCaseHostHeader
+                  baseline={hostConfigBaseline}
+                  value={hostConfigOverride}
+                  onChange={setHostConfigOverride}
+                />
+              </div>
+            ) : null}
 
             <div className="space-y-4 pt-1">
               {editForm ? (
@@ -2161,7 +2222,7 @@ export function TestTemplateEditor({
             <TestCaseIterationsTable
               testCase={currentTestCase}
               iterations={recentIterations ?? []}
-              serverNames={suite?.environment?.servers ?? []}
+              serverNames={effectiveSuiteServers}
               label="Iteration history"
               emptyState="No iterations yet — run this case to see results here."
               sortMode="chronological"
@@ -2354,6 +2415,7 @@ export function TestTemplateEditor({
                             sessionMode: "reuse",
                           })
                         }
+                        baselineHostStyle={hostConfigBaseline?.hostStyle}
                       />
                     </div>
                   );
@@ -2378,6 +2440,7 @@ function RunColumn({
   activeTab,
   onTabChange,
   onRetry,
+  baselineHostStyle,
 }: {
   record: CompareRunRecord;
   allRecords: CompareRunRecord[];
@@ -2389,9 +2452,34 @@ function RunColumn({
   activeTab: RunColumnTab;
   onTabChange: (tab: RunColumnTab) => void;
   onRetry: () => void;
+  /**
+   * The suite's baseline hostStyle (from `hostConfigsV2:getSuiteConfig`),
+   * used as the fallback when the iteration's snapshot doesn't carry an
+   * override. May be undefined when the suite hostConfig hasn't loaded.
+   */
+  baselineHostStyle: string | undefined;
 }) {
   const themeMode = usePreferencesStore((state) => state.themeMode);
-  const hostStyle = usePreferencesStore((state) => state.hostStyle);
+  const globalPreferenceHostStyle = usePreferencesStore(
+    (state) => state.hostStyle,
+  );
+  /**
+   * Effective hostStyle for this iteration's result chrome:
+   *   1. iteration snapshot's per-Run override (authoritative — what
+   *      the run actually ran with);
+   *   2. suite baseline (the suite's saved default);
+   *   3. global preference (last resort — old leaky behavior, kept
+   *      so multi-pane views still have a value while data loads).
+   *
+   * Index into the snapshot is loose (`any`) because the schema treats
+   * `hostConfigOverride` as `v.any()` — the Convex validator doesn't
+   * pin the shape of the per-Run override.
+   */
+  const snapshotHostStyle =
+    (record.iteration?.testCaseSnapshot as { hostConfigOverride?: { hostStyle?: string } } | undefined)
+      ?.hostConfigOverride?.hostStyle;
+  const hostStyle =
+    snapshotHostStyle ?? baselineHostStyle ?? globalPreferenceHostStyle;
   const { toolsMetadata, toolServerMap, connectedServerIds } =
     useEvalTraceToolContext({
       serverNames,

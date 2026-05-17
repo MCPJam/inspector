@@ -27,6 +27,7 @@ import { cn } from "@/lib/utils";
 import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
 import type { EvalCase, EvalSuite } from "./types";
+import { getEffectiveSuiteServers } from "./helpers";
 import {
   formatCaseTitleForSidebar,
   getEvalCaseSidebarGroupKey,
@@ -109,7 +110,10 @@ export function TestCaseListSidebar({
     () => testCases.find((testCase) => testCase._id === selectedTestId) ?? null,
     [selectedTestId, testCases],
   );
-  const suiteServers = suite?.environment?.servers ?? [];
+  // Effective list = legacy `environment.servers` merged with any host
+  // attachments' `resolvedServerNames`. Without the merge, sidebar Run
+  // buttons stay disabled on attachment-only suites.
+  const suiteServers = suite ? getEffectiveSuiteServers(suite) : [];
   const hasConfiguredSuiteServers = suiteServers.length > 0;
   const missingServers = suiteServers.filter(
     (serverName) => !connectedServerNames?.has(serverName),

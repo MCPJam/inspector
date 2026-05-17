@@ -129,14 +129,14 @@ export function HostContextHeader({
   const themeMode = usePreferencesStore((state) => state.themeMode);
   const hostStyle = usePreferencesStore((state) => state.hostStyle);
   const setHostStyle = usePreferencesStore((state) => state.setHostStyle);
-  const setChatUiOverride = usePreferencesStore(
-    (state) => state.setChatUiOverride,
-  );
   const hostCapabilitiesOverride = usePreferencesStore(
     (state) => state.hostCapabilitiesOverride,
   );
   const setHostCapabilitiesOverride = usePreferencesStore(
     (state) => state.setHostCapabilitiesOverride,
+  );
+  const setChatUiOverride = usePreferencesStore(
+    (state) => state.setChatUiOverride,
   );
 
   const usesMcpAppsCsp =
@@ -457,8 +457,8 @@ export function HostContextHeader({
                     // then fans out to the chip stores.
                     applyHostDefaultsToPlayground(host.id, {
                       setHostStyle,
-                      setChatUiOverride,
                       setHostCapabilitiesOverride,
+                      setChatUiOverride,
                     });
                   }}
                   className="h-6 w-6"

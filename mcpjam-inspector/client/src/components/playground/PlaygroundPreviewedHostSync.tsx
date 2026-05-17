@@ -38,11 +38,11 @@ export function PlaygroundPreviewedHostSync({
   const [previewedHostId] = usePreviewedHostId(projectId);
   const { host } = useHost({ isAuthenticated, hostId: previewedHostId });
   const setHostStyle = usePreferencesStore((state) => state.setHostStyle);
-  const setChatUiOverride = usePreferencesStore(
-    (state) => state.setChatUiOverride,
-  );
   const setHostCapabilitiesOverride = usePreferencesStore(
     (state) => state.setHostCapabilitiesOverride,
+  );
+  const setChatUiOverride = usePreferencesStore(
+    (state) => state.setChatUiOverride,
   );
 
   // Track the last (id, configId) tuple we applied so the effect only
@@ -74,16 +74,16 @@ export function PlaygroundPreviewedHostSync({
     }
     applyHostConfigToPlayground(host.config, {
       setHostStyle,
-      setChatUiOverride,
       setHostCapabilitiesOverride,
+      setChatUiOverride,
     });
     lastAppliedRef.current = { hostId: previewedHostId, configId };
   }, [
     previewedHostId,
     host,
     setHostStyle,
-    setChatUiOverride,
     setHostCapabilitiesOverride,
+    setChatUiOverride,
   ]);
 
   return null;

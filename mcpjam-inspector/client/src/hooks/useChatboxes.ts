@@ -52,6 +52,7 @@ export interface ChatboxSettings {
   projectId: string;
   name: string;
   description?: string;
+  /** Projected from the resolved host's hostConfig DTO. */
   hostStyle: ChatboxHostStyle;
   systemPrompt: string;
   modelId: string;
@@ -62,6 +63,9 @@ export interface ChatboxSettings {
   /** Chat UI config envelope: welcome / feedback dialog surfaces (and future surfaces / branding). */
   chatUi?: ChatUiSettings | null;
   servers: ChatboxServerSettings[];
+  /** The named host this chatbox resolves through. */
+  namedHostId: string;
+  namedHostName: string;
   link: {
     token: string;
     path: string;
@@ -82,6 +86,9 @@ export interface ChatboxListItem {
   allowGuestAccess: boolean;
   serverCount: number;
   serverNames: string[];
+  /** The named host this chatbox resolves through. */
+  namedHostId: string;
+  namedHostName: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -122,9 +129,37 @@ export function useChatbox({
   };
 }
 
+/**
+ * Resolve the chatbox bound to a host. Under the 1:1 invariant
+ * (`hosts.createHost` auto-mints a chatbox; `hosts.deleteHost` cascades),
+ * every host has exactly one chatbox reachable via this query. The new
+ * host-detail surfaces use this to drill `chatboxId` into the publish /
+ * sessions / clusters tabs without the URL needing to carry chatboxId.
+ */
+export function useChatboxByHostId({
+  isAuthenticated,
+  hostId,
+}: {
+  isAuthenticated: boolean;
+  hostId: string | null;
+}) {
+  const chatbox = useQuery(
+    "chatboxes:getChatboxByHostId" as any,
+    isAuthenticated && hostId ? ({ hostId } as any) : "skip",
+  ) as ChatboxSettings | null | undefined;
+
+  return {
+    chatbox,
+    isLoading: isAuthenticated && !!hostId && chatbox === undefined,
+  };
+}
+
 export function useChatboxMutations() {
-  const createChatbox = useMutation("chatboxes:createChatbox" as any);
-  const duplicateChatbox = useMutation("chatboxes:duplicateChatbox" as any);
+  // `createChatbox` / `duplicateChatbox` were removed with the 1:1
+  // host↔chatbox refactor. To create, call `hosts.createHost` (which
+  // auto-creates the publish-surface chatbox); to duplicate, call
+  // `hosts.duplicateHost`. The remaining mutations are the publish-side
+  // editors (mode, link rotation, members, name/description/chatUi).
   const updateChatbox = useMutation("chatboxes:updateChatbox" as any);
   const deleteChatbox = useMutation("chatboxes:deleteChatbox" as any);
   const setChatboxMode = useMutation("chatboxes:setChatboxMode" as any);
@@ -137,8 +172,6 @@ export function useChatboxMutations() {
   );
 
   return {
-    createChatbox,
-    duplicateChatbox,
     updateChatbox,
     deleteChatbox,
     setChatboxMode,

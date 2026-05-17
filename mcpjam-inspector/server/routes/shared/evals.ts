@@ -120,6 +120,13 @@ export const RunEvalsRequestSchema = z.object({
    * does NOT mutate persisted suite/case records.
    */
   matchOptionsOverride: matchOptionsSchema.optional(),
+  /**
+   * Scope this run to a single host attached to the suite. The Convex
+   * `startTestSuiteRun` mutation snapshots the host's current config and
+   * derives the run's server environment from it. When the suite has
+   * multiple host attachments, the client makes one request per host.
+   */
+  namedHostId: z.string().optional(),
 });
 
 export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
@@ -164,6 +171,28 @@ export const RunTestCaseRequestSchema = z.object({
    * NOT mutate the persisted case's `matchOptions`.
    */
   matchOptionsOverride: matchOptionsSchema.optional(),
+  /**
+   * One-off hostConfig override for this single-case run. Subset of
+   * `HostConfigInputV2`; recorded on the iteration snapshot so the trace
+   * shows which config the run actually used. Does NOT mutate the suite
+   * hostConfig.
+   */
+  hostConfigOverride: z
+    .object({
+      hostStyle: z.string().optional(),
+      hostContext: z.record(z.string(), z.unknown()).optional(),
+      clientCapabilities: z.record(z.string(), z.unknown()).optional(),
+      hostCapabilitiesOverride: z.record(z.string(), z.unknown()).optional(),
+      chatUiOverride: z.record(z.string(), z.unknown()).optional(),
+      mcpProfile: z.record(z.string(), z.unknown()).optional(),
+      connectionDefaults: z
+        .object({
+          headers: z.record(z.string(), z.string()).optional(),
+          requestTimeout: z.number().optional(),
+        })
+        .optional(),
+    })
+    .optional(),
 });
 
 export type RunTestCaseRequest = z.infer<typeof RunTestCaseRequestSchema>;
@@ -405,6 +434,7 @@ export async function runEvalsWithManager(
     suiteRerun,
     iterationOverride,
     matchOptionsOverride,
+    namedHostId,
   } = request;
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
@@ -664,6 +694,7 @@ export async function runEvalsWithManager(
     toolSnapshotDebug,
     iterationOverride,
     matchOptionsOverride,
+    namedHostId,
   });
 
   const replayConfigsToStore = filterAndRemapReplayConfigs(
@@ -780,6 +811,7 @@ export async function runEvalTestCaseWithManager(
     convexAuthToken,
     testCaseOverrides,
     matchOptionsOverride,
+    hostConfigOverride,
   } = request;
 
   const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
@@ -825,6 +857,7 @@ export async function runEvalTestCaseWithManager(
         | undefined,
       matchOptionsOverride,
     ),
+    hostConfigOverride: hostConfigOverride as Record<string, unknown> | undefined,
     testCaseId: testCase._id,
   };
 
@@ -1029,6 +1062,7 @@ export async function streamEvalTestCaseWithManager(
     convexAuthToken,
     testCaseOverrides,
     matchOptionsOverride,
+    hostConfigOverride,
   } = request;
 
   const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
@@ -1074,6 +1108,7 @@ export async function streamEvalTestCaseWithManager(
         | undefined,
       matchOptionsOverride,
     ),
+    hostConfigOverride: hostConfigOverride as Record<string, unknown> | undefined,
     testCaseId: testCase._id,
   };
 

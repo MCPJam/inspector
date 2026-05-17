@@ -10,6 +10,7 @@ import {
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { createLlmModel } from "../../utils/chat-helpers";
 import {
+  getModelById,
   isMCPJamGuestAllowedModel,
   isMCPJamProvidedModel,
 } from "@/shared/types";
@@ -17,6 +18,7 @@ import type { ModelProvider } from "@/shared/types";
 import { getClientIp } from "../../utils/client-ip.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
+import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config";
 import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler";
 import { handleHostedOrgChatModel } from "../../utils/org-model-stream-handler.js";
 import { deriveOrgProviderKey } from "../../utils/org-model-config.js";
@@ -465,11 +467,11 @@ chatV2.post("/", async (c) => {
       messages,
       apiKey,
       model,
-      systemPrompt,
-      temperature,
+      systemPrompt: bodySystemPrompt,
+      temperature: bodyTemperature,
       selectedServers,
       selectedServerIds: bodySelectedServerIds,
-      requireToolApproval,
+      requireToolApproval: bodyRequireToolApproval,
       chatboxId: bodyChatboxId,
       accessVersion: bodyAccessVersion,
       surface: bodySurface,
@@ -480,6 +482,70 @@ chatV2.post("/", async (c) => {
       : "direct";
     const chatSessionSurface: "preview" | "share_link" | undefined =
       isChatboxSession ? bodySurface ?? "preview" : undefined;
+
+    // Chatbox-bound turns re-resolve execution config from Convex so the
+    // host's hostConfigs row is the source of truth (model / prompt /
+    // temperature / requireToolApproval). Mirrors the web/chat-v2 path.
+    // Soft-fall-through on Convex blip — chat keeps running with body
+    // values, matching pre-rollout behavior.
+    let resolvedSystemPrompt = bodySystemPrompt;
+    let resolvedTemperatureOverride = bodyTemperature;
+    let resolvedRequireToolApproval = bodyRequireToolApproval;
+    let resolvedModelOverride: typeof model | null = null;
+    if (isChatboxSession && bodyChatboxId) {
+      const bearer = c.req.header("authorization") ?? "";
+      if (bearer) {
+        const runtime = await fetchChatboxRuntimeConfig({
+          chatboxId: bodyChatboxId,
+          bearer,
+        });
+        if (runtime.ok) {
+          const cfg = runtime.config;
+          resolvedSystemPrompt = cfg.systemPrompt;
+          resolvedTemperatureOverride = cfg.temperature;
+          resolvedRequireToolApproval = cfg.requireToolApproval;
+          // See web/chat-v2 for rationale: host's modelId wins on
+          // chatbox-bound turns. Built-in catalog hit → full
+          // ModelDefinition; miss → swap id only, keep body provider.
+          if (model && cfg.modelId && cfg.modelId !== model.id) {
+            const hostModel = getModelById(cfg.modelId);
+            if (hostModel) {
+              logger.warn(
+                "[mcp/chat-v2] client model differs from host; using host model",
+                {
+                  chatboxId: bodyChatboxId,
+                  body: model.id,
+                  host: cfg.modelId,
+                },
+              );
+              resolvedModelOverride = hostModel;
+            } else {
+              logger.warn(
+                "[mcp/chat-v2] host model not in catalog; swapping id only",
+                {
+                  chatboxId: bodyChatboxId,
+                  body: model.id,
+                  host: cfg.modelId,
+                },
+              );
+              resolvedModelOverride = { ...model, id: cfg.modelId };
+            }
+          }
+        } else {
+          logger.warn(
+            "[mcp/chat-v2] runtime-config fetch failed; using body values",
+            {
+              chatboxId: bodyChatboxId,
+              status: runtime.status,
+              error: runtime.error,
+            },
+          );
+        }
+      }
+    }
+    const systemPrompt = resolvedSystemPrompt;
+    const temperature = resolvedTemperatureOverride;
+    const requireToolApproval = resolvedRequireToolApproval;
 
     // Local-mode `selectedServers` is server *names*, not Convex Ids. The
     // backend's `hostConfigPayloadValidator` requires `v.array(v.id('servers'))`,
@@ -503,7 +569,7 @@ chatV2.post("/", async (c) => {
       return c.json({ error: "messages are required" }, 400);
     }
 
-    const modelDefinition = model;
+    const modelDefinition = resolvedModelOverride ?? model;
     if (!modelDefinition) {
       return c.json({ error: "model is not supported" }, 400);
     }

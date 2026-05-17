@@ -717,18 +717,11 @@ export function ConformanceRoute() {
 // a host, manage its chatbox here. There is no chatbox list; the host
 // list lives in Connect.
 export function ChatboxesRoute() {
-  const {
-    convexProjectId,
-    activeProjectBillingOrganizationId,
-    isBillingContextPending,
-    ensureServersReady,
-  } = useAppRouteContext();
+  const { convexProjectId, isAuthenticated } = useAppRouteContext();
   return (
     <ChatboxesTab
       projectId={convexProjectId}
-      organizationId={activeProjectBillingOrganizationId}
-      isBillingContextPending={isBillingContextPending}
-      ensureServersReady={ensureServersReady}
+      isAuthenticated={isAuthenticated}
     />
   );
 }
@@ -931,7 +924,7 @@ export function ChatV2Route() {
               }
             : undefined
         }
-        activeMcpProfile={activeHost?.mcpProfile}
+        activeHost={activeHost}
         evalChatHandoff={evalChatHandoff}
         onEvalChatHandoffConsumed={(id) =>
           setEvalChatHandoff((current: EvalChatHandoff | null) =>
