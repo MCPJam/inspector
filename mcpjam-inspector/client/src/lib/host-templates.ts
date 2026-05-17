@@ -11,6 +11,7 @@ import mcpjamLogo from "/mcp_jam.svg";
 import claudeLogo from "/claude_logo.png";
 import openaiLogo from "/openai_logo.png";
 import cursorLogo from "/cursor_logo.png";
+import codexLogo from "/codex-logo.svg";
 
 declare const __APP_VERSION__: string;
 
@@ -202,7 +203,12 @@ const CLAUDE_FONTS_CSS = `
 }
 `;
 
-export type HostTemplateId = "mcpjam" | "claude" | "chatgpt" | "cursor";
+export type HostTemplateId =
+  | "mcpjam"
+  | "claude"
+  | "chatgpt"
+  | "cursor"
+  | "codex";
 
 export interface HostTemplate {
   id: HostTemplateId;
@@ -551,6 +557,61 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               mode: "custom",
               allow: { clipboardWrite: true },
             },
+          },
+        },
+      };
+      return base;
+    },
+  },
+  {
+    id: "codex",
+    label: "Codex",
+    description:
+      "OpenAI Codex CLI. Elicitation-only client, no widget rendering.",
+    logoSrc: codexLogo,
+    seed: () => {
+      const base = emptyHostConfigInputV2({
+        // No "codex" entry in the host-style registry yet — fall back to
+        // chatgpt visuals (closest OpenAI-flavored chrome) so chat UI
+        // resolves to something coherent. Bump to a dedicated "codex"
+        // hostStyle if/when one lands in host-styles/built-ins.ts.
+        hostStyle: "chatgpt",
+        // Canonical id (openai/<slug>) so the chat-composer model picker
+        // resolves it. gpt-5-nano is in MCPJAM_GUEST_ALLOWED_MODEL_IDS, so
+        // guests get it without an OpenAI key; users can swap to a
+        // codex-specific model after creation.
+        modelId: "openai/gpt-5-nano",
+        temperature: 0.7,
+        requireToolApproval: false,
+      });
+      // Codex CLI probe advertises only elicitation. It does NOT advertise
+      // the MCP UI extension (no widget rendering), so we replace the SDK
+      // default clientCapabilities entirely rather than spreading on top —
+      // a spread would leak `extensions["io.modelcontextprotocol/ui"]`
+      // back in and misrepresent Codex as a UI-capable client.
+      base.clientCapabilities = {
+        elicitation: {},
+      };
+      // Codex is a CLI: it doesn't render MCP Apps views, so no
+      // hostContext (styles/displayMode/containerDimensions are
+      // meaningless without a renderer). Leaving `hostContext` as the
+      // empty object from emptyHostConfigInputV2.
+      //
+      // Same reasoning for hostCapabilitiesOverride: there's no
+      // ui/initialize negotiation, so we don't override what the preset
+      // advertises. The preset's chatgpt advertise is irrelevant in
+      // practice because no widget will ever read it from Codex.
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          supportedProtocolVersions: ["2025-06-18"],
+          // Verbatim from a real Codex CLI probe. `title` lands in the
+          // pass-through `Record<string, unknown>` per host-config-v2
+          // (backend soft-validates name/version only).
+          clientInfo: {
+            name: "codex-mcp-client",
+            title: "Codex",
+            version: "0.131.0-alpha.9",
           },
         },
       };
