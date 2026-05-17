@@ -410,13 +410,13 @@ vi.mock("../stores/preferences/preferences-provider", () => ({
   PreferencesStoreProvider: ({ children }: { children?: ReactNode }) => (
     <div>{children}</div>
   ),
-  // ActiveHostServerReconciler (mounted by App) pulls in
-  // useAutoConnectProjectServers, which reads `autoConnectServersEnabled`
-  // from this store. Default to `false` so the reconciler stays inert
-  // in App-level tests; per-test overrides can still call vi.mocked.
-  usePreferencesStore: (
-    selector: (state: { autoConnectServersEnabled: boolean }) => unknown,
-  ) => selector({ autoConnectServersEnabled: false }),
+  usePreferencesStore: () => true,
+}));
+// Reconciler is App-internal plumbing; mock it out so the test doesn't
+// have to thread shared-app-state + preferences mocks deep enough to
+// satisfy `useAutoConnectProjectServers`.
+vi.mock("../components/ActiveHostServerReconciler", () => ({
+  ActiveHostServerReconciler: () => null,
 }));
 vi.mock("@mcpjam/design-system/sonner", () => ({
   Toaster: () => <div />,

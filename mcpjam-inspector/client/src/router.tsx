@@ -64,10 +64,11 @@ export function createAppRouter(): AppRouter {
         { path: "tracing", element: <TracingRoute /> },
         { path: "chat", element: <ChatAliasRoute /> },
         { path: "chat-v2", element: <ChatV2Route /> },
-        // `/chatboxes` — the publish-surface tab. Shows
-        // Publish / Sessions / Clusters for the chatbox bound 1:1 to
-        // the currently-selected host. Navigation between chatboxes
-        // flows through the global host bar.
+        // `/chatboxes` — publish-surface tab (Publish / Sessions / Clusters)
+        // for the chatbox bound 1:1 to the currently-selected host. The
+        // Hosts hub at `/hosts` is the primary navigation entry; tests
+        // exercise the hosted-OAuth callback path via `/hosts` rather
+        // than this route directly.
         { path: "chatboxes", element: <ChatboxesRoute /> },
         { path: "app-builder", element: <AppBuilderRoute /> },
         { path: "playground", element: <PlaygroundRoute /> },

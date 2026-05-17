@@ -106,7 +106,6 @@ export function useAutoConnectProjectServers({
   projectId,
   hostScopeKey,
   requiredServerNames,
-  skip = false,
 }: {
   projectId: string | null;
   /**
@@ -118,15 +117,6 @@ export function useAutoConnectProjectServers({
    */
   hostScopeKey: string | null;
   requiredServerNames: ReadonlyArray<string>;
-  /**
-   * When true, the hook is fully inert — neither disconnect-excess nor
-   * connect-required fires, and no attempts are marked. Callers use this
-   * to defer reconciliation until upstream data has loaded (e.g.
-   * projectServers list resolved); without it, a host that declares
-   * `serverIds` would briefly resolve to an empty `requiredServerNames`
-   * during the loading window and tear down every connected server.
-   */
-  skip?: boolean;
 }): UseAutoConnectProjectServersResult {
   const enabled = usePreferencesStore((s) => s.autoConnectServersEnabled);
   const sharedAppState = useSharedAppState();
@@ -137,25 +127,24 @@ export function useAutoConnectProjectServers({
   } = useServerActions();
   const lastResultRef = useRef<EnsureServersReadyResult | null>(null);
 
-  // Names currently in a "connected" runtime state that the active host
-  // does NOT require — these get torn down on host switch so the runtime
-  // matches what the active host actually declares it needs. We compute
-  // this separately from the connect candidates so the dedupe key can
-  // cover both directions of reconciliation. Skipped when no project is
-  // active or when auto-connect is toggled off (the toggle gates both
-  // directions — it's "auto-reconcile to host", not just "auto-connect").
-  const excessConnectedNamesKey = useMemo(() => {
+  // Names currently in a "connected" runtime state — on a host switch we
+  // tear down EVERY connected server (not just the ones the new host
+  // doesn't require) so each transition forces a fresh reconnect. Servers
+  // the new host still requires fall through to the connect-required pass
+  // below once their dispatched DISCONNECT lands and they re-enter the
+  // candidate set on the next render. Skipped when no project is active or
+  // when auto-connect is toggled off (the toggle gates both directions —
+  // it's "auto-reconcile to host", not just "auto-connect").
+  const connectedNamesToDisconnectKey = useMemo(() => {
     if (!enabled || !projectId) return null;
-    const requiredSet = new Set(requiredServerNames);
-    const excess: string[] = [];
+    const connected: string[] = [];
     for (const [name, server] of Object.entries(sharedAppState.servers)) {
-      if (requiredSet.has(name)) continue;
       if (server?.connectionStatus !== "connected") continue;
-      excess.push(name);
+      connected.push(name);
     }
-    if (excess.length === 0) return null;
-    return excess.slice().sort().join("\0");
-  }, [enabled, projectId, requiredServerNames, sharedAppState.servers]);
+    if (connected.length === 0) return null;
+    return connected.slice().sort().join("\0");
+  }, [enabled, projectId, sharedAppState.servers]);
 
   // Build the candidate name list. Skip servers that are already connected,
   // currently connecting, or in an OAuth flow — connecting/oauth-flow would
@@ -198,7 +187,7 @@ export function useAutoConnectProjectServers({
   // change the tuple, so this fires once per host switch (and once per
   // edit to the host's required set after save).
   useEffect(() => {
-    if (!enabled || !projectId || skip) return;
+    if (!enabled || !projectId) return;
     setSelectedServerNames(requiredNamesKey ? requiredNamesKey.split("\0") : []);
   }, [
     enabled,
@@ -206,7 +195,6 @@ export function useAutoConnectProjectServers({
     scopeKey,
     requiredNamesKey,
     setSelectedServerNames,
-    skip,
   ]);
 
   // Detect a scope transition (user switched the previewed host) and
@@ -224,37 +212,40 @@ export function useAutoConnectProjectServers({
     }
   }, [projectId, scopeKey]);
 
-  // Disconnect-excess: fires at most once per (project, scopeKey). This is
-  // the host-switch tear-down pass — it snapshots the excess set on first
-  // entry to the scope and disconnects it. Later changes to the connected
-  // set within the SAME scope (e.g. the user manually connecting an
-  // additional server from the Servers tab) must not re-fire this path,
-  // otherwise we'd tear down servers the user just intentionally connected.
-  // The dedupe key is scope-only and we mark attempted unconditionally on
-  // first run, so subsequent renders bail even if `excessConnectedNamesKey`
-  // becomes non-null afterwards.
+  // Disconnect-all-connected: fires at most once per (project, scopeKey).
+  // This is the host-switch tear-down pass — it snapshots every currently
+  // connected server on first entry to the scope and disconnects it,
+  // including ones the new host still requires. The required ones then
+  // re-enter the candidate set on the next render and reconnect fresh
+  // (each host switch = full reconnect cycle). Later changes to the
+  // connected set within the SAME scope (e.g. the user manually
+  // connecting an additional server from the Servers tab) must not re-
+  // fire this path, otherwise we'd tear down servers the user just
+  // intentionally connected. The dedupe key is scope-only and we mark
+  // attempted unconditionally on first run, so subsequent renders bail
+  // even if `connectedNamesToDisconnectKey` becomes non-null afterwards.
   useEffect(() => {
-    if (!enabled || !projectId || skip) return;
+    if (!enabled || !projectId) return;
     if (isAttempted(projectId, scopeKey, "disconnect")) return;
     markAttempted(projectId, scopeKey, "disconnect");
-    if (!excessConnectedNamesKey) return;
-    for (const name of excessConnectedNamesKey.split("\0")) {
+    if (!connectedNamesToDisconnectKey) return;
+    for (const name of connectedNamesToDisconnectKey.split("\0")) {
       runtimeDisconnectServer(name);
     }
-    // `excessConnectedNamesKey` is intentionally excluded from the dep
-    // array: this effect must fire only on scope transitions, not when the
-    // user's actions change the set of connected servers within the same
-    // scope. Reading the latest value via closure is fine because the
+    // `connectedNamesToDisconnectKey` is intentionally excluded from the
+    // dep array: this effect must fire only on scope transitions, not when
+    // the user's actions change the set of connected servers within the
+    // same scope. Reading the latest value via closure is fine because the
     // dedupe gate stops re-runs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, projectId, scopeKey, runtimeDisconnectServer, skip]);
+  }, [enabled, projectId, scopeKey, runtimeDisconnectServer]);
 
   // Connect-required: fires when the candidate set (required-but-not-yet-
   // connected) changes. Saving a new server into the host's required list
   // produces a fresh candidate set and re-fires; failures dedupe per
   // candidate-set so they don't retry-loop.
   useEffect(() => {
-    if (!enabled || !projectId || !candidateNamesKey || skip) return;
+    if (!enabled || !projectId || !candidateNamesKey) return;
     const key = `connect:${candidateNamesKey}`;
     if (isAttempted(projectId, scopeKey, key)) return;
     markAttempted(projectId, scopeKey, key);
@@ -284,7 +275,6 @@ export function useAutoConnectProjectServers({
     scopeKey,
     candidateNamesKey,
     ensureServersReady,
-    skip,
   ]);
 
   return { enabled, lastResult: lastResultRef.current };

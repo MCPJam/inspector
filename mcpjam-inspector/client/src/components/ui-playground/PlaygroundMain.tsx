@@ -574,7 +574,13 @@ export function PlaygroundMain({
     null
   );
   useEffect(() => {
-    if (!previewedHostId || !previewedHost) return;
+    if (!previewedHostId || !previewedHost) {
+      // Clear the dedupe ref so a later return to the same (hostId, configId)
+      // — after a transient host-unavailable phase or project switch — still
+      // reseeds the composer instead of short-circuiting on a stale ref.
+      lastSeededHostRef.current = null;
+      return;
+    }
     const configId = previewedHost.config.id;
     const last = lastSeededHostRef.current;
     if (

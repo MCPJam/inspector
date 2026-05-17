@@ -38,16 +38,12 @@ export function ActiveHostServerReconciler({
     isAuthenticated,
   });
 
-  // Distinguish "host declares no required servers" from "we haven't loaded
-  // the project's server catalog yet". Without this, a host with
-  // `serverIds: [id1, id2]` would briefly resolve to `requiredServerNames =
-  // []` during the loading window, and the auto-connect hook would treat
-  // that as "the host wants nothing connected" — disconnecting every server
-  // the user already had open on host switch / startup.
-  const hostRequiresServers = (activeHost?.serverIds?.length ?? 0) > 0;
-  const projectServersLoaded = projectServersList !== undefined;
-  const skipReconciliation = hostRequiresServers && !projectServersLoaded;
-
+  // While `projectServersList` is loading we resolve to an empty
+  // `requiredServerNames`. That's safe under main's "disconnect-all then
+  // reconnect required" strategy: the connect-required pass is keyed on
+  // a non-null `candidateNamesKey`, so it stays quiet until the catalog
+  // arrives and the candidate set materializes, at which point it fires
+  // exactly once.
   const requiredServerNames = useMemo(() => {
     const requiredIds = activeHost?.serverIds ?? [];
     if (requiredIds.length === 0 || !projectServersList) return [];
@@ -66,7 +62,6 @@ export function ActiveHostServerReconciler({
     // host still counts as a scope change).
     hostScopeKey: activeHostId ?? activeHost?.id ?? null,
     requiredServerNames,
-    skip: skipReconciliation,
   });
 
   return null;
