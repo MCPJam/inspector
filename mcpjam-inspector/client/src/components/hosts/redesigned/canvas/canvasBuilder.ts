@@ -115,7 +115,7 @@ function describeBaseCapabilities(
   const exts = draft.clientCapabilities?.extensions;
   const ids =
     exts && typeof exts === "object" && !Array.isArray(exts)
-      ? Object.keys(exts as Record<string, unknown>)
+      ? Object.keys(exts as Record<string, unknown>).sort()
       : [];
   let value: string;
   if (ids.length === 0) value = "(none)";
@@ -290,6 +290,7 @@ function buildSandboxConfig(
       if (on) granted.push(name);
     }
   }
+  granted.sort();
   const permsDescriptor: SandboxConfigDescriptor = {
     subKey: "permissions",
     label: "permissions",

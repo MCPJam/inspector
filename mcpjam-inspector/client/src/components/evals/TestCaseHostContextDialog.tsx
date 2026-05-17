@@ -4,8 +4,10 @@
  * Mirrors the playground's `HostContextDialog` but skips the persistence
  * path: edits live on the per-case override (passed in via `value` /
  * `onChange`) and never write to `useHostContextStore`. "Apply" commits
- * the edit; "Reset" reverts to the suite baseline; the dialog disables
- * Apply when the JSON is invalid.
+ * the edit; "Reset" clears the per-case override entirely via
+ * `onClearOverride` so the case re-tracks the live suite baseline (NOT a
+ * frozen snapshot of today's baseline). The dialog disables Apply when
+ * the JSON is invalid.
  */
 
 import { useEffect, useState } from "react";
@@ -26,10 +28,15 @@ export interface TestCaseHostContextDialogProps {
   onOpenChange: (open: boolean) => void;
   /** Current value (effective: override ?? baseline). */
   value: Record<string, unknown>;
-  /** Suite-level baseline, used for the Reset action. */
-  baseline: Record<string, unknown>;
   /** Commit a new hostContext to the override. */
   onChange: (next: Record<string, unknown>) => void;
+  /**
+   * Clear the per-case override entirely so the case re-tracks the live
+   * suite baseline. Writing `baseline` back through `onChange` would
+   * instead snapshot today's value and silently drift if the suite default
+   * changes later.
+   */
+  onClearOverride: () => void;
 }
 
 function stringify(value: Record<string, unknown>): string {
@@ -44,8 +51,8 @@ export function TestCaseHostContextDialog({
   open,
   onOpenChange,
   value,
-  baseline,
   onChange,
+  onClearOverride,
 }: TestCaseHostContextDialogProps) {
   const [text, setText] = useState(() => stringify(value));
   const [error, setError] = useState<string | null>(null);
@@ -89,7 +96,7 @@ export function TestCaseHostContextDialog({
   };
 
   const handleResetToBaseline = () => {
-    onChange(baseline);
+    onClearOverride();
     onOpenChange(false);
   };
 
