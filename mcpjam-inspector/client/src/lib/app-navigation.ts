@@ -57,6 +57,12 @@ export const routePaths = {
 
 export type RoutePath = (typeof routePaths)[keyof typeof routePaths] | string;
 
+/** Build a path that deep-links to a specific host's canvas, or to the hosts hub. */
+export function buildHostsPath(hostId?: string | null): string {
+  if (!hostId) return routePaths.hosts;
+  return `${routePaths.hosts}/${encodeURIComponent(hostId)}`;
+}
+
 /** Build a path for a specific organization route. */
 export function buildOrganizationPath(
   orgId: string,

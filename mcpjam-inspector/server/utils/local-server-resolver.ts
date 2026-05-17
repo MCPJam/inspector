@@ -5,7 +5,10 @@ import {
   WebRouteError,
   parseErrorMessage,
 } from "../routes/web/errors.js";
-import { buildHostedOAuthUnauthorizedHandler } from "./hosted-oauth-refresh.js";
+import {
+  buildHostedOAuthUnauthorizedHandler,
+  forceRefreshHostedOAuthAccessToken,
+} from "./hosted-oauth-refresh.js";
 import { logger } from "./logger.js";
 import { setRequestLogContext } from "./request-logger.js";
 import {
@@ -472,22 +475,54 @@ export async function resolveLocalServerForConnect(
   const useOAuth =
     result.serverConfig.transportType === "http" &&
     result.serverConfig.useOAuth === true;
-  if (useOAuth && !result.oauthAccessToken) {
+  // Track the access token we'll hand to `toMCPServerConfig`. Starts from
+  // whatever `authorize-batch-local` returned, but for hosted-OAuth servers
+  // we fall back to a server-side refresh — same `force-refresh` endpoint
+  // the chat path's `onUnauthorized` hook uses — when the batch returned
+  // empty. Without this, an expired access token aborts the reconnect with
+  // a 401 *before* the SDK gets a chance to attach `onUnauthorized`, so
+  // auto-connect and the manual reconnect toggle would stay disconnected
+  // even though sending a chat message works (chat goes through the same
+  // refresh helper for in-flight 401s).
+  let resolvedOauthAccessToken: string | undefined =
+    result.oauthAccessToken ?? undefined;
+  if (useOAuth && !resolvedOauthAccessToken) {
     const displayName = options?.serverDisplayName ?? serverId;
-    throw new WebRouteError(
-      401,
-      ErrorCode.UNAUTHORIZED,
-      `Server "${displayName}" requires OAuth authentication. Please complete the OAuth flow first.`,
-      {
-        oauthRequired: true,
+    try {
+      resolvedOauthAccessToken = await forceRefreshHostedOAuthAccessToken(
+        bearerToken,
+        projectId,
         serverId,
-        serverName: options?.serverDisplayName ?? null,
-        serverUrl:
-          result.serverConfig.transportType === "http"
-            ? result.serverConfig.url
-            : undefined,
+        { serverName: displayName },
+      );
+    } catch (error) {
+      const refreshTokenInvalid =
+        error instanceof WebRouteError &&
+        Boolean(
+          (error.details as { refreshTokenInvalid?: boolean } | undefined)
+            ?.refreshTokenInvalid,
+        );
+      if (!refreshTokenInvalid) {
+        // Transient (rate limit, network, backend 5xx). Bubble up so the
+        // UI / caller can retry rather than telling the user to reconnect.
+        throw error;
       }
-    );
+      throw new WebRouteError(
+        401,
+        ErrorCode.UNAUTHORIZED,
+        `Server "${displayName}" requires OAuth authentication. Please complete the OAuth flow first.`,
+        {
+          oauthRequired: true,
+          refreshTokenInvalid: true,
+          serverId,
+          serverName: options?.serverDisplayName ?? null,
+          serverUrl:
+            result.serverConfig.transportType === "http"
+              ? result.serverConfig.url
+              : undefined,
+        }
+      );
+    }
   }
 
   const config = toMCPServerConfig(result, {
@@ -502,6 +537,7 @@ export async function resolveLocalServerForConnect(
     // historical wire behavior — no opt-in, no change.
     clientInfo: options?.defaults?.clientInfo,
     supportedProtocolVersions: options?.defaults?.supportedProtocolVersions,
+    oauthAccessToken: resolvedOauthAccessToken,
     refreshContext: {
       bearerToken,
       projectId,

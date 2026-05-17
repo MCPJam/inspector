@@ -3,6 +3,9 @@ import { toast } from "sonner";
 import { useConvexAuth, useQuery } from "convex/react";
 import type { HostConfigDtoV2 } from "@/lib/host-config-v2";
 import { useLogger } from "./use-logger";
+import { useHost } from "./useHosts";
+import { usePreviewedHostId } from "./use-previewed-host-id";
+import { resolveEffectiveHost } from "@/lib/effective-host";
 import {
   createLocalDefaultProject,
   initialAppState,
@@ -175,7 +178,7 @@ export function useAppState({
   hasOrganizations,
   isLoadingOrganizations,
   validOrganizations,
-  activeHostConfig,
+  hostsHubFlagEnabled,
 }: {
   currentUserId: string | null;
   /**
@@ -190,12 +193,11 @@ export function useAppState({
   isLoadingOrganizations: boolean;
   validOrganizations: Array<{ _id: string; myRole?: string }>;
   /**
-   * When a named host is active in the Chat tab (or host preview), its
-   * connectionDefaults + per-server overrides drive reconnects via
-   * useServerState. App.tsx resolves this from the chat-tab HostPicker
-   * selection; useAppState forwards it untouched.
+   * Hosts-hub feature flag. When off, host queries are skipped and the
+   * connection path falls back to the project default (still authoritative
+   * via its shadow `projects.clientConfig`).
    */
-  activeHostConfig?: HostConfigDtoV2;
+  hostsHubFlagEnabled: boolean;
 }) {
   const logger = useLogger("Connections");
   const [appState, dispatch] = useReducer(appReducer, initialAppState);
@@ -494,6 +496,22 @@ export function useAppState({
       : "skip",
   ) as HostConfigDtoV2 | null | undefined;
 
+  // Single active-host state, shared with the Servers/Playground/Hosts
+  // top-bar preview and the Chat tab's HostPicker. Picking a host anywhere
+  // in the product points every MCP `initialize` and widget `ui/initialize`
+  // at the same `HostConfigDtoV2`.
+  const [activeHostId, setActiveHostId] = usePreviewedHostId(
+    activeSharedProjectId ?? null,
+  );
+  const { host: selectedHost } = useHost({
+    isAuthenticated: isAuthenticated && hostsHubFlagEnabled,
+    hostId: activeHostId,
+  });
+  const activeHost = resolveEffectiveHost({
+    explicitHostConfig: selectedHost?.config ?? null,
+    projectDefaultHostConfig: activeProjectDefaultHostConfig ?? null,
+  });
+
   const serverState = useServerState({
     appState,
     dispatch,
@@ -506,9 +524,8 @@ export function useAppState({
     effectiveProjects: projectState.effectiveProjects,
     effectiveActiveProjectId: projectState.effectiveActiveProjectId,
     activeProjectServersFlat: projectState.activeProjectServersFlat,
-    activeMcpProfile:
-      activeHostConfig?.mcpProfile ?? activeProjectDefaultHostConfig?.mcpProfile,
-    activeHostConfig,
+    activeMcpProfile: activeHost?.mcpProfile,
+    activeHostConfig: activeHost,
     logger,
   });
 
@@ -788,17 +805,22 @@ export function useAppState({
     projects: effectiveProjects,
     activeProjectId: effectiveActiveProjectId,
     activeProject: serverState.activeProject,
-    // Active project's persisted mcpProfile envelope. Forwarded out so the
-    // App shell can mount `ActiveMcpProfileProvider` around in-inspector
-    // chat surfaces — without this, `MCPAppsRenderer` reads `undefined`
-    // from `useActiveMcpProfile()` and never applies the project's sandbox
-    // policy. The hosted-chat path mounts its own provider in
-    // ChatboxChatPage from the redeem-response payload; this is the
-    // in-inspector counterpart.
-    activeMcpProfile: activeProjectDefaultHostConfig?.mcpProfile,
+    // The single active-host bundle every consumer should reach for: its
+    // `mcpProfile` powers `ActiveMcpProfileProvider`, its `clientCapabilities`
+    // and `connectionDefaults` flow through `withProjectConnectionDefaults`,
+    // and `setActiveHostId` is the canonical writer for both the Chat tab's
+    // HostPicker and the global top-bar preview.
+    activeHost,
+    activeHostId,
+    setActiveHostId,
+    // Back-compat: `activeMcpProfile` was the per-call alias for
+    // `activeHost?.mcpProfile`. Surfaces that still destructure it (e.g.
+    // ChatV2Route) keep working without churn.
+    activeMcpProfile: activeHost?.mcpProfile,
 
     handleConnect: serverState.handleConnect,
     handleDisconnect: serverState.handleDisconnect,
+    handleRuntimeDisconnect: serverState.handleRuntimeDisconnect,
     handleReconnect: serverState.handleReconnect,
     ensureServersReady: serverState.ensureServersReady,
     syncAgentStatus: serverState.syncAgentStatus,

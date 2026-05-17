@@ -58,8 +58,8 @@ import {
   PROJECT_NOT_PROVISIONED_ERROR_MESSAGE,
   getEffectiveProjectConnectionDefaults,
   mergeProjectConnectionHeaders,
-  resolveEffectiveServerClientCapabilities,
 } from "@/lib/client-config";
+import { resolveEffectiveClientCapabilities } from "@/lib/effective-host";
 import { EXCALIDRAW_SERVER_NAME } from "@/lib/excalidraw-quick-connect";
 import { readOnboardingState } from "@/lib/onboarding-state";
 import type { HostConfigDtoV2 } from "@/lib/host-config-v2";
@@ -756,11 +756,26 @@ export function useServerState({
 
   const withProjectConnectionDefaults = useCallback(
     (serverConfig: MCPServerConfig, serverId?: string): MCPServerConfig => {
-      const effectiveClientCapabilities =
-        resolveEffectiveServerClientCapabilities({
-          serverConfig,
-          projectClientConfig: activeProject?.clientConfig,
-        });
+      // Capability precedence: per-server explicit override → active host
+      // (always the single source for the global tab scope) → project
+      // clientConfig shadow (transient, only when activeHostConfig hasn't
+      // hydrated yet). The host is the only authoritative source once
+      // provisioned — `projects.clientConfig` is a backend-maintained
+      // shadow-mirror of the project default host.
+      const effectiveClientCapabilities = activeHostConfig
+        ? resolveEffectiveClientCapabilities({
+            host: activeHostConfig,
+            serverConfig,
+          })
+        : resolveEffectiveClientCapabilities({
+            host: activeProject?.clientConfig
+              ? ({
+                  clientCapabilities:
+                    activeProject.clientConfig.clientCapabilities,
+                } as Pick<HostConfigDtoV2, "clientCapabilities">)
+              : null,
+            serverConfig,
+          });
 
       let nextRequestInit = serverConfig.requestInit;
       if ("url" in serverConfig) {
@@ -2722,6 +2737,19 @@ export function useServerState({
     [dispatch, logger]
   );
 
+  // Runtime-only counterpart to `handleDisconnect`. Just flips the in-memory
+  // connection state to "disconnected" without going through `deleteServer`,
+  // which in local mode would also remove the server's persisted config.
+  // Used by host-switch auto-disconnect, where we want to drop the runtime
+  // connection but keep the server entry intact so the user can re-connect
+  // (or another host can require it) without re-adding the server.
+  const handleRuntimeDisconnect = useCallback(
+    (serverName: string) => {
+      dispatch({ type: "DISCONNECT", name: serverName });
+    },
+    [dispatch],
+  );
+
   const cleanupServerLocalArtifacts = useCallback((serverName: string) => {
     // Slice 5: env removal handled by Convex deleteServer; only OAuth local
     // scratchpad remains and is cleaned up here. Once Slice 2's OAuth purge
@@ -3716,6 +3744,7 @@ export function useServerState({
     isMultiSelectMode: appState.isMultiSelectMode,
     handleConnect,
     handleDisconnect,
+    handleRuntimeDisconnect,
     handleReconnect,
     ensureServersReady,
     syncAgentStatus,
