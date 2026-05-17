@@ -129,6 +129,9 @@ export function HostContextHeader({
   const themeMode = usePreferencesStore((state) => state.themeMode);
   const hostStyle = usePreferencesStore((state) => state.hostStyle);
   const setHostStyle = usePreferencesStore((state) => state.setHostStyle);
+  const setChatUiOverride = usePreferencesStore(
+    (state) => state.setChatUiOverride,
+  );
   const hostCapabilitiesOverride = usePreferencesStore(
     (state) => state.hostCapabilitiesOverride,
   );
@@ -454,6 +457,7 @@ export function HostContextHeader({
                     // then fans out to the chip stores.
                     applyHostDefaultsToPlayground(host.id, {
                       setHostStyle,
+                      setChatUiOverride,
                       setHostCapabilitiesOverride,
                     });
                   }}
