@@ -549,7 +549,15 @@ export function buildRedesignedHostCanvas(
     id: "host-matrix-to-hub",
     source: HOST_MATRIX_NODE_ID,
     target: SERVERS_HUB_NODE_ID,
-    type: "default",
+    type: "hostTrunk",
+    data: {
+      // matrix is positioned at (0, 0); its bottom-center sits at
+      // (MATRIX_W / 2, matrixH). Hub top-center is the target.
+      fixedSourceX: MATRIX_W / 2,
+      fixedSourceY: matrixH,
+      fixedTargetX: serversHubX + serversHubW / 2,
+      fixedTargetY: serversHubY,
+    },
     style: { stroke: "oklch(0.68 0.11 40 / 0.55)", strokeWidth: 1.5 },
   });
 
@@ -605,11 +613,23 @@ export function buildRedesignedHostCanvas(
       draggable: false,
     });
 
+    // Bake the source/target endpoints into edge.data so the custom
+    // HostBranchEdge can ignore ReactFlow's measured handle positions —
+    // which framer-motion's `layout`/`layoutId` transform on the canvas
+    // pills pollutes via getBoundingClientRect, making one branch flap
+    // up to the top of the canvas.
+    const cardX = cardsStartX + i * (SERVER_CARD_W + SERVER_CARD_GAP_X);
     edges.push({
       id: `hub-to-server-${serverId}`,
       source: SERVERS_HUB_NODE_ID,
       target: `server-card:${serverId}`,
-      type: "default",
+      type: "hostBranch",
+      data: {
+        fixedSourceX: serversHubX + serversHubW / 2,
+        fixedSourceY: serversHubY + SERVERS_HUB_H,
+        fixedTargetX: cardX + SERVER_CARD_W / 2,
+        fixedTargetY: serverRowY,
+      },
       style: {
         stroke: insecure
           ? "oklch(0.65 0.18 60)"

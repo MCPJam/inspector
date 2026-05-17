@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, LayoutGroup, motion } from "framer-motion";
 import { useNavigate } from "react-router";
 import { HostBuilderView } from "./hosts/HostBuilderView";
 import { HostsConnectAddServerSlotContext } from "./hosts/HostsConnectAddServerSlotContext";
+import { HostsConnectViewPhaseContext } from "./hosts/HostsConnectViewPhaseContext";
+import { SNAPPY_RAIL } from "./hosts/transition-tokens";
 import { ViewModeSelector } from "./shared/view-mode-selector";
 import { usePreviewedHostId } from "@/hooks/use-previewed-host-id";
 import { useHost, useHostList } from "@/hooks/useHosts";
@@ -20,15 +22,11 @@ interface HostsTabProps {
 
 /**
  * Camera-style transition between the browsing state (server list) and the
- * host architecture canvas. Servers shrink toward where the canvas's "Servers
- * hub" will sit (≈70% down, horizontally centered) so the swap reads as a
- * zoom-out reveal of the bigger machine. Canvas exits by pushing past the
- * camera (scale > 1) to feel like the camera is moving back in.
+ * host architecture canvas. Server cards morph 1:1 into the canvas's pills
+ * via shared `layoutId` (see transition-tokens.ts) while the logs rail slides
+ * out and the host chrome staggers in — so the wrapper itself only needs a
+ * gentle opacity/y fade to soften the cut.
  */
-const TRANSITION = {
-  duration: 0.7,
-  ease: [0.32, 0.72, 0, 1] as [number, number, number, number],
-};
 
 export function HostsTab({
   projectId,
@@ -106,17 +104,21 @@ export function HostsTab({
   // fallback the user expects on `#connect`/`#servers`.
   if (!projectId) return <>{serversTabElement}</>;
 
+  const viewPhase = selectedHostId ? "host" : "servers";
+
   return (
+    <HostsConnectViewPhaseContext.Provider value={viewPhase}>
+    <LayoutGroup id="connect-servers-host">
     <div className="relative h-full min-h-0 overflow-hidden">
       <AnimatePresence initial={false} mode="sync">
         {selectedHostId ? (
           <motion.div
             key="host-canvas"
-            initial={{ opacity: 0, scale: 1.06 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 1.18 }}
-            transition={TRANSITION}
-            className="absolute inset-0 [transform-origin:50%_42%]"
+            initial={{ opacity: 0, y: 18, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 18, scale: 0.97 }}
+            transition={SNAPPY_RAIL}
+            className="absolute inset-0 [transform-origin:50%_30%]"
           >
             <HostBuilderView
               hostId={selectedHostId}
@@ -127,13 +129,13 @@ export function HostsTab({
         ) : (
           <motion.div
             key="host-browse"
-            initial={{ opacity: 0, scale: 1.04 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.42 }}
-            transition={TRANSITION}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            transition={SNAPPY_RAIL}
             data-host-style={previewedHostStyle ?? undefined}
             style={browseShellStyle}
-            className="absolute inset-0 flex min-h-0 flex-col bg-background text-foreground [transform-origin:50%_70%]"
+            className="absolute inset-0 flex min-h-0 flex-col bg-background text-foreground"
           >
             <HostsConnectAddServerSlotContext.Provider value={addServerSlotEl}>
               <div
@@ -178,5 +180,7 @@ export function HostsTab({
         )}
       </AnimatePresence>
     </div>
+    </LayoutGroup>
+    </HostsConnectViewPhaseContext.Provider>
   );
 }

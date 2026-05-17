@@ -1,5 +1,6 @@
 import { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import { AnimatePresence, motion } from "framer-motion";
 import { Card } from "@mcpjam/design-system/card";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -104,6 +105,12 @@ import {
 } from "@/lib/server-detail-modal-resume";
 import { cn } from "@/lib/utils";
 import { HostsConnectAddServerSlotContext } from "./hosts/HostsConnectAddServerSlotContext";
+import { useHostsConnectViewPhase } from "./hosts/HostsConnectViewPhaseContext";
+import {
+  SERVER_CARD_LAYOUT_ID,
+  SNAPPY_CAMERA,
+  SNAPPY_RAIL,
+} from "./hosts/transition-tokens";
 import { compareQuickConnectCatalogCards } from "@/lib/quick-connect-catalog-sort";
 import { toast } from "sonner";
 
@@ -452,6 +459,7 @@ function SortableServerCard({
 }) {
   const { listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id, disabled: dndDisabled });
+  const viewPhase = useHostsConnectViewPhase();
   const dragListeners =
     listeners == null
       ? {}
@@ -464,18 +472,49 @@ function SortableServerCard({
     opacity: isDragging ? 0 : 1,
   };
 
+  // When the server has a Convex id, share layout with the ReactFlow pill of
+  // the same server in the Host canvas so the Servers→Host swap morphs cards
+  // into pills 1:1 instead of crossfading. Without an id (server not yet
+  // persisted) we fall back to a plain div so the rest of the grid still
+  // renders.
+  const cardContent = (
+    <ServerConnectionCard
+      server={server}
+      needsReconnect={needsReconnect}
+      onDisconnect={onDisconnect}
+      onReconnect={onReconnect}
+      onRemove={onRemove}
+      hostedServerId={hostedServerId}
+      onOpenDetailModal={onOpenDetailModal}
+      projectId={projectId}
+    />
+  );
+
   return (
     <div ref={setNodeRef} style={style} {...dragListeners}>
-      <ServerConnectionCard
-        server={server}
-        needsReconnect={needsReconnect}
-        onDisconnect={onDisconnect}
-        onReconnect={onReconnect}
-        onRemove={onRemove}
-        hostedServerId={hostedServerId}
-        onOpenDetailModal={onOpenDetailModal}
-        projectId={projectId}
-      />
+      {hostedServerId ? (
+        // Outer box owns the size+position morph (layout); inner wrapper
+        // fades the heavy ServerConnectionCard UI out *before* the size
+        // morph reveals it warping. Mirrors the demo's CSS approach where
+        // toggle/menu/copy collapse to opacity 0 during the camera move.
+        <motion.div
+          layoutId={SERVER_CARD_LAYOUT_ID(hostedServerId)}
+          layout
+          transition={SNAPPY_CAMERA}
+          className="h-full overflow-hidden rounded-xl"
+        >
+          <motion.div
+            initial={false}
+            animate={{ opacity: viewPhase === "servers" ? 1 : 0 }}
+            transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
+            className="h-full"
+          >
+            {cardContent}
+          </motion.div>
+        </motion.div>
+      ) : (
+        cardContent
+      )}
     </div>
   );
 }
@@ -531,6 +570,7 @@ export function ServersTab({
 }: ServersTabProps) {
   const posthog = usePostHog();
   const hostsConnectAddServerSlot = useContext(HostsConnectAddServerSlotContext);
+  const viewPhase = useHostsConnectViewPhase();
   const { isAuthenticated } = useConvexAuth();
 
   // Auto-connect the previewed host's REQUIRED servers once per host scope.
@@ -1463,14 +1503,25 @@ export function ServersTab({
             collapsedSize={0}
             onCollapse={toggleJsonRpcPanel}
           >
-            <div className="h-full flex flex-col bg-background border-l border-border">
-              <LoggerView
-                key={connectedCount}
-                serverIds={loggerServerIds}
-                sinceTimestamp={loggerSinceTimestamp}
-                onClose={toggleJsonRpcPanel}
-              />
-            </div>
+            <AnimatePresence initial={false}>
+              {viewPhase === "servers" ? (
+                <motion.div
+                  key="logs-rail"
+                  initial={{ x: "100%", opacity: 0 }}
+                  animate={{ x: 0, opacity: 1 }}
+                  exit={{ x: "100%", opacity: 0 }}
+                  transition={SNAPPY_RAIL}
+                  className="h-full flex flex-col bg-background border-l border-border"
+                >
+                  <LoggerView
+                    key={connectedCount}
+                    serverIds={loggerServerIds}
+                    sinceTimestamp={loggerSinceTimestamp}
+                    onClose={toggleJsonRpcPanel}
+                  />
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
           </ResizablePanel>
         </>
       ) : (
