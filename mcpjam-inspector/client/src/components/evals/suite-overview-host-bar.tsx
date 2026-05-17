@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -66,17 +66,23 @@ export function SuiteOverviewHostBar({
     return map;
   }, [suite.hostAttachments]);
 
+  // Version counter so concurrent persists can't race: a stale failure must
+  // not roll back state that a newer successful call has already written.
+  const persistVersionRef = useRef(0);
   const persist = useCallback(
     async (next: HostAttachmentDraft[]) => {
       if (!onUpdate) return;
       const previous = attachments;
+      const myVersion = ++persistVersionRef.current;
       setAttachments(next);
       try {
         await onUpdate(next);
       } catch (error) {
-        // Roll the optimistic write back so the pills match the server. The
-        // mutation surfaces its own toast; we just log here for debugging.
-        setAttachments(previous);
+        // Only roll back if no later persist call has been issued since this
+        // one started — otherwise we'd clobber a newer optimistic state.
+        if (persistVersionRef.current === myVersion) {
+          setAttachments(previous);
+        }
         console.error("Failed to update suite host attachments", error);
       }
     },
@@ -115,7 +121,6 @@ export function SuiteOverviewHostBar({
       ),
     [projectHosts, attachments],
   );
-  const canAdd = editable && attachableHosts.length > 0;
 
   const addHostMenu = (align: "start" | "end") => (
     <DropdownMenu open={addMenuOpen} onOpenChange={setAddMenuOpen}>
@@ -124,7 +129,7 @@ export function SuiteOverviewHostBar({
           type="button"
           className="flex h-8 shrink-0 items-center gap-1 rounded-full border border-border/60 bg-background px-2.5 text-xs font-medium text-foreground outline-none transition-colors hover:bg-muted/45 focus-visible:ring-2 focus-visible:ring-ring dark:bg-background"
           aria-label="Attach host"
-          disabled={!canAdd}
+          disabled={!editable}
         >
           <Plus className="h-3.5 w-3.5" />
           <span>Attach host</span>

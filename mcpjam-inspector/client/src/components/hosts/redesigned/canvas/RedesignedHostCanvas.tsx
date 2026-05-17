@@ -295,15 +295,20 @@ export function RedesignedHostCanvas({
     [filteredNodes, selectedNodeId, readOnly],
   );
 
-  // In read-only mode the matrix sub-nodes shouldn't dispatch selection
-  // either; pass a no-op so internal click handlers fall through to the
-  // canvas-level onNodeClick (which we redirect to onRequestEdit).
+  // In read-only mode the matrix sub-regions stopPropagation before
+  // invoking onSelectNode — a no-op handler would swallow the click
+  // entirely and onNodeClick (which we redirect to onRequestEdit) would
+  // never fire. Route the sub-region click directly to onRequestEdit so
+  // the whole matrix card stays an editable affordance in read-only mode.
   const matrixCtx = useMemo(
     () =>
       readOnly
-        ? { selectedNodeId: null, onSelectNode: () => {} }
+        ? {
+            selectedNodeId: null,
+            onSelectNode: () => onRequestEdit?.(),
+          }
         : { selectedNodeId, onSelectNode },
-    [selectedNodeId, onSelectNode, readOnly],
+    [selectedNodeId, onSelectNode, readOnly, onRequestEdit],
   );
 
   return (

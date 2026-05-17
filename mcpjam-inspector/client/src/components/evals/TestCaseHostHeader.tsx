@@ -230,6 +230,8 @@ export function TestCaseHostHeader({
                 onClick={() => handleCapabilityToggle("hover")}
                 className="h-7 w-7"
                 data-testid="test-case-host-hover-toggle"
+                aria-label="Toggle hover capability"
+                aria-pressed={capabilities.hover}
               >
                 <MousePointer2 className="h-3.5 w-3.5" />
               </Button>
@@ -249,6 +251,8 @@ export function TestCaseHostHeader({
                 onClick={() => handleCapabilityToggle("touch")}
                 className="h-7 w-7"
                 data-testid="test-case-host-touch-toggle"
+                aria-label="Toggle touch capability"
+                aria-pressed={capabilities.touch}
               >
                 <Hand className="h-3.5 w-3.5" />
               </Button>
@@ -328,6 +332,7 @@ export function TestCaseHostHeader({
                   data-testid={`test-case-host-style-${host.id}`}
                   data-selected={effective.hostStyle === host.id ? "true" : undefined}
                   aria-pressed={effective.hostStyle === host.id}
+                  aria-label={`Set host style to ${host.chatUi.label}`}
                 >
                   <img
                     src={host.chatUi.logoSrc}
@@ -360,6 +365,7 @@ export function TestCaseHostHeader({
                   onClick={handleReset}
                   className="h-7 w-7"
                   data-testid="test-case-host-reset"
+                  aria-label="Reset to suite default"
                 >
                   <RotateCcw className="h-3.5 w-3.5" />
                 </Button>
@@ -376,8 +382,8 @@ export function TestCaseHostHeader({
         open={hostContextDialogOpen}
         onOpenChange={setHostContextDialogOpen}
         value={effective.hostContext}
-        baseline={baseline.hostContext}
         onChange={setHostContext}
+        onClearOverride={handleReset}
       />
 
       <HostCapabilitiesOverrideDialog

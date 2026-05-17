@@ -2416,6 +2416,7 @@ export function TestTemplateEditor({
                           })
                         }
                         baselineHostStyle={hostConfigBaseline?.hostStyle}
+                        liveOverrideHostStyle={hostConfigOverride?.hostStyle}
                       />
                     </div>
                   );
@@ -2441,6 +2442,7 @@ function RunColumn({
   onTabChange,
   onRetry,
   baselineHostStyle,
+  liveOverrideHostStyle,
 }: {
   record: CompareRunRecord;
   allRecords: CompareRunRecord[];
@@ -2458,6 +2460,14 @@ function RunColumn({
    * override. May be undefined when the suite hostConfig hasn't loaded.
    */
   baselineHostStyle: string | undefined;
+  /**
+   * The transient per-case hostStyle override that was passed to the
+   * current run. Used as the streaming fallback so the chrome matches the
+   * actual run-time style until the iteration snapshot lands and takes
+   * over. Without this, the first run after tweaking host chrome briefly
+   * renders with the wrong shell.
+   */
+  liveOverrideHostStyle: string | undefined;
 }) {
   const themeMode = usePreferencesStore((state) => state.themeMode);
   const globalPreferenceHostStyle = usePreferencesStore(
@@ -2467,8 +2477,11 @@ function RunColumn({
    * Effective hostStyle for this iteration's result chrome:
    *   1. iteration snapshot's per-Run override (authoritative — what
    *      the run actually ran with);
-   *   2. suite baseline (the suite's saved default);
-   *   3. global preference (last resort — old leaky behavior, kept
+   *   2. live per-case override (what we just dispatched to the server
+   *      for the in-flight run — matches the chrome until the snapshot
+   *      catches up);
+   *   3. suite baseline (the suite's saved default);
+   *   4. global preference (last resort — old leaky behavior, kept
    *      so multi-pane views still have a value while data loads).
    *
    * Index into the snapshot is loose (`any`) because the schema treats
@@ -2479,7 +2492,10 @@ function RunColumn({
     (record.iteration?.testCaseSnapshot as { hostConfigOverride?: { hostStyle?: string } } | undefined)
       ?.hostConfigOverride?.hostStyle;
   const hostStyle =
-    snapshotHostStyle ?? baselineHostStyle ?? globalPreferenceHostStyle;
+    snapshotHostStyle ??
+    liveOverrideHostStyle ??
+    baselineHostStyle ??
+    globalPreferenceHostStyle;
   const { toolsMetadata, toolServerMap, connectedServerIds } =
     useEvalTraceToolContext({
       serverNames,

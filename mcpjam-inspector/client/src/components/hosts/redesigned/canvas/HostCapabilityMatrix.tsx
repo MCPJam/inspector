@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, type CSSProperties, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import {
   AGENT_IDENTITY_NODE_ID,
@@ -347,8 +347,8 @@ function Region({
   selectedNodeId: string | null;
   onSelectNode: (id: string) => void;
   className?: string;
-  style?: React.CSSProperties;
-  children: React.ReactNode;
+  style?: CSSProperties;
+  children: ReactNode;
 }) {
   return (
     <button
@@ -442,7 +442,7 @@ function SectionBanner({
   onClick,
 }: {
   label: string;
-  meta: React.ReactNode;
+  meta: ReactNode;
   onClick?: () => void;
 }) {
   return (
@@ -512,7 +512,7 @@ function MatrixRow({
   newly?: boolean;
   selected: boolean;
   onClick: () => void;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <button
@@ -625,7 +625,7 @@ function SandboxSeverityDot({
   );
 }
 
-function SubTag({ children }: { children: React.ReactNode }) {
+function SubTag({ children }: { children: ReactNode }) {
   return (
     <span className="rounded-[3px] border border-border/60 bg-foreground/[0.03] px-1.5 py-px font-mono text-[9.5px] text-muted-foreground">
       {children}
