@@ -56,9 +56,15 @@ export function CreateHostDialog({
     onClose();
   };
 
+  const isServersLoading = isAuthenticated && servers === undefined;
+
   const handleCreate = async () => {
     const trimmed = name.trim();
     if (!trimmed) return;
+    if (isServersLoading) {
+      toast.error("Still loading project servers. Try again in a moment.");
+      return;
+    }
     setIsSaving(true);
     try {
       // Pre-attach every existing project server as required so the new
@@ -135,8 +141,13 @@ export function CreateHostDialog({
           <Button variant="outline" onClick={handleClose} disabled={isSaving}>
             Cancel
           </Button>
-          <Button onClick={handleCreate} disabled={!name.trim() || isSaving}>
-            {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+          <Button
+            onClick={handleCreate}
+            disabled={!name.trim() || isSaving || isServersLoading}
+          >
+            {(isSaving || isServersLoading) && (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            )}
             Create
           </Button>
         </DialogFooter>

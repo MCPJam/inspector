@@ -40,10 +40,12 @@ const isInIframe = (() => {
     try {
       const sameOrigin =
         window.top!.location.origin === window.location.origin;
-      if (
-        sameOrigin &&
-        window.location.pathname.startsWith("/chatbox/")
-      ) {
+      // Match the documented `/chatbox/<slug>/<token>` shape only; a generic
+      // `startsWith("/chatbox/")` would let any unrelated future subpath
+      // slip past the misrouted-pushState guard.
+      const isPublicChatboxRuntimePath =
+        /^\/chatbox\/[^/]+\/[^/]+\/?$/.test(window.location.pathname);
+      if (sameOrigin && isPublicChatboxRuntimePath) {
         return false;
       }
     } catch {

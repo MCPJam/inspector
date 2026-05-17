@@ -294,7 +294,7 @@ export function HostBuilderViewRedesigned({
     } finally {
       setIsSaving(false);
     }
-  }, [hostId, draftName, draftConfig, host?.config?.id, updateHost]);
+  }, [hostId, draftName, draftConfig, updateHost]);
 
   const handleAddServer = useCallback(
     async (formData: ServerFormData) => {

@@ -44,9 +44,6 @@ export function PlaygroundPreviewedHostSync({
   const setHostCapabilitiesOverride = usePreferencesStore(
     (state) => state.setHostCapabilitiesOverride,
   );
-  const setChatUiOverride = usePreferencesStore(
-    (state) => state.setChatUiOverride,
-  );
 
   // Track the last (id, configId) tuple we applied so the effect only
   // fires on actual host changes — not on every re-render or on

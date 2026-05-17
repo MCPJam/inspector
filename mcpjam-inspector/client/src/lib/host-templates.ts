@@ -136,9 +136,13 @@ const CLAUDE_HOST_STYLE_VARIABLES: Record<string, string> = {
     "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1)",
 };
 
-// @font-face block claude.ai injects via hostContext.styles.css.fonts. URL
-// hosts must be allowed in apps.sandbox.csp.resourceDomains (assets.claude.ai)
-// for these to actually load inside the View iframe.
+// @font-face block claude.ai injects via hostContext.styles.css.fonts.
+// Templates use `apps.sandbox.csp.mode: "declared"`, so font URLs load
+// based on the resource's own `_meta.ui.csp` (font-src) declaration —
+// no per-domain allowlist is set on the template. If a host operator
+// wants to clamp font origins they should union assets.claude.ai into
+// a renderer-layer baseline rather than re-introducing a `restrictTo`
+// here (which intersects, not unions, and silently zeros out widgets).
 const CLAUDE_FONTS_CSS = `
 @font-face {
   font-family: "Anthropic Sans";
