@@ -747,6 +747,15 @@
   transition: opacity 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+/* Reduced-motion: the canvas still needs the visibility gate (otherwise the
+   pre-fitView flash is worse), but instant rather than animated. */
+@media (prefers-reduced-motion: reduce) {
+  .host-redesign-canvas[data-edges-ready="true"] .react-flow__edges,
+  .host-redesign-canvas[data-viewport-ready="true"] .react-flow__viewport {
+    transition: none;
+  }
+}
+
 /* Font code variable for theme */
 @theme inline {
   --font-code: var(--font-code);

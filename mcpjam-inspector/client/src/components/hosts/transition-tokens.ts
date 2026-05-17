@@ -10,11 +10,6 @@ export const SNAPPY_CAMERA = {
   ease: [0.32, 0.72, 0, 1] as [number, number, number, number],
 };
 
-export const SNAPPY_FADE = {
-  duration: 0.5,
-  ease: [0.22, 1, 0.36, 1] as [number, number, number, number],
-};
-
 export const SNAPPY_RAIL = {
   duration: 0.9,
   ease: [0.32, 0.72, 0, 1] as [number, number, number, number],
@@ -29,11 +24,6 @@ export const SNAPPY_HOST_REVEAL = {
   duration: 0.7,
   delay: 0.18,
   ease: [0.22, 1, 0.36, 1] as [number, number, number, number],
-};
-
-export const SNAPPY_STAGGER = {
-  staggerChildren: 0.08,
-  delayChildren: 0.28,
 };
 
 export type ViewPhase = "servers" | "host";

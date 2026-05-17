@@ -8,7 +8,7 @@ import { SNAPPY_RAIL } from "./hosts/transition-tokens";
 import { ViewModeSelector } from "./shared/view-mode-selector";
 import { usePreviewedHostId } from "@/hooks/use-previewed-host-id";
 import { useHost, useHostList } from "@/hooks/useHosts";
-import { buildHostsPath, routePaths } from "@/lib/app-navigation";
+import { routePaths } from "@/lib/app-navigation";
 import { getChatboxShellStyle } from "@/lib/chatbox-host-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
@@ -66,11 +66,18 @@ export function HostsTab({
   // Reset host selection only when the project actually changes mid-session,
   // not on first mount — otherwise a deep-link like `/hosts/:hostId` gets
   // wiped right after the page loads.
+  //
+  // useRef(projectId) captures the value at first render; if auth hasn't
+  // resolved yet that's `null`, so the very next render (auth resolves →
+  // projectId becomes a real id) would otherwise look like a project
+  // switch and clear the deep-linked selection. Treat any transition
+  // involving a null side as initial hydration, not a real switch.
   const prevProjectIdRef = useRef(projectId);
   useEffect(() => {
     const prev = prevProjectIdRef.current;
     prevProjectIdRef.current = projectId;
     if (prev === projectId) return;
+    if (prev == null || projectId == null) return;
     if (selectedHostId) onSelectHost(null);
     // selectedHostId/onSelectHost intentionally omitted: this effect resets
     // host context when the active project changes, not when the selection
@@ -123,7 +130,6 @@ export function HostsTab({
             <HostBuilderView
               hostId={selectedHostId}
               projectId={projectId}
-              onBack={() => onSelectHost(null)}
             />
           </motion.div>
         ) : (
@@ -155,9 +161,12 @@ export function HostsTab({
                       value="servers"
                       ariaLabel="Connect view"
                       onChange={(next) => {
+                        // `onSelectHost` is wired to `handleSelectHost` in
+                        // HostsRoute, which itself calls `navigate(buildHostsPath(...))`
+                        // — calling `navigate` here too pushes a duplicate
+                        // history entry, breaking the browser Back button.
                         if (next === "host" && previewedHostId) {
                           onSelectHost(previewedHostId);
-                          navigate(buildHostsPath(previewedHostId));
                         } else if (next === "servers") {
                           navigate(routePaths.servers);
                         }
