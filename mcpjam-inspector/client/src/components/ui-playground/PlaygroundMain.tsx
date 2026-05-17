@@ -577,21 +577,30 @@ export function PlaygroundMain({
     ) {
       return;
     }
-    lastSeededHostRef.current = { hostId: previewedHostId, configId };
 
     const cfg = previewedHost.config;
-    setSystemPrompt(cfg.systemPrompt);
-    setTemperature(cfg.temperature);
-    setRequireToolApproval(cfg.requireToolApproval);
 
     // Map host's required + optional server ids to project server names.
     // Servers the host references but the project no longer has are
     // dropped — selectedMultipleServers must contain valid names.
+    //
+    // Guard the dedupe-ref commit on this resolution: if the host references
+    // servers but `serversById` hasn't hydrated yet (empty map on first pass),
+    // bail without marking the (hostId, configId) seeded so a later render
+    // with a populated map can finish the seed.
+    const ids = [
+      ...(cfg.serverIds ?? []),
+      ...(cfg.optionalServerIds ?? []),
+    ];
+    if (ids.length > 0 && serversById.size === 0) return;
+
+    lastSeededHostRef.current = { hostId: previewedHostId, configId };
+
+    setSystemPrompt(cfg.systemPrompt);
+    setTemperature(cfg.temperature);
+    setRequireToolApproval(cfg.requireToolApproval);
+
     if (onSelectMultipleServers) {
-      const ids = [
-        ...(cfg.serverIds ?? []),
-        ...(cfg.optionalServerIds ?? []),
-      ];
       const seen = new Set<string>();
       const names: string[] = [];
       for (const id of ids) {

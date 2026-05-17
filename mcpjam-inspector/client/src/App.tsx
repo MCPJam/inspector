@@ -2645,6 +2645,7 @@ export default function App() {
       isMultiSelectEnabled: activeTab === "playground",
       onServerChange: setSelectedServer,
       onMultiServerToggle: toggleServerSelection,
+      onSelectMultipleServers: setSelectedMCPConfigs,
       onConnect: handleConnect,
       onReconnect: handleReconnect,
       showOnlyOAuthServers: false,
@@ -2657,6 +2658,7 @@ export default function App() {
     appState.selectedMultipleServers,
     setSelectedServer,
     toggleServerSelection,
+    setSelectedMCPConfigs,
     handleConnect,
     handleReconnect,
   ]);
