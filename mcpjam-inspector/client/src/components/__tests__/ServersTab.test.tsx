@@ -861,17 +861,30 @@ describe("ServersTab shared detail modal", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("surfaces connection settings update indicators when project client capabilities changed", () => {
+  it("surfaces connection settings update indicators when a per-server clientCapabilities override drifts from initialize payload", () => {
+    // The indicator only fires for per-server overrides — host-driven
+    // capability changes are handled by the auto-reconciler (which
+    // disconnect/reconnects affected servers on host switch), so comparing
+    // against host-blended caps here just produced false positives.
     const initializedCapabilities = getDefaultClientCapabilities() as Record<
       string,
       unknown
     >;
+    const driftedOverride = {
+      ...initializedCapabilities,
+      experimental: { perServerOverride: true },
+    } as Record<string, unknown>;
 
-    const { rerender } = render(
+    render(
       <ServersTab
         {...defaultProps}
         projectServers={{
           "test-server": createServer({
+            config: {
+              command: "npx",
+              args: ["-y", "@modelcontextprotocol/server-test"],
+              clientCapabilities: driftedOverride,
+            },
             initializationInfo: {
               clientCapabilities: initializedCapabilities,
             } as any,
@@ -880,6 +893,11 @@ describe("ServersTab shared detail modal", () => {
         projects={{
           "project-1": createProject({
             "test-server": createServer({
+              config: {
+                command: "npx",
+                args: ["-y", "@modelcontextprotocol/server-test"],
+                clientCapabilities: driftedOverride,
+              },
               initializationInfo: {
                 clientCapabilities: initializedCapabilities,
               } as any,
@@ -889,12 +907,21 @@ describe("ServersTab shared detail modal", () => {
       />
     );
 
-    expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
     expect(
-      screen.queryByLabelText("Connection settings changed")
-    ).not.toBeInTheDocument();
+      screen.getByLabelText("Connection settings changed")
+    ).toBeInTheDocument();
+  });
 
-    rerender(
+  it("does not surface the indicator when project client capabilities change but no per-server override is set", () => {
+    // Host-driven caps changes are handled by the auto-reconciler. The
+    // indicator must stay quiet for servers without their own override so
+    // host switches don't paint stale-handshake warnings across the board.
+    const initializedCapabilities = getDefaultClientCapabilities() as Record<
+      string,
+      unknown
+    >;
+
+    render(
       <ServersTab
         {...defaultProps}
         projectServers={{
@@ -917,9 +944,7 @@ describe("ServersTab shared detail modal", () => {
               version: 1,
               clientCapabilities: {
                 elicitation: {},
-                experimental: {
-                  inspectorProfile: true,
-                },
+                experimental: { inspectorProfile: true },
               },
               hostContext: {},
             },
@@ -928,10 +953,9 @@ describe("ServersTab shared detail modal", () => {
       />
     );
 
-    expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
     expect(
-      screen.getByLabelText("Connection settings changed")
-    ).toBeInTheDocument();
+      screen.queryByLabelText("Connection settings changed")
+    ).not.toBeInTheDocument();
   });
 
   it("does not surface connection settings update indicators when server capability overrides already match initialize payload", () => {

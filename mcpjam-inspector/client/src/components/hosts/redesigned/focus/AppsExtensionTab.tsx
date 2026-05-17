@@ -17,14 +17,45 @@ interface AppsExtensionTabProps {
 }
 
 /**
- * User-facing JSON document. The shape matches the SEP-1865 nomenclature
- * the View sees rather than the storage layout: `hostCapabilities` is the
- * EFFECTIVE merged value (preset for the active hostStyle, overlaid with
- * the user's `hostCapabilitiesOverride` when defined). On parse-back we
- * diff against the preset to decide whether an override needs to be stored,
- * so editing the JSON back to the preset's exact shape cleanly reverts to
- * "no override" — the backend hashes that distinctly from an explicit `{}`.
+ * User-facing JSON document. Shape matches SEP-1865 verbatim so an MCP App
+ * developer can read it against the spec without translating inspector-
+ * specific concepts. Key points:
+ *
+ *  - `hostCapabilities` is the EFFECTIVE merged value (preset for the
+ *    active hostStyle, overlaid with the user's `hostCapabilitiesOverride`
+ *    when defined). On parse-back we diff against the preset to decide
+ *    whether an override needs to be stored, so editing back to the
+ *    preset's exact shape cleanly reverts to "no override" — the backend
+ *    hashes that distinctly from an explicit `{}`.
+ *
+ *  - `hostCapabilities.sandbox` is the SPEC SHAPE — four allowlist arrays
+ *    under `csp` (connectDomains, resourceDomains, frameDomains,
+ *    baseUriDomains) and presence-flag objects under `permissions`
+ *    (camera, microphone, geolocation, clipboardWrite). The inspector
+ *    stores this as `mcpProfile.apps.sandbox.csp.restrictTo` /
+ *    `permissions.allow`; we hoist it into spec position on serialize and
+ *    lift it back on parse. Inspector-only knobs (`mode`, `deny`,
+ *    `extensions`) are intentionally not surfaced in this JSON — they
+ *    aren't in the SEP and would confuse a developer reading the doc
+ *    against the spec. They're preserved across edits.
  */
+type SpecSandboxCsp = {
+  connectDomains?: string[];
+  resourceDomains?: string[];
+  frameDomains?: string[];
+  baseUriDomains?: string[];
+};
+type SpecSandboxPermissions = {
+  camera?: Record<string, never>;
+  microphone?: Record<string, never>;
+  geolocation?: Record<string, never>;
+  clipboardWrite?: Record<string, never>;
+};
+type SpecHostCapabilitiesSandbox = {
+  csp?: SpecSandboxCsp;
+  permissions?: SpecSandboxPermissions;
+};
+
 type AppsDoc = {
   extensions?: Record<string, unknown>;
   hostCapabilities?: Record<string, unknown>;
@@ -32,25 +63,137 @@ type AppsDoc = {
   uiInitialize?: {
     hostInfo?: Record<string, unknown>;
   };
-  sandbox?: {
-    csp?: NonNullable<
-      NonNullable<HostConfigMcpProfileV1["apps"]>["sandbox"]
-    >["csp"];
-    permissions?: NonNullable<
-      NonNullable<HostConfigMcpProfileV1["apps"]>["sandbox"]
-    >["permissions"];
-  };
 };
+
+/** Spec sandbox keys we know about. New permission names land here once SEP adds them. */
+const SPEC_PERMISSION_KEYS = [
+  "camera",
+  "microphone",
+  "geolocation",
+  "clipboardWrite",
+] as const satisfies ReadonlyArray<keyof SpecSandboxPermissions>;
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-function pickIfNonEmpty<T extends Record<string, unknown>>(
-  obj: T | undefined,
-): T | undefined {
-  if (!obj || Object.keys(obj).length === 0) return undefined;
-  return obj;
+/**
+ * Build the spec-shaped `HostCapabilities.sandbox` from our internal
+ * storage. We persist a richer policy (mode/restrictTo/deny); the spec
+ * only knows about the four domain allowlists and the four permission
+ * presence-flags. `restrictTo` IS the spec's allowlist semantically —
+ * "host MAY further restrict but MUST NOT allow undeclared domains" —
+ * so we hoist it directly into spec position.
+ */
+function specSandboxFromPolicy(
+  policy: NonNullable<HostConfigMcpProfileV1["apps"]>["sandbox"] | undefined,
+): SpecHostCapabilitiesSandbox | undefined {
+  if (!policy) return undefined;
+  const out: SpecHostCapabilitiesSandbox = {};
+
+  const restrict = policy.csp?.restrictTo;
+  if (restrict) {
+    const csp: SpecSandboxCsp = {};
+    if (restrict.connectDomains && restrict.connectDomains.length > 0)
+      csp.connectDomains = [...restrict.connectDomains];
+    if (restrict.resourceDomains && restrict.resourceDomains.length > 0)
+      csp.resourceDomains = [...restrict.resourceDomains];
+    if (restrict.frameDomains && restrict.frameDomains.length > 0)
+      csp.frameDomains = [...restrict.frameDomains];
+    if (restrict.baseUriDomains && restrict.baseUriDomains.length > 0)
+      csp.baseUriDomains = [...restrict.baseUriDomains];
+    if (Object.keys(csp).length > 0) out.csp = csp;
+  }
+
+  const allow = policy.permissions?.allow;
+  if (allow) {
+    const perms: SpecSandboxPermissions = {};
+    for (const key of SPEC_PERMISSION_KEYS) {
+      // Spec uses presence: `camera: {}` means granted; absence means not granted.
+      // Our storage uses a boolean map; `false` and missing both mean "not granted".
+      if (allow[key] === true) perms[key] = {};
+    }
+    if (Object.keys(perms).length > 0) out.permissions = perms;
+  }
+
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+type SandboxPolicy = NonNullable<
+  NonNullable<HostConfigMcpProfileV1["apps"]>["sandbox"]
+>;
+type SandboxPolicyCsp = NonNullable<SandboxPolicy["csp"]>;
+type SandboxPolicyPerms = NonNullable<SandboxPolicy["permissions"]>;
+
+/**
+ * Inverse of `specSandboxFromPolicy`. Reads the spec-shaped
+ * `hostCapabilities.sandbox` block coming out of the JSON editor and
+ * folds it into the inspector's richer policy shape, preserving prev's
+ * inspector-only knobs (`mode`, `deny`, `extensions`).
+ */
+function liftSpecSandboxIntoPolicy(args: {
+  incomingPresent: boolean;
+  incoming: SpecHostCapabilitiesSandbox | undefined;
+  prev: SandboxPolicy | undefined;
+}): SandboxPolicy | undefined {
+  const { incomingPresent, incoming, prev } = args;
+
+  // No sandbox key in the JSON at all → don't touch policy. The user
+  // either hasn't expanded the section or it's a no-op save.
+  if (!incomingPresent) return prev;
+
+  const prevCsp = prev?.csp;
+  const prevPerms = prev?.permissions;
+
+  // CSP: replace restrictTo wholesale with the parsed spec arrays.
+  // Preserve mode / deny / extensions from prev.
+  const newRestrict: SpecSandboxCsp = {};
+  const incomingCsp = incoming?.csp;
+  if (incomingCsp?.connectDomains && incomingCsp.connectDomains.length > 0) {
+    newRestrict.connectDomains = [...incomingCsp.connectDomains];
+  }
+  if (incomingCsp?.resourceDomains && incomingCsp.resourceDomains.length > 0) {
+    newRestrict.resourceDomains = [...incomingCsp.resourceDomains];
+  }
+  if (incomingCsp?.frameDomains && incomingCsp.frameDomains.length > 0) {
+    newRestrict.frameDomains = [...incomingCsp.frameDomains];
+  }
+  if (incomingCsp?.baseUriDomains && incomingCsp.baseUriDomains.length > 0) {
+    newRestrict.baseUriDomains = [...incomingCsp.baseUriDomains];
+  }
+
+  const nextCsp: SandboxPolicyCsp = {};
+  if (prevCsp?.mode !== undefined) nextCsp.mode = prevCsp.mode;
+  if (prevCsp?.deny !== undefined) nextCsp.deny = prevCsp.deny;
+  if (prevCsp?.extensions !== undefined) nextCsp.extensions = prevCsp.extensions;
+  if (Object.keys(newRestrict).length > 0) nextCsp.restrictTo = newRestrict;
+  const cspNonEmpty = Object.keys(nextCsp).length > 0;
+
+  // Permissions: rebuild `allow` from spec presence-flags. Preserve mode /
+  // deny / extensions from prev.
+  const newAllow: Record<string, boolean> = {};
+  const incomingPerms = incoming?.permissions;
+  if (incomingPerms) {
+    for (const key of SPEC_PERMISSION_KEYS) {
+      if (incomingPerms[key] !== undefined) {
+        newAllow[key] = true;
+      }
+    }
+  }
+
+  const nextPerms: SandboxPolicyPerms = {};
+  if (prevPerms?.mode !== undefined) nextPerms.mode = prevPerms.mode;
+  if (prevPerms?.deny !== undefined) nextPerms.deny = prevPerms.deny;
+  if (prevPerms?.extensions !== undefined)
+    nextPerms.extensions = prevPerms.extensions;
+  if (Object.keys(newAllow).length > 0) nextPerms.allow = newAllow;
+  const permsNonEmpty = Object.keys(nextPerms).length > 0;
+
+  if (!cspNonEmpty && !permsNonEmpty) return undefined;
+  const next: SandboxPolicy = {};
+  if (cspNonEmpty) next.csp = nextCsp;
+  if (permsNonEmpty) next.permissions = nextPerms;
+  return next;
 }
 
 function appsToJson(draft: HostConfigInputV2): AppsDoc {
@@ -67,11 +210,23 @@ function appsToJson(draft: HostConfigInputV2): AppsDoc {
 
   // hostCapabilities — show the EFFECTIVE merged value (preset + override)
   // so the JSON matches what the host actually advertises. resolveEffective
-  // strips `sandbox` defensively, mirroring the runtime contract.
+  // strips `sandbox` defensively because we own sandbox separately; we then
+  // hoist the spec-shaped sandbox view into the same object below.
   const effectiveCaps = resolveEffectiveHostCapabilities({
     hostStyle: draft.hostStyle,
     hostCapabilitiesOverride: draft.hostCapabilitiesOverride,
   }) as Record<string, unknown>;
+
+  // Nest sandbox inside hostCapabilities per SEP-1865, using the spec
+  // shape (allowlist arrays + permission presence-flags). Our richer
+  // policy fields (mode/deny/extensions) are intentionally NOT surfaced
+  // here — they're inspector knobs, not in the SEP, so a developer
+  // reading this JSON against the spec sees only spec primitives.
+  const specSandbox = specSandboxFromPolicy(draft.mcpProfile?.apps?.sandbox);
+  if (specSandbox) {
+    effectiveCaps.sandbox = specSandbox;
+  }
+
   if (Object.keys(effectiveCaps).length > 0) {
     doc.hostCapabilities = effectiveCaps;
   }
@@ -82,32 +237,10 @@ function appsToJson(draft: HostConfigInputV2): AppsDoc {
     doc.uiInitialize = { hostInfo };
   }
 
-  // mcpProfile.apps.sandbox — only render sub-keys with content.
-  const sandbox = draft.mcpProfile?.apps?.sandbox;
-  const csp = sandbox?.csp;
-  const perms = sandbox?.permissions;
-  const cspNonEmpty =
-    csp &&
-    (csp.mode !== undefined ||
-      pickIfNonEmpty(csp.restrictTo as Record<string, unknown> | undefined) ||
-      pickIfNonEmpty(csp.deny as Record<string, unknown> | undefined) ||
-      pickIfNonEmpty(csp.extensions));
-  const permsNonEmpty =
-    perms &&
-    (perms.mode !== undefined ||
-      pickIfNonEmpty(perms.allow as Record<string, unknown> | undefined) ||
-      (perms.deny && perms.deny.length > 0) ||
-      pickIfNonEmpty(perms.extensions));
-  if (cspNonEmpty || permsNonEmpty) {
-    doc.sandbox = {};
-    if (cspNonEmpty) doc.sandbox.csp = csp;
-    if (permsNonEmpty) doc.sandbox.permissions = perms;
-  }
-
   return doc;
 }
 
-function applyJsonToDraft(
+export function applyJsonToDraft(
   parsed: unknown,
   prev: HostConfigInputV2,
 ): HostConfigInputV2 | null {
@@ -131,16 +264,24 @@ function applyJsonToDraft(
   //   - equal to preset → undefined override (clean revert)
   //   - different from preset → override = parsed value (incl. `{}` for
   //     "advertise nothing")
-  // `sandbox` is stripped defensively per SEP-1865 (sandbox is per-resource
-  // at runtime, never a vendor trait).
+  // `sandbox` is peeled off here and routed to mcpProfile.apps.sandbox
+  // storage below; the override-diff compares only the static cap fields
+  // so adding/changing sandbox doesn't spuriously create a host-caps
+  // override.
   const presetEffective = resolveEffectiveHostCapabilities({
     hostStyle: prev.hostStyle,
     hostCapabilitiesOverride: undefined,
   }) as Record<string, unknown>;
   let nextOverride: Record<string, unknown> | undefined = undefined;
+  let incomingHostCapsSandbox: SpecHostCapabilitiesSandbox | undefined;
+  let hostCapsSandboxPresent = false;
   if ("hostCapabilities" in parsed) {
     if (isPlainObject(parsed.hostCapabilities)) {
-      const { sandbox: _sandbox, ...incoming } = parsed.hostCapabilities;
+      const { sandbox, ...incoming } = parsed.hostCapabilities;
+      hostCapsSandboxPresent = "sandbox" in parsed.hostCapabilities;
+      if (isPlainObject(sandbox)) {
+        incomingHostCapsSandbox = sandbox as SpecHostCapabilitiesSandbox;
+      }
       if (stableStringifyJson(incoming) === stableStringifyJson(presetEffective)) {
         nextOverride = undefined;
       } else {
@@ -161,39 +302,35 @@ function applyJsonToDraft(
 
   // mcpProfile.apps reconstruction. We rebuild only the `apps` half and
   // splice back the user's existing `initialize` (edited in ProtocolTab)
-  // and any unknown future keys so cross-tab edits don't trample each
-  // other.
+  // so cross-tab edits don't trample each other. `apps.uiInitialize`
+  // round-trips through this tab's JSON doc; `apps.sandbox` is lifted
+  // from `hostCapabilities.sandbox` (spec-shape) back into the inspector's
+  // richer policy shape, preserving prev's mode/deny/extensions.
   const prevProfile = prev.mcpProfile;
+  const prevSandbox = prevProfile?.apps?.sandbox;
   const incomingUiInit = isPlainObject(parsed.uiInitialize)
     ? parsed.uiInitialize
-    : undefined;
-  const incomingSandbox = isPlainObject(parsed.sandbox)
-    ? parsed.sandbox
     : undefined;
 
   const newAppsHostInfo =
     incomingUiInit && isPlainObject(incomingUiInit.hostInfo)
       ? incomingUiInit.hostInfo
       : undefined;
-  const newSandboxCsp =
-    incomingSandbox && isPlainObject(incomingSandbox.csp)
-      ? (incomingSandbox.csp as NonNullable<
-          NonNullable<HostConfigMcpProfileV1["apps"]>["sandbox"]
-        >["csp"])
-      : undefined;
-  const newSandboxPerms =
-    incomingSandbox && isPlainObject(incomingSandbox.permissions)
-      ? (incomingSandbox.permissions as NonNullable<
-          NonNullable<HostConfigMcpProfileV1["apps"]>["sandbox"]
-        >["permissions"])
-      : undefined;
+
+  // Lift spec-shaped hostCapabilities.sandbox back into policy storage.
+  // - hostCaps had no `sandbox` key → use prev sandbox verbatim (no edit)
+  // - hostCaps had `sandbox` (even empty) → user is asserting intent, so
+  //   overwrite restrictTo / permissions.allow with the parsed spec
+  //   values; preserve mode / deny / extensions from prev because those
+  //   are inspector-only and the JSON view never exposed them.
+  const nextSandbox = liftSpecSandboxIntoPolicy({
+    incomingPresent: hostCapsSandboxPresent,
+    incoming: incomingHostCapsSandbox,
+    prev: prevSandbox,
+  });
 
   const appsBlock: NonNullable<HostConfigMcpProfileV1["apps"]> = {};
-  if (newSandboxCsp || newSandboxPerms) {
-    appsBlock.sandbox = {};
-    if (newSandboxCsp) appsBlock.sandbox.csp = newSandboxCsp;
-    if (newSandboxPerms) appsBlock.sandbox.permissions = newSandboxPerms;
-  }
+  if (nextSandbox) appsBlock.sandbox = nextSandbox;
   if (newAppsHostInfo) {
     appsBlock.uiInitialize = { hostInfo: newAppsHostInfo };
   }

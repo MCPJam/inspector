@@ -7,6 +7,8 @@ import { Input } from "@mcpjam/design-system/input";
 import { Switch } from "@mcpjam/design-system/switch";
 import { cn } from "@/lib/utils";
 import type { HostConfigInputV2 } from "@/lib/host-config-v2";
+import { getServerStatusDot } from "../canvas/RedesignedHostCanvas";
+import type { ServerCardNodeData } from "../types";
 import { Chip, FocusBlock } from "./primitives";
 
 interface ServersTabProps {
@@ -18,6 +20,7 @@ interface ServersTabProps {
     id: string;
     name: string;
     url?: string | null;
+    connectionStatus?: ServerCardNodeData["connectionStatus"];
   }>;
   /** Set when the user clicked a specific server card on the canvas. */
   initialSelectedServerId: string | null;
@@ -133,10 +136,25 @@ export function ServersTab({
                       onCheckedChange={(c) => setRequired(srv.id, !!c)}
                       aria-label={`Required: ${srv.name}`}
                     />
-                    <span
-                      className="flex size-1.5 shrink-0 rounded-full bg-emerald-500"
-                      aria-hidden
-                    />
+                    {(() => {
+                      const insecure =
+                        !!srv.url && srv.url.startsWith("http://");
+                      const { dotClass, statusLabel } = getServerStatusDot({
+                        insecure,
+                        connectionStatus:
+                          srv.connectionStatus ?? "unknown",
+                      });
+                      return (
+                        <span
+                          className={cn(
+                            "flex size-1.5 shrink-0 rounded-full",
+                            dotClass,
+                          )}
+                          aria-label={statusLabel}
+                          title={statusLabel}
+                        />
+                      );
+                    })()}
                     <div className="flex min-w-0 flex-1 flex-col">
                       <span
                         className="truncate text-[12.5px] font-semibold"

@@ -4,8 +4,8 @@ import { cn } from "@/lib/utils";
 import type { HostConfigInputV2 } from "@/lib/host-config-v2";
 import type { HostAttentionIssue, HostFocusTabId } from "../types";
 import { countIssuesByTab, fieldsWithIssues } from "./useHostDraftValidation";
+import { AppearanceTab } from "./AppearanceTab";
 import { BehaviorTab } from "./BehaviorTab";
-import { GeneralTab } from "./GeneralTab";
 import { ProtocolTab } from "./ProtocolTab";
 import { AppsExtensionTab } from "./AppsExtensionTab";
 import { ServersTab } from "./ServersTab";
@@ -38,6 +38,13 @@ interface HostFocusPanelProps {
     id: string;
     name: string;
     url?: string | null;
+    connectionStatus?:
+      | "connected"
+      | "connecting"
+      | "failed"
+      | "disconnected"
+      | "oauth-flow"
+      | "unknown";
   }>;
   onAddServer: () => void;
   onClose: () => void;
@@ -58,7 +65,11 @@ export function HostFocusPanel({
   onClose,
 }: HostFocusPanelProps) {
   const issuesByTab = countIssuesByTab(attention);
-  const generalIssues = fieldsWithIssues(attention, "general");
+  // Host-name validation was retagged from "general" → "behavior" when
+  // the General tab was removed (see useHostDraftValidation.ts). The
+  // identity-row indicator follows the new tag so the input still lights
+  // up red when empty.
+  const behaviorIssues = fieldsWithIssues(attention, "behavior");
 
   return (
     <div className={hostFocusShellRootClass}>
@@ -66,7 +77,7 @@ export function HostFocusPanel({
         className={cn(hostFocusShellHeaderRowClass, "py-2")}
         hostDisplayName={hostDisplayName}
         onHostDisplayNameChange={onHostDisplayNameChange}
-        hasNameIssue={generalIssues.has("hostDisplayName")}
+        hasNameIssue={behaviorIssues.has("hostDisplayName")}
       />
       <header
         className={cn(
@@ -92,15 +103,15 @@ export function HostFocusPanel({
       </header>
 
       <div className={hostFocusShellScrollClass}>
-        {tab === "general" ? (
-          <GeneralTab attention={attention} />
-        ) : null}
         {tab === "behavior" ? (
           <BehaviorTab
             draft={draft}
             onDraftChange={onDraftChange}
             attention={attention}
           />
+        ) : null}
+        {tab === "appearance" ? (
+          <AppearanceTab draft={draft} onDraftChange={onDraftChange} />
         ) : null}
         {tab === "protocol" ? (
           <ProtocolTab

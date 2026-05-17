@@ -31,6 +31,7 @@ import {
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
 import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
+import { useIsChatboxSurface } from "@/contexts/chatbox-surface-context";
 import {
   resolveSandboxCsp,
   resolveSandboxPermissions,
@@ -263,11 +264,30 @@ export function MCPAppsRenderer({
     ? configuredHostTheme ?? chatboxHostTheme ?? themeMode
     : chatboxHostTheme ?? themeMode;
   const playgroundCspMode = useUIPlaygroundStore((s) => s.mcpAppsCspMode);
-  const cspMode: CspMode = isPlaygroundActive
-    ? playgroundCspMode
-    : minimalMode
+  // Chatbox surfaces (published runtime, Chatboxes → Preview, Chatboxes →
+  // Sessions transcript) default to `permissive`. They are end-user-facing
+  // demo surfaces where an incomplete `_meta.ui.csp` declaration on the MCP
+  // server would manifest as a blank widget; the friction outweighs the
+  // loss of host-side CSP enforcement. Hosts that need strict enforcement
+  // can still pin it via the host config's `apps.sandbox.csp` policy,
+  // applied per-resource below by `resolveSandboxCsp` regardless of this
+  // default.
+  //
+  // Why isChatboxSurface wins over isPlaygroundActive: the Playground store
+  // is persisted to localStorage and shared across browsing contexts on the
+  // same origin, including the chatbox runtime iframe rendered inside the
+  // Preview tab. If the user has Playground active in the inspector with
+  // `mcpAppsCspMode: "widget-declared"`, that selection would otherwise
+  // leak into the chatbox preview iframe and render the published runtime
+  // under strict CSP — surprising and inconsistent with the published
+  // chatbox runtime when opened in a top-level window.
+  const isChatboxSurface = useIsChatboxSurface();
+  const cspMode: CspMode =
+    isChatboxSurface || minimalMode
       ? "permissive"
-      : "widget-declared";
+      : isPlaygroundActive
+        ? playgroundCspMode
+        : "widget-declared";
 
   // Get locale and timeZone from playground store when active, fallback to browser defaults
   const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);
@@ -958,6 +978,55 @@ export function MCPAppsRenderer({
     permissive: boolean;
     hostPolicyApplied: boolean;
   }>(() => {
+    // Chatbox / Playground / minimal-mode surfaces opted into `permissive`
+    // CSP up at line 285. Permissive means permissive — short-circuit the
+    // host CSP resolver entirely so the implicit `mode: "host-default"`
+    // baseline doesn't relock a surface the user explicitly chose to leave
+    // open. Without this short-circuit, a saved chatbox profile with
+    // `apps.sandbox.csp.mode: "host-default"` (the default the editor
+    // writes) forces `permissive: false` regardless of cspMode, and the
+    // sandbox-proxy injects the SEP-1865 secure-default CSP — blocking
+    // `esm.sh` script/font/style loads for widgets like Excalidraw.
+    //
+    // Hosts that want strict CSP on chatbox surfaces still get it by
+    // setting `restrictTo` / `deny` explicitly — those go through the
+    // resolver via the cspMode != "permissive" branch (they should also
+    // flip cspMode away from "permissive" in the host config UI, but
+    // belt-and-suspenders).
+    //
+    // Permissions policy still resolves below — it's orthogonal to CSP
+    // and the chatbox-surface decision is specifically about content
+    // loading, not device access.
+    if (cspMode === "permissive") {
+      let resolvedPermissions: McpUiResourcePermissions | undefined;
+      if (sandboxPermissionsPolicy) {
+        const resourcePermsMap: Record<string, boolean> = {};
+        if (widgetPermissions && typeof widgetPermissions === "object") {
+          for (const [k, v] of Object.entries(
+            widgetPermissions as Record<string, unknown>,
+          )) {
+            if (v) resourcePermsMap[k] = true;
+          }
+        }
+        const resolved = resolveSandboxPermissions({
+          resourcePermissions: resourcePermsMap,
+          policy: sandboxPermissionsPolicy,
+          hostedMode: HOSTED_MODE,
+        });
+        const out: Record<string, Record<string, never>> = {};
+        for (const name of Object.keys(resolved.granted)) {
+          out[name] = {};
+        }
+        resolvedPermissions = out as McpUiResourcePermissions;
+      }
+      return {
+        csp: undefined,
+        permissions: resolvedPermissions ?? widgetPermissions,
+        permissive: true,
+        hostPolicyApplied: !!resolvedPermissions,
+      };
+    }
+
     // "relaxed" CSP mode is an explicit dev escape hatch. The resolver
     // can't represent "no restrictions" as a domain list (CSP allow-
     // lists can't carry `*` without inviting the hosted clamp to strip
@@ -1100,6 +1169,7 @@ export function MCPAppsRenderer({
       hostPolicyApplied,
     };
   }, [
+    cspMode,
     sandboxCspPolicy,
     sandboxPermissionsPolicy,
     widgetCsp,

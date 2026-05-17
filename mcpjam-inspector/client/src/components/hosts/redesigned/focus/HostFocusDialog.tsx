@@ -16,8 +16,8 @@ import {
 } from "../types";
 import { countIssuesByTab, fieldsWithIssues } from "./useHostDraftValidation";
 import { HostIdentityRow } from "./HostIdentityRow";
+import { AppearanceTab } from "./AppearanceTab";
 import { BehaviorTab } from "./BehaviorTab";
-import { GeneralTab } from "./GeneralTab";
 import { ProtocolTab } from "./ProtocolTab";
 import { AppsExtensionTab } from "./AppsExtensionTab";
 import { ServersTab } from "./ServersTab";
@@ -65,6 +65,13 @@ interface HostFocusDialogProps {
     id: string;
     name: string;
     url?: string | null;
+    connectionStatus?:
+      | "connected"
+      | "connecting"
+      | "failed"
+      | "disconnected"
+      | "oauth-flow"
+      | "unknown";
   }>;
   onAddServer: () => void;
 
@@ -97,7 +104,9 @@ export function HostFocusDialog({
   onSave,
 }: HostFocusDialogProps) {
   const issuesByTab = countIssuesByTab(attention);
-  const generalIssues = fieldsWithIssues(attention, "general");
+  // See HostFocusPanel: hostDisplayName is now tagged "behavior" after
+  // the General tab was removed.
+  const behaviorIssues = fieldsWithIssues(attention, "behavior");
   const totalIssues = attention.length;
 
   // Click-out / Esc / X all route through this confirm path when the
@@ -247,7 +256,7 @@ export function HostFocusDialog({
             )}
             hostDisplayName={hostDisplayName}
             onHostDisplayNameChange={onHostDisplayNameChange}
-            hasNameIssue={generalIssues.has("hostDisplayName")}
+            hasNameIssue={behaviorIssues.has("hostDisplayName")}
           />
 
           <div
@@ -264,9 +273,6 @@ export function HostFocusDialog({
           </div>
 
           <div className={cn(hostFocusShellScrollClass, "px-6 py-5")}>
-            {tab === "general" ? (
-              <GeneralTab attention={attention} />
-            ) : null}
             {tab === "behavior" ? (
               <BehaviorTab
                 draft={draft}
@@ -298,6 +304,9 @@ export function HostFocusDialog({
                 initialSelectedServerId={initialSelectedServerId}
                 onAddServer={onAddServer}
               />
+            ) : null}
+            {tab === "appearance" ? (
+              <AppearanceTab draft={draft} onDraftChange={onDraftChange} />
             ) : null}
           </div>
         </DialogContent>

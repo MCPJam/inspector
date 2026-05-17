@@ -38,6 +38,9 @@ export function PlaygroundPreviewedHostSync({
   const [previewedHostId] = usePreviewedHostId(projectId);
   const { host } = useHost({ isAuthenticated, hostId: previewedHostId });
   const setHostStyle = usePreferencesStore((state) => state.setHostStyle);
+  const setChatUiOverride = usePreferencesStore(
+    (state) => state.setChatUiOverride,
+  );
   const setHostCapabilitiesOverride = usePreferencesStore(
     (state) => state.setHostCapabilitiesOverride,
   );
@@ -71,10 +74,17 @@ export function PlaygroundPreviewedHostSync({
     }
     applyHostConfigToPlayground(host.config, {
       setHostStyle,
+      setChatUiOverride,
       setHostCapabilitiesOverride,
     });
     lastAppliedRef.current = { hostId: previewedHostId, configId };
-  }, [previewedHostId, host, setHostStyle, setHostCapabilitiesOverride]);
+  }, [
+    previewedHostId,
+    host,
+    setHostStyle,
+    setChatUiOverride,
+    setHostCapabilitiesOverride,
+  ]);
 
   return null;
 }

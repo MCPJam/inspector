@@ -66,6 +66,10 @@ import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { ServersLoadingSkeleton } from "@mcpjam/design-system/servers-loading-skeleton";
 import { useConvexAuth } from "convex/react";
+import { useAutoConnectProjectServers } from "@/hooks/useAutoConnectProjectServers";
+import { useHost } from "@/hooks/useHosts";
+import { usePreviewedHostId } from "@/hooks/use-previewed-host-id";
+import { useProjectServers as useViewProjectServers } from "@/hooks/useViews";
 import { Project } from "@/state/app-types";
 import {
   clearPendingQuickConnect,
@@ -74,10 +78,7 @@ import {
   type PendingQuickConnectState,
 } from "@/lib/quick-connect-pending";
 import { useProjectServers as useRemoteProjectServers } from "@/hooks/useProjects";
-import {
-  projectClientCapabilitiesNeedReconnect,
-  resolveEffectiveServerClientCapabilities,
-} from "@/lib/client-config";
+import { projectClientCapabilitiesNeedReconnect } from "@/lib/client-config";
 import {
   DndContext,
   closestCenter,
@@ -531,6 +532,38 @@ export function ServersTab({
   const posthog = usePostHog();
   const hostsConnectAddServerSlot = useContext(HostsConnectAddServerSlotContext);
   const { isAuthenticated } = useConvexAuth();
+
+  // Auto-connect the previewed host's REQUIRED servers once per host scope.
+  // Mirrors the wiring on the host builder + Playground so /servers, /hosts,
+  // and the Playground all behave the same way. The hook dedupes by
+  // (projectId, hostScopeKey, sortedNames) so navigating between these
+  // surfaces does not re-fire, but switching to a different host (or
+  // saving the host's required set) re-attempts for that scope.
+  const [previewedHostId] = usePreviewedHostId(activeProjectId || null);
+  const { host: previewedHost } = useHost({
+    isAuthenticated,
+    hostId: previewedHostId,
+  });
+  const { servers: viewProjectServersList } = useViewProjectServers({
+    projectId: activeProjectId || null,
+    isAuthenticated,
+  });
+  const previewedHostRequiredNames = useMemo(() => {
+    const requiredIds = previewedHost?.config?.serverIds ?? [];
+    if (requiredIds.length === 0 || !viewProjectServersList) return [];
+    const byId = new Map(
+      viewProjectServersList.map((s) => [s._id, s.name] as const),
+    );
+    return requiredIds
+      .map((id) => byId.get(id))
+      .filter((name): name is string => !!name);
+  }, [previewedHost?.config?.serverIds, viewProjectServersList]);
+  useAutoConnectProjectServers({
+    projectId: activeProjectId || null,
+    hostScopeKey: previewedHostId,
+    requiredServerNames: previewedHostRequiredNames,
+  });
+
   const appReady = useAppReady();
   const appReadyMessage = useAppReadyMessage();
   const isAppBootstrapping = appReady.status !== "ready";
@@ -659,36 +692,32 @@ export function ServersTab({
   const reconnectWarningByServerName = useMemo(
     () =>
       Object.fromEntries(
-        Object.entries(projectServers).map(([serverName, server]) => [
-          serverName,
-          server.connectionStatus === "connected" &&
-            // Suppress the indicator until runtime initializationInfo is
-            // populated. Without this guard the comparator treats
-            // `initialized=undefined` (just-connected, init-info round-trip
-            // not yet landed; or a previously-connected server after a page
-            // reload) as a structural mismatch against the project defaults
-            // and lights up the icon for servers the user never touched.
-            // Hosted /validate returns initInfo inline so this gap doesn't
-            // exist there; the fix is to inline initInfo on local connect/
-            // reconnect too — see executeLocalServerConnect.
+        Object.entries(projectServers).map(([serverName, server]) => {
+          // Only fires when the user edited the per-server clientCapabilities
+          // override after connecting. Host-driven caps changes are handled by
+          // the auto-reconciler, which disconnect/reconnects affected servers
+          // on host switch — comparing against host-blended caps here just
+          // produced false positives (server fresh-reconnects under the new
+          // host, but the SDK strips runtime-gated caps like `elicitation`
+          // when no handler is wired, so the comparator never matched).
+          const override = server.config.clientCapabilities;
+          const hasOverride =
+            override != null &&
+            typeof override === "object" &&
+            !Array.isArray(override);
+          const stale =
+            hasOverride &&
+            server.connectionStatus === "connected" &&
             server.initializationInfo?.clientCapabilities != null &&
             projectClientCapabilitiesNeedReconnect({
-              // Use the same precedence the connect path uses
-              // (`withProjectConnectionDefaults`): per-server explicit
-              // `clientCapabilities` override wins, otherwise merge project
-              // defaults with per-server `capabilities`. Recomputing with a
-              // different recipe lit up the indicator on unchanged servers.
-              desiredCapabilities: resolveEffectiveServerClientCapabilities({
-                serverConfig: server.config,
-                projectClientConfig:
-                  projects[activeProjectId]?.clientConfig,
-              }) as Record<string, unknown>,
+              desiredCapabilities: override as Record<string, unknown>,
               initializedCapabilities: server.initializationInfo
-                ?.clientCapabilities as Record<string, unknown> | undefined,
-            }),
-        ])
+                .clientCapabilities as Record<string, unknown>,
+            });
+          return [serverName, stale];
+        })
       ),
-    [activeProjectId, projectServers, projects]
+    [projectServers]
   );
 
   const detailModalLiveServer = detailModalState.serverName

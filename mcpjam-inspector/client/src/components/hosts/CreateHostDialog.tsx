@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { useConvexAuth } from "convex/react";
 import {
   Dialog,
   DialogContent,
@@ -12,6 +13,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import { useHostMutations } from "@/hooks/useHosts";
+import { useProjectServers } from "@/hooks/useViews";
 import {
   DEFAULT_HOST_TEMPLATE_ID,
   HOST_TEMPLATES,
@@ -34,6 +36,8 @@ export function CreateHostDialog({
   onCreated,
 }: CreateHostDialogProps) {
   const { createHost } = useHostMutations();
+  const { isAuthenticated } = useConvexAuth();
+  const { servers } = useProjectServers({ isAuthenticated, projectId });
   const [name, setName] = useState("");
   const [selectedTemplateId, setSelectedTemplateId] = useState<HostTemplateId>(
     DEFAULT_HOST_TEMPLATE_ID,
@@ -57,10 +61,15 @@ export function CreateHostDialog({
     if (!trimmed) return;
     setIsSaving(true);
     try {
+      // Pre-attach every existing project server as required so the new
+      // host's Servers tab opens with checkboxes filled in instead of
+      // every server reading "optional / uses defaults".
+      const seed = seedFromHostTemplate(selectedTemplateId);
+      const projectServerIds = (servers ?? []).map((s) => s._id);
       const { hostId } = await createHost({
         projectId,
         name: trimmed,
-        input: seedFromHostTemplate(selectedTemplateId),
+        input: { ...seed, serverIds: projectServerIds },
       });
       toast.success(`Host "${trimmed}" created`);
       handleClose();

@@ -15,10 +15,9 @@ interface HostFocusTabBarProps {
 
 const tabBtnClass = cn(
   "relative pb-2.5 pt-1",
-  "motion-safe:transition-[color,transform] motion-safe:duration-150",
-  "flex shrink-0 items-center gap-2 rounded-md px-3 text-left text-[12.5px] font-medium",
-  "text-muted-foreground hover:bg-muted/80 hover:text-foreground",
-  "motion-safe:active:scale-[0.98]",
+  "motion-safe:transition-colors motion-safe:duration-150",
+  "flex shrink-0 items-center gap-1.5 px-2 text-left text-[12.5px] font-medium",
+  "text-muted-foreground hover:text-foreground",
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
 );
 
@@ -65,30 +64,18 @@ export function HostFocusTabBar({
             onClick={() => onTabChange(t.id)}
             className={cn(tabBtnClass, active && "text-foreground")}
           >
-            <span
-              className={cn(
-                "flex size-6 items-center justify-center rounded-md border border-border bg-muted/50 text-muted-foreground",
-                active &&
-                  "border-primary/30 bg-primary/10 text-primary",
-              )}
-              aria-hidden
-            >
-              {t.icon}
-            </span>
-            <span className="flex items-center gap-1.5 whitespace-nowrap">
-              <span>{t.label}</span>
-              {count > 0 ? (
-                <Badge
-                  variant="outline"
-                  className="h-4 border-amber-500/40 bg-amber-500/10 px-1 text-[9.5px] text-amber-800 dark:text-amber-200"
-                >
-                  {count}
-                </Badge>
-              ) : null}
-            </span>
+            <span className="whitespace-nowrap">{t.label}</span>
+            {count > 0 ? (
+              <Badge
+                variant="outline"
+                className="h-4 border-amber-500/40 bg-amber-500/10 px-1 text-[9.5px] text-amber-800 dark:text-amber-200"
+              >
+                {count}
+              </Badge>
+            ) : null}
             {active ? (
               <span
-                className="pointer-events-none absolute bottom-0 left-2 right-2 h-[2px] rounded-full bg-primary shadow-[0_0_10px_color-mix(in_oklch,var(--primary)_45%,transparent)]"
+                className="pointer-events-none absolute bottom-0 left-1 right-1 h-[2px] rounded-full bg-primary"
                 aria-hidden
               />
             ) : null}

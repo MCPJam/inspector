@@ -44,13 +44,9 @@ export function BehaviorTab({
 
   return (
     <div className="flex flex-col gap-4">
-      <FocusBlock
-        title="Model & sampling"
-        subtitle="How this host samples completions during chat."
-      >
+      <FocusBlock title="Model & sampling">
         <FieldRow
           label="Model"
-          description="Provider × model the host will call."
           control={
             <select
               id={`${reactId}-model`}
@@ -94,15 +90,10 @@ export function BehaviorTab({
             }
             aria-label="Temperature"
           />
-          <div className="flex justify-between font-mono text-[10px] text-muted-foreground/70">
-            <span>0.00</span>
-            <span>1.00</span>
-          </div>
         </div>
 
         <FieldRow
           label="Require tool approval"
-          description="Pause before each tool call for user confirmation."
           control={
             <Switch
               checked={draft.requireToolApproval}
@@ -115,17 +106,7 @@ export function BehaviorTab({
         />
       </FocusBlock>
 
-      <FocusBlock
-        title="System prompt"
-        subtitle="Sent verbatim as the system message on every chat turn."
-        action={
-          issues.has("systemPrompt") ? (
-            <span className="text-[10.5px] text-amber-700 dark:text-amber-300">
-              attention
-            </span>
-          ) : null
-        }
-      >
+      <FocusBlock title="System prompt">
         <Textarea
           rows={10}
           value={draft.systemPrompt}

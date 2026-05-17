@@ -2,24 +2,18 @@ import { describe, expect, it } from "vitest";
 import { render, within } from "@testing-library/react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { emptyHostConfigInputV2 } from "@/lib/host-config-v2";
-import {
-  AGENT_IDENTITY_NODE_ID,
-  APPS_HUB_NODE_ID,
-  PROTOCOL_HUB_NODE_ID,
-  appsCapLeafNodeId,
-  protocolLeafNodeId,
-} from "../../types";
+import { HOST_MATRIX_NODE_ID } from "../../types";
 import { RedesignedHostCanvas } from "../RedesignedHostCanvas";
 import { buildRedesignedHostCanvas } from "../canvasBuilder";
 
-function renderCanvas(viewModelOpts: {
+function renderCanvas(opts: {
   draft?: ReturnType<typeof emptyHostConfigInputV2>;
   hostName?: string;
 }) {
   const viewModel = buildRedesignedHostCanvas(
     {
-      hostName: viewModelOpts.hostName ?? "Test",
-      draft: viewModelOpts.draft ?? emptyHostConfigInputV2(),
+      hostName: opts.hostName ?? "Test host",
+      draft: opts.draft ?? emptyHostConfigInputV2(),
       savedSnapshotId: "snap",
       isDirty: false,
       projectServers: [],
@@ -28,7 +22,7 @@ function renderCanvas(viewModelOpts: {
   );
   return render(
     <ReactFlowProvider>
-      <div style={{ width: 800, height: 600 }}>
+      <div style={{ width: 900, height: 700 }}>
         <RedesignedHostCanvas
           viewModel={viewModel}
           selectedNodeId={null}
@@ -42,104 +36,41 @@ function renderCanvas(viewModelOpts: {
 }
 
 describe("RedesignedHostCanvas", () => {
-  it("renders the Agent identity card with the section title", () => {
-    const { container } = renderCanvas({});
-    const agentNode = container.querySelector(
-      `.react-flow__node[data-id="${AGENT_IDENTITY_NODE_ID}"]`,
+  it("renders the host matrix node with the display name", () => {
+    const { container } = renderCanvas({ hostName: "Claude" });
+    const node = container.querySelector(
+      `.react-flow__node[data-id="${HOST_MATRIX_NODE_ID}"]`,
     );
-    expect(agentNode).not.toBeNull();
-    expect(within(agentNode as HTMLElement).getByText("Agent")).toBeInTheDocument();
+    expect(node).not.toBeNull();
     expect(
-      (agentNode as HTMLElement).querySelector(".lucide-sliders-horizontal"),
-    ).toBeNull();
+      within(node as HTMLElement).getByText("Claude"),
+    ).toBeInTheDocument();
   });
 
-  it("renders the Protocol hub puck with title only when protocol is unpinned", () => {
+  it("renders the client capability rows and apps extension banner", () => {
     const { container } = renderCanvas({});
-    const hub = container.querySelector(
-      `.react-flow__node[data-id="${PROTOCOL_HUB_NODE_ID}"]`,
-    );
-    expect(hub).not.toBeNull();
-    expect(within(hub as HTMLElement).getByText("MCP Protocol")).toBeInTheDocument();
-    expect(within(hub as HTMLElement).queryByText(/SDK defaults/)).toBeNull();
-    expect((hub as HTMLElement).querySelector(".size-7")).toBeNull();
+    const node = container.querySelector(
+      `.react-flow__node[data-id="${HOST_MATRIX_NODE_ID}"]`,
+    ) as HTMLElement | null;
+    expect(node).not.toBeNull();
+    const scope = within(node as HTMLElement);
+    expect(scope.getByText("Client capabilities")).toBeInTheDocument();
+    expect(scope.getByText("Apps extension")).toBeInTheDocument();
+    expect(scope.getByText("roots")).toBeInTheDocument();
+    expect(scope.getByText("openLinks")).toBeInTheDocument();
   });
 
-  it("shows pinned subtitle on Protocol hub without an icon", () => {
+  it("strikes through apps caps the resolved blob omits", () => {
     const draft = emptyHostConfigInputV2({
-      mcpProfile: {
-        profileVersion: 1,
-        initialize: {
-          supportedProtocolVersions: ["2026-01-26"],
-        },
-      },
+      hostCapabilitiesOverride: { openLinks: {} },
     });
     const { container } = renderCanvas({ draft });
-    const hub = container.querySelector(
-      `.react-flow__node[data-id="${PROTOCOL_HUB_NODE_ID}"]`,
-    );
-    expect(hub).not.toBeNull();
+    const node = container.querySelector(
+      `.react-flow__node[data-id="${HOST_MATRIX_NODE_ID}"]`,
+    ) as HTMLElement | null;
+    expect(node).not.toBeNull();
     expect(
-      within(hub as HTMLElement).getByText(/pinned 2026-01-26/),
-    ).toBeInTheDocument();
-    expect((hub as HTMLElement).querySelector(".size-7")).toBeNull();
-  });
-
-  it("renders the Apps hub puck with title only (no sandbox subtitle)", () => {
-    const { container } = renderCanvas({});
-    const hub = container.querySelector(
-      `.react-flow__node[data-id="${APPS_HUB_NODE_ID}"]`,
-    );
-    expect(hub).not.toBeNull();
-    expect(
-      within(hub as HTMLElement).getByText("Apps Extension"),
-    ).toBeInTheDocument();
-    expect(within(hub as HTMLElement).queryByText(/sandbox:/)).toBeNull();
-    expect((hub as HTMLElement).querySelector(".size-7")).toBeNull();
-  });
-
-  it("renders an apps cap leaf with the canonical capability label", () => {
-    const { container } = renderCanvas({});
-    const leaf = container.querySelector(
-      `.react-flow__node[data-id="${appsCapLeafNodeId("openLinks")}"]`,
-    );
-    expect(leaf).not.toBeNull();
-    expect(
-      within(leaf as HTMLElement).getByText("openLinks"),
-    ).toBeInTheDocument();
-  });
-
-  it("strikes through cap leaves when the resolved blob omits them", () => {
-    // Override that explicitly leaves out updateModelContext.
-    const draft = emptyHostConfigInputV2({
-      hostCapabilitiesOverride: {
-        openLinks: {},
-        logging: {},
-      },
-    });
-    const { container } = renderCanvas({ draft });
-    const updateLeaf = container.querySelector(
-      `.react-flow__node[data-id="${appsCapLeafNodeId("updateModelContext")}"]`,
-    );
-    expect(updateLeaf).not.toBeNull();
-    // The name span carries `line-through` when on=false.
-    const nameSpan = (updateLeaf as HTMLElement).querySelector(
-      ".line-through",
-    );
-    expect(nameSpan).not.toBeNull();
-  });
-
-  it("renders the always-emitted hostContext and timeout protocol leaves", () => {
-    const { container } = renderCanvas({});
-    expect(
-      container.querySelector(
-        `.react-flow__node[data-id="${protocolLeafNodeId("hostContext")}"]`,
-      ),
-    ).not.toBeNull();
-    expect(
-      container.querySelector(
-        `.react-flow__node[data-id="${protocolLeafNodeId("timeout")}"]`,
-      ),
+      (node as HTMLElement).querySelector(".line-through"),
     ).not.toBeNull();
   });
 });

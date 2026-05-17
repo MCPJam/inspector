@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router";
 import { Loader2, Save } from "lucide-react";
 import { toast } from "sonner";
 import { useConvexAuth } from "convex/react";
@@ -12,6 +13,8 @@ import {
 } from "@/components/ui/resizable";
 import { useHost, useHostMutations } from "@/hooks/useHosts";
 import { useProjectServers, useServerMutations } from "@/hooks/useProjects";
+import { useAutoConnectProjectServers } from "@/hooks/useAutoConnectProjectServers";
+import { useSharedAppState } from "@/state/app-state-context";
 import { AddServerModal } from "@/components/connection/AddServerModal";
 import { ViewModeSelector } from "@/components/shared/view-mode-selector";
 import type { ServerFormData } from "@/shared/types";
@@ -55,6 +58,7 @@ export function HostBuilderViewRedesigned({
   projectId,
   onBack,
 }: HostBuilderViewRedesignedProps) {
+  const navigate = useNavigate();
   const { isAuthenticated } = useConvexAuth();
   const { host } = useHost({
     isAuthenticated,
@@ -154,14 +158,45 @@ export function HostBuilderViewRedesigned({
     draftName,
   );
 
+  // Runtime connection state lives in `appState.servers` keyed by server
+  // name, not in the persisted Convex row. Mirror it into the host builder
+  // so both the canvas card dot and the Servers-tab row dot reflect the
+  // same state the Connect/Servers tab shows — without this they'd be
+  // unconditionally emerald even when the server is disconnected.
+  const sharedAppState = useSharedAppState();
+  const connectionStatusByName = sharedAppState.servers;
+
+  // Auto-connect this host's REQUIRED servers once per session. Optional
+  // servers stay disconnected until the user manually flips them — we
+  // don't connect anything the host's saved config doesn't claim to need.
+  // Resolve saved `serverIds` (Convex ids) to runtime names via the
+  // project servers list. Using the SAVED config (not the draft) means
+  // unsaved checkbox toggles in the Servers tab don't trigger a fresh
+  // batch; saving the host re-fires the dedupe key once and only once.
+  const requiredServerNames = useMemo(() => {
+    const requiredIds = host?.config?.serverIds ?? [];
+    if (requiredIds.length === 0 || !servers) return [];
+    const byId = new Map(servers.map((s) => [s._id, s.name] as const));
+    return requiredIds
+      .map((id) => byId.get(id))
+      .filter((name): name is string => !!name);
+  }, [host?.config?.serverIds, servers]);
+  useAutoConnectProjectServers({
+    projectId,
+    hostScopeKey: hostId,
+    requiredServerNames,
+  });
+
   const availableServers = useMemo(
     () =>
       servers?.map((s) => ({
         id: s._id,
         name: s.name,
         url: s.url ?? null,
+        connectionStatus:
+          connectionStatusByName[s.name]?.connectionStatus ?? "disconnected",
       })) ?? [],
-    [servers],
+    [servers, connectionStatusByName],
   );
 
   const availableServersForCanvas = useMemo(
@@ -170,8 +205,10 @@ export function HostBuilderViewRedesigned({
         id: s._id,
         name: s.name,
         url: s.url ?? undefined,
+        connectionStatus:
+          connectionStatusByName[s.name]?.connectionStatus ?? "disconnected",
       })),
-    [servers],
+    [servers, connectionStatusByName],
   );
 
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -181,9 +218,13 @@ export function HostBuilderViewRedesigned({
   const canvasShellStyle = useMemo(
     () =>
       draftConfig?.hostStyle
-        ? getChatboxShellStyle(draftConfig.hostStyle, themeMode)
+        ? getChatboxShellStyle(
+            draftConfig.hostStyle,
+            themeMode,
+            draftConfig.chatUiOverride,
+          )
         : undefined,
-    [draftConfig?.hostStyle, themeMode],
+    [draftConfig?.hostStyle, draftConfig?.chatUiOverride, themeMode],
   );
 
   const liveSnapshotId = host?.config?.id ?? "";
@@ -339,7 +380,10 @@ export function HostBuilderViewRedesigned({
               value="host"
               ariaLabel="Connect view"
               onChange={(next) => {
-                if (next === "servers") onBack();
+                if (next === "servers") {
+                  onBack();
+                  navigate("/servers");
+                }
               }}
               options={[
                 { value: "servers", label: "Servers" },
