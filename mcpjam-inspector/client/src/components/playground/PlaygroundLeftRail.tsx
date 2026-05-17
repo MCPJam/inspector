@@ -16,22 +16,22 @@ type LeftRailTab = "sessions" | "tools";
  * `PlaygroundTab`.
  */
 export function PlaygroundLeftRail() {
-  const [activeTab, setActiveTab] = useState<LeftRailTab>("sessions");
+  const [activeTab, setActiveTab] = useState<LeftRailTab>("tools");
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <div className="flex shrink-0 items-center gap-0.5 border-b border-border px-2 py-1">
         <TabButton
-          icon={History}
-          label="Sessions"
-          isActive={activeTab === "sessions"}
-          onClick={() => setActiveTab("sessions")}
-        />
-        <TabButton
           icon={Hammer}
           label="Tools"
           isActive={activeTab === "tools"}
           onClick={() => setActiveTab("tools")}
+        />
+        <TabButton
+          icon={History}
+          label="Sessions"
+          isActive={activeTab === "sessions"}
+          onClick={() => setActiveTab("sessions")}
         />
       </div>
       <div className="flex-1 min-h-0">

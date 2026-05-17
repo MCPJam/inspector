@@ -26,9 +26,33 @@ initSentry();
 // Detect if we're inside an iframe - this happens when a user's app uses BrowserRouter
 // and does history.pushState, then the iframe is refreshed. The server doesn't recognize
 // the new path and serves the Inspector's index.html inside the iframe.
+//
+// Exception: same-origin self-embed of the public chatbox runtime
+// (`/chatbox/<slug>/<token>`). The Chatboxes tab's Preview pane iframes the
+// publish link to show a live preview inside the app — that's intentional,
+// not a misrouted-pushState misconfiguration, so we let the normal tree
+// mount. Restricted to the chatbox route + same-origin parent so the
+// "user app accidentally serving inspector index.html" guard still fires
+// for every other shape.
 const isInIframe = (() => {
   try {
-    return window.self !== window.top;
+    if (window.self === window.top) return false;
+    try {
+      const sameOrigin =
+        window.top!.location.origin === window.location.origin;
+      // Match the documented `/chatbox/<slug>/<token>` shape only; a generic
+      // `startsWith("/chatbox/")` would let any unrelated future subpath
+      // slip past the misrouted-pushState guard.
+      const isPublicChatboxRuntimePath =
+        /^\/chatbox\/[^/]+\/[^/]+\/?$/.test(window.location.pathname);
+      if (sameOrigin && isPublicChatboxRuntimePath) {
+        return false;
+      }
+    } catch {
+      // window.top.location throws under cross-origin — definitely an
+      // unrelated embed, keep the guard.
+    }
+    return true;
   } catch {
     // If we can't access window.top due to cross-origin restrictions, we're in an iframe
     return true;
