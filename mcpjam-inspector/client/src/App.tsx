@@ -498,8 +498,18 @@ export function ServersRoute() {
     convexProjectId,
     hostsHubFlagEnabled,
     isAuthenticated,
-    setHostsTabSelectedHostId,
   } = useAppRouteContext();
+  const navigate = useAppNavigate();
+
+  // From /servers, "select a host" means navigate to /hosts/:id. State sync
+  // happens in HostsRoute via the URL → hostsTabSelectedHostId effect, so
+  // here we only need to drive the URL.
+  const handleSelectHost = useCallback(
+    (next: string | null) => {
+      navigate(next ? buildHostsPath(next) : routePaths.servers);
+    },
+    [navigate],
+  );
 
   if (!hostsHubFlagEnabled || !isAuthenticated) {
     return <ServersTabBody />;
@@ -510,7 +520,7 @@ export function ServersRoute() {
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
       selectedHostId={null}
-      onSelectHost={setHostsTabSelectedHostId}
+      onSelectHost={handleSelectHost}
       serversTabElement={<ServersTabBody />}
     />
   );
