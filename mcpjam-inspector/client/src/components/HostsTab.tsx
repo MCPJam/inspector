@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useNavigate } from "react-router";
 import { HostBuilderView } from "./hosts/HostBuilderView";
@@ -6,6 +6,7 @@ import { HostsConnectAddServerSlotContext } from "./hosts/HostsConnectAddServerS
 import { ViewModeSelector } from "./shared/view-mode-selector";
 import { usePreviewedHostId } from "@/hooks/use-previewed-host-id";
 import { useHost, useHostList } from "@/hooks/useHosts";
+import { buildHostsPath, routePaths } from "@/lib/app-navigation";
 import { getChatboxShellStyle } from "@/lib/chatbox-host-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
@@ -64,7 +65,14 @@ export function HostsTab({
     [previewedHostStyle, themeMode],
   );
 
+  // Reset host selection only when the project actually changes mid-session,
+  // not on first mount — otherwise a deep-link like `/hosts/:hostId` gets
+  // wiped right after the page loads.
+  const prevProjectIdRef = useRef(projectId);
   useEffect(() => {
+    const prev = prevProjectIdRef.current;
+    prevProjectIdRef.current = projectId;
+    if (prev === projectId) return;
     if (selectedHostId) onSelectHost(null);
     // selectedHostId/onSelectHost intentionally omitted: this effect resets
     // host context when the active project changes, not when the selection
@@ -147,9 +155,9 @@ export function HostsTab({
                       onChange={(next) => {
                         if (next === "host" && previewedHostId) {
                           onSelectHost(previewedHostId);
-                          navigate("/hosts");
+                          navigate(buildHostsPath(previewedHostId));
                         } else if (next === "servers") {
-                          navigate("/servers");
+                          navigate(routePaths.servers);
                         }
                       }}
                       options={[

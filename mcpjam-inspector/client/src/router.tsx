@@ -50,6 +50,7 @@ export function createAppRouter(): AppRouter {
         { index: true, element: <ServersRoute /> },
         { path: "servers", element: <ServersRoute /> },
         { path: "hosts", element: <HostsRoute /> },
+        { path: "hosts/:hostId", element: <HostsRoute /> },
         { path: "registry", element: <RegistryRoute /> },
         { path: "tools", element: <ToolsRoute /> },
         { path: "resources", element: <ResourcesRoute /> },
