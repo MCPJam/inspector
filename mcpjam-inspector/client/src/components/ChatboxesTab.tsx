@@ -91,17 +91,24 @@ export function ChatboxesTab({
     if (ensureLatchRef.current.has(previewedHostId)) return;
     ensureLatchRef.current.add(previewedHostId);
     const targetHostId = previewedHostId;
+    let cancelled = false;
+    let stuckTimer: ReturnType<typeof setTimeout> | undefined;
     void ensureChatboxForHost({ hostId: targetHostId } as any)
       .then(() => {
-        // The mutation returned a chatbox; if the reactive query *still*
-        // shows null on the next render, mark this host as stuck so the
-        // render path can show an error rather than the provisioning
-        // spinner.
-        setEnsureCompletedNullHosts((prev) => {
-          const next = new Set(prev);
-          next.add(targetHostId);
-          return next;
-        });
+        // The mutation returned. Convex's reactive query takes a render or
+        // two to refetch and surface the new row, so flipping the "stuck"
+        // flag synchronously here flashes the hard-failure UI between
+        // resolve and refetch. Wait a short grace window first; if the
+        // chatbox still hasn't arrived, mark it stuck. The cleanup hook
+        // below clears the flag whenever the chatbox actually appears.
+        if (cancelled) return;
+        stuckTimer = setTimeout(() => {
+          setEnsureCompletedNullHosts((prev) => {
+            const next = new Set(prev);
+            next.add(targetHostId);
+            return next;
+          });
+        }, 1500);
       })
       .catch((err: unknown) => {
         ensureLatchRef.current.delete(targetHostId);
@@ -111,12 +118,20 @@ export function ChatboxesTab({
             : "Failed to provision chatbox for host",
         );
       });
+    return () => {
+      cancelled = true;
+      if (stuckTimer !== undefined) clearTimeout(stuckTimer);
+    };
   }, [chatbox, effectiveAuth, ensureChatboxForHost, isLoading, previewedHostId]);
-  // Once the chatbox shows up, clear the stuck flag for this host so a
-  // future drift can re-arm it.
+  // Once the chatbox shows up, clear the stuck flag AND the per-host
+  // ensure latch so a future drift (host's chatbox gets deleted later in
+  // the same session) re-arms the ensure mutation instead of silently
+  // dropping it. Keying both cleanups in the same effect keeps them in
+  // lockstep with "chatbox is present".
   useEffect(() => {
     if (!previewedHostId) return;
     if (chatbox === null || chatbox === undefined) return;
+    ensureLatchRef.current.delete(previewedHostId);
     setEnsureCompletedNullHosts((prev) => {
       if (!prev.has(previewedHostId)) return prev;
       const next = new Set(prev);

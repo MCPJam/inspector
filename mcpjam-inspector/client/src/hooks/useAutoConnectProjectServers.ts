@@ -106,6 +106,7 @@ export function useAutoConnectProjectServers({
   projectId,
   hostScopeKey,
   requiredServerNames,
+  skip = false,
 }: {
   projectId: string | null;
   /**
@@ -117,6 +118,15 @@ export function useAutoConnectProjectServers({
    */
   hostScopeKey: string | null;
   requiredServerNames: ReadonlyArray<string>;
+  /**
+   * When true, the hook is fully inert — neither disconnect-excess nor
+   * connect-required fires, and no attempts are marked. Callers use this
+   * to defer reconciliation until upstream data has loaded (e.g.
+   * projectServers list resolved); without it, a host that declares
+   * `serverIds` would briefly resolve to an empty `requiredServerNames`
+   * during the loading window and tear down every connected server.
+   */
+  skip?: boolean;
 }): UseAutoConnectProjectServersResult {
   const enabled = usePreferencesStore((s) => s.autoConnectServersEnabled);
   const sharedAppState = useSharedAppState();
@@ -188,7 +198,7 @@ export function useAutoConnectProjectServers({
   // change the tuple, so this fires once per host switch (and once per
   // edit to the host's required set after save).
   useEffect(() => {
-    if (!enabled || !projectId) return;
+    if (!enabled || !projectId || skip) return;
     setSelectedServerNames(requiredNamesKey ? requiredNamesKey.split("\0") : []);
   }, [
     enabled,
@@ -196,6 +206,7 @@ export function useAutoConnectProjectServers({
     scopeKey,
     requiredNamesKey,
     setSelectedServerNames,
+    skip,
   ]);
 
   // Detect a scope transition (user switched the previewed host) and
@@ -223,7 +234,7 @@ export function useAutoConnectProjectServers({
   // first run, so subsequent renders bail even if `excessConnectedNamesKey`
   // becomes non-null afterwards.
   useEffect(() => {
-    if (!enabled || !projectId) return;
+    if (!enabled || !projectId || skip) return;
     if (isAttempted(projectId, scopeKey, "disconnect")) return;
     markAttempted(projectId, scopeKey, "disconnect");
     if (!excessConnectedNamesKey) return;
@@ -236,14 +247,14 @@ export function useAutoConnectProjectServers({
     // scope. Reading the latest value via closure is fine because the
     // dedupe gate stops re-runs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, projectId, scopeKey, runtimeDisconnectServer]);
+  }, [enabled, projectId, scopeKey, runtimeDisconnectServer, skip]);
 
   // Connect-required: fires when the candidate set (required-but-not-yet-
   // connected) changes. Saving a new server into the host's required list
   // produces a fresh candidate set and re-fires; failures dedupe per
   // candidate-set so they don't retry-loop.
   useEffect(() => {
-    if (!enabled || !projectId || !candidateNamesKey) return;
+    if (!enabled || !projectId || !candidateNamesKey || skip) return;
     const key = `connect:${candidateNamesKey}`;
     if (isAttempted(projectId, scopeKey, key)) return;
     markAttempted(projectId, scopeKey, key);
@@ -273,6 +284,7 @@ export function useAutoConnectProjectServers({
     scopeKey,
     candidateNamesKey,
     ensureServersReady,
+    skip,
   ]);
 
   return { enabled, lastResult: lastResultRef.current };

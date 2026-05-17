@@ -14,7 +14,7 @@ import {
   resolveOrgProviderRuntime,
   type OrgProviderRuntime,
 } from "../../utils/org-model-config.js";
-import { isMCPJamProvidedModel } from "@/shared/types";
+import { getModelById, isMCPJamProvidedModel } from "@/shared/types";
 import type { ModelDefinition } from "@/shared/types";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
@@ -109,7 +109,7 @@ chatV2.post("/", async (c) => {
       );
     }
 
-    const modelDefinition = model;
+    let modelDefinition = model;
     if (!modelDefinition) {
       throw new WebRouteError(
         400,
@@ -141,6 +141,29 @@ chatV2.post("/", async (c) => {
             "[chat-v2] client requireToolApproval differs from host; using host value",
             { chatboxId, body: bodyRequireToolApproval, host: cfg.requireToolApproval }
           );
+        }
+        // Model is part of the host-owned contract: a tampered body
+        // mustn't be able to route a chatbox session through a different
+        // model than the host's hostConfigs row specifies. When the
+        // host's modelId is in our built-in catalog we substitute the
+        // full ModelDefinition (correct provider routing); otherwise
+        // (custom provider unknown to backend) we swap just the id and
+        // keep the body's provider fields, then warn.
+        if (cfg.modelId && cfg.modelId !== modelDefinition.id) {
+          const hostModel = getModelById(cfg.modelId);
+          if (hostModel) {
+            logger.warn(
+              "[chat-v2] client model differs from host; using host model",
+              { chatboxId, body: modelDefinition.id, host: cfg.modelId }
+            );
+            modelDefinition = hostModel;
+          } else {
+            logger.warn(
+              "[chat-v2] host model not in catalog; swapping id only",
+              { chatboxId, body: modelDefinition.id, host: cfg.modelId }
+            );
+            modelDefinition = { ...modelDefinition, id: cfg.modelId };
+          }
         }
         resolvedSystemPrompt = cfg.systemPrompt;
         resolvedTemperatureOverride = cfg.temperature;

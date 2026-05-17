@@ -59,7 +59,13 @@ export function HostStyledChatTabV2({
             >
               <ChatTabV2
                 {...props}
-                showHostStyleSelector={showHostStyleSelector}
+                // The selector writes only to the preferences store, but
+                // when `activeHost` is present `hostStyle` is derived from
+                // it instead — the control would silently no-op. Suppress
+                // the selector in that case so the user isn't handed a
+                // dead toggle. Surfaces with no active host (e.g. plain
+                // direct chat) still get the prefs-backed picker.
+                showHostStyleSelector={showHostStyleSelector && !activeHost}
                 hostStyle={hostStyle}
                 onHostStyleChange={setHostStyle}
               />

@@ -56,16 +56,26 @@ export function CreateHostDialog({
     onClose();
   };
 
+  // `useProjectServers` returns `undefined` while loading and `[]` for a
+  // truly empty project. Collapsing both into `[]` at create-time would
+  // silently seed the host with zero attachments whenever the user
+  // clicked Create before the query resolved — the host never self-
+  // corrects, so the only fix is a manual edit in the host tab. Gate the
+  // Create button on `servers !== undefined` so the loading window
+  // disables the action instead of producing a wrong host.
+  const projectServersLoading = servers === undefined;
+
   const handleCreate = async () => {
     const trimmed = name.trim();
     if (!trimmed) return;
+    if (projectServersLoading) return;
     setIsSaving(true);
     try {
       // Pre-attach every existing project server as required so the new
       // host's Servers tab opens with checkboxes filled in instead of
       // every server reading "optional / uses defaults".
       const seed = seedFromHostTemplate(selectedTemplateId);
-      const projectServerIds = (servers ?? []).map((s) => s._id);
+      const projectServerIds = servers.map((s) => s._id);
       const { hostId } = await createHost({
         projectId,
         name: trimmed,
@@ -135,8 +145,13 @@ export function CreateHostDialog({
           <Button variant="outline" onClick={handleClose} disabled={isSaving}>
             Cancel
           </Button>
-          <Button onClick={handleCreate} disabled={!name.trim() || isSaving}>
-            {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+          <Button
+            onClick={handleCreate}
+            disabled={!name.trim() || isSaving || projectServersLoading}
+          >
+            {(isSaving || projectServersLoading) && (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            )}
             Create
           </Button>
         </DialogFooter>

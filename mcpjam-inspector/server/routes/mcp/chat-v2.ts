@@ -10,6 +10,7 @@ import {
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { createLlmModel } from "../../utils/chat-helpers";
 import {
+  getModelById,
   isMCPJamGuestAllowedModel,
   isMCPJamProvidedModel,
 } from "@/shared/types";
@@ -490,6 +491,7 @@ chatV2.post("/", async (c) => {
     let resolvedSystemPrompt = bodySystemPrompt;
     let resolvedTemperatureOverride = bodyTemperature;
     let resolvedRequireToolApproval = bodyRequireToolApproval;
+    let resolvedModelOverride: typeof model | null = null;
     if (isChatboxSession && bodyChatboxId) {
       const bearer = c.req.header("authorization") ?? "";
       if (bearer) {
@@ -502,6 +504,33 @@ chatV2.post("/", async (c) => {
           resolvedSystemPrompt = cfg.systemPrompt;
           resolvedTemperatureOverride = cfg.temperature;
           resolvedRequireToolApproval = cfg.requireToolApproval;
+          // See web/chat-v2 for rationale: host's modelId wins on
+          // chatbox-bound turns. Built-in catalog hit → full
+          // ModelDefinition; miss → swap id only, keep body provider.
+          if (model && cfg.modelId && cfg.modelId !== model.id) {
+            const hostModel = getModelById(cfg.modelId);
+            if (hostModel) {
+              logger.warn(
+                "[mcp/chat-v2] client model differs from host; using host model",
+                {
+                  chatboxId: bodyChatboxId,
+                  body: model.id,
+                  host: cfg.modelId,
+                },
+              );
+              resolvedModelOverride = hostModel;
+            } else {
+              logger.warn(
+                "[mcp/chat-v2] host model not in catalog; swapping id only",
+                {
+                  chatboxId: bodyChatboxId,
+                  body: model.id,
+                  host: cfg.modelId,
+                },
+              );
+              resolvedModelOverride = { ...model, id: cfg.modelId };
+            }
+          }
         } else {
           logger.warn(
             "[mcp/chat-v2] runtime-config fetch failed; using body values",
@@ -540,7 +569,7 @@ chatV2.post("/", async (c) => {
       return c.json({ error: "messages are required" }, 400);
     }
 
-    const modelDefinition = model;
+    const modelDefinition = resolvedModelOverride ?? model;
     if (!modelDefinition) {
       return c.json({ error: "model is not supported" }, 400);
     }

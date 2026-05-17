@@ -45,12 +45,19 @@ type SpecSandboxCsp = {
   frameDomains?: string[];
   baseUriDomains?: string[];
 };
+/**
+ * The four currently-spec'd permission keys, kept around for type-aware
+ * call sites. Permission keys outside this list (e.g. future SEP
+ * additions, host-specific extensions) are NOT dropped — they round-trip
+ * verbatim through serialize / parse so editing the JSON doesn't silently
+ * erase policy data the inspector doesn't yet know about.
+ */
 type SpecSandboxPermissions = {
   camera?: Record<string, never>;
   microphone?: Record<string, never>;
   geolocation?: Record<string, never>;
   clipboardWrite?: Record<string, never>;
-};
+} & Record<string, unknown>;
 type SpecHostCapabilitiesSandbox = {
   csp?: SpecSandboxCsp;
   permissions?: SpecSandboxPermissions;
@@ -64,14 +71,6 @@ type AppsDoc = {
     hostInfo?: Record<string, unknown>;
   };
 };
-
-/** Spec sandbox keys we know about. New permission names land here once SEP adds them. */
-const SPEC_PERMISSION_KEYS = [
-  "camera",
-  "microphone",
-  "geolocation",
-  "clipboardWrite",
-] as const satisfies ReadonlyArray<keyof SpecSandboxPermissions>;
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -108,10 +107,14 @@ function specSandboxFromPolicy(
   const allow = policy.permissions?.allow;
   if (allow) {
     const perms: SpecSandboxPermissions = {};
-    for (const key of SPEC_PERMISSION_KEYS) {
-      // Spec uses presence: `camera: {}` means granted; absence means not granted.
-      // Our storage uses a boolean map; `false` and missing both mean "not granted".
-      if (allow[key] === true) perms[key] = {};
+    // Iterate ALL keys in storage — not just the spec-known set — so any
+    // permission the inspector doesn't recognize round-trips through the
+    // editor instead of being silently erased on the next save. Spec uses
+    // presence: `camera: {}` means granted; absence means not granted.
+    // Our storage uses a boolean map; `false` and missing both mean "not
+    // granted".
+    for (const [key, value] of Object.entries(allow)) {
+      if (value === true) perms[key] = {};
     }
     if (Object.keys(perms).length > 0) out.permissions = perms;
   }
@@ -169,13 +172,17 @@ function liftSpecSandboxIntoPolicy(args: {
   if (Object.keys(newRestrict).length > 0) nextCsp.restrictTo = newRestrict;
   const cspNonEmpty = Object.keys(nextCsp).length > 0;
 
-  // Permissions: rebuild `allow` from spec presence-flags. Preserve mode /
-  // deny / extensions from prev.
+  // Permissions: rebuild `allow` from presence-flags. Preserve mode /
+  // deny / extensions from prev. Iterates every key in the incoming JSON
+  // (not just the spec-known set) so a host using a permission the
+  // inspector doesn't yet recognize survives a round-trip through the
+  // editor. The spec encodes "granted" as a presence object (`{}`); any
+  // non-null value in that slot reads as granted.
   const newAllow: Record<string, boolean> = {};
   const incomingPerms = incoming?.permissions;
   if (incomingPerms) {
-    for (const key of SPEC_PERMISSION_KEYS) {
-      if (incomingPerms[key] !== undefined) {
+    for (const [key, value] of Object.entries(incomingPerms)) {
+      if (value !== undefined && value !== null) {
         newAllow[key] = true;
       }
     }

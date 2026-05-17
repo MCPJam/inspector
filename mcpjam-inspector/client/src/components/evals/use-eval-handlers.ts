@@ -606,6 +606,12 @@ export function useEvalHandlers({
           promptTurns: test.promptTurns,
           advancedConfig: test.advancedConfig,
           matchOptions: (test as { matchOptions?: unknown }).matchOptions,
+          // Preserve the stable testCaseId set inside
+          // getSuiteExecutionContext so the rerun's iteration rows can be
+          // linked back to the saved case for "rerun this case" affordances.
+          // Dropping it here forced the backend to re-derive linkage by
+          // title, which silently broke after a case rename.
+          testCaseId: (test as { testCaseId?: string }).testCaseId,
         }));
 
         // Partial-failure tolerant: a failure on one host shouldn't cancel
