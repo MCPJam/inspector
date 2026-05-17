@@ -31,7 +31,6 @@ import { SettingsTab } from "./components/SettingsTab";
 import { ProjectSettingsTab } from "./components/ProjectSettingsTab";
 import { ProjectClientConfigSync } from "./components/client-config/ProjectClientConfigSync";
 import { ActiveHostServerReconciler } from "./components/ActiveHostServerReconciler";
-import { ChatboxBackfillForProject } from "./components/ChatboxBackfillForProject";
 import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
@@ -2645,6 +2644,7 @@ export default function App() {
       isMultiSelectEnabled: activeTab === "playground",
       onServerChange: setSelectedServer,
       onMultiServerToggle: toggleServerSelection,
+      onSelectMultipleServers: setSelectedMCPConfigs,
       onConnect: handleConnect,
       onReconnect: handleReconnect,
       showOnlyOAuthServers: false,
@@ -2657,6 +2657,7 @@ export default function App() {
     appState.selectedMultipleServers,
     setSelectedServer,
     toggleServerSelection,
+    setSelectedMCPConfigs,
     handleConnect,
     handleReconnect,
   ]);
@@ -3014,10 +3015,6 @@ export default function App() {
           isAuthenticated={isAuthenticated}
           activeHost={activeHost}
           activeHostId={activeHostId}
-        />
-        <ChatboxBackfillForProject
-          projectId={convexProjectId}
-          isAuthenticated={isAuthenticated}
         />
         <AppReadyProvider
           isLoadingAppState={isLoading}

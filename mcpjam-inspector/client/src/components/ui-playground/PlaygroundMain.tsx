@@ -479,7 +479,14 @@ export function PlaygroundMain({
   // chatUiOverride, and the model id via localStorage). The fields
   // re-seeded here live inside `useChatSession`'s own state, so they
   // need imperative setters.
-  const [previewedHostId] = usePreviewedHostId(convexProjectId);
+  // Key by `activeProjectId` (local-or-shared), not `convexProjectId`.
+  // `convexProjectId` is the project's shared id and is `null` for local
+  // projects, which would silently disable the reseed path in CLI / no-
+  // cloud-sync flows. The setter that writes this state (the global host
+  // picker, ServersTab, PlaygroundTab) all key on the local-or-shared
+  // active project id, so reading from `convexProjectId` here looked at
+  // a different storage scope and never saw the selected host.
+  const [previewedHostId] = usePreviewedHostId(activeProjectId);
   const { host: previewedHost } = useHost({
     isAuthenticated: isConvexAuthenticated,
     hostId: previewedHostId,
@@ -567,7 +574,13 @@ export function PlaygroundMain({
     null
   );
   useEffect(() => {
-    if (!previewedHostId || !previewedHost) return;
+    if (!previewedHostId || !previewedHost) {
+      // Clear the dedupe ref so a later return to the same (hostId, configId)
+      // — after a transient host-unavailable phase or project switch — still
+      // reseeds the composer instead of short-circuiting on a stale ref.
+      lastSeededHostRef.current = null;
+      return;
+    }
     const configId = previewedHost.config.id;
     const last = lastSeededHostRef.current;
     if (
@@ -577,21 +590,30 @@ export function PlaygroundMain({
     ) {
       return;
     }
-    lastSeededHostRef.current = { hostId: previewedHostId, configId };
 
     const cfg = previewedHost.config;
-    setSystemPrompt(cfg.systemPrompt);
-    setTemperature(cfg.temperature);
-    setRequireToolApproval(cfg.requireToolApproval);
 
     // Map host's required + optional server ids to project server names.
     // Servers the host references but the project no longer has are
     // dropped — selectedMultipleServers must contain valid names.
+    //
+    // Guard the dedupe-ref commit on this resolution: if the host references
+    // servers but `serversById` hasn't hydrated yet (empty map on first pass),
+    // bail without marking the (hostId, configId) seeded so a later render
+    // with a populated map can finish the seed.
+    const ids = [
+      ...(cfg.serverIds ?? []),
+      ...(cfg.optionalServerIds ?? []),
+    ];
+    if (ids.length > 0 && serversById.size === 0) return;
+
+    lastSeededHostRef.current = { hostId: previewedHostId, configId };
+
+    setSystemPrompt(cfg.systemPrompt);
+    setTemperature(cfg.temperature);
+    setRequireToolApproval(cfg.requireToolApproval);
+
     if (onSelectMultipleServers) {
-      const ids = [
-        ...(cfg.serverIds ?? []),
-        ...(cfg.optionalServerIds ?? []),
-      ];
       const seen = new Set<string>();
       const names: string[] = [];
       for (const id of ids) {

@@ -18,15 +18,6 @@ import {
   PopoverTrigger,
 } from "@mcpjam/design-system/popover";
 import { RadioGroup, RadioGroupItem } from "@mcpjam/design-system/radio-group";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@mcpjam/design-system/select";
-import { Separator } from "@mcpjam/design-system/separator";
-import { Slider } from "@mcpjam/design-system/slider";
 import { Switch } from "@mcpjam/design-system/switch";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
@@ -38,7 +29,6 @@ import {
   type ChatboxAccessPreset,
 } from "@/lib/chatbox-access-presets";
 import type { RemoteServer } from "@/hooks/useProjects";
-import { listHostStyles } from "@/lib/host-styles";
 import { isMCPJamProvidedModel, SUPPORTED_MODELS } from "@/shared/types";
 import { cn } from "@/lib/utils";
 import type { ChatboxDraftConfig } from "./types";
@@ -432,13 +422,12 @@ export function SetupChecklistPanel({
     el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [focusedSection]);
 
-  const hostedModels = useMemo(
-    () =>
-      SUPPORTED_MODELS.filter((model) =>
-        isMCPJamProvidedModel(String(model.id)),
-      ),
-    [],
-  );
+  // Model picker moved to the Host detail page's Definition tab — the
+  // imports are kept because other call sites in the panel may still
+  // reference the SUPPORTED_MODELS catalog for validation; see grep
+  // before removing in a future pass.
+  void SUPPORTED_MODELS;
+  void isMCPJamProvidedModel;
 
   const setSectionOpen = (id: SetupSectionId, open: boolean) => {
     setOpenMap((prev) => ({ ...prev, [id]: open }));
@@ -505,73 +494,13 @@ export function SetupChecklistPanel({
                       }
                     />
                   </div>
-
-                  <Separator />
-
-                  <div className="space-y-2">
-                    <Label>Host style</Label>
-                    <div className="grid gap-2">
-                      {listHostStyles().map((host) => {
-                        const selected = chatboxDraft.hostStyle === host.id;
-                        return (
-                          <button
-                            key={host.id}
-                            type="button"
-                            className={`flex items-center gap-3 rounded-2xl border px-4 py-4 text-left transition-colors ${
-                              selected
-                                ? "border-primary/50 bg-primary/10"
-                                : "border-border/70 bg-card/60 hover:bg-muted/20"
-                            }`}
-                            onClick={() =>
-                              onDraftChange((draft) => ({
-                                ...draft,
-                                hostStyle: host.id,
-                              }))
-                            }
-                          >
-                            <img
-                              src={host.chatUi.logoSrc}
-                              alt=""
-                              className="size-6 rounded-md object-contain"
-                            />
-                            <div>
-                              <p className="font-medium">{host.chatUi.shortLabel}</p>
-                              <p className="text-xs text-muted-foreground">
-                                {host.chatUi.pickerDescription}
-                              </p>
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Model</Label>
-                    <Select
-                      value={chatboxDraft.modelId}
-                      onValueChange={(value) =>
-                        onDraftChange((draft) => ({
-                          ...draft,
-                          modelId: value,
-                        }))
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select a model" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {hostedModels.map((model) => (
-                          <SelectItem
-                            key={String(model.id)}
-                            value={String(model.id)}
-                          >
-                            {model.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                  {/*
+                    Host style + model pickers were removed with the 1:1
+                    host↔chatbox consolidation. They render through the
+                    Host detail page's Definition tab now, which is the
+                    surface that actually persists those edits via
+                    `hosts.updateHost`.
+                  */}
                 </div>
               </CollapsibleContent>
             </Collapsible>
@@ -967,80 +896,15 @@ export function SetupChecklistPanel({
             </Collapsible>
           </div>
 
-          {/* Advanced */}
-          <div
-            ref={(el) => {
-              sectionRefs.current.advanced = el;
-            }}
-          >
-            <Collapsible
-              open={openMap.advanced ?? false}
-              onOpenChange={(o) => setSectionOpen("advanced", o)}
-            >
-              <SetupSectionCollapsibleTrigger
-                step={6}
-                title="Advanced"
-                statusKind="collapsed"
-              />
-              <CollapsibleContent className="pt-3 pb-1">
-                <div className="space-y-4 rounded-xl border border-border/50 bg-card/40 p-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="setup-prompt">System prompt</Label>
-                    <Textarea
-                      id="setup-prompt"
-                      rows={8}
-                      value={chatboxDraft.systemPrompt}
-                      onChange={(event) =>
-                        onDraftChange((draft) => ({
-                          ...draft,
-                          systemPrompt: event.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <Label>Temperature</Label>
-                      <span className="text-sm text-muted-foreground">
-                        {chatboxDraft.temperature.toFixed(2)}
-                      </span>
-                    </div>
-                    <Slider
-                      min={0}
-                      max={2}
-                      step={0.05}
-                      value={[chatboxDraft.temperature]}
-                      onValueChange={(values) =>
-                        onDraftChange((draft) => ({
-                          ...draft,
-                          temperature: values[0] ?? 0.7,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div className="flex items-center justify-between gap-3 rounded-2xl border border-border/70 bg-card/60 px-4 py-4">
-                    <div>
-                      <p className="text-sm font-medium">
-                        Require tool approval
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        Visitors must approve tool calls before execution.
-                      </p>
-                    </div>
-                    <Switch
-                      checked={chatboxDraft.requireToolApproval}
-                      onCheckedChange={(checked) =>
-                        onDraftChange((draft) => ({
-                          ...draft,
-                          requireToolApproval: checked,
-                        }))
-                      }
-                    />
-                  </div>
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
-          </div>
+          {/*
+            The "Advanced" section that previously surfaced system prompt
+            / temperature / requireToolApproval / host style / model
+            editors was removed with the 1:1 host↔chatbox consolidation.
+            Those fields are owned by the host's hostConfig; edits flow
+            through the Host detail page's Definition tab (which calls
+            `hosts.updateHost`). The chatbox save path here only persists
+            metadata (name, description, chatUi).
+          */}
         </div>
       </ScrollArea>
     </div>

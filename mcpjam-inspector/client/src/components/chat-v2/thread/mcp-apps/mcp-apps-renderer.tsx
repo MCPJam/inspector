@@ -289,25 +289,6 @@ export function MCPAppsRenderer({
         ? playgroundCspMode
         : "widget-declared";
 
-  // TEMP debug: prints once per renderer mount so we can verify in the
-  // browser console which branch the chatbox-preview iframe is taking.
-  // Remove once the chatbox CSP fix is confirmed in the wild.
-  useEffect(() => {
-    // eslint-disable-next-line no-console
-    console.log("[mcp-apps-renderer cspMode]", {
-      cspMode,
-      isChatboxSurface,
-      minimalMode,
-      isPlaygroundActive,
-      playgroundCspMode,
-      resourceUri,
-      toolCallId,
-    });
-    // Intentional one-shot on mount; cspMode-change re-fetches are logged
-    // by the existing widget-content-requested event below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   // Get locale and timeZone from playground store when active, fallback to browser defaults
   const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);
   const playgroundTimeZone = useUIPlaygroundStore((s) => s.globals.timeZone);
@@ -997,26 +978,44 @@ export function MCPAppsRenderer({
     permissive: boolean;
     hostPolicyApplied: boolean;
   }>(() => {
+    // Detect whether the host explicitly configured CSP hardening signals.
+    // Hoisted above the permissive short-circuit so the permissive branch
+    // can honor host-explicit restrictTo/deny instead of silently dropping
+    // them; the relaxed branch below reuses the same calculation.
+    const restrictToConfigured =
+      sandboxCspPolicy?.restrictTo !== undefined &&
+      Object.values(sandboxCspPolicy.restrictTo).some(
+        (list) => Array.isArray(list) && list.length > 0,
+      );
+    const denyConfigured =
+      sandboxCspPolicy?.deny !== undefined &&
+      Object.values(sandboxCspPolicy.deny).some(
+        (list) => Array.isArray(list) && list.length > 0,
+      );
+    const hasExplicitCspHardening =
+      restrictToConfigured || denyConfigured || HOSTED_MODE;
+
     // Chatbox / Playground / minimal-mode surfaces opted into `permissive`
-    // CSP up at line 285. Permissive means permissive — short-circuit the
-    // host CSP resolver entirely so the implicit `mode: "host-default"`
-    // baseline doesn't relock a surface the user explicitly chose to leave
-    // open. Without this short-circuit, a saved chatbox profile with
-    // `apps.sandbox.csp.mode: "host-default"` (the default the editor
-    // writes) forces `permissive: false` regardless of cspMode, and the
-    // sandbox-proxy injects the SEP-1865 secure-default CSP — blocking
-    // `esm.sh` script/font/style loads for widgets like Excalidraw.
+    // CSP up at line 285. Permissive means "default to permissive when the
+    // host hasn't asked for tightening" — short-circuit the host CSP
+    // resolver only when the saved profile carries NO explicit hardening
+    // (restrictTo / deny) and we're not in hosted mode. Otherwise fall
+    // through to the resolver so the documented guarantees still hold
+    // even when the surface is permissive-by-default:
+    //   * deny always wins — applies in every mode
+    //   * restrictTo intersects whatever the resource declares
+    //   * hosted clamp is non-bypassable (MCPJam-origin extra-deny)
     //
-    // Hosts that want strict CSP on chatbox surfaces still get it by
-    // setting `restrictTo` / `deny` explicitly — those go through the
-    // resolver via the cspMode != "permissive" branch (they should also
-    // flip cspMode away from "permissive" in the host config UI, but
-    // belt-and-suspenders).
+    // Without this fall-through, a host could save `restrictTo:
+    // { connectDomains: ["https://api.acme"] }` on its chatbox host and
+    // the inspector would silently honor it on Connect → Chat but ignore
+    // it on the public chatbox URL — a policy bypass tied to surface
+    // type.
     //
     // Permissions policy still resolves below — it's orthogonal to CSP
     // and the chatbox-surface decision is specifically about content
     // loading, not device access.
-    if (cspMode === "permissive") {
+    if (cspMode === "permissive" && !hasExplicitCspHardening) {
       let resolvedPermissions: McpUiResourcePermissions | undefined;
       if (sandboxPermissionsPolicy) {
         const resourcePermsMap: Record<string, boolean> = {};
@@ -1064,16 +1063,6 @@ export function MCPAppsRenderer({
     // skipped the resolver entirely on mode==="relaxed". A hosted user
     // could save a relaxed profile and silently opt out of the hosted
     // clamp's MCPJam-origin extra-deny — P1 in production.
-    const restrictToConfigured =
-      sandboxCspPolicy?.restrictTo !== undefined &&
-      Object.values(sandboxCspPolicy.restrictTo).some(
-        (list) => Array.isArray(list) && list.length > 0,
-      );
-    const denyConfigured =
-      sandboxCspPolicy?.deny !== undefined &&
-      Object.values(sandboxCspPolicy.deny).some(
-        (list) => Array.isArray(list) && list.length > 0,
-      );
     const isPureRelaxedCsp =
       sandboxCspPolicy?.mode === "relaxed" &&
       !restrictToConfigured &&

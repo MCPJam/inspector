@@ -38,6 +38,12 @@ export function ActiveHostServerReconciler({
     isAuthenticated,
   });
 
+  // While `projectServersList` is loading we resolve to an empty
+  // `requiredServerNames`. That's safe under main's "disconnect-all then
+  // reconnect required" strategy: the connect-required pass is keyed on
+  // a non-null `candidateNamesKey`, so it stays quiet until the catalog
+  // arrives and the candidate set materializes, at which point it fires
+  // exactly once.
   const requiredServerNames = useMemo(() => {
     const requiredIds = activeHost?.serverIds ?? [];
     if (requiredIds.length === 0 || !projectServersList) return [];

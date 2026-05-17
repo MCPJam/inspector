@@ -142,6 +142,11 @@ vi.mock("@/hooks/use-app-ready", () => ({
   useAppReadyMessage: () => null,
 }));
 
+vi.mock("@/hooks/useAutoConnectProjectServers", () => ({
+  useAutoConnectProjectServers: () => ({ enabled: true, lastResult: null }),
+  resetAutoConnectAttempts: vi.fn(),
+}));
+
 vi.mock("@/lib/billing-gates", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/billing-gates")>();
   return {

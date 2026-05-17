@@ -90,6 +90,9 @@ describe("previewIframeAllow", () => {
     );
   });
 
+  // Deny entries are camelCase profile keys (matching the editor + allow map),
+  // not the kebab-case Permissions-Policy feature tokens that end up in the
+  // iframe `allow=` attribute.
   it("honors deny in resource-declared mode (deny wins over implicit allow)", () => {
     expect(
       previewIframeAllow(
@@ -99,6 +102,17 @@ describe("previewIframeAllow", () => {
         }),
       ),
     ).toBe("geolocation; clipboard-write");
+  });
+
+  it("honors clipboardWrite deny in resource-declared mode (camelCase key, not feature token)", () => {
+    expect(
+      previewIframeAllow(
+        profile({
+          mode: "resource-declared",
+          deny: ["clipboardWrite"],
+        }),
+      ),
+    ).toBe("camera; microphone; geolocation");
   });
 
   it("honors deny in custom mode (deny wins over explicit allow)", () => {
@@ -111,5 +125,17 @@ describe("previewIframeAllow", () => {
         }),
       ),
     ).toBe("clipboard-write");
+  });
+
+  it("honors clipboardWrite deny in custom mode (camelCase key, not feature token)", () => {
+    expect(
+      previewIframeAllow(
+        profile({
+          mode: "custom",
+          allow: { clipboardWrite: true, microphone: true },
+          deny: ["clipboardWrite"],
+        }),
+      ),
+    ).toBe("microphone");
   });
 });

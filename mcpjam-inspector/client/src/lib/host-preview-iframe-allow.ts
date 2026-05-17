@@ -62,10 +62,14 @@ export function previewIframeAllow(
   // with the host policy on a per-resource basis. The outer wrapper must
   // pass through the full spec-defined set so we don't pre-block the inner
   // gate; the inner renderer is still the authoritative enforcement point.
+  // `deny` stores camelCase profile keys (e.g. `clipboardWrite`) — what the
+  // editor and `permissions.allow` use. Translate to feature tokens before
+  // emitting so the deny list actually masks the wrapper output.
   if (!perms || perms.mode === "resource-declared") {
     const denied = new Set(perms?.deny ?? []);
-    return Object.values(SPEC_FEATURES)
-      .filter((feature) => !denied.has(feature))
+    return (Object.keys(SPEC_FEATURES) as SpecFeatureKey[])
+      .filter((key) => !denied.has(key))
+      .map((key) => SPEC_FEATURES[key])
       .join("; ");
   }
 
@@ -76,9 +80,8 @@ export function previewIframeAllow(
   const denied = new Set(perms.deny ?? []);
   const enabled: string[] = [];
   for (const key of Object.keys(SPEC_FEATURES) as SpecFeatureKey[]) {
-    const feature = SPEC_FEATURES[key];
-    if (perms.allow?.[key] && !denied.has(feature)) {
-      enabled.push(feature);
+    if (perms.allow?.[key] && !denied.has(key)) {
+      enabled.push(SPEC_FEATURES[key]);
     }
   }
   return enabled.join("; ");

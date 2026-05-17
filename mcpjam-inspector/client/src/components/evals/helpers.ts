@@ -22,7 +22,16 @@ import { getBillingErrorMessage } from "@/lib/billing-entitlements";
  * (created via `hostAttachments` with no flat list) read as empty.
  */
 export function getEffectiveSuiteServers(
-  suite: Pick<EvalSuite, "environment" | "hostAttachments">,
+  // Accept a structurally narrower suite than the full `EvalSuite`: some
+  // call sites (the test-case overview's lightweight Convex row) carry
+  // an optional `environment.servers` rather than the required shape.
+  // The body already optional-chains both fields, so widening the param
+  // is safe and avoids forcing every caller to assert into a stricter
+  // type than it actually has.
+  suite: {
+    environment?: { servers?: string[] } | undefined;
+    hostAttachments?: EvalSuite["hostAttachments"];
+  },
 ): string[] {
   const flatServers = suite.environment?.servers ?? [];
   const attachmentServers =

@@ -57,6 +57,14 @@ export interface Project {
   name: string;
   description?: string;
   icon?: string;
+  /**
+   * @deprecated Backend-maintained shadow-mirror of the project default host
+   * (`hostConfigsV2.getProjectDefault`). UI reads should go through
+   * `useAppState().activeHost` (which resolves the top-bar selection → project
+   * default). Kept on the type only as a transient bootstrap fallback for the
+   * window before the host query hydrates; will be dropped once that gap can
+   * be guaranteed-closed by `isClientConfigSyncPending`.
+   */
   clientConfig?: ProjectClientConfig;
   servers: Record<string, ServerWithName>;
   createdAt: Date;

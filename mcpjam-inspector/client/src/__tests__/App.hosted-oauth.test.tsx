@@ -208,8 +208,10 @@ vi.mock("convex/react", () => ({
     }
     return result;
   },
-  useMutation: () => vi.fn(),
-  useAction: () => vi.fn(),
+  // Hooks like useChatboxBackfillForProject call the returned mutation as
+  // a thenable; return a resolved promise so `.catch(...)` doesn't crash.
+  useMutation: () => vi.fn(() => Promise.resolve(undefined)),
+  useAction: () => vi.fn(() => Promise.resolve(undefined)),
   // Local-state-migration hook calls useConvex().query for the post-migration
   // OAuth-token import path; the App test never reaches that path (HOSTED_MODE
   // gate exits early), but the hook still calls useConvex() unconditionally.
@@ -408,6 +410,13 @@ vi.mock("../stores/preferences/preferences-provider", () => ({
   PreferencesStoreProvider: ({ children }: { children?: ReactNode }) => (
     <div>{children}</div>
   ),
+  usePreferencesStore: () => true,
+}));
+// Reconciler is App-internal plumbing; mock it out so the test doesn't
+// have to thread shared-app-state + preferences mocks deep enough to
+// satisfy `useAutoConnectProjectServers`.
+vi.mock("../components/ActiveHostServerReconciler", () => ({
+  ActiveHostServerReconciler: () => null,
 }));
 vi.mock("@mcpjam/design-system/sonner", () => ({
   Toaster: () => <div />,
@@ -416,6 +425,10 @@ vi.mock("../state/app-state-context", () => ({
   AppStateProvider: ({ children }: { children?: ReactNode }) => (
     <div>{children}</div>
   ),
+  // ActiveHostServerReconciler reads this via useAutoConnectProjectServers
+  // to compute connected/excess servers. Return an empty servers map so
+  // the reconciler's reconciliation logic is a no-op in App-level tests.
+  useSharedAppState: () => ({ servers: {} }),
 }));
 vi.mock("../components/CompletingSignInLoading", () => ({
   default: () => <div />,
@@ -996,62 +1009,16 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
-  // `/chatboxes` is now a redirect to `/hosts` (1:1 host↔chatbox
-  // consolidation — the chatbox-as-noun tab and its billing wiring were
-  // collapsed into the Host detail page). These three legacy tests
-  // exercise rendering behavior on a route that no longer mounts the
-  // chatbox tab; they're skipped pending a rewrite against the host hub.
-  it.skip("passes a billing-safe project id to the chatboxes tab", async () => {
-    clearHostedOAuthPendingState();
-    clearChatboxSession();
-    window.history.replaceState({}, "", "/chatboxes");
-
-    mockUseAppState.mockImplementation(() => ({
-      ...createAppStateMock(),
-      isCloudSyncActive: false,
-      projects: {
-        ws_local: {
-          id: "ws_local",
-          name: "Project One",
-          sharedProjectId: "shared-ws-1",
-          organizationId: "org-1",
-          servers: {},
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        },
-      },
-    }));
-    mockUseQuery.mockImplementation((name: string) => {
-      if (name === "organizations:getMyOrganizations") {
-        return [
-          {
-            _id: "org-1",
-            name: "Org One",
-            updatedAt: 1,
-            createdAt: 1,
-            createdBy: "user-1",
-            myRole: "owner",
-          },
-        ];
-      }
-
-      return undefined;
-    });
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(mockChatboxesTab).toHaveBeenCalled();
-    });
-
-    const lastCall =
-      mockChatboxesTab.mock.calls[mockChatboxesTab.mock.calls.length - 1];
-    expect(lastCall?.[0]).toMatchObject({
-      projectId: null,
-      organizationId: "org-1",
-      isBillingContextPending: false,
-    });
-  });
+  // (Removed) "passes a billing-safe project id to the chatboxes tab" —
+  // the old test asserted that ChatboxesTab received
+  // `{ projectId: null, organizationId, isBillingContextPending }` when
+  // cloud sync was off, gating the org-scoped billing gate. After the
+  // 1:1 host↔chatbox consolidation the tab signature is just
+  // `{ projectId, isAuthenticated }` (no org / billing props), and the
+  // ChatboxesRoute forwards the route-context `convexProjectId` whether
+  // cloud sync is on or off. The previous invariant no longer maps to a
+  // prop on this component, so the test was deleted rather than
+  // rewritten against a different surface.
 
   it("does not auto-select the first organization without an explicit org route", async () => {
     const setActiveOrganizationId = vi.fn();
@@ -2240,85 +2207,14 @@ describe("App hosted OAuth callback handling", () => {
     expect(window.location.pathname).toBe("/servers");
   });
 
-  it.skip("still renders the chatboxes tab when project premiumness denies chatbox creation", async () => {
-    clearHostedOAuthPendingState();
-    clearChatboxSession();
-    window.history.replaceState({}, "", "/chatboxes");
-    mockUseAppState.mockImplementation(() => ({
-      ...createAppStateMock(),
-      isCloudSyncActive: true,
-      projects: {
-        ws_local: {
-          id: "ws_local",
-          name: "Project One",
-          sharedProjectId: "shared-ws-1",
-          organizationId: "org-1",
-          servers: {},
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        },
-      },
-    }));
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui"
-    );
-    mockUseQuery.mockImplementation((name: string) => {
-      if (name === "organizations:getMyOrganizations") {
-        return [
-          {
-            _id: "org-1",
-            name: "Org One",
-            updatedAt: 1,
-            createdAt: 1,
-            createdBy: "user-1",
-            myRole: "owner",
-          },
-        ];
-      }
+  // (Removed) "still renders the chatboxes tab when project premiumness
+  // denies chatbox creation" — chatbox creation no longer happens on the
+  // /chatboxes tab (it's the publish surface for a host-bound chatbox
+  // that's created with the host). The test's premise — that the tab
+  // has its own billing gate for creation — no longer exists, so the
+  // test was deleted rather than rewritten.
 
-      if (name === "billing:getProjectPremiumness") {
-        return {
-          plan: "free",
-          enforcementState: "active",
-          effectivePlan: "free",
-          billingInterval: null,
-          source: "free",
-          decisionRequired: false,
-          gates: [
-            {
-              gateKey: "chatboxes",
-              kind: "feature",
-              scope: "organization",
-              canAccess: false,
-              shouldShowUpsell: true,
-              upgradePlan: "team",
-              reason: "feature_not_included",
-            },
-          ],
-        };
-      }
-
-      return undefined;
-    });
-
-    render(<App />);
-
-    const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getProjectPremiumness"
-    );
-
-    expect(wsPremiumnessCall?.[1]).toEqual({
-      organizationId: "org-1",
-      projectId: "shared-ws-1",
-    });
-
-    // Chatboxes tab is NOT blocked at tab level — creation is gated inline
-    await waitFor(() => {
-      expect(screen.getByText("Chatboxes Tab")).toBeInTheDocument();
-    });
-  });
-
-  it.skip("navigates back to the chatboxes tab after callback completion", async () => {
+  it("navigates back to the chatboxes tab after callback completion", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     writeHostedOAuthPendingMarker({
