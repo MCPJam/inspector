@@ -178,11 +178,15 @@ export function getHostChromeAccentVariables(
   hostStyle: ChatboxHostStyle | null | undefined,
   themeMode: HostThemeMode,
   chatUiOverride?: ChatUiOverride,
-): CSSProperties | undefined {
+): ChatboxShellStyle | undefined {
   if (!hostStyle) return undefined;
-  const shell = getChatboxShellStyle(hostStyle, themeMode, chatUiOverride);
+  const shell = getChatboxShellStyle(
+    hostStyle,
+    themeMode,
+    chatUiOverride,
+  ) as ChatboxShellStyle;
   return {
-    "--primary": shell["--primary"] as string,
-    "--primary-foreground": shell["--primary-foreground"] as string,
+    "--primary": shell["--primary"],
+    "--primary-foreground": shell["--primary-foreground"],
   };
 }
