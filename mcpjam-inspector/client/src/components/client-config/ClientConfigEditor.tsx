@@ -941,16 +941,41 @@ function McpProfileCspDirectivesEditor({
   value: Record<string, string[]> | undefined;
   onChange: (next: Record<string, string[]> | undefined) => void;
 }) {
-  // Always work with a sorted-key array for stable rendering across keystrokes.
-  const rows = useMemo<Array<{ name: string; tokens: string }>>(() => {
-    if (!value) return [];
-    return Object.keys(value)
-      .sort()
-      .map((k) => ({
-        name: k,
-        tokens: (value[k] ?? []).join(", "),
-      }));
-  }, [value]);
+  const fromValue = useCallback(
+    (v: Record<string, string[]> | undefined) => {
+      if (!v) return [] as Array<{ name: string; tokens: string }>;
+      return Object.keys(v)
+        .sort()
+        .map((k) => ({ name: k, tokens: (v[k] ?? []).join(", ") }));
+    },
+    [],
+  );
+
+  // Local draft state including in-progress blank rows the user has
+  // added but not yet filled in. `commit` filters blanks out before
+  // calling onChange, so without a local buffer a freshly-added blank
+  // would round-trip back through `value` as nothing and disappear.
+  const [draftRows, setDraftRows] = useState<
+    Array<{ name: string; tokens: string }>
+  >(() => fromValue(value));
+
+  // Reconcile with external `value` changes (e.g. switching host
+  // configs from the parent). Tracks the last canonical key we synced
+  // to so our own commits don't trigger a re-seed that wipes blanks.
+  const valueKey = useMemo(() => JSON.stringify(value ?? null), [value]);
+  const lastSyncedKeyRef = useRef(valueKey);
+  useEffect(() => {
+    if (lastSyncedKeyRef.current === valueKey) return;
+    lastSyncedKeyRef.current = valueKey;
+    setDraftRows((prev) => {
+      const fromVal = fromValue(value);
+      // Preserve any blank/in-progress rows the user is still editing.
+      const blanks = prev.filter(
+        (r) => r.name.trim() === "" || r.tokens.trim() === "",
+      );
+      return [...fromVal, ...blanks];
+    });
+  }, [valueKey, value, fromValue]);
 
   const commit = useCallback(
     (next: Array<{ name: string; tokens: string }>) => {
@@ -965,7 +990,9 @@ function McpProfileCspDirectivesEditor({
         if (tokens.length === 0) continue;
         out[name] = tokens;
       }
-      onChange(Object.keys(out).length > 0 ? out : undefined);
+      const built = Object.keys(out).length > 0 ? out : undefined;
+      lastSyncedKeyRef.current = JSON.stringify(built ?? null);
+      onChange(built);
     },
     [onChange],
   );
@@ -974,17 +1001,25 @@ function McpProfileCspDirectivesEditor({
     idx: number,
     patch: Partial<{ name: string; tokens: string }>,
   ) => {
-    const next = rows.map((r, i) => (i === idx ? { ...r, ...patch } : r));
+    const next = draftRows.map((r, i) => (i === idx ? { ...r, ...patch } : r));
+    setDraftRows(next);
     commit(next);
   };
 
   const removeRow = (idx: number) => {
-    commit(rows.filter((_, i) => i !== idx));
+    const next = draftRows.filter((_, i) => i !== idx);
+    setDraftRows(next);
+    commit(next);
   };
 
   const addRow = () => {
-    commit([...rows, { name: "", tokens: "" }]);
+    // Blank rows live only in local draft state until the user types
+    // both a name and at least one token — `commit` filters blanks out,
+    // so committing here would no-op and the row would never appear.
+    setDraftRows((prev) => [...prev, { name: "", tokens: "" }]);
   };
+
+  const rows = draftRows;
 
   return (
     <div className="grid gap-2">
@@ -1197,12 +1232,44 @@ function McpProfileAllowFeaturesEditor({
     [],
   );
 
-  const rows = useMemo<Array<{ key: string; allowlist: string }>>(() => {
-    if (!value) return [];
-    return Object.keys(value)
-      .sort()
-      .map((k) => ({ key: k, allowlist: value[k] ?? "" }));
-  }, [value]);
+  const fromValue = useCallback(
+    (v: Record<string, string> | undefined) => {
+      if (!v) return [] as Array<{ key: string; allowlist: string }>;
+      return Object.keys(v)
+        .sort()
+        .map((k) => ({ key: k, allowlist: v[k] ?? "" }));
+    },
+    [],
+  );
+
+  // Local draft state including in-progress blanks. `commit` filters
+  // blank/spec-feature rows out before calling onChange, so without a
+  // local buffer a freshly-added blank row would round-trip back through
+  // `value` as nothing and disappear before the user can type anything.
+  const [draftRows, setDraftRows] = useState<
+    Array<{ key: string; allowlist: string }>
+  >(() => fromValue(value));
+
+  const valueKey = useMemo(() => JSON.stringify(value ?? null), [value]);
+  const lastSyncedKeyRef = useRef(valueKey);
+  useEffect(() => {
+    if (lastSyncedKeyRef.current === valueKey) return;
+    lastSyncedKeyRef.current = valueKey;
+    setDraftRows((prev) => {
+      const fromVal = fromValue(value);
+      // Preserve any rows the user is mid-edit (blank keys, blank
+      // allowlists, or spec-feature keys that haven't been corrected
+      // yet — the latter would otherwise vanish as soon as they were
+      // typed, losing the inline warning's teaching moment).
+      const inProgress = prev.filter(
+        (r) =>
+          r.key.trim() === "" ||
+          r.allowlist.trim() === "" ||
+          specFeatures.has(r.key.trim()),
+      );
+      return [...fromVal, ...inProgress];
+    });
+  }, [valueKey, value, fromValue, specFeatures]);
 
   const commit = useCallback(
     (next: Array<{ key: string; allowlist: string }>) => {
@@ -1217,7 +1284,9 @@ function McpProfileAllowFeaturesEditor({
         if (allowlist === "") continue;
         out[key] = allowlist;
       }
-      onChange(Object.keys(out).length > 0 ? out : undefined);
+      const built = Object.keys(out).length > 0 ? out : undefined;
+      lastSyncedKeyRef.current = JSON.stringify(built ?? null);
+      onChange(built);
     },
     [onChange, specFeatures],
   );
@@ -1226,17 +1295,25 @@ function McpProfileAllowFeaturesEditor({
     idx: number,
     patch: Partial<{ key: string; allowlist: string }>,
   ) => {
-    const next = rows.map((r, i) => (i === idx ? { ...r, ...patch } : r));
+    const next = draftRows.map((r, i) => (i === idx ? { ...r, ...patch } : r));
+    setDraftRows(next);
     commit(next);
   };
 
   const removeRow = (idx: number) => {
-    commit(rows.filter((_, i) => i !== idx));
+    const next = draftRows.filter((_, i) => i !== idx);
+    setDraftRows(next);
+    commit(next);
   };
 
   const addRow = () => {
-    commit([...rows, { key: "", allowlist: "*" }]);
+    // Blank rows live only in local draft state until the user types
+    // both a feature name and an allowlist — `commit` would filter them
+    // out, so committing here would no-op and the row would never appear.
+    setDraftRows((prev) => [...prev, { key: "", allowlist: "*" }]);
   };
+
+  const rows = draftRows;
 
   return (
     <div className="grid gap-2">
