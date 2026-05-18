@@ -31,12 +31,20 @@ trap 'rm -f "$OUTPUT_FILE"' EXIT
 
 while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
   # Re-run the full command; preserve exit code separately from our loop vars.
-  "$@" 2>&1 | tee "$OUTPUT_FILE"
-  STATUS="${PIPESTATUS[0]}"
+  # Capture output to a file so we can replay it via stderr on failure — many
+  # callers redirect this script's stdout to /dev/null to suppress --json
+  # noise, which also swallows the CLI's own error text on failure.
+  "$@" >"$OUTPUT_FILE" 2>&1
+  STATUS=$?
+  cat "$OUTPUT_FILE"
 
   if [ "$STATUS" -eq 0 ]; then
     exit 0
   fi
+
+  echo "::group::Railway CLI output (attempt $ATTEMPT, exit $STATUS)" >&2
+  cat "$OUTPUT_FILE" >&2
+  echo "::endgroup::" >&2
 
   if [ "$ATTEMPT" -eq "$MAX_ATTEMPTS" ]; then
     echo "::error::Railway CLI failed after $MAX_ATTEMPTS attempts: $*" >&2

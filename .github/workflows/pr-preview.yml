@@ -128,25 +128,20 @@ jobs:
             *) echo "::error::Unexpected HTTP $HTTP_CODE checking ${BACKEND_REPO}/${PR_BRANCH}"; exit 1 ;;
           esac
 
-      - name: Create or refresh Railway preview environment
+      # Railway CLI's `link`, `whoami`, `variable set`, `environment new`,
+      # and `environment delete` all do an internal user-identity preflight
+      # that fails with "Unauthorized" on workspace tokens. We bypass each
+      # with direct GraphQL calls (railway-env.sh, railway-set-vars.sh).
+      # `railway up` and `railway run` work fine with workspace tokens, so
+      # they stay on the CLI. See deploy-staging.yml for the same pattern.
+      - name: Create preview environment
         run: |
-          .github/scripts/railway-retry.sh railway link \
-            --project "$RAILWAY_PROJECT_ID" \
-            --environment "$RAILWAY_STAGING_ENVIRONMENT" \
-            --json >/dev/null
-          .github/scripts/railway-retry.sh railway environment new "${{ steps.meta.outputs.environment }}" \
-            --duplicate "$RAILWAY_STAGING_ENVIRONMENT" \
-            --json >/dev/null || true
+          .github/scripts/railway-retry.sh .github/scripts/railway-env.sh new "${{ steps.meta.outputs.environment }}" \
+            --duplicate "$RAILWAY_STAGING_ENVIRONMENT"
 
       - name: Configure staging-safe preview defaults
         run: |
-          .github/scripts/railway-retry.sh railway link \
-            --project "$RAILWAY_PROJECT_ID" \
-            --environment "${{ steps.meta.outputs.environment }}" \
-            --service "$RAILWAY_INSPECTOR_SERVICE" \
-            --json >/dev/null
-
-          .github/scripts/railway-retry.sh railway variable set \
+          .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
             -e "${{ steps.meta.outputs.environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
             MCPJAM_NONPROD_LOCKDOWN=true \
@@ -185,13 +180,7 @@ jobs:
       - name: Configure preview origin allowlists
         if: steps.preview_domain.outputs.url != ''
         run: |
-          .github/scripts/railway-retry.sh railway link \
-            --project "$RAILWAY_PROJECT_ID" \
-            --environment "${{ steps.meta.outputs.environment }}" \
-            --service "$RAILWAY_INSPECTOR_SERVICE" \
-            --json >/dev/null
-
-          .github/scripts/railway-retry.sh railway variable set \
+          .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
             -e "${{ steps.meta.outputs.environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
             MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app" \
@@ -365,25 +354,15 @@ jobs:
           echo "environment=${RAILWAY_BACKEND_PR_ENV_PREFIX}${BACKEND_PR_NUMBER}" >> "$GITHUB_OUTPUT"
           echo "branch=${{ github.event.client_payload.branch }}" >> "$GITHUB_OUTPUT"
 
-      - name: Create or refresh Railway preview environment
+      # See upsert-preview above for why `railway link` is skipped.
+      - name: Create preview environment
         run: |
-          .github/scripts/railway-retry.sh railway link \
-            --project "$RAILWAY_PROJECT_ID" \
-            --environment "$RAILWAY_STAGING_ENVIRONMENT" \
-            --json >/dev/null
-          .github/scripts/railway-retry.sh railway environment new "${{ steps.meta.outputs.environment }}" \
-            --duplicate "$RAILWAY_STAGING_ENVIRONMENT" \
-            --json >/dev/null || true
+          .github/scripts/railway-retry.sh .github/scripts/railway-env.sh new "${{ steps.meta.outputs.environment }}" \
+            --duplicate "$RAILWAY_STAGING_ENVIRONMENT"
 
       - name: Configure staging-safe preview defaults
         run: |
-          .github/scripts/railway-retry.sh railway link \
-            --project "$RAILWAY_PROJECT_ID" \
-            --environment "${{ steps.meta.outputs.environment }}" \
-            --service "$RAILWAY_INSPECTOR_SERVICE" \
-            --json >/dev/null
-
-          .github/scripts/railway-retry.sh railway variable set \
+          .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
             -e "${{ steps.meta.outputs.environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
             MCPJAM_NONPROD_LOCKDOWN=true \
@@ -422,13 +401,7 @@ jobs:
       - name: Configure preview origin allowlists
         if: steps.preview_domain.outputs.url != ''
         run: |
-          .github/scripts/railway-retry.sh railway link \
-            --project "$RAILWAY_PROJECT_ID" \
-            --environment "${{ steps.meta.outputs.environment }}" \
-            --service "$RAILWAY_INSPECTOR_SERVICE" \
-            --json >/dev/null
-
-          .github/scripts/railway-retry.sh railway variable set \
+          .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
             -e "${{ steps.meta.outputs.environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
             MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app" \
@@ -574,11 +547,7 @@ jobs:
 
       - name: Delete Railway preview environment
         run: |
-          .github/scripts/railway-retry.sh railway link \
-            --project "$RAILWAY_PROJECT_ID" \
-            --environment "$RAILWAY_STAGING_ENVIRONMENT" \
-            --json >/dev/null
-          .github/scripts/railway-retry.sh railway environment delete "${RAILWAY_ENV_PREFIX}${{ github.event.pull_request.number }}" \
+          .github/scripts/railway-retry.sh .github/scripts/railway-env.sh delete "${RAILWAY_ENV_PREFIX}${{ github.event.pull_request.number }}" \
             --yes || true
 
       - name: Dispatch backend preview cleanup
@@ -622,11 +591,7 @@ jobs:
             echo "::error::backend_pr_number is missing or non-numeric: '$BACKEND_PR_NUMBER'"
             exit 1
           fi
-          .github/scripts/railway-retry.sh railway link \
-            --project "$RAILWAY_PROJECT_ID" \
-            --environment "$RAILWAY_STAGING_ENVIRONMENT" \
-            --json >/dev/null
-          .github/scripts/railway-retry.sh railway environment delete "${RAILWAY_BACKEND_PR_ENV_PREFIX}${BACKEND_PR_NUMBER}" \
+          .github/scripts/railway-retry.sh .github/scripts/railway-env.sh delete "${RAILWAY_BACKEND_PR_ENV_PREFIX}${BACKEND_PR_NUMBER}" \
             --yes || true
 
   sync-backend-preview:
@@ -678,13 +643,7 @@ jobs:
 
       - name: Update preview environment variables
         run: |
-          .github/scripts/railway-retry.sh railway link \
-            --project "$RAILWAY_PROJECT_ID" \
-            --environment "${{ github.event.client_payload.inspector_environment }}" \
-            --service "$RAILWAY_INSPECTOR_SERVICE" \
-            --json >/dev/null
-
-          .github/scripts/railway-retry.sh railway variable set \
+          .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
             -e "${{ github.event.client_payload.inspector_environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
             MCPJAM_NONPROD_LOCKDOWN=true \
@@ -721,13 +680,7 @@ jobs:
       - name: Refresh preview origin allowlists
         if: steps.preview_domain.outputs.url != ''
         run: |
-          .github/scripts/railway-retry.sh railway link \
-            --project "$RAILWAY_PROJECT_ID" \
-            --environment "${{ github.event.client_payload.inspector_environment }}" \
-            --service "$RAILWAY_INSPECTOR_SERVICE" \
-            --json >/dev/null
-
-          .github/scripts/railway-retry.sh railway variable set \
+          .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
             -e "${{ github.event.client_payload.inspector_environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
             MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app" \

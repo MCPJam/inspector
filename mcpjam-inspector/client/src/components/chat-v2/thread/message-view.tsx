@@ -19,6 +19,7 @@ import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-over
 import { type ReasoningDisplayMode } from "./parts/reasoning-part";
 import { ClaudeLoadingIndicator } from "@/lib/client-styles/indicators/claude-mark";
 import { getAssistantAvatarDescriptor } from "@/components/chat-v2/shared/assistant-avatar";
+import { CopilotMessageHeader } from "./copilot-message-header";
 
 type ClaudeFooterMode = "none" | "animated" | "static";
 
@@ -138,6 +139,10 @@ function MessageViewImpl({
     chatboxHostStyle,
   });
   const shouldRenderAssistantAvatar = chatboxHostStyle === null;
+  // Copilot mimics show their own "Copilot + mascot" row above the
+  // message content (faithful to real M365 Copilot's avatar/name header).
+  // Other host styles keep the inspector's existing layout.
+  const shouldRenderCopilotHeader = chatboxHostStyle === "copilot";
   // Hide widget state messages (these are internal and sent to the model)
   if (message.id?.startsWith("widget-state-")) return null;
   // Hide model context messages (these are internal and sent to the model)
@@ -260,6 +265,11 @@ function MessageViewImpl({
       ) : null}
 
       <div className="flex-1 min-w-0">
+        {shouldRenderCopilotHeader ? (
+          <div className="mb-2">
+            <CopilotMessageHeader />
+          </div>
+        ) : null}
         <div className="space-y-6 text-sm leading-6">
           {steps.map((stepParts, sIdx) => (
             <div key={sIdx} className="space-y-3">
