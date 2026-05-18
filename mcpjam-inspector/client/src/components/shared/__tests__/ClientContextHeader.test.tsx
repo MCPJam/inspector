@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ClientContextHeader } from "../ClientContextHeader";
+import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 
 const {
   mockPreferencesState,
@@ -17,6 +18,7 @@ const {
     setThemeMode: vi.fn(),
     setHostStyle: vi.fn(),
     setHostCapabilitiesOverride: vi.fn(),
+    setChatUiOverride: vi.fn(),
   },
   mockUIPlaygroundStore: {
     deviceType: "desktop",
@@ -61,7 +63,6 @@ vi.mock("lucide-react", () => ({
   Settings2: () => <span data-testid="icon-settings" />,
   MousePointer2: () => <span data-testid="icon-mouse" />,
   Hand: () => <span data-testid="icon-hand" />,
-  Paintbrush: () => <span data-testid="icon-paintbrush" />,
 }));
 
 vi.mock("@mcpjam/design-system/button", () => ({
@@ -115,12 +116,19 @@ vi.mock("@/components/shared/client-context-constants", () => ({
   TIMEZONE_OPTIONS: [{ zone: "UTC", label: "UTC" }],
 }));
 
-vi.mock("@/components/shared/client-context-picker-bodies", () => ({
-  CspPickerBody: () => <div />,
-  DevicePickerBody: () => <div />,
-  LocalePickerBody: () => <div />,
-  TimezonePickerBody: () => <div />,
-}));
+vi.mock("@/components/shared/client-context-picker-bodies", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("@/components/shared/client-context-picker-bodies")
+    >();
+  return {
+    ...actual,
+    CspPickerBody: () => <div />,
+    DevicePickerBody: () => <div />,
+    LocalePickerBody: () => <div />,
+    TimezonePickerBody: () => <div />,
+  };
+});
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: (selector: any) =>
@@ -203,6 +211,8 @@ describe("ClientContextHeader", () => {
     vi.clearAllMocks();
     mockPreferencesState.themeMode = "light";
     mockPreferencesState.hostStyle = "claude";
+    mockUIPlaygroundStore.cspMode = "widget-declared";
+    mockUIPlaygroundStore.mcpAppsCspMode = "widget-declared";
     mockHostContextState.draftHostContext = {
       locale: "en-US",
       timeZone: "UTC",
@@ -215,6 +225,25 @@ describe("ClientContextHeader", () => {
       },
     };
     mockHostContextState.isDirty = false;
+  });
+
+  it("keeps the ChatGPT and MCP Apps CSP stores synchronized from the active chip", async () => {
+    mockUIPlaygroundStore.cspMode = "widget-declared";
+    mockUIPlaygroundStore.mcpAppsCspMode = "permissive";
+
+    render(
+      <ClientContextHeader
+        activeProjectId="project-1"
+        protocol={UIType.MCP_APPS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mockUIPlaygroundStore.setCspMode).toHaveBeenCalledWith(
+        "permissive",
+      );
+    });
+    expect(mockUIPlaygroundStore.setMcpAppsCspMode).not.toHaveBeenCalled();
   });
 
   it("writes theme changes through hostContext instead of global preferences", () => {
@@ -273,23 +302,28 @@ describe("ClientContextHeader", () => {
       setHostStyle: mockPreferencesState.setHostStyle,
       setHostCapabilitiesOverride:
         mockPreferencesState.setHostCapabilitiesOverride,
+      setChatUiOverride: mockPreferencesState.setChatUiOverride,
     });
   });
 
-  it("surfaces unsaved state and opens the raw host context dialog", () => {
-    mockHostContextState.isDirty = true;
-
+  it("opens the raw host context dialog when the host context button is clicked", () => {
     render(
       <ClientContextHeader activeProjectId="project-1" protocol={null} />,
-    );
-
-    expect(screen.getByTestId("host-context-trigger")).toHaveTextContent(
-      "Unsaved",
     );
 
     fireEvent.click(screen.getByTestId("host-context-trigger"));
 
     expect(screen.getByTestId("host-context-dialog")).toBeInTheDocument();
+  });
+
+  it("labels the host capabilities override control as Host Capabilities", () => {
+    render(
+      <ClientContextHeader activeProjectId="project-1" protocol={null} />,
+    );
+
+    expect(screen.getByTestId("host-capabilities-trigger")).toHaveTextContent(
+      "Host Capabilities",
+    );
   });
 
   it("does not render the display-mode badge in the toolbar", () => {

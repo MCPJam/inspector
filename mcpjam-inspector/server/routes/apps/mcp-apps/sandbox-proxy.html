@@ -91,97 +91,261 @@
 
       /**
        * Build CSP string from metadata (SEP-1865)
+       *
+       * CSP merge rule per directive:
+       *   tokens = unique(domain-derived tokens ++ cspDirectives[directive])
+       *   if tokens contains anything other than 'none', drop 'none'
+       *   emit `<directive> ${tokens.join(" ")}` (or `<directive> 'none'` if
+       *   tokens === ['none'])
+       *
+       * Rationale: `'none' 'self'` is invalid CSP. The domain-derived branch
+       * emits 'none' for empty allowlists (frameDomains: [] → frame-src 'none'),
+       * and cspDirectives can add real tokens on top. Union-and-drop-'none' is
+       * the only sound merge.
+       *
        * @param {Object} csp - CSP metadata with connectDomains, resourceDomains, frameDomains, and baseUriDomains
+       * @param {Object} cspDirectives - Per-directive source-expression overrides
+       *   (inspector-only). Keys are CSP directive names (`script-src`, …);
+       *   values are token arrays.
        * @returns {string} CSP policy string
        */
-      function buildCSP(csp) {
+      function buildCSP(csp, cspDirectives) {
+        // Merge a single directive's domain-derived tokens with any extra
+        // tokens supplied by cspDirectives. See merge rule above the function.
+        function mergeDirective(name, baseTokens) {
+          const extras =
+            cspDirectives && Array.isArray(cspDirectives[name])
+              ? cspDirectives[name]
+              : [];
+          const merged = new Set();
+          for (const t of baseTokens) {
+            if (typeof t === "string" && t.length > 0) merged.add(t);
+          }
+          for (const t of extras) {
+            if (typeof t !== "string") continue;
+            const trimmed = t.trim();
+            if (trimmed.length === 0) continue;
+            // Reject CSP directive separators (`;`) and structural chars
+            // (`,`, newlines, quote-wrapping whitespace) in extras. The
+            // backend canonicalizer is the primary defense, but a crafted
+            // cspDirectives value like `"'self'; script-src *"` would
+            // otherwise break out of the intended directive and inject
+            // an attacker-controlled one when joined with " " below.
+            // Same defense-in-depth as the allowFeatures filter applied
+            // in sandboxed-iframe.tsx.
+            //
+            // Also reject HTML-attribute breakouts (`"`, `<`, `>`). The
+            // merged CSP string is concatenated into
+            // `<meta http-equiv="Content-Security-Policy" content="...">`
+            // by injectCSP without escaping, so a token like
+            // `'self"><script>...` would close the content attribute and
+            // inject markup into the srcdoc before the intended CSP is
+            // established. CSP source expressions never legitimately
+            // contain these characters.
+            if (/[;,\n\r"<>]/.test(trimmed)) continue;
+            merged.add(trimmed);
+          }
+          if (merged.size > 1 && merged.has("'none'")) {
+            merged.delete("'none'");
+          }
+          if (merged.size === 0) return name + " 'none'";
+          return name + " " + Array.from(merged).join(" ");
+        }
+
         // Per SEP-1865: If no CSP declared, use restrictive defaults
         // Note: 'self' doesn't work in srcdoc iframes (refers to about:srcdoc)
         // So we use 'unsafe-inline' for scripts/styles since all widget code is inline
+        let directives;
         if (!csp) {
-          return [
-            "default-src 'none'",
-            "script-src 'unsafe-inline'",
-            "style-src 'unsafe-inline'",
-            "img-src data:",
-            "font-src data:",
-            "media-src data:",
-            "connect-src 'none'",
-            "frame-src 'none'",
-            "object-src 'none'",
-            "base-uri 'none'",
-          ].join("; ");
+          // Two baselines for the no-csp branch:
+          //   - When cspDirectives is set, the profile is modeling a host
+          //     whose emitted CSP is unconstrained EXCEPT for the
+          //     directives it explicitly lists. For directives IN
+          //     cspDirectives, the profile is authoritative (REPLACE the
+          //     baseline — otherwise a permissive base like `https:` would
+          //     dilute a restrictive entry like
+          //     `frame-src "https://widgets.example.com"` back to "any
+          //     HTTPS frame"). For directives NOT in cspDirectives, use
+          //     specific permissive baselines (no `*`) so widgets without
+          //     their own `_meta.ui.csp` can still execute inline scripts,
+          //     load images, fetch over HTTPS, etc.
+          //   - Otherwise (pure no-csp, no overrides), restrictive
+          //     defaults for SEP-1865 secure-default behavior.
+          // A cspDirectives entry only counts as "configured" if it
+          // contributes at least one token that would survive
+          // mergeDirective's trim/filter pass — otherwise the no-op
+          // entry (empty array, whitespace-only string, or a token
+          // rejected by the `;,\n\r` injection guard) flips every
+          // OTHER directive's baseline from secure-default to broad
+          // permissive while the named directive contributes nothing.
+          // Mirrors the filter applied below at the actual emit site.
+          const cspDirectiveTokenSurvives = (t) => {
+            if (typeof t !== "string") return false;
+            const trimmed = t.trim();
+            if (trimmed.length === 0) return false;
+            // Keep this in lockstep with mergeDirective's filter above.
+            // Any character class it rejects must be rejected here too,
+            // or the predicate flips hasCspOverrides for an entry that
+            // ultimately contributes zero tokens — widening every
+            // unrelated directive's baseline for nothing.
+            if (/[;,\n\r"<>]/.test(trimmed)) return false;
+            return true;
+          };
+          const hasCspOverrides =
+            cspDirectives &&
+            typeof cspDirectives === "object" &&
+            Object.values(cspDirectives).some(
+              (tokens) =>
+                Array.isArray(tokens) &&
+                tokens.some(cspDirectiveTokenSurvives),
+            );
+          if (hasCspOverrides) {
+            // Helper: if cspDirectives names this directive, emit ONLY
+            // the profile's tokens (REPLACE). Otherwise emit the
+            // permissive default tokens (browser-default-like for an
+            // unconstrained host).
+            const emitOverridable = (name, permissiveBase) => {
+              const hasOverride =
+                Array.isArray(cspDirectives[name]) &&
+                cspDirectives[name].length > 0;
+              return mergeDirective(name, hasOverride ? [] : permissiveBase);
+            };
+            directives = [
+              emitOverridable("default-src", [
+                "'unsafe-inline'",
+                "'unsafe-eval'",
+                "data:",
+                "blob:",
+                "https:",
+              ]),
+              emitOverridable("script-src", [
+                "'unsafe-inline'",
+                "'unsafe-eval'",
+                "data:",
+                "blob:",
+                "https:",
+              ]),
+              emitOverridable("style-src", [
+                "'unsafe-inline'",
+                "data:",
+                "blob:",
+                "https:",
+              ]),
+              emitOverridable("img-src", ["data:", "blob:", "https:"]),
+              emitOverridable("font-src", ["data:", "blob:", "https:"]),
+              emitOverridable("media-src", ["data:", "blob:", "https:"]),
+              emitOverridable("connect-src", [
+                "data:",
+                "blob:",
+                "https:",
+                "wss:",
+              ]),
+              emitOverridable("frame-src", ["data:", "blob:", "https:"]),
+              emitOverridable("object-src", ["'none'"]),
+              emitOverridable("base-uri", ["'self'"]),
+            ];
+          } else {
+            directives = [
+              mergeDirective("default-src", ["'none'"]),
+              mergeDirective("script-src", ["'unsafe-inline'"]),
+              mergeDirective("style-src", ["'unsafe-inline'"]),
+              mergeDirective("img-src", ["data:"]),
+              mergeDirective("font-src", ["data:"]),
+              mergeDirective("media-src", ["data:"]),
+              mergeDirective("connect-src", ["'none'"]),
+              mergeDirective("frame-src", ["'none'"]),
+              mergeDirective("object-src", ["'none'"]),
+              mergeDirective("base-uri", ["'none'"]),
+            ];
+          }
+        } else {
+          // Build CSP from declared domains (SEP-1865)
+          // Per spec: "Host MAY further restrict but MUST NOT allow undeclared domains"
+          const connectDomains = (csp.connectDomains || [])
+            .map(sanitizeDomain)
+            .filter(Boolean);
+          const resourceDomains = (csp.resourceDomains || [])
+            .map(sanitizeDomain)
+            .filter(Boolean);
+          const frameDomains = (csp.frameDomains || [])
+            .map(sanitizeDomain)
+            .filter(Boolean);
+          const baseUriDomains = (csp.baseUriDomains || [])
+            .map(sanitizeDomain)
+            .filter(Boolean);
+
+          // connect-src: Only allow declared domains, or 'none' if empty
+          const connectTokens =
+            connectDomains.length > 0 ? connectDomains.slice() : ["'none'"];
+
+          // Resource sources: data: and blob: are always allowed for inline content
+          // Only add declared resourceDomains - no forced CDNs per SEP-1865
+          const resourceTokens =
+            resourceDomains.length > 0
+              ? ["data:", "blob:", ...resourceDomains]
+              : ["data:", "blob:"];
+
+          // frame-src: Only allow declared frame domains, or 'none' if empty
+          const frameTokens =
+            frameDomains.length > 0 ? frameDomains.slice() : ["'none'"];
+
+          // base-uri: Only allow declared base URI domains, or 'none' if empty
+          const baseUriTokens =
+            baseUriDomains.length > 0 ? baseUriDomains.slice() : ["'none'"];
+
+          directives = [
+            mergeDirective("default-src", ["'none'"]),
+            mergeDirective("script-src", ["'unsafe-inline'", ...resourceTokens]),
+            mergeDirective("style-src", ["'unsafe-inline'", ...resourceTokens]),
+            mergeDirective("img-src", resourceTokens),
+            mergeDirective("font-src", resourceTokens),
+            mergeDirective("media-src", resourceTokens),
+            mergeDirective("connect-src", connectTokens),
+            mergeDirective("frame-src", frameTokens),
+            mergeDirective("object-src", ["'none'"]),
+            mergeDirective("base-uri", baseUriTokens),
+          ];
         }
 
-        // Build CSP from declared domains (SEP-1865)
-        // Per spec: "Host MAY further restrict but MUST NOT allow undeclared domains"
-        const connectDomains = (csp.connectDomains || [])
-          .map(sanitizeDomain)
-          .filter(Boolean);
-        const resourceDomains = (csp.resourceDomains || [])
-          .map(sanitizeDomain)
-          .filter(Boolean);
-        const frameDomains = (csp.frameDomains || [])
-          .map(sanitizeDomain)
-          .filter(Boolean);
-        const baseUriDomains = (csp.baseUriDomains || [])
-          .map(sanitizeDomain)
-          .filter(Boolean);
+        // If cspDirectives names a directive we didn't emit above (e.g.
+        // `form-action`, `worker-src`), append it verbatim so inspector
+        // probes that capture additional directives round-trip end-to-end.
+        // Runs in both the !csp and truthy-csp branches: a host that
+        // declares no CSP metadata but supplies inspector-only directive
+        // overrides (the documented `form-action` round-trip case) still
+        // gets them appended.
+        if (cspDirectives && typeof cspDirectives === "object") {
+          const known = new Set([
+            "default-src",
+            "script-src",
+            "style-src",
+            "img-src",
+            "font-src",
+            "media-src",
+            "connect-src",
+            "frame-src",
+            "object-src",
+            "base-uri",
+          ]);
+          for (const k of Object.keys(cspDirectives).sort()) {
+            if (known.has(k)) continue;
+            // Reject CSP separators in the directive NAME too — `k` is
+            // concatenated into the output via `name + " " + tokens`, so
+            // a crafted key like `worker-src *; script-src` would inject
+            // a second directive even if every value token is clean.
+            // Also reject HTML-attribute breakouts (`"`, `<`, `>`) for
+            // the same reason as in mergeDirective: the directive name
+            // flows into the unescaped `content="..."` attribute of the
+            // injected <meta> tag, and a crafted key like `x"><script>`
+            // would otherwise close the attribute and inject markup.
+            if (/[;,\n\r\s"<>]/.test(k)) continue;
+            const tokens = cspDirectives[k];
+            if (!Array.isArray(tokens) || tokens.length === 0) continue;
+            directives.push(mergeDirective(k, []));
+          }
+        }
 
-        // connect-src: Only allow declared domains, or 'none' if empty
-        const connectSrc =
-          connectDomains.length > 0 ? connectDomains.join(" ") : "'none'";
-
-        // Resource sources: data: and blob: are always allowed for inline content
-        // Only add declared resourceDomains - no forced CDNs per SEP-1865
-        const resourceSrc =
-          resourceDomains.length > 0
-            ? ["data:", "blob:", ...resourceDomains].join(" ")
-            : "data: blob:";
-
-        // frame-src: Only allow declared frame domains, or 'none' if empty
-        const frameSrc =
-          frameDomains.length > 0 ? frameDomains.join(" ") : "'none'";
-
-        // base-uri: Only allow declared base URI domains, or 'none' if empty
-        const baseUri =
-          baseUriDomains.length > 0 ? baseUriDomains.join(" ") : "'none'";
-
-        console.log("[buildCSP] Processing domains:", {
-          frameDomains,
-          frameSrc,
-          baseUriDomains,
-          baseUri,
-        });
-
-        console.log(
-          "[buildCSP] Built CSP string:",
-          [
-            "default-src 'none'",
-            "script-src 'unsafe-inline' " + resourceSrc,
-            "style-src 'unsafe-inline' " + resourceSrc,
-            "img-src " + resourceSrc,
-            "font-src " + resourceSrc,
-            "media-src " + resourceSrc,
-            "connect-src " + connectSrc,
-            "frame-src " + frameSrc,
-            "object-src 'none'",
-            "base-uri " + baseUri,
-          ].join("; "),
-        );
-
-        return [
-          "default-src 'none'",
-          "script-src 'unsafe-inline' " + resourceSrc,
-          "style-src 'unsafe-inline' " + resourceSrc,
-          "img-src " + resourceSrc,
-          "font-src " + resourceSrc,
-          "media-src " + resourceSrc,
-          "connect-src " + connectSrc,
-          "frame-src " + frameSrc,
-          "object-src 'none'",
-          "base-uri " + baseUri,
-        ].join("; ");
+        return directives.join("; ");
       }
 
       /**
@@ -281,19 +445,81 @@ document.addEventListener('securitypolicyviolation', function(e) {
             event.data &&
             event.data.method === "ui/notifications/sandbox-resource-ready"
           ) {
-            // Load HTML into inner iframe with CSP enforcement
-            const { html, sandbox, csp, permissions, permissive, colorScheme } =
-              event.data.params || {};
+            // Load HTML into inner iframe with CSP enforcement.
+            //
+            // `allowFeatures` is intentionally NOT received here — by design
+            // it applies to the OUTER iframe's `allow=` attribute only. The
+            // outer/inner split (outer grants extras like `fullscreen`; inner
+            // grants only the 4 spec permissions) is enforced upstream in
+            // `sandboxed-iframe.tsx`'s postMessage payload. If `allowFeatures`
+            // shows up in the message here, it's a contract bug, not data we
+            // should consume.
+            const {
+              html,
+              sandbox,
+              csp,
+              permissions,
+              sandboxAttrs,
+              cspDirectives,
+              permissive,
+              colorScheme,
+            } = event.data.params || {};
             inner.style.colorScheme = applyColorScheme(colorScheme);
 
-            if (typeof sandbox === "string") {
-              inner.setAttribute("sandbox", sandbox);
+            // Inner iframe `sandbox=` value.
+            //
+            // When `sandboxAttrs` is provided (even an empty array), the
+            // profile is authoritative: only spec-mandated tokens plus what
+            // the profile lists. Otherwise (no profile opinion) fall back to
+            // the caller's `sandbox` string so existing widget renders that
+            // depend on the legacy permissive baseline keep working.
+            const sandboxTokens = new Set();
+            if (Array.isArray(sandboxAttrs)) {
+              sandboxTokens.add("allow-scripts");
+              sandboxTokens.add("allow-same-origin");
+              for (const t of sandboxAttrs) {
+                if (typeof t !== "string") continue;
+                const trimmed = t.trim();
+                if (trimmed.length === 0) continue;
+                // Reject tokens with internal whitespace — see the
+                // matching renderer-side guard in sandboxed-iframe.tsx.
+                // Without this, a profile entry like
+                // `"allow-forms allow-popups-to-escape-sandbox"` would
+                // round-trip as one Set member but the eventual
+                // join(" ") would emit it as two real sandbox flags,
+                // silently widening the inner iframe's grants.
+                if (/\s/.test(trimmed)) continue;
+                sandboxTokens.add(trimmed);
+              }
+            } else {
+              const baseSandbox =
+                typeof sandbox === "string" && sandbox.length > 0
+                  ? sandbox
+                  : "allow-scripts allow-same-origin allow-forms";
+              for (const t of baseSandbox.split(/\s+/)) {
+                if (t.length > 0) sandboxTokens.add(t);
+              }
+              // Defense in depth: spec-mandated tokens are always present.
+              sandboxTokens.add("allow-scripts");
+              sandboxTokens.add("allow-same-origin");
             }
+            inner.setAttribute(
+              "sandbox",
+              Array.from(sandboxTokens).sort().join(" "),
+            );
 
-            // Set Permission Policy allow attribute based on requested permissions (SEP-1865)
-            const allowAttribute = buildAllowAttribute(permissions);
-            if (allowAttribute) {
-              inner.setAttribute("allow", allowAttribute);
+            // Set Permission Policy `allow=` attribute for the inner iframe
+            // from the requested spec-4 permissions only (SEP-1865:
+            // camera / microphone / geolocation / clipboard-write).
+            //
+            // Non-spec features like `fullscreen` belong on the OUTER
+            // iframe (handled in `sandboxed-iframe.tsx`'s
+            // `outerAllowAttribute`), not here. Modeling real claude.ai's
+            // pattern: outer grants extras for the wrapper, inner trims to
+            // spec so the widget only experiences what's documented.
+            const baseAllow = buildAllowAttribute(permissions);
+            if (baseAllow) {
+              inner.setAttribute("allow", baseAllow);
             }
 
             if (typeof html === "string") {
@@ -316,8 +542,10 @@ document.addEventListener('securitypolicyviolation', function(e) {
                 const processedHtml = injectCSP(html, permissiveCsp);
                 inner.srcdoc = processedHtml;
               } else {
-                // Build CSP and inject into HTML (SEP-1865)
-                const cspValue = buildCSP(csp);
+                // Build CSP and inject into HTML (SEP-1865). cspDirectives
+                // is the inspector-only per-directive source-expression
+                // override map (e.g. `script-src` adds `'unsafe-eval'`).
+                const cspValue = buildCSP(csp, cspDirectives);
                 const processedHtml = injectCSP(html, cspValue);
                 inner.srcdoc = processedHtml;
               }

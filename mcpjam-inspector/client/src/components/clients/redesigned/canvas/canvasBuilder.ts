@@ -285,7 +285,7 @@ function buildSandboxConfig(
       ? null
       : {
           subKey: "mode",
-          label: "mode",
+          label: "CSP mode",
           summary: mode,
           qualifier: null,
           // "relaxed" opens the iframe up; "host-default" silently
@@ -306,20 +306,17 @@ function buildSandboxConfig(
       ? null
       : {
           subKey: "restrictTo",
-          label: "restrictTo",
+          label: "Allowed CSP domains",
           summary: `${restrict.total} domains`,
           qualifier: restrict.breakdown,
           severity: "danger",
           directives: describeCspDirectives(csp?.restrictTo),
         };
 
-  // Permissions: list explicitly granted spec keys (camera / microphone /
-  // geolocation / clipboardWrite per SEP-1865 §UIResourceMeta.permissions).
-  // SEP-1865 is allowlist-only — absence means "not granted." Only the
-  // granted list goes on the row; the inspector-internal `mode`
-  // (resource-declared / deny-all / custom) is a knob name, not spec
-  // terminology, so it stays out of the at-a-glance summary. Users who
-  // need the mode click through to the Apps Extension tab.
+  // Permissions: the 4 SEP-1865-blessed features under
+  // `permissions.allow` (camera / microphone / geolocation / clipboardWrite).
+  // Granted Y/N per the spec — no allowlist control surfaced; the host
+  // decides. Always emitted as the baseline row; "—" when none granted.
   const granted: string[] = [];
   if (perms?.allow) {
     for (const [name, on] of Object.entries(perms.allow)) {
@@ -329,20 +326,128 @@ function buildSandboxConfig(
   granted.sort();
   const permsDescriptor: SandboxConfigDescriptor = {
     subKey: "permissions",
-    label: "permissions",
+    label: "Permissions",
     summary: granted.length === 0 ? "—" : granted.join(", "),
     qualifier: null,
     severity: "neutral",
   };
 
-  // Stable order: mode, restrictTo, permissions. mode and restrictTo
-  // are conditional (skipped when at the safe default); permissions is
-  // always emitted so the row count reflects whatever currently
-  // deviates plus the always-on permissions baseline.
+  // cspDirectives — inspector-only per-directive source-expression overrides
+  // (e.g. `script-src` adds `'unsafe-eval'`). Sits next to restrictTo because
+  // both live under `csp` in the schema. Skipped when undefined/empty so the
+  // matrix stays quiet at the safe default — matches the mode/restrictTo
+  // pattern. When populated, tints `danger` if any token re-enables real
+  // script-execution loosening; else neutral.
+  const cspDirectives = csp?.cspDirectives;
+  const cspDirectivesKeys = cspDirectives ? Object.keys(cspDirectives) : [];
+  let cspDirectivesValueCount = 0;
+  let hasDangerousToken = false;
+  if (cspDirectives) {
+    for (const k of cspDirectivesKeys) {
+      const tokens = cspDirectives[k] ?? [];
+      cspDirectivesValueCount += tokens.length;
+      for (const t of tokens) {
+        // `'unsafe-inline'` is INTENTIONALLY NOT a danger trigger — it's
+        // part of the SEP-1865 restrictive baseline for `script-src` /
+        // `style-src` (the proxy always includes it). Flagging it would
+        // light up every host's matrix unavoidably. The triggers below
+        // are the ones that re-enable real script-execution loosening
+        // beyond the spec default.
+        if (
+          t === "'unsafe-eval'" ||
+          t === "'wasm-unsafe-eval'" ||
+          t === "'strict-dynamic'"
+        ) {
+          hasDangerousToken = true;
+        }
+      }
+    }
+  }
+  // Build the per-directive expansion list. Reuses CspDirectiveDetail
+  // (same `{ key, label, domains }` shape as restrictTo's expansion);
+  // the `domains` field semantically carries source-expression tokens
+  // and/or origins. Sorted by directive name for stability across edits.
+  const cspDirectivesDetails: CspDirectiveDetail[] =
+    cspDirectives !== undefined
+      ? [...cspDirectivesKeys].sort().flatMap((k) => {
+          const tokens = cspDirectives[k] ?? [];
+          return tokens.length > 0
+            ? [{ key: k, label: k, domains: [...tokens] }]
+            : [];
+        })
+      : [];
+
+  const cspDirectivesDescriptor: SandboxConfigDescriptor | null =
+    cspDirectivesKeys.length === 0
+      ? null
+      : {
+          subKey: "cspDirectives",
+          label: "CSP directive overrides",
+          summary: `${cspDirectivesKeys.length} ${
+            cspDirectivesKeys.length === 1 ? "directive" : "directives"
+          }`,
+          qualifier: `${cspDirectivesValueCount} source ${
+            cspDirectivesValueCount === 1 ? "expression" : "expressions"
+          }`,
+          severity: hasDangerousToken ? "danger" : "neutral",
+          directives:
+            cspDirectivesDetails.length > 0 ? cspDirectivesDetails : undefined,
+        };
+
+  // sandboxAttrs — extra outer/inner iframe `sandbox=` tokens beyond the
+  // spec mandatory `allow-scripts allow-same-origin`. Skipped at the safe
+  // default; neutral severity when populated (additive tokens are explicit
+  // user grants, not silent narrowing).
+  const sandboxAttrs = sandbox?.sandboxAttrs ?? [];
+  const sandboxAttrsDescriptor: SandboxConfigDescriptor | null =
+    sandboxAttrs.length === 0
+      ? null
+      : {
+          subKey: "sandboxAttrs",
+          label: "Sandbox attributes",
+          summary: sandboxAttrs.slice(0, 2).join(", "),
+          qualifier:
+            sandboxAttrs.length > 2 ? `+${sandboxAttrs.length - 2} more` : null,
+          severity: "neutral",
+        };
+
+  // Permissions Policy: vendor extras from `allowFeatures` beyond the 4
+  // spec features. Carries a per-feature Permissions Policy allowlist
+  // value (e.g. `*`, `'self'`). Distinct row from `Permissions` because
+  // the spec only blesses the 4; everything else is host-specific and
+  // may not survive a host swap. Skipped at the safe default.
+  const allowFeatures = sandbox?.allowFeatures ?? {};
+  const allowFeaturesKeys = Object.keys(allowFeatures);
+  allowFeaturesKeys.sort();
+  const allowFeaturesDescriptor: SandboxConfigDescriptor | null =
+    allowFeaturesKeys.length === 0
+      ? null
+      : {
+          subKey: "allowFeatures",
+          label: "Permissions Policy",
+          summary: allowFeaturesKeys
+            .slice(0, 2)
+            .map((k) => `${k}: ${allowFeatures[k]}`)
+            .join(", "),
+          qualifier:
+            allowFeaturesKeys.length > 2
+              ? `+${allowFeaturesKeys.length - 2} more`
+              : null,
+          severity: "neutral",
+        };
+
+  // Stable row order: CSP family first (mode, restrictTo, cspDirectives),
+  // then Permissions (spec), then the iframe sandbox-attribute knob, then
+  // Permissions Policy (vendor extras). Every row except Permissions is
+  // conditional — skipped when at the safe default — so the row count
+  // reflects whatever currently deviates plus the spec-permissions baseline.
   const out: SandboxConfigDescriptor[] = [];
   if (modeDescriptor !== null) out.push(modeDescriptor);
   if (restrictDescriptor !== null) out.push(restrictDescriptor);
+  if (cspDirectivesDescriptor !== null) out.push(cspDirectivesDescriptor);
   out.push(permsDescriptor);
+  if (sandboxAttrsDescriptor !== null) out.push(sandboxAttrsDescriptor);
+  if (allowFeaturesDescriptor !== null) out.push(allowFeaturesDescriptor);
   return out;
 }
 

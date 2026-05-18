@@ -363,7 +363,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
   {
     id: "claude",
     label: "Claude",
-    description: "Anthropic-style host. Tool approval on.",
+    description: "Anthropic-style host.",
     logoSrc: claudeLogo,
     seed: (opts) => {
       const base = emptyHostConfigInputV2({
@@ -375,7 +375,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // pick it without an Anthropic key.
         modelId: "anthropic/claude-haiku-4.5",
         temperature: 1.0,
-        requireToolApproval: true,
+        requireToolApproval: false,
       });
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
       // clientCapabilities: Real claude.ai publishes only the SDK-default
@@ -459,11 +459,81 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               // to model the production allowlist can add it explicitly
               // in the editor; absence here means "trust the view".
               mode: "declared",
+              // cspDirectives — verbatim from a live claude.ai inner-iframe
+              // response CSP header (captured 2026-05-18 via DevTools →
+              // Network → Response Headers). These layer on top of
+              // SEP-1865's restrictive baseline via the union merge in
+              // buildCSP (sandbox-proxy.html). Tokens already in the
+              // baseline (`'unsafe-inline'` for script-src/style-src,
+              // `data:`/`blob:` for img/font/media) are omitted to keep
+              // the data set minimal — the merge dedupes regardless.
+              //
+              // 'unsafe-eval' enables `eval()` / `new Function()` — real
+              // Claude allows this; widgets relying on runtime-compiled
+              // templating (Handlebars, Vue full build, etc.) work here
+              // but break in hosts that don't grant it.
+              //
+              // `esm.sh` + `assets.claude.ai` are public CDNs Claude
+              // adds at the proxy layer (NOT in advertised metadata).
+              // Including them here is safe under the union merge rule
+              // (PR 2142) — they can only grant capabilities, never
+              // narrow what a widget declared.
+              cspDirectives: {
+                "script-src": [
+                  "'self'",
+                  "'unsafe-eval'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "style-src": [
+                  "'self'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "img-src": [
+                  "'self'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "connect-src": ["'self'", "https://esm.sh"],
+                "font-src": [
+                  "'self'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "media-src": [
+                  "'self'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "worker-src": [
+                  "'self'",
+                  "blob:",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "frame-src": ["'self'"],
+                "base-uri": ["'self'"],
+                "form-action": ["'self'"],
+              },
             },
             permissions: {
               mode: "custom",
               allow: { clipboardWrite: true },
             },
+            // sandboxAttrs — from live capture of real claude.ai's outer
+            // and inner iframes (both carry `allow-scripts allow-same-origin
+            // allow-forms`). The first two are spec-mandated; `allow-forms`
+            // is the host's addition so `<form>` POSTs work inside widgets.
+            sandboxAttrs: ["allow-forms"],
+            // allowFeatures — non-spec Permissions Policy entries on the
+            // OUTER iframe. Claude's outer grants `fullscreen *; clipboard-
+            // write *`; clipboard-write is the spec permission (lives in
+            // `permissions.allow` above), fullscreen is the non-spec extra
+            // captured here. The inner iframe trims fullscreen out (see
+            // sandbox-proxy.html: inner gets spec-4 only), matching real
+            // claude.ai's outer-grants / inner-trims pattern.
+            allowFeatures: { fullscreen: "*" },
           },
         },
       };
@@ -560,11 +630,61 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               // (intersection trap) and silently breaks widgets reaching
               // any other origin. The view's declaration is authoritative.
               mode: "declared",
+              // cspDirectives — verbatim from a live chatgpt response
+              // Content-Security-Policy header (captured 2026-05-18 via
+              // DevTools → Network → oaiusercontent.com response).
+              //
+              // Real ChatGPT's outer-doc CSP is strikingly minimal: only
+              // `frame-ancestors`, `frame-src`, and the CSP `sandbox`
+              // directive are emitted. There is NO `script-src`,
+              // `style-src`, `connect-src` etc. — script and style
+              // execution is effectively unconstrained at the host layer.
+              // `frame-ancestors` is dropped (controls who can embed the
+              // doc — irrelevant for widget runtime); the CSP `sandbox`
+              // directive duplicates `sandboxAttrs` below and is modeled
+              // there. That leaves just `frame-src` as the meaningful
+              // host-emitted constraint on widget behavior.
+              cspDirectives: {
+                "frame-src": ["'self'", "https:", "data:", "blob:"],
+              },
             },
             permissions: {
               mode: "custom",
-              allow: { microphone: true },
+              // Per ui/initialize hostCapabilities only `microphone` is
+              // advertised. Per the outer iframe `allow=` attribute,
+              // `clipboard-write` is ALSO emitted at runtime even though
+              // it's not in the advertised metadata. Include both so a
+              // widget testing in MCPJam-as-ChatGPT actually gets what
+              // the production iframe grants.
+              allow: { microphone: true, clipboardWrite: true },
             },
+            // sandboxAttrs — captured 2026-05-18 from the outer and
+            // inner iframe `sandbox=` attributes. There's an asymmetry:
+            //   outer: allow-scripts allow-same-origin allow-forms
+            //   inner: allow-scripts allow-same-origin allow-popups
+            //          allow-popups-to-escape-sandbox allow-forms
+            // Schema applies one set to both layers; use the broader
+            // inner set since that's what determines widget runtime
+            // behavior. Outer will over-grant allow-popups in MCPJam vs
+            // real ChatGPT; the modal-popup widget surface is rare
+            // enough that this divergence is acceptable.
+            sandboxAttrs: [
+              "allow-forms",
+              "allow-popups",
+              "allow-popups-to-escape-sandbox",
+            ],
+            // allowFeatures — non-spec Permissions Policy extras on the
+            // outer iframe. Real ChatGPT emits
+            // `clipboard-write *; local-network-access *; microphone *;
+            // midi *`:
+            //   - clipboard-write + microphone → spec features, modeled
+            //     in `permissions.allow` above.
+            //   - local-network-access + midi → ALREADY in MCPJam's
+            //     renderer baseline (sandboxed-iframe.tsx's
+            //     `outerAllowAttribute` memo), auto-granted to every
+            //     host.
+            // So ChatGPT contributes no host-specific allowFeatures
+            // extras — the runtime grant matches real ChatGPT for free.
           },
         },
       };

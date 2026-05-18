@@ -14,6 +14,8 @@ import {
   useRef,
   useState,
 } from "react";
+import { usePostHog } from "posthog-js/react";
+import { standardEventProps } from "@/lib/PosthogUtils";
 import {
   Clock,
   Cpu,
@@ -21,7 +23,6 @@ import {
   Hand,
   Moon,
   MousePointer2,
-  Paintbrush,
   Settings2,
   Shield,
   Sun,
@@ -46,6 +47,7 @@ import {
 } from "@/lib/client-config";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { listHostStyles } from "@/lib/client-styles";
+import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
 import { applyHostDefaultsToPlayground } from "@/lib/playground/apply-client-defaults";
 import { cn } from "@/lib/utils";
 import { useHostContextStore } from "@/stores/client-context-store";
@@ -62,6 +64,7 @@ import {
 import {
   CspPickerBody,
   DevicePickerBody,
+  HostStylePickerBody,
   LocalePickerBody,
   TimezonePickerBody,
 } from "@/components/shared/client-context-picker-bodies";
@@ -101,11 +104,23 @@ export function ClientContextHeader({
   const [localePopoverOpen, setLocalePopoverOpen] = useState(false);
   const [cspPopoverOpen, setCspPopoverOpen] = useState(false);
   const [timezonePopoverOpen, setTimezonePopoverOpen] = useState(false);
+  const [hostStylePopoverOpen, setHostStylePopoverOpen] = useState(false);
   const [hostContextDialogOpen, setHostContextDialogOpen] = useState(false);
   const [hostCapsDialogOpen, setHostCapsDialogOpen] = useState(false);
 
   const widthInputId = useId();
   const heightInputId = useId();
+
+  const posthog = usePostHog();
+  const captureToolbar = useCallback(
+    (event: string, props?: Record<string, unknown>) => {
+      posthog?.capture(event, {
+        ...standardEventProps("host_context_header"),
+        ...props,
+      });
+    },
+    [posthog],
+  );
 
   const deviceType = useUIPlaygroundStore((state) => state.deviceType);
   const setDeviceType = useUIPlaygroundStore((state) => state.setDeviceType);
@@ -124,7 +139,6 @@ export function ClientContextHeader({
     (state) => state.draftHostContext,
   );
   const patchHostContext = useHostContextStore((state) => state.patchHostContext);
-  const hostContextDirty = useHostContextStore((state) => state.isDirty);
 
   const themeMode = usePreferencesStore((state) => state.themeMode);
   const hostStyle = usePreferencesStore((state) => state.hostStyle);
@@ -143,7 +157,24 @@ export function ClientContextHeader({
     protocol === UIType.MCP_APPS ||
     protocol === UIType.OPENAI_SDK_AND_MCP_APPS;
   const activeCspMode = usesMcpAppsCsp ? mcpAppsCspMode : cspMode;
-  const setActiveCspMode = usesMcpAppsCsp ? setMcpAppsCspMode : setCspMode;
+  const setActiveCspMode = useCallback(
+    (next: typeof activeCspMode) => {
+      setCspMode(next);
+      setMcpAppsCspMode(next);
+    },
+    [setCspMode, setMcpAppsCspMode],
+  );
+
+  useEffect(() => {
+    if (cspMode !== activeCspMode) setCspMode(activeCspMode);
+    if (mcpAppsCspMode !== activeCspMode) setMcpAppsCspMode(activeCspMode);
+  }, [
+    activeCspMode,
+    cspMode,
+    mcpAppsCspMode,
+    setCspMode,
+    setMcpAppsCspMode,
+  ]);
 
   const violationCount = useWidgetDebugStore((state) =>
     Array.from(state.widgets.values()).reduce(
@@ -176,6 +207,12 @@ export function ClientContextHeader({
 
     return PRESET_DEVICE_CONFIGS[deviceType];
   }, [customViewport, deviceType]);
+
+  const registeredHostStyles = useMemo(() => listHostStyles(), []);
+  const activeHostStyle = useMemo((): (typeof registeredHostStyles)[number] => {
+    const match = registeredHostStyles.find((h) => h.id === hostStyle);
+    return match ?? registeredHostStyles[0];
+  }, [hostStyle, registeredHostStyles]);
   const DeviceIcon =
     deviceType === "custom" || !("icon" in deviceConfig)
       ? null
@@ -192,21 +229,34 @@ export function ClientContextHeader({
         hover: key === "hover" ? !capabilities.hover : capabilities.hover,
         touch: key === "touch" ? !capabilities.touch : capabilities.touch,
       };
+      captureToolbar("host_toolbar_capability_toggled", {
+        capability: key,
+        enabled: nextCapabilities[key],
+      });
       patchHostContext({ deviceCapabilities: nextCapabilities });
     },
-    [capabilities, patchHostContext],
+    [capabilities, patchHostContext, captureToolbar],
   );
 
   const handleThemeChange = useCallback(() => {
-    patchHostContext({
-      theme: effectiveThemeMode === "dark" ? "light" : "dark",
+    const nextTheme = effectiveThemeMode === "dark" ? "light" : "dark";
+    captureToolbar("host_theme_toggled", {
+      from: effectiveThemeMode,
+      to: nextTheme,
     });
-  }, [effectiveThemeMode, patchHostContext]);
+    patchHostContext({ theme: nextTheme });
+  }, [effectiveThemeMode, patchHostContext, captureToolbar]);
 
   return (
     <div className={cn("min-w-0 max-w-full", className)}>
       <div className="flex min-w-0 max-w-full items-center gap-3 overflow-x-auto overflow-y-hidden overscroll-x-contain [scrollbar-width:none] @max-[860px]/playground-header:gap-2 [&::-webkit-scrollbar]:hidden">
-        <Popover open={devicePopoverOpen} onOpenChange={setDevicePopoverOpen}>
+        <Popover
+          open={devicePopoverOpen}
+          onOpenChange={(next) => {
+            if (next) captureToolbar("host_toolbar_opened", { control: "device" });
+            setDevicePopoverOpen(next);
+          }}
+        >
           <Tooltip>
             <TooltipTrigger asChild>
               <PopoverTrigger asChild>
@@ -230,7 +280,15 @@ export function ClientContextHeader({
           <PopoverContent className="w-56 p-2" align="start">
             <DevicePickerBody
               deviceType={deviceType}
-              setDeviceType={setDeviceType}
+              setDeviceType={(next) => {
+                if (next !== deviceType) {
+                  captureToolbar("host_toolbar_device_changed", {
+                    from: deviceType,
+                    to: next,
+                  });
+                }
+                setDeviceType(next);
+              }}
               customViewport={customViewport}
               setCustomViewport={setCustomViewport}
               widthInputId={widthInputId}
@@ -240,7 +298,13 @@ export function ClientContextHeader({
           </PopoverContent>
         </Popover>
 
-        <Popover open={localePopoverOpen} onOpenChange={setLocalePopoverOpen}>
+        <Popover
+          open={localePopoverOpen}
+          onOpenChange={(next) => {
+            if (next) captureToolbar("host_toolbar_opened", { control: "locale" });
+            setLocalePopoverOpen(next);
+          }}
+        >
           <Tooltip>
             <TooltipTrigger asChild>
               <PopoverTrigger asChild>
@@ -263,13 +327,27 @@ export function ClientContextHeader({
           <PopoverContent className="w-48 p-2" align="start">
             <LocalePickerBody
               locale={locale}
-              patchHostContext={patchHostContext}
+              patchHostContext={(patch) => {
+                if (patch.locale && patch.locale !== locale) {
+                  captureToolbar("host_toolbar_locale_changed", {
+                    from: locale,
+                    to: patch.locale,
+                  });
+                }
+                patchHostContext(patch);
+              }}
               onSelectLocale={() => setLocalePopoverOpen(false)}
             />
           </PopoverContent>
         </Popover>
 
-        <Popover open={timezonePopoverOpen} onOpenChange={setTimezonePopoverOpen}>
+        <Popover
+          open={timezonePopoverOpen}
+          onOpenChange={(next) => {
+            if (next) captureToolbar("host_toolbar_opened", { control: "timezone" });
+            setTimezonePopoverOpen(next);
+          }}
+        >
           <Tooltip>
             <TooltipTrigger asChild>
               <PopoverTrigger asChild>
@@ -293,13 +371,31 @@ export function ClientContextHeader({
           <PopoverContent className="w-56 p-2" align="start">
             <TimezonePickerBody
               timeZone={timeZone}
-              patchHostContext={patchHostContext}
+              patchHostContext={(patch) => {
+                if (patch.timeZone && patch.timeZone !== timeZone) {
+                  captureToolbar("host_toolbar_timezone_changed", {
+                    from: timeZone,
+                    to: patch.timeZone,
+                  });
+                }
+                patchHostContext(patch);
+              }}
               onSelectZone={() => setTimezonePopoverOpen(false)}
             />
           </PopoverContent>
         </Popover>
 
-        <Popover open={cspPopoverOpen} onOpenChange={setCspPopoverOpen}>
+        <Popover
+          open={cspPopoverOpen}
+          onOpenChange={(next) => {
+            if (next)
+              captureToolbar("host_toolbar_opened", {
+                control: "csp",
+                current: activeCspMode,
+              });
+            setCspPopoverOpen(next);
+          }}
+        >
           <Tooltip>
             <TooltipTrigger asChild>
               <PopoverTrigger asChild>
@@ -328,7 +424,15 @@ export function ClientContextHeader({
           <PopoverContent className="w-56 p-2" align="start">
             <CspPickerBody
               activeCspMode={activeCspMode}
-              setActiveCspMode={setActiveCspMode}
+              setActiveCspMode={(next) => {
+                if (next !== activeCspMode) {
+                  captureToolbar("host_toolbar_csp_changed", {
+                    from: activeCspMode,
+                    to: next,
+                  });
+                }
+                setActiveCspMode(next);
+              }}
               onSelectMode={() => setCspPopoverOpen(false)}
             />
           </PopoverContent>
@@ -392,17 +496,15 @@ export function ClientContextHeader({
               size="sm"
               className="h-7 shrink-0 gap-1.5 border bg-background px-2 text-xs shadow-xs"
               data-testid="host-context-trigger"
-              onClick={() => setHostContextDialogOpen(true)}
+              onClick={() => {
+                captureToolbar("host_context_dialog_opened");
+                setHostContextDialogOpen(true);
+              }}
             >
               <Settings2 className="h-3.5 w-3.5" />
               <span className="whitespace-nowrap @max-[700px]/playground-header:sr-only">
                 Host Context
               </span>
-              {hostContextDirty ? (
-                <span className="whitespace-nowrap text-[10px] text-amber-600 @max-[700px]/playground-header:sr-only dark:text-amber-400">
-                  Unsaved
-                </span>
-              ) : null}
             </Button>
           </TooltipTrigger>
           <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP} className="max-w-sm">
@@ -420,75 +522,86 @@ export function ClientContextHeader({
               size="sm"
               className="h-7 shrink-0 gap-1.5 border bg-background px-2 text-xs shadow-xs"
               data-testid="host-capabilities-trigger"
-              onClick={() => setHostCapsDialogOpen(true)}
+              onClick={() => {
+                captureToolbar("host_capabilities_dialog_opened");
+                setHostCapsDialogOpen(true);
+              }}
             >
               <Cpu className="h-3.5 w-3.5" />
               <span className="whitespace-nowrap @max-[700px]/playground-header:sr-only">
-                Client Capabilities
+                Host Capabilities
               </span>
-              {hostCapabilitiesOverride !== undefined ? (
-                <span className="whitespace-nowrap text-[10px] text-amber-600 @max-[700px]/playground-header:sr-only dark:text-amber-400">
-                  Override
-                </span>
-              ) : null}
             </Button>
           </TooltipTrigger>
           <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP} className="max-w-sm">
-            <p className="font-medium">Client Capabilities</p>
+            <p className="font-medium">Host Capabilities</p>
             <p className="text-xs text-muted-foreground">
-              Override the `hostCapabilities` advertised in ui/initialize
+              JSON payload for `hostCapabilities` in ui/initialize
             </p>
           </TooltipContent>
         </Tooltip>
 
-        <div className="flex shrink-0 items-center gap-0.5 rounded-md border bg-background p-0.5 shadow-xs">
+        <Popover
+          open={hostStylePopoverOpen}
+          onOpenChange={(next) => {
+            if (next)
+              captureToolbar("host_toolbar_opened", {
+                control: "host_style",
+                current: hostStyle,
+              });
+            setHostStylePopoverOpen(next);
+          }}
+        >
           <Tooltip>
             <TooltipTrigger asChild>
-              <div className="flex h-6 w-6 items-center justify-center @max-[820px]/playground-header:hidden">
-                <Paintbrush className="h-3.5 w-3.5 text-muted-foreground" />
-              </div>
-            </TooltipTrigger>
-            <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
-              <p className="font-medium">Client Styles</p>
-            </TooltipContent>
-          </Tooltip>
-          {listHostStyles().map((host) => (
-            <Tooltip key={host.id}>
-              <TooltipTrigger asChild>
+              <PopoverTrigger asChild>
                 <Button
-                  variant={hostStyle === host.id ? "secondary" : "ghost"}
+                  variant="secondary"
                   size="icon"
-                  onClick={() => {
-                    // Helper writes the pill id first (via setHostStyle),
-                    // then fans out to the chip stores. Pass MCPJam's
-                    // current global theme so the seeded host matches
-                    // the inspector chrome instead of always opening
-                    // dark (the template default).
-                    applyHostDefaultsToPlayground(
-                      host.id,
-                      {
-                        setHostStyle,
-                        setHostCapabilitiesOverride,
-                        setChatUiOverride,
-                      },
-                      { theme: themeMode },
-                    );
-                  }}
-                  className="h-6 w-6"
+                  aria-label="Client styles"
+                  data-testid="host-style-picker-trigger"
+                  className="h-7 w-7 shrink-0 border bg-background shadow-xs"
                 >
                   <img
-                    src={host.chatUi.logoSrc}
-                    alt={host.chatUi.label}
+                    src={activeHostStyle.chatUi.logoSrc}
+                    alt=""
+                    aria-hidden="true"
                     className="h-3.5 w-3.5 object-contain"
                   />
                 </Button>
-              </TooltipTrigger>
-              <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
-                <p className="font-medium">{host.chatUi.label}</p>
-              </TooltipContent>
-            </Tooltip>
-          ))}
-        </div>
+              </PopoverTrigger>
+            </TooltipTrigger>
+            <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
+              <p className="font-medium">Client styles</p>
+              <p className="text-xs font-light text-muted-foreground">
+                {activeHostStyle.chatUi.label}
+              </p>
+            </TooltipContent>
+          </Tooltip>
+          <PopoverContent className="w-56 p-2" align="start">
+            <HostStylePickerBody
+              hostStyle={hostStyle}
+              onPickHost={(id: ChatboxHostStyle) => {
+                if (id !== hostStyle) {
+                  captureToolbar("host_style_changed", {
+                    from: hostStyle,
+                    to: id,
+                  });
+                }
+                applyHostDefaultsToPlayground(
+                  id,
+                  {
+                    setHostStyle,
+                    setHostCapabilitiesOverride,
+                    setChatUiOverride,
+                  },
+                  { theme: themeMode },
+                );
+                setHostStylePopoverOpen(false);
+              }}
+            />
+          </PopoverContent>
+        </Popover>
 
         {showThemeToggle ? (
           <Tooltip>

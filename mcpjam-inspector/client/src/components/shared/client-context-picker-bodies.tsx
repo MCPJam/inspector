@@ -11,6 +11,8 @@ import {
   TIMEZONE_OPTIONS,
   CSP_MODE_OPTIONS,
 } from "@/components/shared/client-context-constants";
+import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
+import { listHostStyles } from "@/lib/client-styles";
 import type {
   CustomViewport,
   CspMode,
@@ -195,6 +197,37 @@ export function TimezonePickerBody({
           <span className="ml-auto text-[10px] text-muted-foreground">
             {option.offset}
           </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function HostStylePickerBody({
+  hostStyle,
+  onPickHost,
+}: {
+  hostStyle: ChatboxHostStyle;
+  onPickHost: (id: ChatboxHostStyle) => void;
+}) {
+  return (
+    <div className="space-y-1">
+      {listHostStyles().map((host) => (
+        <button
+          key={host.id}
+          type="button"
+          onClick={() => onPickHost(host.id)}
+          className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm transition-colors hover:bg-accent ${
+            hostStyle === host.id ? "bg-accent text-accent-foreground" : ""
+          }`}
+        >
+          <img
+            src={host.chatUi.logoSrc}
+            alt=""
+            aria-hidden="true"
+            className="h-3.5 w-3.5 object-contain"
+          />
+          <span>{host.chatUi.label}</span>
         </button>
       ))}
     </div>
