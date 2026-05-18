@@ -128,15 +128,36 @@ jobs:
             *) echo "::error::Unexpected HTTP $HTTP_CODE checking ${BACKEND_REPO}/${PR_BRANCH}"; exit 1 ;;
           esac
 
+      # Probe: surface CLI version + auth state before the first real call.
+      # The retry script otherwise hides this when callers redirect stdout to
+      # /dev/null. continue-on-error so a transient whoami glitch doesn't mask
+      # the real link/create error that follows.
+      - name: Probe Railway CLI auth
+        continue-on-error: true
+        run: |
+          set +e
+          echo "::group::railway --version"
+          railway --version
+          echo "::endgroup::"
+          echo "::group::railway whoami"
+          railway whoami
+          echo "::endgroup::"
+          echo "::group::railway link (verbose, no --json)"
+          railway link \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_STAGING_ENVIRONMENT"
+          echo "exit=$?"
+          echo "::endgroup::"
+
       - name: Create or refresh Railway preview environment
         run: |
           .github/scripts/railway-retry.sh railway link \
             --project "$RAILWAY_PROJECT_ID" \
             --environment "$RAILWAY_STAGING_ENVIRONMENT" \
-            --json >/dev/null
+            --json
           .github/scripts/railway-retry.sh railway environment new "${{ steps.meta.outputs.environment }}" \
             --duplicate "$RAILWAY_STAGING_ENVIRONMENT" \
-            --json >/dev/null || true
+            --json || true
 
       - name: Configure staging-safe preview defaults
         run: |
