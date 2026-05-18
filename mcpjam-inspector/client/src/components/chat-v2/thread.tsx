@@ -16,7 +16,10 @@ import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-over
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { useResolvedHostStyleForIndicator } from "@/components/chat-v2/shared/loading-indicator-content";
-import { getChatboxHostFamily } from "@/lib/chatbox-client-style";
+import {
+  getChatboxChatBackground,
+  getChatboxHostFamily,
+} from "@/lib/chatbox-client-style";
 import { type ReasoningDisplayMode } from "./thread/parts/reasoning-part";
 import { TranscriptThread } from "./thread/transcript-thread";
 import {
@@ -165,12 +168,26 @@ export function Thread({
     ? isLoading && !hasVisibleAssistantResponse
     : isLoading;
 
+  // Source the dark chatgpt-family chat surface from the registry
+  // (built-ins) so every consumer sees the same color per host+theme.
+  // Built-ins already owns: ChatGPT #212121, Copilot #303030,
+  // Cursor #1f1f1f. Leaves the `isChatgptDark` gating unchanged so we
+  // don't paint a background where one wasn't painted before.
+  const chatgptFamilyDarkBackground = isChatgptDark
+    ? getChatboxChatBackground(chatboxHostStyle, "dark")
+    : undefined;
+
   return (
     <div
       className={cn(
         "flex-1 min-h-0 min-w-0 pb-4",
-        isChatgptDark && "bg-[#212121] text-[#DFDFDF]",
+        isChatgptDark && "text-[#DFDFDF]",
       )}
+      style={
+        chatgptFamilyDarkBackground
+          ? { backgroundColor: chatgptFamilyDarkBackground }
+          : undefined
+      }
     >
       {/* Fixed spacer to reserve space for PIP widget */}
       {pipWidgetId && (

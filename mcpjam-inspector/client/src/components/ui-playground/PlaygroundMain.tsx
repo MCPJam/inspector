@@ -2157,14 +2157,19 @@ export function PlaygroundMain({
           data-testid="playground-empty-state-shell"
           className={cn(
             "flex flex-1 min-h-0 overflow-hidden",
+            // Text color stays family-keyed — built-ins doesn't carry
+            // a foreground token yet. Background comes from built-ins
+            // via `hostBackgroundColor` (already resolved at L553) so
+            // every tab paints the same color for the same host+theme.
             hostStyleFamily === "chatgpt"
               ? effectiveThreadTheme === "dark"
-                ? "bg-[#212121] text-neutral-50"
-                : "bg-white text-neutral-950"
+                ? "text-neutral-50"
+                : "text-neutral-950"
               : effectiveThreadTheme === "dark"
-              ? "bg-[#262624] text-[#F1F0ED]"
-              : "bg-[#FAF9F5] text-[rgba(61,57,41,1)]"
+              ? "text-[#F1F0ED]"
+              : "text-[rgba(61,57,41,1)]"
           )}
+          style={{ backgroundColor: hostBackgroundColor }}
         >
           <div
             className="flex h-full min-h-0 flex-1 items-center justify-center overflow-hidden px-4"
@@ -2453,9 +2458,13 @@ export function PlaygroundMain({
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>
-                  <p>Clear chat</p>
-                  <p className="text-xs text-muted-foreground">
+                <TooltipContent
+                  variant="muted"
+                  sideOffset={6}
+                  collisionPadding={12}
+                >
+                  <p className="font-medium">Clear chat</p>
+                  <p className="text-xs font-light text-muted-foreground">
                     {navigator.platform.includes("Mac")
                       ? "⌘⇧K"
                       : "Ctrl+Shift+K"}

@@ -1,6 +1,8 @@
 import claudeLogo from "/claude_logo.png";
 import openaiLogo from "/openai_logo.png";
 import cursorLogo from "/cursor_logo.png";
+import copilotLogo from "/copilot_logo.png";
+import codexLogo from "/codex-logo.svg";
 import mcpjamLogo from "/mcp_jam.svg";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
@@ -29,7 +31,9 @@ import {
 } from "@/config/mcpjam-client-context";
 import { ClaudeMarkIndicator } from "./indicators/claude-mark";
 import { ChatGptDotIndicator } from "./indicators/chatgpt-dot";
-import { CursorBarIndicator } from "./indicators/cursor-bar";
+import { CursorShineIndicator } from "./indicators/cursor-shine";
+import { CopilotPulseIndicator } from "./indicators/copilot-pulse";
+import { CodexShineIndicator } from "./indicators/codex-shine";
 import { MCPJamMarkIndicator } from "./indicators/mcpjam-mark";
 import type { HostStyleDefinition } from "./types";
 
@@ -134,7 +138,87 @@ export const CURSOR_HOST_STYLE: HostStyleDefinition = {
     // chatgpt visual until Cursor earns its own family.
     family: "chatgpt",
     resolveChatBackground: (theme) => CURSOR_CHAT_BACKGROUND[theme],
-    loadingIndicator: CursorBarIndicator,
+    loadingIndicator: CursorShineIndicator,
+  },
+};
+
+/**
+ * Microsoft 365 Copilot host style. Reuses ChatGPT's MCP profile and most
+ * of its chat chrome — Copilot routes widgets through the OpenAI Apps SDK
+ * under the hood and its chat UI sits in the same flat-neutral visual
+ * bucket. Only the label, picker description, logo, chat background, and
+ * loading indicator are Copilot-specific. The indicator is a faithful
+ * recreation of M365 Copilot's 3-circle gradient pulse (see
+ * `indicators/copilot-pulse.tsx`).
+ */
+export const COPILOT_HOST_STYLE: HostStyleDefinition = {
+  id: "copilot",
+  mcp: {
+    protocolOverride: UIType.OPENAI_SDK,
+    platform: CHATGPT_PLATFORM,
+    fontCss: CHATGPT_FONT_CSS,
+    hostCapabilities: {
+      openLinks: {},
+      serverTools: {},
+      updateModelContext: { text: {} },
+      message: { text: {} },
+    },
+    resolveStyleVariables: getChatGPTStyleVariables,
+  },
+  chatUi: {
+    label: "Copilot",
+    shortLabel: "Copilot-style host",
+    pickerDescription: "Microsoft 365 Copilot chrome",
+    logoSrc: copilotLogo,
+    family: "chatgpt",
+    // Light surface mirrors ChatGPT (pure white). Dark surface is
+    // Copilot's slightly lighter neutral (#303030) — distinct from
+    // ChatGPT's #212121, captured from M365 Copilot's chat panel.
+    resolveChatBackground: (theme) =>
+      theme === "dark" ? "rgba(48, 48, 48, 1)" : CHATGPT_CHAT_BACKGROUND.light,
+    loadingIndicator: CopilotPulseIndicator,
+  },
+};
+
+/**
+ * OpenAI Codex host style. Codex itself is a CLI tool (no widget
+ * rendering — see the Codex template in `client-templates.ts` which
+ * advertises `elicitation`-only client capabilities), so this entry is
+ * a playground stand-in rather than a faithful clone of a real Codex
+ * surface. We mirror ChatGPT's MCP profile because Codex is OpenAI-
+ * flavored: if a widget ever did land in a Codex-adjacent surface, the
+ * OpenAI Apps SDK is the right protocol bucket. In practice the `mcp`
+ * blob is unread (real Codex never renders an iframe).
+ *
+ * Chat surface reuses ChatGPT's `#212121` dark / white light colors
+ * verbatim — Codex doesn't have its own published chat chrome to copy,
+ * and ChatGPT's neutral palette is the closest analog to a terminal-
+ * adjacent OpenAI tool. The loading indicator is the shimmering
+ * "Thinking" treatment (`CodexShineIndicator`), which shares CSS with
+ * Cursor's shine via a multi-selector rule in `index.css`.
+ */
+export const CODEX_HOST_STYLE: HostStyleDefinition = {
+  id: "codex",
+  mcp: {
+    protocolOverride: UIType.OPENAI_SDK,
+    platform: CHATGPT_PLATFORM,
+    fontCss: CHATGPT_FONT_CSS,
+    hostCapabilities: {
+      openLinks: {},
+      serverTools: {},
+      updateModelContext: { text: {} },
+      message: { text: {} },
+    },
+    resolveStyleVariables: getChatGPTStyleVariables,
+  },
+  chatUi: {
+    label: "Codex",
+    shortLabel: "Codex-style host",
+    pickerDescription: "OpenAI Codex CLI-style chrome",
+    logoSrc: codexLogo,
+    family: "chatgpt",
+    resolveChatBackground: (theme) => CHATGPT_CHAT_BACKGROUND[theme],
+    loadingIndicator: CodexShineIndicator,
   },
 };
 
@@ -179,4 +263,6 @@ export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
   CLAUDE_HOST_STYLE,
   CHATGPT_HOST_STYLE,
   CURSOR_HOST_STYLE,
+  COPILOT_HOST_STYLE,
+  CODEX_HOST_STYLE,
 ];
