@@ -48,7 +48,7 @@ export const HostMatrixCard = memo(function HostMatrixCard({
   selectedNodeId,
   onSelectNode,
 }: HostMatrixCardProps) {
-  const appsOn = appsCaps.filter((c) => c.on).length;
+  const connectedClientCaps = clientCaps.filter((row) => row.on);
 
   const timeoutLeaf = protocolBand.find((l) => l.leafKey === "timeout");
   const clientInfoLeaf = protocolBand.find((l) => l.leafKey === "clientInfo");
@@ -140,13 +140,12 @@ export const HostMatrixCard = memo(function HostMatrixCard({
             <span className="hp-section-title">Client capabilities</span>
           </button>
           <div className="hp-caps">
-            {clientCaps.map((row) => (
+            {connectedClientCaps.map((row) => (
               <button
                 key={row.key}
                 type="button"
                 className={cn(
                   "hp-cap",
-                  !row.on && "hp-cap--off",
                   row.isChanged && !row.isNewlyOn && "host-matrix-changed",
                   row.isNewlyOn && "host-matrix-newly",
                 )}
@@ -176,13 +175,7 @@ export const HostMatrixCard = memo(function HostMatrixCard({
                 onSelectNode(SANDBOX_HUB_NODE_ID);
               }}
             >
-              <span className="hp-sandbox-title">
-                Sandbox proxy iframe
-                <span className="hp-policy-tag">host policy</span>
-              </span>
-              <span className="hp-sandbox-sub">
-                Different origin · enforces CSP for nested Views
-              </span>
+              <span className="hp-sandbox-title">Sandbox proxy iframe</span>
             </button>
 
             <div className="hp-sb-grid">
@@ -211,10 +204,6 @@ export const HostMatrixCard = memo(function HostMatrixCard({
                 }}
               >
                 <span className="hp-view-title">View iframe</span>
-                <span className="hp-view-sub">
-                  Apps extension · io.modelcontextprotocol/ui ·{" "}
-                  <b>{appsOn}</b> of 6 advertised
-                </span>
               </button>
               <div className="hp-view-caps">
                 {appsCaps.map((row) => {
@@ -626,28 +615,6 @@ const PAPER_STYLES = `
   font-weight: 600;
   color: var(--hp-sandbox-accent);
   letter-spacing: -0.01em;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-/* Small tag next to the Sandbox title that signals the rows below
-   (mode / restrictTo / deny / permissions) are MCPJam's policy
-   abstractions, not raw spec terms. Quiet enough to skim past once
-   you know what it means, loud enough to keep readers honest. */
-.host-paper-card .hp-policy-tag {
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  padding: 2px 6px 3px;
-  border-radius: 4px;
-  border: 1px solid var(--hp-sandbox-ring);
-  color: var(--hp-sandbox-sub);
-  background: var(--hp-paper-surface);
-}
-.host-paper-card .hp-sandbox-sub {
-  font-size: 12.5px;
-  color: var(--hp-sandbox-sub);
 }
 
 .host-paper-card .hp-sb-grid {
@@ -732,11 +699,6 @@ const PAPER_STYLES = `
   color: var(--hp-view-accent);
   letter-spacing: -0.01em;
 }
-.host-paper-card .hp-view-sub {
-  font-size: 12px;
-  color: var(--hp-view-sub);
-}
-.host-paper-card .hp-view-sub b { color: var(--hp-view-ink); font-weight: 600; }
 .host-paper-card .hp-view-caps {
   display: flex;
   flex-wrap: wrap;

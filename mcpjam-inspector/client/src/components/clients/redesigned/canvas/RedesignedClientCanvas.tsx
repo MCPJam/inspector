@@ -111,15 +111,15 @@ const ServersHubNodeRenderer = memo(
         animate={{ opacity: 1, y: 0 }}
         transition={{ ...SNAPPY_HOST_REVEAL, delay: 0.32 }}
         className={cn(
-          "flex items-center gap-2 rounded-[10px] border border-diagram-server/40 bg-diagram-server/10 px-3 py-2 shadow-sm transition-all hover:shadow-md",
-          selected && "ring-2 ring-diagram-server/50",
+          "flex items-center gap-2 rounded-[10px] border border-border/70 bg-card/95 px-3 py-2 shadow-sm transition-shadow hover:shadow-md",
+          selected && "ring-2 ring-primary/40",
         )}
       >
-        <div className="flex size-7 items-center justify-center rounded-md bg-diagram-server/20 text-diagram-server">
-          <Server className="size-3.5" />
+        <div className="flex size-7 items-center justify-center rounded-md bg-muted/60 text-muted-foreground">
+          <Server className="size-3.5" strokeWidth={1.75} />
         </div>
         <div className="flex min-w-0 flex-col">
-          <span className="text-[13px] font-semibold text-diagram-server">
+          <span className="text-[13px] font-semibold text-foreground">
             Servers
           </span>
           <span className="text-[10.5px] text-muted-foreground">

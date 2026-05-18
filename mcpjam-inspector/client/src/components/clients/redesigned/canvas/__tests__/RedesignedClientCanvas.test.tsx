@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { render, within } from "@testing-library/react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
-import { HOST_MATRIX_NODE_ID } from "../../types";
+import { HOST_MATRIX_NODE_ID, SERVERS_HUB_NODE_ID } from "../../types";
 import { RedesignedClientCanvas } from "../RedesignedClientCanvas";
 import { buildRedesignedHostCanvas } from "../canvasBuilder";
 
@@ -60,7 +60,7 @@ describe("RedesignedClientCanvas", () => {
     expect((node as HTMLElement).querySelector(".hp-agents")).toBeNull();
   });
 
-  it("renders the client capability rows and apps extension banner", () => {
+  it("renders advertised client capabilities and the apps extension banner", () => {
     const { container } = renderCanvas({});
     const node = container.querySelector(
       `.react-flow__node[data-id="${HOST_MATRIX_NODE_ID}"]`,
@@ -68,12 +68,47 @@ describe("RedesignedClientCanvas", () => {
     expect(node).not.toBeNull();
     const scope = within(node as HTMLElement);
     expect(scope.getByText("Client capabilities")).toBeInTheDocument();
-    expect(scope.getByText("extensions")).toBeInTheDocument();
-    // The paper redesign nests Apps Extension caps under a "View iframe"
-    // frame whose subtitle still names the extension. Match by substring.
-    expect(scope.getByText(/Apps extension/)).toBeInTheDocument();
-    expect(scope.getByText("roots")).toBeInTheDocument();
+    const caps = node!.querySelector(".hp-caps");
+    expect(caps).not.toBeNull();
+    const capScope = within(caps as HTMLElement);
+    expect(capScope.getByText("extensions")).toBeInTheDocument();
+    expect(capScope.queryByText("roots")).toBeNull();
+    expect(capScope.queryByText("sampling")).toBeNull();
+    expect(scope.getByText("View iframe")).toBeInTheDocument();
     expect(scope.getByText("openLinks")).toBeInTheDocument();
+    expect(node!.querySelector(".hp-policy-tag")).toBeNull();
+    expect(node!.querySelector(".hp-sandbox-sub")).toBeNull();
+  });
+
+  it("adds a client capability chip when that cap is enabled on the host", () => {
+    const base = emptyHostConfigInputV2();
+    const { container } = renderCanvas({
+      draft: emptyHostConfigInputV2({
+        clientCapabilities: {
+          ...base.clientCapabilities,
+          roots: { listChanged: true },
+        },
+      }),
+    });
+    const node = container.querySelector(
+      `.react-flow__node[data-id="${HOST_MATRIX_NODE_ID}"]`,
+    ) as HTMLElement | null;
+    expect(node).not.toBeNull();
+    const caps = node!.querySelector(".hp-caps");
+    expect(caps).not.toBeNull();
+    expect(within(caps as HTMLElement).getByText("roots")).toBeInTheDocument();
+  });
+
+  it("styles the servers hub with neutral card chrome like server rows", () => {
+    const { container } = renderCanvas({});
+    const hub = container.querySelector(
+      `.react-flow__node[data-id="${SERVERS_HUB_NODE_ID}"]`,
+    ) as HTMLElement | null;
+    expect(hub).not.toBeNull();
+    const shell = hub!.firstElementChild as HTMLElement;
+    expect(shell.className).toMatch(/\bborder-border\/70\b/);
+    expect(shell.className).toMatch(/\bbg-card\/95\b/);
+    expect(shell.className).not.toMatch(/diagram-server/);
   });
 
   it("does not duplicate extensions in the matrix footer", () => {

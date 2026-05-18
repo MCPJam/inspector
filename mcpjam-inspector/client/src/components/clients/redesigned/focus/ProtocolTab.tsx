@@ -1,4 +1,5 @@
-import { JsonEditor } from "@/components/ui/json-editor";
+import { useState } from "react";
+import { JsonEditor, type JsonEditorMode } from "@/components/ui/json-editor";
 import {
   type HostConfigInputV2,
   type HostConfigMcpProfileV1,
@@ -190,6 +191,7 @@ function applyJsonToDraft(
 }
 
 export function ProtocolTab({ draft, onDraftChange }: ProtocolTabProps) {
+  const [jsonMode, setJsonMode] = useState<JsonEditorMode>("edit");
   const { content, onRawChange } = useJsonDraftBuffer({
     draft,
     serialize: protocolToJson,
@@ -202,7 +204,8 @@ export function ProtocolTab({ draft, onDraftChange }: ProtocolTabProps) {
       <JsonEditor
         rawContent={content}
         onRawChange={onRawChange}
-        mode="edit"
+        mode={jsonMode}
+        onModeChange={setJsonMode}
         showModeToggle
         showToolbar
         showLineNumbers

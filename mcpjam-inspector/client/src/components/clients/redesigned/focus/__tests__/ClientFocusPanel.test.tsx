@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
 import { ClientFocusPanel } from "../ClientFocusPanel";
 
@@ -79,6 +80,32 @@ describe("ClientFocusPanel", () => {
     // Tab bar is text-only after the icon-well simplification — there
     // should be no info-tinted decoration on inactive tabs.
     expect(appsTab.className).not.toMatch(/var\(--info|bg-info\b/);
+  });
+
+  it("lets MCP Protocol JSON switch from Edit to View (mode toggle is wired)", async () => {
+    const user = userEvent.setup();
+    render(
+      <ClientFocusPanel
+        hostId="host-test"
+        tab="protocol"
+        onTabChange={vi.fn()}
+        initialSelectedServerId={null}
+        hostDisplayName="Test Host"
+        onHostDisplayNameChange={vi.fn()}
+        draft={emptyHostConfigInputV2()}
+        onDraftChange={vi.fn()}
+        attention={[]}
+        availableServers={[]}
+        onAddServer={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/^Ln /)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /^View$/ }));
+
+    expect(screen.queryByText(/^Ln /)).toBeNull();
   });
 
   it("shows MCP Protocol in the header tab bar without wire subtext", () => {

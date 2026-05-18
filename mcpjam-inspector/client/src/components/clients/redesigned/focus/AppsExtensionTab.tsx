@@ -1,4 +1,5 @@
-import { JsonEditor } from "@/components/ui/json-editor";
+import { useState } from "react";
+import { JsonEditor, type JsonEditorMode } from "@/components/ui/json-editor";
 import {
   resolveEffectiveHostCapabilities,
   type HostConfigInputV2,
@@ -369,6 +370,7 @@ export function AppsExtensionTab({
   draft,
   onDraftChange,
 }: AppsExtensionTabProps) {
+  const [jsonMode, setJsonMode] = useState<JsonEditorMode>("edit");
   const { content, onRawChange } = useJsonDraftBuffer({
     draft,
     serialize: appsToJson,
@@ -381,7 +383,8 @@ export function AppsExtensionTab({
       <JsonEditor
         rawContent={content}
         onRawChange={onRawChange}
-        mode="edit"
+        mode={jsonMode}
+        onModeChange={setJsonMode}
         showModeToggle
         showToolbar
         showLineNumbers
