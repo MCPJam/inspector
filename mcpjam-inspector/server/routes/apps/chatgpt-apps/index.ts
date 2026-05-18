@@ -307,9 +307,9 @@ chatgpt.get("/widget-html/:toolId", async (c) => {
         | string
         | undefined,
       prefersBorder:
-        (resourceMeta?.["openai/widgetPrefersBorder"] as boolean | undefined) ??
         ((resourceMeta?.ui as { prefersBorder?: boolean } | undefined)
           ?.prefersBorder as boolean | undefined) ??
+        (resourceMeta?.["openai/widgetPrefersBorder"] as boolean | undefined) ??
         true,
       closeWidget:
         (resourceMeta?.["openai/closeWidget"] as boolean | undefined) ?? false,
