@@ -157,13 +157,7 @@ Widgets run in a sandboxed iframe, so you need to declare which external domains
 
 - **`connect_domains`** - Domains your widget can fetch from (API calls)
 - **`resource_domains`** - Domains for static assets (images, fonts, scripts)
-- **`redirect_domains`** - Domains for `window.openai.openExternal()` redirects
-
-Our Coffee Shop uses `redirect_domains` to allow the "Learn more" button to redirect users to mcpjam.com:
-
-```javascript src/CoffeeShopWidget.tsx
-window.openai.openExternal({ href: "https://www.mcpjam.com" });
-```
+- **`frame_domains`** - Domains your widget can load in nested iframes
 
 <Note>
 Without declaring a domain in your CSP, the sandbox will block the request. Only declare the domains you actually need.
