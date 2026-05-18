@@ -1,11 +1,9 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Plus, Loader2, Server } from "lucide-react";
 import { toast } from "sonner";
-import { usePostHog } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useHostList, useHostMutations, type HostListItem } from "@/hooks/useClients";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { ClientCard } from "./ClientCard";
 import { CreateClientDialog } from "./CreateClientDialog";
 
@@ -20,37 +18,16 @@ export function ClientIndexPage({
   isAuthenticated,
   onSelectHost,
 }: HostIndexPageProps) {
-  const posthog = usePostHog();
   const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
   const { deleteHost, duplicateHost } = useHostMutations();
   const [showCreate, setShowCreate] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (isLoading) return;
-    posthog.capture("client_index_viewed", {
-      location: "clients_index",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
-      client_count: hosts.length,
-    });
-    // Fire once per mount; downstream client_count changes are covered by
-    // create/delete/duplicate events.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoading]);
-
   const handleDelete = async (host: HostListItem) => {
     setDeletingId(host.hostId);
     try {
       await deleteHost({ hostId: host.hostId });
-      posthog.capture("client_deleted", {
-        location: "clients_index",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
-        client_id: host.hostId,
-        force: false,
-      });
       toast.success(`Host "${host.name}" deleted`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to delete host";
@@ -70,13 +47,6 @@ export function ClientIndexPage({
     setDuplicatingId(host.hostId);
     try {
       const { hostId } = await duplicateHost({ hostId: host.hostId });
-      posthog.capture("client_duplicated", {
-        location: "clients_index",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
-        source_client_id: host.hostId,
-        new_client_id: hostId,
-      });
       toast.success(`Host duplicated`);
       onSelectHost(hostId);
     } catch (err) {
