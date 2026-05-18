@@ -785,9 +785,14 @@ function McpProfileSandboxEditor({
       const hasSandboxFields =
         nextSandbox.csp !== undefined ||
         nextSandbox.permissions !== undefined;
+      // Preserve sibling apps fields (e.g. uiInitialize.hostInfo set by the
+      // redesigned Apps Extension tab) — don't rewrite `apps` to only sandbox.
+      const nextApps = { ...(base.apps ?? {}) };
+      if (hasSandboxFields) nextApps.sandbox = nextSandbox;
+      else delete nextApps.sandbox;
       onChange({
         ...base,
-        apps: hasSandboxFields ? { sandbox: nextSandbox } : undefined,
+        apps: Object.keys(nextApps).length > 0 ? nextApps : undefined,
       });
     },
     [profile, onChange],
@@ -850,14 +855,19 @@ function McpProfileSandboxEditor({
         <Label className="text-xs">Permissions mode</Label>
         <Select
           value={permissions?.mode ?? "resource-declared"}
-          onValueChange={(v) =>
+          onValueChange={(v) => {
+            const mode = v as "resource-declared" | "deny-all" | "custom";
             updateSandbox({
               permissions: {
                 ...(permissions ?? {}),
-                mode: v as "resource-declared" | "deny-all" | "custom",
+                mode,
+                // Drop the allow map when leaving custom; otherwise
+                // appsToJson() still serializes stale grants and flipping
+                // back to custom would resurrect them.
+                allow: mode === "custom" ? permissions?.allow : undefined,
               },
-            })
-          }
+            });
+          }}
         >
           <SelectTrigger>
             <SelectValue />
