@@ -41,6 +41,13 @@ import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 
 interface PlaygroundTabProps {
   activeProjectId?: string | null;
+  /**
+   * Shared (Convex) project id for the active project, when synced. Used as
+   * the canonical previewed-host storage scope so this tab agrees with the
+   * global host bar and ClientsTab. Falls back to `activeProjectId` for
+   * CLI / no-cloud-sync flows.
+   */
+  sharedProjectId?: string | null;
   serverConfig?: MCPServerConfig;
   serverName?: string;
   servers?: Record<string, ServerWithName>;
@@ -87,7 +94,9 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   // PlaygroundPreviewedClientSync below. `useHost` short-circuits on null
   // hostId, so this is cheap when no host is picked yet.
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
-  const [previewedHostId] = usePreviewedHostId(props.activeProjectId ?? null);
+  const [previewedHostId] = usePreviewedHostId(
+    props.sharedProjectId ?? props.activeProjectId ?? null,
+  );
   const { host: previewedHost } = useHost({
     isAuthenticated: isConvexAuthenticated,
     hostId: previewedHostId,
@@ -194,7 +203,9 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                     persisted config into the chip stores when it changes.
                     Renders nothing. */}
                 <PlaygroundPreviewedClientSync
-                  projectId={props.activeProjectId ?? null}
+                  projectId={
+                    props.sharedProjectId ?? props.activeProjectId ?? null
+                  }
                 />
                 <ResizablePanelGroup
                   direction="horizontal"

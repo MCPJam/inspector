@@ -1046,6 +1046,7 @@ export function PlaygroundRoute() {
       serverName={appState.selectedServer}
       servers={projectServers}
       activeProjectId={activeProjectId}
+      sharedProjectId={activeProject?.sharedProjectId ?? null}
       isSignedInWithWorkOs={!!workOsUser}
       isWorkOsAuthLoading={isWorkOsLoading}
       isConvexAuthenticated={isAuthenticated}
