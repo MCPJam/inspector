@@ -161,6 +161,19 @@ describe("sandbox-proxy buildCSP merge rule", () => {
     expect(frameSrc).not.toMatch(/(?:^|\s)blob:(?:\s|$)/);
   });
 
+  it("treats cspDirectives with only empty-array entries as no-override (keeps restrictive defaults)", () => {
+    // Regression: `cspDirectives: { "frame-src": [] }` is semantically
+    // a no-op (no source expressions for that directive). Without a
+    // non-empty check, it used to flip the no-csp branch's baseline
+    // from restrictive secure-default to broad permissive (`https:` /
+    // `wss:` on connect-src etc.), silently widening the iframe's
+    // network surface for widgets without their own _meta.ui.csp.
+    const out = buildCSP(undefined, { "frame-src": [] });
+    expect(out).toContain("connect-src 'none'");
+    expect(out).toContain("frame-src 'none'");
+    expect(out).toContain("default-src 'none'");
+  });
+
   it("appends unknown cspDirectives keys in the no-csp branch too", () => {
     // Regression: the !csp branch previously early-returned after merging
     // only the 10 known directives, dropping unknown keys (e.g. `form-action`,

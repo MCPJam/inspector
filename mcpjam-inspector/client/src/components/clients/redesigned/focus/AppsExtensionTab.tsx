@@ -169,10 +169,15 @@ function sandboxFromPolicy(
     if (Object.keys(perms).length > 0) out.permissions = perms;
   }
 
-  if (policy.sandboxAttrs && policy.sandboxAttrs.length > 0) {
+  // Inspector-only knobs round-trip with their full undefined-vs-empty
+  // semantics so the JSON faithfully represents what's in storage.
+  // `[]` / `{}` are the user's explicit "model the strict host" intent;
+  // dropping them on serialize would silently flip the JSON back to the
+  // legacy permissive default on a copy/paste import.
+  if (policy.sandboxAttrs !== undefined) {
     out.iframeSandboxAttrs = [...policy.sandboxAttrs];
   }
-  if (policy.allowFeatures && Object.keys(policy.allowFeatures).length > 0) {
+  if (policy.allowFeatures !== undefined) {
     out.permissionsPolicy = { ...policy.allowFeatures };
   }
 

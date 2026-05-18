@@ -171,10 +171,21 @@
           //     load images, fetch over HTTPS, etc.
           //   - Otherwise (pure no-csp, no overrides), restrictive
           //     defaults for SEP-1865 secure-default behavior.
+          // A directive entry with an empty array (`{ "frame-src": [] }`)
+          // models "no source expressions for this directive" — semantically
+          // a no-op, not a hardening signal. Counting it as `hasCspOverrides`
+          // would flip every other directive's baseline from the secure
+          // default to the permissive baseline (broad `https:` / `wss:`)
+          // just because an empty key exists. Require at least one
+          // non-empty array entry.
           const hasCspOverrides =
             cspDirectives &&
             typeof cspDirectives === "object" &&
-            Object.keys(cspDirectives).length > 0;
+            Object.keys(cspDirectives).some(
+              (k) =>
+                Array.isArray(cspDirectives[k]) &&
+                cspDirectives[k].length > 0,
+            );
           if (hasCspOverrides) {
             // Helper: if cspDirectives names this directive, emit ONLY
             // the profile's tokens (REPLACE). Otherwise emit the

@@ -319,6 +319,28 @@ describe("AppsExtensionTab — sandbox JSON round-trip", () => {
     });
   });
 
+  it("round-trips EMPTY iframeSandboxAttrs/permissionsPolicy as the explicit strict-host model", () => {
+    // Regression: serializing `sandboxAttrs: []` / `allowFeatures: {}`
+    // used to be dropped from the JSON (only emitted when non-empty),
+    // so a copy/paste import would lose the explicit "spec minimum"
+    // model — the runtime treats the absent fields as the legacy
+    // permissive default and silently re-grants
+    // `local-network-access` / `midi` / popups / forms. Both directions
+    // must preserve the empty container.
+    const next = applyJsonToDraft(
+      {
+        hostContext: {},
+        sandbox: {
+          iframeSandboxAttrs: [],
+          permissionsPolicy: {},
+        },
+      },
+      emptyHostConfigInputV2(),
+    );
+    expect(next?.mcpProfile?.apps?.sandbox?.sandboxAttrs).toEqual([]);
+    expect(next?.mcpProfile?.apps?.sandbox?.allowFeatures).toEqual({});
+  });
+
   it("preserves all sandbox state when JSON has no sandbox key at all", () => {
     // No-op save with rich internal state — everything (including
     // inspector-only knobs) survives because incomingPresent is false.
