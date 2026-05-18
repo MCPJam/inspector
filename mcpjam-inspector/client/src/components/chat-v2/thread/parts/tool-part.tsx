@@ -39,9 +39,9 @@ import { CspDebugPanel } from "../csp-debug-panel";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { cn } from "@/lib/chat-utils";
 import { TextPart } from "./text-part";
-import { useHostContextStore } from "@/stores/host-context-store";
+import { useHostContextStore } from "@/stores/client-context-store";
 import { extractHostDisplayModes } from "@/lib/client-config";
-import { useChatboxHostTheme } from "@/contexts/chatbox-host-style-context";
+import { useChatboxHostTheme } from "@/contexts/chatbox-client-style-context";
 import { navigateApp } from "@/lib/app-navigation";
 
 type ApprovalVisualState = "pending" | "approved" | "denied";

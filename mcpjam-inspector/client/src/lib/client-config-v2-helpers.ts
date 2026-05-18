@@ -16,11 +16,11 @@
 
 import {
   type HostConfigInputV2,
-} from "@/lib/host-config-v2";
+} from "@/lib/client-config-v2";
 import {
   seedFromHostTemplate,
   type HostTemplateId,
-} from "@/lib/host-templates";
+} from "@/lib/client-templates";
 
 /**
  * Snapshot a host-style's template defaults onto a HostConfigInputV2 in-place

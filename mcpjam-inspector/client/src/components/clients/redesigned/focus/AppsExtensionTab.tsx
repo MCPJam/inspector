@@ -3,7 +3,7 @@ import {
   resolveEffectiveHostCapabilities,
   type HostConfigInputV2,
   type HostConfigMcpProfileV1,
-} from "@/lib/host-config-v2";
+} from "@/lib/client-config-v2";
 import { stableStringifyJson } from "@/lib/client-config";
 import type { HostAttentionIssue } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";

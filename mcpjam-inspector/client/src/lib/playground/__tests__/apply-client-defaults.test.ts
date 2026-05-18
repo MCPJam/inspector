@@ -7,9 +7,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   applyHostConfigToPlayground,
   applyHostDefaultsToPlayground,
-} from "../apply-host-defaults";
+} from "../apply-client-defaults";
 import * as selectedModelStorage from "@/lib/selected-model-storage";
-import { useHostContextStore } from "@/stores/host-context-store";
+import { useHostContextStore } from "@/stores/client-context-store";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 
 describe("applyHostDefaultsToPlayground", () => {

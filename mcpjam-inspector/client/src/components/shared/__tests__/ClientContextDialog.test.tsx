@@ -1,8 +1,8 @@
 import type { ChangeEvent, ReactNode } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useHostContextStore } from "@/stores/host-context-store";
-import { HostContextDialog } from "../HostContextDialog";
+import { useHostContextStore } from "@/stores/client-context-store";
+import { ClientContextDialog } from "../ClientContextDialog";
 
 vi.mock("sonner", () => ({
   toast: {
@@ -78,7 +78,7 @@ vi.mock("@/hooks/use-project-client-config-sync-pending", () => ({
   useProjectClientConfigSyncPending: () => false,
 }));
 
-describe("HostContextDialog", () => {
+describe("ClientContextDialog", () => {
   beforeEach(() => {
     useHostContextStore.getState().loadProjectHostContext({
       projectId: "project-1",
@@ -91,7 +91,7 @@ describe("HostContextDialog", () => {
     const onOpenChange = vi.fn();
 
     render(
-      <HostContextDialog
+      <ClientContextDialog
         activeProjectId="project-1"
         open
         onOpenChange={onOpenChange}

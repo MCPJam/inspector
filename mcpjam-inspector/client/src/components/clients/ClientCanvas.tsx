@@ -14,13 +14,13 @@ import {
 import { Plus, Server } from "lucide-react";
 import "@xyflow/react/dist/style.css";
 import { Badge } from "@mcpjam/design-system/badge";
-import { getChatboxHostLogo } from "@/lib/chatbox-host-style";
+import { getChatboxHostLogo } from "@/lib/chatbox-client-style";
 import { cn } from "@/lib/utils";
 import type {
   HostBuilderAddServerNodeData,
   HostBuilderNodeData,
   HostBuilderViewModel,
-} from "./host-builder-types";
+} from "./client-builder-types";
 
 const CHIP_STYLES = {
   neutral: "border-border/70 bg-muted/40 text-muted-foreground",
@@ -204,7 +204,7 @@ interface HostCanvasProps {
   onAddServer: () => void;
 }
 
-export function HostCanvas({
+export function ClientCanvas({
   viewModel,
   selectedNodeId,
   onSelectNode,

@@ -20,7 +20,7 @@
  */
 
 import type { McpUiStyles } from "@modelcontextprotocol/ext-apps/app-bridge";
-import { getChatGPTStyleVariables } from "./chatgpt-host-context";
+import { getChatGPTStyleVariables } from "./chatgpt-client-context";
 
 export const CURSOR_PLATFORM = "desktop" as const;
 

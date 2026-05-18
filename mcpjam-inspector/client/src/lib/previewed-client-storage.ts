@@ -3,7 +3,7 @@
  * project. Source of truth lives in `localStorage` under
  * `mcp-previewed-host-id` (an object keyed by `projectId` → `hostId`).
  *
- * Surfaces that read/write this value (Connect's `HostOverlayBar`,
+ * Surfaces that read/write this value (Connect's `ClientOverlayBar`,
  * Playground's `PlaygroundHeader`) all go through these helpers so they
  * stay in sync. Same-tab updates are propagated via a custom
  * `previewed-host-changed` window event; cross-tab updates come for free

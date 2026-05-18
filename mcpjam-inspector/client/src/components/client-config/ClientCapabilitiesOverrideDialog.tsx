@@ -9,13 +9,13 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import { Label } from "@mcpjam/design-system/label";
-import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
-import { getHostCapabilitiesForStyle } from "@/lib/host-styles";
+import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
+import { getHostCapabilitiesForStyle } from "@/lib/client-styles";
 
 /**
  * Direct-Chat editor for the MCP Apps `hostCapabilities` override
  * (advertised in ui/initialize). Mirrors the JSON section in
- * `HostConfigEditor`, surfaced as a standalone dialog because Direct Chat
+ * `ClientConfigEditor`, surfaced as a standalone dialog because Direct Chat
  * doesn't own a v2 HostConfig row — its override lives in the
  * preferences-store and persists to localStorage.
  *
@@ -32,7 +32,7 @@ export interface HostCapabilitiesOverrideDialogProps {
   onSave: (next: Record<string, unknown> | undefined) => void;
 }
 
-export function HostCapabilitiesOverrideDialog({
+export function ClientCapabilitiesOverrideDialog({
   open,
   onOpenChange,
   hostStyle,
@@ -108,7 +108,7 @@ export function HostCapabilitiesOverrideDialog({
         aria-describedby={undefined}
       >
         <DialogHeader>
-          <DialogTitle>Host capabilities override</DialogTitle>
+          <DialogTitle>Client capabilities override</DialogTitle>
         </DialogHeader>
 
         <div className="grid gap-2 py-2">

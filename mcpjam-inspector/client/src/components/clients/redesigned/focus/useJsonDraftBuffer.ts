@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { HostConfigInputV2 } from "@/lib/host-config-v2";
+import type { HostConfigInputV2 } from "@/lib/client-config-v2";
 
 interface UseJsonDraftBufferOptions {
   draft: HostConfigInputV2;

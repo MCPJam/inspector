@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   emptyHostConfigInputV2,
   resolveEffectiveHostCapabilities,
-} from "@/lib/host-config-v2";
+} from "@/lib/client-config-v2";
 import { applyJsonToDraft } from "../AppsExtensionTab";
 import {
   focusTabForNodeId,

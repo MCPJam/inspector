@@ -49,7 +49,7 @@ export interface HostMatrixCardProps {
   onSelectNode: (nodeId: string) => void;
 }
 
-export const HostMatrixCard = memo(function HostMatrixCard({
+export const ClientMatrixCard = memo(function ClientMatrixCard({
   hostName,
   agent,
   protocolBand,

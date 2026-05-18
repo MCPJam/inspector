@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { HostContextHeader } from "../HostContextHeader";
+import { ClientContextHeader } from "../ClientContextHeader";
 
 const {
   mockPreferencesState,
@@ -96,17 +96,17 @@ vi.mock("@/components/ui-playground/SafeAreaEditor", () => ({
   SafeAreaEditor: () => <div data-testid="safe-area-editor" />,
 }));
 
-vi.mock("@/components/shared/HostContextDialog", () => ({
-  HostContextDialog: ({ open }: { open: boolean }) =>
+vi.mock("@/components/shared/ClientContextDialog", () => ({
+  ClientContextDialog: ({ open }: { open: boolean }) =>
     open ? <div data-testid="host-context-dialog" /> : null,
 }));
 
-vi.mock("@/components/host-config/HostCapabilitiesOverrideDialog", () => ({
-  HostCapabilitiesOverrideDialog: ({ open }: { open: boolean }) =>
+vi.mock("@/components/client-config/ClientCapabilitiesOverrideDialog", () => ({
+  ClientCapabilitiesOverrideDialog: ({ open }: { open: boolean }) =>
     open ? <div data-testid="host-capabilities-dialog" /> : null,
 }));
 
-vi.mock("@/components/shared/host-context-constants", () => ({
+vi.mock("@/components/shared/client-context-constants", () => ({
   PRESET_DEVICE_CONFIGS: {
     mobile: { width: 375, height: 667, label: "Phone", icon: () => null },
     tablet: { width: 768, height: 1024, label: "Tablet", icon: () => null },
@@ -115,7 +115,7 @@ vi.mock("@/components/shared/host-context-constants", () => ({
   TIMEZONE_OPTIONS: [{ zone: "UTC", label: "UTC" }],
 }));
 
-vi.mock("@/components/shared/host-context-picker-bodies", () => ({
+vi.mock("@/components/shared/client-context-picker-bodies", () => ({
   CspPickerBody: () => <div />,
   DevicePickerBody: () => <div />,
   LocalePickerBody: () => <div />,
@@ -145,7 +145,7 @@ vi.mock("@/stores/widget-debug-store", () => ({
         },
 }));
 
-vi.mock("@/stores/host-context-store", () => {
+vi.mock("@/stores/client-context-store", () => {
   const buildState = () => ({
     draftHostContext: mockHostContextState.draftHostContext,
     patchHostContext: mockPatchHostContext,
@@ -172,7 +172,7 @@ vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
 // without pulling in the helper's full dependency graph (host-templates →
 // host-config-v2 → ...). The helper's behavior is covered by its own unit
 // test at lib/playground/__tests__/apply-host-defaults.test.ts.
-vi.mock("@/lib/playground/apply-host-defaults", () => ({
+vi.mock("@/lib/playground/apply-client-defaults", () => ({
   applyHostDefaultsToPlayground: mockApplyHostDefaultsToPlayground,
 }));
 
@@ -198,7 +198,7 @@ vi.mock("@/lib/client-config", () => ({
   ) => hostContext.timeZone ?? fallback,
 }));
 
-describe("HostContextHeader", () => {
+describe("ClientContextHeader", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPreferencesState.themeMode = "light";
@@ -219,7 +219,7 @@ describe("HostContextHeader", () => {
 
   it("writes theme changes through hostContext instead of global preferences", () => {
     render(
-      <HostContextHeader
+      <ClientContextHeader
         activeProjectId="project-1"
         protocol={null}
         showThemeToggle
@@ -236,7 +236,7 @@ describe("HostContextHeader", () => {
 
   it("invokes the playground snapshot helper for each pill click with the right host id", () => {
     render(
-      <HostContextHeader activeProjectId="project-1" protocol={null} />,
+      <ClientContextHeader activeProjectId="project-1" protocol={null} />,
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Claude" }));
@@ -257,7 +257,7 @@ describe("HostContextHeader", () => {
 
   it("calls the playground snapshot helper with both preferences setters in a bag", () => {
     render(
-      <HostContextHeader activeProjectId="project-1" protocol={null} />,
+      <ClientContextHeader activeProjectId="project-1" protocol={null} />,
     );
 
     fireEvent.click(screen.getByRole("button", { name: "ChatGPT" }));
@@ -280,7 +280,7 @@ describe("HostContextHeader", () => {
     mockHostContextState.isDirty = true;
 
     render(
-      <HostContextHeader activeProjectId="project-1" protocol={null} />,
+      <ClientContextHeader activeProjectId="project-1" protocol={null} />,
     );
 
     expect(screen.getByTestId("host-context-trigger")).toHaveTextContent(
@@ -294,7 +294,7 @@ describe("HostContextHeader", () => {
 
   it("does not render the display-mode badge in the toolbar", () => {
     render(
-      <HostContextHeader activeProjectId="project-1" protocol={null} />,
+      <ClientContextHeader activeProjectId="project-1" protocol={null} />,
     );
 
     expect(screen.queryByText("Display")).not.toBeInTheDocument();

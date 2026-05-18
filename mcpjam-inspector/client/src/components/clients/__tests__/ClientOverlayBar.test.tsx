@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { render, screen, waitFor } from "@testing-library/react";
-import { HostOverlayBar } from "@/components/hosts/HostOverlayBar";
+import { ClientOverlayBar } from "@/components/clients/ClientOverlayBar";
 
-vi.mock("@/components/hosts/CreateHostDialog", () => ({
-  CreateHostDialog: () => null,
+vi.mock("@/components/clients/CreateClientDialog", () => ({
+  CreateClientDialog: () => null,
 }));
 
 const mockUseHostList = vi.fn();
@@ -13,7 +13,7 @@ vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
 }));
 
-vi.mock("@/hooks/useHosts", () => ({
+vi.mock("@/hooks/useClients", () => ({
   useHostList: (...args: unknown[]) => mockUseHostList(...args),
   useHostMutations: () => ({
     createHost: vi.fn(),
@@ -52,7 +52,7 @@ const twoHosts = [
   },
 ];
 
-describe("HostOverlayBar", () => {
+describe("ClientOverlayBar", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockUseHostList.mockReturnValue({ hosts: oneHost, isLoading: false });
@@ -60,7 +60,7 @@ describe("HostOverlayBar", () => {
 
   it("lays out the toolbar like the redesigned host builder header row", () => {
     render(
-      <HostOverlayBar
+      <ClientOverlayBar
         projectId="proj-1"
         previewedHostId="host-a"
         onChangePreviewedHostId={vi.fn()}
@@ -74,7 +74,7 @@ describe("HostOverlayBar", () => {
 
   it("exposes prev/next arrows and a current-host dropdown trigger", () => {
     render(
-      <HostOverlayBar
+      <ClientOverlayBar
         projectId="proj-1"
         previewedHostId="host-a"
         onChangePreviewedHostId={vi.fn()}
@@ -92,7 +92,7 @@ describe("HostOverlayBar", () => {
   it("renders per-row edit/delete actions and a save-as-new entry inside the dropdown", async () => {
     const user = userEvent.setup();
     render(
-      <HostOverlayBar
+      <ClientOverlayBar
         projectId="proj-1"
         previewedHostId="host-a"
         onChangePreviewedHostId={vi.fn()}
@@ -101,7 +101,7 @@ describe("HostOverlayBar", () => {
     );
 
     await user.click(
-      screen.getByRole("button", { name: "Host used for preview" }),
+      screen.getByRole("button", { name: "Client used for preview" }),
     );
 
     await waitFor(() => {
@@ -117,7 +117,7 @@ describe("HostOverlayBar", () => {
     mockUseHostList.mockReturnValue({ hosts: twoHosts, isLoading: false });
 
     render(
-      <HostOverlayBar
+      <ClientOverlayBar
         projectId="proj-1"
         previewedHostId="host-a"
         onChangePreviewedHostId={onChange}
@@ -135,7 +135,7 @@ describe("HostOverlayBar", () => {
     mockUseHostList.mockReturnValue({ hosts: twoHosts, isLoading: false });
 
     render(
-      <HostOverlayBar
+      <ClientOverlayBar
         projectId="proj-1"
         previewedHostId="host-a"
         onChangePreviewedHostId={onChange}
@@ -151,7 +151,7 @@ describe("HostOverlayBar", () => {
 
   it("disables the arrows when there is only one host", () => {
     render(
-      <HostOverlayBar
+      <ClientOverlayBar
         projectId="proj-1"
         previewedHostId="host-a"
         onChangePreviewedHostId={vi.fn()}
@@ -166,7 +166,7 @@ describe("HostOverlayBar", () => {
   it("disables delete on the only host and explains why in a tooltip", async () => {
     const user = userEvent.setup();
     render(
-      <HostOverlayBar
+      <ClientOverlayBar
         projectId="proj-1"
         previewedHostId="host-a"
         onChangePreviewedHostId={vi.fn()}
@@ -175,7 +175,7 @@ describe("HostOverlayBar", () => {
     );
 
     await user.click(
-      screen.getByRole("button", { name: "Host used for preview" }),
+      screen.getByRole("button", { name: "Client used for preview" }),
     );
 
     const deleteBtn = await screen.findByTestId("host-overlay-delete-host-a");
@@ -191,7 +191,7 @@ describe("HostOverlayBar", () => {
     mockUseHostList.mockReturnValue({ hosts: twoHosts, isLoading: false });
 
     render(
-      <HostOverlayBar
+      <ClientOverlayBar
         projectId="proj-1"
         previewedHostId="host-a"
         onChangePreviewedHostId={vi.fn()}
@@ -200,7 +200,7 @@ describe("HostOverlayBar", () => {
     );
 
     await user.click(
-      screen.getByRole("button", { name: "Host used for preview" }),
+      screen.getByRole("button", { name: "Client used for preview" }),
     );
 
     const deleteBtn = await screen.findByTestId("host-overlay-delete-host-a");

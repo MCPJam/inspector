@@ -1,15 +1,15 @@
-import { HostOverlayBar } from "@/components/hosts/HostOverlayBar";
+import { ClientOverlayBar } from "@/components/clients/ClientOverlayBar";
 import type { GlobalHostBarProps } from "@/components/Header";
-import { usePreviewedHostId } from "@/hooks/use-previewed-host-id";
+import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 
-export function GlobalHostBar({
+export function GlobalClientBar({
   projectId,
   onEditHost,
   onCanvasReplaceHost,
 }: GlobalHostBarProps) {
   const [previewedHostId, setPreviewedHostId] = usePreviewedHostId(projectId);
   return (
-    <HostOverlayBar
+    <ClientOverlayBar
       projectId={projectId}
       previewedHostId={previewedHostId}
       onChangePreviewedHostId={setPreviewedHostId}

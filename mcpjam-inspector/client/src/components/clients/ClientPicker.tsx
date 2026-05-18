@@ -5,7 +5,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
-import { useHostList } from "@/hooks/useHosts";
+import { useHostList } from "@/hooks/useClients";
 import { useConvexAuth } from "convex/react";
 
 interface HostPickerProps {
@@ -18,7 +18,7 @@ interface HostPickerProps {
   disabled?: boolean;
 }
 
-export function HostPicker({
+export function ClientPicker({
   projectId,
   value,
   onChange,

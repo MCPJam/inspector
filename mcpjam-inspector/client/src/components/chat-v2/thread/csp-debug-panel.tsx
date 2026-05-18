@@ -19,7 +19,7 @@ import { Badge } from "@mcpjam/design-system/badge";
 import type { CspMode } from "@/stores/ui-playground-store";
 import type { CspViolation } from "@/stores/widget-debug-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { useChatboxHostTheme } from "@/contexts/chatbox-host-style-context";
+import { useChatboxHostTheme } from "@/contexts/chatbox-client-style-context";
 
 interface CspDebugPanelProps {
   cspInfo?: {

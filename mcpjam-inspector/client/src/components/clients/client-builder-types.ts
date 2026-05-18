@@ -1,5 +1,5 @@
 import type { Edge, Node } from "@xyflow/react";
-import type { HostConfigInputV2, HostStyleId } from "@/lib/host-config-v2";
+import type { HostConfigInputV2, HostStyleId } from "@/lib/client-config-v2";
 
 export type HostBuilderNodeKind = "host" | "server";
 

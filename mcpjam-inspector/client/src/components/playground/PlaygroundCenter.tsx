@@ -68,7 +68,7 @@ export function PlaygroundCenter({
 
   // Intentionally no `no-server` empty state: the Playground falls through to
   // PlaygroundMain so the user sees the chat composer + starter chips and can
-  // connect a server from the HostPicker in the header (mirrors the legacy
+  // connect a server from the ClientPicker in the header (mirrors the legacy
   // Chat tab behavior). PlaygroundMain already guards server-dependent calls
   // behind `serverName && servers[serverName]?.connectionStatus === "connected"`.
 

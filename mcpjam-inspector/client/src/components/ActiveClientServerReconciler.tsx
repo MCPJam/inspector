@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useAutoConnectProjectServers } from "@/hooks/useAutoConnectProjectServers";
 import { useProjectServers } from "@/hooks/useViews";
-import type { HostConfigDtoV2 } from "@/lib/host-config-v2";
+import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 
 interface ActiveHostServerReconcilerProps {
   projectId: string | null;
@@ -27,7 +27,7 @@ interface ActiveHostServerReconcilerProps {
  *
  * Renders nothing.
  */
-export function ActiveHostServerReconciler({
+export function ActiveClientServerReconciler({
   projectId,
   isAuthenticated,
   activeHost,

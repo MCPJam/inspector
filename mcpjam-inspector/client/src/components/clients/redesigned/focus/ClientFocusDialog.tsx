@@ -8,25 +8,25 @@ import {
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
-import type { HostConfigInputV2 } from "@/lib/host-config-v2";
+import type { HostConfigInputV2 } from "@/lib/client-config-v2";
 import {
   shortenSnapshotId,
   type HostAttentionIssue,
   type HostFocusTabId,
 } from "../types";
-import { countIssuesByTab, fieldsWithIssues } from "./useHostDraftValidation";
-import { HostIdentityRow } from "./HostIdentityRow";
+import { countIssuesByTab, fieldsWithIssues } from "./useClientDraftValidation";
+import { ClientIdentityRow } from "./ClientIdentityRow";
 import { AppearanceTab } from "./AppearanceTab";
 import { BehaviorTab } from "./BehaviorTab";
 import { ProtocolTab } from "./ProtocolTab";
 import { AppsExtensionTab } from "./AppsExtensionTab";
 import { ServersTab } from "./ServersTab";
-import { HostFocusTabBar } from "./HostFocusTabBar";
+import { ClientFocusTabBar } from "./ClientFocusTabBar";
 import {
   hostFocusShellDialogChromeClass,
   hostFocusShellHeaderRowClass,
   hostFocusShellScrollClass,
-} from "./host-focus-shell";
+} from "./client-focus-shell";
 
 interface HostFocusDialogProps {
   open: boolean;
@@ -53,7 +53,7 @@ interface HostFocusDialogProps {
   isSaving: boolean;
   canSave: boolean;
 
-  /** Draft state — single source of truth (lifted to HostBuilderView). */
+  /** Draft state — single source of truth (lifted to ClientBuilderView). */
   draft: HostConfigInputV2;
   onDraftChange: (
     updater: (prev: HostConfigInputV2) => HostConfigInputV2,
@@ -81,7 +81,7 @@ interface HostFocusDialogProps {
   onSave: () => void;
 }
 
-export function HostFocusDialog({
+export function ClientFocusDialog({
   open,
   hostId,
   tab,
@@ -104,7 +104,7 @@ export function HostFocusDialog({
   onSave,
 }: HostFocusDialogProps) {
   const issuesByTab = countIssuesByTab(attention);
-  // See HostFocusPanel: hostDisplayName is now tagged "behavior" after
+  // See ClientFocusPanel: hostDisplayName is now tagged "behavior" after
   // the General tab was removed.
   const behaviorIssues = fieldsWithIssues(attention, "behavior");
   const totalIssues = attention.length;
@@ -161,7 +161,7 @@ export function HostFocusDialog({
           }}
         >
           <DialogTitle className="sr-only">
-            Edit host configuration
+            Edit client configuration
           </DialogTitle>
 
           <header
@@ -249,7 +249,7 @@ export function HostFocusDialog({
             </kbd>
           </header>
 
-          <HostIdentityRow
+          <ClientIdentityRow
             className={cn(
               hostFocusShellHeaderRowClass,
               "border-t-0 px-4 py-2",
@@ -265,7 +265,7 @@ export function HostFocusDialog({
               "border-t-0 py-1 pl-3 pr-4",
             )}
           >
-            <HostFocusTabBar
+            <ClientFocusTabBar
               tab={tab}
               onTabChange={onTabChange}
               issuesByTab={issuesByTab}

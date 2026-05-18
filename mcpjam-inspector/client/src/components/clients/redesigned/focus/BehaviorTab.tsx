@@ -5,10 +5,10 @@ import { Textarea } from "@mcpjam/design-system/textarea";
 import {
   DEFAULT_TEMPERATURE_V2,
   type HostConfigInputV2,
-} from "@/lib/host-config-v2";
+} from "@/lib/client-config-v2";
 import { SUPPORTED_MODELS } from "@/shared/types";
 import { FieldRow, FocusBlock } from "./primitives";
-import { fieldsWithIssues } from "./useHostDraftValidation";
+import { fieldsWithIssues } from "./useClientDraftValidation";
 import type { HostAttentionIssue } from "../types";
 
 interface BehaviorTabProps {

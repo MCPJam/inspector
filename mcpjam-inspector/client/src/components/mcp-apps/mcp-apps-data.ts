@@ -96,7 +96,7 @@ const RESOURCE_SNIPPET = `server.resource(
 const NODES: ArchNodeDef[] = [
   {
     id: "host-group",
-    label: "Host Application",
+    label: "Client Application",
     subtitle: "Claude Desktop, ChatGPT, VS Code, etc.",
     type: "group",
     color: "#6366f1",

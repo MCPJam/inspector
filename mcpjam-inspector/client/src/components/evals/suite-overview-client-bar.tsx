@@ -7,10 +7,10 @@ import {
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import { Globe, MoreHorizontal, Plus, X } from "lucide-react";
-import { type HostListItem } from "@/hooks/useHosts";
+import { type HostListItem } from "@/hooks/useClients";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { cn } from "@/lib/utils";
-import type { HostAttachmentDraft } from "./host-attachments-editor";
+import type { HostAttachmentDraft } from "./client-attachments-editor";
 import type { EvalSuite } from "./types";
 
 export interface SuiteOverviewHostBarProps {
@@ -32,7 +32,7 @@ export interface SuiteOverviewHostBarProps {
   containerVariant?: "panel" | "inline";
 }
 
-export function SuiteOverviewHostBar({
+export function SuiteOverviewClientBar({
   suite,
   projectHosts,
   readOnly = false,
@@ -110,7 +110,7 @@ export function SuiteOverviewHostBar({
   const openHostsPage = () => {
     // No per-host deep-link route exists today; the Hosts page is index-style.
     // When a host-detail route lands, swap this for `buildHostsPath(hostId)`.
-    navigateApp(routePaths.hosts);
+    navigateApp(routePaths.clients);
   };
 
   const editable = Boolean(onUpdate) && !readOnly;
@@ -231,7 +231,7 @@ export function SuiteOverviewHostBar({
                           <button
                             type="button"
                             className="shrink-0 rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-                            aria-label={`Host options (${label})`}
+                            aria-label={`Client options (${label})`}
                           >
                             <MoreHorizontal className="h-3.5 w-3.5" />
                           </button>

@@ -1,21 +1,21 @@
 import { X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
-import type { HostConfigInputV2 } from "@/lib/host-config-v2";
+import type { HostConfigInputV2 } from "@/lib/client-config-v2";
 import type { HostAttentionIssue, HostFocusTabId } from "../types";
-import { countIssuesByTab, fieldsWithIssues } from "./useHostDraftValidation";
+import { countIssuesByTab, fieldsWithIssues } from "./useClientDraftValidation";
 import { AppearanceTab } from "./AppearanceTab";
 import { BehaviorTab } from "./BehaviorTab";
 import { ProtocolTab } from "./ProtocolTab";
 import { AppsExtensionTab } from "./AppsExtensionTab";
 import { ServersTab } from "./ServersTab";
-import { HostFocusTabBar } from "./HostFocusTabBar";
-import { HostIdentityRow } from "./HostIdentityRow";
+import { ClientFocusTabBar } from "./ClientFocusTabBar";
+import { ClientIdentityRow } from "./ClientIdentityRow";
 import {
   hostFocusShellHeaderRowClass,
   hostFocusShellRootClass,
   hostFocusShellScrollClass,
-} from "./host-focus-shell";
+} from "./client-focus-shell";
 
 interface HostFocusPanelProps {
   /**
@@ -50,7 +50,7 @@ interface HostFocusPanelProps {
   onClose: () => void;
 }
 
-export function HostFocusPanel({
+export function ClientFocusPanel({
   hostId,
   tab,
   onTabChange,
@@ -66,14 +66,14 @@ export function HostFocusPanel({
 }: HostFocusPanelProps) {
   const issuesByTab = countIssuesByTab(attention);
   // Host-name validation was retagged from "general" → "behavior" when
-  // the General tab was removed (see useHostDraftValidation.ts). The
+  // the General tab was removed (see useClientDraftValidation.ts). The
   // identity-row indicator follows the new tag so the input still lights
   // up red when empty.
   const behaviorIssues = fieldsWithIssues(attention, "behavior");
 
   return (
     <div className={hostFocusShellRootClass}>
-      <HostIdentityRow
+      <ClientIdentityRow
         className={cn(hostFocusShellHeaderRowClass, "py-2")}
         hostDisplayName={hostDisplayName}
         onHostDisplayNameChange={onHostDisplayNameChange}
@@ -85,7 +85,7 @@ export function HostFocusPanel({
           "items-stretch gap-2 py-1 sm:items-center",
         )}
       >
-        <HostFocusTabBar
+        <ClientFocusTabBar
           tab={tab}
           onTabChange={onTabChange}
           issuesByTab={issuesByTab}

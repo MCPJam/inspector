@@ -35,7 +35,7 @@ import {
   SNAPPY_CAMERA,
   SNAPPY_HOST_REVEAL,
 } from "../../transition-tokens";
-import { HostMatrixCard } from "./HostCapabilityMatrix";
+import { ClientMatrixCard } from "./ClientCapabilityMatrix";
 
 const decorativeHandleClass = "!opacity-0 !w-2 !h-2";
 
@@ -72,7 +72,7 @@ const HostMatrixNodeRenderer = memo(
         transition={SNAPPY_HOST_REVEAL}
         style={{ transformOrigin: "50% 0%" }}
       >
-        <HostMatrixCard
+        <ClientMatrixCard
           hostName={data.hostName}
           agent={data.agent}
           protocolBand={data.protocolBand}
@@ -347,7 +347,7 @@ const edgeTypes = {
   hostBranch: HostBranchEdge,
 };
 
-interface RedesignedHostCanvasProps {
+interface RedesignedClientCanvasProps {
   viewModel: HostRedesignViewModel;
   selectedNodeId: string | null;
   onSelectNode: (nodeId: string) => void;
@@ -374,7 +374,7 @@ interface RedesignedHostCanvasProps {
   onRequestEdit?: () => void;
 }
 
-export function RedesignedHostCanvas({
+export function RedesignedClientCanvas({
   viewModel,
   selectedNodeId,
   onSelectNode,
@@ -383,7 +383,7 @@ export function RedesignedHostCanvas({
   shellStyle,
   readOnly = false,
   onRequestEdit,
-}: RedesignedHostCanvasProps) {
+}: RedesignedClientCanvasProps) {
   const filteredNodes = useMemo(
     () =>
       readOnly

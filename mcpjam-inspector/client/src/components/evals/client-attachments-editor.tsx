@@ -4,8 +4,8 @@ import { useConvexAuth } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Label } from "@mcpjam/design-system/label";
-import { HostPicker } from "@/components/hosts/HostPicker";
-import { useHost, useHostList, type HostListItem } from "@/hooks/useHosts";
+import { ClientPicker } from "@/components/clients/ClientPicker";
+import { useHost, useHostList, type HostListItem } from "@/hooks/useClients";
 import { useProjectServers } from "@/hooks/useViews";
 
 export type HostAttachmentDraft = {
@@ -20,7 +20,7 @@ type HostAttachmentsEditorProps = {
   disabled?: boolean;
 };
 
-export function HostAttachmentsEditor({
+export function ClientAttachmentsEditor({
   projectId,
   value,
   onChange,
@@ -99,15 +99,15 @@ export function HostAttachmentsEditor({
       </div>
 
       <div className="space-y-1">
-        <Label className="text-xs text-muted-foreground">Attach a host</Label>
-        <HostPicker
+        <Label className="text-xs text-muted-foreground">Attach a client</Label>
+        <ClientPicker
           projectId={projectId}
           value={null}
           onChange={handleAddHost}
           placeholder={
             attachedIds.size === hosts.length && hosts.length > 0
-              ? "All hosts attached"
-              : "Choose a host to attach"
+              ? "All clients attached"
+              : "Choose a client to attach"
           }
           includeNone={false}
           disabled={

@@ -67,7 +67,7 @@ import {
   hostConfigDtoToInput,
   type HostConfigDtoV2,
   type HostConfigInputV2,
-} from "@/lib/host-config-v2";
+} from "@/lib/client-config-v2";
 import { cn } from "@/lib/utils";
 import { getEffectiveSuiteServers } from "./helpers";
 import { computeIterationResult } from "./pass-criteria";
@@ -76,7 +76,7 @@ import { RunValidatorsPopover } from "./run-validators-popover";
 import {
   ChatboxHostStyleProvider,
   ChatboxHostThemeProvider,
-} from "@/contexts/chatbox-host-style-context";
+} from "@/contexts/chatbox-client-style-context";
 import {
   buildHistoricalCompareRunRecords,
   buildComparePreviewTrace,
@@ -119,9 +119,9 @@ import {
   adaptTraceToUiMessages,
   type TraceEnvelope,
 } from "./trace-viewer-adapter";
-import { getChatboxShellStyle } from "@/lib/chatbox-host-style";
+import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { TestCaseHostHeader } from "./TestCaseHostHeader";
+import { TestCaseClientHeader } from "./TestCaseClientHeader";
 
 interface TestTemplate {
   title: string;
@@ -2159,7 +2159,7 @@ export function TestTemplateEditor({
                 data-testid="test-template-host-header-row"
                 className="px-1 pt-2"
               >
-                <TestCaseHostHeader
+                <TestCaseClientHeader
                   baseline={hostConfigBaseline}
                   value={hostConfigOverride}
                   onChange={setHostConfigOverride}

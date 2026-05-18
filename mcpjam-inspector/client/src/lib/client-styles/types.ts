@@ -140,7 +140,7 @@ export interface HostChatUi {
 
 /**
  * Single source of truth for one host style. Registered in
- * `@/lib/host-styles` and consumed by chatbox bootstrap, builder pickers,
+ * `@/lib/client-styles` and consumed by chatbox bootstrap, builder pickers,
  * shell theming, and the MCP Apps iframe bridge.
  *
  * Adding a new built-in host is a matter of authoring `mcp` + `chatUi`

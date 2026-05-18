@@ -1,19 +1,19 @@
-import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
+import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
 import {
   type HostConfigDtoV2,
   type HostConfigInputV2,
-} from "@/lib/host-config-v2";
+} from "@/lib/client-config-v2";
 import {
   seedFromHostTemplate,
   type HostTemplateId,
-} from "@/lib/host-templates";
-import type { ChatUiOverride } from "@/lib/host-styles";
+} from "@/lib/client-templates";
+import type { ChatUiOverride } from "@/lib/client-styles";
 import { saveSelectedModelId } from "@/lib/selected-model-storage";
 import {
   getCanonicalModelId,
   isModelSupported,
 } from "@/shared/types";
-import { useHostContextStore } from "@/stores/host-context-store";
+import { useHostContextStore } from "@/stores/client-context-store";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 
 /**
@@ -86,10 +86,10 @@ export interface ApplyHostPlaygroundSetters {
  * persisted back to the host (saving lives in the Hosts editor page).
  *
  * Two callers today:
- *   1. The brand-pill `onClick` in `HostContextHeader` —
+ *   1. The brand-pill `onClick` in `ClientContextHeader` —
  *      via {@link applyHostDefaultsToPlayground}, seeded from a static template.
- *   2. The named-host picker in `PlaygroundHeader` (the `HostPicker`
- *      dropdown) — via `PlaygroundPreviewedHostSync`, seeded from the
+ *   2. The named-host picker in `PlaygroundHeader` (the `ClientPicker`
+ *      dropdown) — via `PlaygroundPreviewedClientSync`, seeded from the
  *      project's persisted host config.
  *
  * Writes to multiple stores synchronously:
@@ -165,7 +165,7 @@ export function applyHostConfigToPlayground(
 
 /**
  * Snapshot a host *style*'s template defaults into the playground chip
- * state. Wired to the brand-pill `onClick` in `HostContextHeader`.
+ * state. Wired to the brand-pill `onClick` in `ClientContextHeader`.
  *
  * BYO custom hosts (registered client-side via `lib/host-styles` but with
  * no `host-templates.ts` entry) fall through to the MCPJam template

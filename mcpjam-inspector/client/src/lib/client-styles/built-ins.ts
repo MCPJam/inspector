@@ -8,25 +8,25 @@ import {
   CHATGPT_FONT_CSS,
   CHATGPT_PLATFORM,
   getChatGPTStyleVariables,
-} from "@/config/chatgpt-host-context";
+} from "@/config/chatgpt-client-context";
 import {
   CLAUDE_DESKTOP_CHAT_BACKGROUND,
   CLAUDE_DESKTOP_FONT_CSS,
   CLAUDE_DESKTOP_PLATFORM,
   getClaudeDesktopStyleVariables,
-} from "@/config/claude-desktop-host-context";
+} from "@/config/claude-desktop-client-context";
 import {
   CURSOR_CHAT_BACKGROUND,
   CURSOR_FONT_CSS,
   CURSOR_PLATFORM,
   getCursorStyleVariables,
-} from "@/config/cursor-host-context";
+} from "@/config/cursor-client-context";
 import {
   MCPJAM_CHAT_BACKGROUND,
   MCPJAM_FONT_CSS,
   MCPJAM_PLATFORM,
   getMcpJamStyleVariables,
-} from "@/config/mcpjam-host-context";
+} from "@/config/mcpjam-client-context";
 import { ClaudeMarkIndicator } from "./indicators/claude-mark";
 import { ChatGptDotIndicator } from "./indicators/chatgpt-dot";
 import { CursorBarIndicator } from "./indicators/cursor-bar";

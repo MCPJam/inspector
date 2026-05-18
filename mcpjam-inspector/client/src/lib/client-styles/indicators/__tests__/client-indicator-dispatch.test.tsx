@@ -1,6 +1,6 @@
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { HostIndicatorDispatch } from "../host-indicator-dispatch";
+import { HostIndicatorDispatch } from "../client-indicator-dispatch";
 
 describe("HostIndicatorDispatch", () => {
   it("renders 3 dots by default for kind:'dots'", () => {

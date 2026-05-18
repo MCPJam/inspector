@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { emptyHostConfigInputV2 } from "@/lib/host-config-v2";
-import { collectHostAttentionIssues } from "../useHostDraftValidation";
+import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
+import { collectHostAttentionIssues } from "../useClientDraftValidation";
 
 describe("collectHostAttentionIssues (host display name)", () => {
   it("flags an empty host display name on the behavior tab", () => {

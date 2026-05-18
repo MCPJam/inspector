@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect, useCallback } from "react";
 import { useMutation, useConvexAuth } from "convex/react";
-import { useHostList } from "@/hooks/useHosts";
+import { useHostList } from "@/hooks/useClients";
 import { toast } from "sonner";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { SuiteHeader } from "./suite-header";
@@ -273,7 +273,7 @@ export function SuiteIterationsView({
   const updateSuite = useMutation("testSuites:updateTestSuite" as any);
   const { isAuthenticated } = useConvexAuth();
   // Hosts available to attach in the header's "+ Attach host" picker. The
-  // query is owned here (not inside SuiteOverviewHostBar) so the bar stays
+  // query is owned here (not inside SuiteOverviewClientBar) so the bar stays
   // pure-props and renderable in test environments without a Convex provider.
   const { hosts: projectHosts } = useHostList({
     isAuthenticated,
@@ -425,11 +425,11 @@ export function SuiteIterationsView({
       });
       toast.success(
         attachments.length === 0
-          ? "Hosts cleared"
-          : "Hosts updated",
+          ? "Clients cleared"
+          : "Clients updated",
       );
     } catch (error) {
-      toast.error(getBillingErrorMessage(error, "Failed to update hosts"));
+      toast.error(getBillingErrorMessage(error, "Failed to update clients"));
       console.error("Failed to update host attachments:", error);
       throw error;
     }

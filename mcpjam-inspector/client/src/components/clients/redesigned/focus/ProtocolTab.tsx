@@ -2,7 +2,7 @@ import { JsonEditor } from "@/components/ui/json-editor";
 import {
   type HostConfigInputV2,
   type HostConfigMcpProfileV1,
-} from "@/lib/host-config-v2";
+} from "@/lib/client-config-v2";
 import type { HostAttentionIssue } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 

@@ -1,12 +1,12 @@
 import type { Edge } from "@xyflow/react";
 import { getModelById } from "@/shared/types";
-import { findHostStyle } from "@/lib/host-styles";
+import { findHostStyle } from "@/lib/client-styles";
 import {
   resolveEffectiveHostCapabilities,
   resolveClientInfo,
   resolveSupportedProtocolVersions,
   type HostConfigInputV2,
-} from "@/lib/host-config-v2";
+} from "@/lib/client-config-v2";
 import {
   ADD_SERVER_NODE_ID,
   HOST_MATRIX_NODE_ID,
@@ -25,7 +25,7 @@ import {
   type SandboxConfigNodeData,
   type SandboxConfigSubKey,
 } from "../types";
-import { fieldsWithIssues } from "../focus/useHostDraftValidation";
+import { fieldsWithIssues } from "../focus/useClientDraftValidation";
 
 /* ============================================================
    Layout constants. The host renders as a single matrix node;

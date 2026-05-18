@@ -50,9 +50,9 @@ import {
 import { RunDetailPlaygroundActions } from "./run-detail-playground-actions";
 import { cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { SuiteOverviewHostBar } from "./suite-overview-host-bar";
-import type { HostAttachmentDraft } from "./host-attachments-editor";
-import type { HostListItem } from "@/hooks/useHosts";
+import { SuiteOverviewClientBar } from "./suite-overview-client-bar";
+import type { HostAttachmentDraft } from "./client-attachments-editor";
+import type { HostListItem } from "@/hooks/useClients";
 
 interface SuiteHeaderProps {
   suite: EvalSuite;
@@ -381,7 +381,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   // removed: a host's `modelId` is the source of truth for what each run
   // runs against, so a separate suite-wide model selector is just noise.
   const suiteOverviewHostBar = (
-    <SuiteOverviewHostBar
+    <SuiteOverviewClientBar
       containerVariant="inline"
       className="py-1.5 md:py-2"
       suite={suite}

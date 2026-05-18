@@ -6,8 +6,8 @@ import { Checkbox } from "@mcpjam/design-system/checkbox";
 import { Input } from "@mcpjam/design-system/input";
 import { Switch } from "@mcpjam/design-system/switch";
 import { cn } from "@/lib/utils";
-import type { HostConfigInputV2 } from "@/lib/host-config-v2";
-import { getServerStatusDot } from "../canvas/RedesignedHostCanvas";
+import type { HostConfigInputV2 } from "@/lib/client-config-v2";
+import { getServerStatusDot } from "../canvas/RedesignedClientCanvas";
 import type { ServerCardNodeData } from "../types";
 import { Chip, FocusBlock } from "./primitives";
 
@@ -90,7 +90,7 @@ export function ServersTab({
     <div className="flex flex-col gap-4">
       <FocusBlock
         title="Attached servers"
-        subtitle="Every project server attaches to this host. Mark the ones the host depends on as required — the rest are optional."
+        subtitle="Every project server attaches to this client. Mark the ones the client depends on as required — the rest are optional."
         action={
           <Button
             type="button"
@@ -267,7 +267,7 @@ function ServerOverrideEditor({
                 aria-label="Enable overrides"
               />
               <span className="text-[11px] text-muted-foreground">
-                {hasOverride ? "active" : "uses host defaults"}
+                {hasOverride ? "active" : "uses client defaults"}
               </span>
             </div>
           </div>
@@ -284,7 +284,7 @@ function ServerOverrideEditor({
                     min={1}
                     step={500}
                     value={timeout ?? ""}
-                    placeholder="(host default)"
+                    placeholder="(client default)"
                     onChange={(e) => {
                       const v = e.target.value;
                       const parsed = v === "" ? undefined : Number(v);

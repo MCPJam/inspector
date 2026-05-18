@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 import {
   useChatboxHostStyle,
   useChatboxHostTheme,
-} from "@/contexts/chatbox-host-style-context";
+} from "@/contexts/chatbox-client-style-context";
 import { UIMessage } from "@ai-sdk/react";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { TranscriptThreadProps } from "./thread/transcript-thread";
@@ -16,7 +16,7 @@ import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-over
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { useResolvedHostStyleForIndicator } from "@/components/chat-v2/shared/loading-indicator-content";
-import { getChatboxHostFamily } from "@/lib/chatbox-host-style";
+import { getChatboxHostFamily } from "@/lib/chatbox-client-style";
 import { type ReasoningDisplayMode } from "./thread/parts/reasoning-part";
 import { TranscriptThread } from "./thread/transcript-thread";
 import {

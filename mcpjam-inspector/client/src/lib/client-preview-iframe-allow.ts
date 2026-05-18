@@ -1,4 +1,4 @@
-import type { HostConfigMcpProfileV1 } from "./host-config-v2";
+import type { HostConfigMcpProfileV1 } from "./client-config-v2";
 
 // Spec-defined sandbox permissions per SEP-1865 §UIResourceMeta.permissions.
 // Keys are mcpProfile field names; values are the Permissions-Policy feature

@@ -9,7 +9,7 @@ import {
   ActiveServerSelectorProps,
 } from "@/components/ActiveServerSelector";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
-import { GlobalHostBar } from "@/components/hosts/GlobalHostBar";
+import { GlobalClientBar } from "@/components/clients/GlobalClientBar";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import type { GlobalHostBarProps } from "@/components/Header";
 
@@ -47,7 +47,7 @@ export function AuthUpperArea({
     <div className="ml-auto flex h-full flex-1 items-center gap-2 no-drag min-w-0">
       {globalHostBarProps ? (
         <div className="flex shrink-0 items-center pr-1">
-          <GlobalHostBar {...globalHostBarProps} />
+          <GlobalClientBar {...globalHostBarProps} />
         </div>
       ) : null}
       {activeServerSelectorProps ? (

@@ -9,7 +9,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
-import type { HostListItem } from "@/hooks/useHosts";
+import type { HostListItem } from "@/hooks/useClients";
 
 interface HostCardProps {
   host: HostListItem;
@@ -20,7 +20,7 @@ interface HostCardProps {
   isDeleting?: boolean;
 }
 
-export function HostCard({
+export function ClientCard({
   host,
   onEdit,
   onDuplicate,

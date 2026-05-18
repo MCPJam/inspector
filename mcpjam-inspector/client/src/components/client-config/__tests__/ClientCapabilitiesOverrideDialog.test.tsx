@@ -1,14 +1,14 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { HostCapabilitiesOverrideDialog } from "../HostCapabilitiesOverrideDialog";
+import { ClientCapabilitiesOverrideDialog } from "../ClientCapabilitiesOverrideDialog";
 
-describe("HostCapabilitiesOverrideDialog", () => {
+describe("ClientCapabilitiesOverrideDialog", () => {
   it("renders the title without the header description paragraph", () => {
     const onSave = vi.fn();
     const onOpenChange = vi.fn();
 
     render(
-      <HostCapabilitiesOverrideDialog
+      <ClientCapabilitiesOverrideDialog
         open
         onOpenChange={onOpenChange}
         hostStyle="claude"
@@ -18,7 +18,7 @@ describe("HostCapabilitiesOverrideDialog", () => {
     );
 
     expect(
-      screen.getByRole("heading", { name: "Host capabilities override" }),
+      screen.getByRole("heading", { name: "Client capabilities override" }),
     ).toBeInTheDocument();
 
     expect(
@@ -39,7 +39,7 @@ describe("HostCapabilitiesOverrideDialog", () => {
 
   it("shows override status and enables Clear override when an override is saved", () => {
     render(
-      <HostCapabilitiesOverrideDialog
+      <ClientCapabilitiesOverrideDialog
         open
         onOpenChange={vi.fn()}
         hostStyle="claude"
@@ -59,7 +59,7 @@ describe("HostCapabilitiesOverrideDialog", () => {
     const onOpenChange = vi.fn();
 
     render(
-      <HostCapabilitiesOverrideDialog
+      <ClientCapabilitiesOverrideDialog
         open
         onOpenChange={onOpenChange}
         hostStyle="claude"

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { HostFocusTabId } from "../../types";
-import { HostFocusTabBar } from "../HostFocusTabBar";
+import { ClientFocusTabBar } from "../ClientFocusTabBar";
 
 const emptyIssues = {
   behavior: 0,
@@ -12,13 +12,13 @@ const emptyIssues = {
   appearance: 0,
 } as const;
 
-describe("HostFocusTabBar", () => {
+describe("ClientFocusTabBar", () => {
   it("uses a horizontal tablist for arrow-key navigation", async () => {
     const user = userEvent.setup();
     const onTabChange = vi.fn();
 
     render(
-      <HostFocusTabBar
+      <ClientFocusTabBar
         tab="behavior"
         onTabChange={onTabChange}
         issuesByTab={emptyIssues}

@@ -1,5 +1,5 @@
 /**
- * Shared HostConfigEditor.
+ * Shared ClientConfigEditor.
  *
  * Used by:
  *  - Project Settings → edits projects.defaultHostConfigId. Copy makes
@@ -46,11 +46,11 @@ import {
   type HostConfigMcpProfileV1,
   type HostStyleId,
   DEFAULT_TEMPERATURE_V2,
-} from "@/lib/host-config-v2";
+} from "@/lib/client-config-v2";
 import {
   getHostCapabilitiesForStyle,
   listHostStyles,
-} from "@/lib/host-styles";
+} from "@/lib/client-styles";
 
 export type HostConfigEditorOwner =
   | "project-default"
@@ -85,7 +85,7 @@ export interface HostConfigEditorProps {
   onValidityChange?: (hasError: boolean) => void;
 }
 
-export function HostConfigEditor({
+export function ClientConfigEditor({
   value,
   onChange,
   owner = "chatbox",
@@ -138,7 +138,7 @@ export function HostConfigEditor({
   // picker entirely (and ignores `availableServers`) so users can't
   // type changes the backend would reject.
   // For owner="host", server selection is managed via the canvas in
-  // HostBuilderView — hiding it here prevents double-entry confusion.
+  // ClientBuilderView — hiding it here prevents double-entry confusion.
   const showServersSection =
     owner !== "connection-only" && owner !== "eval-suite" && owner !== "host";
 
@@ -1311,7 +1311,7 @@ function HostCapabilitiesOverrideSection({
   return (
     <div className="grid gap-2">
       <div className="flex items-center justify-between gap-2">
-        <Label>Host capabilities override (JSON)</Label>
+        <Label>Client capabilities override (JSON)</Label>
         {isOverriding ? (
           <Button
             type="button"

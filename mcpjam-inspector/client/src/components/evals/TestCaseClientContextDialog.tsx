@@ -1,7 +1,7 @@
 /**
  * Controlled hostContext JSON editor for the test case host header.
  *
- * Mirrors the playground's `HostContextDialog` but skips the persistence
+ * Mirrors the playground's `ClientContextDialog` but skips the persistence
  * path: edits live on the per-case override (passed in via `value` /
  * `onChange`) and never write to `useHostContextStore`. "Apply" commits
  * the edit; "Reset" clears the per-case override entirely via
@@ -47,7 +47,7 @@ function stringify(value: Record<string, unknown>): string {
   }
 }
 
-export function TestCaseHostContextDialog({
+export function TestCaseClientContextDialog({
   open,
   onOpenChange,
   value,
@@ -104,7 +104,7 @@ export function TestCaseHostContextDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex h-[80vh] w-[min(96vw,60rem)] max-w-[60rem] flex-col gap-0 overflow-hidden p-0">
         <DialogHeader className="border-b px-5 py-4">
-          <DialogTitle>Host Context</DialogTitle>
+          <DialogTitle>Client Context</DialogTitle>
           <DialogDescription>
             Edit the `hostContext` for the next Run. Changes are not saved
             back to the suite.

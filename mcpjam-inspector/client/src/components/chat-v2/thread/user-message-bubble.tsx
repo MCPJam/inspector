@@ -8,9 +8,9 @@
 import {
   useChatboxHostStyle,
   useChatboxHostTheme,
-} from "@/contexts/chatbox-host-style-context";
+} from "@/contexts/chatbox-client-style-context";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { getChatboxHostFamily } from "@/lib/chatbox-host-style";
+import { getChatboxHostFamily } from "@/lib/chatbox-client-style";
 import { cn } from "@/lib/utils";
 
 interface UserMessageBubbleProps {

@@ -8,14 +8,14 @@ import {
   CollapsibleTrigger,
 } from "@mcpjam/design-system/collapsible";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
-import { HostConfigEditor } from "@/components/host-config/HostConfigEditor";
+import { ClientConfigEditor } from "@/components/client-config/ClientConfigEditor";
 import { cn } from "@/lib/utils";
-import type { HostConfigInputV2 } from "@/lib/host-config-v2";
+import type { HostConfigInputV2 } from "@/lib/client-config-v2";
 import { ServerConnectionOverrideSection } from "./ServerConnectionOverrideSection";
 import type {
   HostSectionStatusKind,
   HostSetupSectionId,
-} from "./host-builder-types";
+} from "./client-builder-types";
 
 const sectionStatusMetaClassName =
   "inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground";
@@ -108,7 +108,7 @@ export interface HostSetupChecklistPanelProps {
   onOpenAddServer: () => void;
 }
 
-export function HostSetupChecklistPanel({
+export function ClientSetupChecklistPanel({
   draft,
   onDraftChange,
   availableServers,
@@ -178,7 +178,7 @@ export function HostSetupChecklistPanel({
               />
               <CollapsibleContent className="pt-3 pb-1">
                 <div className="rounded-xl border border-border/50 bg-card/40 p-4">
-                  <HostConfigEditor
+                  <ClientConfigEditor
                     value={draft}
                     onChange={(next) => onDraftChange(() => next)}
                     owner="host"

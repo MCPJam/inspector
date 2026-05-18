@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { previewIframeAllow } from "../host-preview-iframe-allow";
-import type { HostConfigMcpProfileV1 } from "../host-config-v2";
+import { previewIframeAllow } from "../client-preview-iframe-allow";
+import type { HostConfigMcpProfileV1 } from "../client-config-v2";
 
 const profile = (
   permissions: HostConfigMcpProfileV1["apps"] extends infer A

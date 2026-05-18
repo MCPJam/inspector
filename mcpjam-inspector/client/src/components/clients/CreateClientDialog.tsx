@@ -12,14 +12,14 @@ import {
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
-import { useHostMutations } from "@/hooks/useHosts";
+import { useHostMutations } from "@/hooks/useClients";
 import { useProjectServers } from "@/hooks/useViews";
 import {
   DEFAULT_HOST_TEMPLATE_ID,
   HOST_TEMPLATES,
   seedFromHostTemplate,
   type HostTemplateId,
-} from "@/lib/host-templates";
+} from "@/lib/client-templates";
 import { cn } from "@/lib/utils";
 
 interface CreateHostDialogProps {
@@ -29,7 +29,7 @@ interface CreateHostDialogProps {
   onCreated: (hostId: string) => void;
 }
 
-export function CreateHostDialog({
+export function CreateClientDialog({
   isOpen,
   onClose,
   projectId,
@@ -89,11 +89,11 @@ export function CreateHostDialog({
         name: trimmed,
         input: { ...seed, serverIds: projectServerIds },
       });
-      toast.success(`Host "${trimmed}" created`);
+      toast.success(`Client "${trimmed}" created`);
       handleClose();
       onCreated(hostId);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to create host");
+      toast.error(err instanceof Error ? err.message : "Failed to create client");
     } finally {
       setIsSaving(false);
     }
@@ -103,7 +103,7 @@ export function CreateHostDialog({
     <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>New Host</DialogTitle>
+          <DialogTitle>New Client</DialogTitle>
         </DialogHeader>
         <div className="flex flex-col gap-4 py-2">
           <div className="flex flex-col gap-2">
@@ -141,7 +141,7 @@ export function CreateHostDialog({
             <Label htmlFor="host-name">Name</Label>
             <Input
               id="host-name"
-              placeholder="My Host"
+              placeholder="My Client"
               value={name}
               onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleCreate()}

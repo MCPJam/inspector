@@ -1,9 +1,9 @@
 import { useEffect, useRef } from "react";
 import { useConvexAuth } from "convex/react";
 
-import { useHost } from "@/hooks/useHosts";
-import { usePreviewedHostId } from "@/hooks/use-previewed-host-id";
-import { applyHostConfigToPlayground } from "@/lib/playground/apply-host-defaults";
+import { useHost } from "@/hooks/useClients";
+import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
+import { applyHostConfigToPlayground } from "@/lib/playground/apply-client-defaults";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 interface PlaygroundPreviewedHostSyncProps {
@@ -12,8 +12,8 @@ interface PlaygroundPreviewedHostSyncProps {
 
 /**
  * Subscribe to the project's previewed-host id (the named host picked in
- * `PlaygroundHeader`'s `HostPicker` dropdown — backed by the same
- * localStorage key Connect's `HostOverlayBar` uses), resolve that host's
+ * `PlaygroundHeader`'s `ClientPicker` dropdown — backed by the same
+ * localStorage key Connect's `ClientOverlayBar` uses), resolve that host's
  * persisted config via `useHost`, and snapshot its defaults into the
  * playground top-bar chip state whenever the resolved id changes.
  *
@@ -31,7 +31,7 @@ interface PlaygroundPreviewedHostSyncProps {
  * not "no-host means project default." Initial chip state is still owned
  * by `ProjectClientConfigSync`.
  */
-export function PlaygroundPreviewedHostSync({
+export function PlaygroundPreviewedClientSync({
   projectId,
 }: PlaygroundPreviewedHostSyncProps) {
   const { isAuthenticated } = useConvexAuth();

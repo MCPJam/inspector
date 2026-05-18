@@ -1,12 +1,12 @@
 import {
   emptyHostConfigInputV2,
   type HostConfigInputV2,
-} from "@/lib/host-config-v2";
+} from "@/lib/client-config-v2";
 import {
   MCPJAM_FONT_CSS,
   MCPJAM_PLATFORM,
   getMcpJamStyleVariables,
-} from "@/config/mcpjam-host-context";
+} from "@/config/mcpjam-client-context";
 import mcpjamLogo from "/mcp_jam.svg";
 import claudeLogo from "/claude_logo.png";
 import openaiLogo from "/openai_logo.png";

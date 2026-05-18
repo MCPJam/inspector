@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { render, within } from "@testing-library/react";
 import { ReactFlowProvider } from "@xyflow/react";
-import { emptyHostConfigInputV2 } from "@/lib/host-config-v2";
+import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
 import { HOST_MATRIX_NODE_ID } from "../../types";
-import { RedesignedHostCanvas } from "../RedesignedHostCanvas";
+import { RedesignedClientCanvas } from "../RedesignedClientCanvas";
 import { buildRedesignedHostCanvas } from "../canvasBuilder";
 
 function renderCanvas(opts: {
@@ -23,7 +23,7 @@ function renderCanvas(opts: {
   return render(
     <ReactFlowProvider>
       <div style={{ width: 900, height: 700 }}>
-        <RedesignedHostCanvas
+        <RedesignedClientCanvas
           viewModel={viewModel}
           selectedNodeId={null}
           onSelectNode={() => {}}
@@ -35,7 +35,7 @@ function renderCanvas(opts: {
   );
 }
 
-describe("RedesignedHostCanvas", () => {
+describe("RedesignedClientCanvas", () => {
   it("renders the host matrix node with the display name", () => {
     const { container } = renderCanvas({ hostName: "Claude" });
     const node = container.querySelector(

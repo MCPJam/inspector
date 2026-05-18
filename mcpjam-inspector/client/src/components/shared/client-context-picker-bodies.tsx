@@ -1,5 +1,5 @@
 /**
- * Shared picker bodies for HostContextHeader popovers.
+ * Shared picker bodies for ClientContextHeader popovers.
  */
 
 import { Settings2 } from "lucide-react";
@@ -10,7 +10,7 @@ import {
   LOCALE_OPTIONS,
   TIMEZONE_OPTIONS,
   CSP_MODE_OPTIONS,
-} from "@/components/shared/host-context-constants";
+} from "@/components/shared/client-context-constants";
 import type {
   CustomViewport,
   CspMode,

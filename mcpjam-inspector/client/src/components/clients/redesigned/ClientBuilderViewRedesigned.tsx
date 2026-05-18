@@ -11,7 +11,7 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { useHost, useHostMutations } from "@/hooks/useHosts";
+import { useHost, useHostMutations } from "@/hooks/useClients";
 import { useProjectServers, useServerMutations } from "@/hooks/useProjects";
 import { useAutoConnectProjectServers } from "@/hooks/useAutoConnectProjectServers";
 import { useSharedAppState } from "@/state/app-state-context";
@@ -25,16 +25,16 @@ import {
   hostConfigInputsEqual,
   serverConnectionOverridesEqual,
   type HostConfigInputV2,
-} from "@/lib/host-config-v2";
-import { getChatboxShellStyle } from "@/lib/chatbox-host-style";
+} from "@/lib/client-config-v2";
+import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { RedesignedHostCanvas } from "./canvas/RedesignedHostCanvas";
+import { RedesignedClientCanvas } from "./canvas/RedesignedClientCanvas";
 import { buildRedesignedHostCanvas } from "./canvas/canvasBuilder";
-import { HostFocusPanel } from "./focus/HostFocusPanel";
+import { ClientFocusPanel } from "./focus/ClientFocusPanel";
 import {
   hasBlockingErrors,
-  useHostDraftValidation,
-} from "./focus/useHostDraftValidation";
+  useClientDraftValidation,
+} from "./focus/useClientDraftValidation";
 import {
   focusTabForNodeId,
   type HostFocusState,
@@ -52,7 +52,7 @@ const CLOSED_FOCUS: HostFocusState = {
   selectedServerId: null,
 };
 
-export function HostBuilderViewRedesigned({
+export function ClientBuilderViewRedesigned({
   hostId,
   projectId,
 }: HostBuilderViewRedesignedProps) {
@@ -123,7 +123,7 @@ export function HostBuilderViewRedesigned({
 
   // Clear the diff snapshot ~1.5s after a host switch so subsequent
   // in-place edits don't keep re-firing the morph animation. Matches the
-  // CSS flash duration in RedesignedHostCanvas.
+  // CSS flash duration in RedesignedClientCanvas.
   useEffect(() => {
     if (!prevHostSnapshot) return;
     const t = window.setTimeout(() => setPrevHostSnapshot(null), 1500);
@@ -151,7 +151,7 @@ export function HostBuilderViewRedesigned({
   }, [host, draftName, draftConfig, savedConfig]);
 
   // Validation: recompute issues whenever draft or host display name changes.
-  const attention = useHostDraftValidation(
+  const attention = useClientDraftValidation(
     draftConfig ?? emptyHostConfigInputV2(),
     draftName,
   );
@@ -381,14 +381,14 @@ export function HostBuilderViewRedesigned({
                 if (next === "servers") {
                   // Skip `onBack()` (which would push `/hosts` first via
                   // the parent's handleSelectHost) and just navigate.
-                  // The URL→state sync in HostsRoute will clear the
+                  // The URL→state sync in ClientsRoute will clear the
                   // selected host when /servers takes over.
                   navigate("/servers");
                 }
               }}
               options={[
                 { value: "servers", label: "Servers" },
-                { value: "host", label: "Host" },
+                { value: "host", label: "Client" },
               ]}
             />
           </div>
@@ -415,7 +415,7 @@ export function HostBuilderViewRedesigned({
           >
             <div className="h-full min-h-0 pr-2">
               <ReactFlowProvider>
-                <RedesignedHostCanvas
+                <RedesignedClientCanvas
                   viewModel={viewModel}
                   selectedNodeId={selectedNodeId}
                   onSelectNode={handleSelectNode}
@@ -430,7 +430,7 @@ export function HostBuilderViewRedesigned({
             <>
               <ResizableHandle withHandle />
               <ResizablePanel defaultSize={45} minSize={35} maxSize={70}>
-                <HostFocusPanel
+                <ClientFocusPanel
                   hostId={hostId}
                   tab={focusState.tab}
                   onTabChange={(next) =>

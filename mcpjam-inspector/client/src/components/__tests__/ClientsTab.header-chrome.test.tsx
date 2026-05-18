@@ -1,20 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import React from "react";
-import { HostsTab } from "@/components/HostsTab";
+import { ClientsTab } from "@/components/ClientsTab";
 
-// HostsTab only consumes `useNavigate`; stubbing it dodges the workspace
+// ClientsTab only consumes `useNavigate`; stubbing it dodges the workspace
 // React-version mismatch that pulls in a duplicate React when MemoryRouter
 // initializes its hooks under jsdom.
 vi.mock("react-router", () => ({
   useNavigate: () => vi.fn(),
 }));
 
-vi.mock("@/hooks/use-previewed-host-id", () => ({
+vi.mock("@/hooks/use-previewed-client-id", () => ({
   usePreviewedHostId: vi.fn(() => [null as string | null, vi.fn()]),
 }));
 
-vi.mock("@/hooks/useHosts", () => ({
+vi.mock("@/hooks/useClients", () => ({
   useHost: vi.fn(() => ({ host: null, isLoading: false })),
   useHostList: vi.fn(() => ({ hosts: [], isLoading: false })),
 }));
@@ -25,8 +25,8 @@ vi.mock("@/stores/preferences/preferences-provider", () => ({
   ),
 }));
 
-vi.mock("@/components/hosts/HostBuilderView", () => ({
-  HostBuilderView: () => <div data-testid="mock-host-builder" />,
+vi.mock("@/components/clients/ClientBuilderView", () => ({
+  ClientBuilderView: () => <div data-testid="mock-host-builder" />,
 }));
 
 // framer-motion's `motion.div` + `AnimatePresence` rely on browser primitives
@@ -57,10 +57,10 @@ vi.mock("framer-motion", () => {
   };
 });
 
-describe("HostsTab", () => {
+describe("ClientsTab", () => {
   it("matches the redesigned host builder top chrome spacing and divider", () => {
     render(
-      <HostsTab
+      <ClientsTab
         projectId="proj-1"
         isAuthenticated
         selectedHostId={null}

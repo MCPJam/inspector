@@ -12,7 +12,7 @@ import {
 import { JsonEditor } from "@/components/ui/json-editor";
 import type { ProjectHostContextDraft } from "@/lib/client-config";
 import { useProjectClientConfigSyncPending } from "@/hooks/use-project-client-config-sync-pending";
-import { useHostContextStore } from "@/stores/host-context-store";
+import { useHostContextStore } from "@/stores/client-context-store";
 
 interface HostContextDialogProps {
   activeProjectId: string | null;
@@ -24,7 +24,7 @@ interface HostContextDialogProps {
   ) => Promise<void>;
 }
 
-export function HostContextDialog({
+export function ClientContextDialog({
   activeProjectId,
   open,
   onOpenChange,
@@ -49,7 +49,7 @@ export function HostContextDialog({
 
     try {
       await onSaveHostContext(activeProjectId, draftHostContext);
-      toast.success("Host context saved.");
+      toast.success("Client context saved.");
       onOpenChange(false);
     } catch {
       failSave();

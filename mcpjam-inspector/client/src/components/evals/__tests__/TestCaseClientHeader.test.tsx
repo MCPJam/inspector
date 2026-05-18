@@ -17,20 +17,20 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
-import { TestCaseHostHeader } from "../TestCaseHostHeader";
+import { TestCaseClientHeader } from "../TestCaseClientHeader";
 import {
   emptyHostConfigInputV2,
   hostConfigInputsEqual,
   type HostConfigInputV2,
-} from "@/lib/host-config-v2";
-import { seedFromHostTemplate } from "@/lib/host-templates";
-import { applyHostStyleToHostConfigInput } from "@/lib/host-config-v2-helpers";
+} from "@/lib/client-config-v2";
+import { seedFromHostTemplate } from "@/lib/client-templates";
+import { applyHostStyleToHostConfigInput } from "@/lib/client-config-v2-helpers";
 
 // Mock the dialogs — their internals (JsonEditor, MCP override JSON) are
 // out of scope. Tests assert that the buttons mount; dialog content
 // behavior is tested separately.
-vi.mock("../TestCaseHostContextDialog", () => ({
-  TestCaseHostContextDialog: ({
+vi.mock("../TestCaseClientContextDialog", () => ({
+  TestCaseClientContextDialog: ({
     open,
     value,
   }: {
@@ -44,8 +44,8 @@ vi.mock("../TestCaseHostContextDialog", () => ({
     ) : null,
 }));
 
-vi.mock("@/components/host-config/HostCapabilitiesOverrideDialog", () => ({
-  HostCapabilitiesOverrideDialog: ({
+vi.mock("@/components/client-config/ClientCapabilitiesOverrideDialog", () => ({
+  ClientCapabilitiesOverrideDialog: ({
     open,
     override,
   }: {
@@ -60,7 +60,7 @@ vi.mock("@/components/host-config/HostCapabilitiesOverrideDialog", () => ({
 }));
 
 function renderHeader(
-  props: Partial<React.ComponentProps<typeof TestCaseHostHeader>> = {},
+  props: Partial<React.ComponentProps<typeof TestCaseClientHeader>> = {},
 ) {
   const baseline: HostConfigInputV2 =
     props.baseline ??
@@ -76,7 +76,7 @@ function renderHeader(
       themePreset="default"
       hostStyle="claude"
     >
-      <TestCaseHostHeader
+      <TestCaseClientHeader
         baseline={baseline}
         value={props.value ?? null}
         onChange={props.onChange ?? onChange}
@@ -86,7 +86,7 @@ function renderHeader(
   return { ...utils, baseline, onChange };
 }
 
-describe("TestCaseHostHeader", () => {
+describe("TestCaseClientHeader", () => {
   it("renders the baseline values when no override is set", () => {
     const baseline = emptyHostConfigInputV2({
       hostStyle: "claude",

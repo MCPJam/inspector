@@ -4,7 +4,7 @@ import type { ReactElement } from "react";
 import { Thread } from "../thread";
 import type { UIMessage } from "@ai-sdk/react";
 import type { ModelDefinition } from "@/shared/types";
-import { ChatboxHostStyleProvider } from "@/contexts/chatbox-host-style-context";
+import { ChatboxHostStyleProvider } from "@/contexts/chatbox-client-style-context";
 
 const mockMessageView = vi.fn();
 const mockThinkingIndicator = vi.fn();

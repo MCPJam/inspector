@@ -1,10 +1,10 @@
-import { HostBuilderViewRedesigned } from "./redesigned/HostBuilderViewRedesigned";
+import { ClientBuilderViewRedesigned } from "./redesigned/ClientBuilderViewRedesigned";
 
 interface HostBuilderViewProps {
   hostId: string;
   projectId: string;
 }
 
-export function HostBuilderView(props: HostBuilderViewProps) {
-  return <HostBuilderViewRedesigned {...props} />;
+export function ClientBuilderView(props: HostBuilderViewProps) {
+  return <ClientBuilderViewRedesigned {...props} />;
 }

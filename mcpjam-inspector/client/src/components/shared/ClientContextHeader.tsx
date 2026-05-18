@@ -1,5 +1,5 @@
 /**
- * HostContextHeader
+ * ClientContextHeader
  *
  * Reusable preview/runtime controls for host context, adjacent preview chrome,
  * and CSP mode. Host context edits are live draft changes; persistence happens
@@ -45,28 +45,28 @@ import {
   extractHostTimeZone,
 } from "@/lib/client-config";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
-import { listHostStyles } from "@/lib/host-styles";
-import { applyHostDefaultsToPlayground } from "@/lib/playground/apply-host-defaults";
+import { listHostStyles } from "@/lib/client-styles";
+import { applyHostDefaultsToPlayground } from "@/lib/playground/apply-client-defaults";
 import { cn } from "@/lib/utils";
-import { useHostContextStore } from "@/stores/host-context-store";
+import { useHostContextStore } from "@/stores/client-context-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { SafeAreaEditor } from "@/components/ui-playground/SafeAreaEditor";
-import { HostContextDialog } from "@/components/shared/HostContextDialog";
-import { HostCapabilitiesOverrideDialog } from "@/components/host-config/HostCapabilitiesOverrideDialog";
+import { ClientContextDialog } from "@/components/shared/ClientContextDialog";
+import { ClientCapabilitiesOverrideDialog } from "@/components/client-config/ClientCapabilitiesOverrideDialog";
 import {
   PRESET_DEVICE_CONFIGS,
   TIMEZONE_OPTIONS,
-} from "@/components/shared/host-context-constants";
+} from "@/components/shared/client-context-constants";
 import {
   CspPickerBody,
   DevicePickerBody,
   LocalePickerBody,
   TimezonePickerBody,
-} from "@/components/shared/host-context-picker-bodies";
+} from "@/components/shared/client-context-picker-bodies";
 
-export { PRESET_DEVICE_CONFIGS } from "@/components/shared/host-context-constants";
+export { PRESET_DEVICE_CONFIGS } from "@/components/shared/client-context-constants";
 
 const CUSTOM_DEVICE_BASE = {
   label: "Custom",
@@ -90,7 +90,7 @@ export interface HostContextHeaderProps {
   className?: string;
 }
 
-export function HostContextHeader({
+export function ClientContextHeader({
   activeProjectId,
   onSaveHostContext,
   protocol,
@@ -406,7 +406,7 @@ export function HostContextHeader({
             </Button>
           </TooltipTrigger>
           <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP} className="max-w-sm">
-            <p className="font-medium">Host Context</p>
+            <p className="font-medium">Client Context</p>
             <p className="text-xs text-muted-foreground">
               Edit raw `hostContext` JSON
             </p>
@@ -424,7 +424,7 @@ export function HostContextHeader({
             >
               <Cpu className="h-3.5 w-3.5" />
               <span className="whitespace-nowrap @max-[700px]/playground-header:sr-only">
-                Host Capabilities
+                Client Capabilities
               </span>
               {hostCapabilitiesOverride !== undefined ? (
                 <span className="whitespace-nowrap text-[10px] text-amber-600 @max-[700px]/playground-header:sr-only dark:text-amber-400">
@@ -434,7 +434,7 @@ export function HostContextHeader({
             </Button>
           </TooltipTrigger>
           <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP} className="max-w-sm">
-            <p className="font-medium">Host Capabilities</p>
+            <p className="font-medium">Client Capabilities</p>
             <p className="text-xs text-muted-foreground">
               Override the `hostCapabilities` advertised in ui/initialize
             </p>
@@ -473,7 +473,7 @@ export function HostContextHeader({
             </div>
           </TooltipTrigger>
           <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
-            <p className="font-medium">Host Styles</p>
+            <p className="font-medium">Client Styles</p>
           </TooltipContent>
         </Tooltip>
 
@@ -503,14 +503,14 @@ export function HostContextHeader({
         ) : null}
       </div>
 
-      <HostContextDialog
+      <ClientContextDialog
         activeProjectId={activeProjectId}
         open={hostContextDialogOpen}
         onOpenChange={setHostContextDialogOpen}
         onSaveHostContext={onSaveHostContext}
       />
 
-      <HostCapabilitiesOverrideDialog
+      <ClientCapabilitiesOverrideDialog
         open={hostCapsDialogOpen}
         onOpenChange={setHostCapsDialogOpen}
         hostStyle={hostStyle}

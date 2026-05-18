@@ -3,9 +3,9 @@ import { Plus, Loader2, Server } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { useHostList, useHostMutations, type HostListItem } from "@/hooks/useHosts";
-import { HostCard } from "./HostCard";
-import { CreateHostDialog } from "./CreateHostDialog";
+import { useHostList, useHostMutations, type HostListItem } from "@/hooks/useClients";
+import { ClientCard } from "./ClientCard";
+import { CreateClientDialog } from "./CreateClientDialog";
 
 interface HostIndexPageProps {
   projectId: string;
@@ -13,7 +13,7 @@ interface HostIndexPageProps {
   onSelectHost: (hostId: string) => void;
 }
 
-export function HostIndexPage({
+export function ClientIndexPage({
   projectId,
   isAuthenticated,
   onSelectHost,
@@ -94,7 +94,7 @@ export function HostIndexPage({
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {hosts.map((host) => (
-            <HostCard
+            <ClientCard
               key={host.hostId}
               host={host}
               onEdit={() => onSelectHost(host.hostId)}
@@ -107,7 +107,7 @@ export function HostIndexPage({
         </div>
       )}
 
-      <CreateHostDialog
+      <CreateClientDialog
         isOpen={showCreate}
         onClose={() => setShowCreate(false)}
         projectId={projectId}

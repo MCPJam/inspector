@@ -13,12 +13,12 @@ import { ViewModeSelector } from "@/components/shared/view-mode-selector";
 import { ChatboxShareSection } from "@/components/chatboxes/ChatboxShareSection";
 import { ChatboxUsagePanel } from "@/components/chatboxes/ChatboxUsagePanel";
 import { useChatboxByHostId } from "@/hooks/useChatboxes";
-import { useHost } from "@/hooks/useHosts";
-import { usePreviewedHostId } from "@/hooks/use-previewed-host-id";
+import { useHost } from "@/hooks/useClients";
+import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { buildChatboxLink } from "@/lib/chatbox-session";
 import { copyToClipboard } from "@/lib/clipboard";
-import type { HostConfigMcpProfileV1 } from "@/lib/host-config-v2";
-import { previewIframeAllow } from "@/lib/host-preview-iframe-allow";
+import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
+import { previewIframeAllow } from "@/lib/client-preview-iframe-allow";
 
 /**
  * `/chatboxes` — the publish surface for the currently-selected host's
@@ -161,9 +161,9 @@ export function ChatboxesTab({
       <div className="flex h-full items-center justify-center px-6 text-center">
         <div className="max-w-sm">
           <Inbox className="mx-auto size-8 text-muted-foreground/70" />
-          <p className="mt-3 text-sm font-medium">Pick a host</p>
+          <p className="mt-3 text-sm font-medium">Pick a client</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Use the host bar at the top to choose which host's chatbox you
+            Use the client bar at the top to choose which client's chatbox you
             want to manage.
           </p>
         </div>
@@ -221,10 +221,10 @@ export function ChatboxesTab({
               // sidebar's own Connect link.
               window.location.hash = "connect";
             }}
-            title="Open this host's config in Connect"
+            title="Open this client's config in Connect"
           >
             <Settings2 className="mr-1.5 size-4" />
-            Edit host config
+            Edit client config
           </Button>
           {publishLink ? (
             <Button

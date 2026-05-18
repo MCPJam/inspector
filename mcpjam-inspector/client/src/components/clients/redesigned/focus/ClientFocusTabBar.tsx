@@ -2,7 +2,7 @@ import type { KeyboardEvent } from "react";
 import { Badge } from "@mcpjam/design-system/badge";
 import { cn } from "@/lib/utils";
 import type { HostFocusTabId } from "../types";
-import { HOST_FOCUS_TAB_DEFS } from "./host-focus-tab-defs";
+import { HOST_FOCUS_TAB_DEFS } from "./client-focus-tab-defs";
 
 export type HostFocusIssuesByTab = Record<HostFocusTabId, number>;
 
@@ -21,7 +21,7 @@ const tabBtnClass = cn(
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
 );
 
-export function HostFocusTabBar({
+export function ClientFocusTabBar({
   tab,
   onTabChange,
   issuesByTab,

@@ -100,6 +100,7 @@ export function isFirstRunEligible(
   if (
     routeTab !== "servers" &&
     routeTab !== "connect" &&
+    routeTab !== "clients" &&
     routeTab !== "hosts" &&
     routeTab
   )

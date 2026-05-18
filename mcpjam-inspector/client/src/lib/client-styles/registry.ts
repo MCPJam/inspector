@@ -4,7 +4,7 @@ import type {
   McpUiStyles,
 } from "@modelcontextprotocol/ext-apps/app-bridge";
 import { BUILT_IN_HOST_STYLES, MCPJAM_HOST_STYLE } from "./built-ins";
-import { HostIndicatorDispatch } from "./indicators/host-indicator-dispatch";
+import { HostIndicatorDispatch } from "./indicators/client-indicator-dispatch";
 import type {
   ChatUiOverride,
   HostChatUi,

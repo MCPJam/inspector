@@ -20,8 +20,8 @@ import type {
   HostConfigConnectionDefaults,
   HostConfigDtoV2,
   HostConfigMcpProfileV1,
-} from "./host-config-v2";
-import { resolveServerConnectionSettings } from "./host-connection-resolve";
+} from "./client-config-v2";
+import { resolveServerConnectionSettings } from "./client-connection-resolve";
 
 /**
  * Resolve the effective host for a surface.

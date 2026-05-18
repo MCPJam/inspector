@@ -3,11 +3,11 @@ import { ChatTabV2 } from "./ChatTabV2";
 import {
   ChatboxHostStyleProvider,
   ChatboxHostThemeProvider,
-} from "@/contexts/chatbox-host-style-context";
-import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-host-capabilities-override-context";
+} from "@/contexts/chatbox-client-style-context";
+import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
-import { getChatboxShellStyle } from "@/lib/chatbox-host-style";
-import type { HostConfigDtoV2 } from "@/lib/host-config-v2";
+import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
+import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 import { cn } from "@/lib/utils";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
@@ -24,7 +24,7 @@ type HostStyledChatTabV2Props = Omit<
   activeHost?: HostConfigDtoV2;
 };
 
-export function HostStyledChatTabV2({
+export function ClientStyledChatTabV2({
   showHostStyleSelector = false,
   activeHost,
   ...props

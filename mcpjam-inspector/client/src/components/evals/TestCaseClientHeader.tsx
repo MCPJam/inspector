@@ -1,8 +1,8 @@
 /**
- * TestCaseHostHeader
+ * TestCaseClientHeader
  *
  * Per-case in-place tweak header for the eval test case editor. Mirrors the
- * playground's HostContextHeader visually, but is fully controlled — no
+ * playground's ClientContextHeader visually, but is fully controlled — no
  * writes to zustand stores. Tweaks live on `value` (a HostConfigInputV2)
  * and never persist back to the suite.
  *
@@ -33,21 +33,21 @@ import {
 import {
   LocalePickerBody,
   TimezonePickerBody,
-} from "@/components/shared/host-context-picker-bodies";
-import { TIMEZONE_OPTIONS } from "@/components/shared/host-context-constants";
-import { TestCaseHostContextDialog } from "./TestCaseHostContextDialog";
-import { HostCapabilitiesOverrideDialog } from "@/components/host-config/HostCapabilitiesOverrideDialog";
+} from "@/components/shared/client-context-picker-bodies";
+import { TIMEZONE_OPTIONS } from "@/components/shared/client-context-constants";
+import { TestCaseClientContextDialog } from "./TestCaseClientContextDialog";
+import { ClientCapabilitiesOverrideDialog } from "@/components/client-config/ClientCapabilitiesOverrideDialog";
 import {
   extractHostDeviceCapabilities,
   extractHostLocale,
   extractHostTimeZone,
 } from "@/lib/client-config";
-import { listHostStyles } from "@/lib/host-styles";
+import { listHostStyles } from "@/lib/client-styles";
 import {
   hostConfigInputsEqual,
   type HostConfigInputV2,
-} from "@/lib/host-config-v2";
-import { applyHostStyleToHostConfigInput } from "@/lib/host-config-v2-helpers";
+} from "@/lib/client-config-v2";
+import { applyHostStyleToHostConfigInput } from "@/lib/client-config-v2-helpers";
 import { cn } from "@/lib/utils";
 
 const PLAYGROUND_HEADER_TOOLTIP = {
@@ -72,7 +72,7 @@ export interface TestCaseHostHeaderProps {
   className?: string;
 }
 
-export function TestCaseHostHeader({
+export function TestCaseClientHeader({
   baseline,
   value,
   onChange,
@@ -277,11 +277,11 @@ export function TestCaseHostHeader({
               onClick={() => setHostContextDialogOpen(true)}
             >
               <Settings2 className="h-3.5 w-3.5" />
-              <span className="whitespace-nowrap">Host Context</span>
+              <span className="whitespace-nowrap">Client Context</span>
             </Button>
           </TooltipTrigger>
           <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP} className="max-w-sm">
-            <p className="font-medium">Host Context</p>
+            <p className="font-medium">Client Context</p>
             <p className="text-xs text-muted-foreground">
               Edit raw `hostContext` JSON for the next Run
             </p>
@@ -299,7 +299,7 @@ export function TestCaseHostHeader({
               onClick={() => setHostCapsDialogOpen(true)}
             >
               <Cpu className="h-3.5 w-3.5" />
-              <span className="whitespace-nowrap">Host Capabilities</span>
+              <span className="whitespace-nowrap">Client Capabilities</span>
               {effective.hostCapabilitiesOverride !== undefined ? (
                 <span className="whitespace-nowrap text-[10px] text-amber-600 dark:text-amber-400">
                   Override
@@ -308,7 +308,7 @@ export function TestCaseHostHeader({
             </Button>
           </TooltipTrigger>
           <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP} className="max-w-sm">
-            <p className="font-medium">Host Capabilities</p>
+            <p className="font-medium">Client Capabilities</p>
             <p className="text-xs text-muted-foreground">
               Override the `hostCapabilities` advertised in ui/initialize
             </p>
@@ -344,7 +344,7 @@ export function TestCaseHostHeader({
             </div>
           </TooltipTrigger>
           <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
-            <p className="font-medium">Host Styles</p>
+            <p className="font-medium">Client Styles</p>
           </TooltipContent>
         </Tooltip>
 
@@ -378,7 +378,7 @@ export function TestCaseHostHeader({
         ) : null}
       </div>
 
-      <TestCaseHostContextDialog
+      <TestCaseClientContextDialog
         open={hostContextDialogOpen}
         onOpenChange={setHostContextDialogOpen}
         value={effective.hostContext}
@@ -386,7 +386,7 @@ export function TestCaseHostHeader({
         onClearOverride={handleReset}
       />
 
-      <HostCapabilitiesOverrideDialog
+      <ClientCapabilitiesOverrideDialog
         open={hostCapsDialogOpen}
         onOpenChange={setHostCapsDialogOpen}
         hostStyle={effective.hostStyle}

@@ -26,7 +26,7 @@ import {
   hostConfigInputsEqual,
   resolveClientInfo,
   resolveSupportedProtocolVersions,
-} from "../host-config-v2";
+} from "../client-config-v2";
 
 const SAMPLE_PROFILE: HostConfigMcpProfileV1 = {
   profileVersion: 1,

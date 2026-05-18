@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { HostConfigEditor } from "../HostConfigEditor";
+import { ClientConfigEditor } from "../ClientConfigEditor";
 import {
   emptyHostConfigInputV2,
   type HostConfigInputV2,
-} from "@/lib/host-config-v2";
+} from "@/lib/client-config-v2";
 
 const SERVERS = [
   { id: "srv-a", name: "Server A" },
@@ -23,7 +23,7 @@ function renderEditor(initial: Partial<HostConfigInputV2>) {
     current = next;
     onChange(next);
     utils.rerender(
-      <HostConfigEditor
+      <ClientConfigEditor
         value={current}
         onChange={handleChange}
         availableServers={SERVERS}
@@ -31,7 +31,7 @@ function renderEditor(initial: Partial<HostConfigInputV2>) {
     );
   };
   const utils = render(
-    <HostConfigEditor
+    <ClientConfigEditor
       value={current}
       onChange={handleChange}
       availableServers={SERVERS}
@@ -40,7 +40,7 @@ function renderEditor(initial: Partial<HostConfigInputV2>) {
   return { onChange, getCurrent: () => current };
 }
 
-describe("HostConfigEditor server selection invariant", () => {
+describe("ClientConfigEditor server selection invariant", () => {
   it("removes a server from optionalServerIds when it is unchecked from required", () => {
     const { onChange, getCurrent } = renderEditor({
       serverIds: ["srv-a", "srv-b"],
@@ -85,7 +85,7 @@ describe("HostConfigEditor server selection invariant", () => {
 
   it("hides the host context section in connection-only mode", () => {
     render(
-      <HostConfigEditor
+      <ClientConfigEditor
         value={emptyHostConfigInputV2()}
         onChange={() => {}}
         owner="connection-only"
@@ -98,7 +98,7 @@ describe("HostConfigEditor server selection invariant", () => {
   });
 });
 
-describe("HostConfigEditor MCP profile clientInfo draft", () => {
+describe("ClientConfigEditor MCP profile clientInfo draft", () => {
   // Regression guard for the "draft not reset after profile reset" bug:
   // useState initialized the draft once from `profile`, so after the user
   // hit "Reset to SDK defaults" (or a parent DTO swap) the draft still
@@ -146,7 +146,7 @@ describe("HostConfigEditor MCP profile clientInfo draft", () => {
       current = next;
       onChange(next);
       utils.rerender(
-        <HostConfigEditor
+        <ClientConfigEditor
           value={current}
           onChange={handleChange}
           availableServers={SERVERS}
@@ -154,7 +154,7 @@ describe("HostConfigEditor MCP profile clientInfo draft", () => {
       );
     };
     const utils = render(
-      <HostConfigEditor
+      <ClientConfigEditor
         value={current}
         onChange={handleChange}
         availableServers={SERVERS}
@@ -205,7 +205,7 @@ describe("HostConfigEditor MCP profile clientInfo draft", () => {
       current = next;
       onChange(next);
       utils.rerender(
-        <HostConfigEditor
+        <ClientConfigEditor
           value={current}
           onChange={handleChange}
           availableServers={SERVERS}
@@ -213,7 +213,7 @@ describe("HostConfigEditor MCP profile clientInfo draft", () => {
       );
     };
     const utils = render(
-      <HostConfigEditor
+      <ClientConfigEditor
         value={current}
         onChange={handleChange}
         availableServers={SERVERS}

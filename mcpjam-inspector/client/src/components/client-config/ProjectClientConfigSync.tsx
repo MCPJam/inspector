@@ -7,7 +7,7 @@ import {
   pickProjectHostContext,
 } from "@/lib/client-config";
 import { useClientConfigStore } from "@/stores/client-config-store";
-import { useHostContextStore } from "@/stores/host-context-store";
+import { useHostContextStore } from "@/stores/client-context-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 

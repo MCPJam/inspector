@@ -13,9 +13,9 @@ import {
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { useHostList, useHostMutations } from "@/hooks/useHosts";
-import { emptyHostConfigInputV2 } from "@/lib/host-config-v2";
-import { CreateHostDialog } from "./CreateHostDialog";
+import { useHostList, useHostMutations } from "@/hooks/useClients";
+import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
+import { CreateClientDialog } from "./CreateClientDialog";
 
 const MCPJAM_HOST_NAME = "MCPJam";
 const LAST_HOST_DELETE_REASON =
@@ -29,7 +29,7 @@ interface HostOverlayBarProps {
   onCanvasReplaceHost?: (hostId: string) => void;
 }
 
-export function HostOverlayBar({
+export function ClientOverlayBar({
   projectId,
   previewedHostId,
   onChangePreviewedHostId,
@@ -156,9 +156,9 @@ export function HostOverlayBar({
     setIsDeleting(true);
     try {
       await deleteHost({ hostId });
-      toast.success(`Host "${host.name}" deleted`);
+      toast.success(`Client "${host.name}" deleted`);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to delete host";
+      const msg = err instanceof Error ? err.message : "Failed to delete client";
       if (msg.includes("consumer")) {
         toast.error(
           `${msg} — use force delete or remove dependent chatboxes/evals first`,
@@ -204,7 +204,7 @@ export function HostOverlayBar({
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                aria-label="Host used for preview"
+                aria-label="Client used for preview"
                 data-testid="host-overlay-current"
                 className={cn(
                   "flex h-8 min-w-[7rem] max-w-[14rem] items-center justify-center border-x border-border/40 bg-transparent px-3 text-sm font-medium text-foreground transition-colors outline-none",
@@ -274,14 +274,14 @@ export function HostOverlayBar({
                 onSelect={() => setShowCreate(true)}
               >
                 <Plus className="size-3.5" />
-                Add host
+                Add client
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
 
           <button
             type="button"
-            aria-label="Next host"
+            aria-label="Next client"
             data-testid="host-overlay-next"
             disabled={arrowDisabled}
             onClick={() => cycle(1)}
@@ -297,7 +297,7 @@ export function HostOverlayBar({
         </div>
       )}
 
-      <CreateHostDialog
+      <CreateClientDialog
         isOpen={showCreate}
         onClose={() => setShowCreate(false)}
         projectId={projectId}

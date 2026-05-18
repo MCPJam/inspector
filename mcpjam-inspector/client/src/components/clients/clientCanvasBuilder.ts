@@ -9,7 +9,7 @@ import {
   type HostBuilderNodeData,
   type HostBuilderViewModel,
   type HostFlowNode,
-} from "./host-builder-types";
+} from "./client-builder-types";
 
 /**
  * Layout constants. Host card at the top, an add-server pseudo-node in
@@ -80,8 +80,8 @@ function resolveHostData(context: HostBuilderContext): HostBuilderNodeData {
     : "No model selected";
   return {
     kind: "host",
-    title: "Host",
-    subtitle: hostName.trim() || "Untitled host",
+    title: "Client",
+    subtitle: hostName.trim() || "Untitled client",
     detailLine: `Model · ${modelName}`,
     hostStyle: draft.hostStyle,
     chips: [],

@@ -5,7 +5,7 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
   useChatboxHostStyle,
   useChatboxHostTheme,
-} from "@/contexts/chatbox-host-style-context";
+} from "@/contexts/chatbox-client-style-context";
 import { LoadingIndicatorContent } from "./loading-indicator-content";
 import { getAssistantAvatarDescriptor } from "./assistant-avatar";
 

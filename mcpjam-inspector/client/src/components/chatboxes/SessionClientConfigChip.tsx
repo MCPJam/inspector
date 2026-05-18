@@ -24,7 +24,7 @@ interface SessionHostConfigChipProps {
  * historical config, plus a banner when the host's *current* config
  * differs from the historical pin.
  */
-export function SessionHostConfigChip({ sessionId }: SessionHostConfigChipProps) {
+export function SessionClientConfigChip({ sessionId }: SessionHostConfigChipProps) {
   const [isOpen, setIsOpen] = useState(false);
   const { config } = useSessionHistoricalHostConfig({ sessionId });
 
@@ -73,7 +73,7 @@ function HistoricalConfigDetails({
           Configuration this session ran on
         </p>
         <p className="mt-0.5 text-[11px] text-muted-foreground">
-          Pinned at session open. The current host may have changed since.
+          Pinned at session open. The current client may have changed since.
         </p>
       </div>
 

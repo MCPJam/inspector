@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "convex/react";
-import type { HostConfigDtoV2, HostConfigInputV2 } from "@/lib/host-config-v2";
+import type { HostConfigDtoV2, HostConfigInputV2 } from "@/lib/client-config-v2";
 
 export interface HostListItem {
   hostId: string;

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UIMessage } from "@ai-sdk/react";
 import type { ModelDefinition } from "@/shared/types";
 import { TranscriptThread } from "../thread/transcript-thread";
-import { ChatboxHostStyleProvider } from "@/contexts/chatbox-host-style-context";
+import { ChatboxHostStyleProvider } from "@/contexts/chatbox-client-style-context";
 
 const mockMessageView = vi.fn();
 

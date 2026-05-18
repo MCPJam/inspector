@@ -6,7 +6,7 @@ import {
   resolveEffectiveHostCapabilities,
   type HostConfigDtoV2,
   type HostConfigInputV2,
-} from "../host-config-v2";
+} from "../client-config-v2";
 
 function makeInput(overrides: Partial<HostConfigInputV2> = {}): HostConfigInputV2 {
   return emptyHostConfigInputV2({

@@ -1,4 +1,4 @@
-import type { HostConfigConnectionDefaults } from "./host-config-v2";
+import type { HostConfigConnectionDefaults } from "./client-config-v2";
 
 /**
  * Resolve the effective connection settings for a single server within a host.

@@ -8,7 +8,7 @@ export interface HostIdentityRowProps {
   className?: string;
 }
 
-export function HostIdentityRow({
+export function ClientIdentityRow({
   hostDisplayName,
   onHostDisplayNameChange,
   hasNameIssue,
@@ -24,8 +24,8 @@ export function HostIdentityRow({
       <Input
         value={hostDisplayName}
         onChange={(event) => onHostDisplayNameChange(event.target.value)}
-        placeholder="Host name"
-        aria-label="Host name"
+        placeholder="Client name"
+        aria-label="Client name"
         className={cn(
           "h-8 min-w-0 flex-1 text-[13px]",
           hasNameIssue && "border-amber-500",

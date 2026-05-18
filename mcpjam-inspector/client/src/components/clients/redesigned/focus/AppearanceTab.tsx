@@ -2,12 +2,12 @@ import { useId } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { cn } from "@/lib/utils";
-import type { HostConfigInputV2 } from "@/lib/host-config-v2";
+import type { HostConfigInputV2 } from "@/lib/client-config-v2";
 import {
   resolveEffectiveHostStyle,
   type ChatUiOverride,
-} from "@/lib/host-styles";
-import { HOST_TEMPLATES } from "@/lib/host-templates";
+} from "@/lib/client-styles";
+import { HOST_TEMPLATES } from "@/lib/client-templates";
 import { FieldRow, FocusBlock, SegmentedControl } from "./primitives";
 
 interface AppearanceTabProps {

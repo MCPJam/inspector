@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyHostConfigInputV2 } from "@/lib/host-config-v2";
+import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
 import {
   ADD_SERVER_NODE_ID,
   HOST_MATRIX_NODE_ID,

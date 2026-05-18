@@ -6,7 +6,7 @@ import { ProjectSlackIntegrationSection } from "./setting/ProjectSlackIntegratio
 import { ProjectMembersFacepile } from "./project/ProjectMembersFacepile";
 import { ProjectShareButton } from "./project/ProjectShareButton";
 import { ProjectIconPicker } from "./project/ProjectEmojiPicker";
-import { ProjectDefaultHostConfigSection } from "./host-config/ProjectDefaultHostConfigSection";
+import { ProjectDefaultClientConfigSection } from "./client-config/ProjectDefaultClientConfigSection";
 
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -172,7 +172,7 @@ export function ProjectSettingsTab({
             and direct chat tabs. Editing it does not change existing
             chatboxes or suites. */}
         {isAuthenticated && convexProjectId ? (
-          <ProjectDefaultHostConfigSection
+          <ProjectDefaultClientConfigSection
             convexProjectId={convexProjectId}
             projectServers={projectServers}
             canManage={canManageProjectSettings}

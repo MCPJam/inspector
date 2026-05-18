@@ -4,12 +4,12 @@ import { useState } from "react";
 import {
   emptyHostConfigInputV2,
   type HostConfigInputV2,
-} from "@/lib/host-config-v2";
+} from "@/lib/client-config-v2";
 import { AppearanceTab } from "../AppearanceTab";
 
 /**
  * Local controlled wrapper so tests can observe the draft after each
- * onDraftChange. Mirrors how `HostFocusPanel` threads the prop in real use.
+ * onDraftChange. Mirrors how `ClientFocusPanel` threads the prop in real use.
  */
 function ControlledAppearanceTab({
   initial,

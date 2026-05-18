@@ -1,6 +1,6 @@
 import { createContext, useContext } from "react";
-import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
-import type { ChatUiOverride } from "@/lib/host-styles";
+import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
+import type { ChatUiOverride } from "@/lib/client-styles";
 
 const ChatboxHostStyleContext = createContext<ChatboxHostStyle | null>(null);
 const ChatboxHostThemeContext = createContext<"light" | "dark" | null>(null);

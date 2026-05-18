@@ -26,4 +26,4 @@ export {
   registerHostStyle,
   resolveEffectiveHostStyle,
 } from "./registry";
-export { HostIndicatorDispatch } from "./indicators/host-indicator-dispatch";
+export { HostIndicatorDispatch } from "./indicators/client-indicator-dispatch";

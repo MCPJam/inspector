@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
-import { emptyHostConfigInputV2 } from "@/lib/host-config-v2";
-import { HostFocusPanel } from "../HostFocusPanel";
+import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
+import { ClientFocusPanel } from "../ClientFocusPanel";
 
-describe("HostFocusPanel", () => {
+describe("ClientFocusPanel", () => {
   it("uses global theme shell classes for the panel root", () => {
     const { container } = render(
-      <HostFocusPanel
+      <ClientFocusPanel
         hostId="host-test"
         tab="behavior"
         onTabChange={vi.fn()}
@@ -28,7 +28,7 @@ describe("HostFocusPanel", () => {
 
   it("shows Agent in the header tab bar with neutral icon chrome only", () => {
     render(
-      <HostFocusPanel
+      <ClientFocusPanel
         hostId="host-test"
         tab="protocol"
         onTabChange={vi.fn()}
@@ -57,7 +57,7 @@ describe("HostFocusPanel", () => {
 
   it("shows Apps Extension in the header tab bar without SEP-1865 subtext", () => {
     render(
-      <HostFocusPanel
+      <ClientFocusPanel
         hostId="host-test"
         tab="protocol"
         onTabChange={vi.fn()}
@@ -83,7 +83,7 @@ describe("HostFocusPanel", () => {
 
   it("shows MCP Protocol in the header tab bar without wire subtext", () => {
     render(
-      <HostFocusPanel
+      <ClientFocusPanel
         hostId="host-test"
         tab="apps"
         onTabChange={vi.fn()}
@@ -108,7 +108,7 @@ describe("HostFocusPanel", () => {
 
   it("does not include a General tab; host name input still lives in the identity header", () => {
     render(
-      <HostFocusPanel
+      <ClientFocusPanel
         hostId="host-test"
         tab="behavior"
         onTabChange={vi.fn()}
@@ -131,14 +131,14 @@ describe("HostFocusPanel", () => {
       screen.getByRole("tab", { name: /^Appearance$/ }),
     ).toBeInTheDocument();
     // The host-name textbox lives in the always-visible identity header.
-    expect(screen.getByRole("textbox", { name: "Host name" })).toHaveValue(
+    expect(screen.getByRole("textbox", { name: "Client name" })).toHaveValue(
       "My Host",
     );
   });
 
   it("does not show a placeholder Advanced tab", () => {
     render(
-      <HostFocusPanel
+      <ClientFocusPanel
         hostId="host-test"
         tab="servers"
         onTabChange={vi.fn()}

@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useConvexAuth, useQuery } from "convex/react";
-import type { HostConfigDtoV2 } from "@/lib/host-config-v2";
+import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 import { useLogger } from "./use-logger";
-import { useHost } from "./useHosts";
-import { usePreviewedHostId } from "./use-previewed-host-id";
-import { resolveEffectiveHost } from "@/lib/effective-host";
+import { useHost } from "./useClients";
+import { usePreviewedHostId } from "./use-previewed-client-id";
+import { resolveEffectiveHost } from "@/lib/effective-client";
 import {
   createLocalDefaultProject,
   initialAppState,
@@ -480,7 +480,7 @@ export function useAppState({
   });
 
   // Active project default hostConfig DTO. Sourced from Convex so it
-  // stays current with edits made in the HostConfigEditor without a
+  // stays current with edits made in the ClientConfigEditor without a
   // page reload. We pluck `mcpProfile` out and pass it down to
   // useServerState so resolver-path connects can pin clientInfo and
   // supportedProtocolVersions. `skip` when the active project isn't
@@ -497,7 +497,7 @@ export function useAppState({
   ) as HostConfigDtoV2 | null | undefined;
 
   // Single active-host state, shared with the Servers/Playground/Hosts
-  // top-bar preview and the Chat tab's HostPicker. Picking a host anywhere
+  // top-bar preview and the Chat tab's ClientPicker. Picking a host anywhere
   // in the product points every MCP `initialize` and widget `ui/initialize`
   // at the same `HostConfigDtoV2`.
   const [activeHostId, setActiveHostId] = usePreviewedHostId(
@@ -809,7 +809,7 @@ export function useAppState({
     // `mcpProfile` powers `ActiveMcpProfileProvider`, its `clientCapabilities`
     // and `connectionDefaults` flow through `withProjectConnectionDefaults`,
     // and `setActiveHostId` is the canonical writer for both the Chat tab's
-    // HostPicker and the global top-bar preview.
+    // ClientPicker and the global top-bar preview.
     activeHost,
     activeHostId,
     setActiveHostId,

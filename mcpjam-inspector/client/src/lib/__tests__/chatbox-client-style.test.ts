@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getChatboxShellStyle } from "@/lib/chatbox-host-style";
+import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 
 describe("getChatboxShellStyle", () => {
   it("maps ChatGPT host accent to info blue, not the global warm primary", () => {

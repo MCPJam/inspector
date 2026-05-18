@@ -17,7 +17,7 @@ import { ChatHistoryRow } from "./ChatHistoryRow";
 import { useChatHistory } from "./use-chat-history";
 import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
 import { useProjectMembers } from "@/hooks/useProjects";
-import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
+import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
 import { buildEvalsPath, navigateApp } from "@/lib/app-navigation";
 import {
   buildProjectOwnerProfileByUserId,

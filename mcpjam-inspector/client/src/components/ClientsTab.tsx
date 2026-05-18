@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, LayoutGroup, motion } from "framer-motion";
 import { useNavigate } from "react-router";
-import { HostBuilderView } from "./hosts/HostBuilderView";
-import { HostsConnectAddServerSlotContext } from "./hosts/HostsConnectAddServerSlotContext";
-import { HostsConnectViewPhaseContext } from "./hosts/HostsConnectViewPhaseContext";
-import { SNAPPY_RAIL } from "./hosts/transition-tokens";
+import { ClientBuilderView } from "./clients/ClientBuilderView";
+import { ClientsConnectAddServerSlotContext } from "./clients/ClientsConnectAddServerSlotContext";
+import { ClientsConnectViewPhaseContext } from "./clients/ClientsConnectViewPhaseContext";
+import { SNAPPY_RAIL } from "./clients/transition-tokens";
 import { ViewModeSelector } from "./shared/view-mode-selector";
-import { usePreviewedHostId } from "@/hooks/use-previewed-host-id";
-import { useHost, useHostList } from "@/hooks/useHosts";
+import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
+import { useHost, useHostList } from "@/hooks/useClients";
 import { routePaths } from "@/lib/app-navigation";
-import { getChatboxShellStyle } from "@/lib/chatbox-host-style";
+import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 interface HostsTabProps {
@@ -28,7 +28,7 @@ interface HostsTabProps {
  * gentle opacity/y fade to soften the cut.
  */
 
-export function HostsTab({
+export function ClientsTab({
   projectId,
   isAuthenticated,
   selectedHostId,
@@ -48,7 +48,7 @@ export function HostsTab({
   // the previewed host's style and cascade brand `--background`, `--primary`,
   // `--card`, etc. into the subtree so the Servers chrome inherits the host's
   // accent (orange for Claude, blue for ChatGPT, …) without per-component
-  // theming code. Mirrors `HostBuilderViewRedesigned.canvasShellStyle`.
+  // theming code. Mirrors `ClientBuilderViewRedesigned.canvasShellStyle`.
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const { host: previewedHost } = useHost({
     isAuthenticated,
@@ -88,7 +88,7 @@ export function HostsTab({
   // Reconcile stale selections against the live host list. If the host the
   // user was viewing (or had previewed) was deleted elsewhere, drop the
   // reference so the canvas doesn't get stuck on a missing id — without
-  // this, HostBuilderViewRedesigned's `!draftConfig` guard renders skeletons
+  // this, ClientBuilderViewRedesigned's `!draftConfig` guard renders skeletons
   // forever because the seed effect bails on a null host.
   useEffect(() => {
     if (isHostListLoading) return;
@@ -114,7 +114,7 @@ export function HostsTab({
   const viewPhase = selectedHostId ? "host" : "servers";
 
   return (
-    <HostsConnectViewPhaseContext.Provider value={viewPhase}>
+    <ClientsConnectViewPhaseContext.Provider value={viewPhase}>
     <LayoutGroup id="connect-servers-host">
     <div className="relative h-full min-h-0 overflow-hidden">
       <AnimatePresence initial={false} mode="sync">
@@ -127,7 +127,7 @@ export function HostsTab({
             transition={SNAPPY_RAIL}
             className="absolute inset-0 [transform-origin:50%_30%]"
           >
-            <HostBuilderView
+            <ClientBuilderView
               hostId={selectedHostId}
               projectId={projectId}
             />
@@ -143,7 +143,7 @@ export function HostsTab({
             style={browseShellStyle}
             className="absolute inset-0 flex min-h-0 flex-col bg-background text-foreground"
           >
-            <HostsConnectAddServerSlotContext.Provider value={addServerSlotEl}>
+            <ClientsConnectAddServerSlotContext.Provider value={addServerSlotEl}>
               <div
                 className="relative shrink-0 border-b border-border/40 px-8 py-2.5"
                 data-testid="hosts-tab-header-chrome"
@@ -162,7 +162,7 @@ export function HostsTab({
                       ariaLabel="Connect view"
                       onChange={(next) => {
                         // `onSelectHost` is wired to `handleSelectHost` in
-                        // HostsRoute, which itself calls `navigate(buildHostsPath(...))`
+                        // ClientsRoute, which itself calls `navigate(buildHostsPath(...))`
                         // — calling `navigate` here too pushes a duplicate
                         // history entry, breaking the browser Back button.
                         if (next === "host" && previewedHostId) {
@@ -175,7 +175,7 @@ export function HostsTab({
                         { value: "servers", label: "Servers" },
                         {
                           value: "host",
-                          label: "Host",
+                          label: "Client",
                           disabled: !previewedHostId,
                         },
                       ]}
@@ -184,12 +184,12 @@ export function HostsTab({
                 </div>
               </div>
               <div className="min-h-0 flex-1">{serversTabElement}</div>
-            </HostsConnectAddServerSlotContext.Provider>
+            </ClientsConnectAddServerSlotContext.Provider>
           </motion.div>
         )}
       </AnimatePresence>
     </div>
     </LayoutGroup>
-    </HostsConnectViewPhaseContext.Provider>
+    </ClientsConnectViewPhaseContext.Provider>
   );
 }

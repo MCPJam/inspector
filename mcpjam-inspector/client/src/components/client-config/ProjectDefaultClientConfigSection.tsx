@@ -3,14 +3,14 @@ import { useMutation, useQuery } from "convex/react";
 import { Loader2, RotateCcw, Save } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
-import { HostConfigEditor } from "./HostConfigEditor";
+import { ClientConfigEditor } from "./ClientConfigEditor";
 import {
   emptyHostConfigInputV2,
   hostConfigDtoToInput,
   hostConfigInputsEqual,
   type HostConfigDtoV2,
   type HostConfigInputV2,
-} from "@/lib/host-config-v2";
+} from "@/lib/client-config-v2";
 import type { ServerWithName } from "@/hooks/use-app-state";
 
 interface ProjectDefaultHostConfigSectionProps {
@@ -39,7 +39,7 @@ interface ProjectDefaultHostConfigSectionProps {
  * this same row through the legacy `updateProjectClientConfig`
  * compatibility wrapper.
  */
-export function ProjectDefaultHostConfigSection({
+export function ProjectDefaultClientConfigSection({
   convexProjectId,
   projectServers,
   canManage,
@@ -141,7 +141,7 @@ export function ProjectDefaultHostConfigSection({
       </div>
 
       <div className="rounded-xl border bg-card/60 p-4">
-        <HostConfigEditor
+        <ClientConfigEditor
           value={value}
           onChange={canManage ? setValue : () => {}}
           owner="project-default"

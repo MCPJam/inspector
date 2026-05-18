@@ -3,8 +3,8 @@ import {
   resolveEffectiveClientCapabilities,
   resolveEffectiveHost,
   resolveServerInit,
-} from "@/lib/effective-host";
-import type { HostConfigDtoV2 } from "@/lib/host-config-v2";
+} from "@/lib/effective-client";
+import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 
 function makeHost(
   partial: Partial<HostConfigDtoV2> & { clientCapabilities?: Record<string, unknown> },

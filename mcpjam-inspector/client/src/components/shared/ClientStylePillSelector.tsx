@@ -1,6 +1,6 @@
 import { ToggleGroup, ToggleGroupItem } from "@mcpjam/design-system/toggle-group";
-import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
-import { listHostStyles } from "@/lib/host-styles";
+import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
+import { listHostStyles } from "@/lib/client-styles";
 import { cn } from "@/lib/utils";
 
 interface HostStylePillSelectorProps {
@@ -9,7 +9,7 @@ interface HostStylePillSelectorProps {
   className?: string;
 }
 
-export function HostStylePillSelector({
+export function ClientStylePillSelector({
   value,
   onValueChange,
   className,
@@ -30,7 +30,7 @@ export function HostStylePillSelector({
             onValueChange(nextValue);
           }
         }}
-        aria-label="Host style"
+        aria-label="Client style"
         className="relative flex w-full rounded-full bg-transparent p-0"
       >
         {listHostStyles().map((host) => (

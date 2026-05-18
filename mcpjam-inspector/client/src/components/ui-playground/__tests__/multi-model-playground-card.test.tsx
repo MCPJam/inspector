@@ -95,7 +95,7 @@ vi.mock("@/stores/preferences/preferences-provider", () => ({
     selector({ hostCapabilitiesOverride: null }),
 }));
 
-vi.mock("@/contexts/chatbox-host-style-context", () => ({
+vi.mock("@/contexts/chatbox-client-style-context", () => ({
   ChatboxHostStyleProvider: ({ children }: { children: React.ReactNode }) => (
     <>{children}</>
   ),
@@ -104,7 +104,7 @@ vi.mock("@/contexts/chatbox-host-style-context", () => ({
   ),
 }));
 
-vi.mock("@/contexts/chatbox-host-capabilities-override-context", () => ({
+vi.mock("@/contexts/chatbox-client-capabilities-override-context", () => ({
   ChatboxHostCapabilitiesOverrideProvider: ({
     children,
   }: {

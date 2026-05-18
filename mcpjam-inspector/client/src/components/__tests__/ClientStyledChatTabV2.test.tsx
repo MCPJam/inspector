@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { HostStyledChatTabV2 } from "../HostStyledChatTabV2";
+import { ClientStyledChatTabV2 } from "../ClientStyledChatTabV2";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
 import { HOST_STYLE_KEY } from "@/stores/preferences/preferences-store";
 
@@ -8,7 +8,7 @@ const mockChatTabV2 = vi.hoisted(() => vi.fn());
 
 vi.mock("../ChatTabV2", async () => {
   const { useChatboxHostStyle, useChatboxHostTheme } =
-    await import("@/contexts/chatbox-host-style-context");
+    await import("@/contexts/chatbox-client-style-context");
 
   return {
     ChatTabV2: (props: {
@@ -51,7 +51,7 @@ function renderWithPreferences(hostStyle?: "claude" | "chatgpt") {
 
   return render(
     <PreferencesStoreProvider themeMode="dark" themePreset="default">
-      <HostStyledChatTabV2
+      <ClientStyledChatTabV2
         connectedOrConnectingServerConfigs={{} as any}
         selectedServerNames={[]}
         showHostStyleSelector={true}
@@ -60,7 +60,7 @@ function renderWithPreferences(hostStyle?: "claude" | "chatgpt") {
   );
 }
 
-describe("HostStyledChatTabV2", () => {
+describe("ClientStyledChatTabV2", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();

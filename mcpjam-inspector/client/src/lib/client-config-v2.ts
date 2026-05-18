@@ -12,13 +12,13 @@
  */
 
 import type { McpUiHostCapabilities } from "@modelcontextprotocol/ext-apps/app-bridge";
-import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
+import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
 import {
   DEFAULT_REQUEST_TIMEOUT_MS,
   stableStringifyJson,
 } from "@/lib/client-config";
-import { getHostCapabilitiesForStyle } from "@/lib/host-styles";
-import type { ChatUiOverride } from "@/lib/host-styles";
+import { getHostCapabilitiesForStyle } from "@/lib/client-styles";
+import type { ChatUiOverride } from "@/lib/client-styles";
 import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
 
 export type HostStyleId = ChatboxHostStyle;

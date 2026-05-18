@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { HostConfigInputV2 } from "@/lib/host-config-v2";
+import type { HostConfigInputV2 } from "@/lib/client-config-v2";
 import type {
   HostAttentionIssue,
   HostFocusTabId,
@@ -21,13 +21,13 @@ export function collectHostAttentionIssues(
     issues.push({
       level: "error",
       // Host name lives in the sticky identity header above the tab
-      // bar (see HostIdentityRow's `hasNameIssue` indicator), not in any
+      // bar (see ClientIdentityRow's `hasNameIssue` indicator), not in any
       // tab. After the General tab was removed, attribute the issue to
       // the most-active tab (Behavior) so it still shows a badge, even
       // though the input itself is in the header.
       tab: "behavior",
       field: "hostDisplayName",
-      message: "Host name is required",
+      message: "Client name is required",
     });
   }
 
@@ -59,7 +59,7 @@ export function collectHostAttentionIssues(
         level: "error",
         tab: "apps",
         field: "hostContext",
-        message: "Host context must be a JSON object",
+        message: "Client context must be a JSON object",
       });
     }
   }
@@ -140,7 +140,7 @@ export function hasBlockingErrors(
   return issues.some((issue) => issue.level === "error");
 }
 
-export function useHostDraftValidation(
+export function useClientDraftValidation(
   draft: HostConfigInputV2,
   hostDisplayName?: string,
 ) {

@@ -7,7 +7,7 @@ import {
   type HostStyleFamily,
   type HostStyleId,
   type HostThemeMode,
-} from "@/lib/host-styles";
+} from "@/lib/client-styles";
 
 /**
  * Identifier of a chatbox host style. Today the registry contains "claude"
