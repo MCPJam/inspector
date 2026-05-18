@@ -125,15 +125,21 @@ export function ClientBuilderViewRedesigned({
   }, [host, hostId]);
 
   // Fire once per hostId for builder-view adoption. Gated on hostId truthiness
-  // so an empty/transitional mount doesn't capture a phantom view.
+  // so an empty/transitional mount doesn't capture a phantom view. Telemetry
+  // is best-effort: a posthog throw must not raise out of the effect and
+  // trip the nearest error boundary while the builder itself rendered fine.
   useEffect(() => {
     if (!hostId) return;
-    posthog.capture("client_builder_viewed", {
-      location: "client_builder",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
-      client_id: hostId,
-    });
+    try {
+      posthog.capture("client_builder_viewed", {
+        location: "client_builder",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+        client_id: hostId,
+      });
+    } catch {
+      // swallow — analytics must not break the builder view
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hostId]);
 
