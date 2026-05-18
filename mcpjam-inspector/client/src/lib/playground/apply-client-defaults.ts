@@ -7,7 +7,7 @@ import {
   seedFromHostTemplate,
   type HostTemplateId,
 } from "@/lib/client-templates";
-import type { ChatUiOverride } from "@/lib/client-styles";
+import type { ChatUiOverride, HostThemeMode } from "@/lib/client-styles";
 import { saveSelectedModelId } from "@/lib/selected-model-storage";
 import {
   getCanonicalModelId,
@@ -175,11 +175,18 @@ export function applyHostConfigToPlayground(
 export function applyHostDefaultsToPlayground(
   hostStyle: ChatboxHostStyle,
   setters: ApplyHostPlaygroundSetters,
+  opts?: { theme?: HostThemeMode },
 ): void {
   // `seedFromHostTemplate` is typed as `HostTemplateId` but the runtime
   // falls through to MCPJam on unknown ids. The cast keeps the call site
   // tolerant of arbitrary BYO host-style ids.
-  const cfg = seedFromHostTemplate(hostStyle as HostTemplateId);
+  //
+  // Thread the caller's theme so the brand-pill click in the chat header
+  // seeds the new host with MCPJam's current global theme instead of the
+  // template's hardcoded "dark" fallback. Without this, picking Copilot/
+  // ChatGPT/etc. from the pill row always flipped the chat surface to
+  // dark even when MCPJam itself was in light mode.
+  const cfg = seedFromHostTemplate(hostStyle as HostTemplateId, opts);
   // Override the template's `hostStyle` with the user's actual pick — for
   // BYO ids the template falls back to MCPJam, but the brand pill that
   // was clicked is the right identity to advertise.

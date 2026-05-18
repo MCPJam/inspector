@@ -22,6 +22,7 @@ import {
   seedFromHostTemplate,
   type HostTemplateId,
 } from "@/lib/client-templates";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { cn } from "@/lib/utils";
 
 interface CreateHostDialogProps {
@@ -41,6 +42,7 @@ export function CreateClientDialog({
   const { createHost } = useHostMutations();
   const { isAuthenticated } = useConvexAuth();
   const { servers } = useProjectServers({ isAuthenticated, projectId });
+  const themeMode = usePreferencesStore((s) => s.themeMode);
   const [name, setName] = useState("");
   const [selectedTemplateId, setSelectedTemplateId] = useState<HostTemplateId>(
     DEFAULT_HOST_TEMPLATE_ID,
@@ -81,8 +83,13 @@ export function CreateClientDialog({
     try {
       // Pre-attach every existing project server as required so the new
       // host's Servers tab opens with checkboxes filled in instead of
-      // every server reading "optional / uses defaults".
-      const seed = seedFromHostTemplate(selectedTemplateId);
+      // every server reading "optional / uses defaults". Thread MCPJam's
+      // current global theme into the seed so the new host opens
+      // matching the inspector chrome instead of always defaulting to
+      // dark — the user can still flip it later from the host editor.
+      const seed = seedFromHostTemplate(selectedTemplateId, {
+        theme: themeMode,
+      });
       // `isServersLoading` already guards the authenticated-loading case;
       // for unauthenticated callers the query is skipped so `servers` is
       // undefined and we seed with no attachments.

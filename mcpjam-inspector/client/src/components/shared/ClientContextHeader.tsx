@@ -460,12 +460,19 @@ export function ClientContextHeader({
                   size="icon"
                   onClick={() => {
                     // Helper writes the pill id first (via setHostStyle),
-                    // then fans out to the chip stores.
-                    applyHostDefaultsToPlayground(host.id, {
-                      setHostStyle,
-                      setHostCapabilitiesOverride,
-                      setChatUiOverride,
-                    });
+                    // then fans out to the chip stores. Pass MCPJam's
+                    // current global theme so the seeded host matches
+                    // the inspector chrome instead of always opening
+                    // dark (the template default).
+                    applyHostDefaultsToPlayground(
+                      host.id,
+                      {
+                        setHostStyle,
+                        setHostCapabilitiesOverride,
+                        setChatUiOverride,
+                      },
+                      { theme: themeMode },
+                    );
                   }}
                   className="h-6 w-6"
                 >
