@@ -50,7 +50,7 @@ export const CHATBOX_STARTERS: ChatboxStarterDefinition[] = [
     promptHint:
       "Great for sharing a quick demo — ask the assistant to sketch a diagram and watch the tools work.",
     templateTooltip:
-      "Link-shareable. Tool approval on. ChatGPT-style host. Pre-attaches the Excalidraw MCP server so the chatbox is usable on first save.",
+      "Link-shareable. ChatGPT-style host. Pre-attaches the Excalidraw MCP server so the chatbox is usable on first save.",
     serverSeeds: [{ name: "Excalidraw", url: EXCALIDRAW_MCP_URL }],
     createDraft: (defaultModelId) => ({
       name: "Excalidraw demo",
@@ -59,7 +59,7 @@ export const CHATBOX_STARTERS: ChatboxStarterDefinition[] = [
       systemPrompt: DEFAULT_SYSTEM_PROMPT,
       modelId: defaultModelId,
       temperature: TEMPLATE_TEMPERATURE,
-      requireToolApproval: true,
+      requireToolApproval: false,
       allowGuestAccess: false,
       mode: "anyone_with_link",
       selectedServerIds: [],
