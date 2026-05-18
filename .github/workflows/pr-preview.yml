@@ -128,42 +128,12 @@ jobs:
             *) echo "::error::Unexpected HTTP $HTTP_CODE checking ${BACKEND_REPO}/${PR_BRANCH}"; exit 1 ;;
           esac
 
-      # TEMPORARY debug: confirm the token in CI matches the workspace token
-      # we expect, and that a raw environmentCreate from the runner's IP
-      # works the same way it does locally.
-      - name: Probe Railway token + GraphQL from runner
-        run: |
-          set +e
-          echo "::group::token hash (compare to local)"
-          printf '%s' "$RAILWAY_API_TOKEN" | sha256sum
-          echo "len=${#RAILWAY_API_TOKEN}"
-          echo "::endgroup::"
-
-          echo "::group::projects query"
-          curl -sS -X POST https://backboard.railway.app/graphql/v2 \
-            -H "Authorization: Bearer $RAILWAY_API_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d '{"query":"{ projects { edges { node { id name } } } }"}'
-          echo
-          echo "::endgroup::"
-
-          echo "::group::environmentCreate probe"
-          PROBE_NAME="_runner_probe_${{ github.run_id }}"
-          curl -sS -X POST https://backboard.railway.app/graphql/v2 \
-            -H "Authorization: Bearer $RAILWAY_API_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "{\"query\":\"mutation C(\$input: EnvironmentCreateInput!){ environmentCreate(input: \$input) { id name } }\",\"variables\":{\"input\":{\"projectId\":\"$RAILWAY_PROJECT_ID\",\"name\":\"$PROBE_NAME\",\"sourceEnvironmentId\":\"$RAILWAY_STAGING_ENVIRONMENT\"}}}"
-          echo
-          echo "::endgroup::"
-
-      # `railway link` / `railway whoami` require a *user* identity, which
-      # workspace tokens don't have — they return "Unauthorized" even though
-      # the token has full project access (this is what broke the pipeline
-      # when the repo secret was rotated to a workspace token). Skip link
-      # entirely; RAILWAY_PROJECT_ID in the job env provides project context
-      # for the implicit-project commands below, and the rest already pass
-      # --project/--environment/--service explicitly. See deploy-staging.yml
-      # for the same pattern.
+      # Railway CLI's `link`, `whoami`, `variable set`, `environment new`,
+      # and `environment delete` all do an internal user-identity preflight
+      # that fails with "Unauthorized" on workspace tokens. We bypass each
+      # with direct GraphQL calls (railway-env.sh, railway-set-vars.sh).
+      # `railway up` and `railway run` work fine with workspace tokens, so
+      # they stay on the CLI. See deploy-staging.yml for the same pattern.
       - name: Create preview environment
         run: |
           .github/scripts/railway-retry.sh .github/scripts/railway-env.sh new "${{ steps.meta.outputs.environment }}" \
