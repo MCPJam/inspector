@@ -887,6 +887,30 @@ async function handlePendingApprovals(
   );
 
   if (needsExecution) {
+    // Emit tool-input-available for approved tool calls so the AI SDK client
+    // can attach the upcoming tool-output-available chunks. Without this, the
+    // stream consumer throws "No tool invocation found for tool call ID …"
+    // because the matching tool-call was on a prior assistant message and
+    // this resumed stream hasn't introduced it yet.
+    for (const toolCallId of approvedToolCallIds) {
+      if (existingResultIds.has(toolCallId)) continue;
+      const assistantIdx = toolCallIdToAssistantIdx.get(toolCallId);
+      if (assistantIdx === undefined) continue;
+      const assistantMsg = messageHistory[assistantIdx] as AssistantModelMessage;
+      if (!Array.isArray(assistantMsg.content)) continue;
+      for (const part of assistantMsg.content) {
+        if (part.type === "tool-call" && part.toolCallId === toolCallId) {
+          writer.write({
+            type: "tool-input-available",
+            toolCallId: part.toolCallId,
+            toolName: part.toolName,
+            input: part.input ?? {},
+          });
+          break;
+        }
+      }
+    }
+
     const newMessages = await executeToolCallsFromMessages(messageHistory, {
       tools: tools as Record<string, any>,
     });
