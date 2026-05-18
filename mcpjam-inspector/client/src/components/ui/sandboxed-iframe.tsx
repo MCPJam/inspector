@@ -321,13 +321,22 @@ export const SandboxedIframe = forwardRef<
       },
       sandboxProxyOrigin,
     );
-    // `colorScheme` is intentionally OMITTED from this dep list: the proxy
-    // handles `sandbox-resource-ready` by rebuilding the CSP and assigning
-    // `inner.srcdoc`, which reloads the widget and drops any in-iframe state.
-    // Theme changes flow through the dedicated
-    // `sandbox-color-scheme-changed` effect below, which updates the inner
-    // document's color-scheme without a reload. Re-including colorScheme
-    // here would silently full-reload the widget on every theme flip.
+    // `colorScheme` and `allowFeatures` are intentionally OMITTED from
+    // this dep list. The proxy handles `sandbox-resource-ready` by
+    // rebuilding the CSP and assigning `inner.srcdoc`, which reloads the
+    // widget and drops any in-iframe state — so we MUST NOT re-fire this
+    // effect for props that don't actually affect the inner iframe.
+    //
+    //   - `colorScheme`: flows through the dedicated
+    //     `sandbox-color-scheme-changed` effect below, which updates the
+    //     inner document's color-scheme without a reload.
+    //   - `allowFeatures`: applies only to the OUTER iframe's `allow=`
+    //     attribute (computed in `outerAllowAttribute` above and applied
+    //     declaratively via JSX, so React reconciliation handles the
+    //     update without a reload). It's not forwarded in the params
+    //     payload at all (see the comment above the field). Re-including
+    //     it here would silently full-reload the widget every time a
+    //     user toggles an entry in the AppExtensionTab editor.
   }, [
     proxyReady,
     html,
@@ -335,7 +344,6 @@ export const SandboxedIframe = forwardRef<
     csp,
     permissions,
     sandboxAttrs,
-    allowFeatures,
     cspDirectives,
     permissive,
     sandboxProxyOrigin,
