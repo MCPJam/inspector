@@ -150,4 +150,51 @@ describe("SandboxedIframe — outer allow attribute (allowFeatures injection gua
     );
     expect(getOuterIframeAllow(container)).toContain("fullscreen *");
   });
+
+  // Mirror of the sandboxAttrs authoritative-profile contract: when a
+  // profile uses allowFeatures to model a real host's `allow=` shape, the
+  // renderer's legacy `local-network-access *` / `midi *` defaults are
+  // dropped so MCPJam matches the real host's grant set. Spec-permission
+  // entries from `permissions` are orthogonal and still flow through.
+
+  it("preserves legacy local-network-access + midi defaults when allowFeatures is undefined", () => {
+    const { container } = render(
+      <SandboxedIframe html={null} onMessage={() => {}} />,
+    );
+    const allow = getOuterIframeAllow(container);
+    expect(allow).toContain("local-network-access *");
+    expect(allow).toContain("midi *");
+  });
+
+  it("drops legacy local-network-access + midi defaults when allowFeatures is provided (even {})", () => {
+    // The profile is authoritative: a host that doesn't list
+    // local-network-access / midi shouldn't have them silently granted by
+    // the inspector.
+    const { container } = render(
+      <SandboxedIframe
+        html={null}
+        allowFeatures={{}}
+        onMessage={() => {}}
+      />,
+    );
+    const allow = getOuterIframeAllow(container);
+    expect(allow).not.toContain("local-network-access");
+    expect(allow).not.toContain("midi");
+  });
+
+  it("still emits spec-permission grants from `permissions` even when allowFeatures is authoritative", () => {
+    // SEP-1865 spec permissions and allowFeatures are orthogonal —
+    // `allowFeatures: {}` shouldn't suppress a `permissions.camera` grant.
+    const { container } = render(
+      <SandboxedIframe
+        html={null}
+        permissions={{ camera: {} }}
+        allowFeatures={{}}
+        onMessage={() => {}}
+      />,
+    );
+    const allow = getOuterIframeAllow(container);
+    expect(allow).toContain("camera *");
+    expect(allow).not.toContain("local-network-access");
+  });
 });

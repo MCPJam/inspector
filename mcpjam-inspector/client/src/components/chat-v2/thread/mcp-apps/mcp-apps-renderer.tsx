@@ -993,6 +993,37 @@ export function MCPAppsRenderer({
     activeMcpProfile?.apps?.sandbox?.allowFeatures;
   const cspDirectivesPolicy =
     activeMcpProfile?.apps?.sandbox?.csp?.cspDirectives;
+  // Hosted-mode clamp for cspDirectives. The resolver's
+  // `hostedClampExtraDeny` strips MCPJam app/API origins from the
+  // widget-declared CSP (`restrictTo` + resource declaration), but
+  // cspDirectives is inspector-only — it bypasses the resolver and the
+  // proxy merges its tokens AFTER the resolver output, so without a
+  // mirrored clamp here a hosted profile with e.g.
+  // `cspDirectives: { "connect-src": ["https://app.mcpjam.com"] }`
+  // re-adds the same-origin access the clamp is meant to make
+  // non-bypassable. Strip any host-bearing token that resolves to the
+  // mcpjam.com namespace; CSP keyword tokens (`'unsafe-eval'`, hashes,
+  // nonces — quoted with `'…'`) and scheme-only tokens (`data:`, `blob:`)
+  // pass through unchanged.
+  const cspDirectivesEffective = useMemo(() => {
+    if (!cspDirectivesPolicy) return cspDirectivesPolicy;
+    if (!HOSTED_MODE) return cspDirectivesPolicy;
+    const isMcpjamOrigin = (token: string) => {
+      if (token.startsWith("'")) return false; // CSP keyword
+      if (/^[a-z]+:$/.test(token)) return false; // scheme-only (data:, blob:)
+      // Match `mcpjam.com` as a host component: with optional subdomain,
+      // optional scheme prefix, optional port/path. Covers the same
+      // surface as MCPJAM_HOSTED_CLAMP_ORIGINS (`https://*.mcpjam.com`
+      // and `https://mcpjam.com`).
+      return /(?:^|[/.@])mcpjam\.com(?:[:/]|$)/i.test(token);
+    };
+    const out: Record<string, string[]> = {};
+    for (const [k, tokens] of Object.entries(cspDirectivesPolicy)) {
+      const clamped = tokens.filter((t) => !isMcpjamOrigin(t));
+      if (clamped.length > 0) out[k] = clamped;
+    }
+    return Object.keys(out).length > 0 ? out : undefined;
+  }, [cspDirectivesPolicy]);
   const effectiveSandbox = useMemo<{
     csp: McpUiResourceCsp | undefined;
     permissions: McpUiResourcePermissions | undefined;
@@ -1074,7 +1105,7 @@ export function MCPAppsRenderer({
         hostPolicyApplied: !!resolvedPermissions,
         sandboxAttrs: sandboxAttrsPolicy,
         allowFeatures: allowFeaturesPolicy,
-        cspDirectives: cspDirectivesPolicy,
+        cspDirectives: cspDirectivesEffective,
       };
     }
 
@@ -1208,7 +1239,7 @@ export function MCPAppsRenderer({
       hostPolicyApplied,
       sandboxAttrs: sandboxAttrsPolicy,
       allowFeatures: allowFeaturesPolicy,
-      cspDirectives: cspDirectivesPolicy,
+      cspDirectives: cspDirectivesEffective,
     };
   }, [
     cspMode,
@@ -1219,7 +1250,7 @@ export function MCPAppsRenderer({
     widgetPermissive,
     sandboxAttrsPolicy,
     allowFeaturesPolicy,
-    cspDirectivesPolicy,
+    cspDirectivesEffective,
   ]);
 
   useEffect(() => {

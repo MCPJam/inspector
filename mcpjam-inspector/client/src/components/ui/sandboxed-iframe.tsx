@@ -209,12 +209,27 @@ export const SandboxedIframe = forwardRef<
   }, [handleMessage]);
 
   // Build allow attribute for outer iframe based on requested permissions.
-  // SEP-1865 spec-permission features come from `permissions`; extra
-  // Permissions Policy entries from the inspector-only `allowFeatures` knob
-  // are appended after them. Per Permissions Policy spec, `;` separates
-  // features.
+  //
+  // Same authoritative-profile semantic as `sandboxAttrs` above: when
+  // `allowFeatures` is provided (even as `{}`), the profile is the
+  // source of truth for non-spec Permissions Policy features, and the
+  // renderer's legacy defaults (`local-network-access *`, `midi *`) are
+  // dropped. A profile that doesn't list those features models a real
+  // host that doesn't emit them — and the iframe must match, or
+  // experiments using Web MIDI / Local Network Access would pass in
+  // MCPJam while the real host blocks them.
+  //
+  // The 4 SEP-1865 spec permissions (camera/microphone/geolocation/
+  // clipboard-write) ALWAYS flow through from `permissions` regardless
+  // of `allowFeatures` — they're orthogonal user-facing knobs. Only the
+  // inspector-only legacy defaults are conditional.
+  //
+  // Per Permissions Policy spec, `;` separates features.
   const outerAllowAttribute = useMemo(() => {
-    const allowList = ["local-network-access *", "midi *"];
+    const allowFeaturesIsAuthoritative = allowFeatures !== undefined;
+    const allowList = allowFeaturesIsAuthoritative
+      ? []
+      : ["local-network-access *", "midi *"];
     if (permissions?.camera) allowList.push("camera *");
     if (permissions?.microphone) allowList.push("microphone *");
     if (permissions?.geolocation) allowList.push("geolocation *");
