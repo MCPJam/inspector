@@ -28,7 +28,10 @@ import {
   serverConnectionOverridesEqual,
   type HostConfigInputV2,
 } from "@/lib/client-config-v2";
-import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
+import {
+  getChatboxShellStyle,
+  getHostChromeAccentVariables,
+} from "@/lib/chatbox-client-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { RedesignedClientCanvas } from "./canvas/RedesignedClientCanvas";
 import { buildRedesignedHostCanvas } from "./canvas/canvasBuilder";
@@ -236,9 +239,8 @@ export function ClientBuilderViewRedesigned({
   );
 
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  // Full brand shell — sets `--background`, `--foreground`, `--card`,
-  // `--border`, etc. for the canvas subtree so sub-cards repaint to the
-  // host's brand instead of the app theme.
+  // Brand shell on the canvas subtree only (not the top tab chrome) so the
+  // tab row matches the global Header background; see getHostChromeAccentVariables.
   const canvasShellStyle = useMemo(
     () =>
       draftConfig?.hostStyle
@@ -248,6 +250,15 @@ export function ClientBuilderViewRedesigned({
             draftConfig.chatUiOverride,
           )
         : undefined,
+    [draftConfig?.hostStyle, draftConfig?.chatUiOverride, themeMode],
+  );
+  const chromeAccentStyle = useMemo(
+    () =>
+      getHostChromeAccentVariables(
+        draftConfig?.hostStyle ?? null,
+        themeMode,
+        draftConfig?.chatUiOverride,
+      ),
     [draftConfig?.hostStyle, draftConfig?.chatUiOverride, themeMode],
   );
 
@@ -396,9 +407,12 @@ export function ClientBuilderViewRedesigned({
   const canSave = isDirty && !isSaving && !hasBlockingErrors(attention);
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      {/* Chrome */}
-      <div className="relative shrink-0 border-b border-border/40 px-8 py-2.5">
+    <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
+      {/* Chrome — app background matches global Header; primary accents stay host-branded */}
+      <div
+        className="relative shrink-0 border-b border-border/40 px-8 py-2.5"
+        style={chromeAccentStyle}
+      >
         <div className="flex min-w-0 items-center justify-end gap-2 sm:gap-3">
           <Button
             size="sm"
@@ -442,6 +456,10 @@ export function ClientBuilderViewRedesigned({
         </div>
       </div>
 
+      <div
+        className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background text-foreground"
+        style={canvasShellStyle}
+      >
       {/* Canvas + side focus panel (mirrors the ChatboxBuilderView layout:
           left = canvas, right = setup/focus rail). Resizable so the user
           can grow the editor without losing the canvas context. */}
@@ -510,6 +528,7 @@ export function ClientBuilderViewRedesigned({
           onSubmit={handleAddServer}
         />
       )}
+      </div>
     </div>
   );
 }

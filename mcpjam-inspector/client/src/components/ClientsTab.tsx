@@ -9,7 +9,10 @@ import { ViewModeSelector } from "./shared/view-mode-selector";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useHost, useHostList } from "@/hooks/useClients";
 import { routePaths } from "@/lib/app-navigation";
-import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
+import {
+  getChatboxShellStyle,
+  getHostChromeAccentVariables,
+} from "@/lib/chatbox-client-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 interface HostsTabProps {
@@ -44,23 +47,35 @@ export function ClientsTab({
   const [addServerSlotEl, setAddServerSlotEl] = useState<HTMLDivElement | null>(
     null,
   );
-  // Match the Host canvas's brand-tinted backdrop on the Servers view: read
-  // the previewed host's style and cascade brand `--background`, `--primary`,
-  // `--card`, etc. into the subtree so the Servers chrome inherits the host's
-  // accent (orange for Claude, blue for ChatGPT, …) without per-component
-  // theming code. Mirrors `ClientBuilderViewRedesigned.canvasShellStyle`.
+  // Brand shell variables apply to the server list body so cards match the
+  // emulated host canvas; the tab chrome uses the app background (same as
+  // the global Header) plus `getHostChromeAccentVariables` for primary accents.
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const { host: previewedHost } = useHost({
     isAuthenticated,
     hostId: previewedHostId,
   });
   const previewedHostStyle = previewedHost?.config?.hostStyle ?? null;
+  const previewedChatUiOverride = previewedHost?.config?.chatUiOverride;
   const browseShellStyle = useMemo(
     () =>
       previewedHostStyle
-        ? getChatboxShellStyle(previewedHostStyle, themeMode)
+        ? getChatboxShellStyle(
+            previewedHostStyle,
+            themeMode,
+            previewedChatUiOverride,
+          )
         : undefined,
-    [previewedHostStyle, themeMode],
+    [previewedHostStyle, previewedChatUiOverride, themeMode],
+  );
+  const chromeAccentStyle = useMemo(
+    () =>
+      getHostChromeAccentVariables(
+        previewedHostStyle,
+        themeMode,
+        previewedChatUiOverride,
+      ),
+    [previewedHostStyle, previewedChatUiOverride, themeMode],
   );
 
   // Reset host selection only when the project actually changes mid-session,
@@ -139,13 +154,12 @@ export function ClientsTab({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 8 }}
             transition={SNAPPY_RAIL}
-            data-host-style={previewedHostStyle ?? undefined}
-            style={browseShellStyle}
             className="absolute inset-0 flex min-h-0 flex-col bg-background text-foreground"
           >
             <ClientsConnectAddServerSlotContext.Provider value={addServerSlotEl}>
               <div
                 className="relative shrink-0 border-b border-border/40 px-8 py-2.5"
+                style={chromeAccentStyle}
                 data-testid="hosts-tab-header-chrome"
               >
                 <div className="flex min-w-0 items-center justify-end gap-3">
@@ -183,7 +197,13 @@ export function ClientsTab({
                   </div>
                 </div>
               </div>
-              <div className="min-h-0 flex-1">{serversTabElement}</div>
+              <div
+                className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background text-foreground"
+                style={browseShellStyle}
+                data-host-style={previewedHostStyle ?? undefined}
+              >
+                <div className="min-h-0 flex-1">{serversTabElement}</div>
+              </div>
             </ClientsConnectAddServerSlotContext.Provider>
           </motion.div>
         )}

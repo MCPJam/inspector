@@ -168,3 +168,25 @@ export function getChatboxShellStyle(
 
   return shellStyle;
 }
+
+/**
+ * Applies only the host's primary pair so tab underlines and primary buttons
+ * match the emulated client, without swapping `--background` away from the
+ * app shell — keeps Connect headers visually aligned with {@link Header}.
+ */
+export function getHostChromeAccentVariables(
+  hostStyle: ChatboxHostStyle | null | undefined,
+  themeMode: HostThemeMode,
+  chatUiOverride?: ChatUiOverride,
+): ChatboxShellStyle | undefined {
+  if (!hostStyle) return undefined;
+  const shell = getChatboxShellStyle(
+    hostStyle,
+    themeMode,
+    chatUiOverride,
+  ) as ChatboxShellStyle;
+  return {
+    "--primary": shell["--primary"],
+    "--primary-foreground": shell["--primary-foreground"],
+  };
+}

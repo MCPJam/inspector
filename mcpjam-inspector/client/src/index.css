@@ -455,6 +455,241 @@
   }
 }
 
+/* M365 Copilot thinking pulse — three gradient circles cycle through
+   "enter from left, grow to center, exit right" over 3.6s. Verbatim
+   timing from Copilot's Houdini paint worklet (`animation-name: r1a0u976`,
+   `cubic-bezier(0.8, 0, 0.2, 1)` aka Fluent's --curveEasyEaseMax).
+
+   The original encodes all three circles in ONE keyframe rule by
+   driving 9 CSS custom properties (3 per circle: opacity, scale,
+   x-position) read by `paint(pulsingDot)`. We split that into three
+   independent @keyframes — one per circle — because we're rendering
+   with literal DOM elements instead of a paint worklet.
+
+   Each circle is positioned at the box center (cx=7, cy=7 within the
+   14×14 stage) and slides ±7px (left edge ↔ center ↔ right edge).
+   `transform-origin` defaults to center so `scale(0)` collapses each
+   circle into its own midpoint. */
+
+.copilot-pulse-indicator {
+  position: relative;
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+}
+
+.copilot-pulse-indicator__circle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border-radius: 9999px;
+  animation: 3600ms cubic-bezier(0.8, 0, 0.2, 1) infinite;
+  will-change: transform, opacity;
+}
+
+.copilot-pulse-indicator__circle--1 {
+  background-image: linear-gradient(135deg, #d161aa 0%, #e96d80 100%);
+  animation-name: copilot-pulse-circle-1;
+}
+
+.copilot-pulse-indicator__circle--2 {
+  background-image: linear-gradient(135deg, #42a3a6 0%, #73af69 100%);
+  animation-name: copilot-pulse-circle-2;
+}
+
+.copilot-pulse-indicator__circle--3 {
+  background-image: linear-gradient(135deg, #65a5dd 0%, #8173ee 100%);
+  animation-name: copilot-pulse-circle-3;
+}
+
+/* Per-property unwrap of @keyframes r1a0u976. Each circle's stops
+   are extracted verbatim from the live computed keyframe rule:
+     x-position 0/50/100  →  translateX(-7px / 0 / 7px)
+     scale 0%/100%        →  scale(0) / scale(1)
+     opacity 0/1          →  unchanged */
+@keyframes copilot-pulse-circle-1 {
+  0% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+  16.67% {
+    opacity: 0;
+    transform: translateX(7px) scale(0);
+  }
+  33.33% {
+    opacity: 0;
+    transform: translateX(-7px) scale(0);
+  }
+  50% {
+    opacity: 0;
+    transform: translateX(-7px) scale(0);
+  }
+  66.67% {
+    opacity: 1;
+    transform: translateX(-7px) scale(0);
+  }
+  83.33% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes copilot-pulse-circle-2 {
+  0% {
+    opacity: 1;
+    transform: translateX(-7px) scale(0);
+  }
+  16.67% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+  33.33% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+  50% {
+    opacity: 0;
+    transform: translateX(7px) scale(0);
+  }
+  66.67% {
+    opacity: 0;
+    transform: translateX(-7px) scale(0);
+  }
+  83.33% {
+    opacity: 0;
+    transform: translateX(-7px) scale(0);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(-7px) scale(0);
+  }
+}
+
+@keyframes copilot-pulse-circle-3 {
+  0% {
+    opacity: 0;
+    transform: translateX(-7px) scale(0);
+  }
+  16.67% {
+    opacity: 0;
+    transform: translateX(-7px) scale(0);
+  }
+  33.33% {
+    opacity: 1;
+    transform: translateX(-7px) scale(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+  66.67% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+  83.33% {
+    opacity: 0;
+    transform: translateX(7px) scale(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-7px) scale(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .copilot-pulse-indicator__circle {
+    /* Freeze on the "at-center" state for circle 1; circles 2 and 3
+       hide. Gives reduced-motion users a single static colored dot
+       instead of nothing or a jittering composite. */
+    animation: none;
+    opacity: 0;
+    transform: translateX(0) scale(0);
+  }
+  .copilot-pulse-indicator__circle--1 {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+/* Cursor "shine" thinking indicator — verbatim port of Cursor's own
+   `.make-shine` rule (captured from Cursor 1.x DevTools). A 200%-wide
+   linear gradient masks the text, then animates `background-position`
+   from 0% to -200% over 2 seconds linear/infinite, which slides the
+   single bright stripe across the glyph silhouette.
+
+   We use `currentColor` + `color-mix` instead of Cursor's
+   `--text-primary`/`--text-tertiary` tokens so the indicator inherits
+   the inspector's surrounding text color (chat shell renders it inside
+   `text-muted-foreground/80`). Visual result is the same — a brighter
+   stripe gliding through a dimmer base. */
+/* `.codex-shine-indicator` shares this entire rule body via the
+   multi-selector — Codex (OpenAI CLI) reuses Cursor's shimmer to
+   render its "Thinking" indicator in the playground. The keyframe
+   (`cursor-shine`) and the `--cursor-shine-base` custom property keep
+   their Cursor-flavored names because they're stylesheet-internal;
+   renaming them isn't worth churning Cursor's tests. */
+.cursor-shine-indicator,
+.codex-shine-indicator {
+  /* `--cursor-shine-base` is what Cursor calls `--base` — a single
+     foreground tone the gradient stops derive from. The 48% and 94%
+     mixes are verbatim from Cursor's resolved `--text-tertiary` /
+     `--text-primary` definitions:
+       --text-tertiary: color-mix(in oklab, var(--base) 48%, transparent)
+       --text-primary:  color-mix(in oklab, var(--base) 94%, transparent)
+     Default is the dark-mode base (#E4E4E4) captured from a live
+     DevTools dump; the light-mode override sits in
+     `.cursor-shine-indicator[data-theme="light"]` below. */
+  --cursor-shine-base: #e4e4e4;
+  background-image: linear-gradient(
+    90deg,
+    color-mix(in oklab, var(--cursor-shine-base) 48%, transparent) 0%,
+    color-mix(in oklab, var(--cursor-shine-base) 48%, transparent) 40%,
+    color-mix(in oklab, var(--cursor-shine-base) 94%, transparent) 50%,
+    color-mix(in oklab, var(--cursor-shine-base) 48%, transparent) 60%,
+    color-mix(in oklab, var(--cursor-shine-base) 48%, transparent) 100%
+  );
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: cursor-shine 2s linear infinite;
+  will-change: background-position;
+}
+
+/* Light-mode base. Cursor swaps `--base` between #E4E4E4 (dark theme)
+   and a near-black for light. #1a1a1a here is the inspector's standard
+   light-mode foreground and gives the same 48%/94% contrast on white
+   that #E4E4E4 gives on Cursor's #181818 editor background. */
+.cursor-shine-indicator[data-theme="light"],
+.codex-shine-indicator[data-theme="light"] {
+  --cursor-shine-base: #1a1a1a;
+}
+
+@keyframes cursor-shine {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cursor-shine-indicator,
+  .codex-shine-indicator {
+    animation: none;
+    background: none;
+    -webkit-text-fill-color: currentColor;
+  }
+}
+
 @keyframes progress-indeterminate {
   0% {
     transform: translateX(-100%);

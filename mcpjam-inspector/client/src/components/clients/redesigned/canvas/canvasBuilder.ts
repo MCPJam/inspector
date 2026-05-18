@@ -34,22 +34,23 @@ import { fieldsWithIssues } from "../focus/useClientDraftValidation";
    ============================================================ */
 const MATRIX_W = 580;
 // Matrix renders auto-height; these constants only feed the servers hub
-// y-position downstream. Two heights so the servers hub doesn't float in
-// a dead zone when the Apps Extension section is hidden (Codex et al).
-//   - BASE: identity + stats + protocol + client-caps sub-matrix + footer
-//   - APPS_SECTION: banner + head + 6 cap rows
-const MATRIX_H_BASE = 400;
-const MATRIX_H_APPS_SECTION = 240;
-// Sandbox section: banner + head + 4 fixed rows (mode/restrictTo/deny/permissions)
-const MATRIX_H_SANDBOX_SECTION = 160;
-const SERVERS_HUB_GAP = 64;
+// y-position downstream. Three heights so the servers hub doesn't float in
+// a dead zone when the Apps Extension section is hidden (Codex et al) and
+// so the dimensions still match the paper-aesthetic card's nested frames.
+//   - BASE: outer host padding + identity + stats + client-caps + footer
+//   - APPS_SECTION: inner View frame (lavender) with chip rows
+//   - SANDBOX_SECTION: Sandbox frame (amber) shell + sb-grid rows
+const MATRIX_H_BASE = 380;
+const MATRIX_H_APPS_SECTION = 230;
+const MATRIX_H_SANDBOX_SECTION = 180;
+const SERVERS_HUB_GAP = 40;
 const SERVERS_HUB_W_BASE = 220;
 const SERVERS_HUB_W_PER_SERVER = 38;
 const SERVERS_HUB_H = 48;
 const SERVER_CARD_W = 220;
 const SERVER_CARD_H = 88;
 const SERVER_CARD_GAP_X = 16;
-const SERVERS_ROW_GAP = 56;
+const SERVERS_ROW_GAP = 40;
 
 /* ============================================================
    Stable cap orders. Keeping order stable lets row diffs morph
@@ -549,15 +550,9 @@ export function buildRedesignedHostCanvas(
     id: "host-matrix-to-hub",
     source: HOST_MATRIX_NODE_ID,
     target: SERVERS_HUB_NODE_ID,
+    sourceHandle: "bottom",
+    targetHandle: "top",
     type: "hostTrunk",
-    data: {
-      // matrix is positioned at (0, 0); its bottom-center sits at
-      // (MATRIX_W / 2, matrixH). Hub top-center is the target.
-      fixedSourceX: MATRIX_W / 2,
-      fixedSourceY: matrixH,
-      fixedTargetX: serversHubX + serversHubW / 2,
-      fixedTargetY: serversHubY,
-    },
     style: { stroke: "oklch(0.68 0.11 40 / 0.55)", strokeWidth: 1.5 },
   });
 
