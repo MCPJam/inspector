@@ -1,6 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { PlaygroundCenterHeaderBar } from "@/components/playground/PlaygroundCenterHeaderBar";
 
 vi.mock("@/components/shared/ClientContextHeader", () => ({
@@ -15,61 +14,32 @@ describe("PlaygroundCenterHeaderBar", () => {
   const defaultProps = {
     mode: "chat" as const,
     onModeChange: vi.fn(),
-    headerView: "host" as const,
-    onHeaderViewChange: vi.fn(),
     activeProjectId: null,
     protocol: null,
     isMultiModelLayoutMode: false,
   };
 
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it("shows an in-flow Back control in host view so it is not absolutely positioned", () => {
-    const { container } = render(
-      <PlaygroundCenterHeaderBar
-        {...defaultProps}
-        showTraceTabs
-        headerView="host"
-      />,
-    );
-
-    const header = container.querySelector('[data-testid="playground-main-header"]');
-    expect(header).toBeTruthy();
-    expect(header).not.toHaveClass("relative");
-
-    const back = screen.getByTestId("playground-header-host-back");
-    expect(back).toBeVisible();
-    expect(back.closest(".absolute")).toBeNull();
-  });
-
-  it("returns to tabs when Back is pressed", async () => {
-    const user = userEvent.setup();
-    const onHeaderViewChange = vi.fn();
-
+  it("stacks host chrome and trace tabs when trace tabs are shown", () => {
     render(
-      <PlaygroundCenterHeaderBar
-        {...defaultProps}
-        showTraceTabs
-        headerView="host"
-        onHeaderViewChange={onHeaderViewChange}
-      />,
+      <PlaygroundCenterHeaderBar {...defaultProps} showTraceTabs />,
     );
 
-    await user.click(screen.getByTestId("playground-header-host-back"));
-    expect(onHeaderViewChange).toHaveBeenCalledWith("tabs");
+    expect(screen.getByTestId("playground-main-header")).toBeInTheDocument();
+    expect(screen.getByTestId("mock-host-header")).toBeInTheDocument();
+    expect(screen.getByTestId("playground-trace-view-tabs")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Trace" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Chat" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Raw" })).toBeInTheDocument();
   });
 
-  it("omits Back when trace tabs are hidden (multi-model)", () => {
+  it("shows only host chrome when trace tabs are hidden (e.g. multi-model with messages)", () => {
     render(
-      <PlaygroundCenterHeaderBar
-        {...defaultProps}
-        showTraceTabs={false}
-        headerView="host"
-      />,
+      <PlaygroundCenterHeaderBar {...defaultProps} showTraceTabs={false} />,
     );
 
-    expect(screen.queryByTestId("playground-header-host-back")).toBeNull();
+    expect(screen.getByTestId("mock-host-header")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("playground-trace-view-tabs"),
+    ).not.toBeInTheDocument();
   });
 });

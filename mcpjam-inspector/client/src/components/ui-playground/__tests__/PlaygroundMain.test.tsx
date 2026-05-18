@@ -880,18 +880,16 @@ describe("PlaygroundMain", () => {
         <PlaygroundMain {...defaultProps} enableTraceViews={true} />,
       );
 
-      // #2121: trace tabs now live inline in PlaygroundCenterHeaderBar.
-      // The host pill (only rendered when showTraceTabs is true) is a stable
-      // proxy for "trace mode tabs are visible".
+      // Trace / Chat / Raw row in PlaygroundCenterHeaderBar (second strip).
       expect(
-        screen.getByTestId("playground-header-host-tab"),
+        screen.getByTestId("playground-trace-view-tabs"),
       ).toBeInTheDocument();
 
       mockUseChatSession.traceViewsSupported = false;
       rerender(<PlaygroundMain {...defaultProps} enableTraceViews={true} />);
 
       expect(
-        screen.queryByTestId("playground-header-host-tab"),
+        screen.queryByTestId("playground-trace-view-tabs"),
       ).not.toBeInTheDocument();
     });
 
@@ -902,7 +900,7 @@ describe("PlaygroundMain", () => {
       render(<PlaygroundMain {...defaultProps} enableTraceViews={true} />);
 
       expect(
-        screen.getByTestId("playground-header-host-tab"),
+        screen.getByTestId("playground-trace-view-tabs"),
       ).toBeInTheDocument();
     });
 
@@ -912,13 +910,11 @@ describe("PlaygroundMain", () => {
 
       render(<PlaygroundMain {...defaultProps} enableTraceViews={true} />);
 
-      // #2121 collapsed the legacy ChatTraceViewModeHeaderBar +
-      // TraceViewModeTabs into the single PlaygroundCenterHeaderBar strip.
       expect(
         screen.getByTestId("playground-main-header"),
       ).toBeInTheDocument();
       expect(
-        screen.getByTestId("playground-header-host-tab"),
+        screen.getByTestId("playground-trace-view-tabs"),
       ).toBeInTheDocument();
     });
 
@@ -1134,7 +1130,7 @@ describe("PlaygroundMain", () => {
       expect(grid).toHaveClass("xl:grid-cols-3");
       expect(grid).not.toHaveClass("2xl:grid-cols-3");
       expect(
-        screen.getByTestId("playground-header-host-tab"),
+        screen.getByTestId("playground-trace-view-tabs"),
       ).toBeInTheDocument();
       expect(screen.getAllByTestId("chat-input")).not.toHaveLength(0);
       expect(
