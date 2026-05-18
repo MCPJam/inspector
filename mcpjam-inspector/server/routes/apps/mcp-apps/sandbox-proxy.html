@@ -183,7 +183,12 @@
             if (typeof t !== "string") return false;
             const trimmed = t.trim();
             if (trimmed.length === 0) return false;
-            if (/[;,\n\r]/.test(trimmed)) return false;
+            // Keep this in lockstep with mergeDirective's filter above.
+            // Any character class it rejects must be rejected here too,
+            // or the predicate flips hasCspOverrides for an entry that
+            // ultimately contributes zero tokens — widening every
+            // unrelated directive's baseline for nothing.
+            if (/[;,\n\r"<>]/.test(trimmed)) return false;
             return true;
           };
           const hasCspOverrides =

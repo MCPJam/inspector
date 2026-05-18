@@ -183,6 +183,19 @@ describe("sandbox-proxy buildCSP merge rule", () => {
     expect(out).toContain("frame-src 'none'");
   });
 
+  it("treats cspDirectives with HTML-attribute-breakout tokens as no-override", () => {
+    // mergeDirective rejects `"`, `<`, `>` (they'd break out of the
+    // injectCSP meta-tag content attribute). hasCspOverrides must
+    // mirror that filter — otherwise an entry like `["https:\"><script>"]`
+    // flips the baseline to permissive for every other directive while
+    // contributing zero tokens to the named one.
+    const out = buildCSP(undefined, {
+      "frame-src": ['https:"><script>'],
+    });
+    expect(out).toContain("connect-src 'none'");
+    expect(out).toContain("frame-src 'none'");
+  });
+
   it("treats cspDirectives with only empty-array entries as no-override (keeps restrictive defaults)", () => {
     // Regression: `cspDirectives: { "frame-src": [] }` is semantically
     // a no-op (no source expressions for that directive). Without a
