@@ -21,7 +21,6 @@ import {
   Hand,
   Moon,
   MousePointer2,
-  Paintbrush,
   Settings2,
   Shield,
   Sun,
@@ -46,6 +45,7 @@ import {
 } from "@/lib/client-config";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { listHostStyles } from "@/lib/client-styles";
+import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
 import { applyHostDefaultsToPlayground } from "@/lib/playground/apply-client-defaults";
 import { cn } from "@/lib/utils";
 import { useHostContextStore } from "@/stores/client-context-store";
@@ -62,6 +62,7 @@ import {
 import {
   CspPickerBody,
   DevicePickerBody,
+  HostStylePickerBody,
   LocalePickerBody,
   TimezonePickerBody,
 } from "@/components/shared/client-context-picker-bodies";
@@ -101,6 +102,7 @@ export function ClientContextHeader({
   const [localePopoverOpen, setLocalePopoverOpen] = useState(false);
   const [cspPopoverOpen, setCspPopoverOpen] = useState(false);
   const [timezonePopoverOpen, setTimezonePopoverOpen] = useState(false);
+  const [hostStylePopoverOpen, setHostStylePopoverOpen] = useState(false);
   const [hostContextDialogOpen, setHostContextDialogOpen] = useState(false);
   const [hostCapsDialogOpen, setHostCapsDialogOpen] = useState(false);
 
@@ -176,6 +178,12 @@ export function ClientContextHeader({
 
     return PRESET_DEVICE_CONFIGS[deviceType];
   }, [customViewport, deviceType]);
+
+  const registeredHostStyles = useMemo(() => listHostStyles(), []);
+  const activeHostStyle = useMemo((): (typeof registeredHostStyles)[number] => {
+    const match = registeredHostStyles.find((h) => h.id === hostStyle);
+    return match ?? registeredHostStyles[0];
+  }, [hostStyle, registeredHostStyles]);
   const DeviceIcon =
     deviceType === "custom" || !("icon" in deviceConfig)
       ? null
@@ -424,7 +432,7 @@ export function ClientContextHeader({
             >
               <Cpu className="h-3.5 w-3.5" />
               <span className="whitespace-nowrap @max-[700px]/playground-header:sr-only">
-                Client Capabilities
+                Host Capabilities
               </span>
               {hostCapabilitiesOverride !== undefined ? (
                 <span className="whitespace-nowrap text-[10px] text-amber-600 @max-[700px]/playground-header:sr-only dark:text-amber-400">
@@ -434,61 +442,61 @@ export function ClientContextHeader({
             </Button>
           </TooltipTrigger>
           <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP} className="max-w-sm">
-            <p className="font-medium">Client Capabilities</p>
+            <p className="font-medium">Host Capabilities</p>
             <p className="text-xs text-muted-foreground">
               Override the `hostCapabilities` advertised in ui/initialize
             </p>
           </TooltipContent>
         </Tooltip>
 
-        <div className="flex shrink-0 items-center gap-0.5 rounded-md border bg-background p-0.5 shadow-xs">
+        <Popover
+          open={hostStylePopoverOpen}
+          onOpenChange={setHostStylePopoverOpen}
+        >
           <Tooltip>
             <TooltipTrigger asChild>
-              <div className="flex h-6 w-6 items-center justify-center @max-[820px]/playground-header:hidden">
-                <Paintbrush className="h-3.5 w-3.5 text-muted-foreground" />
-              </div>
-            </TooltipTrigger>
-            <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
-              <p className="font-medium">Client Styles</p>
-            </TooltipContent>
-          </Tooltip>
-          {listHostStyles().map((host) => (
-            <Tooltip key={host.id}>
-              <TooltipTrigger asChild>
+              <PopoverTrigger asChild>
                 <Button
-                  variant={hostStyle === host.id ? "secondary" : "ghost"}
+                  variant="secondary"
                   size="icon"
-                  onClick={() => {
-                    // Helper writes the pill id first (via setHostStyle),
-                    // then fans out to the chip stores. Pass MCPJam's
-                    // current global theme so the seeded host matches
-                    // the inspector chrome instead of always opening
-                    // dark (the template default).
-                    applyHostDefaultsToPlayground(
-                      host.id,
-                      {
-                        setHostStyle,
-                        setHostCapabilitiesOverride,
-                        setChatUiOverride,
-                      },
-                      { theme: themeMode },
-                    );
-                  }}
-                  className="h-6 w-6"
+                  aria-label="Client styles"
+                  data-testid="host-style-picker-trigger"
+                  className="h-7 w-7 shrink-0 border bg-background shadow-xs"
                 >
                   <img
-                    src={host.chatUi.logoSrc}
-                    alt={host.chatUi.label}
+                    src={activeHostStyle.chatUi.logoSrc}
+                    alt=""
+                    aria-hidden="true"
                     className="h-3.5 w-3.5 object-contain"
                   />
                 </Button>
-              </TooltipTrigger>
-              <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
-                <p className="font-medium">{host.chatUi.label}</p>
-              </TooltipContent>
-            </Tooltip>
-          ))}
-        </div>
+              </PopoverTrigger>
+            </TooltipTrigger>
+            <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
+              <p className="font-medium">Client styles</p>
+              <p className="text-xs font-light text-muted-foreground">
+                {activeHostStyle.chatUi.label}
+              </p>
+            </TooltipContent>
+          </Tooltip>
+          <PopoverContent className="w-56 p-2" align="start">
+            <HostStylePickerBody
+              hostStyle={hostStyle}
+              onPickHost={(id: ChatboxHostStyle) => {
+                applyHostDefaultsToPlayground(
+                  id,
+                  {
+                    setHostStyle,
+                    setHostCapabilitiesOverride,
+                    setChatUiOverride,
+                  },
+                  { theme: themeMode },
+                );
+                setHostStylePopoverOpen(false);
+              }}
+            />
+          </PopoverContent>
+        </Popover>
 
         {showThemeToggle ? (
           <Tooltip>

@@ -17,6 +17,7 @@ const {
     setThemeMode: vi.fn(),
     setHostStyle: vi.fn(),
     setHostCapabilitiesOverride: vi.fn(),
+    setChatUiOverride: vi.fn(),
   },
   mockUIPlaygroundStore: {
     deviceType: "desktop",
@@ -61,7 +62,6 @@ vi.mock("lucide-react", () => ({
   Settings2: () => <span data-testid="icon-settings" />,
   MousePointer2: () => <span data-testid="icon-mouse" />,
   Hand: () => <span data-testid="icon-hand" />,
-  Paintbrush: () => <span data-testid="icon-paintbrush" />,
 }));
 
 vi.mock("@mcpjam/design-system/button", () => ({
@@ -115,12 +115,19 @@ vi.mock("@/components/shared/client-context-constants", () => ({
   TIMEZONE_OPTIONS: [{ zone: "UTC", label: "UTC" }],
 }));
 
-vi.mock("@/components/shared/client-context-picker-bodies", () => ({
-  CspPickerBody: () => <div />,
-  DevicePickerBody: () => <div />,
-  LocalePickerBody: () => <div />,
-  TimezonePickerBody: () => <div />,
-}));
+vi.mock("@/components/shared/client-context-picker-bodies", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("@/components/shared/client-context-picker-bodies")
+    >();
+  return {
+    ...actual,
+    CspPickerBody: () => <div />,
+    DevicePickerBody: () => <div />,
+    LocalePickerBody: () => <div />,
+    TimezonePickerBody: () => <div />,
+  };
+});
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: (selector: any) =>
@@ -273,6 +280,7 @@ describe("ClientContextHeader", () => {
       setHostStyle: mockPreferencesState.setHostStyle,
       setHostCapabilitiesOverride:
         mockPreferencesState.setHostCapabilitiesOverride,
+      setChatUiOverride: mockPreferencesState.setChatUiOverride,
     });
   });
 
@@ -290,6 +298,16 @@ describe("ClientContextHeader", () => {
     fireEvent.click(screen.getByTestId("host-context-trigger"));
 
     expect(screen.getByTestId("host-context-dialog")).toBeInTheDocument();
+  });
+
+  it("labels the host capabilities override control as Host Capabilities", () => {
+    render(
+      <ClientContextHeader activeProjectId="project-1" protocol={null} />,
+    );
+
+    expect(screen.getByTestId("host-capabilities-trigger")).toHaveTextContent(
+      "Host Capabilities",
+    );
   });
 
   it("does not render the display-mode badge in the toolbar", () => {

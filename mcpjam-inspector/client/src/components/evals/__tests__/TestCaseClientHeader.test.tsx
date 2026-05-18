@@ -249,6 +249,7 @@ describe("TestCaseClientHeader", () => {
     renderHeader({ baseline, value });
 
     const trigger = screen.getByTestId("test-case-host-capabilities-trigger");
+    expect(within(trigger).getByText("Host Capabilities")).toBeInTheDocument();
     expect(within(trigger).getByText("Override")).toBeInTheDocument();
   });
 });

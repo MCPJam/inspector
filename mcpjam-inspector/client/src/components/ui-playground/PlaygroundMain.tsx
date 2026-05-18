@@ -333,7 +333,6 @@ export function PlaygroundMain({
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [traceViewMode, setTraceViewMode] =
     useState<PlaygroundTraceViewMode>("chat");
-  const [headerView, setHeaderView] = useState<"tabs" | "host">("tabs");
   const [isWidgetFullscreen, setIsWidgetFullscreen] = useState(false);
   const [isFullscreenChatOpen, setIsFullscreenChatOpen] = useState(false);
   const [isPreparingServerForSend, setIsPreparingServerForSend] =
@@ -2440,8 +2439,6 @@ export function PlaygroundMain({
             if (mode === "tools") return;
             setTraceViewMode(mode);
           }}
-          headerView={headerView}
-          onHeaderViewChange={setHeaderView}
           activeProjectId={activeProjectId}
           onSaveHostContext={onSaveHostContext}
           protocol={selectedProtocol}
