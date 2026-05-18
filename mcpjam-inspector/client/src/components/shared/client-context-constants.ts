@@ -85,7 +85,7 @@ export const CSP_MODE_OPTIONS: {
   {
     mode: "permissive",
     label: "Permissive",
-    description: "Allows all HTTPS resources",
+    description: "Allows all HTTP(S) resources",
   },
   {
     mode: "widget-declared",

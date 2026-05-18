@@ -157,7 +157,24 @@ export function ClientContextHeader({
     protocol === UIType.MCP_APPS ||
     protocol === UIType.OPENAI_SDK_AND_MCP_APPS;
   const activeCspMode = usesMcpAppsCsp ? mcpAppsCspMode : cspMode;
-  const setActiveCspMode = usesMcpAppsCsp ? setMcpAppsCspMode : setCspMode;
+  const setActiveCspMode = useCallback(
+    (next: typeof activeCspMode) => {
+      setCspMode(next);
+      setMcpAppsCspMode(next);
+    },
+    [setCspMode, setMcpAppsCspMode],
+  );
+
+  useEffect(() => {
+    if (cspMode !== activeCspMode) setCspMode(activeCspMode);
+    if (mcpAppsCspMode !== activeCspMode) setMcpAppsCspMode(activeCspMode);
+  }, [
+    activeCspMode,
+    cspMode,
+    mcpAppsCspMode,
+    setCspMode,
+    setMcpAppsCspMode,
+  ]);
 
   const violationCount = useWidgetDebugStore((state) =>
     Array.from(state.widgets.values()).reduce(

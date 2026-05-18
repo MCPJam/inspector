@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ClientContextHeader } from "../ClientContextHeader";
+import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 
 const {
   mockPreferencesState,
@@ -210,6 +211,8 @@ describe("ClientContextHeader", () => {
     vi.clearAllMocks();
     mockPreferencesState.themeMode = "light";
     mockPreferencesState.hostStyle = "claude";
+    mockUIPlaygroundStore.cspMode = "widget-declared";
+    mockUIPlaygroundStore.mcpAppsCspMode = "widget-declared";
     mockHostContextState.draftHostContext = {
       locale: "en-US",
       timeZone: "UTC",
@@ -222,6 +225,25 @@ describe("ClientContextHeader", () => {
       },
     };
     mockHostContextState.isDirty = false;
+  });
+
+  it("keeps the ChatGPT and MCP Apps CSP stores synchronized from the active chip", async () => {
+    mockUIPlaygroundStore.cspMode = "widget-declared";
+    mockUIPlaygroundStore.mcpAppsCspMode = "permissive";
+
+    render(
+      <ClientContextHeader
+        activeProjectId="project-1"
+        protocol={UIType.MCP_APPS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mockUIPlaygroundStore.setCspMode).toHaveBeenCalledWith(
+        "permissive",
+      );
+    });
+    expect(mockUIPlaygroundStore.setMcpAppsCspMode).not.toHaveBeenCalled();
   });
 
   it("writes theme changes through hostContext instead of global preferences", () => {

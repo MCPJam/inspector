@@ -395,13 +395,14 @@ function useWidgetFetch(
     // Check if widgetUrl is current (matches expected URL based on mode)
     // In cached mode: widgetUrl should equal cachedWidgetHtmlUrl
     // In live mode: widgetUrl is a widget-content endpoint URL
+    const expectedLocalWidgetUrl = `/api/apps/chatgpt-apps/widget-content/${resolvedToolCallId}?csp_mode=${encodeURIComponent(cspMode)}`;
     const isWidgetUrlCurrent =
       widgetUrl &&
       ((canUseCachedHtml && widgetUrl === cachedWidgetHtmlUrl) ||
         (!canUseCachedHtml &&
           (HOSTED_MODE
             ? widgetUrl.startsWith("blob:")
-            : widgetUrl.includes("/api/apps/chatgpt-apps/widget-content/"))));
+            : widgetUrl === expectedLocalWidgetUrl)));
 
     if (
       toolState !== "output-available" ||
