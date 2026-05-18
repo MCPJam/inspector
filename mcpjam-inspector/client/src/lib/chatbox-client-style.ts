@@ -116,22 +116,6 @@ export function getChatboxShellStyle(
   const getStyleVar = (key: string, fallback: string) =>
     resolvedStyleVariables[key] ?? fallback;
 
-  // shadcn / Tailwind `primary` is not part of the MCP Apps token set. Map it
-  // from each host's semantic accents so builder chrome (e.g. `bg-primary`,
-  // `color-mix(..., var(--primary), ...)`) follows the emulated vendor instead
-  // of leaking the app-wide MCPJam primary.
-  const primary =
-    definition.chatUi.family === "chatgpt"
-      ? getStyleVar("--color-border-info", getStyleVar("--color-text-primary", background))
-      : getStyleVar(
-          "--color-border-warning",
-          getStyleVar("--color-text-primary", background),
-        );
-  const primaryForeground = getStyleVar(
-    "--color-text-inverse",
-    getStyleVar("--color-background-primary", background),
-  );
-
   const shellStyle: ChatboxShellStyle = {
     "--background": background,
     "--foreground": getStyleVar("--color-text-primary", background),
@@ -145,8 +129,6 @@ export function getChatboxShellStyle(
     "--muted-foreground": getStyleVar("--color-text-secondary", background),
     "--accent": getStyleVar("--color-background-tertiary", background),
     "--accent-foreground": getStyleVar("--color-text-primary", background),
-    "--primary": primary,
-    "--primary-foreground": primaryForeground,
     "--border": getStyleVar("--color-border-secondary", background),
     "--input": getStyleVar("--color-border-primary", background),
     "--ring": getStyleVar("--color-ring-primary", background),
@@ -167,26 +149,4 @@ export function getChatboxShellStyle(
   };
 
   return shellStyle;
-}
-
-/**
- * Applies only the host's primary pair so tab underlines and primary buttons
- * match the emulated client, without swapping `--background` away from the
- * app shell — keeps Connect headers visually aligned with {@link Header}.
- */
-export function getHostChromeAccentVariables(
-  hostStyle: ChatboxHostStyle | null | undefined,
-  themeMode: HostThemeMode,
-  chatUiOverride?: ChatUiOverride,
-): ChatboxShellStyle | undefined {
-  if (!hostStyle) return undefined;
-  const shell = getChatboxShellStyle(
-    hostStyle,
-    themeMode,
-    chatUiOverride,
-  ) as ChatboxShellStyle;
-  return {
-    "--primary": shell["--primary"],
-    "--primary-foreground": shell["--primary-foreground"],
-  };
 }
