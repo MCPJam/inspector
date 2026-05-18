@@ -35,7 +35,7 @@ import {
   SNAPPY_CAMERA,
   SNAPPY_HOST_REVEAL,
 } from "../../transition-tokens";
-import { ClientMatrixCard } from "./ClientCapabilityMatrix";
+import { HostMatrixCard } from "./ClientCapabilityMatrix";
 
 const decorativeHandleClass = "!opacity-0 !w-2 !h-2";
 
@@ -72,7 +72,7 @@ const HostMatrixNodeRenderer = memo(
         transition={SNAPPY_HOST_REVEAL}
         style={{ transformOrigin: "50% 0%" }}
       >
-        <ClientMatrixCard
+        <HostMatrixCard
           hostName={data.hostName}
           agent={data.agent}
           protocolBand={data.protocolBand}
@@ -111,15 +111,17 @@ const ServersHubNodeRenderer = memo(
         animate={{ opacity: 1, y: 0 }}
         transition={{ ...SNAPPY_HOST_REVEAL, delay: 0.32 }}
         className={cn(
-          "flex items-center gap-2 rounded-[10px] border border-border/70 bg-card/95 px-3 py-2 shadow-sm transition-all hover:shadow-md",
-          selected && "ring-2 ring-primary/40",
+          "flex items-center gap-2 rounded-[10px] border border-diagram-server/40 bg-diagram-server/10 px-3 py-2 shadow-sm transition-all hover:shadow-md",
+          selected && "ring-2 ring-diagram-server/50",
         )}
       >
-        <div className="flex size-7 items-center justify-center rounded-md bg-muted/60 text-muted-foreground">
+        <div className="flex size-7 items-center justify-center rounded-md bg-diagram-server/20 text-diagram-server">
           <Server className="size-3.5" />
         </div>
         <div className="flex min-w-0 flex-col">
-          <span className="text-[13px] font-semibold">Servers</span>
+          <span className="text-[13px] font-semibold text-diagram-server">
+            Servers
+          </span>
           <span className="text-[10.5px] text-muted-foreground">
             {data.totalCount} attached
           </span>
@@ -339,7 +341,40 @@ function makeFixedEdge(cornerRadius: number) {
   };
 }
 
-const HostTrunkEdge = makeFixedEdge(TRUNK_CORNER);
+/**
+ * Trunk edge uses ReactFlow's measured source/target positions instead of
+ * the canvasBuilder's fixed coords, so the line tracks the matrix card's
+ * actual rendered bottom rather than the `matrixH` estimate (which the
+ * card content doesn't reliably hit, leaving a visible gap + the apparent
+ * offset that motivated this edge type).
+ *
+ * Why this is safe (unlike the branch edges): neither the matrix card nor
+ * the servers hub uses framer-motion `layout`/`layoutId`. They only run a
+ * one-time mount reveal that settles to an identity transform, so
+ * `getBoundingClientRect` — and therefore ReactFlow's measured handle
+ * positions — is correct in steady state. The branch edges still need
+ * fixed coords because the server cards' `layoutId` morph persistently
+ * pollutes their measured rects on every tab switch.
+ */
+function HostTrunkEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  style,
+  markerEnd,
+}: EdgeProps) {
+  const path = buildOrthogonalTreePath(
+    sourceX,
+    sourceY,
+    targetX,
+    targetY,
+    TRUNK_CORNER,
+  );
+  return <BaseEdge id={id} path={path} style={style} markerEnd={markerEnd} />;
+}
+
 const HostBranchEdge = makeFixedEdge(BRANCH_CORNER);
 
 const edgeTypes = {
@@ -347,7 +382,7 @@ const edgeTypes = {
   hostBranch: HostBranchEdge,
 };
 
-interface RedesignedClientCanvasProps {
+interface RedesignedHostCanvasProps {
   viewModel: HostRedesignViewModel;
   selectedNodeId: string | null;
   onSelectNode: (nodeId: string) => void;
@@ -383,7 +418,7 @@ export function RedesignedClientCanvas({
   shellStyle,
   readOnly = false,
   onRequestEdit,
-}: RedesignedClientCanvasProps) {
+}: RedesignedHostCanvasProps) {
   const filteredNodes = useMemo(
     () =>
       readOnly

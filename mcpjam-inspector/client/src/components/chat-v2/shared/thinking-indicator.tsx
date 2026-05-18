@@ -8,6 +8,7 @@ import {
 } from "@/contexts/chatbox-client-style-context";
 import { LoadingIndicatorContent } from "./loading-indicator-content";
 import { getAssistantAvatarDescriptor } from "./assistant-avatar";
+import { CopilotMessageHeader } from "@/components/chat-v2/thread/copilot-message-header";
 
 export function ThinkingIndicator({
   model,
@@ -23,6 +24,27 @@ export function ThinkingIndicator({
     chatboxHostStyle,
   });
   const shouldRenderAssistantAvatar = chatboxHostStyle === null;
+  // Copilot's UI keeps the "Copilot + mascot" row visible during the
+  // thinking state too — the dot sits BELOW it. Matches MessageView's
+  // own conditional render so the header is identical in both phases.
+  const shouldRenderCopilotHeader = chatboxHostStyle === "copilot";
+
+  if (shouldRenderCopilotHeader) {
+    return (
+      <article
+        className="w-full text-sm leading-6 text-muted-foreground"
+        aria-live="polite"
+        aria-busy="true"
+      >
+        <div className="mb-2">
+          <CopilotMessageHeader />
+        </div>
+        <div className="inline-flex items-center gap-2 text-muted-foreground/80">
+          <LoadingIndicatorContent modelProvider={model?.provider ?? null} />
+        </div>
+      </article>
+    );
+  }
 
   return (
     <article

@@ -12,6 +12,7 @@ import claudeLogo from "/claude_logo.png";
 import openaiLogo from "/openai_logo.png";
 import cursorLogo from "/cursor_logo.png";
 import codexLogo from "/codex-logo.svg";
+import copilotLogo from "/copilot_logo.png";
 
 declare const __APP_VERSION__: string;
 
@@ -208,7 +209,8 @@ export type HostTemplateId =
   | "claude"
   | "chatgpt"
   | "cursor"
-  | "codex";
+  | "codex"
+  | "copilot";
 
 export interface HostTemplate {
   id: HostTemplateId;
@@ -571,11 +573,10 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     logoSrc: codexLogo,
     seed: () => {
       const base = emptyHostConfigInputV2({
-        // No "codex" entry in the host-style registry yet — fall back to
-        // chatgpt visuals (closest OpenAI-flavored chrome) so chat UI
-        // resolves to something coherent. Bump to a dedicated "codex"
-        // hostStyle if/when one lands in host-styles/built-ins.ts.
-        hostStyle: "chatgpt",
+        // Dedicated Codex skin (OpenAI Apps SDK profile + ChatGPT chat
+        // surface colors + the shimmering "Thinking" indicator). See
+        // CODEX_HOST_STYLE in client-styles/built-ins.ts.
+        hostStyle: "codex",
         // Canonical id (openai/<slug>) so the chat-composer model picker
         // resolves it. gpt-5-nano is in MCPJAM_GUEST_ALLOWED_MODEL_IDS, so
         // guests get it without an OpenAI key; users can swap to a
@@ -612,6 +613,105 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             name: "codex-mcp-client",
             title: "Codex",
             version: "0.131.0-alpha.9",
+          },
+        },
+      };
+      return base;
+    },
+  },
+  {
+    id: "copilot",
+    label: "Copilot",
+    description: "Microsoft 365 Copilot host. OpenAI-shaped Apps SDK.",
+    logoSrc: copilotLogo,
+    seed: () => {
+      const base = emptyHostConfigInputV2({
+        hostStyle: "copilot",
+        // Real Microsoft 365 Copilot routes through OpenAI's chat-class
+        // models under the hood, so the OpenAI-shaped Apps SDK is the
+        // right protocol bucket here. `openai/gpt-5.3-chat` is the closest
+        // MCPJam-guest-allowed analog (Copilot's flagship is chat-tuned,
+        // not nano-tier), so the App Builder works out-of-the-box without
+        // a BYOK while staying faithful to the host's real model class.
+        modelId: "openai/gpt-5.3-chat",
+        temperature: 0.7,
+        requireToolApproval: false,
+      });
+      // Copilot's MCP client identity is not publicly documented; declare
+      // an experimental `microsoft/copilot` flag so any app that branches
+      // on it can detect the host. Keep the SDK-default UI extension entry
+      // (`mimeTypes: ["text/html;profile=mcp-app"]`) intact.
+      base.clientCapabilities = {
+        ...base.clientCapabilities,
+        experimental: { "microsoft/copilot": { enabled: true } },
+      };
+      // Capability advertise: mirrors ChatGPT's surface minus `pip` and
+      // bundles `serverResources` since Copilot surfaces resources in
+      // side panels. Conservative — no `listChanged` notifications since
+      // the renderer doesn't forward them. Revise once Microsoft
+      // publishes authoritative MCP Apps guidance.
+      base.hostCapabilitiesOverride = {
+        openLinks: {},
+        serverTools: {},
+        serverResources: {},
+        logging: {},
+        message: {},
+        updateModelContext: {},
+      };
+      // Per-resource environment context. `containerDimensions` mirrors
+      // ChatGPT's "fill your container" intent (md breakpoint width
+      // policy, modest fixed height); `availableDisplayModes` drops
+      // `pip` because Copilot's surface doesn't currently expose it.
+      base.hostContext = {
+        theme: "dark",
+        displayMode: "inline",
+        availableDisplayModes: ["inline", "fullscreen"],
+        containerDimensions: { height: 400, maxWidth: 768 },
+        locale: "en-US",
+        timeZone: "America/Los_Angeles",
+        userAgent: "ms-copilot",
+        platform: "desktop",
+        deviceCapabilities: { touch: false, hover: true },
+        safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
+      };
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          // Base MCP protocol: clientInfo sent during MCP `initialize`.
+          // Matches Microsoft's "ms-copilot" identity convention.
+          clientInfo: { name: "ms-copilot", version: "1.0.0" },
+        },
+        apps: {
+          uiInitialize: {
+            // MCP Apps extension: hostInfo sent in `ui/initialize`. Apps
+            // that branch on `hostInfo.name === "Copilot"` need this to
+            // take that path.
+            hostInfo: { name: "Copilot", version: "1.0.0" },
+          },
+          sandbox: {
+            csp: {
+              mode: "declared",
+              restrictTo: {
+                connectDomains: [
+                  "https://api.openai.com",
+                  "https://api.anthropic.com",
+                  "https://cdn.jsdelivr.net",
+                  // Microsoft Graph is the canonical M365 data plane;
+                  // Copilot widgets that read user data hit it.
+                  "https://graph.microsoft.com",
+                ],
+                resourceDomains: [
+                  "https://cdn.jsdelivr.net",
+                  // Microsoft's Office CDN — assets and brand fonts
+                  // when widgets opt to load them.
+                  "https://res.cdn.office.net",
+                ],
+              },
+            },
+            permissions: {
+              mode: "custom",
+              allow: { clipboardWrite: true },
+            },
           },
         },
       };
