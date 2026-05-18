@@ -171,20 +171,28 @@
           //     load images, fetch over HTTPS, etc.
           //   - Otherwise (pure no-csp, no overrides), restrictive
           //     defaults for SEP-1865 secure-default behavior.
-          // A directive entry with an empty array (`{ "frame-src": [] }`)
-          // models "no source expressions for this directive" — semantically
-          // a no-op, not a hardening signal. Counting it as `hasCspOverrides`
-          // would flip every other directive's baseline from the secure
-          // default to the permissive baseline (broad `https:` / `wss:`)
-          // just because an empty key exists. Require at least one
-          // non-empty array entry.
+          // A cspDirectives entry only counts as "configured" if it
+          // contributes at least one token that would survive
+          // mergeDirective's trim/filter pass — otherwise the no-op
+          // entry (empty array, whitespace-only string, or a token
+          // rejected by the `;,\n\r` injection guard) flips every
+          // OTHER directive's baseline from secure-default to broad
+          // permissive while the named directive contributes nothing.
+          // Mirrors the filter applied below at the actual emit site.
+          const cspDirectiveTokenSurvives = (t) => {
+            if (typeof t !== "string") return false;
+            const trimmed = t.trim();
+            if (trimmed.length === 0) return false;
+            if (/[;,\n\r]/.test(trimmed)) return false;
+            return true;
+          };
           const hasCspOverrides =
             cspDirectives &&
             typeof cspDirectives === "object" &&
-            Object.keys(cspDirectives).some(
-              (k) =>
-                Array.isArray(cspDirectives[k]) &&
-                cspDirectives[k].length > 0,
+            Object.values(cspDirectives).some(
+              (tokens) =>
+                Array.isArray(tokens) &&
+                tokens.some(cspDirectiveTokenSurvives),
             );
           if (hasCspOverrides) {
             // Helper: if cspDirectives names this directive, emit ONLY

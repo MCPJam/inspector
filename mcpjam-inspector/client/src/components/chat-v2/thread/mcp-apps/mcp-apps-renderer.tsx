@@ -1011,7 +1011,18 @@ export function MCPAppsRenderer({
     if (!cspDirectivesPolicy) return cspDirectivesPolicy;
     if (!HOSTED_MODE) return cspDirectivesPolicy;
     const isClampBypass = (token: string) => {
-      if (token.startsWith("'")) return false; // CSP keyword
+      // `'self'` is a clamp bypass in hosted mode. The proxy is served
+      // from the MCPJam origin and the inner srcdoc iframe carries
+      // `allow-same-origin` (so its document origin = parent's =
+      // MCPJam). `'self'` in the inner doc's CSP therefore resolves
+      // to the MCPJam app origin, which lets an untrusted widget
+      // fetch authenticated MCPJam endpoints — exactly what the clamp
+      // is meant to make unreachable. Templates that need actual
+      // same-origin access in production hosts (e.g. real Claude
+      // where `'self'` resolves to claude.ai) should list the host
+      // explicitly so the modeling is faithful in hosted mode too.
+      if (token === "'self'") return true;
+      if (token.startsWith("'")) return false; // other CSP keywords
       // Scheme-wide tokens that cover MCPJam-namespace origins. The
       // clamp's purpose is to keep MCPJam app/API endpoints unreachable
       // from the iframe; `https:` (and friends) covers them just as

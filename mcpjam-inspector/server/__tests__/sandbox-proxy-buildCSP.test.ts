@@ -161,6 +161,28 @@ describe("sandbox-proxy buildCSP merge rule", () => {
     expect(frameSrc).not.toMatch(/(?:^|\s)blob:(?:\s|$)/);
   });
 
+  it("treats cspDirectives with only whitespace-string entries as no-override", () => {
+    // Regression: `{ "frame-src": [" "] }` and similar entries trim
+    // away to nothing in mergeDirective, so they contribute nothing to
+    // frame-src — but `hasCspOverrides` used to count them as
+    // "configured" and flip every other directive's baseline from
+    // restrictive secure-default to broad permissive.
+    const out = buildCSP(undefined, { "frame-src": [" "] });
+    expect(out).toContain("connect-src 'none'");
+    expect(out).toContain("frame-src 'none'");
+  });
+
+  it("treats cspDirectives with only injection-rejected entries as no-override", () => {
+    // Same idea for tokens rejected by the `;,\n\r` injection guard —
+    // mergeDirective drops them, so they contribute nothing and must
+    // not flip the baseline.
+    const out = buildCSP(undefined, {
+      "frame-src": ["bad;injection"],
+    });
+    expect(out).toContain("connect-src 'none'");
+    expect(out).toContain("frame-src 'none'");
+  });
+
   it("treats cspDirectives with only empty-array entries as no-override (keeps restrictive defaults)", () => {
     // Regression: `cspDirectives: { "frame-src": [] }` is semantically
     // a no-op (no source expressions for that directive). Without a
