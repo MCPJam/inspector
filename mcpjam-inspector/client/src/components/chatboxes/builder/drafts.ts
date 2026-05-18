@@ -59,7 +59,7 @@ export const CHATBOX_STARTERS: ChatboxStarterDefinition[] = [
       systemPrompt: DEFAULT_SYSTEM_PROMPT,
       modelId: defaultModelId,
       temperature: TEMPLATE_TEMPERATURE,
-      requireToolApproval: true,
+      requireToolApproval: false,
       allowGuestAccess: false,
       mode: "anyone_with_link",
       selectedServerIds: [],

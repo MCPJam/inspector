@@ -363,7 +363,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
   {
     id: "claude",
     label: "Claude",
-    description: "Anthropic-style host. Tool approval on.",
+    description: "Anthropic-style host.",
     logoSrc: claudeLogo,
     seed: (opts) => {
       const base = emptyHostConfigInputV2({
@@ -375,7 +375,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // pick it without an Anthropic key.
         modelId: "anthropic/claude-haiku-4.5",
         temperature: 1.0,
-        requireToolApproval: true,
+        requireToolApproval: false,
       });
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
       // clientCapabilities: Real claude.ai publishes only the SDK-default
