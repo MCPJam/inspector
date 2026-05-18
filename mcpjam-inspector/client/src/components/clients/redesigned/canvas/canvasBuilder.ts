@@ -550,15 +550,9 @@ export function buildRedesignedHostCanvas(
     id: "host-matrix-to-hub",
     source: HOST_MATRIX_NODE_ID,
     target: SERVERS_HUB_NODE_ID,
+    sourceHandle: "bottom",
+    targetHandle: "top",
     type: "hostTrunk",
-    data: {
-      // matrix is positioned at (0, 0); its bottom-center sits at
-      // (MATRIX_W / 2, matrixH). Hub top-center is the target.
-      fixedSourceX: MATRIX_W / 2,
-      fixedSourceY: matrixH,
-      fixedTargetX: serversHubX + serversHubW / 2,
-      fixedTargetY: serversHubY,
-    },
     style: { stroke: "oklch(0.68 0.11 40 / 0.55)", strokeWidth: 1.5 },
   });
 

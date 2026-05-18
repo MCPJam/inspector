@@ -472,21 +472,23 @@ const PAPER_STYLES = `
   --hp-host-bg: var(--popover);
   --hp-host-ring: var(--border);
 
-  --hp-sandbox-bg: var(--muted);
-  --hp-sandbox-ring: var(--border);
+  --hp-sandbox-bg: color-mix(in oklch, var(--diagram-sandbox) 8%, var(--popover));
+  --hp-sandbox-ring: color-mix(in oklch, var(--diagram-sandbox) 35%, var(--border));
   --hp-sandbox-ink: var(--foreground);
+  --hp-sandbox-accent: var(--diagram-sandbox);
   --hp-sandbox-sub: var(--muted-foreground);
-  --hp-sandbox-hairline: var(--border);
-  --hp-sandbox-row-hover: color-mix(in oklch, var(--foreground) 4%, transparent);
-  --hp-sandbox-row-selected: color-mix(in oklch, var(--foreground) 7%, transparent);
+  --hp-sandbox-hairline: color-mix(in oklch, var(--diagram-sandbox) 20%, var(--border));
+  --hp-sandbox-row-hover: color-mix(in oklch, var(--diagram-sandbox) 6%, transparent);
+  --hp-sandbox-row-selected: color-mix(in oklch, var(--diagram-sandbox) 12%, transparent);
 
-  --hp-view-bg: var(--popover);
-  --hp-view-ring: var(--border);
+  --hp-view-bg: color-mix(in oklch, var(--diagram-view) 10%, var(--popover));
+  --hp-view-ring: color-mix(in oklch, var(--diagram-view) 40%, var(--border));
   --hp-view-ink: var(--foreground);
+  --hp-view-accent: var(--diagram-view);
   --hp-view-sub: var(--muted-foreground);
-  --hp-view-cap-selected-bg: color-mix(in oklch, var(--foreground) 7%, transparent);
+  --hp-view-cap-selected-bg: color-mix(in oklch, var(--diagram-view) 14%, transparent);
 
-  --hp-emerald: var(--success);
+  --hp-emerald: var(--diagram-server);
   --hp-amber: var(--warning);
   --hp-danger: var(--destructive);
 
@@ -721,7 +723,7 @@ const PAPER_STYLES = `
 .host-paper-card .hp-sandbox-title {
   font-size: 15px;
   font-weight: 600;
-  color: var(--hp-sandbox-ink);
+  color: var(--hp-sandbox-accent);
   letter-spacing: -0.01em;
   display: inline-flex;
   align-items: center;
@@ -826,7 +828,7 @@ const PAPER_STYLES = `
 .host-paper-card .hp-view-title {
   font-size: 14px;
   font-weight: 600;
-  color: var(--hp-view-ink);
+  color: var(--hp-view-accent);
   letter-spacing: -0.01em;
 }
 .host-paper-card .hp-view-sub {

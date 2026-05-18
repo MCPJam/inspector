@@ -288,6 +288,12 @@
   --info-foreground: oklch(1 0 0);
   --pending: oklch(0.769 0.188 85.3);
   --pending-foreground: oklch(0.239 0.06 60);
+  --diagram-server: oklch(0.62 0.1 155);
+  --diagram-server-foreground: oklch(0.99 0.01 155);
+  --diagram-sandbox: oklch(0.65 0.12 75);
+  --diagram-sandbox-foreground: oklch(0.99 0.01 75);
+  --diagram-view: oklch(0.6 0.1 290);
+  --diagram-view-foreground: oklch(0.99 0.01 290);
   --trace-waterfall-bar-prompt: oklch(0.885 0.082 292);
   --trace-waterfall-bar-llm: oklch(0.885 0.076 255);
   --trace-waterfall-bar-tool: oklch(0.905 0.105 96);
@@ -351,6 +357,12 @@
   --info-foreground: oklch(1 0 0);
   --pending: oklch(0.75 0.183 55);
   --pending-foreground: oklch(0.95 0.06 70);
+  --diagram-server: oklch(0.8 0.1 155);
+  --diagram-server-foreground: oklch(0.2 0.04 155);
+  --diagram-sandbox: oklch(0.82 0.11 75);
+  --diagram-sandbox-foreground: oklch(0.2 0.04 75);
+  --diagram-view: oklch(0.8 0.09 290);
+  --diagram-view-foreground: oklch(0.2 0.04 290);
   --trace-waterfall-bar-prompt: oklch(0.79 0.11 292 / 0.58);
   --trace-waterfall-bar-llm: oklch(0.79 0.1 255 / 0.58);
   --trace-waterfall-bar-tool: oklch(0.83 0.12 88 / 0.58);
@@ -392,6 +404,12 @@
   --color-info-foreground: var(--info-foreground);
   --color-pending: var(--pending);
   --color-pending-foreground: var(--pending-foreground);
+  --color-diagram-server: var(--diagram-server);
+  --color-diagram-server-foreground: var(--diagram-server-foreground);
+  --color-diagram-sandbox: var(--diagram-sandbox);
+  --color-diagram-sandbox-foreground: var(--diagram-sandbox-foreground);
+  --color-diagram-view: var(--diagram-view);
+  --color-diagram-view-foreground: var(--diagram-view-foreground);
   --color-overlay: var(--overlay);
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
