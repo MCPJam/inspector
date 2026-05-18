@@ -1320,6 +1320,15 @@ function McpProfileAllowFeaturesEditor({
     });
   }, [valueKey, value, fromValue, specFeatures]);
 
+  // Same `undefined` vs `{}` semantic as sandboxAttrs above: the
+  // renderer treats `allowFeatures === undefined` as the legacy fallback
+  // (re-adds `local-network-access *` / `midi *`); any Record value
+  // (including the empty {}) is the authoritative profile model and
+  // drops those legacy defaults. The toggle below is the explicit opt-in
+  // — without it, removing the last row collapsed `{}` to `undefined`
+  // and silently flipped a stricter-host profile back to permissive.
+  const isEnabled = value !== undefined;
+
   const commit = useCallback(
     (next: Array<{ key: string; allowlist: string }>) => {
       const out: Record<string, string> = {};
@@ -1333,29 +1342,44 @@ function McpProfileAllowFeaturesEditor({
         if (allowlist === "") continue;
         out[key] = allowlist;
       }
-      const built = Object.keys(out).length > 0 ? out : undefined;
-      lastSyncedKeyRef.current = JSON.stringify(built ?? null);
-      onChange(built);
+      // Don't collapse empty → undefined. Once the user has opted in,
+      // an empty record IS the stricter "spec-features-only" host model
+      // and must round-trip as `{}`.
+      lastSyncedKeyRef.current = JSON.stringify(out);
+      onChange(out);
     },
     [onChange, specFeatures],
   );
+
+  const setEnabled = (enabled: boolean) => {
+    if (enabled === isEnabled) return;
+    if (enabled) {
+      onChange({});
+    } else {
+      // Opt out → revert to legacy permissive default.
+      onChange(undefined);
+    }
+  };
 
   const updateRow = (
     idx: number,
     patch: Partial<{ key: string; allowlist: string }>,
   ) => {
+    if (!isEnabled) return;
     const next = draftRows.map((r, i) => (i === idx ? { ...r, ...patch } : r));
     setDraftRows(next);
     commit(next);
   };
 
   const removeRow = (idx: number) => {
+    if (!isEnabled) return;
     const next = draftRows.filter((_, i) => i !== idx);
     setDraftRows(next);
     commit(next);
   };
 
   const addRow = () => {
+    if (!isEnabled) return;
     // Blank rows live only in local draft state until the user types
     // both a feature name and an allowlist — `commit` would filter them
     // out, so committing here would no-op and the row would never appear.
@@ -1366,60 +1390,81 @@ function McpProfileAllowFeaturesEditor({
 
   return (
     <div className="grid gap-2">
-      <Label className="text-xs">allowFeatures (inspector-only)</Label>
-      <p className="text-xs text-muted-foreground">
-        Non-spec Permissions Policy features (e.g. <code>fullscreen</code>,
-        <code>web-share</code>). The 4 spec features (<code>camera</code>,
-        <code>microphone</code>, <code>geolocation</code>,
-        <code>clipboard-write</code>) live in Permissions above and cannot
-        be added here.
-      </p>
-      {rows.length === 0 ? (
-        <p className="text-xs italic text-muted-foreground">
-          No extra features.
-        </p>
-      ) : (
-        <div className="grid gap-1">
-          {rows.map((row, idx) => {
-            const isSpec = specFeatures.has(row.key.trim());
-            return (
-              <div key={idx} className="grid gap-1">
-                <div className="grid grid-cols-[1fr_1fr_auto] gap-2">
-                  <Input
-                    value={row.key}
-                    placeholder="fullscreen"
-                    onChange={(e) => updateRow(idx, { key: e.target.value })}
-                  />
-                  <Input
-                    value={row.allowlist}
-                    placeholder="*"
-                    onChange={(e) =>
-                      updateRow(idx, { allowlist: e.target.value })
-                    }
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => removeRow(idx)}
-                  >
-                    Remove
-                  </Button>
-                </div>
-                {isSpec ? (
-                  <p className="text-xs text-destructive">
-                    Use Permissions above for spec features — this row will be
-                    dropped on save.
-                  </p>
-                ) : null}
-              </div>
-            );
-          })}
+      <div className="flex items-center justify-between">
+        <Label className="text-xs">allowFeatures (inspector-only)</Label>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">
+            Model host allow features
+          </span>
+          <Switch
+            checked={isEnabled}
+            onCheckedChange={setEnabled}
+            aria-label="Model host allow features"
+          />
         </div>
-      )}
-      <Button type="button" variant="outline" size="sm" onClick={addRow}>
-        + add feature
-      </Button>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {isEnabled
+          ? "Profile is authoritative: the outer iframe's allow= is the 4 spec permissions (above) plus exactly the features listed below. Leave empty to model a host that grants only the spec features."
+          : "Using the inspector's legacy outer-iframe allow= default (adds local-network-access / midi on top of spec permissions). Toggle on to model the real host's emitted allow= — empty = spec permissions only."}
+      </p>
+      <div className={isEnabled ? "" : "opacity-50 pointer-events-none"}>
+        {rows.length === 0 ? (
+          <p className="text-xs italic text-muted-foreground">
+            No extra features.
+          </p>
+        ) : (
+          <div className="grid gap-1">
+            {rows.map((row, idx) => {
+              const isSpec = specFeatures.has(row.key.trim());
+              return (
+                <div key={idx} className="grid gap-1">
+                  <div className="grid grid-cols-[1fr_1fr_auto] gap-2">
+                    <Input
+                      value={row.key}
+                      placeholder="fullscreen"
+                      disabled={!isEnabled}
+                      onChange={(e) => updateRow(idx, { key: e.target.value })}
+                    />
+                    <Input
+                      value={row.allowlist}
+                      placeholder="*"
+                      disabled={!isEnabled}
+                      onChange={(e) =>
+                        updateRow(idx, { allowlist: e.target.value })
+                      }
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={!isEnabled}
+                      onClick={() => removeRow(idx)}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                  {isSpec ? (
+                    <p className="text-xs text-destructive">
+                      Use Permissions above for spec features — this row will be
+                      dropped on save.
+                    </p>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={!isEnabled}
+          onClick={addRow}
+        >
+          + add feature
+        </Button>
+      </div>
     </div>
   );
 }

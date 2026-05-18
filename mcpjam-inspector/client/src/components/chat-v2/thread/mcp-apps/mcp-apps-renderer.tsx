@@ -1002,24 +1002,35 @@ export function MCPAppsRenderer({
   // `cspDirectives: { "connect-src": ["https://app.mcpjam.com"] }`
   // re-adds the same-origin access the clamp is meant to make
   // non-bypassable. Strip any host-bearing token that resolves to the
-  // mcpjam.com namespace; CSP keyword tokens (`'unsafe-eval'`, hashes,
-  // nonces — quoted with `'…'`) and scheme-only tokens (`data:`, `blob:`)
-  // pass through unchanged.
+  // mcpjam.com namespace AND scheme-wide tokens that would otherwise
+  // cover MCPJam endpoints (`*`, `https:`, `http:`, `wss:`, `ws:`); CSP
+  // keyword tokens (`'unsafe-eval'`, hashes, nonces — quoted with `'…'`)
+  // and safe scheme-only tokens (`data:`, `blob:`, `about:`,
+  // `filesystem:`, `mediastream:`) pass through unchanged.
   const cspDirectivesEffective = useMemo(() => {
     if (!cspDirectivesPolicy) return cspDirectivesPolicy;
     if (!HOSTED_MODE) return cspDirectivesPolicy;
-    const isMcpjamOrigin = (token: string) => {
+    const isClampBypass = (token: string) => {
       if (token.startsWith("'")) return false; // CSP keyword
-      if (/^[a-z]+:$/.test(token)) return false; // scheme-only (data:, blob:)
-      // Match `mcpjam.com` as a host component: with optional subdomain,
-      // optional scheme prefix, optional port/path. Covers the same
-      // surface as MCPJAM_HOSTED_CLAMP_ORIGINS (`https://*.mcpjam.com`
+      // Scheme-wide tokens that cover MCPJam-namespace origins. The
+      // clamp's purpose is to keep MCPJam app/API endpoints unreachable
+      // from the iframe; `https:` (and friends) covers them just as
+      // effectively as naming `https://app.mcpjam.com` directly.
+      // Templates that need broad access should list specific origins
+      // (e.g. Claude lists `https://esm.sh`, `https://assets.claude.ai`).
+      if (token === "*") return true;
+      if (/^(https?|wss?):$/i.test(token)) return true;
+      // Other scheme-only tokens (data:, blob:, about:, filesystem:,
+      // mediastream:) don't reach MCPJam origins — let through.
+      if (/^[a-z]+:$/.test(token)) return false;
+      // Host-bearing token: match mcpjam.com as a host component,
+      // covering MCPJAM_HOSTED_CLAMP_ORIGINS (`https://*.mcpjam.com`
       // and `https://mcpjam.com`).
       return /(?:^|[/.@])mcpjam\.com(?:[:/]|$)/i.test(token);
     };
     const out: Record<string, string[]> = {};
     for (const [k, tokens] of Object.entries(cspDirectivesPolicy)) {
-      const clamped = tokens.filter((t) => !isMcpjamOrigin(t));
+      const clamped = tokens.filter((t) => !isClampBypass(t));
       if (clamped.length > 0) out[k] = clamped;
     }
     return Object.keys(out).length > 0 ? out : undefined;

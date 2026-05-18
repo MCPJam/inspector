@@ -150,54 +150,66 @@
         if (!csp) {
           // Two baselines for the no-csp branch:
           //   - When cspDirectives is set, the profile is modeling a host
-          //     whose emitted CSP is unconstrained EXCEPT for the directives
-          //     it explicitly lists. Use SPECIFIC permissive baselines
-          //     (no `*` wildcard — so cspDirectives entries that name
-          //     specific origins, e.g. ChatGPT's `frame-src 'self' https:
-          //     data: blob:`, actually constrain via the union merge rather
-          //     than being diluted back to permissive by a `*` in the base).
-          //     Widgets without their own `_meta.ui.csp` still need
-          //     `'unsafe-inline'`, `data:`, `https:`, etc. to function.
-          //   - Otherwise (pure no-csp, no overrides), restrictive defaults
-          //     for SEP-1865 secure-default behavior.
+          //     whose emitted CSP is unconstrained EXCEPT for the
+          //     directives it explicitly lists. For directives IN
+          //     cspDirectives, the profile is authoritative (REPLACE the
+          //     baseline — otherwise a permissive base like `https:` would
+          //     dilute a restrictive entry like
+          //     `frame-src "https://widgets.example.com"` back to "any
+          //     HTTPS frame"). For directives NOT in cspDirectives, use
+          //     specific permissive baselines (no `*`) so widgets without
+          //     their own `_meta.ui.csp` can still execute inline scripts,
+          //     load images, fetch over HTTPS, etc.
+          //   - Otherwise (pure no-csp, no overrides), restrictive
+          //     defaults for SEP-1865 secure-default behavior.
           const hasCspOverrides =
             cspDirectives &&
             typeof cspDirectives === "object" &&
             Object.keys(cspDirectives).length > 0;
           if (hasCspOverrides) {
+            // Helper: if cspDirectives names this directive, emit ONLY
+            // the profile's tokens (REPLACE). Otherwise emit the
+            // permissive default tokens (browser-default-like for an
+            // unconstrained host).
+            const emitOverridable = (name, permissiveBase) => {
+              const hasOverride =
+                Array.isArray(cspDirectives[name]) &&
+                cspDirectives[name].length > 0;
+              return mergeDirective(name, hasOverride ? [] : permissiveBase);
+            };
             directives = [
-              mergeDirective("default-src", [
+              emitOverridable("default-src", [
                 "'unsafe-inline'",
                 "'unsafe-eval'",
                 "data:",
                 "blob:",
                 "https:",
               ]),
-              mergeDirective("script-src", [
+              emitOverridable("script-src", [
                 "'unsafe-inline'",
                 "'unsafe-eval'",
                 "data:",
                 "blob:",
                 "https:",
               ]),
-              mergeDirective("style-src", [
+              emitOverridable("style-src", [
                 "'unsafe-inline'",
                 "data:",
                 "blob:",
                 "https:",
               ]),
-              mergeDirective("img-src", ["data:", "blob:", "https:"]),
-              mergeDirective("font-src", ["data:", "blob:", "https:"]),
-              mergeDirective("media-src", ["data:", "blob:", "https:"]),
-              mergeDirective("connect-src", [
+              emitOverridable("img-src", ["data:", "blob:", "https:"]),
+              emitOverridable("font-src", ["data:", "blob:", "https:"]),
+              emitOverridable("media-src", ["data:", "blob:", "https:"]),
+              emitOverridable("connect-src", [
                 "data:",
                 "blob:",
                 "https:",
                 "wss:",
               ]),
-              mergeDirective("frame-src", ["data:", "blob:", "https:"]),
-              mergeDirective("object-src", ["'none'"]),
-              mergeDirective("base-uri", ["'self'"]),
+              emitOverridable("frame-src", ["data:", "blob:", "https:"]),
+              emitOverridable("object-src", ["'none'"]),
+              emitOverridable("base-uri", ["'self'"]),
             ];
           } else {
             directives = [

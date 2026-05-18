@@ -111,7 +111,16 @@ describe("sandbox-proxy buildCSP merge rule", () => {
     expect(out).toContain("form-action 'self'");
   });
 
-  it("the no-csp branch still respects cspDirectives merge", () => {
+  it("no-csp + cspDirectives REPLACES the baseline for overridden directives", () => {
+    // When cspDirectives names a directive, the profile is authoritative
+    // — the permissive baseline is dropped so a restrictive entry isn't
+    // diluted (e.g. `frame-src "https://widgets.example.com"` must not
+    // be widened to `frame-src https: data: blob: https://widgets...`).
+    //
+    // Template authors who want 'unsafe-inline' alongside 'unsafe-eval'
+    // for script-src must list both explicitly; the inspector won't
+    // silently add baseline tokens that would lie about the modeled
+    // host's CSP shape.
     const out = buildCSP(undefined, {
       "script-src": ["'unsafe-eval'"],
     });
@@ -119,8 +128,37 @@ describe("sandbox-proxy buildCSP merge rule", () => {
       .split(";")
       .map((s) => s.trim())
       .find((s) => s.startsWith("script-src "));
-    expect(scriptLine).toContain("'unsafe-inline'");
-    expect(scriptLine).toContain("'unsafe-eval'");
+    expect(scriptLine).toBe("script-src 'unsafe-eval'");
+  });
+
+  it("no-csp + cspDirectives keeps permissive defaults on UNOVERRIDDEN directives", () => {
+    // The ChatGPT case: profile only restricts frame-src. Other
+    // directives stay permissive (with 'unsafe-inline' / https: / etc.)
+    // so widgets without their own CSP keep working.
+    const out = buildCSP(undefined, {
+      "frame-src": ["'self'", "https://embed.example.com"],
+    });
+    const lines = out.split(";").map((s) => s.trim());
+    const get = (name: string) => lines.find((l) => l.startsWith(name + " "));
+
+    // script-src wasn't overridden → permissive baseline applies.
+    expect(get("script-src")).toContain("'unsafe-inline'");
+    expect(get("script-src")).toContain("https:");
+    // connect-src wasn't overridden → permissive baseline applies.
+    expect(get("connect-src")).toContain("https:");
+
+    // frame-src IS in cspDirectives → REPLACE, no permissive dilution.
+    // The strict `toBe` pins the full directive shape; the regex
+    // assertions below additionally guard against the scheme-only
+    // `https:` (or `data:` / `blob:`) tokens bleeding in from the
+    // permissive baseline as separate tokens, which is what we're
+    // specifically defending against (`https://embed...` contains the
+    // substring "https:" but is a host-bearing token, not scheme-wide).
+    const frameSrc = get("frame-src");
+    expect(frameSrc).toBe("frame-src 'self' https://embed.example.com");
+    expect(frameSrc).not.toMatch(/(?:^|\s)https:(?:\s|$)/);
+    expect(frameSrc).not.toMatch(/(?:^|\s)data:(?:\s|$)/);
+    expect(frameSrc).not.toMatch(/(?:^|\s)blob:(?:\s|$)/);
   });
 
   it("appends unknown cspDirectives keys in the no-csp branch too", () => {
