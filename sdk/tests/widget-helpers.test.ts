@@ -1,6 +1,8 @@
 import {
   buildChatGptRuntimeHead,
+  buildCspHeader,
   buildCspMetaContent,
+  normalizeWidgetCspMeta,
 } from "../src/widget-helpers.js";
 
 describe("buildCspMetaContent", () => {
@@ -18,6 +20,77 @@ describe("buildCspMetaContent", () => {
       "default-src 'self'; script-src 'unsafe-inline'; img-src data: blob:";
 
     expect(buildCspMetaContent(input)).toBe(input);
+  });
+});
+
+describe("buildCspHeader", () => {
+  it("allows http and https resource loads in permissive mode", () => {
+    const { headerString } = buildCspHeader("permissive");
+
+    expect(headerString).toContain("img-src 'self' data: blob: https: http:");
+    expect(headerString).toContain("media-src 'self' data: blob: https: http:");
+    expect(headerString).toContain("connect-src 'self' https: http: wss: ws:");
+    expect(headerString).toContain(
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'self' data: blob: https: http:",
+    );
+  });
+});
+
+describe("normalizeWidgetCspMeta", () => {
+  it("normalizes standard MCP Apps ui.csp metadata for ChatGPT compatibility", () => {
+    const normalized = normalizeWidgetCspMeta({
+      ui: {
+        csp: {
+          connectDomains: ["https://api.example.com"],
+          resourceDomains: ["https://img.example.com"],
+          frameDomains: ["https://frame.example.com"],
+        },
+      },
+    });
+
+    expect(normalized).toEqual({
+      connect_domains: ["https://api.example.com"],
+      resource_domains: ["https://img.example.com"],
+      frame_domains: ["https://frame.example.com"],
+    });
+    expect(buildCspHeader("widget-declared", normalized).headerString).toContain(
+      "https://img.example.com",
+    );
+  });
+
+  it("falls back to legacy openai/widgetCSP fields when standard fields are absent", () => {
+    expect(
+      normalizeWidgetCspMeta({
+        ui: {
+          csp: {
+            connectDomains: ["https://api.example.com"],
+          },
+        },
+        "openai/widgetCSP": {
+          resource_domains: ["https://legacy-assets.example.com"],
+          redirect_domains: ["https://redirect.example.com"],
+        },
+      }),
+    ).toEqual({
+      connect_domains: ["https://api.example.com"],
+      resource_domains: ["https://legacy-assets.example.com"],
+      redirect_domains: ["https://redirect.example.com"],
+    });
+  });
+
+  it("treats empty standard domain arrays as explicit declarations", () => {
+    expect(
+      normalizeWidgetCspMeta({
+        ui: {
+          csp: {
+            resourceDomains: [],
+          },
+        },
+        "openai/widgetCSP": {
+          resource_domains: ["https://legacy-assets.example.com"],
+        },
+      }),
+    ).toBeUndefined();
   });
 });
 
