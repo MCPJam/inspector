@@ -104,6 +104,7 @@ export function ClientAttachmentsEditor({
           projectId={projectId}
           value={null}
           onChange={handleAddHost}
+          location="eval_runner"
           placeholder={
             attachedIds.size === hosts.length && hosts.length > 0
               ? "All clients attached"

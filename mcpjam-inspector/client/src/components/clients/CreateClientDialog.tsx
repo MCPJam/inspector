@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useConvexAuth } from "convex/react";
+import { usePostHog } from "posthog-js/react";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import {
   Dialog,
   DialogContent,
@@ -35,6 +37,7 @@ export function CreateClientDialog({
   projectId,
   onCreated,
 }: CreateHostDialogProps) {
+  const posthog = usePostHog();
   const { createHost } = useHostMutations();
   const { isAuthenticated } = useConvexAuth();
   const { servers } = useProjectServers({ isAuthenticated, projectId });
@@ -84,10 +87,19 @@ export function CreateClientDialog({
       // for unauthenticated callers the query is skipped so `servers` is
       // undefined and we seed with no attachments.
       const projectServerIds = servers?.map((s) => s._id) ?? [];
-      const { hostId } = await createHost({
+      const { hostId, hostConfigId } = await createHost({
         projectId,
         name: trimmed,
         input: { ...seed, serverIds: projectServerIds },
+      });
+      posthog.capture("client_created", {
+        location: "create_client_dialog",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+        client_id: hostId,
+        client_config_id: hostConfigId,
+        template_id: selectedTemplateId,
+        server_count: projectServerIds.length,
       });
       toast.success(`Client "${trimmed}" created`);
       handleClose();

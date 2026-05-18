@@ -3,7 +3,9 @@ import { useNavigate } from "react-router";
 import { Loader2, Save } from "lucide-react";
 import { toast } from "sonner";
 import { useConvexAuth } from "convex/react";
+import { usePostHog } from "posthog-js/react";
 import { ReactFlowProvider } from "@xyflow/react";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { Button } from "@mcpjam/design-system/button";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 import {
@@ -57,6 +59,7 @@ export function ClientBuilderViewRedesigned({
   projectId,
 }: HostBuilderViewRedesignedProps) {
   const navigate = useNavigate();
+  const posthog = usePostHog();
   const { isAuthenticated } = useConvexAuth();
   const { host } = useHost({
     isAuthenticated,
@@ -120,6 +123,19 @@ export function ClientBuilderViewRedesigned({
     // user's own edits as "diff from previous host," which is wrong.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [host, hostId]);
+
+  // Fire once per hostId for builder-view adoption. Gated on hostId truthiness
+  // so an empty/transitional mount doesn't capture a phantom view.
+  useEffect(() => {
+    if (!hostId) return;
+    posthog.capture("client_builder_viewed", {
+      location: "client_builder",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+      client_id: hostId,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hostId]);
 
   // Clear the diff snapshot ~1.5s after a host switch so subsequent
   // in-place edits don't keep re-firing the morph animation. Matches the
@@ -276,10 +292,26 @@ export function ClientBuilderViewRedesigned({
     if (!draftConfig) return;
     setIsSaving(true);
     try {
-      await updateHost({
+      const changedFields = savedConfig
+        ? (Object.keys(draftConfig) as Array<keyof HostConfigInputV2>).filter(
+            (key) =>
+              JSON.stringify(draftConfig[key]) !==
+              JSON.stringify(savedConfig[key]),
+          )
+        : [];
+      const { hostConfigId } = await updateHost({
         hostId,
         name: draftName,
         input: draftConfig,
+      });
+      posthog.capture("client_config_saved", {
+        location: "client_builder",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+        client_id: hostId,
+        client_config_id: hostConfigId,
+        server_count: draftConfig.serverIds?.length ?? 0,
+        changed_fields: changedFields,
       });
       // The freshly persisted snapshot id arrives via the Convex
       // subscription on the next tick; don't include it in this toast
@@ -292,7 +324,7 @@ export function ClientBuilderViewRedesigned({
     } finally {
       setIsSaving(false);
     }
-  }, [hostId, draftName, draftConfig, updateHost]);
+  }, [hostId, draftName, draftConfig, savedConfig, updateHost, posthog]);
 
   const handleAddServer = useCallback(
     async (formData: ServerFormData) => {
