@@ -67,6 +67,23 @@ type PendingCall = {
   // Pending checkout calls awaiting responses (notification + callId pattern)
   const pendingCheckoutCalls = new Map<number, PendingCall>();
 
+  /**
+   * Dispatch the `openai:set_globals` CustomEvent. Apps SDK widgets (and the
+   * ChatGPT UI guide examples) subscribe to this event to learn about
+   * host-side state changes. The MCP-Apps path translates `ui/*`
+   * notifications into this event so a widget written against the Apps SDK
+   * contract sees the same surface here as it would in production ChatGPT.
+   */
+  const dispatchSetGlobals = (globals: Record<string, unknown>): void => {
+    try {
+      window.dispatchEvent(
+        new CustomEvent("openai:set_globals", { detail: { globals } }),
+      );
+    } catch {
+      // silent — CustomEvent should always succeed in a real DOM
+    }
+  };
+
   // Timeout for pending calls (30 seconds)
   const CALL_TIMEOUT_MS = 30_000;
 
@@ -266,6 +283,7 @@ type PendingCall = {
             ? (state as Record<string, unknown>)
             : { value: state },
       });
+      dispatchSetGlobals({ widgetState: state });
     },
 
     /**
@@ -455,22 +473,38 @@ type PendingCall = {
       const params = data.params ?? {};
       switch (data.method) {
         // MCP Apps bridge notification names (SEP-1865)
-        case "ui/notifications/tool-input":
-          openaiAPI.toolInput = params.arguments ?? params;
+        case "ui/notifications/tool-input": {
+          const args = params.arguments ?? params;
+          openaiAPI.toolInput = args;
+          dispatchSetGlobals({ toolInput: args });
           break;
-        case "ui/notifications/tool-input-partial":
-          openaiAPI.toolInput = params.arguments ?? params;
+        }
+        case "ui/notifications/tool-input-partial": {
+          const args = params.arguments ?? params;
+          openaiAPI.toolInput = args;
+          dispatchSetGlobals({ toolInput: args });
           break;
+        }
         case "ui/notifications/tool-result":
           openaiAPI.toolOutput = params;
+          dispatchSetGlobals({ toolOutput: params });
           break;
         case "ui/notifications/tool-cancelled":
           // Tool was cancelled/errored
           break;
-        case "ui/notifications/host-context-changed":
-          if (params.theme) openaiAPI.theme = params.theme;
-          if (params.displayMode) openaiAPI.displayMode = params.displayMode;
+        case "ui/notifications/host-context-changed": {
+          const changed: Record<string, unknown> = {};
+          if (params.theme) {
+            openaiAPI.theme = params.theme;
+            changed.theme = params.theme;
+          }
+          if (params.displayMode) {
+            openaiAPI.displayMode = params.displayMode;
+            changed.displayMode = params.displayMode;
+          }
+          if (Object.keys(changed).length > 0) dispatchSetGlobals(changed);
           break;
+        }
         case "openai/requestCheckout:response": {
           const pending = pendingCheckoutCalls.get(params.callId as number);
           if (pending) {
@@ -553,6 +587,15 @@ type PendingCall = {
       }
       // Complete the handshake — this triggers bridge.oninitialized on the host
       sendNotification("ui/notifications/initialized", {});
+      // Initial set_globals dispatch with everything the runtime currently
+      // knows. Apps SDK widgets that subscribe at script load (or via the
+      // standard early-script pattern) will see this on the next tick.
+      dispatchSetGlobals({
+        toolInput: openaiAPI.toolInput,
+        toolOutput: openaiAPI.toolOutput,
+        theme: openaiAPI.theme,
+        displayMode: openaiAPI.displayMode,
+      });
     },
     reject: () => {
       // Initialization failed; still try to signal initialized so widget shows

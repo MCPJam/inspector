@@ -299,8 +299,12 @@ apps.post("/chatgpt-apps/widget-content", async (c) =>
 );
 
 // ── File stubs (not supported in hosted mode) ────────────────────────
+// Canonical `/files/*` plus legacy `/chatgpt-apps/*` aliases. The client
+// short-circuits hosted-mode uploads/downloads before hitting the server
+// (see client widget-file-messages.ts), so these are belt-and-suspenders.
+// Drop the chatgpt-apps aliases in Phase 4.
 
-apps.post("/chatgpt-apps/upload-file", async (c) =>
+const fileUploadStub = async (c: any) =>
   handleRoute(c, async () => {
     assertBearerToken(c);
     throw new WebRouteError(
@@ -308,10 +312,9 @@ apps.post("/chatgpt-apps/upload-file", async (c) =>
       ErrorCode.FEATURE_NOT_SUPPORTED,
       "File upload is not supported in hosted mode",
     );
-  }),
-);
+  });
 
-apps.get("/chatgpt-apps/file/:id", async (c) =>
+const fileDownloadStub = async (c: any) =>
   handleRoute(c, async () => {
     assertBearerToken(c);
     throw new WebRouteError(
@@ -319,7 +322,12 @@ apps.get("/chatgpt-apps/file/:id", async (c) =>
       ErrorCode.FEATURE_NOT_SUPPORTED,
       "File download is not supported in hosted mode",
     );
-  }),
-);
+  });
+
+apps.post("/files/upload-file", fileUploadStub);
+apps.get("/files/file/:fileId", fileDownloadStub);
+
+apps.post("/chatgpt-apps/upload-file", fileUploadStub);
+apps.get("/chatgpt-apps/file/:id", fileDownloadStub);
 
 export default apps;
