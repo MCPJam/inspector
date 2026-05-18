@@ -92,18 +92,25 @@ export function CreateClientDialog({
         name: trimmed,
         input: { ...seed, serverIds: projectServerIds },
       });
-      posthog.capture("client_created", {
-        location: "create_client_dialog",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
-        client_id: hostId,
-        client_config_id: hostConfigId,
-        template_id: selectedTemplateId,
-        server_count: projectServerIds.length,
-      });
       toast.success(`Client "${trimmed}" created`);
       handleClose();
       onCreated(hostId);
+      // Telemetry is best-effort: a posthog throw must not bubble into the
+      // shared catch and surface a "creation failed" toast after we've
+      // already shown success and notified the caller.
+      try {
+        posthog.capture("client_created", {
+          location: "create_client_dialog",
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+          client_id: hostId,
+          client_config_id: hostConfigId,
+          template_id: selectedTemplateId,
+          server_count: projectServerIds.length,
+        });
+      } catch {
+        // swallow — analytics must not block the success path
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to create client");
     } finally {
