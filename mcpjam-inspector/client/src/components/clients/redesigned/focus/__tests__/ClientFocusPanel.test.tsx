@@ -27,6 +27,39 @@ describe("ClientFocusPanel", () => {
     expect(root.className).not.toMatch(/#09090b|text-zinc-100/);
   });
 
+  it("does not render issue-count badges on focus tabs", () => {
+    const { container } = render(
+      <ClientFocusPanel
+        hostId="host-test"
+        tab="behavior"
+        onTabChange={vi.fn()}
+        initialSelectedServerId={null}
+        hostDisplayName="Test Host"
+        onHostDisplayNameChange={vi.fn()}
+        draft={emptyHostConfigInputV2()}
+        onDraftChange={vi.fn()}
+        attention={[
+          {
+            level: "error",
+            tab: "behavior",
+            field: "modelId",
+            message: "Pick a model",
+          },
+          {
+            level: "warning",
+            tab: "behavior",
+            field: "systemPrompt",
+            message: "Empty prompt",
+          },
+        ]}
+        availableServers={[]}
+        onAddServer={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(container.querySelector('[data-slot="badge"]')).toBeNull();
+  });
+
   it("shows Agent in the header tab bar with neutral icon chrome only", () => {
     render(
       <ClientFocusPanel

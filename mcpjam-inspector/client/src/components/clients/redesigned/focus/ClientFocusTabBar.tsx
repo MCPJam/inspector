@@ -1,15 +1,11 @@
 import type { KeyboardEvent } from "react";
-import { Badge } from "@mcpjam/design-system/badge";
 import { cn } from "@/lib/utils";
 import type { HostFocusTabId } from "../types";
 import { HOST_FOCUS_TAB_DEFS } from "./client-focus-tab-defs";
 
-export type HostFocusIssuesByTab = Record<HostFocusTabId, number>;
-
 interface HostFocusTabBarProps {
   tab: HostFocusTabId;
   onTabChange: (next: HostFocusTabId) => void;
-  issuesByTab: HostFocusIssuesByTab;
   className?: string;
 }
 
@@ -24,7 +20,6 @@ const tabBtnClass = cn(
 export function ClientFocusTabBar({
   tab,
   onTabChange,
-  issuesByTab,
   className,
 }: HostFocusTabBarProps) {
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -54,7 +49,6 @@ export function ClientFocusTabBar({
     >
       {HOST_FOCUS_TAB_DEFS.map((t) => {
         const active = tab === t.id;
-        const count = issuesByTab[t.id];
         return (
           <button
             key={t.id}
@@ -65,14 +59,6 @@ export function ClientFocusTabBar({
             className={cn(tabBtnClass, active && "text-foreground")}
           >
             <span className="whitespace-nowrap">{t.label}</span>
-            {count > 0 ? (
-              <Badge
-                variant="outline"
-                className="h-4 border-amber-500/40 bg-amber-500/10 px-1 text-[9.5px] text-amber-800 dark:text-amber-200"
-              >
-                {count}
-              </Badge>
-            ) : null}
             {active ? (
               <span
                 className="pointer-events-none absolute bottom-0 left-1 right-1 h-[2px] rounded-full bg-primary"

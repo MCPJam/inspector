@@ -22,7 +22,7 @@ describe("focusTabForNodeId — sandbox routing", () => {
   });
 
   it("routes every sandbox leaf node id to the Apps Extension tab", () => {
-    for (const sub of ["mode", "restrictTo", "deny", "permissions"] as const) {
+    for (const sub of ["mode", "restrictTo", "permissions"] as const) {
       expect(focusTabForNodeId(sandboxConfigLeafNodeId(sub))).toEqual({
         tab: "apps",
         selectedServerId: null,
@@ -39,8 +39,9 @@ describe("AppsExtensionTab — spec-shaped sandbox round-trip", () => {
   it("writes spec-shaped hostCapabilities.sandbox.csp into storage as restrictTo", () => {
     // The user typed spec-shaped JSON: domain arrays under csp,
     // presence-flags under permissions. Internally we store this as
-    // `restrictTo` + `allow` because we layer additional inspector knobs
-    // (mode/deny) on top — but those aren't in the JSON.
+    // `restrictTo` + `allow` because we layer an inspector-only `mode`
+    // knob on top — but that's not in the spec JSON. SEP-1865 is
+    // allowlist-only; there's no deny concept.
     const next = applyJsonToDraft(
       {
         hostContext: {},
@@ -66,11 +67,11 @@ describe("AppsExtensionTab — spec-shaped sandbox round-trip", () => {
     });
   });
 
-  it("preserves inspector-only mode/deny on edit (not surfaced in JSON, can't be wiped from it)", () => {
-    // Regression: mode + deny are inspector knobs (not in SEP-1865). The
-    // JSON view shows only spec primitives. If editing the JSON dropped
-    // mode/deny, a user who set `mode: "relaxed"` from elsewhere would
-    // silently lose it the next time they saved this tab.
+  it("preserves inspector-only mode on edit (not surfaced in JSON, can't be wiped from it)", () => {
+    // Regression: `mode` is an inspector knob (not in SEP-1865). The JSON
+    // view shows only spec primitives. If editing the JSON dropped `mode`,
+    // a user who set `mode: "relaxed"` from elsewhere would silently lose
+    // it the next time they saved this tab.
     const prev = emptyHostConfigInputV2();
     prev.mcpProfile = {
       profileVersion: 1,
@@ -79,14 +80,13 @@ describe("AppsExtensionTab — spec-shaped sandbox round-trip", () => {
           csp: {
             mode: "relaxed",
             restrictTo: { connectDomains: ["https://api.openai.com"] },
-            deny: { connectDomains: ["https://evil.com"] },
           },
-          permissions: { mode: "custom", deny: ["camera"] },
+          permissions: { mode: "custom" },
         },
       },
     };
     // User edits hostCapabilities.sandbox in JSON, swapping the allowed
-    // connect domain. Nothing about mode/deny in the JSON.
+    // connect domain. Nothing about mode in the JSON.
     const next = applyJsonToDraft(
       {
         hostContext: {},
@@ -99,16 +99,10 @@ describe("AppsExtensionTab — spec-shaped sandbox round-trip", () => {
       prev,
     );
     expect(next?.mcpProfile?.apps?.sandbox?.csp?.mode).toBe("relaxed");
-    expect(next?.mcpProfile?.apps?.sandbox?.csp?.deny).toEqual({
-      connectDomains: ["https://evil.com"],
-    });
     expect(next?.mcpProfile?.apps?.sandbox?.csp?.restrictTo).toEqual({
       connectDomains: ["https://api.anthropic.com"],
     });
     expect(next?.mcpProfile?.apps?.sandbox?.permissions?.mode).toBe("custom");
-    expect(next?.mcpProfile?.apps?.sandbox?.permissions?.deny).toEqual([
-      "camera",
-    ]);
   });
 
   it("treats absent hostCapabilities.sandbox as 'no change' (preserves prev sandbox verbatim)", () => {
@@ -134,10 +128,10 @@ describe("AppsExtensionTab — spec-shaped sandbox round-trip", () => {
     );
   });
 
-  it("treats empty hostCapabilities.sandbox as 'clear restrictTo + allow' but keeps mode/deny", () => {
+  it("treats empty hostCapabilities.sandbox as 'clear restrictTo + allow' but keeps mode", () => {
     // The user explicitly emptied the spec-shape (e.g. they cleared the
     // arrays from the JSON). That should drop restrictTo/allow but keep
-    // mode/deny so the user doesn't lose the inspector-side state.
+    // `mode` so the user doesn't lose the inspector-side state.
     const prev = emptyHostConfigInputV2();
     prev.mcpProfile = {
       profileVersion: 1,

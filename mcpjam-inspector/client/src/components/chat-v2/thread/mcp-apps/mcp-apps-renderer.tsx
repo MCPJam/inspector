@@ -100,8 +100,9 @@ const PIP_MAX_HEIGHT = "min(40vh, 600px)";
  * declared CSP. A hosted widget could otherwise declare an MCPJam
  * origin in `connectDomains` and use the user's authenticated session
  * to exfiltrate data through the iframe. Forwarded into the SDK via
- * `resolveSandboxCsp`'s `hostedClampExtraDeny` — that's the only
- * codepath that's NOT profile-overridable (unlike `policy.deny`).
+ * `resolveSandboxCsp`'s `hostedClampExtraDeny` — an SDK-internal API
+ * for hosted-mode origin stripping, distinct from anything the user can
+ * configure (SEP-1865 host policies are allowlist-only).
  *
  * Wildcards cover all subdomains (api, staging, www, etc.) without
  * having to enumerate them. The bare-host entry catches widgets that
@@ -842,9 +843,19 @@ export function MCPAppsRenderer({
   const hostStyleDefinition = getHostStyleOrDefault(effectiveHostStyle);
   // Single source of truth for what `hostCapabilities` this view will
   // advertise. The bridge-creation effect (`new AppBridge(...)`) spreads this
-  // value into the handshake; `registerBridgeHandlers` closes over it so the
-  // future enforcement PR can read the same blob without duplicating the
-  // resolution logic (which would risk advertise/enforce drift).
+  // value into the handshake, and `registerBridgeHandlers` gates each
+  // chip-bound handler on the matching field — same blob drives both
+  // advertise and enforce, no drift.
+  //
+  // Stability matters: this memo is a dep of both the bridge-construction
+  // useEffect and the registerBridgeHandlers useCallback, so a fresh
+  // reference per render would tear down + re-attach the bridge on every
+  // commit. Both inputs are stable — `effectiveHostStyle` resolves to a
+  // string|null derived from Zustand+context selectors, and
+  // `hostCapabilitiesOverride` comes from a context whose Providers (see
+  // ClientStyledChatTabV2 / PlaygroundTab / ChatboxChatPage) read from
+  // Zustand selectors that return stable refs until the underlying field
+  // mutates.
   const effectiveHostCapabilities = useMemo(
     () =>
       resolveEffectiveHostCapabilities({
@@ -980,31 +991,26 @@ export function MCPAppsRenderer({
   }>(() => {
     // Detect whether the host explicitly configured CSP hardening signals.
     // Hoisted above the permissive short-circuit so the permissive branch
-    // can honor host-explicit restrictTo/deny instead of silently dropping
-    // them; the relaxed branch below reuses the same calculation.
+    // can honor host-explicit `restrictTo` instead of silently dropping it;
+    // the relaxed branch below reuses the same calculation. SEP-1865 host
+    // policies are allowlist-only, so `restrictTo` and the hosted clamp are
+    // the only hardening levers.
     const restrictToConfigured =
       sandboxCspPolicy?.restrictTo !== undefined &&
       Object.values(sandboxCspPolicy.restrictTo).some(
         (list) => Array.isArray(list) && list.length > 0,
       );
-    const denyConfigured =
-      sandboxCspPolicy?.deny !== undefined &&
-      Object.values(sandboxCspPolicy.deny).some(
-        (list) => Array.isArray(list) && list.length > 0,
-      );
-    const hasExplicitCspHardening =
-      restrictToConfigured || denyConfigured || HOSTED_MODE;
+    const hasExplicitCspHardening = restrictToConfigured || HOSTED_MODE;
 
     // Chatbox / Playground / minimal-mode surfaces opted into `permissive`
     // CSP up at line 285. Permissive means "default to permissive when the
     // host hasn't asked for tightening" — short-circuit the host CSP
     // resolver only when the saved profile carries NO explicit hardening
-    // (restrictTo / deny) and we're not in hosted mode. Otherwise fall
-    // through to the resolver so the documented guarantees still hold
-    // even when the surface is permissive-by-default:
-    //   * deny always wins — applies in every mode
+    // (restrictTo) and we're not in hosted mode. Otherwise fall through to
+    // the resolver so the documented guarantees still hold even when the
+    // surface is permissive-by-default:
     //   * restrictTo intersects whatever the resource declares
-    //   * hosted clamp is non-bypassable (MCPJam-origin extra-deny)
+    //   * hosted clamp is non-bypassable (MCPJam-origin SDK-internal strip)
     //
     // Without this fall-through, a host could save `restrictTo:
     // { connectDomains: ["https://api.acme"] }` on its chatbox host and
@@ -1048,25 +1054,22 @@ export function MCPAppsRenderer({
     // "relaxed" CSP mode is an explicit dev escape hatch. The resolver
     // can't represent "no restrictions" as a domain list (CSP allow-
     // lists can't carry `*` without inviting the hosted clamp to strip
-    // it), so PURE relaxed (no restrictTo, no deny, not hosted) short-
-    // circuits the resolver and emits no CSP — preserves the dev
-    // experience.
+    // it), so PURE relaxed (no restrictTo, not hosted) short-circuits
+    // the resolver and emits no CSP — preserves the dev experience.
     //
-    // Any tightening signal — restrictTo, deny, or hostedMode — falls
-    // through INTO the resolver so the documented guarantees hold:
-    //   * "deny always wins" — applies in every mode
+    // Any tightening signal — restrictTo or hostedMode — falls through
+    // INTO the resolver so the documented guarantees hold:
     //   * "restrictTo applies in every mode" — intersects in every mode
-    //   * "hosted clamp is non-bypassable" — the MCPJam-origin extra-
-    //     deny must run in hosted mode regardless of saved profile
+    //   * "hosted clamp is non-bypassable" — the MCPJam-origin SDK-
+    //     internal strip must run in hosted mode regardless of saved profile
     //
     // The previous shape (`if (sandboxCspPolicy && !isRelaxedCsp)`)
     // skipped the resolver entirely on mode==="relaxed". A hosted user
     // could save a relaxed profile and silently opt out of the hosted
-    // clamp's MCPJam-origin extra-deny — P1 in production.
+    // clamp's MCPJam-origin strip — P1 in production.
     const isPureRelaxedCsp =
       sandboxCspPolicy?.mode === "relaxed" &&
       !restrictToConfigured &&
-      !denyConfigured &&
       !HOSTED_MODE;
 
     let resolvedCsp: McpUiResourceCsp | undefined;
@@ -1080,7 +1083,7 @@ export function MCPAppsRenderer({
         // default baseline we have is the resource's own declaration —
         // passing it here means "host-default" is restrictive only as
         // much as the resource itself asked for (never more, possibly
-        // less if restrictTo/deny narrow it). Without this, picking
+        // less if restrictTo narrows it). Without this, picking
         // "host-default" would silently emit `connect-src 'none'` and
         // break any widget that fetches external assets.
         hostDefaultBaseline: widgetCsp,
@@ -1218,13 +1221,13 @@ export function MCPAppsRenderer({
     onAppSupportedDisplayModesChange,
   ]);
 
-  // ENFORCEMENT LANDING PAD (deferred):
+  // ENFORCEMENT (live):
   // `effectiveHostCapabilities` (above) is the contract advertised in
-  // ui/initialize. The handlers bound below SHOULD eventually gate their work
-  // on it so that "advertise" and "enforce" stay in lockstep, otherwise the
-  // handshake lies (advertised "unsupported" + behavior "supported") — which
-  // is worse than no mock at all for conformance testing. Mapping for the
-  // follow-up PR:
+  // ui/initialize, and the six chip-bound handlers below are only assigned
+  // when their cap is present — so advertise and enforce stay in lockstep.
+  // An unassigned `bridge.on*` slot causes the SDK to auto-respond to the
+  // widget's RPC with a "method not supported" envelope, matching strict
+  // host behavior.
   //   • bridge.onopenlink            ← effectiveHostCapabilities.openLinks
   //   • bridge.onmessage             ← effectiveHostCapabilities.message
   //   • bridge.onupdatemodelcontext  ← effectiveHostCapabilities.updateModelContext
@@ -1233,9 +1236,19 @@ export function MCPAppsRenderer({
   //     onlistresources /
   //     onlistresourcetemplates      ← effectiveHostCapabilities.serverResources
   //   • bridge.onloggingmessage      ← effectiveHostCapabilities.logging
-  //   • (downloadFile handler)       ← effectiveHostCapabilities.downloadFile
-  // When enforcement lands, add `effectiveHostCapabilities` to this
-  // useCallback's dep array.
+  //
+  // Intentionally unconditional (no chip / not capability-negotiated in
+  // SEP-1865):
+  //   • bridge.oninitialized         — handshake plumbing
+  //   • bridge.onsizechange          — iframe resize is host-shell infra
+  //   • bridge.onrequestdisplaymode  — request acceptance is always OK;
+  //                                    the spec governs which modes are
+  //                                    granted, not whether requests reply
+  //   • bridge.onlistprompts         — no serverPrompts cap exists yet
+  //   • handleUploadFile / GetFileDownloadUrl
+  //                                  — gated by a separate `downloadFile`
+  //                                    cap that no template advertises and
+  //                                    no chip surfaces today
   const registerBridgeHandlers = useCallback(
     (bridge: AppBridge) => {
       bridge.oninitialized = () => {
@@ -1260,107 +1273,124 @@ export function MCPAppsRenderer({
         }
       };
 
-      bridge.onmessage = async ({ content }) => {
-        const textContent = content.find((item) => item.type === "text")?.text;
-        if (textContent) {
-          onSendFollowUpRef.current?.(textContent);
-        }
-        return {};
-      };
+      if (effectiveHostCapabilities.message) {
+        bridge.onmessage = async ({ content }) => {
+          const textContent = content.find(
+            (item) => item.type === "text",
+          )?.text;
+          if (textContent) {
+            onSendFollowUpRef.current?.(textContent);
+          }
+          return {};
+        };
+      }
 
-      bridge.onopenlink = async ({ url }) => {
-        if (url) {
-          window.open(url, "_blank", "noopener,noreferrer");
-        }
-        return {};
-      };
+      if (effectiveHostCapabilities.openLinks) {
+        bridge.onopenlink = async ({ url }) => {
+          if (url) {
+            window.open(url, "_blank", "noopener,noreferrer");
+          }
+          return {};
+        };
+      }
 
-      bridge.oncalltool = async ({ name, arguments: args }, _extra) => {
-        // Check if tool is model-only (not callable by apps) per SEP-1865
-        const calledToolMeta = toolsMetadataRef.current?.[name];
-        if (isVisibleToModelOnly(calledToolMeta)) {
-          const error = new Error(
-            `Tool "${name}" is not callable by apps (visibility: model-only)`,
+      if (effectiveHostCapabilities.serverTools) {
+        bridge.oncalltool = async ({ name, arguments: args }, _extra) => {
+          // Check if tool is model-only (not callable by apps) per SEP-1865
+          const calledToolMeta = toolsMetadataRef.current?.[name];
+          if (isVisibleToModelOnly(calledToolMeta)) {
+            const error = new Error(
+              `Tool "${name}" is not callable by apps (visibility: model-only)`,
+            );
+            bridge.sendToolCancelled({ reason: error.message });
+            throw error;
+          }
+
+          if (!onCallToolRef.current) {
+            const error = new Error("Tool calls not supported");
+            bridge.sendToolCancelled({ reason: error.message });
+            throw error;
+          }
+
+          try {
+            const result = await onCallToolRef.current(
+              name,
+              (args ?? {}) as Record<string, unknown>,
+            );
+            return result as CallToolResult;
+          } catch (error) {
+            // SEP-1865: Send tool-cancelled for failed app-initiated tool calls
+            bridge.sendToolCancelled({
+              reason: error instanceof Error ? error.message : String(error),
+            });
+            throw error;
+          }
+        };
+      }
+
+      if (effectiveHostCapabilities.serverResources) {
+        bridge.onreadresource = async ({ uri }) => {
+          const result = await readResource(serverIdRef.current, uri);
+          return result.content;
+        };
+
+        bridge.onlistresources = async (params) => {
+          return listResources(
+            serverIdRef.current,
+            (params as { cursor?: string } | undefined)?.cursor,
           );
-          bridge.sendToolCancelled({ reason: error.message });
-          throw error;
-        }
+        };
 
-        if (!onCallToolRef.current) {
-          const error = new Error("Tool calls not supported");
-          bridge.sendToolCancelled({ reason: error.message });
-          throw error;
-        }
+        bridge.onlistresourcetemplates = async (_params) => {
+          if (HOSTED_MODE) {
+            throw new Error(
+              "Resource templates are not supported in hosted mode",
+            );
+          }
 
-        try {
-          const result = await onCallToolRef.current(
-            name,
-            (args ?? {}) as Record<string, unknown>,
+          const response = await authFetch(
+            `/api/mcp/resource-templates/list`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                serverId: serverIdRef.current,
+              }),
+            },
           );
-          return result as CallToolResult;
-        } catch (error) {
-          // SEP-1865: Send tool-cancelled for failed app-initiated tool calls
-          bridge.sendToolCancelled({
-            reason: error instanceof Error ? error.message : String(error),
-          });
-          throw error;
-        }
-      };
+          if (!response.ok) {
+            throw new Error(
+              `Resource template list failed: ${response.statusText}`,
+            );
+          }
+          return response.json();
+        };
+      }
 
-      bridge.onreadresource = async ({ uri }) => {
-        const result = await readResource(serverIdRef.current, uri);
-        return result.content;
-      };
-
-      bridge.onlistresources = async (params) => {
-        return listResources(
-          serverIdRef.current,
-          (params as { cursor?: string } | undefined)?.cursor,
-        );
-      };
-
-      bridge.onlistresourcetemplates = async (_params) => {
-        if (HOSTED_MODE) {
-          throw new Error(
-            "Resource templates are not supported in hosted mode",
-          );
-        }
-
-        const response = await authFetch(`/api/mcp/resource-templates/list`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            serverId: serverIdRef.current,
-          }),
-        });
-        if (!response.ok) {
-          throw new Error(
-            `Resource template list failed: ${response.statusText}`,
-          );
-        }
-        return response.json();
-      };
-
+      // onlistprompts: unconditional — no serverPrompts cap in SEP-1865 or
+      // the chip set. Revisit if/when a serverPrompts chip is added.
       bridge.onlistprompts = async (params) => {
         void params;
         const prompts = await listPrompts(serverIdRef.current);
         return { prompts };
       };
 
-      bridge.onloggingmessage = ({ level, data, logger }) => {
-        if (minimalMode) return;
-        const prefix = logger ? `[${logger}]` : "[MCP Apps]";
-        const message = `${prefix} ${level.toUpperCase()}:`;
-        if (level === "error" || level === "critical" || level === "alert") {
-          console.error(message, data);
-          return;
-        }
-        if (level === "warning") {
-          console.warn(message, data);
-          return;
-        }
-        console.info(message, data);
-      };
+      if (effectiveHostCapabilities.logging) {
+        bridge.onloggingmessage = ({ level, data, logger }) => {
+          if (minimalMode) return;
+          const prefix = logger ? `[${logger}]` : "[MCP Apps]";
+          const message = `${prefix} ${level.toUpperCase()}:`;
+          if (level === "error" || level === "critical" || level === "alert") {
+            console.error(message, data);
+            return;
+          }
+          if (level === "warning") {
+            console.warn(message, data);
+            return;
+          }
+          console.info(message, data);
+        };
+      }
 
       // Width resize handling was removed here — previously this destructured
       // `width` and applied it to the iframe via `min(${width}px, 100%)`.
@@ -1432,23 +1462,34 @@ export function MCPAppsRenderer({
         return { mode: actualMode };
       };
 
-      bridge.onupdatemodelcontext = async ({ content, structuredContent }) => {
-        // Store in debug store for UI display
-        setWidgetModelContext(toolCallId, {
+      if (effectiveHostCapabilities.updateModelContext) {
+        bridge.onupdatemodelcontext = async ({
           content,
           structuredContent,
-        });
+        }) => {
+          // Store in debug store for UI display
+          setWidgetModelContext(toolCallId, {
+            content,
+            structuredContent,
+          });
 
-        // Notify parent component to queue for next model turn
-        onModelContextUpdateRef.current?.(toolCallId, {
-          content,
-          structuredContent,
-        });
+          // Notify parent component to queue for next model turn
+          onModelContextUpdateRef.current?.(toolCallId, {
+            content,
+            structuredContent,
+          });
 
-        return {};
-      };
+          return {};
+        };
+      }
     },
-    [setIsReady, toolCallId, setWidgetModelContext, logWidgetDebug],
+    [
+      setIsReady,
+      toolCallId,
+      setWidgetModelContext,
+      logWidgetDebug,
+      effectiveHostCapabilities,
+    ],
   );
 
   useEffect(() => {
@@ -1589,7 +1630,7 @@ export function MCPAppsRenderer({
     setWidgetModelContext,
     cspMode,
     // Bridge must rebuild when the resolved sandbox policy changes — a host
-    // toggling deny rules at runtime needs the new handshake. The memo
+    // toggling sandbox policy at runtime needs the new handshake. The memo
     // identity captures `widgetCsp`/`widgetPermissions`/`widgetPermissive`
     // and the sandbox slice of mcpProfile transitively.
     effectiveSandbox,
@@ -1871,8 +1912,8 @@ export function MCPAppsRenderer({
       sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
       // Browser-enforced CSP / Permission Policy MUST receive the resolved
       // values, not the raw resource declaration. `effectiveSandbox` runs the
-      // shared resolver (mode → restrictTo intersect → deny subtract →
-      // hosted-mode clamp); when a host policy applies it forces
+      // shared resolver (mode → restrictTo intersect → hosted-mode clamp);
+      // when a host policy applies it forces
       // `permissive: false` so SandboxedIframe injects the meta-CSP rather
       // than skipping it. Passing `widgetCsp` here directly is the canonical
       // regression — keep the resolver path.
@@ -1974,8 +2015,8 @@ export function MCPAppsRenderer({
         registerBridgeHandlers={registerBridgeHandlers}
         // The modal mounts its own SandboxedIframe via `fetchMcpAppsWidgetContent`.
         // Pass the resolved values so the modal's CSP enforcement matches the
-        // inline iframe — otherwise a host deny rule applies to inline but
-        // not to a modal-mode widget reading the same resource.
+        // inline iframe — otherwise a host restrictTo intersection applies to
+        // inline but not to a modal-mode widget reading the same resource.
         widgetCsp={effectiveSandbox.csp}
         widgetPermissions={effectiveSandbox.permissions}
         widgetPermissive={effectiveSandbox.permissive}

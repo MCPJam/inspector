@@ -14,7 +14,7 @@ import {
   type HostAttentionIssue,
   type HostFocusTabId,
 } from "../types";
-import { countIssuesByTab, fieldsWithIssues } from "./useClientDraftValidation";
+import { fieldsWithIssues } from "./useClientDraftValidation";
 import { ClientIdentityRow } from "./ClientIdentityRow";
 import { AppearanceTab } from "./AppearanceTab";
 import { BehaviorTab } from "./BehaviorTab";
@@ -103,7 +103,6 @@ export function ClientFocusDialog({
   onRevert,
   onSave,
 }: HostFocusDialogProps) {
-  const issuesByTab = countIssuesByTab(attention);
   // See ClientFocusPanel: hostDisplayName is now tagged "behavior" after
   // the General tab was removed.
   const behaviorIssues = fieldsWithIssues(attention, "behavior");
@@ -265,11 +264,7 @@ export function ClientFocusDialog({
               "border-t-0 py-1 pl-3 pr-4",
             )}
           >
-            <ClientFocusTabBar
-              tab={tab}
-              onTabChange={onTabChange}
-              issuesByTab={issuesByTab}
-            />
+            <ClientFocusTabBar tab={tab} onTabChange={onTabChange} />
           </div>
 
           <div className={cn(hostFocusShellScrollClass, "px-6 py-5")}>

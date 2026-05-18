@@ -79,8 +79,8 @@ const HostMatrixNodeRenderer = memo(
           clientCaps={data.clientCaps}
           appsCaps={data.appsCaps}
           sandbox={data.sandbox}
+          hostInfo={data.hostInfo}
           appsExtensionAdvertised={data.appsExtensionAdvertised}
-          hostContext={data.hostContext}
           selectedNodeId={ctx?.selectedNodeId ?? null}
           onSelectNode={ctx?.onSelectNode ?? (() => {})}
         />

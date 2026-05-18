@@ -4,25 +4,13 @@ import userEvent from "@testing-library/user-event";
 import type { HostFocusTabId } from "../../types";
 import { ClientFocusTabBar } from "../ClientFocusTabBar";
 
-const emptyIssues = {
-  behavior: 0,
-  protocol: 0,
-  apps: 0,
-  servers: 0,
-  appearance: 0,
-} as const;
-
 describe("ClientFocusTabBar", () => {
   it("uses a horizontal tablist for arrow-key navigation", async () => {
     const user = userEvent.setup();
     const onTabChange = vi.fn();
 
     render(
-      <ClientFocusTabBar
-        tab="behavior"
-        onTabChange={onTabChange}
-        issuesByTab={emptyIssues}
-      />,
+      <ClientFocusTabBar tab="behavior" onTabChange={onTabChange} />,
     );
 
     const list = screen.getByRole("tablist");

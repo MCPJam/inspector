@@ -30,20 +30,19 @@ type SpecFeatureKey = keyof typeof SPEC_FEATURES;
  * clipboard-write / camera / etc., while Sessions (no outer wrapper) renders
  * the same widget correctly.
  *
- * Security posture:
+ * Security posture (SEP-1865 is allowlist-only; no deny concept exists):
  *   - Strict allowlist: only the four SEP-1865 features are ever emitted.
  *     Unknown keys in `permissions.allow` are ignored.
  *   - Bare feature tokens default to `'self'` (the iframe's own origin) per
  *     the Permissions-Policy spec — no cross-origin children inherit.
- *   - `deny` always wins, matching the spec's "deny wins" rule.
  *   - Default (undefined / no opt-in): emit the full spec set so the inner
  *     mcp-apps renderer's per-resource gate isn't pre-blocked by the
  *     wrapper. This mirrors the chatbox-surface CSP default of `permissive`
  *     in `mcp-apps-renderer.tsx` — both layers default permissive on
  *     chatbox surfaces and the inner renderer / host config remain the
  *     authoritative enforcement points. Hosts that want strict enforcement
- *     opt in via `apps.sandbox.permissions` (e.g. `mode: "deny-all"` or
- *     a `custom` allow map).
+ *     opt in via `apps.sandbox.permissions` (`mode: "deny-all"` for
+ *     block-everything, or `mode: "custom"` with an `allow` map).
  *   - `deny-all` mode produces an empty string regardless of `allow`.
  *
  * The outer iframe is NOT given a `sandbox=` attribute — it wraps a
@@ -62,25 +61,18 @@ export function previewIframeAllow(
   // with the host policy on a per-resource basis. The outer wrapper must
   // pass through the full spec-defined set so we don't pre-block the inner
   // gate; the inner renderer is still the authoritative enforcement point.
-  // `deny` stores camelCase profile keys (e.g. `clipboardWrite`) — what the
-  // editor and `permissions.allow` use. Translate to feature tokens before
-  // emitting so the deny list actually masks the wrapper output.
   if (!perms || perms.mode === "resource-declared") {
-    const denied = new Set(perms?.deny ?? []);
     return (Object.keys(SPEC_FEATURES) as SpecFeatureKey[])
-      .filter((key) => !denied.has(key))
       .map((key) => SPEC_FEATURES[key])
       .join("; ");
   }
 
   // "custom" (or undefined mode with an explicit `allow` map): emit only the
-  // spec-defined features the host opted in for, minus anything the host
-  // denied. Unknown keys are silently ignored — they can't widen the
-  // wrapper.
-  const denied = new Set(perms.deny ?? []);
+  // spec-defined features the host opted in for. Unknown keys are silently
+  // ignored — they can't widen the wrapper.
   const enabled: string[] = [];
   for (const key of Object.keys(SPEC_FEATURES) as SpecFeatureKey[]) {
-    if (perms.allow?.[key] && !denied.has(key)) {
+    if (perms.allow?.[key]) {
       enabled.push(SPEC_FEATURES[key]);
     }
   }

@@ -80,9 +80,13 @@ describe("RedesignedClientCanvas", () => {
     expect(capScope.queryByText("roots")).toBeNull();
     expect(capScope.queryByText("sampling")).toBeNull();
     expect(scope.getByText("View iframe")).toBeInTheDocument();
+    expect(scope.getByText("uiInitialize")).toBeInTheDocument();
+    expect(scope.queryByText(/no view loaded/i)).toBeNull();
+    expect(scope.queryByText("ui/initialize")).toBeNull();
     expect(scope.getByText("openLinks")).toBeInTheDocument();
     expect(node!.querySelector(".hp-policy-tag")).toBeNull();
     expect(node!.querySelector(".hp-sandbox-sub")).toBeNull();
+    expect(node!.querySelector(".hp-view-empty-label")).toBeNull();
   });
 
   it("adds a client capability chip when that cap is enabled on the host", () => {
@@ -130,7 +134,7 @@ describe("RedesignedClientCanvas", () => {
     expect(shell.className).not.toMatch(/diagram-server/);
   });
 
-  it("does not duplicate extensions in the matrix footer", () => {
+  it("does not duplicate extensions in a legacy Extensions footer strip", () => {
     const { container } = renderCanvas({});
     const node = container.querySelector(
       `.react-flow__node[data-id="${HOST_MATRIX_NODE_ID}"]`,
@@ -138,9 +142,7 @@ describe("RedesignedClientCanvas", () => {
     expect(node).not.toBeNull();
     const scope = within(node as HTMLElement);
     expect(scope.queryByText(/^Extensions ·/)).toBeNull();
-    const footer = (node as HTMLElement).querySelector(".hp-footer");
-    expect(footer).not.toBeNull();
-    expect(footer!.querySelector(".hp-ctx-btn")).not.toBeNull();
+    expect(node!.querySelector(".hp-footer")).toBeNull();
   });
 
   it("strikes through apps caps the resolved blob omits", () => {
@@ -152,12 +154,21 @@ describe("RedesignedClientCanvas", () => {
       `.react-flow__node[data-id="${HOST_MATRIX_NODE_ID}"]`,
     ) as HTMLElement | null;
     expect(node).not.toBeNull();
-    // Off caps in the View frame carry the `hp-view-cap--off` class which
-    // applies a dashed border + strike-through via CSS. Asserting the
-    // semantic class beats asserting a Tailwind utility name that the
-    // redesign no longer uses.
-    expect(
-      (node as HTMLElement).querySelector(".hp-view-cap--off"),
-    ).not.toBeNull();
+    const hostCapsSection = [...node!.querySelectorAll(".hp-section")].find(
+      (el) =>
+        el
+          .querySelector(".hp-section-title")
+          ?.textContent?.includes("Host capabilities"),
+    ) as HTMLElement | undefined;
+    expect(hostCapsSection).toBeDefined();
+    const strikethroughNames = [
+      ...hostCapsSection!.querySelectorAll("button.hp-cap--off .hp-cap-name"),
+    ].map((el) => el.textContent);
+    expect(strikethroughNames).toContain("serverTools");
+    const openLinksBtn = [...hostCapsSection!.querySelectorAll("button.hp-cap")].find(
+      (b) => b.querySelector(".hp-cap-name")?.textContent === "openLinks",
+    );
+    expect(openLinksBtn).toBeDefined();
+    expect(openLinksBtn!.className).not.toMatch(/\bhp-cap--off\b/);
   });
 });
