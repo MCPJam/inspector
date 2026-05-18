@@ -55,7 +55,9 @@ describe("RedesignedClientCanvas", () => {
     expect(node).not.toBeNull();
     const scope = within(node as HTMLElement);
     expect(scope.getByText("Client capabilities")).toBeInTheDocument();
-    expect(scope.getByText("Apps extension")).toBeInTheDocument();
+    // The paper redesign nests Apps Extension caps under a "View iframe"
+    // frame whose subtitle still names the extension. Match by substring.
+    expect(scope.getByText(/Apps extension/)).toBeInTheDocument();
     expect(scope.getByText("roots")).toBeInTheDocument();
     expect(scope.getByText("openLinks")).toBeInTheDocument();
   });
@@ -69,8 +71,12 @@ describe("RedesignedClientCanvas", () => {
       `.react-flow__node[data-id="${HOST_MATRIX_NODE_ID}"]`,
     ) as HTMLElement | null;
     expect(node).not.toBeNull();
+    // Off caps in the View frame carry the `hp-view-cap--off` class which
+    // applies a dashed border + strike-through via CSS. Asserting the
+    // semantic class beats asserting a Tailwind utility name that the
+    // redesign no longer uses.
     expect(
-      (node as HTMLElement).querySelector(".line-through"),
+      (node as HTMLElement).querySelector(".hp-view-cap--off"),
     ).not.toBeNull();
   });
 });

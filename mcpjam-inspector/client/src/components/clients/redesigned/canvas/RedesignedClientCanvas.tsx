@@ -35,9 +35,46 @@ import {
   SNAPPY_CAMERA,
   SNAPPY_HOST_REVEAL,
 } from "../../transition-tokens";
-import { ClientMatrixCard } from "./ClientCapabilityMatrix";
+import { HostMatrixCard } from "./ClientCapabilityMatrix";
 
 const decorativeHandleClass = "!opacity-0 !w-2 !h-2";
+
+/**
+ * Canvas chrome palette. Declared as CSS custom properties on the canvas
+ * root so server hub / cards / pill / controls / dots all read the same
+ * tokens. Dark mode swaps lightness while keeping the mint hue for the
+ * MCP-server frame — same principle as the inner Host/Sandbox/View card.
+ */
+const CANVAS_STYLES = `
+.host-redesign-canvas {
+  --rd-canvas-bg: oklch(0.985 0.005 80);
+  --rd-canvas-ring: oklch(0.86 0.008 80);
+  --rd-dot: oklch(0.70 0.04 80 / 0.55);
+
+  --rd-server-bg: oklch(0.95 0.035 165);
+  --rd-server-ring: oklch(0.84 0.08 165);
+  --rd-server-ink: oklch(0.36 0.12 165);
+  --rd-server-sub: oklch(0.50 0.10 165);
+  --rd-server-surface: white;
+
+  --rd-controls-bg: white;
+  --rd-override: oklch(0.55 0.14 70);
+}
+.dark .host-redesign-canvas {
+  --rd-canvas-bg: oklch(0.18 0.005 250);
+  --rd-canvas-ring: oklch(0.32 0.008 250);
+  --rd-dot: oklch(0.55 0.02 250 / 0.40);
+
+  --rd-server-bg: oklch(0.245 0.04 165);
+  --rd-server-ring: oklch(0.40 0.08 165);
+  --rd-server-ink: oklch(0.86 0.10 165);
+  --rd-server-sub: oklch(0.70 0.08 165);
+  --rd-server-surface: oklch(0.27 0.008 250);
+
+  --rd-controls-bg: oklch(0.27 0.008 250);
+  --rd-override: oklch(0.80 0.12 70);
+}
+`;
 
 /* ============================================================
    Sub-region click dispatch. The matrix is a single ReactFlow
@@ -72,7 +109,7 @@ const HostMatrixNodeRenderer = memo(
         transition={SNAPPY_HOST_REVEAL}
         style={{ transformOrigin: "50% 0%" }}
       >
-        <ClientMatrixCard
+        <HostMatrixCard
           hostName={data.hostName}
           agent={data.agent}
           protocolBand={data.protocolBand}
@@ -111,17 +148,36 @@ const ServersHubNodeRenderer = memo(
         animate={{ opacity: 1, y: 0 }}
         transition={{ ...SNAPPY_HOST_REVEAL, delay: 0.32 }}
         className={cn(
-          "flex items-center gap-2 rounded-[10px] border border-border/70 bg-card/95 px-3 py-2 shadow-sm transition-all hover:shadow-md",
-          selected && "ring-2 ring-primary/40",
+          "flex items-center gap-2 rounded-[12px] border px-3 py-2 shadow-sm transition-all hover:shadow-md",
+          selected && "ring-2",
         )}
+        style={{
+          background: "var(--rd-server-bg)",
+          borderColor: "var(--rd-server-ring)",
+          color: "var(--rd-server-ink)",
+        }}
       >
-        <div className="flex size-7 items-center justify-center rounded-md bg-muted/60 text-muted-foreground">
+        <div
+          className="flex size-7 items-center justify-center rounded-md"
+          style={{
+            background: "var(--rd-server-surface)",
+            color: "var(--rd-server-sub)",
+          }}
+        >
           <Server className="size-3.5" />
         </div>
-        <div className="flex min-w-0 flex-col">
-          <span className="text-[13px] font-semibold">Servers</span>
-          <span className="text-[10.5px] text-muted-foreground">
-            {data.totalCount} attached
+        <div className="flex min-w-0 flex-col leading-tight">
+          <span
+            className="text-[13px] font-semibold"
+            style={{ color: "var(--rd-server-ink)" }}
+          >
+            MCP servers
+          </span>
+          <span
+            className="text-[10.5px]"
+            style={{ color: "var(--rd-server-sub)" }}
+          >
+            {data.totalCount} attached · provide UI + tools
           </span>
         </div>
         <Handle
@@ -196,9 +252,13 @@ const ServerCardNodeRenderer = memo(
         layout
         transition={SNAPPY_CAMERA}
         className={cn(
-          "h-full w-full overflow-hidden rounded-[8px] border border-border/70 bg-card/95 shadow-sm transition-shadow hover:shadow-md",
-          selected && "ring-2 ring-primary/40",
+          "h-full w-full overflow-hidden rounded-[10px] border shadow-sm transition-shadow hover:shadow-md",
+          selected && "ring-2",
         )}
+        style={{
+          background: "var(--rd-server-surface)",
+          borderColor: "var(--rd-server-ring)",
+        }}
       >
         <motion.div
           initial={{ opacity: 0 }}
@@ -219,21 +279,32 @@ const ServerCardNodeRenderer = memo(
             <span
               className="flex-1 truncate text-[12.5px] font-semibold"
               title={data.name}
+              style={{
+                color: "var(--rd-server-ink)",
+                letterSpacing: "-0.005em",
+              }}
             >
               {data.name}
             </span>
-            <span className="text-[10px] uppercase tracking-[0.04em] text-muted-foreground/80">
+            <span
+              className="text-[10px] uppercase tracking-[0.08em]"
+              style={{ color: "var(--rd-server-sub)" }}
+            >
               {data.isOptional ? "optional" : "required"}
             </span>
           </div>
           <span
-            className="truncate font-mono text-[10.5px] text-muted-foreground"
+            className="truncate font-mono text-[10.5px]"
             title={data.url ?? "Project server"}
+            style={{ color: "var(--rd-server-sub)" }}
           >
             {data.url ?? "Project server"}
           </span>
           {data.hasOverride ? (
-            <span className="mt-auto text-[10px] text-amber-700 dark:text-amber-300">
+            <span
+              className="mt-auto text-[10px]"
+              style={{ color: "var(--rd-override)" }}
+            >
               overrides set
             </span>
           ) : null}
@@ -253,7 +324,14 @@ ServerCardNodeRenderer.displayName = "ServerCardNodeRenderer";
 const AddServerPillRenderer = memo(
   (_props: NodeProps<Node<AddServerPillNodeData, "redesignAddServer">>) => {
     return (
-      <div className="flex size-9 items-center justify-center rounded-full border border-dashed border-border/70 bg-card/95 text-muted-foreground shadow-sm">
+      <div
+        className="flex size-9 items-center justify-center rounded-full border border-dashed shadow-sm transition-colors"
+        style={{
+          background: "var(--rd-server-surface)",
+          borderColor: "var(--rd-server-ring)",
+          color: "var(--rd-server-sub)",
+        }}
+      >
         <Plus className="size-4" />
       </div>
     );
@@ -347,7 +425,7 @@ const edgeTypes = {
   hostBranch: HostBranchEdge,
 };
 
-interface RedesignedClientCanvasProps {
+interface RedesignedHostCanvasProps {
   viewModel: HostRedesignViewModel;
   selectedNodeId: string | null;
   onSelectNode: (nodeId: string) => void;
@@ -383,7 +461,7 @@ export function RedesignedClientCanvas({
   shellStyle,
   readOnly = false,
   onRequestEdit,
-}: RedesignedClientCanvasProps) {
+}: RedesignedHostCanvasProps) {
   const filteredNodes = useMemo(
     () =>
       readOnly
@@ -448,11 +526,16 @@ export function RedesignedClientCanvas({
 
   return (
     <div
-      className="host-redesign-canvas relative h-full w-full overflow-hidden rounded-[28px] border border-border/70 bg-background"
-      style={shellStyle}
+      className="host-redesign-canvas relative h-full w-full overflow-hidden rounded-[28px] border"
+      style={{
+        background: "var(--rd-canvas-bg)",
+        borderColor: "var(--rd-canvas-ring)",
+        ...shellStyle,
+      }}
       data-edges-ready={edgesReady ? "true" : "false"}
       data-viewport-ready={viewportReady ? "true" : "false"}
     >
+      <style>{CANVAS_STYLES}</style>
       <HostMatrixContext.Provider value={matrixCtx}>
         {/* Inline opacity gate: keeps ReactFlow's pre-fitView paint (nodes
             at raw canvas coords, edges trailing off-screen) invisible until
@@ -511,12 +594,16 @@ export function RedesignedClientCanvas({
             variant={BackgroundVariant.Dots}
             gap={16}
             size={0.9}
-            color="oklch(0.55 0.02 250 / 0.22)"
+            color="var(--rd-dot)"
             patternClassName="opacity-[0.45]"
           />
           <Controls
             showInteractive={false}
-            className="!rounded-xl !border !border-border/70 !bg-card/95"
+            className="!rounded-xl !border"
+            style={{
+              background: "var(--rd-controls-bg)",
+              borderColor: "var(--rd-canvas-ring)",
+            }}
           />
         </ReactFlow>
         </div>
