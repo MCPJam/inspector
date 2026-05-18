@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { useConvexAuth } from "convex/react";
 import { usePostHog } from "posthog-js/react";
 import { ReactFlowProvider } from "@xyflow/react";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { standardEventProps } from "@/lib/PosthogUtils";
 import { Button } from "@mcpjam/design-system/button";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 import {
@@ -124,24 +124,28 @@ export function ClientBuilderViewRedesigned({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [host, hostId]);
 
-  // Fire once per hostId for builder-view adoption. Gated on hostId truthiness
-  // so an empty/transitional mount doesn't capture a phantom view. Telemetry
-  // is best-effort: a posthog throw must not raise out of the effect and
-  // trip the nearest error boundary while the builder itself rendered fine.
+  // Fire once per *loaded* host for builder-view adoption. Gating on `host`
+  // (not just `hostId`) means a stale/deleted deep link to /clients/:hostId
+  // — which ClientsTab eventually reconciles by clearing the selection —
+  // never logs a phantom view for a client the user didn't actually open.
+  // The ref dedupes across Convex re-emits of the same host doc so we get
+  // one capture per hostId, not one per subscription tick. Telemetry is
+  // best-effort: a posthog throw must not trip the nearest error boundary.
+  const capturedBuilderHostIdRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!hostId) return;
+    if (!hostId || !host) return;
+    if (capturedBuilderHostIdRef.current === hostId) return;
+    capturedBuilderHostIdRef.current = hostId;
     try {
       posthog.capture("client_builder_viewed", {
-        location: "client_builder",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
+        ...standardEventProps("client_builder"),
         client_id: hostId,
       });
     } catch {
       // swallow — analytics must not break the builder view
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hostId]);
+  }, [hostId, host]);
 
   // Clear the diff snapshot ~1.5s after a host switch so subsequent
   // in-place edits don't keep re-firing the morph animation. Matches the
@@ -319,9 +323,7 @@ export function ClientBuilderViewRedesigned({
       // has already been persisted.
       try {
         posthog.capture("client_config_saved", {
-          location: "client_builder",
-          platform: detectPlatform(),
-          environment: detectEnvironment(),
+          ...standardEventProps("client_builder"),
           client_id: hostId,
           client_config_id: hostConfigId,
           server_count: draftConfig.serverIds?.length ?? 0,

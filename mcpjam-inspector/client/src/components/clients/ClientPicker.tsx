@@ -8,7 +8,7 @@ import {
 import { usePostHog } from "posthog-js/react";
 import { useHostList } from "@/hooks/useClients";
 import { useConvexAuth } from "convex/react";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { standardEventProps } from "@/lib/PosthogUtils";
 
 export type ClientPickerLocation =
   | "chat_tab"
@@ -55,9 +55,7 @@ export function ClientPicker({
         if (next !== null) {
           try {
             posthog.capture("client_selected", {
-              location,
-              platform: detectPlatform(),
-              environment: detectEnvironment(),
+              ...standardEventProps(location),
               client_id: next,
             });
           } catch {

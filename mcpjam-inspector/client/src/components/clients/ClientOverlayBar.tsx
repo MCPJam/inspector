@@ -15,7 +15,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useHostList, useHostMutations } from "@/hooks/useClients";
 import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { standardEventProps } from "@/lib/PosthogUtils";
 import { CreateClientDialog } from "./CreateClientDialog";
 
 const MCPJAM_HOST_NAME = "MCPJam";
@@ -163,9 +163,7 @@ export function ClientOverlayBar({
       // has already been removed.
       try {
         posthog.capture("client_deleted", {
-          location: "chatbox_overlay",
-          platform: detectPlatform(),
-          environment: detectEnvironment(),
+          ...standardEventProps("chatbox_overlay"),
           client_id: hostId,
           force: false,
         });

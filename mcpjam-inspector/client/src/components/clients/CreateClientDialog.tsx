@@ -3,7 +3,7 @@ import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useConvexAuth } from "convex/react";
 import { usePostHog } from "posthog-js/react";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { standardEventProps } from "@/lib/PosthogUtils";
 import {
   Dialog,
   DialogContent,
@@ -100,9 +100,7 @@ export function CreateClientDialog({
       // already shown success and notified the caller.
       try {
         posthog.capture("client_created", {
-          location: "create_client_dialog",
-          platform: detectPlatform(),
-          environment: detectEnvironment(),
+          ...standardEventProps("create_client_dialog"),
           client_id: hostId,
           client_config_id: hostConfigId,
           template_id: selectedTemplateId,
