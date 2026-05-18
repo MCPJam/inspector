@@ -575,15 +575,6 @@ export function PlaygroundMain({
     null
   );
   useEffect(() => {
-    // eslint-disable-next-line no-console
-    console.log("[reseed-debug] tick", {
-      previewedHostId,
-      convexProjectId,
-      activeProjectId,
-      hasHost: !!previewedHost,
-      hostSystemPrompt: previewedHost?.config.systemPrompt,
-      serversByIdSize: serversById.size,
-    });
     if (!previewedHostId || !previewedHost) {
       // Clear the dedupe ref so a later return to the same (hostId, configId)
       // — after a transient host-unavailable phase or project switch — still
@@ -598,17 +589,10 @@ export function PlaygroundMain({
       last.hostId === previewedHostId &&
       last.configId === configId
     ) {
-      // eslint-disable-next-line no-console
-      console.log("[reseed-debug] dedup-skip", { last });
       return;
     }
 
     const cfg = previewedHost.config;
-    // eslint-disable-next-line no-console
-    console.log("[reseed-debug] applying", {
-      systemPrompt: cfg.systemPrompt,
-      temperature: cfg.temperature,
-    });
 
     // Map host's required + optional server ids to project server names.
     // Servers the host references but the project no longer has are

@@ -989,29 +989,7 @@ export function useChatSession({
   >(undefined);
   const [isSessionBootstrapComplete, setIsSessionBootstrapComplete] =
     useState(false);
-  const instanceIdRef = useRef<string>("");
-  if (!instanceIdRef.current) {
-    instanceIdRef.current = Math.random().toString(36).slice(2, 8);
-  }
-  const [systemPrompt, _setSystemPromptRaw] = useState(initialSystemPrompt);
-  const setSystemPrompt = useCallback((next: string) => {
-    // eslint-disable-next-line no-console
-    console.log("[setSP-debug]", {
-      instance: instanceIdRef.current,
-      to: next?.slice(0, 30),
-    });
-    _setSystemPromptRaw(next);
-  }, []);
-  // Track every render of systemPrompt state so we can see resets in the log
-  // without depending on the wrapper firing (a re-render with reverted state
-  // is still a reset we want to see).
-  useEffect(() => {
-    // eslint-disable-next-line no-console
-    console.log("[state-debug]", {
-      instance: instanceIdRef.current,
-      systemPrompt: systemPrompt?.slice(0, 30),
-    });
-  }, [systemPrompt]);
+  const [systemPrompt, setSystemPrompt] = useState(initialSystemPrompt);
   const [temperature, setTemperature] = useState(initialTemperature);
   const [chatSessionId, setChatSessionId] = useState(generateId());
   const chatSessionIdRef = useRef(chatSessionId);
@@ -1847,21 +1825,17 @@ export function useChatSession({
 
   // Only re-sync from `executionConfig` when the caller explicitly provides
   // one. Surfaces that omit `executionConfig` (e.g. Playground, which owns
-  // an imperative reseed-from-host effect via `setSystemPrompt`) would
-  // otherwise see their state stomped back to `DEFAULT_SYSTEM_PROMPT` on
-  // every render of the hook, racing the imperative reseed.
+  // an imperative reseed-from-host effect) would otherwise see their state
+  // stomped back to the hook defaults on every render, racing the imperative
+  // reseed and producing the default literal in the system-prompt modal even
+  // though the host's value had already been applied.
   const executionSystemPrompt = executionConfig?.systemPrompt;
   const executionTemperature = executionConfig?.temperature;
   const executionRequireToolApproval = executionConfig?.requireToolApproval;
   useEffect(() => {
     if (executionSystemPrompt === undefined) return;
-    // eslint-disable-next-line no-console
-    console.log("[init-sync-debug] initialSystemPrompt changed", {
-      instance: instanceIdRef.current,
-      newInitial: executionSystemPrompt?.slice(0, 30),
-    });
     setSystemPrompt(executionSystemPrompt);
-  }, [executionSystemPrompt, setSystemPrompt]);
+  }, [executionSystemPrompt]);
 
   useEffect(() => {
     if (executionTemperature === undefined) return;
