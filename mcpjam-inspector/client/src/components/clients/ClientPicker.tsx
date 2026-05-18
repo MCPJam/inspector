@@ -49,15 +49,21 @@ export function ClientPicker({
       value={selectValue}
       onValueChange={(v) => {
         const next = v === "__none__" ? null : v;
-        if (next !== null) {
-          posthog.capture("client_selected", {
-            location,
-            platform: detectPlatform(),
-            environment: detectEnvironment(),
-            client_id: next,
-          });
-        }
         onChange(next);
+        // Telemetry is best-effort: a posthog throw must not block the
+        // user's selection from taking effect.
+        if (next !== null) {
+          try {
+            posthog.capture("client_selected", {
+              location,
+              platform: detectPlatform(),
+              environment: detectEnvironment(),
+              client_id: next,
+            });
+          } catch {
+            // swallow — analytics must not block the selection
+          }
+        }
       }}
       disabled={disabled || isLoading}
     >
