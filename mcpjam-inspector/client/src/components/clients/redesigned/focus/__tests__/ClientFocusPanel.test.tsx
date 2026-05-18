@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
 import { ClientFocusPanel } from "../ClientFocusPanel";
 
@@ -24,6 +25,39 @@ describe("ClientFocusPanel", () => {
     const root = container.firstElementChild as HTMLElement;
     expect(root.className).toMatch(/\bbg-background\b/);
     expect(root.className).not.toMatch(/#09090b|text-zinc-100/);
+  });
+
+  it("does not render issue-count badges on focus tabs", () => {
+    const { container } = render(
+      <ClientFocusPanel
+        hostId="host-test"
+        tab="behavior"
+        onTabChange={vi.fn()}
+        initialSelectedServerId={null}
+        hostDisplayName="Test Host"
+        onHostDisplayNameChange={vi.fn()}
+        draft={emptyHostConfigInputV2()}
+        onDraftChange={vi.fn()}
+        attention={[
+          {
+            level: "error",
+            tab: "behavior",
+            field: "modelId",
+            message: "Pick a model",
+          },
+          {
+            level: "warning",
+            tab: "behavior",
+            field: "systemPrompt",
+            message: "Empty prompt",
+          },
+        ]}
+        availableServers={[]}
+        onAddServer={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(container.querySelector('[data-slot="badge"]')).toBeNull();
   });
 
   it("shows Agent in the header tab bar with neutral icon chrome only", () => {
@@ -81,6 +115,32 @@ describe("ClientFocusPanel", () => {
     expect(appsTab.className).not.toMatch(/var\(--info|bg-info\b/);
   });
 
+  it("lets MCP Protocol JSON switch from Edit to View (mode toggle is wired)", async () => {
+    const user = userEvent.setup();
+    render(
+      <ClientFocusPanel
+        hostId="host-test"
+        tab="protocol"
+        onTabChange={vi.fn()}
+        initialSelectedServerId={null}
+        hostDisplayName="Test Host"
+        onHostDisplayNameChange={vi.fn()}
+        draft={emptyHostConfigInputV2()}
+        onDraftChange={vi.fn()}
+        attention={[]}
+        availableServers={[]}
+        onAddServer={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/^Ln /)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /^View$/ }));
+
+    expect(screen.queryByText(/^Ln /)).toBeNull();
+  });
+
   it("shows MCP Protocol in the header tab bar without wire subtext", () => {
     render(
       <ClientFocusPanel
@@ -124,16 +184,41 @@ describe("ClientFocusPanel", () => {
       />,
     );
 
-    // General tab was removed; Appearance is the new home for host-wide
-    // chrome settings.
+    // General tab was removed; Appearance is temporarily hidden (see
+    // HOST_FOCUS_TAB_DEFS) — host-wide chrome may return in a later pass.
     expect(screen.queryByRole("tab", { name: /^General$/ })).toBeNull();
-    expect(
-      screen.getByRole("tab", { name: /^Appearance$/ }),
-    ).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /^Appearance$/ })).toBeNull();
     // The host-name textbox lives in the always-visible identity header.
     expect(screen.getByRole("textbox", { name: "Client name" })).toHaveValue(
       "My Host",
     );
+  });
+
+  it("does not surface uses client defaults next to the overrides switch", () => {
+    render(
+      <ClientFocusPanel
+        hostId="host-test"
+        tab="servers"
+        onTabChange={vi.fn()}
+        initialSelectedServerId="s1"
+        hostDisplayName="Test Host"
+        onHostDisplayNameChange={vi.fn()}
+        draft={emptyHostConfigInputV2()}
+        onDraftChange={vi.fn()}
+        attention={[]}
+        availableServers={[
+          { id: "s1", name: "Bench", url: "https://example.com" },
+        ]}
+        onAddServer={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("uses client defaults")).toBeNull();
+    expect(screen.queryByText(/^active$/)).toBeNull();
+    expect(
+      screen.getByRole("switch", { name: "Enable overrides" }),
+    ).toBeInTheDocument();
   });
 
   it("does not show a placeholder Advanced tab", () => {

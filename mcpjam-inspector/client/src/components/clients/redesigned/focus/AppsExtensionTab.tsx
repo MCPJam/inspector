@@ -1,4 +1,5 @@
-import { JsonEditor } from "@/components/ui/json-editor";
+import { useState } from "react";
+import { JsonEditor, type JsonEditorMode } from "@/components/ui/json-editor";
 import {
   resolveEffectiveHostCapabilities,
   type HostConfigInputV2,
@@ -34,10 +35,10 @@ interface AppsExtensionTabProps {
  *    (camera, microphone, geolocation, clipboardWrite). The inspector
  *    stores this as `mcpProfile.apps.sandbox.csp.restrictTo` /
  *    `permissions.allow`; we hoist it into spec position on serialize and
- *    lift it back on parse. Inspector-only knobs (`mode`, `deny`,
- *    `extensions`) are intentionally not surfaced in this JSON — they
- *    aren't in the SEP and would confuse a developer reading the doc
- *    against the spec. They're preserved across edits.
+ *    lift it back on parse. Inspector-only knobs (`mode`, `extensions`)
+ *    are intentionally not surfaced in this JSON — they aren't in the
+ *    SEP and would confuse a developer reading the doc against the spec.
+ *    They're preserved across edits.
  */
 type SpecSandboxCsp = {
   connectDomains?: string[];
@@ -78,7 +79,7 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 
 /**
  * Build the spec-shaped `HostCapabilities.sandbox` from our internal
- * storage. We persist a richer policy (mode/restrictTo/deny); the spec
+ * storage. We persist a richer policy (mode/restrictTo); the spec
  * only knows about the four domain allowlists and the four permission
  * presence-flags. `restrictTo` IS the spec's allowlist semantically —
  * "host MAY further restrict but MUST NOT allow undeclared domains" —
@@ -132,7 +133,7 @@ type SandboxPolicyPerms = NonNullable<SandboxPolicy["permissions"]>;
  * Inverse of `specSandboxFromPolicy`. Reads the spec-shaped
  * `hostCapabilities.sandbox` block coming out of the JSON editor and
  * folds it into the inspector's richer policy shape, preserving prev's
- * inspector-only knobs (`mode`, `deny`, `extensions`).
+ * inspector-only knobs (`mode`, `extensions`).
  */
 function liftSpecSandboxIntoPolicy(args: {
   incomingPresent: boolean;
@@ -149,7 +150,7 @@ function liftSpecSandboxIntoPolicy(args: {
   const prevPerms = prev?.permissions;
 
   // CSP: replace restrictTo wholesale with the parsed spec arrays.
-  // Preserve mode / deny / extensions from prev.
+  // Preserve mode / extensions from prev.
   const newRestrict: SpecSandboxCsp = {};
   const incomingCsp = incoming?.csp;
   if (incomingCsp?.connectDomains && incomingCsp.connectDomains.length > 0) {
@@ -167,17 +168,16 @@ function liftSpecSandboxIntoPolicy(args: {
 
   const nextCsp: SandboxPolicyCsp = {};
   if (prevCsp?.mode !== undefined) nextCsp.mode = prevCsp.mode;
-  if (prevCsp?.deny !== undefined) nextCsp.deny = prevCsp.deny;
   if (prevCsp?.extensions !== undefined) nextCsp.extensions = prevCsp.extensions;
   if (Object.keys(newRestrict).length > 0) nextCsp.restrictTo = newRestrict;
   const cspNonEmpty = Object.keys(nextCsp).length > 0;
 
   // Permissions: rebuild `allow` from presence-flags. Preserve mode /
-  // deny / extensions from prev. Iterates every key in the incoming JSON
-  // (not just the spec-known set) so a host using a permission the
-  // inspector doesn't yet recognize survives a round-trip through the
-  // editor. The spec encodes "granted" as a presence object (`{}`); any
-  // non-null value in that slot reads as granted.
+  // extensions from prev. Iterates every key in the incoming JSON (not
+  // just the spec-known set) so a host using a permission the inspector
+  // doesn't yet recognize survives a round-trip through the editor. The
+  // spec encodes "granted" as a presence object (`{}`); any non-null
+  // value in that slot reads as granted.
   const newAllow: Record<string, boolean> = {};
   const incomingPerms = incoming?.permissions;
   if (incomingPerms) {
@@ -190,7 +190,6 @@ function liftSpecSandboxIntoPolicy(args: {
 
   const nextPerms: SandboxPolicyPerms = {};
   if (prevPerms?.mode !== undefined) nextPerms.mode = prevPerms.mode;
-  if (prevPerms?.deny !== undefined) nextPerms.deny = prevPerms.deny;
   if (prevPerms?.extensions !== undefined)
     nextPerms.extensions = prevPerms.extensions;
   if (Object.keys(newAllow).length > 0) nextPerms.allow = newAllow;
@@ -226,7 +225,7 @@ function appsToJson(draft: HostConfigInputV2): AppsDoc {
 
   // Nest sandbox inside hostCapabilities per SEP-1865, using the spec
   // shape (allowlist arrays + permission presence-flags). Our richer
-  // policy fields (mode/deny/extensions) are intentionally NOT surfaced
+  // policy fields (mode/extensions) are intentionally NOT surfaced
   // here — they're inspector knobs, not in the SEP, so a developer
   // reading this JSON against the spec sees only spec primitives.
   const specSandbox = specSandboxFromPolicy(draft.mcpProfile?.apps?.sandbox);
@@ -312,7 +311,7 @@ export function applyJsonToDraft(
   // so cross-tab edits don't trample each other. `apps.uiInitialize`
   // round-trips through this tab's JSON doc; `apps.sandbox` is lifted
   // from `hostCapabilities.sandbox` (spec-shape) back into the inspector's
-  // richer policy shape, preserving prev's mode/deny/extensions.
+  // richer policy shape, preserving prev's mode/extensions.
   const prevProfile = prev.mcpProfile;
   const prevSandbox = prevProfile?.apps?.sandbox;
   const incomingUiInit = isPlainObject(parsed.uiInitialize)
@@ -328,7 +327,7 @@ export function applyJsonToDraft(
   // - hostCaps had no `sandbox` key → use prev sandbox verbatim (no edit)
   // - hostCaps had `sandbox` (even empty) → user is asserting intent, so
   //   overwrite restrictTo / permissions.allow with the parsed spec
-  //   values; preserve mode / deny / extensions from prev because those
+  //   values; preserve mode / extensions from prev because those
   //   are inspector-only and the JSON view never exposed them.
   const nextSandbox = liftSpecSandboxIntoPolicy({
     incomingPresent: hostCapsSandboxPresent,
@@ -369,6 +368,7 @@ export function AppsExtensionTab({
   draft,
   onDraftChange,
 }: AppsExtensionTabProps) {
+  const [jsonMode, setJsonMode] = useState<JsonEditorMode>("edit");
   const { content, onRawChange } = useJsonDraftBuffer({
     draft,
     serialize: appsToJson,
@@ -381,7 +381,8 @@ export function AppsExtensionTab({
       <JsonEditor
         rawContent={content}
         onRawChange={onRawChange}
-        mode="edit"
+        mode={jsonMode}
+        onModeChange={setJsonMode}
         showModeToggle
         showToolbar
         showLineNumbers

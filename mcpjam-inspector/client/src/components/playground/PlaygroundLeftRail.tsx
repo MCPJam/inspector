@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Hammer, History } from "lucide-react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { ChatHistoryRail } from "@/components/chat-v2/history/ChatHistoryRail";
 import { useAppBuilderStateContext } from "@/components/ui-playground/hooks/use-app-builder-state";
 import { PlaygroundLeft } from "@/components/ui-playground/PlaygroundLeft";
@@ -16,7 +17,15 @@ type LeftRailTab = "sessions" | "tools";
  * `PlaygroundTab`.
  */
 export function PlaygroundLeftRail() {
+  const sessionsTabEnabled =
+    useFeatureFlagEnabled("playground-sessions-enabled") === true;
   const [activeTab, setActiveTab] = useState<LeftRailTab>("tools");
+
+  useEffect(() => {
+    if (!sessionsTabEnabled && activeTab === "sessions") {
+      setActiveTab("tools");
+    }
+  }, [sessionsTabEnabled, activeTab]);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
@@ -27,15 +36,21 @@ export function PlaygroundLeftRail() {
           isActive={activeTab === "tools"}
           onClick={() => setActiveTab("tools")}
         />
-        <TabButton
-          icon={History}
-          label="Sessions"
-          isActive={activeTab === "sessions"}
-          onClick={() => setActiveTab("sessions")}
-        />
+        {sessionsTabEnabled ? (
+          <TabButton
+            icon={History}
+            label="Sessions"
+            isActive={activeTab === "sessions"}
+            onClick={() => setActiveTab("sessions")}
+          />
+        ) : null}
       </div>
       <div className="flex-1 min-h-0">
-        {activeTab === "sessions" ? <SessionsBody /> : <ToolsBody />}
+        {activeTab === "sessions" && sessionsTabEnabled ? (
+          <SessionsBody />
+        ) : (
+          <ToolsBody />
+        )}
       </div>
     </div>
   );

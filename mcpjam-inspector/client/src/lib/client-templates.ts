@@ -253,6 +253,34 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     seed: (opts) => {
       const base = emptyHostConfigInputV2({ hostStyle: "mcpjam" });
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
+      // MCPJam is the "out of the box" default the rest of the product
+      // assumes works for every UI Resource. Goal: advertise the
+      // maximal SEP-1865 host-side surface so a view designed for any
+      // real host (Claude, ChatGPT, Cursor, Copilot) lands here and runs
+      // without degrading. Each entry below mirrors a spec-defined or
+      // widely-shipped host capability:
+      //   - experimental:    opt-in surface for forward-compat features
+      //   - openLinks:       ui/open-link (spec §HostCapabilities.openLinks)
+      //   - downloadFile:    real-world extension (Claude ships it)
+      //   - serverTools:     ui-iframe → tools/call proxy
+      //   - serverResources: ui-iframe → resources/read proxy
+      //   - logging:         notifications/message
+      //   - updateModelContext: text + image content (matches Claude)
+      //   - message:         text content (ui/message)
+      // The `listChanged: true` flags are intentionally omitted — the
+      // renderer doesn't yet forward those notifications (see
+      // MCPJAM_HOST_STYLE comment); advertising them would be dishonest
+      // until the renderer-side gap is closed.
+      base.hostCapabilitiesOverride = {
+        experimental: {},
+        openLinks: {},
+        downloadFile: {},
+        serverTools: {},
+        serverResources: {},
+        logging: {},
+        updateModelContext: { text: {}, image: {} },
+        message: { text: {} },
+      };
       // Per-resource hostContext for MCPJam's own house chrome. Style
       // variables come straight from the design-system tokens that
       // `client/src/index.css` imports via `@mcpjam/design-system`, so
@@ -266,7 +294,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       base.hostContext = {
         theme,
         displayMode: "inline",
-        availableDisplayModes: ["inline", "fullscreen"],
+        availableDisplayModes: ["inline", "fullscreen", "pip"],
         containerDimensions: { width: 720, maxHeight: 5000 },
         locale: "en-US",
         timeZone: "America/Los_Angeles",
@@ -291,6 +319,42 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         profileVersion: 1,
         initialize: {
           clientInfo: { name: "mcpjam-inspector", version: __APP_VERSION__ },
+        },
+        apps: {
+          // MCP Apps extension: hostInfo sent to the View iframe in
+          // `ui/initialize`. Views that branch on hostInfo.name === "MCPJam"
+          // (e.g. dev-tool-aware widgets) need this to identify the host.
+          uiInitialize: {
+            hostInfo: { name: "MCPJam", version: __APP_VERSION__ },
+          },
+          sandbox: {
+            csp: {
+              // Honor the view's declared `_meta.ui.csp` as-is. MCPJam is
+              // a dev tool — narrowing host-side would silently drop a
+              // developer's outbound calls and look like "my widget is
+              // broken" when it's actually MCPJam intersecting the
+              // allowlist to empty. Production hosts (Claude / ChatGPT /
+              // Cursor) ship a `restrictTo` allowlist for end-user safety;
+              // the inspector explicitly does not, so developers can debug
+              // against any origin their view declares.
+              mode: "declared",
+            },
+            permissions: {
+              // Grant every SEP-1865 permission so any widget that
+              // declares `_meta.ui.permissions` in good faith gets what
+              // it asks for. Resource declaration is still the ceiling
+              // (resolver intersects), so granting extras here is safe —
+              // an unused grant is a no-op, an unanticipated denial
+              // silently breaks features.
+              mode: "custom",
+              allow: {
+                camera: true,
+                microphone: true,
+                geolocation: true,
+                clipboardWrite: true,
+              },
+            },
+          },
         },
       };
       return base;
@@ -383,14 +447,17 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           },
           sandbox: {
             csp: {
-              // Trust the resource's own _meta.ui.csp declaration. Real
-              // claude.ai does the same — it honors what the widget asks
-              // for. A hardcoded restrictTo here turns into an empty
-              // INTERSECTION (not union) for any widget reaching a domain
-              // outside the list, silently producing connect-src 'none' /
-              // font-src data: blob:. Host-injected fonts that need
-              // assets.claude.ai must be unioned in at the renderer layer,
-              // not via restrictTo.
+              // Honor the view's declared `_meta.ui.csp` as-is — no
+              // host-side `restrictTo`. SEP-1865 makes restrictTo an
+              // intersection with what the view declares, so any
+              // hardcoded allowlist here can only narrow widgets, never
+              // help them. Production hosts (real claude.ai) DO publish
+              // a captured set (anthropic / openai / jsdelivr) — but
+              // mirroring that here propagates a widget-breaking default
+              // (e.g. esm.sh-loading views go silent) without giving
+              // users any protection MCPJam itself owns. Users who want
+              // to model the production allowlist can add it explicitly
+              // in the editor; absence here means "trust the view".
               mode: "declared",
             },
             permissions: {
@@ -486,11 +553,12 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           },
           sandbox: {
             csp: {
-              // Trust the resource's own _meta.ui.csp declaration. Real
-              // ChatGPT honors what the widget asks for; a hardcoded
-              // restrictTo intersects to empty for any widget reaching
-              // domains outside the list. See Claude template for the
-              // full rationale.
+              // No host-side `restrictTo` — see the Claude template for
+              // the full rationale. Real ChatGPT does ship the same
+              // captured allowlist (anthropic / openai / jsdelivr), but
+              // mirroring it here only narrows the view's declared CSP
+              // (intersection trap) and silently breaks widgets reaching
+              // any other origin. The view's declaration is authoritative.
               mode: "declared",
             },
             permissions: {
@@ -532,7 +600,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         elicitation: { form: {} },
         roots: { listChanged: false },
       };
-      // hostCapabilities override: captured verbatim from a Cursor 3.4.17
+      // hostCapabilities override: captured verbatim from a Cursor 3.4.20
       // probe. Notably no `updateModelContext` and no `message` (Cursor
       // doesn't surface a way for widgets to push text back to the model
       // turn or seed the next user message). `listChanged: false` is
@@ -552,7 +620,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         theme,
         displayMode: "inline",
         availableDisplayModes: ["inline"],
-        containerDimensions: { width: 748, maxHeight: 800 },
+        containerDimensions: { width: 649, maxHeight: 800 },
         locale: "en-US",
         timeZone: "America/Los_Angeles",
         userAgent: "cursor",
@@ -571,15 +639,14 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             // `ui/initialize`. Apps that branch on `hostInfo.name === "Cursor"`
             // need this to take that path. Version pinned to a real probed
             // build; bump when capturing a fresh probe.
-            hostInfo: { name: "Cursor", version: "3.4.17" },
+            hostInfo: { name: "Cursor", version: "3.4.20" },
           },
           sandbox: {
             csp: {
-              // Trust the resource's own _meta.ui.csp declaration. Cursor's
-              // webview does ship a tight CSP, but it derives from what
-              // the resource declared — adding a hardcoded restrictTo here
-              // intersects to empty for any widget outside the small set.
-              // See Claude template for the full rationale.
+              // No host-side `restrictTo` — see the Claude template for
+              // the full rationale. Cursor's live probe ships the same
+              // canonical AI-lab allowlist, but mirroring it would
+              // intersect-trap any widget reaching another origin.
               mode: "declared",
             },
             permissions: {
@@ -674,23 +741,29 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         ...base.clientCapabilities,
         experimental: { "microsoft/copilot": { enabled: true } },
       };
-      // Capability advertise: mirrors ChatGPT's surface minus `pip` and
-      // bundles `serverResources` since Copilot surfaces resources in
-      // side panels. Conservative — no `listChanged` notifications since
-      // the renderer doesn't forward them. Revise once Microsoft
-      // publishes authoritative MCP Apps guidance.
+      // Capability advertise: tracks Microsoft's published "Supported MCP
+      // Apps capabilities in Copilot" table. Only `app.openLink`,
+      // `app.callServerTool`, `app.sendMessage`, and `app.updateModelContext`
+      // are documented as supported; `app.sendLog` is explicitly ❌, and
+      // there is no documented `callServerResource`/`readResource` bridge in
+      // Copilot — so `logging` and `serverResources` are intentionally
+      // omitted. `text` sub-fields mirror the style entry for consistency.
+      // Source: https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-mcp-apps#supported-mcp-apps-capabilities-in-copilot
       base.hostCapabilitiesOverride = {
         openLinks: {},
         serverTools: {},
-        serverResources: {},
-        logging: {},
-        message: {},
-        updateModelContext: {},
+        message: { text: {} },
+        updateModelContext: { text: {} },
       };
       // Per-resource environment context. `containerDimensions` mirrors
       // ChatGPT's "fill your container" intent (md breakpoint width
-      // policy, modest fixed height); `availableDisplayModes` drops
-      // `pip` because Copilot's surface doesn't currently expose it.
+      // policy, modest fixed height). `availableDisplayModes` is kept as
+      // ["inline", "fullscreen"] because omitting it falls back to the
+      // inspector default ["inline", "pip", "fullscreen"], which would
+      // claim `pip` support Copilot doesn't have — a worse lie than the
+      // known minor gap that Microsoft's docs mark
+      // `app.getHostContext()?.availableDisplayModes` as ❌ (Copilot
+      // widgets can't actually introspect this field on the real host).
       base.hostContext = {
         theme,
         displayMode: "inline",
@@ -719,23 +792,13 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           },
           sandbox: {
             csp: {
+              // No host-side `restrictTo` — see the Claude template for
+              // the full rationale. Real Copilot publishes its own
+              // allowlist (AI APIs + jsDelivr + Microsoft Graph + Office
+              // CDN), but mirroring it here would only narrow the view's
+              // declared CSP via the SEP-1865 intersection rule and
+              // silently break widgets reaching anything else.
               mode: "declared",
-              restrictTo: {
-                connectDomains: [
-                  "https://api.openai.com",
-                  "https://api.anthropic.com",
-                  "https://cdn.jsdelivr.net",
-                  // Microsoft Graph is the canonical M365 data plane;
-                  // Copilot widgets that read user data hit it.
-                  "https://graph.microsoft.com",
-                ],
-                resourceDomains: [
-                  "https://cdn.jsdelivr.net",
-                  // Microsoft's Office CDN — assets and brand fonts
-                  // when widgets opt to load them.
-                  "https://res.cdn.office.net",
-                ],
-              },
             },
             permissions: {
               mode: "custom",

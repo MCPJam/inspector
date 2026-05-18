@@ -29,10 +29,11 @@ export type HostConfigConnectionDefaults = {
 };
 
 /**
- * Four parallel allow/deny lists keyed by CSP directive family. Mirrors
- * `CspDomainSet` in the backend (`convex/lib/hostConfigV2.ts`). Canonicalized
- * server-side as a set (trimmed, deduped, sorted); the client may emit
- * arrays in any order — the backend hash dedupes regardless.
+ * Four parallel allowlists keyed by CSP directive family (SEP-1865 is
+ * allowlist-only; there's no deny concept). Mirrors `CspDomainSet` in the
+ * backend (`convex/lib/hostConfigV2.ts`). Canonicalized server-side as a set
+ * (trimmed, deduped, sorted); the client may emit arrays in any order — the
+ * backend hash dedupes regardless.
  */
 export type CspDomainSet = {
   connectDomains?: string[];
@@ -76,18 +77,15 @@ export type HostConfigMcpProfileV1 = {
   apps?: {
     sandbox?: {
       csp?: {
-        /** Picks the starting baseline; restrictTo/deny apply on top regardless of mode. */
+        /** Picks the starting baseline; restrictTo applies on top regardless of mode. */
         mode?: "host-default" | "declared" | "relaxed";
         /** Intersection — never adds undeclared domains (SEP-1865). */
         restrictTo?: CspDomainSet;
-        /** Always wins over restrictTo and the resource declaration. */
-        deny?: CspDomainSet;
         extensions?: Record<string, unknown>;
       };
       permissions?: {
         mode?: "resource-declared" | "deny-all" | "custom";
         allow?: Record<string, boolean>;
-        deny?: string[];
         extensions?: Record<string, unknown>;
       };
     };

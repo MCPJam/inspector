@@ -221,6 +221,7 @@ import {
   ChatboxHostThemeProvider,
 } from "@/contexts/chatbox-client-style-context";
 import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
+import type { McpUiHostCapabilities } from "@modelcontextprotocol/ext-apps/app-bridge";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 const baseProps = {
@@ -1341,5 +1342,137 @@ describe("MCPAppsRenderer tool input streaming", () => {
     infoSpy.mockRestore();
     warnSpy.mockRestore();
     errorSpy.mockRestore();
+  });
+});
+
+// ── Host capability gating ─────────────────────────────────────────────────
+// Every chip-bound bridge handler is only assigned when the matching
+// `effectiveHostCapabilities.*` field is set. An unassigned handler slot
+// causes the SDK to auto-respond with "method not supported" — keeping
+// advertise and enforce in lockstep.
+describe("MCPAppsRenderer host capability enforcement", () => {
+  beforeEach(() => {
+    // Reset every handler slot so each test observes a clean slate. The
+    // outer beforeEach only resets oninitialized; capability gating tests
+    // care about all of them.
+    mockBridge.oninitialized = null;
+    mockBridge.onmessage = null;
+    mockBridge.onopenlink = null;
+    mockBridge.oncalltool = null;
+    mockBridge.onreadresource = null;
+    mockBridge.onlistresources = null;
+    mockBridge.onlistresourcetemplates = null;
+    mockBridge.onlistprompts = null;
+    mockBridge.onloggingmessage = null;
+    mockBridge.onsizechange = null;
+    mockBridge.onrequestdisplaymode = null;
+    mockBridge.onupdatemodelcontext = null;
+  });
+
+  it("does not register chip-bound handlers when no capability is advertised", async () => {
+    render(
+      <ChatboxHostCapabilitiesOverrideProvider value={{}}>
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostCapabilitiesOverrideProvider>,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+
+    expect(mockBridge.onmessage).toBeNull();
+    expect(mockBridge.onopenlink).toBeNull();
+    expect(mockBridge.oncalltool).toBeNull();
+    expect(mockBridge.onreadresource).toBeNull();
+    expect(mockBridge.onlistresources).toBeNull();
+    expect(mockBridge.onlistresourcetemplates).toBeNull();
+    expect(mockBridge.onloggingmessage).toBeNull();
+    expect(mockBridge.onupdatemodelcontext).toBeNull();
+  });
+
+  it("keeps non-gated handlers wired regardless of cap surface", async () => {
+    render(
+      <ChatboxHostCapabilitiesOverrideProvider value={{}}>
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostCapabilitiesOverrideProvider>,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+
+    // Infrastructure handlers (handshake, iframe resize, display mode) and
+    // prompts (no cap surface today) must stay assigned even with an empty
+    // capability blob.
+    expect(mockBridge.oninitialized).not.toBeNull();
+    expect(mockBridge.onsizechange).not.toBeNull();
+    expect(mockBridge.onrequestdisplaymode).not.toBeNull();
+    expect(mockBridge.onlistprompts).not.toBeNull();
+  });
+
+  const capHandlerPairs: ReadonlyArray<
+    readonly [keyof McpUiHostCapabilities, keyof typeof mockBridge]
+  > = [
+    ["openLinks", "onopenlink"],
+    ["serverTools", "oncalltool"],
+    ["logging", "onloggingmessage"],
+    ["updateModelContext", "onupdatemodelcontext"],
+    ["message", "onmessage"],
+  ];
+
+  it.each(capHandlerPairs)(
+    "registers the %s handler when the cap is advertised",
+    async (cap, handlerKey) => {
+      render(
+        <ChatboxHostCapabilitiesOverrideProvider value={{ [cap]: {} }}>
+          <MCPAppsRenderer {...baseProps} />
+        </ChatboxHostCapabilitiesOverrideProvider>,
+      );
+
+      await vi.waitFor(() => {
+        expect(mockBridge.connect).toHaveBeenCalled();
+      });
+
+      expect(mockBridge[handlerKey]).not.toBeNull();
+    },
+  );
+
+  it("registers all three serverResources handlers under a single cap", async () => {
+    render(
+      <ChatboxHostCapabilitiesOverrideProvider
+        value={{ serverResources: {} }}
+      >
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostCapabilitiesOverrideProvider>,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+
+    expect(mockBridge.onreadresource).not.toBeNull();
+    expect(mockBridge.onlistresources).not.toBeNull();
+    expect(mockBridge.onlistresourcetemplates).not.toBeNull();
+  });
+
+  it("leaves serverResources handlers unregistered without the cap", async () => {
+    render(
+      <ChatboxHostCapabilitiesOverrideProvider
+        value={{ openLinks: {} }}
+      >
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostCapabilitiesOverrideProvider>,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+
+    // Adjacent cap advertised, but serverResources is not — the three
+    // resource handlers must stay unassigned so the SDK rejects callers.
+    expect(mockBridge.onopenlink).not.toBeNull();
+    expect(mockBridge.onreadresource).toBeNull();
+    expect(mockBridge.onlistresources).toBeNull();
+    expect(mockBridge.onlistresourcetemplates).toBeNull();
   });
 });

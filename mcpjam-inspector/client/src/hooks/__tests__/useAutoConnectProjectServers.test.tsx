@@ -437,6 +437,137 @@ describe("useAutoConnectProjectServers", () => {
     expect(runtimeDisconnectServer).toHaveBeenCalledTimes(1);
   });
 
+  it("respects a user-initiated disconnect: a host-required server toggled off stays off in the same scope", async () => {
+    // Regression: in a dev/inspector tool the user often disconnects a
+    // server intentionally (e.g. reproducing a fallback path). The host
+    // reconciler must not undo that. Each server in a scope gets at most
+    // one auto-connect attempt; once attempted, status changes back to
+    // "disconnected" don't re-fire reconciliation.
+    const ensureServersReady = vi.fn().mockResolvedValue({
+      readyServerNames: ["bart"],
+      failedServerNames: [],
+      missingServerNames: [],
+      reauthServerNames: [],
+    });
+
+    const appStateHolder: { current: any } = {
+      current: {
+        servers: {
+          bart: { name: "bart", connectionStatus: "disconnected" },
+        },
+      },
+    };
+
+    const { rerender } = renderHook(
+      () =>
+        useAutoConnectProjectServers({
+          projectId: "proj-user-disconnect",
+          hostScopeKey: "host-bart",
+          requiredServerNames: ["bart"],
+        }),
+      {
+        wrapper: ({ children }) =>
+          wrapper({
+            children,
+            ensureServersReady,
+            appState: appStateHolder.current,
+          }),
+      },
+    );
+
+    await flushMicrotasks();
+    expect(ensureServersReady).toHaveBeenCalledTimes(1);
+    expect(ensureServersReady).toHaveBeenCalledWith(["bart"]);
+
+    // Auto-connect succeeded → bart is connected.
+    appStateHolder.current = {
+      servers: {
+        bart: { name: "bart", connectionStatus: "connected" },
+      },
+    };
+    rerender();
+    await flushMicrotasks();
+    expect(ensureServersReady).toHaveBeenCalledTimes(1);
+
+    // User toggles bart off in the Servers tab → status flips back to
+    // "disconnected". This must NOT trigger a reconnect, even though bart
+    // is in the host's required set.
+    appStateHolder.current = {
+      servers: {
+        bart: { name: "bart", connectionStatus: "disconnected" },
+      },
+    };
+    rerender();
+    await flushMicrotasks();
+    expect(ensureServersReady).toHaveBeenCalledTimes(1);
+  });
+
+  it("respects user disconnect of one server in a multi-server host (subset of attempted set)", async () => {
+    // Regression for the per-set keying bug: with two required servers
+    // [bart, foo], the boot batch attempted "bart\0foo". Disconnecting
+    // bart left "foo" connected and the candidate set shrank to "bart".
+    // Under per-set keying that was a new key and re-fired. Per-server
+    // keying suppresses it.
+    const ensureServersReady = vi.fn().mockResolvedValue({
+      readyServerNames: ["bart", "foo"],
+      failedServerNames: [],
+      missingServerNames: [],
+      reauthServerNames: [],
+    });
+
+    const appStateHolder: { current: any } = {
+      current: {
+        servers: {
+          bart: { name: "bart", connectionStatus: "disconnected" },
+          foo: { name: "foo", connectionStatus: "disconnected" },
+        },
+      },
+    };
+
+    const { rerender } = renderHook(
+      () =>
+        useAutoConnectProjectServers({
+          projectId: "proj-user-disconnect-multi",
+          hostScopeKey: "host-multi",
+          requiredServerNames: ["bart", "foo"],
+        }),
+      {
+        wrapper: ({ children }) =>
+          wrapper({
+            children,
+            ensureServersReady,
+            appState: appStateHolder.current,
+          }),
+      },
+    );
+
+    await flushMicrotasks();
+    expect(ensureServersReady).toHaveBeenCalledTimes(1);
+    expect(ensureServersReady).toHaveBeenCalledWith(["bart", "foo"]);
+
+    // Both connected.
+    appStateHolder.current = {
+      servers: {
+        bart: { name: "bart", connectionStatus: "connected" },
+        foo: { name: "foo", connectionStatus: "connected" },
+      },
+    };
+    rerender();
+    await flushMicrotasks();
+
+    // User disconnects bart only.
+    appStateHolder.current = {
+      servers: {
+        bart: { name: "bart", connectionStatus: "disconnected" },
+        foo: { name: "foo", connectionStatus: "connected" },
+      },
+    };
+    rerender();
+    await flushMicrotasks();
+
+    expect(ensureServersReady).toHaveBeenCalledTimes(1);
+  });
+
   it("does NOT re-fire while sitting on the same host (refresh-keeps-failing guard preserved)", async () => {
     const ensureServersReady = vi.fn().mockRejectedValue(new Error("boom"));
     const appState = makeAppState(["alpha"]);

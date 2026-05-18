@@ -7,13 +7,11 @@ import codexLogo from "/codex-logo.svg";
 import copilotLogo from "/copilot_logo.png";
 import mcpjamLogo from "/mcp_jam_2row.png";
 import {
-  AGENT_IDENTITY_NODE_ID,
   APPS_HUB_NODE_ID,
   HOST_GROUP_NODE_ID,
   PROTOCOL_HUB_NODE_ID,
   SANDBOX_HUB_NODE_ID,
   appsCapLeafNodeId,
-  protocolLeafNodeId,
   sandboxConfigLeafNodeId,
   type AgentIdentityNodeData,
   type AppsCapLeafNodeData,
@@ -52,8 +50,14 @@ export interface HostMatrixCardProps {
   clientCaps: ClientCapRow[];
   appsCaps: AppsCapLeafNodeData[];
   sandbox: SandboxConfigNodeData[];
+  /**
+   * hostInfo advertised in ui/initialize per SEP-1865 §McpUiInitializeResult.
+   * Rendered inside the View iframe frame as the empty state — it's exactly
+   * what a view would receive on connect, so the frame stays meaningful when
+   * no actual view is mounted.
+   */
+  hostInfo: { name: string; version: string } | null;
   appsExtensionAdvertised: boolean;
-  hostContext: ProtocolLeafNodeData | null;
   selectedNodeId: string | null;
   onSelectNode: (nodeId: string) => void;
 }
@@ -65,20 +69,18 @@ export const HostMatrixCard = memo(function HostMatrixCard({
   clientCaps,
   appsCaps,
   sandbox,
+  hostInfo,
   appsExtensionAdvertised,
-  hostContext,
   selectedNodeId,
   onSelectNode,
 }: HostMatrixCardProps) {
-  const clientOn = clientCaps.filter((c) => c.on).length;
-  const appsOn = appsCaps.filter((c) => c.on).length;
+  const connectedClientCaps = clientCaps.filter((row) => row.on);
 
   const timeoutLeaf = protocolBand.find((l) => l.leafKey === "timeout");
   const clientInfoLeaf = protocolBand.find((l) => l.leafKey === "clientInfo");
   const protocolVersionLeaf = protocolBand.find(
     (l) => l.leafKey === "protocolVersion",
   );
-  const extensionsLeaf = protocolBand.find((l) => l.leafKey === "capabilities");
 
   return (
     <article className="host-paper-card w-full">
@@ -120,7 +122,20 @@ export const HostMatrixCard = memo(function HostMatrixCard({
             <span className="hp-host-name" title={hostName}>
               {hostName}
             </span>
-            <span className="hp-host-sub" title={agent?.modelLabel ?? ""}>
+            <span
+              className="hp-host-sub"
+              title={
+                [
+                  agent?.modelLabel?.trim(),
+                  clientInfoLeaf?.value,
+                  timeoutLeaf
+                    ? `Timeout ${timeoutLeaf.value}`
+                    : protocolVersionLeaf?.value,
+                ]
+                  .filter(Boolean)
+                  .join(" · ") || undefined
+              }
+            >
               {agent?.modelLabel ?? "No model selected"}
               {clientInfoLeaf ? (
                 <>
@@ -130,50 +145,35 @@ export const HostMatrixCard = memo(function HostMatrixCard({
                   <span className="hp-mono">{clientInfoLeaf.value}</span>
                 </>
               ) : null}
+              {timeoutLeaf ? (
+                <>
+                  <span className="hp-dot-sep" aria-hidden>
+                    ·
+                  </span>
+                  <span
+                    className={cn(
+                      "hp-host-sub-stat",
+                      timeoutLeaf.isChanged && "host-matrix-changed",
+                    )}
+                  >
+                    <span className="hp-host-sub-stat-label">Timeout</span>
+                    <span className="hp-host-sub-stat-value">
+                      {timeoutLeaf.value}
+                    </span>
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="hp-dot-sep" aria-hidden>
+                    ·
+                  </span>
+                  <span className="hp-host-sub-stat-value">
+                    {protocolVersionLeaf?.value ?? "—"}
+                  </span>
+                </>
+              )}
             </span>
           </span>
-        </ClickableRegion>
-
-        {/* Agent stats — AGENT_IDENTITY_NODE_ID */}
-        <ClickableRegion
-          id={AGENT_IDENTITY_NODE_ID}
-          selectedNodeId={selectedNodeId}
-          onSelectNode={onSelectNode}
-          className="hp-agents"
-        >
-          <PaperStat
-            label="Temp"
-            value={agent?.temperature.toFixed(2) ?? "—"}
-            changed={agent?.changedFields.includes("temperature")}
-            mono
-          />
-          <PaperStat
-            label="Style"
-            value={agent?.hostStyleLabel ?? "—"}
-            changed={agent?.changedFields.includes("hostStyle")}
-          />
-          <PaperStat
-            label="Approve"
-            value={agent ? (agent.toolApproval ? "on" : "off") : "—"}
-            changed={agent?.changedFields.includes("toolApproval")}
-            muted={agent ? !agent.toolApproval : false}
-          />
-          <PaperStat
-            label="Prompt"
-            value={agent ? (agent.systemPromptEmpty ? "∅ empty" : "set") : "—"}
-            changed={agent?.changedFields.includes("systemPrompt")}
-            muted={agent?.systemPromptEmpty}
-          />
-          {timeoutLeaf ? (
-            <PaperStat
-              label="Timeout"
-              value={timeoutLeaf.value}
-              changed={timeoutLeaf.isChanged}
-              mono
-            />
-          ) : (
-            <PaperStat label="Protocol" value={protocolVersionLeaf?.value ?? "—"} mono />
-          )}
         </ClickableRegion>
 
         {/* Client capabilities — chip row at the Host layer */}
@@ -187,19 +187,14 @@ export const HostMatrixCard = memo(function HostMatrixCard({
             }}
           >
             <span className="hp-section-title">Client capabilities</span>
-            <span className="hp-section-count">
-              <b>{clientOn}</b> of 5 advertised
-              <span className="hp-section-meta"> · base protocol</span>
-            </span>
           </button>
           <div className="hp-caps">
-            {clientCaps.map((row) => (
+            {connectedClientCaps.map((row) => (
               <button
                 key={row.key}
                 type="button"
                 className={cn(
                   "hp-cap",
-                  !row.on && "hp-cap--off",
                   row.isChanged && !row.isNewlyOn && "host-matrix-changed",
                   row.isNewlyOn && "host-matrix-newly",
                 )}
@@ -218,6 +213,55 @@ export const HostMatrixCard = memo(function HostMatrixCard({
           </div>
         </div>
 
+        {/* Host capabilities — chip row at the Host layer. These are the
+            host-side capabilities advertised in McpUiInitializeResult.
+            hostCapabilities per SEP-1865; the view consumes them but the
+            host produces them, so they live at the host level (mirroring
+            the Client capabilities chip row above). */}
+        {appsExtensionAdvertised ? (
+          <div className="hp-section">
+            <button
+              type="button"
+              className="hp-section-head"
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelectNode(APPS_HUB_NODE_ID);
+              }}
+            >
+              <span className="hp-section-title">Host capabilities</span>
+            </button>
+            <div className="hp-caps">
+              {appsCaps.map((row) => {
+                const isSelected =
+                  selectedNodeId === appsCapLeafNodeId(row.capKey);
+                return (
+                  <button
+                    key={row.capKey}
+                    type="button"
+                    className={cn(
+                      "hp-cap",
+                      !row.on && "hp-cap--off",
+                      isSelected && "hp-cap--selected",
+                      row.isChanged && !row.isNewlyOn && "host-matrix-changed",
+                      row.isNewlyOn && "host-matrix-newly",
+                    )}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSelectNode(appsCapLeafNodeId(row.capKey));
+                    }}
+                  >
+                    <span className="hp-cap-dot" aria-hidden />
+                    <span className="hp-cap-name">{row.label}</span>
+                    {row.on && row.qualifier ? (
+                      <span className="hp-cap-tag">{row.qualifier}</span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+
         {/* ===== Sandbox nested frame ===== */}
         {appsExtensionAdvertised ? (
           <div className="hp-sandbox">
@@ -229,13 +273,7 @@ export const HostMatrixCard = memo(function HostMatrixCard({
                 onSelectNode(SANDBOX_HUB_NODE_ID);
               }}
             >
-              <span className="hp-sandbox-title">
-                Sandbox proxy iframe
-                <span className="hp-policy-tag">host policy</span>
-              </span>
-              <span className="hp-sandbox-sub">
-                Different origin · enforces CSP for nested Views
-              </span>
+              <span className="hp-sandbox-title">Sandbox proxy iframe</span>
             </button>
 
             <div className="hp-sb-grid">
@@ -253,7 +291,10 @@ export const HostMatrixCard = memo(function HostMatrixCard({
               ))}
             </div>
 
-            {/* ===== View nested-nested frame ===== */}
+            {/* ===== View nested-nested frame =====
+                Empty state: surfaces `mcpProfile.apps.uiInitialize` — the
+                hostInfo line matches what a view receives over the wire when
+                one connects (SEP-1865). */}
             <div className="hp-view">
               <button
                 type="button"
@@ -264,86 +305,44 @@ export const HostMatrixCard = memo(function HostMatrixCard({
                 }}
               >
                 <span className="hp-view-title">View iframe</span>
-                <span className="hp-view-sub">
-                  Apps extension · io.modelcontextprotocol/ui ·{" "}
-                  <b>{appsOn}</b> of 6 advertised
-                </span>
               </button>
-              <div className="hp-view-caps">
-                {appsCaps.map((row) => {
-                  const isSelected =
-                    selectedNodeId === appsCapLeafNodeId(row.capKey);
-                  return (
-                    <button
-                      key={row.capKey}
-                      type="button"
-                      className={cn(
-                        "hp-view-cap",
-                        !row.on && "hp-view-cap--off",
-                        isSelected && "hp-view-cap--selected",
-                        row.isChanged && !row.isNewlyOn && "host-matrix-changed",
-                        row.isNewlyOn && "host-matrix-newly",
-                      )}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onSelectNode(appsCapLeafNodeId(row.capKey));
-                      }}
-                    >
-                      <span className="hp-view-cap-name">{row.label}</span>
-                      {row.on ? (
-                        <span className="hp-view-cap-tag">
-                          view
-                          {row.qualifier ? ` · ${row.qualifier}` : ""}
-                        </span>
-                      ) : null}
-                    </button>
-                  );
-                })}
-              </div>
+              <ViewIframeEmptyState hostInfo={hostInfo} />
             </div>
           </div>
         ) : null}
-
-        {/* ===== Host footer ===== */}
-        <div className="hp-footer">
-          <span className="hp-footer-ext">
-            Extensions ·{" "}
-            <span className="hp-mono">
-              {extensionsLeaf?.value ?? "io.modelcontextprotocol/ui"}
-            </span>
-          </span>
-          {appsExtensionAdvertised ? (
-            <button
-              type="button"
-              className={cn(
-                "hp-ctx-btn",
-                hostContext?.isChanged && "host-matrix-changed",
-              )}
-              onClick={(e) => {
-                e.stopPropagation();
-                onSelectNode(protocolLeafNodeId("hostContext"));
-              }}
-            >
-              hostContext · <b>{extractFieldCount(hostContext?.value)}</b>{" "}
-              fields
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden
-              >
-                <path d="M9 18l6-6-6-6" />
-              </svg>
-            </button>
-          ) : null}
-        </div>
       </div>
     </article>
   );
 });
+
+/* Empty-state body for the View iframe frame: `uiInitialize` envelope only,
+   optionally followed by the resolved hostInfo (name + version). */
+function ViewIframeEmptyState({
+  hostInfo,
+}: {
+  hostInfo: { name: string; version: string } | null;
+}) {
+  return (
+    <div className="hp-view-empty">
+      <span className="hp-view-empty-payload">
+        <span className="hp-view-empty-payload-key">uiInitialize</span>
+        {hostInfo ? (
+          <>
+            <span className="hp-view-empty-payload-arrow" aria-hidden>
+              →
+            </span>
+            <span className="hp-view-empty-payload-value">
+              hostInfo · <b>{hostInfo.name}</b>
+              <span className="hp-view-empty-payload-version">
+                {hostInfo.version}
+              </span>
+            </span>
+          </>
+        ) : null}
+      </span>
+    </div>
+  );
+}
 
 /* ---------------- subcomponents ---------------- */
 
@@ -380,36 +379,6 @@ function ClickableRegion({
   );
 }
 
-function PaperStat({
-  label,
-  value,
-  mono,
-  muted,
-  changed,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-  muted?: boolean;
-  changed?: boolean;
-}) {
-  return (
-    <div className={cn("hp-stat", changed && "host-matrix-changed")}>
-      <span className="hp-stat-label">{label}</span>
-      <span
-        className={cn(
-          "hp-stat-value",
-          mono && "hp-mono",
-          muted && "hp-stat-value--muted",
-        )}
-        title={value}
-      >
-        {value}
-      </span>
-    </div>
-  );
-}
-
 /**
  * One sandbox config row. Severity drives a left-edge dot color but the
  * row sits inside the amber Sandbox frame, so danger/warn render as
@@ -426,62 +395,86 @@ function SandboxConfigCell({
 }) {
   const displayValue =
     row.summary && row.summary !== "—" ? row.summary : semanticAbsence(row.subKey);
+  const directives = row.directives ?? [];
   return (
-    <button
-      type="button"
-      onClick={(e) => {
-        e.stopPropagation();
-        onClick();
-      }}
+    <div
       className={cn(
-        "hp-sb-row",
-        selected && "hp-sb-row--selected",
-        row.severity === "danger" && "hp-sb-row--danger",
-        row.severity === "warn" && "hp-sb-row--warn",
-        row.isChanged && "host-matrix-changed",
+        "hp-sb-cell",
+        directives.length > 0 && "hp-sb-cell--with-directives",
       )}
     >
-      <span className="hp-sb-key">{row.label}</span>
-      <span
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onClick();
+        }}
         className={cn(
-          "hp-sb-value",
-          row.summary === "—" && "hp-sb-value--italic",
+          "hp-sb-row",
+          selected && "hp-sb-row--selected",
+          row.severity === "danger" && "hp-sb-row--danger",
+          row.severity === "warn" && "hp-sb-row--warn",
+          row.isChanged && "host-matrix-changed",
         )}
-        title={row.summary}
       >
-        {displayValue}
-      </span>
-      {row.qualifier ? (
-        <span className="hp-sb-qual" title={row.qualifier}>
-          {row.qualifier}
+        <span className="hp-sb-key">{row.label}</span>
+        <span
+          className={cn(
+            "hp-sb-value",
+            row.summary === "—" && "hp-sb-value--italic",
+          )}
+          title={row.summary}
+        >
+          {displayValue}
         </span>
+        {row.qualifier ? (
+          <span className="hp-sb-qual" title={row.qualifier}>
+            {row.qualifier}
+          </span>
+        ) : null}
+      </button>
+      {directives.length > 0 ? (
+        <ul className="hp-sb-directives" aria-label={`${row.label} directives`}>
+          {directives.map((d) => (
+            <li key={d.key} className="hp-sb-directive">
+              <span className="hp-sb-directive-label">{d.label}</span>
+              <span className="hp-sb-directive-domains">
+                {d.domains.map((domain) => (
+                  <span key={domain} className="hp-sb-directive-domain">
+                    {domain}
+                  </span>
+                ))}
+              </span>
+            </li>
+          ))}
+        </ul>
       ) : null}
-    </button>
+    </div>
   );
 }
 
 /**
  * Map an absent sandbox slice ("—" summary) to a semantic word, so the
- * reader sees "any" / "none" / "default" instead of an em-dash that
+ * reader sees "default" / "none granted" instead of an em-dash that
  * could be confused with "unknown".
+ *
+ * Note: `restrictTo` is not listed here — canvasBuilder skips the row
+ * entirely when restrictTo is empty (the safe default), so this helper
+ * is only called for `mode` and `permissions`.
  */
 function semanticAbsence(key: SandboxConfigNodeData["subKey"]): string {
   switch (key) {
-    case "restrictTo":
-      return "any origin";
-    case "deny":
-      return "none";
     case "permissions":
-      return "default";
+      // SEP-1865 is allowlist-only: an empty `allow` map means no permission
+      // is granted, regardless of the inspector-internal resolver mode.
+      return "none granted";
     case "mode":
       return "default";
+    case "restrictTo":
+      // Unreachable — canvasBuilder drops the row when restrictTo is
+      // empty. Kept for type exhaustiveness.
+      return "";
   }
-}
-
-function extractFieldCount(value: string | undefined): number {
-  if (!value) return 0;
-  const m = value.match(/\d+/);
-  return m ? Number(m[0]) : 0;
 }
 
 /* ---------------- inline styles ---------------- */
@@ -507,7 +500,6 @@ const PAPER_STYLES = `
   --hp-paper-surface: var(--popover);
   --hp-region-hover: color-mix(in oklch, var(--foreground) 4%, transparent);
   --hp-region-selected: color-mix(in oklch, var(--foreground) 7%, transparent);
-  --hp-ctx-hover: color-mix(in oklch, var(--foreground) 5%, transparent);
 
   --hp-host-bg: var(--popover);
   --hp-host-ring: var(--border);
@@ -558,8 +550,9 @@ const PAPER_STYLES = `
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 0;
+  padding: 0 0 22px 0;
   border: 0;
+  border-bottom: 1px dashed var(--hp-hairline);
   background: transparent;
   cursor: pointer;
   text-align: left;
@@ -597,6 +590,7 @@ const PAPER_STYLES = `
 .host-paper-card .hp-identity-meta {
   display: flex;
   flex-direction: column;
+  flex: 1;
   min-width: 0;
   line-height: 1.3;
 }
@@ -618,55 +612,31 @@ const PAPER_STYLES = `
   gap: 6px;
   flex-wrap: wrap;
 }
-.host-paper-card .hp-dot-sep { color: var(--hp-muted-dim); }
-
-/* === Agent stats === */
-.host-paper-card .hp-agents {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  padding: 0 0 22px 0;
-  border: 0;
-  border-bottom: 1px dashed var(--hp-hairline);
-  background: transparent;
-  cursor: pointer;
-  text-align: left;
-  width: 100%;
+.host-paper-card .hp-host-sub-stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
 }
-.host-paper-card .hp-agents:hover { background: var(--hp-region-hover); }
-.host-paper-card .hp-stat {
-  padding: 0 16px;
-  border-right: 1px dashed var(--hp-hairline);
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-.host-paper-card .hp-stat:first-child { padding-left: 0; }
-.host-paper-card .hp-stat:last-child { border-right: 0; padding-right: 0; }
-.host-paper-card .hp-stat-label {
+.host-paper-card .hp-host-sub-stat-label {
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.14em;
   color: var(--hp-muted-dim);
   font-weight: 500;
 }
-.host-paper-card .hp-stat-value {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--hp-ink);
-  letter-spacing: -0.005em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.host-paper-card .hp-host-sub-stat-value {
+  font-size: 12.5px;
+  font-weight: 400;
+  color: inherit;
 }
-.host-paper-card .hp-stat-value--muted { color: var(--hp-muted); }
+.host-paper-card .hp-dot-sep { color: var(--hp-muted-dim); }
 
 /* === Section (Client capabilities) === */
 .host-paper-card .hp-section { display: flex; flex-direction: column; gap: 12px; }
 .host-paper-card .hp-section-head {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
+  justify-content: flex-start;
   background: transparent;
   border: 0;
   padding: 0;
@@ -681,13 +651,6 @@ const PAPER_STYLES = `
   letter-spacing: -0.01em;
   color: var(--hp-ink);
 }
-.host-paper-card .hp-section-count {
-  font-size: 12.5px;
-  color: var(--hp-muted);
-  font-variant-numeric: tabular-nums;
-}
-.host-paper-card .hp-section-count b { color: var(--hp-ink); font-weight: 600; }
-.host-paper-card .hp-section-meta { color: var(--hp-muted-dim); }
 
 /* === Capability chip row === */
 .host-paper-card .hp-caps {
@@ -771,28 +734,6 @@ const PAPER_STYLES = `
   font-weight: 600;
   color: var(--hp-sandbox-accent);
   letter-spacing: -0.01em;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-/* Small tag next to the Sandbox title that signals the rows below
-   (mode / restrictTo / deny / permissions) are MCPJam's policy
-   abstractions, not raw spec terms. Quiet enough to skim past once
-   you know what it means, loud enough to keep readers honest. */
-.host-paper-card .hp-policy-tag {
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  padding: 2px 6px 3px;
-  border-radius: 4px;
-  border: 1px solid var(--hp-sandbox-ring);
-  color: var(--hp-sandbox-sub);
-  background: var(--hp-paper-surface);
-}
-.host-paper-card .hp-sandbox-sub {
-  font-size: 12.5px;
-  color: var(--hp-sandbox-sub);
 }
 
 .host-paper-card .hp-sb-grid {
@@ -877,99 +818,112 @@ const PAPER_STYLES = `
   color: var(--hp-view-accent);
   letter-spacing: -0.01em;
 }
-.host-paper-card .hp-view-sub {
-  font-size: 12px;
-  color: var(--hp-view-sub);
-}
-.host-paper-card .hp-view-sub b { color: var(--hp-view-ink); font-weight: 600; }
-.host-paper-card .hp-view-caps {
+/* View-iframe empty-state: uiInitialize line (+ optional hostInfo detail). */
+.host-paper-card .hp-view-empty {
   display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 4px 2px;
+  border-top: 1px dashed
+    color-mix(in oklch, var(--diagram-view) 30%, var(--border));
 }
-.host-paper-card .hp-view-cap {
+.host-paper-card .hp-view-empty-payload {
   display: inline-flex;
   align-items: baseline;
-  background: var(--hp-paper-surface);
-  border: 1px solid var(--hp-view-ring);
-  color: var(--hp-view-ink);
-  border-radius: 999px;
-  padding: 4px 11px 5px;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: transform 120ms ease;
+  gap: 6px;
   font-family: ui-monospace, "JetBrains Mono", monospace;
+  font-size: 11.5px;
+  color: var(--hp-view-ink);
 }
-.host-paper-card .hp-view-cap:hover { transform: translateY(-1px); }
-.host-paper-card .hp-view-cap--off {
-  background: transparent;
+.host-paper-card .hp-view-empty-payload-key {
   color: var(--hp-view-sub);
+}
+.host-paper-card .hp-view-empty-payload-arrow {
+  color: var(--hp-view-sub);
+}
+.host-paper-card .hp-view-empty-payload-value b {
+  font-weight: 600;
+  color: var(--hp-view-ink);
+}
+.host-paper-card .hp-view-empty-payload-version {
+  margin-left: 6px;
+  padding-left: 6px;
+  border-left: 1px solid var(--hp-view-ring);
+  color: var(--hp-view-sub);
+  font-size: 10.5px;
+}
+
+/* Off / selected variants of the host-level capability chip, used by
+   the new Host capabilities section (mirrors the spec's hostCapabilities
+   blob). Same shape as the Client capabilities chips so the two rows
+   read as a matched pair. */
+.host-paper-card .hp-cap--off {
+  background: transparent;
+  color: var(--hp-muted-dim);
   border-style: dashed;
   font-weight: 400;
   text-decoration: line-through;
   text-decoration-color: color-mix(in oklch, var(--muted-foreground) 60%, transparent);
   text-decoration-thickness: 0.5px;
 }
-.host-paper-card .hp-view-cap--selected {
-  background: var(--hp-view-cap-selected-bg);
-  border-color: var(--hp-view-ink);
+.host-paper-card .hp-cap--off .hp-cap-dot {
+  background: transparent;
+  border: 1px solid var(--hp-muted-dim);
 }
-.host-paper-card .hp-view-cap-name {
-  font-weight: 500;
-}
-.host-paper-card .hp-view-cap-tag {
-  font-size: 10px;
-  color: var(--hp-view-sub);
-  margin-left: 6px;
-  padding-left: 6px;
-  border-left: 1px solid var(--hp-view-ring);
-  font-weight: 400;
-  font-family: inherit;
+.host-paper-card .hp-cap--selected {
+  border-color: var(--hp-ink);
 }
 
-/* === Host footer === */
-.host-paper-card .hp-footer {
-  margin-top: 4px;
-  padding-top: 16px;
-  border-top: 1px dashed var(--hp-hairline);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  color: var(--hp-muted);
-  font-size: 12px;
-  gap: 12px;
-  flex-wrap: wrap;
+/* Sandbox config cell — wraps the row button so an optional directive
+   list can render below it without breaking the 2-col grid. When the
+   row has directives populated, the cell expands to full-width and the
+   list of directive domains appears as a quiet sub-block. */
+.host-paper-card .hp-sb-cell {
+  display: contents;
 }
-.host-paper-card .hp-footer-ext {
-  display: inline-flex;
-  align-items: baseline;
+.host-paper-card .hp-sb-cell--with-directives {
+  display: block;
+  grid-column: 1 / -1;
+}
+.host-paper-card .hp-sb-directives {
+  list-style: none;
+  margin: 4px 0 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: color-mix(in oklch, var(--diagram-sandbox) 6%, transparent);
+  display: flex;
+  flex-direction: column;
   gap: 4px;
 }
-.host-paper-card .hp-footer-ext .hp-mono {
-  color: var(--hp-ink);
-  font-size: 11.5px;
+.host-paper-card .hp-sb-directive {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  font-size: 11px;
+  color: var(--hp-sandbox-ink);
 }
-.host-paper-card .hp-ctx-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: transparent;
-  border: 0;
-  padding: 4px 6px;
-  border-radius: 6px;
-  cursor: pointer;
-  color: var(--hp-muted);
-  font: inherit;
-  font-weight: 500;
-  font-size: 12px;
+.host-paper-card .hp-sb-directive-label {
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  font-size: 10.5px;
+  color: var(--hp-sandbox-sub);
+  text-transform: lowercase;
 }
-.host-paper-card .hp-ctx-btn:hover {
-  color: var(--hp-ink);
-  background: var(--hp-ctx-hover);
+.host-paper-card .hp-sb-directive-domains {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
-.host-paper-card .hp-ctx-btn b { color: var(--hp-ink); font-weight: 600; }
-.host-paper-card .hp-ctx-btn svg { width: 11px; height: 11px; }
+.host-paper-card .hp-sb-directive-domain {
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  font-size: 10.5px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: color-mix(in oklch, var(--diagram-sandbox) 14%, transparent);
+  border: 1px solid var(--hp-sandbox-hairline);
+  color: var(--hp-sandbox-ink);
+  word-break: break-all;
+}
 
 /* === Region selection wash === */
 .host-paper-card .hp-region--selected {

@@ -122,6 +122,31 @@ export type AppBuilderLoadingState =
 
 export type UseAppBuilderStateReturn = ReturnType<typeof useAppBuilderState>;
 
+/**
+ * Pick the servers whose tools should appear in the Playground tools pane
+ * and be callable by the manual Run button. Mirrors the predicate the LLM
+ * tools list (`PlaygroundMain.tsx`) and composer popover (`chat-input.tsx`)
+ * already use, so all three surfaces agree on what "in-use" means and the
+ * pane stays in sync with the user's connection toggle.
+ *
+ * Multi-server (Playground) passes `selectedServerNames`; single-server
+ * (App Builder) passes `serverName`. Either way the filter rejects anything
+ * not currently in `connectionStatus === "connected"`.
+ */
+export function selectConnectedActiveServerNames(input: {
+  selectedServerNames: ReadonlyArray<string> | undefined;
+  serverName: string | undefined;
+  servers: Record<string, ServerWithName>;
+}): string[] {
+  const { selectedServerNames, serverName, servers } = input;
+  const isConnected = (name: string) =>
+    servers[name]?.connectionStatus === "connected";
+  if (selectedServerNames && selectedServerNames.length > 0) {
+    return selectedServerNames.filter(isConnected);
+  }
+  return serverName && isConnected(serverName) ? [serverName] : [];
+}
+
 export function useAppBuilderState(options: UseAppBuilderStateOptions) {
   const {
     serverConfig,
@@ -139,12 +164,15 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
     surface = "app-builder",
   } = options;
 
-  const activeServerNames = useMemo(() => {
-    if (selectedServerNames && selectedServerNames.length > 0) {
-      return selectedServerNames;
-    }
-    return serverName ? [serverName] : [];
-  }, [selectedServerNames, serverName]);
+  const activeServerNames = useMemo(
+    () =>
+      selectConnectedActiveServerNames({
+        selectedServerNames,
+        serverName,
+        servers,
+      }),
+    [selectedServerNames, serverName, servers],
+  );
 
   const posthog = usePostHog();
   const prefersReducedMotion = useReducedMotion();

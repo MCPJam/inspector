@@ -61,43 +61,28 @@ export function CreateClientDialog({
     onClose();
   };
 
-  // `useProjectServers` returns `undefined` while loading and `[]` for a
-  // truly empty project. Collapsing both into `[]` at create-time would
-  // silently seed the host with zero attachments whenever the user
-  // clicked Create before the query resolved — the host never self-
-  // corrects, so the only fix is a manual edit in the host tab. Gate the
-  // Create button on `servers !== undefined` so the loading window
-  // disables the action instead of producing a wrong host. The auth gate
-  // matches `useProjectServers`'s own skip rule: unauthenticated users
-  // never fire the query, so "loading" can't apply to them.
-  const isServersLoading = isAuthenticated && servers === undefined;
-
   const handleCreate = async () => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    if (isServersLoading) {
-      toast.error("Still loading project servers. Try again in a moment.");
-      return;
-    }
     setIsSaving(true);
     try {
-      // Pre-attach every existing project server as required so the new
-      // host's Servers tab opens with checkboxes filled in instead of
-      // every server reading "optional / uses defaults". Thread MCPJam's
-      // current global theme into the seed so the new host opens
-      // matching the inspector chrome instead of always defaulting to
-      // dark — the user can still flip it later from the host editor.
+      // New hosts start with no required servers so creation never triggers
+      // an auto-connect storm; users opt servers in via the Servers tab.
+      // Thread MCPJam's current global theme into the seed so the new
+      // host opens matching the inspector chrome instead of always
+      // defaulting to dark — user can still flip it later from the host
+      // editor.
       const seed = seedFromHostTemplate(selectedTemplateId, {
         theme: themeMode,
       });
-      // `isServersLoading` already guards the authenticated-loading case;
-      // for unauthenticated callers the query is skipped so `servers` is
-      // undefined and we seed with no attachments.
+      // Capture available-server count for analytics (we don't attach
+      // them — see above — but knowing the count at creation time is
+      // useful signal for onboarding funnels).
       const projectServerIds = servers?.map((s) => s._id) ?? [];
       const { hostId, hostConfigId } = await createHost({
         projectId,
         name: trimmed,
-        input: { ...seed, serverIds: projectServerIds },
+        input: { ...seed, serverIds: [] },
       });
       toast.success(`Client "${trimmed}" created`);
       handleClose();
@@ -179,11 +164,9 @@ export function CreateClientDialog({
           </Button>
           <Button
             onClick={handleCreate}
-            disabled={!name.trim() || isSaving || isServersLoading}
+            disabled={!name.trim() || isSaving}
           >
-            {(isSaving || isServersLoading) && (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            )}
+            {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Create
           </Button>
         </DialogFooter>

@@ -38,7 +38,7 @@ const SAMPLE_PROFILE: HostConfigMcpProfileV1 = {
     sandbox: {
       csp: {
         mode: "declared",
-        deny: { connectDomains: ["evil.com"] },
+        restrictTo: { connectDomains: ["api.openai.com"] },
       },
     },
   },
@@ -222,7 +222,7 @@ describe("hostConfigInputsEqual mcpProfile semantics", () => {
         apps: {
           sandbox: {
             csp: {
-              deny: { connectDomains: ["evil.com"] },
+              restrictTo: { connectDomains: ["api.openai.com"] },
               mode: "declared",
             },
           },

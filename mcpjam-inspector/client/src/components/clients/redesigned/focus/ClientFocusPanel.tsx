@@ -3,7 +3,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 import type { HostConfigInputV2 } from "@/lib/client-config-v2";
 import type { HostAttentionIssue, HostFocusTabId } from "../types";
-import { countIssuesByTab, fieldsWithIssues } from "./useClientDraftValidation";
+import { fieldsWithIssues } from "./useClientDraftValidation";
 import { AppearanceTab } from "./AppearanceTab";
 import { BehaviorTab } from "./BehaviorTab";
 import { ProtocolTab } from "./ProtocolTab";
@@ -64,7 +64,6 @@ export function ClientFocusPanel({
   onAddServer,
   onClose,
 }: HostFocusPanelProps) {
-  const issuesByTab = countIssuesByTab(attention);
   // Host-name validation was retagged from "general" → "behavior" when
   // the General tab was removed (see useClientDraftValidation.ts). The
   // identity-row indicator follows the new tag so the input still lights
@@ -85,11 +84,7 @@ export function ClientFocusPanel({
           "items-stretch gap-2 py-1 sm:items-center",
         )}
       >
-        <ClientFocusTabBar
-          tab={tab}
-          onTabChange={onTabChange}
-          issuesByTab={issuesByTab}
-        />
+        <ClientFocusTabBar tab={tab} onTabChange={onTabChange} />
         <Button
           size="icon"
           variant="ghost"

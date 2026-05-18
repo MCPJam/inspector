@@ -367,7 +367,7 @@ export function ClientConfigEditor({
  * Minimal v1 surface (per the inspector PR plan): structured controls for
  * the spec-stable fields (`clientInfo.{name,version,title}`,
  * `supportedProtocolVersions`, CSP/permissions `mode`) plus raw-JSON
- * editors for the freeform CSP/permissions allow/deny sets.
+ * editors for the freeform CSP restrictTo / permissions allow sets.
  *
  * `undefined` ↔ `{ profileVersion: 1 }` distinction is preserved
  * verbatim: the section starts hidden (`undefined`), "Enable" stamps a
@@ -760,7 +760,7 @@ function McpProfileSection({
 
 /**
  * Sandbox subsection — CSP and permissions. Uses structured mode
- * dropdowns + raw-JSON for the more complex allow/deny shapes. v1 keeps
+ * dropdowns + raw-JSON for the more complex allowlist shapes. v1 keeps
  * the JSON editors lean rather than building four-domain-list
  * widgets per directive; the editor evolves once usage patterns settle.
  */
@@ -785,9 +785,14 @@ function McpProfileSandboxEditor({
       const hasSandboxFields =
         nextSandbox.csp !== undefined ||
         nextSandbox.permissions !== undefined;
+      // Preserve sibling apps fields (e.g. uiInitialize.hostInfo set by the
+      // redesigned Apps Extension tab) — don't rewrite `apps` to only sandbox.
+      const nextApps = { ...(base.apps ?? {}) };
+      if (hasSandboxFields) nextApps.sandbox = nextSandbox;
+      else delete nextApps.sandbox;
       onChange({
         ...base,
-        apps: hasSandboxFields ? { sandbox: nextSandbox } : undefined,
+        apps: Object.keys(nextApps).length > 0 ? nextApps : undefined,
       });
     },
     [profile, onChange],
@@ -827,23 +832,20 @@ function McpProfileSandboxEditor({
           </SelectContent>
         </Select>
         <p className="text-xs text-muted-foreground">
-          restrictTo intersects with the baseline; deny always wins. Below
-          take effect in every mode.
+          restrictTo is optional and empty by default. Only set it if you
+          want to narrow the view's declared CSP further than the view
+          itself asks for. Per SEP-1865 it's allowlist-only and intersects
+          the view's declaration — adding origins here can only block
+          what the view would otherwise reach, never make a view more
+          compatible. Leave empty to honor the view's declaration as-is.
         </p>
       </div>
 
       <McpProfileCspDomainSetEditor
-        label="restrictTo (intersect with baseline)"
+        label="restrictTo (optional, narrows view declaration)"
         value={csp?.restrictTo}
         onChange={(restrictTo) =>
           updateSandbox({ csp: { ...(csp ?? {}), restrictTo } })
-        }
-      />
-      <McpProfileCspDomainSetEditor
-        label="deny (always blocked)"
-        value={csp?.deny}
-        onChange={(deny) =>
-          updateSandbox({ csp: { ...(csp ?? {}), deny } })
         }
       />
 
@@ -853,14 +855,19 @@ function McpProfileSandboxEditor({
         <Label className="text-xs">Permissions mode</Label>
         <Select
           value={permissions?.mode ?? "resource-declared"}
-          onValueChange={(v) =>
+          onValueChange={(v) => {
+            const mode = v as "resource-declared" | "deny-all" | "custom";
             updateSandbox({
               permissions: {
                 ...(permissions ?? {}),
-                mode: v as "resource-declared" | "deny-all" | "custom",
+                mode,
+                // Drop the allow map when leaving custom; otherwise
+                // appsToJson() still serializes stale grants and flipping
+                // back to custom would resurrect them.
+                allow: mode === "custom" ? permissions?.allow : undefined,
               },
-            })
-          }
+            });
+          }}
         >
           <SelectTrigger>
             <SelectValue />
@@ -870,7 +877,7 @@ function McpProfileSandboxEditor({
               Resource-declared (default)
             </SelectItem>
             <SelectItem value="deny-all">Deny all</SelectItem>
-            <SelectItem value="custom">Custom allow/deny</SelectItem>
+            <SelectItem value="custom">Custom allow</SelectItem>
           </SelectContent>
         </Select>
         <p className="text-xs text-muted-foreground">
@@ -879,16 +886,14 @@ function McpProfileSandboxEditor({
         </p>
       </div>
 
-      <McpProfilePermissionsAllowDenyEditor
+      <McpProfilePermissionsAllowEditor
         mode={permissions?.mode ?? "resource-declared"}
         allow={permissions?.allow}
-        deny={permissions?.deny}
         onChange={(next) =>
           updateSandbox({
             permissions: {
               ...(permissions ?? {}),
               allow: next.allow,
-              deny: next.deny,
             },
           })
         }
@@ -898,35 +903,33 @@ function McpProfileSandboxEditor({
 }
 
 /**
- * Per-permission allow/deny grid for the four MCP Apps permission keys
+ * Per-permission allow grid for the four MCP Apps permission keys
  * spec'd by SEP-1865 (`camera`, `microphone`, `geolocation`,
  * `clipboardWrite` — camelCase, matching the resource's `_meta.ui.
  * permissions` declaration; the kebab-case `clipboard-write` form
  * belongs at the iframe `allow=` boundary, not in profile state).
  *
+ * SEP-1865 is allowlist-only — there is no deny concept. Permissions
+ * are positively declared; absence = not granted.
+ *
  * - Allow column: only meaningful in `custom` mode (the resolver seeds
  *   the candidate set from `policy.allow` in custom mode); rendered
  *   disabled in resource-declared / deny-all so the user can see the
  *   shape without it being a no-op trap.
- * - Deny column: applies in every mode (resolver subtracts after the
- *   mode-derived candidate is built), so always enabled.
  *
  * Resource declaration is still the ceiling — toggling `allow` on for a
  * permission the resource didn't request yields nothing at runtime. The
  * help text below the grid spells this out.
  */
-function McpProfilePermissionsAllowDenyEditor({
+function McpProfilePermissionsAllowEditor({
   mode,
   allow,
-  deny,
   onChange,
 }: {
   mode: "resource-declared" | "deny-all" | "custom";
   allow: Record<string, boolean> | undefined;
-  deny: string[] | undefined;
   onChange: (next: {
     allow: Record<string, boolean> | undefined;
-    deny: string[] | undefined;
   }) => void;
 }) {
   const PERMISSION_KEYS: ReadonlyArray<{ key: string; label: string }> = [
@@ -937,20 +940,14 @@ function McpProfilePermissionsAllowDenyEditor({
   ];
   const allowEnabled = mode === "custom";
   const allowMap = allow ?? {};
-  const denySet = new Set(deny ?? []);
 
-  const emitChange = (
-    nextAllow: Record<string, boolean>,
-    nextDeny: string[],
-  ) => {
-    // Collapse empty objects/arrays to `undefined` so the persisted
-    // envelope stays minimal and round-trips identically (matches the
-    // mcpProfile hash-dedupe expectations enforced by the backend).
+  const emitChange = (nextAllow: Record<string, boolean>) => {
+    // Collapse empty objects to `undefined` so the persisted envelope
+    // stays minimal and round-trips identically (matches the mcpProfile
+    // hash-dedupe expectations enforced by the backend).
     const hasAllowEntries = Object.keys(nextAllow).length > 0;
-    const hasDenyEntries = nextDeny.length > 0;
     onChange({
       allow: hasAllowEntries ? nextAllow : undefined,
-      deny: hasDenyEntries ? nextDeny : undefined,
     });
   };
 
@@ -961,22 +958,12 @@ function McpProfilePermissionsAllowDenyEditor({
     } else {
       delete next[key];
     }
-    emitChange(next, deny ?? []);
-  };
-
-  const toggleDeny = (key: string, denied: boolean) => {
-    const next = new Set(denySet);
-    if (denied) {
-      next.add(key);
-    } else {
-      next.delete(key);
-    }
-    emitChange(allow ?? {}, Array.from(next));
+    emitChange(next);
   };
 
   return (
     <div className="grid gap-2 rounded-md border border-border/20 p-2">
-      <div className="grid grid-cols-[1fr_auto_auto] items-center gap-x-3 gap-y-1 text-xs">
+      <div className="grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-1 text-xs">
         <span className="font-medium text-muted-foreground">Permission</span>
         <span
           className={`font-medium ${
@@ -990,21 +977,13 @@ function McpProfilePermissionsAllowDenyEditor({
         >
           Allow
         </span>
-        <span
-          className="font-medium text-muted-foreground"
-          title="Deny always blocks the permission, regardless of mode"
-        >
-          Deny
-        </span>
         {PERMISSION_KEYS.map(({ key, label }) => (
           <PermissionRow
             key={key}
             label={label}
             allowChecked={!!allowMap[key]}
             allowEnabled={allowEnabled}
-            denyChecked={denySet.has(key)}
             onToggleAllow={(v) => toggleAllow(key, v)}
-            onToggleDeny={(v) => toggleDeny(key, v)}
           />
         ))}
       </div>
@@ -1020,16 +999,12 @@ function PermissionRow({
   label,
   allowChecked,
   allowEnabled,
-  denyChecked,
   onToggleAllow,
-  onToggleDeny,
 }: {
   label: string;
   allowChecked: boolean;
   allowEnabled: boolean;
-  denyChecked: boolean;
   onToggleAllow: (v: boolean) => void;
-  onToggleDeny: (v: boolean) => void;
 }) {
   return (
     <>
@@ -1039,11 +1014,6 @@ function PermissionRow({
         disabled={!allowEnabled}
         onCheckedChange={onToggleAllow}
         aria-label={`Allow ${label}`}
-      />
-      <Switch
-        checked={denyChecked}
-        onCheckedChange={onToggleDeny}
-        aria-label={`Deny ${label}`}
       />
     </>
   );

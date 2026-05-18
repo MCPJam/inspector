@@ -128,22 +128,35 @@ export interface AppsCapLeafNodeData extends Record<string, unknown> {
 }
 
 /**
- * One row per sandbox config slice (CSP mode, restrictTo, deny,
- * permissions). The sandbox section in the matrix is fixed-shape (always
- * 4 rows) so users can read "this is the default" at a glance — same
- * "absence is informative" principle the Apps caps section uses for
- * off capabilities. Severity drives the row tint:
+ * One row per sandbox config slice (CSP mode, restrictTo, permissions).
+ * The sandbox section in the matrix is fixed-shape (always 3 rows) so
+ * users can read "this is the default" at a glance — same "absence is
+ * informative" principle the Apps caps section uses for off capabilities.
+ * Severity drives the row tint:
  *   - `neutral`: default / empty, no surprise
  *   - `warn`: deviates from default but doesn't silently narrow (e.g.
- *     `mode: "relaxed"`, `deny` populated)
+ *     `mode: "relaxed"`)
  *   - `danger`: silently NARROWS what widgets can do (e.g. `restrictTo`
  *     populated — the intersection trap that broke Excalidraw)
+ *
+ * SEP-1865 is allowlist-only — there's no deny concept at any layer.
  */
-export type SandboxConfigSubKey =
-  | "mode"
-  | "restrictTo"
-  | "deny"
-  | "permissions";
+export type SandboxConfigSubKey = "mode" | "restrictTo" | "permissions";
+
+/**
+ * CSP directive arrays surfaced under the `restrictTo` row when populated.
+ * Each entry is one of the four SEP-1865 allowlist directive families.
+ * Empty arrays / undefined values are NOT rendered — the matrix only shows
+ * directives the host actually narrowed.
+ */
+export interface CspDirectiveDetail {
+  /** Directive family name (e.g. "connectDomains"). */
+  key: "connectDomains" | "resourceDomains" | "frameDomains" | "baseUriDomains";
+  /** Short display label ("connect", "resource", "frame", "baseUri"). */
+  label: string;
+  /** Domain entries declared under this directive. */
+  domains: string[];
+}
 
 export interface SandboxConfigNodeData extends Record<string, unknown> {
   kind: "sandbox-config-leaf";
@@ -155,20 +168,28 @@ export interface SandboxConfigNodeData extends Record<string, unknown> {
   qualifier: string | null;
   severity: "neutral" | "warn" | "danger";
   isChanged: boolean;
+  /**
+   * Per-directive allowlist entries (currently only populated for the
+   * `restrictTo` row when non-empty). Lets the matrix surface the actual
+   * domains a host narrowed to, not just the count.
+   */
+  directives?: CspDirectiveDetail[];
 }
 
 /**
- * MCP client-capability row. One per base-protocol cap declared in the
- * `initialize` handshake (roots / sampling / elicitation / tasks /
- * experimental). Diff bits drive the matrix's "M" / "+" gutter so a
- * host switch reads the same way as the Apps cap matrix.
+ * MCP client-capability row. Covers optional caps declared under
+ * `initialize` (`roots` / `sampling` / `elicitation` / `tasks` /
+ * `experimental`) plus `extensions` (`capabilities.extensions` in JSON).
+ * Diff bits drive the matrix's "M" / "+" gutter so a host switch reads
+ * the same way as the Apps cap matrix.
  */
 export type ClientCapKey =
   | "roots"
   | "sampling"
   | "elicitation"
   | "tasks"
-  | "experimental";
+  | "experimental"
+  | "extensions";
 
 export interface ClientCapRow {
   key: ClientCapKey;
@@ -182,7 +203,7 @@ export interface ClientCapRow {
 /**
  * The host's entire surface, packed into one ReactFlow node. Replaces
  * the previous atomized layout (agent + protocol hub + protocol leaves
- * + apps hub + cap leaves + hostContext leaf). Servers stay as their
+ * + apps hub + cap leaves). Servers stay as their
  * own subgraph so the hub→servers edges remain.
  */
 export interface HostMatrixNodeData extends Record<string, unknown> {
@@ -193,12 +214,21 @@ export interface HostMatrixNodeData extends Record<string, unknown> {
   clientCaps: ClientCapRow[];
   appsCaps: AppsCapLeafNodeData[];
   /**
-   * Sandbox config rows (CSP mode, restrictTo, deny, permissions).
-   * Always 4 rows when `appsExtensionAdvertised` is true — gated on
-   * the same flag as `appsCaps` because sandbox is part of SEP-1865
-   * and only meaningful when the client opts in to the UI extension.
+   * Sandbox config rows (CSP mode, restrictTo, permissions). Always 3
+   * rows when `appsExtensionAdvertised` is true — gated on the same flag
+   * as `appsCaps` because sandbox is part of SEP-1865 and only meaningful
+   * when the client opts in to the UI extension.
    */
   sandbox: SandboxConfigNodeData[];
+  /**
+   * hostInfo (name + version) the host will advertise in `ui/initialize`'s
+   * `McpUiInitializeResult.hostInfo` per SEP-1865. Lifted from
+   * `mcpProfile.apps.uiInitialize.hostInfo` so the matrix's View iframe
+   * frame can show what a view would receive on connect. `null` when the
+   * host hasn't customized it (the inspector falls back to its own
+   * identity at runtime).
+   */
+  hostInfo: { name: string; version: string } | null;
   /**
    * Whether the client advertises `io.modelcontextprotocol/ui` in its
    * `clientCapabilities.extensions`. When false, the host-side Apps caps
@@ -207,7 +237,6 @@ export interface HostMatrixNodeData extends Record<string, unknown> {
    * matrix hides the entire Apps section to avoid implying support.
    */
   appsExtensionAdvertised: boolean;
-  hostContext: ProtocolLeafNodeData | null;
 }
 
 export interface ServersHubNodeData extends Record<string, unknown> {

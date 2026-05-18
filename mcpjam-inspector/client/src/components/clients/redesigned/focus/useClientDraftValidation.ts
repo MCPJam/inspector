@@ -23,8 +23,9 @@ export function collectHostAttentionIssues(
       // Host name lives in the sticky identity header above the tab
       // bar (see ClientIdentityRow's `hasNameIssue` indicator), not in any
       // tab. After the General tab was removed, attribute the issue to
-      // the most-active tab (Behavior) so it still shows a badge, even
-      // though the input itself is in the header.
+      // the most-active tab (Behavior) so it still participates in
+      // tab-scoped validation helpers, even though the input itself is
+      // in the header.
       tab: "behavior",
       field: "hostDisplayName",
       message: "Client name is required",
@@ -96,6 +97,41 @@ export function collectHostAttentionIssues(
     }
   }
 
+  // Apps Extension: detect profiles still carrying the legacy default
+  // restrictTo (anthropic / openai / jsdelivr) we used to seed Claude,
+  // ChatGPT, Cursor, and Copilot templates with. SEP-1865 makes
+  // restrictTo an intersection with the view's declared CSP — so this
+  // captured allowlist silently strips any widget reaching an origin
+  // outside the three. New profiles no longer ship it; this surfaces it
+  // on existing profiles so users can clear it deliberately.
+  //
+  // Match heuristic: connectDomains contains all three canonical origins
+  // AND resourceDomains contains jsdelivr. Users who typed those three
+  // by hand will see this too — acceptable: the message is a warning,
+  // not a blocker, and the explanation tells them what to do.
+  const restrictTo = draft.mcpProfile?.apps?.sandbox?.csp?.restrictTo;
+  if (restrictTo) {
+    const connect = restrictTo.connectDomains ?? [];
+    const resource = restrictTo.resourceDomains ?? [];
+    const hasAll = (list: string[], needles: string[]) =>
+      needles.every((n) => list.includes(n));
+    const looksLegacy =
+      hasAll(connect, [
+        "https://api.anthropic.com",
+        "https://api.openai.com",
+        "https://cdn.jsdelivr.net",
+      ]) && resource.includes("https://cdn.jsdelivr.net");
+    if (looksLegacy) {
+      issues.push({
+        level: "warning",
+        tab: "apps",
+        field: "sandboxRestrictTo",
+        message:
+          "Legacy default restrictTo (anthropic/openai/jsdelivr) silently narrows view CSP — clear it to honor the view's declaration",
+      });
+    }
+  }
+
   // Apps Extension: sandbox permissions.allow MUST be an object with
   // boolean values — backend canonicalizer rejects anything else and the
   // write would fail. Reject both non-object shapes (string/number/array)
@@ -148,21 +184,6 @@ export function useClientDraftValidation(
     () => collectHostAttentionIssues(draft, hostDisplayName),
     [draft, hostDisplayName],
   );
-}
-
-/** Convenience: count issues by tab for the sub-node attention badges. */
-export function countIssuesByTab(
-  issues: ReadonlyArray<HostAttentionIssue>,
-): Record<HostFocusTabId, number> {
-  const out: Record<HostFocusTabId, number> = {
-    behavior: 0,
-    protocol: 0,
-    apps: 0,
-    servers: 0,
-    appearance: 0,
-  };
-  for (const issue of issues) out[issue.tab]++;
-  return out;
 }
 
 /** Convenience: extract the offending field set for a tab. */
