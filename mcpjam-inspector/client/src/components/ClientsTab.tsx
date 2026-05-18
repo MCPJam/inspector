@@ -9,10 +9,7 @@ import { ViewModeSelector } from "./shared/view-mode-selector";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useHost, useHostList } from "@/hooks/useClients";
 import { routePaths } from "@/lib/app-navigation";
-import {
-  getChatboxShellStyle,
-  getHostChromeAccentVariables,
-} from "@/lib/chatbox-client-style";
+import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 interface HostsTabProps {
@@ -49,7 +46,7 @@ export function ClientsTab({
   );
   // Brand shell variables apply to the server list body so cards match the
   // emulated host canvas; the tab chrome uses the app background (same as
-  // the global Header) plus `getHostChromeAccentVariables` for primary accents.
+  // the global Header).
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const { host: previewedHost } = useHost({
     isAuthenticated,
@@ -68,16 +65,6 @@ export function ClientsTab({
         : undefined,
     [previewedHostStyle, previewedChatUiOverride, themeMode],
   );
-  const chromeAccentStyle = useMemo(
-    () =>
-      getHostChromeAccentVariables(
-        previewedHostStyle,
-        themeMode,
-        previewedChatUiOverride,
-      ),
-    [previewedHostStyle, previewedChatUiOverride, themeMode],
-  );
-
   // Reset host selection only when the project actually changes mid-session,
   // not on first mount — otherwise a deep-link like `/hosts/:hostId` gets
   // wiped right after the page loads.
@@ -159,7 +146,6 @@ export function ClientsTab({
             <ClientsConnectAddServerSlotContext.Provider value={addServerSlotEl}>
               <div
                 className="relative shrink-0 border-b border-border/40 px-8 py-2.5"
-                style={chromeAccentStyle}
                 data-testid="hosts-tab-header-chrome"
               >
                 <div className="flex min-w-0 items-center justify-end gap-3">
