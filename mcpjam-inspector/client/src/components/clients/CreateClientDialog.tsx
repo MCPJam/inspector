@@ -30,6 +30,7 @@ interface CreateHostDialogProps {
   onClose: () => void;
   projectId: string;
   onCreated: (hostId: string) => void;
+  initialTemplateId?: HostTemplateId;
 }
 
 export function CreateClientDialog({
@@ -37,6 +38,7 @@ export function CreateClientDialog({
   onClose,
   projectId,
   onCreated,
+  initialTemplateId,
 }: CreateHostDialogProps) {
   const posthog = usePostHog();
   const { createHost } = useHostMutations();
@@ -45,9 +47,14 @@ export function CreateClientDialog({
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const [name, setName] = useState("");
   const [selectedTemplateId, setSelectedTemplateId] = useState<HostTemplateId>(
-    DEFAULT_HOST_TEMPLATE_ID,
+    initialTemplateId ?? DEFAULT_HOST_TEMPLATE_ID,
   );
   const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setSelectedTemplateId(initialTemplateId ?? DEFAULT_HOST_TEMPLATE_ID);
+  }, [isOpen, initialTemplateId]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -57,7 +64,7 @@ export function CreateClientDialog({
 
   const handleClose = () => {
     setName("");
-    setSelectedTemplateId(DEFAULT_HOST_TEMPLATE_ID);
+    setSelectedTemplateId(initialTemplateId ?? DEFAULT_HOST_TEMPLATE_ID);
     onClose();
   };
 
