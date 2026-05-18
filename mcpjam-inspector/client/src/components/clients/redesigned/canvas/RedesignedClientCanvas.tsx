@@ -224,9 +224,6 @@ const ServerCardNodeRenderer = memo(
             >
               {data.name}
             </span>
-            <span className="text-[10px] uppercase tracking-[0.04em] text-muted-foreground/80">
-              {data.isOptional ? "optional" : "required"}
-            </span>
           </div>
           <span
             className="truncate font-mono text-[10.5px] text-muted-foreground"

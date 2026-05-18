@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 import type { HostConfigInputV2 } from "@/lib/client-config-v2";
 import { getServerStatusDot } from "../canvas/RedesignedClientCanvas";
 import type { ServerCardNodeData } from "../types";
-import { Chip, FocusBlock } from "./primitives";
+import { FocusBlock } from "./primitives";
 
 interface ServersTabProps {
   draft: HostConfigInputV2;
@@ -89,8 +89,8 @@ export function ServersTab({
   return (
     <div className="flex flex-col gap-4">
       <FocusBlock
-        title="Attached servers"
-        subtitle="Every project server attaches to this client. Mark the ones the client depends on as required — the rest are optional."
+        title="Servers"
+        subtitle="Choose which servers connect when this client opens."
         action={
           <Button
             type="button"
@@ -112,7 +112,6 @@ export function ServersTab({
           <div className="flex flex-col gap-1.5">
             {availableServers.map((srv) => {
               const isRequired = draft.serverIds.includes(srv.id);
-              const isOptional = !isRequired;
               const override = overrides[srv.id];
               const expanded = expandedServerId === srv.id;
               const overrideCount =
@@ -134,7 +133,7 @@ export function ServersTab({
                     <Checkbox
                       checked={isRequired}
                       onCheckedChange={(c) => setRequired(srv.id, !!c)}
-                      aria-label={`Required: ${srv.name}`}
+                      aria-label={`Connect ${srv.name} when this client opens`}
                     />
                     {(() => {
                       const insecure =
@@ -169,12 +168,6 @@ export function ServersTab({
                         {srv.url ?? "Project server"}
                       </span>
                     </div>
-                    <Chip
-                      tone={isOptional ? "info" : "primary"}
-                      mono={false}
-                    >
-                      {isOptional ? "optional" : "required"}
-                    </Chip>
                     {overrideCount > 0 ? (
                       <Badge
                         variant="outline"
@@ -183,11 +176,7 @@ export function ServersTab({
                         {overrideCount}{" "}
                         {overrideCount === 1 ? "override" : "overrides"}
                       </Badge>
-                    ) : (
-                      <span className="text-[10.5px] text-muted-foreground/70">
-                        uses defaults
-                      </span>
-                    )}
+                    ) : null}
                     <Button
                       variant="ghost"
                       size="icon"
@@ -258,18 +247,13 @@ function ServerOverrideEditor({
       <div className="flex flex-col gap-3">
           <div className="flex items-center justify-between gap-2">
             <span className="text-[12px] font-medium">Overrides</span>
-            <div className="flex items-center gap-1.5">
-              <Switch
-                checked={hasOverride}
-                onCheckedChange={(c) =>
-                  onChange(c ? { headersOverride: {} } : null)
-                }
-                aria-label="Enable overrides"
-              />
-              <span className="text-[11px] text-muted-foreground">
-                {hasOverride ? "active" : "uses client defaults"}
-              </span>
-            </div>
+            <Switch
+              checked={hasOverride}
+              onCheckedChange={(c) =>
+                onChange(c ? { headersOverride: {} } : null)
+              }
+              aria-label="Enable overrides"
+            />
           </div>
 
           {hasOverride ? (

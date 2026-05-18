@@ -151,16 +151,41 @@ describe("ClientFocusPanel", () => {
       />,
     );
 
-    // General tab was removed; Appearance is the new home for host-wide
-    // chrome settings.
+    // General tab was removed; Appearance is temporarily hidden (see
+    // HOST_FOCUS_TAB_DEFS) — host-wide chrome may return in a later pass.
     expect(screen.queryByRole("tab", { name: /^General$/ })).toBeNull();
-    expect(
-      screen.getByRole("tab", { name: /^Appearance$/ }),
-    ).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /^Appearance$/ })).toBeNull();
     // The host-name textbox lives in the always-visible identity header.
     expect(screen.getByRole("textbox", { name: "Client name" })).toHaveValue(
       "My Host",
     );
+  });
+
+  it("does not surface uses client defaults next to the overrides switch", () => {
+    render(
+      <ClientFocusPanel
+        hostId="host-test"
+        tab="servers"
+        onTabChange={vi.fn()}
+        initialSelectedServerId="s1"
+        hostDisplayName="Test Host"
+        onHostDisplayNameChange={vi.fn()}
+        draft={emptyHostConfigInputV2()}
+        onDraftChange={vi.fn()}
+        attention={[]}
+        availableServers={[
+          { id: "s1", name: "Bench", url: "https://example.com" },
+        ]}
+        onAddServer={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("uses client defaults")).toBeNull();
+    expect(screen.queryByText(/^active$/)).toBeNull();
+    expect(
+      screen.getByRole("switch", { name: "Enable overrides" }),
+    ).toBeInTheDocument();
   });
 
   it("does not show a placeholder Advanced tab", () => {

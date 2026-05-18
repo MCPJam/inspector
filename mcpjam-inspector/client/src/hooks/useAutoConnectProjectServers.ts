@@ -6,18 +6,21 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 /**
  * Module-level memo of "we already kicked off ensureServersReady for this
- * (project, host-scope, server-name set)". Lives outside React state on
+ * (project, host-scope, server-name)". Lives outside React state on
  * purpose: navigating Servers → Host → Playground re-mounts the hook
- * three times but should only fire one batch per scope. Cleared per-project
- * on entry so switching projects starts fresh.
+ * three times but should only fire one batch per scope. Cleared per-
+ * project on entry so switching projects starts fresh.
  *
- * Concretely: this is the "refresh-keeps-failing" guard. Once a batch has
- * been attempted — regardless of whether it succeeded, failed, or stalled
- * on a bad refresh token — we never retry it automatically for the SAME
- * host. Switching to a different host counts as a different scope, so the
- * user can recover from a transient failure by switching hosts. Otherwise
- * the per-card connect toggle in the Servers tab is the manual retry path,
- * matching the existing chatbox behavior.
+ * Granularity is per-server within a scope, not per-candidate-set. That
+ * matters for two cases the old per-set keying got wrong: (a) the user
+ * manually disconnects one of N required servers, which would otherwise
+ * produce a fresh (N−1)-element candidate set and re-fire; (b) the
+ * "refresh-keeps-failing" guard — once a server has been attempted in
+ * this scope (success, failure, or stalled OAuth) we never auto-retry it.
+ * Switching hosts counts as a different scope, so the user can recover
+ * from a transient failure by switching hosts; otherwise the per-card
+ * connect toggle in the Servers tab is the manual retry path, matching
+ * the existing chatbox behavior.
  */
 const attemptedByProject = new Map<string, Set<string>>();
 
@@ -241,18 +244,30 @@ export function useAutoConnectProjectServers({
   }, [enabled, projectId, scopeKey, runtimeDisconnectServer]);
 
   // Connect-required: fires when the candidate set (required-but-not-yet-
-  // connected) changes. Saving a new server into the host's required list
-  // produces a fresh candidate set and re-fires; failures dedupe per
-  // candidate-set so they don't retry-loop.
+  // connected) changes. Dedupe is per-server-within-scope, not per
+  // candidate-set: once we've attempted `bart` in this scope we never
+  // re-attempt it, even if the user toggles it off and back into the
+  // candidate set. Without that, user-initiated disconnect of a host-
+  // required server would immediately be undone by the next reconcile —
+  // wrong behavior for a dev/inspector tool where disconnecting is often
+  // intentional (e.g. reproducing a client-side fallback path).
+  //
+  // Switching hosts clears the project's attempted set (see scope-
+  // transition effect above), so re-entering this host gives every
+  // required server a fresh attempt.
   useEffect(() => {
     if (!enabled || !projectId || !candidateNamesKey) return;
-    const key = `connect:${candidateNamesKey}`;
-    if (isAttempted(projectId, scopeKey, key)) return;
-    markAttempted(projectId, scopeKey, key);
+    const allNames = candidateNamesKey.split("\0");
+    const fresh = allNames.filter(
+      (name) => !isAttempted(projectId, scopeKey, `srv:${name}`),
+    );
+    if (fresh.length === 0) return;
+    for (const name of fresh) {
+      markAttempted(projectId, scopeKey, `srv:${name}`);
+    }
 
     let cancelled = false;
-    const names = candidateNamesKey.split("\0");
-    ensureServersReady(names).then(
+    ensureServersReady(fresh).then(
       (result) => {
         if (cancelled) return;
         lastResultRef.current = result;

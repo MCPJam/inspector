@@ -9,6 +9,11 @@ import { buildRedesignedHostCanvas } from "../canvasBuilder";
 function renderCanvas(opts: {
   draft?: ReturnType<typeof emptyHostConfigInputV2>;
   hostName?: string;
+  projectServers?: Array<{
+    id: string;
+    name: string;
+    url?: string;
+  }>;
 }) {
   const viewModel = buildRedesignedHostCanvas(
     {
@@ -16,7 +21,7 @@ function renderCanvas(opts: {
       draft: opts.draft ?? emptyHostConfigInputV2(),
       savedSnapshotId: "snap",
       isDirty: false,
-      projectServers: [],
+      projectServers: opts.projectServers ?? [],
     },
     [],
   );
@@ -97,6 +102,20 @@ describe("RedesignedClientCanvas", () => {
     const caps = node!.querySelector(".hp-caps");
     expect(caps).not.toBeNull();
     expect(within(caps as HTMLElement).getByText("roots")).toBeInTheDocument();
+  });
+
+  it("does not show required/optional chips on canvas server cards", () => {
+    const { container } = renderCanvas({
+      projectServers: [
+        { id: "s1", name: "bench", url: "https://example.com" },
+      ],
+    });
+    const card = container.querySelector(
+      `.react-flow__node[data-id="server-card:s1"]`,
+    ) as HTMLElement | null;
+    expect(card).not.toBeNull();
+    expect(within(card!).queryByText(/^required$/i)).toBeNull();
+    expect(within(card!).queryByText(/^optional$/i)).toBeNull();
   });
 
   it("styles the servers hub with neutral card chrome like server rows", () => {
