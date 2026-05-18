@@ -156,12 +156,12 @@ describe("buildRedesignedHostCanvas", () => {
 });
 
 describe("buildRedesignedHostCanvas — sandbox config rows", () => {
-  it("emits only the permissions row when mode is 'declared' and restrictTo is empty — the universal safe default doesn't generate noise rows", () => {
-    // Both mode='declared' and empty restrictTo are the spec-aligned
-    // defaults (trust the view's CSP, narrow nothing). Surfacing them
-    // as rows would just confirm "safe default in effect" on every
-    // host. permissions stays because it's always informative (lists
-    // granted spec keys, "—" when nothing's granted).
+  it("emits only the permissions row when every other slice is at the safe default — no noise rows", () => {
+    // mode='declared', empty restrictTo / cspDirectives / sandboxAttrs /
+    // allowFeatures are all spec-aligned safe defaults. Surfacing them as
+    // rows would just confirm "safe default in effect" on every host.
+    // permissions stays because it's always informative (lists granted spec
+    // keys, "—" when nothing's granted).
     const data = matrixData(buildVm());
     expect(data.sandbox.map((s) => s.subKey)).toEqual(["permissions"]);
   });
@@ -322,6 +322,154 @@ describe("buildRedesignedHostCanvas — sandbox config rows", () => {
     );
     expect(row?.summary).toBe("—");
     expect(row?.qualifier).toBeNull();
+  });
+
+  it("omits the new inspector-only rows entirely when at the safe default", () => {
+    // cspDirectives / sandboxAttrs / allowFeatures all follow the same
+    // "skip at default" pattern as mode / restrictTo — surfacing them as
+    // "—" rows would just confirm "safe default in effect" on every host.
+    const data = matrixData(buildVm());
+    for (const key of ["cspDirectives", "sandboxAttrs", "allowFeatures"]) {
+      const row = data.sandbox.find((s) => s.subKey === key);
+      expect(row).toBeUndefined();
+    }
+  });
+
+  it("tints cspDirectives as DANGER when any value contains 'unsafe-eval'", () => {
+    const draft = emptyHostConfigInputV2();
+    draft.mcpProfile = {
+      profileVersion: 1,
+      apps: {
+        sandbox: {
+          csp: {
+            cspDirectives: {
+              "script-src": ["'unsafe-eval'", "'wasm-unsafe-eval'"],
+            },
+          },
+        },
+      },
+    };
+    const row = matrixData(buildVm({ draft })).sandbox.find(
+      (s) => s.subKey === "cspDirectives",
+    );
+    expect(row?.severity).toBe("danger");
+    expect(row?.summary).toBe("1 directive");
+  });
+
+  it("keeps cspDirectives NEUTRAL when only safe tokens are present", () => {
+    const draft = emptyHostConfigInputV2();
+    draft.mcpProfile = {
+      profileVersion: 1,
+      apps: {
+        sandbox: {
+          csp: {
+            cspDirectives: {
+              "img-src": ["blob:", "data:"],
+              "connect-src": ["https://api.example.com"],
+            },
+          },
+        },
+      },
+    };
+    const row = matrixData(buildVm({ draft })).sandbox.find(
+      (s) => s.subKey === "cspDirectives",
+    );
+    expect(row?.severity).toBe("neutral");
+    expect(row?.summary).toBe("2 directives");
+  });
+
+  // Regression: `'unsafe-inline'` is part of the SEP-1865 restrictive
+  // baseline for script-src/style-src — every host has it. Treating it
+  // as a danger trigger would light up every populated cspDirectives
+  // row unavoidably. Only the tokens that re-enable script-execution
+  // loosening BEYOND the baseline (`'unsafe-eval'`,
+  // `'wasm-unsafe-eval'`, `'strict-dynamic'`) qualify as danger.
+  it("does NOT tint cspDirectives danger when only 'unsafe-inline' is present (baseline, not a deviation)", () => {
+    const draft = emptyHostConfigInputV2();
+    draft.mcpProfile = {
+      profileVersion: 1,
+      apps: {
+        sandbox: {
+          csp: {
+            cspDirectives: {
+              "script-src": ["'unsafe-inline'"],
+              "style-src": ["'unsafe-inline'"],
+            },
+          },
+        },
+      },
+    };
+    const row = matrixData(buildVm({ draft })).sandbox.find(
+      (s) => s.subKey === "cspDirectives",
+    );
+    expect(row?.severity).toBe("neutral");
+  });
+
+  it("surfaces per-directive expansion on cspDirectives for matrix sub-rows", () => {
+    const draft = emptyHostConfigInputV2();
+    draft.mcpProfile = {
+      profileVersion: 1,
+      apps: {
+        sandbox: {
+          csp: {
+            cspDirectives: {
+              "script-src": ["'unsafe-eval'", "'wasm-unsafe-eval'"],
+              "img-src": ["data:", "blob:"],
+            },
+          },
+        },
+      },
+    };
+    const row = matrixData(buildVm({ draft })).sandbox.find(
+      (s) => s.subKey === "cspDirectives",
+    );
+    // Reuses the existing `directives` field on SandboxConfigNodeData so the
+    // renderer's per-directive expansion (used for restrictTo today) works
+    // unchanged. Sorted by directive name for stable diffs across edits.
+    expect(row?.directives).toEqual([
+      { key: "img-src", label: "img-src", domains: ["data:", "blob:"] },
+      {
+        key: "script-src",
+        label: "script-src",
+        domains: ["'unsafe-eval'", "'wasm-unsafe-eval'"],
+      },
+    ]);
+  });
+
+  it("summarizes sandboxAttrs as a neutral list", () => {
+    const draft = emptyHostConfigInputV2();
+    draft.mcpProfile = {
+      profileVersion: 1,
+      apps: {
+        sandbox: { sandboxAttrs: ["allow-forms", "allow-modals"] },
+      },
+    };
+    const row = matrixData(buildVm({ draft })).sandbox.find(
+      (s) => s.subKey === "sandboxAttrs",
+    );
+    expect(row?.severity).toBe("neutral");
+    expect(row?.summary).toBe("allow-forms, allow-modals");
+  });
+
+  it("summarizes allowFeatures as a neutral key:value list on its own row", () => {
+    // `Permissions` (spec) and `Permissions Policy` (vendor extras) are
+    // separate rows because the spec only blesses the 4 features under
+    // `permissions.allow`; everything else is host-specific and may not
+    // survive a host swap. The split mirrors that boundary so readers can
+    // tell spec-portable from vendor-extra at a glance.
+    const draft = emptyHostConfigInputV2();
+    draft.mcpProfile = {
+      profileVersion: 1,
+      apps: {
+        sandbox: { allowFeatures: { fullscreen: "*" } },
+      },
+    };
+    const row = matrixData(buildVm({ draft })).sandbox.find(
+      (s) => s.subKey === "allowFeatures",
+    );
+    expect(row?.label).toBe("Permissions Policy");
+    expect(row?.severity).toBe("neutral");
+    expect(row?.summary).toBe("fullscreen: *");
   });
 
   it("flags a sandbox row as changed when the previous host had different config", () => {

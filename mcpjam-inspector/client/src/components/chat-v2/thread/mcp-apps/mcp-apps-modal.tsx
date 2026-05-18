@@ -37,6 +37,9 @@ export interface McpAppsModalProps {
   widgetCsp: McpUiResourceCsp | undefined;
   widgetPermissions: McpUiResourcePermissions | undefined;
   widgetPermissive: boolean;
+  widgetSandboxAttrs: string[] | undefined;
+  widgetAllowFeatures: Record<string, string> | undefined;
+  widgetCspDirectives: Record<string, string[]> | undefined;
   hostContextRef: React.RefObject<McpUiHostContext | null>;
   serverId: string;
   resourceUri: string;
@@ -67,6 +70,9 @@ export function McpAppsModal({
   widgetCsp,
   widgetPermissions,
   widgetPermissive,
+  widgetSandboxAttrs,
+  widgetAllowFeatures,
+  widgetCspDirectives,
   hostContextRef,
   serverId,
   resourceUri,
@@ -287,6 +293,9 @@ export function McpAppsModal({
               csp={widgetCsp}
               permissions={widgetPermissions}
               permissive={widgetPermissive}
+              sandboxAttrs={widgetSandboxAttrs}
+              allowFeatures={widgetAllowFeatures}
+              cspDirectives={widgetCspDirectives}
               colorScheme={modalColorScheme}
               onMessage={handleModalMessage}
               title={`MCP App Modal: ${title}`}
