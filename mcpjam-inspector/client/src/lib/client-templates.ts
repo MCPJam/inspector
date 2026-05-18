@@ -645,27 +645,30 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         ...base.clientCapabilities,
         experimental: { "microsoft/copilot": { enabled: true } },
       };
-      // Capability advertise: mirrors ChatGPT's surface minus `pip` and
-      // bundles `serverResources` since Copilot surfaces resources in
-      // side panels. Conservative — no `listChanged` notifications since
-      // the renderer doesn't forward them. Revise once Microsoft
-      // publishes authoritative MCP Apps guidance.
+      // Capability advertise: tracks Microsoft's published "Supported MCP
+      // Apps capabilities in Copilot" table. Only `app.openLink`,
+      // `app.callServerTool`, `app.sendMessage`, and `app.updateModelContext`
+      // are documented as supported; `app.sendLog` is explicitly ❌, and
+      // there is no documented `callServerResource`/`readResource` bridge in
+      // Copilot — so `logging` and `serverResources` are intentionally
+      // omitted. `text` sub-fields mirror the style entry for consistency.
+      // Source: https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-mcp-apps#supported-mcp-apps-capabilities-in-copilot
       base.hostCapabilitiesOverride = {
         openLinks: {},
         serverTools: {},
-        serverResources: {},
-        logging: {},
-        message: {},
-        updateModelContext: {},
+        message: { text: {} },
+        updateModelContext: { text: {} },
       };
       // Per-resource environment context. `containerDimensions` mirrors
       // ChatGPT's "fill your container" intent (md breakpoint width
-      // policy, modest fixed height); `availableDisplayModes` drops
-      // `pip` because Copilot's surface doesn't currently expose it.
+      // policy, modest fixed height). `availableDisplayModes` is omitted:
+      // Microsoft's docs mark `app.getHostContext()?.availableDisplayModes`
+      // as ❌, so Copilot widgets can't introspect this — advertising it
+      // would be a handshake lie. Copilot still supports `requestDisplayMode`
+      // (fullscreen only), so widgets call that without prior introspection.
       base.hostContext = {
         theme: "dark",
         displayMode: "inline",
-        availableDisplayModes: ["inline", "fullscreen"],
         containerDimensions: { height: 400, maxWidth: 768 },
         locale: "en-US",
         timeZone: "America/Los_Angeles",
