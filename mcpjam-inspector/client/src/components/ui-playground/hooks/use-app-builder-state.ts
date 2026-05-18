@@ -140,11 +140,18 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
   } = options;
 
   const activeServerNames = useMemo(() => {
+    // Mirror the predicate the LLM tools list (PlaygroundMain) and the
+    // composer popover (chat-input) use, so all three Playground surfaces
+    // agree on what "in-use" means. Without this, the docked Tools pane
+    // shows tools (and the manual Run button executes them) for servers
+    // the user has toggled off in the popover/Servers tab.
+    const isConnected = (name: string) =>
+      servers[name]?.connectionStatus === "connected";
     if (selectedServerNames && selectedServerNames.length > 0) {
-      return selectedServerNames;
+      return selectedServerNames.filter(isConnected);
     }
-    return serverName ? [serverName] : [];
-  }, [selectedServerNames, serverName]);
+    return serverName && isConnected(serverName) ? [serverName] : [];
+  }, [selectedServerNames, serverName, servers]);
 
   const posthog = usePostHog();
   const prefersReducedMotion = useReducedMotion();
