@@ -1083,9 +1083,28 @@ export function MCPAppsRenderer({
     // without treating cspDirectives as hardening the configured
     // directives get silently dropped on the chatbox/preview surfaces
     // where host profiles are most meant to apply.
+    //
+    // Only count entries that contribute at least one token that would
+    // survive the proxy's mergeDirective filter (trim, plus `;,\n\r"<>`
+    // rejection — kept in lockstep with the predicate in
+    // sandbox-proxy.html). An entry like `{ "frame-src": [] }` or
+    // `{ "frame-src": [" "] }` is a semantic no-op and must not flip
+    // a permissive surface into the resolver path (which would then
+    // enforce the widget-declared CSP even though the named directive
+    // contributes nothing).
     const cspDirectivesConfigured =
       sandboxCspPolicy?.cspDirectives !== undefined &&
-      Object.keys(sandboxCspPolicy.cspDirectives).length > 0;
+      Object.values(sandboxCspPolicy.cspDirectives).some(
+        (tokens) =>
+          Array.isArray(tokens) &&
+          tokens.some((t) => {
+            if (typeof t !== "string") return false;
+            const trimmed = t.trim();
+            if (trimmed.length === 0) return false;
+            if (/[;,\n\r"<>]/.test(trimmed)) return false;
+            return true;
+          }),
+      );
     const hasExplicitCspHardening =
       restrictToConfigured || cspDirectivesConfigured || HOSTED_MODE;
 
