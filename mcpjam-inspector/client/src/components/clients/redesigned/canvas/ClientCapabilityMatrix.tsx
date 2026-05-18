@@ -17,17 +17,12 @@ import {
 } from "../types";
 
 /* ============================================================
-   Host card — paper aesthetic. The card IS the architecture
-   diagram. Host frame wraps Sandbox frame wraps View frame;
-   capability data lives inside the layer it belongs to.
-
-   - Host outer (gray paper): identity, agent settings, client
-     capabilities, extensions footer
-   - Sandbox middle (amber/cream): mode/restrictTo/deny/permissions
-   - View inner (lavender): Apps Extension capabilities + hostContext
-
-   Every sub-region click still dispatches the same node id as the
-   previous matrix card, so the focus panel routing is unchanged.
+   Host card. The card IS the architecture diagram — Host frame
+   wraps Sandbox frame wraps View frame; capability data lives
+   inside the layer it belongs to. Depth comes from tonal
+   variation of the app's design-system tokens (card → muted →
+   card), so the card reads as the same product as the Servers
+   tab. Sub-region clicks dispatch the same node ids as before.
    ============================================================ */
 export interface HostMatrixCardProps {
   hostName: string;
@@ -451,80 +446,54 @@ function extractFieldCount(value: string | undefined): number {
 
 /* ---------------- inline styles ---------------- */
 /**
- * Paper palette declared via scoped CSS custom properties. The light/paper
- * values are the default; `.dark .host-paper-card` overrides them with a
- * dark-tinted equivalent that keeps the per-frame hue cues (amber sandbox,
- * lavender view) so the architecture metaphor survives the theme flip.
+ * Frame palette is sourced from the app's design-system tokens
+ * (--card, --muted, --border, --foreground, --muted-foreground,
+ * --success, --warning, --destructive). Light/dark switches via
+ * those tokens at :root / .dark, so the card matches the rest of
+ * the product without a separate dark block here.
+ *
+ * Depth between the three nested frames comes from tonal
+ * variation alone: Host = card, Sandbox = muted wash, View =
+ * card again (inset back to the surface tone). The result is a
+ * clear "paper inside grey inside paper" hierarchy without any
+ * bespoke hue.
  */
 const PAPER_STYLES = `
 .host-paper-card {
-  /* Light / paper palette (default) */
-  --hp-page: oklch(0.985 0.005 80);
-  --hp-ink: oklch(0.22 0.01 250);
-  --hp-muted: oklch(0.50 0.01 250);
-  --hp-muted-dim: oklch(0.64 0.008 250);
-  --hp-hairline: oklch(0.82 0.005 250 / 0.55);
-  --hp-paper-surface: white;
-  --hp-region-hover: oklch(1 0 0 / 0.4);
-  --hp-region-selected: oklch(1 0 0 / 0.6);
-  --hp-ctx-hover: oklch(1 0 0 / 0.5);
+  --hp-ink: var(--foreground);
+  --hp-muted: var(--muted-foreground);
+  --hp-muted-dim: color-mix(in oklch, var(--muted-foreground) 65%, transparent);
+  --hp-hairline: var(--border);
+  --hp-paper-surface: var(--popover);
+  --hp-region-hover: color-mix(in oklch, var(--foreground) 4%, transparent);
+  --hp-region-selected: color-mix(in oklch, var(--foreground) 7%, transparent);
+  --hp-ctx-hover: color-mix(in oklch, var(--foreground) 5%, transparent);
 
-  --hp-host-bg: oklch(0.965 0.005 80);
-  --hp-host-ring: oklch(0.86 0.008 80);
+  --hp-host-bg: var(--popover);
+  --hp-host-ring: var(--border);
 
-  --hp-sandbox-bg: oklch(0.965 0.03 75);
-  --hp-sandbox-ring: oklch(0.87 0.06 70);
-  --hp-sandbox-ink: oklch(0.40 0.10 60);
-  --hp-sandbox-sub: oklch(0.55 0.10 65);
-  --hp-sandbox-hairline: oklch(0.87 0.04 70 / 0.4);
-  --hp-sandbox-row-hover: oklch(1 0 0 / 0.35);
-  --hp-sandbox-row-selected: oklch(1 0 0 / 0.55);
+  --hp-sandbox-bg: var(--muted);
+  --hp-sandbox-ring: var(--border);
+  --hp-sandbox-ink: var(--foreground);
+  --hp-sandbox-sub: var(--muted-foreground);
+  --hp-sandbox-hairline: var(--border);
+  --hp-sandbox-row-hover: color-mix(in oklch, var(--foreground) 4%, transparent);
+  --hp-sandbox-row-selected: color-mix(in oklch, var(--foreground) 7%, transparent);
 
-  --hp-view-bg: oklch(0.96 0.025 285);
-  --hp-view-ring: oklch(0.86 0.07 285);
-  --hp-view-ink: oklch(0.34 0.16 285);
-  --hp-view-sub: oklch(0.50 0.12 285);
-  --hp-view-cap-selected-bg: oklch(0.90 0.06 285);
+  --hp-view-bg: var(--popover);
+  --hp-view-ring: var(--border);
+  --hp-view-ink: var(--foreground);
+  --hp-view-sub: var(--muted-foreground);
+  --hp-view-cap-selected-bg: color-mix(in oklch, var(--foreground) 7%, transparent);
 
-  --hp-emerald: oklch(0.62 0.15 145);
-  --hp-amber: oklch(0.72 0.16 70);
-  --hp-danger: oklch(0.65 0.21 25);
+  --hp-emerald: var(--success);
+  --hp-amber: var(--warning);
+  --hp-danger: var(--destructive);
 
-  font-family: ui-sans-serif, system-ui, -apple-system, "Inter", sans-serif;
   color: var(--hp-ink);
   font-size: 14px;
   line-height: 1.5;
   text-align: left;
-}
-
-/* Dark theme: keep hue cues, swap lightness. Each frame is now a dim
-   tinted wash rather than a saturated paper fill. */
-.dark .host-paper-card {
-  --hp-ink: oklch(0.95 0.005 250);
-  --hp-muted: oklch(0.65 0.01 250);
-  --hp-muted-dim: oklch(0.50 0.008 250);
-  --hp-hairline: oklch(0.40 0.01 250 / 0.5);
-  --hp-paper-surface: oklch(0.27 0.008 250);
-  --hp-region-hover: oklch(1 0 0 / 0.04);
-  --hp-region-selected: oklch(1 0 0 / 0.07);
-  --hp-ctx-hover: oklch(1 0 0 / 0.05);
-
-  --hp-host-bg: oklch(0.215 0.006 250);
-  --hp-host-ring: oklch(0.32 0.008 250);
-
-  --hp-sandbox-bg: oklch(0.255 0.035 70);
-  --hp-sandbox-ring: oklch(0.38 0.06 70);
-  --hp-sandbox-ink: oklch(0.86 0.10 70);
-  --hp-sandbox-sub: oklch(0.72 0.08 65);
-  --hp-sandbox-hairline: oklch(0.40 0.04 70 / 0.5);
-  --hp-sandbox-row-hover: oklch(1 0 0 / 0.04);
-  --hp-sandbox-row-selected: oklch(1 0 0 / 0.07);
-
-  --hp-view-bg: oklch(0.245 0.045 285);
-  --hp-view-ring: oklch(0.40 0.08 285);
-  --hp-view-ink: oklch(0.87 0.10 285);
-  --hp-view-sub: oklch(0.72 0.10 285);
-  --hp-view-cap-selected-bg: oklch(0.36 0.10 285);
 }
 .host-paper-card .hp-mono {
   font-family: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
@@ -699,7 +668,7 @@ const PAPER_STYLES = `
   border-style: dashed;
   font-weight: 400;
   text-decoration: line-through;
-  text-decoration-color: oklch(0.64 0.008 250 / 0.5);
+  text-decoration-color: color-mix(in oklch, var(--muted-foreground) 60%, transparent);
   text-decoration-thickness: 0.5px;
 }
 .host-paper-card .hp-cap-dot {
@@ -802,13 +771,17 @@ const PAPER_STYLES = `
 .host-paper-card .hp-sb-row:hover { background: var(--hp-sandbox-row-hover); }
 .host-paper-card .hp-sb-row--selected { background: var(--hp-sandbox-row-selected); }
 .host-paper-card .hp-sb-row--warn {
-  background: oklch(0.78 0.16 75 / 0.10);
+  background: color-mix(in oklch, var(--warning) 12%, transparent);
 }
-.host-paper-card .hp-sb-row--warn:hover { background: oklch(0.78 0.16 75 / 0.16); }
+.host-paper-card .hp-sb-row--warn:hover {
+  background: color-mix(in oklch, var(--warning) 18%, transparent);
+}
 .host-paper-card .hp-sb-row--danger {
-  background: oklch(0.65 0.21 25 / 0.10);
+  background: color-mix(in oklch, var(--destructive) 12%, transparent);
 }
-.host-paper-card .hp-sb-row--danger:hover { background: oklch(0.65 0.21 25 / 0.16); }
+.host-paper-card .hp-sb-row--danger:hover {
+  background: color-mix(in oklch, var(--destructive) 18%, transparent);
+}
 .host-paper-card .hp-sb-key {
   color: var(--hp-sandbox-sub);
   font-family: ui-monospace, "JetBrains Mono", monospace;
@@ -887,7 +860,7 @@ const PAPER_STYLES = `
   border-style: dashed;
   font-weight: 400;
   text-decoration: line-through;
-  text-decoration-color: oklch(0.50 0.12 285 / 0.55);
+  text-decoration-color: color-mix(in oklch, var(--muted-foreground) 60%, transparent);
   text-decoration-thickness: 0.5px;
 }
 .host-paper-card .hp-view-cap--selected {
@@ -955,16 +928,16 @@ const PAPER_STYLES = `
   background: var(--hp-region-selected) !important;
 }
 
-/* === Diff flash (preserved from prior card, retuned to paper) === */
+/* === Diff flash === */
 @keyframes hostMatrixDiffFlashPaper {
-  0% { background-color: oklch(0.83 0.17 75 / 0.32); }
+  0% { background-color: color-mix(in oklch, var(--warning) 32%, transparent); }
   100% { background-color: transparent; }
 }
 .host-paper-card .host-matrix-changed {
   animation: hostMatrixDiffFlashPaper 1.8s ease-out;
 }
 .host-paper-card .host-matrix-newly {
-  box-shadow: inset 2px 0 0 oklch(0.78 0.16 70);
+  box-shadow: inset 2px 0 0 var(--warning);
   animation: hostMatrixDiffFlashPaper 1.8s ease-out;
 }
 `;

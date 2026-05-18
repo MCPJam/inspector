@@ -559,7 +559,7 @@ export function buildRedesignedHostCanvas(
       fixedTargetX: serversHubX + serversHubW / 2,
       fixedTargetY: serversHubY,
     },
-    style: { stroke: "oklch(0.55 0.01 250 / 0.5)", strokeWidth: 1.5 },
+    style: { stroke: "oklch(0.68 0.11 40 / 0.55)", strokeWidth: 1.5 },
   });
 
   // 3) Server cards — required first, then optional. Insecure http
@@ -634,7 +634,7 @@ export function buildRedesignedHostCanvas(
       style: {
         stroke: insecure
           ? "oklch(0.65 0.18 60)"
-          : "oklch(0.55 0.01 250 / 0.5)",
+          : "oklch(0.68 0.11 40 / 0.55)",
         strokeWidth: 1.5,
         strokeDasharray: isOptional ? "4 4" : undefined,
       },
