@@ -342,28 +342,34 @@ document.addEventListener('securitypolicyviolation', function(e) {
             } = event.data.params || {};
             inner.style.colorScheme = applyColorScheme(colorScheme);
 
-            // Inner iframe `sandbox=` is the union of the spec-mandated
-            // `allow-scripts allow-same-origin allow-forms` baseline (or the
-            // explicit `sandbox` string from the host) with the inspector-only
-            // `sandboxAttrs` extras. Dedupe + sort for stable DOM output.
+            // Inner iframe `sandbox=` value.
+            //
+            // When `sandboxAttrs` is provided (even an empty array), the
+            // profile is authoritative: only spec-mandated tokens plus what
+            // the profile lists. Otherwise (no profile opinion) fall back to
+            // the caller's `sandbox` string so existing widget renders that
+            // depend on the legacy permissive baseline keep working.
             const sandboxTokens = new Set();
-            const baseSandbox =
-              typeof sandbox === "string" && sandbox.length > 0
-                ? sandbox
-                : "allow-scripts allow-same-origin allow-forms";
-            for (const t of baseSandbox.split(/\s+/)) {
-              if (t.length > 0) sandboxTokens.add(t);
-            }
-            // Mandatory tokens regardless of caller input.
-            sandboxTokens.add("allow-scripts");
-            sandboxTokens.add("allow-same-origin");
             if (Array.isArray(sandboxAttrs)) {
+              sandboxTokens.add("allow-scripts");
+              sandboxTokens.add("allow-same-origin");
               for (const t of sandboxAttrs) {
                 if (typeof t === "string") {
                   const trimmed = t.trim();
                   if (trimmed.length > 0) sandboxTokens.add(trimmed);
                 }
               }
+            } else {
+              const baseSandbox =
+                typeof sandbox === "string" && sandbox.length > 0
+                  ? sandbox
+                  : "allow-scripts allow-same-origin allow-forms";
+              for (const t of baseSandbox.split(/\s+/)) {
+                if (t.length > 0) sandboxTokens.add(t);
+              }
+              // Defense in depth: spec-mandated tokens are always present.
+              sandboxTokens.add("allow-scripts");
+              sandboxTokens.add("allow-same-origin");
             }
             inner.setAttribute(
               "sandbox",

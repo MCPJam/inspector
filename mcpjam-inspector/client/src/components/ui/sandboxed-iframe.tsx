@@ -239,23 +239,38 @@ export const SandboxedIframe = forwardRef<
     return allowList.join("; ");
   }, [permissions, allowFeatures]);
 
-  // Outer iframe `sandbox=` value: union of the spec-mandated/default
-  // tokens (from the `sandbox` prop) with the inspector-only `sandboxAttrs`
-  // extras. Dedupe + sort for stable DOM output.
+  // Outer iframe `sandbox=` value.
+  //
+  // When `sandboxAttrs` is provided (even as `[]`), the profile is the
+  // authoritative source: the iframe gets `allow-scripts allow-same-origin`
+  // plus exactly what the profile lists. This is what makes "model the
+  // real host's emitted tokens" actually work — e.g. a Claude-modeled
+  // profile with `sandboxAttrs: ["allow-forms"]` gets exactly those three
+  // tokens, not those PLUS the renderer's legacy permissive default.
+  //
+  // When `sandboxAttrs` is undefined (no profile opinion), fall back to
+  // the caller's `sandbox` prop so existing call sites — which pass a
+  // wider permissive baseline — behave unchanged.
+  //
+  // `undefined` vs `[]` matters here: `[]` is the explicit "spec-minimum
+  // only" intent, mirroring the canonicalizer's preservation contract.
   const outerSandboxAttribute = useMemo(() => {
     const tokens = new Set<string>();
-    for (const t of sandbox.split(/\s+/)) {
-      if (t.length > 0) tokens.add(t);
-    }
-    // `allow-scripts` and `allow-same-origin` are mandatory regardless of
-    // what the caller passed.
-    tokens.add("allow-scripts");
-    tokens.add("allow-same-origin");
-    if (sandboxAttrs) {
+    if (sandboxAttrs !== undefined) {
+      tokens.add("allow-scripts");
+      tokens.add("allow-same-origin");
       for (const t of sandboxAttrs) {
         const trimmed = t.trim();
         if (trimmed.length > 0) tokens.add(trimmed);
       }
+    } else {
+      for (const t of sandbox.split(/\s+/)) {
+        if (t.length > 0) tokens.add(t);
+      }
+      // Defense in depth: spec-mandated tokens are always present even
+      // if a caller passes a malformed `sandbox` prop.
+      tokens.add("allow-scripts");
+      tokens.add("allow-same-origin");
     }
     return Array.from(tokens).sort().join(" ");
   }, [sandbox, sandboxAttrs]);
