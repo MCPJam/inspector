@@ -198,7 +198,7 @@ export function ClientOverlayBar({
     setShowCreate(true);
     setMenuOpen(false);
     if (templateId) {
-      posthog.capture("connect_host_overlay_quick_add_clicked", {
+      posthog.capture("connect_host_overlay_quick_added", {
         template_id: templateId,
       });
     }
