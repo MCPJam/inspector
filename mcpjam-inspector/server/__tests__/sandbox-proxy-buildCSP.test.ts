@@ -135,4 +135,33 @@ describe("sandbox-proxy buildCSP merge rule", () => {
     expect(out).toContain("form-action 'self'");
     expect(out).toContain("worker-src blob:");
   });
+
+  it("drops cspDirectives value tokens containing ';' — injection guard", () => {
+    // Defense in depth: the backend canonicalizer rejects this at write
+    // time, but if it ever drifts the proxy must not blindly concatenate
+    // a token like `"'self'; script-src *"` into the CSP — that would
+    // break out of the intended directive and smuggle a wildcard.
+    const out = buildCSP({}, {
+      "connect-src": ["'self'; script-src *"],
+    });
+    // The injected directive must not appear in the output.
+    expect(out).not.toContain("script-src *");
+    // The hostile token must not be emitted under connect-src either.
+    const connectLine = out
+      .split(";")
+      .map((s) => s.trim())
+      .find((s) => s.startsWith("connect-src "));
+    expect(connectLine).not.toContain("'self'");
+  });
+
+  it("drops cspDirectives keys containing CSP separators or whitespace", () => {
+    // The key is concatenated into the output via `name + " " + tokens`,
+    // so a crafted name like `"worker-src *; script-src"` would smuggle
+    // a second directive even if every value token is clean.
+    const out = buildCSP({}, {
+      "worker-src *; script-src": ["'unsafe-eval'"],
+    });
+    expect(out).not.toContain("script-src 'unsafe-eval'");
+    expect(out).not.toContain("worker-src *");
+  });
 });

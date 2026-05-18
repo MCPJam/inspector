@@ -122,8 +122,19 @@
             if (typeof t === "string" && t.length > 0) merged.add(t);
           }
           for (const t of extras) {
-            if (typeof t === "string" && t.trim().length > 0)
-              merged.add(t.trim());
+            if (typeof t !== "string") continue;
+            const trimmed = t.trim();
+            if (trimmed.length === 0) continue;
+            // Reject CSP directive separators (`;`) and structural chars
+            // (`,`, newlines, quote-wrapping whitespace) in extras. The
+            // backend canonicalizer is the primary defense, but a crafted
+            // cspDirectives value like `"'self'; script-src *"` would
+            // otherwise break out of the intended directive and inject
+            // an attacker-controlled one when joined with " " below.
+            // Same defense-in-depth as the allowFeatures filter applied
+            // in sandboxed-iframe.tsx.
+            if (/[;,\n\r]/.test(trimmed)) continue;
+            merged.add(trimmed);
           }
           if (merged.size > 1 && merged.has("'none'")) {
             merged.delete("'none'");
@@ -220,6 +231,11 @@
           ]);
           for (const k of Object.keys(cspDirectives).sort()) {
             if (known.has(k)) continue;
+            // Reject CSP separators in the directive NAME too — `k` is
+            // concatenated into the output via `name + " " + tokens`, so
+            // a crafted key like `worker-src *; script-src` would inject
+            // a second directive even if every value token is clean.
+            if (/[;,\n\r\s]/.test(k)) continue;
             const tokens = cspDirectives[k];
             if (!Array.isArray(tokens) || tokens.length === 0) continue;
             directives.push(mergeDirective(k, []));
