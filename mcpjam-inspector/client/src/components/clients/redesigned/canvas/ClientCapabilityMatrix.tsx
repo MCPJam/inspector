@@ -549,7 +549,7 @@ const PAPER_STYLES = `
 .host-paper-card .hp-identity {
   display: flex;
   align-items: center;
-  gap: 0;
+  gap: 14px;
   padding: 0 0 22px 0;
   border: 0;
   border-bottom: 1px dashed var(--hp-hairline);
