@@ -661,14 +661,17 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       };
       // Per-resource environment context. `containerDimensions` mirrors
       // ChatGPT's "fill your container" intent (md breakpoint width
-      // policy, modest fixed height). `availableDisplayModes` is omitted:
-      // Microsoft's docs mark `app.getHostContext()?.availableDisplayModes`
-      // as ❌, so Copilot widgets can't introspect this — advertising it
-      // would be a handshake lie. Copilot still supports `requestDisplayMode`
-      // (fullscreen only), so widgets call that without prior introspection.
+      // policy, modest fixed height). `availableDisplayModes` is kept as
+      // ["inline", "fullscreen"] because omitting it falls back to the
+      // inspector default ["inline", "pip", "fullscreen"], which would
+      // claim `pip` support Copilot doesn't have — a worse lie than the
+      // known minor gap that Microsoft's docs mark
+      // `app.getHostContext()?.availableDisplayModes` as ❌ (Copilot
+      // widgets can't actually introspect this field on the real host).
       base.hostContext = {
         theme: "dark",
         displayMode: "inline",
+        availableDisplayModes: ["inline", "fullscreen"],
         containerDimensions: { height: 400, maxWidth: 768 },
         locale: "en-US",
         timeZone: "America/Los_Angeles",
