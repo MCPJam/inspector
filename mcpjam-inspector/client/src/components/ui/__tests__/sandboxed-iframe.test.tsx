@@ -102,3 +102,52 @@ describe("SandboxedIframe — outer sandbox attribute", () => {
     ]);
   });
 });
+
+describe("SandboxedIframe — outer allow attribute (allowFeatures injection guard)", () => {
+  function getOuterIframeAllow(container: HTMLElement): string {
+    const iframe = container.querySelector("iframe");
+    expect(iframe).not.toBeNull();
+    return iframe!.getAttribute("allow") ?? "";
+  }
+
+  it("drops allowFeatures entries with ';' in the value — directive-injection guard", () => {
+    // A crafted profile that put `fullscreen: "*; camera *"` would
+    // otherwise smuggle `camera *` past the spec-feature key filter
+    // (since `;` is the Permissions Policy separator). Defense in depth
+    // for the canonicalizer's reject-at-write-time check.
+    const { container } = render(
+      <SandboxedIframe
+        html={null}
+        allowFeatures={{ fullscreen: "*; camera *" }}
+        onMessage={() => {}}
+      />,
+    );
+    const allow = getOuterIframeAllow(container);
+    expect(allow).not.toContain("camera");
+    expect(allow).not.toContain("fullscreen");
+  });
+
+  it("drops allowFeatures entries with ',' in the value", () => {
+    const { container } = render(
+      <SandboxedIframe
+        html={null}
+        allowFeatures={{ fullscreen: "*, camera *" }}
+        onMessage={() => {}}
+      />,
+    );
+    const allow = getOuterIframeAllow(container);
+    expect(allow).not.toContain("camera");
+    expect(allow).not.toContain("fullscreen");
+  });
+
+  it("keeps clean allowFeatures entries through", () => {
+    const { container } = render(
+      <SandboxedIframe
+        html={null}
+        allowFeatures={{ fullscreen: "*" }}
+        onMessage={() => {}}
+      />,
+    );
+    expect(getOuterIframeAllow(container)).toContain("fullscreen *");
+  });
+});

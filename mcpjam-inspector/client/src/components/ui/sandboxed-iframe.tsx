@@ -227,9 +227,16 @@ export const SandboxedIframe = forwardRef<
       for (const k of Object.keys(allowFeatures).sort()) {
         if (specFeatures.has(k)) continue;
         const allowlist = allowFeatures[k];
-        if (typeof allowlist === "string" && allowlist.length > 0) {
-          allowList.push(`${k} ${allowlist}`);
-        }
+        if (typeof allowlist !== "string" || allowlist.length === 0) continue;
+        // Reject `;` and `,` in keys and values. The Permissions Policy
+        // iframe `allow=` attribute uses `;` to separate features; allowing
+        // either character through here turns the per-feature filter into
+        // a directive-injection bypass (e.g. `fullscreen: "*; camera *"`
+        // would smuggle a `camera *` grant past the spec-feature check
+        // above). `,` is the corresponding separator in HTTP-header
+        // Permissions-Policy syntax and is rejected for symmetry.
+        if (/[;,]/.test(k) || /[;,]/.test(allowlist)) continue;
+        allowList.push(`${k} ${allowlist}`);
       }
     }
     return allowList.join("; ");
