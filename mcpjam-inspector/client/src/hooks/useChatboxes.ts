@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "convex/react";
-import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
+import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
 import type {
   ChatUiSettings,
   ChatboxFeedbackDialogSettings,

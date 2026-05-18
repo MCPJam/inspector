@@ -73,7 +73,7 @@ import {
 } from "@/lib/client-config";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { useClientConfigStore } from "@/stores/client-config-store";
-import { useHostContextStore } from "@/stores/host-context-store";
+import { useHostContextStore } from "@/stores/client-context-store";
 import { useOrganizationBillingStatus } from "./useOrganizationBilling";
 import {
   clearLegacyActiveProjectStorage,

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, act, screen } from "@testing-library/react";
 import React from "react";
-import { CHATGPT_HOST_STYLE, CLAUDE_HOST_STYLE } from "@/lib/host-styles";
+import { CHATGPT_HOST_STYLE, CLAUDE_HOST_STYLE } from "@/lib/client-styles";
 
 // Declare the global that Vite normally injects
 (globalThis as any).__APP_VERSION__ = "0.0.0-test";
@@ -163,7 +163,7 @@ vi.mock("@/stores/ui-playground-store", () => ({
     selector(mockPlaygroundStoreState),
 }));
 
-vi.mock("@/stores/host-context-store", () => ({
+vi.mock("@/stores/client-context-store", () => ({
   useHostContextStore: (selector: any) => selector(mockHostContextStoreState),
 }));
 
@@ -219,8 +219,8 @@ import { authFetch } from "@/lib/session-token";
 import {
   ChatboxHostStyleProvider,
   ChatboxHostThemeProvider,
-} from "@/contexts/chatbox-host-style-context";
-import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-host-capabilities-override-context";
+} from "@/contexts/chatbox-client-style-context";
+import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 const baseProps = {

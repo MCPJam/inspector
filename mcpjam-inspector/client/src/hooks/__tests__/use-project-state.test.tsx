@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import type { AppAction, AppState, Project } from "@/state/app-types";
 import { useProjectState } from "../use-project-state";
 import { useClientConfigStore } from "@/stores/client-config-store";
-import { useHostContextStore } from "@/stores/host-context-store";
+import { useHostContextStore } from "@/stores/client-context-store";
 import type {
   ProjectClientConfig,
   ProjectConnectionConfigDraft,

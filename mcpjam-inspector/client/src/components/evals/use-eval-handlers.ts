@@ -515,7 +515,7 @@ export function useEvalHandlers({
           await handleReplayRun(suite, rerunEligibility.replayableLatestRun);
           return;
         }
-        toast.error("Attach a host to this suite before running it.");
+        toast.error("Attach a client to this suite before running it.");
         return;
       }
 
@@ -748,7 +748,7 @@ export function useEvalHandlers({
       );
 
       if (suiteServers.length === 0) {
-        toast.error("Attach a host to this suite before running it.");
+        toast.error("Attach a client to this suite before running it.");
         return null;
       }
 

@@ -8,7 +8,7 @@ import type { ChatboxSettings } from "@/hooks/useChatboxes";
 import {
   emptyHostConfigInputV2,
   type HostConfigInputV2,
-} from "@/lib/host-config-v2";
+} from "@/lib/client-config-v2";
 
 export const DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant.";
 

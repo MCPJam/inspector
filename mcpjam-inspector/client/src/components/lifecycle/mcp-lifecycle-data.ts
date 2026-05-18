@@ -34,7 +34,7 @@ export interface McpLifecycleScenario {
 
 const CLIENT_ACTOR: SequenceDiagramActorConfig = {
   id: "client",
-  label: "Client (Host)",
+  label: "Client",
   color: "#10b981", // green
 };
 

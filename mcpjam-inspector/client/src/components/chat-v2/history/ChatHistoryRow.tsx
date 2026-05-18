@@ -25,7 +25,7 @@ import type { ProjectThreadOwnerAvatar } from "./project-thread-owner-avatar";
 import {
   getChatboxHostFamily,
   type ChatboxHostStyle,
-} from "@/lib/chatbox-host-style";
+} from "@/lib/chatbox-client-style";
 import { CHAT_HISTORY_STRONG_BG_CLASS } from "./chat-history-theme";
 
 function formatChatHistoryModelLabel(

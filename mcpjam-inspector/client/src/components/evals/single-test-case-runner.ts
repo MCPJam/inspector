@@ -3,7 +3,7 @@ import type { ModelDefinition } from "@/shared/types";
 import type { EvalCase, EvalSuite } from "./types";
 import type { PromptTurn } from "@/shared/prompt-turns";
 import type { EvalMatchOptions } from "@/shared/eval-matching";
-import type { HostConfigInputV2 } from "@/lib/host-config-v2";
+import type { HostConfigInputV2 } from "@/lib/client-config-v2";
 
 /**
  * Per-Run hostConfig override shape sent in the request. Subset of

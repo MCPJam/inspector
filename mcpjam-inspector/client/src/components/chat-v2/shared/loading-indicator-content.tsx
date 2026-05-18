@@ -1,9 +1,9 @@
 import {
   useChatboxChatUiOverride,
   useChatboxHostStyle,
-} from "@/contexts/chatbox-host-style-context";
-import { type ChatboxHostStyle } from "@/lib/chatbox-host-style";
-import { getLoadingIndicatorForStyle } from "@/lib/host-styles";
+} from "@/contexts/chatbox-client-style-context";
+import { type ChatboxHostStyle } from "@/lib/chatbox-client-style";
+import { getLoadingIndicatorForStyle } from "@/lib/client-styles";
 import { cn } from "@/lib/utils";
 
 function modelProviderToHostStyle(

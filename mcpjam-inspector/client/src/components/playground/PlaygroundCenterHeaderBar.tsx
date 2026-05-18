@@ -14,18 +14,18 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
-import { HostContextHeader } from "@/components/shared/HostContextHeader";
+import { ClientContextHeader } from "@/components/shared/ClientContextHeader";
 import type { TraceViewMode } from "@/components/evals/trace-view-mode-tabs";
 import type { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import type { ProjectHostContextDraft } from "@/lib/client-config";
 
 /**
  * Single-strip playground center header. Replaces the two stacked strips
- * (`HostContextHeader` + `ChatTraceViewModeHeaderBar`) with a four-pill row
+ * (`ClientContextHeader` + `ChatTraceViewModeHeaderBar`) with a four-pill row
  * `[ Host ] [ Chat ] [ Trace ] [ Raw ]`. Clicking `Host` swaps the strip to
- * the `HostContextHeader` controls plus a back pill; the other three switch
+ * the `ClientContextHeader` controls plus a back pill; the other three switch
  * the trace view mode as before. In multi-model mode (when trace tabs are
- * suppressed), the strip falls back to `HostContextHeader` directly, matching
+ * suppressed), the strip falls back to `ClientContextHeader` directly, matching
  * the prior behavior — there's nothing to swap to.
  *
  * The pill styling mirrors `TraceViewModeTabs` so the row reads as one
@@ -118,7 +118,7 @@ export function PlaygroundCenterHeaderBar({
 
       {showHostInline ? (
         <div className="flex min-w-0 flex-1 items-center justify-center overflow-hidden">
-          <HostContextHeader
+          <ClientContextHeader
             activeProjectId={activeProjectId}
             onSaveHostContext={onSaveHostContext}
             protocol={protocol}
@@ -132,11 +132,11 @@ export function PlaygroundCenterHeaderBar({
               type="button"
               onClick={() => onHeaderViewChange("host")}
               className={pillClass(false)}
-              title="Host context"
+              title="Client context"
               data-testid="playground-header-host-tab"
             >
               <Monitor className="h-3 w-3 shrink-0" />
-              <span className="truncate">Host</span>
+              <span className="truncate">Client</span>
             </button>
             <button
               type="button"

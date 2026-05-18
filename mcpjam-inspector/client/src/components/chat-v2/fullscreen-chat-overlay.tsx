@@ -7,12 +7,12 @@ import { ArrowUp, ChevronDown, ChevronUp, Square } from "lucide-react";
 import {
   useChatboxHostStyle,
   useChatboxHostTheme,
-} from "@/contexts/chatbox-host-style-context";
+} from "@/contexts/chatbox-client-style-context";
 import {
   getChatboxChatBackground,
   getChatboxHostFamily,
   type ChatboxHostStyle,
-} from "@/lib/chatbox-host-style";
+} from "@/lib/chatbox-client-style";
 import { cn } from "@/lib/utils";
 import { Button } from "@mcpjam/design-system/button";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
@@ -20,7 +20,7 @@ import {
   LoadingIndicatorContent,
   useResolvedHostStyleForIndicator,
 } from "@/components/chat-v2/shared/loading-indicator-content";
-import { ClaudeLoadingIndicator } from "@/lib/host-styles/indicators/claude-mark";
+import { ClaudeLoadingIndicator } from "@/lib/client-styles/indicators/claude-mark";
 import { getRenderableConversationMessages } from "@/components/chat-v2/thread/thread-helpers";
 
 function getMessagePreviewText(message: UIMessage): string {

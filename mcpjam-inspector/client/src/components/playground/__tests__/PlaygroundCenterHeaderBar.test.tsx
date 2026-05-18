@@ -3,8 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PlaygroundCenterHeaderBar } from "@/components/playground/PlaygroundCenterHeaderBar";
 
-vi.mock("@/components/shared/HostContextHeader", () => ({
-  HostContextHeader: () => <div data-testid="mock-host-header" />,
+vi.mock("@/components/shared/ClientContextHeader", () => ({
+  ClientContextHeader: () => <div data-testid="mock-host-header" />,
 }));
 
 vi.mock("posthog-js/react", () => ({

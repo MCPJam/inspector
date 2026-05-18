@@ -22,7 +22,7 @@ import type { CspMode } from "@/stores/ui-playground-store";
 import { LoggingTransport } from "./mcp-apps-logging-transport";
 import { fetchMcpAppsWidgetContent } from "./fetch-widget-content";
 import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
-import { resolveHostInfo } from "@/lib/host-config-v2";
+import { resolveHostInfo } from "@/lib/client-config-v2";
 
 // Injected by Vite at build time from package.json
 declare const __APP_VERSION__: string;

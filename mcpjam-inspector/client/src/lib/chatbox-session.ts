@@ -1,9 +1,9 @@
 import {
   normalizeChatboxHostStyleId,
   type ChatboxHostStyle,
-} from "@/lib/chatbox-host-style";
-import type { HostConfigMcpProfileV1 } from "@/lib/host-config-v2";
-import { DEFAULT_HOST_STYLE, type ChatUiOverride } from "@/lib/host-styles";
+} from "@/lib/chatbox-client-style";
+import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
+import { DEFAULT_HOST_STYLE, type ChatUiOverride } from "@/lib/client-styles";
 
 const MCPJAM_APP_ORIGIN = "https://app.mcpjam.com";
 

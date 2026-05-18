@@ -3,8 +3,8 @@ import { createStore } from "zustand/vanilla";
 import {
   normalizeChatboxHostStyleId,
   type ChatboxHostStyle,
-} from "@/lib/chatbox-host-style";
-import { DEFAULT_HOST_STYLE, type ChatUiOverride } from "@/lib/host-styles";
+} from "@/lib/chatbox-client-style";
+import { DEFAULT_HOST_STYLE, type ChatUiOverride } from "@/lib/client-styles";
 import type { ThemeMode, ThemePreset } from "@/types/preferences/theme";
 
 export type PreferencesState = {

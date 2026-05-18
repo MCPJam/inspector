@@ -1,5 +1,5 @@
 import { useClientConfigStore } from "@/stores/client-config-store";
-import { useHostContextStore } from "@/stores/host-context-store";
+import { useHostContextStore } from "@/stores/client-context-store";
 
 export function useProjectClientConfigSyncPending(
   projectId: string | null | undefined,

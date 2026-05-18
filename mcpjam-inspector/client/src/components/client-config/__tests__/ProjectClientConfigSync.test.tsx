@@ -3,7 +3,7 @@ import { act, render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { ProjectClientConfigSync } from "../ProjectClientConfigSync";
 import { useClientConfigStore } from "@/stores/client-config-store";
-import { useHostContextStore } from "@/stores/host-context-store";
+import { useHostContextStore } from "@/stores/client-context-store";
 import {
   PreferencesStoreProvider,
   usePreferencesStore,

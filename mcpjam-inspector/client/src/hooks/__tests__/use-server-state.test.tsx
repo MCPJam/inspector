@@ -13,7 +13,7 @@ import {
 } from "@/lib/client-config";
 import type { ProjectClientConfig } from "@/lib/client-config";
 import { useClientConfigStore } from "@/stores/client-config-store";
-import { useHostContextStore } from "@/stores/host-context-store";
+import { useHostContextStore } from "@/stores/client-context-store";
 
 const {
   toastError,
