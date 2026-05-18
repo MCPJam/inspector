@@ -6,8 +6,8 @@ import {
   buildChatGptRuntimeHead,
   injectScripts,
   buildCspHeader,
+  normalizeWidgetCspMeta,
   type CspMode,
-  type WidgetCspMeta,
 } from "../../../utils/widget-helpers";
 
 const chatgpt = new Hono();
@@ -254,13 +254,13 @@ chatgpt.get("/widget-html/:toolId", async (c) => {
     const { html: htmlContent, firstContent } = extractHtmlContent(content);
     if (!htmlContent) return c.json({ error: "No HTML content found" }, 404);
 
-    // Extract openai/widgetCSP from resource metadata
+    // ChatGPT now supports the standard MCP Apps `_meta.ui.csp` field.
+    // Normalize it into the legacy snake_case shape expected by this
+    // compatibility route, falling back to `openai/widgetCSP` for older apps.
     const resourceMeta = firstContent?._meta as
       | Record<string, unknown>
       | undefined;
-    const widgetCspRaw = resourceMeta?.["openai/widgetCSP"] as
-      | WidgetCspMeta
-      | undefined;
+    const widgetCspRaw = normalizeWidgetCspMeta(resourceMeta);
 
     // Build CSP configuration based on mode
     const cspConfig = buildCspHeader(cspMode ?? "permissive", widgetCspRaw);
@@ -307,6 +307,8 @@ chatgpt.get("/widget-html/:toolId", async (c) => {
         | string
         | undefined,
       prefersBorder:
+        ((resourceMeta?.ui as { prefersBorder?: boolean } | undefined)
+          ?.prefersBorder as boolean | undefined) ??
         (resourceMeta?.["openai/widgetPrefersBorder"] as boolean | undefined) ??
         true,
       closeWidget:
@@ -416,13 +418,13 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
         404,
       );
 
-    // Extract openai/widgetCSP from resource metadata
+    // ChatGPT now supports the standard MCP Apps `_meta.ui.csp` field.
+    // Normalize it into the legacy snake_case shape expected by this
+    // compatibility route, falling back to `openai/widgetCSP` for older apps.
     const resourceMeta = firstContent?._meta as
       | Record<string, unknown>
       | undefined;
-    const widgetCspRaw = resourceMeta?.["openai/widgetCSP"] as
-      | WidgetCspMeta
-      | undefined;
+    const widgetCspRaw = normalizeWidgetCspMeta(resourceMeta);
 
     // Build CSP based on effective mode
     const cspConfig = buildCspHeader(effectiveCspMode, widgetCspRaw);

@@ -16,8 +16,8 @@ import {
   buildCspHeader,
   buildCspMetaContent,
   buildChatGptRuntimeHead,
+  normalizeWidgetCspMeta,
   type CspMode,
-  type WidgetCspMeta,
 } from "../../utils/widget-helpers.js";
 import {
   projectServerSchema,
@@ -229,9 +229,7 @@ apps.post("/chatgpt-apps/widget-content", async (c) =>
       const resourceMeta = firstContent?._meta as
         | Record<string, unknown>
         | undefined;
-      const widgetCspRaw = resourceMeta?.["openai/widgetCSP"] as
-        | WidgetCspMeta
-        | undefined;
+      const widgetCspRaw = normalizeWidgetCspMeta(resourceMeta);
       const effectiveCspMode = body.cspMode ?? "permissive";
       const cspConfig = buildCspHeader(effectiveCspMode, widgetCspRaw, {
         frameAncestors: buildFrameAncestors(),
@@ -286,9 +284,12 @@ apps.post("/chatgpt-apps/widget-content", async (c) =>
           | string
           | undefined,
         prefersBorder:
+          ((resourceMeta?.ui as { prefersBorder?: boolean } | undefined)
+            ?.prefersBorder as boolean | undefined) ??
           (resourceMeta?.["openai/widgetPrefersBorder"] as
             | boolean
-            | undefined) ?? true,
+            | undefined) ??
+          true,
         closeWidget:
           (resourceMeta?.["openai/closeWidget"] as boolean | undefined) ??
           false,
