@@ -240,7 +240,8 @@ describe("TestCaseClientHeader", () => {
     expect(dialog).toHaveTextContent('"timeZone":"Europe/Paris"');
   });
 
-  it("marks the host-capabilities button as Override when set", () => {
+  it("opens the host-capabilities dialog with the effective override payload", async () => {
+    const user = userEvent.setup();
     const baseline = emptyHostConfigInputV2({ hostStyle: "mcpjam" });
     const value: HostConfigInputV2 = {
       ...baseline,
@@ -250,6 +251,10 @@ describe("TestCaseClientHeader", () => {
 
     const trigger = screen.getByTestId("test-case-host-capabilities-trigger");
     expect(within(trigger).getByText("Host Capabilities")).toBeInTheDocument();
-    expect(within(trigger).getByText("Override")).toBeInTheDocument();
+
+    await user.click(trigger);
+
+    const dialog = await screen.findByTestId("mock-host-caps-dialog");
+    expect(dialog).toHaveTextContent('"foo":"bar"');
   });
 });

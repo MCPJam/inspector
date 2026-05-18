@@ -284,15 +284,9 @@ describe("ClientContextHeader", () => {
     });
   });
 
-  it("surfaces unsaved state and opens the raw host context dialog", () => {
-    mockHostContextState.isDirty = true;
-
+  it("opens the raw host context dialog when the host context button is clicked", () => {
     render(
       <ClientContextHeader activeProjectId="project-1" protocol={null} />,
-    );
-
-    expect(screen.getByTestId("host-context-trigger")).toHaveTextContent(
-      "Unsaved",
     );
 
     fireEvent.click(screen.getByTestId("host-context-trigger"));

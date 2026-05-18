@@ -126,7 +126,6 @@ export function ClientContextHeader({
     (state) => state.draftHostContext,
   );
   const patchHostContext = useHostContextStore((state) => state.patchHostContext);
-  const hostContextDirty = useHostContextStore((state) => state.isDirty);
 
   const themeMode = usePreferencesStore((state) => state.themeMode);
   const hostStyle = usePreferencesStore((state) => state.hostStyle);
@@ -406,11 +405,6 @@ export function ClientContextHeader({
               <span className="whitespace-nowrap @max-[700px]/playground-header:sr-only">
                 Host Context
               </span>
-              {hostContextDirty ? (
-                <span className="whitespace-nowrap text-[10px] text-amber-600 @max-[700px]/playground-header:sr-only dark:text-amber-400">
-                  Unsaved
-                </span>
-              ) : null}
             </Button>
           </TooltipTrigger>
           <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP} className="max-w-sm">
@@ -434,17 +428,12 @@ export function ClientContextHeader({
               <span className="whitespace-nowrap @max-[700px]/playground-header:sr-only">
                 Host Capabilities
               </span>
-              {hostCapabilitiesOverride !== undefined ? (
-                <span className="whitespace-nowrap text-[10px] text-amber-600 @max-[700px]/playground-header:sr-only dark:text-amber-400">
-                  Override
-                </span>
-              ) : null}
             </Button>
           </TooltipTrigger>
           <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP} className="max-w-sm">
             <p className="font-medium">Host Capabilities</p>
             <p className="text-xs text-muted-foreground">
-              Override the `hostCapabilities` advertised in ui/initialize
+              JSON payload for `hostCapabilities` in ui/initialize
             </p>
           </TooltipContent>
         </Tooltip>

@@ -300,17 +300,12 @@ export function TestCaseClientHeader({
             >
               <Cpu className="h-3.5 w-3.5" />
               <span className="whitespace-nowrap">Host Capabilities</span>
-              {effective.hostCapabilitiesOverride !== undefined ? (
-                <span className="whitespace-nowrap text-[10px] text-amber-600 dark:text-amber-400">
-                  Override
-                </span>
-              ) : null}
             </Button>
           </TooltipTrigger>
           <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP} className="max-w-sm">
             <p className="font-medium">Host Capabilities</p>
             <p className="text-xs text-muted-foreground">
-              Override the `hostCapabilities` advertised in ui/initialize
+              JSON payload for `hostCapabilities` in ui/initialize
             </p>
           </TooltipContent>
         </Tooltip>
