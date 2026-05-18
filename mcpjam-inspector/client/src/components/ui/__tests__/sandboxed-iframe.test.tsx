@@ -101,6 +101,26 @@ describe("SandboxedIframe — outer sandbox attribute", () => {
       "allow-scripts",
     ]);
   });
+
+  it("rejects sandboxAttrs entries with internal whitespace (silent-widen guard)", () => {
+    // Regression: `"allow-forms allow-popups-to-escape-sandbox"` as a
+    // single Set entry would otherwise emit two real sandbox flags via
+    // join(" "), silently widening the iframe grants beyond what the
+    // editor/matrix display.
+    const { container } = render(
+      <SandboxedIframe
+        html={null}
+        sandboxAttrs={["allow-forms allow-popups-to-escape-sandbox"]}
+        onMessage={() => {}}
+      />,
+    );
+    const tokens = getOuterIframeSandbox(container);
+    // The whitespace-bearing entry is dropped entirely. Mandatory
+    // tokens remain; the smuggled flags do NOT.
+    expect(tokens).toEqual(["allow-same-origin", "allow-scripts"]);
+    expect(tokens).not.toContain("allow-forms");
+    expect(tokens).not.toContain("allow-popups-to-escape-sandbox");
+  });
 });
 
 describe("SandboxedIframe — outer allow attribute (allowFeatures injection guard)", () => {

@@ -1030,7 +1030,17 @@ export function MCPAppsRenderer({
     };
     const out: Record<string, string[]> = {};
     for (const [k, tokens] of Object.entries(cspDirectivesPolicy)) {
-      const clamped = tokens.filter((t) => !isClampBypass(t));
+      // Trim BEFORE the bypass check: an imported/saved profile can
+      // carry " https:" or " https://app.mcpjam.com" with leading
+      // whitespace, and the proxy's mergeDirective trims tokens before
+      // emitting them — so the untrimmed string sneaks past
+      // isClampBypass while the trimmed version still lands in the
+      // output CSP, reintroducing the access the clamp is supposed to
+      // remove. Normalize here so the filter and the proxy see the same
+      // token shape.
+      const clamped = tokens
+        .map((t) => t.trim())
+        .filter((t) => t.length > 0 && !isClampBypass(t));
       if (clamped.length > 0) out[k] = clamped;
     }
     return Object.keys(out).length > 0 ? out : undefined;

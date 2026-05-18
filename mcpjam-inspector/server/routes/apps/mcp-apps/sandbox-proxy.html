@@ -440,10 +440,18 @@ document.addEventListener('securitypolicyviolation', function(e) {
               sandboxTokens.add("allow-scripts");
               sandboxTokens.add("allow-same-origin");
               for (const t of sandboxAttrs) {
-                if (typeof t === "string") {
-                  const trimmed = t.trim();
-                  if (trimmed.length > 0) sandboxTokens.add(trimmed);
-                }
+                if (typeof t !== "string") continue;
+                const trimmed = t.trim();
+                if (trimmed.length === 0) continue;
+                // Reject tokens with internal whitespace — see the
+                // matching renderer-side guard in sandboxed-iframe.tsx.
+                // Without this, a profile entry like
+                // `"allow-forms allow-popups-to-escape-sandbox"` would
+                // round-trip as one Set member but the eventual
+                // join(" ") would emit it as two real sandbox flags,
+                // silently widening the inner iframe's grants.
+                if (/\s/.test(trimmed)) continue;
+                sandboxTokens.add(trimmed);
               }
             } else {
               const baseSandbox =

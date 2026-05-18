@@ -279,7 +279,17 @@ export const SandboxedIframe = forwardRef<
       tokens.add("allow-same-origin");
       for (const t of sandboxAttrs) {
         const trimmed = t.trim();
-        if (trimmed.length > 0) tokens.add(trimmed);
+        if (trimmed.length === 0) continue;
+        // Reject tokens with internal whitespace. A profile (or custom-
+        // token input) that smuggles `"allow-forms allow-popups-to-
+        // escape-sandbox"` would otherwise land in the Set as one entry
+        // but the join(" ") below would emit it as two real sandbox
+        // flags — silently widening the iframe grant beyond what the
+        // editor/matrix display. Reject is safer than split: the entry
+        // visibly does nothing (user notices) instead of taking effect
+        // invisibly.
+        if (/\s/.test(trimmed)) continue;
+        tokens.add(trimmed);
       }
     } else {
       for (const t of sandbox.split(/\s+/)) {
