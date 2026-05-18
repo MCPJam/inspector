@@ -148,18 +148,71 @@
         // So we use 'unsafe-inline' for scripts/styles since all widget code is inline
         let directives;
         if (!csp) {
-          directives = [
-            mergeDirective("default-src", ["'none'"]),
-            mergeDirective("script-src", ["'unsafe-inline'"]),
-            mergeDirective("style-src", ["'unsafe-inline'"]),
-            mergeDirective("img-src", ["data:"]),
-            mergeDirective("font-src", ["data:"]),
-            mergeDirective("media-src", ["data:"]),
-            mergeDirective("connect-src", ["'none'"]),
-            mergeDirective("frame-src", ["'none'"]),
-            mergeDirective("object-src", ["'none'"]),
-            mergeDirective("base-uri", ["'none'"]),
-          ];
+          // Two baselines for the no-csp branch:
+          //   - When cspDirectives is set, the profile is modeling a host
+          //     whose emitted CSP is unconstrained EXCEPT for the directives
+          //     it explicitly lists. Use SPECIFIC permissive baselines
+          //     (no `*` wildcard — so cspDirectives entries that name
+          //     specific origins, e.g. ChatGPT's `frame-src 'self' https:
+          //     data: blob:`, actually constrain via the union merge rather
+          //     than being diluted back to permissive by a `*` in the base).
+          //     Widgets without their own `_meta.ui.csp` still need
+          //     `'unsafe-inline'`, `data:`, `https:`, etc. to function.
+          //   - Otherwise (pure no-csp, no overrides), restrictive defaults
+          //     for SEP-1865 secure-default behavior.
+          const hasCspOverrides =
+            cspDirectives &&
+            typeof cspDirectives === "object" &&
+            Object.keys(cspDirectives).length > 0;
+          if (hasCspOverrides) {
+            directives = [
+              mergeDirective("default-src", [
+                "'unsafe-inline'",
+                "'unsafe-eval'",
+                "data:",
+                "blob:",
+                "https:",
+              ]),
+              mergeDirective("script-src", [
+                "'unsafe-inline'",
+                "'unsafe-eval'",
+                "data:",
+                "blob:",
+                "https:",
+              ]),
+              mergeDirective("style-src", [
+                "'unsafe-inline'",
+                "data:",
+                "blob:",
+                "https:",
+              ]),
+              mergeDirective("img-src", ["data:", "blob:", "https:"]),
+              mergeDirective("font-src", ["data:", "blob:", "https:"]),
+              mergeDirective("media-src", ["data:", "blob:", "https:"]),
+              mergeDirective("connect-src", [
+                "data:",
+                "blob:",
+                "https:",
+                "wss:",
+              ]),
+              mergeDirective("frame-src", ["data:", "blob:", "https:"]),
+              mergeDirective("object-src", ["'none'"]),
+              mergeDirective("base-uri", ["'self'"]),
+            ];
+          } else {
+            directives = [
+              mergeDirective("default-src", ["'none'"]),
+              mergeDirective("script-src", ["'unsafe-inline'"]),
+              mergeDirective("style-src", ["'unsafe-inline'"]),
+              mergeDirective("img-src", ["data:"]),
+              mergeDirective("font-src", ["data:"]),
+              mergeDirective("media-src", ["data:"]),
+              mergeDirective("connect-src", ["'none'"]),
+              mergeDirective("frame-src", ["'none'"]),
+              mergeDirective("object-src", ["'none'"]),
+              mergeDirective("base-uri", ["'none'"]),
+            ];
+          }
         } else {
           // Build CSP from declared domains (SEP-1865)
           // Per spec: "Host MAY further restrict but MUST NOT allow undeclared domains"

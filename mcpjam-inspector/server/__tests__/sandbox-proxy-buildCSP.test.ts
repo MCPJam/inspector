@@ -154,6 +154,35 @@ describe("sandbox-proxy buildCSP merge rule", () => {
     expect(connectLine).not.toContain("'self'");
   });
 
+  it("uses permissive baselines (not restrictive) on no-csp + cspDirectives — ChatGPT-style profile", () => {
+    // Regression for: a profile like ChatGPT that lists only `frame-src`
+    // in cspDirectives (because the real host's emitted CSP only
+    // constrains frame-src) used to force restrictive defaults on every
+    // other directive — so a widget without its own _meta.ui.csp got
+    // `connect-src 'none'` / restrictive `script-src` and silently
+    // failed even though the modeled host wouldn't block it.
+    const out = buildCSP(undefined, {
+      "frame-src": ["'self'", "https:", "data:", "blob:"],
+    });
+    const lines = out.split(";").map((s) => s.trim());
+    const get = (name: string) => lines.find((l) => l.startsWith(name + " "));
+
+    // Directives NOT in cspDirectives should be permissive (specifically
+    // include 'unsafe-inline' / 'https:' / 'data:' / 'blob:' so widget
+    // code can execute and fetch normally).
+    expect(get("script-src")).toContain("'unsafe-inline'");
+    expect(get("script-src")).toContain("https:");
+    expect(get("connect-src")).toContain("https:");
+    expect(get("connect-src")).not.toContain("'none'");
+
+    // frame-src IS in cspDirectives — gets the listed tokens (and no `*`
+    // wildcard in the baseline that would dilute them back to permissive).
+    const frameSrc = get("frame-src");
+    expect(frameSrc).toContain("'self'");
+    expect(frameSrc).toContain("https:");
+    expect(frameSrc).not.toContain("*");
+  });
+
   it("drops cspDirectives keys containing CSP separators or whitespace", () => {
     // The key is concatenated into the output via `name + " " + tokens`,
     // so a crafted name like `"worker-src *; script-src"` would smuggle
