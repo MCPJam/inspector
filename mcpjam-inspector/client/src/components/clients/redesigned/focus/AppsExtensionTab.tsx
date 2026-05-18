@@ -18,27 +18,44 @@ interface AppsExtensionTabProps {
 }
 
 /**
- * User-facing JSON document. Shape matches SEP-1865 verbatim so an MCP App
- * developer can read it against the spec without translating inspector-
- * specific concepts. Key points:
+ * User-facing JSON document. The `sandbox` block configures the proxy
+ * iframe the inspector renders MCP App views in — one place to edit
+ * everything the inspector enforces at the iframe boundary, matching the
+ * "Sandbox proxy iframe" card in the matrix.
  *
- *  - `hostCapabilities` is the EFFECTIVE merged value (preset for the
- *    active hostStyle, overlaid with the user's `hostCapabilitiesOverride`
- *    when defined). On parse-back we diff against the preset to decide
- *    whether an override needs to be stored, so editing back to the
- *    preset's exact shape cleanly reverts to "no override" — the backend
- *    hashes that distinctly from an explicit `{}`.
+ * Spec-portable fields (will be advertised as `HostCapabilities.sandbox`
+ * to real MCP App views) keep their SEP-1865 names and positions verbatim:
  *
- *  - `hostCapabilities.sandbox` is the SPEC SHAPE — four allowlist arrays
- *    under `csp` (connectDomains, resourceDomains, frameDomains,
- *    baseUriDomains) and presence-flag objects under `permissions`
- *    (camera, microphone, geolocation, clipboardWrite). The inspector
- *    stores this as `mcpProfile.apps.sandbox.csp.restrictTo` /
- *    `permissions.allow`; we hoist it into spec position on serialize and
- *    lift it back on parse. Inspector-only knobs (`mode`, `extensions`)
- *    are intentionally not surfaced in this JSON — they aren't in the
- *    SEP and would confuse a developer reading the doc against the spec.
- *    They're preserved across edits.
+ *   sandbox.csp.connectDomains   ⟷ SEP-1865 HostCapabilities.sandbox.csp.connectDomains
+ *   sandbox.csp.resourceDomains  ⟷ SEP-1865 HostCapabilities.sandbox.csp.resourceDomains
+ *   sandbox.csp.frameDomains     ⟷ SEP-1865 HostCapabilities.sandbox.csp.frameDomains
+ *   sandbox.csp.baseUriDomains   ⟷ SEP-1865 HostCapabilities.sandbox.csp.baseUriDomains
+ *   sandbox.permissions          ⟷ SEP-1865 HostCapabilities.sandbox.permissions
+ *
+ * Inspector-only knobs (NOT in SEP-1865 — won't survive a host swap) are
+ * named after the HTML mechanism they drive on the proxy iframe:
+ *
+ *   sandbox.csp.directiveOverrides   per-directive CSP source-expression
+ *                                    overrides on the proxy iframe CSP
+ *   sandbox.iframeSandboxAttrs       extra tokens for the iframe `sandbox=`
+ *                                    attribute beyond the spec-required
+ *                                    `allow-scripts allow-same-origin`
+ *   sandbox.permissionsPolicy        Permissions Policy entries on the
+ *                                    iframe `allow=` attribute beyond the
+ *                                    4 SEP-blessed features
+ *
+ * Inspector-internal resolver fields (`mode`, `extensions`) stay out of
+ * the JSON entirely — they're owned by the structured editor and preserved
+ * across JSON edits.
+ *
+ * `hostCapabilities` is the EFFECTIVE merged value (preset + override).
+ * On parse-back we diff against the preset to decide whether to store an
+ * override, so editing back to the preset's exact shape cleanly reverts to
+ * "no override" — the backend hashes that distinctly from an explicit `{}`.
+ *
+ * Permissions use the spec presence-flag shape (`{ clipboardWrite: {} }`
+ * means granted; absence means not granted). Stored internally as a
+ * boolean map; converted at the JSON boundary.
  */
 type SpecSandboxCsp = {
   connectDomains?: string[];
@@ -59,15 +76,39 @@ type SpecSandboxPermissions = {
   geolocation?: Record<string, never>;
   clipboardWrite?: Record<string, never>;
 } & Record<string, unknown>;
-type SpecHostCapabilitiesSandbox = {
-  csp?: SpecSandboxCsp;
+
+type SandboxDocCsp = SpecSandboxCsp & {
+  /**
+   * Inspector-only: per-directive source-expression overrides on the
+   * proxy iframe CSP (e.g. `script-src: ["'unsafe-eval'"]`). NOT in
+   * SEP-1865. Sits under `csp` because that's the directive family it
+   * affects, but a real MCP App host won't see this.
+   */
+  directiveOverrides?: Record<string, string[]>;
+};
+
+type SandboxDoc = {
+  csp?: SandboxDocCsp;
   permissions?: SpecSandboxPermissions;
+  /**
+   * Inspector-only: extra tokens for the proxy iframe's HTML `sandbox=`
+   * attribute, on top of the spec-required `allow-scripts allow-same-origin`.
+   * NOT in SEP-1865.
+   */
+  iframeSandboxAttrs?: string[];
+  /**
+   * Inspector-only: Permissions Policy entries written to the proxy
+   * iframe's HTML `allow=` attribute, beyond the 4 SEP-blessed features in
+   * `permissions`. NOT in SEP-1865. May not survive a host swap.
+   */
+  permissionsPolicy?: Record<string, string>;
 };
 
 type AppsDoc = {
   extensions?: Record<string, unknown>;
   hostCapabilities?: Record<string, unknown>;
   hostContext: Record<string, unknown>;
+  sandbox?: SandboxDoc;
   uiInitialize?: {
     hostInfo?: Record<string, unknown>;
   };
@@ -78,32 +119,40 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 }
 
 /**
- * Build the spec-shaped `HostCapabilities.sandbox` from our internal
- * storage. We persist a richer policy (mode/restrictTo); the spec
- * only knows about the four domain allowlists and the four permission
- * presence-flags. `restrictTo` IS the spec's allowlist semantically —
- * "host MAY further restrict but MUST NOT allow undeclared domains" —
- * so we hoist it directly into spec position.
+ * Build the JSON `sandbox` block from internal policy storage. The four
+ * CSP allowlists are hoisted out of internal `csp.restrictTo` into spec
+ * position directly under `csp.{connectDomains, ...}` so a reader can map
+ * them straight to SEP-1865; inspector-only knobs are nested with names
+ * that telegraph their non-spec status.
  */
-function specSandboxFromPolicy(
+function sandboxFromPolicy(
   policy: NonNullable<HostConfigMcpProfileV1["apps"]>["sandbox"] | undefined,
-): SpecHostCapabilitiesSandbox | undefined {
+): SandboxDoc | undefined {
   if (!policy) return undefined;
-  const out: SpecHostCapabilitiesSandbox = {};
+  const out: SandboxDoc = {};
 
+  const cspBlock: SandboxDocCsp = {};
+  // Hoist restrictTo's allowlists into spec position. Semantically these
+  // ARE the spec's `HostCapabilities.sandbox.csp.{connectDomains, ...}` —
+  // "host MAY further restrict but MUST NOT allow undeclared domains."
   const restrict = policy.csp?.restrictTo;
   if (restrict) {
-    const csp: SpecSandboxCsp = {};
     if (restrict.connectDomains && restrict.connectDomains.length > 0)
-      csp.connectDomains = [...restrict.connectDomains];
+      cspBlock.connectDomains = [...restrict.connectDomains];
     if (restrict.resourceDomains && restrict.resourceDomains.length > 0)
-      csp.resourceDomains = [...restrict.resourceDomains];
+      cspBlock.resourceDomains = [...restrict.resourceDomains];
     if (restrict.frameDomains && restrict.frameDomains.length > 0)
-      csp.frameDomains = [...restrict.frameDomains];
+      cspBlock.frameDomains = [...restrict.frameDomains];
     if (restrict.baseUriDomains && restrict.baseUriDomains.length > 0)
-      csp.baseUriDomains = [...restrict.baseUriDomains];
-    if (Object.keys(csp).length > 0) out.csp = csp;
+      cspBlock.baseUriDomains = [...restrict.baseUriDomains];
   }
+  const directiveOverrides = policy.csp?.cspDirectives;
+  if (directiveOverrides && Object.keys(directiveOverrides).length > 0) {
+    const cd: Record<string, string[]> = {};
+    for (const [k, v] of Object.entries(directiveOverrides)) cd[k] = [...v];
+    cspBlock.directiveOverrides = cd;
+  }
+  if (Object.keys(cspBlock).length > 0) out.csp = cspBlock;
 
   const allow = policy.permissions?.allow;
   if (allow) {
@@ -120,6 +169,13 @@ function specSandboxFromPolicy(
     if (Object.keys(perms).length > 0) out.permissions = perms;
   }
 
+  if (policy.sandboxAttrs && policy.sandboxAttrs.length > 0) {
+    out.iframeSandboxAttrs = [...policy.sandboxAttrs];
+  }
+  if (policy.allowFeatures && Object.keys(policy.allowFeatures).length > 0) {
+    out.permissionsPolicy = { ...policy.allowFeatures };
+  }
+
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
@@ -130,50 +186,54 @@ type SandboxPolicyCsp = NonNullable<SandboxPolicy["csp"]>;
 type SandboxPolicyPerms = NonNullable<SandboxPolicy["permissions"]>;
 
 /**
- * Inverse of `specSandboxFromPolicy`. Reads the spec-shaped
- * `hostCapabilities.sandbox` block coming out of the JSON editor and
- * folds it into the inspector's richer policy shape, preserving prev's
- * inspector-only knobs (`mode`, `extensions`).
+ * Inverse of `sandboxFromPolicy`. Reads the unified `sandbox` block from
+ * the JSON editor and folds it into the inspector's richer policy shape,
+ * preserving prev's inspector-internal knobs (`mode`, `extensions`) which
+ * aren't surfaced in the JSON.
+ *
+ * `incomingPresent: false` means the `sandbox` key wasn't in the JSON at
+ * all → don't touch the stored policy. A present (even empty) block means
+ * the user is asserting intent; we replace each surfaced field with the
+ * parsed value (or clear it when absent under the present block).
  */
-function liftSpecSandboxIntoPolicy(args: {
+function liftSandboxIntoPolicy(args: {
   incomingPresent: boolean;
-  incoming: SpecHostCapabilitiesSandbox | undefined;
+  incoming: SandboxDoc | undefined;
   prev: SandboxPolicy | undefined;
 }): SandboxPolicy | undefined {
   const { incomingPresent, incoming, prev } = args;
 
-  // No sandbox key in the JSON at all → don't touch policy. The user
-  // either hasn't expanded the section or it's a no-op save.
   if (!incomingPresent) return prev;
 
   const prevCsp = prev?.csp;
   const prevPerms = prev?.permissions;
+  const incomingCspBlock = incoming?.csp;
 
-  // CSP: replace restrictTo wholesale with the parsed spec arrays.
-  // Preserve mode / extensions from prev.
+  // CSP: the four spec allowlists live directly under `csp` (spec
+  // position); `directiveOverrides` is the inspector-only sibling. Replace
+  // each with the parsed value when its key is present; when the parent
+  // `csp` block is absent, all clear. Preserve internal mode / extensions
+  // from prev — those aren't in the JSON.
   const newRestrict: SpecSandboxCsp = {};
-  const incomingCsp = incoming?.csp;
-  if (incomingCsp?.connectDomains && incomingCsp.connectDomains.length > 0) {
-    newRestrict.connectDomains = [...incomingCsp.connectDomains];
+  if (incomingCspBlock?.connectDomains && incomingCspBlock.connectDomains.length > 0) {
+    newRestrict.connectDomains = [...incomingCspBlock.connectDomains];
   }
-  if (incomingCsp?.resourceDomains && incomingCsp.resourceDomains.length > 0) {
-    newRestrict.resourceDomains = [...incomingCsp.resourceDomains];
+  if (incomingCspBlock?.resourceDomains && incomingCspBlock.resourceDomains.length > 0) {
+    newRestrict.resourceDomains = [...incomingCspBlock.resourceDomains];
   }
-  if (incomingCsp?.frameDomains && incomingCsp.frameDomains.length > 0) {
-    newRestrict.frameDomains = [...incomingCsp.frameDomains];
+  if (incomingCspBlock?.frameDomains && incomingCspBlock.frameDomains.length > 0) {
+    newRestrict.frameDomains = [...incomingCspBlock.frameDomains];
   }
-  if (incomingCsp?.baseUriDomains && incomingCsp.baseUriDomains.length > 0) {
-    newRestrict.baseUriDomains = [...incomingCsp.baseUriDomains];
+  if (incomingCspBlock?.baseUriDomains && incomingCspBlock.baseUriDomains.length > 0) {
+    newRestrict.baseUriDomains = [...incomingCspBlock.baseUriDomains];
   }
 
   const nextCsp: SandboxPolicyCsp = {};
   if (prevCsp?.mode !== undefined) nextCsp.mode = prevCsp.mode;
   if (prevCsp?.extensions !== undefined) nextCsp.extensions = prevCsp.extensions;
-  // cspDirectives is an inspector-only emission knob — not in the spec JSON
-  // shape. Preserve verbatim across a JSON edit; the user manages it from
-  // the structured editor in `ClientConfigEditor`, not by typing it here.
-  if (prevCsp?.cspDirectives !== undefined)
-    nextCsp.cspDirectives = prevCsp.cspDirectives;
+  if (incomingCspBlock?.directiveOverrides !== undefined) {
+    nextCsp.cspDirectives = incomingCspBlock.directiveOverrides;
+  }
   if (Object.keys(newRestrict).length > 0) nextCsp.restrictTo = newRestrict;
   const cspNonEmpty = Object.keys(nextCsp).length > 0;
 
@@ -200,26 +260,24 @@ function liftSpecSandboxIntoPolicy(args: {
   if (Object.keys(newAllow).length > 0) nextPerms.allow = newAllow;
   const permsNonEmpty = Object.keys(nextPerms).length > 0;
 
-  // sandboxAttrs and allowFeatures are inspector-only emission knobs —
-  // never surfaced in the spec JSON view. Preserve verbatim across a JSON
-  // edit; the user manages them from the structured editor in
-  // `ClientConfigEditor`, not by typing them here.
-  const prevSandboxAttrs = prev?.sandboxAttrs;
-  const prevAllowFeatures = prev?.allowFeatures;
+  // iframeSandboxAttrs / permissionsPolicy: parsed value wins when the
+  // block is present (absent under a present block = user cleared it).
+  const nextSandboxAttrs = incoming?.iframeSandboxAttrs;
+  const nextAllowFeatures = incoming?.permissionsPolicy;
 
   if (
     !cspNonEmpty &&
     !permsNonEmpty &&
-    prevSandboxAttrs === undefined &&
-    prevAllowFeatures === undefined
+    nextSandboxAttrs === undefined &&
+    nextAllowFeatures === undefined
   ) {
     return undefined;
   }
   const next: SandboxPolicy = {};
   if (cspNonEmpty) next.csp = nextCsp;
   if (permsNonEmpty) next.permissions = nextPerms;
-  if (prevSandboxAttrs !== undefined) next.sandboxAttrs = prevSandboxAttrs;
-  if (prevAllowFeatures !== undefined) next.allowFeatures = prevAllowFeatures;
+  if (nextSandboxAttrs !== undefined) next.sandboxAttrs = nextSandboxAttrs;
+  if (nextAllowFeatures !== undefined) next.allowFeatures = nextAllowFeatures;
   return next;
 }
 
@@ -236,26 +294,27 @@ function appsToJson(draft: HostConfigInputV2): AppsDoc {
   }
 
   // hostCapabilities — show the EFFECTIVE merged value (preset + override)
-  // so the JSON matches what the host actually advertises. resolveEffective
-  // strips `sandbox` defensively because we own sandbox separately; we then
-  // hoist the spec-shaped sandbox view into the same object below.
+  // so the JSON matches what the host actually advertises. Sandbox lives
+  // in its own top-level block below; resolveEffective strips it from this
+  // object defensively so the two views don't desync.
   const effectiveCaps = resolveEffectiveHostCapabilities({
     hostStyle: draft.hostStyle,
     hostCapabilitiesOverride: draft.hostCapabilitiesOverride,
   }) as Record<string, unknown>;
 
-  // Nest sandbox inside hostCapabilities per SEP-1865, using the spec
-  // shape (allowlist arrays + permission presence-flags). Our richer
-  // policy fields (mode/extensions) are intentionally NOT surfaced
-  // here — they're inspector knobs, not in the SEP, so a developer
-  // reading this JSON against the spec sees only spec primitives.
-  const specSandbox = specSandboxFromPolicy(draft.mcpProfile?.apps?.sandbox);
-  if (specSandbox) {
-    effectiveCaps.sandbox = specSandbox;
-  }
-
   if (Object.keys(effectiveCaps).length > 0) {
     doc.hostCapabilities = effectiveCaps;
+  }
+
+  // sandbox — proxy iframe configuration. Maps to `mcpProfile.apps.sandbox`
+  // in storage and the "Sandbox proxy iframe" card in the matrix. Spec
+  // fields use SEP-1865 names/positions verbatim (csp.{connectDomains,...},
+  // permissions); inspector-only knobs are named after the HTML mechanism
+  // they drive (csp.directiveOverrides, iframeSandboxAttrs,
+  // permissionsPolicy) and clearly do not survive a host swap.
+  const sandboxDoc = sandboxFromPolicy(draft.mcpProfile?.apps?.sandbox);
+  if (sandboxDoc) {
+    doc.sandbox = sandboxDoc;
   }
 
   // mcpProfile.apps.uiInitialize.hostInfo
@@ -291,24 +350,17 @@ export function applyJsonToDraft(
   //   - equal to preset → undefined override (clean revert)
   //   - different from preset → override = parsed value (incl. `{}` for
   //     "advertise nothing")
-  // `sandbox` is peeled off here and routed to mcpProfile.apps.sandbox
-  // storage below; the override-diff compares only the static cap fields
-  // so adding/changing sandbox doesn't spuriously create a host-caps
-  // override.
+  // Sandbox is its own top-level block now; if a `sandbox` key sneaks into
+  // hostCapabilities (paste from an older export, hand-edit), strip it so
+  // it doesn't pollute the override diff.
   const presetEffective = resolveEffectiveHostCapabilities({
     hostStyle: prev.hostStyle,
     hostCapabilitiesOverride: undefined,
   }) as Record<string, unknown>;
   let nextOverride: Record<string, unknown> | undefined = undefined;
-  let incomingHostCapsSandbox: SpecHostCapabilitiesSandbox | undefined;
-  let hostCapsSandboxPresent = false;
   if ("hostCapabilities" in parsed) {
     if (isPlainObject(parsed.hostCapabilities)) {
-      const { sandbox, ...incoming } = parsed.hostCapabilities;
-      hostCapsSandboxPresent = "sandbox" in parsed.hostCapabilities;
-      if (isPlainObject(sandbox)) {
-        incomingHostCapsSandbox = sandbox as SpecHostCapabilitiesSandbox;
-      }
+      const { sandbox: _ignored, ...incoming } = parsed.hostCapabilities;
       if (stableStringifyJson(incoming) === stableStringifyJson(presetEffective)) {
         nextOverride = undefined;
       } else {
@@ -331,7 +383,7 @@ export function applyJsonToDraft(
   // splice back the user's existing `initialize` (edited in ProtocolTab)
   // so cross-tab edits don't trample each other. `apps.uiInitialize`
   // round-trips through this tab's JSON doc; `apps.sandbox` is lifted
-  // from `hostCapabilities.sandbox` (spec-shape) back into the inspector's
+  // from the unified top-level `sandbox` block back into the inspector's
   // richer policy shape, preserving prev's mode/extensions.
   const prevProfile = prev.mcpProfile;
   const prevSandbox = prevProfile?.apps?.sandbox;
@@ -344,15 +396,77 @@ export function applyJsonToDraft(
       ? incomingUiInit.hostInfo
       : undefined;
 
-  // Lift spec-shaped hostCapabilities.sandbox back into policy storage.
-  // - hostCaps had no `sandbox` key → use prev sandbox verbatim (no edit)
-  // - hostCaps had `sandbox` (even empty) → user is asserting intent, so
-  //   overwrite restrictTo / permissions.allow with the parsed spec
-  //   values; preserve mode / extensions from prev because those
-  //   are inspector-only and the JSON view never exposed them.
-  const nextSandbox = liftSpecSandboxIntoPolicy({
-    incomingPresent: hostCapsSandboxPresent,
-    incoming: incomingHostCapsSandbox,
+  // Parse the `sandbox` block. Values are validated shape-wise here; the
+  // canonicalizer enforces deeper constraints (no `;` or `,` in CSP
+  // directive override values, spec-feature filtering, etc.) at storage
+  // time. The four spec allowlists are read from spec position directly
+  // under `csp`; inspector-only knobs use the new names.
+  let incomingSandbox: SandboxDoc | undefined;
+  let sandboxPresent = false;
+  if ("sandbox" in parsed) {
+    sandboxPresent = true;
+    const sandboxBlock = parsed.sandbox;
+    if (isPlainObject(sandboxBlock)) {
+      const parsedSandbox: SandboxDoc = {};
+      if (isPlainObject(sandboxBlock.csp)) {
+        const c = sandboxBlock.csp;
+        const cspOut: SandboxDocCsp = {};
+        if (Array.isArray(c.connectDomains))
+          cspOut.connectDomains = c.connectDomains.filter(
+            (t): t is string => typeof t === "string",
+          );
+        if (Array.isArray(c.resourceDomains))
+          cspOut.resourceDomains = c.resourceDomains.filter(
+            (t): t is string => typeof t === "string",
+          );
+        if (Array.isArray(c.frameDomains))
+          cspOut.frameDomains = c.frameDomains.filter(
+            (t): t is string => typeof t === "string",
+          );
+        if (Array.isArray(c.baseUriDomains))
+          cspOut.baseUriDomains = c.baseUriDomains.filter(
+            (t): t is string => typeof t === "string",
+          );
+        if (isPlainObject(c.directiveOverrides)) {
+          const cd: Record<string, string[]> = {};
+          for (const [k, v] of Object.entries(c.directiveOverrides)) {
+            if (Array.isArray(v)) {
+              cd[k] = v.filter((t): t is string => typeof t === "string");
+            }
+          }
+          cspOut.directiveOverrides = cd;
+        }
+        // Always assign the csp block when present in JSON — empty
+        // signals "user asserted intent to clear", which liftSandboxIntoPolicy
+        // honors by dropping restrictTo / directiveOverrides while
+        // preserving inspector-internal mode / extensions.
+        parsedSandbox.csp = cspOut;
+      }
+      if (isPlainObject(sandboxBlock.permissions)) {
+        parsedSandbox.permissions = sandboxBlock.permissions as SpecSandboxPermissions;
+      }
+      if (Array.isArray(sandboxBlock.iframeSandboxAttrs)) {
+        parsedSandbox.iframeSandboxAttrs = sandboxBlock.iframeSandboxAttrs.filter(
+          (t): t is string => typeof t === "string",
+        );
+      }
+      if (isPlainObject(sandboxBlock.permissionsPolicy)) {
+        const pp: Record<string, string> = {};
+        for (const [k, v] of Object.entries(sandboxBlock.permissionsPolicy)) {
+          if (typeof v === "string") pp[k] = v;
+        }
+        parsedSandbox.permissionsPolicy = pp;
+      }
+      incomingSandbox = parsedSandbox;
+    }
+  }
+
+  // Lift the parsed `sandbox` block back into policy storage. Inspector-
+  // internal fields not surfaced in the JSON (mode, extensions) are
+  // preserved from prev across edits regardless.
+  const nextSandbox = liftSandboxIntoPolicy({
+    incomingPresent: sandboxPresent,
+    incoming: incomingSandbox,
     prev: prevSandbox,
   });
 

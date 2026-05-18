@@ -399,7 +399,7 @@ function SandboxConfigCell({
   // like cspDirectives with 10+ directives × multiple tokens each, an
   // always-expanded chip list overwhelms the matrix and pushes downstream
   // sections (View iframe, Servers) off-screen. The row's summary
-  // ("10 directives · 25 tokens") conveys cardinality at a glance; the
+  // ("10 directives · 25 source expressions") conveys cardinality at a glance; the
   // structured editor in ClientConfigEditor.tsx is where the per-directive
   // detail belongs. We surface the breakdown as a `title=` tooltip on the
   // qualifier so power users can hover without losing the layout.
@@ -426,23 +426,25 @@ function SandboxConfigCell({
       )}
     >
       <span className="hp-sb-key">{row.label}</span>
-      <span
-        className={cn(
-          "hp-sb-value",
-          row.summary === "—" && "hp-sb-value--italic",
-        )}
-        title={directivesTooltip ?? row.summary}
-      >
-        {displayValue}
-      </span>
-      {row.qualifier ? (
+      <span className="hp-sb-value-line">
         <span
-          className="hp-sb-qual"
-          title={directivesTooltip ?? row.qualifier}
+          className={cn(
+            "hp-sb-value",
+            row.summary === "—" && "hp-sb-value--italic",
+          )}
+          title={directivesTooltip ?? row.summary}
         >
-          {row.qualifier}
+          {displayValue}
         </span>
-      ) : null}
+        {row.qualifier ? (
+          <span
+            className="hp-sb-qual"
+            title={directivesTooltip ?? row.qualifier}
+          >
+            {row.qualifier}
+          </span>
+        ) : null}
+      </span>
     </button>
   );
 }
@@ -740,11 +742,10 @@ const PAPER_STYLES = `
   gap: 6px 18px;
 }
 .host-paper-card .hp-sb-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 8px;
-  align-items: baseline;
-  padding: 5px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 8px;
   border-radius: 8px;
   border: 0;
   background: transparent;
@@ -754,6 +755,7 @@ const PAPER_STYLES = `
   color: var(--hp-sandbox-ink);
   border-bottom: 1px dashed var(--hp-sandbox-hairline);
   transition: background 120ms ease;
+  min-width: 0;
 }
 .host-paper-card .hp-sb-row:hover { background: var(--hp-sandbox-row-hover); }
 .host-paper-card .hp-sb-row--selected { background: var(--hp-sandbox-row-selected); }
@@ -774,12 +776,22 @@ const PAPER_STYLES = `
   font-family: ui-monospace, "JetBrains Mono", monospace;
   font-size: 11.5px;
 }
+.host-paper-card .hp-sb-value-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  min-width: 0;
+}
 .host-paper-card .hp-sb-value {
-  text-align: right;
+  text-align: left;
   font-family: ui-monospace, "JetBrains Mono", monospace;
   font-size: 11.5px;
   color: var(--hp-sandbox-ink);
   font-weight: 500;
+  min-width: 0;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 .host-paper-card .hp-sb-value--italic {
   font-style: italic;
@@ -789,14 +801,11 @@ const PAPER_STYLES = `
   font-size: 12.5px;
 }
 .host-paper-card .hp-sb-qual {
-  text-align: right;
+  text-align: left;
   font-family: ui-monospace, "JetBrains Mono", monospace;
   font-size: 10.5px;
   color: var(--hp-sandbox-sub);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 120px;
+  flex: 0 0 auto;
 }
 
 /* === View nested-nested frame === */

@@ -451,7 +451,12 @@ describe("buildRedesignedHostCanvas — sandbox config rows", () => {
     expect(row?.summary).toBe("allow-forms, allow-modals");
   });
 
-  it("summarizes allowFeatures as a neutral key:value list", () => {
+  it("summarizes allowFeatures as a neutral key:value list on its own row", () => {
+    // `Permissions` (spec) and `Permissions Policy` (vendor extras) are
+    // separate rows because the spec only blesses the 4 features under
+    // `permissions.allow`; everything else is host-specific and may not
+    // survive a host swap. The split mirrors that boundary so readers can
+    // tell spec-portable from vendor-extra at a glance.
     const draft = emptyHostConfigInputV2();
     draft.mcpProfile = {
       profileVersion: 1,
@@ -462,6 +467,7 @@ describe("buildRedesignedHostCanvas — sandbox config rows", () => {
     const row = matrixData(buildVm({ draft })).sandbox.find(
       (s) => s.subKey === "allowFeatures",
     );
+    expect(row?.label).toBe("Permissions Policy");
     expect(row?.severity).toBe("neutral");
     expect(row?.summary).toBe("fullscreen: *");
   });
