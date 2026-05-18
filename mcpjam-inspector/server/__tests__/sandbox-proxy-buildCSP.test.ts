@@ -221,6 +221,50 @@ describe("sandbox-proxy buildCSP merge rule", () => {
     expect(frameSrc).not.toContain("*");
   });
 
+  it("drops cspDirectives value tokens containing HTML-attribute breakouts — meta-tag injection guard", () => {
+    // The merged CSP string is injected as the value of
+    // `<meta http-equiv="Content-Security-Policy" content="...">` without
+    // HTML-escaping. A token containing `"`, `<`, or `>` would close the
+    // content attribute or open a tag in the srcdoc before the intended
+    // CSP is established. CSP source expressions never legitimately
+    // contain these characters, so reject them outright.
+    const out = buildCSP(
+      {},
+      {
+        "connect-src": [
+          "'self\"><script>alert(1)</script>",
+          "https://evil<>.example",
+        ],
+      },
+    );
+    expect(out).not.toContain("<script>");
+    expect(out).not.toContain('">');
+    expect(out).not.toContain("<");
+    expect(out).not.toContain(">");
+    expect(out).not.toContain('"');
+    const connectLine = out
+      .split(";")
+      .map((s) => s.trim())
+      .find((s) => s.startsWith("connect-src "));
+    // Both hostile tokens dropped → directive falls back to 'none'.
+    expect(connectLine).toBe("connect-src 'none'");
+  });
+
+  it("drops cspDirectives keys containing HTML-attribute breakouts", () => {
+    // Same risk as the value path: the key flows into the unescaped
+    // content="..." of the injected <meta> tag via `name + " " + tokens`.
+    const out = buildCSP(
+      {},
+      {
+        'x"><script>alert(1)</script><x ': ["'self'"],
+      },
+    );
+    expect(out).not.toContain("<script>");
+    expect(out).not.toContain('"');
+    expect(out).not.toContain("<");
+    expect(out).not.toContain(">");
+  });
+
   it("drops cspDirectives keys containing CSP separators or whitespace", () => {
     // The key is concatenated into the output via `name + " " + tokens`,
     // so a crafted name like `"worker-src *; script-src"` would smuggle

@@ -133,7 +133,16 @@
             // an attacker-controlled one when joined with " " below.
             // Same defense-in-depth as the allowFeatures filter applied
             // in sandboxed-iframe.tsx.
-            if (/[;,\n\r]/.test(trimmed)) continue;
+            //
+            // Also reject HTML-attribute breakouts (`"`, `<`, `>`). The
+            // merged CSP string is concatenated into
+            // `<meta http-equiv="Content-Security-Policy" content="...">`
+            // by injectCSP without escaping, so a token like
+            // `'self"><script>...` would close the content attribute and
+            // inject markup into the srcdoc before the intended CSP is
+            // established. CSP source expressions never legitimately
+            // contain these characters.
+            if (/[;,\n\r"<>]/.test(trimmed)) continue;
             merged.add(trimmed);
           }
           if (merged.size > 1 && merged.has("'none'")) {
@@ -300,7 +309,12 @@
             // concatenated into the output via `name + " " + tokens`, so
             // a crafted key like `worker-src *; script-src` would inject
             // a second directive even if every value token is clean.
-            if (/[;,\n\r\s]/.test(k)) continue;
+            // Also reject HTML-attribute breakouts (`"`, `<`, `>`) for
+            // the same reason as in mergeDirective: the directive name
+            // flows into the unescaped `content="..."` attribute of the
+            // injected <meta> tag, and a crafted key like `x"><script>`
+            // would otherwise close the attribute and inject markup.
+            if (/[;,\n\r\s"<>]/.test(k)) continue;
             const tokens = cspDirectives[k];
             if (!Array.isArray(tokens) || tokens.length === 0) continue;
             directives.push(mergeDirective(k, []));
