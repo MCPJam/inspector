@@ -129,6 +129,7 @@ export interface WidgetCspMeta {
   connect_domains?: string[];
   resource_domains?: string[];
   frame_domains?: string[];
+  redirect_domains?: string[];
 }
 
 export interface CspConfig {
@@ -151,6 +152,72 @@ const WS_SOURCES = [
   "ws://127.0.0.1:*",
   "wss://localhost:*",
 ];
+
+function readStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.filter(
+    (entry): entry is string => typeof entry === "string" && entry.length > 0,
+  );
+}
+
+function pickStringArray(...values: unknown[]): string[] | undefined {
+  for (const value of values) {
+    const parsed = readStringArray(value);
+    if (parsed !== undefined) return parsed;
+  }
+  return undefined;
+}
+
+function hasAnyWidgetCspField(value: WidgetCspMeta): boolean {
+  return (
+    Boolean(value.connect_domains?.length) ||
+    Boolean(value.resource_domains?.length) ||
+    Boolean(value.frame_domains?.length) ||
+    Boolean(value.redirect_domains?.length)
+  );
+}
+
+export function normalizeWidgetCspMeta(
+  resourceMeta?: Record<string, unknown> | null,
+): WidgetCspMeta | undefined {
+  if (!resourceMeta || typeof resourceMeta !== "object") return undefined;
+
+  const uiMeta =
+    resourceMeta.ui && typeof resourceMeta.ui === "object"
+      ? (resourceMeta.ui as Record<string, unknown>)
+      : undefined;
+  const uiCsp =
+    uiMeta?.csp && typeof uiMeta.csp === "object"
+      ? (uiMeta.csp as Record<string, unknown>)
+      : undefined;
+  const openaiCsp =
+    resourceMeta["openai/widgetCSP"] &&
+    typeof resourceMeta["openai/widgetCSP"] === "object"
+      ? (resourceMeta["openai/widgetCSP"] as Record<string, unknown>)
+      : undefined;
+
+  const normalized: WidgetCspMeta = {};
+  const connectDomains = pickStringArray(
+    uiCsp?.connectDomains,
+    openaiCsp?.connect_domains,
+  );
+  const resourceDomains = pickStringArray(
+    uiCsp?.resourceDomains,
+    openaiCsp?.resource_domains,
+  );
+  const frameDomains = pickStringArray(
+    uiCsp?.frameDomains,
+    openaiCsp?.frame_domains,
+  );
+  const redirectDomains = readStringArray(openaiCsp?.redirect_domains);
+
+  if (connectDomains) normalized.connect_domains = connectDomains;
+  if (resourceDomains) normalized.resource_domains = resourceDomains;
+  if (frameDomains) normalized.frame_domains = frameDomains;
+  if (redirectDomains) normalized.redirect_domains = redirectDomains;
+
+  return hasAnyWidgetCspField(normalized) ? normalized : undefined;
+}
 
 export function buildCspHeader(
   mode: CspMode,
@@ -183,6 +250,7 @@ export function buildCspHeader(
     connectDomains = [
       "'self'",
       "https:",
+      "http:",
       "wss:",
       "ws:",
       ...LOCALHOST_SOURCES,
@@ -193,6 +261,7 @@ export function buildCspHeader(
       "data:",
       "blob:",
       "https:",
+      "http:",
       ...LOCALHOST_SOURCES,
     ];
     frameDomains = ["*", "data:", "blob:", "https:", "http:", "about:"];
@@ -203,11 +272,11 @@ export function buildCspHeader(
   const imgSrc =
     mode === "widget-declared"
       ? `'self' data: blob: ${(widgetCsp?.resource_domains || []).join(" ")} ${LOCALHOST_SOURCES.join(" ")}`
-      : `'self' data: blob: https: ${LOCALHOST_SOURCES.join(" ")}`;
+      : `'self' data: blob: https: http: ${LOCALHOST_SOURCES.join(" ")}`;
   const mediaSrc =
     mode === "widget-declared"
       ? `'self' data: blob: ${(widgetCsp?.resource_domains || []).join(" ")} ${LOCALHOST_SOURCES.join(" ")}`
-      : "'self' data: blob: https:";
+      : "'self' data: blob: https: http:";
 
   const frameAncestors =
     options?.frameAncestors ??
