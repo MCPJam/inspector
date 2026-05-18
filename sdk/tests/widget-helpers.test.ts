@@ -31,7 +31,7 @@ describe("buildCspHeader", () => {
     expect(headerString).toContain("media-src 'self' data: blob: https: http:");
     expect(headerString).toContain("connect-src 'self' https: http: wss: ws:");
     expect(headerString).toContain(
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'self' data: blob: https: http:",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https: http:",
     );
   });
 });
@@ -58,7 +58,23 @@ describe("normalizeWidgetCspMeta", () => {
     );
   });
 
-  it("falls back to legacy openai/widgetCSP fields when standard fields are absent", () => {
+  it("falls back to legacy openai/widgetCSP fields when standard csp is absent", () => {
+    expect(
+      normalizeWidgetCspMeta({
+        "openai/widgetCSP": {
+          connect_domains: ["https://legacy-api.example.com"],
+          resource_domains: ["https://legacy-assets.example.com"],
+          frame_domains: ["https://legacy-frame.example.com"],
+        },
+      }),
+    ).toEqual({
+      connect_domains: ["https://legacy-api.example.com"],
+      resource_domains: ["https://legacy-assets.example.com"],
+      frame_domains: ["https://legacy-frame.example.com"],
+    });
+  });
+
+  it("uses standard ui.csp exclusively when stale legacy fields also exist", () => {
     expect(
       normalizeWidgetCspMeta({
         ui: {
@@ -68,17 +84,15 @@ describe("normalizeWidgetCspMeta", () => {
         },
         "openai/widgetCSP": {
           resource_domains: ["https://legacy-assets.example.com"],
-          redirect_domains: ["https://redirect.example.com"],
+          frame_domains: ["https://legacy-frame.example.com"],
         },
       }),
     ).toEqual({
       connect_domains: ["https://api.example.com"],
-      resource_domains: ["https://legacy-assets.example.com"],
-      redirect_domains: ["https://redirect.example.com"],
     });
   });
 
-  it("treats empty standard domain arrays as explicit declarations", () => {
+  it("returns undefined when explicit empty standard arrays block legacy fallback", () => {
     expect(
       normalizeWidgetCspMeta({
         ui: {
