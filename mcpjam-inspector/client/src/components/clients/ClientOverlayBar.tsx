@@ -21,7 +21,6 @@ import {
   seedFromHostTemplate,
   type HostTemplateId,
 } from "@/lib/client-templates";
-import { useProjectServers } from "@/hooks/useViews";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { CreateClientDialog } from "./CreateClientDialog";
 
@@ -50,7 +49,6 @@ export function ClientOverlayBar({
   const { isAuthenticated } = useConvexAuth();
   const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
   const { createHost, deleteHost } = useHostMutations();
-  const { servers } = useProjectServers({ isAuthenticated, projectId });
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const [showCreate, setShowCreate] = useState(false);
   const [quickAddingId, setQuickAddingId] = useState<HostTemplateId | null>(null);
@@ -196,29 +194,18 @@ export function ClientOverlayBar({
     }
   };
 
-  // Mirrors the gate in CreateClientDialog.handleCreate. `useProjectServers`
-  // returns `undefined` while loading vs `[]` for a truly empty project;
-  // collapsing both into `[]` would silently seed the new host with zero
-  // attachments and there's no UI affordance to fix it after the fact (the
-  // host never self-corrects). The auth gate matches `useProjectServers`'s
-  // own skip rule: unauthenticated users never fire the query.
-  const isServersLoading = isAuthenticated && servers === undefined;
-
   const handleQuickAdd = async (templateId: HostTemplateId) => {
-    if (isServersLoading) {
-      toast.error("Still loading project servers. Try again in a moment.");
-      return;
-    }
     const template = HOST_TEMPLATES.find((t) => t.id === templateId);
     if (!template) return;
     setQuickAddingId(templateId);
     try {
       const seed = seedFromHostTemplate(templateId, { theme: themeMode });
-      const projectServerIds = servers?.map((s) => s._id) ?? [];
+      // New hosts start with no required servers so creation never triggers
+      // an auto-connect storm; users opt servers in via the Servers tab.
       const { hostId } = await createHost({
         projectId,
         name: template.label,
-        input: { ...seed, serverIds: projectServerIds },
+        input: { ...seed, serverIds: [] },
       });
       toast.success(`Client "${template.label}" created`);
       posthog.capture("connect_host_overlay_quick_added", {
@@ -354,7 +341,7 @@ export function ClientOverlayBar({
                         type="button"
                         aria-label={`Add ${template.label} client`}
                         title={`Add ${template.label}`}
-                        disabled={quickAddingId !== null || isServersLoading}
+                        disabled={quickAddingId !== null}
                         data-testid={`host-overlay-quick-add-${id}`}
                         onClick={(e) => {
                           e.preventDefault();
