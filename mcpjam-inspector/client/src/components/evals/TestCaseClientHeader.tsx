@@ -299,18 +299,13 @@ export function TestCaseClientHeader({
               onClick={() => setHostCapsDialogOpen(true)}
             >
               <Cpu className="h-3.5 w-3.5" />
-              <span className="whitespace-nowrap">Client Capabilities</span>
-              {effective.hostCapabilitiesOverride !== undefined ? (
-                <span className="whitespace-nowrap text-[10px] text-amber-600 dark:text-amber-400">
-                  Override
-                </span>
-              ) : null}
+              <span className="whitespace-nowrap">Host Capabilities</span>
             </Button>
           </TooltipTrigger>
           <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP} className="max-w-sm">
-            <p className="font-medium">Client Capabilities</p>
+            <p className="font-medium">Host Capabilities</p>
             <p className="text-xs text-muted-foreground">
-              Override the `hostCapabilities` advertised in ui/initialize
+              JSON payload for `hostCapabilities` in ui/initialize
             </p>
           </TooltipContent>
         </Tooltip>
@@ -318,29 +313,49 @@ export function TestCaseClientHeader({
         {/* Host Style brand pills */}
         <Tooltip>
           <TooltipTrigger asChild>
-            <div className="flex shrink-0 items-center gap-0.5 rounded-md border bg-background p-0.5 shadow-xs">
-              <div className="flex h-6 w-6 items-center justify-center">
+            <div
+              className={cn(
+                "group/host-styles flex shrink-0 items-center gap-0.5 rounded-md border bg-background p-0.5 shadow-xs transition-[border-color,background-color,box-shadow]",
+                "border-border/40 bg-muted/15 shadow-none hover:border-border hover:bg-background hover:shadow-xs focus-within:border-border focus-within:bg-background focus-within:shadow-xs",
+              )}
+            >
+              <div className="flex h-6 w-6 shrink-0 items-center justify-center">
                 <Paintbrush className="h-3.5 w-3.5 text-muted-foreground" />
               </div>
-              {hostStyles.map((host) => (
-                <Button
-                  key={host.id}
-                  variant={effective.hostStyle === host.id ? "secondary" : "ghost"}
-                  size="icon"
-                  onClick={() => handleHostStyleClick(host.id)}
-                  className="h-6 w-6"
-                  data-testid={`test-case-host-style-${host.id}`}
-                  data-selected={effective.hostStyle === host.id ? "true" : undefined}
-                  aria-pressed={effective.hostStyle === host.id}
-                  aria-label={`Set host style to ${host.chatUi.label}`}
-                >
-                  <img
-                    src={host.chatUi.logoSrc}
-                    alt={host.chatUi.label}
-                    className="h-3.5 w-3.5 object-contain"
-                  />
-                </Button>
-              ))}
+              <div
+                className={cn(
+                  "flex min-w-0 items-center gap-0.5 overflow-hidden transition-[max-width,opacity] duration-200 ease-out",
+                  "max-w-0 opacity-0",
+                  "group-hover/host-styles:max-w-[320px] group-hover/host-styles:opacity-100",
+                  "group-focus-within/host-styles:max-w-[320px] group-focus-within/host-styles:opacity-100",
+                  "[@media(hover:none)]:!max-w-[320px] [@media(hover:none)]:!opacity-100",
+                  "[@media(pointer:coarse)]:!max-w-[320px] [@media(pointer:coarse)]:!opacity-100",
+                )}
+              >
+                {hostStyles.map((host) => (
+                  <Button
+                    key={host.id}
+                    variant={
+                      effective.hostStyle === host.id ? "secondary" : "ghost"
+                    }
+                    size="icon"
+                    onClick={() => handleHostStyleClick(host.id)}
+                    className="h-6 w-6 shrink-0"
+                    data-testid={`test-case-host-style-${host.id}`}
+                    data-selected={
+                      effective.hostStyle === host.id ? "true" : undefined
+                    }
+                    aria-pressed={effective.hostStyle === host.id}
+                    aria-label={`Set host style to ${host.chatUi.label}`}
+                  >
+                    <img
+                      src={host.chatUi.logoSrc}
+                      alt={host.chatUi.label}
+                      className="h-3.5 w-3.5 object-contain"
+                    />
+                  </Button>
+                ))}
+              </div>
             </div>
           </TooltipTrigger>
           <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
