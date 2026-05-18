@@ -16,7 +16,16 @@ import { cn } from "@/lib/utils";
 import { useHostList, useHostMutations } from "@/hooks/useClients";
 import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
 import { standardEventProps } from "@/lib/PosthogUtils";
+import {
+  HOST_TEMPLATES,
+  seedFromHostTemplate,
+  type HostTemplateId,
+} from "@/lib/client-templates";
+import { useProjectServers } from "@/hooks/useViews";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { CreateClientDialog } from "./CreateClientDialog";
+
+const QUICK_ADD_TEMPLATES: HostTemplateId[] = ["claude", "chatgpt", "copilot"];
 
 const MCPJAM_HOST_NAME = "MCPJam";
 const LAST_HOST_DELETE_REASON =
@@ -41,7 +50,10 @@ export function ClientOverlayBar({
   const { isAuthenticated } = useConvexAuth();
   const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
   const { createHost, deleteHost } = useHostMutations();
+  const { servers } = useProjectServers({ isAuthenticated, projectId });
+  const themeMode = usePreferencesStore((s) => s.themeMode);
   const [showCreate, setShowCreate] = useState(false);
+  const [quickAddingId, setQuickAddingId] = useState<HostTemplateId | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -184,6 +196,45 @@ export function ClientOverlayBar({
     }
   };
 
+  // Mirrors the gate in CreateClientDialog.handleCreate. `useProjectServers`
+  // returns `undefined` while loading vs `[]` for a truly empty project;
+  // collapsing both into `[]` would silently seed the new host with zero
+  // attachments and there's no UI affordance to fix it after the fact (the
+  // host never self-corrects). The auth gate matches `useProjectServers`'s
+  // own skip rule: unauthenticated users never fire the query.
+  const isServersLoading = isAuthenticated && servers === undefined;
+
+  const handleQuickAdd = async (templateId: HostTemplateId) => {
+    if (isServersLoading) {
+      toast.error("Still loading project servers. Try again in a moment.");
+      return;
+    }
+    const template = HOST_TEMPLATES.find((t) => t.id === templateId);
+    if (!template) return;
+    setQuickAddingId(templateId);
+    try {
+      const seed = seedFromHostTemplate(templateId, { theme: themeMode });
+      const projectServerIds = servers?.map((s) => s._id) ?? [];
+      const { hostId } = await createHost({
+        projectId,
+        name: template.label,
+        input: { ...seed, serverIds: projectServerIds },
+      });
+      toast.success(`Client "${template.label}" created`);
+      posthog.capture("connect_host_overlay_quick_added", {
+        template_id: templateId,
+        host_id: hostId,
+      });
+      setMenuOpen(false);
+      onChangePreviewedHostId(hostId);
+      onCanvasReplaceHost?.(hostId);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to create client");
+    } finally {
+      setQuickAddingId(null);
+    }
+  };
+
   const canCycle = sortedHosts.length > 1;
   const canDelete = sortedHosts.length > 1;
   const arrowDisabled = isLoading || !canCycle;
@@ -285,9 +336,49 @@ export function ClientOverlayBar({
               <DropdownMenuItem
                 data-testid="host-overlay-save-as-new"
                 onSelect={() => setShowCreate(true)}
+                className="group pr-1.5"
               >
                 <Plus className="size-3.5" />
-                Add client
+                <span className="flex-1">Add client</span>
+                <span
+                  className="ml-2 flex shrink-0 items-center gap-0.5"
+                  onPointerDown={(e) => e.stopPropagation()}
+                >
+                  {QUICK_ADD_TEMPLATES.map((id) => {
+                    const template = HOST_TEMPLATES.find((t) => t.id === id);
+                    if (!template) return null;
+                    const isAdding = quickAddingId === id;
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        aria-label={`Add ${template.label} client`}
+                        title={`Add ${template.label}`}
+                        disabled={quickAddingId !== null || isServersLoading}
+                        data-testid={`host-overlay-quick-add-${id}`}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          void handleQuickAdd(id);
+                        }}
+                        className={cn(
+                          "inline-flex size-6 items-center justify-center rounded-sm transition-colors",
+                          "hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50",
+                        )}
+                      >
+                        {isAdding ? (
+                          <span className="size-3 animate-pulse rounded-full bg-muted-foreground/40" />
+                        ) : (
+                          <img
+                            src={template.logoSrc}
+                            alt=""
+                            className="size-4 object-contain"
+                          />
+                        )}
+                      </button>
+                    );
+                  })}
+                </span>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

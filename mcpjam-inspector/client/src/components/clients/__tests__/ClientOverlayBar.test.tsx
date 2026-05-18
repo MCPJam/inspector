@@ -23,6 +23,15 @@ vi.mock("@/hooks/useClients", () => ({
   }),
 }));
 
+vi.mock("@/hooks/useViews", () => ({
+  useProjectServers: () => ({ servers: [] }),
+}));
+
+vi.mock("@/stores/preferences/preferences-provider", () => ({
+  usePreferencesStore: (selector: (state: { themeMode: "light" | "dark" }) => unknown) =>
+    selector({ themeMode: "light" }),
+}));
+
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({ capture: vi.fn() }),
 }));

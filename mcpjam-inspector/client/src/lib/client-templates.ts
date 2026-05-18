@@ -2,6 +2,7 @@ import {
   emptyHostConfigInputV2,
   type HostConfigInputV2,
 } from "@/lib/client-config-v2";
+import type { HostThemeMode } from "@/lib/client-styles";
 import {
   MCPJAM_FONT_CSS,
   MCPJAM_PLATFORM,
@@ -212,12 +213,32 @@ export type HostTemplateId =
   | "codex"
   | "copilot";
 
+export interface SeedHostTemplateOptions {
+  /**
+   * Theme stamped into `hostContext.theme` (and for the MCPJam template,
+   * threaded into `getMcpJamStyleVariables`) at creation time. Callers at
+   * the host-creation seam pass MCPJam's current global `themeMode` so a
+   * newly-created host opens matching the rest of the app instead of
+   * defaulting to dark. Omitting it preserves the legacy "always dark"
+   * behavior for callers that snapshot template defaults onto already-
+   * existing surfaces (see `applyHostStyleToHostConfigInput`,
+   * `applyHostDefaultsToPlayground`) where flipping to MCPJam's theme on
+   * every brand-pill click would be a surprise.
+   *
+   * Codex ignores this — its template doesn't set `hostContext` at all
+   * (no rendering surface, so no theme to honor).
+   */
+  theme?: HostThemeMode;
+}
+
+const DEFAULT_SEED_THEME: HostThemeMode = "dark";
+
 export interface HostTemplate {
   id: HostTemplateId;
   label: string;
   description: string;
   logoSrc: string;
-  seed: () => HostConfigInputV2;
+  seed: (opts?: SeedHostTemplateOptions) => HostConfigInputV2;
 }
 
 export const HOST_TEMPLATES: readonly HostTemplate[] = [
@@ -229,19 +250,21 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     // Explicit `hostStyle: "mcpjam"` so the template doesn't silently
     // inherit the registry default — keeps MCPJam hosts visually distinct
     // from Claude even if the default ever drifts.
-    seed: () => {
+    seed: (opts) => {
       const base = emptyHostConfigInputV2({ hostStyle: "mcpjam" });
+      const theme = opts?.theme ?? DEFAULT_SEED_THEME;
       // Per-resource hostContext for MCPJam's own house chrome. Style
       // variables come straight from the design-system tokens that
       // `client/src/index.css` imports via `@mcpjam/design-system`, so
       // a widget rendered in an MCPJam-styled host sees the same
-      // surfaces/text/border tokens as the inspector itself. Theme is
-      // resolved to "dark" here because the template hardcodes `theme:
-      // "dark"` below; switching theme requires re-seeding.
+      // surfaces/text/border tokens as the inspector itself. The theme
+      // value below also threads into `getMcpJamStyleVariables(theme)` —
+      // MCPJam's variables are JS-resolved (not CSS `light-dark()`), so
+      // both need to flip together.
       // MCPJAM_FONT_CSS is empty (system font stack, no @font-face), so
       // `styles.css` is omitted entirely.
       base.hostContext = {
-        theme: "dark",
+        theme,
         displayMode: "inline",
         availableDisplayModes: ["inline", "fullscreen"],
         containerDimensions: { width: 720, maxHeight: 5000 },
@@ -252,7 +275,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         deviceCapabilities: { touch: false, hover: true },
         safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
         styles: {
-          variables: getMcpJamStyleVariables("dark"),
+          variables: getMcpJamStyleVariables(theme),
           ...(MCPJAM_FONT_CSS ? { css: { fonts: MCPJAM_FONT_CSS } } : {}),
         },
       };
@@ -278,7 +301,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     label: "Claude",
     description: "Anthropic-style host. Tool approval on.",
     logoSrc: claudeLogo,
-    seed: () => {
+    seed: (opts) => {
       const base = emptyHostConfigInputV2({
         hostStyle: "claude",
         // Canonical id (anthropic/<slug>) so the chat-composer model
@@ -290,6 +313,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         temperature: 1.0,
         requireToolApproval: true,
       });
+      const theme = opts?.theme ?? DEFAULT_SEED_THEME;
       // clientCapabilities: Real claude.ai publishes only the SDK-default
       // MCP UI extension (no `experimental` flag). emptyHostConfigInputV2
       // already seeds that, so no override needed here — distinct from
@@ -322,7 +346,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       // width; widgets render at whatever the iframe is, the value
       // communicates Claude's layout policy.
       base.hostContext = {
-        theme: "dark",
+        theme,
         displayMode: "inline",
         availableDisplayModes: ["inline", "fullscreen"],
         containerDimensions: { width: 720, maxHeight: 5000 },
@@ -335,7 +359,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
         // SEP-1865 hostContext.styles. Anthropic Sans @font-face URLs
         // require `assets.claude.ai` in apps.sandbox.csp.resourceDomains
-        // (set below).
+        // (set below). Variables use CSS `light-dark()` so they pick the
+        // right side based on the iframe's `color-scheme` — no JS-side
+        // theme threading required here.
         styles: {
           variables: CLAUDE_HOST_STYLE_VARIABLES,
           css: { fonts: CLAUDE_FONTS_CSS },
@@ -382,7 +408,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     label: "ChatGPT",
     description: "OpenAI-style host with ChatGPT protocol.",
     logoSrc: openaiLogo,
-    seed: () => {
+    seed: (opts) => {
       const base = emptyHostConfigInputV2({
         hostStyle: "chatgpt",
         // Canonical id (openai/<slug>) so the chat-composer model picker
@@ -394,6 +420,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         temperature: 0.7,
         requireToolApproval: false,
       });
+      const theme = opts?.theme ?? DEFAULT_SEED_THEME;
       // Real ChatGPT advertises an `experimental.openai/visibility` flag on top
       // of the SDK-default MCP UI extension. Keep the default extension block
       // (mime types) intact; only add the openai-specific experimental key.
@@ -423,7 +450,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       // viewport-minus-padding); rounded to the md breakpoint (768) so the
       // template communicates intent rather than freezing a snapshot.
       base.hostContext = {
-        theme: "dark",
+        theme,
         displayMode: "inline",
         availableDisplayModes: ["inline", "fullscreen", "pip"],
         containerDimensions: { height: 400, maxWidth: 768 },
@@ -481,7 +508,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     label: "Cursor",
     description: "Cursor IDE chat panel. MCP UI extension on, no message/updateModelContext.",
     logoSrc: cursorLogo,
-    seed: () => {
+    seed: (opts) => {
       const base = emptyHostConfigInputV2({
         hostStyle: "cursor",
         // Canonical id (anthropic/<slug>) so the chat-composer model
@@ -494,6 +521,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         temperature: 0.7,
         requireToolApproval: false,
       });
+      const theme = opts?.theme ?? DEFAULT_SEED_THEME;
       // clientCapabilities: matches what real Cursor publishes during MCP
       // `initialize` — declares MCP UI support plus its own elicitation
       // and roots flags. We keep the SDK-default UI extension entry
@@ -521,7 +549,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       // `availableDisplayModes` is a single-element list because Cursor
       // currently only renders inline (no fullscreen / pip).
       base.hostContext = {
-        theme: "dark",
+        theme,
         displayMode: "inline",
         availableDisplayModes: ["inline"],
         containerDimensions: { width: 748, maxHeight: 800 },
@@ -624,7 +652,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     label: "Copilot",
     description: "Microsoft 365 Copilot host. OpenAI-shaped Apps SDK.",
     logoSrc: copilotLogo,
-    seed: () => {
+    seed: (opts) => {
       const base = emptyHostConfigInputV2({
         hostStyle: "copilot",
         // Real Microsoft 365 Copilot routes through OpenAI's chat-class
@@ -637,6 +665,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         temperature: 0.7,
         requireToolApproval: false,
       });
+      const theme = opts?.theme ?? DEFAULT_SEED_THEME;
       // Copilot's MCP client identity is not publicly documented; declare
       // an experimental `microsoft/copilot` flag so any app that branches
       // on it can detect the host. Keep the SDK-default UI extension entry
@@ -663,7 +692,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       // policy, modest fixed height); `availableDisplayModes` drops
       // `pip` because Copilot's surface doesn't currently expose it.
       base.hostContext = {
-        theme: "dark",
+        theme,
         displayMode: "inline",
         availableDisplayModes: ["inline", "fullscreen"],
         containerDimensions: { height: 400, maxWidth: 768 },
@@ -722,8 +751,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
 
 export const DEFAULT_HOST_TEMPLATE_ID: HostTemplateId = "mcpjam";
 
-export function seedFromHostTemplate(id: HostTemplateId): HostConfigInputV2 {
+export function seedFromHostTemplate(
+  id: HostTemplateId,
+  opts?: SeedHostTemplateOptions,
+): HostConfigInputV2 {
   const template =
     HOST_TEMPLATES.find((t) => t.id === id) ?? HOST_TEMPLATES[0];
-  return template.seed();
+  return template.seed(opts);
 }
