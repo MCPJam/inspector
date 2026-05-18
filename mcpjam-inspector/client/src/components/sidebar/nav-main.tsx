@@ -205,7 +205,10 @@ function AnnouncementNavRow({
     </Badge>
   ) : null;
 
-  const button = renderButton(item, { suppressTooltip: !dismissed, badge });
+  const button = renderButton(item, {
+    suppressTooltip: !dismissed && sidebarOpen,
+    badge,
+  });
 
   if (dismissed || !sidebarOpen) {
     return <SidebarMenuItem>{button}</SidebarMenuItem>;
