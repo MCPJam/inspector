@@ -936,6 +936,7 @@ export function ChatV2Route() {
               projectId={convexProjectId}
               value={activeHostId}
               onChange={setActiveHostId}
+              location="chat_tab"
               placeholder="Project default"
               noneLabel="Project default"
             />

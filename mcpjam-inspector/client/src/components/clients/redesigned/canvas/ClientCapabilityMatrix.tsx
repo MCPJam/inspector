@@ -1,5 +1,11 @@
 import { memo, type CSSProperties, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import claudeLogo from "/claude_logo.png";
+import openaiLogo from "/openai_logo.png";
+import cursorLogo from "/cursor_logo.png";
+import codexLogo from "/codex-logo.svg";
+import copilotLogo from "/copilot_logo.png";
+import mcpjamLogo from "/mcp_jam_2row.png";
 import {
   APPS_HUB_NODE_ID,
   HOST_GROUP_NODE_ID,
@@ -13,6 +19,21 @@ import {
   type ProtocolLeafNodeData,
   type SandboxConfigNodeData,
 } from "../types";
+
+function getClientLogo(
+  clientInfoName: string | undefined,
+  hostName: string | undefined,
+): string | null {
+  const haystack = `${clientInfoName ?? ""} ${hostName ?? ""}`.toLowerCase();
+  if (haystack.includes("mcpjam") || haystack.includes("mcp-jam")) return mcpjamLogo;
+  if (haystack.includes("claude")) return claudeLogo;
+  if (haystack.includes("cursor")) return cursorLogo;
+  if (haystack.includes("codex")) return codexLogo;
+  if (haystack.includes("copilot")) return copilotLogo;
+  if (haystack.includes("openai") || haystack.includes("chatgpt") || haystack.includes("gpt"))
+    return openaiLogo;
+  return null;
+}
 
 /* ============================================================
    Host card. The card IS the architecture diagram — Host frame
@@ -74,6 +95,29 @@ export const HostMatrixCard = memo(function HostMatrixCard({
           onSelectNode={onSelectNode}
           className="hp-identity"
         >
+          {(() => {
+            // Pass the full value — `getClientLogo` already lowercases
+            // and substring-matches against the combined haystack, so any
+            // pre-tokenization here just hides keywords that don't sit at
+            // index 0 (e.g. "mcp-client-claude" → no logo with split[0]).
+            const clientLogo = getClientLogo(clientInfoLeaf?.value, hostName);
+            return (
+              <span
+                className={cn("hp-glyph", clientLogo && "hp-glyph--logo")}
+                aria-hidden
+              >
+                {clientLogo ? (
+                  <img
+                    src={clientLogo}
+                    alt=""
+                    className="hp-glyph-img"
+                  />
+                ) : (
+                  (agent?.modelProvider?.charAt(0) ?? "?").toUpperCase()
+                )}
+              </span>
+            );
+          })()}
           <span className="hp-identity-meta">
             <span className="hp-host-name" title={hostName}>
               {hostName}
@@ -516,6 +560,33 @@ const PAPER_STYLES = `
   border-radius: 10px;
 }
 .host-paper-card .hp-identity:hover { background: var(--hp-region-hover); }
+.host-paper-card .hp-glyph {
+  position: relative;
+  width: 44px; height: 44px;
+  background: transparent;
+  border: none;
+  border-radius: 11px;
+  display: grid; place-items: center;
+  font-weight: 600;
+  font-size: 18px;
+  color: var(--hp-ink);
+  letter-spacing: -0.02em;
+  flex: none;
+}
+.host-paper-card .hp-glyph-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 8px;
+}
+.host-paper-card .hp-glyph-state {
+  position: absolute;
+  top: -3px; right: -3px;
+  width: 10px; height: 10px;
+  border-radius: 999px;
+  background: var(--hp-emerald);
+  border: 2px solid var(--hp-host-bg);
+}
 .host-paper-card .hp-identity-meta {
   display: flex;
   flex-direction: column;
