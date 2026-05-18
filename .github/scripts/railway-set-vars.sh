@@ -51,6 +51,31 @@ if [ "$#" -eq 0 ]; then
 fi
 
 ENDPOINT="https://backboard.railway.app/graphql/v2"
+
+# Accept either a UUID or an environment NAME for -e. The Railway CLI does
+# this transparently; the GraphQL API does not. Resolve names → UUIDs by
+# querying the project's environments.
+UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+if ! [[ "$ENV_ID" =~ $UUID_RE ]]; then
+  RESOLVE_PAYLOAD=$(jq -nc \
+    --arg q 'query R($id: String!){ project(id: $id){ environments { edges { node { id name } } } } }' \
+    --arg id "$RAILWAY_PROJECT_ID" \
+    '{query: $q, variables: {id: $id}}')
+  RESOLVE_RESPONSE=$(curl -fsS -X POST "$ENDPOINT" \
+    -H "Authorization: Bearer $RAILWAY_API_TOKEN" \
+    -H "Content-Type: application/json" \
+    --data "$RESOLVE_PAYLOAD")
+  RESOLVED=$(echo "$RESOLVE_RESPONSE" \
+    | jq -r --arg name "$ENV_ID" '.data.project.environments.edges[]?.node | select(.name == $name) | .id')
+  if [ -z "$RESOLVED" ]; then
+    echo "::error::railway-set-vars.sh: no environment named '$ENV_ID' under project $RAILWAY_PROJECT_ID" >&2
+    echo "$RESOLVE_RESPONSE" | jq '.' >&2 || echo "$RESOLVE_RESPONSE" >&2
+    exit 1
+  fi
+  echo "resolved env '$ENV_ID' → $RESOLVED"
+  ENV_ID="$RESOLVED"
+fi
+
 MUTATION='mutation U($input: VariableUpsertInput!){ variableUpsert(input: $input) }'
 
 for pair in "$@"; do

@@ -138,9 +138,8 @@ jobs:
       # for the same pattern.
       - name: Create preview environment
         run: |
-          .github/scripts/railway-retry.sh railway environment new "${{ steps.meta.outputs.environment }}" \
-            --duplicate "$RAILWAY_STAGING_ENVIRONMENT" \
-            --json >/dev/null || true
+          .github/scripts/railway-retry.sh .github/scripts/railway-env.sh new "${{ steps.meta.outputs.environment }}" \
+            --duplicate "$RAILWAY_STAGING_ENVIRONMENT"
 
       - name: Configure staging-safe preview defaults
         run: |
@@ -360,9 +359,8 @@ jobs:
       # See upsert-preview above for why `railway link` is skipped.
       - name: Create preview environment
         run: |
-          .github/scripts/railway-retry.sh railway environment new "${{ steps.meta.outputs.environment }}" \
-            --duplicate "$RAILWAY_STAGING_ENVIRONMENT" \
-            --json >/dev/null || true
+          .github/scripts/railway-retry.sh .github/scripts/railway-env.sh new "${{ steps.meta.outputs.environment }}" \
+            --duplicate "$RAILWAY_STAGING_ENVIRONMENT"
 
       - name: Configure staging-safe preview defaults
         run: |
@@ -551,7 +549,7 @@ jobs:
 
       - name: Delete Railway preview environment
         run: |
-          .github/scripts/railway-retry.sh railway environment delete "${RAILWAY_ENV_PREFIX}${{ github.event.pull_request.number }}" \
+          .github/scripts/railway-retry.sh .github/scripts/railway-env.sh delete "${RAILWAY_ENV_PREFIX}${{ github.event.pull_request.number }}" \
             --yes || true
 
       - name: Dispatch backend preview cleanup
@@ -595,7 +593,7 @@ jobs:
             echo "::error::backend_pr_number is missing or non-numeric: '$BACKEND_PR_NUMBER'"
             exit 1
           fi
-          .github/scripts/railway-retry.sh railway environment delete "${RAILWAY_BACKEND_PR_ENV_PREFIX}${BACKEND_PR_NUMBER}" \
+          .github/scripts/railway-retry.sh .github/scripts/railway-env.sh delete "${RAILWAY_BACKEND_PR_ENV_PREFIX}${BACKEND_PR_NUMBER}" \
             --yes || true
 
   sync-backend-preview:
