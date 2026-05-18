@@ -29,13 +29,22 @@ const html = fs.readFileSync(
 );
 
 // Extract sanitizeDomain + buildCSP source from the inline <script>.
+// Locates the function signature with a forgiving regex, then walks the
+// body counting `{` / `}` so reformatting (whitespace, brace indentation)
+// in `sandbox-proxy.html` doesn't break the test.
 function extract(name: string): string {
-  const re = new RegExp(
-    `function\\s+${name}\\s*\\([^)]*\\)\\s*\\{([\\s\\S]*?)\\n\\s{6}\\}`,
-  );
-  const m = html.match(re);
+  const sig = new RegExp(`function\\s+${name}\\s*\\([^)]*\\)\\s*\\{`);
+  const m = sig.exec(html);
   if (!m) throw new Error(`Could not extract function ${name}`);
-  return m[0];
+  let i = m.index + m[0].length;
+  let depth = 1;
+  while (i < html.length && depth > 0) {
+    const ch = html[i++];
+    if (ch === "{") depth++;
+    else if (ch === "}") depth--;
+  }
+  if (depth !== 0) throw new Error(`Unbalanced braces in ${name}`);
+  return html.slice(m.index, i);
 }
 
 const sanitize = extract("sanitizeDomain");

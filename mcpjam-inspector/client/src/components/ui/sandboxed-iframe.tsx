@@ -282,6 +282,13 @@ export const SandboxedIframe = forwardRef<
       },
       sandboxProxyOrigin,
     );
+    // `colorScheme` is intentionally OMITTED from this dep list: the proxy
+    // handles `sandbox-resource-ready` by rebuilding the CSP and assigning
+    // `inner.srcdoc`, which reloads the widget and drops any in-iframe state.
+    // Theme changes flow through the dedicated
+    // `sandbox-color-scheme-changed` effect below, which updates the inner
+    // document's color-scheme without a reload. Re-including colorScheme
+    // here would silently full-reload the widget on every theme flip.
   }, [
     proxyReady,
     html,
@@ -293,7 +300,6 @@ export const SandboxedIframe = forwardRef<
     cspDirectives,
     permissive,
     sandboxProxyOrigin,
-    colorScheme,
   ]);
 
   // Keep iframe color-scheme in sync without reloading the widget document.
