@@ -43,7 +43,6 @@ describe("buildRedesignedHostCanvas", () => {
     expect(data.agent?.kind).toBe("agent-identity");
     expect(data.appsCaps).toHaveLength(6);
     expect(data.clientCaps).toHaveLength(6);
-    expect(data.hostContext?.leafKey).toBe("hostContext");
   });
 
   it("falls back to 'Untitled host' when name is whitespace", () => {
@@ -106,13 +105,6 @@ describe("buildRedesignedHostCanvas", () => {
     expect(keys).toContain("timeout");
   });
 
-  it("reports the hostContext field count in the footer leaf", () => {
-    const draft = emptyHostConfigInputV2();
-    draft.hostContext = { theme: "dark", locale: "en-US", timeZone: "UTC" };
-    const data = matrixData(buildVm({ draft }));
-    expect(data.hostContext?.value).toContain("3");
-  });
-
   it("flags an apps cap as newly-on when the previous host did not advertise it", () => {
     const prev = emptyHostConfigInputV2({
       hostCapabilitiesOverride: { openLinks: {} },
@@ -164,24 +156,40 @@ describe("buildRedesignedHostCanvas", () => {
 });
 
 describe("buildRedesignedHostCanvas — sandbox config rows", () => {
-  it("always emits 4 sandbox rows (mode, restrictTo, deny, permissions) in stable order", () => {
+  it("emits only the permissions row when mode is 'declared' and restrictTo is empty — the universal safe default doesn't generate noise rows", () => {
+    // Both mode='declared' and empty restrictTo are the spec-aligned
+    // defaults (trust the view's CSP, narrow nothing). Surfacing them
+    // as rows would just confirm "safe default in effect" on every
+    // host. permissions stays because it's always informative (lists
+    // granted spec keys, "—" when nothing's granted).
     const data = matrixData(buildVm());
+    expect(data.sandbox.map((s) => s.subKey)).toEqual(["permissions"]);
+  });
+
+  it("emits mode + restrictTo + permissions in stable order when both deviate from defaults", () => {
+    const draft = emptyHostConfigInputV2();
+    draft.mcpProfile = {
+      profileVersion: 1,
+      apps: {
+        sandbox: {
+          csp: {
+            mode: "relaxed",
+            restrictTo: { connectDomains: ["https://api.openai.com"] },
+          },
+        },
+      },
+    };
+    const data = matrixData(buildVm({ draft }));
     expect(data.sandbox.map((s) => s.subKey)).toEqual([
       "mode",
       "restrictTo",
-      "deny",
       "permissions",
     ]);
   });
 
-  it("defaults to mode='declared' (the resolver default) when csp is unspecified", () => {
-    const data = matrixData(buildVm());
-    const mode = data.sandbox.find((s) => s.subKey === "mode");
-    expect(mode?.summary).toBe("declared");
-    // qualifier surfaces "default" when the user hasn't set anything so it's
-    // clear the row shows what the resolver will apply, not what's persisted.
-    expect(mode?.qualifier).toBe("default");
-    expect(mode?.severity).toBe("neutral");
+  it("omits the mode row entirely when mode is 'declared' (the spec-default trust-view behavior)", () => {
+    const row = matrixData(buildVm()).sandbox.find((s) => s.subKey === "mode");
+    expect(row).toBeUndefined();
   });
 
   it("tints mode='relaxed' as warn (opens the iframe up, not silent narrowing)", () => {
@@ -195,6 +203,19 @@ describe("buildRedesignedHostCanvas — sandbox config rows", () => {
     );
     expect(mode?.summary).toBe("relaxed");
     expect(mode?.severity).toBe("warn");
+  });
+
+  it("emits a neutral-tinted mode row when mode is 'host-default' (deviation worth surfacing, but not danger)", () => {
+    const draft = emptyHostConfigInputV2();
+    draft.mcpProfile = {
+      profileVersion: 1,
+      apps: { sandbox: { csp: { mode: "host-default" } } },
+    };
+    const mode = matrixData(buildVm({ draft })).sandbox.find(
+      (s) => s.subKey === "mode",
+    );
+    expect(mode?.summary).toBe("host-default");
+    expect(mode?.severity).toBe("neutral");
   });
 
   it("tints restrictTo as DANGER when populated — the intersection trap that silently breaks widgets", () => {
@@ -227,24 +248,54 @@ describe("buildRedesignedHostCanvas — sandbox config rows", () => {
     expect(row?.qualifier).toBe("c:1 r:2 f:0 b:0");
   });
 
-  it("tints deny as WARN (explicit narrowing the user opted into, not silent)", () => {
+  it("surfaces non-empty restrictTo directives so the matrix shows the actual narrowed domains, not just counts", () => {
+    // SEP-1865 lists the four allowlist directive families (connect, resource,
+    // frame, baseUri); the matrix needs to render the actual entries so a user
+    // debugging "why is my widget blocked" can see what was narrowed.
     const draft = emptyHostConfigInputV2();
     draft.mcpProfile = {
       profileVersion: 1,
       apps: {
         sandbox: {
-          csp: { deny: { connectDomains: ["https://evil.com"] } },
+          csp: {
+            restrictTo: {
+              connectDomains: ["https://api.openai.com"],
+              resourceDomains: ["https://cdn.jsdelivr.net", "https://x.com"],
+            },
+          },
         },
       },
     };
     const row = matrixData(buildVm({ draft })).sandbox.find(
-      (s) => s.subKey === "deny",
+      (s) => s.subKey === "restrictTo",
     );
-    expect(row?.severity).toBe("warn");
-    expect(row?.summary).toBe("1 domains");
+    expect(row?.directives).toEqual([
+      {
+        key: "connectDomains",
+        label: "connect",
+        domains: ["https://api.openai.com"],
+      },
+      {
+        key: "resourceDomains",
+        label: "resource",
+        domains: ["https://cdn.jsdelivr.net", "https://x.com"],
+      },
+    ]);
   });
 
-  it("summarizes permissions mode + granted names", () => {
+  it("omits the restrictTo row entirely when empty (the safe default)", () => {
+    const row = matrixData(buildVm()).sandbox.find(
+      (s) => s.subKey === "restrictTo",
+    );
+    expect(row).toBeUndefined();
+  });
+
+  it("summarizes permissions as the granted spec keys (no inspector-internal mode name leaks into the row)", () => {
+    // SEP-1865 is allowlist-only — what matters to a reader is *which*
+    // permissions are granted, not which inspector resolver mode produced
+    // the grant. The `mode` enum (resource-declared / deny-all / custom)
+    // is an MCPJam knob and would only confuse a developer reading the
+    // matrix against the spec.
     const draft = emptyHostConfigInputV2();
     draft.mcpProfile = {
       profileVersion: 1,
@@ -260,10 +311,17 @@ describe("buildRedesignedHostCanvas — sandbox config rows", () => {
     const row = matrixData(buildVm({ draft })).sandbox.find(
       (s) => s.subKey === "permissions",
     );
-    expect(row?.summary).toBe("custom");
-    // only TRUE entries surface in the qualifier — false grants shouldn't
-    // look like grants
-    expect(row?.qualifier).toBe("clipboardWrite");
+    // Only TRUE entries surface — false grants shouldn't look like grants.
+    expect(row?.summary).toBe("clipboardWrite");
+    expect(row?.qualifier).toBeNull();
+  });
+
+  it("renders empty-permissions row as '—' (rendered via semanticAbsence as 'none granted')", () => {
+    const row = matrixData(buildVm()).sandbox.find(
+      (s) => s.subKey === "permissions",
+    );
+    expect(row?.summary).toBe("—");
+    expect(row?.qualifier).toBeNull();
   });
 
   it("flags a sandbox row as changed when the previous host had different config", () => {

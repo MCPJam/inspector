@@ -16,6 +16,7 @@ import {
   type AppsCapLeafNodeData,
   type ClientCapKey,
   type ClientCapRow,
+  type CspDirectiveDetail,
   type HostAttentionIssue,
   type HostRedesignContext,
   type HostRedesignFlowNode,
@@ -37,10 +38,10 @@ const MATRIX_W = 580;
 // y-position downstream. Three heights so the servers hub doesn't float in
 // a dead zone when the Apps Extension section is hidden (Codex et al) and
 // so the dimensions still match the paper-aesthetic card's nested frames.
-//   - BASE: outer host padding + identity (incl. timeout) + client-caps + footer
+//   - BASE: outer host padding + identity (incl. timeout) + client-caps
 //   - APPS_SECTION: inner View frame (lavender) with chip rows
 //   - SANDBOX_SECTION: Sandbox frame (amber) shell + sb-grid rows
-const MATRIX_H_BASE = 330;
+const MATRIX_H_BASE = 280;
 const MATRIX_H_APPS_SECTION = 230;
 const MATRIX_H_SANDBOX_SECTION = 180;
 const SERVERS_HUB_GAP = 40;
@@ -76,9 +77,9 @@ const CLIENT_CAP_ORDER: ReadonlyArray<ClientCapKey> = [
 
 /* ============================================================
    Protocol band descriptors. Request timeout is always emitted
-   so it stays comparable across hosts. hostContext is part of
-   the Apps Extension (SEP-1865) and is rendered as the matrix
-   footer; everything else fills the protocol cells.
+   so it stays comparable across hosts. Protocol cells are
+   separate from the matrix card body; optional headers row can be
+   omitted when empty.
    ============================================================ */
 interface ProtocolLeafDescriptor {
   key: ProtocolLeafKey;
@@ -124,17 +125,6 @@ function describeBaseCapabilities(
   else if (ids.length === 1) value = ids[0];
   else value = `${ids[0]} +${ids.length - 1}`;
   return { key: "capabilities", label: "extensions", value };
-}
-
-function describeHostContext(
-  draft: HostConfigInputV2,
-): ProtocolLeafDescriptor {
-  const count = Object.keys(draft.hostContext ?? {}).length;
-  return {
-    key: "hostContext",
-    label: "hostContext",
-    value: `{ ${count} ${count === 1 ? "field" : "fields"} }`,
-  };
 }
 
 function describeTimeout(draft: HostConfigInputV2): ProtocolLeafDescriptor {
@@ -201,18 +191,20 @@ function buildAppsCaps(draft: HostConfigInputV2): AppsCapDescriptor[] {
 /* ============================================================
    Sandbox config rows. The sandbox slice
    (mcpProfile.apps.sandbox) decides whether widget CSP
-   declarations are honored, narrowed, or overridden — a hardcoded
-   `restrictTo` here was silently dropping every widget-declared
-   domain that wasn't in our 3-item allowlist (intersection went to
-   empty → connect-src 'none', all fetches blocked). The matrix
-   surfaces these four slices so "why isn't my widget working?"
-   stops being invisible state.
+   declarations are honored or narrowed — a hardcoded `restrictTo`
+   here was silently dropping every widget-declared domain that
+   wasn't in our 3-item allowlist (intersection went to empty →
+   connect-src 'none', all fetches blocked). The matrix surfaces
+   these three slices so "why isn't my widget working?" stops being
+   invisible state.
+
+   SEP-1865 is allowlist-only — there is no deny concept.
 
    Severity contract (drives row tint in HostMatrixCard):
      - `danger`: silently NARROWS what widgets can do (restrictTo
        populated — the intersection trap).
      - `warn`: deviates from default but doesn't silently narrow
-       (mode "relaxed", deny populated).
+       (mode "relaxed").
      - `neutral`: default or empty.
    ============================================================ */
 interface SandboxConfigDescriptor {
@@ -221,16 +213,28 @@ interface SandboxConfigDescriptor {
   summary: string;
   qualifier: string | null;
   severity: "neutral" | "warn" | "danger";
+  directives?: CspDirectiveDetail[];
 }
+
+type CspDomainKey =
+  | "connectDomains"
+  | "resourceDomains"
+  | "frameDomains"
+  | "baseUriDomains";
+
+const CSP_DIRECTIVE_DISPLAY: ReadonlyArray<{
+  key: CspDomainKey;
+  label: string;
+}> = [
+  { key: "connectDomains", label: "connect" },
+  { key: "resourceDomains", label: "resource" },
+  { key: "frameDomains", label: "frame" },
+  { key: "baseUriDomains", label: "baseUri" },
+];
 
 function countDirectives(
   set:
-    | {
-        connectDomains?: string[];
-        resourceDomains?: string[];
-        frameDomains?: string[];
-        baseUriDomains?: string[];
-      }
+    | Partial<Record<CspDomainKey, string[] | undefined>>
     | undefined,
 ): { total: number; breakdown: string } {
   const c = set?.connectDomains?.length ?? 0;
@@ -243,6 +247,26 @@ function countDirectives(
   };
 }
 
+/**
+ * Lift the non-empty allowlist directives from a CSP domain set into the
+ * display shape consumed by HostMatrixCard. Empty directives are dropped —
+ * we only render what the host actually narrowed (SEP-1865 §UI Resource
+ * Format defines exactly these four allowlist directive families).
+ */
+function describeCspDirectives(
+  set: Partial<Record<CspDomainKey, string[] | undefined>> | undefined,
+): CspDirectiveDetail[] | undefined {
+  if (!set) return undefined;
+  const out: CspDirectiveDetail[] = [];
+  for (const { key, label } of CSP_DIRECTIVE_DISPLAY) {
+    const domains = set[key];
+    if (domains && domains.length > 0) {
+      out.push({ key, label, domains: [...domains] });
+    }
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 function buildSandboxConfig(
   draft: HostConfigInputV2,
 ): SandboxConfigDescriptor[] {
@@ -250,42 +274,52 @@ function buildSandboxConfig(
   const csp = sandbox?.csp;
   const perms = sandbox?.permissions;
 
-  // mode — default per resolver is "declared". Surface that explicitly
-  // when undefined so users see what's actually applied at runtime.
+  // mode — default per resolver is "declared" (trust the view's CSP).
+  // Only `host-default` (inspector baseline overrides the view) and
+  // `relaxed` (iframe opened up, dev only) are deviations worth a row;
+  // for the default `declared`, the row would just confirm "safe
+  // default in effect" which is the universal new normal, so skip it.
   const mode = csp?.mode ?? "declared";
-  const modeDescriptor: SandboxConfigDescriptor = {
-    subKey: "mode",
-    label: "mode",
-    summary: mode,
-    qualifier: csp?.mode === undefined ? "default" : null,
-    // "relaxed" opens the iframe up — not silent narrowing, but worth a
-    // tint so users notice they're not getting host-default protection.
-    severity: mode === "relaxed" ? "warn" : "neutral",
-  };
+  const modeDescriptor: SandboxConfigDescriptor | null =
+    mode === "declared"
+      ? null
+      : {
+          subKey: "mode",
+          label: "mode",
+          summary: mode,
+          qualifier: null,
+          // "relaxed" opens the iframe up; "host-default" silently
+          // overrides the view's declaration. Tint accordingly so users
+          // notice they're not on the spec-default trust-view path.
+          severity: mode === "relaxed" ? "warn" : "neutral",
+        };
 
+  // restrictTo is the intersection trap — any non-zero count means
+  // widget-declared domains outside this set get silently dropped.
+  // When empty (the new default since we stopped pre-populating it in
+  // host templates), the row carries no information beyond "default
+  // behavior is in effect," so skip it entirely. The row only appears
+  // when restrictTo IS set, where it tints `danger` to flag the trap.
   const restrict = countDirectives(csp?.restrictTo);
-  const restrictDescriptor: SandboxConfigDescriptor = {
-    subKey: "restrictTo",
-    label: "restrictTo",
-    summary: restrict.total === 0 ? "—" : `${restrict.total} domains`,
-    qualifier: restrict.total === 0 ? null : restrict.breakdown,
-    // restrictTo is the intersection trap — any non-zero count means
-    // widget-declared domains outside this set get silently dropped.
-    severity: restrict.total === 0 ? "neutral" : "danger",
-  };
+  const restrictDescriptor: SandboxConfigDescriptor | null =
+    restrict.total === 0
+      ? null
+      : {
+          subKey: "restrictTo",
+          label: "restrictTo",
+          summary: `${restrict.total} domains`,
+          qualifier: restrict.breakdown,
+          severity: "danger",
+          directives: describeCspDirectives(csp?.restrictTo),
+        };
 
-  const deny = countDirectives(csp?.deny);
-  const denyDescriptor: SandboxConfigDescriptor = {
-    subKey: "deny",
-    label: "deny",
-    summary: deny.total === 0 ? "—" : `${deny.total} domains`,
-    qualifier: deny.total === 0 ? null : deny.breakdown,
-    // deny does narrow, but explicitly — the user opted in. Warn rather
-    // than danger so danger stays reserved for the silent restrictTo trap.
-    severity: deny.total === 0 ? "neutral" : "warn",
-  };
-
-  const permsMode = perms?.mode ?? "resource-declared";
+  // Permissions: list explicitly granted spec keys (camera / microphone /
+  // geolocation / clipboardWrite per SEP-1865 §UIResourceMeta.permissions).
+  // SEP-1865 is allowlist-only — absence means "not granted." Only the
+  // granted list goes on the row; the inspector-internal `mode`
+  // (resource-declared / deny-all / custom) is a knob name, not spec
+  // terminology, so it stays out of the at-a-glance summary. Users who
+  // need the mode click through to the Apps Extension tab.
   const granted: string[] = [];
   if (perms?.allow) {
     for (const [name, on] of Object.entries(perms.allow)) {
@@ -296,15 +330,20 @@ function buildSandboxConfig(
   const permsDescriptor: SandboxConfigDescriptor = {
     subKey: "permissions",
     label: "permissions",
-    summary: permsMode,
-    qualifier: granted.length === 0 ? null : granted.join(", "),
-    // "deny-all" is a tightening, not loosening — neutral. Anything that
-    // grants beyond default ("custom" with allow entries) we still leave
-    // neutral; permissions are explicit user grants, not silent traps.
+    summary: granted.length === 0 ? "—" : granted.join(", "),
+    qualifier: null,
     severity: "neutral",
   };
 
-  return [modeDescriptor, restrictDescriptor, denyDescriptor, permsDescriptor];
+  // Stable order: mode, restrictTo, permissions. mode and restrictTo
+  // are conditional (skipped when at the safe default); permissions is
+  // always emitted so the row count reflects whatever currently
+  // deviates plus the always-on permissions baseline.
+  const out: SandboxConfigDescriptor[] = [];
+  if (modeDescriptor !== null) out.push(modeDescriptor);
+  if (restrictDescriptor !== null) out.push(restrictDescriptor);
+  out.push(permsDescriptor);
+  return out;
 }
 
 /* ============================================================
@@ -471,9 +510,16 @@ export function buildRedesignedHostCanvas(
   }
   const sandbox: SandboxConfigNodeData[] = sandboxDescs.map((leaf) => {
     const prevLeaf = prevDraft ? prevSandboxByKey[leaf.subKey] : undefined;
+    // A row is "changed" if either its summary/qualifier differs from the
+    // prev host's row, OR the row newly appeared (prev didn't emit one
+    // at this subKey). The newly-appeared case matters for restrictTo:
+    // it's the only sandbox row that's conditionally emitted, so when a
+    // user adds it for the first time, the diff signal lives in the
+    // row's appearance and we want the tint to follow.
     const isChanged =
-      prevLeaf !== undefined &&
-      (prevLeaf.summary !== leaf.summary ||
+      prevDraft !== undefined &&
+      (prevLeaf === undefined ||
+        prevLeaf.summary !== leaf.summary ||
         prevLeaf.qualifier !== leaf.qualifier);
     return {
       kind: "sandbox-config-leaf",
@@ -483,24 +529,27 @@ export function buildRedesignedHostCanvas(
       qualifier: leaf.qualifier,
       severity: leaf.severity,
       isChanged,
+      directives: leaf.directives,
     };
   });
 
-  // ---- hostContext (footer) ----
-  const hostContextDesc = describeHostContext(draft);
-  const prevHostContext = prevDraft ? describeHostContext(prevDraft) : null;
-  const hostContext: ProtocolLeafNodeData = {
-    kind: "protocol-leaf",
-    leafKey: "hostContext",
-    label: hostContextDesc.label,
-    value: hostContextDesc.value,
-    isChanged:
-      prevHostContext !== null && prevHostContext.value !== hostContextDesc.value,
-    hasAttention: false,
-  };
-
   // ---- Client caps (initialize + extensions) ----
   const clientCaps = buildClientCaps(draft, prevDraft);
+
+  // ---- hostInfo (advertised in ui/initialize per SEP-1865) ----
+  // Lifted from mcpProfile.apps.uiInitialize.hostInfo so the matrix's
+  // View iframe frame can show what a view receives on connect. Returns
+  // null when the host hasn't customized it — the runtime falls back to
+  // the inspector's own identity in that case.
+  const hostInfo: { name: string; version: string } | null = (() => {
+    const raw = draft.mcpProfile?.apps?.uiInitialize?.hostInfo;
+    if (!isRecord(raw)) return null;
+    const name = raw.name;
+    const version = raw.version;
+    if (typeof name !== "string" || typeof version !== "string") return null;
+    if (name.trim() === "" || version.trim() === "") return null;
+    return { name, version };
+  })();
 
   // Whether the client advertises the MCP UI extension. Host-side Apps
   // capabilities only matter when the client opts in to rendering iframes;
@@ -530,8 +579,8 @@ export function buildRedesignedHostCanvas(
       clientCaps,
       appsCaps,
       sandbox,
+      hostInfo,
       appsExtensionAdvertised,
-      hostContext,
     },
     draggable: false,
     selectable: false,
@@ -539,7 +588,7 @@ export function buildRedesignedHostCanvas(
 
   // 2) Servers hub — sibling, below the matrix. Y tracks whether the
   // Apps section actually renders so there's no dead zone between the
-  // footer and the hub when the section is hidden.
+  // matrix and the hub when the section is hidden.
   const matrixH =
     MATRIX_H_BASE +
     (appsExtensionAdvertised
