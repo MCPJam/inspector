@@ -35,7 +35,7 @@ vi.mock("@/stores/ui-playground-store", () => ({
     selector(mockPlaygroundStoreState),
 }));
 
-vi.mock("@/stores/host-context-store", () => ({
+vi.mock("@/stores/client-context-store", () => ({
   useHostContextStore: (
     selector: (state: { draftHostContext: Record<string, unknown> }) => unknown,
   ) => selector({ draftHostContext: {} }),

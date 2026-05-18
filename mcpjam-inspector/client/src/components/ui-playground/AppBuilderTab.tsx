@@ -17,7 +17,7 @@ import { EmptyState } from "../ui/empty-state";
 import { CollapsedPanelStrip } from "../ui/collapsed-panel-strip";
 import { PlaygroundLeft } from "./PlaygroundLeft";
 import { PlaygroundMain } from "./PlaygroundMain";
-import { ChatboxHostStyleProvider } from "@/contexts/chatbox-host-style-context";
+import { ChatboxHostStyleProvider } from "@/contexts/chatbox-client-style-context";
 import SaveRequestDialog from "../tools/SaveRequestDialog";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import type { ProjectHostContextDraft } from "@/lib/client-config";

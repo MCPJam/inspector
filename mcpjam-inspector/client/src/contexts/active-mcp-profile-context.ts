@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react";
-import type { HostConfigMcpProfileV1 } from "@/lib/host-config-v2";
+import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
 
 /**
  * Per-scope active `mcpProfile` envelope. Mirrors

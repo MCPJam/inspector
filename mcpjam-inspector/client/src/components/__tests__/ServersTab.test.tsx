@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
-import { HostsConnectAddServerSlotContext } from "@/components/hosts/HostsConnectAddServerSlotContext";
+import { ClientsConnectAddServerSlotContext } from "@/components/clients/ClientsConnectAddServerSlotContext";
 import { useState, type ReactNode } from "react";
 import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
 import type { ServerWithName, ServerUpdateResult } from "@/hooks/use-app-state";
@@ -533,9 +533,9 @@ describe("ServersTab shared detail modal", () => {
     document.body.appendChild(slotEl);
     try {
       render(
-        <HostsConnectAddServerSlotContext.Provider value={slotEl}>
+        <ClientsConnectAddServerSlotContext.Provider value={slotEl}>
           <ServersTab {...defaultProps} />
-        </HostsConnectAddServerSlotContext.Provider>,
+        </ClientsConnectAddServerSlotContext.Provider>,
       );
 
       expect(within(slotEl).getByText("Add Server")).toBeInTheDocument();

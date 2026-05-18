@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { LoadingIndicatorContent } from "../shared/loading-indicator-content";
-import { ClaudeLoadingIndicator } from "@/lib/host-styles/indicators/claude-mark";
-import { ChatboxHostStyleProvider } from "@/contexts/chatbox-host-style-context";
+import { ClaudeLoadingIndicator } from "@/lib/client-styles/indicators/claude-mark";
+import { ChatboxHostStyleProvider } from "@/contexts/chatbox-client-style-context";
 
 const mockUseReducedMotion = vi.hoisted(() => vi.fn(() => false));
 

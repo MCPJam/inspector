@@ -59,11 +59,11 @@ import {
   getEffectiveProjectConnectionDefaults,
   mergeProjectConnectionHeaders,
 } from "@/lib/client-config";
-import { resolveEffectiveClientCapabilities } from "@/lib/effective-host";
+import { resolveEffectiveClientCapabilities } from "@/lib/effective-client";
 import { EXCALIDRAW_SERVER_NAME } from "@/lib/excalidraw-quick-connect";
 import { readOnboardingState } from "@/lib/onboarding-state";
-import type { HostConfigDtoV2 } from "@/lib/host-config-v2";
-import { resolveServerConnectionSettings } from "@/lib/host-connection-resolve";
+import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
+import { resolveServerConnectionSettings } from "@/lib/client-connection-resolve";
 
 /** Skip noisy connect toast while first-run App Builder onboarding is in progress. */
 function shouldSuppressExcalidrawConnectToastForOnboarding(
@@ -494,9 +494,9 @@ interface UseServerStateParams {
    * resolver-path connect site into ConnectionDefaults so the SDK pins
    * clientInfo / supportedProtocolVersions accordingly.
    */
-  activeMcpProfile?: import("@/lib/host-config-v2").HostConfigMcpProfileV1;
+  activeMcpProfile?: import("@/lib/client-config-v2").HostConfigMcpProfileV1;
   /**
-   * When a named host is active (e.g. selected in ChatTabV2 or HostBuilderView
+   * When a named host is active (e.g. selected in ChatTabV2 or ClientBuilderView
    * preview), its connectionDefaults replace the project-level connection
    * defaults in `withProjectConnectionDefaults`. Per-server overrides are
    * applied when the call site also supplies the `serverId`.
@@ -906,7 +906,7 @@ export function useServerState({
       // ConnectionDefaults wire shape. Undefined preserves historical
       // behavior — connect runs without an mcpProfile pin and the SDK
       // falls back to its hardcoded defaults.
-      mcpProfile?: import("@/lib/host-config-v2").HostConfigMcpProfileV1
+      mcpProfile?: import("@/lib/client-config-v2").HostConfigMcpProfileV1
     ) => {
       const defaults: {
         headers?: Record<string, string>;

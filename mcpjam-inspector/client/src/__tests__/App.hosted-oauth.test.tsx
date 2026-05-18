@@ -415,8 +415,8 @@ vi.mock("../stores/preferences/preferences-provider", () => ({
 // Reconciler is App-internal plumbing; mock it out so the test doesn't
 // have to thread shared-app-state + preferences mocks deep enough to
 // satisfy `useAutoConnectProjectServers`.
-vi.mock("../components/ActiveHostServerReconciler", () => ({
-  ActiveHostServerReconciler: () => null,
+vi.mock("../components/ActiveClientServerReconciler", () => ({
+  ActiveClientServerReconciler: () => null,
 }));
 vi.mock("@mcpjam/design-system/sonner", () => ({
   Toaster: () => <div />,
@@ -425,7 +425,7 @@ vi.mock("../state/app-state-context", () => ({
   AppStateProvider: ({ children }: { children?: ReactNode }) => (
     <div>{children}</div>
   ),
-  // ActiveHostServerReconciler reads this via useAutoConnectProjectServers
+  // ActiveClientServerReconciler reads this via useAutoConnectProjectServers
   // to compute connected/excess servers. Return an empty servers map so
   // the reconciler's reconciliation logic is a no-op in App-level tests.
   useSharedAppState: () => ({ servers: {} }),

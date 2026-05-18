@@ -5,9 +5,9 @@ import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import {
-  HostAttachmentsEditor,
+  ClientAttachmentsEditor,
   type HostAttachmentDraft,
-} from "./host-attachments-editor";
+} from "./client-attachments-editor";
 
 export type CreateSuitePayload = {
   name: string;
@@ -80,7 +80,7 @@ export function CreateSuiteDialog({
         <DialogHeader>
           <DialogTitle>Create suite</DialogTitle>
           <DialogDescription>
-            Create a suite, attach hosts to run it against, then generate cases
+            Create a suite, attach clients to run it against, then generate cases
             or import a chat transcript.
           </DialogDescription>
         </DialogHeader>
@@ -111,14 +111,14 @@ export function CreateSuiteDialog({
           {hostsEnabled && projectId ? (
             <div className="space-y-2">
               <div>
-                <h3 className="text-sm font-medium text-foreground">Hosts</h3>
+                <h3 className="text-sm font-medium text-foreground">Clients</h3>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Attach hosts to run this suite against. Each attachment fans
-                  out into its own run when you click "Run all hosts". You can
-                  attach more hosts later from the suite header.
+                  Attach clients to run this suite against. Each attachment fans
+                  out into its own run when you click "Run all clients". You can
+                  attach more clients later from the suite header.
                 </p>
               </div>
-              <HostAttachmentsEditor
+              <ClientAttachmentsEditor
                 projectId={projectId}
                 value={hostAttachments}
                 onChange={setHostAttachments}

@@ -6,7 +6,7 @@ import type { UIMessage } from "@ai-sdk/react";
 import {
   ChatboxHostStyleProvider,
   ChatboxHostThemeProvider,
-} from "@/contexts/chatbox-host-style-context";
+} from "@/contexts/chatbox-client-style-context";
 import { FullscreenChatOverlay } from "../fullscreen-chat-overlay";
 
 // Mock loading-indicator-content so the test can assert which brand path
@@ -15,7 +15,7 @@ import { FullscreenChatOverlay } from "../fullscreen-chat-overlay";
 // shared helper) or falls back to "default".
 vi.mock("../shared/loading-indicator-content", async () => {
   const { useChatboxHostStyle } = await import(
-    "@/contexts/chatbox-host-style-context"
+    "@/contexts/chatbox-client-style-context"
   );
   return {
     LoadingIndicatorContent: ({
@@ -51,7 +51,7 @@ vi.mock("../shared/loading-indicator-content", async () => {
   };
 });
 
-vi.mock("@/lib/host-styles/indicators/claude-mark", () => ({
+vi.mock("@/lib/client-styles/indicators/claude-mark", () => ({
   ClaudeLoadingIndicator: ({ mode = "animated" }: { mode?: string }) => (
     <div data-testid={`claude-indicator-${mode}`} />
   ),

@@ -1,4 +1,4 @@
-import type { HostStyleFamily } from "@/lib/host-styles";
+import type { HostStyleFamily } from "@/lib/client-styles";
 
 /**
  * Token sets keyed on the user's host-style preference. ChatGPT mimics use the

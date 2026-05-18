@@ -11,13 +11,13 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
   useChatboxHostStyle,
   useChatboxHostTheme,
-} from "@/contexts/chatbox-host-style-context";
+} from "@/contexts/chatbox-client-style-context";
 import { groupAssistantPartsIntoSteps } from "./thread-helpers";
 import { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { type ReasoningDisplayMode } from "./parts/reasoning-part";
-import { ClaudeLoadingIndicator } from "@/lib/host-styles/indicators/claude-mark";
+import { ClaudeLoadingIndicator } from "@/lib/client-styles/indicators/claude-mark";
 import { getAssistantAvatarDescriptor } from "@/components/chat-v2/shared/assistant-avatar";
 
 type ClaudeFooterMode = "none" | "animated" | "static";

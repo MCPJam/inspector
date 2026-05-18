@@ -991,7 +991,7 @@ describe("TestTemplateEditor run view from route", () => {
       hostHeaderRow.compareDocumentPosition(scenarioHeading) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).not.toBe(0);
-    // The new TestCaseHostHeader sources its baseline from suite
+    // The new TestCaseClientHeader sources its baseline from suite
     // hostConfigsV2 — the mock returns null → seeded empty input →
     // `DEFAULT_HOST_STYLE_V2` ("mcpjam"). The `renderWithProviders`
     // `hostStyle: "claude"` only seeds the GLOBAL preferences store,
@@ -1007,7 +1007,7 @@ describe("TestTemplateEditor run view from route", () => {
     // old test locked in cross-view leak behavior: clicking a host pill
     // in the test case editor mutated `usePreferencesStore.hostStyle`,
     // which downstream surfaces (CompareResultColumn, playground, chat
-    // UI) all read. The new TestCaseHostHeader writes to a per-case
+    // UI) all read. The new TestCaseClientHeader writes to a per-case
     // local override; the global preference store is untouched. A
     // follow-up will plumb the override into the iteration snapshot so
     // result cards can read it from there.

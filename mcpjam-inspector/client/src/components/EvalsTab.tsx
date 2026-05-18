@@ -432,7 +432,7 @@ export function EvalsTab({
       return {
         canGenerate: false,
         disabledReason:
-          "Attach a host in the suite header before generating cases.",
+          "Attach a client in the suite header before generating cases.",
       };
     }
 

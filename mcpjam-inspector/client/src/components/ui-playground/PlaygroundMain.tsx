@@ -80,9 +80,9 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
   getChatboxChatBackground,
   getChatboxHostFamily,
-} from "@/lib/chatbox-host-style";
-import { DEFAULT_HOST_STYLE } from "@/lib/host-styles";
-import { PRESET_DEVICE_CONFIGS } from "@/components/shared/HostContextHeader";
+} from "@/lib/chatbox-client-style";
+import { DEFAULT_HOST_STYLE } from "@/lib/client-styles";
+import { PRESET_DEVICE_CONFIGS } from "@/components/shared/ClientContextHeader";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
@@ -92,11 +92,11 @@ import { useSharedAppState } from "@/state/app-state-context";
 import { Settings2 } from "lucide-react";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { useConvexAuth } from "convex/react";
-import { useHost } from "@/hooks/useHosts";
-import { usePreviewedHostId } from "@/hooks/use-previewed-host-id";
+import { useHost } from "@/hooks/useClients";
+import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useProjectServers } from "@/hooks/useViews";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
-import { useHostContextStore } from "@/stores/host-context-store";
+import { useHostContextStore } from "@/stores/client-context-store";
 import {
   extractEffectiveHostDisplayMode,
   extractHostTheme,
@@ -106,8 +106,8 @@ import { PostConnectGuide } from "@/components/app-builder/PostConnectGuide";
 import {
   ChatboxHostStyleProvider,
   ChatboxHostThemeProvider,
-} from "@/contexts/chatbox-host-style-context";
-import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-host-capabilities-override-context";
+} from "@/contexts/chatbox-client-style-context";
+import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
 import { useComposerOnboarding } from "@/hooks/use-composer-onboarding";
 import { useModelSelectorLayoutLock } from "@/hooks/use-model-selector-layout-lock";
 import {
@@ -267,7 +267,7 @@ export function PlaygroundMain({
   pendingExecution,
   onExecutionInjected,
   toolRenderOverrides: externalToolRenderOverrides = {},
-  // Device/locale/timezone props are now managed via the store by HostContextHeader
+  // Device/locale/timezone props are now managed via the store by ClientContextHeader
   // These are kept for backward compatibility but are no longer used
   deviceType: _deviceType = "mobile",
   onDeviceTypeChange: _onDeviceTypeChange,
@@ -368,7 +368,7 @@ export function PlaygroundMain({
   const lastMultiLeadIdRef = useRef<string | null>(null);
   const prevCompareModelIdsRef = useRef<Set<string>>(new Set());
   const multiAddColumnSeqRef = useRef(0);
-  // Device config from store (managed by HostContextHeader)
+  // Device config from store (managed by ClientContextHeader)
   const storeDeviceType = useUIPlaygroundStore((s) => s.deviceType);
   const customViewport = useUIPlaygroundStore((s) => s.customViewport);
   const hostContext = useHostContextStore((s) => s.draftHostContext);
@@ -474,7 +474,7 @@ export function PlaygroundMain({
   // in-session without being locked out, and a later host switch
   // re-snapshots from the host config (discarding tweaks).
   //
-  // `applyHostConfigToPlayground` (via PlaygroundPreviewedHostSync)
+  // `applyHostConfigToPlayground` (via PlaygroundPreviewedClientSync)
   // covers chip-level fields (hostStyle, capabilities, hostContext, CSP,
   // chatUiOverride, and the model id via localStorage). The fields
   // re-seeded here live inside `useChatSession`'s own state, so they

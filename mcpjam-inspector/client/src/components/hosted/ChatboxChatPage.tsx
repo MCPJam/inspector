@@ -33,13 +33,13 @@ import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import {
   ChatboxChatUiOverrideProvider,
   ChatboxHostStyleProvider,
-} from "@/contexts/chatbox-host-style-context";
-import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-host-capabilities-override-context";
+} from "@/contexts/chatbox-client-style-context";
+import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
 import { ChatboxSurfaceProvider } from "@/contexts/chatbox-surface-context";
 import { ChatboxHostOnboardingOverlays } from "@/components/hosted/ChatboxHostOnboardingOverlays";
 import { useChatboxHostIntroGate } from "@/components/hosted/useChatboxHostIntroGate";
-import { getChatboxShellStyle } from "@/lib/chatbox-host-style";
+import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 
 interface ChatboxChatPageProps {
   pathToken?: string | null;

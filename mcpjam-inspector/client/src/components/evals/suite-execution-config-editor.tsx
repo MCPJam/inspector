@@ -3,14 +3,14 @@ import { Loader2, RotateCcw, Save, Settings2 } from "lucide-react";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
-import { HostConfigEditor } from "@/components/host-config/HostConfigEditor";
+import { ClientConfigEditor } from "@/components/client-config/ClientConfigEditor";
 import {
   emptyHostConfigInputV2,
   hostConfigDtoToInput,
   hostConfigInputsEqual,
   type HostConfigDtoV2,
   type HostConfigInputV2,
-} from "@/lib/host-config-v2";
+} from "@/lib/client-config-v2";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import type { EvalSuite } from "./types";
 import type { ModelDefinition } from "@/shared/types";
@@ -36,7 +36,7 @@ type SuiteExecutionConfigEditorProps = {
  * is hidden (servers come from `suite.environment`; the backend rejects
  * non-empty serverIds), but model / system prompt / temperature /
  * tool-approval / connection-defaults / capabilities / hostContext are
- * all editable through the shared HostConfigEditor.
+ * all editable through the shared ClientConfigEditor.
  *
  * `setSuiteConfig` mirrors `{ modelId, systemPrompt, temperature }`
  * back to `suite.defaultConfig` for legacy readers (run snapshot,
@@ -47,7 +47,7 @@ export function SuiteExecutionConfigEditor({
   availableModels,
   projectId,
 }: SuiteExecutionConfigEditorProps) {
-  void availableModels; // currently unused; HostConfigEditor uses a free-text modelId.
+  void availableModels; // currently unused; ClientConfigEditor uses a free-text modelId.
 
   const dto = useQuery(
     "hostConfigsV2:getSuiteConfig" as any,
@@ -99,7 +99,7 @@ export function SuiteExecutionConfigEditor({
       : emptyHostConfigInputV2({
           // Seed empty editor with suite.defaultConfig.{modelId,systemPrompt,
           // temperature} when the v2 row hasn't been written yet — so a
-          // first-time save through HostConfigEditor doesn't blow away
+          // first-time save through ClientConfigEditor doesn't blow away
           // a legacy-only suite config.
           modelId: legacyModelId,
           systemPrompt: legacySystemPrompt,
@@ -240,7 +240,7 @@ export function SuiteExecutionConfigEditor({
       </div>
 
       <div className="rounded-xl border bg-card/60 p-4">
-        <HostConfigEditor
+        <ClientConfigEditor
           value={value}
           onChange={setValue}
           owner="eval-suite"

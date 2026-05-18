@@ -39,7 +39,7 @@ import {
   loadLocalChatGptWidget,
   type WidgetCspData,
 } from "./chatgpt-widget-loaders";
-import { useHostContextStore } from "@/stores/host-context-store";
+import { useHostContextStore } from "@/stores/client-context-store";
 import {
   extractHostDeviceCapabilities,
   extractHostLocale,

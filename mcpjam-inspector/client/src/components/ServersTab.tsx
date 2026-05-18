@@ -68,8 +68,8 @@ import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { ServersLoadingSkeleton } from "@mcpjam/design-system/servers-loading-skeleton";
 import { useConvexAuth } from "convex/react";
 import { useAutoConnectProjectServers } from "@/hooks/useAutoConnectProjectServers";
-import { useHost } from "@/hooks/useHosts";
-import { usePreviewedHostId } from "@/hooks/use-previewed-host-id";
+import { useHost } from "@/hooks/useClients";
+import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useProjectServers as useViewProjectServers } from "@/hooks/useViews";
 import { Project } from "@/state/app-types";
 import {
@@ -104,13 +104,13 @@ import {
   writeOpenServerDetailModalState,
 } from "@/lib/server-detail-modal-resume";
 import { cn } from "@/lib/utils";
-import { HostsConnectAddServerSlotContext } from "./hosts/HostsConnectAddServerSlotContext";
-import { useHostsConnectViewPhase } from "./hosts/HostsConnectViewPhaseContext";
+import { ClientsConnectAddServerSlotContext } from "./clients/ClientsConnectAddServerSlotContext";
+import { useHostsConnectViewPhase } from "./clients/ClientsConnectViewPhaseContext";
 import {
   SERVER_CARD_LAYOUT_ID,
   SNAPPY_CAMERA,
   SNAPPY_RAIL,
-} from "./hosts/transition-tokens";
+} from "./clients/transition-tokens";
 import { compareQuickConnectCatalogCards } from "@/lib/quick-connect-catalog-sort";
 import { toast } from "sonner";
 
@@ -569,7 +569,7 @@ export function ServersTab({
   onNavigateToRegistry,
 }: ServersTabProps) {
   const posthog = usePostHog();
-  const hostsConnectAddServerSlot = useContext(HostsConnectAddServerSlotContext);
+  const hostsConnectAddServerSlot = useContext(ClientsConnectAddServerSlotContext);
   const viewPhase = useHostsConnectViewPhase();
   const { isAuthenticated } = useConvexAuth();
 

@@ -13,7 +13,7 @@
  */
 import { create } from "zustand";
 import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
-import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
+import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
 
 export interface PlaygroundChatHistoryBridge {
   activeSessionId: string | null;

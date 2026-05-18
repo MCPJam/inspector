@@ -8,14 +8,14 @@ import {
   ChatboxChatUiOverrideProvider,
   ChatboxHostStyleProvider,
   ChatboxHostThemeProvider,
-} from "@/contexts/chatbox-host-style-context";
-import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-host-capabilities-override-context";
+} from "@/contexts/chatbox-client-style-context";
+import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
-import { getChatboxShellStyle } from "@/lib/chatbox-host-style";
+import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 import { cn } from "@/lib/utils";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { useHost } from "@/hooks/useHosts";
-import { usePreviewedHostId } from "@/hooks/use-previewed-host-id";
+import { useHost } from "@/hooks/useClients";
+import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useAutoConnectProjectServers } from "@/hooks/useAutoConnectProjectServers";
 import { useProjectServers } from "@/hooks/useViews";
 import {
@@ -27,7 +27,7 @@ import type { ImperativePanelHandle } from "react-resizable-panels";
 import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
 import { LoggerView } from "@/components/logger-view";
 import { PlaygroundCenter } from "./PlaygroundCenter";
-import { PlaygroundPreviewedHostSync } from "./PlaygroundPreviewedHostSync";
+import { PlaygroundPreviewedClientSync } from "./PlaygroundPreviewedClientSync";
 import { PlaygroundLeftRail } from "./PlaygroundLeftRail";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import type { ProjectHostContextDraft } from "@/lib/client-config";
@@ -84,7 +84,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   // Resolve the previewed host once at the tab root so the host-config-
   // derived providers (Active MCP Profile, hostStyle, capabilities override,
   // chatUiOverride) share a single Convex subscription with
-  // PlaygroundPreviewedHostSync below. `useHost` short-circuits on null
+  // PlaygroundPreviewedClientSync below. `useHost` short-circuits on null
   // hostId, so this is cheap when no host is picked yet.
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
   const [previewedHostId] = usePreviewedHostId(props.activeProjectId ?? null);
@@ -193,7 +193,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                     dropdown in the global header) and re-snapshots its
                     persisted config into the chip stores when it changes.
                     Renders nothing. */}
-                <PlaygroundPreviewedHostSync
+                <PlaygroundPreviewedClientSync
                   projectId={props.activeProjectId ?? null}
                 />
                 <ResizablePanelGroup

@@ -3,7 +3,7 @@ import { getProviderLogoFromProvider } from "../../shared/chat-helpers";
 import { cn } from "@/lib/chat-utils";
 import { getProviderColorForTheme } from "../../shared/chat-helpers";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { useChatboxHostTheme } from "@/contexts/chatbox-host-style-context";
+import { useChatboxHostTheme } from "@/contexts/chatbox-client-style-context";
 
 interface ProviderLogoProps {
   provider: string;

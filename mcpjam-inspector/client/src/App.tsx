@@ -21,7 +21,7 @@ import { PromptsTab } from "./components/PromptsTab";
 import { SkillsTab } from "./components/SkillsTab";
 import { LearningTab } from "./components/LearningTab";
 import { TasksTab } from "./components/TasksTab";
-import { HostStyledChatTabV2 } from "./components/HostStyledChatTabV2";
+import { ClientStyledChatTabV2 } from "./components/ClientStyledChatTabV2";
 import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
 import { EvalsTab } from "./components/EvalsTab";
 import { CiEvalsTab } from "./components/CiEvalsTab";
@@ -30,7 +30,7 @@ import { ChatboxesTab } from "./components/ChatboxesTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { ProjectSettingsTab } from "./components/ProjectSettingsTab";
 import { ProjectClientConfigSync } from "./components/client-config/ProjectClientConfigSync";
-import { ActiveHostServerReconciler } from "./components/ActiveHostServerReconciler";
+import { ActiveClientServerReconciler } from "./components/ActiveClientServerReconciler";
 import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
@@ -47,8 +47,8 @@ import { BillingUpsellGate } from "./components/billing/BillingUpsellGate";
 import { OrganizationsTab } from "./components/OrganizationsTab";
 import { SupportTab } from "./components/SupportTab";
 import { RegistryTab } from "./components/RegistryTab";
-import { HostsTab } from "./components/HostsTab";
-import { HostPicker } from "./components/hosts/HostPicker";
+import { ClientsTab } from "./components/ClientsTab";
+import { ClientPicker } from "./components/clients/ClientPicker";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
 import { MCPSidebar } from "./components/mcp-sidebar";
@@ -77,7 +77,7 @@ import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
 import { AppStateProvider } from "./state/app-state-context";
 import { ServerActionsProvider } from "./state/server-actions-context";
-import { usePreviewedHostId } from "./hooks/use-previewed-host-id";
+import { usePreviewedHostId } from "./hooks/use-previewed-client-id";
 import { useOrganizationQueries } from "./hooks/useOrganizations";
 import { useOrganizationBilling } from "./hooks/useOrganizationBilling";
 import type { BillingFeatureName } from "./hooks/useOrganizationBilling";
@@ -181,7 +181,7 @@ import { disconnectAllRuntimeServers } from "./state/mcp-api";
 import { getEffectiveProjectClientCapabilities } from "./lib/client-config";
 import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
 import {
-  buildHostsPath,
+  buildClientsPath,
   buildOrganizationPath,
   buildEvalsPath,
   getInvalidOrganizationRouteNavigationTarget,
@@ -435,8 +435,8 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <XAAFlowRoute />;
     case "tracing":
       return <TracingRoute />;
-    case "hosts":
-      return <HostsRoute />;
+    case "clients":
+      return <ClientsRoute />;
     case "chat-v2":
       return <ChatV2Route />;
     case "chatboxes":
@@ -502,11 +502,11 @@ export function ServersRoute() {
   const navigate = useAppNavigate();
 
   // From /servers, "select a host" means navigate to /hosts/:id. State sync
-  // happens in HostsRoute via the URL → hostsTabSelectedHostId effect, so
+  // happens in ClientsRoute via the URL → hostsTabSelectedHostId effect, so
   // here we only need to drive the URL.
   const handleSelectHost = useCallback(
     (next: string | null) => {
-      navigate(next ? buildHostsPath(next) : routePaths.servers);
+      navigate(next ? buildClientsPath(next) : routePaths.servers);
     },
     [navigate],
   );
@@ -516,7 +516,7 @@ export function ServersRoute() {
   }
 
   return (
-    <HostsTab
+    <ClientsTab
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
       selectedHostId={null}
@@ -574,7 +574,7 @@ function ServersTabBody() {
   );
 }
 
-export function HostsRoute() {
+export function ClientsRoute() {
   const {
     convexProjectId,
     hostsHubFlagEnabled,
@@ -595,7 +595,7 @@ export function HostsRoute() {
   }, [params.hostId]);
 
   // URL is the source of truth for the open host canvas. Sync into shared
-  // state so `GlobalHostBar`, `onCanvasReplaceHost`, and other surfaces that
+  // state so `GlobalClientBar`, `onCanvasReplaceHost`, and other surfaces that
   // still read `hostsTabSelectedHostId` stay aligned.
   useEffect(() => {
     if (hostsTabSelectedHostId === urlHostId) return;
@@ -604,7 +604,7 @@ export function HostsRoute() {
 
   const handleSelectHost = useCallback(
     (next: string | null) => {
-      navigate(next ? buildHostsPath(next) : routePaths.hosts);
+      navigate(next ? buildClientsPath(next) : routePaths.clients);
     },
     [navigate],
   );
@@ -614,7 +614,7 @@ export function HostsRoute() {
   }
 
   return (
-    <HostsTab
+    <ClientsTab
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
       selectedHostId={urlHostId ?? previewedHostId}
@@ -930,9 +930,9 @@ export function ChatV2Route() {
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
       {hostsHubFlagEnabled && isAuthenticated && convexProjectId && (
         <div className="flex shrink-0 items-center gap-2 border-b px-4 py-2">
-          <span className="text-xs text-muted-foreground">Host:</span>
+          <span className="text-xs text-muted-foreground">Client:</span>
           <div className="w-48">
-            <HostPicker
+            <ClientPicker
               projectId={convexProjectId}
               value={activeHostId}
               onChange={setActiveHostId}
@@ -942,7 +942,7 @@ export function ChatV2Route() {
           </div>
         </div>
       )}
-      <HostStyledChatTabV2
+      <ClientStyledChatTabV2
         connectedOrConnectingServerConfigs={connectedOrConnectingServerConfigs}
         selectedServerNames={appState.selectedMultipleServers}
         allServerConfigs={projectServers}
@@ -1711,7 +1711,7 @@ export default function App() {
       : currentUser.hasSeenOnboarding === true ||
         currentUser.hasCompletedOnboarding === true;
   const hasSeenFirstRunOnboarding = remoteFirstRunOnboardingShown === true;
-  const isHostedDefaultRoute = activeTab === "servers" || activeTab === "hosts";
+  const isHostedDefaultRoute = activeTab === "servers" || activeTab === "clients";
   const shouldHoldHostedDefaultRouteForAuth =
     HOSTED_MODE &&
     !isHostedChatRoute &&
@@ -1732,7 +1732,7 @@ export default function App() {
       connectedServers
     );
 
-    if (activeTab === "servers" || activeTab === "hosts") {
+    if (activeTab === "servers" || activeTab === "clients") {
       const firstVisitServer = newlyConnectedServers.find((serverName) => {
         try {
           return (
@@ -2412,7 +2412,7 @@ export default function App() {
       );
       navigateToTarget(defaultHubRoute, { replace: true });
     } else if (
-      activeTab === "hosts" &&
+      activeTab === "clients" &&
       (!hostsHubFlagEnabled || !isAuthenticated)
     ) {
       navigateToTarget(defaultHubRoute, { replace: true });
@@ -2834,16 +2834,16 @@ export default function App() {
           projectId: convexProjectId,
           onEditHost: (hostId: string) => {
             setHostsTabSelectedHostId(hostId);
-            navigateApp(buildHostsPath(hostId));
+            navigateApp(buildClientsPath(hostId));
           },
           // Only present while the host canvas is open — re-targets it on
           // dropdown change so the diagram tracks the selected host instead
           // of stuck on whatever was first opened via Edit.
           onCanvasReplaceHost:
-            activeTab === "hosts" && hostsTabSelectedHostId
+            activeTab === "clients" && hostsTabSelectedHostId
               ? (hostId: string) => {
                   setHostsTabSelectedHostId(hostId);
-                  navigateApp(buildHostsPath(hostId), { replace: true });
+                  navigateApp(buildClientsPath(hostId), { replace: true });
                 }
               : undefined,
         }
@@ -3051,7 +3051,7 @@ export default function App() {
           setSelectedServerNames: setSelectedMCPConfigs,
         }}
       >
-        <ActiveHostServerReconciler
+        <ActiveClientServerReconciler
           projectId={convexProjectId}
           isAuthenticated={isAuthenticated}
           activeHost={activeHost}

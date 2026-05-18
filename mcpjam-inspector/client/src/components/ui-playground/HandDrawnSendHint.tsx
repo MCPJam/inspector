@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { getChatboxHostFamily } from "@/lib/chatbox-host-style";
+import { getChatboxHostFamily } from "@/lib/chatbox-client-style";
 import { cn } from "@/lib/utils";
 import arrow8Svg from "./arrow-8.svg?raw";
 

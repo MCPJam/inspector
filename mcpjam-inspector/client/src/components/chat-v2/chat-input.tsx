@@ -62,18 +62,18 @@ import { SkillResultCard } from "@/components/chat-v2/chat-input/skills/skill-re
 import {
   useChatboxHostStyle,
   useChatboxHostTheme,
-} from "@/contexts/chatbox-host-style-context";
+} from "@/contexts/chatbox-client-style-context";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@mcpjam/design-system/popover";
-import { HostStylePillSelector } from "@/components/shared/HostStylePillSelector";
+import { ClientStylePillSelector } from "@/components/shared/ClientStylePillSelector";
 import {
   getChatboxHostFamily,
   type ChatboxHostStyle,
-} from "@/lib/chatbox-host-style";
+} from "@/lib/chatbox-client-style";
 
 interface ChatInputProps {
   value: string;
@@ -808,9 +808,9 @@ export function ChatInput({
                         <div className="mt-1 border-t border-border/70 px-2 py-[5px]">
                           <div className="flex items-center justify-between gap-2">
                             <p className="shrink-0 text-[9px] font-medium text-muted-foreground uppercase tracking-[0.18em]">
-                              Host Style
+                              Client Style
                             </p>
-                            <HostStylePillSelector
+                            <ClientStylePillSelector
                               className="w-[164px] shrink-0"
                               value={selectorHostStyle}
                               onValueChange={(nextStyle) =>

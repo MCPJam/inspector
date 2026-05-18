@@ -56,7 +56,7 @@ import { listTools } from "@/lib/apis/mcp-tools-api";
 import type { RemoteServer } from "@/hooks/useProjects";
 import { ProjectServerPickerList } from "@/components/chatboxes/builder/setup-checklist-panel";
 import { MCPIcon } from "@/components/ui/mcp-icon";
-import { getChatboxHostLogo } from "@/lib/chatbox-host-style";
+import { getChatboxHostLogo } from "@/lib/chatbox-client-style";
 import { cn } from "@/lib/utils";
 import type {
   ChatboxBuilderNodeData,

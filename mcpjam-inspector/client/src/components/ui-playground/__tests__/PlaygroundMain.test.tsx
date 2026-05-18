@@ -9,7 +9,7 @@ import {
 } from "@testing-library/react";
 import { PlaygroundMain } from "../PlaygroundMain";
 import { DEFAULT_CHAT_COMPOSER_PLACEHOLDER } from "@/components/chat-v2/shared/chat-helpers";
-import { useHostContextStore } from "@/stores/host-context-store";
+import { useHostContextStore } from "@/stores/client-context-store";
 
 vi.mock("framer-motion", async (importOriginal) => {
   const actual = await importOriginal<typeof import("framer-motion")>();
@@ -466,9 +466,9 @@ vi.mock("@/stores/ui-playground-store", () => ({
   },
 }));
 
-// Mock HostContextHeader which exports PRESET_DEVICE_CONFIGS
-vi.mock("@/components/shared/HostContextHeader", () => ({
-  HostContextHeader: ({
+// Mock ClientContextHeader which exports PRESET_DEVICE_CONFIGS
+vi.mock("@/components/shared/ClientContextHeader", () => ({
+  ClientContextHeader: ({
     showThemeToggle,
   }: {
     showThemeToggle?: boolean;
@@ -619,7 +619,7 @@ describe("PlaygroundMain", () => {
     it("renders device controls", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
-      // Device controls are rendered by HostContextHeader (mocked)
+      // Device controls are rendered by ClientContextHeader (mocked)
       expect(screen.getByTestId("host-context-header")).toBeInTheDocument();
     });
 
@@ -1621,7 +1621,7 @@ describe("PlaygroundMain", () => {
     it("renders with default mobile device type", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
-      // Device controls are rendered by HostContextHeader (mocked)
+      // Device controls are rendered by ClientContextHeader (mocked)
       expect(screen.getByTestId("host-context-header")).toBeInTheDocument();
     });
 
@@ -1638,7 +1638,7 @@ describe("PlaygroundMain", () => {
     it("shows display context header for locale controls", () => {
       render(<PlaygroundMain {...defaultProps} locale="en-US" />);
 
-      // Locale controls are rendered by HostContextHeader (mocked)
+      // Locale controls are rendered by ClientContextHeader (mocked)
       expect(screen.getByTestId("host-context-header")).toBeInTheDocument();
     });
   });

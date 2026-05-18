@@ -56,7 +56,7 @@ import type {
 import {
   DEFAULT_HOST_STYLE,
   getHostStyleOrDefault,
-} from "@/lib/host-styles";
+} from "@/lib/client-styles";
 import { isVisibleToModelOnly } from "@/lib/mcp-ui/mcp-apps-utils";
 import { LoggingTransport } from "./mcp-apps-logging-transport";
 import { McpAppsModal } from "./mcp-apps-modal";
@@ -72,9 +72,9 @@ import { listPrompts } from "@/lib/apis/mcp-prompts-api";
 import {
   useChatboxHostStyle,
   useChatboxHostTheme,
-} from "@/contexts/chatbox-host-style-context";
-import { useChatboxHostCapabilitiesOverride } from "@/contexts/chatbox-host-capabilities-override-context";
-import { useHostContextStore } from "@/stores/host-context-store";
+} from "@/contexts/chatbox-client-style-context";
+import { useChatboxHostCapabilitiesOverride } from "@/contexts/chatbox-client-capabilities-override-context";
+import { useHostContextStore } from "@/stores/client-context-store";
 import {
   clampDisplayModeToAvailableModes,
   extractHostDisplayMode,
@@ -84,7 +84,7 @@ import {
 import {
   resolveEffectiveHostCapabilities,
   resolveHostInfo,
-} from "@/lib/host-config-v2";
+} from "@/lib/client-config-v2";
 
 // Injected by Vite at build time from package.json
 declare const __APP_VERSION__: string;

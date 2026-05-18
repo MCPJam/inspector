@@ -32,14 +32,14 @@ import {
 import {
   ChatboxHostStyleProvider,
   ChatboxHostThemeProvider,
-} from "@/contexts/chatbox-host-style-context";
-import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-host-capabilities-override-context";
+} from "@/contexts/chatbox-client-style-context";
+import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import type { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
   getChatboxChatBackground,
   type ChatboxHostStyle,
-} from "@/lib/chatbox-host-style";
+} from "@/lib/chatbox-client-style";
 import type { DeviceType, DisplayMode } from "@/stores/ui-playground-store";
 import type { BroadcastChatTurnRequest } from "@/components/chat-v2/multi-model-chat-card";
 import type { TraceViewMode } from "@/components/evals/trace-view-mode-tabs";

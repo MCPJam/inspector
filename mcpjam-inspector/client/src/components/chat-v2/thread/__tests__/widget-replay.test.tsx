@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { WidgetReplay } from "../widget-replay";
-import { ChatboxHostStyleProvider } from "@/contexts/chatbox-host-style-context";
+import { ChatboxHostStyleProvider } from "@/contexts/chatbox-client-style-context";
 
 const mockDetectUIType = vi.fn();
 

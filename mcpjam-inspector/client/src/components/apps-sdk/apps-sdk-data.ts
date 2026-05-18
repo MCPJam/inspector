@@ -110,7 +110,7 @@ const RESULT_SNIPPET = `return {
 const NODES: ArchNodeDef[] = [
   {
     id: "host-group",
-    label: "ChatGPT Host",
+    label: "ChatGPT Client",
     subtitle: "Apps SDK runtime environment",
     type: "group",
     color: "#6366f1",

@@ -12,7 +12,7 @@ import {
   type SafeAreaPreset,
 } from "@/stores/ui-playground-store";
 import { cn } from "@/lib/utils";
-import { useHostContextStore } from "@/stores/host-context-store";
+import { useHostContextStore } from "@/stores/client-context-store";
 import {
   extractHostSafeAreaInsets,
   type HostSafeAreaInsets,

@@ -110,7 +110,7 @@ import {
   getChatComposerInteractivity,
   useChatStopControls,
 } from "@/hooks/use-chat-stop-controls";
-import type { ChatboxHostStyle } from "@/lib/chatbox-host-style";
+import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
 
 interface ChatTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;

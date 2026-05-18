@@ -13,8 +13,8 @@ import {
   readToolResultMeta,
   readToolResultServerId,
 } from "@/lib/tool-result-utils";
-import { useChatboxHostStyle } from "@/contexts/chatbox-host-style-context";
-import { getChatboxProtocolOverride } from "@/lib/chatbox-host-style";
+import { useChatboxHostStyle } from "@/contexts/chatbox-client-style-context";
+import { getChatboxProtocolOverride } from "@/lib/chatbox-client-style";
 import type { DisplayMode } from "@/stores/ui-playground-store";
 
 export interface WidgetReplayProps {

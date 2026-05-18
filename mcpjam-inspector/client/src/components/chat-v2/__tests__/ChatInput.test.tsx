@@ -4,7 +4,7 @@ import { ChatInput } from "../chat-input";
 import {
   ChatboxHostStyleProvider,
   ChatboxHostThemeProvider,
-} from "@/contexts/chatbox-host-style-context";
+} from "@/contexts/chatbox-client-style-context";
 import type { ModelDefinition } from "@/shared/types";
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
@@ -434,7 +434,7 @@ describe("ChatInput", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "Options" }));
 
-      expect(screen.getByText("Host Style")).toBeInTheDocument();
+      expect(screen.getByText("Client Style")).toBeInTheDocument();
       expect(
         screen.getByRole("radio", { name: "ChatGPT" }),
       ).toBeInTheDocument();
@@ -472,7 +472,7 @@ describe("ChatInput", () => {
       fireEvent.click(screen.getByRole("button", { name: "Options" }));
 
       const toolApproval = screen.getByText("Tool Approval");
-      const hostStyle = screen.getByText("Host Style");
+      const hostStyle = screen.getByText("Client Style");
 
       expect(
         toolApproval.compareDocumentPosition(hostStyle) &
@@ -491,7 +491,7 @@ describe("ChatInput", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "Options" }));
 
-      expect(screen.queryByText("Host Style")).not.toBeInTheDocument();
+      expect(screen.queryByText("Client Style")).not.toBeInTheDocument();
       expect(
         screen.queryByRole("radio", { name: "ChatGPT" }),
       ).not.toBeInTheDocument();
