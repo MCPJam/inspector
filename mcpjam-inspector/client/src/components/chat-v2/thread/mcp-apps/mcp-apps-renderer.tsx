@@ -1013,7 +1013,18 @@ export function MCPAppsRenderer({
       Object.values(sandboxCspPolicy.restrictTo).some(
         (list) => Array.isArray(list) && list.length > 0,
       );
-    const hasExplicitCspHardening = restrictToConfigured || HOSTED_MODE;
+    // cspDirectives is an inspector-only emission knob, but a populated
+    // value is still an explicit "I want this CSP shape" signal. The
+    // permissive shortcut below bypasses the proxy's `buildCSP(csp,
+    // cspDirectives)` path (it builds its own fixed permissive CSP), so
+    // without treating cspDirectives as hardening the configured
+    // directives get silently dropped on the chatbox/preview surfaces
+    // where host profiles are most meant to apply.
+    const cspDirectivesConfigured =
+      sandboxCspPolicy?.cspDirectives !== undefined &&
+      Object.keys(sandboxCspPolicy.cspDirectives).length > 0;
+    const hasExplicitCspHardening =
+      restrictToConfigured || cspDirectivesConfigured || HOSTED_MODE;
 
     // Chatbox / Playground / minimal-mode surfaces opted into `permissive`
     // CSP up at line 285. Permissive means "default to permissive when the
@@ -1086,6 +1097,7 @@ export function MCPAppsRenderer({
     const isPureRelaxedCsp =
       sandboxCspPolicy?.mode === "relaxed" &&
       !restrictToConfigured &&
+      !cspDirectivesConfigured &&
       !HOSTED_MODE;
 
     let resolvedCsp: McpUiResourceCsp | undefined;

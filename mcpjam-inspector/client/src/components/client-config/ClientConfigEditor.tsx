@@ -1112,6 +1112,13 @@ function McpProfileSandboxAttrsEditor({
   onChange: (next: string[] | undefined) => void;
 }) {
   const [customDraft, setCustomDraft] = useState("");
+  // `value === undefined` (no profile opinion) vs `value === []` (explicit
+  // "spec-minimum only") are SEMANTICALLY DIFFERENT at the runtime layer:
+  // the renderer treats undefined as "fall back to the legacy permissive
+  // baseline" and any array (including empty) as "the profile is
+  // authoritative — use spec-mandated tokens plus exactly these." The
+  // toggle below is the user-facing affordance for that opt-in.
+  const isEnabled = Array.isArray(value);
   const active = useMemo(() => new Set(value ?? []), [value]);
 
   const commit = (next: Set<string>) => {
@@ -1119,10 +1126,27 @@ function McpProfileSandboxAttrsEditor({
       .map((t) => t.trim())
       .filter((t) => t.length > 0 && !MANDATORY_SANDBOX_TOKENS.has(t));
     arr.sort();
-    onChange(arr.length > 0 ? arr : undefined);
+    // Don't collapse empty → undefined. Once the user has opted in, an
+    // empty array IS the stricter "spec-minimum only" host model and
+    // must round-trip as `[]`.
+    onChange(arr);
+  };
+
+  const setEnabled = (enabled: boolean) => {
+    if (enabled === isEnabled) return;
+    if (enabled) {
+      // Opt in. Seed with any tokens that were already on `value` (would
+      // only happen if value was [...] before, but isEnabled would be true
+      // already — keeping the branch defensive).
+      onChange(Array.from(active).sort());
+    } else {
+      // Opt out → revert to legacy permissive default.
+      onChange(undefined);
+    }
   };
 
   const toggle = (token: string) => {
+    if (!isEnabled) return;
     if (MANDATORY_SANDBOX_TOKENS.has(token)) return;
     const next = new Set(active);
     if (next.has(token)) next.delete(token);
@@ -1131,6 +1155,7 @@ function McpProfileSandboxAttrsEditor({
   };
 
   const addCustom = () => {
+    if (!isEnabled) return;
     const t = customDraft.trim();
     if (t.length === 0) return;
     if (MANDATORY_SANDBOX_TOKENS.has(t)) {
@@ -1151,21 +1176,36 @@ function McpProfileSandboxAttrsEditor({
 
   return (
     <div className="grid gap-2">
-      <Label className="text-xs">sandboxAttrs (inspector-only)</Label>
+      <div className="flex items-center justify-between">
+        <Label className="text-xs">sandboxAttrs (inspector-only)</Label>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">
+            Model host sandbox tokens
+          </span>
+          <Switch
+            checked={isEnabled}
+            onCheckedChange={setEnabled}
+            aria-label="Model host sandbox tokens"
+          />
+        </div>
+      </div>
       <p className="text-xs text-muted-foreground">
-        Extra <code>sandbox=</code> tokens beyond <code>allow-scripts</code> /
-        <code>allow-same-origin</code> which the spec mandates.
+        {isEnabled
+          ? "Profile is authoritative: the iframe gets allow-scripts / allow-same-origin (spec-mandated) plus exactly the tokens checked below. Leave everything off to model a host that emits the spec minimum only."
+          : "Using the inspector's legacy permissive sandbox default. Toggle on to model the real host's emitted sandbox= tokens — empty = spec minimum only."}
       </p>
-      <div className="flex flex-wrap gap-1">
+      <div
+        className={`flex flex-wrap gap-1 ${isEnabled ? "" : "opacity-50 pointer-events-none"}`}
+      >
         {KNOWN_SANDBOX_TOKENS.map((token) => {
           const isMandatory = MANDATORY_SANDBOX_TOKENS.has(token);
-          const isActive = isMandatory || active.has(token);
+          const isActive = isEnabled && (isMandatory || active.has(token));
           return (
             <button
               key={token}
               type="button"
               onClick={() => toggle(token)}
-              disabled={isMandatory}
+              disabled={isMandatory || !isEnabled}
               className={`rounded-md border px-2 py-0.5 text-xs ${
                 isActive
                   ? "border-primary bg-primary/10 text-foreground"
@@ -1190,10 +1230,13 @@ function McpProfileSandboxAttrsEditor({
           </button>
         ))}
       </div>
-      <div className="flex gap-2">
+      <div
+        className={`flex gap-2 ${isEnabled ? "" : "opacity-50 pointer-events-none"}`}
+      >
         <Input
           value={customDraft}
           placeholder="custom token"
+          disabled={!isEnabled}
           onChange={(e) => setCustomDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
@@ -1202,7 +1245,13 @@ function McpProfileSandboxAttrsEditor({
             }
           }}
         />
-        <Button type="button" variant="outline" size="sm" onClick={addCustom}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={!isEnabled}
+          onClick={addCustom}
+        >
           Add
         </Button>
       </div>
