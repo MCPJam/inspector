@@ -10,7 +10,6 @@ import {
   Workflow,
   Anvil,
   Layers,
-  PanelsTopLeft,
   ListTodo,
   SquareSlash,
   MessageCircleQuestionIcon,
@@ -97,6 +96,13 @@ interface NavItem {
   billingFeature?: BillingFeatureName;
   /** Nested Playground / Runs entries; omit from the flat main menu */
   evalsSubnav?: boolean;
+  /** One-time announcement shown next to this item (e.g., NEW badge + popover) */
+  announcement?: {
+    id: string;
+    badge: string;
+    title: string;
+    body: string;
+  };
 }
 
 interface NavSection {
@@ -202,10 +208,16 @@ const navigationSections: NavSection[] = [
         featureFlag: "sandboxes-enabled",
       },
       {
-        title: "Playground",
+        title: "Chat",
         url: "/playground",
-        icon: PanelsTopLeft,
+        icon: MessageCircle,
         featureFlag: "playground-tab-enabled",
+        announcement: {
+          id: "playground-tab-rename-2026-05",
+          badge: "NEW",
+          title: "Chat just got more powerful",
+          body: "Chat now includes everything from App Builder — generate, preview, and test MCP-powered apps without switching tabs.",
+        },
       },
     ],
   },
