@@ -251,6 +251,16 @@ export const SandboxedIframe = forwardRef<
         // above). `,` is the corresponding separator in HTTP-header
         // Permissions-Policy syntax and is rejected for symmetry.
         if (/[;,]/.test(k) || /[;,]/.test(allowlist)) continue;
+        // Reject whitespace in the KEY too. A key like `"camera *"`
+        // doesn't equal the spec key `"camera"`, so the spec-feature
+        // filter above lets it through; the join produces
+        // `camera * *`, which the browser parses as a `camera` grant
+        // — bypassing `permissions.allow` as the single source of
+        // truth for the 4 spec permissions. (Values legitimately
+        // contain whitespace for multi-token allowlists like
+        // `"'self' https://example.com"`, so the whitespace rule
+        // applies only to keys.)
+        if (/\s/.test(k)) continue;
         allowList.push(`${k} ${allowlist}`);
       }
     }
@@ -375,8 +385,26 @@ export const SandboxedIframe = forwardRef<
 
   const iframeStyle = colorScheme ? { ...style, colorScheme } : style;
 
+  // Browsers apply iframe `sandbox=` only on navigation, not when the
+  // attribute mutates on an already-loaded frame. If the user edits a
+  // profile from permissive tokens to `[]` while the widget is mounted,
+  // React updates the attribute but the live iframe keeps the OLD
+  // grants until something forces a navigation — so the matrix/editor
+  // can show stricter modeling while the running widget still has
+  // popups/forms/etc. enabled. Key the outer iframe on
+  // outerSandboxAttribute so React unmounts + remounts (= fresh
+  // navigation) whenever the effective sandbox flags change. Resetting
+  // proxyReady below ensures the resource-ready effect re-fires after
+  // the new proxy load completes (otherwise proxyReady would stay
+  // `true` from the prior iframe and the widget wouldn't get re-sent
+  // to the new proxy).
+  useEffect(() => {
+    setProxyReady(false);
+  }, [outerSandboxAttribute]);
+
   return (
     <iframe
+      key={outerSandboxAttribute}
       ref={outerRef}
       src={sandboxProxyUrl}
       sandbox={outerSandboxAttribute}

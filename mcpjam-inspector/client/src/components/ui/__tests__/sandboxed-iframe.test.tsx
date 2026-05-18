@@ -102,6 +102,40 @@ describe("SandboxedIframe — outer sandbox attribute", () => {
     ]);
   });
 
+  it("remounts the outer iframe when sandboxAttrs changes (so new sandbox flags take effect)", () => {
+    // Browsers apply iframe `sandbox=` only on navigation; mutating
+    // the attribute on a mounted iframe does not retroactively change
+    // its grants. If we didn't remount, editing a profile from
+    // permissive tokens to `[]` would leave the running widget with
+    // popups/forms/etc. enabled even though the matrix shows the
+    // stricter model. Asserts the iframe DOM identity changes when
+    // outerSandboxAttribute does.
+    const { container, rerender } = render(
+      <SandboxedIframe
+        html={null}
+        sandboxAttrs={["allow-forms", "allow-popups"]}
+        onMessage={() => {}}
+      />,
+    );
+    const firstIframe = container.querySelector("iframe");
+    expect(firstIframe).not.toBeNull();
+    rerender(
+      <SandboxedIframe
+        html={null}
+        sandboxAttrs={[]}
+        onMessage={() => {}}
+      />,
+    );
+    const secondIframe = container.querySelector("iframe");
+    expect(secondIframe).not.toBeNull();
+    expect(secondIframe).not.toBe(firstIframe);
+    // The remounted iframe carries the strict spec-minimum sandbox.
+    expect(getOuterIframeSandbox(container)).toEqual([
+      "allow-same-origin",
+      "allow-scripts",
+    ]);
+  });
+
   it("rejects sandboxAttrs entries with internal whitespace (silent-widen guard)", () => {
     // Regression: `"allow-forms allow-popups-to-escape-sandbox"` as a
     // single Set entry would otherwise emit two real sandbox flags via
@@ -169,6 +203,23 @@ describe("SandboxedIframe — outer allow attribute (allowFeatures injection gua
       />,
     );
     expect(getOuterIframeAllow(container)).toContain("fullscreen *");
+  });
+
+  it("drops allowFeatures keys with whitespace (spec-feature-bypass guard)", () => {
+    // Regression: a key like `"camera *"` doesn't match the spec-feature
+    // filter (exact-equals `"camera"`), so without a whitespace check it
+    // would flow through as `camera * *`, which the browser parses as a
+    // camera grant — bypassing `permissions.allow` as the single source
+    // of truth for the 4 spec permissions.
+    const { container } = render(
+      <SandboxedIframe
+        html={null}
+        allowFeatures={{ "camera *": "*" }}
+        onMessage={() => {}}
+      />,
+    );
+    const allow = getOuterIframeAllow(container);
+    expect(allow).not.toContain("camera");
   });
 
   // Mirror of the sandboxAttrs authoritative-profile contract: when a
