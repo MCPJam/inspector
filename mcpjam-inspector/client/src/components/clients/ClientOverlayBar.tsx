@@ -157,14 +157,21 @@ export function ClientOverlayBar({
     setIsDeleting(true);
     try {
       await deleteHost({ hostId });
-      posthog.capture("client_deleted", {
-        location: "chatbox_overlay",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
-        client_id: hostId,
-        force: false,
-      });
       toast.success(`Client "${host.name}" deleted`);
+      // Telemetry is best-effort: a posthog throw must not bubble into the
+      // shared catch and surface a delete-failure toast after the client
+      // has already been removed.
+      try {
+        posthog.capture("client_deleted", {
+          location: "chatbox_overlay",
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+          client_id: hostId,
+          force: false,
+        });
+      } catch {
+        // swallow — analytics must not block the success path
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to delete client";
       if (msg.includes("consumer")) {

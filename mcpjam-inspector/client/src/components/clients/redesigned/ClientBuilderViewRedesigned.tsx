@@ -304,19 +304,26 @@ export function ClientBuilderViewRedesigned({
         name: draftName,
         input: draftConfig,
       });
-      posthog.capture("client_config_saved", {
-        location: "client_builder",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
-        client_id: hostId,
-        client_config_id: hostConfigId,
-        server_count: draftConfig.serverIds?.length ?? 0,
-        changed_fields: changedFields,
-      });
       // The freshly persisted snapshot id arrives via the Convex
       // subscription on the next tick; don't include it in this toast
       // because `host?.config?.id` is still the *previous* snapshot here.
       toast.success("Snapshot saved");
+      // Telemetry is best-effort: a posthog throw must not bubble into the
+      // shared catch and surface "Failed to save host" after the snapshot
+      // has already been persisted.
+      try {
+        posthog.capture("client_config_saved", {
+          location: "client_builder",
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+          client_id: hostId,
+          client_config_id: hostConfigId,
+          server_count: draftConfig.serverIds?.length ?? 0,
+          changed_fields: changedFields,
+        });
+      } catch {
+        // swallow — analytics must not block the success path
+      }
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Failed to save host",
