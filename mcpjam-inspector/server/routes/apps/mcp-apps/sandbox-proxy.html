@@ -135,8 +135,9 @@
         // Per SEP-1865: If no CSP declared, use restrictive defaults
         // Note: 'self' doesn't work in srcdoc iframes (refers to about:srcdoc)
         // So we use 'unsafe-inline' for scripts/styles since all widget code is inline
+        let directives;
         if (!csp) {
-          return [
+          directives = [
             mergeDirective("default-src", ["'none'"]),
             mergeDirective("script-src", ["'unsafe-inline'"]),
             mergeDirective("style-src", ["'unsafe-inline'"]),
@@ -147,59 +148,63 @@
             mergeDirective("frame-src", ["'none'"]),
             mergeDirective("object-src", ["'none'"]),
             mergeDirective("base-uri", ["'none'"]),
-          ].join("; ");
+          ];
+        } else {
+          // Build CSP from declared domains (SEP-1865)
+          // Per spec: "Host MAY further restrict but MUST NOT allow undeclared domains"
+          const connectDomains = (csp.connectDomains || [])
+            .map(sanitizeDomain)
+            .filter(Boolean);
+          const resourceDomains = (csp.resourceDomains || [])
+            .map(sanitizeDomain)
+            .filter(Boolean);
+          const frameDomains = (csp.frameDomains || [])
+            .map(sanitizeDomain)
+            .filter(Boolean);
+          const baseUriDomains = (csp.baseUriDomains || [])
+            .map(sanitizeDomain)
+            .filter(Boolean);
+
+          // connect-src: Only allow declared domains, or 'none' if empty
+          const connectTokens =
+            connectDomains.length > 0 ? connectDomains.slice() : ["'none'"];
+
+          // Resource sources: data: and blob: are always allowed for inline content
+          // Only add declared resourceDomains - no forced CDNs per SEP-1865
+          const resourceTokens =
+            resourceDomains.length > 0
+              ? ["data:", "blob:", ...resourceDomains]
+              : ["data:", "blob:"];
+
+          // frame-src: Only allow declared frame domains, or 'none' if empty
+          const frameTokens =
+            frameDomains.length > 0 ? frameDomains.slice() : ["'none'"];
+
+          // base-uri: Only allow declared base URI domains, or 'none' if empty
+          const baseUriTokens =
+            baseUriDomains.length > 0 ? baseUriDomains.slice() : ["'none'"];
+
+          directives = [
+            mergeDirective("default-src", ["'none'"]),
+            mergeDirective("script-src", ["'unsafe-inline'", ...resourceTokens]),
+            mergeDirective("style-src", ["'unsafe-inline'", ...resourceTokens]),
+            mergeDirective("img-src", resourceTokens),
+            mergeDirective("font-src", resourceTokens),
+            mergeDirective("media-src", resourceTokens),
+            mergeDirective("connect-src", connectTokens),
+            mergeDirective("frame-src", frameTokens),
+            mergeDirective("object-src", ["'none'"]),
+            mergeDirective("base-uri", baseUriTokens),
+          ];
         }
-
-        // Build CSP from declared domains (SEP-1865)
-        // Per spec: "Host MAY further restrict but MUST NOT allow undeclared domains"
-        const connectDomains = (csp.connectDomains || [])
-          .map(sanitizeDomain)
-          .filter(Boolean);
-        const resourceDomains = (csp.resourceDomains || [])
-          .map(sanitizeDomain)
-          .filter(Boolean);
-        const frameDomains = (csp.frameDomains || [])
-          .map(sanitizeDomain)
-          .filter(Boolean);
-        const baseUriDomains = (csp.baseUriDomains || [])
-          .map(sanitizeDomain)
-          .filter(Boolean);
-
-        // connect-src: Only allow declared domains, or 'none' if empty
-        const connectTokens =
-          connectDomains.length > 0 ? connectDomains.slice() : ["'none'"];
-
-        // Resource sources: data: and blob: are always allowed for inline content
-        // Only add declared resourceDomains - no forced CDNs per SEP-1865
-        const resourceTokens =
-          resourceDomains.length > 0
-            ? ["data:", "blob:", ...resourceDomains]
-            : ["data:", "blob:"];
-
-        // frame-src: Only allow declared frame domains, or 'none' if empty
-        const frameTokens =
-          frameDomains.length > 0 ? frameDomains.slice() : ["'none'"];
-
-        // base-uri: Only allow declared base URI domains, or 'none' if empty
-        const baseUriTokens =
-          baseUriDomains.length > 0 ? baseUriDomains.slice() : ["'none'"];
-
-        const directives = [
-          mergeDirective("default-src", ["'none'"]),
-          mergeDirective("script-src", ["'unsafe-inline'", ...resourceTokens]),
-          mergeDirective("style-src", ["'unsafe-inline'", ...resourceTokens]),
-          mergeDirective("img-src", resourceTokens),
-          mergeDirective("font-src", resourceTokens),
-          mergeDirective("media-src", resourceTokens),
-          mergeDirective("connect-src", connectTokens),
-          mergeDirective("frame-src", frameTokens),
-          mergeDirective("object-src", ["'none'"]),
-          mergeDirective("base-uri", baseUriTokens),
-        ];
 
         // If cspDirectives names a directive we didn't emit above (e.g.
         // `form-action`, `worker-src`), append it verbatim so inspector
         // probes that capture additional directives round-trip end-to-end.
+        // Runs in both the !csp and truthy-csp branches: a host that
+        // declares no CSP metadata but supplies inspector-only directive
+        // overrides (the documented `form-action` round-trip case) still
+        // gets them appended.
         if (cspDirectives && typeof cspDirectives === "object") {
           const known = new Set([
             "default-src",

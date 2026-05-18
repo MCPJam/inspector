@@ -113,4 +113,17 @@ describe("sandbox-proxy buildCSP merge rule", () => {
     expect(scriptLine).toContain("'unsafe-inline'");
     expect(scriptLine).toContain("'unsafe-eval'");
   });
+
+  it("appends unknown cspDirectives keys in the no-csp branch too", () => {
+    // Regression: the !csp branch previously early-returned after merging
+    // only the 10 known directives, dropping unknown keys (e.g. `form-action`,
+    // `worker-src`) — breaking the round-trip guarantee whenever no CSP
+    // metadata was declared.
+    const out = buildCSP(undefined, {
+      "form-action": ["'self'"],
+      "worker-src": ["blob:"],
+    });
+    expect(out).toContain("form-action 'self'");
+    expect(out).toContain("worker-src blob:");
+  });
 });
