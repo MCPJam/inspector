@@ -10,5 +10,5 @@ export const HOST_FOCUS_TAB_DEFS: ReadonlyArray<HostFocusTabDef> = [
   { id: "protocol", label: "MCP Protocol" },
   { id: "apps", label: "Apps Extension" },
   { id: "servers", label: "Servers" },
-  { id: "appearance", label: "Appearance" },
+  // { id: "appearance", label: "Appearance" }, // hidden — to reintroduce soon
 ];
