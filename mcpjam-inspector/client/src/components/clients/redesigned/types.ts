@@ -158,17 +158,19 @@ export interface SandboxConfigNodeData extends Record<string, unknown> {
 }
 
 /**
- * MCP client-capability row. One per base-protocol cap declared in the
- * `initialize` handshake (roots / sampling / elicitation / tasks /
- * experimental). Diff bits drive the matrix's "M" / "+" gutter so a
- * host switch reads the same way as the Apps cap matrix.
+ * MCP client-capability row. Covers optional caps declared under
+ * `initialize` (`roots` / `sampling` / `elicitation` / `tasks` /
+ * `experimental`) plus `extensions` (`capabilities.extensions` in JSON).
+ * Diff bits drive the matrix's "M" / "+" gutter so a host switch reads
+ * the same way as the Apps cap matrix.
  */
 export type ClientCapKey =
   | "roots"
   | "sampling"
   | "elicitation"
   | "tasks"
-  | "experimental";
+  | "experimental"
+  | "extensions";
 
 export interface ClientCapRow {
   key: ClientCapKey;

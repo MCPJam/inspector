@@ -37,10 +37,10 @@ const MATRIX_W = 580;
 // y-position downstream. Three heights so the servers hub doesn't float in
 // a dead zone when the Apps Extension section is hidden (Codex et al) and
 // so the dimensions still match the paper-aesthetic card's nested frames.
-//   - BASE: outer host padding + identity + stats + client-caps + footer
+//   - BASE: outer host padding + identity (incl. timeout) + client-caps + footer
 //   - APPS_SECTION: inner View frame (lavender) with chip rows
 //   - SANDBOX_SECTION: Sandbox frame (amber) shell + sb-grid rows
-const MATRIX_H_BASE = 380;
+const MATRIX_H_BASE = 330;
 const MATRIX_H_APPS_SECTION = 230;
 const MATRIX_H_SANDBOX_SECTION = 180;
 const SERVERS_HUB_GAP = 40;
@@ -71,6 +71,7 @@ const CLIENT_CAP_ORDER: ReadonlyArray<ClientCapKey> = [
   "elicitation",
   "tasks",
   "experimental",
+  "extensions",
 ];
 
 /* ============================================================
@@ -307,18 +308,32 @@ function buildSandboxConfig(
 }
 
 /* ============================================================
-   Client (base-protocol) capability detection. Mirrors the
-   2025-11-25 initialize handshake shape — roots / sampling /
-   elicitation / tasks / experimental.
+   Client capability detection. Mirrors the 2025-11-25 initialize
+   handshake — roots / sampling / elicitation / tasks / experimental —
+   plus `extensions` when `clientCapabilities.extensions` is non-empty.
    ============================================================ */
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function describeExtensionsCap(blob: Record<string, unknown>): {
+  on: boolean;
+  subs: string[];
+} {
+  const exts = blob.extensions;
+  if (!isRecord(exts)) return { on: false, subs: [] };
+  const ids = Object.keys(exts).sort();
+  if (ids.length === 0) return { on: false, subs: [] };
+  return { on: true, subs: ids };
 }
 
 function describeClientCap(
   key: ClientCapKey,
   blob: Record<string, unknown>,
 ): { on: boolean; subs: string[] } {
+  if (key === "extensions") {
+    return describeExtensionsCap(blob);
+  }
   const v = blob[key];
   if (v === undefined || v === null) return { on: false, subs: [] };
   if (!isRecord(v)) return { on: true, subs: [] };
@@ -484,7 +499,7 @@ export function buildRedesignedHostCanvas(
     hasAttention: false,
   };
 
-  // ---- Client (base-protocol) caps ----
+  // ---- Client caps (initialize + extensions) ----
   const clientCaps = buildClientCaps(draft, prevDraft);
 
   // Whether the client advertises the MCP UI extension. Host-side Apps

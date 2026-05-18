@@ -42,7 +42,7 @@ describe("buildRedesignedHostCanvas", () => {
     expect(data.hostName).toBe("My Host");
     expect(data.agent?.kind).toBe("agent-identity");
     expect(data.appsCaps).toHaveLength(6);
-    expect(data.clientCaps).toHaveLength(5);
+    expect(data.clientCaps).toHaveLength(6);
     expect(data.hostContext?.leafKey).toBe("hostContext");
   });
 
@@ -51,7 +51,7 @@ describe("buildRedesignedHostCanvas", () => {
     expect(data.hostName).toBe("Untitled host");
   });
 
-  it("emits all five base-protocol client capabilities in stable order", () => {
+  it("emits all client capability rows in stable order (base + extensions)", () => {
     const data = matrixData(buildVm());
     expect(data.clientCaps.map((c) => c.key)).toEqual([
       "roots",
@@ -59,6 +59,7 @@ describe("buildRedesignedHostCanvas", () => {
       "elicitation",
       "tasks",
       "experimental",
+      "extensions",
     ]);
   });
 
@@ -77,6 +78,25 @@ describe("buildRedesignedHostCanvas", () => {
     expect(elicit?.on).toBe(true);
     expect(elicit?.subs).toEqual(["form", "url"]);
     expect(sampling?.on).toBe(false);
+  });
+
+  it("flags extensions as on with sorted extension URIs in subs when declared", () => {
+    const draft = emptyHostConfigInputV2();
+    draft.clientCapabilities = {
+      extensions: {
+        "io.modelcontextprotocol/ui": {
+          mimeTypes: ["text/html;profile=mcp-app"],
+        },
+        "https://example.com/ext": {},
+      },
+    };
+    const data = matrixData(buildVm({ draft }));
+    const ext = data.clientCaps.find((c) => c.key === "extensions");
+    expect(ext?.on).toBe(true);
+    expect(ext?.subs).toEqual([
+      "https://example.com/ext",
+      "io.modelcontextprotocol/ui",
+    ]);
   });
 
   it("always emits the capabilities and timeout cells in the protocol band", () => {

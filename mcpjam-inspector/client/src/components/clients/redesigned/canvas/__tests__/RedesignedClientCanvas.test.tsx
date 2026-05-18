@@ -47,6 +47,19 @@ describe("RedesignedClientCanvas", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows timeout on the identity subtitle beside client metadata", () => {
+    const { container } = renderCanvas({});
+    const node = container.querySelector(
+      `.react-flow__node[data-id="${HOST_MATRIX_NODE_ID}"]`,
+    ) as HTMLElement | null;
+    expect(node).not.toBeNull();
+    const sub = (node as HTMLElement).querySelector(".hp-host-sub");
+    expect(sub).not.toBeNull();
+    expect(sub!.textContent).toMatch(/Timeout/);
+    expect(sub!.textContent).toMatch(/10s/);
+    expect((node as HTMLElement).querySelector(".hp-agents")).toBeNull();
+  });
+
   it("renders the client capability rows and apps extension banner", () => {
     const { container } = renderCanvas({});
     const node = container.querySelector(
@@ -55,11 +68,25 @@ describe("RedesignedClientCanvas", () => {
     expect(node).not.toBeNull();
     const scope = within(node as HTMLElement);
     expect(scope.getByText("Client capabilities")).toBeInTheDocument();
+    expect(scope.getByText("extensions")).toBeInTheDocument();
     // The paper redesign nests Apps Extension caps under a "View iframe"
     // frame whose subtitle still names the extension. Match by substring.
     expect(scope.getByText(/Apps extension/)).toBeInTheDocument();
     expect(scope.getByText("roots")).toBeInTheDocument();
     expect(scope.getByText("openLinks")).toBeInTheDocument();
+  });
+
+  it("does not duplicate extensions in the matrix footer", () => {
+    const { container } = renderCanvas({});
+    const node = container.querySelector(
+      `.react-flow__node[data-id="${HOST_MATRIX_NODE_ID}"]`,
+    ) as HTMLElement | null;
+    expect(node).not.toBeNull();
+    const scope = within(node as HTMLElement);
+    expect(scope.queryByText(/^Extensions ·/)).toBeNull();
+    const footer = (node as HTMLElement).querySelector(".hp-footer");
+    expect(footer).not.toBeNull();
+    expect(footer!.querySelector(".hp-ctx-btn")).not.toBeNull();
   });
 
   it("strikes through apps caps the resolved blob omits", () => {
