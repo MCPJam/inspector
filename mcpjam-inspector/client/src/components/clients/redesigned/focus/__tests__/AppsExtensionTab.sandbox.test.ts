@@ -12,9 +12,6 @@ import {
 
 describe("focusTabForNodeId — sandbox routing", () => {
   it("routes the sandbox hub id to the Apps Extension tab", () => {
-    // Sandbox lives at mcpProfile.apps.sandbox; the matrix surfaces it as
-    // its own section for visibility, but clicking opens the Apps
-    // Extension tab so users edit the spec-shaped JSON.
     expect(focusTabForNodeId(SANDBOX_HUB_NODE_ID)).toEqual({
       tab: "apps",
       selectedServerId: null,
@@ -22,7 +19,14 @@ describe("focusTabForNodeId — sandbox routing", () => {
   });
 
   it("routes every sandbox leaf node id to the Apps Extension tab", () => {
-    for (const sub of ["mode", "restrictTo", "permissions"] as const) {
+    for (const sub of [
+      "mode",
+      "restrictTo",
+      "cspDirectives",
+      "permissions",
+      "sandboxAttrs",
+      "allowFeatures",
+    ] as const) {
       expect(focusTabForNodeId(sandboxConfigLeafNodeId(sub))).toEqual({
         tab: "apps",
         selectedServerId: null,
@@ -35,24 +39,22 @@ describe("focusTabForNodeId — sandbox routing", () => {
   });
 });
 
-describe("AppsExtensionTab — spec-shaped sandbox round-trip", () => {
-  it("writes spec-shaped hostCapabilities.sandbox.csp into storage as restrictTo", () => {
-    // The user typed spec-shaped JSON: domain arrays under csp,
-    // presence-flags under permissions. Internally we store this as
-    // `restrictTo` + `allow` because we layer an inspector-only `mode`
-    // knob on top — but that's not in the spec JSON. SEP-1865 is
-    // allowlist-only; there's no deny concept.
+describe("AppsExtensionTab — sandbox JSON round-trip", () => {
+  it("reads the four spec CSP allowlists from spec position into restrictTo storage", () => {
+    // The user types SEP-1865 shape: the four allowlists live directly
+    // under `sandbox.csp` (no `restrictTo` wrapper) so they map to
+    // `HostCapabilities.sandbox.csp.{connectDomains, ...}` 1:1.
+    // Internally we still store as `csp.restrictTo` because the inspector
+    // layers a `mode` knob on top.
     const next = applyJsonToDraft(
       {
         hostContext: {},
-        hostCapabilities: {
-          sandbox: {
-            csp: {
-              connectDomains: ["https://api.openai.com"],
-              resourceDomains: ["https://cdn.jsdelivr.net"],
-            },
-            permissions: { clipboardWrite: {}, microphone: {} },
+        sandbox: {
+          csp: {
+            connectDomains: ["https://api.openai.com"],
+            resourceDomains: ["https://cdn.jsdelivr.net"],
           },
+          permissions: { clipboardWrite: {}, microphone: {} },
         },
       },
       emptyHostConfigInputV2(),
@@ -69,9 +71,8 @@ describe("AppsExtensionTab — spec-shaped sandbox round-trip", () => {
 
   it("preserves inspector-only mode on edit (not surfaced in JSON, can't be wiped from it)", () => {
     // Regression: `mode` is an inspector knob (not in SEP-1865). The JSON
-    // view shows only spec primitives. If editing the JSON dropped `mode`,
-    // a user who set `mode: "relaxed"` from elsewhere would silently lose
-    // it the next time they saved this tab.
+    // surfaces enforcement, not internal resolver state. Editing JSON
+    // must not nuke `mode`.
     const prev = emptyHostConfigInputV2();
     prev.mcpProfile = {
       profileVersion: 1,
@@ -85,15 +86,11 @@ describe("AppsExtensionTab — spec-shaped sandbox round-trip", () => {
         },
       },
     };
-    // User edits hostCapabilities.sandbox in JSON, swapping the allowed
-    // connect domain. Nothing about mode in the JSON.
     const next = applyJsonToDraft(
       {
         hostContext: {},
-        hostCapabilities: {
-          sandbox: {
-            csp: { connectDomains: ["https://api.anthropic.com"] },
-          },
+        sandbox: {
+          csp: { connectDomains: ["https://api.anthropic.com"] },
         },
       },
       prev,
@@ -105,7 +102,7 @@ describe("AppsExtensionTab — spec-shaped sandbox round-trip", () => {
     expect(next?.mcpProfile?.apps?.sandbox?.permissions?.mode).toBe("custom");
   });
 
-  it("treats absent hostCapabilities.sandbox as 'no change' (preserves prev sandbox verbatim)", () => {
+  it("treats absent sandbox key as 'no change' (preserves prev sandbox verbatim)", () => {
     // A no-op apps-tab save (user opened the tab, didn't touch sandbox,
     // pressed save) parses JSON without a sandbox key. Sandbox must
     // round-trip untouched.
@@ -128,10 +125,10 @@ describe("AppsExtensionTab — spec-shaped sandbox round-trip", () => {
     );
   });
 
-  it("treats empty hostCapabilities.sandbox as 'clear restrictTo + allow' but keeps mode", () => {
-    // The user explicitly emptied the spec-shape (e.g. they cleared the
-    // arrays from the JSON). That should drop restrictTo/allow but keep
-    // `mode` so the user doesn't lose the inspector-side state.
+  it("treats empty sandbox block as 'clear surfaced fields' but keeps mode", () => {
+    // The user explicitly emptied the sandbox block. That should drop
+    // restrictTo/allow/directiveOverrides/sandboxAttrs/permissionsPolicy
+    // but keep `mode` so the user doesn't lose inspector-internal state.
     const prev = emptyHostConfigInputV2();
     prev.mcpProfile = {
       profileVersion: 1,
@@ -151,7 +148,7 @@ describe("AppsExtensionTab — spec-shaped sandbox round-trip", () => {
     const next = applyJsonToDraft(
       {
         hostContext: {},
-        hostCapabilities: { sandbox: {} },
+        sandbox: {},
       },
       prev,
     );
@@ -167,11 +164,9 @@ describe("AppsExtensionTab — spec-shaped sandbox round-trip", () => {
     const next = applyJsonToDraft(
       {
         hostContext: {},
-        hostCapabilities: {
-          sandbox: {
-            permissions: { clipboardWrite: {} },
-            // microphone absent → not granted
-          },
+        sandbox: {
+          permissions: { clipboardWrite: {} },
+          // microphone absent → not granted
         },
       },
       emptyHostConfigInputV2(),
@@ -191,9 +186,7 @@ describe("AppsExtensionTab — spec-shaped sandbox round-trip", () => {
     const next = applyJsonToDraft(
       {
         hostContext: {},
-        hostCapabilities: {
-          sandbox: { csp: { connectDomains: ["https://api.openai.com"] } },
-        },
+        sandbox: { csp: { connectDomains: ["https://api.openai.com"] } },
       },
       prev,
     );
@@ -203,11 +196,34 @@ describe("AppsExtensionTab — spec-shaped sandbox round-trip", () => {
     });
   });
 
-  it("does NOT create a hostCapabilitiesOverride when JSON matches preset + adds sandbox", () => {
-    // The override-diff compares static caps only. Adding sandbox to the
-    // JSON while leaving the rest of hostCapabilities equal to the
-    // preset must not create a spurious override — sandbox is policy
-    // (stored separately at mcpProfile.apps.sandbox), not a vendor cap.
+  it("does NOT create a hostCapabilitiesOverride when sandbox is edited and hostCapabilities matches preset", () => {
+    // Sandbox lives in its own top-level block; the override-diff
+    // compares only static cap fields. Editing sandbox while leaving
+    // hostCapabilities equal to the preset must not create a spurious
+    // override.
+    const prev = emptyHostConfigInputV2();
+    const preset = resolveEffectiveHostCapabilities({
+      hostStyle: prev.hostStyle,
+      hostCapabilitiesOverride: undefined,
+    }) as Record<string, unknown>;
+    const next = applyJsonToDraft(
+      {
+        hostContext: {},
+        hostCapabilities: preset,
+        sandbox: { csp: { connectDomains: ["https://api.openai.com"] } },
+      },
+      prev,
+    );
+    expect(next?.hostCapabilitiesOverride).toBeUndefined();
+    expect(
+      next?.mcpProfile?.apps?.sandbox?.csp?.restrictTo?.connectDomains,
+    ).toEqual(["https://api.openai.com"]);
+  });
+
+  it("strips a legacy `sandbox` key from hostCapabilities so it doesn't pollute the override diff", () => {
+    // Older exports / hand-edits may still nest sandbox under
+    // hostCapabilities. We ignore it there (it lives at top level now)
+    // and must not let it flip the diff into 'override present'.
     const prev = emptyHostConfigInputV2();
     const preset = resolveEffectiveHostCapabilities({
       hostStyle: prev.hostStyle,
@@ -218,15 +234,133 @@ describe("AppsExtensionTab — spec-shaped sandbox round-trip", () => {
         hostContext: {},
         hostCapabilities: {
           ...preset,
-          sandbox: { csp: { connectDomains: ["https://api.openai.com"] } },
+          sandbox: { csp: { connectDomains: ["https://leaked.example"] } },
         },
       },
       prev,
     );
     expect(next?.hostCapabilitiesOverride).toBeUndefined();
-    // sandbox still landed in policy storage
+  });
+
+  it("round-trips csp.directiveOverrides through the renamed JSON shape", () => {
+    // Inspector-only per-directive source-expression overrides on the
+    // proxy iframe CSP. Surfaced under `csp.directiveOverrides`; stored
+    // as `csp.cspDirectives` because that's the internal field name.
+    const next = applyJsonToDraft(
+      {
+        hostContext: {},
+        sandbox: {
+          csp: {
+            directiveOverrides: {
+              "script-src": ["'unsafe-eval'", "'wasm-unsafe-eval'"],
+            },
+          },
+        },
+      },
+      emptyHostConfigInputV2(),
+    );
+    expect(next?.mcpProfile?.apps?.sandbox?.csp?.cspDirectives).toEqual({
+      "script-src": ["'unsafe-eval'", "'wasm-unsafe-eval'"],
+    });
+  });
+
+  it("clears csp.directiveOverrides when the csp block is present but the field is absent", () => {
+    // Regression: with the unified-block "present-block-asserts-intent"
+    // semantics, removing `directiveOverrides` from a still-present `csp`
+    // block must clear it. Round-trip stability — if we silently
+    // preserved prev's value, the next save would resurrect the field
+    // the user deleted.
+    const prev = emptyHostConfigInputV2();
+    prev.mcpProfile = {
+      profileVersion: 1,
+      apps: {
+        sandbox: {
+          csp: {
+            cspDirectives: { "script-src": ["'unsafe-eval'"] },
+          },
+        },
+      },
+    };
+    const next = applyJsonToDraft(
+      {
+        hostContext: {},
+        sandbox: {
+          csp: { connectDomains: ["https://api.openai.com"] },
+        },
+      },
+      prev,
+    );
+    expect(next?.mcpProfile?.apps?.sandbox?.csp?.cspDirectives).toBeUndefined();
     expect(
       next?.mcpProfile?.apps?.sandbox?.csp?.restrictTo?.connectDomains,
     ).toEqual(["https://api.openai.com"]);
+  });
+
+  it("round-trips iframeSandboxAttrs and permissionsPolicy through their renamed JSON keys", () => {
+    // These two are inspector-only HTML iframe attribute knobs. Both
+    // editable from the JSON now; both store under their legacy field
+    // names internally.
+    const next = applyJsonToDraft(
+      {
+        hostContext: {},
+        sandbox: {
+          iframeSandboxAttrs: ["allow-forms", "allow-modals"],
+          permissionsPolicy: { fullscreen: "*" },
+        },
+      },
+      emptyHostConfigInputV2(),
+    );
+    expect(next?.mcpProfile?.apps?.sandbox?.sandboxAttrs).toEqual([
+      "allow-forms",
+      "allow-modals",
+    ]);
+    expect(next?.mcpProfile?.apps?.sandbox?.allowFeatures).toEqual({
+      fullscreen: "*",
+    });
+  });
+
+  it("round-trips EMPTY iframeSandboxAttrs/permissionsPolicy as the explicit strict-host model", () => {
+    // Regression: serializing `sandboxAttrs: []` / `allowFeatures: {}`
+    // used to be dropped from the JSON (only emitted when non-empty),
+    // so a copy/paste import would lose the explicit "spec minimum"
+    // model — the runtime treats the absent fields as the legacy
+    // permissive default and silently re-grants
+    // `local-network-access` / `midi` / popups / forms. Both directions
+    // must preserve the empty container.
+    const next = applyJsonToDraft(
+      {
+        hostContext: {},
+        sandbox: {
+          iframeSandboxAttrs: [],
+          permissionsPolicy: {},
+        },
+      },
+      emptyHostConfigInputV2(),
+    );
+    expect(next?.mcpProfile?.apps?.sandbox?.sandboxAttrs).toEqual([]);
+    expect(next?.mcpProfile?.apps?.sandbox?.allowFeatures).toEqual({});
+  });
+
+  it("preserves all sandbox state when JSON has no sandbox key at all", () => {
+    // No-op save with rich internal state — everything (including
+    // inspector-only knobs) survives because incomingPresent is false.
+    const prev = emptyHostConfigInputV2();
+    prev.mcpProfile = {
+      profileVersion: 1,
+      apps: {
+        sandbox: {
+          csp: {
+            cspDirectives: { "script-src": ["'unsafe-eval'"] },
+            restrictTo: { connectDomains: ["https://api.openai.com"] },
+          },
+          sandboxAttrs: ["allow-forms"],
+          allowFeatures: { fullscreen: "*" },
+        },
+      },
+    };
+    const next = applyJsonToDraft({ hostContext: {} }, prev);
+    expect(next?.mcpProfile?.apps?.sandbox).toEqual(
+      prev.mcpProfile.apps!.sandbox,
+    );
   });
 });

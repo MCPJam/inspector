@@ -46,6 +46,7 @@ import {
   type HostConfigMcpProfileV1,
   type HostStyleId,
   DEFAULT_TEMPERATURE_V2,
+  SEP_1865_PERMISSION_FEATURES,
 } from "@/lib/client-config-v2";
 import {
   getHostCapabilitiesForStyle,
@@ -784,7 +785,9 @@ function McpProfileSandboxEditor({
       };
       const hasSandboxFields =
         nextSandbox.csp !== undefined ||
-        nextSandbox.permissions !== undefined;
+        nextSandbox.permissions !== undefined ||
+        nextSandbox.sandboxAttrs !== undefined ||
+        nextSandbox.allowFeatures !== undefined;
       // Preserve sibling apps fields (e.g. uiInitialize.hostInfo set by the
       // redesigned Apps Extension tab) — don't rewrite `apps` to only sandbox.
       const nextApps = { ...(base.apps ?? {}) };
@@ -849,6 +852,13 @@ function McpProfileSandboxEditor({
         }
       />
 
+      <McpProfileCspDirectivesEditor
+        value={csp?.cspDirectives}
+        onChange={(cspDirectives) =>
+          updateSandbox({ csp: { ...(csp ?? {}), cspDirectives } })
+        }
+      />
+
       <Separator />
 
       <div className="grid gap-2">
@@ -898,6 +908,563 @@ function McpProfileSandboxEditor({
           })
         }
       />
+
+      <Separator />
+
+      <McpProfileSandboxAttrsEditor
+        value={profile?.apps?.sandbox?.sandboxAttrs}
+        onChange={(sandboxAttrs) => updateSandbox({ sandboxAttrs })}
+      />
+
+      <McpProfileAllowFeaturesEditor
+        value={profile?.apps?.sandbox?.allowFeatures}
+        onChange={(allowFeatures) => updateSandbox({ allowFeatures })}
+      />
+    </div>
+  );
+}
+
+/**
+ * `cspDirectives` editor — inspector-only per-directive source-expression
+ * overrides emitted in the inner doc's `<meta http-equiv="Content-Security-
+ * Policy">`. Each row is a directive name + comma-separated tokens.
+ *
+ * Not part of SEP-1865 metadata; models what real hosts emit at the browser
+ * layer (e.g. `'unsafe-eval'`, `'wasm-unsafe-eval'`, `'strict-dynamic'`,
+ * nonces, hashes). Stored verbatim so future tokens land here without
+ * schema churn.
+ */
+function McpProfileCspDirectivesEditor({
+  value,
+  onChange,
+}: {
+  value: Record<string, string[]> | undefined;
+  onChange: (next: Record<string, string[]> | undefined) => void;
+}) {
+  const fromValue = useCallback(
+    (v: Record<string, string[]> | undefined) => {
+      if (!v) return [] as Array<{ name: string; tokens: string }>;
+      return Object.keys(v)
+        .sort()
+        .map((k) => ({ name: k, tokens: (v[k] ?? []).join(", ") }));
+    },
+    [],
+  );
+
+  // Local draft state including in-progress blank rows the user has
+  // added but not yet filled in. `commit` filters blanks out before
+  // calling onChange, so without a local buffer a freshly-added blank
+  // would round-trip back through `value` as nothing and disappear.
+  const [draftRows, setDraftRows] = useState<
+    Array<{ name: string; tokens: string }>
+  >(() => fromValue(value));
+
+  // Reconcile with external `value` changes (e.g. switching host
+  // configs from the parent). Tracks the last canonical key we synced
+  // to so our own commits don't trigger a re-seed that wipes blanks.
+  const valueKey = useMemo(() => JSON.stringify(value ?? null), [value]);
+  const lastSyncedKeyRef = useRef(valueKey);
+  useEffect(() => {
+    if (lastSyncedKeyRef.current === valueKey) return;
+    lastSyncedKeyRef.current = valueKey;
+    setDraftRows((prev) => {
+      const fromVal = fromValue(value);
+      // Preserve any blank/in-progress rows the user is still editing.
+      const blanks = prev.filter(
+        (r) => r.name.trim() === "" || r.tokens.trim() === "",
+      );
+      return [...fromVal, ...blanks];
+    });
+  }, [valueKey, value, fromValue]);
+
+  const commit = useCallback(
+    (next: Array<{ name: string; tokens: string }>) => {
+      const out: Record<string, string[]> = {};
+      for (const row of next) {
+        const name = row.name.trim();
+        if (name === "") continue;
+        const tokens = row.tokens
+          .split(",")
+          .map((t) => t.trim())
+          .filter((t) => t.length > 0);
+        if (tokens.length === 0) continue;
+        out[name] = tokens;
+      }
+      const built = Object.keys(out).length > 0 ? out : undefined;
+      lastSyncedKeyRef.current = JSON.stringify(built ?? null);
+      onChange(built);
+    },
+    [onChange],
+  );
+
+  const updateRow = (
+    idx: number,
+    patch: Partial<{ name: string; tokens: string }>,
+  ) => {
+    const next = draftRows.map((r, i) => (i === idx ? { ...r, ...patch } : r));
+    setDraftRows(next);
+    commit(next);
+  };
+
+  const removeRow = (idx: number) => {
+    const next = draftRows.filter((_, i) => i !== idx);
+    setDraftRows(next);
+    commit(next);
+  };
+
+  const addRow = () => {
+    // Blank rows live only in local draft state until the user types
+    // both a name and at least one token — `commit` filters blanks out,
+    // so committing here would no-op and the row would never appear.
+    setDraftRows((prev) => [...prev, { name: "", tokens: "" }]);
+  };
+
+  const rows = draftRows;
+
+  return (
+    <div className="grid gap-2">
+      <Label className="text-xs">cspDirectives (inspector-only)</Label>
+      <p className="text-xs text-muted-foreground">
+        Adds source expressions (e.g. <code>'unsafe-eval'</code>) to the inner
+        doc CSP. Not in SEP-1865 metadata; models what real hosts emit at the
+        browser layer. Comma-separate tokens; values stored verbatim so
+        nonces/hashes/<code>'strict-dynamic'</code> round-trip.
+      </p>
+      {rows.length === 0 ? (
+        <p className="text-xs italic text-muted-foreground">
+          No directive overrides.
+        </p>
+      ) : (
+        <div className="grid gap-1">
+          {rows.map((row, idx) => (
+            <div key={idx} className="grid grid-cols-[1fr_2fr_auto] gap-2">
+              <Input
+                value={row.name}
+                placeholder="script-src"
+                onChange={(e) => updateRow(idx, { name: e.target.value })}
+                list="csp-directive-name-suggestions"
+              />
+              <Input
+                value={row.tokens}
+                placeholder="'unsafe-eval', 'wasm-unsafe-eval'"
+                onChange={(e) => updateRow(idx, { tokens: e.target.value })}
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => removeRow(idx)}
+              >
+                Remove
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+      <datalist id="csp-directive-name-suggestions">
+        <option value="script-src" />
+        <option value="style-src" />
+        <option value="img-src" />
+        <option value="connect-src" />
+        <option value="frame-src" />
+        <option value="media-src" />
+        <option value="font-src" />
+        <option value="base-uri" />
+        <option value="default-src" />
+      </datalist>
+      <Button type="button" variant="outline" size="sm" onClick={addRow}>
+        + add directive
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * `sandboxAttrs` editor — inspector-only extra outer/inner iframe `sandbox=`
+ * tokens unioned with the mandatory `allow-scripts allow-same-origin`.
+ * Each known token is a toggle; a free-text input accepts unknown tokens
+ * for forward-compat.
+ */
+const KNOWN_SANDBOX_TOKENS = [
+  "allow-scripts",
+  "allow-same-origin",
+  "allow-forms",
+  "allow-popups",
+  "allow-popups-to-escape-sandbox",
+  "allow-modals",
+  "allow-downloads",
+  "allow-presentation",
+  "allow-pointer-lock",
+  "allow-top-navigation",
+  "allow-top-navigation-by-user-activation",
+  "allow-orientation-lock",
+] as const;
+const MANDATORY_SANDBOX_TOKENS = new Set<string>([
+  "allow-scripts",
+  "allow-same-origin",
+]);
+
+function McpProfileSandboxAttrsEditor({
+  value,
+  onChange,
+}: {
+  value: string[] | undefined;
+  onChange: (next: string[] | undefined) => void;
+}) {
+  const [customDraft, setCustomDraft] = useState("");
+  // `value === undefined` (no profile opinion) vs `value === []` (explicit
+  // "spec-minimum only") are SEMANTICALLY DIFFERENT at the runtime layer:
+  // the renderer treats undefined as "fall back to the legacy permissive
+  // baseline" and any array (including empty) as "the profile is
+  // authoritative — use spec-mandated tokens plus exactly these." The
+  // toggle below is the user-facing affordance for that opt-in.
+  const isEnabled = Array.isArray(value);
+  const active = useMemo(() => new Set(value ?? []), [value]);
+
+  const commit = (next: Set<string>) => {
+    const arr = Array.from(next)
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0 && !MANDATORY_SANDBOX_TOKENS.has(t));
+    arr.sort();
+    // Don't collapse empty → undefined. Once the user has opted in, an
+    // empty array IS the stricter "spec-minimum only" host model and
+    // must round-trip as `[]`.
+    onChange(arr);
+  };
+
+  const setEnabled = (enabled: boolean) => {
+    if (enabled === isEnabled) return;
+    if (enabled) {
+      // Opt in. Seed with any tokens that were already on `value` (would
+      // only happen if value was [...] before, but isEnabled would be true
+      // already — keeping the branch defensive).
+      onChange(Array.from(active).sort());
+    } else {
+      // Opt out → revert to legacy permissive default.
+      onChange(undefined);
+    }
+  };
+
+  const toggle = (token: string) => {
+    if (!isEnabled) return;
+    if (MANDATORY_SANDBOX_TOKENS.has(token)) return;
+    const next = new Set(active);
+    if (next.has(token)) next.delete(token);
+    else next.add(token);
+    commit(next);
+  };
+
+  const addCustom = () => {
+    if (!isEnabled) return;
+    const t = customDraft.trim();
+    if (t.length === 0) return;
+    if (MANDATORY_SANDBOX_TOKENS.has(t)) {
+      setCustomDraft("");
+      return;
+    }
+    const next = new Set(active);
+    next.add(t);
+    commit(next);
+    setCustomDraft("");
+  };
+
+  // Anything in value that isn't in the known list — surface as a chip too
+  // so the user can see it and remove it.
+  const unknownTokens = Array.from(active).filter(
+    (t) => !KNOWN_SANDBOX_TOKENS.includes(t as (typeof KNOWN_SANDBOX_TOKENS)[number]),
+  );
+
+  return (
+    <div className="grid gap-2">
+      <div className="flex items-center justify-between">
+        <Label className="text-xs">sandboxAttrs (inspector-only)</Label>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">
+            Model host sandbox tokens
+          </span>
+          <Switch
+            checked={isEnabled}
+            onCheckedChange={setEnabled}
+            aria-label="Model host sandbox tokens"
+          />
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {isEnabled
+          ? "Profile is authoritative: the iframe gets allow-scripts / allow-same-origin (spec-mandated) plus exactly the tokens checked below. Leave everything off to model a host that emits the spec minimum only."
+          : "Using the inspector's legacy permissive sandbox default. Toggle on to model the real host's emitted sandbox= tokens — empty = spec minimum only."}
+      </p>
+      <div
+        className={`flex flex-wrap gap-1 ${isEnabled ? "" : "opacity-50 pointer-events-none"}`}
+      >
+        {KNOWN_SANDBOX_TOKENS.map((token) => {
+          const isMandatory = MANDATORY_SANDBOX_TOKENS.has(token);
+          const isActive = isEnabled && (isMandatory || active.has(token));
+          return (
+            <button
+              key={token}
+              type="button"
+              onClick={() => toggle(token)}
+              disabled={isMandatory || !isEnabled}
+              className={`rounded-md border px-2 py-0.5 text-xs ${
+                isActive
+                  ? "border-primary bg-primary/10 text-foreground"
+                  : "border-border/40 text-muted-foreground hover:bg-muted/40"
+              } ${isMandatory ? "cursor-not-allowed opacity-70" : "cursor-pointer"}`}
+              title={isMandatory ? "Spec-mandated (always on)" : token}
+            >
+              {token}
+              {isMandatory ? " (locked)" : ""}
+            </button>
+          );
+        })}
+        {unknownTokens.map((token) => (
+          <button
+            key={token}
+            type="button"
+            onClick={() => toggle(token)}
+            className="rounded-md border border-primary bg-primary/10 px-2 py-0.5 text-xs"
+            title={token}
+          >
+            {token} ×
+          </button>
+        ))}
+      </div>
+      <div
+        className={`flex gap-2 ${isEnabled ? "" : "opacity-50 pointer-events-none"}`}
+      >
+        <Input
+          value={customDraft}
+          placeholder="custom token"
+          disabled={!isEnabled}
+          onChange={(e) => setCustomDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              addCustom();
+            }
+          }}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={!isEnabled}
+          onClick={addCustom}
+        >
+          Add
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * `allowFeatures` editor — inspector-only extra Permissions Policy entries
+ * appended to outer/inner iframe `allow=`. Keys are RAW kebab Permissions
+ * Policy tokens; values are allowlist strings.
+ *
+ * The 4 spec features (camera / microphone / geolocation / clipboard-write)
+ * live in the Permissions section above and cannot be added here — entering
+ * them shows an inline warning and the canonicalizer drops them on save as
+ * a defense-in-depth safeguard.
+ */
+function McpProfileAllowFeaturesEditor({
+  value,
+  onChange,
+}: {
+  value: Record<string, string> | undefined;
+  onChange: (next: Record<string, string> | undefined) => void;
+}) {
+  const specFeatures = useMemo(
+    () => new Set<string>(SEP_1865_PERMISSION_FEATURES),
+    [],
+  );
+
+  const fromValue = useCallback(
+    (v: Record<string, string> | undefined) => {
+      if (!v) return [] as Array<{ key: string; allowlist: string }>;
+      return Object.keys(v)
+        .sort()
+        .map((k) => ({ key: k, allowlist: v[k] ?? "" }));
+    },
+    [],
+  );
+
+  // Local draft state including in-progress blanks. `commit` filters
+  // blank/spec-feature rows out before calling onChange, so without a
+  // local buffer a freshly-added blank row would round-trip back through
+  // `value` as nothing and disappear before the user can type anything.
+  const [draftRows, setDraftRows] = useState<
+    Array<{ key: string; allowlist: string }>
+  >(() => fromValue(value));
+
+  const valueKey = useMemo(() => JSON.stringify(value ?? null), [value]);
+  const lastSyncedKeyRef = useRef(valueKey);
+  useEffect(() => {
+    if (lastSyncedKeyRef.current === valueKey) return;
+    lastSyncedKeyRef.current = valueKey;
+    setDraftRows((prev) => {
+      const fromVal = fromValue(value);
+      // Preserve any rows the user is mid-edit (blank keys, blank
+      // allowlists, or spec-feature keys that haven't been corrected
+      // yet — the latter would otherwise vanish as soon as they were
+      // typed, losing the inline warning's teaching moment).
+      const inProgress = prev.filter(
+        (r) =>
+          r.key.trim() === "" ||
+          r.allowlist.trim() === "" ||
+          specFeatures.has(r.key.trim()),
+      );
+      return [...fromVal, ...inProgress];
+    });
+  }, [valueKey, value, fromValue, specFeatures]);
+
+  // Same `undefined` vs `{}` semantic as sandboxAttrs above: the
+  // renderer treats `allowFeatures === undefined` as the legacy fallback
+  // (re-adds `local-network-access *` / `midi *`); any Record value
+  // (including the empty {}) is the authoritative profile model and
+  // drops those legacy defaults. The toggle below is the explicit opt-in
+  // — without it, removing the last row collapsed `{}` to `undefined`
+  // and silently flipped a stricter-host profile back to permissive.
+  const isEnabled = value !== undefined;
+
+  const commit = useCallback(
+    (next: Array<{ key: string; allowlist: string }>) => {
+      const out: Record<string, string> = {};
+      for (const row of next) {
+        const key = row.key.trim();
+        if (key === "") continue;
+        // Defense in depth — the canonicalizer drops these too, but we
+        // refuse to commit them locally so the warning has teeth.
+        if (specFeatures.has(key)) continue;
+        const allowlist = row.allowlist.trim();
+        if (allowlist === "") continue;
+        out[key] = allowlist;
+      }
+      // Don't collapse empty → undefined. Once the user has opted in,
+      // an empty record IS the stricter "spec-features-only" host model
+      // and must round-trip as `{}`.
+      lastSyncedKeyRef.current = JSON.stringify(out);
+      onChange(out);
+    },
+    [onChange, specFeatures],
+  );
+
+  const setEnabled = (enabled: boolean) => {
+    if (enabled === isEnabled) return;
+    if (enabled) {
+      onChange({});
+    } else {
+      // Opt out → revert to legacy permissive default.
+      onChange(undefined);
+    }
+  };
+
+  const updateRow = (
+    idx: number,
+    patch: Partial<{ key: string; allowlist: string }>,
+  ) => {
+    if (!isEnabled) return;
+    const next = draftRows.map((r, i) => (i === idx ? { ...r, ...patch } : r));
+    setDraftRows(next);
+    commit(next);
+  };
+
+  const removeRow = (idx: number) => {
+    if (!isEnabled) return;
+    const next = draftRows.filter((_, i) => i !== idx);
+    setDraftRows(next);
+    commit(next);
+  };
+
+  const addRow = () => {
+    if (!isEnabled) return;
+    // Blank rows live only in local draft state until the user types
+    // both a feature name and an allowlist — `commit` would filter them
+    // out, so committing here would no-op and the row would never appear.
+    setDraftRows((prev) => [...prev, { key: "", allowlist: "*" }]);
+  };
+
+  const rows = draftRows;
+
+  return (
+    <div className="grid gap-2">
+      <div className="flex items-center justify-between">
+        <Label className="text-xs">allowFeatures (inspector-only)</Label>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">
+            Model host allow features
+          </span>
+          <Switch
+            checked={isEnabled}
+            onCheckedChange={setEnabled}
+            aria-label="Model host allow features"
+          />
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {isEnabled
+          ? "Profile is authoritative: the outer iframe's allow= is the 4 spec permissions (above) plus exactly the features listed below. Leave empty to model a host that grants only the spec features."
+          : "Using the inspector's legacy outer-iframe allow= default (adds local-network-access / midi on top of spec permissions). Toggle on to model the real host's emitted allow= — empty = spec permissions only."}
+      </p>
+      <div className={isEnabled ? "" : "opacity-50 pointer-events-none"}>
+        {rows.length === 0 ? (
+          <p className="text-xs italic text-muted-foreground">
+            No extra features.
+          </p>
+        ) : (
+          <div className="grid gap-1">
+            {rows.map((row, idx) => {
+              const isSpec = specFeatures.has(row.key.trim());
+              return (
+                <div key={idx} className="grid gap-1">
+                  <div className="grid grid-cols-[1fr_1fr_auto] gap-2">
+                    <Input
+                      value={row.key}
+                      placeholder="fullscreen"
+                      disabled={!isEnabled}
+                      onChange={(e) => updateRow(idx, { key: e.target.value })}
+                    />
+                    <Input
+                      value={row.allowlist}
+                      placeholder="*"
+                      disabled={!isEnabled}
+                      onChange={(e) =>
+                        updateRow(idx, { allowlist: e.target.value })
+                      }
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={!isEnabled}
+                      onClick={() => removeRow(idx)}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                  {isSpec ? (
+                    <p className="text-xs text-destructive">
+                      Use Permissions above for spec features — this row will be
+                      dropped on save.
+                    </p>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={!isEnabled}
+          onClick={addRow}
+        >
+          + add feature
+        </Button>
+      </div>
     </div>
   );
 }

@@ -983,11 +983,87 @@ export function MCPAppsRenderer({
   const sandboxCspPolicy = activeMcpProfile?.apps?.sandbox?.csp;
   const sandboxPermissionsPolicy =
     activeMcpProfile?.apps?.sandbox?.permissions;
+  // Inspector-only emission knobs sourced directly from the profile. They
+  // bypass the SEP-1865 resolver because they model browser-emission state
+  // that has no spec slot (raw `sandbox=`/`allow=` tokens, CSP source
+  // expressions). Passed through unchanged to <SandboxedIframe>.
+  const sandboxAttrsPolicy =
+    activeMcpProfile?.apps?.sandbox?.sandboxAttrs;
+  const allowFeaturesPolicy =
+    activeMcpProfile?.apps?.sandbox?.allowFeatures;
+  const cspDirectivesPolicy =
+    activeMcpProfile?.apps?.sandbox?.csp?.cspDirectives;
+  // Hosted-mode clamp for cspDirectives. The resolver's
+  // `hostedClampExtraDeny` strips MCPJam app/API origins from the
+  // widget-declared CSP (`restrictTo` + resource declaration), but
+  // cspDirectives is inspector-only — it bypasses the resolver and the
+  // proxy merges its tokens AFTER the resolver output, so without a
+  // mirrored clamp here a hosted profile with e.g.
+  // `cspDirectives: { "connect-src": ["https://app.mcpjam.com"] }`
+  // re-adds the same-origin access the clamp is meant to make
+  // non-bypassable. Strip any host-bearing token that resolves to the
+  // mcpjam.com namespace AND scheme-wide tokens that would otherwise
+  // cover MCPJam endpoints (`*`, `https:`, `http:`, `wss:`, `ws:`); CSP
+  // keyword tokens (`'unsafe-eval'`, hashes, nonces — quoted with `'…'`)
+  // and safe scheme-only tokens (`data:`, `blob:`, `about:`,
+  // `filesystem:`, `mediastream:`) pass through unchanged.
+  const cspDirectivesEffective = useMemo(() => {
+    if (!cspDirectivesPolicy) return cspDirectivesPolicy;
+    if (!HOSTED_MODE) return cspDirectivesPolicy;
+    const isClampBypass = (token: string) => {
+      // `'self'` is a clamp bypass in hosted mode. The proxy is served
+      // from the MCPJam origin and the inner srcdoc iframe carries
+      // `allow-same-origin` (so its document origin = parent's =
+      // MCPJam). `'self'` in the inner doc's CSP therefore resolves
+      // to the MCPJam app origin, which lets an untrusted widget
+      // fetch authenticated MCPJam endpoints — exactly what the clamp
+      // is meant to make unreachable. Templates that need actual
+      // same-origin access in production hosts (e.g. real Claude
+      // where `'self'` resolves to claude.ai) should list the host
+      // explicitly so the modeling is faithful in hosted mode too.
+      if (token === "'self'") return true;
+      if (token.startsWith("'")) return false; // other CSP keywords
+      // Scheme-wide tokens that cover MCPJam-namespace origins. The
+      // clamp's purpose is to keep MCPJam app/API endpoints unreachable
+      // from the iframe; `https:` (and friends) covers them just as
+      // effectively as naming `https://app.mcpjam.com` directly.
+      // Templates that need broad access should list specific origins
+      // (e.g. Claude lists `https://esm.sh`, `https://assets.claude.ai`).
+      if (token === "*") return true;
+      if (/^(https?|wss?):$/i.test(token)) return true;
+      // Other scheme-only tokens (data:, blob:, about:, filesystem:,
+      // mediastream:) don't reach MCPJam origins — let through.
+      if (/^[a-z]+:$/.test(token)) return false;
+      // Host-bearing token: match mcpjam.com as a host component,
+      // covering MCPJAM_HOSTED_CLAMP_ORIGINS (`https://*.mcpjam.com`
+      // and `https://mcpjam.com`).
+      return /(?:^|[/.@])mcpjam\.com(?:[:/]|$)/i.test(token);
+    };
+    const out: Record<string, string[]> = {};
+    for (const [k, tokens] of Object.entries(cspDirectivesPolicy)) {
+      // Trim BEFORE the bypass check: an imported/saved profile can
+      // carry " https:" or " https://app.mcpjam.com" with leading
+      // whitespace, and the proxy's mergeDirective trims tokens before
+      // emitting them — so the untrimmed string sneaks past
+      // isClampBypass while the trimmed version still lands in the
+      // output CSP, reintroducing the access the clamp is supposed to
+      // remove. Normalize here so the filter and the proxy see the same
+      // token shape.
+      const clamped = tokens
+        .map((t) => t.trim())
+        .filter((t) => t.length > 0 && !isClampBypass(t));
+      if (clamped.length > 0) out[k] = clamped;
+    }
+    return Object.keys(out).length > 0 ? out : undefined;
+  }, [cspDirectivesPolicy]);
   const effectiveSandbox = useMemo<{
     csp: McpUiResourceCsp | undefined;
     permissions: McpUiResourcePermissions | undefined;
     permissive: boolean;
     hostPolicyApplied: boolean;
+    sandboxAttrs: string[] | undefined;
+    allowFeatures: Record<string, string> | undefined;
+    cspDirectives: Record<string, string[]> | undefined;
   }>(() => {
     // Detect whether the host explicitly configured CSP hardening signals.
     // Hoisted above the permissive short-circuit so the permissive branch
@@ -1000,7 +1076,37 @@ export function MCPAppsRenderer({
       Object.values(sandboxCspPolicy.restrictTo).some(
         (list) => Array.isArray(list) && list.length > 0,
       );
-    const hasExplicitCspHardening = restrictToConfigured || HOSTED_MODE;
+    // cspDirectives is an inspector-only emission knob, but a populated
+    // value is still an explicit "I want this CSP shape" signal. The
+    // permissive shortcut below bypasses the proxy's `buildCSP(csp,
+    // cspDirectives)` path (it builds its own fixed permissive CSP), so
+    // without treating cspDirectives as hardening the configured
+    // directives get silently dropped on the chatbox/preview surfaces
+    // where host profiles are most meant to apply.
+    //
+    // Only count entries that contribute at least one token that would
+    // survive the proxy's mergeDirective filter (trim, plus `;,\n\r"<>`
+    // rejection — kept in lockstep with the predicate in
+    // sandbox-proxy.html). An entry like `{ "frame-src": [] }` or
+    // `{ "frame-src": [" "] }` is a semantic no-op and must not flip
+    // a permissive surface into the resolver path (which would then
+    // enforce the widget-declared CSP even though the named directive
+    // contributes nothing).
+    const cspDirectivesConfigured =
+      sandboxCspPolicy?.cspDirectives !== undefined &&
+      Object.values(sandboxCspPolicy.cspDirectives).some(
+        (tokens) =>
+          Array.isArray(tokens) &&
+          tokens.some((t) => {
+            if (typeof t !== "string") return false;
+            const trimmed = t.trim();
+            if (trimmed.length === 0) return false;
+            if (/[;,\n\r"<>]/.test(trimmed)) return false;
+            return true;
+          }),
+      );
+    const hasExplicitCspHardening =
+      restrictToConfigured || cspDirectivesConfigured || HOSTED_MODE;
 
     // Chatbox / Playground / minimal-mode surfaces opted into `permissive`
     // CSP up at line 285. Permissive means "default to permissive when the
@@ -1048,6 +1154,9 @@ export function MCPAppsRenderer({
         permissions: resolvedPermissions ?? widgetPermissions,
         permissive: true,
         hostPolicyApplied: !!resolvedPermissions,
+        sandboxAttrs: sandboxAttrsPolicy,
+        allowFeatures: allowFeaturesPolicy,
+        cspDirectives: cspDirectivesEffective,
       };
     }
 
@@ -1070,6 +1179,7 @@ export function MCPAppsRenderer({
     const isPureRelaxedCsp =
       sandboxCspPolicy?.mode === "relaxed" &&
       !restrictToConfigured &&
+      !cspDirectivesConfigured &&
       !HOSTED_MODE;
 
     let resolvedCsp: McpUiResourceCsp | undefined;
@@ -1178,6 +1288,9 @@ export function MCPAppsRenderer({
           ? false
           : widgetPermissive,
       hostPolicyApplied,
+      sandboxAttrs: sandboxAttrsPolicy,
+      allowFeatures: allowFeaturesPolicy,
+      cspDirectives: cspDirectivesEffective,
     };
   }, [
     cspMode,
@@ -1186,6 +1299,9 @@ export function MCPAppsRenderer({
     widgetCsp,
     widgetPermissions,
     widgetPermissive,
+    sandboxAttrsPolicy,
+    allowFeaturesPolicy,
+    cspDirectivesEffective,
   ]);
 
   useEffect(() => {
@@ -1920,6 +2036,9 @@ export function MCPAppsRenderer({
       csp={effectiveSandbox.csp}
       permissions={effectiveSandbox.permissions}
       permissive={effectiveSandbox.permissive}
+      sandboxAttrs={effectiveSandbox.sandboxAttrs}
+      allowFeatures={effectiveSandbox.allowFeatures}
+      cspDirectives={effectiveSandbox.cspDirectives}
       colorScheme={resolvedTheme}
       onProxyReady={() => {
         setSandboxProxyReady(true);
@@ -2020,6 +2139,9 @@ export function MCPAppsRenderer({
         widgetCsp={effectiveSandbox.csp}
         widgetPermissions={effectiveSandbox.permissions}
         widgetPermissive={effectiveSandbox.permissive}
+        widgetSandboxAttrs={effectiveSandbox.sandboxAttrs}
+        widgetAllowFeatures={effectiveSandbox.allowFeatures}
+        widgetCspDirectives={effectiveSandbox.cspDirectives}
         hostContextRef={hostContextRef}
         serverId={serverId}
         resourceUri={resourceUri}
