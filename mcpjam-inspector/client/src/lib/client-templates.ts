@@ -630,11 +630,61 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               // (intersection trap) and silently breaks widgets reaching
               // any other origin. The view's declaration is authoritative.
               mode: "declared",
+              // cspDirectives — verbatim from a live chatgpt response
+              // Content-Security-Policy header (captured 2026-05-18 via
+              // DevTools → Network → oaiusercontent.com response).
+              //
+              // Real ChatGPT's outer-doc CSP is strikingly minimal: only
+              // `frame-ancestors`, `frame-src`, and the CSP `sandbox`
+              // directive are emitted. There is NO `script-src`,
+              // `style-src`, `connect-src` etc. — script and style
+              // execution is effectively unconstrained at the host layer.
+              // `frame-ancestors` is dropped (controls who can embed the
+              // doc — irrelevant for widget runtime); the CSP `sandbox`
+              // directive duplicates `sandboxAttrs` below and is modeled
+              // there. That leaves just `frame-src` as the meaningful
+              // host-emitted constraint on widget behavior.
+              cspDirectives: {
+                "frame-src": ["'self'", "https:", "data:", "blob:"],
+              },
             },
             permissions: {
               mode: "custom",
-              allow: { microphone: true },
+              // Per ui/initialize hostCapabilities only `microphone` is
+              // advertised. Per the outer iframe `allow=` attribute,
+              // `clipboard-write` is ALSO emitted at runtime even though
+              // it's not in the advertised metadata. Include both so a
+              // widget testing in MCPJam-as-ChatGPT actually gets what
+              // the production iframe grants.
+              allow: { microphone: true, clipboardWrite: true },
             },
+            // sandboxAttrs — captured 2026-05-18 from the outer and
+            // inner iframe `sandbox=` attributes. There's an asymmetry:
+            //   outer: allow-scripts allow-same-origin allow-forms
+            //   inner: allow-scripts allow-same-origin allow-popups
+            //          allow-popups-to-escape-sandbox allow-forms
+            // Schema applies one set to both layers; use the broader
+            // inner set since that's what determines widget runtime
+            // behavior. Outer will over-grant allow-popups in MCPJam vs
+            // real ChatGPT; the modal-popup widget surface is rare
+            // enough that this divergence is acceptable.
+            sandboxAttrs: [
+              "allow-forms",
+              "allow-popups",
+              "allow-popups-to-escape-sandbox",
+            ],
+            // allowFeatures — non-spec Permissions Policy extras on the
+            // outer iframe. Real ChatGPT emits
+            // `clipboard-write *; local-network-access *; microphone *;
+            // midi *`:
+            //   - clipboard-write + microphone → spec features, modeled
+            //     in `permissions.allow` above.
+            //   - local-network-access + midi → ALREADY in MCPJam's
+            //     renderer baseline (sandboxed-iframe.tsx's
+            //     `outerAllowAttribute` memo), auto-granted to every
+            //     host.
+            // So ChatGPT contributes no host-specific allowFeatures
+            // extras — the runtime grant matches real ChatGPT for free.
           },
         },
       };
