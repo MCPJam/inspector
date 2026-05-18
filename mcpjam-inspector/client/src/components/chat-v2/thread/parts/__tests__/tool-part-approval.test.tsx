@@ -18,6 +18,7 @@ vi.mock("lucide-react", () => {
     Shield: s,
     ShieldCheck: s,
     ShieldX: s,
+    Terminal: s,
     X: s,
   };
 });
@@ -93,12 +94,15 @@ describe("ToolPart approval expansion", () => {
     window.location.hash = "";
   });
 
-  it("auto-expands once approval is requested after mount", async () => {
+  it("renders the approval pill when approval is requested", async () => {
     const { rerender } = render(
       <ToolPart part={basePart as any} uiType="mcp-apps" />,
     );
 
     expect(getHeaderButton()).toHaveAttribute("aria-expanded", "false");
+    expect(
+      screen.queryByRole("button", { name: /^approve$/i }),
+    ).not.toBeInTheDocument();
 
     rerender(
       <ToolPart
@@ -109,11 +113,14 @@ describe("ToolPart approval expansion", () => {
     );
 
     await waitFor(() => {
-      expect(getHeaderButton()).toHaveAttribute("aria-expanded", "true");
+      expect(
+        screen.getByRole("button", { name: /^approve$/i }),
+      ).toBeInTheDocument();
     });
+    expect(screen.getByRole("button", { name: /^deny$/i })).toBeInTheDocument();
   });
 
-  it("collapses after approval resolves", async () => {
+  it("returns to a collapsed card after approval resolves", async () => {
     const user = userEvent.setup();
     const { rerender } = render(
       <ToolPart
@@ -123,23 +130,19 @@ describe("ToolPart approval expansion", () => {
       />,
     );
 
-    await waitFor(() => {
-      expect(getHeaderButton()).toHaveAttribute("aria-expanded", "true");
+    const approveButton = await screen.findByRole("button", {
+      name: /^approve$/i,
     });
-
-    const headerButton = getHeaderButton();
-    expect(headerButton).toBeTruthy();
-    if (headerButton) {
-      await user.click(headerButton);
-    }
-
-    await user.click(screen.getByRole("button", { name: /^approve$/i }));
+    await user.click(approveButton);
 
     rerender(<ToolPart part={basePart as any} uiType="mcp-apps" />);
 
     await waitFor(() => {
       expect(getHeaderButton()).toHaveAttribute("aria-expanded", "false");
     });
+    expect(
+      screen.queryByRole("button", { name: /^approve$/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("does not show a one-time save hint above save view", () => {
