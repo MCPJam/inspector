@@ -989,7 +989,29 @@ export function useChatSession({
   >(undefined);
   const [isSessionBootstrapComplete, setIsSessionBootstrapComplete] =
     useState(false);
-  const [systemPrompt, setSystemPrompt] = useState(initialSystemPrompt);
+  const instanceIdRef = useRef<string>("");
+  if (!instanceIdRef.current) {
+    instanceIdRef.current = Math.random().toString(36).slice(2, 8);
+  }
+  const [systemPrompt, _setSystemPromptRaw] = useState(initialSystemPrompt);
+  const setSystemPrompt = useCallback((next: string) => {
+    // eslint-disable-next-line no-console
+    console.log("[setSP-debug]", {
+      instance: instanceIdRef.current,
+      to: next?.slice(0, 30),
+    });
+    _setSystemPromptRaw(next);
+  }, []);
+  // Track every render of systemPrompt state so we can see resets in the log
+  // without depending on the wrapper firing (a re-render with reverted state
+  // is still a reset we want to see).
+  useEffect(() => {
+    // eslint-disable-next-line no-console
+    console.log("[state-debug]", {
+      instance: instanceIdRef.current,
+      systemPrompt: systemPrompt?.slice(0, 30),
+    });
+  }, [systemPrompt]);
   const [temperature, setTemperature] = useState(initialTemperature);
   const [chatSessionId, setChatSessionId] = useState(generateId());
   const chatSessionIdRef = useRef(chatSessionId);
@@ -1823,17 +1845,33 @@ export function useChatSession({
     [queueSessionHydration]
   );
 
+  // Only re-sync from `executionConfig` when the caller explicitly provides
+  // one. Surfaces that omit `executionConfig` (e.g. Playground, which owns
+  // an imperative reseed-from-host effect via `setSystemPrompt`) would
+  // otherwise see their state stomped back to `DEFAULT_SYSTEM_PROMPT` on
+  // every render of the hook, racing the imperative reseed.
+  const executionSystemPrompt = executionConfig?.systemPrompt;
+  const executionTemperature = executionConfig?.temperature;
+  const executionRequireToolApproval = executionConfig?.requireToolApproval;
   useEffect(() => {
-    setSystemPrompt(initialSystemPrompt);
-  }, [initialSystemPrompt]);
+    if (executionSystemPrompt === undefined) return;
+    // eslint-disable-next-line no-console
+    console.log("[init-sync-debug] initialSystemPrompt changed", {
+      instance: instanceIdRef.current,
+      newInitial: executionSystemPrompt?.slice(0, 30),
+    });
+    setSystemPrompt(executionSystemPrompt);
+  }, [executionSystemPrompt, setSystemPrompt]);
 
   useEffect(() => {
-    setTemperature(initialTemperature);
-  }, [initialTemperature]);
+    if (executionTemperature === undefined) return;
+    setTemperature(executionTemperature);
+  }, [executionTemperature]);
 
   useEffect(() => {
-    setRequireToolApproval(initialRequireToolApproval);
-  }, [initialRequireToolApproval]);
+    if (executionRequireToolApproval === undefined) return;
+    setRequireToolApproval(executionRequireToolApproval);
+  }, [executionRequireToolApproval]);
 
   // Auth headers setup - reset chat after auth changes to ensure transport has correct headers
   useEffect(() => {

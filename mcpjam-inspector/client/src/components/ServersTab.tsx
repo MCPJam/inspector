@@ -579,7 +579,17 @@ export function ServersTab({
   // (projectId, hostScopeKey, sortedNames) so navigating between these
   // surfaces does not re-fire, but switching to a different host (or
   // saving the host's required set) re-attempts for that scope.
-  const [previewedHostId] = usePreviewedHostId(activeProjectId || null);
+  //
+  // Match the global host picker / ClientsTab / useAppState scope: prefer
+  // the shared project id (what writers use in authed cloud flows), falling
+  // back to the local id for CLI / no-cloud-sync where there is no shared
+  // id. Reading only `activeProjectId` here misses selections made via
+  // the global host bar on a Convex-synced project.
+  const sharedProjectIdForHostScope =
+    projects[activeProjectId]?.sharedProjectId ?? null;
+  const [previewedHostId] = usePreviewedHostId(
+    sharedProjectIdForHostScope ?? activeProjectId ?? null,
+  );
   const { host: previewedHost } = useHost({
     isAuthenticated,
     hostId: previewedHostId,

@@ -964,10 +964,22 @@ export function ChatInput({
 
       {!minimalMode && (
         <SystemPromptSelector
-          systemPrompt={
-            systemPrompt ||
-            "You are a helpful assistant with access to MCP tools."
-          }
+          systemPrompt={(() => {
+            // eslint-disable-next-line no-console
+            console.log("[chat-input-debug] systemPrompt prop", {
+              raw: systemPrompt?.slice(0, 30),
+              len: systemPrompt?.length,
+              isDefault:
+                systemPrompt ===
+                "You are a helpful assistant with access to MCP tools.",
+              hasMessages,
+              currentModel: currentModel?.id,
+            });
+            return (
+              systemPrompt ||
+              "You are a helpful assistant with access to MCP tools."
+            );
+          })()}
           onSystemPromptChange={onSystemPromptChange}
           temperature={temperature}
           onTemperatureChange={onTemperatureChange}
