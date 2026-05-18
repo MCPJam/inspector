@@ -196,7 +196,19 @@ export function ClientOverlayBar({
     }
   };
 
+  // Mirrors the gate in CreateClientDialog.handleCreate. `useProjectServers`
+  // returns `undefined` while loading vs `[]` for a truly empty project;
+  // collapsing both into `[]` would silently seed the new host with zero
+  // attachments and there's no UI affordance to fix it after the fact (the
+  // host never self-corrects). The auth gate matches `useProjectServers`'s
+  // own skip rule: unauthenticated users never fire the query.
+  const isServersLoading = isAuthenticated && servers === undefined;
+
   const handleQuickAdd = async (templateId: HostTemplateId) => {
+    if (isServersLoading) {
+      toast.error("Still loading project servers. Try again in a moment.");
+      return;
+    }
     const template = HOST_TEMPLATES.find((t) => t.id === templateId);
     if (!template) return;
     setQuickAddingId(templateId);
@@ -342,7 +354,7 @@ export function ClientOverlayBar({
                         type="button"
                         aria-label={`Add ${template.label} client`}
                         title={`Add ${template.label}`}
-                        disabled={quickAddingId !== null}
+                        disabled={quickAddingId !== null || isServersLoading}
                         data-testid={`host-overlay-quick-add-${id}`}
                         onClick={(e) => {
                           e.preventDefault();

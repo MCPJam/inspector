@@ -94,8 +94,11 @@ export const HostMatrixCard = memo(function HostMatrixCard({
           className="hp-identity"
         >
           {(() => {
-            const clientInfoName = clientInfoLeaf?.value?.split(" ")[0];
-            const clientLogo = getClientLogo(clientInfoName, hostName);
+            // Pass the full value — `getClientLogo` already lowercases
+            // and substring-matches against the combined haystack, so any
+            // pre-tokenization here just hides keywords that don't sit at
+            // index 0 (e.g. "mcp-client-claude" → no logo with split[0]).
+            const clientLogo = getClientLogo(clientInfoLeaf?.value, hostName);
             return (
               <span
                 className={cn("hp-glyph", clientLogo && "hp-glyph--logo")}
