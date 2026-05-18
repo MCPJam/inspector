@@ -129,7 +129,7 @@ describe("applyHostDefaultsToPlayground", () => {
     expect(setHostCapabilitiesOverride.mock.calls[0]?.[0]).toBeDefined();
   });
 
-  it("snapshots MCPJam fallback: setDeviceType('desktop'), permissive CSP, override cleared, model id NOT touched", () => {
+  it("snapshots MCPJam fallback: setDeviceType('desktop'), widget-declared CSP, override set, model id NOT touched", () => {
     applyHostDefaultsToPlayground("mcpjam", setters);
 
     expect(setHostStyle).toHaveBeenCalledWith("mcpjam");
@@ -141,13 +141,16 @@ describe("applyHostDefaultsToPlayground", () => {
     expect(setCustomViewportSpy).not.toHaveBeenCalled();
     expect(setDeviceTypeSpy).toHaveBeenCalledWith("desktop");
 
-    expect(setCspModeSpy).toHaveBeenCalledWith("permissive");
-    expect(setMcpAppsCspModeSpy).toHaveBeenCalledWith("permissive");
+    // MCPJam template advertises apps.sandbox.csp.mode "declared" so the
+    // Permissive chip resolves to widget-declared, same as Claude/ChatGPT.
+    expect(setCspModeSpy).toHaveBeenCalledWith("widget-declared");
+    expect(setMcpAppsCspModeSpy).toHaveBeenCalledWith("widget-declared");
 
-    // MCPJam template doesn't set hostCapabilitiesOverride → undefined,
-    // which clears the override (host-style preset takes over).
+    // MCPJam template now ships its own hostCapabilitiesOverride
+    // (openLinks, updateModelContext, etc.) — the override is set, not
+    // cleared, so widgets see MCPJam's advertised host surface.
     expect(setHostCapabilitiesOverride).toHaveBeenCalledTimes(1);
-    expect(setHostCapabilitiesOverride.mock.calls[0]?.[0]).toBeUndefined();
+    expect(setHostCapabilitiesOverride.mock.calls[0]?.[0]).toBeDefined();
   });
 
   it("preserves the picked hostStyle for an unknown BYO host id even though template falls back to MCPJam", () => {
@@ -161,8 +164,11 @@ describe("applyHostDefaultsToPlayground", () => {
     // is preserved.
     expect(saveSelectedModelIdSpy).not.toHaveBeenCalled();
     expect(setDeviceTypeSpy).toHaveBeenCalledWith("desktop");
-    expect(setCspModeSpy).toHaveBeenCalledWith("permissive");
-    expect(setHostCapabilitiesOverride.mock.calls[0]?.[0]).toBeUndefined();
+    // MCPJam fallback now stamps apps.sandbox.csp.mode "declared" and a
+    // hostCapabilitiesOverride, so the BYO unknown id inherits both like
+    // other branded templates.
+    expect(setCspModeSpy).toHaveBeenCalledWith("widget-declared");
+    expect(setHostCapabilitiesOverride.mock.calls[0]?.[0]).toBeDefined();
   });
 
   describe("applyHostConfigToPlayground (used by named-host picker sync)", () => {
