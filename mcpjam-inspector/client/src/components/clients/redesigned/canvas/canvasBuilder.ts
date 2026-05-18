@@ -350,9 +350,14 @@ function buildSandboxConfig(
       const tokens = cspDirectives[k] ?? [];
       cspDirectivesValueCount += tokens.length;
       for (const t of tokens) {
+        // `'unsafe-inline'` is INTENTIONALLY NOT a danger trigger — it's
+        // part of the SEP-1865 restrictive baseline for `script-src` /
+        // `style-src` (the proxy always includes it). Flagging it would
+        // light up every host's matrix unavoidably. The triggers below
+        // are the ones that re-enable real script-execution loosening
+        // beyond the spec default.
         if (
           t === "'unsafe-eval'" ||
-          t === "'unsafe-inline'" ||
           t === "'wasm-unsafe-eval'" ||
           t === "'strict-dynamic'"
         ) {
@@ -361,6 +366,20 @@ function buildSandboxConfig(
       }
     }
   }
+  // Build the per-directive expansion list. Reuses CspDirectiveDetail
+  // (same `{ key, label, domains }` shape as restrictTo's expansion);
+  // the `domains` field semantically carries source-expression tokens
+  // and/or origins. Sorted by directive name for stability across edits.
+  const cspDirectivesDetails: CspDirectiveDetail[] =
+    cspDirectives !== undefined
+      ? [...cspDirectivesKeys].sort().flatMap((k) => {
+          const tokens = cspDirectives[k] ?? [];
+          return tokens.length > 0
+            ? [{ key: k, label: k, domains: [...tokens] }]
+            : [];
+        })
+      : [];
+
   const cspDirectivesDescriptor: SandboxConfigDescriptor | null =
     cspDirectivesKeys.length === 0
       ? null
@@ -374,6 +393,8 @@ function buildSandboxConfig(
             cspDirectivesValueCount === 1 ? "token" : "tokens"
           }`,
           severity: hasDangerousToken ? "danger" : "neutral",
+          directives:
+            cspDirectivesDetails.length > 0 ? cspDirectivesDetails : undefined,
         };
 
   // sandboxAttrs — extra outer/inner iframe `sandbox=` tokens beyond the

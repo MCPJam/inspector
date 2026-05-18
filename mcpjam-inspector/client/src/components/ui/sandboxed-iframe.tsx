@@ -292,7 +292,13 @@ export const SandboxedIframe = forwardRef<
           csp,
           permissions,
           sandboxAttrs,
-          allowFeatures,
+          // `allowFeatures` is intentionally NOT forwarded to the proxy:
+          // it applies to the OUTER iframe only. The inner iframe gets the
+          // 4 spec permissions (via `permissions`) and nothing else, matching
+          // real claude.ai's outer-grants-fullscreen / inner-trims-to-spec
+          // pattern. Centralizing the outer/inner split here means the proxy
+          // can't accidentally widen the inner grant by reading a stale
+          // field.
           cspDirectives,
           permissive,
           colorScheme,

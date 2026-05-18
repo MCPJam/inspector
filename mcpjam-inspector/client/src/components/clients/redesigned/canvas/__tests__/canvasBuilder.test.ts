@@ -378,6 +378,64 @@ describe("buildRedesignedHostCanvas — sandbox config rows", () => {
     expect(row?.summary).toBe("2 directives");
   });
 
+  // Regression: `'unsafe-inline'` is part of the SEP-1865 restrictive
+  // baseline for script-src/style-src — every host has it. Treating it
+  // as a danger trigger would light up every populated cspDirectives
+  // row unavoidably. Only the tokens that re-enable script-execution
+  // loosening BEYOND the baseline (`'unsafe-eval'`,
+  // `'wasm-unsafe-eval'`, `'strict-dynamic'`) qualify as danger.
+  it("does NOT tint cspDirectives danger when only 'unsafe-inline' is present (baseline, not a deviation)", () => {
+    const draft = emptyHostConfigInputV2();
+    draft.mcpProfile = {
+      profileVersion: 1,
+      apps: {
+        sandbox: {
+          csp: {
+            cspDirectives: {
+              "script-src": ["'unsafe-inline'"],
+              "style-src": ["'unsafe-inline'"],
+            },
+          },
+        },
+      },
+    };
+    const row = matrixData(buildVm({ draft })).sandbox.find(
+      (s) => s.subKey === "cspDirectives",
+    );
+    expect(row?.severity).toBe("neutral");
+  });
+
+  it("surfaces per-directive expansion on cspDirectives for matrix sub-rows", () => {
+    const draft = emptyHostConfigInputV2();
+    draft.mcpProfile = {
+      profileVersion: 1,
+      apps: {
+        sandbox: {
+          csp: {
+            cspDirectives: {
+              "script-src": ["'unsafe-eval'", "'wasm-unsafe-eval'"],
+              "img-src": ["data:", "blob:"],
+            },
+          },
+        },
+      },
+    };
+    const row = matrixData(buildVm({ draft })).sandbox.find(
+      (s) => s.subKey === "cspDirectives",
+    );
+    // Reuses the existing `directives` field on SandboxConfigNodeData so the
+    // renderer's per-directive expansion (used for restrictTo today) works
+    // unchanged. Sorted by directive name for stable diffs across edits.
+    expect(row?.directives).toEqual([
+      { key: "img-src", label: "img-src", domains: ["data:", "blob:"] },
+      {
+        key: "script-src",
+        label: "script-src",
+        domains: ["'unsafe-eval'", "'wasm-unsafe-eval'"],
+      },
+    ]);
+  });
+
   it("summarizes sandboxAttrs as a neutral list", () => {
     const draft = emptyHostConfigInputV2();
     draft.mcpProfile = {

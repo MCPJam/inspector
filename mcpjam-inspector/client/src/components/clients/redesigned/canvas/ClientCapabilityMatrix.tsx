@@ -395,61 +395,55 @@ function SandboxConfigCell({
 }) {
   const displayValue =
     row.summary && row.summary !== "—" ? row.summary : semanticAbsence(row.subKey);
+  // Per-directive token chips intentionally NOT rendered inline. For rows
+  // like cspDirectives with 10+ directives × multiple tokens each, an
+  // always-expanded chip list overwhelms the matrix and pushes downstream
+  // sections (View iframe, Servers) off-screen. The row's summary
+  // ("10 directives · 25 tokens") conveys cardinality at a glance; the
+  // structured editor in ClientConfigEditor.tsx is where the per-directive
+  // detail belongs. We surface the breakdown as a `title=` tooltip on the
+  // qualifier so power users can hover without losing the layout.
   const directives = row.directives ?? [];
+  const directivesTooltip =
+    directives.length > 0
+      ? directives
+          .map((d) => `${d.label}: ${d.domains.join(" ")}`)
+          .join("\n")
+      : undefined;
   return (
-    <div
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
       className={cn(
-        "hp-sb-cell",
-        directives.length > 0 && "hp-sb-cell--with-directives",
+        "hp-sb-row",
+        selected && "hp-sb-row--selected",
+        row.severity === "danger" && "hp-sb-row--danger",
+        row.severity === "warn" && "hp-sb-row--warn",
+        row.isChanged && "host-matrix-changed",
       )}
     >
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          onClick();
-        }}
+      <span className="hp-sb-key">{row.label}</span>
+      <span
         className={cn(
-          "hp-sb-row",
-          selected && "hp-sb-row--selected",
-          row.severity === "danger" && "hp-sb-row--danger",
-          row.severity === "warn" && "hp-sb-row--warn",
-          row.isChanged && "host-matrix-changed",
+          "hp-sb-value",
+          row.summary === "—" && "hp-sb-value--italic",
         )}
+        title={directivesTooltip ?? row.summary}
       >
-        <span className="hp-sb-key">{row.label}</span>
+        {displayValue}
+      </span>
+      {row.qualifier ? (
         <span
-          className={cn(
-            "hp-sb-value",
-            row.summary === "—" && "hp-sb-value--italic",
-          )}
-          title={row.summary}
+          className="hp-sb-qual"
+          title={directivesTooltip ?? row.qualifier}
         >
-          {displayValue}
+          {row.qualifier}
         </span>
-        {row.qualifier ? (
-          <span className="hp-sb-qual" title={row.qualifier}>
-            {row.qualifier}
-          </span>
-        ) : null}
-      </button>
-      {directives.length > 0 ? (
-        <ul className="hp-sb-directives" aria-label={`${row.label} directives`}>
-          {directives.map((d) => (
-            <li key={d.key} className="hp-sb-directive">
-              <span className="hp-sb-directive-label">{d.label}</span>
-              <span className="hp-sb-directive-domains">
-                {d.domains.map((domain) => (
-                  <span key={domain} className="hp-sb-directive-domain">
-                    {domain}
-                  </span>
-                ))}
-              </span>
-            </li>
-          ))}
-        </ul>
       ) : null}
-    </div>
+    </button>
   );
 }
 

@@ -459,11 +459,81 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               // to model the production allowlist can add it explicitly
               // in the editor; absence here means "trust the view".
               mode: "declared",
+              // cspDirectives — verbatim from a live claude.ai inner-iframe
+              // response CSP header (captured 2026-05-18 via DevTools →
+              // Network → Response Headers). These layer on top of
+              // SEP-1865's restrictive baseline via the union merge in
+              // buildCSP (sandbox-proxy.html). Tokens already in the
+              // baseline (`'unsafe-inline'` for script-src/style-src,
+              // `data:`/`blob:` for img/font/media) are omitted to keep
+              // the data set minimal — the merge dedupes regardless.
+              //
+              // 'unsafe-eval' enables `eval()` / `new Function()` — real
+              // Claude allows this; widgets relying on runtime-compiled
+              // templating (Handlebars, Vue full build, etc.) work here
+              // but break in hosts that don't grant it.
+              //
+              // `esm.sh` + `assets.claude.ai` are public CDNs Claude
+              // adds at the proxy layer (NOT in advertised metadata).
+              // Including them here is safe under the union merge rule
+              // (PR 2142) — they can only grant capabilities, never
+              // narrow what a widget declared.
+              cspDirectives: {
+                "script-src": [
+                  "'self'",
+                  "'unsafe-eval'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "style-src": [
+                  "'self'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "img-src": [
+                  "'self'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "connect-src": ["'self'", "https://esm.sh"],
+                "font-src": [
+                  "'self'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "media-src": [
+                  "'self'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "worker-src": [
+                  "'self'",
+                  "blob:",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "frame-src": ["'self'"],
+                "base-uri": ["'self'"],
+                "form-action": ["'self'"],
+              },
             },
             permissions: {
               mode: "custom",
               allow: { clipboardWrite: true },
             },
+            // sandboxAttrs — from live capture of real claude.ai's outer
+            // and inner iframes (both carry `allow-scripts allow-same-origin
+            // allow-forms`). The first two are spec-mandated; `allow-forms`
+            // is the host's addition so `<form>` POSTs work inside widgets.
+            sandboxAttrs: ["allow-forms"],
+            // allowFeatures — non-spec Permissions Policy entries on the
+            // OUTER iframe. Claude's outer grants `fullscreen *; clipboard-
+            // write *`; clipboard-write is the spec permission (lives in
+            // `permissions.allow` above), fullscreen is the non-spec extra
+            // captured here. The inner iframe trims fullscreen out (see
+            // sandbox-proxy.html: inner gets spec-4 only), matching real
+            // claude.ai's outer-grants / inner-trims pattern.
+            allowFeatures: { fullscreen: "*" },
           },
         },
       };

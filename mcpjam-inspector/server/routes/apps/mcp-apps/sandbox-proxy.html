@@ -326,14 +326,21 @@ document.addEventListener('securitypolicyviolation', function(e) {
             event.data &&
             event.data.method === "ui/notifications/sandbox-resource-ready"
           ) {
-            // Load HTML into inner iframe with CSP enforcement
+            // Load HTML into inner iframe with CSP enforcement.
+            //
+            // `allowFeatures` is intentionally NOT received here — by design
+            // it applies to the OUTER iframe's `allow=` attribute only. The
+            // outer/inner split (outer grants extras like `fullscreen`; inner
+            // grants only the 4 spec permissions) is enforced upstream in
+            // `sandboxed-iframe.tsx`'s postMessage payload. If `allowFeatures`
+            // shows up in the message here, it's a contract bug, not data we
+            // should consume.
             const {
               html,
               sandbox,
               csp,
               permissions,
               sandboxAttrs,
-              allowFeatures,
               cspDirectives,
               permissive,
               colorScheme,
@@ -374,44 +381,18 @@ document.addEventListener('securitypolicyviolation', function(e) {
               Array.from(sandboxTokens).sort().join(" "),
             );
 
-            // Set Permission Policy allow attribute based on requested
-            // permissions (SEP-1865) plus any inspector-only `allowFeatures`
-            // extras (kebab Permissions Policy tokens, e.g. `fullscreen`).
-            const allowParts = [];
+            // Set Permission Policy `allow=` attribute for the inner iframe
+            // from the requested spec-4 permissions only (SEP-1865:
+            // camera / microphone / geolocation / clipboard-write).
+            //
+            // Non-spec features like `fullscreen` belong on the OUTER
+            // iframe (handled in `sandboxed-iframe.tsx`'s
+            // `outerAllowAttribute`), not here. Modeling real claude.ai's
+            // pattern: outer grants extras for the wrapper, inner trims to
+            // spec so the widget only experiences what's documented.
             const baseAllow = buildAllowAttribute(permissions);
-            if (baseAllow) allowParts.push(baseAllow);
-            if (allowFeatures && typeof allowFeatures === "object") {
-              // Keep this list in sync with SEP_1865_PERMISSION_FEATURES
-              // in `convex/lib/hostConfigV2.ts` (canonical) and
-              // `client/src/lib/client-config-v2.ts` (mirror). This file
-              // is plain HTML/JS served to the proxy iframe and can't
-              // import the constant; the canonicalizer drops these keys
-              // server-side, the renderer drops them again client-side,
-              // and this is the last line of defense.
-              const specFeatures = new Set([
-                "camera",
-                "microphone",
-                "geolocation",
-                "clipboard-write",
-              ]);
-              for (const k of Object.keys(allowFeatures).sort()) {
-                if (specFeatures.has(k)) continue;
-                const v = allowFeatures[k];
-                if (typeof v !== "string" || v.length === 0) continue;
-                // Reject `;` (and `,` for symmetry) in keys and values.
-                // `;` is the Permissions Policy iframe `allow=` separator,
-                // so unescaped `;` in a value turns the per-feature filter
-                // above into a directive-injection bypass (e.g.
-                // `fullscreen: "*; camera *"`). Without this check, a
-                // crafted profile could grant spec features (camera, etc.)
-                // through allowFeatures even though permissions.allow is
-                // documented as the single source of truth.
-                if (/[;,]/.test(k) || /[;,]/.test(v)) continue;
-                allowParts.push(k + " " + v);
-              }
-            }
-            if (allowParts.length > 0) {
-              inner.setAttribute("allow", allowParts.join("; "));
+            if (baseAllow) {
+              inner.setAttribute("allow", baseAllow);
             }
 
             if (typeof html === "string") {

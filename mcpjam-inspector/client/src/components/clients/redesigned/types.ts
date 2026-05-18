@@ -154,17 +154,27 @@ export type SandboxConfigSubKey =
   | "allowFeatures";
 
 /**
- * CSP directive arrays surfaced under the `restrictTo` row when populated.
- * Each entry is one of the four SEP-1865 allowlist directive families.
- * Empty arrays / undefined values are NOT rendered — the matrix only shows
- * directives the host actually narrowed.
+ * CSP directive arrays surfaced under the `restrictTo` and `cspDirectives`
+ * rows when populated. Two consumers, same shape:
+ *
+ * - `restrictTo` uses it for the four SEP-1865 allowlist directive families
+ *   (`connectDomains` / `resourceDomains` / `frameDomains` / `baseUriDomains`).
+ *   `domains` carries domain origins.
+ * - `cspDirectives` uses it for arbitrary CSP directive names (`script-src`,
+ *   `style-src`, …). `domains` carries source-expression tokens AND/OR
+ *   public-domain origins — the field name is historical; semantically
+ *   it's a flat token list.
+ *
+ * `key` is a free-form string so both consumers can share the type. Empty
+ * arrays / undefined values are NOT rendered — the matrix only shows
+ * directives the host actually populated.
  */
 export interface CspDirectiveDetail {
-  /** Directive family name (e.g. "connectDomains"). */
-  key: "connectDomains" | "resourceDomains" | "frameDomains" | "baseUriDomains";
-  /** Short display label ("connect", "resource", "frame", "baseUri"). */
+  /** Directive family or name (e.g. "connectDomains", "script-src"). */
+  key: string;
+  /** Short display label. */
   label: string;
-  /** Domain entries declared under this directive. */
+  /** Token entries declared under this directive (domains and/or source expressions). */
   domains: string[];
 }
 

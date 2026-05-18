@@ -125,12 +125,16 @@ export type HostConfigMcpProfileV1 = {
        */
       sandboxAttrs?: string[];
       /**
-       * Extra Permissions Policy entries appended to the outer/inner iframe
-       * `allow=` attribute. Keys are RAW kebab-case Permissions Policy tokens
-       * (`clipboard-write`, not `clipboardWrite`); values are allowlist
-       * strings (`*`, `'self'`, an origin). The 4 spec features
-       * (camera/microphone/geolocation/clipboard-write) are silently dropped
-       * by the canonicalizer — `permissions.allow` is the single source of
+       * Extra Permissions Policy entries appended to the OUTER iframe's
+       * `allow=` attribute ONLY. The inner iframe gets only the 4 spec
+       * permissions (from `permissions.allow`), matching real claude.ai's
+       * pattern where the outer grants `fullscreen *; clipboard-write *`
+       * but the inner trims to `clipboard-write *`. Keys are RAW
+       * kebab-case Permissions Policy tokens (`clipboard-write`, not
+       * `clipboardWrite`); values are allowlist strings (`*`, `'self'`,
+       * an origin). The 4 spec features (camera / microphone /
+       * geolocation / clipboard-write) are silently dropped by the
+       * canonicalizer — `permissions.allow` is the single source of
        * truth for them. Inspector-only.
        */
       allowFeatures?: Record<string, string>;
