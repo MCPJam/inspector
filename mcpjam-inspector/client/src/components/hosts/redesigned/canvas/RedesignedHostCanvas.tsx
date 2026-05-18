@@ -1,12 +1,21 @@
-import { createContext, memo, useContext, useMemo, type CSSProperties } from "react";
 import {
+  createContext,
+  memo,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+} from "react";
+import { motion } from "framer-motion";
+import {
+  BaseEdge,
   Background,
   BackgroundVariant,
   Controls,
   Handle,
   Position,
   ReactFlow,
-  SmoothStepEdge,
   type EdgeProps,
   type Node,
   type NodeProps,
@@ -21,6 +30,11 @@ import {
   type ServerCardNodeData,
   type ServersHubNodeData,
 } from "../types";
+import {
+  SERVER_CARD_LAYOUT_ID,
+  SNAPPY_CAMERA,
+  SNAPPY_HOST_REVEAL,
+} from "../../transition-tokens";
 import { HostMatrixCard } from "./HostCapabilityMatrix";
 
 const decorativeHandleClass = "!opacity-0 !w-2 !h-2";
@@ -47,8 +61,17 @@ const HostMatrixNodeRenderer = memo(
   (props: NodeProps<Node<HostMatrixNodeData, "redesignHostMatrix">>) => {
     const { data } = props;
     const ctx = useContext(HostMatrixContext);
+    // Reveal the host card with a brief scale/fade after the page-level
+    // crossfade begins. Without this the Cursor card reads as "already
+    // there" on click — the demo's host group has the same beat.
     return (
-      <div className="w-full">
+      <motion.div
+        className="w-full"
+        initial={{ opacity: 0, scale: 0.9, y: 40 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        transition={SNAPPY_HOST_REVEAL}
+        style={{ transformOrigin: "50% 0%" }}
+      >
         <HostMatrixCard
           hostName={data.hostName}
           agent={data.agent}
@@ -67,7 +90,7 @@ const HostMatrixNodeRenderer = memo(
           id="bottom"
           className={decorativeHandleClass}
         />
-      </div>
+      </motion.div>
     );
   },
 );
@@ -83,7 +106,10 @@ const ServersHubNodeRenderer = memo(
   (props: NodeProps<Node<ServersHubNodeData, "redesignServersHub">>) => {
     const { data, selected } = props;
     return (
-      <div
+      <motion.div
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ ...SNAPPY_HOST_REVEAL, delay: 0.32 }}
         className={cn(
           "flex items-center gap-2 rounded-[10px] border border-border/70 bg-card/95 px-3 py-2 shadow-sm transition-all hover:shadow-md",
           selected && "ring-2 ring-primary/40",
@@ -110,7 +136,7 @@ const ServersHubNodeRenderer = memo(
           id="bottom"
           className={decorativeHandleClass}
         />
-      </div>
+      </motion.div>
     );
   },
 );
@@ -156,47 +182,69 @@ const ServerCardNodeRenderer = memo(
   (props: NodeProps<Node<ServerCardNodeData, "redesignServerCard">>) => {
     const { data, selected } = props;
     const { dotClass, statusLabel } = getServerStatusDot(data);
+    // Share layout with the same server's grid card on the Connect "Servers"
+    // view — Framer Motion FLIPs between the two rendered rects when the user
+    // toggles tabs so each card morphs 1:1 into its pill slot. Full `layout`
+    // animates both position and size; the inner motion.div fades the pill
+    // content in *after* the box has finished shrinking, which avoids the
+    // visible warp that scaling text/icons would cause mid-morph. Mirrors the
+    // demo's pattern where inner controls slide to opacity 0 first, the box
+    // morphs, then the pill content settles in.
     return (
-      <div
+      <motion.div
+        layoutId={SERVER_CARD_LAYOUT_ID(data.serverId)}
+        layout
+        transition={SNAPPY_CAMERA}
         className={cn(
-          "flex h-full w-full flex-col gap-1 rounded-[8px] border border-border/70 bg-card/95 px-3 py-2 shadow-sm transition-all hover:shadow-md",
+          "h-full w-full overflow-hidden rounded-[8px] border border-border/70 bg-card/95 shadow-sm transition-shadow hover:shadow-md",
           selected && "ring-2 ring-primary/40",
         )}
       >
-        <div className="flex items-center gap-1.5">
-          <span
-            className={cn("size-1.5 rounded-full", dotClass)}
-            aria-label={statusLabel}
-            title={statusLabel}
-          />
-          <span
-            className="flex-1 truncate text-[12.5px] font-semibold"
-            title={data.name}
-          >
-            {data.name}
-          </span>
-          <span className="text-[10px] uppercase tracking-[0.04em] text-muted-foreground/80">
-            {data.isOptional ? "optional" : "required"}
-          </span>
-        </div>
-        <span
-          className="truncate font-mono text-[10.5px] text-muted-foreground"
-          title={data.url ?? "Project server"}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{
+            duration: 0.34,
+            delay: 0.55,
+            ease: [0.22, 1, 0.36, 1],
+          }}
+          className="flex h-full w-full flex-col gap-1 px-3 py-2"
         >
-          {data.url ?? "Project server"}
-        </span>
-        {data.hasOverride ? (
-          <span className="mt-auto text-[10px] text-amber-700 dark:text-amber-300">
-            overrides set
+          <div className="flex items-center gap-1.5">
+            <span
+              className={cn("size-1.5 rounded-full", dotClass)}
+              aria-label={statusLabel}
+              title={statusLabel}
+            />
+            <span
+              className="flex-1 truncate text-[12.5px] font-semibold"
+              title={data.name}
+            >
+              {data.name}
+            </span>
+            <span className="text-[10px] uppercase tracking-[0.04em] text-muted-foreground/80">
+              {data.isOptional ? "optional" : "required"}
+            </span>
+          </div>
+          <span
+            className="truncate font-mono text-[10.5px] text-muted-foreground"
+            title={data.url ?? "Project server"}
+          >
+            {data.url ?? "Project server"}
           </span>
-        ) : null}
+          {data.hasOverride ? (
+            <span className="mt-auto text-[10px] text-amber-700 dark:text-amber-300">
+              overrides set
+            </span>
+          ) : null}
+        </motion.div>
         <Handle
           type="target"
           position={Position.Top}
           id="top"
           className={decorativeHandleClass}
         />
-      </div>
+      </motion.div>
     );
   },
 );
@@ -220,13 +268,83 @@ const nodeTypes = {
   redesignAddServer: AddServerPillRenderer,
 };
 
-function HostSmoothEdge(props: EdgeProps) {
-  const pathOptions = useMemo(() => ({ borderRadius: 14 }), []);
-  return <SmoothStepEdge {...props} pathOptions={pathOptions} />;
+/**
+ * Both host-canvas edges (matrix→hub trunk and hub→card branches) read
+ * their endpoints from `edge.data.fixed{Source,Target}{X,Y}` instead of
+ * from ReactFlow's measured handle positions.
+ *
+ * Why: framer-motion's `layout` + `layoutId` morph on the canvas server
+ * pills (and the matrix card's initial scale/y transform) modify the
+ * elements' CSS transforms. ReactFlow measures handle positions via
+ * `getBoundingClientRect`, which includes those transforms — so the
+ * measured target X/Y can be hundreds of px away from where the node
+ * actually lives in flow coordinates. That made one branch flap up to
+ * the top-right of the canvas (the "giant dashed rectangle" artifact).
+ *
+ * The canvasBuilder already has authoritative flow coordinates for every
+ * node, so just pass them straight through and bypass the measurement.
+ */
+interface FixedEdgeData {
+  fixedSourceX: number;
+  fixedSourceY: number;
+  fixedTargetX: number;
+  fixedTargetY: number;
 }
 
+const TRUNK_CORNER = 14;
+const BRANCH_CORNER = 8;
+
+function buildOrthogonalTreePath(
+  sourceX: number,
+  sourceY: number,
+  targetX: number,
+  targetY: number,
+  cornerRadius: number,
+): string {
+  const midY = (sourceY + targetY) / 2;
+  const goingRight = targetX >= sourceX;
+  const dirX = goingRight ? 1 : -1;
+  const r = Math.min(
+    cornerRadius,
+    Math.abs(targetX - sourceX) / 2,
+    Math.abs(midY - sourceY),
+    Math.abs(targetY - midY),
+  );
+  if (r <= 0.5) {
+    // Source and target vertically aligned — single straight line.
+    return `M ${sourceX} ${sourceY} L ${targetX} ${targetY}`;
+  }
+  return [
+    `M ${sourceX} ${sourceY}`,
+    `L ${sourceX} ${midY - r}`,
+    `Q ${sourceX} ${midY} ${sourceX + r * dirX} ${midY}`,
+    `L ${targetX - r * dirX} ${midY}`,
+    `Q ${targetX} ${midY} ${targetX} ${midY + r}`,
+    `L ${targetX} ${targetY}`,
+  ].join(" ");
+}
+
+function makeFixedEdge(cornerRadius: number) {
+  return function FixedEdge({ id, data, style, markerEnd }: EdgeProps) {
+    const d = data as FixedEdgeData | undefined;
+    if (!d) return null;
+    const path = buildOrthogonalTreePath(
+      d.fixedSourceX,
+      d.fixedSourceY,
+      d.fixedTargetX,
+      d.fixedTargetY,
+      cornerRadius,
+    );
+    return <BaseEdge id={id} path={path} style={style} markerEnd={markerEnd} />;
+  };
+}
+
+const HostTrunkEdge = makeFixedEdge(TRUNK_CORNER);
+const HostBranchEdge = makeFixedEdge(BRANCH_CORNER);
+
 const edgeTypes = {
-  default: HostSmoothEdge,
+  hostTrunk: HostTrunkEdge,
+  hostBranch: HostBranchEdge,
 };
 
 interface RedesignedHostCanvasProps {
@@ -311,12 +429,46 @@ export function RedesignedHostCanvas({
     [selectedNodeId, onSelectNode, readOnly, onRequestEdit],
   );
 
+  // Hold the canvas edges invisible until the server pills have landed at
+  // their layoutId destinations AND their inner content has faded in —
+  // otherwise the lines render at full opacity while the cards are still
+  // morphing in from the Servers grid, which reads as "lines drawn first,
+  // then servers". Timing covers SNAPPY_CAMERA (1150ms) + inner-fade tail.
+  const [edgesReady, setEdgesReady] = useState(false);
+  useEffect(() => {
+    const t = window.setTimeout(() => setEdgesReady(true), 1450);
+    return () => window.clearTimeout(t);
+  }, []);
+
+  // ReactFlow renders nodes at their absolute canvas coordinates first, then
+  // applies `fitView` on the next frame, which causes a one-frame "off-center"
+  // flash where edges trail off to wherever the nodes are pre-fit. Hide the
+  // viewport until onInit fires and fitView has settled, then fade in.
+  const [viewportReady, setViewportReady] = useState(false);
+
   return (
     <div
       className="host-redesign-canvas relative h-full w-full overflow-hidden rounded-[28px] border border-border/70 bg-background"
       style={shellStyle}
+      data-edges-ready={edgesReady ? "true" : "false"}
+      data-viewport-ready={viewportReady ? "true" : "false"}
     >
       <HostMatrixContext.Provider value={matrixCtx}>
+        {/* Inline opacity gate: keeps ReactFlow's pre-fitView paint (nodes
+            at raw canvas coords, edges trailing off-screen) invisible until
+            fitView has applied. Inline style always wins over the cascade,
+            unlike the `data-viewport-ready` CSS attribute selector which was
+            getting shadowed by xyflow's own stylesheet in some load orders. */}
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            opacity: viewportReady ? 1 : 0,
+            transition: viewportReady
+              ? "opacity 220ms cubic-bezier(0.22, 1, 0.36, 1)"
+              : "none",
+          }}
+        >
         <ReactFlow
           nodes={nodes}
           edges={filteredEdges}
@@ -332,7 +484,15 @@ export function RedesignedHostCanvas({
           nodesConnectable={false}
           elementsSelectable={!readOnly}
           fitView
-          fitViewOptions={{ padding: 0.18 }}
+          fitViewOptions={{ padding: 0.18, duration: 0 }}
+          onInit={(instance) => {
+            // Force a deterministic fit + defer the visibility flip a couple
+            // frames so node-measurement and fitView have definitely
+            // applied. `requestAnimationFrame` alone fires before
+            // ReactFlow's measurement pass on the first render.
+            instance.fitView({ padding: 0.18, duration: 0 });
+            window.setTimeout(() => setViewportReady(true), 60);
+          }}
           onNodeClick={(_, node) => {
             if (readOnly) {
               onRequestEdit?.();
@@ -359,6 +519,7 @@ export function RedesignedHostCanvas({
             className="!rounded-xl !border !border-border/70 !bg-card/95"
           />
         </ReactFlow>
+        </div>
       </HostMatrixContext.Provider>
     </div>
   );

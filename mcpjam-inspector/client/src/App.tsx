@@ -181,6 +181,7 @@ import { disconnectAllRuntimeServers } from "./state/mcp-api";
 import { getEffectiveProjectClientCapabilities } from "./lib/client-config";
 import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
 import {
+  buildHostsPath,
   buildOrganizationPath,
   buildEvalsPath,
   getInvalidOrganizationRouteNavigationTarget,
@@ -191,6 +192,7 @@ import {
   routePaths,
   type OrganizationRouteSection,
   useActiveTab,
+  useAppNavigate,
   useCurrentOrgRoute,
 } from "./lib/app-navigation";
 import {
@@ -198,6 +200,7 @@ import {
   Outlet,
   UNSAFE_LocationContext,
   useOutletContext,
+  useParams,
 } from "react-router";
 import { useProjectClientConfigSyncPending } from "./hooks/use-project-client-config-sync-pending";
 import { ingestOAuthTraceLogs } from "./stores/traffic-log-store";
@@ -495,8 +498,18 @@ export function ServersRoute() {
     convexProjectId,
     hostsHubFlagEnabled,
     isAuthenticated,
-    setHostsTabSelectedHostId,
   } = useAppRouteContext();
+  const navigate = useAppNavigate();
+
+  // From /servers, "select a host" means navigate to /hosts/:id. State sync
+  // happens in HostsRoute via the URL → hostsTabSelectedHostId effect, so
+  // here we only need to drive the URL.
+  const handleSelectHost = useCallback(
+    (next: string | null) => {
+      navigate(next ? buildHostsPath(next) : routePaths.servers);
+    },
+    [navigate],
+  );
 
   if (!hostsHubFlagEnabled || !isAuthenticated) {
     return <ServersTabBody />;
@@ -507,7 +520,7 @@ export function ServersRoute() {
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
       selectedHostId={null}
-      onSelectHost={setHostsTabSelectedHostId}
+      onSelectHost={handleSelectHost}
       serversTabElement={<ServersTabBody />}
     />
   );
@@ -570,6 +583,31 @@ export function HostsRoute() {
     setHostsTabSelectedHostId,
   } = useAppRouteContext();
   const [previewedHostId] = usePreviewedHostId(convexProjectId);
+  const params = useParams<{ hostId?: string }>();
+  const navigate = useAppNavigate();
+  const urlHostId = useMemo(() => {
+    if (!params.hostId) return null;
+    try {
+      return decodeURIComponent(params.hostId);
+    } catch {
+      return params.hostId;
+    }
+  }, [params.hostId]);
+
+  // URL is the source of truth for the open host canvas. Sync into shared
+  // state so `GlobalHostBar`, `onCanvasReplaceHost`, and other surfaces that
+  // still read `hostsTabSelectedHostId` stay aligned.
+  useEffect(() => {
+    if (hostsTabSelectedHostId === urlHostId) return;
+    setHostsTabSelectedHostId(urlHostId);
+  }, [urlHostId, hostsTabSelectedHostId, setHostsTabSelectedHostId]);
+
+  const handleSelectHost = useCallback(
+    (next: string | null) => {
+      navigate(next ? buildHostsPath(next) : routePaths.hosts);
+    },
+    [navigate],
+  );
 
   if (!hostsHubFlagEnabled || !isAuthenticated) {
     return <ServersTabBody />;
@@ -579,8 +617,8 @@ export function HostsRoute() {
     <HostsTab
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
-      selectedHostId={hostsTabSelectedHostId ?? previewedHostId}
-      onSelectHost={setHostsTabSelectedHostId}
+      selectedHostId={urlHostId ?? previewedHostId}
+      onSelectHost={handleSelectHost}
       serversTabElement={<ServersTabBody />}
     />
   );
@@ -2796,14 +2834,17 @@ export default function App() {
           projectId: convexProjectId,
           onEditHost: (hostId: string) => {
             setHostsTabSelectedHostId(hostId);
-            handleNavigate("hosts");
+            navigateApp(buildHostsPath(hostId));
           },
           // Only present while the host canvas is open — re-targets it on
           // dropdown change so the diagram tracks the selected host instead
           // of stuck on whatever was first opened via Edit.
           onCanvasReplaceHost:
             activeTab === "hosts" && hostsTabSelectedHostId
-              ? (hostId: string) => setHostsTabSelectedHostId(hostId)
+              ? (hostId: string) => {
+                  setHostsTabSelectedHostId(hostId);
+                  navigateApp(buildHostsPath(hostId), { replace: true });
+                }
               : undefined,
         }
       : undefined;

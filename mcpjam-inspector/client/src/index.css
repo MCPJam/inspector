@@ -723,6 +723,39 @@
   }
 }
 
+/* Hold the host canvas's connecting edges invisible until the server pills
+   have landed via Framer Motion's layoutId morph (~SNAPPY_CAMERA + buffer).
+   Otherwise the lines render immediately while cards are still translating,
+   which reads as "edges drawn before servers arrive". */
+.host-redesign-canvas[data-edges-ready="false"] .react-flow__edges {
+  opacity: 0;
+}
+.host-redesign-canvas[data-edges-ready="true"] .react-flow__edges {
+  opacity: 1;
+  transition: opacity 360ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Hide ReactFlow's viewport (node + edge layers) until fitView has settled —
+   prevents the one-frame "off-center" flash where nodes render at their raw
+   canvas coords before the viewport pans into place. The nodes pane and the
+   edges pane both sit inside .react-flow__viewport. */
+.host-redesign-canvas[data-viewport-ready="false"] .react-flow__viewport {
+  opacity: 0;
+}
+.host-redesign-canvas[data-viewport-ready="true"] .react-flow__viewport {
+  opacity: 1;
+  transition: opacity 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Reduced-motion: the canvas still needs the visibility gate (otherwise the
+   pre-fitView flash is worse), but instant rather than animated. */
+@media (prefers-reduced-motion: reduce) {
+  .host-redesign-canvas[data-edges-ready="true"] .react-flow__edges,
+  .host-redesign-canvas[data-viewport-ready="true"] .react-flow__viewport {
+    transition: none;
+  }
+}
+
 /* Font code variable for theme */
 @theme inline {
   --font-code: var(--font-code);

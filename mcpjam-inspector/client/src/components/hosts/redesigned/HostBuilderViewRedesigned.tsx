@@ -44,7 +44,6 @@ import {
 interface HostBuilderViewRedesignedProps {
   hostId: string;
   projectId: string;
-  onBack: () => void;
 }
 
 const CLOSED_FOCUS: HostFocusState = {
@@ -56,7 +55,6 @@ const CLOSED_FOCUS: HostFocusState = {
 export function HostBuilderViewRedesigned({
   hostId,
   projectId,
-  onBack,
 }: HostBuilderViewRedesignedProps) {
   const navigate = useNavigate();
   const { isAuthenticated } = useConvexAuth();
@@ -381,7 +379,10 @@ export function HostBuilderViewRedesigned({
               ariaLabel="Connect view"
               onChange={(next) => {
                 if (next === "servers") {
-                  onBack();
+                  // Skip `onBack()` (which would push `/hosts` first via
+                  // the parent's handleSelectHost) and just navigate.
+                  // The URL→state sync in HostsRoute will clear the
+                  // selected host when /servers takes over.
                   navigate("/servers");
                 }
               }}
