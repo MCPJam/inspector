@@ -441,15 +441,21 @@ export function ClientContextHeader({
           </TooltipContent>
         </Tooltip>
 
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <div className="flex shrink-0 items-center gap-0.5 rounded-md border bg-background p-0.5 shadow-xs">
+        <div className="flex shrink-0 items-center gap-0.5 rounded-md border bg-background p-0.5 shadow-xs">
+          <Tooltip>
+            <TooltipTrigger asChild>
               <div className="flex h-6 w-6 items-center justify-center @max-[820px]/playground-header:hidden">
                 <Paintbrush className="h-3.5 w-3.5 text-muted-foreground" />
               </div>
-              {listHostStyles().map((host) => (
+            </TooltipTrigger>
+            <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
+              <p className="font-medium">Client Styles</p>
+            </TooltipContent>
+          </Tooltip>
+          {listHostStyles().map((host) => (
+            <Tooltip key={host.id}>
+              <TooltipTrigger asChild>
                 <Button
-                  key={host.id}
                   variant={hostStyle === host.id ? "secondary" : "ghost"}
                   size="icon"
                   onClick={() => {
@@ -469,13 +475,13 @@ export function ClientContextHeader({
                     className="h-3.5 w-3.5 object-contain"
                   />
                 </Button>
-              ))}
-            </div>
-          </TooltipTrigger>
-          <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
-            <p className="font-medium">Client Styles</p>
-          </TooltipContent>
-        </Tooltip>
+              </TooltipTrigger>
+              <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
+                <p className="font-medium">{host.chatUi.label}</p>
+              </TooltipContent>
+            </Tooltip>
+          ))}
+        </div>
 
         {showThemeToggle ? (
           <Tooltip>
