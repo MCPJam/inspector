@@ -937,16 +937,26 @@ function isAuthDeniedError(error: unknown): boolean {
   return /\b(401|403)\b|unauthorized|forbidden/i.test(withStatus.message);
 }
 
-export function useChatSession({
-  selectedServers,
-  directVisibility = "private",
-  hostedOrgModelConfig,
-  hostedContext,
-  minimalMode: _minimalMode = false,
-  executionConfig,
-  hostStyle,
-  onReset,
-}: UseChatSessionOptions): UseChatSessionReturn {
+export function useChatSession(
+  options: UseChatSessionOptions
+): UseChatSessionReturn {
+  const {
+    selectedServers,
+    directVisibility = "private",
+    hostedOrgModelConfig,
+    hostedContext,
+    minimalMode: _minimalMode = false,
+    executionConfig,
+    hostStyle,
+    onReset,
+  } = options;
+  // Surfaces that omit `executionConfig` entirely (e.g. Playground) own their
+  // chat-execution state imperatively and must not be re-synced from prop
+  // defaults. Surfaces that pass `executionConfig` are in controlled mode and
+  // get synced on every change — including when an upstream value transiently
+  // becomes undefined during host bootstrap, in which case fields fall back to
+  // hook defaults rather than retaining the prior host's value.
+  const isExecutionConfigControlled = "executionConfig" in options;
   const hostedProjectId = hostedContext?.projectId;
   const hostedSelectedServerIds = hostedContext?.selectedServerIds ?? [];
   const hostedOAuthTokens = hostedContext?.oauthTokens;
@@ -1823,29 +1833,30 @@ export function useChatSession({
     [queueSessionHydration]
   );
 
-  // Only re-sync from `executionConfig` when the caller explicitly provides
-  // one. Surfaces that omit `executionConfig` (e.g. Playground, which owns
-  // an imperative reseed-from-host effect) would otherwise see their state
-  // stomped back to the hook defaults on every render, racing the imperative
-  // reseed and producing the default literal in the system-prompt modal even
-  // though the host's value had already been applied.
+  // When controlled, mirror `executionConfig` fields into local state; when
+  // a field is undefined, reset to the hook default rather than retaining
+  // the prior host's value (e.g. ChatV2Route passes `executionConfig`
+  // computed from `activeHost`, which is transiently undefined during
+  // project/host bootstrap). When uncontrolled (Playground), skip — the
+  // caller drives these via imperative setters and would otherwise race
+  // the sync.
   const executionSystemPrompt = executionConfig?.systemPrompt;
   const executionTemperature = executionConfig?.temperature;
   const executionRequireToolApproval = executionConfig?.requireToolApproval;
   useEffect(() => {
-    if (executionSystemPrompt === undefined) return;
-    setSystemPrompt(executionSystemPrompt);
-  }, [executionSystemPrompt]);
+    if (!isExecutionConfigControlled) return;
+    setSystemPrompt(executionSystemPrompt ?? DEFAULT_SYSTEM_PROMPT);
+  }, [isExecutionConfigControlled, executionSystemPrompt]);
 
   useEffect(() => {
-    if (executionTemperature === undefined) return;
-    setTemperature(executionTemperature);
-  }, [executionTemperature]);
+    if (!isExecutionConfigControlled) return;
+    setTemperature(executionTemperature ?? 0.7);
+  }, [isExecutionConfigControlled, executionTemperature]);
 
   useEffect(() => {
-    if (executionRequireToolApproval === undefined) return;
-    setRequireToolApproval(executionRequireToolApproval);
-  }, [executionRequireToolApproval]);
+    if (!isExecutionConfigControlled) return;
+    setRequireToolApproval(executionRequireToolApproval ?? false);
+  }, [isExecutionConfigControlled, executionRequireToolApproval]);
 
   // Auth headers setup - reset chat after auth changes to ensure transport has correct headers
   useEffect(() => {
