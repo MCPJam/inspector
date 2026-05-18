@@ -226,9 +226,7 @@
           }
         }
 
-        const cspString = directives.join("; ");
-        console.log("[buildCSP] Built CSP string:", cspString);
-        return cspString;
+        return directives.join("; ");
       }
 
       /**
@@ -383,6 +381,13 @@ document.addEventListener('securitypolicyviolation', function(e) {
             const baseAllow = buildAllowAttribute(permissions);
             if (baseAllow) allowParts.push(baseAllow);
             if (allowFeatures && typeof allowFeatures === "object") {
+              // Keep this list in sync with SEP_1865_PERMISSION_FEATURES
+              // in `convex/lib/hostConfigV2.ts` (canonical) and
+              // `client/src/lib/client-config-v2.ts` (mirror). This file
+              // is plain HTML/JS served to the proxy iframe and can't
+              // import the constant; the canonicalizer drops these keys
+              // server-side, the renderer drops them again client-side,
+              // and this is the last line of defense.
               const specFeatures = new Set([
                 "camera",
                 "microphone",

@@ -27,6 +27,7 @@ import type {
   McpUiResourceCsp,
   McpUiResourcePermissions,
 } from "@modelcontextprotocol/ext-apps/app-bridge";
+import { SEP_1865_PERMISSION_FEATURES } from "@/lib/client-config-v2";
 
 export interface SandboxedIframeHandle {
   postMessage: (data: unknown) => void;
@@ -219,17 +220,12 @@ export const SandboxedIframe = forwardRef<
     if (permissions?.geolocation) allowList.push("geolocation *");
     if (permissions?.clipboardWrite) allowList.push("clipboard-write *");
     if (allowFeatures) {
+      // Defense-in-depth: skip spec features in case the canonicalizer
+      // was bypassed. `permissions.allow.{camera,...}` is the single
+      // source of truth — see SEP_1865_PERMISSION_FEATURES.
+      const specFeatures = new Set<string>(SEP_1865_PERMISSION_FEATURES);
       for (const k of Object.keys(allowFeatures).sort()) {
-        // Defense-in-depth: skip the 4 spec features here too in case the
-        // canonicalizer was bypassed.
-        if (
-          k === "camera" ||
-          k === "microphone" ||
-          k === "geolocation" ||
-          k === "clipboard-write"
-        ) {
-          continue;
-        }
+        if (specFeatures.has(k)) continue;
         const allowlist = allowFeatures[k];
         if (typeof allowlist === "string" && allowlist.length > 0) {
           allowList.push(`${k} ${allowlist}`);
