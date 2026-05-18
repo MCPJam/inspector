@@ -169,6 +169,11 @@ function liftSpecSandboxIntoPolicy(args: {
   const nextCsp: SandboxPolicyCsp = {};
   if (prevCsp?.mode !== undefined) nextCsp.mode = prevCsp.mode;
   if (prevCsp?.extensions !== undefined) nextCsp.extensions = prevCsp.extensions;
+  // cspDirectives is an inspector-only emission knob — not in the spec JSON
+  // shape. Preserve verbatim across a JSON edit; the user manages it from
+  // the structured editor in `ClientConfigEditor`, not by typing it here.
+  if (prevCsp?.cspDirectives !== undefined)
+    nextCsp.cspDirectives = prevCsp.cspDirectives;
   if (Object.keys(newRestrict).length > 0) nextCsp.restrictTo = newRestrict;
   const cspNonEmpty = Object.keys(nextCsp).length > 0;
 
@@ -195,10 +200,26 @@ function liftSpecSandboxIntoPolicy(args: {
   if (Object.keys(newAllow).length > 0) nextPerms.allow = newAllow;
   const permsNonEmpty = Object.keys(nextPerms).length > 0;
 
-  if (!cspNonEmpty && !permsNonEmpty) return undefined;
+  // sandboxAttrs and allowFeatures are inspector-only emission knobs —
+  // never surfaced in the spec JSON view. Preserve verbatim across a JSON
+  // edit; the user manages them from the structured editor in
+  // `ClientConfigEditor`, not by typing them here.
+  const prevSandboxAttrs = prev?.sandboxAttrs;
+  const prevAllowFeatures = prev?.allowFeatures;
+
+  if (
+    !cspNonEmpty &&
+    !permsNonEmpty &&
+    prevSandboxAttrs === undefined &&
+    prevAllowFeatures === undefined
+  ) {
+    return undefined;
+  }
   const next: SandboxPolicy = {};
   if (cspNonEmpty) next.csp = nextCsp;
   if (permsNonEmpty) next.permissions = nextPerms;
+  if (prevSandboxAttrs !== undefined) next.sandboxAttrs = prevSandboxAttrs;
+  if (prevAllowFeatures !== undefined) next.allowFeatures = prevAllowFeatures;
   return next;
 }
 

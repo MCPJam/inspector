@@ -42,6 +42,28 @@ interface SandboxedIframeProps {
   csp?: McpUiResourceCsp;
   /** Permissions metadata from resource _meta.ui.permissions (SEP-1865) */
   permissions?: McpUiResourcePermissions;
+  /**
+   * Inspector-only: extra `sandbox=` tokens unioned with the spec-mandated
+   * `allow-scripts allow-same-origin` on both outer and inner iframes.
+   * Models tokens real hosts emit (e.g. `allow-forms`) that aren't part of
+   * SEP-1865 metadata.
+   */
+  sandboxAttrs?: string[];
+  /**
+   * Inspector-only: extra Permissions Policy entries appended to outer/inner
+   * iframe `allow=`. Keys are kebab Permissions Policy tokens
+   * (`fullscreen`, `web-share`); the 4 spec features
+   * (camera/microphone/geolocation/clipboard-write) live in `permissions`
+   * and are NOT permitted here.
+   */
+  allowFeatures?: Record<string, string>;
+  /**
+   * Inspector-only: per-directive CSP source-expression overrides merged
+   * into the inner doc's `<meta http-equiv="Content-Security-Policy">`.
+   * Keys are CSP directive names (`script-src`, …); values are token arrays
+   * (`["'unsafe-eval'", "'wasm-unsafe-eval'"]`).
+   */
+  cspDirectives?: Record<string, string[]>;
   /** Skip CSP injection entirely (for permissive/testing mode) */
   permissive?: boolean;
   /** Callback when sandbox proxy is ready */
@@ -75,6 +97,9 @@ export const SandboxedIframe = forwardRef<
     sandbox = "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox",
     csp,
     permissions,
+    sandboxAttrs,
+    allowFeatures,
+    cspDirectives,
     permissive,
     onProxyReady,
     onMessage,
@@ -182,15 +207,58 @@ export const SandboxedIframe = forwardRef<
     return () => window.removeEventListener("message", handleMessage);
   }, [handleMessage]);
 
-  // Build allow attribute for outer iframe based on requested permissions
+  // Build allow attribute for outer iframe based on requested permissions.
+  // SEP-1865 spec-permission features come from `permissions`; extra
+  // Permissions Policy entries from the inspector-only `allowFeatures` knob
+  // are appended after them. Per Permissions Policy spec, `;` separates
+  // features.
   const outerAllowAttribute = useMemo(() => {
     const allowList = ["local-network-access *", "midi *"];
     if (permissions?.camera) allowList.push("camera *");
     if (permissions?.microphone) allowList.push("microphone *");
     if (permissions?.geolocation) allowList.push("geolocation *");
     if (permissions?.clipboardWrite) allowList.push("clipboard-write *");
+    if (allowFeatures) {
+      for (const k of Object.keys(allowFeatures).sort()) {
+        // Defense-in-depth: skip the 4 spec features here too in case the
+        // canonicalizer was bypassed.
+        if (
+          k === "camera" ||
+          k === "microphone" ||
+          k === "geolocation" ||
+          k === "clipboard-write"
+        ) {
+          continue;
+        }
+        const allowlist = allowFeatures[k];
+        if (typeof allowlist === "string" && allowlist.length > 0) {
+          allowList.push(`${k} ${allowlist}`);
+        }
+      }
+    }
     return allowList.join("; ");
-  }, [permissions]);
+  }, [permissions, allowFeatures]);
+
+  // Outer iframe `sandbox=` value: union of the spec-mandated/default
+  // tokens (from the `sandbox` prop) with the inspector-only `sandboxAttrs`
+  // extras. Dedupe + sort for stable DOM output.
+  const outerSandboxAttribute = useMemo(() => {
+    const tokens = new Set<string>();
+    for (const t of sandbox.split(/\s+/)) {
+      if (t.length > 0) tokens.add(t);
+    }
+    // `allow-scripts` and `allow-same-origin` are mandatory regardless of
+    // what the caller passed.
+    tokens.add("allow-scripts");
+    tokens.add("allow-same-origin");
+    if (sandboxAttrs) {
+      for (const t of sandboxAttrs) {
+        const trimmed = t.trim();
+        if (trimmed.length > 0) tokens.add(trimmed);
+      }
+    }
+    return Array.from(tokens).sort().join(" ");
+  }, [sandbox, sandboxAttrs]);
 
   // Send HTML, CSP, and permissions to sandbox when ready (SEP-1865)
   useEffect(() => {
@@ -200,7 +268,17 @@ export const SandboxedIframe = forwardRef<
       {
         jsonrpc: "2.0",
         method: "ui/notifications/sandbox-resource-ready",
-        params: { html, sandbox, csp, permissions, permissive, colorScheme },
+        params: {
+          html,
+          sandbox,
+          csp,
+          permissions,
+          sandboxAttrs,
+          allowFeatures,
+          cspDirectives,
+          permissive,
+          colorScheme,
+        },
       },
       sandboxProxyOrigin,
     );
@@ -210,8 +288,12 @@ export const SandboxedIframe = forwardRef<
     sandbox,
     csp,
     permissions,
+    sandboxAttrs,
+    allowFeatures,
+    cspDirectives,
     permissive,
     sandboxProxyOrigin,
+    colorScheme,
   ]);
 
   // Keep iframe color-scheme in sync without reloading the widget document.
@@ -234,7 +316,7 @@ export const SandboxedIframe = forwardRef<
     <iframe
       ref={outerRef}
       src={sandboxProxyUrl}
-      sandbox={sandbox}
+      sandbox={outerSandboxAttribute}
       allow={outerAllowAttribute}
       title={title}
       className={className}

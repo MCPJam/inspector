@@ -983,11 +983,24 @@ export function MCPAppsRenderer({
   const sandboxCspPolicy = activeMcpProfile?.apps?.sandbox?.csp;
   const sandboxPermissionsPolicy =
     activeMcpProfile?.apps?.sandbox?.permissions;
+  // Inspector-only emission knobs sourced directly from the profile. They
+  // bypass the SEP-1865 resolver because they model browser-emission state
+  // that has no spec slot (raw `sandbox=`/`allow=` tokens, CSP source
+  // expressions). Passed through unchanged to <SandboxedIframe>.
+  const sandboxAttrsPolicy =
+    activeMcpProfile?.apps?.sandbox?.sandboxAttrs;
+  const allowFeaturesPolicy =
+    activeMcpProfile?.apps?.sandbox?.allowFeatures;
+  const cspDirectivesPolicy =
+    activeMcpProfile?.apps?.sandbox?.csp?.cspDirectives;
   const effectiveSandbox = useMemo<{
     csp: McpUiResourceCsp | undefined;
     permissions: McpUiResourcePermissions | undefined;
     permissive: boolean;
     hostPolicyApplied: boolean;
+    sandboxAttrs: string[] | undefined;
+    allowFeatures: Record<string, string> | undefined;
+    cspDirectives: Record<string, string[]> | undefined;
   }>(() => {
     // Detect whether the host explicitly configured CSP hardening signals.
     // Hoisted above the permissive short-circuit so the permissive branch
@@ -1048,6 +1061,9 @@ export function MCPAppsRenderer({
         permissions: resolvedPermissions ?? widgetPermissions,
         permissive: true,
         hostPolicyApplied: !!resolvedPermissions,
+        sandboxAttrs: sandboxAttrsPolicy,
+        allowFeatures: allowFeaturesPolicy,
+        cspDirectives: cspDirectivesPolicy,
       };
     }
 
@@ -1178,6 +1194,9 @@ export function MCPAppsRenderer({
           ? false
           : widgetPermissive,
       hostPolicyApplied,
+      sandboxAttrs: sandboxAttrsPolicy,
+      allowFeatures: allowFeaturesPolicy,
+      cspDirectives: cspDirectivesPolicy,
     };
   }, [
     cspMode,
@@ -1186,6 +1205,9 @@ export function MCPAppsRenderer({
     widgetCsp,
     widgetPermissions,
     widgetPermissive,
+    sandboxAttrsPolicy,
+    allowFeaturesPolicy,
+    cspDirectivesPolicy,
   ]);
 
   useEffect(() => {
@@ -1920,6 +1942,9 @@ export function MCPAppsRenderer({
       csp={effectiveSandbox.csp}
       permissions={effectiveSandbox.permissions}
       permissive={effectiveSandbox.permissive}
+      sandboxAttrs={effectiveSandbox.sandboxAttrs}
+      allowFeatures={effectiveSandbox.allowFeatures}
+      cspDirectives={effectiveSandbox.cspDirectives}
       colorScheme={resolvedTheme}
       onProxyReady={() => {
         setSandboxProxyReady(true);
@@ -2020,6 +2045,9 @@ export function MCPAppsRenderer({
         widgetCsp={effectiveSandbox.csp}
         widgetPermissions={effectiveSandbox.permissions}
         widgetPermissive={effectiveSandbox.permissive}
+        widgetSandboxAttrs={effectiveSandbox.sandboxAttrs}
+        widgetAllowFeatures={effectiveSandbox.allowFeatures}
+        widgetCspDirectives={effectiveSandbox.cspDirectives}
         hostContextRef={hostContextRef}
         serverId={serverId}
         resourceUri={resourceUri}

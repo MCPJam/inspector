@@ -23,6 +23,26 @@ import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
 
 export type HostStyleId = ChatboxHostStyle;
 
+/**
+ * Permissions Policy feature tokens corresponding to the four SEP-1865
+ * spec permissions. KEBAB-CASE browser tokens (as they appear in iframe
+ * `allow=` attributes), NOT the camelCase keys used in
+ * `mcpProfile.permissions.allow`. The backend canonicalizer drops any
+ * key in this list from `allowFeatures` — `permissions.allow` is the
+ * single source of truth. Mirror of the same constant in
+ * `convex/lib/hostConfigV2.ts`.
+ *
+ * Naming gap (intentional): `permissions.allow.clipboardWrite` (camel,
+ * spec field name) ↔ `allowFeatures["clipboard-write"]` (kebab,
+ * Permissions Policy token). Do NOT normalize casing on either side.
+ */
+export const SEP_1865_PERMISSION_FEATURES = [
+  "camera",
+  "microphone",
+  "geolocation",
+  "clipboard-write",
+] as const;
+
 export type HostConfigConnectionDefaults = {
   headers: Record<string, string>;
   requestTimeout: number;
@@ -81,6 +101,17 @@ export type HostConfigMcpProfileV1 = {
         mode?: "host-default" | "declared" | "relaxed";
         /** Intersection — never adds undeclared domains (SEP-1865). */
         restrictTo?: CspDomainSet;
+        /**
+         * Per-directive CSP source-expression overrides emitted in the inner
+         * doc's `<meta http-equiv="Content-Security-Policy">`. Keys are CSP
+         * directive names (`script-src`, `style-src`, …); values are
+         * source-expression token arrays (`["'unsafe-eval'", "'wasm-unsafe-eval'"]`).
+         * Stored verbatim — no enum — so future tokens (nonces, hashes,
+         * `'strict-dynamic'`) land here without schema churn.
+         * Inspector-only emission knob: NOT advertised in SEP-1865 metadata;
+         * models what real hosts emit at the browser layer.
+         */
+        cspDirectives?: Record<string, string[]>;
         extensions?: Record<string, unknown>;
       };
       permissions?: {
@@ -88,6 +119,21 @@ export type HostConfigMcpProfileV1 = {
         allow?: Record<string, boolean>;
         extensions?: Record<string, unknown>;
       };
+      /**
+       * Extra outer/inner iframe `sandbox=` tokens unioned with the mandatory
+       * `allow-scripts allow-same-origin`. Inspector-only emission knob.
+       */
+      sandboxAttrs?: string[];
+      /**
+       * Extra Permissions Policy entries appended to the outer/inner iframe
+       * `allow=` attribute. Keys are RAW kebab-case Permissions Policy tokens
+       * (`clipboard-write`, not `clipboardWrite`); values are allowlist
+       * strings (`*`, `'self'`, an origin). The 4 spec features
+       * (camera/microphone/geolocation/clipboard-write) are silently dropped
+       * by the canonicalizer — `permissions.allow` is the single source of
+       * truth for them. Inspector-only.
+       */
+      allowFeatures?: Record<string, string>;
     };
     /**
      * Overrides for the MCP Apps `ui/initialize` response advertised to

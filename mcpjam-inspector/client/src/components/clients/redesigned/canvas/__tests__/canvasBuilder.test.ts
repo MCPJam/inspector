@@ -156,12 +156,12 @@ describe("buildRedesignedHostCanvas", () => {
 });
 
 describe("buildRedesignedHostCanvas — sandbox config rows", () => {
-  it("emits only the permissions row when mode is 'declared' and restrictTo is empty — the universal safe default doesn't generate noise rows", () => {
-    // Both mode='declared' and empty restrictTo are the spec-aligned
-    // defaults (trust the view's CSP, narrow nothing). Surfacing them
-    // as rows would just confirm "safe default in effect" on every
-    // host. permissions stays because it's always informative (lists
-    // granted spec keys, "—" when nothing's granted).
+  it("emits only the permissions row when every other slice is at the safe default — no noise rows", () => {
+    // mode='declared', empty restrictTo / cspDirectives / sandboxAttrs /
+    // allowFeatures are all spec-aligned safe defaults. Surfacing them as
+    // rows would just confirm "safe default in effect" on every host.
+    // permissions stays because it's always informative (lists granted spec
+    // keys, "—" when nothing's granted).
     const data = matrixData(buildVm());
     expect(data.sandbox.map((s) => s.subKey)).toEqual(["permissions"]);
   });
@@ -322,6 +322,90 @@ describe("buildRedesignedHostCanvas — sandbox config rows", () => {
     );
     expect(row?.summary).toBe("—");
     expect(row?.qualifier).toBeNull();
+  });
+
+  it("omits the new inspector-only rows entirely when at the safe default", () => {
+    // cspDirectives / sandboxAttrs / allowFeatures all follow the same
+    // "skip at default" pattern as mode / restrictTo — surfacing them as
+    // "—" rows would just confirm "safe default in effect" on every host.
+    const data = matrixData(buildVm());
+    for (const key of ["cspDirectives", "sandboxAttrs", "allowFeatures"]) {
+      const row = data.sandbox.find((s) => s.subKey === key);
+      expect(row).toBeUndefined();
+    }
+  });
+
+  it("tints cspDirectives as DANGER when any value contains 'unsafe-eval'", () => {
+    const draft = emptyHostConfigInputV2();
+    draft.mcpProfile = {
+      profileVersion: 1,
+      apps: {
+        sandbox: {
+          csp: {
+            cspDirectives: {
+              "script-src": ["'unsafe-eval'", "'wasm-unsafe-eval'"],
+            },
+          },
+        },
+      },
+    };
+    const row = matrixData(buildVm({ draft })).sandbox.find(
+      (s) => s.subKey === "cspDirectives",
+    );
+    expect(row?.severity).toBe("danger");
+    expect(row?.summary).toBe("1 directive");
+  });
+
+  it("keeps cspDirectives NEUTRAL when only safe tokens are present", () => {
+    const draft = emptyHostConfigInputV2();
+    draft.mcpProfile = {
+      profileVersion: 1,
+      apps: {
+        sandbox: {
+          csp: {
+            cspDirectives: {
+              "img-src": ["blob:", "data:"],
+              "connect-src": ["https://api.example.com"],
+            },
+          },
+        },
+      },
+    };
+    const row = matrixData(buildVm({ draft })).sandbox.find(
+      (s) => s.subKey === "cspDirectives",
+    );
+    expect(row?.severity).toBe("neutral");
+    expect(row?.summary).toBe("2 directives");
+  });
+
+  it("summarizes sandboxAttrs as a neutral list", () => {
+    const draft = emptyHostConfigInputV2();
+    draft.mcpProfile = {
+      profileVersion: 1,
+      apps: {
+        sandbox: { sandboxAttrs: ["allow-forms", "allow-modals"] },
+      },
+    };
+    const row = matrixData(buildVm({ draft })).sandbox.find(
+      (s) => s.subKey === "sandboxAttrs",
+    );
+    expect(row?.severity).toBe("neutral");
+    expect(row?.summary).toBe("allow-forms, allow-modals");
+  });
+
+  it("summarizes allowFeatures as a neutral key:value list", () => {
+    const draft = emptyHostConfigInputV2();
+    draft.mcpProfile = {
+      profileVersion: 1,
+      apps: {
+        sandbox: { allowFeatures: { fullscreen: "*" } },
+      },
+    };
+    const row = matrixData(buildVm({ draft })).sandbox.find(
+      (s) => s.subKey === "allowFeatures",
+    );
+    expect(row?.severity).toBe("neutral");
+    expect(row?.summary).toBe("fullscreen: *");
   });
 
   it("flags a sandbox row as changed when the previous host had different config", () => {

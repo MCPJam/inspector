@@ -22,7 +22,14 @@ describe("focusTabForNodeId — sandbox routing", () => {
   });
 
   it("routes every sandbox leaf node id to the Apps Extension tab", () => {
-    for (const sub of ["mode", "restrictTo", "permissions"] as const) {
+    for (const sub of [
+      "mode",
+      "restrictTo",
+      "cspDirectives",
+      "permissions",
+      "sandboxAttrs",
+      "allowFeatures",
+    ] as const) {
       expect(focusTabForNodeId(sandboxConfigLeafNodeId(sub))).toEqual({
         tab: "apps",
         selectedServerId: null,
@@ -228,5 +235,72 @@ describe("AppsExtensionTab — spec-shaped sandbox round-trip", () => {
     expect(
       next?.mcpProfile?.apps?.sandbox?.csp?.restrictTo?.connectDomains,
     ).toEqual(["https://api.openai.com"]);
+  });
+
+  it("preserves inspector-only sandboxAttrs/allowFeatures/cspDirectives across a JSON edit", () => {
+    // These three knobs live in the structured editor (not the spec JSON
+    // view), but they must survive a JSON-side edit of the spec sandbox
+    // shape — same preservation contract as mode/extensions.
+    const prev = emptyHostConfigInputV2();
+    prev.mcpProfile = {
+      profileVersion: 1,
+      apps: {
+        sandbox: {
+          csp: {
+            cspDirectives: {
+              "script-src": ["'unsafe-eval'", "'wasm-unsafe-eval'"],
+            },
+          },
+          sandboxAttrs: ["allow-forms", "allow-modals"],
+          allowFeatures: { fullscreen: "*" },
+        },
+      },
+    };
+    const next = applyJsonToDraft(
+      {
+        hostContext: {},
+        hostCapabilities: {
+          sandbox: {
+            csp: { connectDomains: ["https://api.openai.com"] },
+          },
+        },
+      },
+      prev,
+    );
+    // The user typed a new spec-shape restrictTo on the CSP side.
+    expect(
+      next?.mcpProfile?.apps?.sandbox?.csp?.restrictTo?.connectDomains,
+    ).toEqual(["https://api.openai.com"]);
+    // Inspector-only knobs survived verbatim.
+    expect(next?.mcpProfile?.apps?.sandbox?.csp?.cspDirectives).toEqual({
+      "script-src": ["'unsafe-eval'", "'wasm-unsafe-eval'"],
+    });
+    expect(next?.mcpProfile?.apps?.sandbox?.sandboxAttrs).toEqual([
+      "allow-forms",
+      "allow-modals",
+    ]);
+    expect(next?.mcpProfile?.apps?.sandbox?.allowFeatures).toEqual({
+      fullscreen: "*",
+    });
+  });
+
+  it("preserves inspector-only knobs when JSON has no sandbox key at all", () => {
+    const prev = emptyHostConfigInputV2();
+    prev.mcpProfile = {
+      profileVersion: 1,
+      apps: {
+        sandbox: {
+          sandboxAttrs: ["allow-forms"],
+          allowFeatures: { fullscreen: "*" },
+        },
+      },
+    };
+    const next = applyJsonToDraft({ hostContext: {} }, prev);
+    expect(next?.mcpProfile?.apps?.sandbox?.sandboxAttrs).toEqual([
+      "allow-forms",
+    ]);
+    expect(next?.mcpProfile?.apps?.sandbox?.allowFeatures).toEqual({
+      fullscreen: "*",
+    });
   });
 });

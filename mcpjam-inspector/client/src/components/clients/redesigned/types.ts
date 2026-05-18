@@ -128,20 +128,30 @@ export interface AppsCapLeafNodeData extends Record<string, unknown> {
 }
 
 /**
- * One row per sandbox config slice (CSP mode, restrictTo, permissions).
- * The sandbox section in the matrix is fixed-shape (always 3 rows) so
- * users can read "this is the default" at a glance — same "absence is
- * informative" principle the Apps caps section uses for off capabilities.
+ * One row per sandbox config slice. The CSP-family rows (mode, restrictTo,
+ * cspDirectives) plus permissions form the SEP-1865 surface; sandboxAttrs
+ * and allowFeatures are inspector-only emission knobs that model what real
+ * hosts emit at the browser layer.
+ *
  * Severity drives the row tint:
- *   - `neutral`: default / empty, no surprise
+ *   - `neutral`: default / empty / additive user grant, no surprise
  *   - `warn`: deviates from default but doesn't silently narrow (e.g.
  *     `mode: "relaxed"`)
- *   - `danger`: silently NARROWS what widgets can do (e.g. `restrictTo`
- *     populated — the intersection trap that broke Excalidraw)
+ *   - `danger`: silently NARROWS what widgets can do, OR re-enables real
+ *     script-execution loosening (e.g. `restrictTo` populated — the
+ *     intersection trap that broke Excalidraw; `cspDirectives` carrying
+ *     `'unsafe-eval'` / `'wasm-unsafe-eval'` / `'unsafe-inline'` /
+ *     `'strict-dynamic'`)
  *
  * SEP-1865 is allowlist-only — there's no deny concept at any layer.
  */
-export type SandboxConfigSubKey = "mode" | "restrictTo" | "permissions";
+export type SandboxConfigSubKey =
+  | "mode"
+  | "restrictTo"
+  | "cspDirectives"
+  | "permissions"
+  | "sandboxAttrs"
+  | "allowFeatures";
 
 /**
  * CSP directive arrays surfaced under the `restrictTo` row when populated.

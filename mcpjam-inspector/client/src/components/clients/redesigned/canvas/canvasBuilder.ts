@@ -335,14 +335,99 @@ function buildSandboxConfig(
     severity: "neutral",
   };
 
-  // Stable order: mode, restrictTo, permissions. mode and restrictTo
-  // are conditional (skipped when at the safe default); permissions is
-  // always emitted so the row count reflects whatever currently
-  // deviates plus the always-on permissions baseline.
+  // cspDirectives — inspector-only per-directive source-expression overrides
+  // (e.g. `script-src` adds `'unsafe-eval'`). Sits next to restrictTo because
+  // both live under `csp` in the schema. Skipped when undefined/empty so the
+  // matrix stays quiet at the safe default — matches the mode/restrictTo
+  // pattern. When populated, tints `danger` if any token re-enables real
+  // script-execution loosening; else neutral.
+  const cspDirectives = csp?.cspDirectives;
+  const cspDirectivesKeys = cspDirectives ? Object.keys(cspDirectives) : [];
+  let cspDirectivesValueCount = 0;
+  let hasDangerousToken = false;
+  if (cspDirectives) {
+    for (const k of cspDirectivesKeys) {
+      const tokens = cspDirectives[k] ?? [];
+      cspDirectivesValueCount += tokens.length;
+      for (const t of tokens) {
+        if (
+          t === "'unsafe-eval'" ||
+          t === "'unsafe-inline'" ||
+          t === "'wasm-unsafe-eval'" ||
+          t === "'strict-dynamic'"
+        ) {
+          hasDangerousToken = true;
+        }
+      }
+    }
+  }
+  const cspDirectivesDescriptor: SandboxConfigDescriptor | null =
+    cspDirectivesKeys.length === 0
+      ? null
+      : {
+          subKey: "cspDirectives",
+          label: "cspDirectives",
+          summary: `${cspDirectivesKeys.length} ${
+            cspDirectivesKeys.length === 1 ? "directive" : "directives"
+          }`,
+          qualifier: `${cspDirectivesValueCount} ${
+            cspDirectivesValueCount === 1 ? "token" : "tokens"
+          }`,
+          severity: hasDangerousToken ? "danger" : "neutral",
+        };
+
+  // sandboxAttrs — extra outer/inner iframe `sandbox=` tokens beyond the
+  // spec mandatory `allow-scripts allow-same-origin`. Skipped at the safe
+  // default; neutral severity when populated (additive tokens are explicit
+  // user grants, not silent narrowing).
+  const sandboxAttrs = sandbox?.sandboxAttrs ?? [];
+  const sandboxAttrsDescriptor: SandboxConfigDescriptor | null =
+    sandboxAttrs.length === 0
+      ? null
+      : {
+          subKey: "sandboxAttrs",
+          label: "sandboxAttrs",
+          summary: sandboxAttrs.slice(0, 2).join(", "),
+          qualifier:
+            sandboxAttrs.length > 2 ? `+${sandboxAttrs.length - 2} more` : null,
+          severity: "neutral",
+        };
+
+  // allowFeatures — extra Permissions Policy entries beyond the 4 spec
+  // permissions. Skipped at the safe default; neutral severity when
+  // populated (explicit user grant).
+  const allowFeatures = sandbox?.allowFeatures ?? {};
+  const allowFeaturesKeys = Object.keys(allowFeatures);
+  allowFeaturesKeys.sort();
+  const allowFeaturesDescriptor: SandboxConfigDescriptor | null =
+    allowFeaturesKeys.length === 0
+      ? null
+      : {
+          subKey: "allowFeatures",
+          label: "allowFeatures",
+          summary: allowFeaturesKeys
+            .slice(0, 2)
+            .map((k) => `${k}: ${allowFeatures[k]}`)
+            .join(", "),
+          qualifier:
+            allowFeaturesKeys.length > 2
+              ? `+${allowFeaturesKeys.length - 2} more`
+              : null,
+          severity: "neutral",
+        };
+
+  // Stable row order: CSP family first (mode, restrictTo, cspDirectives),
+  // then permissions, then the iframe-attribute knobs at the bottom. Every
+  // row except permissions is conditional — skipped when at the safe
+  // default — so the row count reflects whatever currently deviates plus
+  // the always-on permissions baseline.
   const out: SandboxConfigDescriptor[] = [];
   if (modeDescriptor !== null) out.push(modeDescriptor);
   if (restrictDescriptor !== null) out.push(restrictDescriptor);
+  if (cspDirectivesDescriptor !== null) out.push(cspDirectivesDescriptor);
   out.push(permsDescriptor);
+  if (sandboxAttrsDescriptor !== null) out.push(sandboxAttrsDescriptor);
+  if (allowFeaturesDescriptor !== null) out.push(allowFeaturesDescriptor);
   return out;
 }
 

@@ -458,9 +458,10 @@ function SandboxConfigCell({
  * reader sees "default" / "none granted" instead of an em-dash that
  * could be confused with "unknown".
  *
- * Note: `restrictTo` is not listed here — canvasBuilder skips the row
- * entirely when restrictTo is empty (the safe default), so this helper
- * is only called for `mode` and `permissions`.
+ * Note: `restrictTo` / `cspDirectives` / `sandboxAttrs` / `allowFeatures`
+ * are not listed here — canvasBuilder skips those rows entirely when at
+ * the safe default, so this helper is only called for `mode` and
+ * `permissions`.
  */
 function semanticAbsence(key: SandboxConfigNodeData["subKey"]): string {
   switch (key) {
@@ -471,8 +472,11 @@ function semanticAbsence(key: SandboxConfigNodeData["subKey"]): string {
     case "mode":
       return "default";
     case "restrictTo":
-      // Unreachable — canvasBuilder drops the row when restrictTo is
-      // empty. Kept for type exhaustiveness.
+    case "cspDirectives":
+    case "sandboxAttrs":
+    case "allowFeatures":
+      // Unreachable — canvasBuilder drops these rows when they're at the
+      // safe default. Kept for type exhaustiveness.
       return "";
   }
 }

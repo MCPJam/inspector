@@ -46,6 +46,7 @@ import {
   type HostConfigMcpProfileV1,
   type HostStyleId,
   DEFAULT_TEMPERATURE_V2,
+  SEP_1865_PERMISSION_FEATURES,
 } from "@/lib/client-config-v2";
 import {
   getHostCapabilitiesForStyle,
@@ -784,7 +785,9 @@ function McpProfileSandboxEditor({
       };
       const hasSandboxFields =
         nextSandbox.csp !== undefined ||
-        nextSandbox.permissions !== undefined;
+        nextSandbox.permissions !== undefined ||
+        nextSandbox.sandboxAttrs !== undefined ||
+        nextSandbox.allowFeatures !== undefined;
       // Preserve sibling apps fields (e.g. uiInitialize.hostInfo set by the
       // redesigned Apps Extension tab) — don't rewrite `apps` to only sandbox.
       const nextApps = { ...(base.apps ?? {}) };
@@ -849,6 +852,13 @@ function McpProfileSandboxEditor({
         }
       />
 
+      <McpProfileCspDirectivesEditor
+        value={csp?.cspDirectives}
+        onChange={(cspDirectives) =>
+          updateSandbox({ csp: { ...(csp ?? {}), cspDirectives } })
+        }
+      />
+
       <Separator />
 
       <div className="grid gap-2">
@@ -898,6 +908,392 @@ function McpProfileSandboxEditor({
           })
         }
       />
+
+      <Separator />
+
+      <McpProfileSandboxAttrsEditor
+        value={profile?.apps?.sandbox?.sandboxAttrs}
+        onChange={(sandboxAttrs) => updateSandbox({ sandboxAttrs })}
+      />
+
+      <McpProfileAllowFeaturesEditor
+        value={profile?.apps?.sandbox?.allowFeatures}
+        onChange={(allowFeatures) => updateSandbox({ allowFeatures })}
+      />
+    </div>
+  );
+}
+
+/**
+ * `cspDirectives` editor — inspector-only per-directive source-expression
+ * overrides emitted in the inner doc's `<meta http-equiv="Content-Security-
+ * Policy">`. Each row is a directive name + comma-separated tokens.
+ *
+ * Not part of SEP-1865 metadata; models what real hosts emit at the browser
+ * layer (e.g. `'unsafe-eval'`, `'wasm-unsafe-eval'`, `'strict-dynamic'`,
+ * nonces, hashes). Stored verbatim so future tokens land here without
+ * schema churn.
+ */
+function McpProfileCspDirectivesEditor({
+  value,
+  onChange,
+}: {
+  value: Record<string, string[]> | undefined;
+  onChange: (next: Record<string, string[]> | undefined) => void;
+}) {
+  // Always work with a sorted-key array for stable rendering across keystrokes.
+  const rows = useMemo<Array<{ name: string; tokens: string }>>(() => {
+    if (!value) return [];
+    return Object.keys(value)
+      .sort()
+      .map((k) => ({
+        name: k,
+        tokens: (value[k] ?? []).join(", "),
+      }));
+  }, [value]);
+
+  const commit = useCallback(
+    (next: Array<{ name: string; tokens: string }>) => {
+      const out: Record<string, string[]> = {};
+      for (const row of next) {
+        const name = row.name.trim();
+        if (name === "") continue;
+        const tokens = row.tokens
+          .split(",")
+          .map((t) => t.trim())
+          .filter((t) => t.length > 0);
+        if (tokens.length === 0) continue;
+        out[name] = tokens;
+      }
+      onChange(Object.keys(out).length > 0 ? out : undefined);
+    },
+    [onChange],
+  );
+
+  const updateRow = (
+    idx: number,
+    patch: Partial<{ name: string; tokens: string }>,
+  ) => {
+    const next = rows.map((r, i) => (i === idx ? { ...r, ...patch } : r));
+    commit(next);
+  };
+
+  const removeRow = (idx: number) => {
+    commit(rows.filter((_, i) => i !== idx));
+  };
+
+  const addRow = () => {
+    commit([...rows, { name: "", tokens: "" }]);
+  };
+
+  return (
+    <div className="grid gap-2">
+      <Label className="text-xs">cspDirectives (inspector-only)</Label>
+      <p className="text-xs text-muted-foreground">
+        Adds source expressions (e.g. <code>'unsafe-eval'</code>) to the inner
+        doc CSP. Not in SEP-1865 metadata; models what real hosts emit at the
+        browser layer. Comma-separate tokens; values stored verbatim so
+        nonces/hashes/<code>'strict-dynamic'</code> round-trip.
+      </p>
+      {rows.length === 0 ? (
+        <p className="text-xs italic text-muted-foreground">
+          No directive overrides.
+        </p>
+      ) : (
+        <div className="grid gap-1">
+          {rows.map((row, idx) => (
+            <div key={idx} className="grid grid-cols-[1fr_2fr_auto] gap-2">
+              <Input
+                value={row.name}
+                placeholder="script-src"
+                onChange={(e) => updateRow(idx, { name: e.target.value })}
+                list="csp-directive-name-suggestions"
+              />
+              <Input
+                value={row.tokens}
+                placeholder="'unsafe-eval', 'wasm-unsafe-eval'"
+                onChange={(e) => updateRow(idx, { tokens: e.target.value })}
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => removeRow(idx)}
+              >
+                Remove
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+      <datalist id="csp-directive-name-suggestions">
+        <option value="script-src" />
+        <option value="style-src" />
+        <option value="img-src" />
+        <option value="connect-src" />
+        <option value="frame-src" />
+        <option value="media-src" />
+        <option value="font-src" />
+        <option value="base-uri" />
+        <option value="default-src" />
+      </datalist>
+      <Button type="button" variant="outline" size="sm" onClick={addRow}>
+        + add directive
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * `sandboxAttrs` editor — inspector-only extra outer/inner iframe `sandbox=`
+ * tokens unioned with the mandatory `allow-scripts allow-same-origin`.
+ * Each known token is a toggle; a free-text input accepts unknown tokens
+ * for forward-compat.
+ */
+const KNOWN_SANDBOX_TOKENS = [
+  "allow-scripts",
+  "allow-same-origin",
+  "allow-forms",
+  "allow-popups",
+  "allow-popups-to-escape-sandbox",
+  "allow-modals",
+  "allow-downloads",
+  "allow-presentation",
+  "allow-pointer-lock",
+  "allow-top-navigation",
+  "allow-top-navigation-by-user-activation",
+  "allow-orientation-lock",
+] as const;
+const MANDATORY_SANDBOX_TOKENS = new Set<string>([
+  "allow-scripts",
+  "allow-same-origin",
+]);
+
+function McpProfileSandboxAttrsEditor({
+  value,
+  onChange,
+}: {
+  value: string[] | undefined;
+  onChange: (next: string[] | undefined) => void;
+}) {
+  const [customDraft, setCustomDraft] = useState("");
+  const active = useMemo(() => new Set(value ?? []), [value]);
+
+  const commit = (next: Set<string>) => {
+    const arr = Array.from(next)
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0 && !MANDATORY_SANDBOX_TOKENS.has(t));
+    arr.sort();
+    onChange(arr.length > 0 ? arr : undefined);
+  };
+
+  const toggle = (token: string) => {
+    if (MANDATORY_SANDBOX_TOKENS.has(token)) return;
+    const next = new Set(active);
+    if (next.has(token)) next.delete(token);
+    else next.add(token);
+    commit(next);
+  };
+
+  const addCustom = () => {
+    const t = customDraft.trim();
+    if (t.length === 0) return;
+    if (MANDATORY_SANDBOX_TOKENS.has(t)) {
+      setCustomDraft("");
+      return;
+    }
+    const next = new Set(active);
+    next.add(t);
+    commit(next);
+    setCustomDraft("");
+  };
+
+  // Anything in value that isn't in the known list — surface as a chip too
+  // so the user can see it and remove it.
+  const unknownTokens = Array.from(active).filter(
+    (t) => !KNOWN_SANDBOX_TOKENS.includes(t as (typeof KNOWN_SANDBOX_TOKENS)[number]),
+  );
+
+  return (
+    <div className="grid gap-2">
+      <Label className="text-xs">sandboxAttrs (inspector-only)</Label>
+      <p className="text-xs text-muted-foreground">
+        Extra <code>sandbox=</code> tokens beyond <code>allow-scripts</code> /
+        <code>allow-same-origin</code> which the spec mandates.
+      </p>
+      <div className="flex flex-wrap gap-1">
+        {KNOWN_SANDBOX_TOKENS.map((token) => {
+          const isMandatory = MANDATORY_SANDBOX_TOKENS.has(token);
+          const isActive = isMandatory || active.has(token);
+          return (
+            <button
+              key={token}
+              type="button"
+              onClick={() => toggle(token)}
+              disabled={isMandatory}
+              className={`rounded-md border px-2 py-0.5 text-xs ${
+                isActive
+                  ? "border-primary bg-primary/10 text-foreground"
+                  : "border-border/40 text-muted-foreground hover:bg-muted/40"
+              } ${isMandatory ? "cursor-not-allowed opacity-70" : "cursor-pointer"}`}
+              title={isMandatory ? "Spec-mandated (always on)" : token}
+            >
+              {token}
+              {isMandatory ? " (locked)" : ""}
+            </button>
+          );
+        })}
+        {unknownTokens.map((token) => (
+          <button
+            key={token}
+            type="button"
+            onClick={() => toggle(token)}
+            className="rounded-md border border-primary bg-primary/10 px-2 py-0.5 text-xs"
+            title={token}
+          >
+            {token} ×
+          </button>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <Input
+          value={customDraft}
+          placeholder="custom token"
+          onChange={(e) => setCustomDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              addCustom();
+            }
+          }}
+        />
+        <Button type="button" variant="outline" size="sm" onClick={addCustom}>
+          Add
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * `allowFeatures` editor — inspector-only extra Permissions Policy entries
+ * appended to outer/inner iframe `allow=`. Keys are RAW kebab Permissions
+ * Policy tokens; values are allowlist strings.
+ *
+ * The 4 spec features (camera / microphone / geolocation / clipboard-write)
+ * live in the Permissions section above and cannot be added here — entering
+ * them shows an inline warning and the canonicalizer drops them on save as
+ * a defense-in-depth safeguard.
+ */
+function McpProfileAllowFeaturesEditor({
+  value,
+  onChange,
+}: {
+  value: Record<string, string> | undefined;
+  onChange: (next: Record<string, string> | undefined) => void;
+}) {
+  const specFeatures = useMemo(
+    () => new Set<string>(SEP_1865_PERMISSION_FEATURES),
+    [],
+  );
+
+  const rows = useMemo<Array<{ key: string; allowlist: string }>>(() => {
+    if (!value) return [];
+    return Object.keys(value)
+      .sort()
+      .map((k) => ({ key: k, allowlist: value[k] ?? "" }));
+  }, [value]);
+
+  const commit = useCallback(
+    (next: Array<{ key: string; allowlist: string }>) => {
+      const out: Record<string, string> = {};
+      for (const row of next) {
+        const key = row.key.trim();
+        if (key === "") continue;
+        // Defense in depth — the canonicalizer drops these too, but we
+        // refuse to commit them locally so the warning has teeth.
+        if (specFeatures.has(key)) continue;
+        const allowlist = row.allowlist.trim();
+        if (allowlist === "") continue;
+        out[key] = allowlist;
+      }
+      onChange(Object.keys(out).length > 0 ? out : undefined);
+    },
+    [onChange, specFeatures],
+  );
+
+  const updateRow = (
+    idx: number,
+    patch: Partial<{ key: string; allowlist: string }>,
+  ) => {
+    const next = rows.map((r, i) => (i === idx ? { ...r, ...patch } : r));
+    commit(next);
+  };
+
+  const removeRow = (idx: number) => {
+    commit(rows.filter((_, i) => i !== idx));
+  };
+
+  const addRow = () => {
+    commit([...rows, { key: "", allowlist: "*" }]);
+  };
+
+  return (
+    <div className="grid gap-2">
+      <Label className="text-xs">allowFeatures (inspector-only)</Label>
+      <p className="text-xs text-muted-foreground">
+        Non-spec Permissions Policy features (e.g. <code>fullscreen</code>,
+        <code>web-share</code>). The 4 spec features (<code>camera</code>,
+        <code>microphone</code>, <code>geolocation</code>,
+        <code>clipboard-write</code>) live in Permissions above and cannot
+        be added here.
+      </p>
+      {rows.length === 0 ? (
+        <p className="text-xs italic text-muted-foreground">
+          No extra features.
+        </p>
+      ) : (
+        <div className="grid gap-1">
+          {rows.map((row, idx) => {
+            const isSpec = specFeatures.has(row.key.trim());
+            return (
+              <div key={idx} className="grid gap-1">
+                <div className="grid grid-cols-[1fr_1fr_auto] gap-2">
+                  <Input
+                    value={row.key}
+                    placeholder="fullscreen"
+                    onChange={(e) => updateRow(idx, { key: e.target.value })}
+                  />
+                  <Input
+                    value={row.allowlist}
+                    placeholder="*"
+                    onChange={(e) =>
+                      updateRow(idx, { allowlist: e.target.value })
+                    }
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => removeRow(idx)}
+                  >
+                    Remove
+                  </Button>
+                </div>
+                {isSpec ? (
+                  <p className="text-xs text-destructive">
+                    Use Permissions above for spec features — this row will be
+                    dropped on save.
+                  </p>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <Button type="button" variant="outline" size="sm" onClick={addRow}>
+        + add feature
+      </Button>
     </div>
   );
 }
