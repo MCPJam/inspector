@@ -51,13 +51,8 @@ interface Selection {
 
 export function MultiServerToolsPaneInner({ activeServerNames }: InnerProps) {
   const state = useAppBuilderStateContext();
-  const {
-    flat,
-    collidingNames,
-    loadingByServer,
-    errorByServer,
-    refetch,
-  } = useAggregatedTools(activeServerNames);
+  const { flat, collidingNames, loadingByServer, refetch } =
+    useAggregatedTools(activeServerNames);
 
   const [selected, setSelected] = useState<Selection | null>(null);
   const [activeTab, setActiveTab] = useState<"tools" | "saved">("tools");
@@ -115,9 +110,6 @@ export function MultiServerToolsPaneInner({ activeServerNames }: InnerProps) {
   }, [flat, searchQuery]);
 
   const isLoadingAny = Object.values(loadingByServer).some(Boolean);
-  const errorMessages = Object.entries(errorByServer)
-    .filter(([, msg]) => Boolean(msg))
-    .map(([serverId, msg]) => ({ serverId, msg }));
 
   const handleFieldChange = (name: string, value: unknown) => {
     setFormFields((current) =>
@@ -205,7 +197,6 @@ export function MultiServerToolsPaneInner({ activeServerNames }: InnerProps) {
             totalCount={flat.length}
             collidingNames={collidingNames}
             loading={isLoadingAny}
-            errors={errorMessages}
             searchQuery={searchQuery}
             onSearchQueryChange={setSearchQuery}
             selected={selected}
@@ -240,7 +231,6 @@ interface FlatToolListProps {
   totalCount: number;
   collidingNames: string[];
   loading: boolean;
-  errors: Array<{ serverId: string; msg: string }>;
   searchQuery: string;
   onSearchQueryChange: (q: string) => void;
   selected: Selection | null;
@@ -252,7 +242,6 @@ function FlatToolList({
   totalCount,
   collidingNames,
   loading,
-  errors,
   searchQuery,
   onSearchQueryChange,
   selected,
@@ -269,19 +258,6 @@ function FlatToolList({
       </div>
 
       <div className="flex-1 min-h-0 overflow-auto px-2 pb-2">
-        {errors.length > 0 ? (
-          <div className="mx-1 mb-2 space-y-1">
-            {errors.map(({ serverId, msg }) => (
-              <div
-                key={serverId}
-                className="rounded bg-destructive/10 px-2 py-1 text-[11px] text-destructive"
-              >
-                <span className="font-medium">{serverId}:</span> {msg}
-              </div>
-            ))}
-          </div>
-        ) : null}
-
         {loading && entries.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-8 text-center">
             <RefreshCw className="h-5 w-5 text-muted-foreground animate-spin mb-2" />
