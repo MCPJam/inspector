@@ -144,7 +144,7 @@ jobs:
 
       - name: Configure staging-safe preview defaults
         run: |
-          .github/scripts/railway-retry.sh railway variable set \
+          .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
             -e "${{ steps.meta.outputs.environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
             MCPJAM_NONPROD_LOCKDOWN=true \
@@ -183,7 +183,7 @@ jobs:
       - name: Configure preview origin allowlists
         if: steps.preview_domain.outputs.url != ''
         run: |
-          .github/scripts/railway-retry.sh railway variable set \
+          .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
             -e "${{ steps.meta.outputs.environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
             MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app" \
@@ -366,7 +366,7 @@ jobs:
 
       - name: Configure staging-safe preview defaults
         run: |
-          .github/scripts/railway-retry.sh railway variable set \
+          .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
             -e "${{ steps.meta.outputs.environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
             MCPJAM_NONPROD_LOCKDOWN=true \
@@ -405,7 +405,7 @@ jobs:
       - name: Configure preview origin allowlists
         if: steps.preview_domain.outputs.url != ''
         run: |
-          .github/scripts/railway-retry.sh railway variable set \
+          .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
             -e "${{ steps.meta.outputs.environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
             MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app" \
@@ -647,7 +647,7 @@ jobs:
 
       - name: Update preview environment variables
         run: |
-          .github/scripts/railway-retry.sh railway variable set \
+          .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
             -e "${{ github.event.client_payload.inspector_environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
             MCPJAM_NONPROD_LOCKDOWN=true \
@@ -684,7 +684,7 @@ jobs:
       - name: Refresh preview origin allowlists
         if: steps.preview_domain.outputs.url != ''
         run: |
-          .github/scripts/railway-retry.sh railway variable set \
+          .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
             -e "${{ github.event.client_payload.inspector_environment }}" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
             MCPJAM_ALLOWED_HOSTS="staging.mcpjam.com,*.up.railway.app" \
