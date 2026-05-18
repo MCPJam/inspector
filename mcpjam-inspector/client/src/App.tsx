@@ -936,6 +936,7 @@ export function ChatV2Route() {
               projectId={convexProjectId}
               value={activeHostId}
               onChange={setActiveHostId}
+              location="chat_tab"
               placeholder="Project default"
               noneLabel="Project default"
             />
@@ -1046,6 +1047,7 @@ export function PlaygroundRoute() {
       serverName={appState.selectedServer}
       servers={projectServers}
       activeProjectId={activeProjectId}
+      sharedProjectId={activeProject?.sharedProjectId ?? null}
       isSignedInWithWorkOs={!!workOsUser}
       isWorkOsAuthLoading={isWorkOsLoading}
       isConvexAuthenticated={isAuthenticated}

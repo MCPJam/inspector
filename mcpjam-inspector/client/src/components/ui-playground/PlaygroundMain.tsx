@@ -479,14 +479,15 @@ export function PlaygroundMain({
   // chatUiOverride, and the model id via localStorage). The fields
   // re-seeded here live inside `useChatSession`'s own state, so they
   // need imperative setters.
-  // Key by `activeProjectId` (local-or-shared), not `convexProjectId`.
-  // `convexProjectId` is the project's shared id and is `null` for local
-  // projects, which would silently disable the reseed path in CLI / no-
-  // cloud-sync flows. The setter that writes this state (the global host
-  // picker, ServersTab, PlaygroundTab) all key on the local-or-shared
-  // active project id, so reading from `convexProjectId` here looked at
-  // a different storage scope and never saw the selected host.
-  const [previewedHostId] = usePreviewedHostId(activeProjectId);
+  // Match the global host picker / ClientsTab / useAppState scope: prefer
+  // the shared project id (what `GlobalClientBar` and `ClientsTab` write),
+  // falling back to `activeProjectId` for CLI / no-cloud-sync flows where
+  // `convexProjectId` is null. Reading only from `activeProjectId` here
+  // silently disabled the reseed in authed projects because the writer
+  // wrote under a different storage scope.
+  const [previewedHostId] = usePreviewedHostId(
+    convexProjectId ?? activeProjectId,
+  );
   const { host: previewedHost } = useHost({
     isAuthenticated: isConvexAuthenticated,
     hostId: previewedHostId,

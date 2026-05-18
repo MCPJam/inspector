@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useConvexAuth } from "convex/react";
+import { usePostHog } from "posthog-js/react";
+import { standardEventProps } from "@/lib/PosthogUtils";
 import {
   Dialog,
   DialogContent,
@@ -35,6 +37,7 @@ export function CreateClientDialog({
   projectId,
   onCreated,
 }: CreateHostDialogProps) {
+  const posthog = usePostHog();
   const { createHost } = useHostMutations();
   const { isAuthenticated } = useConvexAuth();
   const { servers } = useProjectServers({ isAuthenticated, projectId });
@@ -84,7 +87,7 @@ export function CreateClientDialog({
       // for unauthenticated callers the query is skipped so `servers` is
       // undefined and we seed with no attachments.
       const projectServerIds = servers?.map((s) => s._id) ?? [];
-      const { hostId } = await createHost({
+      const { hostId, hostConfigId } = await createHost({
         projectId,
         name: trimmed,
         input: { ...seed, serverIds: projectServerIds },
@@ -92,6 +95,20 @@ export function CreateClientDialog({
       toast.success(`Client "${trimmed}" created`);
       handleClose();
       onCreated(hostId);
+      // Telemetry is best-effort: a posthog throw must not bubble into the
+      // shared catch and surface a "creation failed" toast after we've
+      // already shown success and notified the caller.
+      try {
+        posthog.capture("client_created", {
+          ...standardEventProps("create_client_dialog"),
+          client_id: hostId,
+          client_config_id: hostConfigId,
+          template_id: selectedTemplateId,
+          server_count: projectServerIds.length,
+        });
+      } catch {
+        // swallow — analytics must not block the success path
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to create client");
     } finally {

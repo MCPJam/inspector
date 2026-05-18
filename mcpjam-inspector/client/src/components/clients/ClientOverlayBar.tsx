@@ -15,6 +15,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useHostList, useHostMutations } from "@/hooks/useClients";
 import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
+import { standardEventProps } from "@/lib/PosthogUtils";
 import { CreateClientDialog } from "./CreateClientDialog";
 
 const MCPJAM_HOST_NAME = "MCPJam";
@@ -157,6 +158,18 @@ export function ClientOverlayBar({
     try {
       await deleteHost({ hostId });
       toast.success(`Client "${host.name}" deleted`);
+      // Telemetry is best-effort: a posthog throw must not bubble into the
+      // shared catch and surface a delete-failure toast after the client
+      // has already been removed.
+      try {
+        posthog.capture("client_deleted", {
+          ...standardEventProps("chatbox_overlay"),
+          client_id: hostId,
+          force: false,
+        });
+      } catch {
+        // swallow — analytics must not block the success path
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to delete client";
       if (msg.includes("consumer")) {

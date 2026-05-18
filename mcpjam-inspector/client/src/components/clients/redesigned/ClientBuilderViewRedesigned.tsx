@@ -3,7 +3,9 @@ import { useNavigate } from "react-router";
 import { Loader2, Save } from "lucide-react";
 import { toast } from "sonner";
 import { useConvexAuth } from "convex/react";
+import { usePostHog } from "posthog-js/react";
 import { ReactFlowProvider } from "@xyflow/react";
+import { standardEventProps } from "@/lib/PosthogUtils";
 import { Button } from "@mcpjam/design-system/button";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 import {
@@ -60,6 +62,7 @@ export function ClientBuilderViewRedesigned({
   projectId,
 }: HostBuilderViewRedesignedProps) {
   const navigate = useNavigate();
+  const posthog = usePostHog();
   const { isAuthenticated } = useConvexAuth();
   const { host } = useHost({
     isAuthenticated,
@@ -123,6 +126,29 @@ export function ClientBuilderViewRedesigned({
     // user's own edits as "diff from previous host," which is wrong.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [host, hostId]);
+
+  // Fire once per *loaded* host for builder-view adoption. Gating on `host`
+  // (not just `hostId`) means a stale/deleted deep link to /clients/:hostId
+  // — which ClientsTab eventually reconciles by clearing the selection —
+  // never logs a phantom view for a client the user didn't actually open.
+  // The ref dedupes across Convex re-emits of the same host doc so we get
+  // one capture per hostId, not one per subscription tick. Telemetry is
+  // best-effort: a posthog throw must not trip the nearest error boundary.
+  const capturedBuilderHostIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!hostId || !host) return;
+    if (capturedBuilderHostIdRef.current === hostId) return;
+    capturedBuilderHostIdRef.current = hostId;
+    try {
+      posthog.capture("client_builder_viewed", {
+        ...standardEventProps("client_builder"),
+        client_id: hostId,
+      });
+    } catch {
+      // swallow — analytics must not break the builder view
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hostId, host]);
 
   // Clear the diff snapshot ~1.5s after a host switch so subsequent
   // in-place edits don't keep re-firing the morph animation. Matches the
@@ -287,7 +313,14 @@ export function ClientBuilderViewRedesigned({
     if (!draftConfig) return;
     setIsSaving(true);
     try {
-      await updateHost({
+      const changedFields = savedConfig
+        ? (Object.keys(draftConfig) as Array<keyof HostConfigInputV2>).filter(
+            (key) =>
+              JSON.stringify(draftConfig[key]) !==
+              JSON.stringify(savedConfig[key]),
+          )
+        : [];
+      const { hostConfigId } = await updateHost({
         hostId,
         name: draftName,
         input: draftConfig,
@@ -296,6 +329,20 @@ export function ClientBuilderViewRedesigned({
       // subscription on the next tick; don't include it in this toast
       // because `host?.config?.id` is still the *previous* snapshot here.
       toast.success("Snapshot saved");
+      // Telemetry is best-effort: a posthog throw must not bubble into the
+      // shared catch and surface "Failed to save host" after the snapshot
+      // has already been persisted.
+      try {
+        posthog.capture("client_config_saved", {
+          ...standardEventProps("client_builder"),
+          client_id: hostId,
+          client_config_id: hostConfigId,
+          server_count: draftConfig.serverIds?.length ?? 0,
+          changed_fields: changedFields,
+        });
+      } catch {
+        // swallow — analytics must not block the success path
+      }
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Failed to save host",
@@ -303,7 +350,7 @@ export function ClientBuilderViewRedesigned({
     } finally {
       setIsSaving(false);
     }
-  }, [hostId, draftName, draftConfig, updateHost]);
+  }, [hostId, draftName, draftConfig, savedConfig, updateHost, posthog]);
 
   const handleAddServer = useCallback(
     async (formData: ServerFormData) => {
