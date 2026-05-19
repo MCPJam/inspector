@@ -66,6 +66,7 @@ import {
 } from "./widget-file-messages";
 import { CheckoutDialogV2 } from "./checkout-dialog-v2";
 import { fetchMcpAppsWidgetContent } from "./fetch-widget-content";
+import { readToolResultMeta } from "@/lib/tool-result-utils";
 import type { CheckoutSession } from "@/shared/acp-types";
 import { listResources, readResource } from "@/lib/apis/mcp-resources-api";
 import { listPrompts } from "@/lib/apis/mcp-prompts-api";
@@ -152,30 +153,6 @@ function sanitizeHostStyleVariables(
 
 // CSP and permissions metadata types are now imported from SDK
 
-/**
- * Pull `_meta` (or legacy `.meta`) off the tool result for surfacing to
- * widgets as `window.openai.toolResponseMetadata`. Apps SDK widgets read
- * this for timestamps, source IDs, and other non-rendered metadata.
- * Mirrors the derivation the legacy ChatGPTAppRenderer performed.
- */
-function extractToolResponseMetadata(
-  toolOutput: unknown,
-): Record<string, unknown> | null {
-  if (!toolOutput || typeof toolOutput !== "object") return null;
-  const obj = toolOutput as Record<string, unknown>;
-  if (
-    "_meta" in obj &&
-    obj._meta &&
-    typeof obj._meta === "object"
-  ) {
-    return obj._meta as Record<string, unknown>;
-  }
-  if ("meta" in obj && obj.meta && typeof obj.meta === "object") {
-    return obj.meta as Record<string, unknown>;
-  }
-  return null;
-}
-
 interface MCPAppsRendererProps {
   serverId: string;
   toolCallId: string;
@@ -183,6 +160,16 @@ interface MCPAppsRendererProps {
   toolState?: ToolState;
   toolInput?: Record<string, unknown>;
   toolOutput?: unknown;
+  /**
+   * Tool response `_meta`, pre-extracted by the caller from the raw
+   * (still-wrapped) tool result. Required because `toolOutput` is
+   * typically the *unwrapped* value (e.g. `result.value`), at which
+   * point `_meta` from the wrapper is no longer reachable from the
+   * value alone. Passing this explicitly preserves Apps SDK's
+   * `window.openai.toolResponseMetadata` surface for widgets relying
+   * on it (timestamps, source IDs, etc.).
+   */
+  toolResponseMetadata?: Record<string, unknown> | null;
   toolErrorText?: string;
   resourceUri: string;
   toolMetadata?: Record<string, unknown>;
@@ -226,6 +213,14 @@ interface MCPAppsRendererProps {
   widgetPermissive?: boolean;
   /** Persisted prefersBorder value for cached/offline replay */
   prefersBorder?: boolean;
+  /**
+   * Persisted widget state from a saved view or fork. When set, the
+   * compat runtime seeds `window.openai.widgetState` with this value so
+   * the widget boots in the same state it was when the view was saved
+   * (Apps SDK parity — the legacy ChatGPTAppRenderer wired this the same
+   * way).
+   */
+  initialWidgetState?: unknown;
   /** Minimal mode hides diagnostics and metadata surfaces */
   minimalMode?: boolean;
 }
@@ -237,6 +232,7 @@ export function MCPAppsRenderer({
   toolState,
   toolInput,
   toolOutput,
+  toolResponseMetadata,
   toolErrorText,
   resourceUri,
   toolMetadata,
@@ -260,6 +256,7 @@ export function MCPAppsRenderer({
   widgetPermissions: initialWidgetPermissions,
   widgetPermissive: initialWidgetPermissive,
   prefersBorder: initialPrefersBorder,
+  initialWidgetState,
   minimalMode = false,
 }: MCPAppsRendererProps) {
   const sandboxRef = useRef<SandboxedIframeHandle>(null);
@@ -646,11 +643,16 @@ export function MCPAppsRenderer({
           toolInput: toolInputRef.current,
           toolOutput: toolOutputRef.current,
           // Surface `_meta` from the tool response so the compat runtime
-          // can expose it as `window.openai.toolResponseMetadata`. Mirrors
-          // the derivation from the legacy ChatGPTAppRenderer.
-          toolResponseMetadata: extractToolResponseMetadata(
-            toolOutputRef.current,
-          ),
+          // can expose it as `window.openai.toolResponseMetadata`. Prefer
+          // the explicit `toolResponseMetadata` prop (which the caller
+          // computes from rawOutput where the `{ value, _meta }` wrapper
+          // is still intact); fall back to deriving from the resolved
+          // output for callers that don't pass it.
+          toolResponseMetadata:
+            toolResponseMetadata ??
+            readToolResultMeta(toolOutputRef.current) ??
+            null,
+          initialWidgetState,
           toolId: toolCallId,
           toolName,
           theme: themeModeRef.current,

@@ -18,6 +18,12 @@ export interface FetchMcpAppsWidgetContentRequest {
    * `rawOutput._meta` at the renderer layer; pass null when absent.
    */
   toolResponseMetadata?: Record<string, unknown> | null;
+  /**
+   * Persisted widget state from a saved view or fork. When set, the
+   * compat runtime seeds `window.openai.widgetState` so the widget
+   * boots in the previously-saved state instead of fresh defaults.
+   */
+  initialWidgetState?: unknown;
   toolId: string;
   toolName: string;
   theme: string;
@@ -57,6 +63,7 @@ export async function fetchMcpAppsWidgetContent(
       toolInput: request.toolInput,
       toolOutput: request.toolOutput,
       toolResponseMetadata: request.toolResponseMetadata ?? null,
+      initialWidgetState: request.initialWidgetState ?? null,
       toolId: request.toolId,
       toolName: request.toolName,
       theme: request.theme,

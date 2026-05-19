@@ -32,6 +32,47 @@ const apps = new Hono();
 
 const MCP_APPS_MIMETYPE = RESOURCE_MIME_TYPE;
 
+/**
+ * Hosted-mode mirror of `extractLegacyOpenAICsp` in
+ * routes/apps/mcp-apps/index.ts. Reads the legacy Apps SDK CSP shape
+ * (`_meta["openai/widgetCSP"]` with snake_case fields) and returns the
+ * camelCase `McpUiResourceCsp` the proxy expects, or undefined when no
+ * legacy CSP is present.
+ */
+function extractLegacyOpenAICspHosted(
+  resourceMeta: Record<string, unknown> | undefined,
+): McpUiResourceCsp | undefined {
+  if (!resourceMeta) return undefined;
+  const legacy = resourceMeta["openai/widgetCSP"];
+  if (!legacy || typeof legacy !== "object") return undefined;
+  const src = legacy as Record<string, unknown>;
+  const readArr = (v: unknown): string[] | undefined =>
+    Array.isArray(v)
+      ? v.filter((x): x is string => typeof x === "string" && x.length > 0)
+      : undefined;
+  const out: McpUiResourceCsp = {};
+  const connect = readArr(src.connect_domains);
+  const resource = readArr(src.resource_domains);
+  const frame = readArr(src.frame_domains);
+  if (connect && connect.length > 0) out.connectDomains = connect;
+  if (resource && resource.length > 0) out.resourceDomains = resource;
+  if (frame && frame.length > 0) out.frameDomains = frame;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// Mimetypes accepted by the hosted-mode widget-content route. Mirrors
+// the local route in routes/apps/mcp-apps/index.ts — see the long-form
+// comment there for rationale (SEP-1865 canonical + two legacy Apps SDK
+// forms, kept for backward compat with widgets that worked on the old
+// ChatGPTAppRenderer path).
+const SKYBRIDGE_MIMETYPE = "text/html+skybridge";
+const PLAIN_HTML_MIMETYPE = "text/html";
+const ACCEPTED_WIDGET_MIMETYPES = new Set<string>([
+  MCP_APPS_MIMETYPE,
+  SKYBRIDGE_MIMETYPE,
+  PLAIN_HTML_MIMETYPE,
+]);
+
 const LOCALHOST_FRAME_SOURCES = [
   "http://localhost:*",
   "http://127.0.0.1:*",
@@ -66,6 +107,8 @@ const mcpAppsWidgetContentSchema = projectServerSchema.extend({
   resourceUri: z.string().min(1),
   toolInput: z.record(z.string(), z.unknown()).default({}),
   toolOutput: z.unknown().optional(),
+  toolResponseMetadata: z.record(z.string(), z.unknown()).nullable().optional(),
+  initialWidgetState: z.unknown().optional(),
   toolId: z.string().min(1),
   toolName: z.string().min(1),
   theme: z.enum(["light", "dark"]).optional(),
@@ -146,11 +189,13 @@ apps.post("/mcp-apps/widget-content", async (c) =>
       }
 
       const contentMimeType = (content as { mimeType?: string }).mimeType;
-      const mimeTypeValid = contentMimeType === MCP_APPS_MIMETYPE;
+      const mimeTypeValid =
+        typeof contentMimeType === "string" &&
+        ACCEPTED_WIDGET_MIMETYPES.has(contentMimeType);
       const mimeTypeWarning = !mimeTypeValid
         ? contentMimeType
-          ? `Invalid mimetype "${contentMimeType}" - SEP-1865 requires "${MCP_APPS_MIMETYPE}"`
-          : `Missing mimetype - SEP-1865 requires "${MCP_APPS_MIMETYPE}"`
+          ? `Invalid mimetype "${contentMimeType}" - expected one of: ${[...ACCEPTED_WIDGET_MIMETYPES].join(", ")}`
+          : `Missing mimetype - expected one of: ${[...ACCEPTED_WIDGET_MIMETYPES].join(", ")}`
         : null;
 
       let html = extractHtmlFromResourceContent(content);
@@ -162,19 +207,36 @@ apps.post("/mcp-apps/widget-content", async (c) =>
         );
       }
 
-      const uiMeta = (content._meta as { ui?: any } | undefined)?.ui as
+      const resourceMeta = content._meta as
+        | Record<string, unknown>
+        | undefined;
+      const uiMeta = (resourceMeta as { ui?: any } | undefined)?.ui as
         | {
             csp?: McpUiResourceCsp;
             permissions?: McpUiResourcePermissions;
             prefersBorder?: boolean;
           }
         | undefined;
+      // Apps SDK widgets declare CSP under _meta["openai/widgetCSP"]
+      // (snake_case) and border preference under
+      // _meta["openai/widgetPrefersBorder"]. Fall back to those so the
+      // consolidated path renders legacy widgets with their declared
+      // origins and border preference. Mirrors routes/apps/mcp-apps/index.ts.
+      const cspFromMeta: McpUiResourceCsp | undefined =
+        uiMeta?.csp ?? extractLegacyOpenAICspHosted(resourceMeta);
+      const prefersBorderFromMeta: boolean | undefined =
+        uiMeta?.prefersBorder ??
+        (typeof resourceMeta?.["openai/widgetPrefersBorder"] === "boolean"
+          ? (resourceMeta["openai/widgetPrefersBorder"] as boolean)
+          : undefined);
 
       html = injectOpenAICompat(html, {
         toolId: body.toolId,
         toolName: body.toolName,
         toolInput: body.toolInput ?? {},
         toolOutput: body.toolOutput,
+        toolResponseMetadata: body.toolResponseMetadata ?? null,
+        initialWidgetState: body.initialWidgetState ?? null,
         theme: body.theme,
         viewMode: body.viewMode,
         viewParams: body.viewParams,
@@ -182,11 +244,11 @@ apps.post("/mcp-apps/widget-content", async (c) =>
 
       return {
         html,
-        csp: effectiveCspMode === "permissive" ? undefined : uiMeta?.csp,
+        csp: effectiveCspMode === "permissive" ? undefined : cspFromMeta,
         permissions: uiMeta?.permissions,
         permissive: effectiveCspMode === "permissive",
         cspMode: effectiveCspMode,
-        prefersBorder: uiMeta?.prefersBorder,
+        prefersBorder: prefersBorderFromMeta,
         mimeType: contentMimeType,
         mimeTypeValid,
         mimeTypeWarning,

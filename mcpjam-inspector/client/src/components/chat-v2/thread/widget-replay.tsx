@@ -130,6 +130,15 @@ export function WidgetReplay({
     );
   }
 
+  // Tool response `_meta` for window.openai.toolResponseMetadata.
+  // Computed from `rawOutput` so the `{ value, _meta }` wrapper case
+  // (where `toolOutput` is the unwrapped value and lacks `_meta`)
+  // resolves correctly via readToolResultMeta's two-level check.
+  const toolResponseMetadata = (readToolResultMeta(rawOutput) ??
+    readToolResultMeta(toolOutput)) as
+    | Record<string, unknown>
+    | undefined;
+
   return (
     <MCPAppsRenderer
       serverId={serverId ?? "offline-view"}
@@ -138,6 +147,7 @@ export function WidgetReplay({
       toolState={toolState}
       toolInput={toolInput ?? undefined}
       toolOutput={resolvedToolOutput}
+      toolResponseMetadata={toolResponseMetadata ?? null}
       toolErrorText={toolErrorText}
       resourceUri={uiResourceUri ?? "mcp://offline/view"}
       toolMetadata={effectiveToolMeta}
@@ -161,6 +171,7 @@ export function WidgetReplay({
       widgetPermissions={renderOverride?.widgetPermissions}
       widgetPermissive={renderOverride?.widgetPermissive}
       prefersBorder={renderOverride?.prefersBorder}
+      initialWidgetState={renderOverride?.initialWidgetState}
       minimalMode={minimalMode}
     />
   );

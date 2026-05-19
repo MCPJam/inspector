@@ -64,6 +64,29 @@ const widgetFiles = new Hono();
 
 widgetFiles.post("/upload-file", async (c) => {
   try {
+    // Reject oversized payloads BEFORE buffering the body. The endpoint
+    // is unauthenticated (widgets in sandboxed iframes can't send auth
+    // headers), so a 100 MB request would otherwise force the server to
+    // buffer the full body before the post-parse size check at line
+    // ~91 runs. Use Content-Length as a fast pre-check; a base64
+    // payload is ~33% larger than the decoded bytes, so we allow ~1.4x
+    // the MAX_FILE_SIZE before rejecting to leave headroom for the
+    // JSON envelope.
+    const contentLengthHeader = c.req.header("content-length");
+    if (contentLengthHeader) {
+      const declared = Number.parseInt(contentLengthHeader, 10);
+      if (
+        Number.isFinite(declared) &&
+        declared > Math.floor(MAX_FILE_SIZE * 1.4)
+      ) {
+        return c.json(
+          {
+            error: `Request body too large (${declared} bytes). Maximum: ${MAX_FILE_SIZE / 1024 / 1024}MB`,
+          },
+          413,
+        );
+      }
+    }
     const { data, mimeType, fileName } = await c.req.json();
 
     if (!data || typeof data !== "string") {

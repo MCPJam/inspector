@@ -28,17 +28,25 @@ const apps = new Hono();
 const MCP_APPS_MIMETYPE = RESOURCE_MIME_TYPE;
 
 /**
- * Mimetypes accepted by the unified widget-content route. Includes the
- * SEP-1865 canonical type plus `text/html+skybridge` so Apps SDK widgets
- * (which still ship with the legacy ChatGPT mimetype — see
- * examples/chatgpt-apps/CoffeeShop/server.ts) can render through the
- * consolidated MCP path. The renderer surfaces a warning when a
- * non-canonical type is seen but renders the content.
+ * Mimetypes accepted by the unified widget-content route.
+ *
+ * - `text/html;profile=mcp-app` — SEP-1865 canonical.
+ * - `text/html+skybridge` — legacy Apps SDK mimetype shipped by ChatGPT
+ *   apps (see examples/chatgpt-apps/CoffeeShop/server.ts).
+ * - `text/html` — older Apps SDK / hand-rolled widgets that just declare
+ *   plain HTML. The legacy ChatGPTAppRenderer accepted these without any
+ *   mimetype check; we mirror that for backward compatibility.
+ *
+ * Anything else triggers a hard load error so a misconfigured resource
+ * doesn't silently render the wrong content type. The renderer surfaces a
+ * warning for the two non-canonical forms but still renders the content.
  */
 const SKYBRIDGE_MIMETYPE = "text/html+skybridge";
+const PLAIN_HTML_MIMETYPE = "text/html";
 const ACCEPTED_WIDGET_MIMETYPES = new Set<string>([
   MCP_APPS_MIMETYPE,
   SKYBRIDGE_MIMETYPE,
+  PLAIN_HTML_MIMETYPE,
 ]);
 
 /**
@@ -57,6 +65,12 @@ interface WidgetContentRequest {
    * can read timestamps / source IDs without digging into toolOutput.
    */
   toolResponseMetadata?: Record<string, unknown> | null;
+  /**
+   * Persisted widget state from a saved view or fork. Seeds
+   * `window.openai.widgetState` in the compat runtime so widgets boot
+   * in the previously-saved state rather than fresh defaults.
+   */
+  initialWidgetState?: unknown;
   toolId: string;
   toolName: string;
   theme?: "light" | "dark";
@@ -113,6 +127,7 @@ apps.post("/widget-content", async (c) => {
       toolInput,
       toolOutput,
       toolResponseMetadata,
+      initialWidgetState,
       toolId,
       toolName,
       theme,
@@ -153,18 +168,20 @@ apps.post("/widget-content", async (c) => {
       return c.json({ error: "No content in resource" }, 404);
     }
 
-    // Accept SEP-1865 canonical mimetype plus the legacy Apps SDK
-    // `text/html+skybridge`. Anything else is rejected by the renderer.
+    // Accept the SEP-1865 canonical mimetype plus the two legacy Apps SDK
+    // forms (`text/html+skybridge` and plain `text/html`) so widgets that
+    // worked on the old ChatGPTAppRenderer path keep rendering through
+    // the consolidated MCP path. Anything else is a hard error.
     const contentMimeType = (content as { mimeType?: string }).mimeType;
     const mimeTypeValid =
       typeof contentMimeType === "string" &&
       ACCEPTED_WIDGET_MIMETYPES.has(contentMimeType);
     const mimeTypeWarning = !mimeTypeValid
       ? contentMimeType
-        ? `Invalid mimetype "${contentMimeType}" - expected "${MCP_APPS_MIMETYPE}" or "${SKYBRIDGE_MIMETYPE}"`
-        : `Missing mimetype - expected "${MCP_APPS_MIMETYPE}" or "${SKYBRIDGE_MIMETYPE}"`
-      : contentMimeType === SKYBRIDGE_MIMETYPE
-        ? `Legacy Apps SDK mimetype "${SKYBRIDGE_MIMETYPE}" — SEP-1865 prefers "${MCP_APPS_MIMETYPE}"`
+        ? `Invalid mimetype "${contentMimeType}" - expected one of: ${[...ACCEPTED_WIDGET_MIMETYPES].join(", ")}`
+        : `Missing mimetype - expected one of: ${[...ACCEPTED_WIDGET_MIMETYPES].join(", ")}`
+      : contentMimeType !== MCP_APPS_MIMETYPE
+        ? `Legacy Apps SDK mimetype "${contentMimeType}" — SEP-1865 prefers "${MCP_APPS_MIMETYPE}"`
         : null;
 
     if (mimeTypeWarning) {
@@ -238,6 +255,7 @@ apps.post("/widget-content", async (c) => {
       toolInput: toolInput ?? {},
       toolOutput,
       toolResponseMetadata: toolResponseMetadata ?? null,
+      initialWidgetState: initialWidgetState ?? null,
       theme,
       viewMode,
       viewParams,

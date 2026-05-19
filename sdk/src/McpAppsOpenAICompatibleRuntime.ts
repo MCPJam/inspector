@@ -30,6 +30,13 @@ type OpenAICompatConfig = {
    * `null` when no `_meta` was attached to the tool result.
    */
   toolResponseMetadata: Record<string, unknown> | null;
+  /**
+   * Persisted widget state from a saved view or fork. Seeds
+   * `window.openai.widgetState` on bootstrap so widgets that read
+   * `widgetState` at first render see the saved value, not `null`.
+   * `null` when the widget should boot with fresh state.
+   */
+  initialWidgetState: unknown;
   theme: string;
   viewMode: string;
   viewParams: Record<string, unknown>;
@@ -68,6 +75,7 @@ type PendingCall = {
     toolInput,
     toolOutput,
     toolResponseMetadata,
+    initialWidgetState,
     theme,
     viewMode,
     viewParams,
@@ -206,7 +214,10 @@ type PendingCall = {
     displayMode: "inline",
     viewMode: viewMode ?? "inline",
     viewParams: viewParams ?? {},
-    widgetState: null as unknown,
+    // Seeded with the persisted widgetState from a saved view / fork
+    // (when present) so widgets that read window.openai.widgetState on
+    // first render see the previously-saved state instead of null.
+    widgetState: (initialWidgetState ?? null) as unknown,
 
     /**
      * Call an MCP tool by name. Returns a Promise resolved when the
@@ -632,11 +643,24 @@ type PendingCall = {
         toolResponseMetadata: openaiAPI.toolResponseMetadata,
         theme: openaiAPI.theme,
         displayMode: openaiAPI.displayMode,
+        widgetState: openaiAPI.widgetState,
       });
     },
     reject: () => {
       // Initialization failed; still try to signal initialized so widget shows
       sendNotification("ui/notifications/initialized", {});
+      // Dispatch initial globals in the failure path too so event-driven
+      // widgets that subscribe to openai:set_globals get their initial
+      // state (toolInput/toolOutput from config + defaults). Mirrors the
+      // success branch above.
+      dispatchSetGlobals({
+        toolInput: openaiAPI.toolInput,
+        toolOutput: openaiAPI.toolOutput,
+        toolResponseMetadata: openaiAPI.toolResponseMetadata,
+        theme: openaiAPI.theme,
+        displayMode: openaiAPI.displayMode,
+        widgetState: openaiAPI.widgetState,
+      });
     },
   });
 

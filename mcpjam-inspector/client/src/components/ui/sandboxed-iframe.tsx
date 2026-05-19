@@ -178,7 +178,8 @@ export const SandboxedIframe = forwardRef<
       // File upload/download messages (not JSON-RPC) - forward directly
       if (
         event.data?.type === "openai:uploadFile" ||
-        event.data?.type === "openai:getFileDownloadUrl"
+        event.data?.type === "openai:getFileDownloadUrl" ||
+        event.data?.type === "openai:setWidgetState"
       ) {
         onMessage(event);
         return;

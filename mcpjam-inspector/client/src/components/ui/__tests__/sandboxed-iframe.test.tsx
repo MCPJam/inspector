@@ -14,7 +14,7 @@
  * `allow-popups-to-escape-sandbox` on profiles that explicitly model a
  * stricter real host.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render } from "@testing-library/react";
 import { SandboxedIframe } from "@/components/ui/sandboxed-iframe";
 
@@ -267,5 +267,151 @@ describe("SandboxedIframe — outer allow attribute (allowFeatures injection gua
     const allow = getOuterIframeAllow(container);
     expect(allow).toContain("camera *");
     expect(allow).not.toContain("local-network-access");
+  });
+});
+
+describe("SandboxedIframe — non-JSON-RPC message allow-list", () => {
+  // The handler at sandboxed-iframe.tsx:165-205 only forwards messages that
+  // either (a) match a small non-JSON-RPC allow-list or (b) carry
+  // `jsonrpc: "2.0"`. Anything else is dropped. This is the integration
+  // point where the widget-renderer-consolidation regressed: the compat
+  // runtime's `openai:setWidgetState` postMessage is non-JSON-RPC and was
+  // silently dropped before being added to the allow-list, breaking widget
+  // state persistence on the unified path. These tests pin the allow-list.
+  //
+  // They render the real component and dispatch synthetic MessageEvents
+  // whose `source` matches the rendered iframe's contentWindow and whose
+  // `origin` matches the sandbox-proxy origin the component derived from
+  // `window.location`.
+
+  function dispatchFromIframe(
+    iframe: HTMLIFrameElement,
+    data: unknown,
+  ): void {
+    // The component swaps localhost↔127.0.0.1 to satisfy SEP-1865's
+    // different-origin requirement; derive the same origin here.
+    const proxyOrigin = new URL(iframe.src).origin;
+    const event = new MessageEvent("message", {
+      data,
+      source: iframe.contentWindow!,
+      origin: proxyOrigin,
+    });
+    window.dispatchEvent(event);
+  }
+
+  it("forwards openai:setWidgetState (regression: widget-renderer consolidation)", () => {
+    // Without this entry in the allow-list, Apps SDK widgets calling
+    // window.openai.setWidgetState(...) silently lose state — the message
+    // reaches the sandbox proxy and gets forwarded toward the host, but the
+    // outer iframe handler bails on the `jsonrpc !== "2.0"` gate. Pin the
+    // forwarding so a future tightening of the allow-list can't regress
+    // saved-view / replay / fork persistence.
+    const onMessage = vi.fn();
+    const { container } = render(
+      <SandboxedIframe html={null} onMessage={onMessage} />,
+    );
+    const iframe = container.querySelector("iframe") as HTMLIFrameElement;
+    dispatchFromIframe(iframe, {
+      type: "openai:setWidgetState",
+      toolId: "tool-1",
+      state: { counter: 5 },
+    });
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(onMessage.mock.calls[0][0].data).toEqual({
+      type: "openai:setWidgetState",
+      toolId: "tool-1",
+      state: { counter: 5 },
+    });
+  });
+
+  it("forwards openai:uploadFile", () => {
+    const onMessage = vi.fn();
+    const { container } = render(
+      <SandboxedIframe html={null} onMessage={onMessage} />,
+    );
+    const iframe = container.querySelector("iframe") as HTMLIFrameElement;
+    dispatchFromIframe(iframe, {
+      type: "openai:uploadFile",
+      callId: 1,
+      data: "deadbeef",
+      mimeType: "image/png",
+      fileName: "t.png",
+    });
+    expect(onMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("forwards openai:getFileDownloadUrl", () => {
+    const onMessage = vi.fn();
+    const { container } = render(
+      <SandboxedIframe html={null} onMessage={onMessage} />,
+    );
+    const iframe = container.querySelector("iframe") as HTMLIFrameElement;
+    dispatchFromIframe(iframe, {
+      type: "openai:getFileDownloadUrl",
+      callId: 2,
+      fileId: "file_abc",
+    });
+    expect(onMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("forwards mcp-apps:csp-violation", () => {
+    const onMessage = vi.fn();
+    const { container } = render(
+      <SandboxedIframe html={null} onMessage={onMessage} />,
+    );
+    const iframe = container.querySelector("iframe") as HTMLIFrameElement;
+    dispatchFromIframe(iframe, {
+      type: "mcp-apps:csp-violation",
+      directive: "script-src",
+    });
+    expect(onMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops non-JSON-RPC messages that are not in the allow-list", () => {
+    // Belt-and-suspenders: a future "let's add openai:foo" change must
+    // pass through the allow-list, not bypass it. If this assertion ever
+    // needs to flip, the runtime's contract changed and the test should
+    // be updated deliberately.
+    const onMessage = vi.fn();
+    const { container } = render(
+      <SandboxedIframe html={null} onMessage={onMessage} />,
+    );
+    const iframe = container.querySelector("iframe") as HTMLIFrameElement;
+    dispatchFromIframe(iframe, { type: "openai:unknownSomething", x: 1 });
+    dispatchFromIframe(iframe, { hello: "world" });
+    expect(onMessage).not.toHaveBeenCalled();
+  });
+
+  it("forwards generic JSON-RPC 2.0 messages", () => {
+    const onMessage = vi.fn();
+    const { container } = render(
+      <SandboxedIframe html={null} onMessage={onMessage} />,
+    );
+    const iframe = container.querySelector("iframe") as HTMLIFrameElement;
+    dispatchFromIframe(iframe, {
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: { name: "search", arguments: {} },
+      id: 1,
+    });
+    expect(onMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("swallows ui/notifications/sandbox-* messages (internal proxy lifecycle)", () => {
+    // The spec reserves `ui/notifications/sandbox-*` for the proxy↔host
+    // bootstrap and the component handles them internally. They must not
+    // bubble out to consumers — otherwise mcp-apps-renderer would see
+    // sandbox-proxy-ready / sandbox-resource-ready as widget messages.
+    const onMessage = vi.fn();
+    const { container } = render(
+      <SandboxedIframe html={null} onMessage={onMessage} />,
+    );
+    const iframe = container.querySelector("iframe") as HTMLIFrameElement;
+    dispatchFromIframe(iframe, {
+      jsonrpc: "2.0",
+      method: "ui/notifications/sandbox-resource-ready",
+      params: {},
+    });
+    expect(onMessage).not.toHaveBeenCalled();
   });
 });
