@@ -729,7 +729,7 @@ describe("adaptTraceToUiMessages", () => {
   });
 
   describe("buildToolRenderOverridesFromSnapshots / preferLiveWhenPossible", () => {
-    it("strips cached widget URL for mcp-apps snapshots with a resourceUri", () => {
+    it("sets liveFetchPreferred for mcp-apps snapshots with a resourceUri but keeps the cached URL as fallback", () => {
       const overrides = buildToolRenderOverridesFromSnapshots(
         [
           makeWidgetSnapshot({
@@ -744,12 +744,15 @@ describe("adaptTraceToUiMessages", () => {
 
       const override = overrides["call-mcp-live"];
       expect(override).toBeDefined();
-      expect(override.cachedWidgetHtmlUrl).toBeUndefined();
-      expect(override.isOffline).toBe(false);
+      expect(override.liveFetchPreferred).toBe(true);
+      expect(override.cachedWidgetHtmlUrl).toBe(
+        "https://storage.example.com/mcp-widget.html",
+      );
+      expect(override.isOffline).toBe(true);
       expect(override.resourceUri).toBe("ui://widget/create-view.html");
     });
 
-    it("keeps cached widget URL for mcp-apps snapshots without a resourceUri", () => {
+    it("leaves liveFetchPreferred unset for mcp-apps snapshots without a resourceUri", () => {
       const overrides = buildToolRenderOverridesFromSnapshots(
         [
           makeWidgetSnapshot({
@@ -763,13 +766,14 @@ describe("adaptTraceToUiMessages", () => {
       );
 
       const override = overrides["call-mcp-no-uri"];
+      expect(override.liveFetchPreferred).toBe(false);
       expect(override.cachedWidgetHtmlUrl).toBe(
         "https://storage.example.com/no-uri.html",
       );
       expect(override.isOffline).toBe(true);
     });
 
-    it("keeps cached widget URL for openai-apps snapshots even with preferLiveWhenPossible", () => {
+    it("leaves liveFetchPreferred unset for openai-apps snapshots", () => {
       const overrides = buildToolRenderOverridesFromSnapshots(
         [
           makeWidgetSnapshot({
@@ -784,13 +788,14 @@ describe("adaptTraceToUiMessages", () => {
       );
 
       const override = overrides["call-openai"];
+      expect(override.liveFetchPreferred).toBe(false);
       expect(override.cachedWidgetHtmlUrl).toBe(
         "https://storage.example.com/openai-widget.html",
       );
       expect(override.isOffline).toBe(true);
     });
 
-    it("defaults to keeping the cached widget URL (back-compat with persisted offline replay)", () => {
+    it("defaults to liveFetchPreferred=false when the option is not set", () => {
       const overrides = buildToolRenderOverridesFromSnapshots([
         makeWidgetSnapshot({
           toolCallId: "call-default",
@@ -799,13 +804,14 @@ describe("adaptTraceToUiMessages", () => {
       ]);
 
       const override = overrides["call-default"];
+      expect(override.liveFetchPreferred).toBe(false);
       expect(override.cachedWidgetHtmlUrl).toBe(
         "https://storage.example.com/default.html",
       );
       expect(override.isOffline).toBe(true);
     });
 
-    it("leaves isOffline false when there was no cached widget URL to strip", () => {
+    it("sets liveFetchPreferred without a cached fallback when the snapshot has no widget HTML", () => {
       const overrides = buildToolRenderOverridesFromSnapshots(
         [
           makeWidgetSnapshot({
@@ -819,6 +825,7 @@ describe("adaptTraceToUiMessages", () => {
       );
 
       const override = overrides["call-no-url"];
+      expect(override.liveFetchPreferred).toBe(true);
       expect(override.cachedWidgetHtmlUrl).toBeUndefined();
       expect(override.isOffline).toBe(false);
     });

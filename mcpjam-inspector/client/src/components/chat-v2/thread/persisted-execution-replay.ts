@@ -16,6 +16,8 @@ export interface PersistedExecutionReplayInput {
   serverId: string;
   isOffline: boolean;
   cachedWidgetHtmlUrl?: string;
+  /** See ToolRenderOverride.liveFetchPreferred. */
+  liveFetchPreferred?: boolean;
   resourceUri?: string;
   initialWidgetState?: unknown;
   widgetCsp?: McpUiResourceCsp | null;
@@ -50,6 +52,7 @@ export function buildPersistedExecutionReplay(
       serverId: input.serverId,
       isOffline: input.isOffline,
       cachedWidgetHtmlUrl: input.cachedWidgetHtmlUrl,
+      liveFetchPreferred: input.liveFetchPreferred,
       toolOutput: input.toolOutput,
       initialWidgetState:
         input.protocol === "openai-apps" ? input.initialWidgetState : undefined,

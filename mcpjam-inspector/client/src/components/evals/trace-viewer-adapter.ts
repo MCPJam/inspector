@@ -120,12 +120,13 @@ export function snapshotsToTraceWidgetSnapshots(
  * but don't need the full adaptTraceToUiMessages pipeline.
  *
  * When `preferLiveWhenPossible` is set, snapshots that have enough information
- * to live-fetch (mcp-apps with a real `resourceUri`) drop the cached widget
- * URL so the renderer goes through the live MCP Apps fetch path against the
- * active host's current CSP / bridge state. OpenAI Apps snapshots (whose
- * `toolMetadata["openai/outputTemplate"]` is `"__cached__"`) and mcp-apps
- * snapshots missing `resourceUri` keep the cached URL because there is no
- * source to live-fetch from.
+ * to live-fetch (mcp-apps with a real `resourceUri`) get `liveFetchPreferred:
+ * true` so the renderer attempts the live MCP Apps path first and only falls
+ * back to the cached snapshot HTML if live fetch fails (e.g., the server is
+ * no longer connected). The cached URL is preserved as the fallback. OpenAI
+ * Apps snapshots (whose `toolMetadata["openai/outputTemplate"]` is
+ * `"__cached__"`) and mcp-apps snapshots missing `resourceUri` cannot
+ * live-fetch, so they stay on the cached path unconditionally.
  */
 export function buildToolRenderOverridesFromSnapshots(
   snapshots: TraceWidgetSnapshot[],
@@ -136,9 +137,7 @@ export function buildToolRenderOverridesFromSnapshots(
   for (const snap of snapshots) {
     const canLiveFetch =
       preferLive && snap.protocol === "mcp-apps" && !!snap.resourceUri;
-    const cachedWidgetHtmlUrl = canLiveFetch
-      ? undefined
-      : (snap.widgetHtmlUrl ?? undefined);
+    const cachedWidgetHtmlUrl = snap.widgetHtmlUrl ?? undefined;
     const replay = buildPersistedExecutionReplay({
       protocol: snap.protocol,
       toolCallId: snap.toolCallId,
@@ -148,6 +147,7 @@ export function buildToolRenderOverridesFromSnapshots(
       serverId: snap.serverId,
       isOffline: !!cachedWidgetHtmlUrl,
       cachedWidgetHtmlUrl,
+      liveFetchPreferred: canLiveFetch,
       resourceUri: snap.resourceUri,
       toolMetadata: snap.toolMetadata,
       widgetCsp: snap.widgetCsp as any,

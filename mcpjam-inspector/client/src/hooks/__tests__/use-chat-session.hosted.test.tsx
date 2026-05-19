@@ -889,7 +889,7 @@ describe("useChatSession hosted mode", () => {
     unmount();
   });
 
-  it("strips cachedWidgetHtmlUrl for mcp-apps revisits but keeps it for openai-apps", async () => {
+  it("sets liveFetchPreferred for mcp-apps revisits but leaves openai-apps on the cached path", async () => {
     const { result, unmount } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
@@ -942,8 +942,16 @@ describe("useChatSession hosted mode", () => {
         result.current.restoredToolRenderOverrides["tool-call-openai"];
       expect(mcp).toBeDefined();
       expect(openai).toBeDefined();
-      expect(mcp?.cachedWidgetHtmlUrl).toBeUndefined();
-      expect(mcp?.isOffline).toBe(false);
+      // MCP Apps revisit: live-first with cached fallback. Cached URL is
+      // preserved so the renderer can fall back if the server is no longer
+      // connected.
+      expect(mcp?.liveFetchPreferred).toBe(true);
+      expect(mcp?.cachedWidgetHtmlUrl).toBe(
+        "https://storage.example.com/mcp-widget.html"
+      );
+      // OpenAI Apps revisit: cached path only (cannot live-fetch
+      // `outputTemplate = "__cached__"`).
+      expect(openai?.liveFetchPreferred).toBe(false);
       expect(openai?.cachedWidgetHtmlUrl).toBe(
         "https://storage.example.com/openai-widget.html"
       );
