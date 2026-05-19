@@ -525,7 +525,17 @@ export function MCPAppsRenderer({
   const bridgeRef = useRef<AppBridge | null>(null);
   const hostContextRef = useRef<McpUiHostContext | null>(null);
   const isReadyRef = useRef(false);
-  const lastInlineHeightRef = useRef<string>("0px");
+  // Bootstrap the inline iframe at a non-trivial height so viewport-sized
+  // widgets (e.g. `height: 100%`, `100vh`, `min-h-screen`) have a canvas
+  // to measure against before their first `ui/notifications/size-changed`
+  // fires. The compat runtime in `sdk/src/McpAppsOpenAICompatibleRuntime`
+  // suppresses size-changed for `<= 0` heights — if we bootstrap the
+  // iframe at 0px, a viewport-sized widget measures to 0, the runtime
+  // never notifies, and the reveal gate stays locked forever behind the
+  // skeleton. This value doesn't affect visible layout while hidden: the
+  // iframe is `position: absolute` + `opacity: 0`, and the host-side
+  // Skeleton claims the layout slot.
+  const lastInlineHeightRef = useRef<string>("400px");
 
   const onSendFollowUpRef = useRef(onSendFollowUp);
   const onCallToolRef = useRef(onCallTool);

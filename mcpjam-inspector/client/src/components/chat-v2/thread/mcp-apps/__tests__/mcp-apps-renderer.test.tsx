@@ -1012,6 +1012,35 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
   });
 
+  it("bootstraps inline iframe at non-zero height so viewport widgets can measure", async () => {
+    // The compat runtime suppresses `ui/notifications/size-changed` for
+    // measured heights `<= 0`. If the inline iframe starts at 0px, a
+    // viewport-sized widget (`height: 100%`, `100vh`, `min-h-screen`)
+    // measures to 0, never fires size-changed, and the reveal gate stays
+    // locked behind the skeleton. The bootstrap height must be non-zero.
+    const toolInput = { elements: '[{"type":"rectangle"}]' };
+    render(
+      <MCPAppsRenderer
+        {...baseProps}
+        toolState="output-available"
+        toolInput={toolInput}
+        toolOutput={{ ok: true }}
+        cachedWidgetHtmlUrl="blob:cached"
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+    act(() => triggerReady());
+
+    const iframe = screen.getByTestId("sandboxed-iframe") as HTMLElement;
+    expect(iframe.style.height).not.toBe("0px");
+    expect(iframe.style.height).not.toBe("");
+    const heightPx = parseFloat(iframe.style.height);
+    expect(heightPx).toBeGreaterThan(0);
+  });
+
   it("keeps fullscreen iframe hidden until first size-change fires", async () => {
     // Fullscreen exhibits the same "iframe revealed before first paint,
     // widget shows its own 'Connecting…' placeholder" flash as inline.
