@@ -96,6 +96,12 @@ const DEFAULT_INPUT_SCHEMA = { type: "object" } as const;
 
 const SUPPRESSED_UI_LOG_METHODS = new Set(["ui/notifications/size-changed"]);
 const PIP_MAX_HEIGHT = "min(40vh, 600px)";
+// Debounce window for the size-change reveal gate. The widget typically
+// fires multiple size-changes during its mount sequence (initial paint,
+// then re-paint after tool-result is processed). Waiting this long
+// without a new size-change is our proxy for "the widget's layout has
+// stabilized — what's painted now is what the user should see".
+const SIZE_STABILIZE_MS = 150;
 
 /**
  * Origins the hosted-mode sandbox clamp must strip from any widget-
@@ -536,6 +542,25 @@ export function MCPAppsRenderer({
   // iframe is `position: absolute` + `opacity: 0`, and the host-side
   // Skeleton claims the layout slot.
   const lastInlineHeightRef = useRef<string>("400px");
+  // Debounce timer for the size-change reveal gate. The View SDK's
+  // ResizeObserver fires `size-changed` for every layout pass — including
+  // the widget's own initial "Connecting…" placeholder paint before it
+  // receives `tool-result` and re-renders with content. Revealing the
+  // iframe on the first size-change exposes that placeholder text.
+  // Instead, wait for the size to stabilize (no new size-change within
+  // SIZE_STABILIZE_MS) before flipping the gate.
+  const sizeStabilizeTimerRef = useRef<number | null>(null);
+
+  // Clear the debounce timer on unmount so it doesn't fire
+  // `setHasFirstSizeChange` on an unmounted component.
+  useEffect(() => {
+    return () => {
+      if (sizeStabilizeTimerRef.current !== null) {
+        window.clearTimeout(sizeStabilizeTimerRef.current);
+        sizeStabilizeTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const onSendFollowUpRef = useRef(onSendFollowUp);
   const onCallToolRef = useRef(onCallTool);
@@ -807,6 +832,10 @@ export function MCPAppsRenderer({
     if (loadedCspMode !== null && loadedCspMode !== cspMode) {
       setIsReady(false);
       setHasFirstSizeChange(false);
+      if (sizeStabilizeTimerRef.current !== null) {
+        window.clearTimeout(sizeStabilizeTimerRef.current);
+        sizeStabilizeTimerRef.current = null;
+      }
       isReadyRef.current = false;
       resetStreamingState();
     }
@@ -1575,15 +1604,30 @@ export function MCPAppsRenderer({
             parseFloat(style.borderBottomWidth);
         }
 
-        // Always record the painted height in `lastInlineHeightRef` and flip
-        // `hasFirstSizeChange` — both are mode-independent so that a widget
-        // whose first paint arrives while in fullscreen / PiP renders at the
-        // right size (not 0px) the moment the user switches back to inline.
-        // Only the live iframe height-write + resize animation is inline-only:
-        // fullscreen / PiP control height via the render-time `iframeStyle`,
-        // so writing to `iframe.style.height` from here would fight React.
+        // Always record the painted height in `lastInlineHeightRef` —
+        // mode-independent so that a widget whose first paint arrives
+        // while in fullscreen / PiP renders at the right size (not 0px)
+        // the moment the user switches back to inline. Only the live
+        // iframe height-write + resize animation is inline-only:
+        // fullscreen / PiP control height via the render-time
+        // `iframeStyle`, so writing to `iframe.style.height` from here
+        // would fight React.
         lastInlineHeightRef.current = `${adjustedHeight}px`;
-        setHasFirstSizeChange(true);
+
+        // Debounce the reveal gate: a widget typically fires multiple
+        // size-changes during mount (initial placeholder paint, then
+        // re-paint after `tool-result` is processed). Revealing on the
+        // *first* size-change exposes the placeholder (e.g. the OpenAI
+        // Apps SDK compat-shim widgets that show "Connecting…" while
+        // they translate the host's MCP tool-result into the runtime's
+        // `window.openai.toolOutput`). Wait for the size to stabilize.
+        if (sizeStabilizeTimerRef.current !== null) {
+          window.clearTimeout(sizeStabilizeTimerRef.current);
+        }
+        sizeStabilizeTimerRef.current = window.setTimeout(() => {
+          sizeStabilizeTimerRef.current = null;
+          setHasFirstSizeChange(true);
+        }, SIZE_STABILIZE_MS);
 
         if (effectiveDisplayModeRef.current !== "inline") return;
 
@@ -1678,6 +1722,10 @@ export function MCPAppsRenderer({
     setBridgeTransportReady(false);
     setIsReady(false);
     setHasFirstSizeChange(false);
+    if (sizeStabilizeTimerRef.current !== null) {
+      window.clearTimeout(sizeStabilizeTimerRef.current);
+      sizeStabilizeTimerRef.current = null;
+    }
     isReadyRef.current = false;
     logWidgetDebug("host-to-ui", "debug/bridge-connect-start", {
       cspMode,

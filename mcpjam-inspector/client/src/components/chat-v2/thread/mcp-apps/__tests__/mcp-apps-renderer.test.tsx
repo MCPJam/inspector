@@ -1012,6 +1012,57 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
   });
 
+  it("waits for size to stabilize before revealing (Connecting then content)", async () => {
+    // The widget often paints a small "Connecting…" placeholder first
+    // (e.g. OpenAI Apps SDK compat-shim widgets translating the host's
+    // MCP tool-result into `window.openai.toolOutput`), fires a small
+    // size-change, then re-paints with content and fires a second
+    // size-change at the real height. The reveal gate must wait for the
+    // size to stabilize and reveal at the *final* height — otherwise the
+    // user sees the placeholder text flash before content paints.
+    const toolInput = { elements: '[{"type":"rectangle"}]' };
+    render(
+      <MCPAppsRenderer
+        {...baseProps}
+        toolState="output-available"
+        toolInput={toolInput}
+        toolOutput={{ ok: true }}
+        cachedWidgetHtmlUrl="blob:cached"
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+    act(() => triggerReady());
+
+    const iframe = screen.getByTestId("sandboxed-iframe") as HTMLElement;
+
+    // First paint: small placeholder ("Connecting…" text).
+    act(() => {
+      mockBridge.onsizechange?.({ width: 400, height: 40 });
+    });
+    // Immediately after the first size-change, the iframe must still be
+    // hidden — we haven't waited long enough to know if more size-changes
+    // are coming.
+    expect(iframe.style.opacity).toBe("0");
+
+    // Second paint within the debounce window: real content size.
+    // The renderer should track the latest height for the eventual reveal.
+    act(() => {
+      mockBridge.onsizechange?.({ width: 400, height: 320 });
+    });
+    expect(iframe.style.opacity).toBe("0");
+
+    // After the debounce window with no further size-changes, the gate
+    // flips and the iframe reveals at the final size (not the
+    // placeholder size).
+    await vi.waitFor(() => {
+      expect(iframe.style.opacity).toBe("1");
+    });
+    expect(iframe.style.height).toBe("320px");
+  });
+
   it("bootstraps inline iframe at non-zero height so viewport widgets can measure", async () => {
     // The compat runtime suppresses `ui/notifications/size-changed` for
     // measured heights `<= 0`. If the inline iframe starts at 0px, a
