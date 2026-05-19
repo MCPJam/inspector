@@ -7,7 +7,7 @@ import {
   forwardRef,
   useMemo,
 } from "react";
-import { HOSTED_MODE } from "@/lib/config";
+import { HOSTED_MODE, SANDBOX_ORIGIN } from "@/lib/config";
 
 export interface ChatGPTSandboxedIframeHandle {
   postMessage: (data: unknown) => void;
@@ -71,37 +71,51 @@ export const ChatGPTSandboxedIframe = forwardRef<
   const [proxyReady, setProxyReady] = useState(false);
   const urlSentRef = useRef(false);
 
-  // Build cross-origin sandbox proxy URL (localhost ↔ 127.0.0.1 swap)
+  // Build cross-origin sandbox proxy URL.
+  //
+  // Hosted: prefer operator-configured SANDBOX_ORIGIN
+  // (`VITE_MCPJAM_SANDBOX_ORIGIN`) so the sandbox lives on a distinct
+  // origin. Same-origin fallback is a soft-fail with a loud warning.
+  //
+  // Local: localhost ↔ 127.0.0.1 swap.
   const [sandboxProxyUrl, sandboxOrigin] = useMemo(() => {
-    const currentHost = window.location.hostname;
-    const currentPort = window.location.port;
-    const protocol = window.location.protocol;
-
-    // Hosted mode keeps same-origin to support blob/data widget URLs.
-    // Local mode keeps localhost <-> 127.0.0.1 swapping for stronger isolation.
-    let sandboxHost: string;
-    if (HOSTED_MODE) {
-      sandboxHost = currentHost;
-    } else if (currentHost === "localhost") {
-      sandboxHost = "127.0.0.1";
-    } else if (currentHost === "127.0.0.1") {
-      sandboxHost = "localhost";
-    } else {
-      // In production or other environments, fall back to same-origin
-      // Could be enhanced with a dedicated sandbox subdomain
-      console.warn(
-        "[ChatGPTSandboxedIframe] Cross-origin isolation not available, using same-origin",
-      );
-      sandboxHost = currentHost;
-    }
-
-    const portSuffix = currentPort ? `:${currentPort}` : "";
     const version = import.meta.env.PROD
       ? import.meta.env.VITE_BUILD_HASH || "v1"
       : Date.now();
     const proxyPath = HOSTED_MODE
       ? "/api/web/apps/chatgpt-apps/sandbox-proxy"
       : "/api/apps/chatgpt-apps/sandbox-proxy";
+
+    if (HOSTED_MODE && SANDBOX_ORIGIN) {
+      const url = `${SANDBOX_ORIGIN}${proxyPath}?v=${version}`;
+      return [url, SANDBOX_ORIGIN];
+    }
+
+    const currentHost = window.location.hostname;
+    const currentPort = window.location.port;
+    const protocol = window.location.protocol;
+
+    let sandboxHost: string;
+    if (currentHost === "localhost") {
+      sandboxHost = "127.0.0.1";
+    } else if (currentHost === "127.0.0.1") {
+      sandboxHost = "localhost";
+    } else {
+      if (HOSTED_MODE) {
+        console.warn(
+          "[ChatGPTSandboxedIframe] VITE_MCPJAM_SANDBOX_ORIGIN is not configured;" +
+            " sandbox iframe is falling back to same-origin." +
+            " This is a security regression — configure a distinct origin and redeploy.",
+        );
+      } else {
+        console.warn(
+          "[ChatGPTSandboxedIframe] Cross-origin isolation not available, using same-origin",
+        );
+      }
+      sandboxHost = currentHost;
+    }
+
+    const portSuffix = currentPort ? `:${currentPort}` : "";
     const url = `${protocol}//${sandboxHost}${portSuffix}${proxyPath}?v=${version}`;
     const origin = `${protocol}//${sandboxHost}${portSuffix}`;
 
