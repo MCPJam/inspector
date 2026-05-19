@@ -234,10 +234,14 @@ export function useProjectMutations() {
 // Server mutations for the flat servers table
 export function useServerMutations() {
   const createServer = useMutation("servers:createServer" as any);
+  const upsertServer = useMutation("servers:upsertServer" as any);
   const updateServer = useMutation("servers:updateServer" as any);
   const deleteServer = useMutation("servers:deleteServer" as any);
   const createServerWithClientSecret = useAction(
     "servers:createServerWithClientSecret" as any,
+  );
+  const upsertServerWithClientSecret = useAction(
+    "servers:upsertServerWithClientSecret" as any,
   );
   const updateServerWithClientSecret = useAction(
     "servers:updateServerWithClientSecret" as any,
@@ -245,8 +249,10 @@ export function useServerMutations() {
 
   return {
     createServer,
+    upsertServer,
     updateServer,
     createServerWithClientSecret,
+    upsertServerWithClientSecret,
     updateServerWithClientSecret,
     deleteServer,
   };

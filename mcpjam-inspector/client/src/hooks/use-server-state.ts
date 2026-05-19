@@ -566,9 +566,9 @@ export function useServerState({
 }: UseServerStateParams) {
   const convex = useConvex();
   const {
-    createServer: convexCreateServer,
+    upsertServer: convexUpsertServer,
     updateServer: convexUpdateServer,
-    createServerWithClientSecret: convexCreateServerWithClientSecret,
+    upsertServerWithClientSecret: convexUpsertServerWithClientSecret,
     updateServerWithClientSecret: convexUpdateServerWithClientSecret,
     deleteServer: convexDeleteServer,
   } = useServerMutations();
@@ -1073,7 +1073,31 @@ export function useServerState({
       }
       const hasSecretOperation = Boolean(clientSecret || clearClientSecret);
 
-      const existingServer = flatSnapshot?.find((s) => s.name === serverName);
+      // Resolve "does a server with this name already exist?" from the local
+      // snapshot when possible, then fall back to a one-shot Convex query
+      // during loading windows. When no row is visible, the write path still
+      // uses the backend upsert mutation so the final decision is atomic.
+      const resolveExistingServer = async (
+        snapshot: RemoteServer[] | undefined,
+        options?: { queryWhenLoaded?: boolean }
+      ): Promise<RemoteServer | undefined> => {
+        const local = snapshot?.find((s) => s.name === serverName);
+        if (local) return local;
+        if (snapshot !== undefined && options?.queryWhenLoaded !== true) {
+          return undefined;
+        }
+        try {
+          const fresh = (await convex.query(
+            "servers:getProjectServers" as any,
+            { projectId: latestProjectId } as any
+          )) as RemoteServer[] | undefined;
+          return fresh?.find((s) => s.name === serverName);
+        } catch {
+          return undefined;
+        }
+      };
+
+      const existingServer = await resolveExistingServer(flatSnapshot);
 
       const config = serverEntry.config as any;
       const transportType = config?.command ? "stdio" : "http";
@@ -1123,11 +1147,19 @@ export function useServerState({
           ...payload,
           ...(clientSecret ? { clientSecret } : {}),
         };
-        const newId = clientSecret
-          ? await convexCreateServerWithClientSecret(createPayload)
-          : await convexCreateServer(createPayload);
+        const upsertPayload = {
+          ...createPayload,
+          ...(clearClientSecret ? { clearClientSecret: true } : {}),
+        };
+        const newId = hasSecretOperation
+          ? await convexUpsertServerWithClientSecret(upsertPayload)
+          : await convexUpsertServer(createPayload);
         return newId as string | undefined;
       } catch (primaryError) {
+        const primaryErrorMessage =
+          primaryError instanceof Error
+            ? primaryError.message
+            : "Unknown error";
         // Best-effort fallback for stale query snapshots:
         // if update failed, try create; if create failed, try update when possible.
         try {
@@ -1137,14 +1169,20 @@ export function useServerState({
               ...payload,
               ...(clientSecret ? { clientSecret } : {}),
             };
-            const newId = clientSecret
-              ? await convexCreateServerWithClientSecret(createPayload)
-              : await convexCreateServer(createPayload);
+            const upsertPayload = {
+              ...createPayload,
+              ...(clearClientSecret ? { clearClientSecret: true } : {}),
+            };
+            const newId = hasSecretOperation
+              ? await convexUpsertServerWithClientSecret(upsertPayload)
+              : await convexUpsertServer(createPayload);
             return newId as string | undefined;
           }
           const flatRetry =
             activeProjectServersFlatRef.current ?? activeProjectServersFlat;
-          const retryExisting = flatRetry?.find((s) => s.name === serverName);
+          const retryExisting = await resolveExistingServer(flatRetry, {
+            queryWhenLoaded: true,
+          });
           if (retryExisting) {
             const updatePayload = {
               serverId: retryExisting._id,
@@ -1159,13 +1197,23 @@ export function useServerState({
             }
             return retryExisting._id;
           }
+          const createPayload = {
+            projectId: latestProjectId,
+            ...payload,
+            ...(clientSecret ? { clientSecret } : {}),
+          };
+          const upsertPayload = {
+            ...createPayload,
+            ...(clearClientSecret ? { clearClientSecret: true } : {}),
+          };
+          const newId = hasSecretOperation
+            ? await convexUpsertServerWithClientSecret(upsertPayload)
+            : await convexUpsertServer(createPayload);
+          return newId as string | undefined;
         } catch (fallbackError) {
           logger.error("Failed to sync server to Convex", {
             serverName,
-            primaryError:
-              primaryError instanceof Error
-                ? primaryError.message
-                : "Unknown error",
+            primaryError: primaryErrorMessage,
             fallbackError:
               fallbackError instanceof Error
                 ? fallbackError.message
@@ -1173,23 +1221,15 @@ export function useServerState({
           });
           return undefined;
         }
-
-        logger.error("Failed to sync server to Convex", {
-          serverName,
-          error:
-            primaryError instanceof Error
-              ? primaryError.message
-              : "Unknown error",
-        });
-        return undefined;
       }
     },
     [
       activeProjectServersFlat,
+      convex,
+      convexUpsertServer,
       convexUpdateServer,
-      convexCreateServer,
+      convexUpsertServerWithClientSecret,
       convexUpdateServerWithClientSecret,
-      convexCreateServerWithClientSecret,
       logger,
     ]
   );
