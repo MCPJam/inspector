@@ -137,11 +137,8 @@ describe("SandboxDebugPanel — resolved-policy grid", () => {
         protocol="mcp-apps"
       />,
     );
-    // The full matrix card heading is rendered (not the old plain
-    // "Resolved sandbox policy" label).
+    // The full matrix card heading is rendered.
     expect(screen.getByText("Sandbox proxy iframe")).toBeInTheDocument();
-    // The nested View iframe sub-card is also rendered.
-    expect(screen.getByText("View iframe")).toBeInTheDocument();
     // The grid surfaces the granted permission names as the Permissions
     // row's summary value (matrix semantics).
     expect(screen.getByText(/camera, microphone/i)).toBeInTheDocument();
@@ -149,7 +146,22 @@ describe("SandboxDebugPanel — resolved-policy grid", () => {
     expect(screen.getByText(/allow-forms, allow-popups/i)).toBeInTheDocument();
   });
 
-  it("threads hostInfo into the View iframe sub-card", () => {
+  it("hides the View iframe sub-card when hostInfo is null (no fabricated empty)", () => {
+    // When the host hasn't customized uiInitialize.hostInfo, rendering a
+    // lone "uiInitialize" line adds noise without telling the reader
+    // anything. The runtime panel doesn't wire up a click handler either,
+    // so there's no editing affordance to preserve.
+    render(
+      <SandboxDebugPanel
+        sandboxInfo={{ ...baseSandboxInfo, lifecycle: [], applied }}
+        protocol="mcp-apps"
+      />,
+    );
+    expect(screen.queryByText("View iframe")).not.toBeInTheDocument();
+    expect(screen.queryByText("uiInitialize")).not.toBeInTheDocument();
+  });
+
+  it("shows the View iframe sub-card when hostInfo is published", () => {
     render(
       <SandboxDebugPanel
         sandboxInfo={{
@@ -161,6 +173,7 @@ describe("SandboxDebugPanel — resolved-policy grid", () => {
         protocol="mcp-apps"
       />,
     );
+    expect(screen.getByText("View iframe")).toBeInTheDocument();
     expect(screen.getByText("mcpjam-inspector")).toBeInTheDocument();
     expect(screen.getByText("2.4.12")).toBeInTheDocument();
   });

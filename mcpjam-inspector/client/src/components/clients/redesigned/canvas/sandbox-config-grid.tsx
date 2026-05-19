@@ -152,29 +152,38 @@ export const SandboxProxyIframeCard = memo(function SandboxProxyIframeCard({
         selectedSubKey={selectedSubKey}
       />
 
-      <div className="sandbox-proxy-iframe-card__view">
-        <button
-          type="button"
-          className={cn(
-            "sandbox-proxy-iframe-card__head",
-            !onViewTitleClick && "sandbox-proxy-iframe-card__head--static",
-          )}
-          onClick={
-            onViewTitleClick
-              ? (e) => {
-                  e.stopPropagation();
-                  onViewTitleClick();
-                }
-              : undefined
-          }
-          disabled={!onViewTitleClick}
-        >
-          <span className="sandbox-proxy-iframe-card__view-title">
-            View iframe
-          </span>
-        </button>
-        <ViewIframeEmptyState hostInfo={hostInfo} />
-      </div>
+      {/* View iframe sub-card — hidden when the host hasn't customized
+          `uiInitialize.hostInfo` AND the caller didn't wire up a click
+          handler. Without either signal, the sub-card would render a
+          lone "uiInitialize" placeholder which adds noise without
+          telling the reader anything (per "render only actual data").
+          The matrix passes `onViewTitleClick` to keep the editing
+          affordance even when empty; the runtime panel doesn't. */}
+      {hostInfo || onViewTitleClick ? (
+        <div className="sandbox-proxy-iframe-card__view">
+          <button
+            type="button"
+            className={cn(
+              "sandbox-proxy-iframe-card__head",
+              !onViewTitleClick && "sandbox-proxy-iframe-card__head--static",
+            )}
+            onClick={
+              onViewTitleClick
+                ? (e) => {
+                    e.stopPropagation();
+                    onViewTitleClick();
+                  }
+                : undefined
+            }
+            disabled={!onViewTitleClick}
+          >
+            <span className="sandbox-proxy-iframe-card__view-title">
+              View iframe
+            </span>
+          </button>
+          <ViewIframeEmptyState hostInfo={hostInfo} />
+        </div>
+      ) : null}
     </div>
   );
 });
