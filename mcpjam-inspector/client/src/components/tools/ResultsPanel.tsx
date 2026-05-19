@@ -6,6 +6,8 @@ import { detectUIType, UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { extractDisplayFromToolResult } from "@/components/chat-v2/shared/tool-result-text";
 import { navigateApp } from "@/lib/app-navigation";
+import { useActiveHostClientCapabilities } from "@/contexts/active-host-client-capabilities-context";
+import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
 
 interface ResultsPanelProps {
   error: string;
@@ -31,13 +33,22 @@ export function ResultsPanel({
   const uiType = detectUIType(toolMeta, rawResult);
   const hasOpenAIComponent = uiType === UIType.OPENAI_SDK;
   const hasMCPAppsComponent = uiType === UIType.MCP_APPS;
-  const hasUIComponent = hasOpenAIComponent || hasMCPAppsComponent;
+  // Same gate as the chat thread (PartSwitch/WidgetReplay): suppress the
+  // "Use the App Builder" affordance when the active host doesn't advertise
+  // the MCP UI extension. Codex etc. won't render the widget in the chat
+  // surface either, so pointing the user there is misleading.
+  const hostClientCapabilities = useActiveHostClientCapabilities();
+  const hostSupportsWidgets = hostSupportsWidgetRendering(
+    hostClientCapabilities
+  );
+  const hasUIComponent =
+    hostSupportsWidgets && (hasOpenAIComponent || hasMCPAppsComponent);
   const formattedResponseTime =
     responseDurationMs == null
       ? null
       : responseDurationMs < 1000
-        ? `${Math.round(responseDurationMs)} ms`
-        : `${(responseDurationMs / 1000).toFixed(2)} s`;
+      ? `${Math.round(responseDurationMs)} ms`
+      : `${(responseDurationMs / 1000).toFixed(2)} s`;
 
   return (
     <div className="h-full flex flex-col bg-background break-all">

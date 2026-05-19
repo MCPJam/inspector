@@ -1,11 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
+import { MCP_UI_EXTENSION_ID } from "@mcpjam/sdk/browser";
 import { ResultsPanel } from "../ResultsPanel";
+import { ActiveHostClientCapabilitiesProvider } from "@/contexts/active-host-client-capabilities-context";
 
-const { mockJsonEditor } = vi.hoisted(() => ({
+const { mockJsonEditor, mockDetectUIType } = vi.hoisted(() => ({
   mockJsonEditor: vi.fn((props: any) => (
     <div data-testid="json-editor">{JSON.stringify(props.value)}</div>
   )),
+  mockDetectUIType: vi.fn(),
 }));
 
 vi.mock("@/components/ui/json-editor", () => ({
@@ -17,12 +20,14 @@ vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
     OPENAI_SDK: "openai-apps",
     MCP_APPS: "mcp-apps",
   },
-  detectUIType: () => null,
+  detectUIType: (...args: unknown[]) => mockDetectUIType(...args),
 }));
 
 describe("ResultsPanel", () => {
   beforeEach(() => {
     mockJsonEditor.mockClear();
+    mockDetectUIType.mockReset();
+    mockDetectUIType.mockReturnValue(null);
   });
 
   it("renders parsed JSON from a text content block instead of the raw MCP envelope", () => {
@@ -38,7 +43,7 @@ describe("ResultsPanel", () => {
             },
           ],
         }}
-      />,
+      />
     );
 
     expect(screen.getByTestId("json-editor")).toBeInTheDocument();
@@ -53,7 +58,7 @@ describe("ResultsPanel", () => {
           showToolbar: false,
           height: "100%",
         }),
-      ]),
+      ])
     );
   });
 
@@ -63,7 +68,7 @@ describe("ResultsPanel", () => {
     };
 
     render(
-      <ResultsPanel error="" structuredContentValid={false} result={result} />,
+      <ResultsPanel error="" structuredContentValid={false} result={result} />
     );
 
     expect(mockJsonEditor.mock.calls.map(([props]) => props)).toEqual(
@@ -71,7 +76,51 @@ describe("ResultsPanel", () => {
         expect.objectContaining({
           value: result,
         }),
-      ]),
+      ])
     );
+  });
+
+  describe("App Builder banner gate", () => {
+    const uiResult = {
+      content: [{ type: "text", text: "{}" }],
+    };
+
+    it("renders the App Builder banner when the host supports widgets", () => {
+      mockDetectUIType.mockReturnValue("mcp-apps");
+      const caps = {
+        extensions: {
+          [MCP_UI_EXTENSION_ID]: {
+            mimeTypes: ["text/html;profile=mcp-app"],
+          },
+        },
+      };
+      render(
+        <ActiveHostClientCapabilitiesProvider value={caps}>
+          <ResultsPanel
+            error=""
+            structuredContentValid={false}
+            result={uiResult}
+          />
+        </ActiveHostClientCapabilitiesProvider>
+      );
+      expect(screen.getByText(/This tool renders UI/i)).toBeInTheDocument();
+    });
+
+    it("suppresses the banner when the host strips the UI extension (Codex)", () => {
+      mockDetectUIType.mockReturnValue("mcp-apps");
+      const codexCaps = { elicitation: {} };
+      render(
+        <ActiveHostClientCapabilitiesProvider value={codexCaps}>
+          <ResultsPanel
+            error=""
+            structuredContentValid={false}
+            result={uiResult}
+          />
+        </ActiveHostClientCapabilitiesProvider>
+      );
+      expect(
+        screen.queryByText(/This tool renders UI/i)
+      ).not.toBeInTheDocument();
+    });
   });
 });
