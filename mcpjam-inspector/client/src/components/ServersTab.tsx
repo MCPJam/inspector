@@ -595,7 +595,7 @@ export function ServersTab({
     hostId: previewedHostId,
   });
   const { servers: viewProjectServersList } = useViewProjectServers({
-    projectId: activeProjectId || null,
+    projectId: sharedProjectIdForHostScope,
     isAuthenticated,
   });
   const previewedHostRequiredNames = useMemo(() => {
