@@ -560,6 +560,14 @@ export function MCPAppsRenderer({
   toolOutputRef.current = toolOutput;
   const themeModeRef = useRef(themeMode);
 
+  // Source-identity guard for the async fetch effect. The renderer can be
+  // reused across session swaps and prop changes, so an older fetch can
+  // resolve after `{ toolCallId, resourceUri, cachedWidgetHtmlUrl, cspMode,
+  // liveFetchPreferred }` has moved on. Each effect run sets this ref to
+  // its own key; the helpers below drop any state writes that don't still
+  // match the latest key.
+  const latestFetchSourceKeyRef = useRef<string>("");
+
   const {
     canRenderStreamingInput,
     signalStreamingRender,
@@ -588,6 +596,20 @@ export function MCPAppsRenderer({
     // Re-fetch if CSP mode changed (widget needs to reload with new CSP policy)
     if (widgetHtml && loadedCspMode === cspMode) return;
 
+    // Source-identity key for this run. Any in-flight fetch whose key no
+    // longer matches `latestFetchSourceKeyRef.current` when it resolves is
+    // stale and MUST NOT mutate state.
+    const fetchSourceKey = [
+      toolCallId,
+      resourceUri ?? "",
+      cachedWidgetHtmlUrl ?? "",
+      cspMode,
+      liveFetchPreferred ? "live-pref" : "",
+    ].join("|");
+    latestFetchSourceKeyRef.current = fetchSourceKey;
+    const isStillCurrent = () =>
+      latestFetchSourceKeyRef.current === fetchSourceKey;
+
     // Throws on failure. Caller is responsible for surfacing the error.
     const loadFromCachedUrl = async (cachedUrl: string) => {
       const cachedResponse = await fetch(cachedUrl);
@@ -597,6 +619,7 @@ export function MCPAppsRenderer({
         );
       }
       const html = await cachedResponse.text();
+      if (!isStillCurrent()) return;
       // Reset readiness so the previous bridge's transport doesn't
       // get reused with the new HTML before its connect resolves.
       setBridgeTransportReady(false);
@@ -648,6 +671,11 @@ export function MCPAppsRenderer({
         theme: themeModeRef.current,
         cspMode,
       });
+
+      // Stale fetch: source key moved on (e.g. session swap, CSP toggle,
+      // tool call change) while this request was in flight. Drop the
+      // result so it can't overwrite the newer commit's state.
+      if (!isStillCurrent()) return true;
 
       if (!valid) {
         const errorMessage =
@@ -762,6 +790,7 @@ export function MCPAppsRenderer({
 
         await loadFromLiveFetch();
       } catch (err) {
+        if (!isStillCurrent()) return;
         const errorMessage =
           err instanceof Error ? err.message : "Failed to prepare widget";
         setLoadError(errorMessage);
