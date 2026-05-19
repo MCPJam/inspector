@@ -247,11 +247,23 @@ describe("ChatHistoryRow", () => {
     const dropdown = screen.getByTestId("dropdown-menu");
     expect(dropdown).toHaveAttribute("data-state", "closed");
 
+    const rowTitle = screen.getByText("hello world");
+    let contextMenuEvent: Event | null = null;
+    rowTitle.addEventListener(
+      "contextmenu",
+      (event) => {
+        contextMenuEvent = event;
+      },
+      { once: true },
+    );
+
     await user.pointer({
-      target: screen.getByText("hello world"),
+      target: rowTitle,
       keys: "[MouseRight]",
     });
 
+    expect(contextMenuEvent).not.toBeNull();
+    expect(contextMenuEvent?.defaultPrevented).toBe(true);
     expect(dropdown).toHaveAttribute("data-state", "open");
   });
 

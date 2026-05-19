@@ -169,6 +169,17 @@ describe("useChatHistory archiveAllActive", () => {
       expect.objectContaining({ headers: undefined }),
     );
   });
+
+  it("rejects fallback share actions without project scope", async () => {
+    const { result } = renderHook(() => useChatHistory({ enabled: true }));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await expect(result.current.actions.share("p1")).rejects.toThrow(
+      "Cannot share a session without a project.",
+    );
+    expect(chatHistoryApi.chatHistoryAction).not.toHaveBeenCalled();
+  });
 });
 
 describe("useChatHistory archiveManySessionIds", () => {
@@ -336,6 +347,18 @@ describe("useChatHistory reactive mode", () => {
       sessionId: "p1",
       projectId: "project-1",
     });
+    expect(chatHistoryApi.chatHistoryAction).not.toHaveBeenCalled();
+  });
+
+  it("rejects reactive share actions without project scope", async () => {
+    const { result } = renderHook(() => useChatHistory({ enabled: true }));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await expect(result.current.actions.share("p1")).rejects.toThrow(
+      "Cannot share a session without a project.",
+    );
+    expect(reactiveShareMutationMock).not.toHaveBeenCalled();
     expect(chatHistoryApi.chatHistoryAction).not.toHaveBeenCalled();
   });
 });

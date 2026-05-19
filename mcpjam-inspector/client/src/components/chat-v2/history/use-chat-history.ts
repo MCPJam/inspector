@@ -171,10 +171,6 @@ export function useChatHistory({
       params?: Record<string, unknown>,
     ) => {
       const payload = { sessionId: sessionId as any };
-      const scopedPayload = {
-        ...payload,
-        ...(projectId ? { projectId: projectId as any } : {}),
-      };
       switch (action) {
         case "rename":
           await renameCurrentSession({
@@ -189,7 +185,13 @@ export function useChatHistory({
           await unarchiveCurrentSession(payload);
           return;
         case "share":
-          await shareCurrentSession(scopedPayload);
+          if (!projectId) {
+            throw new Error("Cannot share a session without a project.");
+          }
+          await shareCurrentSession({
+            ...payload,
+            projectId: projectId as any,
+          });
           return;
         case "unshare":
           await unshareCurrentSession(payload);
@@ -224,10 +226,13 @@ export function useChatHistory({
         await performReactiveAction(action, sessionId, params);
         return;
       }
-      const scopedParams =
-        action === "share" && projectId
-          ? { ...params, projectId }
-          : params;
+      let scopedParams = params;
+      if (action === "share") {
+        if (!projectId) {
+          throw new Error("Cannot share a session without a project.");
+        }
+        scopedParams = { ...params, projectId };
+      }
       await chatHistoryAction(action, sessionId, scopedParams, {
         headers: requestHeaders,
       });
