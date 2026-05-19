@@ -2,7 +2,11 @@ import { X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 import type { HostConfigInputV2 } from "@/lib/client-config-v2";
-import type { HostAttentionIssue, HostFocusTabId } from "../types";
+import type {
+  HostAttentionIssue,
+  HostFocusTabId,
+  SandboxConfigSubKey,
+} from "../types";
 import { fieldsWithIssues } from "./useClientDraftValidation";
 import { AppearanceTab } from "./AppearanceTab";
 import { BehaviorTab } from "./BehaviorTab";
@@ -27,6 +31,13 @@ interface HostFocusPanelProps {
   tab: HostFocusTabId;
   onTabChange: (next: HostFocusTabId) => void;
   initialSelectedServerId: string | null;
+  /**
+   * Sandbox-config subKey to focus inside the Apps tab when opened from a
+   * sandbox-cfg matrix click. Currently threaded through but ignored by
+   * the editor (no programmatic JSON key-focus API yet); see
+   * `AppsExtensionTab` focusSubKey TODO.
+   */
+  focusSubKey?: SandboxConfigSubKey;
   hostDisplayName: string;
   onHostDisplayNameChange: (value: string) => void;
   draft: HostConfigInputV2;
@@ -55,6 +66,7 @@ export function ClientFocusPanel({
   tab,
   onTabChange,
   initialSelectedServerId,
+  focusSubKey,
   hostDisplayName,
   onHostDisplayNameChange,
   draft,
@@ -122,6 +134,7 @@ export function ClientFocusPanel({
             draft={draft}
             onDraftChange={onDraftChange}
             attention={attention}
+            focusSubKey={focusSubKey}
           />
         ) : null}
         {tab === "servers" ? (

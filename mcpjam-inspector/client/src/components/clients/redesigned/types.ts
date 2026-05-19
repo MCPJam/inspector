@@ -22,6 +22,14 @@ export type HostFocusState =
       open: true;
       tab: HostFocusTabId;
       selectedServerId: string | null;
+      /**
+       * Sandbox-config row to focus inside `AppsExtensionTab` when the
+       * overlay opens from a `sandbox-cfg:<subKey>` matrix click. Currently
+       * a no-op (the JSON editor exposes no programmatic key-focus API);
+       * threaded through end-to-end so the future scroll-to-key landing is
+       * a one-file change. See `AppsExtensionTab` focusSubKey TODO.
+       */
+      focusSubKey?: SandboxConfigSubKey;
     };
 
 export interface HostAttentionIssue {
@@ -388,10 +396,21 @@ export function sandboxConfigLeafNodeId(key: SandboxConfigSubKey): string {
   return `sandbox-cfg:${key}`;
 }
 
-/** Returns the focus tab a clicked node should open in the overlay. */
-export function focusTabForNodeId(
-  nodeId: string,
-): { tab: HostFocusTabId; selectedServerId: string | null } | null {
+/**
+ * Returns the focus tab a clicked node should open in the overlay.
+ *
+ * `focusSubKey` (optional) carries a sandbox-config row identifier when
+ * the click came from a `sandbox-cfg:<subKey>` node. Consumers can use it
+ * to scroll/highlight the matching JSON region inside `AppsExtensionTab`
+ * once the editor exposes a programmatic key-focus API. Until then, it's
+ * threaded through as-is and ignored by the editor — a deliberate no-op
+ * (see `AppsExtensionTab`'s focusSubKey TODO).
+ */
+export function focusTabForNodeId(nodeId: string): {
+  tab: HostFocusTabId;
+  selectedServerId: string | null;
+  focusSubKey?: SandboxConfigSubKey;
+} | null {
   if (nodeId === HOST_GROUP_NODE_ID) {
     // After the General tab was removed, host-group clicks land on
     // Behavior — it's the most active settings tab and the natural
@@ -423,7 +442,14 @@ export function focusTabForNodeId(
     // row in the matrix opens the Apps Extension tab rather than a
     // dedicated tab. The matrix section is still visually distinct via the
     // severity tint; the editor stays unified.
-    return { tab: "apps", selectedServerId: null };
+    const focusSubKey = nodeId.startsWith("sandbox-cfg:")
+      ? (nodeId.slice("sandbox-cfg:".length) as SandboxConfigSubKey)
+      : undefined;
+    return {
+      tab: "apps",
+      selectedServerId: null,
+      ...(focusSubKey ? { focusSubKey } : {}),
+    };
   }
   if (nodeId === SERVERS_HUB_NODE_ID) {
     return { tab: "servers", selectedServerId: null };

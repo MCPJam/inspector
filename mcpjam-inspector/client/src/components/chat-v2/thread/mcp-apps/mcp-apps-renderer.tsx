@@ -41,7 +41,10 @@ import {
   extractMethod,
   UiProtocol,
 } from "@/stores/traffic-log-store";
-import { useWidgetDebugStore } from "@/stores/widget-debug-store";
+import {
+  useWidgetDebugStore,
+  type WidgetLifecycleEvent,
+} from "@/stores/widget-debug-store";
 import {
   AppBridge,
   PostMessageTransport,
@@ -241,6 +244,62 @@ interface MCPAppsRendererProps {
   initialWidgetState?: unknown;
   /** Minimal mode hides diagnostics and metadata surfaces */
   minimalMode?: boolean;
+}
+
+/**
+ * Map a `logWidgetDebug` emission to a `WidgetLifecycleEvent` for the
+ * Sandbox debug panel, or return `null` for methods we don't track.
+ *
+ * Constraints:
+ *  - We only fan out methods that already exist in the renderer. No
+ *    invented events; no synthetic `pending` placeholders. Absence is
+ *    semantic — a stage that hasn't fired stays absent from the array.
+ *  - Status comes from the method itself (e.g. `*-error` → "error",
+ *    `*-ready` / `*-initialized` → "ok", `*-start` / `*-requested` →
+ *    "pending").
+ *  - The store's `appendLifecycle` setter dedupes consecutive same-
+ *    kind same-status entries, so a retry loop doesn't smear the panel.
+ */
+function mapLogToLifecycle(
+  method: string,
+  details: Record<string, unknown>,
+): WidgetLifecycleEvent | null {
+  const kindByMethod: Record<string, WidgetLifecycleEvent["kind"]> = {
+    "debug/sandbox-proxy-ready": "sandbox-proxy-ready",
+    "debug/widget-content-requested": "widget-content-requested",
+    "debug/widget-content-ready": "widget-content-ready",
+    "debug/widget-content-error": "widget-content-error",
+    "debug/widget-content-invalid-mimetype": "widget-content-invalid-mimetype",
+    "debug/bridge-connect-start": "bridge-connect-start",
+    "debug/bridge-connect-ready": "bridge-connect-ready",
+    "debug/bridge-connect-error": "bridge-connect-error",
+    "debug/bridge-connect-skipped": "bridge-connect-skipped",
+    "debug/app-initialized": "app-initialized",
+  };
+  const kind = kindByMethod[method];
+  if (!kind) return null;
+  let status: WidgetLifecycleEvent["status"];
+  if (
+    method.endsWith("-error") ||
+    method === "debug/widget-content-invalid-mimetype"
+  ) {
+    status = "error";
+  } else if (
+    method.endsWith("-ready") ||
+    method === "debug/app-initialized" ||
+    method === "debug/bridge-connect-skipped"
+  ) {
+    status = "ok";
+  } else {
+    status = "pending";
+  }
+  const message =
+    typeof details.error === "string"
+      ? details.error
+      : typeof details.reason === "string"
+        ? details.reason
+        : undefined;
+  return { kind, status, message, timestamp: Date.now() };
 }
 
 export function MCPAppsRenderer({
@@ -926,6 +985,16 @@ export function MCPAppsRenderer({
         method,
         message: details,
       });
+      // Also mirror this event into the widget-debug-store's lifecycle
+      // array when the method matches one of our tracked stages. This is
+      // the Sandbox debug panel's source of truth for "how far did the
+      // widget get before something went wrong" — driven by the renderer's
+      // existing log emissions so we never invent events.
+      const mapped = mapLogToLifecycle(method, details);
+      if (mapped !== null) {
+        const toolCallId = toolCallIdRef.current;
+        if (toolCallId) appendLifecycleRef.current(toolCallId, mapped);
+      }
     },
     [],
   );
@@ -941,6 +1010,15 @@ export function MCPAppsRenderer({
     (s) => s.setWidgetModelContext,
   );
   const setWidgetHtmlStore = useWidgetDebugStore((s) => s.setWidgetHtml);
+  const setSandboxAppliedStore = useWidgetDebugStore(
+    (s) => s.setSandboxApplied,
+  );
+  const appendLifecycleStore = useWidgetDebugStore((s) => s.appendLifecycle);
+  // Ref-route the lifecycle setter so logWidgetDebug stays stable-identity
+  // without listing the store setter in its deps (matches the logUiEvent
+  // pattern above).
+  const appendLifecycleRef = useRef(appendLifecycleStore);
+  appendLifecycleRef.current = appendLifecycleStore;
 
   // Clear CSP violations when CSP mode OR compat flag changes (stale
   // data from previous load — both reload-key axes trigger a refetch
@@ -1530,6 +1608,60 @@ export function MCPAppsRenderer({
     sandboxAttrsPolicy,
     allowFeaturesPolicy,
     cspDirectivesEffective,
+  ]);
+
+  // Publish the resolved sandbox payload into the widget-debug store so the
+  // Sandbox debug panel can render it. `restrictTo` and `cspMode` come from
+  // the source profile because the resolver intersects them in but doesn't
+  // echo them back verbatim — surfacing both lets the matrix-shared grid show
+  // the narrowing knobs even when they collapsed into an intersection.
+  //
+  // Follow-up: `sandboxAttrs` / `allowFeatures` are policy inputs to
+  // `SandboxedIframe`; the literal emitted `sandbox=` / `allow=` strings are
+  // joined and filtered inside that component and are NOT exposed here.
+  // Exposing the final emitted attributes (via a ref or callback on
+  // SandboxedIframe) is left as a follow-up; the resolved policy is enough
+  // for "why isn't this view rendering" in the vast majority of cases.
+  // hostInfo advertised in `ui/initialize` per SEP-1865. Sourced from the
+  // active host profile's `mcpProfile.apps.uiInitialize.hostInfo` so the
+  // panel's "View iframe" sub-card shows what a view actually receives.
+  // Null when the host hasn't customized it — same fallback contract as
+  // the matrix (canvasBuilder.ts:708).
+  const sandboxHostInfo = useMemo<
+    { name: string; version: string } | null
+  >(() => {
+    const raw = activeMcpProfile?.apps?.uiInitialize?.hostInfo;
+    if (!raw || typeof raw !== "object") return null;
+    const name = (raw as { name?: unknown }).name;
+    const version = (raw as { version?: unknown }).version;
+    if (typeof name !== "string" || typeof version !== "string") return null;
+    if (name.trim() === "" || version.trim() === "") return null;
+    return { name, version };
+  }, [activeMcpProfile]);
+
+  useEffect(() => {
+    if (!toolCallId) return;
+    setSandboxAppliedStore(
+      toolCallId,
+      {
+        sandboxAttrs: effectiveSandbox.sandboxAttrs,
+        allowFeatures: effectiveSandbox.allowFeatures,
+        cspDirectives: effectiveSandbox.cspDirectives,
+        permissive: effectiveSandbox.permissive,
+        hostPolicyApplied: effectiveSandbox.hostPolicyApplied,
+        restrictTo: sandboxCspPolicy?.restrictTo,
+        cspMode: sandboxCspPolicy?.mode,
+        permissions: effectiveSandbox.permissions,
+      },
+      undefined,
+      sandboxHostInfo,
+    );
+  }, [
+    toolCallId,
+    effectiveSandbox,
+    sandboxCspPolicy,
+    sandboxHostInfo,
+    setSandboxAppliedStore,
   ]);
 
   useEffect(() => {
