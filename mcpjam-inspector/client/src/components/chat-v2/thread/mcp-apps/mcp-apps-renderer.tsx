@@ -550,6 +550,12 @@ export function MCPAppsRenderer({
   // Instead, wait for the size to stabilize (no new size-change within
   // SIZE_STABILIZE_MS) before flipping the gate.
   const sizeStabilizeTimerRef = useRef<number | null>(null);
+  // Tracks whether tool input/result has been delivered to the bridge.
+  // The reveal-timer is only armed AFTER delivery so a pre-delivery
+  // placeholder paint ("Connecting…" before tool-input/result arrives)
+  // can't stabilize the gate and flash through once
+  // `canRenderStreamingInput` later flips true.
+  const hasDeliveredToolDataRef = useRef(false);
 
   // Clear the debounce timer on unmount so it doesn't fire
   // `setHasFirstSizeChange` on an unmounted component.
@@ -832,6 +838,7 @@ export function MCPAppsRenderer({
     if (loadedCspMode !== null && loadedCspMode !== cspMode) {
       setIsReady(false);
       setHasFirstSizeChange(false);
+      hasDeliveredToolDataRef.current = false;
       if (sizeStabilizeTimerRef.current !== null) {
         window.clearTimeout(sizeStabilizeTimerRef.current);
         sizeStabilizeTimerRef.current = null;
@@ -840,6 +847,28 @@ export function MCPAppsRenderer({
       resetStreamingState();
     }
   }, [cspMode, loadedCspMode, resetStreamingState]);
+
+  // Track when tool input/result has been delivered to the bridge so
+  // the reveal-debounce can be armed only on POST-delivery size-changes.
+  // `useToolInputStreaming` sends:
+  //   - tool-input-partial when toolState === "input-streaming" with data
+  //   - tool-input when toolState transitions to input-available/output-available
+  //   - tool-result when toolState === "output-available" with toolOutput
+  // Mirror those conditions here. (We can't observe the hook's bridge
+  // calls directly, so we infer delivery from the same input signals.)
+  useEffect(() => {
+    if (!isReady) return;
+    if (hasDeliveredToolDataRef.current) return;
+    const hasData =
+      toolState === "input-available" ||
+      toolState === "output-available" ||
+      (toolState === "input-streaming" &&
+        !!toolInput &&
+        Object.keys(toolInput).length > 0);
+    if (hasData) {
+      hasDeliveredToolDataRef.current = true;
+    }
+  }, [isReady, toolState, toolInput]);
 
   // Sync displayMode from playground store when it changes (SEP-1865)
   // Only sync when not in controlled mode (parent controls displayMode via props)
@@ -1621,6 +1650,15 @@ export function MCPAppsRenderer({
         // Apps SDK compat-shim widgets that show "Connecting…" while
         // they translate the host's MCP tool-result into the runtime's
         // `window.openai.toolOutput`). Wait for the size to stabilize.
+        //
+        // Only arm the debounce AFTER tool data has been delivered to
+        // the bridge. A pre-delivery size-change is necessarily the
+        // widget's pre-data placeholder paint; revealing on it would
+        // flash the placeholder once `canRenderStreamingInput` later
+        // flips true. We still update `lastInlineHeightRef` and the
+        // live iframe height above so the layout tracks the widget,
+        // but we don't schedule the reveal.
+        if (!hasDeliveredToolDataRef.current) return;
         if (sizeStabilizeTimerRef.current !== null) {
           window.clearTimeout(sizeStabilizeTimerRef.current);
         }
@@ -1722,6 +1760,7 @@ export function MCPAppsRenderer({
     setBridgeTransportReady(false);
     setIsReady(false);
     setHasFirstSizeChange(false);
+    hasDeliveredToolDataRef.current = false;
     if (sizeStabilizeTimerRef.current !== null) {
       window.clearTimeout(sizeStabilizeTimerRef.current);
       sizeStabilizeTimerRef.current = null;

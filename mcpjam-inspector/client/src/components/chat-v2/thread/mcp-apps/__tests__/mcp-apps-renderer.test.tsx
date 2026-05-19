@@ -950,6 +950,10 @@ describe("MCPAppsRenderer tool input streaming", () => {
       expect(mockBridge.connect).toHaveBeenCalled();
     });
     act(() => triggerReady());
+
+    // Pre-delivery size-change (widget paints its placeholder before
+    // any tool-input arrives). With the post-delivery debounce guard
+    // this must NOT arm the reveal timer.
     act(() => {
       mockBridge.onsizechange?.({ width: 400, height: 300 });
     });
@@ -974,6 +978,13 @@ describe("MCPAppsRenderer tool input streaming", () => {
         arguments: partialInput,
       });
     });
+
+    // Post-delivery size-change for the widget's content paint. This
+    // one is what should arm the reveal-debounce.
+    act(() => {
+      mockBridge.onsizechange?.({ width: 400, height: 300 });
+    });
+
     await vi.waitFor(() => {
       expect(iframe.style.opacity).toBe("1");
       expect(iframe.style.position).toBe("");
@@ -1010,6 +1021,62 @@ describe("MCPAppsRenderer tool input streaming", () => {
       expect(iframe.style.opacity).toBe("1");
       expect(iframe.style.position).toBe("");
     });
+  });
+
+  it("ignores pre-delivery size-changes (only post-delivery size arms reveal)", async () => {
+    // Codex P2: a widget can emit `size-changed` for its pre-data
+    // placeholder paint BEFORE the host has delivered tool input/result
+    // to the bridge. If the debounce timer is armed unconditionally,
+    // 150 ms of quiet flips `hasFirstSizeChange` to true; if
+    // `canRenderStreamingInput` only flips true later (e.g. while a
+    // streaming widget is waiting for its first partial), `showWidget`
+    // reveals immediately on the next render — flashing the placeholder
+    // this gate is meant to hide.
+    //
+    // Guard: the timer is only armed after tool data has been delivered.
+    const toolInput = { elements: '[{"type":"rectangle"}]' };
+    render(
+      <MCPAppsRenderer
+        {...baseProps}
+        toolState="output-available"
+        toolInput={toolInput}
+        toolOutput={{ ok: true }}
+        cachedWidgetHtmlUrl="blob:cached"
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.onsizechange).not.toBeNull();
+    });
+
+    // Pre-delivery size-change: bridge handlers are registered (the
+    // sandbox proxy is up) but `triggerReady` (oninitialized) hasn't
+    // fired, so the renderer's "data delivered" effect hasn't run.
+    act(() => {
+      mockBridge.onsizechange?.({ width: 400, height: 40 });
+    });
+
+    // Wait longer than SIZE_STABILIZE_MS to prove the timer wasn't
+    // scheduled — opacity must still be "0".
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    const iframe = screen.getByTestId("sandboxed-iframe") as HTMLElement;
+    expect(iframe.style.opacity).toBe("0");
+
+    // Now deliver: oninitialized fires, effects run, hook sends
+    // tool-input + tool-result to the bridge.
+    act(() => triggerReady());
+
+    // Post-delivery size-change for the content paint. This one arms
+    // the debounce and after the quiet window the iframe reveals.
+    act(() => {
+      mockBridge.onsizechange?.({ width: 400, height: 320 });
+    });
+
+    await vi.waitFor(() => {
+      expect(iframe.style.opacity).toBe("1");
+    });
+    expect(iframe.style.height).toBe("320px");
   });
 
   it("waits for size to stabilize before revealing (Connecting then content)", async () => {
