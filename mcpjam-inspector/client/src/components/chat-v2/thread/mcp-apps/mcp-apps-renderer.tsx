@@ -1548,6 +1548,14 @@ export function MCPAppsRenderer({
       // `width` and applied it to the iframe via `min(${width}px, 100%)`.
       // Only height-based auto-resize is applied; width is host-controlled.
       bridge.onsizechange = ({ height }) => {
+        // "First size-change" is a mode-independent "widget has painted"
+        // signal: flip it up-front so the inline reveal gate is satisfied
+        // even when the widget first reports a size while in fullscreen /
+        // PiP and is later switched back to inline. The state-set is a
+        // no-op after the first true.
+        if (height !== undefined) {
+          setHasFirstSizeChange(true);
+        }
         if (effectiveDisplayModeRef.current !== "inline") return;
         const iframe = sandboxRef.current?.getIframeElement();
         if (!iframe || height === undefined) return;
@@ -1574,7 +1582,6 @@ export function MCPAppsRenderer({
           from.height = `${iframe.offsetHeight}px`;
           iframe.style.height = to.height = `${adjustedHeight}px`;
           lastInlineHeightRef.current = `${adjustedHeight}px`;
-          setHasFirstSizeChange(true);
         }
 
         iframe.animate([from, to], { duration: 300, easing: "ease-out" });
