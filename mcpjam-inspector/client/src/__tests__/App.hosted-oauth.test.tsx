@@ -257,7 +257,7 @@ vi.mock("../hooks/useElectronOAuth", () => ({
 }));
 
 vi.mock("../hooks/useEnsureDbUser", () => ({
-  useEnsureDbUser: vi.fn(() => ({ isEnsuringUser: false })),
+  useEnsureDbUser: vi.fn(() => ({ isEnsuringUser: false, isUserReady: true })),
 }));
 
 vi.mock("../hooks/usePostHogIdentify", () => ({

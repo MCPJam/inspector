@@ -197,6 +197,7 @@ describe("useAppState active organization recovery", () => {
       useAppState({
         currentUserId: "user-1",
         currentActorKey: "user-1",
+        isUserReady: true,
         routeOrganizationId: undefined,
         hasOrganizations: true,
         isLoadingOrganizations: false,
@@ -229,6 +230,7 @@ describe("useAppState active organization recovery", () => {
       useAppState({
         currentUserId: "user-1",
         currentActorKey: "user-1",
+        isUserReady: true,
         routeOrganizationId: undefined,
         hasOrganizations: true,
         isLoadingOrganizations: false,
@@ -258,6 +260,7 @@ describe("useAppState active organization recovery", () => {
       useAppState({
         currentUserId: "user-1",
         currentActorKey: "user-1",
+        isUserReady: true,
         routeOrganizationId: "org-b",
         hasOrganizations: true,
         isLoadingOrganizations: false,
@@ -282,6 +285,7 @@ describe("useAppState active organization recovery", () => {
       useAppState({
         currentUserId: "user-1",
         currentActorKey: "user-1",
+        isUserReady: true,
         routeOrganizationId: undefined,
         hasOrganizations: false,
         isLoadingOrganizations: false,
@@ -340,6 +344,7 @@ describe("useAppState active organization recovery", () => {
     const hookProps = {
       currentUserId: "user-1",
       currentActorKey: "user-1",
+      isUserReady: true,
       routeOrganizationId: undefined,
       hasOrganizations: true,
       isLoadingOrganizations: false,
@@ -399,6 +404,7 @@ describe("useAppState active organization recovery", () => {
       useAppState({
         currentUserId: "user-1",
         currentActorKey: "user-1",
+        isUserReady: true,
         routeOrganizationId: undefined,
         hasOrganizations: false,
         isLoadingOrganizations: false,
@@ -446,6 +452,7 @@ describe("useAppState active organization recovery", () => {
         useAppState({
           currentUserId: "user-1",
           currentActorKey: "user-1",
+          isUserReady: true,
           routeOrganizationId: undefined,
           hasOrganizations: false,
           isLoadingOrganizations: false,

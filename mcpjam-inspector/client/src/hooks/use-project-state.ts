@@ -152,6 +152,7 @@ export interface UseProjectStateParams {
   appState: AppState;
   dispatch: Dispatch<AppAction>;
   isAuthenticated: boolean;
+  isUserReady: boolean;
   isAuthLoading: boolean;
   hasOrganizations: boolean;
   isLoadingOrganizations: boolean;
@@ -178,6 +179,7 @@ export function useProjectState({
   appState,
   dispatch,
   isAuthenticated,
+  isUserReady,
   isAuthLoading,
   hasOrganizations,
   isLoadingOrganizations,
@@ -304,6 +306,7 @@ export function useProjectState({
     useProjectServers({
       projectId: resolvedActiveProjectIdForServers,
       isAuthenticated,
+      isUserReady,
     });
 
   const clearPendingClientConfigSync = useCallback(

@@ -184,6 +184,7 @@ function renderUseServerState(
   options?: {
     hasSignedInUser?: boolean;
     isAuthenticated?: boolean;
+    isUserReady?: boolean;
     useLocalFallback?: boolean;
     effectiveProjects?: AppState["projects"];
     effectiveActiveProjectId?: string;
@@ -196,6 +197,7 @@ function renderUseServerState(
       dispatch,
       isLoading: false,
       isAuthenticated: options?.isAuthenticated ?? false,
+      isUserReady: options?.isUserReady ?? options?.isAuthenticated ?? false,
       hasSignedInUser: options?.hasSignedInUser ?? false,
       isAuthLoading: false,
       isLoadingProjects: false,
@@ -1789,6 +1791,34 @@ describe("syncServerToConvex name-collision recovery", () => {
     expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
   });
 
+  it("skips the loading-window project servers query until the user row is ready", async () => {
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    const dispatch = vi.fn();
+
+    mockCreateServerIfMissing.mockResolvedValue("srv_created");
+
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true,
+      isUserReady: false,
+      hasSignedInUser: true,
+      useLocalFallback: false,
+      effectiveProjects: appState.projects,
+      activeProjectServersFlat: undefined,
+    });
+
+    await act(async () => {
+      await result.current.saveServerConfigWithoutConnecting({
+        name: "Excalidraw (App)",
+        type: "http",
+        url: "https://mcp.excalidraw.com/mcp",
+      });
+    });
+
+    expect(mockConvexQuery).not.toHaveBeenCalled();
+    expect(mockCreateServerIfMissing).toHaveBeenCalled();
+  });
+
   it("uses create-if-missing when a stale-loaded snapshot misses the row", async () => {
     const appState = createAppState();
     appState.projects.default.sharedProjectId = "project_default";
@@ -1981,6 +2011,7 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
         dispatch,
         isLoading: false,
         isAuthenticated: true,
+        isUserReady: true,
         hasSignedInUser: true,
         isAuthLoading: false,
         isLoadingProjects: false,
@@ -2141,6 +2172,7 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
         dispatch,
         isLoading: false,
         isAuthenticated: true,
+        isUserReady: true,
         hasSignedInUser: true,
         isAuthLoading: false,
         isLoadingProjects: false,
@@ -2186,6 +2218,7 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
         dispatch,
         isLoading: false,
         isAuthenticated: true,
+        isUserReady: true,
         hasSignedInUser: true,
         isAuthLoading: false,
         isLoadingProjects: false,
@@ -2233,6 +2266,7 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
         dispatch,
         isLoading: false,
         isAuthenticated: true,
+        isUserReady: true,
         hasSignedInUser: true,
         isAuthLoading: false,
         isLoadingProjects: false,
@@ -2286,6 +2320,7 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
         dispatch,
         isLoading: false,
         isAuthenticated: true,
+        isUserReady: true,
         hasSignedInUser: true,
         isAuthLoading: false,
         isLoadingProjects: false,
@@ -2343,6 +2378,7 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
         dispatch,
         isLoading: false,
         isAuthenticated: true,
+        isUserReady: true,
         hasSignedInUser: true,
         isAuthLoading: false,
         isLoadingProjects: false,
@@ -2416,6 +2452,7 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
         dispatch,
         isLoading: false,
         isAuthenticated: readiness.isAuthenticated,
+        isUserReady: readiness.isAuthenticated,
         hasSignedInUser: readiness.hasSignedInUser,
         isAuthLoading: readiness.isAuthLoading,
         isLoadingProjects: readiness.isLoadingProjects,

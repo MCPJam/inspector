@@ -96,6 +96,7 @@ describe("useProjectServers", () => {
     const { result } = renderHook(() =>
       useProjectServers({
         isAuthenticated: true,
+        isUserReady: true,
         projectId: "none",
       }),
     );
@@ -114,6 +115,7 @@ describe("useProjectServers", () => {
     renderHook(() =>
       useProjectServers({
         isAuthenticated: true,
+        isUserReady: true,
         projectId: " project-id ",
       }),
     );
@@ -121,6 +123,21 @@ describe("useProjectServers", () => {
     expect(mockUseQuery).toHaveBeenCalledWith("servers:getProjectServers", {
       projectId: "project-id",
     });
+  });
+
+  it("skips the project servers query until the user row is ready", () => {
+    renderHook(() =>
+      useProjectServers({
+        isAuthenticated: true,
+        isUserReady: false,
+        projectId: "project-id",
+      }),
+    );
+
+    expect(mockUseQuery).toHaveBeenCalledWith(
+      "servers:getProjectServers",
+      "skip",
+    );
   });
 });
 

@@ -174,6 +174,7 @@ export function buildDisconnectedRuntimeServers(
 export function useAppState({
   currentUserId,
   currentActorKey,
+  isUserReady,
   routeOrganizationId,
   hasOrganizations,
   isLoadingOrganizations,
@@ -181,6 +182,7 @@ export function useAppState({
   hostsHubFlagEnabled,
 }: {
   currentUserId: string | null;
+  isUserReady: boolean;
   /**
    * Stable identifier for the active actor — `currentUserId` for signed-in
    * users, the guest cookie's `guestId` for guests. Used to scope per-actor
@@ -466,6 +468,7 @@ export function useAppState({
     appState,
     dispatch,
     isAuthenticated,
+    isUserReady,
     isAuthLoading,
     hasOrganizations,
     isLoadingOrganizations,
@@ -517,6 +520,7 @@ export function useAppState({
     dispatch,
     isLoading,
     isAuthenticated,
+    isUserReady,
     hasSignedInUser: currentUserId != null,
     isAuthLoading,
     isLoadingProjects: projectState.isLoadingProjects,

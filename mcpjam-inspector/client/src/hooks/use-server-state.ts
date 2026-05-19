@@ -477,6 +477,7 @@ interface UseServerStateParams {
   dispatch: Dispatch<AppAction>;
   isLoading: boolean;
   isAuthenticated: boolean;
+  isUserReady: boolean;
   /** True when a signed-in WorkOS user is present (not guest Convex-only auth). */
   hasSignedInUser: boolean;
   isAuthLoading: boolean;
@@ -553,6 +554,7 @@ export function useServerState({
   dispatch,
   isLoading,
   isAuthenticated,
+  isUserReady,
   hasSignedInUser,
   isAuthLoading,
   isLoadingProjects,
@@ -577,6 +579,8 @@ export function useServerState({
   hasSignedInUserRef.current = hasSignedInUser;
   const isAuthenticatedRef = useRef(isAuthenticated);
   isAuthenticatedRef.current = isAuthenticated;
+  const isUserReadyRef = useRef(isUserReady);
+  isUserReadyRef.current = isUserReady;
   const isAuthLoadingRef = useRef(isAuthLoading);
   isAuthLoadingRef.current = isAuthLoading;
   const isLoadingProjectsRef = useRef(isLoadingProjects);
@@ -1085,6 +1089,9 @@ export function useServerState({
         const local = snapshot?.find((s) => s.name === serverName);
         if (local) return local;
         if (snapshot !== undefined && options?.queryWhenLoaded !== true) {
+          return undefined;
+        }
+        if (!isUserReadyRef.current) {
           return undefined;
         }
         try {

@@ -175,6 +175,7 @@ describe("useAppState hosted OAuth browser back", () => {
       useAppState({
         currentUserId: "user-1",
         currentActorKey: "user-1",
+        isUserReady: true,
         routeOrganizationId: undefined,
         hasOrganizations: false,
         isLoadingOrganizations: false,
@@ -247,6 +248,7 @@ describe("useAppState pending OAuth marker org preference", () => {
     const { result } = renderHook(() =>
       useAppState({
         currentUserId: "user-1",
+        isUserReady: true,
         routeOrganizationId: undefined,
         hasOrganizations: true,
         isLoadingOrganizations: false,
@@ -270,6 +272,7 @@ describe("useAppState pending OAuth marker org preference", () => {
     const { result } = renderHook(() =>
       useAppState({
         currentUserId: "user-1",
+        isUserReady: true,
         routeOrganizationId: undefined,
         hasOrganizations: true,
         isLoadingOrganizations: false,
@@ -298,6 +301,7 @@ describe("useAppState pending OAuth marker org preference", () => {
     const { result } = renderHook(() =>
       useAppState({
         currentUserId: "user-1",
+        isUserReady: true,
         routeOrganizationId: undefined,
         hasOrganizations: true,
         isLoadingOrganizations: false,
@@ -328,6 +332,7 @@ describe("useAppState pending OAuth marker org preference", () => {
     const { result } = renderHook(() =>
       useAppState({
         currentUserId: "user-1",
+        isUserReady: true,
         routeOrganizationId: undefined,
         hasOrganizations: true,
         isLoadingOrganizations: false,
