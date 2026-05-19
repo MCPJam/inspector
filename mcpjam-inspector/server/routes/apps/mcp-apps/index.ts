@@ -28,6 +28,20 @@ const apps = new Hono();
 const MCP_APPS_MIMETYPE = RESOURCE_MIME_TYPE;
 
 /**
+ * Mimetypes accepted by the unified widget-content route. Includes the
+ * SEP-1865 canonical type plus `text/html+skybridge` so Apps SDK widgets
+ * (which still ship with the legacy ChatGPT mimetype — see
+ * examples/chatgpt-apps/CoffeeShop/server.ts) can render through the
+ * consolidated MCP path. The renderer surfaces a warning when a
+ * non-canonical type is seen but renders the content.
+ */
+const SKYBRIDGE_MIMETYPE = "text/html+skybridge";
+const ACCEPTED_WIDGET_MIMETYPES = new Set<string>([
+  MCP_APPS_MIMETYPE,
+  SKYBRIDGE_MIMETYPE,
+]);
+
+/**
  * CSP mode types - matches client-side CspMode type
  */
 type CspMode = "permissive" | "widget-declared";
@@ -37,6 +51,12 @@ interface WidgetContentRequest {
   resourceUri: string;
   toolInput: Record<string, unknown>;
   toolOutput: unknown;
+  /**
+   * Tool response `_meta` (Apps SDK contract). When present, the compat
+   * runtime exposes it as `window.openai.toolResponseMetadata` so widgets
+   * can read timestamps / source IDs without digging into toolOutput.
+   */
+  toolResponseMetadata?: Record<string, unknown> | null;
   toolId: string;
   toolName: string;
   theme?: "light" | "dark";
@@ -54,6 +74,35 @@ interface UIResourceMeta {
   prefersBorder?: boolean;
 }
 
+/**
+ * Fallback CSP extraction for legacy Apps SDK widgets that declare CSP
+ * via `_meta["openai/widgetCSP"]` (snake_case fields:
+ * `connect_domains`, `resource_domains`, `frame_domains`) instead of the
+ * SEP-1865 `_meta.ui.csp` shape (camelCase). Returns the camelCase shape
+ * the proxy's buildCSP expects, or undefined when no legacy CSP is set
+ * or only contains non-array values.
+ */
+function extractLegacyOpenAICsp(
+  resourceMeta: Record<string, unknown> | undefined,
+): McpUiResourceCsp | undefined {
+  if (!resourceMeta) return undefined;
+  const legacy = resourceMeta["openai/widgetCSP"];
+  if (!legacy || typeof legacy !== "object") return undefined;
+  const src = legacy as Record<string, unknown>;
+  const readArr = (v: unknown): string[] | undefined =>
+    Array.isArray(v)
+      ? v.filter((x): x is string => typeof x === "string" && x.length > 0)
+      : undefined;
+  const out: McpUiResourceCsp = {};
+  const connect = readArr(src.connect_domains);
+  const resource = readArr(src.resource_domains);
+  const frame = readArr(src.frame_domains);
+  if (connect && connect.length > 0) out.connectDomains = connect;
+  if (resource && resource.length > 0) out.resourceDomains = resource;
+  if (frame && frame.length > 0) out.frameDomains = frame;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 // Serve widget content with CSP metadata (SEP-1865)
 apps.post("/widget-content", async (c) => {
   try {
@@ -63,6 +112,7 @@ apps.post("/widget-content", async (c) => {
       resourceUri,
       toolInput,
       toolOutput,
+      toolResponseMetadata,
       toolId,
       toolName,
       theme,
@@ -103,14 +153,19 @@ apps.post("/widget-content", async (c) => {
       return c.json({ error: "No content in resource" }, 404);
     }
 
-    // SEP-1865: Validate mimetype - MUST be "text/html;profile=mcp-app"
+    // Accept SEP-1865 canonical mimetype plus the legacy Apps SDK
+    // `text/html+skybridge`. Anything else is rejected by the renderer.
     const contentMimeType = (content as { mimeType?: string }).mimeType;
-    const mimeTypeValid = contentMimeType === MCP_APPS_MIMETYPE;
+    const mimeTypeValid =
+      typeof contentMimeType === "string" &&
+      ACCEPTED_WIDGET_MIMETYPES.has(contentMimeType);
     const mimeTypeWarning = !mimeTypeValid
       ? contentMimeType
-        ? `Invalid mimetype "${contentMimeType}" - SEP-1865 requires "${MCP_APPS_MIMETYPE}"`
-        : `Missing mimetype - SEP-1865 requires "${MCP_APPS_MIMETYPE}"`
-      : null;
+        ? `Invalid mimetype "${contentMimeType}" - expected "${MCP_APPS_MIMETYPE}" or "${SKYBRIDGE_MIMETYPE}"`
+        : `Missing mimetype - expected "${MCP_APPS_MIMETYPE}" or "${SKYBRIDGE_MIMETYPE}"`
+      : contentMimeType === SKYBRIDGE_MIMETYPE
+        ? `Legacy Apps SDK mimetype "${SKYBRIDGE_MIMETYPE}" — SEP-1865 prefers "${MCP_APPS_MIMETYPE}"`
+        : null;
 
     if (mimeTypeWarning) {
       logger.warn("[MCP Apps] Mimetype validation: " + mimeTypeWarning, {
@@ -133,11 +188,22 @@ apps.post("/widget-content", async (c) => {
       return c.json({ error: "No HTML content in resource" }, 404);
     }
 
-    // Extract CSP, permissions, and other UI metadata from resource _meta (SEP-1865)
-    const uiMeta = (content._meta as { ui?: UIResourceMeta } | undefined)?.ui;
-    const csp = uiMeta?.csp;
+    // Extract CSP, permissions, and other UI metadata from resource _meta.
+    // SEP-1865 keys (`_meta.ui.csp`, `_meta.ui.prefersBorder`) are
+    // canonical; fall back to the legacy Apps SDK keys
+    // (`_meta["openai/widgetCSP"]`, `_meta["openai/widgetPrefersBorder"]`)
+    // when SEP-1865 keys are absent so widgets that haven't migrated still
+    // get their declared CSP/border preference honored.
+    const resourceMeta = content._meta as Record<string, unknown> | undefined;
+    const uiMeta = (resourceMeta as { ui?: UIResourceMeta } | undefined)?.ui;
+    const csp: McpUiResourceCsp | undefined =
+      uiMeta?.csp ?? extractLegacyOpenAICsp(resourceMeta);
     const permissions = uiMeta?.permissions;
-    const prefersBorder = uiMeta?.prefersBorder;
+    const prefersBorder: boolean | undefined =
+      uiMeta?.prefersBorder ??
+      (typeof resourceMeta?.["openai/widgetPrefersBorder"] === "boolean"
+        ? (resourceMeta["openai/widgetPrefersBorder"] as boolean)
+        : undefined);
 
     // Log CSP and permissions configuration for security review (SEP-1865)
     logger.debug("[MCP Apps] Security configuration", {
@@ -171,6 +237,7 @@ apps.post("/widget-content", async (c) => {
       toolName,
       toolInput: toolInput ?? {},
       toolOutput,
+      toolResponseMetadata: toolResponseMetadata ?? null,
       theme,
       viewMode,
       viewParams,

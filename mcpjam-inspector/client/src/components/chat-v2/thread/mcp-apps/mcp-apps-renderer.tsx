@@ -152,6 +152,30 @@ function sanitizeHostStyleVariables(
 
 // CSP and permissions metadata types are now imported from SDK
 
+/**
+ * Pull `_meta` (or legacy `.meta`) off the tool result for surfacing to
+ * widgets as `window.openai.toolResponseMetadata`. Apps SDK widgets read
+ * this for timestamps, source IDs, and other non-rendered metadata.
+ * Mirrors the derivation the legacy ChatGPTAppRenderer performed.
+ */
+function extractToolResponseMetadata(
+  toolOutput: unknown,
+): Record<string, unknown> | null {
+  if (!toolOutput || typeof toolOutput !== "object") return null;
+  const obj = toolOutput as Record<string, unknown>;
+  if (
+    "_meta" in obj &&
+    obj._meta &&
+    typeof obj._meta === "object"
+  ) {
+    return obj._meta as Record<string, unknown>;
+  }
+  if ("meta" in obj && obj.meta && typeof obj.meta === "object") {
+    return obj.meta as Record<string, unknown>;
+  }
+  return null;
+}
+
 interface MCPAppsRendererProps {
   serverId: string;
   toolCallId: string;
@@ -219,6 +243,7 @@ export function MCPAppsRenderer({
   toolsMetadata,
   onSendFollowUp,
   onCallTool,
+  onWidgetStateChange,
   pipWidgetId,
   fullscreenWidgetId,
   onRequestPip,
@@ -620,6 +645,12 @@ export function MCPAppsRenderer({
           resourceUri,
           toolInput: toolInputRef.current,
           toolOutput: toolOutputRef.current,
+          // Surface `_meta` from the tool response so the compat runtime
+          // can expose it as `window.openai.toolResponseMetadata`. Mirrors
+          // the derivation from the legacy ChatGPTAppRenderer.
+          toolResponseMetadata: extractToolResponseMetadata(
+            toolOutputRef.current,
+          ),
           toolId: toolCallId,
           toolName,
           theme: themeModeRef.current,
@@ -1833,6 +1864,17 @@ export function MCPAppsRenderer({
       handleGetFileDownloadUrlMessage(data, (message) => {
         sandboxRef.current?.postMessage(message);
       });
+      return;
+    }
+
+    // Apps SDK widget-state persistence (forwarded from the compat
+    // runtime in the inner iframe). Pass through to the host so saved
+    // views / replay / fork can restore it; matches the contract the
+    // legacy ChatGPTAppRenderer fulfilled.
+    if (data.type === "openai:setWidgetState") {
+      if (onWidgetStateChange && typeof toolCallId === "string") {
+        onWidgetStateChange(toolCallId, data.state);
+      }
       return;
     }
 

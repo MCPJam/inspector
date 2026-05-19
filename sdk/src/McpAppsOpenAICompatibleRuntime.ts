@@ -23,6 +23,13 @@ type OpenAICompatConfig = {
   toolName: string;
   toolInput: Record<string, unknown>;
   toolOutput: unknown;
+  /**
+   * Tool response `_meta` (per the Apps SDK contract — exposed to widgets
+   * as `window.openai.toolResponseMetadata`, distinct from
+   * `toolOutput` which is the structured result the widget renders).
+   * `null` when no `_meta` was attached to the tool result.
+   */
+  toolResponseMetadata: Record<string, unknown> | null;
   theme: string;
   viewMode: string;
   viewParams: Record<string, unknown>;
@@ -56,7 +63,15 @@ type PendingCall = {
   const config = readConfig();
   if (!config) return;
 
-  const { toolId, toolInput, toolOutput, theme, viewMode, viewParams } = config;
+  const {
+    toolId,
+    toolInput,
+    toolOutput,
+    toolResponseMetadata,
+    theme,
+    viewMode,
+    viewParams,
+  } = config;
 
   // JSON-RPC 2.0 call ID counter
   let callId = 0;
@@ -186,6 +201,7 @@ type PendingCall = {
   const openaiAPI = {
     toolInput: toolInput ?? {},
     toolOutput: toolOutput ?? null,
+    toolResponseMetadata: toolResponseMetadata ?? null,
     theme: theme ?? "dark",
     displayMode: "inline",
     viewMode: viewMode ?? "inline",
@@ -271,18 +287,25 @@ type PendingCall = {
     },
 
     /**
-     * Store arbitrary widget state for persistence.
-     * Maps to ui/update-model-context which is a request expecting
-     * { content?: ContentBlock[], structuredContent?: Record }.
+     * Store arbitrary widget state for persistence. Mirrors the Apps SDK
+     * contract:
+     *   - update local `window.openai.widgetState`,
+     *   - notify the host so it can persist for replay / saved views,
+     *   - fire the `openai:set_globals` event for widgets that observe it.
+     *
+     * IMPORTANT: this does NOT call `ui/update-model-context`. That
+     * request is a SEP-1865 spec API for explicitly updating the host's
+     * model context (which is consumed by the LLM on the next turn) and
+     * should be opt-in — auto-posting on every state change would leak
+     * widget internals into the LLM prompt. Widgets that want to update
+     * model context must call it themselves.
      */
     setWidgetState(state: unknown): void {
       this.widgetState = state;
-      sendRequest("ui/update-model-context", {
-        structuredContent:
-          typeof state === "object" && state !== null
-            ? (state as Record<string, unknown>)
-            : { value: state },
-      });
+      window.parent.postMessage(
+        { type: "openai:setWidgetState", toolId, state },
+        "*",
+      );
       dispatchSetGlobals({ widgetState: state });
     },
 
@@ -485,10 +508,23 @@ type PendingCall = {
           dispatchSetGlobals({ toolInput: args });
           break;
         }
-        case "ui/notifications/tool-result":
+        case "ui/notifications/tool-result": {
           openaiAPI.toolOutput = params;
-          dispatchSetGlobals({ toolOutput: params });
+          // Apps SDK exposes the tool result's `_meta` as a separate
+          // `window.openai.toolResponseMetadata` surface (distinct from
+          // toolOutput, which is the structured result the widget renders).
+          // Surface it here when present so widgets can read timestamps,
+          // source IDs, etc. without rummaging in toolOutput.
+          const meta =
+            (params as { _meta?: Record<string, unknown> } | undefined)?._meta;
+          const detail: Record<string, unknown> = { toolOutput: params };
+          if (meta && typeof meta === "object") {
+            openaiAPI.toolResponseMetadata = meta;
+            detail.toolResponseMetadata = meta;
+          }
+          dispatchSetGlobals(detail);
           break;
+        }
         case "ui/notifications/tool-cancelled":
           // Tool was cancelled/errored
           break;
@@ -593,6 +629,7 @@ type PendingCall = {
       dispatchSetGlobals({
         toolInput: openaiAPI.toolInput,
         toolOutput: openaiAPI.toolOutput,
+        toolResponseMetadata: openaiAPI.toolResponseMetadata,
         theme: openaiAPI.theme,
         displayMode: openaiAPI.displayMode,
       });

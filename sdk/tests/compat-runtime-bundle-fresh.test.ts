@@ -40,6 +40,8 @@ const fingerprints: Array<[string, string]> = [
   ["initialized notification", "ui/notifications/initialized"],
   ["upload-file message type", "openai:uploadFile"],
   ["getFileDownloadUrl message type", "openai:getFileDownloadUrl"],
+  ["setWidgetState postMessage", "openai:setWidgetState"],
+  ["toolResponseMetadata config field", "toolResponseMetadata"],
   ["requestCheckout notification", "openai/requestCheckout"],
   ["requestModal notification", "openai/requestModal"],
   ["requestClose notification", "openai/requestClose"],

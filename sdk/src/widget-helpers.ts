@@ -37,6 +37,12 @@ export function injectOpenAICompat(
     toolName: string;
     toolInput: Record<string, unknown>;
     toolOutput: unknown;
+    /**
+     * Tool response `_meta` exposed to the widget as
+     * `window.openai.toolResponseMetadata`. Apps SDK widgets read this
+     * for non-model-context metadata (timestamps, source IDs, etc.).
+     */
+    toolResponseMetadata?: Record<string, unknown> | null;
     theme?: string;
     viewMode?: string;
     viewParams?: Record<string, unknown>;
@@ -51,6 +57,7 @@ export function injectOpenAICompat(
     toolName: widgetData.toolName,
     toolInput: widgetData.toolInput,
     toolOutput: widgetData.toolOutput,
+    toolResponseMetadata: widgetData.toolResponseMetadata ?? null,
     theme: widgetData.theme ?? "dark",
     viewMode: widgetData.viewMode ?? "inline",
     viewParams: widgetData.viewParams ?? {},

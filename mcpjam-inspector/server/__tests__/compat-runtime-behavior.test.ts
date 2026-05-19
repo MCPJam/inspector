@@ -110,6 +110,7 @@ const F1_CONFIG = {
   toolName: "search",
   toolInput: { q: "hello" },
   toolOutput: null,
+  toolResponseMetadata: { source: "boot" },
   theme: "dark",
   viewMode: "inline",
   viewParams: {},
@@ -120,6 +121,7 @@ const F2_CONFIG = {
   toolName: "weather",
   toolInput: { location: "SF" },
   toolOutput: { temperature: 72 },
+  toolResponseMetadata: null,
   theme: "light",
   viewMode: "inline",
   viewParams: {},
@@ -130,6 +132,7 @@ const F3_CONFIG = {
   toolName: "dual",
   toolInput: { a: 1 },
   toolOutput: { b: 2 },
+  toolResponseMetadata: null,
   theme: "dark",
   viewMode: "inline",
   viewParams: {},
@@ -172,15 +175,27 @@ describe("compat runtime — F1: Apps SDK only", () => {
     expect((call!.data as any).params.arguments).toEqual({ q: "hi" });
   });
 
-  it("window.openai.setWidgetState emits ui/update-model-context and dispatches set_globals", () => {
+  it("window.openai.setWidgetState emits openai:setWidgetState postMessage and dispatches set_globals", () => {
+    // The compat runtime mirrors the Apps SDK contract: setWidgetState
+    // notifies the host via a non-JSON-RPC `openai:setWidgetState` message
+    // (which mcp-apps-renderer.tsx forwards into onWidgetStateChange for
+    // replay/saved-view persistence). It does NOT auto-call
+    // ui/update-model-context — that would leak widget state into the LLM
+    // prompt on every state change.
     h.completeInitHandshake();
     const before = h.setGlobalsEvents.length;
     h.window.openai.setWidgetState({ counter: 5 });
-    const update = h.parentMessages.find(
+    const set = h.parentMessages.find(
+      (m) => (m.data as any)?.type === "openai:setWidgetState",
+    );
+    expect(set).toBeDefined();
+    expect((set!.data as any).state).toEqual({ counter: 5 });
+    expect((set!.data as any).toolId).toBe(F1_CONFIG.toolId);
+    // Model context update should NOT be auto-sent.
+    const modelCtx = h.parentMessages.find(
       (m) => (m.data as any)?.method === "ui/update-model-context",
     );
-    expect(update).toBeDefined();
-    expect((update!.data as any).params.structuredContent).toEqual({ counter: 5 });
+    expect(modelCtx).toBeUndefined();
     const after = h.setGlobalsEvents.length;
     expect(after).toBe(before + 1);
     const last = h.setGlobalsEvents[after - 1] as { globals: Record<string, unknown> };
@@ -256,6 +271,35 @@ describe("compat runtime — F1: Apps SDK only", () => {
     );
     expect(req).toBeDefined();
     expect((req!.data as any).params.mode).toBe("fullscreen");
+  });
+
+  it("exposes toolResponseMetadata from config on window.openai", () => {
+    h.completeInitHandshake();
+    expect(h.window.openai.toolResponseMetadata).toEqual({ source: "boot" });
+  });
+
+  it("ui/notifications/tool-result with _meta updates window.openai.toolResponseMetadata", () => {
+    h.completeInitHandshake();
+    const before = h.setGlobalsEvents.length;
+    h.sendFromParent({
+      jsonrpc: "2.0",
+      method: "ui/notifications/tool-result",
+      params: {
+        content: [{ type: "text", text: "ok" }],
+        _meta: { timestamp: "2026-01-01T00:00:00Z", source: "weather-api" },
+      },
+    });
+    expect(h.window.openai.toolResponseMetadata).toEqual({
+      timestamp: "2026-01-01T00:00:00Z",
+      source: "weather-api",
+    });
+    const after = h.setGlobalsEvents.length;
+    expect(after).toBe(before + 1);
+    const last = h.setGlobalsEvents[after - 1] as { globals: Record<string, unknown> };
+    expect(last.globals.toolResponseMetadata).toEqual({
+      timestamp: "2026-01-01T00:00:00Z",
+      source: "weather-api",
+    });
   });
 });
 
@@ -340,13 +384,18 @@ describe("compat runtime — F3: dual metadata", () => {
     // Both should have fired
     expect(h.setGlobalsEvents.length).toBe(baseline + 2);
 
-    // The MCP path emitted ui/update-model-context; the legacy
-    // ChatGPT path's openai:setWidgetState postMessage is NOT emitted
-    // (compat runtime uses the JSON-RPC alias).
-    const update = h.parentMessages.find(
+    // setWidgetState emits the Apps SDK contract message
+    // (openai:setWidgetState postMessage) so the host can persist widget
+    // state for replay / saved views. ui/update-model-context is an
+    // opt-in spec API and should NOT be auto-fired.
+    const setState = h.parentMessages.find(
+      (m) => (m.data as any)?.type === "openai:setWidgetState",
+    );
+    expect(setState).toBeDefined();
+    const modelCtx = h.parentMessages.find(
       (m) => (m.data as any)?.method === "ui/update-model-context",
     );
-    expect(update).toBeDefined();
+    expect(modelCtx).toBeUndefined();
   });
 
   it("does not double-dispatch when both notification streams target the same field", () => {

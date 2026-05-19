@@ -12,6 +12,12 @@ export interface FetchMcpAppsWidgetContentRequest {
   resourceUri: string;
   toolInput: Record<string, unknown> | undefined;
   toolOutput: unknown;
+  /**
+   * Tool response `_meta`. Flows through to
+   * `window.openai.toolResponseMetadata` in the widget. Read from
+   * `rawOutput._meta` at the renderer layer; pass null when absent.
+   */
+  toolResponseMetadata?: Record<string, unknown> | null;
   toolId: string;
   toolName: string;
   theme: string;
@@ -50,6 +56,7 @@ export async function fetchMcpAppsWidgetContent(
       resourceUri: request.resourceUri,
       toolInput: request.toolInput,
       toolOutput: request.toolOutput,
+      toolResponseMetadata: request.toolResponseMetadata ?? null,
       toolId: request.toolId,
       toolName: request.toolName,
       theme: request.theme,
