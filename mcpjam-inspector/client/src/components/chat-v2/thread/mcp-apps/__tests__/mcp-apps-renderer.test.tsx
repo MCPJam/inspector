@@ -16,6 +16,9 @@ const {
   stableStoreFns,
   mockSandboxPostMessage,
   sandboxedIframePropsRef,
+  sandboxedIframeElementRef,
+  sandboxedIframeMountsRef,
+  sandboxedIframeUnmountsRef,
   sandboxProxyBehaviorRef,
   appBridgeArgsRef,
 } = vi.hoisted(() => {
@@ -55,6 +58,9 @@ const {
       };
       return bridge;
     });
+  const sandboxedIframeElementRef = { current: null as HTMLElement | null };
+  const sandboxedIframeMountsRef = { current: 0 };
+  const sandboxedIframeUnmountsRef = { current: 0 };
 
   // Stable function references for store selectors — prevents useEffect deps
   // from changing on every render, which would teardown/reinitialize the bridge.
@@ -77,6 +83,9 @@ const {
     mockPostMessageTransport: vi.fn(),
     mockSandboxPostMessage: vi.fn(),
     sandboxedIframePropsRef: { current: null as any },
+    sandboxedIframeElementRef,
+    sandboxedIframeMountsRef,
+    sandboxedIframeUnmountsRef,
     sandboxProxyBehaviorRef: { current: { autoReady: true } },
     appBridgeArgsRef,
     stableStoreFns: stableFns,
@@ -122,6 +131,12 @@ vi.mock("@/components/ui/sandboxed-iframe", () => ({
   SandboxedIframe: React.forwardRef((props: any, ref: any) => {
     sandboxedIframePropsRef.current = props;
     const iframeElementRef = React.useRef<HTMLElement | null>(null);
+    React.useEffect(() => {
+      sandboxedIframeMountsRef.current += 1;
+      return () => {
+        sandboxedIframeUnmountsRef.current += 1;
+      };
+    }, []);
     if (!iframeElementRef.current) {
       const el = document.createElement("div");
       Object.defineProperty(el, "contentWindow", {
@@ -134,6 +149,7 @@ vi.mock("@/components/ui/sandboxed-iframe", () => ({
       animatedEl.animate = vi.fn();
       iframeElementRef.current = el;
     }
+    sandboxedIframeElementRef.current = iframeElementRef.current;
 
     React.useImperativeHandle(ref, () => ({
       getIframeElement: () => iframeElementRef.current,
@@ -266,8 +282,22 @@ describe("MCPAppsRenderer tool input streaming", () => {
     mockBridge.teardownResource.mockClear().mockResolvedValue({});
     mockAppBridgeCtor.mockClear();
     mockBridge.oninitialized = null;
+    mockBridge.onmessage = null;
+    mockBridge.onopenlink = null;
+    mockBridge.oncalltool = null;
+    mockBridge.onreadresource = null;
+    mockBridge.onlistresources = null;
+    mockBridge.onlistresourcetemplates = null;
+    mockBridge.onlistprompts = null;
+    mockBridge.onloggingmessage = null;
+    mockBridge.onsizechange = null;
+    mockBridge.onrequestdisplaymode = null;
+    mockBridge.onupdatemodelcontext = null;
     mockSandboxPostMessage.mockClear();
     sandboxedIframePropsRef.current = null;
+    sandboxedIframeElementRef.current = null;
+    sandboxedIframeMountsRef.current = 0;
+    sandboxedIframeUnmountsRef.current = 0;
     sandboxProxyBehaviorRef.current.autoReady = true;
     appBridgeArgsRef.current = null;
 
@@ -724,10 +754,85 @@ describe("MCPAppsRenderer tool input streaming", () => {
     );
 
     const iframe = await screen.findByTestId("sandboxed-iframe");
-    const container = iframe.parentElement as HTMLElement | null;
+    const stableChromeWrapper = iframe.parentElement as HTMLElement | null;
+    const container = stableChromeWrapper?.parentElement as HTMLElement | null;
+    expect(stableChromeWrapper?.className).toContain("contents");
     expect(container).not.toBeNull();
     expect(container?.className).toContain("fixed");
     expect(container?.className).toContain("inset-0");
+  });
+
+  it("keeps the sandbox iframe mounted when toggling fullscreen", async () => {
+    const renderInline = () => (
+      <MCPAppsRenderer
+        {...baseProps}
+        cachedWidgetHtmlUrl="blob:cached"
+        displayMode="inline"
+      />
+    );
+    const { rerender } = render(renderInline());
+
+    await screen.findByTestId("sandboxed-iframe");
+    const initialIframeElement = sandboxedIframeElementRef.current;
+    expect(initialIframeElement).not.toBeNull();
+    expect(sandboxedIframeMountsRef.current).toBe(1);
+
+    rerender(
+      <MCPAppsRenderer
+        {...baseProps}
+        cachedWidgetHtmlUrl="blob:cached"
+        displayMode="fullscreen"
+        fullscreenWidgetId="call-1"
+      />,
+    );
+
+    expect(sandboxedIframeElementRef.current).toBe(initialIframeElement);
+    expect(sandboxedIframeUnmountsRef.current).toBe(0);
+
+    rerender(renderInline());
+
+    expect(sandboxedIframeElementRef.current).toBe(initialIframeElement);
+    expect(sandboxedIframeUnmountsRef.current).toBe(0);
+    expect(screen.getByTestId("mcp-app-host-chrome")).toBeInTheDocument();
+  });
+
+  it("preserves inline height when fullscreen widgets report viewport size", async () => {
+    const renderInline = () => (
+      <MCPAppsRenderer
+        {...baseProps}
+        cachedWidgetHtmlUrl="blob:cached"
+        displayMode="inline"
+      />
+    );
+    const { rerender } = render(renderInline());
+
+    await screen.findByTestId("sandboxed-iframe");
+    await vi.waitFor(() => {
+      expect(mockBridge.onsizechange).toBeTypeOf("function");
+    });
+
+    act(() => {
+      mockBridge.onsizechange?.({ width: 400, height: 300 });
+    });
+    rerender(renderInline());
+    expect(sandboxedIframePropsRef.current?.style?.height).toBe("300px");
+
+    rerender(
+      <MCPAppsRenderer
+        {...baseProps}
+        cachedWidgetHtmlUrl="blob:cached"
+        displayMode="fullscreen"
+        fullscreenWidgetId="call-1"
+      />,
+    );
+    expect(sandboxedIframePropsRef.current?.style?.height).toBe("100%");
+
+    act(() => {
+      mockBridge.onsizechange?.({ width: 1200, height: 900 });
+    });
+    rerender(renderInline());
+
+    expect(sandboxedIframePropsRef.current?.style?.height).toBe("300px");
   });
 
   it("pushes updated host context when the project client profile changes", async () => {

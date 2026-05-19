@@ -13,6 +13,7 @@ import {
   useRef,
   useState,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useCallback,
   type CSSProperties,
@@ -1555,7 +1556,9 @@ export function MCPAppsRenderer({
     setSandboxAppliedStore,
   ]);
 
-  useEffect(() => {
+  // Keep bridge callbacks in sync before ResizeObserver/rAF-driven widget
+  // messages can fire after a display-mode commit.
+  useLayoutEffect(() => {
     onSendFollowUpRef.current = onSendFollowUp;
     onCallToolRef.current = onCallTool;
     onRequestPipRef.current = onRequestPip;
@@ -2283,12 +2286,12 @@ export function MCPAppsRenderer({
       ? { position: "absolute" as const, pointerEvents: "none" as const }
       : {}),
   };
-  const hostChromeStyle: CSSProperties | undefined =
-    !isFullscreen && prefersBorder
-      ? {
-          backgroundColor: mergedStyleVariables["--color-background-primary"],
-        }
-      : undefined;
+  const showHostChrome = !isFullscreen && prefersBorder;
+  const hostChromeStyle: CSSProperties | undefined = showHostChrome
+    ? {
+        backgroundColor: mergedStyleVariables["--color-background-primary"],
+      }
+    : undefined;
   const iframe = (
     <SandboxedIframe
       ref={sandboxRef}
@@ -2380,18 +2383,15 @@ export function MCPAppsRenderer({
           <X className="w-4 h-4" />
         </button>
       )}
-      {/* Uses SandboxedIframe for DRY double-iframe architecture */}
-      {!isFullscreen && prefersBorder ? (
-        <div
-          data-testid="mcp-app-host-chrome"
-          className="rounded-md"
-          style={hostChromeStyle}
-        >
-          {iframe}
-        </div>
-      ) : (
-        iframe
-      )}
+      {/* Keep this wrapper mounted so display-mode changes don't remount the
+       * sandbox iframe and strand the bridge on the old contentWindow. */}
+      <div
+        data-testid={showHostChrome ? "mcp-app-host-chrome" : undefined}
+        className={showHostChrome ? "rounded-md" : "contents"}
+        style={hostChromeStyle}
+      >
+        {iframe}
+      </div>
 
       <McpAppsModal
         open={modalOpen}
