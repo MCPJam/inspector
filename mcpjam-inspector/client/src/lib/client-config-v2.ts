@@ -164,6 +164,15 @@ export type HostConfigMcpProfileV1 = {
 /**
  * Mutable input shape. All fields are required at write time so the editor
  * can't accidentally erase a section.
+ *
+ * Note: the backend validator (`hostConfigInputV2Validator` in
+ * `mcpjam-backend/convex/lib/hostConfigV2.ts`) has been relaxed to make
+ * `serverIds`, `optionalServerIds`, and `serverConnectionOverrides`
+ * optional as part of the project-scoped server config rollout (Option A:
+ * optional + canonicalize → [] before hashing). The inspector type is
+ * intentionally kept strict during P1/P2/P3 so the editor draft can't
+ * silently drop a section; P4 will loosen this as the iterative-host
+ * write path stops sending server fields.
  */
 export type HostConfigInputV2 = {
   hostStyle: HostStyleId;
