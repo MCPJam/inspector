@@ -324,17 +324,47 @@ describe("compat runtime — F2: MCP Apps only", () => {
     expect(last.globals.toolInput).toEqual({ location: "NYC" });
   });
 
-  it("ui/notifications/tool-result updates window.openai.toolOutput and fires set_globals", () => {
+  it("ui/notifications/tool-result unwraps structuredContent into window.openai.toolOutput", () => {
+    // OpenAI Apps SDK convention: widgets read their fields off
+    // `window.openai.toolOutput` directly (e.g. `toolOutput.t`), not
+    // off `toolOutput.structuredContent.t`. The MCP message's
+    // `params` is the full CallToolResult shape — unwrap to
+    // `structuredContent` so widgets like `apps-sdk-everything`'s
+    // `create_view` actually advance past their pre-data placeholder.
     h.completeInitHandshake();
     const before = h.setGlobalsEvents.length;
     h.sendFromParent({
       jsonrpc: "2.0",
       method: "ui/notifications/tool-result",
-      params: { content: [{ type: "text", text: "Sunny" }], structuredContent: { t: 75 } },
+      params: {
+        content: [{ type: "text", text: "Sunny" }],
+        structuredContent: { t: 75 },
+      },
     });
-    expect((h.window.openai.toolOutput as any).structuredContent.t).toBe(75);
+    expect((h.window.openai.toolOutput as any).t).toBe(75);
+    expect(
+      (h.window.openai.toolOutput as any).structuredContent,
+    ).toBeUndefined();
     const after = h.setGlobalsEvents.length;
     expect(after).toBe(before + 1);
+    const lastDispatched = h.setGlobalsEvents[after - 1] as {
+      globals: Record<string, unknown>;
+    };
+    expect((lastDispatched.globals.toolOutput as any).t).toBe(75);
+  });
+
+  it("ui/notifications/tool-result falls back to content when no structuredContent", () => {
+    // Per the SDK docs ("By default, this is the structuredContent
+    // (or content) of the most recent tool call"), tools that only
+    // return `content` still surface something on `toolOutput`.
+    h.completeInitHandshake();
+    const content = [{ type: "text", text: "Sunny" }];
+    h.sendFromParent({
+      jsonrpc: "2.0",
+      method: "ui/notifications/tool-result",
+      params: { content },
+    });
+    expect(h.window.openai.toolOutput).toEqual(content);
   });
 
   it("ui/notifications/host-context-changed updates theme/displayMode and fires set_globals", () => {

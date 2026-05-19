@@ -520,15 +520,37 @@ type PendingCall = {
           break;
         }
         case "ui/notifications/tool-result": {
-          openaiAPI.toolOutput = params;
+          // OpenAI Apps SDK convention: `window.openai.toolOutput` is
+          // the tool's *structured content* directly — widgets read
+          // their fields off it (e.g. `toolOutput.coffeeCount`), not
+          // `toolOutput.structuredContent.coffeeCount`. The MCP
+          // ui/notifications/tool-result params is the full
+          // CallToolResult (`{ content, structuredContent, _meta }`),
+          // so unwrap to `structuredContent` here. Per the SDK docs
+          // ("By default, this is the structuredContent (or content)
+          // of the most recent tool call"), fall back to `content`
+          // when there is no `structuredContent`, then to the raw
+          // params if neither exists. Without this unwrap, widgets
+          // that check `window.openai.toolOutput?.someField` get
+          // `undefined` and stay stuck on their pre-data placeholder
+          // ("Connecting…"), even though `params` is non-null.
+          const callResult = params as {
+            content?: unknown;
+            structuredContent?: unknown;
+            _meta?: Record<string, unknown>;
+          };
+          const toolOutputValue =
+            callResult?.structuredContent ?? callResult?.content ?? params;
+          openaiAPI.toolOutput = toolOutputValue;
           // Apps SDK exposes the tool result's `_meta` as a separate
           // `window.openai.toolResponseMetadata` surface (distinct from
           // toolOutput, which is the structured result the widget renders).
           // Surface it here when present so widgets can read timestamps,
           // source IDs, etc. without rummaging in toolOutput.
-          const meta =
-            (params as { _meta?: Record<string, unknown> } | undefined)?._meta;
-          const detail: Record<string, unknown> = { toolOutput: params };
+          const meta = callResult?._meta;
+          const detail: Record<string, unknown> = {
+            toolOutput: toolOutputValue,
+          };
           if (meta && typeof meta === "object") {
             openaiAPI.toolResponseMetadata = meta;
             detail.toolResponseMetadata = meta;
