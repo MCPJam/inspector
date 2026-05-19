@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
+import { MCP_UI_EXTENSION_ID } from "@mcpjam/sdk/browser";
 import { PartSwitch } from "../thread/part-switch";
+import { ActiveHostClientCapabilitiesProvider } from "@/contexts/active-host-client-capabilities-context";
 import type { UIMessage } from "@ai-sdk/react";
 
 const { mockUseSaveView, mockDetectUIType, mockWidgetReplay } = vi.hoisted(
@@ -381,6 +383,97 @@ describe("PartSwitch", () => {
           serverName: "server-1",
         }),
       );
+    });
+
+    describe("host capability gate (Bug 1)", () => {
+      it("renders WidgetReplay when the host advertises the MCP UI extension", () => {
+        mockDetectUIType.mockReturnValue("mcp-apps");
+        const part = {
+          type: "tool-invocation",
+          toolName: "create_view",
+          toolCallId: "call-1",
+          state: "output-available",
+          input: { title: "Flow" },
+          output: { content: "saved" },
+        };
+        const caps = {
+          extensions: {
+            [MCP_UI_EXTENSION_ID]: {
+              mimeTypes: ["text/html;profile=mcp-app"],
+            },
+          },
+        };
+        render(
+          <ActiveHostClientCapabilitiesProvider value={caps}>
+            <PartSwitch
+              {...defaultProps}
+              part={part as any}
+              toolsMetadata={{
+                create_view: {
+                  ui: { resourceUri: "ui://widget/create-view.html" },
+                },
+              }}
+            />
+          </ActiveHostClientCapabilitiesProvider>,
+        );
+        expect(screen.getByTestId("widget-replay")).toBeInTheDocument();
+      });
+
+      it("falls through to ToolPart when the host strips the UI extension (Codex)", () => {
+        mockDetectUIType.mockReturnValue("mcp-apps");
+        const part = {
+          type: "tool-invocation",
+          toolName: "create_view",
+          toolCallId: "call-1",
+          state: "output-available",
+          input: { title: "Flow" },
+          output: { content: "saved" },
+        };
+        // Mirrors the Codex template's REPLACE (not spread) of
+        // clientCapabilities — see client-templates.ts:803-810.
+        const codexCaps = { elicitation: {} };
+        render(
+          <ActiveHostClientCapabilitiesProvider value={codexCaps}>
+            <PartSwitch
+              {...defaultProps}
+              part={part as any}
+              toolsMetadata={{
+                create_view: {
+                  ui: { resourceUri: "ui://widget/create-view.html" },
+                },
+              }}
+            />
+          </ActiveHostClientCapabilitiesProvider>,
+        );
+        expect(screen.queryByTestId("widget-replay")).not.toBeInTheDocument();
+        expect(screen.getByTestId("tool-part")).toBeInTheDocument();
+      });
+
+      it("renders WidgetReplay when no host is in scope (legacy surfaces)", () => {
+        // No provider — context default is `undefined`, which preserves
+        // historical tool-metadata-only behavior.
+        mockDetectUIType.mockReturnValue("mcp-apps");
+        const part = {
+          type: "tool-invocation",
+          toolName: "create_view",
+          toolCallId: "call-1",
+          state: "output-available",
+          input: { title: "Flow" },
+          output: { content: "saved" },
+        };
+        render(
+          <PartSwitch
+            {...defaultProps}
+            part={part as any}
+            toolsMetadata={{
+              create_view: {
+                ui: { resourceUri: "ui://widget/create-view.html" },
+              },
+            }}
+          />,
+        );
+        expect(screen.getByTestId("widget-replay")).toBeInTheDocument();
+      });
     });
 
     it("reuses WidgetReplay for offline widget overrides", () => {

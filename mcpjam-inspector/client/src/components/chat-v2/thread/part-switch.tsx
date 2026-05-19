@@ -38,6 +38,8 @@ import {
   isToolPart,
 } from "./thread-helpers";
 import { useSharedAppState } from "@/state/app-state-context";
+import { useActiveHostClientCapabilities } from "@/contexts/active-host-client-capabilities-context";
+import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { WidgetReplay } from "./widget-replay";
@@ -111,6 +113,7 @@ export function PartSwitch({
   const { isAuthenticated } = useConvexAuth();
   const posthog = usePostHog();
   const appState = useSharedAppState();
+  const hostClientCapabilities = useActiveHostClientCapabilities();
   const savingEnabled = isAuthenticated && !minimalMode && interactive;
 
   // Get the Convex project ID (sharedProjectId) from the active project
@@ -292,10 +295,23 @@ export function PartSwitch({
       effectiveToolMeta as Record<string, unknown> | undefined,
     );
 
+    // Gate widget render on the active host's advertised capabilities, not
+    // just the tool's metadata. Hosts that don't advertise the MCP UI
+    // extension (Codex — elicitation-only client) fall through to the plain
+    // ToolPart result row, even when the tool itself declares
+    // `_meta.ui.resourceUri` / `openai/outputTemplate`. This mirrors what
+    // real CLI clients do: tool runs, JSON result is shown, no iframe.
+    //
+    // Note on Apps SDK hosts (ChatGPT, Copilot): their templates KEEP the
+    // SDK-default MCP UI extension in `clientCapabilities`, so they pass
+    // this gate today. A future explicit "window.openai" flag on
+    // HostConfigInputV2 will be OR-ed here to cover Apps-SDK hosts that
+    // choose to strip the MCP UI extension.
     const shouldRenderWidget =
-      uiType === UIType.OPENAI_SDK ||
-      uiType === UIType.MCP_APPS ||
-      uiType === UIType.OPENAI_SDK_AND_MCP_APPS;
+      hostSupportsWidgetRendering(hostClientCapabilities) &&
+      (uiType === UIType.OPENAI_SDK ||
+        uiType === UIType.MCP_APPS ||
+        uiType === UIType.OPENAI_SDK_AND_MCP_APPS);
 
     if (shouldRenderWidget) {
       return (

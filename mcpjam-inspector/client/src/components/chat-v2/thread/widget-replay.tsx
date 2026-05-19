@@ -4,6 +4,8 @@ import type { ToolState } from "./mcp-apps/useToolInputStreaming";
 import type { ToolRenderOverride } from "./tool-render-overrides";
 import { detectUIType, getUIResourceUri, UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { getToolServerId, type ToolServerMap } from "@/lib/apis/mcp-tools-api";
+import { useActiveHostClientCapabilities } from "@/contexts/active-host-client-capabilities-context";
+import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
 import {
   readToolResultMeta,
   readToolResultServerId,
@@ -83,6 +85,7 @@ export function WidgetReplay({
   minimalMode = false,
 }: WidgetReplayProps) {
   void _ignored;
+  const hostClientCapabilities = useActiveHostClientCapabilities();
   const effectiveToolMeta =
     renderOverride?.toolMetadata ??
     toolMetadata ??
@@ -102,10 +105,17 @@ export function WidgetReplay({
   // window.openai compat shim is always injected, so widgets calling
   // window.openai.* and widgets using ui/* JSON-RPC both work without a
   // protocol switch. See plan: phase 3a.
+  //
+  // Defense-in-depth host gate: the primary check lives in PartSwitch
+  // (which decides between ToolPart and WidgetReplay). Re-checking here
+  // means a host that strips the MCP UI extension never renders a widget
+  // even on code paths that mount WidgetReplay directly (transcript
+  // thread, trace viewer adapters, future callers).
   const hasUi =
-    uiType === UIType.MCP_APPS ||
-    uiType === UIType.OPENAI_SDK ||
-    uiType === UIType.OPENAI_SDK_AND_MCP_APPS;
+    hostSupportsWidgetRendering(hostClientCapabilities) &&
+    (uiType === UIType.MCP_APPS ||
+      uiType === UIType.OPENAI_SDK ||
+      uiType === UIType.OPENAI_SDK_AND_MCP_APPS);
   if (!hasUi) return null;
 
   if (
