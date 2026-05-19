@@ -79,9 +79,13 @@ describe("SandboxDebugPanel — lifecycle strip", () => {
     expect(screen.getByText("Initialized")).toBeInTheDocument();
   });
 
-  it("collapses repeated lifecycle events into a single stage + retry count", () => {
+  it("collapses repeated lifecycle events into a single stage (no retry chip)", () => {
     // The renderer can re-trigger the entire sequence on re-render; the
     // strip must read as a 4-stage progress, not an unbounded event log.
+    // The retry count is intentionally NOT surfaced as a visible chip
+    // (it was reading as "something is wrong" when in practice it just
+    // means React re-rendered the surface) — it stays in the hover title
+    // only.
     const lifecycle: WidgetLifecycleEvent[] = [];
     for (let i = 0; i < 3; i++) {
       lifecycle.push({
@@ -101,10 +105,8 @@ describe("SandboxDebugPanel — lifecycle strip", () => {
         protocol="mcp-apps"
       />,
     );
-    // Single "Content" stage rendered (not 6 dots), retry indicator
-    // shows the attempt count.
     expect(screen.getAllByText("Content")).toHaveLength(1);
-    expect(screen.getByText("×3")).toBeInTheDocument();
+    expect(screen.queryByText(/×\d/)).not.toBeInTheDocument();
   });
 });
 

@@ -318,20 +318,6 @@
   color: var(--foreground);
 }
 
-.lifecycle-retries {
-  position: absolute;
-  top: -4px;
-  right: -8px;
-  background: var(--popover);
-  border: 1px solid var(--lifecycle-track);
-  border-radius: 999px;
-  padding: 0 4px;
-  font-family: ui-monospace, "JetBrains Mono", monospace;
-  font-size: 9px;
-  color: var(--muted-foreground);
-  line-height: 1.2;
-}
-
 .lifecycle-connector {
   flex: 1 1 auto;
   height: 2px;

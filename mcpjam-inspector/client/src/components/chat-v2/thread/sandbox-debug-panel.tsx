@@ -351,11 +351,14 @@ function LifecycleStrip({ events }: { events: WidgetLifecycleEvent[] }) {
   return (
     <div className="lifecycle-track">
       {summary.map((s, i) => {
-        const showRetries = s.attempts > 1;
+        // Attempts count is still surfaced via the hover title for the
+        // rare power-user case — but not as a visible chip, since the
+        // retry signal was reading as "something is wrong" when in
+        // practice it just means React re-rendered the surface.
         const title = [
           `${s.label} stage`,
           `status: ${s.status}`,
-          showRetries ? `attempts: ${s.attempts}` : null,
+          s.attempts > 1 ? `attempts: ${s.attempts}` : null,
           s.lastTimestamp
             ? new Date(s.lastTimestamp).toLocaleTimeString()
             : null,
@@ -388,9 +391,6 @@ function LifecycleStrip({ events }: { events: WidgetLifecycleEvent[] }) {
                 ) : null}
               </div>
               <span className="lifecycle-label">{s.label}</span>
-              {showRetries ? (
-                <span className="lifecycle-retries">×{s.attempts}</span>
-              ) : null}
             </div>
             {i < summary.length - 1 ? (
               <div className={nextConnectorClass} aria-hidden />
