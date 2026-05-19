@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   loadSelectedModelId,
+  loadSelectedModelIds,
   saveSelectedModelId,
+  saveSelectedModelIds,
   subscribeSelectedModelId,
 } from "@/lib/selected-model-storage";
 
-const MULTI_MODEL_STORAGE_KEY = "mcp-inspector-selected-models";
 const MULTI_MODEL_ENABLED_STORAGE_KEY = "mcp-inspector-multi-model-enabled";
 
 function normalizeSelectedModelIds(modelIds: string[]): string[] {
@@ -42,10 +43,11 @@ export interface UsePersistedModelReturn {
  * Hook to persist the user's last selected model ID to localStorage.
  * Returns the selected model ID and a setter function.
  *
- * The lead `selectedModelId` flows through `lib/selected-model-storage`
- * so outside seams (e.g. the playground's "apply host defaults" helper)
- * can update it via `saveSelectedModelId(modelId)` and this hook will
- * re-read on the next event tick. Multi-model state stays owned here.
+ * Both the lead `selectedModelId` and the compare-column `selectedModelIds`
+ * array flow through `lib/selected-model-storage` so outside seams (e.g.
+ * the playground's "apply host defaults" helper) can update them via
+ * `replaceLeadModelId(modelId)` and this hook will re-read on the next
+ * event tick. The multi-model toggle stays owned here.
  */
 export function usePersistedModel(): UsePersistedModelReturn {
   const [selectedModelId, setSelectedModelIdState] = useState<string | null>(
@@ -63,19 +65,8 @@ export function usePersistedModel(): UsePersistedModelReturn {
       return;
     }
     setSelectedModelIdState(loadSelectedModelId());
+    setSelectedModelIdsState(loadSelectedModelIds());
     try {
-      const storedSelectedModels = localStorage.getItem(
-        MULTI_MODEL_STORAGE_KEY,
-      );
-      if (storedSelectedModels) {
-        const parsed = JSON.parse(storedSelectedModels);
-        if (Array.isArray(parsed)) {
-          setSelectedModelIdsState(
-            normalizeSelectedModelIds(parsed as string[]),
-          );
-        }
-      }
-
       const storedMultiModelEnabled = localStorage.getItem(
         MULTI_MODEL_ENABLED_STORAGE_KEY,
       );
@@ -87,29 +78,23 @@ export function usePersistedModel(): UsePersistedModelReturn {
     }
     setIsInitialized(true);
 
-    // Subscribe to lead-model writes from any source (this hook's setter,
-    // another tab, or the playground host-snapshot helper).
+    // Subscribe to selected-model writes from any source (this hook's
+    // setters, another tab, or the playground host-snapshot helper).
+    // Re-read both the lead and the array so `replaceLeadModelId` writes
+    // propagate fully into React state.
     const unsubscribe = subscribeSelectedModelId(() => {
       setSelectedModelIdState(loadSelectedModelId());
+      setSelectedModelIdsState(loadSelectedModelIds());
     });
     return unsubscribe;
   }, []);
 
-  // Persist multi-model state. Lead `selectedModelId` is persisted by the
-  // setter directly via `saveSelectedModelId` (which also fires the
-  // sync event), so this effect intentionally doesn't write that key.
+  // Persist multi-model toggle. The lead and the array are persisted by
+  // the storage module via the setter callbacks below (which also fire
+  // the sync event); this effect only writes the toggle key.
   useEffect(() => {
     if (!isInitialized || typeof window === "undefined") return;
     try {
-      if (selectedModelIds.length > 0) {
-        localStorage.setItem(
-          MULTI_MODEL_STORAGE_KEY,
-          JSON.stringify(selectedModelIds),
-        );
-      } else {
-        localStorage.removeItem(MULTI_MODEL_STORAGE_KEY);
-      }
-
       localStorage.setItem(
         MULTI_MODEL_ENABLED_STORAGE_KEY,
         multiModelEnabled ? "true" : "false",
@@ -117,7 +102,7 @@ export function usePersistedModel(): UsePersistedModelReturn {
     } catch (error) {
       console.warn("Failed to save selected model to localStorage:", error);
     }
-  }, [isInitialized, multiModelEnabled, selectedModelIds]);
+  }, [isInitialized, multiModelEnabled]);
 
   const setSelectedModelId = useCallback((modelId: string | null) => {
     // Persist + notify other listeners. The subscription effect above
@@ -133,6 +118,9 @@ export function usePersistedModel(): UsePersistedModelReturn {
         modelId,
         ...previous.filter((existingId) => existingId !== modelId),
       ]);
+      // Also persist the new array so the compare column line-up
+      // survives reloads — same as the lead key above.
+      saveSelectedModelIds(next);
       return next;
     });
   }, []);
@@ -140,6 +128,7 @@ export function usePersistedModel(): UsePersistedModelReturn {
   const setSelectedModelIds = useCallback((modelIds: string[]) => {
     const normalized = normalizeSelectedModelIds(modelIds);
     setSelectedModelIdsState(normalized);
+    saveSelectedModelIds(normalized);
     saveSelectedModelId(normalized[0] ?? null);
   }, []);
 
