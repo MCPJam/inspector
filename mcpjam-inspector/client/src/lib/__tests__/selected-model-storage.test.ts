@@ -6,6 +6,7 @@ import {
   saveSelectedModelId,
   saveSelectedModelIds,
   subscribeSelectedModelId,
+  subscribeSelectedModelIds,
 } from "../selected-model-storage";
 
 const LEAD_KEY = "mcp-inspector-selected-model";
@@ -129,15 +130,21 @@ describe("selected-model-storage", () => {
       unsubscribe();
     });
 
-    it("fires the callback when the array is saved", () => {
+    it("does NOT fire the lead callback when only the array is saved", () => {
+      // Regression: `saveSelectedModelIds` is called as a mirror by the
+      // in-app React setter and must not feed back into React state by
+      // dispatching the lead-id channel. The host-switch primitive
+      // (`replaceLeadModelId`) is the only path that updates the array
+      // from outside React and uses its own channel
+      // (`subscribeSelectedModelIds`).
       const cb = vi.fn();
       const unsubscribe = subscribeSelectedModelId(cb);
       saveSelectedModelIds(["a", "b"]);
-      expect(cb).toHaveBeenCalled();
+      expect(cb).not.toHaveBeenCalled();
       unsubscribe();
     });
 
-    it("fires the callback once per replaceLeadModelId, and the read after the event sees both keys updated", () => {
+    it("fires the lead callback once per replaceLeadModelId, and the read after the event sees both keys updated", () => {
       saveSelectedModelIds(["a", "b"]);
       saveSelectedModelId("a");
 
@@ -167,6 +174,49 @@ describe("selected-model-storage", () => {
       const unsubscribe = subscribeSelectedModelId(cb);
       unsubscribe();
       saveSelectedModelId("anything");
+      expect(cb).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("subscribeSelectedModelIds", () => {
+    it("does NOT fire when only `saveSelectedModelIds` is called (in-app mirror path)", () => {
+      const cb = vi.fn();
+      const unsubscribe = subscribeSelectedModelIds(cb);
+      saveSelectedModelIds(["a", "b"]);
+      expect(cb).not.toHaveBeenCalled();
+      unsubscribe();
+    });
+
+    it("fires when `replaceLeadModelId` mutates the array (host-switch path)", () => {
+      saveSelectedModelIds(["a", "b"]);
+      saveSelectedModelId("a");
+
+      const cb = vi.fn();
+      const unsubscribe = subscribeSelectedModelIds(cb);
+      // Replaces slot 0 ("a") with "c" — array changes.
+      replaceLeadModelId("c");
+      expect(cb).toHaveBeenCalledTimes(1);
+      unsubscribe();
+    });
+
+    it("does NOT fire when `replaceLeadModelId` leaves the array untouched (lead already at slot 0)", () => {
+      saveSelectedModelIds(["a", "b"]);
+      saveSelectedModelId("a");
+
+      const cb = vi.fn();
+      const unsubscribe = subscribeSelectedModelIds(cb);
+      // "a" is already at slot 0 — no array change, no array event.
+      replaceLeadModelId("a");
+      expect(cb).not.toHaveBeenCalled();
+      unsubscribe();
+    });
+
+    it("stops firing after unsubscribe", () => {
+      saveSelectedModelIds(["a"]);
+      const cb = vi.fn();
+      const unsubscribe = subscribeSelectedModelIds(cb);
+      unsubscribe();
+      replaceLeadModelId("b");
       expect(cb).not.toHaveBeenCalled();
     });
   });

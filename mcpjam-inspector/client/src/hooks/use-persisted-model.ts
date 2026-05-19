@@ -5,6 +5,7 @@ import {
   saveSelectedModelId,
   saveSelectedModelIds,
   subscribeSelectedModelId,
+  subscribeSelectedModelIds,
 } from "@/lib/selected-model-storage";
 
 const MULTI_MODEL_ENABLED_STORAGE_KEY = "mcp-inspector-multi-model-enabled";
@@ -43,11 +44,19 @@ export interface UsePersistedModelReturn {
  * Hook to persist the user's last selected model ID to localStorage.
  * Returns the selected model ID and a setter function.
  *
- * Both the lead `selectedModelId` and the compare-column `selectedModelIds`
- * array flow through `lib/selected-model-storage` so outside seams (e.g.
- * the playground's "apply host defaults" helper) can update them via
- * `replaceLeadModelId(modelId)` and this hook will re-read on the next
- * event tick. The multi-model toggle stays owned here.
+ * The lead `selectedModelId` flows through `lib/selected-model-storage`
+ * so outside seams (e.g. the playground's "apply host defaults" helper)
+ * can update it via `saveSelectedModelId` or `replaceLeadModelId` and
+ * this hook will re-read on the next event tick. The multi-model array
+ * `selectedModelIds` is React-state-authoritative for in-app writes;
+ * `saveSelectedModelIds` only mirrors to localStorage without dispatching
+ * an event, so the picker's `setSelectedModel` + `setSelectedModelIds`
+ * sequence cannot race with a listener that overwrites the new array.
+ * The host-switch outside seam (`replaceLeadModelId`) fires its own
+ * `selected-model-ids-changed` channel so multi-model state still syncs
+ * when the active host's default model changes.
+ *
+ * The multi-model toggle stays owned by this hook.
  */
 export function usePersistedModel(): UsePersistedModelReturn {
   const [selectedModelId, setSelectedModelIdState] = useState<string | null>(
@@ -78,20 +87,34 @@ export function usePersistedModel(): UsePersistedModelReturn {
     }
     setIsInitialized(true);
 
-    // Subscribe to selected-model writes from any source (this hook's
-    // setters, another tab, or the playground host-snapshot helper).
-    // Re-read both the lead and the array so `replaceLeadModelId` writes
-    // propagate fully into React state.
-    const unsubscribe = subscribeSelectedModelId(() => {
+    // Lead-id channel: any write to the single-model picker key
+    // (including the host-snapshot helper and other-tab `storage`
+    // events) re-reads the lead. In-app `setSelectedModelIds` does NOT
+    // fire this channel — see lib/selected-model-storage for the
+    // rationale.
+    const unsubscribeLead = subscribeSelectedModelId(() => {
       setSelectedModelIdState(loadSelectedModelId());
+    });
+    // Array channel: fires only from `replaceLeadModelId` (outside-seam
+    // host-switch primitive) and cross-tab `storage` events on the
+    // array key. Keeping this narrow is what fixes the regression
+    // where in-app multi-select setters fed back into React state.
+    const unsubscribeIds = subscribeSelectedModelIds(() => {
       setSelectedModelIdsState(loadSelectedModelIds());
     });
-    return unsubscribe;
+    return () => {
+      unsubscribeLead();
+      unsubscribeIds();
+    };
   }, []);
 
-  // Persist multi-model toggle. The lead and the array are persisted by
-  // the storage module via the setter callbacks below (which also fire
-  // the sync event); this effect only writes the toggle key.
+  // Persist multi-model toggle + mirror the selected-models array to
+  // localStorage on every React state change. The array is React-state-
+  // authoritative for in-app writes (see hook docblock); this effect is
+  // the single backstop that keeps localStorage in sync, so setters
+  // never have to call `saveSelectedModelIds` themselves — which keeps
+  // them free of in-updater side effects that could race with later
+  // value setStates in the same batch.
   useEffect(() => {
     if (!isInitialized || typeof window === "undefined") return;
     try {
@@ -102,10 +125,13 @@ export function usePersistedModel(): UsePersistedModelReturn {
     } catch (error) {
       console.warn("Failed to save selected model to localStorage:", error);
     }
-  }, [isInitialized, multiModelEnabled]);
+    // Mirror the array. `saveSelectedModelIds` does NOT dispatch a
+    // same-tab event, so this won't feed back into React state.
+    saveSelectedModelIds(selectedModelIds);
+  }, [isInitialized, multiModelEnabled, selectedModelIds]);
 
   const setSelectedModelId = useCallback((modelId: string | null) => {
-    // Persist + notify other listeners. The subscription effect above
+    // Persist + notify other listeners. The lead-id subscription above
     // will then sync this hook's React state on the next event tick,
     // keeping the lead model id consistent across all consumers.
     saveSelectedModelId(modelId);
@@ -113,22 +139,21 @@ export function usePersistedModel(): UsePersistedModelReturn {
       if (!modelId) {
         return [];
       }
-
-      const next = normalizeSelectedModelIds([
+      return normalizeSelectedModelIds([
         modelId,
         ...previous.filter((existingId) => existingId !== modelId),
       ]);
-      // Also persist the new array so the compare column line-up
-      // survives reloads — same as the lead key above.
-      saveSelectedModelIds(next);
-      return next;
     });
   }, []);
 
   const setSelectedModelIds = useCallback((modelIds: string[]) => {
     const normalized = normalizeSelectedModelIds(modelIds);
+    // React state is the source of truth for the compare-column line-
+    // up during in-app writes; the array-mirror effect above persists
+    // it. `saveSelectedModelId` fires the lead channel, which only
+    // re-syncs the lead state — the array we just committed is left
+    // alone.
     setSelectedModelIdsState(normalized);
-    saveSelectedModelIds(normalized);
     saveSelectedModelId(normalized[0] ?? null);
   }, []);
 
