@@ -313,10 +313,17 @@ export function PlaygroundMain({
   // follow-up. The rail re-fetches on initial mount + whenever signal changes.
   const historyRefreshSignal = 0;
   const historySelectionRequestIdRef = useRef(0);
+  const activeHistorySessionIdRef = useRef<string | null>(null);
+  const reactiveHistoryLoadRequestIdRef = useRef(0);
   const resumedThreadSendBaselineRef = useRef<{
     sessionId: string;
     version: number;
   } | null>(null);
+
+  useEffect(() => {
+    activeHistorySessionIdRef.current = activeHistorySessionId;
+    reactiveHistoryLoadRequestIdRef.current += 1;
+  }, [activeHistorySessionId]);
 
   const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
     []
@@ -1200,11 +1207,19 @@ export function PlaygroundMain({
       return;
     }
 
+    const requestId = reactiveHistoryLoadRequestIdRef.current + 1;
+    reactiveHistoryLoadRequestIdRef.current = requestId;
+
     void loadHistorySession(
       reactiveHistorySession,
       reactiveHistoryWidgetSnapshots,
       {
-        shouldRestoreComposerState: () => !hasUnsavedDraftRef.current,
+        shouldRestoreComposerState: () =>
+          !hasUnsavedDraftRef.current &&
+          activeHistorySessionIdRef.current === reactiveHistorySession._id,
+        shouldApply: () =>
+          reactiveHistoryLoadRequestIdRef.current === requestId &&
+          activeHistorySessionIdRef.current === reactiveHistorySession._id,
         turnTraces: undefined,
       },
     ).catch((error) => {

@@ -1,6 +1,9 @@
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 
 const LIVE_TURN_FLUSH_INTERVAL_MS = 250;
+const LIVE_TURN_SEND_TIMEOUT_MS = 5_000;
+const LIVE_TURN_SEND_ATTEMPTS = 2;
+const LIVE_TURN_SEND_RETRY_DELAY_MS = 150;
 
 export interface DirectChatLiveTurnPublisher {
   start: () => void;
@@ -61,7 +64,7 @@ export function createDirectChatLiveTurnPublisher({
   modelId,
   messages,
 }: DirectChatLiveTurnPublisherOptions): DirectChatLiveTurnPublisher | null {
-  const convexUrl = process.env.CONVEX_HTTP_URL;
+  const convexUrl = process.env.CONVEX_HTTP_URL?.replace(/\/$/, "");
   if (!convexUrl || !authHeader || !chatSessionId || !projectId) {
     return null;
   }
@@ -78,9 +81,21 @@ export function createDirectChatLiveTurnPublisher({
   let flushAgain = false;
   let closed = false;
 
-  const send = async (status: "streaming" | "complete" | "error") => {
+  const waitForRetry = () =>
+    new Promise<void>((resolve) => {
+      setTimeout(resolve, LIVE_TURN_SEND_RETRY_DELAY_MS);
+    });
+
+  const sendOnce = async (
+    status: "streaming" | "complete" | "error",
+    snapshot: string,
+  ) => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => {
+      controller.abort();
+    }, LIVE_TURN_SEND_TIMEOUT_MS);
     try {
-      await fetch(`${convexUrl}/direct-chat/live-turn`, {
+      const response = await fetch(`${convexUrl}/direct-chat/live-turn`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -92,15 +107,38 @@ export function createDirectChatLiveTurnPublisher({
           turnId,
           promptIndex,
           promptText,
-          assistantText,
+          assistantText: snapshot,
           status,
           modelId,
           startedAt,
         }),
+        signal: controller.signal,
       });
-    } catch {
-      // Best effort: live collaboration should not interrupt the sender stream.
+      if (!response.ok) {
+        throw new Error(`live-turn write failed (${response.status})`);
+      }
+    } finally {
+      clearTimeout(timeout);
     }
+  };
+
+  const send = async (
+    status: "streaming" | "complete" | "error",
+    snapshot: string,
+  ) => {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= LIVE_TURN_SEND_ATTEMPTS; attempt += 1) {
+      try {
+        await sendOnce(status, snapshot);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt < LIVE_TURN_SEND_ATTEMPTS) {
+          await waitForRetry();
+        }
+      }
+    }
+    throw lastError;
   };
 
   const flush = (
@@ -127,14 +165,21 @@ export function createDirectChatLiveTurnPublisher({
       return inFlight;
     }
 
-    lastSentText = assistantText;
-    inFlight = send(status).finally(() => {
-      inFlight = null;
-      if (flushAgain && !closed) {
-        flushAgain = false;
-        void flush();
-      }
-    });
+    const snapshot = assistantText;
+    inFlight = send(status, snapshot)
+      .then(() => {
+        lastSentText = snapshot;
+      })
+      .catch(() => {
+        // Best effort: live collaboration should not interrupt the sender stream.
+      })
+      .finally(() => {
+        inFlight = null;
+        if (flushAgain && !closed) {
+          flushAgain = false;
+          void flush();
+        }
+      });
     return inFlight;
   };
 

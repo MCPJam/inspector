@@ -412,6 +412,24 @@ function scrubMessagesForBackend(
   return normalizeModelMessagesForConvex(scrubbed);
 }
 
+function safelyEmitLiveTextDelta(
+  onLiveTextDelta: ((delta: string) => void) | undefined,
+  delta: string,
+) {
+  if (!onLiveTextDelta) return;
+  try {
+    void Promise.resolve(onLiveTextDelta(delta)).catch((error) => {
+      logger.warn("[mcpjam-stream-handler] onLiveTextDelta callback failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  } catch (error) {
+    logger.warn("[mcpjam-stream-handler] onLiveTextDelta callback failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 /**
  * Process the SSE stream from Convex and extract content parts.
  * Forwards relevant chunks to the client while building up the message content.
@@ -500,7 +518,7 @@ async function processStream(
           flushReasoning();
           pendingText += chunk.delta ?? "";
           if (chunk.delta) {
-            onLiveTextDelta?.(chunk.delta);
+            safelyEmitLiveTextDelta(onLiveTextDelta, chunk.delta);
           }
           writer.write(chunk);
           if (chunk.delta) {

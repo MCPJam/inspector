@@ -120,6 +120,24 @@ function toLiveChatTraceUsageLocal(
   return Object.keys(next).length > 0 ? next : undefined;
 }
 
+function safelyEmitLiveTextDelta(
+  onLiveTextDelta: ((delta: string) => void) | undefined,
+  delta: string,
+) {
+  if (!onLiveTextDelta) return;
+  try {
+    void Promise.resolve(onLiveTextDelta(delta)).catch((error) => {
+      logger.warn("[org/local] onLiveTextDelta callback failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  } catch (error) {
+    logger.warn("[org/local] onLiveTextDelta callback failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 function collectStepToolCallIdsLocal(
   toolCalls: Array<{ toolCallId?: string } | undefined> | null | undefined,
 ): Set<string> {
@@ -335,7 +353,7 @@ export function handleLocalOrgChatModel(
         onChunk: async ({ chunk }) => {
           if (chunk.type === "text-delta") {
             if (chunk.text) {
-              onLiveTextDelta?.(chunk.text);
+              safelyEmitLiveTextDelta(onLiveTextDelta, chunk.text);
             }
             writeTraceEvent(writer, {
               type: "text_delta",
