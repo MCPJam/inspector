@@ -902,7 +902,12 @@ export function MCPAppsRenderer({
         setHasFirstSizeChange(true);
       }, SIZE_STABILIZE_MS);
     }
-  }, [isReady, toolState, toolInput]);
+    // `reinitCount` is in deps so the effect re-runs after the
+    // `oninitialized` reinit path clears `hasDeliveredToolDataRef` —
+    // otherwise the early-return above would block re-detection for
+    // the SDK-app session and post-reinit size-changes would never arm
+    // the reveal timer.
+  }, [isReady, toolState, toolInput, reinitCount]);
 
   // Sync displayMode from playground store when it changes (SEP-1865)
   // Only sync when not in controlled mode (parent controls displayMode via props)
@@ -1524,6 +1529,22 @@ export function MCPAppsRenderer({
         // bump reinitCount so the delivery effects re-send tool data.
         if (wasReady) {
           setReinitCount((c) => c + 1);
+          // Reset the reveal-gate state for the new session. The
+          // pre-reinit timer + observations described the compat-shim's
+          // shell paint, not the real SDK app's content. Clearing here
+          // forces us to wait for a post-reinit size-change to arm a
+          // fresh debounce — otherwise a pending timer from the shell
+          // size-change can still fire and reveal at the (now-stale)
+          // shell height before the SDK app paints content. The
+          // delivery effect re-runs on `reinitCount` and re-flips
+          // `hasDeliveredToolDataRef` once the hook re-sends data.
+          setHasFirstSizeChange(false);
+          hasObservedPreDeliverySizeRef.current = false;
+          hasDeliveredToolDataRef.current = false;
+          if (sizeStabilizeTimerRef.current !== null) {
+            window.clearTimeout(sizeStabilizeTimerRef.current);
+            sizeStabilizeTimerRef.current = null;
+          }
         }
       };
 

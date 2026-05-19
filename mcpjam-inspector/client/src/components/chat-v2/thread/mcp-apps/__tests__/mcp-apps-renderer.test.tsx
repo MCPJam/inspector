@@ -1078,6 +1078,62 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(iframe.style.height).toBe("180px");
   });
 
+  it("resets reveal gate on SDK reinitialization (post-shim handshake)", async () => {
+    // Codex P2: a compat-shim widget may complete its own handshake,
+    // receive tool data, paint its "Connecting" shell, fire a
+    // post-delivery size-change, and THEN the real SDK app inside the
+    // shim calls `ui/initialized` again. Without resetting the reveal
+    // gate on reinit, the pending shell-paint timer keeps ticking and
+    // can fire BEFORE the SDK app finishes painting content — revealing
+    // at the (stale) shell height.
+    render(
+      <MCPAppsRenderer
+        {...baseProps}
+        toolState="output-available"
+        toolInput={{ elements: '[{"type":"rectangle"}]' }}
+        toolOutput={{ ok: true }}
+        cachedWidgetHtmlUrl="blob:cached"
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+    await vi.waitFor(() => {
+      expect(mockBridge.oninitialized).not.toBeNull();
+    });
+
+    // Compat-shim initializes.
+    act(() => triggerReady());
+
+    const iframe = screen.getByTestId("sandboxed-iframe") as HTMLElement;
+
+    // Post-delivery size-change for the shim's shell.
+    act(() => {
+      mockBridge.onsizechange?.({ width: 400, height: 60 });
+    });
+
+    // Reinit before the debounce fires (real SDK app calls
+    // `ui/initialized` again — `wasReady` is true so the host's
+    // oninitialized handler bumps reinitCount and resets the gate).
+    act(() => triggerReady());
+
+    // Wait longer than SIZE_STABILIZE_MS — the pre-reinit timer was
+    // cleared so it must not fire.
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(iframe.style.opacity).toBe("0");
+
+    // Post-reinit size-change for the SDK app's content paint.
+    act(() => {
+      mockBridge.onsizechange?.({ width: 400, height: 320 });
+    });
+
+    await vi.waitFor(() => {
+      expect(iframe.style.opacity).toBe("1");
+    });
+    expect(iframe.style.height).toBe("320px");
+  });
+
   it("reveals when pre-delivery size matches content size (SDK dedup safety)", async () => {
     // Codex P2: the compat runtime's `postHeight` suppresses
     // notifications for duplicate heights. If the widget paints its
