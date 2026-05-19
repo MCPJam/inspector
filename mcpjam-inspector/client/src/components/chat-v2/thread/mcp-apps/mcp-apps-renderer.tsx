@@ -1523,6 +1523,7 @@ export function MCPAppsRenderer({
       hostPolicyApplied: effectiveSandbox.hostPolicyApplied,
       restrictTo: sandboxCspPolicy?.restrictTo,
       cspMode: sandboxCspPolicy?.mode,
+      permissions: effectiveSandbox.permissions,
     });
   }, [toolCallId, effectiveSandbox, sandboxCspPolicy, setSandboxAppliedStore]);
 

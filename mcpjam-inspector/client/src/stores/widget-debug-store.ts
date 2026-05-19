@@ -77,6 +77,19 @@ export interface WidgetSandboxApplied {
     baseUriDomains?: string[];
   };
   cspMode?: "host-default" | "declared" | "relaxed";
+  /**
+   * Granted permissions after the resolver intersected widget-requested
+   * permissions against host policy. Same shape as the widget-requested
+   * `permissions` field above; the panel renders this as the matrix's
+   * "Permissions" row (vs widget-requested which appears in the declared-
+   * CSP section). Absent when no permissions were granted.
+   */
+  permissions?: {
+    camera?: {};
+    microphone?: {};
+    geolocation?: {};
+    clipboardWrite?: {};
+  };
 }
 
 /**

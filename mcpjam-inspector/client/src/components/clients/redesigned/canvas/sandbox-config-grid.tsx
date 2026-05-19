@@ -25,6 +25,7 @@ import type {
   SandboxConfigNodeData,
   SandboxConfigSubKey,
 } from "../types";
+import type { SandboxConfigDescriptor } from "./canvasBuilder";
 import "./sandbox-config-grid.css";
 
 /**
@@ -51,12 +52,18 @@ export interface SandboxConfigGridProps {
  * the field mapping.
  */
 export function descriptorToNodeData(
-  d: Omit<SandboxConfigNodeData, "kind" | "isChanged">,
+  d: SandboxConfigDescriptor,
 ): SandboxConfigNodeData {
-  // Spread last would preserve `kind`/`isChanged` from `d` if they
-  // somehow got in via the Omit-shaped input; this ordering forces the
-  // canonical values.
-  return { ...(d as object), kind: "sandbox-config-leaf", isChanged: false } as SandboxConfigNodeData;
+  return {
+    kind: "sandbox-config-leaf",
+    subKey: d.subKey,
+    label: d.label,
+    summary: d.summary,
+    qualifier: d.qualifier,
+    severity: d.severity,
+    isChanged: false,
+    directives: d.directives,
+  };
 }
 
 export const SandboxConfigGrid = memo(function SandboxConfigGrid({
