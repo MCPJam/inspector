@@ -728,6 +728,102 @@ describe("adaptTraceToUiMessages", () => {
     expect(overrides["call-1"].toolOutput).toBeUndefined();
   });
 
+  describe("buildToolRenderOverridesFromSnapshots / preferLiveWhenPossible", () => {
+    it("strips cached widget URL for mcp-apps snapshots with a resourceUri", () => {
+      const overrides = buildToolRenderOverridesFromSnapshots(
+        [
+          makeWidgetSnapshot({
+            toolCallId: "call-mcp-live",
+            protocol: "mcp-apps",
+            resourceUri: "ui://widget/create-view.html",
+            widgetHtmlUrl: "https://storage.example.com/mcp-widget.html",
+          }),
+        ],
+        { preferLiveWhenPossible: true },
+      );
+
+      const override = overrides["call-mcp-live"];
+      expect(override).toBeDefined();
+      expect(override.cachedWidgetHtmlUrl).toBeUndefined();
+      expect(override.isOffline).toBe(false);
+      expect(override.resourceUri).toBe("ui://widget/create-view.html");
+    });
+
+    it("keeps cached widget URL for mcp-apps snapshots without a resourceUri", () => {
+      const overrides = buildToolRenderOverridesFromSnapshots(
+        [
+          makeWidgetSnapshot({
+            toolCallId: "call-mcp-no-uri",
+            protocol: "mcp-apps",
+            resourceUri: undefined,
+            widgetHtmlUrl: "https://storage.example.com/no-uri.html",
+          }),
+        ],
+        { preferLiveWhenPossible: true },
+      );
+
+      const override = overrides["call-mcp-no-uri"];
+      expect(override.cachedWidgetHtmlUrl).toBe(
+        "https://storage.example.com/no-uri.html",
+      );
+      expect(override.isOffline).toBe(true);
+    });
+
+    it("keeps cached widget URL for openai-apps snapshots even with preferLiveWhenPossible", () => {
+      const overrides = buildToolRenderOverridesFromSnapshots(
+        [
+          makeWidgetSnapshot({
+            toolCallId: "call-openai",
+            protocol: "openai-apps",
+            resourceUri: undefined,
+            toolMetadata: { "openai/outputTemplate": "__cached__" },
+            widgetHtmlUrl: "https://storage.example.com/openai-widget.html",
+          }),
+        ],
+        { preferLiveWhenPossible: true },
+      );
+
+      const override = overrides["call-openai"];
+      expect(override.cachedWidgetHtmlUrl).toBe(
+        "https://storage.example.com/openai-widget.html",
+      );
+      expect(override.isOffline).toBe(true);
+    });
+
+    it("defaults to keeping the cached widget URL (back-compat with persisted offline replay)", () => {
+      const overrides = buildToolRenderOverridesFromSnapshots([
+        makeWidgetSnapshot({
+          toolCallId: "call-default",
+          widgetHtmlUrl: "https://storage.example.com/default.html",
+        }),
+      ]);
+
+      const override = overrides["call-default"];
+      expect(override.cachedWidgetHtmlUrl).toBe(
+        "https://storage.example.com/default.html",
+      );
+      expect(override.isOffline).toBe(true);
+    });
+
+    it("leaves isOffline false when there was no cached widget URL to strip", () => {
+      const overrides = buildToolRenderOverridesFromSnapshots(
+        [
+          makeWidgetSnapshot({
+            toolCallId: "call-no-url",
+            protocol: "mcp-apps",
+            resourceUri: "ui://widget/create-view.html",
+            widgetHtmlUrl: undefined,
+          }),
+        ],
+        { preferLiveWhenPossible: true },
+      );
+
+      const override = overrides["call-no-url"];
+      expect(override.cachedWidgetHtmlUrl).toBeUndefined();
+      expect(override.isOffline).toBe(false);
+    });
+  });
+
   it("treats nested result.isError tool-results as output errors", () => {
     const trace: TraceEnvelope = {
       messages: [

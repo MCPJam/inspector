@@ -889,6 +889,70 @@ describe("useChatSession hosted mode", () => {
     unmount();
   });
 
+  it("strips cachedWidgetHtmlUrl for mcp-apps revisits but keeps it for openai-apps", async () => {
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: ["server-id-1"],
+        },
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.isSessionBootstrapComplete).toBe(true);
+    });
+
+    await result.current.loadChatSession({
+      chatSessionId: "history-session-revisit",
+      messagesBlobUrl: null,
+      version: 5,
+      widgetSnapshots: [
+        {
+          toolCallId: "tool-call-mcp",
+          toolName: "create_view",
+          serverId: "server-id-1",
+          uiType: "mcp-apps",
+          resourceUri: "ui://excalidraw/mcp-app.html",
+          widgetCsp: null,
+          widgetPermissions: null,
+          widgetPermissive: false,
+          prefersBorder: false,
+          widgetHtmlUrl: "https://storage.example.com/mcp-widget.html",
+        },
+        {
+          toolCallId: "tool-call-openai",
+          toolName: "show_pizzeria",
+          serverId: "server-id-1",
+          uiType: "openai-apps",
+          widgetCsp: null,
+          widgetPermissions: null,
+          widgetPermissive: false,
+          prefersBorder: false,
+          widgetHtmlUrl: "https://storage.example.com/openai-widget.html",
+        },
+      ],
+    });
+
+    await waitFor(() => {
+      const mcp =
+        result.current.restoredToolRenderOverrides["tool-call-mcp"];
+      const openai =
+        result.current.restoredToolRenderOverrides["tool-call-openai"];
+      expect(mcp).toBeDefined();
+      expect(openai).toBeDefined();
+      expect(mcp?.cachedWidgetHtmlUrl).toBeUndefined();
+      expect(mcp?.isOffline).toBe(false);
+      expect(openai?.cachedWidgetHtmlUrl).toBe(
+        "https://storage.example.com/openai-widget.html"
+      );
+      expect(openai?.isOffline).toBe(true);
+    });
+
+    unmount();
+  });
+
   it("keeps even gated hosted models available for authenticated viewers", async () => {
     const { result, unmount } = renderHook(() =>
       useChatSession({

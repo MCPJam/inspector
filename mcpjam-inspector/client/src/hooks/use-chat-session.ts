@@ -1835,7 +1835,13 @@ export function useChatSession(
         const traceSnapshots = snapshotsToTraceWidgetSnapshots(
           hydratedWidgetSnapshots
         );
-        overrides = buildToolRenderOverridesFromSnapshots(traceSnapshots);
+        // In-flow session revisit: prefer the live MCP Apps fetch over the
+        // cached snapshot HTML so the widget re-renders against the active
+        // host's current CSP / bridge state. The cached path is kept for
+        // OpenAI Apps and degenerate mcp-apps snapshots that can't live-fetch.
+        overrides = buildToolRenderOverridesFromSnapshots(traceSnapshots, {
+          preferLiveWhenPossible: true,
+        });
       }
 
       const hydratedTurnTraces = await resolveHydratedTurnTraces(
