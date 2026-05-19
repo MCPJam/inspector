@@ -1,6 +1,4 @@
 import { authFetch } from "@/lib/session-token";
-import { HOSTED_MODE } from "@/lib/config";
-import { getGuestBearerToken } from "@/lib/guest-session";
 import { WebApiError } from "./base";
 
 export interface ChatHistorySession {
@@ -119,18 +117,10 @@ interface ChatHistoryRequestOptions {
   headers?: HeadersInit;
 }
 
-async function buildChatHistoryHeaders(
+function buildChatHistoryHeaders(
   initHeaders?: HeadersInit,
-): Promise<HeadersInit | undefined> {
+): HeadersInit | undefined {
   const headers = new Headers(initHeaders);
-
-  if (!HOSTED_MODE && !headers.has("Authorization")) {
-    const guestToken = await getGuestBearerToken();
-    if (guestToken) {
-      headers.set("Authorization", `Bearer ${guestToken}`);
-    }
-  }
-
   return Array.from(headers.keys()).length > 0 ? headers : undefined;
 }
 
@@ -140,7 +130,7 @@ async function webGet<T>(
 ): Promise<T> {
   const response = await authFetch(path, {
     method: "GET",
-    headers: await buildChatHistoryHeaders(options?.headers),
+    headers: buildChatHistoryHeaders(options?.headers),
   });
 
   let body: any = null;
@@ -171,7 +161,7 @@ async function webPost<TRequest, TResponse>(
 ): Promise<TResponse> {
   const initHeaders = new Headers(options?.headers);
   initHeaders.set("Content-Type", "application/json");
-  const headers = new Headers(await buildChatHistoryHeaders(initHeaders));
+  const headers = new Headers(buildChatHistoryHeaders(initHeaders));
   const response = await authFetch(path, {
     method: "POST",
     headers,
