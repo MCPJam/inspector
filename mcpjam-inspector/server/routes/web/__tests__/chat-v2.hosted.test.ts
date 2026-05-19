@@ -137,6 +137,15 @@ describe("web routes — chat-v2 hosted mode", () => {
           }
         );
       }
+      if (
+        String(input).endsWith("/ingest-chat") ||
+        String(input).endsWith("/direct-chat/live-turn")
+      ) {
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
 
       throw new Error(`Unexpected fetch: ${String(input)}`);
     }) as typeof fetch;
@@ -253,11 +262,14 @@ describe("web routes — chat-v2 hosted mode", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(global.fetch).toHaveBeenCalledTimes(1);
+    const authorizeBatchCalls = vi.mocked(global.fetch).mock.calls.filter(
+      ([input]) => String(input).endsWith("/web/authorize-batch"),
+    );
+    expect(authorizeBatchCalls).toHaveLength(1);
     // Membership chat (no share/chatbox token) sends no accessScope — the
     // backend authorizes via project ownership for both guest and authed
     // users uniformly. accessScope is only set when a token is in play.
-    expect(global.fetch).toHaveBeenCalledWith(
+    expect(authorizeBatchCalls[0]).toEqual([
       "https://example.convex.site/web/authorize-batch",
       expect.objectContaining({
         method: "POST",
@@ -265,8 +277,8 @@ describe("web routes — chat-v2 hosted mode", () => {
           projectId: "project-1",
           serverIds: ["server-1", "server-2"],
         }),
-      })
-    );
+      }),
+    ]);
   });
 
   it("forwards directVisibility for hosted direct chats", async () => {
@@ -293,6 +305,24 @@ describe("web routes — chat-v2 hosted mode", () => {
 
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("ok");
+    expect(persistChatSessionToConvexMock).toHaveBeenCalledTimes(2);
+    expect(persistChatSessionToConvexMock.mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        chatSessionId: "chat-session-direct",
+        projectId: "project-1",
+        sourceType: "direct",
+        directVisibility: "project",
+        sessionMessages: [{ role: "user", content: "hello" }],
+        timeoutMs: 2000,
+      }),
+    );
+    expect(
+      vi
+        .mocked(global.fetch)
+        .mock.calls.some(([input]) =>
+          String(input).endsWith("/direct-chat/live-turn"),
+        ),
+    ).toBe(true);
     expect(persistChatSessionToConvexMock).toHaveBeenCalledWith(
       expect.objectContaining({
         chatSessionId: "chat-session-direct",

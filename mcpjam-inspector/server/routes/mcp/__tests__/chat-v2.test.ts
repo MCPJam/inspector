@@ -760,6 +760,10 @@ describe("POST /api/mcp/chat-v2", () => {
             return new Response(null, { status: 200 });
           }
 
+          if (url === "https://test-convex.example.com/direct-chat/live-turn") {
+            return new Response(JSON.stringify({ ok: true }), { status: 200 });
+          }
+
           throw new Error(`Unexpected fetch URL: ${url}`);
         });
 
@@ -767,6 +771,7 @@ describe("POST /api/mcp/chat-v2", () => {
         const res = await postAuthenticatedJson({
           messages: [{ role: "user", content: "Hello" }],
           model: { id: "google/gemini-2.5-flash", provider: "google" },
+          projectId: "project-1",
           chatSessionId: "chat-session-1",
           directVisibility: "project",
           selectedServers: ["Asana", "GitHub"],
@@ -814,6 +819,30 @@ describe("POST /api/mcp/chat-v2", () => {
           temperature: 0.4,
           requireToolApproval: true,
           selectedServerIds: ["abc123serverid", "def456serverid"],
+        });
+
+        const liveTurnCall = vi
+          .mocked(global.fetch)
+          .mock.calls.find(([url]) =>
+            String(url).endsWith("/direct-chat/live-turn"),
+          );
+        expect(liveTurnCall).toBeDefined();
+        const [, liveTurnInit] = liveTurnCall!;
+        const liveTurnBody = JSON.parse(
+          String((liveTurnInit as RequestInit).body ?? "{}"),
+        );
+        expect(liveTurnInit).toMatchObject({
+          headers: expect.objectContaining({
+            authorization: "Bearer signed-in-test-token",
+          }),
+        });
+        expect(liveTurnBody).toMatchObject({
+          chatSessionId: "chat-session-1",
+          projectId: "project-1",
+          promptText: "Hello",
+          modelId: "google/gemini-2.5-flash",
+          modelSource: "mcpjam",
+          directVisibility: "project",
         });
       } finally {
         global.fetch = originalFetch;

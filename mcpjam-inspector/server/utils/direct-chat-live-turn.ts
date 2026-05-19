@@ -1,4 +1,5 @@
 import type { ModelMessage } from "@ai-sdk/provider-utils";
+import { logger } from "./logger.js";
 
 const LIVE_TURN_FLUSH_INTERVAL_MS = 250;
 const LIVE_TURN_SEND_TIMEOUT_MS = 5_000;
@@ -17,6 +18,8 @@ interface DirectChatLiveTurnPublisherOptions {
   chatSessionId?: string;
   projectId?: string;
   modelId?: string;
+  modelSource?: "mcpjam" | "byok" | "local_byok";
+  directVisibility?: "private" | "project";
   messages: ModelMessage[];
 }
 
@@ -62,6 +65,8 @@ export function createDirectChatLiveTurnPublisher({
   chatSessionId,
   projectId,
   modelId,
+  modelSource,
+  directVisibility,
   messages,
 }: DirectChatLiveTurnPublisherOptions): DirectChatLiveTurnPublisher | null {
   const convexUrl = process.env.CONVEX_HTTP_URL?.replace(/\/$/, "");
@@ -80,6 +85,7 @@ export function createDirectChatLiveTurnPublisher({
   let inFlight: Promise<void> | null = null;
   let flushAgain = false;
   let closed = false;
+  let loggedFailure = false;
 
   const waitForRetry = () =>
     new Promise<void>((resolve) => {
@@ -110,6 +116,8 @@ export function createDirectChatLiveTurnPublisher({
           assistantText: snapshot,
           status,
           modelId,
+          modelSource,
+          directVisibility,
           startedAt,
         }),
         signal: controller.signal,
@@ -170,8 +178,18 @@ export function createDirectChatLiveTurnPublisher({
       .then(() => {
         lastSentText = snapshot;
       })
-      .catch(() => {
+      .catch((error) => {
         // Best effort: live collaboration should not interrupt the sender stream.
+        if (!loggedFailure) {
+          loggedFailure = true;
+          logger.warn("[direct-chat-live-turn] Failed to write live turn", {
+            chatSessionId,
+            projectId,
+            modelId,
+            status,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       })
       .finally(() => {
         inFlight = null;

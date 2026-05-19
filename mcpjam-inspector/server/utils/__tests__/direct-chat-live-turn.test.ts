@@ -30,6 +30,8 @@ describe("createDirectChatLiveTurnPublisher", () => {
       chatSessionId: "session-1",
       projectId: "project-1",
       modelId: "model-1",
+      modelSource: "mcpjam",
+      directVisibility: "project",
       messages: [{ role: "user", content: "hello" }],
     });
 
@@ -48,6 +50,8 @@ describe("createDirectChatLiveTurnPublisher", () => {
       assistantText: "hi there",
       status: "complete",
       modelId: "model-1",
+      modelSource: "mcpjam",
+      directVisibility: "project",
     });
   });
 
