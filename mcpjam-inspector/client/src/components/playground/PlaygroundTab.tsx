@@ -11,6 +11,7 @@ import {
 } from "@/contexts/chatbox-client-style-context";
 import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
+import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
 import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 import { cn } from "@/lib/utils";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -38,6 +39,7 @@ import type {
 } from "@/hooks/use-app-state";
 import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSelector";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
+import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 
 interface PlaygroundTabProps {
   activeProjectId?: string | null;
@@ -60,13 +62,21 @@ interface PlaygroundTabProps {
   onConnect?: (formData: ServerFormData) => void;
   onSaveHostContext?: (
     projectId: string,
-    hostContext: ProjectHostContextDraft,
+    hostContext: ProjectHostContextDraft
   ) => Promise<void>;
   ensureServersReady?: (
-    serverNames: string[],
+    serverNames: string[]
   ) => Promise<EnsureServersReadyResult>;
   onOnboardingChange?: (isOnboarding: boolean) => void;
   playgroundServerSelectorProps?: PlaygroundServerSelectorProps;
+  /**
+   * Resolved active host from `useAppState` — the project default unless
+   * the user explicitly previewed a different host. Used as the host
+   * fallback when nothing is selected in the preview picker so the
+   * render gate agrees with what `initialize` is using server-side.
+   * Preview mode (when set) still wins over this fallback.
+   */
+  activeHost?: HostConfigDtoV2 | null;
   evalChatHandoff?: EvalChatHandoff | null;
   onEvalChatHandoffConsumed?: (id: string) => void;
 }
@@ -95,7 +105,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   // hostId, so this is cheap when no host is picked yet.
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
   const [previewedHostId] = usePreviewedHostId(
-    props.sharedProjectId ?? props.activeProjectId ?? null,
+    props.sharedProjectId ?? props.activeProjectId ?? null
   );
   const { host: previewedHost } = useHost({
     isAuthenticated: isConvexAuthenticated,
@@ -109,10 +119,10 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   // its properties" everywhere.
   const prefHostStyle = usePreferencesStore((state) => state.hostStyle);
   const prefHostCapabilitiesOverride = usePreferencesStore(
-    (state) => state.hostCapabilitiesOverride,
+    (state) => state.hostCapabilitiesOverride
   );
   const prefChatUiOverride = usePreferencesStore(
-    (state) => state.chatUiOverride,
+    (state) => state.chatUiOverride
   );
   const hostStyle = previewedHost?.config.hostStyle ?? prefHostStyle;
   const hostCapabilitiesOverride =
@@ -133,7 +143,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     const requiredIds = previewedHost?.config?.serverIds ?? [];
     if (requiredIds.length === 0 || !projectServersList) return [];
     const byId = new Map(
-      projectServersList.map((s) => [s._id, s.name] as const),
+      projectServersList.map((s) => [s._id, s.name] as const)
     );
     return requiredIds
       .map((id) => byId.get(id))
@@ -164,10 +174,10 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     // Playground supports multi-server tool selection — pass the active
     // multi-server set through so the docked tools pane aggregates across
     // all of them and execution routes to the right server per tool.
-    selectedServerNames:
-      props.playgroundServerSelectorProps?.isMultiSelectEnabled
-        ? props.playgroundServerSelectorProps?.selectedMultipleServers
-        : undefined,
+    selectedServerNames: props.playgroundServerSelectorProps
+      ?.isMultiSelectEnabled
+      ? props.playgroundServerSelectorProps?.selectedMultipleServers
+      : undefined,
   });
 
   // Rail collapse state — local to the workspace; not persisted per view.
@@ -184,126 +194,138 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   return (
     <AppBuilderStateProvider value={appBuilderState}>
       <ActiveMcpProfileProvider value={activeMcpProfile}>
-        <ChatboxHostStyleProvider value={hostStyle}>
-          <ChatboxHostCapabilitiesOverrideProvider
-            value={hostCapabilitiesOverride}
-          >
-          <ChatboxChatUiOverrideProvider value={chatUiOverride}>
-            <ChatboxHostThemeProvider value={themeMode}>
-              <div
-                className={cn(
-                  "chatbox-host-shell app-theme-scope flex h-full min-h-0 flex-1 flex-col overflow-hidden",
-                  themeMode === "dark" && "dark",
-                )}
-                data-host-style={hostStyle}
-                style={shellStyle}
-              >
-                {/* Watches the project's previewed-host id (the named-host
+        <ActiveHostCapsResolverScope
+          // Preview-mode (explicit picker selection) wins; otherwise fall
+          // back to the resolved project-default `activeHost` from
+          // `useAppState` so the render gate agrees with what
+          // `initialize` was called with. Without this fallback, a
+          // project whose default is Codex would render widgets in
+          // Playground while connect knows the server was init'd as
+          // Codex.
+          activeHost={previewedHost?.config ?? props.activeHost ?? null}
+          hostStyle={hostStyle}
+        >
+          <ChatboxHostStyleProvider value={hostStyle}>
+            <ChatboxHostCapabilitiesOverrideProvider
+              value={hostCapabilitiesOverride}
+            >
+              <ChatboxChatUiOverrideProvider value={chatUiOverride}>
+                <ChatboxHostThemeProvider value={themeMode}>
+                  <div
+                    className={cn(
+                      "chatbox-host-shell app-theme-scope flex h-full min-h-0 flex-1 flex-col overflow-hidden",
+                      themeMode === "dark" && "dark"
+                    )}
+                    data-host-style={hostStyle}
+                    style={shellStyle}
+                  >
+                    {/* Watches the project's previewed-host id (the named-host
                     dropdown in the global header) and re-snapshots its
                     persisted config into the chip stores when it changes.
                     Renders nothing. */}
-                <PlaygroundPreviewedClientSync
-                  projectId={
-                    props.sharedProjectId ?? props.activeProjectId ?? null
-                  }
-                />
-                <ResizablePanelGroup
-                  direction="horizontal"
-                  className="min-h-0 flex-1"
-                >
-                  {isLeftRailVisible ? (
-                    <>
+                    <PlaygroundPreviewedClientSync
+                      projectId={
+                        props.sharedProjectId ?? props.activeProjectId ?? null
+                      }
+                    />
+                    <ResizablePanelGroup
+                      direction="horizontal"
+                      className="min-h-0 flex-1"
+                    >
+                      {isLeftRailVisible ? (
+                        <>
+                          <ResizablePanel
+                            ref={leftPanelRef}
+                            id="playground-left"
+                            order={1}
+                            defaultSize={22}
+                            minSize={15}
+                            maxSize={35}
+                            collapsible
+                            collapsedSize={0}
+                            onCollapse={() => setIsLeftRailVisible(false)}
+                            className="min-h-0 min-w-0 overflow-hidden"
+                          >
+                            <PlaygroundLeftRail />
+                          </ResizablePanel>
+                          <ResizableHandle withHandle />
+                        </>
+                      ) : (
+                        <CollapsedPanelStrip
+                          side="left"
+                          onOpen={() => {
+                            setIsLeftRailVisible(true);
+                            // The panel only remounts on the next paint; expand
+                            // imperatively once it has a ref to honor the click.
+                            requestAnimationFrame(() =>
+                              leftPanelRef.current?.expand()
+                            );
+                          }}
+                          tooltipText="Show sessions"
+                        />
+                      )}
                       <ResizablePanel
-                        ref={leftPanelRef}
-                        id="playground-left"
-                        order={1}
-                        defaultSize={22}
-                        minSize={15}
-                        maxSize={35}
-                        collapsible
-                        collapsedSize={0}
-                        onCollapse={() => setIsLeftRailVisible(false)}
+                        id="playground-center"
+                        order={2}
+                        minSize={40}
                         className="min-h-0 min-w-0 overflow-hidden"
                       >
-                        <PlaygroundLeftRail />
+                        <PlaygroundCenter
+                          activeProjectId={props.activeProjectId}
+                          serverName={props.serverName}
+                          enableMultiModelChat={true}
+                          onSaveHostContext={props.onSaveHostContext}
+                          ensureServersReady={props.ensureServersReady}
+                          playgroundServerSelectorProps={
+                            props.playgroundServerSelectorProps
+                          }
+                          evalChatHandoff={props.evalChatHandoff}
+                          onEvalChatHandoffConsumed={
+                            props.onEvalChatHandoffConsumed
+                          }
+                        />
                       </ResizablePanel>
-                      <ResizableHandle withHandle />
-                    </>
-                  ) : (
-                    <CollapsedPanelStrip
-                      side="left"
-                      onOpen={() => {
-                        setIsLeftRailVisible(true);
-                        // The panel only remounts on the next paint; expand
-                        // imperatively once it has a ref to honor the click.
-                        requestAnimationFrame(() =>
-                          leftPanelRef.current?.expand(),
-                        );
-                      }}
-                      tooltipText="Show sessions"
-                    />
-                  )}
-                  <ResizablePanel
-                    id="playground-center"
-                    order={2}
-                    minSize={40}
-                    className="min-h-0 min-w-0 overflow-hidden"
-                  >
-                    <PlaygroundCenter
-                      activeProjectId={props.activeProjectId}
-                      serverName={props.serverName}
-                      enableMultiModelChat={true}
-                      onSaveHostContext={props.onSaveHostContext}
-                      ensureServersReady={props.ensureServersReady}
-                      playgroundServerSelectorProps={
-                        props.playgroundServerSelectorProps
-                      }
-                      evalChatHandoff={props.evalChatHandoff}
-                      onEvalChatHandoffConsumed={
-                        props.onEvalChatHandoffConsumed
-                      }
-                    />
-                  </ResizablePanel>
-                  {isRightRailVisible ? (
-                    <>
-                      <ResizableHandle withHandle />
-                      <ResizablePanel
-                        ref={rightPanelRef}
-                        id="playground-right"
-                        order={3}
-                        defaultSize={30}
-                        minSize={4}
-                        maxSize={50}
-                        collapsible
-                        collapsedSize={0}
-                        onCollapse={() => setIsRightRailVisible(false)}
-                        className="min-h-0 overflow-hidden"
-                      >
-                        <div className="h-full min-h-0 overflow-hidden">
-                          <LoggerView
-                            onClose={() => setIsRightRailVisible(false)}
-                          />
-                        </div>
-                      </ResizablePanel>
-                    </>
-                  ) : (
-                    <CollapsedPanelStrip
-                      side="right"
-                      onOpen={() => {
-                        setIsRightRailVisible(true);
-                        requestAnimationFrame(() =>
-                          rightPanelRef.current?.expand(),
-                        );
-                      }}
-                      tooltipText="Show logs"
-                    />
-                  )}
-                </ResizablePanelGroup>
-              </div>
-            </ChatboxHostThemeProvider>
-          </ChatboxChatUiOverrideProvider>
-          </ChatboxHostCapabilitiesOverrideProvider>
-        </ChatboxHostStyleProvider>
+                      {isRightRailVisible ? (
+                        <>
+                          <ResizableHandle withHandle />
+                          <ResizablePanel
+                            ref={rightPanelRef}
+                            id="playground-right"
+                            order={3}
+                            defaultSize={30}
+                            minSize={4}
+                            maxSize={50}
+                            collapsible
+                            collapsedSize={0}
+                            onCollapse={() => setIsRightRailVisible(false)}
+                            className="min-h-0 overflow-hidden"
+                          >
+                            <div className="h-full min-h-0 overflow-hidden">
+                              <LoggerView
+                                onClose={() => setIsRightRailVisible(false)}
+                              />
+                            </div>
+                          </ResizablePanel>
+                        </>
+                      ) : (
+                        <CollapsedPanelStrip
+                          side="right"
+                          onOpen={() => {
+                            setIsRightRailVisible(true);
+                            requestAnimationFrame(() =>
+                              rightPanelRef.current?.expand()
+                            );
+                          }}
+                          tooltipText="Show logs"
+                        />
+                      )}
+                    </ResizablePanelGroup>
+                  </div>
+                </ChatboxHostThemeProvider>
+              </ChatboxChatUiOverrideProvider>
+            </ChatboxHostCapabilitiesOverrideProvider>
+          </ChatboxHostStyleProvider>
+        </ActiveHostCapsResolverScope>
       </ActiveMcpProfileProvider>
     </AppBuilderStateProvider>
   );

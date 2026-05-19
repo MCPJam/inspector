@@ -659,6 +659,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       structuredContentValid={structuredContentValid}
       toolMeta={getToolMeta(lastToolName)}
       responseDurationMs={responseDurationMs}
+      serverName={serverName}
     />
   ) : (
     <div className="h-full flex items-center justify-center">
