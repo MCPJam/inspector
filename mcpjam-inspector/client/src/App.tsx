@@ -1033,6 +1033,7 @@ export function AppBuilderRoute() {
 
 export function PlaygroundRoute() {
   const {
+    activeHost,
     activeProject,
     activeProjectId,
     appState,
@@ -1070,6 +1071,7 @@ export function PlaygroundRoute() {
       ensureServersReady={ensureServersReady}
       onOnboardingChange={setAppBuilderOnboarding}
       playgroundServerSelectorProps={playgroundServerSelectorProps}
+      activeHost={activeHost}
       evalChatHandoff={evalChatHandoff}
       onEvalChatHandoffConsumed={(id) =>
         setEvalChatHandoff((current: EvalChatHandoff | null) =>

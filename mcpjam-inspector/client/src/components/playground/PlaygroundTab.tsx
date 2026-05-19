@@ -39,6 +39,7 @@ import type {
 } from "@/hooks/use-app-state";
 import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSelector";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
+import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 
 interface PlaygroundTabProps {
   activeProjectId?: string | null;
@@ -68,6 +69,14 @@ interface PlaygroundTabProps {
   ) => Promise<EnsureServersReadyResult>;
   onOnboardingChange?: (isOnboarding: boolean) => void;
   playgroundServerSelectorProps?: PlaygroundServerSelectorProps;
+  /**
+   * Resolved active host from `useAppState` — the project default unless
+   * the user explicitly previewed a different host. Used as the host
+   * fallback when nothing is selected in the preview picker so the
+   * render gate agrees with what `initialize` is using server-side.
+   * Preview mode (when set) still wins over this fallback.
+   */
+  activeHost?: HostConfigDtoV2 | null;
   evalChatHandoff?: EvalChatHandoff | null;
   onEvalChatHandoffConsumed?: (id: string) => void;
 }
@@ -186,7 +195,14 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     <AppBuilderStateProvider value={appBuilderState}>
       <ActiveMcpProfileProvider value={activeMcpProfile}>
         <ActiveHostCapsResolverScope
-          activeHost={previewedHost?.config}
+          // Preview-mode (explicit picker selection) wins; otherwise fall
+          // back to the resolved project-default `activeHost` from
+          // `useAppState` so the render gate agrees with what
+          // `initialize` was called with. Without this fallback, a
+          // project whose default is Codex would render widgets in
+          // Playground while connect knows the server was init'd as
+          // Codex.
+          activeHost={previewedHost?.config ?? props.activeHost ?? null}
           hostStyle={hostStyle}
         >
           <ChatboxHostStyleProvider value={hostStyle}>

@@ -2,6 +2,8 @@
 "@mcpjam/inspector": patch
 ---
 
-Chat: don't render widget iframes for hosts that don't advertise the MCP UI extension. Codex (elicitation-only CLI) now correctly falls through to the plain tool-result row instead of mounting an iframe for tools that declare `_meta.ui.resourceUri` or `openai/outputTemplate`. Apps-SDK hosts that keep the SDK-default UI extension (ChatGPT, Copilot, MCPJam, Claude) are unaffected.
+Chat / Tools / Trace replays / Playground / hosted chatbox: don't render widget iframes for hosts whose effective `clientCapabilities` (host config + per-server overrides) don't advertise the MCP UI extension per SEP-1865. The render gate now calls the same `resolveEffectiveClientCapabilities` function the connect path uses, so the renderer and `initialize` always evaluate the same blob. Codex (elicitation-only CLI) falls through to the plain tool-result row; SDK-default hosts (Claude, ChatGPT, Copilot, MCPJam) keep rendering widgets.
 
-The render gate keys off the host's persisted `clientCapabilities`, not its `hostStyle` — user edits to capabilities are honored. A future `window.openai` flag on `HostConfigInputV2` will be OR-ed into the same gate.
+Behavioral notes:
+- Server-level `clientCapabilities` overrides are now honored at render time. A server that re-advertises the UI extension renders widgets even when the host (e.g. Codex) strips it — server-level override beats host identity, matching `initialize`.
+- SEP-1865 strictness: the helper now requires `extensions["io.modelcontextprotocol/ui"].mimeTypes` to include `text/html;profile=mcp-app`. Custom configs with bare `{ extensions: { [id]: {} } }` (no `mimeTypes` array) stop rendering widgets. SDK-default capability shapes are unaffected.

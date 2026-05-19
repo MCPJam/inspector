@@ -38,6 +38,16 @@ import {
   TraceRawView,
   type TraceRawRequestPayloadHistory,
 } from "./trace-raw-view";
+import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
+import { useChatboxHostStyle } from "@/contexts/chatbox-client-style-context";
+import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
+
+// Default host-style template id when neither prop nor ambient context
+// supplies one. Mirrors `DEFAULT_HOST_TEMPLATE_ID` in
+// `lib/client-templates.ts` but inlined to avoid pulling that module
+// (and its build-time `__APP_VERSION__` reference) into surfaces that
+// don't otherwise need it — keeps trace-viewer test environments lean.
+const DEFAULT_TRACE_HOST_STYLE_FALLBACK = "mcpjam";
 
 const TraceTimelineLazy = lazy(() =>
   import("./trace-timeline").then((m) => ({ default: m.TraceTimeline })),
@@ -119,6 +129,22 @@ interface TraceViewerProps {
    * `StickToBottom` (or similar) owns vertical scroll as the payload grows.
    */
   rawGrowWithContent?: boolean;
+  /**
+   * Active host (resolved by `useAppState`) at the time the trace is
+   * being viewed — NOT the host that was active when the trace was
+   * recorded. The render gate uses "current active host" semantics so
+   * trace replays match what the user is modeling right now (switch to
+   * Codex → widgets hide in replays). Optional: callers that don't
+   * thread it get the legacy "allow widgets" behavior via the scope's
+   * template-seed fallback.
+   */
+  activeHost?: HostConfigDtoV2 | null;
+  /**
+   * Host style fallback used by the resolver when `activeHost` is
+   * absent. Read from the surrounding `ChatboxHostStyleProvider` when
+   * not provided.
+   */
+  hostStyle?: string;
 }
 
 function getTraceMessages(
@@ -197,9 +223,20 @@ export function TraceViewer({
   onFullscreenChange,
   rawRequestPayloadHistory = null,
   rawGrowWithContent = false,
+  activeHost = null,
+  hostStyle,
 }: TraceViewerProps) {
   // Only live chat shells should opt into the interactive widget path.
   const threadInteractive = interactive || sendFollowUpMessage !== NOOP;
+
+  // Host-style fallback: prefer the prop, else read from the surrounding
+  // ChatboxHostStyleProvider (most eval surfaces wrap one), else the
+  // default template id. Feeds the ActiveHostCapsResolverScope below so
+  // trace replays gate widgets on the *current* active host even when
+  // the caller doesn't thread `activeHost` explicitly.
+  const ambientHostStyle = useChatboxHostStyle();
+  const resolverHostStyle =
+    hostStyle ?? ambientHostStyle ?? DEFAULT_TRACE_HOST_STYLE_FALLBACK;
 
   const [viewMode, setViewMode] = useState<
     "timeline" | "chat" | "raw" | "tools"
@@ -597,8 +634,20 @@ export function TraceViewer({
               >
                 <div className="relative flex-1 min-h-0">
                   <StickToBottom.Content className="flex flex-col min-h-0">
-                    <Thread
-                      messages={adaptedTrace.messages}
+                    {/*
+                      Gate trace-replay widget rendering on the CURRENT
+                      active host (not the host recorded with the trace).
+                      Switching to Codex while viewing a recorded run
+                      hides the widget — replay reflects "what would this
+                      look like under my current host." Resolver also
+                      honors per-server overrides via appState.servers.
+                    */}
+                    <ActiveHostCapsResolverScope
+                      activeHost={activeHost}
+                      hostStyle={resolverHostStyle}
+                    >
+                      <Thread
+                        messages={adaptedTrace.messages}
                       sendFollowUpMessage={sendFollowUpMessage}
                       model={resolvedModel}
                       isLoading={isLoading}
@@ -639,6 +688,7 @@ export function TraceViewer({
                         };
                       }}
                     />
+                    </ActiveHostCapsResolverScope>
                   </StickToBottom.Content>
                   <ScrollToBottomButton />
                 </div>
