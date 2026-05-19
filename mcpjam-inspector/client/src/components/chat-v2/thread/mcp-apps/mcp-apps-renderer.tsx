@@ -1921,12 +1921,14 @@ export function MCPAppsRenderer({
       }
     }
   };
-  const isInlineDisplayMode =
-    effectiveDisplayMode !== "fullscreen" && effectiveDisplayMode !== "pip";
+  // Gate the reveal on `hasFirstSizeChange` in *all* display modes —
+  // fullscreen and PiP exhibit the same "iframe revealed before first
+  // paint, widget shows its own 'Connecting…' placeholder" flash that
+  // motivated the inline change. The View SDK's built-in ResizeObserver
+  // fires `ui/notifications/size-changed` on first paint regardless of
+  // mode, so this is the right reveal signal everywhere.
   const showWidget =
-    isReady &&
-    canRenderStreamingInput &&
-    (!isInlineDisplayMode || hasFirstSizeChange);
+    isReady && canRenderStreamingInput && hasFirstSizeChange;
 
   useEffect(() => {
     logWidgetDebug("host-to-ui", "debug/widget-visibility", {
@@ -2068,10 +2070,16 @@ export function MCPAppsRenderer({
     ]
       .filter(Boolean)
       .join(", "),
-    // Keep iframe in the layout but invisible while not ready
-    ...(!showWidget
+    // Keep iframe in the layout but invisible while not ready. Inline mode
+    // takes the iframe out of flow with `position: absolute` so the
+    // host-side Skeleton can occupy the slot. Fullscreen / PiP keep the
+    // iframe in flow (flex-1 / fixed PiP height) — taking it out of flow
+    // would collapse those layouts and there's no skeleton to fill them.
+    ...(!showWidget && !isFullscreen && !isPip
       ? { position: "absolute" as const, pointerEvents: "none" as const }
-      : {}),
+      : !showWidget
+        ? { pointerEvents: "none" as const }
+        : {}),
   };
   const hostChromeStyle: CSSProperties | undefined =
     !isFullscreen && prefersBorder

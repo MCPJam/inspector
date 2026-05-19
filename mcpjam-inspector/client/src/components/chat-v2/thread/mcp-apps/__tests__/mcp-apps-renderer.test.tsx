@@ -1012,11 +1012,46 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
   });
 
+  it("keeps fullscreen iframe hidden until first size-change fires", async () => {
+    // Fullscreen exhibits the same "iframe revealed before first paint,
+    // widget shows its own 'Connecting…' placeholder" flash as inline.
+    // The size-change gate must apply in fullscreen too.
+    const toolInput = { elements: '[{"type":"rectangle"}]' };
+    render(
+      <MCPAppsRenderer
+        {...baseProps}
+        toolState="output-available"
+        toolInput={toolInput}
+        toolOutput={{ ok: true }}
+        cachedWidgetHtmlUrl="blob:cached"
+        displayMode="fullscreen"
+        fullscreenWidgetId="call-1"
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+    act(() => triggerReady());
+
+    const iframe = screen.getByTestId("sandboxed-iframe") as HTMLElement;
+    expect(iframe.style.opacity).toBe("0");
+    // Fullscreen iframe stays in flow (flex-1) — must NOT be position:absolute.
+    expect(iframe.style.position).toBe("");
+
+    act(() => {
+      mockBridge.onsizechange?.({ width: 400, height: 300 });
+    });
+
+    await vi.waitFor(() => {
+      expect(iframe.style.opacity).toBe("1");
+    });
+  });
+
   it("reveals iframe on inline switch when size-change fired in fullscreen", async () => {
-    // Regression for the case where the widget's first size-change arrives
-    // while in fullscreen (the inline reveal-gate state must still flip, so
-    // the iframe is not stuck behind the skeleton when the user returns to
-    // inline and the widget happens not to resize again).
+    // Regression: the widget's first size-change can arrive while in
+    // fullscreen. Switching back to inline must render at the recorded
+    // height (not the "0px" placeholder default).
     const toolInput = { elements: '[{"type":"rectangle"}]' };
     const { rerender } = render(
       <MCPAppsRenderer
@@ -1034,9 +1069,6 @@ describe("MCPAppsRenderer tool input streaming", () => {
       expect(mockBridge.connect).toHaveBeenCalled();
     });
     act(() => triggerReady());
-
-    // Size-change while in fullscreen — handler bails on the inline-only
-    // height-application path but must still record "first size-change".
     act(() => {
       mockBridge.onsizechange?.({ width: 400, height: 300 });
     });
