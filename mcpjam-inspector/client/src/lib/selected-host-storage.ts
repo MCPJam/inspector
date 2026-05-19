@@ -1,9 +1,19 @@
 /**
  * Storage for the playground's persisted multi-host array — the compare-
- * column line-up of host ids the user wants to compare side-by-side. The
- * array lives in global localStorage under `mcp-inspector-selected-hosts`.
+ * column line-up of host ids the user wants to compare side-by-side.
  *
- * This file owns the array key and its same-tab channel
+ * Per-project scoping: hosts are project entities (a host belongs to a
+ * specific project), so the array lives under a project-scoped key
+ * `mcp-inspector-selected-hosts:{projectId}`. Switching projects must NOT
+ * inherit the previous project's compare-column line-up — opening project
+ * B should never surface project A's host ids. This is a deliberate
+ * divergence from `selected-model-storage.ts`: models are global
+ * resources (the same provider/model ids mean the same thing across
+ * projects), so the model array is keyed globally. Hosts are not — so
+ * this module project-scopes the array (and the hook project-scopes its
+ * sibling `mcp-inspector-multi-host-enabled` toggle for the same reason).
+ *
+ * This file owns the array key prefix and its same-tab channel
  * (`selected-host-ids-changed`). It does NOT own the lead host id: the
  * LEAD source-of-truth is the per-project "previewed host" managed by
  * `lib/previewed-client-storage.ts` (key: `mcp-previewed-host-id`,
@@ -13,10 +23,17 @@
  * operation, then dispatches the array channel once so subscribers see a
  * consistent snapshot.
  *
- * `usePersistedHost` (in `hooks/use-persisted-host.ts`) derives the lead
- * from `usePreviewedHostId(projectId)` and exposes
- * `selectedHostIds` always normalized as `[leadId, ...secondaries]`, so
- * the two cannot drift by construction.
+ * Defensive-derivation contract: `usePersistedHost` (in
+ * `hooks/use-persisted-host.ts`) does NOT trust that every lead change
+ * flows through `replaceLeadHostId`. Existing UI surfaces (global host
+ * bar, project setup flows) call `savePreviewedHostId` directly, which
+ * changes the lead without rotating the array. The hook therefore
+ * re-applies the same count-preserving algorithm at READ time: if the
+ * derived lead is not at slot 0 of the stored array, the hook rotates it
+ * to slot 0 (when present elsewhere) or replaces slot 0 (when absent),
+ * never growing the array. The invariant is enforced by both writers
+ * (`replaceLeadHostId`) and readers (`usePersistedHost`) so an external
+ * `savePreviewedHostId` write cannot break column-count preservation.
  *
  * Same dispatch asymmetry as `selected-model-storage.ts`:
  *   - `saveSelectedHostIds` does NOT dispatch a same-tab event. In-app
@@ -27,19 +44,31 @@
  *   - `replaceLeadHostId` DOES dispatch, because it's the outside-seam
  *     write — fired by host-snapshot apply or by the future
  *     `MultiHostPicker` promotion path. Subscribers re-read on the next
- *     event tick.
- *   - Cross-tab `storage` events on the array key are forwarded to
- *     subscribers for free.
+ *     event tick with their own `projectId` to resolve the scoped key.
+ *   - Cross-tab `storage` events on any project's array key are forwarded
+ *     to subscribers. The listener filters on key PREFIX
+ *     (`mcp-inspector-selected-hosts:`) since project-scoping makes the
+ *     exact key variable; subscribers re-read with their own projectId.
  *
  * Count-preservation invariant: column count is a workspace preference,
  * not a host property. Switching hosts must swap the lead in place, never
  * grow or shrink the array. `replaceLeadHostId` rotates an existing entry
- * to slot 0 or replaces slot 0 in-place; it never appends or pops.
+ * to slot 0 or replaces slot 0 in-place; it never appends or pops. The
+ * hook's defensive derivation re-applies the same algorithm at read time.
  */
 import { savePreviewedHostId } from "@/lib/previewed-client-storage";
 
-const MULTI_STORAGE_KEY = "mcp-inspector-selected-hosts";
+const MULTI_STORAGE_KEY_PREFIX = "mcp-inspector-selected-hosts";
 const ARRAY_EVENT_NAME = "selected-host-ids-changed";
+
+function arrayKey(projectId: string): string {
+  return `${MULTI_STORAGE_KEY_PREFIX}:${projectId}`;
+}
+
+function isArrayKey(key: string | null): boolean {
+  if (!key) return false;
+  return key.startsWith(`${MULTI_STORAGE_KEY_PREFIX}:`);
+}
 
 function normalizeSelectedHostIds(hostIds: unknown): string[] {
   if (!Array.isArray(hostIds)) return [];
@@ -63,9 +92,15 @@ function dispatchArrayChanged(): void {
   }
 }
 
-export function loadSelectedHostIds(): string[] {
+export function loadSelectedHostIds(projectId: string | null): string[] {
+  // Defend against null projectId: hosts are per-project, so without a
+  // project we have nothing meaningful to return. In practice
+  // `PlaygroundTab.tsx` only mounts the hook with a non-null projectId,
+  // so this branch is not reachable through the normal app shell — but
+  // we still guard the storage seam.
+  if (!projectId) return [];
   try {
-    const raw = localStorage.getItem(MULTI_STORAGE_KEY);
+    const raw = localStorage.getItem(arrayKey(projectId));
     if (typeof raw !== "string" || raw.length === 0) return [];
     const parsed = JSON.parse(raw);
     return normalizeSelectedHostIds(parsed);
@@ -74,13 +109,22 @@ export function loadSelectedHostIds(): string[] {
   }
 }
 
-export function saveSelectedHostIds(ids: string[]): void {
+export function saveSelectedHostIds(
+  projectId: string | null,
+  ids: string[],
+): void {
+  // No-op when projectId is null: see `loadSelectedHostIds`. Writing
+  // without a scope would either leak project A's ids into B's storage
+  // or overwrite an existing project's array — both worse than dropping
+  // the write.
+  if (!projectId) return;
   try {
     const normalized = normalizeSelectedHostIds(ids);
+    const key = arrayKey(projectId);
     if (normalized.length > 0) {
-      localStorage.setItem(MULTI_STORAGE_KEY, JSON.stringify(normalized));
+      localStorage.setItem(key, JSON.stringify(normalized));
     } else {
-      localStorage.removeItem(MULTI_STORAGE_KEY);
+      localStorage.removeItem(key);
     }
     // Intentionally do NOT dispatch the array channel here. In-app writes
     // flow from React setters that already updated React state directly
@@ -101,7 +145,7 @@ export function saveSelectedHostIds(ids: string[]): void {
  * previewed host key for the purpose of promotion (single-mode pickers
  * that simply change the previewed host without rotating the array
  * continue to use `savePreviewedHostId` directly — they don't need
- * rotation).
+ * rotation, and the hook's defensive derivation handles them).
  *
  * Semantics (mirroring `replaceLeadModelId`):
  *   - `newHostId` null/whitespace → clear the lead key, leave array
@@ -130,7 +174,7 @@ export function replaceLeadHostId(
     return;
   }
 
-  const current = loadSelectedHostIds();
+  const current = loadSelectedHostIds(projectId);
   let nextArray: string[] | null;
   if (current.length === 0) {
     nextArray = [next];
@@ -156,10 +200,11 @@ export function replaceLeadHostId(
   // the event observe a consistent snapshot.
   try {
     if (nextArray !== null) {
+      const key = arrayKey(projectId);
       if (nextArray.length > 0) {
-        localStorage.setItem(MULTI_STORAGE_KEY, JSON.stringify(nextArray));
+        localStorage.setItem(key, JSON.stringify(nextArray));
       } else {
-        localStorage.removeItem(MULTI_STORAGE_KEY);
+        localStorage.removeItem(key);
       }
     }
   } catch {
@@ -177,11 +222,19 @@ export function replaceLeadHostId(
 
 /**
  * Subscribe to outside-seam writes of the multi-host array (currently
- * only `replaceLeadHostId`) and cross-tab `storage` events on the array
- * key. React-side setters intentionally do NOT fire this channel — they
- * update React state directly and call `saveSelectedHostIds` only to
- * mirror localStorage, so subscribers here won't be flooded by every
- * in-app multi-host change.
+ * only `replaceLeadHostId`) and cross-tab `storage` events on any
+ * project-scoped array key. React-side setters intentionally do NOT fire
+ * this channel — they update React state directly and call
+ * `saveSelectedHostIds` only to mirror localStorage, so subscribers here
+ * won't be flooded by every in-app multi-host change.
+ *
+ * The channel is event-name-keyed (one channel for all projects);
+ * subscribers re-read with their own `projectId` to resolve the scoped
+ * key. The cross-tab `storage` filter matches the prefix
+ * `mcp-inspector-selected-hosts:` so writes to any project's key wake
+ * subscribers, who then re-read with their own projectId and ignore
+ * irrelevant changes (the re-read for the wrong project simply returns
+ * the same value).
  *
  * Lead-host changes flow through `subscribePreviewedHostId` (in
  * `previewed-client-storage.ts`); `usePersistedHost` derives the lead
@@ -191,7 +244,7 @@ export function replaceLeadHostId(
 export function subscribeSelectedHostIds(callback: () => void): () => void {
   const onCustom = () => callback();
   const onStorage = (event: StorageEvent) => {
-    if (event.key === MULTI_STORAGE_KEY) callback();
+    if (isArrayKey(event.key)) callback();
   };
   window.addEventListener(ARRAY_EVENT_NAME, onCustom);
   window.addEventListener("storage", onStorage);

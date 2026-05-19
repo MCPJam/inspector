@@ -10,8 +10,10 @@ import {
   savePreviewedHostId,
 } from "../previewed-client-storage";
 
-const ARRAY_KEY = "mcp-inspector-selected-hosts";
 const PROJECT = "p1";
+const PROJECT_B = "p2";
+const ARRAY_KEY_P1 = `mcp-inspector-selected-hosts:${PROJECT}`;
+const ARRAY_KEY_P2 = `mcp-inspector-selected-hosts:${PROJECT_B}`;
 
 describe("selected-host-storage", () => {
   beforeEach(() => {
@@ -24,19 +26,19 @@ describe("selected-host-storage", () => {
 
   describe("loadSelectedHostIds / saveSelectedHostIds", () => {
     it("returns [] when nothing is stored", () => {
-      expect(loadSelectedHostIds()).toEqual([]);
+      expect(loadSelectedHostIds(PROJECT)).toEqual([]);
     });
 
-    it("round-trips a normalized array", () => {
-      saveSelectedHostIds(["a", "b", "c"]);
-      expect(loadSelectedHostIds()).toEqual(["a", "b", "c"]);
-      expect(localStorage.getItem(ARRAY_KEY)).toBe(
+    it("round-trips a normalized array under the project-scoped key", () => {
+      saveSelectedHostIds(PROJECT, ["a", "b", "c"]);
+      expect(loadSelectedHostIds(PROJECT)).toEqual(["a", "b", "c"]);
+      expect(localStorage.getItem(ARRAY_KEY_P1)).toBe(
         JSON.stringify(["a", "b", "c"]),
       );
     });
 
     it("dedupes, trims, and drops non-strings on save", () => {
-      saveSelectedHostIds([
+      saveSelectedHostIds(PROJECT, [
         " a ",
         "a",
         "",
@@ -45,18 +47,46 @@ describe("selected-host-storage", () => {
         "b",
         "b",
       ]);
-      expect(loadSelectedHostIds()).toEqual(["a", "b"]);
+      expect(loadSelectedHostIds(PROJECT)).toEqual(["a", "b"]);
     });
 
     it("removes the key when saving an empty array", () => {
-      saveSelectedHostIds(["a"]);
-      saveSelectedHostIds([]);
-      expect(localStorage.getItem(ARRAY_KEY)).toBeNull();
+      saveSelectedHostIds(PROJECT, ["a"]);
+      saveSelectedHostIds(PROJECT, []);
+      expect(localStorage.getItem(ARRAY_KEY_P1)).toBeNull();
     });
 
     it("returns [] when the stored JSON is malformed", () => {
-      localStorage.setItem(ARRAY_KEY, "{not json");
-      expect(loadSelectedHostIds()).toEqual([]);
+      localStorage.setItem(ARRAY_KEY_P1, "{not json");
+      expect(loadSelectedHostIds(PROJECT)).toEqual([]);
+    });
+
+    it("isolates arrays across projects (no cross-project leakage)", () => {
+      saveSelectedHostIds(PROJECT, ["a", "b"]);
+      expect(loadSelectedHostIds(PROJECT_B)).toEqual([]);
+      saveSelectedHostIds(PROJECT_B, ["x", "y", "z"]);
+      expect(loadSelectedHostIds(PROJECT)).toEqual(["a", "b"]);
+      expect(loadSelectedHostIds(PROJECT_B)).toEqual(["x", "y", "z"]);
+      expect(localStorage.getItem(ARRAY_KEY_P1)).toBe(
+        JSON.stringify(["a", "b"]),
+      );
+      expect(localStorage.getItem(ARRAY_KEY_P2)).toBe(
+        JSON.stringify(["x", "y", "z"]),
+      );
+    });
+
+    // Null projectId is defensive — not reachable through PlaygroundTab
+    // (which always passes a non-null projectId). We still guard the
+    // storage seam.
+    it("loadSelectedHostIds(null) returns [] (defensive; not reachable in practice)", () => {
+      saveSelectedHostIds(PROJECT, ["a"]);
+      expect(loadSelectedHostIds(null)).toEqual([]);
+    });
+
+    it("saveSelectedHostIds(null, …) is a no-op (defensive; not reachable in practice)", () => {
+      saveSelectedHostIds(null, ["a", "b"]);
+      expect(loadSelectedHostIds(PROJECT)).toEqual([]);
+      expect(localStorage.getItem(ARRAY_KEY_P1)).toBeNull();
     });
   });
 
@@ -64,69 +94,77 @@ describe("selected-host-storage", () => {
     it("seeds the array with [newHostId] when it is currently empty", () => {
       replaceLeadHostId(PROJECT, "host-a");
       expect(loadPreviewedHostId(PROJECT)).toBe("host-a");
-      expect(loadSelectedHostIds()).toEqual(["host-a"]);
+      expect(loadSelectedHostIds(PROJECT)).toEqual(["host-a"]);
     });
 
     it("is a no-op on the array when newHostId already sits at index 0", () => {
-      saveSelectedHostIds(["a", "b", "c"]);
+      saveSelectedHostIds(PROJECT, ["a", "b", "c"]);
       replaceLeadHostId(PROJECT, "a");
       expect(loadPreviewedHostId(PROJECT)).toBe("a");
-      expect(loadSelectedHostIds()).toEqual(["a", "b", "c"]);
+      expect(loadSelectedHostIds(PROJECT)).toEqual(["a", "b", "c"]);
     });
 
     it("rotates an existing id at index k > 0 to the front, preserving count", () => {
-      saveSelectedHostIds(["a", "b", "c"]);
+      saveSelectedHostIds(PROJECT, ["a", "b", "c"]);
       replaceLeadHostId(PROJECT, "c");
       expect(loadPreviewedHostId(PROJECT)).toBe("c");
-      expect(loadSelectedHostIds()).toEqual(["c", "a", "b"]);
+      expect(loadSelectedHostIds(PROJECT)).toEqual(["c", "a", "b"]);
     });
 
     it("replaces the lead slot when newHostId is not in the array, preserving count", () => {
-      saveSelectedHostIds(["a", "b", "c"]);
+      saveSelectedHostIds(PROJECT, ["a", "b", "c"]);
       replaceLeadHostId(PROJECT, "z");
       expect(loadPreviewedHostId(PROJECT)).toBe("z");
-      expect(loadSelectedHostIds()).toEqual(["z", "b", "c"]);
+      expect(loadSelectedHostIds(PROJECT)).toEqual(["z", "b", "c"]);
     });
 
     it("clears the lead but leaves the array intact when called with null", () => {
-      saveSelectedHostIds(["a", "b", "c"]);
+      saveSelectedHostIds(PROJECT, ["a", "b", "c"]);
       savePreviewedHostId(PROJECT, "a");
       replaceLeadHostId(PROJECT, null);
       expect(loadPreviewedHostId(PROJECT)).toBeNull();
-      expect(loadSelectedHostIds()).toEqual(["a", "b", "c"]);
+      expect(loadSelectedHostIds(PROJECT)).toEqual(["a", "b", "c"]);
     });
 
     it("treats whitespace-only ids like null", () => {
-      saveSelectedHostIds(["a", "b"]);
+      saveSelectedHostIds(PROJECT, ["a", "b"]);
       savePreviewedHostId(PROJECT, "a");
       replaceLeadHostId(PROJECT, "   ");
       expect(loadPreviewedHostId(PROJECT)).toBeNull();
-      expect(loadSelectedHostIds()).toEqual(["a", "b"]);
+      expect(loadSelectedHostIds(PROJECT)).toEqual(["a", "b"]);
     });
 
     it("keeps lead and array aligned after a switch", () => {
-      saveSelectedHostIds(["a"]);
+      saveSelectedHostIds(PROJECT, ["a"]);
       savePreviewedHostId(PROJECT, "a");
 
       replaceLeadHostId(PROJECT, "b");
       // Lead in the per-project previewed-host storage is "b" and the
       // array starts with "b".
       expect(loadPreviewedHostId(PROJECT)).toBe("b");
-      const ids = loadSelectedHostIds();
+      const ids = loadSelectedHostIds(PROJECT);
       expect(ids[0]).toBe("b");
     });
 
     it("preserves multi-column count when switching hosts (regression for column-drift bug)", () => {
-      saveSelectedHostIds(["host-a", "extra"]);
+      saveSelectedHostIds(PROJECT, ["host-a", "extra"]);
       savePreviewedHostId(PROJECT, "host-a");
 
       replaceLeadHostId(PROJECT, "host-b");
 
-      const ids = loadSelectedHostIds();
+      const ids = loadSelectedHostIds(PROJECT);
       expect(ids.length).toBe(2);
       expect(ids[0]).toBe("host-b");
       expect(ids[1]).toBe("extra");
       expect(loadPreviewedHostId(PROJECT)).toBe("host-b");
+    });
+
+    it("scopes array writes to the given projectId", () => {
+      saveSelectedHostIds(PROJECT_B, ["other"]);
+      replaceLeadHostId(PROJECT, "host-a");
+      expect(loadSelectedHostIds(PROJECT)).toEqual(["host-a"]);
+      // Project B's array is untouched.
+      expect(loadSelectedHostIds(PROJECT_B)).toEqual(["other"]);
     });
   });
 
@@ -134,20 +172,20 @@ describe("selected-host-storage", () => {
     it("does NOT fire when only `saveSelectedHostIds` is called (in-app mirror path)", () => {
       const cb = vi.fn();
       const unsubscribe = subscribeSelectedHostIds(cb);
-      saveSelectedHostIds(["a", "b"]);
+      saveSelectedHostIds(PROJECT, ["a", "b"]);
       expect(cb).not.toHaveBeenCalled();
       unsubscribe();
     });
 
     it("fires once on `replaceLeadHostId` and the read after the event sees both keys updated", () => {
-      saveSelectedHostIds(["a", "b"]);
+      saveSelectedHostIds(PROJECT, ["a", "b"]);
       savePreviewedHostId(PROJECT, "a");
 
       let observedLead: string | null | undefined;
       let observedArray: string[] | undefined;
       const cb = vi.fn(() => {
         observedLead = loadPreviewedHostId(PROJECT);
-        observedArray = loadSelectedHostIds();
+        observedArray = loadSelectedHostIds(PROJECT);
       });
       const unsubscribe = subscribeSelectedHostIds(cb);
 
@@ -163,7 +201,7 @@ describe("selected-host-storage", () => {
     });
 
     it("does NOT fire when `replaceLeadHostId` leaves the array untouched (lead already at slot 0)", () => {
-      saveSelectedHostIds(["a", "b"]);
+      saveSelectedHostIds(PROJECT, ["a", "b"]);
       savePreviewedHostId(PROJECT, "a");
 
       const cb = vi.fn();
@@ -174,19 +212,38 @@ describe("selected-host-storage", () => {
       unsubscribe();
     });
 
-    it("fires on cross-tab `storage` events for the array key", () => {
+    it("fires on cross-tab `storage` events for any project-scoped array key (prefix match)", () => {
       const cb = vi.fn();
       const unsubscribe = subscribeSelectedHostIds(cb);
-      // Simulate a cross-tab storage event on the array key.
+      // Simulate a cross-tab storage event on a project-scoped array key.
       window.dispatchEvent(
-        new StorageEvent("storage", { key: ARRAY_KEY, newValue: "[]" }),
+        new StorageEvent("storage", { key: ARRAY_KEY_P1, newValue: "[]" }),
       );
       expect(cb).toHaveBeenCalledTimes(1);
+      // A different project's array key also wakes the listener; the
+      // subscriber re-reads with its own projectId.
+      window.dispatchEvent(
+        new StorageEvent("storage", { key: ARRAY_KEY_P2, newValue: "[]" }),
+      );
+      expect(cb).toHaveBeenCalledTimes(2);
+      unsubscribe();
+    });
+
+    it("ignores cross-tab `storage` events on unrelated keys", () => {
+      const cb = vi.fn();
+      const unsubscribe = subscribeSelectedHostIds(cb);
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: "some-other-key",
+          newValue: "x",
+        }),
+      );
+      expect(cb).not.toHaveBeenCalled();
       unsubscribe();
     });
 
     it("stops firing after unsubscribe", () => {
-      saveSelectedHostIds(["a"]);
+      saveSelectedHostIds(PROJECT, ["a"]);
       const cb = vi.fn();
       const unsubscribe = subscribeSelectedHostIds(cb);
       unsubscribe();
