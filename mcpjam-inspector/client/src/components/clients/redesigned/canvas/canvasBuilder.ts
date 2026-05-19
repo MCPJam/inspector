@@ -207,7 +207,7 @@ function buildAppsCaps(draft: HostConfigInputV2): AppsCapDescriptor[] {
        (mode "relaxed").
      - `neutral`: default or empty.
    ============================================================ */
-interface SandboxConfigDescriptor {
+export interface SandboxConfigDescriptor {
   subKey: SandboxConfigSubKey;
   label: string;
   summary: string;
@@ -221,6 +221,37 @@ type CspDomainKey =
   | "resourceDomains"
   | "frameDomains"
   | "baseUriDomains";
+
+/**
+ * Normalized view of the sandbox slice consumed by {@link buildSandboxConfig}.
+ *
+ * Two call sites populate this:
+ *
+ * 1. **Matrix builder** — wraps `draft.mcpProfile?.apps?.sandbox` from the
+ *    host-config draft. CSP mode + restrictTo come from the schema's
+ *    `sandbox.csp`; permissions from `sandbox.permissions.allow`.
+ *
+ * 2. **Chat-thread Sandbox debug panel** — wraps the runtime payload
+ *    `mcp-apps-renderer` posts to the sandbox proxy. The resolver
+ *    intersects the host policy with the widget's own declaration; the
+ *    `cspMode` / `restrictTo` fields are echoed from the original profile
+ *    (the resolver doesn't return them verbatim).
+ *
+ * Both shapes converge here so descriptor output is identical for equivalent
+ * inputs — that's the locking property `canvasBuilder.test.ts` pins.
+ */
+export type SandboxCspMode = "declared" | "host-default" | "relaxed";
+
+export interface ResolvedSandboxView {
+  csp?: {
+    mode?: SandboxCspMode;
+    restrictTo?: Partial<Record<CspDomainKey, string[]>>;
+    cspDirectives?: Record<string, string[]>;
+  };
+  permissions?: { allow?: Record<string, boolean> };
+  sandboxAttrs?: string[];
+  allowFeatures?: Record<string, string>;
+}
 
 const CSP_DIRECTIVE_DISPLAY: ReadonlyArray<{
   key: CspDomainKey;
@@ -267,12 +298,32 @@ function describeCspDirectives(
   return out.length > 0 ? out : undefined;
 }
 
-function buildSandboxConfig(
-  draft: HostConfigInputV2,
-): SandboxConfigDescriptor[] {
+/**
+ * Bridge from `HostConfigInputV2` to the normalized DTO. Pulled out of the
+ * builder so we can verify in tests that an equivalent runtime-shaped DTO
+ * (the chat-thread Sandbox panel call site) produces an identical row set.
+ */
+function draftToSandboxView(draft: HostConfigInputV2): ResolvedSandboxView {
   const sandbox = draft.mcpProfile?.apps?.sandbox;
-  const csp = sandbox?.csp;
-  const perms = sandbox?.permissions;
+  return {
+    csp: sandbox?.csp,
+    permissions: sandbox?.permissions,
+    sandboxAttrs: sandbox?.sandboxAttrs,
+    allowFeatures: sandbox?.allowFeatures,
+  };
+}
+
+export function buildSandboxConfig(
+  view: ResolvedSandboxView,
+): SandboxConfigDescriptor[] {
+  // The previous shape took `HostConfigInputV2` directly and reached into
+  // `mcpProfile.apps.sandbox`; we now accept a normalized DTO so the
+  // runtime panel (which doesn't have a draft, just a resolved payload)
+  // can drive the same rows. The wrapper at the call site below feeds the
+  // exact same data, so descriptor output is unchanged for matrix usage.
+  const sandbox = view;
+  const csp = sandbox.csp;
+  const perms = sandbox.permissions;
 
   // mode — default per resolver is "declared" (trust the view's CSP).
   // Only `host-default` (inspector baseline overrides the view) and
@@ -607,11 +658,19 @@ export function buildRedesignedHostCanvas(
   });
 
   // ---- Sandbox config rows ----
-  const sandboxDescs = buildSandboxConfig(draft);
+  // Adapt the host-config draft into the normalized DTO `buildSandboxConfig`
+  // now takes. Matrix consumers get exactly the same descriptor output for
+  // a given `mcpProfile.apps.sandbox` shape; the indirection exists so the
+  // chat-thread Sandbox debug panel can drive the same rows from the
+  // runtime resolver payload.
+  const sandboxDescs = buildSandboxConfig(
+    draftToSandboxView(draft),
+  );
   const prevSandboxByKey: Record<SandboxConfigSubKey, SandboxConfigDescriptor> =
     {} as Record<SandboxConfigSubKey, SandboxConfigDescriptor>;
   if (prevDraft) {
-    for (const l of buildSandboxConfig(prevDraft)) prevSandboxByKey[l.subKey] = l;
+    for (const l of buildSandboxConfig(draftToSandboxView(prevDraft)))
+      prevSandboxByKey[l.subKey] = l;
   }
   const sandbox: SandboxConfigNodeData[] = sandboxDescs.map((leaf) => {
     const prevLeaf = prevDraft ? prevSandboxByKey[leaf.subKey] : undefined;
