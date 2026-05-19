@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Archive, Folder, FolderOpen, Loader2, Plus } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -274,7 +275,9 @@ export function ChatHistoryRail({
   }, [enabled, isReactive, refetch, refreshSignal]);
 
   const archiveBusy = archivingScope !== null;
-  const canConvertToTestCase = Boolean(isAuthenticated);
+  const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
+  const canConvertToTestCase =
+    Boolean(isAuthenticated) && playgroundEnabled === true;
 
   const handleArchiveSection = async (
     scope: ArchiveSectionScope,
