@@ -9,11 +9,13 @@ const {
   archiveManySessionIdsMock,
   useChatHistoryMock,
   useProjectMembersMock,
+  useFeatureFlagEnabledMock,
   chatHistoryRowPropsSpy,
 } = vi.hoisted(() => {
   const refetchMock = vi.fn();
   const archiveManySessionIdsMock = vi.fn();
   const chatHistoryRowPropsSpy = vi.fn();
+  const useFeatureFlagEnabledMock = vi.fn(() => true);
   const useProjectMembersMock = vi.fn(() => ({
     members: [],
     activeMembers: [],
@@ -46,9 +48,15 @@ const {
     archiveManySessionIdsMock,
     useChatHistoryMock,
     useProjectMembersMock,
+    useFeatureFlagEnabledMock,
     chatHistoryRowPropsSpy,
   };
 });
+
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: (...args: unknown[]) =>
+    useFeatureFlagEnabledMock(...args),
+}));
 
 vi.mock("@/hooks/useProjects", () => ({
   useProjectMembers: (...args: unknown[]) => useProjectMembersMock(...args),
@@ -114,6 +122,8 @@ describe("ChatHistoryRail", () => {
     archiveManySessionIdsMock.mockReset();
     chatHistoryRowPropsSpy.mockReset();
     useProjectMembersMock.mockReset();
+    useFeatureFlagEnabledMock.mockReset();
+    useFeatureFlagEnabledMock.mockReturnValue(true);
     useProjectMembersMock.mockReturnValue({
       members: [],
       activeMembers: [],
@@ -198,7 +208,7 @@ describe("ChatHistoryRail", () => {
     }
   });
 
-  it("only exposes chat-to-test-case conversion when authenticated", () => {
+  it("only exposes chat-to-test-case conversion when authenticated and playground flag is on", () => {
     useChatHistoryMock.mockImplementation(() => ({
       personal: [sessionStub("personal-1")],
       project: [],
@@ -252,6 +262,26 @@ describe("ChatHistoryRail", () => {
     expect(chatHistoryRowPropsSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         canConvertToTestCase: true,
+      }),
+    );
+
+    chatHistoryRowPropsSpy.mockReset();
+    useFeatureFlagEnabledMock.mockReturnValue(false);
+
+    rerender(
+      <ChatHistoryRail
+        activeSessionId={null}
+        isAuthenticated
+        isStreaming={false}
+        projectId={null}
+        onSelectThread={vi.fn()}
+        onNewChat={vi.fn()}
+      />,
+    );
+
+    expect(chatHistoryRowPropsSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        canConvertToTestCase: false,
       }),
     );
   });
