@@ -1023,6 +1023,61 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
   });
 
+  it("reveals widget after output-error (tool-cancelled delivery counts)", async () => {
+    // Codex P2 follow-up: useToolInputStreaming sends `sendToolCancelled`
+    // when `toolState === "output-error"`. If the delivery-mirror gate
+    // doesn't include that state, `hasDeliveredToolDataRef` stays false,
+    // `bridge.onsizechange` bails before arming the reveal timer, and
+    // apps that render their own error/cancelled UI stay invisible
+    // behind the skeleton forever.
+    //
+    // Repro: mount in input-streaming with no input data (so no
+    // delivery happens there), then transition to output-error.
+    const { rerender } = render(
+      <MCPAppsRenderer
+        {...baseProps}
+        toolState="input-streaming"
+        toolInput={undefined}
+        toolOutput={undefined}
+        cachedWidgetHtmlUrl="blob:cached"
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+    act(() => triggerReady());
+
+    rerender(
+      <MCPAppsRenderer
+        {...baseProps}
+        toolState="output-error"
+        toolInput={undefined}
+        toolOutput={undefined}
+        toolErrorText="Tool execution failed"
+        cachedWidgetHtmlUrl="blob:cached"
+      />,
+    );
+
+    // sendToolCancelled is the hook's "delivery" for output-error.
+    await vi.waitFor(() => {
+      expect(mockBridge.sendToolCancelled).toHaveBeenCalledWith({
+        reason: "Tool execution failed",
+      });
+    });
+
+    // Widget renders its error UI and fires size-change for it.
+    act(() => {
+      mockBridge.onsizechange?.({ width: 400, height: 180 });
+    });
+
+    const iframe = screen.getByTestId("sandboxed-iframe") as HTMLElement;
+    await vi.waitFor(() => {
+      expect(iframe.style.opacity).toBe("1");
+    });
+    expect(iframe.style.height).toBe("180px");
+  });
+
   it("ignores pre-delivery size-changes (only post-delivery size arms reveal)", async () => {
     // Codex P2: a widget can emit `size-changed` for its pre-data
     // placeholder paint BEFORE the host has delivered tool input/result

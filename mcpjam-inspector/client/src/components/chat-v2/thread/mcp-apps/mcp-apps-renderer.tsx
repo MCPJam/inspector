@@ -854,14 +854,20 @@ export function MCPAppsRenderer({
   //   - tool-input-partial when toolState === "input-streaming" with data
   //   - tool-input when toolState transitions to input-available/output-available
   //   - tool-result when toolState === "output-available" with toolOutput
+  //   - tool-cancelled when toolState === "output-error"
   // Mirror those conditions here. (We can't observe the hook's bridge
   // calls directly, so we infer delivery from the same input signals.)
+  // `output-denied` is handled by an early-return above (no iframe is
+  // rendered) so it doesn't need a delivery signal. `approval-requested`
+  // intentionally doesn't deliver — the widget should stay hidden
+  // until approval resolves to a state that does deliver data.
   useEffect(() => {
     if (!isReady) return;
     if (hasDeliveredToolDataRef.current) return;
     const hasData =
       toolState === "input-available" ||
       toolState === "output-available" ||
+      toolState === "output-error" ||
       (toolState === "input-streaming" &&
         !!toolInput &&
         Object.keys(toolInput).length > 0);
