@@ -32,7 +32,7 @@ import { MCP_UI_EXTENSION_ID } from "@mcpjam/sdk/browser";
  * a host at all.
  */
 export function hostSupportsWidgetRendering(
-  clientCapabilities: Record<string, unknown> | undefined,
+  clientCapabilities: Record<string, unknown> | undefined
 ): boolean {
   if (clientCapabilities === undefined) return true;
   const extensions = clientCapabilities.extensions;

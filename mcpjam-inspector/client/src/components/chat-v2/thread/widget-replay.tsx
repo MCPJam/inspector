@@ -2,7 +2,11 @@ import type { ContentBlock } from "@modelcontextprotocol/client";
 import { MCPAppsRenderer } from "./mcp-apps/mcp-apps-renderer";
 import type { ToolState } from "./mcp-apps/useToolInputStreaming";
 import type { ToolRenderOverride } from "./tool-render-overrides";
-import { detectUIType, getUIResourceUri, UIType } from "@/lib/mcp-ui/mcp-apps-utils";
+import {
+  detectUIType,
+  getUIResourceUri,
+  UIType,
+} from "@/lib/mcp-ui/mcp-apps-utils";
 import { getToolServerId, type ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { useActiveHostClientCapabilities } from "@/contexts/active-host-client-capabilities-context";
 import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
@@ -27,7 +31,7 @@ export interface WidgetReplayProps {
   onSendFollowUp?: (text: string) => void;
   onCallTool?: (
     toolName: string,
-    params: Record<string, unknown>,
+    params: Record<string, unknown>
   ) => Promise<unknown>;
   onWidgetStateChange?: (toolCallId: string, state: unknown) => void;
   onModelContextUpdate?: (
@@ -35,7 +39,7 @@ export interface WidgetReplayProps {
     context: {
       content?: ContentBlock[];
       structuredContent?: Record<string, unknown>;
-    },
+    }
   ) => void;
   pipWidgetId?: string | null;
   fullscreenWidgetId?: string | null;
@@ -145,9 +149,7 @@ export function WidgetReplay({
   // (where `toolOutput` is the unwrapped value and lacks `_meta`)
   // resolves correctly via readToolResultMeta's two-level check.
   const toolResponseMetadata = (readToolResultMeta(rawOutput) ??
-    readToolResultMeta(toolOutput)) as
-    | Record<string, unknown>
-    | undefined;
+    readToolResultMeta(toolOutput)) as Record<string, unknown> | undefined;
 
   return (
     <MCPAppsRenderer

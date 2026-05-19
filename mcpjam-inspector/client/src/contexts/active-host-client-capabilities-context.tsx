@@ -1,9 +1,4 @@
-import {
-  createContext,
-  useContext,
-  useMemo,
-  type ReactNode,
-} from "react";
+import { createContext, useContext, useMemo, type ReactNode } from "react";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 import {
   seedFromHostTemplate,

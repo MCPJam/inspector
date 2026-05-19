@@ -34,7 +34,7 @@ export function ClientStyledChatTabV2({
   const prefHostStyle = usePreferencesStore((state) => state.hostStyle);
   const setHostStyle = usePreferencesStore((state) => state.setHostStyle);
   const prefHostCapabilitiesOverride = usePreferencesStore(
-    (state) => state.hostCapabilitiesOverride,
+    (state) => state.hostCapabilitiesOverride
   );
 
   const hostStyle = activeHost?.hostStyle ?? prefHostStyle;
@@ -45,9 +45,7 @@ export function ClientStyledChatTabV2({
 
   return (
     <ChatboxHostStyleProvider value={hostStyle}>
-      <ChatboxHostCapabilitiesOverrideProvider
-        value={hostCapabilitiesOverride}
-      >
+      <ChatboxHostCapabilitiesOverrideProvider value={hostCapabilitiesOverride}>
         <ChatboxHostThemeProvider value={themeMode}>
           <ActiveMcpProfileProvider value={activeMcpProfile}>
             <ActiveHostClientCapabilitiesScope
@@ -57,7 +55,7 @@ export function ClientStyledChatTabV2({
               <div
                 className={cn(
                   "chatbox-host-shell app-theme-scope flex h-full min-h-0 flex-1 flex-col overflow-hidden",
-                  themeMode === "dark" && "dark",
+                  themeMode === "dark" && "dark"
                 )}
                 data-host-style={hostStyle}
                 style={shellStyle}

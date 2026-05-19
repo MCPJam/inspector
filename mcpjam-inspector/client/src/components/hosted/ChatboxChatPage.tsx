@@ -491,14 +491,11 @@ export function ChatboxChatPage({
           // `accessVersion` grant plus the bootstrap payload, in one round
           // trip. Every chatbox-aware backend call then keys on the resolved
           // identity — the URL token is not threaded onto the read path.
-          const redeemResponse = await authFetch(
-            "/api/web/chatboxes/redeem",
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ chatboxToken: tokenFromPath }),
-            },
-          );
+          const redeemResponse = await authFetch("/api/web/chatboxes/redeem", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ chatboxToken: tokenFromPath }),
+          });
 
           if (!redeemResponse.ok) {
             throw await readRouteError(redeemResponse);
@@ -525,14 +522,16 @@ export function ChatboxChatPage({
               typeof redeemed.accessVersion === "number"
                 ? redeemed.accessVersion
                 : undefined,
-            payload: redeemed.bootstrap as ChatboxSession["payload"] | undefined,
+            payload: redeemed.bootstrap as
+              | ChatboxSession["payload"]
+              | undefined,
             surface: readChatboxSurfaceFromUrl(window.location.search),
             shareToken: tokenFromPath ?? undefined,
           });
           if (!nextSession) {
             throw createChatboxRouteError(
               502,
-              "Chatbox redeem returned an incomplete bootstrap payload.",
+              "Chatbox redeem returned an incomplete bootstrap payload."
             );
           }
 
@@ -682,7 +681,7 @@ export function ChatboxChatPage({
       } catch (error) {
         console.warn(
           "[ChatboxChatPage] Silent chatbox re-redeem failed",
-          error,
+          error
         );
       } finally {
         // Only clear the latch if we're still the active in-flight refresh.
@@ -752,8 +751,7 @@ export function ChatboxChatPage({
     };
   }, [session]);
 
-  const shareableToken =
-    tokenFromPath ?? session?.shareToken?.trim() ?? null;
+  const shareableToken = tokenFromPath ?? session?.shareToken?.trim() ?? null;
 
   const handleCopyLink = useCallback(async () => {
     // Token preference: live URL → persisted `session.shareToken`. After
@@ -916,67 +914,67 @@ export function ChatboxChatPage({
   return (
     <ChatboxHostStyleProvider value={hostStyle}>
       <ChatboxChatUiOverrideProvider value={chatUiOverride}>
-      <ChatboxHostCapabilitiesOverrideProvider
-        value={session?.payload.hostCapabilitiesOverride}
-      >
-      <ActiveMcpProfileProvider value={session?.payload.mcpProfile}>
-      {/*
+        <ChatboxHostCapabilitiesOverrideProvider
+          value={session?.payload.hostCapabilitiesOverride}
+        >
+          <ActiveMcpProfileProvider value={session?.payload.mcpProfile}>
+            {/*
         Hosted bootstrap payload doesn't (yet) carry clientCapabilities —
         we pass `activeHost={null}` and let the scope fall back to the
         template seed for `hostStyle`. Correct for unmodified host styles;
         if a chatbox owner customizes capabilities, that will require a
         bootstrap-payload extension (out of scope here).
       */}
-      <ActiveHostClientCapabilitiesScope
-        activeHost={null}
-        hostStyle={hostStyle}
-      >
-      <ChatboxSurfaceProvider value={true}>
-      <div
-        className="chatbox-host-shell flex h-svh min-h-0 flex-col overflow-hidden"
-        data-host-style={hostStyle}
-        style={shellStyle}
-      >
-        <header className="border-b border-border/50 bg-background/95 backdrop-blur">
-          <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-2.5">
-            <h1 className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
-              {session?.payload.name || "\u00A0"}
-            </h1>
-            <button
-              onClick={handleOpenMcpJam}
-              className="cursor-pointer flex-shrink-0 border-none bg-transparent p-0"
+            <ActiveHostClientCapabilitiesScope
+              activeHost={null}
+              hostStyle={hostStyle}
             >
-              <img
-                src={
-                  themeMode === "dark"
-                    ? "/mcp_jam_dark.png"
-                    : "/mcp_jam_light.png"
-                }
-                alt="MCPJam"
-                className="h-4 w-auto object-contain"
-              />
-            </button>
-            <div className="flex flex-1 items-center justify-end gap-1.5">
-              {session && shareableToken ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-muted-foreground"
-                  onClick={handleCopyLink}
+              <ChatboxSurfaceProvider value={true}>
+                <div
+                  className="chatbox-host-shell flex h-svh min-h-0 flex-col overflow-hidden"
+                  data-host-style={hostStyle}
+                  style={shellStyle}
                 >
-                  Copy link
-                </Button>
-              ) : null}
-            </div>
-          </div>
-        </header>
+                  <header className="border-b border-border/50 bg-background/95 backdrop-blur">
+                    <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-2.5">
+                      <h1 className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
+                        {session?.payload.name || "\u00A0"}
+                      </h1>
+                      <button
+                        onClick={handleOpenMcpJam}
+                        className="cursor-pointer flex-shrink-0 border-none bg-transparent p-0"
+                      >
+                        <img
+                          src={
+                            themeMode === "dark"
+                              ? "/mcp_jam_dark.png"
+                              : "/mcp_jam_light.png"
+                          }
+                          alt="MCPJam"
+                          className="h-4 w-auto object-contain"
+                        />
+                      </button>
+                      <div className="flex flex-1 items-center justify-end gap-1.5">
+                        {session && shareableToken ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-muted-foreground"
+                            onClick={handleCopyLink}
+                          >
+                            Copy link
+                          </Button>
+                        ) : null}
+                      </div>
+                    </div>
+                  </header>
 
-        {renderContent()}
-      </div>
-      </ChatboxSurfaceProvider>
-      </ActiveHostClientCapabilitiesScope>
-      </ActiveMcpProfileProvider>
-      </ChatboxHostCapabilitiesOverrideProvider>
+                  {renderContent()}
+                </div>
+              </ChatboxSurfaceProvider>
+            </ActiveHostClientCapabilitiesScope>
+          </ActiveMcpProfileProvider>
+        </ChatboxHostCapabilitiesOverrideProvider>
       </ChatboxChatUiOverrideProvider>
     </ChatboxHostStyleProvider>
   );

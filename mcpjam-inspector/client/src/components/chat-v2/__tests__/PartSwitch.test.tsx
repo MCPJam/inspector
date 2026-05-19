@@ -10,7 +10,7 @@ const { mockUseSaveView, mockDetectUIType, mockWidgetReplay } = vi.hoisted(
     mockUseSaveView: vi.fn(),
     mockDetectUIType: vi.fn(),
     mockWidgetReplay: vi.fn(),
-  }),
+  })
 );
 
 // Mock all part components
@@ -186,12 +186,12 @@ describe("PartSwitch", () => {
       const part = { type: "text", text: "Hello" };
 
       render(
-        <PartSwitch {...defaultProps} part={part as any} role="assistant" />,
+        <PartSwitch {...defaultProps} part={part as any} role="assistant" />
       );
 
       expect(screen.getByTestId("text-part")).toHaveAttribute(
         "data-role",
-        "assistant",
+        "assistant"
       );
     });
   });
@@ -208,7 +208,7 @@ describe("PartSwitch", () => {
 
       expect(screen.getByTestId("reasoning-part")).toBeInTheDocument();
       expect(screen.getByTestId("reasoning-part")).toHaveTextContent(
-        "Thinking...",
+        "Thinking..."
       );
     });
 
@@ -219,7 +219,7 @@ describe("PartSwitch", () => {
 
       expect(screen.getByTestId("reasoning-part")).toHaveAttribute(
         "data-state",
-        "done",
+        "done"
       );
     });
 
@@ -235,12 +235,12 @@ describe("PartSwitch", () => {
           {...defaultProps}
           part={part as any}
           reasoningDisplayMode="collapsed"
-        />,
+        />
       );
 
       expect(screen.getByTestId("reasoning-part")).toHaveAttribute(
         "data-display-mode",
-        "collapsed",
+        "collapsed"
       );
     });
 
@@ -256,12 +256,12 @@ describe("PartSwitch", () => {
           {...defaultProps}
           part={part as any}
           reasoningDisplayMode="collapsible"
-        />,
+        />
       );
 
       expect(screen.getByTestId("reasoning-part")).toHaveAttribute(
         "data-display-mode",
-        "collapsible",
+        "collapsible"
       );
     });
   });
@@ -284,7 +284,7 @@ describe("PartSwitch", () => {
 
       expect(screen.getByTestId("source-url-part")).toBeInTheDocument();
       expect(screen.getByTestId("source-url-part")).toHaveTextContent(
-        "https://example.com",
+        "https://example.com"
       );
     });
 
@@ -295,7 +295,7 @@ describe("PartSwitch", () => {
 
       expect(screen.getByTestId("source-document-part")).toBeInTheDocument();
       expect(screen.getByTestId("source-document-part")).toHaveTextContent(
-        "Doc Title",
+        "Doc Title"
       );
     });
   });
@@ -305,7 +305,7 @@ describe("PartSwitch", () => {
       const part = { type: "step-start" };
 
       const { container } = render(
-        <PartSwitch {...defaultProps} part={part as any} />,
+        <PartSwitch {...defaultProps} part={part as any} />
       );
 
       expect(container.firstChild).toBeNull();
@@ -321,7 +321,7 @@ describe("PartSwitch", () => {
       expect(screen.getByTestId("json-part")).toBeInTheDocument();
       expect(screen.getByTestId("json-part")).toHaveAttribute(
         "data-label",
-        "Unknown part",
+        "Unknown part"
       );
     });
   });
@@ -353,7 +353,7 @@ describe("PartSwitch", () => {
           part={part as any}
           toolsMetadata={{}}
           toolServerMap={{}}
-        />,
+        />
       );
 
       expect(screen.getByTestId("tool-part")).toBeInTheDocument();
@@ -375,13 +375,13 @@ describe("PartSwitch", () => {
           part={part as any}
           toolsMetadata={{}}
           toolServerMap={{}}
-        />,
+        />
       );
 
       expect(mockUseSaveView).toHaveBeenCalledWith(
         expect.objectContaining({
           serverName: "server-1",
-        }),
+        })
       );
     });
 
@@ -414,7 +414,7 @@ describe("PartSwitch", () => {
                 },
               }}
             />
-          </ActiveHostClientCapabilitiesProvider>,
+          </ActiveHostClientCapabilitiesProvider>
         );
         expect(screen.getByTestId("widget-replay")).toBeInTheDocument();
       });
@@ -443,7 +443,7 @@ describe("PartSwitch", () => {
                 },
               }}
             />
-          </ActiveHostClientCapabilitiesProvider>,
+          </ActiveHostClientCapabilitiesProvider>
         );
         expect(screen.queryByTestId("widget-replay")).not.toBeInTheDocument();
         expect(screen.getByTestId("tool-part")).toBeInTheDocument();
@@ -470,7 +470,7 @@ describe("PartSwitch", () => {
                 ui: { resourceUri: "ui://widget/create-view.html" },
               },
             }}
-          />,
+          />
         );
         expect(screen.getByTestId("widget-replay")).toBeInTheDocument();
       });
@@ -507,13 +507,13 @@ describe("PartSwitch", () => {
               },
             },
           }}
-        />,
+        />
       );
 
       expect(screen.getByTestId("widget-replay")).toBeInTheDocument();
       expect(screen.getByTestId("widget-replay")).toHaveAttribute(
         "data-cached-url",
-        "https://storage.example.com/widget.html",
+        "https://storage.example.com/widget.html"
       );
       expect(mockWidgetReplay).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -521,7 +521,7 @@ describe("PartSwitch", () => {
           renderOverride: expect.objectContaining({
             cachedWidgetHtmlUrl: "https://storage.example.com/widget.html",
           }),
-        }),
+        })
       );
     });
   });

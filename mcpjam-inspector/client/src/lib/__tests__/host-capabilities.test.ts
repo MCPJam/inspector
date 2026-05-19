@@ -32,13 +32,13 @@ describe("hostSupportsWidgetRendering", () => {
 
   it("returns false when extensions is non-object (defensive)", () => {
     expect(
-      hostSupportsWidgetRendering({ extensions: "nope" as unknown as object }),
+      hostSupportsWidgetRendering({ extensions: "nope" as unknown as object })
     ).toBe(false);
     expect(
-      hostSupportsWidgetRendering({ extensions: null as unknown as object }),
+      hostSupportsWidgetRendering({ extensions: null as unknown as object })
     ).toBe(false);
     expect(
-      hostSupportsWidgetRendering({ extensions: [] as unknown as object }),
+      hostSupportsWidgetRendering({ extensions: [] as unknown as object })
     ).toBe(false);
   });
 

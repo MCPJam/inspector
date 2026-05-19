@@ -85,7 +85,7 @@ export function PartSwitch({
     context: {
       content?: ContentBlock[];
       structuredContent?: Record<string, unknown>;
-    },
+    }
   ) => void;
   pipWidgetId: string | null;
   fullscreenWidgetId: string | null;
@@ -140,7 +140,7 @@ export function PartSwitch({
   });
   const existingViewNames = useMemo(
     () => new Set(sortedViews.map((v) => v.name)),
-    [sortedViews],
+    [sortedViews]
   );
 
   // Instant save hook
@@ -157,7 +157,7 @@ export function PartSwitch({
       ? ((part as any).toolCallId as string | undefined)
       : undefined;
   const widgetDebugInfo = useWidgetDebugStore((s) =>
-    toolCallId ? s.widgets.get(toolCallId) : undefined,
+    toolCallId ? s.widgets.get(toolCallId) : undefined
   );
 
   // Create save view handler for a specific tool (instant save)
@@ -171,7 +171,7 @@ export function PartSwitch({
       uiType: UIType,
       resourceUri?: string,
       outputTemplate?: string,
-      toolMetadata?: Record<string, unknown>,
+      toolMetadata?: Record<string, unknown>
     ) => {
       return async () => {
         posthog.capture("save_as_view_clicked", {
@@ -205,7 +205,7 @@ export function PartSwitch({
         await saveViewInstant(data);
       };
     },
-    [toolCallId, widgetDebugInfo, saveViewInstant, posthog],
+    [toolCallId, widgetDebugInfo, saveViewInstant, posthog]
   );
 
   if (isToolPart(part) || isDynamicTool(part)) {
@@ -246,7 +246,7 @@ export function PartSwitch({
       Object.prototype.hasOwnProperty.call(renderOverride, "toolOutput");
     const resolvedToolOutput = hasRenderOverrideToolOutput
       ? renderOverride.toolOutput
-      : (toolInfo.output ?? toolInfo.rawOutput);
+      : toolInfo.output ?? toolInfo.rawOutput;
 
     // Determine why save might be disabled
     const hasOutput =
@@ -292,7 +292,7 @@ export function PartSwitch({
       uiType || UIType.MCP_APPS,
       uiResourceUri ?? undefined,
       outputTemplate,
-      effectiveToolMeta as Record<string, unknown> | undefined,
+      effectiveToolMeta as Record<string, unknown> | undefined
     );
 
     // Gate widget render on the active host's advertised capabilities, not

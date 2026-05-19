@@ -86,7 +86,7 @@ describe("WidgetReplay", () => {
       render(
         <ActiveHostClientCapabilitiesProvider value={caps}>
           <WidgetReplay {...baseProps} />
-        </ActiveHostClientCapabilitiesProvider>,
+        </ActiveHostClientCapabilitiesProvider>
       );
       expect(screen.getByTestId("mcp-apps-renderer")).toBeInTheDocument();
     });
@@ -97,7 +97,7 @@ describe("WidgetReplay", () => {
       const { container } = render(
         <ActiveHostClientCapabilitiesProvider value={codexCaps}>
           <WidgetReplay {...baseProps} />
-        </ActiveHostClientCapabilitiesProvider>,
+        </ActiveHostClientCapabilitiesProvider>
       );
       expect(container.firstChild).toBeNull();
     });
