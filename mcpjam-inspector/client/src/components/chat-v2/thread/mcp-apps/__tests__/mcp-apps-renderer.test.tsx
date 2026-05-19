@@ -1056,6 +1056,10 @@ describe("MCPAppsRenderer tool input streaming", () => {
     await vi.waitFor(() => {
       expect(iframe.style.opacity).toBe("1");
     });
+    // Inline iframe height must reflect the fullscreen-time size-change,
+    // not the "0px" placeholder default — otherwise the user sees a flash
+    // of zero-height content until the next resize tick.
+    expect(iframe.style.height).toBe("300px");
     expect(screen.queryByTestId("mcp-app-loading-skeleton")).toBeNull();
   });
 
