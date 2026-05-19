@@ -1078,6 +1078,60 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(iframe.style.height).toBe("180px");
   });
 
+  it("reveals when pre-delivery size matches content size (SDK dedup safety)", async () => {
+    // Codex P2: the compat runtime's `postHeight` suppresses
+    // notifications for duplicate heights. If the widget paints its
+    // placeholder at some height H pre-delivery, then re-paints
+    // content at the same H post-delivery, there will be NO
+    // post-delivery `size-changed` to arm the reveal timer. The
+    // pre-delivery observation must still result in a reveal — the
+    // delivery effect arms the timer using the already-recorded
+    // height when it detects a pending pre-delivery observation.
+    const { rerender } = render(
+      <MCPAppsRenderer
+        {...baseProps}
+        toolState="input-streaming"
+        toolInput={undefined}
+        cachedWidgetHtmlUrl="blob:cached"
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+    await vi.waitFor(() => {
+      expect(mockBridge.oninitialized).not.toBeNull();
+    });
+    act(() => triggerReady());
+
+    // Pre-delivery size-change at height H.
+    act(() => {
+      mockBridge.onsizechange?.({ width: 400, height: 240 });
+    });
+
+    const iframe = screen.getByTestId("sandboxed-iframe") as HTMLElement;
+    expect(iframe.style.opacity).toBe("0");
+
+    // Deliver tool input. NO post-delivery size-change is fired
+    // (simulating the SDK dedup'ing a same-height content paint).
+    const partialInput = { elements: '[{"type":"rectangle"' };
+    rerender(
+      <MCPAppsRenderer
+        {...baseProps}
+        toolState="input-streaming"
+        toolInput={partialInput}
+        cachedWidgetHtmlUrl="blob:cached"
+      />,
+    );
+
+    // The delivery effect should arm the timer itself; after
+    // SIZE_STABILIZE_MS the iframe must reveal at the recorded H.
+    await vi.waitFor(() => {
+      expect(iframe.style.opacity).toBe("1");
+    });
+    expect(iframe.style.height).toBe("240px");
+  });
+
   it("ignores pre-delivery size-changes (only post-delivery size arms reveal)", async () => {
     // Codex P2: a widget can emit `size-changed` for its pre-data
     // placeholder paint BEFORE the host has delivered tool input/result

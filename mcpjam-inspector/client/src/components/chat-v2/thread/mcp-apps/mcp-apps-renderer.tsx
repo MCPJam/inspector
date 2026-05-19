@@ -556,6 +556,17 @@ export function MCPAppsRenderer({
   // can't stabilize the gate and flash through once
   // `canRenderStreamingInput` later flips true.
   const hasDeliveredToolDataRef = useRef(false);
+  // Tracks whether the widget has fired *any* `size-changed` while we
+  // were still waiting on delivery. The compat runtime's `postHeight`
+  // (`sdk/src/McpAppsOpenAICompatibleRuntime.ts`) suppresses duplicate
+  // heights, so if the widget's placeholder and content happen to
+  // render at the same height there will be no post-delivery
+  // notification to arm the timer — leaving the iframe stuck. When
+  // delivery flips, we arm the timer ourselves using the
+  // already-recorded `lastInlineHeightRef` if a pre-delivery size was
+  // observed. Any subsequent post-delivery size-change (different
+  // height) reschedules the timer normally.
+  const hasObservedPreDeliverySizeRef = useRef(false);
 
   // Clear the debounce timer on unmount so it doesn't fire
   // `setHasFirstSizeChange` on an unmounted component.
@@ -839,6 +850,7 @@ export function MCPAppsRenderer({
       setIsReady(false);
       setHasFirstSizeChange(false);
       hasDeliveredToolDataRef.current = false;
+      hasObservedPreDeliverySizeRef.current = false;
       if (sizeStabilizeTimerRef.current !== null) {
         window.clearTimeout(sizeStabilizeTimerRef.current);
         sizeStabilizeTimerRef.current = null;
@@ -871,8 +883,24 @@ export function MCPAppsRenderer({
       (toolState === "input-streaming" &&
         !!toolInput &&
         Object.keys(toolInput).length > 0);
-    if (hasData) {
-      hasDeliveredToolDataRef.current = true;
+    if (!hasData) return;
+    hasDeliveredToolDataRef.current = true;
+
+    // If the widget already fired a `size-changed` while we were
+    // waiting on delivery, the compat runtime will suppress a
+    // post-delivery notification at the same height. Arm the
+    // debounce timer ourselves so a same-height content paint still
+    // reveals the iframe (using the height already recorded in
+    // `lastInlineHeightRef`). A subsequent post-delivery size-change
+    // at a different height will reset this timer in the normal flow.
+    if (
+      hasObservedPreDeliverySizeRef.current &&
+      sizeStabilizeTimerRef.current === null
+    ) {
+      sizeStabilizeTimerRef.current = window.setTimeout(() => {
+        sizeStabilizeTimerRef.current = null;
+        setHasFirstSizeChange(true);
+      }, SIZE_STABILIZE_MS);
     }
   }, [isReady, toolState, toolInput]);
 
@@ -1664,7 +1692,17 @@ export function MCPAppsRenderer({
         // flips true. We still update `lastInlineHeightRef` and the
         // live iframe height above so the layout tracks the widget,
         // but we don't schedule the reveal.
-        if (!hasDeliveredToolDataRef.current) return;
+        //
+        // We DO mark that a size was observed pre-delivery. The
+        // compat runtime suppresses duplicate heights, so if the
+        // widget's content happens to render at the same height as
+        // its placeholder there will be no post-delivery notification
+        // to arm the timer. The delivery effect below arms the timer
+        // itself in that case using the recorded `lastInlineHeightRef`.
+        if (!hasDeliveredToolDataRef.current) {
+          hasObservedPreDeliverySizeRef.current = true;
+          return;
+        }
         if (sizeStabilizeTimerRef.current !== null) {
           window.clearTimeout(sizeStabilizeTimerRef.current);
         }
@@ -1767,6 +1805,7 @@ export function MCPAppsRenderer({
     setIsReady(false);
     setHasFirstSizeChange(false);
     hasDeliveredToolDataRef.current = false;
+    hasObservedPreDeliverySizeRef.current = false;
     if (sizeStabilizeTimerRef.current !== null) {
       window.clearTimeout(sizeStabilizeTimerRef.current);
       sizeStabilizeTimerRef.current = null;
