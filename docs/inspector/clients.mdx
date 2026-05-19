@@ -26,7 +26,7 @@ These map directly to fields the inspector sends during the standard MCP `initia
 
 - **Supported protocol versions** — The ordered list of MCP protocol versions the client advertises. The first entry is sent as `protocolVersion`; the rest form the accept-set. Useful for testing how your server handles older or newer clients.
 - **`clientInfo`** — The `name`, `version`, and any additional fields sent in `initialize.params.clientInfo`. Set this to match a real host's identifier when you want your server to take a host-specific code path.
-- **Client capabilities** — The capabilities object sent in `initialize` (sampling, roots, elicitation, experimental, etc.). Enable or disable each one to test what your server does when a capability is missing.
+- **Client capabilities** — The capabilities object sent in `initialize` (sampling, roots, elicitation, experimental, etc.). Enable or disable each one to test what your server does when a capability is missing. This blob also gates widget rendering at display time: the inspector uses the same resolved capabilities to decide whether to render widget iframes in Chat, Playground, and the Tools tab — so what you configure here affects both the `initialize` handshake and what the user sees in the thread.
 - **Request timeout** — Per-request timeout in milliseconds applied to all MCP calls (`tools/call`, `resources/read`, etc.). Lower it to verify your server handles cancellation correctly; raise it for long-running tools.
 - **Default headers** — Headers attached to every HTTP-transport request. Useful for auth tokens, tenant IDs, or anything else your server expects upstream.
 
