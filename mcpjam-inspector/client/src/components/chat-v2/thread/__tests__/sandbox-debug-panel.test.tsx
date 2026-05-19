@@ -93,23 +93,43 @@ describe("SandboxDebugPanel — resolved-policy grid", () => {
       />,
     );
     expect(
-      screen.queryByText(/Resolved sandbox policy/i),
+      screen.queryByText(/Sandbox proxy iframe/i),
     ).not.toBeInTheDocument();
   });
 
-  it("renders the grid + heading when applied is published", () => {
+  it("renders the Sandbox proxy iframe card when applied is published", () => {
     render(
       <SandboxDebugPanel
         sandboxInfo={{ ...baseSandboxInfo, lifecycle: [], applied }}
         protocol="mcp-apps"
       />,
     );
-    expect(screen.getByText(/Resolved sandbox policy/i)).toBeInTheDocument();
+    // The full matrix card heading is rendered (not the old plain
+    // "Resolved sandbox policy" label).
+    expect(screen.getByText("Sandbox proxy iframe")).toBeInTheDocument();
+    // The nested View iframe sub-card is also rendered.
+    expect(screen.getByText("View iframe")).toBeInTheDocument();
     // The grid surfaces the granted permission names as the Permissions
     // row's summary value (matrix semantics).
     expect(screen.getByText(/camera, microphone/i)).toBeInTheDocument();
     // And the sandboxAttrs row's summary should show the first two attrs.
     expect(screen.getByText(/allow-forms, allow-popups/i)).toBeInTheDocument();
+  });
+
+  it("threads hostInfo into the View iframe sub-card", () => {
+    render(
+      <SandboxDebugPanel
+        sandboxInfo={{
+          ...baseSandboxInfo,
+          lifecycle: [],
+          applied,
+          hostInfo: { name: "mcpjam-inspector", version: "2.4.12" },
+        }}
+        protocol="mcp-apps"
+      />,
+    );
+    expect(screen.getByText("mcpjam-inspector")).toBeInTheDocument();
+    expect(screen.getByText("2.4.12")).toBeInTheDocument();
   });
 
   it("shows the permissive badge iff applied.permissive is true", () => {

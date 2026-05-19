@@ -90,6 +90,132 @@ export const SandboxConfigGrid = memo(function SandboxConfigGrid({
 });
 
 /**
+ * Props for {@link SandboxProxyIframeCard}. Both `onTitleClick` /
+ * `onViewTitleClick` are optional — the matrix wires them up for node
+ * selection; the chat-thread panel leaves them undefined and the
+ * headings render as static text.
+ */
+export interface SandboxProxyIframeCardProps extends SandboxConfigGridProps {
+  /**
+   * hostInfo advertised in `ui/initialize` per SEP-1865
+   * §McpUiInitializeResult. Rendered inside the nested "View iframe"
+   * sub-card. `null` means the host hasn't customized it — the row
+   * still shows `uiInitialize` but omits the hostInfo detail.
+   */
+  hostInfo: { name: string; version: string } | null;
+  onTitleClick?: () => void;
+  onViewTitleClick?: () => void;
+}
+
+/**
+ * The full matrix "Sandbox proxy iframe" card. Wraps {@link SandboxConfigGrid}
+ * with the amber frame chrome, the "Sandbox proxy iframe" heading, and the
+ * nested lavender "View iframe" sub-card. Reused verbatim by the chat-thread
+ * Sandbox debug panel so the runtime view and the matrix editor view stay
+ * visually identical.
+ */
+export const SandboxProxyIframeCard = memo(function SandboxProxyIframeCard({
+  rows,
+  hostInfo,
+  onTitleClick,
+  onViewTitleClick,
+  onRowSelect,
+  selectedSubKey,
+  className,
+}: SandboxProxyIframeCardProps) {
+  return (
+    <div className={cn("sandbox-proxy-iframe-card", className)}>
+      <button
+        type="button"
+        className={cn(
+          "sandbox-proxy-iframe-card__head",
+          !onTitleClick && "sandbox-proxy-iframe-card__head--static",
+        )}
+        onClick={
+          onTitleClick
+            ? (e) => {
+                e.stopPropagation();
+                onTitleClick();
+              }
+            : undefined
+        }
+        disabled={!onTitleClick}
+      >
+        <span className="sandbox-proxy-iframe-card__title">
+          Sandbox proxy iframe
+        </span>
+      </button>
+
+      <SandboxConfigGrid
+        rows={rows}
+        onRowSelect={onRowSelect}
+        selectedSubKey={selectedSubKey}
+      />
+
+      <div className="sandbox-proxy-iframe-card__view">
+        <button
+          type="button"
+          className={cn(
+            "sandbox-proxy-iframe-card__head",
+            !onViewTitleClick && "sandbox-proxy-iframe-card__head--static",
+          )}
+          onClick={
+            onViewTitleClick
+              ? (e) => {
+                  e.stopPropagation();
+                  onViewTitleClick();
+                }
+              : undefined
+          }
+          disabled={!onViewTitleClick}
+        >
+          <span className="sandbox-proxy-iframe-card__view-title">
+            View iframe
+          </span>
+        </button>
+        <ViewIframeEmptyState hostInfo={hostInfo} />
+      </div>
+    </div>
+  );
+});
+
+/**
+ * Empty-state body for the View iframe sub-card: the `uiInitialize`
+ * envelope name, optionally followed by the resolved hostInfo.
+ */
+function ViewIframeEmptyState({
+  hostInfo,
+}: {
+  hostInfo: { name: string; version: string } | null;
+}) {
+  return (
+    <div className="sandbox-proxy-iframe-card__view-empty">
+      <span className="sandbox-proxy-iframe-card__view-empty-payload">
+        <span className="sandbox-proxy-iframe-card__view-empty-payload-key">
+          uiInitialize
+        </span>
+        {hostInfo ? (
+          <>
+            <span
+              className="sandbox-proxy-iframe-card__view-empty-payload-arrow"
+              aria-hidden
+            >
+              →
+            </span>
+            <span className="sandbox-proxy-iframe-card__view-empty-payload-value">
+              hostInfo · <b>{hostInfo.name}</b>
+              <span className="sandbox-proxy-iframe-card__view-empty-payload-version">
+                {hostInfo.version}
+              </span>
+            </span>
+          </>
+        ) : null}
+      </span>
+    </div>
+  );
+}
+
+/**
  * One sandbox config row. Severity drives a left-edge dot color but the
  * row sits inside the amber Sandbox frame, so danger/warn render as
  * subtler in-frame tints than they did on the old dark card.

@@ -119,3 +119,116 @@
   color: var(--hp-sandbox-sub);
   flex: 0 0 auto;
 }
+
+/* ============================================================
+   `SandboxProxyIframeCard` — the full matrix card (frame chrome +
+   heading + nested View iframe sub-card). Reused by the chat-thread
+   Sandbox debug panel so the runtime view matches the editor view.
+   The matrix mounts this inside `.host-paper-card`, which already
+   declares the `--hp-sandbox-*` / `--hp-view-*` vars at an outer
+   scope. The chat panel has no such ancestor — we redeclare the
+   var block on the card's own selector below.
+   ============================================================ */
+
+.sandbox-proxy-iframe-card {
+  --hp-ink: var(--foreground);
+  --hp-muted: var(--muted-foreground);
+  --hp-hairline: var(--border);
+
+  --hp-sandbox-bg: color-mix(in oklch, var(--diagram-sandbox) 8%, var(--popover));
+  --hp-sandbox-ring: color-mix(in oklch, var(--diagram-sandbox) 35%, var(--border));
+  --hp-sandbox-ink: var(--foreground);
+  --hp-sandbox-accent: var(--diagram-sandbox);
+  --hp-sandbox-sub: var(--muted-foreground);
+
+  --hp-view-bg: color-mix(in oklch, var(--diagram-view) 10%, var(--popover));
+  --hp-view-ring: color-mix(in oklch, var(--diagram-view) 40%, var(--border));
+  --hp-view-ink: var(--foreground);
+  --hp-view-accent: var(--diagram-view);
+  --hp-view-sub: var(--muted-foreground);
+
+  background: var(--hp-sandbox-bg);
+  border: 1px solid var(--hp-sandbox-ring);
+  border-radius: 14px;
+  padding: 20px 20px 22px;
+  color: var(--hp-sandbox-ink);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.sandbox-proxy-iframe-card__head {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: inherit;
+}
+.sandbox-proxy-iframe-card__head--static {
+  cursor: default;
+}
+
+.sandbox-proxy-iframe-card__title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--hp-sandbox-accent);
+  letter-spacing: -0.01em;
+}
+
+.sandbox-proxy-iframe-card__view {
+  background: var(--hp-view-bg);
+  border: 1px solid var(--hp-view-ring);
+  border-radius: 12px;
+  padding: 16px 18px 18px;
+  color: var(--hp-view-ink);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sandbox-proxy-iframe-card__view-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--hp-view-accent);
+  letter-spacing: -0.01em;
+}
+
+.sandbox-proxy-iframe-card__view-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 4px 2px;
+  border-top: 1px dashed
+    color-mix(in oklch, var(--diagram-view) 30%, var(--border));
+}
+
+.sandbox-proxy-iframe-card__view-empty-payload {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  font-size: 11.5px;
+  color: var(--hp-view-ink);
+}
+.sandbox-proxy-iframe-card__view-empty-payload-key {
+  color: var(--hp-view-sub);
+}
+.sandbox-proxy-iframe-card__view-empty-payload-arrow {
+  color: var(--hp-view-sub);
+}
+.sandbox-proxy-iframe-card__view-empty-payload-value b {
+  font-weight: 600;
+  color: var(--hp-view-ink);
+}
+.sandbox-proxy-iframe-card__view-empty-payload-version {
+  margin-left: 6px;
+  padding-left: 6px;
+  border-left: 1px solid var(--hp-view-ring);
+  color: var(--hp-view-sub);
+  font-size: 10.5px;
+}

@@ -1513,19 +1513,47 @@ export function MCPAppsRenderer({
   // Exposing the final emitted attributes (via a ref or callback on
   // SandboxedIframe) is left as a follow-up; the resolved policy is enough
   // for "why isn't this view rendering" in the vast majority of cases.
+  // hostInfo advertised in `ui/initialize` per SEP-1865. Sourced from the
+  // active host profile's `mcpProfile.apps.uiInitialize.hostInfo` so the
+  // panel's "View iframe" sub-card shows what a view actually receives.
+  // Null when the host hasn't customized it — same fallback contract as
+  // the matrix (canvasBuilder.ts:708).
+  const sandboxHostInfo = useMemo<
+    { name: string; version: string } | null
+  >(() => {
+    const raw = activeMcpProfile?.apps?.uiInitialize?.hostInfo;
+    if (!raw || typeof raw !== "object") return null;
+    const name = (raw as { name?: unknown }).name;
+    const version = (raw as { version?: unknown }).version;
+    if (typeof name !== "string" || typeof version !== "string") return null;
+    if (name.trim() === "" || version.trim() === "") return null;
+    return { name, version };
+  }, [activeMcpProfile]);
+
   useEffect(() => {
     if (!toolCallId) return;
-    setSandboxAppliedStore(toolCallId, {
-      sandboxAttrs: effectiveSandbox.sandboxAttrs,
-      allowFeatures: effectiveSandbox.allowFeatures,
-      cspDirectives: effectiveSandbox.cspDirectives,
-      permissive: effectiveSandbox.permissive,
-      hostPolicyApplied: effectiveSandbox.hostPolicyApplied,
-      restrictTo: sandboxCspPolicy?.restrictTo,
-      cspMode: sandboxCspPolicy?.mode,
-      permissions: effectiveSandbox.permissions,
-    });
-  }, [toolCallId, effectiveSandbox, sandboxCspPolicy, setSandboxAppliedStore]);
+    setSandboxAppliedStore(
+      toolCallId,
+      {
+        sandboxAttrs: effectiveSandbox.sandboxAttrs,
+        allowFeatures: effectiveSandbox.allowFeatures,
+        cspDirectives: effectiveSandbox.cspDirectives,
+        permissive: effectiveSandbox.permissive,
+        hostPolicyApplied: effectiveSandbox.hostPolicyApplied,
+        restrictTo: sandboxCspPolicy?.restrictTo,
+        cspMode: sandboxCspPolicy?.mode,
+        permissions: effectiveSandbox.permissions,
+      },
+      undefined,
+      sandboxHostInfo,
+    );
+  }, [
+    toolCallId,
+    effectiveSandbox,
+    sandboxCspPolicy,
+    sandboxHostInfo,
+    setSandboxAppliedStore,
+  ]);
 
   useEffect(() => {
     onSendFollowUpRef.current = onSendFollowUp;

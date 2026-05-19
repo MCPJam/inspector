@@ -20,7 +20,7 @@ import {
   type SandboxConfigNodeData,
   type SandboxConfigSubKey,
 } from "../types";
-import { SandboxConfigGrid } from "./sandbox-config-grid";
+import { SandboxProxyIframeCard } from "./sandbox-config-grid";
 
 function getClientLogo(
   clientInfoName: string | undefined,
@@ -264,94 +264,35 @@ export const HostMatrixCard = memo(function HostMatrixCard({
           </div>
         ) : null}
 
-        {/* ===== Sandbox nested frame ===== */}
+        {/* ===== Sandbox nested frame =====
+            Delegated to `SandboxProxyIframeCard` so the chat-thread
+            Sandbox debug panel renders an identical card from the
+            runtime resolver payload. */}
         {appsExtensionAdvertised ? (
-          <div className="hp-sandbox">
-            <button
-              type="button"
-              className="hp-frame-head"
-              onClick={(e) => {
-                e.stopPropagation();
-                onSelectNode(SANDBOX_HUB_NODE_ID);
-              }}
-            >
-              <span className="hp-sandbox-title">Sandbox proxy iframe</span>
-            </button>
-
-            <SandboxConfigGrid
-              rows={sandbox}
-              selectedSubKey={
-                (() => {
-                  // Map back from the selected node id ("sandbox-cfg:<subKey>")
-                  // to a subKey so the grid can render its own selected state.
-                  // Unrelated selected nodes simply produce `null`.
-                  const prefix = "sandbox-cfg:";
-                  if (
-                    selectedNodeId &&
-                    selectedNodeId.startsWith(prefix)
-                  ) {
-                    return selectedNodeId.slice(prefix.length) as SandboxConfigSubKey;
-                  }
-                  return null;
-                })()
+          <SandboxProxyIframeCard
+            rows={sandbox}
+            hostInfo={hostInfo}
+            onTitleClick={() => onSelectNode(SANDBOX_HUB_NODE_ID)}
+            onViewTitleClick={() => onSelectNode(APPS_HUB_NODE_ID)}
+            selectedSubKey={(() => {
+              const prefix = "sandbox-cfg:";
+              if (
+                selectedNodeId &&
+                selectedNodeId.startsWith(prefix)
+              ) {
+                return selectedNodeId.slice(prefix.length) as SandboxConfigSubKey;
               }
-              onRowSelect={(subKey) =>
-                onSelectNode(sandboxConfigLeafNodeId(subKey))
-              }
-            />
-
-            {/* ===== View nested-nested frame =====
-                Empty state: surfaces `mcpProfile.apps.uiInitialize` — the
-                hostInfo line matches what a view receives over the wire when
-                one connects (SEP-1865). */}
-            <div className="hp-view">
-              <button
-                type="button"
-                className="hp-frame-head"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onSelectNode(APPS_HUB_NODE_ID);
-                }}
-              >
-                <span className="hp-view-title">View iframe</span>
-              </button>
-              <ViewIframeEmptyState hostInfo={hostInfo} />
-            </div>
-          </div>
+              return null;
+            })()}
+            onRowSelect={(subKey) =>
+              onSelectNode(sandboxConfigLeafNodeId(subKey))
+            }
+          />
         ) : null}
       </div>
     </article>
   );
 });
-
-/* Empty-state body for the View iframe frame: `uiInitialize` envelope only,
-   optionally followed by the resolved hostInfo (name + version). */
-function ViewIframeEmptyState({
-  hostInfo,
-}: {
-  hostInfo: { name: string; version: string } | null;
-}) {
-  return (
-    <div className="hp-view-empty">
-      <span className="hp-view-empty-payload">
-        <span className="hp-view-empty-payload-key">uiInitialize</span>
-        {hostInfo ? (
-          <>
-            <span className="hp-view-empty-payload-arrow" aria-hidden>
-              →
-            </span>
-            <span className="hp-view-empty-payload-value">
-              hostInfo · <b>{hostInfo.name}</b>
-              <span className="hp-view-empty-payload-version">
-                {hostInfo.version}
-              </span>
-            </span>
-          </>
-        ) : null}
-      </span>
-    </div>
-  );
-}
 
 /* ---------------- subcomponents ---------------- */
 
@@ -617,92 +558,11 @@ const PAPER_STYLES = `
   font-family: ui-monospace, "JetBrains Mono", monospace;
 }
 
-/* === Sandbox nested frame === */
-.host-paper-card .hp-sandbox {
-  background: var(--hp-sandbox-bg);
-  border: 1px solid var(--hp-sandbox-ring);
-  border-radius: 14px;
-  padding: 20px 20px 22px;
-  color: var(--hp-sandbox-ink);
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-.host-paper-card .hp-frame-head {
-  background: transparent;
-  border: 0;
-  padding: 0;
-  cursor: pointer;
-  text-align: left;
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  color: inherit;
-}
-.host-paper-card .hp-sandbox-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--hp-sandbox-accent);
-  letter-spacing: -0.01em;
-}
-
-/* hp-sb-* rules now live in sandbox-config-grid.css, scoped under the
-   .sandbox-config-grid selector. The matrix renders that component
-   directly, so dropping these duplicates avoids drift between the two
-   call sites. */
-
-/* === View nested-nested frame === */
-.host-paper-card .hp-view {
-  background: var(--hp-view-bg);
-  border: 1px solid var(--hp-view-ring);
-  border-radius: 12px;
-  padding: 16px 18px 18px;
-  color: var(--hp-view-ink);
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.host-paper-card .hp-view-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--hp-view-accent);
-  letter-spacing: -0.01em;
-}
-/* View-iframe empty-state: uiInitialize line (+ optional hostInfo detail). */
-.host-paper-card .hp-view-empty {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 14px 4px 2px;
-  border-top: 1px dashed
-    color-mix(in oklch, var(--diagram-view) 30%, var(--border));
-}
-.host-paper-card .hp-view-empty-payload {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  font-family: ui-monospace, "JetBrains Mono", monospace;
-  font-size: 11.5px;
-  color: var(--hp-view-ink);
-}
-.host-paper-card .hp-view-empty-payload-key {
-  color: var(--hp-view-sub);
-}
-.host-paper-card .hp-view-empty-payload-arrow {
-  color: var(--hp-view-sub);
-}
-.host-paper-card .hp-view-empty-payload-value b {
-  font-weight: 600;
-  color: var(--hp-view-ink);
-}
-.host-paper-card .hp-view-empty-payload-version {
-  margin-left: 6px;
-  padding-left: 6px;
-  border-left: 1px solid var(--hp-view-ring);
-  color: var(--hp-view-sub);
-  font-size: 10.5px;
-}
+/* Sandbox + View frame chrome now lives in sandbox-config-grid.css,
+   scoped under the .sandbox-proxy-iframe-card selector. The matrix
+   mounts <SandboxProxyIframeCard /> directly so dropping these
+   duplicates avoids drift between the two call sites (matrix and the
+   chat-thread Sandbox debug panel). */
 
 /* Off / selected variants of the host-level capability chip, used by
    the new Host capabilities section (mirrors the spec's hostCapabilities

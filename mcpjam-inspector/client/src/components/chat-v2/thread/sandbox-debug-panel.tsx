@@ -56,7 +56,7 @@ import {
   type ResolvedSandboxView,
 } from "@/components/clients/redesigned/canvas/canvasBuilder";
 import {
-  SandboxConfigGrid,
+  SandboxProxyIframeCard,
   descriptorToNodeData,
 } from "@/components/clients/redesigned/canvas/sandbox-config-grid";
 
@@ -79,6 +79,7 @@ interface SandboxDebugPanelProps {
     } | null;
     applied?: WidgetSandboxApplied;
     lifecycle?: WidgetLifecycleEvent[];
+    hostInfo?: { name: string; version: string } | null;
   };
   protocol?: "openai-apps" | "mcp-apps";
 }
@@ -462,25 +463,27 @@ export function SandboxDebugPanel({
         </details>
       )}
 
-      {/* Resolved sandbox policy — hidden when no resolver payload was
-          published yet (OpenAI Apps v1, or pre-init). */}
+      {/* Full Sandbox proxy iframe card — same component the host-config
+          matrix renders, fed from the runtime resolver payload. Hidden
+          when no resolver output has been published yet (OpenAI Apps v1,
+          or pre-init). The "permissive" badge is overlaid on top of the
+          card so users see at a glance when CSP enforcement was bypassed
+          for this surface. */}
       {resolvedRows.length > 0 ? (
-        <div className="space-y-1">
-          <div className="flex items-center justify-between">
-            <Label className="text-[10px] text-muted-foreground">
-              Resolved sandbox policy
-            </Label>
-            {applied?.permissive ? (
-              <Badge
-                variant="outline"
-                className="text-[9px] px-1 py-0 h-4 shrink-0"
-                title="Sandbox CSP enforcement bypassed for this surface"
-              >
-                permissive
-              </Badge>
-            ) : null}
-          </div>
-          <SandboxConfigGrid rows={resolvedRows} />
+        <div className="relative">
+          {applied?.permissive ? (
+            <Badge
+              variant="outline"
+              className="absolute right-3 top-3 text-[9px] px-1 py-0 h-4 z-10"
+              title="Sandbox CSP enforcement bypassed for this surface"
+            >
+              permissive
+            </Badge>
+          ) : null}
+          <SandboxProxyIframeCard
+            rows={resolvedRows}
+            hostInfo={sandboxInfo?.hostInfo ?? null}
+          />
         </div>
       ) : null}
 

@@ -198,6 +198,14 @@ export interface WidgetDebugInfo {
    */
   hostProfileId?: string;
   /**
+   * hostInfo advertised in `ui/initialize` per SEP-1865
+   * §McpUiInitializeResult. Surfaced in the Sandbox debug panel's
+   * "View iframe" sub-card so the runtime view matches what a view
+   * actually receives over the wire. `null` when the host hasn't
+   * customized it (the inspector falls back to its own identity).
+   */
+  hostInfo?: { name: string; version: string } | null;
+  /**
    * Lifecycle event sequence captured from the renderer's `logWidgetDebug`
    * callsites. Always an array (never undefined); empty when no events
    * have fired yet. Consecutive same-kind same-status events are deduped
@@ -276,6 +284,7 @@ interface WidgetDebugStore {
     toolCallId: string,
     applied: WidgetSandboxApplied,
     hostProfileId?: string,
+    hostInfo?: { name: string; version: string } | null,
   ) => void;
 
   /**
@@ -321,6 +330,7 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         // create-if-missing setters (setSandboxApplied / appendLifecycle).
         applied: existing?.applied,
         hostProfileId: existing?.hostProfileId,
+        hostInfo: existing?.hostInfo,
         lifecycle: existing?.lifecycle ?? [],
         widgetHtml: existing?.widgetHtml, // Preserve cached HTML for save view feature
         modelContext: existing?.modelContext, // Preserve model context across updates
@@ -474,6 +484,7 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         csp: existing?.csp,
         applied: existing?.applied,
         hostProfileId: existing?.hostProfileId,
+        hostInfo: existing?.hostInfo,
         lifecycle: existing?.lifecycle ?? [],
         modelContext: existing?.modelContext,
         widgetHtml: html,
@@ -483,7 +494,7 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
     });
   },
 
-  setSandboxApplied: (toolCallId, applied, hostProfileId) => {
+  setSandboxApplied: (toolCallId, applied, hostProfileId, hostInfo) => {
     set((state) => {
       const widgets = new Map(state.widgets);
       const existing = widgets.get(toolCallId);
@@ -502,6 +513,7 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         csp: existing?.csp,
         applied,
         hostProfileId: hostProfileId ?? existing?.hostProfileId,
+        hostInfo: hostInfo !== undefined ? hostInfo : existing?.hostInfo,
         lifecycle: existing?.lifecycle ?? [],
         modelContext: existing?.modelContext,
         widgetHtml: existing?.widgetHtml,
@@ -539,6 +551,7 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         csp: existing?.csp,
         applied: existing?.applied,
         hostProfileId: existing?.hostProfileId,
+        hostInfo: existing?.hostInfo,
         lifecycle: nextLifecycle,
         modelContext: existing?.modelContext,
         widgetHtml: existing?.widgetHtml,

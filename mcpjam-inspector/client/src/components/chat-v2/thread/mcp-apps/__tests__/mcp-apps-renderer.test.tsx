@@ -1099,6 +1099,11 @@ describe("MCPAppsRenderer tool input streaming", () => {
           permissive: expect.any(Boolean),
           hostPolicyApplied: expect.any(Boolean),
         }),
+        undefined,
+        // hostInfo derived from activeMcpProfile.apps.uiInitialize.hostInfo;
+        // null in the test environment because the default context value is
+        // `undefined` (no ActiveMcpProfileProvider wrapping the renderer).
+        null,
       );
     });
 
