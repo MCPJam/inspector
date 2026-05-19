@@ -566,9 +566,9 @@ export function useServerState({
 }: UseServerStateParams) {
   const convex = useConvex();
   const {
-    upsertServer: convexUpsertServer,
+    createServerIfMissing: convexCreateServerIfMissing,
     updateServer: convexUpdateServer,
-    upsertServerWithClientSecret: convexUpsertServerWithClientSecret,
+    createServerWithClientSecret: convexCreateServerWithClientSecret,
     updateServerWithClientSecret: convexUpdateServerWithClientSecret,
     deleteServer: convexDeleteServer,
   } = useServerMutations();
@@ -1075,8 +1075,9 @@ export function useServerState({
 
       // Resolve "does a server with this name already exist?" from the local
       // snapshot when possible, then fall back to a one-shot Convex query
-      // during loading windows. When no row is visible, the write path still
-      // uses the backend upsert mutation so the final decision is atomic.
+      // during loading windows. When no row is visible, the no-secret write
+      // path still uses the backend create-if-missing mutation so the final
+      // decision is atomic.
       const resolveExistingServer = async (
         snapshot: RemoteServer[] | undefined,
         options?: { queryWhenLoaded?: boolean }
@@ -1147,13 +1148,9 @@ export function useServerState({
           ...payload,
           ...(clientSecret ? { clientSecret } : {}),
         };
-        const upsertPayload = {
-          ...createPayload,
-          ...(clearClientSecret ? { clearClientSecret: true } : {}),
-        };
-        const newId = hasSecretOperation
-          ? await convexUpsertServerWithClientSecret(upsertPayload)
-          : await convexUpsertServer(createPayload);
+        const newId = clientSecret
+          ? await convexCreateServerWithClientSecret(createPayload)
+          : await convexCreateServerIfMissing(createPayload);
         return newId as string | undefined;
       } catch (primaryError) {
         const primaryErrorMessage =
@@ -1169,13 +1166,9 @@ export function useServerState({
               ...payload,
               ...(clientSecret ? { clientSecret } : {}),
             };
-            const upsertPayload = {
-              ...createPayload,
-              ...(clearClientSecret ? { clearClientSecret: true } : {}),
-            };
-            const newId = hasSecretOperation
-              ? await convexUpsertServerWithClientSecret(upsertPayload)
-              : await convexUpsertServer(createPayload);
+            const newId = clientSecret
+              ? await convexCreateServerWithClientSecret(createPayload)
+              : await convexCreateServerIfMissing(createPayload);
             return newId as string | undefined;
           }
           const flatRetry =
@@ -1202,13 +1195,9 @@ export function useServerState({
             ...payload,
             ...(clientSecret ? { clientSecret } : {}),
           };
-          const upsertPayload = {
-            ...createPayload,
-            ...(clearClientSecret ? { clearClientSecret: true } : {}),
-          };
-          const newId = hasSecretOperation
-            ? await convexUpsertServerWithClientSecret(upsertPayload)
-            : await convexUpsertServer(createPayload);
+          const newId = clientSecret
+            ? await convexCreateServerWithClientSecret(createPayload)
+            : await convexCreateServerIfMissing(createPayload);
           return newId as string | undefined;
         } catch (fallbackError) {
           logger.error("Failed to sync server to Convex", {
@@ -1226,9 +1215,9 @@ export function useServerState({
     [
       activeProjectServersFlat,
       convex,
-      convexUpsertServer,
+      convexCreateServerIfMissing,
       convexUpdateServer,
-      convexUpsertServerWithClientSecret,
+      convexCreateServerWithClientSecret,
       convexUpdateServerWithClientSecret,
       logger,
     ]
