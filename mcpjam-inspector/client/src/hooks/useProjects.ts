@@ -78,6 +78,22 @@ interface ProjectMembersQueryResult {
   canManageMembers: boolean;
 }
 
+const INVALID_PROJECT_ID_SENTINELS = new Set(["none", "null", "undefined"]);
+const UUID_PROJECT_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const LOCAL_PROJECT_ID_PREFIXES = ["local_", "project_"];
+
+export function shouldQueryProjectId(projectId: string | null | undefined) {
+  const normalized = projectId?.trim();
+  if (!normalized) return false;
+  const lower = normalized.toLowerCase();
+  return Boolean(
+    !INVALID_PROJECT_ID_SENTINELS.has(lower) &&
+      !UUID_PROJECT_ID_PATTERN.test(normalized) &&
+      !LOCAL_PROJECT_ID_PREFIXES.some((prefix) => lower.startsWith(prefix)),
+  );
+}
+
 function isProjectMembersQueryResult(
   value: unknown
 ): value is ProjectMembersQueryResult {
@@ -259,12 +275,15 @@ export function useProjectServers({
   projectId: string | null;
   isAuthenticated: boolean;
 }) {
+  const shouldQuery = isAuthenticated && shouldQueryProjectId(projectId);
+  const queryProjectId = projectId?.trim() ?? "";
+
   const servers = useQuery(
     "servers:getProjectServers" as any,
-    isAuthenticated && projectId ? ({ projectId } as any) : "skip"
+    shouldQuery ? ({ projectId: queryProjectId } as any) : "skip"
   ) as RemoteServer[] | undefined;
 
-  const isLoading = isAuthenticated && projectId && servers === undefined;
+  const isLoading = shouldQuery && servers === undefined;
 
   // Convert array to record keyed by server name
   const serversRecord = useMemo(() => {

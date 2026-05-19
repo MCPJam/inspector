@@ -4,7 +4,9 @@ import {
   filterProjectsForOrganization,
   normalizeProjectMembersResult,
   type RemoteProject,
+  shouldQueryProjectId,
   useProjectQueries,
+  useProjectServers,
   type ProjectMember,
 } from "../useProjects";
 
@@ -81,6 +83,58 @@ describe("useProjectQueries", () => {
     expect(result.current.hasProjects).toBe(false);
     expect(result.current.hasAnyProjects).toBe(false);
     expect(mockUseQuery).toHaveBeenCalledWith("projects:getMyProjects", {});
+  });
+});
+
+describe("useProjectServers", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUseMutation.mockReturnValue(vi.fn());
+  });
+
+  it("skips the project servers query for the none sentinel", () => {
+    const { result } = renderHook(() =>
+      useProjectServers({
+        isAuthenticated: true,
+        projectId: "none",
+      }),
+    );
+
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.serversRecord).toEqual({});
+    expect(mockUseQuery).toHaveBeenCalledWith(
+      "servers:getProjectServers",
+      "skip",
+    );
+  });
+
+  it("trims valid project ids before querying", () => {
+    mockUseQuery.mockReturnValue([]);
+
+    renderHook(() =>
+      useProjectServers({
+        isAuthenticated: true,
+        projectId: " project-id ",
+      }),
+    );
+
+    expect(mockUseQuery).toHaveBeenCalledWith("servers:getProjectServers", {
+      projectId: "project-id",
+    });
+  });
+});
+
+describe("shouldQueryProjectId", () => {
+  it("rejects empty and sentinel ids", () => {
+    expect(shouldQueryProjectId(null)).toBe(false);
+    expect(shouldQueryProjectId("")).toBe(false);
+    expect(shouldQueryProjectId(" none ")).toBe(false);
+    expect(shouldQueryProjectId("NULL")).toBe(false);
+    expect(shouldQueryProjectId("a3ae0f26-0747-4ef0-963f-2c93fbadbeef")).toBe(
+      false,
+    );
+    expect(shouldQueryProjectId("local_123")).toBe(false);
+    expect(shouldQueryProjectId("project_123")).toBe(false);
   });
 });
 

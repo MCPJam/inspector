@@ -126,7 +126,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   // No previewed host = no auto-connect. Optional servers stay
   // disconnected until the user manually toggles them in the Servers tab.
   const { servers: projectServersList } = useProjectServers({
-    projectId: props.activeProjectId ?? null,
+    projectId: props.sharedProjectId ?? null,
     isAuthenticated: isConvexAuthenticated,
   });
   const previewedHostRequiredNames = useMemo(() => {
