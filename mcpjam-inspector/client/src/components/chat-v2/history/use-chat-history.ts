@@ -171,6 +171,10 @@ export function useChatHistory({
       params?: Record<string, unknown>,
     ) => {
       const payload = { sessionId: sessionId as any };
+      const scopedPayload = {
+        ...payload,
+        ...(projectId ? { projectId: projectId as any } : {}),
+      };
       switch (action) {
         case "rename":
           await renameCurrentSession({
@@ -185,7 +189,7 @@ export function useChatHistory({
           await unarchiveCurrentSession(payload);
           return;
         case "share":
-          await shareCurrentSession(payload);
+          await shareCurrentSession(scopedPayload);
           return;
         case "unshare":
           await unshareCurrentSession(payload);
@@ -201,6 +205,7 @@ export function useChatHistory({
     [
       archiveCurrentSession,
       pinCurrentSession,
+      projectId,
       renameCurrentSession,
       shareCurrentSession,
       unarchiveCurrentSession,
@@ -219,12 +224,16 @@ export function useChatHistory({
         await performReactiveAction(action, sessionId, params);
         return;
       }
-      await chatHistoryAction(action, sessionId, params, {
+      const scopedParams =
+        action === "share" && projectId
+          ? { ...params, projectId }
+          : params;
+      await chatHistoryAction(action, sessionId, scopedParams, {
         headers: requestHeaders,
       });
       await fetchHistory();
     },
-    [fetchHistory, isReactive, performReactiveAction, requestHeaders],
+    [fetchHistory, isReactive, performReactiveAction, projectId, requestHeaders],
   );
 
   const archiveManySessionIds = useCallback(

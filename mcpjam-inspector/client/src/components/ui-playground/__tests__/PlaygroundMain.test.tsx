@@ -10,6 +10,7 @@ import {
 import { PlaygroundMain } from "../PlaygroundMain";
 import { DEFAULT_CHAT_COMPOSER_PLACEHOLDER } from "@/components/chat-v2/shared/chat-helpers";
 import { useHostContextStore } from "@/stores/client-context-store";
+import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
 
 vi.mock("framer-motion", async (importOriginal) => {
   const actual = await importOriginal<typeof import("framer-motion")>();
@@ -23,6 +24,8 @@ const mockThread = vi.fn();
 const mockFullscreenChatOverlay = vi.fn();
 const mockMultiModelPlaygroundCard = vi.fn();
 const mockTraceViewer = vi.fn();
+const mockGetChatHistoryDetail = vi.hoisted(() => vi.fn());
+const mockChatHistoryAction = vi.hoisted(() => vi.fn());
 
 // Mock lucide-react icons
 vi.mock("lucide-react", () => ({
@@ -164,6 +167,12 @@ vi.mock("@/hooks/useViews", () => ({
   }),
 }));
 
+vi.mock("@/lib/apis/web/chat-history-api", () => ({
+  getChatHistoryDetail: (...args: unknown[]) =>
+    mockGetChatHistoryDetail(...args),
+  chatHistoryAction: (...args: unknown[]) => mockChatHistoryAction(...args),
+}));
+
 // Mock useChatSession hook
 const mockUseChatSession = {
   messages: [],
@@ -197,6 +206,10 @@ const mockUseChatSession = {
   toolServerMap: {},
   tokenUsage: null,
   resetChat: vi.fn(),
+  loadChatSession: vi.fn(async () => undefined),
+  syncResumedVersion: vi.fn(),
+  resumedVersion: null,
+  restoredToolRenderOverrides: {},
   chatSessionId: "chat-session-1",
   liveTraceEnvelope: null,
   requestPayloadHistory: [],
@@ -206,6 +219,7 @@ const mockUseChatSession = {
   requireToolApproval: false,
   setRequireToolApproval: vi.fn(),
   addToolApprovalResponse: vi.fn(),
+  isSessionBootstrapComplete: true,
   isStreaming: false,
   disableForAuthentication: false,
   submitBlocked: false,
@@ -558,6 +572,10 @@ describe("PlaygroundMain", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     capturedChatSessionOptions = null;
+    usePlaygroundChatHistoryBridgeStore.getState().setBridge(null);
+    mockGetChatHistoryDetail.mockReset();
+    mockChatHistoryAction.mockReset();
+    mockChatHistoryAction.mockResolvedValue({ ok: true });
     mockPreferencesState.themeMode = "light";
     mockPreferencesState.themePreset = "soft-pop";
     mockPreferencesState.hostStyle = "claude";
@@ -627,6 +645,94 @@ describe("PlaygroundMain", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
       expect(screen.getByTestId("host-context-theme-toggle")).toBeInTheDocument();
+    });
+
+    it("starts shared-session rail chats with project visibility", async () => {
+      render(<PlaygroundMain {...defaultProps} />);
+
+      await waitFor(() => {
+        expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
+          null,
+        );
+      });
+      expect(capturedChatSessionOptions.directVisibility).toBe("private");
+
+      await act(async () => {
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await Promise.resolve(bridge?.onNewChat({ shared: true }));
+      });
+
+      await waitFor(() => {
+        expect(capturedChatSessionOptions.directVisibility).toBe("project");
+      });
+      expect(mockUseChatSession.resetChat).toHaveBeenCalled();
+    });
+
+    it("keeps active playground thread visibility in sync after sharing", async () => {
+      const privateSession = {
+        _id: "history-1",
+        chatSessionId: "chat-session-1",
+        firstMessagePreview: "Hello",
+        status: "active" as const,
+        directVisibility: "private" as const,
+        messageCount: 2,
+        version: 4,
+        startedAt: 1,
+        lastActivityAt: 1,
+        isPinned: false,
+        manualUnread: false,
+        isUnread: false,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: {
+          selectedServers: ["test-server"],
+        },
+      };
+      const sharedSession = {
+        ...privateSession,
+        directVisibility: "project" as const,
+        version: 5,
+      };
+      mockGetChatHistoryDetail
+        .mockResolvedValueOnce({
+          ok: true,
+          session: privateSession,
+          widgetSnapshots: [],
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          session: sharedSession,
+          widgetSnapshots: [],
+        });
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      await waitFor(() => {
+        expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
+          null,
+        );
+      });
+
+      await act(async () => {
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await Promise.resolve(bridge?.onSelectThread(privateSession));
+      });
+      await waitFor(() => {
+        expect(capturedChatSessionOptions.directVisibility).toBe("private");
+      });
+
+      await act(async () => {
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await Promise.resolve(
+          bridge?.onSessionAction?.({
+            action: "share",
+            session: privateSession,
+          }),
+        );
+      });
+
+      await waitFor(() => {
+        expect(capturedChatSessionOptions.directVisibility).toBe("project");
+      });
     });
 
     // Removed: "passes the requested loading indicator variant to Thread".

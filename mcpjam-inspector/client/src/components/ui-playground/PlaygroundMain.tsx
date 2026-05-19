@@ -537,6 +537,7 @@ export function PlaygroundMain({
     status,
   } = useChatSession({
     selectedServers,
+    directVisibility: pendingDirectVisibility,
     hostedContext: {
       projectId: convexProjectId,
       selectedServerIds: hostedSelectedServerIds,
@@ -1170,6 +1171,7 @@ export function PlaygroundMain({
             projectId: convexProjectId ?? undefined,
           });
           setActiveHistorySessionId(detail.session._id);
+          setPendingDirectVisibility(detail.session.directVisibility);
           syncResumedVersion(detail.session.version);
           if (markRead) {
             void markHistorySessionRead(detail.session._id);
@@ -1361,7 +1363,10 @@ export function PlaygroundMain({
         | "unpin";
       session: ChatHistorySession;
     }) => {
-      if (action === "unshare" && session._id === activeHistorySessionId) {
+      if (
+        (action === "share" || action === "unshare") &&
+        session._id === activeHistorySessionId
+      ) {
         try {
           const detail = await refreshCurrentHistorySession();
           if (!detail) {
@@ -1524,10 +1529,6 @@ export function PlaygroundMain({
     resumedVersion,
     status,
   ]);
-
-  // Reserved for a follow-up (direct/project visibility toggle when starting
-  // a new chat from a shared row context).
-  void pendingDirectVisibility;
 
   // Delay the spinner so a hover-prefetched (instant) load doesn't flash an
   // overlay for one frame. After ~120 ms the load is "slow enough" to warrant

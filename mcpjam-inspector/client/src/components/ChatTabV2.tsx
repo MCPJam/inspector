@@ -663,6 +663,7 @@ export function ChatTabV2({
             projectId: effectiveHostedProjectId ?? undefined,
           });
           setActiveHistorySessionId(detail.session._id);
+          setPendingDirectVisibility(detail.session.directVisibility);
           syncResumedVersion(detail.session.version);
           if (markRead) {
             void markHistorySessionRead(detail.session._id);
@@ -976,7 +977,10 @@ export function ChatTabV2({
         | "unpin";
       session: ChatHistorySession;
     }) => {
-      if (action === "unshare" && session._id === activeHistorySessionId) {
+      if (
+        (action === "share" || action === "unshare") &&
+        session._id === activeHistorySessionId
+      ) {
         try {
           const detail = await refreshCurrentHistorySession();
           if (!detail) {
