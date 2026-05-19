@@ -42,6 +42,7 @@ import {
 import { getClientIp } from "../../utils/client-ip.js";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
 import { logger } from "../../utils/logger.js";
+import { createDirectChatLiveTurnPublisher } from "../../utils/direct-chat-live-turn.js";
 
 function deriveOrgProviderKey(modelDefinition: ModelDefinition): string {
   const result = deriveOrgProviderKeyResult(modelDefinition);
@@ -207,6 +208,11 @@ chatV2.post("/", async (c) => {
     );
     oauthServerUrls = urls;
 
+    let liveTurnPublisher: ReturnType<
+      typeof createDirectChatLiveTurnPublisher
+    > = null;
+    let liveTurnCompleted = false;
+
     try {
       const sessionStartedAt = Date.now();
       let prepared;
@@ -237,6 +243,27 @@ chatV2.post("/", async (c) => {
       const hostedChatSessionId = body.chatSessionId;
 
       const modelMessages = await convertToModelMessages(messages);
+      liveTurnPublisher =
+        !isChatboxSession && hostedChatSessionId
+          ? createDirectChatLiveTurnPublisher({
+              authHeader: c.req.header("authorization"),
+              chatSessionId: hostedChatSessionId,
+              projectId: hostedBody.projectId,
+              modelId: String(modelDefinition.id),
+              messages: modelMessages as ModelMessage[],
+            })
+          : null;
+      liveTurnPublisher?.start();
+      const completeLiveTurn = async () => {
+        liveTurnCompleted = true;
+        await liveTurnPublisher?.complete();
+      };
+      const cleanupStream = async () => {
+        if (!liveTurnCompleted) {
+          await liveTurnPublisher?.error();
+        }
+        await manager.disconnectAllServers();
+      };
       const isMCPJam =
         Boolean(modelDefinition.id) &&
         isMCPJamProvidedModel(String(modelDefinition.id));
@@ -332,6 +359,7 @@ chatV2.post("/", async (c) => {
                 turnTrace,
                 forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
               });
+              await completeLiveTurn();
             }
           : undefined;
 
@@ -353,9 +381,10 @@ chatV2.post("/", async (c) => {
             selectedServers: selectedServerIds,
             requireToolApproval,
             onConversationComplete,
-            onStreamComplete: () => manager.disconnectAllServers(),
+            onStreamComplete: cleanupStream,
             onStreamWriterReady: (writer) =>
               rpcCollector?.attachStreamWriter(writer),
+            onLiveTextDelta: (delta) => liveTurnPublisher?.appendText(delta),
           });
         }
 
@@ -378,9 +407,10 @@ chatV2.post("/", async (c) => {
           selectedServers: selectedServerIds,
           requireToolApproval,
           onConversationComplete,
-          onStreamComplete: () => manager.disconnectAllServers(),
+          onStreamComplete: cleanupStream,
           onStreamWriterReady: (writer) =>
             rpcCollector?.attachStreamWriter(writer),
+          onLiveTextDelta: (delta) => liveTurnPublisher?.appendText(delta),
         });
       }
 
@@ -460,13 +490,18 @@ chatV2.post("/", async (c) => {
                 turnTrace,
                 forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
               });
+              await completeLiveTurn();
             }
           : undefined,
-        onStreamComplete: () => manager.disconnectAllServers(),
+        onStreamComplete: cleanupStream,
         onStreamWriterReady: (writer) =>
           rpcCollector?.attachStreamWriter(writer),
+        onLiveTextDelta: (delta) => liveTurnPublisher?.appendText(delta),
       });
     } catch (error) {
+      if (!liveTurnCompleted) {
+        await liveTurnPublisher?.error();
+      }
       await manager.disconnectAllServers();
       throw error;
     }

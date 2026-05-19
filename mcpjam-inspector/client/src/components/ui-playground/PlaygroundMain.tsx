@@ -139,6 +139,7 @@ import {
   type ChatHistoryTurnTrace,
 } from "@/lib/apis/web/chat-history-api";
 import { resolveRestorableServerNames } from "@/components/chat-v2/history/session-restore";
+import { applyDirectChatLiveTurn } from "@/components/chat-v2/history/live-turn-messages";
 import {
   getCachedChatHistoryDetail,
   prefetchChatHistorySession,
@@ -146,6 +147,7 @@ import {
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { WebApiError } from "@/lib/apis/web/base";
+import { useDirectChatSessionSubscription } from "@/hooks/use-direct-chat-session-subscription";
 
 // On post-stream reconcile, the Convex-side detail row may not yet reflect the
 // version bump from the turn that just finished. Retry a couple of times.
@@ -1138,6 +1140,17 @@ export function PlaygroundMain({
     ],
   );
 
+  const {
+    session: reactiveHistorySession,
+    widgetSnapshots: reactiveHistoryWidgetSnapshots,
+    liveTurn: reactiveHistoryLiveTurn,
+  } = useDirectChatSessionSubscription({
+    sessionId: activeHistorySessionId,
+    projectId: convexProjectId,
+    enabled:
+      isConvexAuthenticated && !!activeHistorySessionId && !isStreaming,
+  });
+
   const detachHistorySession = useCallback(
     (toastMessage: string) => {
       resumedThreadSendBaselineRef.current = null;
@@ -1159,6 +1172,71 @@ export function PlaygroundMain({
       syncResumedVersion,
     ],
   );
+
+  useEffect(() => {
+    if (!activeHistorySessionId || isStreaming) {
+      return;
+    }
+
+    if (reactiveHistorySession === undefined) {
+      return;
+    }
+
+    if (reactiveHistorySession === null) {
+      detachHistorySession(
+        "This chat is no longer available. Continuing locally in a new thread.",
+      );
+      return;
+    }
+
+    if (reactiveHistoryWidgetSnapshots === undefined) {
+      return;
+    }
+
+    if (
+      resumedVersion !== null &&
+      reactiveHistorySession.version <= resumedVersion
+    ) {
+      return;
+    }
+
+    void loadHistorySession(
+      reactiveHistorySession,
+      reactiveHistoryWidgetSnapshots,
+      {
+        shouldRestoreComposerState: () => !hasUnsavedDraftRef.current,
+        turnTraces: undefined,
+      },
+    ).catch((error) => {
+      console.error(
+        "[PlaygroundMain] Failed to apply reactive chat history",
+        error,
+      );
+    });
+  }, [
+    activeHistorySessionId,
+    detachHistorySession,
+    isStreaming,
+    loadHistorySession,
+    reactiveHistorySession,
+    reactiveHistoryWidgetSnapshots,
+    resumedVersion,
+  ]);
+
+  useEffect(() => {
+    if (!activeHistorySessionId || isStreaming || !reactiveHistoryLiveTurn) {
+      return;
+    }
+
+    setMessages((currentMessages) =>
+      applyDirectChatLiveTurn(currentMessages, reactiveHistoryLiveTurn),
+    );
+  }, [
+    activeHistorySessionId,
+    isStreaming,
+    reactiveHistoryLiveTurn,
+    setMessages,
+  ]);
 
   const refreshCurrentHistorySession = useCallback(
     async ({ retries = 0, markRead = false } = {}) => {

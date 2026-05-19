@@ -81,6 +81,7 @@ export interface OrgModelHandlerOptions {
   onStreamWriterReady?: (writer: {
     write: (chunk: UIMessageChunk) => void;
   }) => void;
+  onLiveTextDelta?: (delta: string) => void;
   /**
    * The end user's Authorization header from the inbound request. Forwarded
    * to /stream/org so Convex can re-authorize the user against the project.
@@ -192,6 +193,7 @@ export interface OrgLocalModelHandlerOptions {
   onStreamWriterReady?: (writer: {
     write: (chunk: UIMessageChunk) => void;
   }) => void;
+  onLiveTextDelta?: (delta: string) => void;
 }
 
 export function handleLocalOrgChatModel(
@@ -215,6 +217,7 @@ export function handleLocalOrgChatModel(
     onConversationComplete,
     onStreamComplete,
     onStreamWriterReady,
+    onLiveTextDelta,
   } = options;
 
   if (requireToolApproval && Object.keys(tools).length > 0) {
@@ -331,6 +334,9 @@ export function handleLocalOrgChatModel(
         },
         onChunk: async ({ chunk }) => {
           if (chunk.type === "text-delta") {
+            if (chunk.text) {
+              onLiveTextDelta?.(chunk.text);
+            }
             writeTraceEvent(writer, {
               type: "text_delta",
               turnId: traceTurn.turnId,
@@ -615,6 +621,7 @@ export async function handleHostedOrgChatModel(
     onConversationComplete: options.onConversationComplete,
     onStreamComplete: options.onStreamComplete,
     onStreamWriterReady: options.onStreamWriterReady,
+    onLiveTextDelta: options.onLiveTextDelta,
     clientIp: options.clientIp,
     endpointPath: "/stream/org",
     extraHeaders: {

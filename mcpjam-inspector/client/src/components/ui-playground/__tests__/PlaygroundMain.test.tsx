@@ -155,7 +155,8 @@ vi.mock("convex/react", () => ({
   // `useHost` (and any other Convex-backed hook PlaygroundMain pulls in)
   // calls useQuery. The test doesn't exercise auth flows, so a static
   // null is enough — the consumer treats it as "no host resolved yet".
-  useQuery: () => null,
+  useQuery: (_name: string, args: unknown) =>
+    args === "skip" ? undefined : null,
   useMutation: () => () => Promise.resolve(),
 }));
 

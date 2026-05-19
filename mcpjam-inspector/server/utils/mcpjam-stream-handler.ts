@@ -95,6 +95,7 @@ export interface MCPJamHandlerOptions {
   onStreamWriterReady?: (writer: {
     write: (chunk: UIMessageChunk) => void;
   }) => void;
+  onLiveTextDelta?: (delta: string) => void;
   /**
    * Override the Convex endpoint path for the per-step LLM call.
    * Defaults to "/stream". Org BYOK chat uses "/stream/org".
@@ -148,6 +149,7 @@ interface StepContext {
   extraHeaders?: Record<string, string>;
   extraBodyFields?: Record<string, unknown>;
   clientIp?: string | null;
+  onLiveTextDelta?: (delta: string) => void;
 }
 
 type PersistedAssistantPart = TextPart | ToolCallPart | ReasoningUIPart;
@@ -421,7 +423,8 @@ async function processStream(
   traceTurn: LiveTraceTurnContext,
   stepIndex: number,
   tools: ToolSet,
-  requireToolApproval?: boolean
+  requireToolApproval?: boolean,
+  onLiveTextDelta?: (delta: string) => void
 ): Promise<StreamResult> {
   const contentParts: PersistedAssistantPart[] = [];
   let pendingText = "";
@@ -496,6 +499,9 @@ async function processStream(
         case "text-delta":
           flushReasoning();
           pendingText += chunk.delta ?? "";
+          if (chunk.delta) {
+            onLiveTextDelta?.(chunk.delta);
+          }
           writer.write(chunk);
           if (chunk.delta) {
             writeTraceEvent(writer, {
@@ -993,6 +999,7 @@ async function processOneStep(
     chatSessionId,
     sourceType,
     clientIp,
+    onLiveTextDelta,
   } = ctx;
   // Hash the originating IP for the per-IP daily spend cap. Hashing here
   // (server-side) keeps the raw IP off the wire to Convex. If no hash can be
@@ -1090,7 +1097,8 @@ async function processOneStep(
     traceTurn,
     stepIndex,
     tools,
-    requireToolApproval
+    requireToolApproval,
+    onLiveTextDelta
   );
   const llmEndAbs = Date.now();
   traceTurn.turnUsage = mergeLiveChatTraceUsage(
@@ -1353,6 +1361,7 @@ export async function handleMCPJamFreeChatModel(
     chatSessionId,
     sourceType,
     clientIp,
+    onLiveTextDelta,
   } = options;
   const resolvedEndpointPath = endpointPath ?? "/stream";
 
@@ -1429,6 +1438,7 @@ export async function handleMCPJamFreeChatModel(
             extraHeaders,
             extraBodyFields,
             clientIp,
+            onLiveTextDelta,
           });
 
           steps++;
