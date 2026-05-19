@@ -54,6 +54,7 @@ import {
 import { useProjectClientConfigSyncPending } from "./use-project-client-config-sync-pending";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { useServerMutations, type RemoteServer } from "./useProjects";
+import { writeCliSignInReturnPath } from "@/lib/cli-signin-return-path";
 import {
   CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
   PROJECT_NOT_PROVISIONED_ERROR_MESSAGE,
@@ -508,6 +509,7 @@ interface UseServerStateParams {
    * applied when the call site also supplies the `serverId`.
    */
   activeHostConfig?: HostConfigDtoV2;
+  requestSignIn?: () => void | Promise<void>;
   logger: LoggerLike;
 }
 
@@ -568,6 +570,7 @@ export function useServerState({
   activeProjectServersFlat,
   activeMcpProfile,
   activeHostConfig,
+  requestSignIn,
   logger,
 }: UseServerStateParams) {
   const isUserReady = useDbUserReady();
@@ -1165,6 +1168,7 @@ export function useServerState({
         transportType,
         command: config?.command,
         args: config?.args,
+        env: config?.env,
         url,
         headers,
         timeout: config?.timeout,
@@ -2515,7 +2519,7 @@ export function useServerState({
   const saveServerConfigWithoutConnecting = useCallback(
     async (
       formData: ServerFormData,
-      options?: { oauthProfile?: OAuthTestProfile }
+      options?: { oauthProfile?: OAuthTestProfile; suppressToast?: boolean }
     ) => {
       const validationError = validateForm(formData);
       if (validationError) {
@@ -2601,7 +2605,9 @@ export function useServerState({
       logger.info("Saved server configuration without connecting", {
         serverName,
       });
-      toast.success(`Saved configuration for ${serverName}`);
+      if (!options?.suppressToast) {
+        toast.success(`Saved configuration for ${serverName}`);
+      }
     },
     [
       appState.activeProjectId,
@@ -2797,123 +2803,201 @@ export function useServerState({
   );
 
   const cliConfigProcessedRef = useRef<boolean>(false);
+  const cliConfigFetchStartedRef = useRef<boolean>(false);
+  const cliConfigSignInRequestedRef = useRef<boolean>(false);
+  const pendingCliConfigRef = useRef<any | null>(null);
 
   useEffect(() => {
     if (HOSTED_MODE) {
       return;
     }
-
-    if (!isLoading && !cliConfigProcessedRef.current) {
-      cliConfigProcessedRef.current = true;
-      authFetch("/api/mcp-cli-config")
-        .then((response) => response.json())
-        .then((data) => {
-          const cliConfig = data.config;
-          if (cliConfig) {
-            if (
-              cliConfig.initialTab &&
-              (!window.location.pathname || window.location.pathname === "/")
-            ) {
-              const tab = cliConfig.initialTab.replace(/^[#/]+/, "");
-              if (tab) {
-                navigateApp(`/${tab}`, { replace: true });
-              }
-            }
-
-            if (
-              cliConfig.cspMode === "permissive" ||
-              cliConfig.cspMode === "widget-declared"
-            ) {
-              const store = useUIPlaygroundStore.getState();
-              store.setCspMode(cliConfig.cspMode);
-              store.setMcpAppsCspMode(cliConfig.cspMode);
-            }
-
-            if (cliConfig.servers && Array.isArray(cliConfig.servers)) {
-              const autoConnectServer = cliConfig.autoConnectServer;
-
-              logger.info(
-                "Processing CLI-provided MCP servers (from config file)",
-                {
-                  serverCount: cliConfig.servers.length,
-                  autoConnectServer: autoConnectServer || "all",
-                  cliConfig: cliConfig,
-                }
-              );
-
-              cliConfig.servers.forEach((server: any) => {
-                const serverName = server.name || "CLI Server";
-                const urlParams = new URLSearchParams(window.location.search);
-                const oauthCallbackInProgress = urlParams.has("code");
-                const formData: ServerFormData = {
-                  name: serverName,
-                  type: (server.type === "sse"
-                    ? "http"
-                    : server.type || "stdio") as "stdio" | "http",
-                  command: server.command,
-                  args: server.args || [],
-                  url: server.url,
-                  env: server.env || {},
-                  headers: server.headers,
-                  useOAuth: server.useOAuth ?? false,
-                };
-
-                const mcpConfig = toMCPConfig(formData);
-                dispatch({
-                  type: "UPSERT_SERVER",
-                  name: formData.name,
-                  server: {
-                    name: formData.name,
-                    config: mcpConfig,
-                    lastConnectionTime: new Date(),
-                    connectionStatus: "disconnected" as const,
-                    retryCount: 0,
-                    enabled: false,
-                  },
-                });
-
-                if (oauthCallbackInProgress && server.useOAuth) {
-                  logger.info("Skipping auto-connect for OAuth server", {
-                    serverName: server.name,
-                    reason: "OAuth callback in progress",
-                  });
-                } else if (
-                  !autoConnectServer ||
-                  server.name === autoConnectServer
-                ) {
-                  logger.info("Auto-connecting to server", {
-                    serverName: server.name,
-                  });
-                  handleConnect(formData);
-                } else {
-                  logger.info("Skipping auto-connect for server", {
-                    serverName: server.name,
-                    reason: "filtered out",
-                  });
-                }
-              });
-              return;
-            }
-            if (cliConfig.command) {
-              logger.info("Auto-connecting to CLI-provided MCP server", {
-                cliConfig,
-              });
-              const formData: ServerFormData = {
-                name: cliConfig.name || "CLI Server",
-                type: "stdio" as const,
-                command: cliConfig.command,
-                args: cliConfig.args || [],
-                env: cliConfig.env || {},
-              };
-              handleConnect(formData);
-            }
-          }
-        })
-        .catch((error) => {
-          logger.debug("Could not fetch CLI config from API", { error });
-        });
+    if (cliConfigProcessedRef.current) {
+      return;
     }
-  }, [isLoading, handleConnect, logger, dispatch]);
+    if (isLoading || isAuthLoading) {
+      return;
+    }
+
+    const oauthCallbackInProgress = new URLSearchParams(
+      window.location.search
+    ).has("code");
+
+    const applyCliUiConfig = (cliConfig: any) => {
+      if (
+        cliConfig.initialTab &&
+        (!window.location.pathname || window.location.pathname === "/")
+      ) {
+        const tab = cliConfig.initialTab.replace(/^[#/]+/, "");
+        if (tab) {
+          navigateApp(`/${tab}`, { replace: true });
+        }
+      }
+
+      if (
+        cliConfig.cspMode === "permissive" ||
+        cliConfig.cspMode === "widget-declared"
+      ) {
+        const store = useUIPlaygroundStore.getState();
+        store.setCspMode(cliConfig.cspMode);
+        store.setMcpAppsCspMode(cliConfig.cspMode);
+      }
+    };
+
+    const hasServerPayload = (cliConfig: any): boolean =>
+      Boolean(
+        (Array.isArray(cliConfig.servers) && cliConfig.servers.length > 0) ||
+          cliConfig.command
+      );
+
+    const formDataFromCliServer = (
+      server: any,
+      fallbackName = "CLI Server"
+    ): ServerFormData => ({
+      name: server.name || fallbackName,
+      type: (server.type === "sse"
+        ? "http"
+        : server.type || "stdio") as "stdio" | "http",
+      command: server.command,
+      args: server.args || [],
+      url: server.url,
+      env: server.env || {},
+      headers: server.headers,
+      useOAuth: server.useOAuth ?? false,
+    });
+
+    const requestCliSignIn = () => {
+      if (cliConfigSignInRequestedRef.current) {
+        return;
+      }
+      cliConfigSignInRequestedRef.current = true;
+      writeCliSignInReturnPath(
+        `${window.location.pathname || routePaths.root}${window.location.search || ""}`
+      );
+      void requestSignIn?.();
+    };
+
+    const processCliConfig = async (cliConfig: any) => {
+      applyCliUiConfig(cliConfig);
+
+      if (!hasServerPayload(cliConfig)) {
+        cliConfigProcessedRef.current = true;
+        return;
+      }
+
+      if (!hasSignedInUser) {
+        if (oauthCallbackInProgress) {
+          logger.info("Skipping CLI sign-in redirect during OAuth callback");
+          return;
+        }
+        requestCliSignIn();
+        return;
+      }
+
+      const hasActiveConvexProject = Boolean(
+        activeProject?.sharedProjectId &&
+          effectiveActiveProjectId &&
+          effectiveActiveProjectId !== "none" &&
+          !useLocalFallback
+      );
+      if (isLoadingProjects || !hasActiveConvexProject) {
+        return;
+      }
+
+      cliConfigProcessedRef.current = true;
+
+      if (Array.isArray(cliConfig.servers) && cliConfig.servers.length > 0) {
+        const autoConnectServer = cliConfig.autoConnectServer;
+
+        logger.info("Processing CLI-provided MCP servers (from config file)", {
+          serverCount: cliConfig.servers.length,
+          autoConnectServer: autoConnectServer || "all",
+          cliConfig,
+        });
+
+        for (const server of cliConfig.servers) {
+          const serverName = server.name || "CLI Server";
+          const formData = formDataFromCliServer(server, serverName);
+
+          if (oauthCallbackInProgress && server.useOAuth) {
+            logger.info("Skipping auto-connect for OAuth server", {
+              serverName,
+              reason: "OAuth callback in progress",
+            });
+            await saveServerConfigWithoutConnecting(formData, {
+              suppressToast: true,
+            });
+          } else if (!autoConnectServer || server.name === autoConnectServer) {
+            logger.info("Auto-connecting to server", {
+              serverName,
+            });
+            await handleConnect(formData);
+          } else {
+            logger.info("Saving CLI server without auto-connect", {
+              serverName,
+              reason: "filtered out",
+            });
+            await saveServerConfigWithoutConnecting(formData, {
+              suppressToast: true,
+            });
+          }
+        }
+        return;
+      }
+
+      if (cliConfig.command) {
+        logger.info("Auto-connecting to CLI-provided MCP server", {
+          cliConfig,
+        });
+        const formData = formDataFromCliServer(
+          {
+            ...cliConfig,
+            type: "stdio",
+          },
+          cliConfig.name || "CLI Server"
+        );
+        await handleConnect(formData);
+      }
+    };
+
+    const pendingCliConfig = pendingCliConfigRef.current;
+    if (pendingCliConfig) {
+      void processCliConfig(pendingCliConfig);
+      return;
+    }
+
+    if (cliConfigFetchStartedRef.current) {
+      return;
+    }
+
+    cliConfigFetchStartedRef.current = true;
+    authFetch("/api/mcp-cli-config")
+      .then((response) => response.json())
+      .then((data) => {
+        const cliConfig = data.config ?? null;
+        pendingCliConfigRef.current = cliConfig;
+        if (!cliConfig) {
+          cliConfigProcessedRef.current = true;
+          return;
+        }
+        void processCliConfig(cliConfig);
+      })
+      .catch((error) => {
+        logger.debug("Could not fetch CLI config from API", { error });
+        cliConfigProcessedRef.current = true;
+      });
+  }, [
+    isLoading,
+    isAuthLoading,
+    isLoadingProjects,
+    hasSignedInUser,
+    useLocalFallback,
+    effectiveActiveProjectId,
+    activeProject?.sharedProjectId,
+    requestSignIn,
+    handleConnect,
+    saveServerConfigWithoutConnecting,
+    logger,
+  ]);
 
   const getValidAccessToken = useCallback(
     async (serverName: string): Promise<string | null> => {

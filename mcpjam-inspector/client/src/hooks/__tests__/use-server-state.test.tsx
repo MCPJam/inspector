@@ -14,6 +14,8 @@ import {
 import type { ProjectClientConfig } from "@/lib/client-config";
 import { useClientConfigStore } from "@/stores/client-config-store";
 import { useHostContextStore } from "@/stores/client-context-store";
+import { authFetch } from "@/lib/session-token";
+import { readCliSignInReturnPath } from "@/lib/cli-signin-return-path";
 
 const {
   toastError,
@@ -117,6 +119,8 @@ vi.mock("@/stores/ui-playground-store", () => ({
   useUIPlaygroundStore: {
     getState: vi.fn(() => ({
       setSelectedToolResult: vi.fn(),
+      setCspMode: vi.fn(),
+      setMcpAppsCspMode: vi.fn(),
     })),
   },
 }));
@@ -184,6 +188,27 @@ function createAppState(options?: {
   };
 }
 
+function createCloudCliAppState(): AppState {
+  return {
+    projects: {
+      proj_cloud: {
+        id: "proj_cloud",
+        name: "Cloud project",
+        servers: {},
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        sharedProjectId: "proj_cloud",
+        organizationId: "org_1",
+      },
+    },
+    activeProjectId: "proj_cloud",
+    servers: {},
+    selectedServer: "",
+    selectedMultipleServers: [],
+    isMultiSelectMode: false,
+  };
+}
+
 function renderUseServerState(
   dispatch: (action: AppAction) => void,
   appState = createAppState(),
@@ -197,6 +222,7 @@ function renderUseServerState(
     activeProjectServersFlat?: any;
     activeMcpProfile?: any;
     activeHostConfig?: any;
+    requestSignIn?: () => void | Promise<void>;
   }
 ) {
   mockUseDbUserReady.mockReturnValue(
@@ -219,6 +245,7 @@ function renderUseServerState(
       activeProjectServersFlat: options?.activeProjectServersFlat,
       activeMcpProfile: options?.activeMcpProfile,
       activeHostConfig: options?.activeHostConfig,
+      requestSignIn: options?.requestSignIn,
       logger: {
         info: vi.fn(),
         warn: vi.fn(),
@@ -237,6 +264,15 @@ async function flushAsyncWork(iterations = 5): Promise<void> {
 
 beforeEach(() => {
   mockUseDbUserReady.mockReturnValue(true);
+  vi.mocked(authFetch).mockReset();
+  vi.mocked(authFetch).mockResolvedValue({
+    json: async () => ({}),
+  } as Response);
+  sessionStorage.clear();
+  readStoredOAuthConfigMock.mockReturnValue({
+    registryServerId: undefined,
+    useRegistryOAuthProxy: false,
+  });
   tryResolveProjectServerMock.mockReturnValue({
     projectId: "project_default",
     serverId: "srv_demo",
@@ -245,6 +281,217 @@ beforeEach(() => {
   getInitializationInfoMock.mockResolvedValue({
     success: true,
     initInfo: null,
+  });
+});
+
+describe("useServerState CLI config import", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    sessionStorage.clear();
+    window.history.replaceState({}, "", "/");
+    mockCreateServerIfMissing.mockReset();
+    mockUpdateServer.mockReset();
+    mockConvexQuery.mockResolvedValue([]);
+    testConnectionMock.mockResolvedValue({ success: true, initInfo: null });
+    getInitializationInfoMock.mockResolvedValue({
+      success: true,
+      initInfo: null,
+    });
+    vi.mocked(authFetch).mockReset();
+    vi.mocked(authFetch).mockResolvedValue({
+      json: async () => ({}),
+    } as Response);
+  });
+
+  it("does not ask for sign-in when there is no CLI server payload", async () => {
+    vi.mocked(authFetch).mockResolvedValueOnce({
+      json: async () => ({ config: { servers: [] } }),
+    } as Response);
+    const requestSignIn = vi.fn();
+
+    renderUseServerState(vi.fn(), createCloudCliAppState(), {
+      isAuthenticated: true,
+      hasSignedInUser: false,
+      useLocalFallback: false,
+      effectiveProjects: createCloudCliAppState().projects,
+      effectiveActiveProjectId: "proj_cloud",
+      activeProjectServersFlat: [],
+      requestSignIn,
+    });
+
+    await waitFor(() => {
+      expect(authFetch).toHaveBeenCalledWith("/api/mcp-cli-config");
+    });
+
+    expect(requestSignIn).not.toHaveBeenCalled();
+    expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
+  });
+
+  it("requests WorkOS sign-in for guest auth and waits to inject until a signed-in project is available", async () => {
+    vi.mocked(authFetch).mockResolvedValueOnce({
+      json: async () => ({
+        config: {
+          servers: [
+            {
+              name: "cli-stdio",
+              type: "stdio",
+              command: "node",
+              args: ["server.js"],
+              env: { API_TOKEN: "token" },
+            },
+          ],
+        },
+      }),
+    } as Response);
+    mockCreateServerIfMissing.mockResolvedValue("srv_cli");
+    const appState = createCloudCliAppState();
+    const dispatch = vi.fn();
+    const requestSignIn = vi.fn();
+    window.history.replaceState({}, "", "/tools?view=cli");
+
+    const { rerender } = renderHook(
+      (props: { hasSignedInUser: boolean }) =>
+        useServerState({
+          appState,
+          dispatch,
+          isLoading: false,
+          isAuthenticated: true,
+          hasSignedInUser: props.hasSignedInUser,
+          isAuthLoading: false,
+          isLoadingProjects: false,
+          useLocalFallback: false,
+          effectiveProjects: appState.projects,
+          effectiveActiveProjectId: "proj_cloud",
+          activeProjectServersFlat: [],
+          requestSignIn,
+          logger: {
+            info: vi.fn(),
+            warn: vi.fn(),
+            error: vi.fn(),
+            debug: vi.fn(),
+          },
+        }),
+      { initialProps: { hasSignedInUser: false } }
+    );
+
+    await waitFor(() => {
+      expect(requestSignIn).toHaveBeenCalledTimes(1);
+    });
+    expect(readCliSignInReturnPath()).toBe("/tools?view=cli");
+    expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "UPSERT_SERVER" })
+    );
+
+    rerender({ hasSignedInUser: true });
+
+    await waitFor(() => {
+      expect(mockCreateServerIfMissing).toHaveBeenCalledTimes(1);
+    });
+    expect(mockCreateServerIfMissing).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "proj_cloud",
+        name: "cli-stdio",
+        enabled: true,
+        transportType: "stdio",
+        command: "node",
+        args: ["server.js"],
+        env: { API_TOKEN: "token" },
+      })
+    );
+  });
+
+  it("persists all CLI config servers and only connects the selected auto-connect server", async () => {
+    vi.mocked(authFetch).mockResolvedValueOnce({
+      json: async () => ({
+        config: {
+          autoConnectServer: "cli-http",
+          servers: [
+            {
+              name: "cli-stdio",
+              type: "stdio",
+              command: "node",
+              args: ["server.js"],
+              env: { API_TOKEN: "token" },
+            },
+            {
+              name: "cli-http",
+              type: "http",
+              url: "https://example.com/mcp",
+              headers: { Authorization: "Bearer secret" },
+            },
+          ],
+        },
+      }),
+    } as Response);
+    mockCreateServerIfMissing.mockImplementation(async (payload: any) => {
+      return `srv_${payload.name}`;
+    });
+    const appState = createCloudCliAppState();
+    const dispatch = vi.fn();
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    };
+
+    renderHook(() =>
+      useServerState({
+        appState,
+        dispatch,
+        isLoading: false,
+        isAuthenticated: true,
+        hasSignedInUser: true,
+        isAuthLoading: false,
+        isLoadingProjects: false,
+        useLocalFallback: false,
+        effectiveProjects: appState.projects,
+        effectiveActiveProjectId: "proj_cloud",
+        activeProjectServersFlat: [],
+        logger,
+      })
+    );
+
+    await waitFor(() => {
+      expect(authFetch).toHaveBeenCalled();
+    });
+
+    await waitFor(() => {
+      expect(mockCreateServerIfMissing).toHaveBeenCalledTimes(2);
+    });
+
+    const payloads = mockCreateServerIfMissing.mock.calls.map(
+      ([payload]) => payload
+    );
+    expect(payloads).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          projectId: "proj_cloud",
+          name: "cli-stdio",
+          enabled: false,
+          transportType: "stdio",
+          command: "node",
+          args: ["server.js"],
+          env: { API_TOKEN: "token" },
+        }),
+        expect.objectContaining({
+          projectId: "proj_cloud",
+          name: "cli-http",
+          enabled: true,
+          transportType: "http",
+          url: "https://example.com/mcp",
+          headers: { Authorization: "Bearer secret" },
+        }),
+      ])
+    );
+    expect(testConnectionMock).toHaveBeenCalledTimes(1);
+    expect(testConnectionMock.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        url: "https://example.com/mcp",
+      })
+    );
   });
 });
 
