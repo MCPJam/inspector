@@ -1,4 +1,4 @@
-import type { ComponentProps } from "react";
+import { useMemo, type ComponentProps } from "react";
 import { ChatTabV2 } from "./ChatTabV2";
 import {
   ChatboxHostStyleProvider,
@@ -9,6 +9,10 @@ import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context"
 import { ActiveHostClientCapabilitiesProvider } from "@/contexts/active-host-client-capabilities-context";
 import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
+import {
+  seedFromHostTemplate,
+  type HostTemplateId,
+} from "@/lib/client-templates";
 import { cn } from "@/lib/utils";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
@@ -41,7 +45,17 @@ export function ClientStyledChatTabV2({
   const hostCapabilitiesOverride =
     activeHost?.hostCapabilitiesOverride ?? prefHostCapabilitiesOverride;
   const activeMcpProfile = activeHost?.mcpProfile;
-  const activeHostClientCapabilities = activeHost?.clientCapabilities;
+  // clientCapabilities: prefer the persisted host config; fall back to the
+  // template seed for `hostStyle` so prefs-only surfaces (no Convex
+  // `activeHost` hydrated) still gate widget rendering correctly. Without
+  // this fallback, picking Codex via the host-style preference would still
+  // leave `clientCapabilities` undefined here, the gate in PartSwitch would
+  // read the legacy-preservation default (`undefined` → allow), and the
+  // widget would render even though Codex strips the MCP UI extension.
+  const activeHostClientCapabilities = useMemo(() => {
+    if (activeHost?.clientCapabilities) return activeHost.clientCapabilities;
+    return seedFromHostTemplate(hostStyle as HostTemplateId).clientCapabilities;
+  }, [activeHost?.clientCapabilities, hostStyle]);
   const shellStyle = getChatboxShellStyle(hostStyle, themeMode);
 
   return (
