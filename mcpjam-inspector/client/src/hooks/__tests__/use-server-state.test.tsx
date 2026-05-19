@@ -30,7 +30,10 @@ const {
   tryResolveProjectServerMock,
   mockConvexQuery,
   mockCreateServer,
+  mockCreateServerIfMissing,
+  mockCreateServerWithClientSecret,
   mockUpdateServer,
+  mockUpdateServerWithClientSecret,
 } = vi.hoisted(() => ({
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
@@ -48,7 +51,10 @@ const {
   >(() => null),
   mockConvexQuery: vi.fn(),
   mockCreateServer: vi.fn(),
+  mockCreateServerIfMissing: vi.fn(),
+  mockCreateServerWithClientSecret: vi.fn(),
   mockUpdateServer: vi.fn(),
+  mockUpdateServerWithClientSecret: vi.fn(),
 }));
 
 vi.mock("sonner", () => ({
@@ -112,8 +118,11 @@ vi.mock("@/stores/ui-playground-store", () => ({
 vi.mock("../useProjects", () => ({
   useServerMutations: () => ({
     createServer: mockCreateServer,
+    createServerIfMissing: mockCreateServerIfMissing,
     updateServer: mockUpdateServer,
     deleteServer: vi.fn(),
+    createServerWithClientSecret: mockCreateServerWithClientSecret,
+    updateServerWithClientSecret: mockUpdateServerWithClientSecret,
   }),
 }));
 
@@ -413,7 +422,9 @@ describe("useServerState OAuth callback failures", () => {
     });
     mockConvexQuery.mockResolvedValue(null);
     mockCreateServer.mockReset();
+    mockCreateServerWithClientSecret.mockReset();
     mockUpdateServer.mockReset();
+    mockUpdateServerWithClientSecret.mockReset();
     tryResolveProjectServerMock.mockReturnValue({
       projectId: "project_default",
       serverId: "srv_demo",
@@ -1694,6 +1705,197 @@ describe("useServerState OAuth callback in-flight dispatch", () => {
   });
 });
 
+describe("syncServerToConvex name-collision recovery", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    window.history.replaceState({}, "", "/");
+    mockCreateServer.mockReset();
+    mockCreateServerIfMissing.mockReset();
+    mockCreateServerWithClientSecret.mockReset();
+    mockUpdateServer.mockReset();
+    mockUpdateServerWithClientSecret.mockReset();
+    mockConvexQuery.mockReset();
+    getStoredTokensMock.mockReturnValue(null);
+    readStoredOAuthConfigMock.mockReturnValue({});
+    testConnectionMock.mockResolvedValue({ success: true, initInfo: null });
+    tryResolveProjectServerMock.mockReturnValue({
+      projectId: "project_default",
+      serverId: "srv_demo",
+    });
+    useClientConfigStore.setState({
+      activeProjectId: null,
+      defaultConfig: null,
+      savedConfig: undefined,
+      draftConfig: null,
+      connectionDefaultsText: "{}",
+      clientCapabilitiesText: "{}",
+      clientCapabilitiesError: null,
+      connectionDefaultsError: null,
+      isSaving: false,
+      isDirty: false,
+      pendingProjectId: null,
+      pendingSavedConfig: undefined,
+      isAwaitingRemoteEcho: false,
+    });
+    useHostContextStore.setState({
+      activeProjectId: null,
+      defaultHostContext: {},
+      savedHostContext: undefined,
+      draftHostContext: {},
+      hostContextText: "{}",
+      hostContextError: null,
+      isSaving: false,
+      isDirty: false,
+      pendingProjectId: null,
+      pendingSavedHostContext: undefined,
+      isAwaitingRemoteEcho: false,
+    });
+  });
+
+  it("primary path: uses Convex query to recover when snapshot is still loading", async () => {
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    const dispatch = vi.fn();
+
+    mockConvexQuery.mockResolvedValue([
+      { _id: "srv_existing", name: "Excalidraw (App)" },
+    ]);
+    mockUpdateServer.mockResolvedValue(undefined);
+
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      useLocalFallback: false,
+      effectiveProjects: appState.projects,
+      activeProjectServersFlat: undefined,
+    });
+
+    await act(async () => {
+      await result.current.saveServerConfigWithoutConnecting({
+        name: "Excalidraw (App)",
+        type: "http",
+        url: "https://mcp.excalidraw.com/mcp",
+      });
+    });
+
+    expect(mockConvexQuery).toHaveBeenCalledWith("servers:getProjectServers", {
+      projectId: "default",
+    });
+    expect(mockUpdateServer).toHaveBeenCalledWith(
+      expect.objectContaining({ serverId: "srv_existing" })
+    );
+    expect(mockCreateServer).not.toHaveBeenCalled();
+    expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
+  });
+
+  it("uses create-if-missing when a stale-loaded snapshot misses the row", async () => {
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    const dispatch = vi.fn();
+
+    mockCreateServerIfMissing.mockResolvedValue("srv_existing");
+
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      useLocalFallback: false,
+      effectiveProjects: appState.projects,
+      activeProjectServersFlat: [],
+    });
+
+    await act(async () => {
+      await result.current.saveServerConfigWithoutConnecting({
+        name: "Excalidraw (App)",
+        type: "http",
+        url: "https://mcp.excalidraw.com/mcp",
+      });
+    });
+
+    expect(mockCreateServerIfMissing).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "default",
+        name: "Excalidraw (App)",
+      })
+    );
+    expect(mockCreateServer).not.toHaveBeenCalled();
+    expect(mockConvexQuery).not.toHaveBeenCalled();
+  });
+
+  it("uses create-if-missing when the loading-window query misses the existing row", async () => {
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    const dispatch = vi.fn();
+
+    mockConvexQuery.mockResolvedValue([]);
+    mockCreateServerIfMissing.mockResolvedValue("srv_existing");
+
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      useLocalFallback: false,
+      effectiveProjects: appState.projects,
+      activeProjectServersFlat: undefined,
+    });
+
+    await act(async () => {
+      await result.current.saveServerConfigWithoutConnecting({
+        name: "Excalidraw (App)",
+        type: "http",
+        url: "https://mcp.excalidraw.com/mcp",
+      });
+    });
+
+    expect(mockConvexQuery).toHaveBeenCalledWith("servers:getProjectServers", {
+      projectId: "default",
+    });
+    expect(mockCreateServerIfMissing).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "default",
+        name: "Excalidraw (App)",
+      })
+    );
+    expect(mockCreateServer).not.toHaveBeenCalled();
+  });
+
+  it("keeps OAuth client-secret creates on the existing secret action", async () => {
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    const dispatch = vi.fn();
+
+    mockConvexQuery.mockResolvedValue([]);
+    mockCreateServerWithClientSecret.mockResolvedValue("srv_oauth");
+
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      useLocalFallback: false,
+      effectiveProjects: appState.projects,
+      activeProjectServersFlat: undefined,
+    });
+
+    await act(async () => {
+      await result.current.saveServerConfigWithoutConnecting({
+        name: "OAuth Server",
+        type: "http",
+        url: "https://oauth.example.com/mcp",
+        useOAuth: true,
+        clientId: "client-id",
+        clientSecret: "client-secret",
+      });
+    });
+
+    expect(mockCreateServerWithClientSecret).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "default",
+        name: "OAuth Server",
+        clientSecret: "client-secret",
+      })
+    );
+    expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
+  });
+});
+
 describe("persistRuntimeServerToProjectIfNeeded", () => {
   function buildCloudPersistState(
     connectionStatus: ServerWithName["connectionStatus"] = "connected"
@@ -1731,7 +1933,10 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockCreateServer.mockReset();
+    mockCreateServerIfMissing.mockReset();
+    mockCreateServerWithClientSecret.mockReset();
     mockUpdateServer.mockReset();
+    mockUpdateServerWithClientSecret.mockReset();
     useClientConfigStore.setState({
       activeProjectId: null,
       defaultConfig: null,
@@ -1792,7 +1997,7 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
       })
     );
 
-    mockCreateServer.mockImplementation(async () => {
+    mockCreateServerIfMissing.mockImplementation(async () => {
       flatRef.current = [{ _id: "new_srv_id", name: "rt-server" }];
       flushSync(() => {
         rerender();
@@ -1807,12 +2012,12 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
       expect(out).toBe("persisted");
     });
 
-    expect(mockCreateServer).toHaveBeenCalledTimes(1);
+    expect(mockCreateServerIfMissing).toHaveBeenCalledTimes(1);
     expect(mockUpdateServer).not.toHaveBeenCalled();
   });
 
   it("does nothing for guest-like or unsigned state", async () => {
-    mockCreateServer.mockResolvedValue("id");
+    mockCreateServerIfMissing.mockResolvedValue("id");
     const dispatch = vi.fn();
     const appState = buildCloudPersistState();
     const { result } = renderUseServerState(dispatch, appState, {
@@ -1858,11 +2063,11 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
       ).toBe("noop");
     });
 
-    expect(mockCreateServer).not.toHaveBeenCalled();
+    expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
   });
 
   it("does nothing for missing or non-connected runtime server", async () => {
-    mockCreateServer.mockResolvedValue("id");
+    mockCreateServerIfMissing.mockResolvedValue("id");
     const dispatch = vi.fn();
     const appState = buildCloudPersistState("connecting");
     const { result } = renderUseServerState(dispatch, appState, {
@@ -1912,7 +2117,7 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
       ).toBe("noop");
     });
 
-    expect(mockCreateServer).not.toHaveBeenCalled();
+    expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
   });
 
   it("waits for project server snapshot before deciding collision", async () => {
@@ -1922,7 +2127,7 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
       current: undefined,
     };
 
-    mockCreateServer.mockImplementation(async () => {
+    mockCreateServerIfMissing.mockImplementation(async () => {
       flatRef.current = [{ _id: "new", name: "rt-server" }];
       flushSync(() => {
         rerender();
@@ -1956,7 +2161,7 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
       await result.current.persistRuntimeServerToProjectIfNeeded("rt-server");
     });
 
-    expect(mockCreateServer).not.toHaveBeenCalled();
+    expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
 
     flatRef.current = [];
     flushSync(() => {
@@ -1965,7 +2170,7 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
 
     await done;
 
-    expect(mockCreateServer).toHaveBeenCalledTimes(1);
+    expect(mockCreateServerIfMissing).toHaveBeenCalledTimes(1);
   });
 
   it("skips write when same-name saved server appears after waiting", async () => {
@@ -2010,7 +2215,7 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
     });
 
     await done;
-    expect(mockCreateServer).not.toHaveBeenCalled();
+    expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
   });
 
   it("clears pending key on failed mutation", async () => {
@@ -2020,7 +2225,7 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
       current: [],
     };
 
-    mockCreateServer.mockResolvedValueOnce(undefined);
+    mockCreateServerIfMissing.mockResolvedValueOnce(undefined);
 
     const { result, rerender } = renderHook(() =>
       useServerState({
@@ -2050,8 +2255,8 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
       ).toBe("failed");
     });
 
-    mockCreateServer.mockReset();
-    mockCreateServer.mockImplementation(async () => {
+    mockCreateServerIfMissing.mockReset();
+    mockCreateServerIfMissing.mockImplementation(async () => {
       flatRef.current = [{ _id: "n2", name: "rt-server" }];
       flushSync(() => {
         rerender();
@@ -2065,7 +2270,7 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
       ).toBe("persisted");
     });
 
-    expect(mockCreateServer).toHaveBeenCalledTimes(1);
+    expect(mockCreateServerIfMissing).toHaveBeenCalledTimes(1);
   });
 
   it("clears pending key when Convex echo lands", async () => {
@@ -2097,7 +2302,7 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
       })
     );
 
-    mockCreateServer.mockImplementation(async () => {
+    mockCreateServerIfMissing.mockImplementation(async () => {
       flatRef.current = [{ _id: "echo", name: "rt-server" }];
       flushSync(() => {
         rerender();
@@ -2125,7 +2330,7 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
       current: [],
     };
     let resolveCreate!: (v: string) => void;
-    mockCreateServer.mockImplementation(
+    mockCreateServerIfMissing.mockImplementation(
       () =>
         new Promise<string>((resolve) => {
           resolveCreate = resolve;
@@ -2169,7 +2374,7 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
       expect(second).toBe("pending");
     });
 
-    expect(mockCreateServer).toHaveBeenCalledTimes(1);
+    expect(mockCreateServerIfMissing).toHaveBeenCalledTimes(1);
 
     resolveCreate!("srv1");
     flatRef.current = [{ _id: "srv1", name: "rt-server" }];
@@ -2186,7 +2391,7 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
       );
       expect(again).toBe("skipped_existing_name");
     });
-    expect(mockCreateServer).toHaveBeenCalledTimes(1);
+    expect(mockCreateServerIfMissing).toHaveBeenCalledTimes(1);
   });
 
   it("waits for auth and project readiness before persisting", async () => {
@@ -2231,7 +2436,7 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
       rerender();
     });
 
-    mockCreateServer.mockImplementation(async () => {
+    mockCreateServerIfMissing.mockImplementation(async () => {
       flatRef.current = [{ _id: "late_srv", name: "rt-server" }];
       flushSync(() => {
         rerender();
@@ -2246,7 +2451,7 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
       expect(out).toBe("persisted");
     });
 
-    expect(mockCreateServer).not.toHaveBeenCalled();
+    expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
 
     readiness.isAuthenticated = true;
     readiness.isAuthLoading = false;
@@ -2259,6 +2464,6 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
 
     await done;
 
-    expect(mockCreateServer).toHaveBeenCalledTimes(1);
+    expect(mockCreateServerIfMissing).toHaveBeenCalledTimes(1);
   });
 });
