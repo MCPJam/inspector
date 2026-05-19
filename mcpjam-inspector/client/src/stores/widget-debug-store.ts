@@ -25,7 +25,97 @@ export interface CspViolation {
   timestamp: number;
 }
 
-export interface WidgetCspInfo {
+/**
+ * Resolved sandbox payload — the same object MCP-Apps renderer posts to the
+ * sandbox proxy iframe at runtime. Populated only for MCP Apps tool calls;
+ * absent for OpenAI Apps (which doesn't go through `resolveSandboxCsp` /
+ * `resolveSandboxPermissions`).
+ *
+ * Naming follows the runtime envelope on purpose: `sandboxAttrs` /
+ * `allowFeatures` are inputs to <SandboxedIframe>; the literal emitted
+ * `sandbox=` / `allow=` attribute strings are computed inside that
+ * component and not currently surfaced here (see follow-up in
+ * sandbox-debug-panel.tsx).
+ */
+export interface WidgetSandboxApplied {
+  /**
+   * Tokens passed as the additional outer/inner iframe `sandbox=` attribute
+   * beyond the spec-required `allow-scripts allow-same-origin`. Absent
+   * when the host hasn't configured `mcpProfile.apps.sandbox.sandboxAttrs`.
+   */
+  sandboxAttrs?: string[];
+  /** Permissions Policy entries for the iframe `allow=` attribute. */
+  allowFeatures?: Record<string, string>;
+  /**
+   * Per-directive CSP source-expression overrides (inspector-only —
+   * `cspDirectives` knob). Merged into the proxy CSP after the resolver's
+   * allowlist directives.
+   */
+  cspDirectives?: Record<string, string[]>;
+  /**
+   * `true` when the surface bypassed the host CSP resolver entirely
+   * (permissive surface with no hardening signals). Drives the
+   * "permissive" badge in the debug panel.
+   */
+  permissive: boolean;
+  /**
+   * `true` when a non-trivial host policy was applied (resolvedCsp or
+   * resolvedPermissions or pure-relaxed). Lets the panel distinguish
+   * "default everything" from "host actively shaped this".
+   */
+  hostPolicyApplied: boolean;
+  /**
+   * Echoed from the original host profile (the resolver intersects but
+   * doesn't return these verbatim). Lets the matrix-shared grid show the
+   * narrowing knobs even when the resolver collapsed them into an
+   * intersection.
+   */
+  restrictTo?: {
+    connectDomains?: string[];
+    resourceDomains?: string[];
+    frameDomains?: string[];
+    baseUriDomains?: string[];
+  };
+  cspMode?: "host-default" | "declared" | "relaxed";
+  /**
+   * Granted permissions after the resolver intersected widget-requested
+   * permissions against host policy. Same shape as the widget-requested
+   * `permissions` field above; the panel renders this as the matrix's
+   * "Permissions" row (vs widget-requested which appears in the declared-
+   * CSP section). Absent when no permissions were granted.
+   */
+  permissions?: {
+    camera?: {};
+    microphone?: {};
+    geolocation?: {};
+    clipboardWrite?: {};
+  };
+}
+
+/**
+ * One lifecycle event from the widget's load/connect sequence. Recorded
+ * by `mcp-apps-renderer` from the same `logWidgetDebug` callsites that
+ * already feed the traffic log, so this never invents events — it just
+ * captures what already happened.
+ */
+export interface WidgetLifecycleEvent {
+  kind:
+    | "sandbox-proxy-ready"
+    | "widget-content-requested"
+    | "widget-content-ready"
+    | "widget-content-error"
+    | "widget-content-invalid-mimetype"
+    | "bridge-connect-start"
+    | "bridge-connect-ready"
+    | "bridge-connect-error"
+    | "bridge-connect-skipped"
+    | "app-initialized";
+  status: "ok" | "error" | "pending";
+  message?: string;
+  timestamp: number;
+}
+
+export interface WidgetSandboxInfo {
   /** Current CSP enforcement mode */
   mode: CspMode;
   /** Allowed domains for fetch/XHR (connect-src) - effective values */
@@ -86,8 +176,42 @@ export interface WidgetDebugInfo {
   globals: WidgetGlobals;
   prefersBorder?: boolean;
   updatedAt: number;
-  /** CSP configuration and violation tracking */
-  csp?: WidgetCspInfo;
+  /**
+   * CSP configuration and violation tracking. Historical field name —
+   * keeps the existing `setWidgetCsp` / `addCspViolation` /
+   * `clearCspViolations` API surface unchanged. The Sandbox debug panel
+   * also reads from sibling fields below (`applied`, `lifecycle`) when the
+   * MCP-Apps renderer publishes them.
+   */
+  csp?: WidgetSandboxInfo;
+  /**
+   * Resolved sandbox payload from the MCP-Apps runtime resolver. Absent
+   * for OpenAI Apps (which doesn't share that code path) and for any
+   * widget that hasn't yet reached the resolver step.
+   */
+  applied?: WidgetSandboxApplied;
+  /**
+   * Active host profile id when available — drives the panel's deep-link
+   * row clicks into the host-config Apps tab. Optional because the
+   * runtime context isn't always anchored to a saved host (e.g. evals,
+   * one-shot tool calls).
+   */
+  hostProfileId?: string;
+  /**
+   * hostInfo advertised in `ui/initialize` per SEP-1865
+   * §McpUiInitializeResult. Surfaced in the Sandbox debug panel's
+   * "View iframe" sub-card so the runtime view matches what a view
+   * actually receives over the wire. `null` when the host hasn't
+   * customized it (the inspector falls back to its own identity).
+   */
+  hostInfo?: { name: string; version: string } | null;
+  /**
+   * Lifecycle event sequence captured from the renderer's `logWidgetDebug`
+   * callsites. Always an array (never undefined); empty when no events
+   * have fired yet. Consecutive same-kind same-status events are deduped
+   * to a single entry whose timestamp/message reflect the latest.
+   */
+  lifecycle: WidgetLifecycleEvent[];
   /** Model context set by the widget (SEP-1865 ui/update-model-context) */
   modelContext?: {
     content?: unknown[];
@@ -128,7 +252,7 @@ interface WidgetDebugStore {
   // Set CSP info for a widget
   setWidgetCsp: (
     toolCallId: string,
-    csp: Omit<WidgetCspInfo, "violations">,
+    csp: Omit<WidgetSandboxInfo, "violations">,
   ) => void;
 
   // Add a CSP violation for a widget
@@ -148,6 +272,33 @@ interface WidgetDebugStore {
 
   // Set widget HTML for offline rendering cache
   setWidgetHtml: (toolCallId: string, html: string) => void;
+
+  /**
+   * Publish the resolved sandbox payload from the MCP-Apps renderer.
+   * Create-if-missing (patterned after setWidgetHtml): the first lifecycle
+   * event can fire before setWidgetDebugInfo's init effect, so early-
+   * returning when no record exists would silently drop the most important
+   * sequence.
+   */
+  setSandboxApplied: (
+    toolCallId: string,
+    applied: WidgetSandboxApplied,
+    hostProfileId?: string,
+    hostInfo?: { name: string; version: string } | null,
+  ) => void;
+
+  /**
+   * Append one lifecycle event. Dedupes when the previous entry has the
+   * same `kind` AND `status` — replaces timestamp/message instead of
+   * pushing — so a flaky network doesn't smear the panel with 12 duplicate
+   * "bridge-connect-error" rows. Create-if-missing for the same reason as
+   * setSandboxApplied (the renderer's first widget-content-requested event
+   * fires before the init effect).
+   */
+  appendLifecycle: (
+    toolCallId: string,
+    event: WidgetLifecycleEvent,
+  ) => void;
 }
 
 export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
@@ -175,6 +326,12 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
             ? info.prefersBorder
             : existing?.prefersBorder,
         csp: existing?.csp, // Preserve CSP violations across updates
+        // Preserve runtime-only fields populated by the renderer's
+        // create-if-missing setters (setSandboxApplied / appendLifecycle).
+        applied: existing?.applied,
+        hostProfileId: existing?.hostProfileId,
+        hostInfo: existing?.hostInfo,
+        lifecycle: existing?.lifecycle ?? [],
         widgetHtml: existing?.widgetHtml, // Preserve cached HTML for save view feature
         modelContext: existing?.modelContext, // Preserve model context across updates
         updatedAt: Date.now(),
@@ -325,8 +482,79 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         globals: existing?.globals ?? { theme: "dark", displayMode: "inline" },
         prefersBorder: existing?.prefersBorder,
         csp: existing?.csp,
+        applied: existing?.applied,
+        hostProfileId: existing?.hostProfileId,
+        hostInfo: existing?.hostInfo,
+        lifecycle: existing?.lifecycle ?? [],
         modelContext: existing?.modelContext,
         widgetHtml: html,
+        updatedAt: Date.now(),
+      });
+      return { widgets };
+    });
+  },
+
+  setSandboxApplied: (toolCallId, applied, hostProfileId, hostInfo) => {
+    set((state) => {
+      const widgets = new Map(state.widgets);
+      const existing = widgets.get(toolCallId);
+      // Create-if-missing patterned after setWidgetHtml — see the
+      // store-level dock comment on setSandboxApplied. Without this the
+      // first call (which can fire before setWidgetDebugInfo's init effect
+      // settles) would early-return and the panel would never see the
+      // resolved policy.
+      widgets.set(toolCallId, {
+        toolCallId,
+        toolName: existing?.toolName ?? "unknown",
+        protocol: existing?.protocol ?? "mcp-apps",
+        widgetState: existing?.widgetState ?? null,
+        globals: existing?.globals ?? { theme: "dark", displayMode: "inline" },
+        prefersBorder: existing?.prefersBorder,
+        csp: existing?.csp,
+        applied,
+        hostProfileId: hostProfileId ?? existing?.hostProfileId,
+        hostInfo: hostInfo !== undefined ? hostInfo : existing?.hostInfo,
+        lifecycle: existing?.lifecycle ?? [],
+        modelContext: existing?.modelContext,
+        widgetHtml: existing?.widgetHtml,
+        updatedAt: Date.now(),
+      });
+      return { widgets };
+    });
+  },
+
+  appendLifecycle: (toolCallId, event) => {
+    set((state) => {
+      const widgets = new Map(state.widgets);
+      const existing = widgets.get(toolCallId);
+      const existingLifecycle = existing?.lifecycle ?? [];
+      // Dedupe consecutive same-kind same-status entries — replace
+      // timestamp + message rather than push, so a retry storm doesn't
+      // smear the panel with 12 duplicate dots.
+      const last = existingLifecycle[existingLifecycle.length - 1];
+      let nextLifecycle: WidgetLifecycleEvent[];
+      if (last && last.kind === event.kind && last.status === event.status) {
+        nextLifecycle = [
+          ...existingLifecycle.slice(0, -1),
+          { ...last, timestamp: event.timestamp, message: event.message },
+        ];
+      } else {
+        nextLifecycle = [...existingLifecycle, event];
+      }
+      widgets.set(toolCallId, {
+        toolCallId,
+        toolName: existing?.toolName ?? "unknown",
+        protocol: existing?.protocol ?? "mcp-apps",
+        widgetState: existing?.widgetState ?? null,
+        globals: existing?.globals ?? { theme: "dark", displayMode: "inline" },
+        prefersBorder: existing?.prefersBorder,
+        csp: existing?.csp,
+        applied: existing?.applied,
+        hostProfileId: existing?.hostProfileId,
+        hostInfo: existing?.hostInfo,
+        lifecycle: nextLifecycle,
+        modelContext: existing?.modelContext,
+        widgetHtml: existing?.widgetHtml,
         updatedAt: Date.now(),
       });
       return { widgets };

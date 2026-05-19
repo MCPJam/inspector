@@ -18,7 +18,7 @@ describe("focusTabForNodeId — sandbox routing", () => {
     });
   });
 
-  it("routes every sandbox leaf node id to the Apps Extension tab", () => {
+  it("routes every sandbox leaf node id to the Apps Extension tab and carries the subKey through as focusSubKey", () => {
     for (const sub of [
       "mode",
       "restrictTo",
@@ -30,6 +30,7 @@ describe("focusTabForNodeId — sandbox routing", () => {
       expect(focusTabForNodeId(sandboxConfigLeafNodeId(sub))).toEqual({
         tab: "apps",
         selectedServerId: null,
+        focusSubKey: sub,
       });
     }
   });

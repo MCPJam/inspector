@@ -67,6 +67,8 @@ const {
     clearCspViolations: vi.fn(),
     setWidgetModelContext: vi.fn(),
     setWidgetHtml: vi.fn(),
+    setSandboxApplied: vi.fn(),
+    appendLifecycle: vi.fn(),
   };
 
   return {
@@ -183,6 +185,8 @@ vi.mock("@/stores/widget-debug-store", () => ({
       clearCspViolations: stableStoreFns.clearCspViolations,
       setWidgetModelContext: stableStoreFns.setWidgetModelContext,
       setWidgetHtml: stableStoreFns.setWidgetHtml,
+      setSandboxApplied: stableStoreFns.setSandboxApplied,
+      appendLifecycle: stableStoreFns.appendLifecycle,
     }),
 }));
 
@@ -1072,6 +1076,41 @@ describe("MCPAppsRenderer tool input streaming", () => {
       expect(sandboxedIframePropsRef.current?.html).toBe(
         "<html><body>widget</body></html>",
       );
+    });
+  });
+
+  it("publishes the resolved sandbox payload + lifecycle into widget-debug-store", async () => {
+    // Verifies the Phase 4 plumbing: as soon as the effectiveSandbox useMemo
+    // settles, setSandboxApplied fires; as widget-content-* / bridge-* events
+    // flow through logWidgetDebug, appendLifecycle fans them out into the
+    // store's lifecycle array. This is the runtime feed the Sandbox debug
+    // panel reads — if it stops happening the panel silently goes blank.
+    render(
+      <MCPAppsRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />,
+    );
+
+    await vi.waitFor(() => {
+      // setSandboxApplied is called with the resolved payload shape we
+      // documented in WidgetSandboxApplied. We don't pin the exact CSP
+      // values (those are the resolver's concern) — just the contract.
+      expect(stableStoreFns.setSandboxApplied).toHaveBeenCalledWith(
+        "call-1",
+        expect.objectContaining({
+          permissive: expect.any(Boolean),
+          hostPolicyApplied: expect.any(Boolean),
+        }),
+        undefined,
+        // hostInfo derived from activeMcpProfile.apps.uiInitialize.hostInfo;
+        // null in the test environment because the default context value is
+        // `undefined` (no ActiveMcpProfileProvider wrapping the renderer).
+        null,
+      );
+    });
+
+    await vi.waitFor(() => {
+      // At least one lifecycle event from the renderer's existing
+      // logWidgetDebug emissions made it through the bridge.
+      expect(stableStoreFns.appendLifecycle).toHaveBeenCalled();
     });
   });
 

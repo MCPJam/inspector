@@ -18,7 +18,9 @@ import {
   type ClientCapRow,
   type ProtocolLeafNodeData,
   type SandboxConfigNodeData,
+  type SandboxConfigSubKey,
 } from "../types";
+import { SandboxProxyIframeCard } from "./sandbox-config-grid";
 
 function getClientLogo(
   clientInfoName: string | undefined,
@@ -262,87 +264,35 @@ export const HostMatrixCard = memo(function HostMatrixCard({
           </div>
         ) : null}
 
-        {/* ===== Sandbox nested frame ===== */}
+        {/* ===== Sandbox nested frame =====
+            Delegated to `SandboxProxyIframeCard` so the chat-thread
+            Sandbox debug panel renders an identical card from the
+            runtime resolver payload. */}
         {appsExtensionAdvertised ? (
-          <div className="hp-sandbox">
-            <button
-              type="button"
-              className="hp-frame-head"
-              onClick={(e) => {
-                e.stopPropagation();
-                onSelectNode(SANDBOX_HUB_NODE_ID);
-              }}
-            >
-              <span className="hp-sandbox-title">Sandbox proxy iframe</span>
-            </button>
-
-            <div className="hp-sb-grid">
-              {sandbox.map((row) => (
-                <SandboxConfigCell
-                  key={row.subKey}
-                  row={row}
-                  selected={
-                    selectedNodeId === sandboxConfigLeafNodeId(row.subKey)
-                  }
-                  onClick={() =>
-                    onSelectNode(sandboxConfigLeafNodeId(row.subKey))
-                  }
-                />
-              ))}
-            </div>
-
-            {/* ===== View nested-nested frame =====
-                Empty state: surfaces `mcpProfile.apps.uiInitialize` — the
-                hostInfo line matches what a view receives over the wire when
-                one connects (SEP-1865). */}
-            <div className="hp-view">
-              <button
-                type="button"
-                className="hp-frame-head"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onSelectNode(APPS_HUB_NODE_ID);
-                }}
-              >
-                <span className="hp-view-title">View iframe</span>
-              </button>
-              <ViewIframeEmptyState hostInfo={hostInfo} />
-            </div>
-          </div>
+          <SandboxProxyIframeCard
+            rows={sandbox}
+            hostInfo={hostInfo}
+            onTitleClick={() => onSelectNode(SANDBOX_HUB_NODE_ID)}
+            onViewTitleClick={() => onSelectNode(APPS_HUB_NODE_ID)}
+            selectedSubKey={(() => {
+              const prefix = "sandbox-cfg:";
+              if (
+                selectedNodeId &&
+                selectedNodeId.startsWith(prefix)
+              ) {
+                return selectedNodeId.slice(prefix.length) as SandboxConfigSubKey;
+              }
+              return null;
+            })()}
+            onRowSelect={(subKey) =>
+              onSelectNode(sandboxConfigLeafNodeId(subKey))
+            }
+          />
         ) : null}
       </div>
     </article>
   );
 });
-
-/* Empty-state body for the View iframe frame: `uiInitialize` envelope only,
-   optionally followed by the resolved hostInfo (name + version). */
-function ViewIframeEmptyState({
-  hostInfo,
-}: {
-  hostInfo: { name: string; version: string } | null;
-}) {
-  return (
-    <div className="hp-view-empty">
-      <span className="hp-view-empty-payload">
-        <span className="hp-view-empty-payload-key">uiInitialize</span>
-        {hostInfo ? (
-          <>
-            <span className="hp-view-empty-payload-arrow" aria-hidden>
-              →
-            </span>
-            <span className="hp-view-empty-payload-value">
-              hostInfo · <b>{hostInfo.name}</b>
-              <span className="hp-view-empty-payload-version">
-                {hostInfo.version}
-              </span>
-            </span>
-          </>
-        ) : null}
-      </span>
-    </div>
-  );
-}
 
 /* ---------------- subcomponents ---------------- */
 
@@ -377,104 +327,6 @@ function ClickableRegion({
       {children}
     </button>
   );
-}
-
-/**
- * One sandbox config row. Severity drives a left-edge dot color but the
- * row sits inside the amber Sandbox frame, so danger/warn render as
- * subtler in-frame tints than they did on the old dark card.
- */
-function SandboxConfigCell({
-  row,
-  selected,
-  onClick,
-}: {
-  row: SandboxConfigNodeData;
-  selected: boolean;
-  onClick: () => void;
-}) {
-  const displayValue =
-    row.summary && row.summary !== "—" ? row.summary : semanticAbsence(row.subKey);
-  // Per-directive token chips intentionally NOT rendered inline. For rows
-  // like cspDirectives with 10+ directives × multiple tokens each, an
-  // always-expanded chip list overwhelms the matrix and pushes downstream
-  // sections (View iframe, Servers) off-screen. The row's summary
-  // ("10 directives · 25 source expressions") conveys cardinality at a glance; the
-  // structured editor in ClientConfigEditor.tsx is where the per-directive
-  // detail belongs. We surface the breakdown as a `title=` tooltip on the
-  // qualifier so power users can hover without losing the layout.
-  const directives = row.directives ?? [];
-  const directivesTooltip =
-    directives.length > 0
-      ? directives
-          .map((d) => `${d.label}: ${d.domains.join(" ")}`)
-          .join("\n")
-      : undefined;
-  return (
-    <button
-      type="button"
-      onClick={(e) => {
-        e.stopPropagation();
-        onClick();
-      }}
-      className={cn(
-        "hp-sb-row",
-        selected && "hp-sb-row--selected",
-        row.severity === "danger" && "hp-sb-row--danger",
-        row.severity === "warn" && "hp-sb-row--warn",
-        row.isChanged && "host-matrix-changed",
-      )}
-    >
-      <span className="hp-sb-key">{row.label}</span>
-      <span className="hp-sb-value-line">
-        <span
-          className={cn(
-            "hp-sb-value",
-            row.summary === "—" && "hp-sb-value--italic",
-          )}
-          title={directivesTooltip ?? row.summary}
-        >
-          {displayValue}
-        </span>
-        {row.qualifier ? (
-          <span
-            className="hp-sb-qual"
-            title={directivesTooltip ?? row.qualifier}
-          >
-            {row.qualifier}
-          </span>
-        ) : null}
-      </span>
-    </button>
-  );
-}
-
-/**
- * Map an absent sandbox slice ("—" summary) to a semantic word, so the
- * reader sees "default" / "none granted" instead of an em-dash that
- * could be confused with "unknown".
- *
- * Note: `restrictTo` / `cspDirectives` / `sandboxAttrs` / `allowFeatures`
- * are not listed here — canvasBuilder skips those rows entirely when at
- * the safe default, so this helper is only called for `mode` and
- * `permissions`.
- */
-function semanticAbsence(key: SandboxConfigNodeData["subKey"]): string {
-  switch (key) {
-    case "permissions":
-      // SEP-1865 is allowlist-only: an empty `allow` map means no permission
-      // is granted, regardless of the inspector-internal resolver mode.
-      return "none granted";
-    case "mode":
-      return "default";
-    case "restrictTo":
-    case "cspDirectives":
-    case "sandboxAttrs":
-    case "allowFeatures":
-      // Unreachable — canvasBuilder drops these rows when they're at the
-      // safe default. Kept for type exhaustiveness.
-      return "";
-  }
 }
 
 /* ---------------- inline styles ---------------- */
@@ -706,159 +558,11 @@ const PAPER_STYLES = `
   font-family: ui-monospace, "JetBrains Mono", monospace;
 }
 
-/* === Sandbox nested frame === */
-.host-paper-card .hp-sandbox {
-  background: var(--hp-sandbox-bg);
-  border: 1px solid var(--hp-sandbox-ring);
-  border-radius: 14px;
-  padding: 20px 20px 22px;
-  color: var(--hp-sandbox-ink);
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-.host-paper-card .hp-frame-head {
-  background: transparent;
-  border: 0;
-  padding: 0;
-  cursor: pointer;
-  text-align: left;
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  color: inherit;
-}
-.host-paper-card .hp-sandbox-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--hp-sandbox-accent);
-  letter-spacing: -0.01em;
-}
-
-.host-paper-card .hp-sb-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 6px 18px;
-}
-.host-paper-card .hp-sb-row {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 6px 8px;
-  border-radius: 8px;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-  text-align: left;
-  font-size: 12.5px;
-  color: var(--hp-sandbox-ink);
-  border-bottom: 1px dashed var(--hp-sandbox-hairline);
-  transition: background 120ms ease;
-  min-width: 0;
-}
-.host-paper-card .hp-sb-row:hover { background: var(--hp-sandbox-row-hover); }
-.host-paper-card .hp-sb-row--selected { background: var(--hp-sandbox-row-selected); }
-.host-paper-card .hp-sb-row--warn {
-  background: color-mix(in oklch, var(--warning) 12%, transparent);
-}
-.host-paper-card .hp-sb-row--warn:hover {
-  background: color-mix(in oklch, var(--warning) 18%, transparent);
-}
-.host-paper-card .hp-sb-row--danger {
-  background: color-mix(in oklch, var(--destructive) 12%, transparent);
-}
-.host-paper-card .hp-sb-row--danger:hover {
-  background: color-mix(in oklch, var(--destructive) 18%, transparent);
-}
-.host-paper-card .hp-sb-key {
-  color: var(--hp-sandbox-sub);
-  font-family: ui-monospace, "JetBrains Mono", monospace;
-  font-size: 11.5px;
-}
-.host-paper-card .hp-sb-value-line {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 8px;
-  min-width: 0;
-}
-.host-paper-card .hp-sb-value {
-  text-align: left;
-  font-family: ui-monospace, "JetBrains Mono", monospace;
-  font-size: 11.5px;
-  color: var(--hp-sandbox-ink);
-  font-weight: 500;
-  min-width: 0;
-  word-break: break-word;
-  overflow-wrap: anywhere;
-}
-.host-paper-card .hp-sb-value--italic {
-  font-style: italic;
-  font-weight: 400;
-  color: var(--hp-sandbox-sub);
-  font-family: inherit;
-  font-size: 12.5px;
-}
-.host-paper-card .hp-sb-qual {
-  text-align: left;
-  font-family: ui-monospace, "JetBrains Mono", monospace;
-  font-size: 10.5px;
-  color: var(--hp-sandbox-sub);
-  flex: 0 0 auto;
-}
-
-/* === View nested-nested frame === */
-.host-paper-card .hp-view {
-  background: var(--hp-view-bg);
-  border: 1px solid var(--hp-view-ring);
-  border-radius: 12px;
-  padding: 16px 18px 18px;
-  color: var(--hp-view-ink);
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.host-paper-card .hp-view-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--hp-view-accent);
-  letter-spacing: -0.01em;
-}
-/* View-iframe empty-state: uiInitialize line (+ optional hostInfo detail). */
-.host-paper-card .hp-view-empty {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 14px 4px 2px;
-  border-top: 1px dashed
-    color-mix(in oklch, var(--diagram-view) 30%, var(--border));
-}
-.host-paper-card .hp-view-empty-payload {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  font-family: ui-monospace, "JetBrains Mono", monospace;
-  font-size: 11.5px;
-  color: var(--hp-view-ink);
-}
-.host-paper-card .hp-view-empty-payload-key {
-  color: var(--hp-view-sub);
-}
-.host-paper-card .hp-view-empty-payload-arrow {
-  color: var(--hp-view-sub);
-}
-.host-paper-card .hp-view-empty-payload-value b {
-  font-weight: 600;
-  color: var(--hp-view-ink);
-}
-.host-paper-card .hp-view-empty-payload-version {
-  margin-left: 6px;
-  padding-left: 6px;
-  border-left: 1px solid var(--hp-view-ring);
-  color: var(--hp-view-sub);
-  font-size: 10.5px;
-}
+/* Sandbox + View frame chrome now lives in sandbox-config-grid.css,
+   scoped under the .sandbox-proxy-iframe-card selector. The matrix
+   mounts <SandboxProxyIframeCard /> directly so dropping these
+   duplicates avoids drift between the two call sites (matrix and the
+   chat-thread Sandbox debug panel). */
 
 /* Off / selected variants of the host-level capability chip, used by
    the new Host capabilities section (mirrors the spec's hostCapabilities

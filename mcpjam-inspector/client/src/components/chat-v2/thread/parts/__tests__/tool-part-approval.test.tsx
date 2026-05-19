@@ -58,8 +58,8 @@ vi.mock("@mcpjam/design-system/badge", () => ({
   Badge: ({ children, ...props }: any) => <span {...props}>{children}</span>,
 }));
 
-vi.mock("../../csp-debug-panel", () => ({
-  CspDebugPanel: () => null,
+vi.mock("../../sandbox-debug-panel", () => ({
+  SandboxDebugPanel: () => null,
 }));
 
 vi.mock("@/components/ui/json-editor", () => ({

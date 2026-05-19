@@ -34,7 +34,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
-import { CspDebugPanel } from "../csp-debug-panel";
+import { SandboxDebugPanel } from "../sandbox-debug-panel";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { cn } from "@/lib/chat-utils";
 import { TextPart } from "./text-part";
@@ -137,7 +137,7 @@ export function ToolPart({
   const [paramsExpanded, setParamsExpanded] = useState(false);
   const isExpanded = !hideDiagnosticsUI && userExpanded;
   const [activeDebugTab, setActiveDebugTab] = useState<
-    "data" | "state" | "csp" | "context" | null
+    "data" | "state" | "sandbox" | "context" | null
   >("data");
 
   const inputData = (part as any).input;
@@ -196,7 +196,7 @@ export function ToolPart({
 
   const debugOptions = useMemo(() => {
     const options: {
-      tab: "data" | "state" | "csp" | "context";
+      tab: "data" | "state" | "sandbox" | "context";
       icon: typeof Database;
       label: string;
       badge?: number;
@@ -216,9 +216,9 @@ export function ToolPart({
     }
 
     options.push({
-      tab: "csp",
+      tab: "sandbox",
       icon: Shield,
-      label: "CSP",
+      label: "Sandbox",
       badge: widgetDebugInfo?.csp?.violations?.length,
     });
 
@@ -229,7 +229,7 @@ export function ToolPart({
     widgetDebugInfo?.modelContext,
   ]);
 
-  const handleDebugClick = (tab: "data" | "state" | "csp" | "context") => {
+  const handleDebugClick = (tab: "data" | "state" | "sandbox" | "context") => {
     if (activeDebugTab === tab) {
       setActiveDebugTab(null);
       setUserExpanded(false);
@@ -332,16 +332,16 @@ export function ToolPart({
           ? "Data"
           : tab === "state"
             ? "State"
-            : tab === "csp"
-              ? "CSP"
+            : tab === "sandbox"
+              ? "Sandbox"
               : "Context";
       const tooltipLabel =
         tab === "data"
           ? "Data"
           : tab === "state"
             ? "Widget State"
-            : tab === "csp"
-              ? "CSP"
+            : tab === "sandbox"
+              ? "Sandbox"
               : "Model Context";
 
       return (
@@ -732,9 +732,18 @@ export function ToolPart({
                   </div>
                 </div>
               )}
-              {hasWidgetDebug && activeDebugTab === "csp" && (
-                <CspDebugPanel
-                  cspInfo={widgetDebugInfo.csp}
+              {hasWidgetDebug && activeDebugTab === "sandbox" && (
+                <SandboxDebugPanel
+                  sandboxInfo={
+                    widgetDebugInfo.csp
+                      ? {
+                          ...widgetDebugInfo.csp,
+                          applied: widgetDebugInfo.applied,
+                          lifecycle: widgetDebugInfo.lifecycle,
+                          hostInfo: widgetDebugInfo.hostInfo ?? null,
+                        }
+                      : undefined
+                  }
                   protocol={widgetDebugInfo.protocol}
                 />
               )}
