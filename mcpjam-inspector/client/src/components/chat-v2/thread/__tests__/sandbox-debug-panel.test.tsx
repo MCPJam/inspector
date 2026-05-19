@@ -53,15 +53,19 @@ describe("SandboxDebugPanel — lifecycle strip", () => {
         protocol="mcp-apps"
       />,
     );
-    expect(screen.queryByText(/proxy/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/initialized/)).not.toBeInTheDocument();
+    // No stage labels render — strip is hidden entirely.
+    expect(screen.queryByText("Proxy")).not.toBeInTheDocument();
+    expect(screen.queryByText("Initialized")).not.toBeInTheDocument();
   });
 
-  it("renders one labeled dot per event the renderer emitted", () => {
+  it("always renders the same 4 stages (Proxy → Content → Bridge → Initialized)", () => {
+    // Even with sparse events, the strip is a fixed-width progress
+    // indicator. Stages without events render in the muted "absent"
+    // tint so the eye locks onto where things stopped.
     const lifecycle: WidgetLifecycleEvent[] = [
       { kind: "sandbox-proxy-ready", status: "ok", timestamp: 1 },
       { kind: "widget-content-ready", status: "ok", timestamp: 2 },
-      { kind: "bridge-connect-error", status: "error", timestamp: 3 },
+      { kind: "bridge-connect-error", status: "error", timestamp: 3, message: "timeout" },
     ];
     render(
       <SandboxDebugPanel
@@ -69,9 +73,38 @@ describe("SandboxDebugPanel — lifecycle strip", () => {
         protocol="mcp-apps"
       />,
     );
-    expect(screen.getByText("proxy")).toBeInTheDocument();
-    expect(screen.getByText("content")).toBeInTheDocument();
-    expect(screen.getByText("bridge err")).toBeInTheDocument();
+    expect(screen.getByText("Proxy")).toBeInTheDocument();
+    expect(screen.getByText("Content")).toBeInTheDocument();
+    expect(screen.getByText("Bridge")).toBeInTheDocument();
+    expect(screen.getByText("Initialized")).toBeInTheDocument();
+  });
+
+  it("collapses repeated lifecycle events into a single stage + retry count", () => {
+    // The renderer can re-trigger the entire sequence on re-render; the
+    // strip must read as a 4-stage progress, not an unbounded event log.
+    const lifecycle: WidgetLifecycleEvent[] = [];
+    for (let i = 0; i < 3; i++) {
+      lifecycle.push({
+        kind: "widget-content-requested",
+        status: "pending",
+        timestamp: i * 10,
+      });
+      lifecycle.push({
+        kind: "widget-content-ready",
+        status: "ok",
+        timestamp: i * 10 + 1,
+      });
+    }
+    render(
+      <SandboxDebugPanel
+        sandboxInfo={{ ...baseSandboxInfo, lifecycle }}
+        protocol="mcp-apps"
+      />,
+    );
+    // Single "Content" stage rendered (not 6 dots), retry indicator
+    // shows the attempt count.
+    expect(screen.getAllByText("Content")).toHaveLength(1);
+    expect(screen.getByText("×3")).toBeInTheDocument();
   });
 });
 

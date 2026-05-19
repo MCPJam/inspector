@@ -237,21 +237,114 @@ function appliedToView(applied: WidgetSandboxApplied): ResolvedSandboxView {
 }
 
 /* ============================================================
-   Lifecycle strip.
+   Lifecycle strip — collapsed to 4 fixed stages.
+
+   The renderer emits ~10 different event kinds and can re-trigger the
+   whole sequence on re-render, so the raw event log grows unbounded
+   and reads as noise (see Sandbox tab screenshots that overflowed to
+   4 wrapped lines). The user-facing question is "did each stage
+   succeed?" — answered by 4 dots in a fixed order, each showing its
+   latest state plus a retry count when the stage fired more than once.
+   The full event log stays in the store for tests / future drill-down.
    ============================================================ */
 
-const LIFECYCLE_KIND_LABELS: Record<WidgetLifecycleEvent["kind"], string> = {
+type LifecycleStage = "proxy" | "content" | "bridge" | "initialized";
+
+interface StageSummary {
+  stage: LifecycleStage;
+  label: string;
+  status: "ok" | "error" | "pending" | "absent";
+  attempts: number;
+  lastMessage?: string;
+  lastTimestamp?: number;
+}
+
+const STAGE_OF_KIND: Partial<
+  Record<WidgetLifecycleEvent["kind"], LifecycleStage>
+> = {
   "sandbox-proxy-ready": "proxy",
-  "widget-content-requested": "content req",
+  "widget-content-requested": "content",
   "widget-content-ready": "content",
-  "widget-content-error": "content err",
-  "widget-content-invalid-mimetype": "mimetype err",
-  "bridge-connect-start": "bridge start",
+  "widget-content-error": "content",
+  "widget-content-invalid-mimetype": "content",
+  "bridge-connect-start": "bridge",
   "bridge-connect-ready": "bridge",
-  "bridge-connect-error": "bridge err",
-  "bridge-connect-skipped": "bridge skip",
+  "bridge-connect-error": "bridge",
+  // bridge-connect-skipped is intentionally excluded — it's a no-op
+  // signal (the renderer deliberately deferred a connect attempt), not
+  // a stage outcome users care about at a glance.
   "app-initialized": "initialized",
 };
+
+const STAGE_LABELS: Record<LifecycleStage, string> = {
+  proxy: "Proxy",
+  content: "Content",
+  bridge: "Bridge",
+  initialized: "Initialized",
+};
+
+const STAGE_ORDER: LifecycleStage[] = [
+  "proxy",
+  "content",
+  "bridge",
+  "initialized",
+];
+
+const ATTEMPT_STARTER_KINDS: Partial<
+  Record<WidgetLifecycleEvent["kind"], true>
+> = {
+  // Each "start" / "requested" event = one new attempt at the stage.
+  "widget-content-requested": true,
+  "bridge-connect-start": true,
+};
+
+function summarizeLifecycle(
+  events: WidgetLifecycleEvent[],
+): StageSummary[] {
+  const acc: Record<LifecycleStage, StageSummary> = {
+    proxy: { stage: "proxy", label: STAGE_LABELS.proxy, status: "absent", attempts: 0 },
+    content: {
+      stage: "content",
+      label: STAGE_LABELS.content,
+      status: "absent",
+      attempts: 0,
+    },
+    bridge: {
+      stage: "bridge",
+      label: STAGE_LABELS.bridge,
+      status: "absent",
+      attempts: 0,
+    },
+    initialized: {
+      stage: "initialized",
+      label: STAGE_LABELS.initialized,
+      status: "absent",
+      attempts: 0,
+    },
+  };
+  for (const e of events) {
+    const stage = STAGE_OF_KIND[e.kind];
+    if (!stage) continue;
+    const slot = acc[stage];
+    if (ATTEMPT_STARTER_KINDS[e.kind]) slot.attempts += 1;
+    // Latest event wins — the strip shows current state, not history.
+    slot.status = e.status;
+    slot.lastMessage = e.message;
+    slot.lastTimestamp = e.timestamp;
+    // For stages whose "start" event isn't also a final state, an
+    // initial pending entry should still count as one attempt. Proxy
+    // and Initialized fire only once each (no starter event), so the
+    // event itself is the attempt — bump on those too if we haven't.
+    if (
+      !ATTEMPT_STARTER_KINDS[e.kind] &&
+      (stage === "proxy" || stage === "initialized") &&
+      slot.attempts === 0
+    ) {
+      slot.attempts = 1;
+    }
+  }
+  return STAGE_ORDER.map((s) => acc[s]);
+}
 
 function LifecycleStrip({
   events,
@@ -261,42 +354,62 @@ function LifecycleStrip({
   themeMode: "light" | "dark";
 }) {
   if (events.length === 0) return null;
+  const summary = summarizeLifecycle(events);
   const tintErr = themeMode === "dark" ? "text-red-400" : "text-red-600";
   const tintOk = themeMode === "dark" ? "text-emerald-400" : "text-emerald-600";
   const tintPending =
     themeMode === "dark" ? "text-amber-400" : "text-amber-600";
+  const tintAbsent =
+    themeMode === "dark" ? "text-muted-foreground/50" : "text-muted-foreground/60";
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      {events.map((event, i) => {
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      {summary.map((s, i) => {
         const tint =
-          event.status === "error"
+          s.status === "error"
             ? tintErr
-            : event.status === "ok"
+            : s.status === "ok"
               ? tintOk
-              : tintPending;
+              : s.status === "pending"
+                ? tintPending
+                : tintAbsent;
         const Icon =
-          event.status === "error"
+          s.status === "error"
             ? CircleX
-            : event.status === "ok"
+            : s.status === "ok"
               ? CircleCheck
-              : CircleDashed;
-        const label = LIFECYCLE_KIND_LABELS[event.kind] ?? event.kind;
+              : s.status === "pending"
+                ? CircleDashed
+                : CircleDashed;
+        const showRetries = s.attempts > 1;
         const title = [
-          event.kind,
-          event.status,
-          new Date(event.timestamp).toLocaleTimeString(),
-          event.message,
+          `${s.label} stage`,
+          `status: ${s.status}`,
+          showRetries ? `attempts: ${s.attempts}` : null,
+          s.lastTimestamp
+            ? new Date(s.lastTimestamp).toLocaleTimeString()
+            : null,
+          s.lastMessage,
         ]
           .filter(Boolean)
           .join(" — ");
         return (
           <span
-            key={`${event.kind}-${i}`}
-            className={`inline-flex items-center gap-1 text-[10px] ${tint}`}
+            key={s.stage}
+            className={`inline-flex items-center gap-1 text-[11px] ${tint}`}
             title={title}
           >
-            <Icon className="h-3 w-3" />
-            <span className="font-mono">{label}</span>
+            <Icon className="h-3.5 w-3.5" />
+            <span className="font-medium">{s.label}</span>
+            {showRetries ? (
+              <span className="font-mono text-[10px] opacity-70">
+                ×{s.attempts}
+              </span>
+            ) : null}
+            {i < summary.length - 1 ? (
+              <span aria-hidden className="ml-1 text-muted-foreground/50">
+                →
+              </span>
+            ) : null}
           </span>
         );
       })}
