@@ -11,28 +11,28 @@
           "type": "minor"
         }
       ],
-      "summary": "Inspector + SDK rollup since the last release.\n\n**@mcpjam/sdk**\n\n- Consume `hostConfig.mcpProfile` end-to-end: profile-aware connection in `MCPClientManager`, new sandbox-policy types, and supporting browser/index exports (#2103).\n\n**@mcpjam/inspector**\n\n- Named hosts UI: new Hosts tab, HostPicker, host builder, and consumer seeding (#2112).\n- Host config: consume `hostConfig.mcpProfile` end-to-end across chatbox, hosted chat, and server connection paths (#2103).\n- Billing: surface pending and failed credit top-ups in the credit balance card (#2111).\n- Electron OAuth: redirect-mixing fix between dev and local (#2116), plus an Electron fallback path for the OAuth modal/sidebar/auth flow (#2096).\n- Tokenizer: stop paging Sentry for client-side fetch failures (#2109).\n- Docs: desktop download links now point at the latest release URLs (#2093).\n- Misc sidebar nit.",
-      "id": "release-rollup-2026-05-14"
+      "summary": "Inspector + SDK rollup since the last release.\n\n**@mcpjam/sdk**\n\n- New `normalizeWidgetCspMeta` export and hardening of CSP/runtime-head helpers used by the ChatGPT widget surface (#2149, #2153).\n\n**@mcpjam/inspector**\n\n- Clients (formerly Hosts) tab: canvas redesign as a single host matrix with diagram color tokens, snappier Servers→Host transition, host routes, and Rename Hosts→Clients in UI (#2126, #2128, #2132, #2133, #2136).\n- Playground / Chat: new IDE-style Playground tab, renamed to Chat with NEW announcement, refactored Chat UX, chatbox surface, playground routing, evals host config override, and copilot/cursor animation with thread-color abstraction (#2121, #2129, #2130, #2131, #2135, #2138, #2144).\n- React Router v7 shell + path-based navigation adapter (#2115).\n- Sandbox: model real-host iframe attributes via 3 new sandbox config fields; stop pre-populating `restrictTo` and hide safe-default sandbox rows (#2142, #2143).\n- ChatGPT client: patches CSP and addresses follow-up CSP review feedback; fix auto-create client (#2147, #2149, #2153, #2154).\n- Tool approvals: default Require tool approval off in client templates; fix tool approvals (#2146, #2150).\n- Host previews and theming: read global theme on host creation + icons, fix system-prompt race, align previewed-host scope across surfaces, hide per-server OAuth errors in playground Tools tab, revert per-client primary color (#2134, #2139, #2140, #2141).\n- Servers spinner held across sign-out gap with snap-to-Servers on project switch; don't send org id from inspector; don't error on invite when guest/UI changes on org modal (#2123, #2125, #2127).\n- Electron: Squirrel + update detector (#2114).\n- PostHog instrumentation for Clients feature launch (#2137).",
+      "id": "release-rollup-2026-05-18"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
       "type": "patch",
-      "oldVersion": "2.4.10",
+      "oldVersion": "2.4.11",
       "changesets": [
-        "release-rollup-2026-05-14"
+        "release-rollup-2026-05-18"
       ],
-      "newVersion": "2.4.11"
+      "newVersion": "2.4.12"
     },
     {
       "name": "@mcpjam/sdk",
       "type": "minor",
-      "oldVersion": "1.5.0",
+      "oldVersion": "1.6.0",
       "changesets": [
-        "release-rollup-2026-05-14"
+        "release-rollup-2026-05-18"
       ],
-      "newVersion": "1.6.0"
+      "newVersion": "1.7.0"
     },
     {
       "name": "@mcpjam/mcp",
