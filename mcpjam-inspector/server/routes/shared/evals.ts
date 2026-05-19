@@ -12,6 +12,10 @@ import {
   storeReplayConfig,
 } from "../../services/evals/route-helpers";
 import {
+  loadSuiteHostConfig,
+  resolveOpenAiCompatForHostConfig,
+} from "../../services/evals/compat-runtime";
+import {
   runEvalSuiteWithAiSdk,
   streamTestCase,
 } from "../../services/evals-runner";
@@ -684,7 +688,12 @@ export async function runEvalsWithManager(
     }
   }
 
-  const { runId, config, recorder } = await startSuiteRunWithRecorder({
+  const {
+    runId,
+    config,
+    recorder,
+    hostConfig: runHostConfigSnapshot,
+  } = await startSuiteRunWithRecorder({
     convexClient,
     suiteId: resolvedSuiteId,
     notes,
@@ -696,6 +705,11 @@ export async function runEvalsWithManager(
     matchOptionsOverride,
     namedHostId,
   });
+  const suiteHostConfig =
+    runHostConfigSnapshot ??
+    (await loadSuiteHostConfig(convexClient, resolvedSuiteId, namedHostId));
+  const suiteInjectOpenAiCompat =
+    resolveOpenAiCompatForHostConfig(suiteHostConfig);
 
   const replayConfigsToStore = filterAndRemapReplayConfigs(
     clientManager.getServerReplayConfigs(),
@@ -777,6 +791,7 @@ export async function runEvalsWithManager(
     convexAuthToken,
     mcpClientManager: clientManager,
     recorder,
+    suiteInjectOpenAiCompat,
   });
 
   return {
@@ -832,6 +847,14 @@ export async function runEvalTestCaseWithManager(
   const suiteDefaultMatchOptions = await loadSuiteDefaultMatchOptions(
     convexClient,
     testCase.evalTestSuiteId,
+  );
+  const suiteHostConfig = await loadSuiteHostConfig(
+    convexClient,
+    testCase.evalTestSuiteId,
+  );
+  const suiteInjectOpenAiCompat = resolveOpenAiCompatForHostConfig(
+    suiteHostConfig,
+    hostConfigOverride as Record<string, unknown> | undefined,
   );
   const test = {
     title: testCase.title,
@@ -917,6 +940,7 @@ export async function runEvalTestCaseWithManager(
     recorder: null,
     testCaseId,
     compareRunId,
+    suiteInjectOpenAiCompat,
   });
 
   const expectedIterationId =
@@ -1084,6 +1108,14 @@ export async function streamEvalTestCaseWithManager(
     convexClient,
     testCase.evalTestSuiteId,
   );
+  const suiteHostConfig = await loadSuiteHostConfig(
+    convexClient,
+    testCase.evalTestSuiteId,
+  );
+  const suiteInjectOpenAiCompat = resolveOpenAiCompatForHostConfig(
+    suiteHostConfig,
+    hostConfigOverride as Record<string, unknown> | undefined,
+  );
   const test = {
     title: testCase.title,
     query: testCaseOverrides?.query ?? testCase.query,
@@ -1182,6 +1214,7 @@ export async function streamEvalTestCaseWithManager(
           suiteId: testCase.evalTestSuiteId,
           runId: null,
           compareRunId,
+          injectOpenAiCompat: suiteInjectOpenAiCompat,
           emit: (event: EvalStreamEvent) => {
             try {
               controller.enqueue(sseEncode(event));

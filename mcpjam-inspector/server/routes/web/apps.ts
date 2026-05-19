@@ -113,10 +113,9 @@ const mcpAppsWidgetContentSchema = projectServerSchema.extend({
   toolName: z.string().min(1),
   theme: z.enum(["light", "dark"]).optional(),
   cspMode: z.enum(["permissive", "widget-declared"]).optional(),
-  // Default false: real Claude/Cursor/MCPJam hosts don't expose
-  // `window.openai`, and the inspector's default host shouldn't lie.
-  // ChatGPT/Copilot/Codex host configs flip this on per request via
-  // the resolver in the renderer.
+  // Default false: Claude/Cursor/Codex-style hosts don't expose
+  // `window.openai`. ChatGPT/Copilot and MCPJam dev host configs flip
+  // this on per request via the resolver in the renderer.
   injectOpenAiCompat: z.boolean().optional().default(false),
   template: z.string().optional(),
   viewMode: z.string().optional(),

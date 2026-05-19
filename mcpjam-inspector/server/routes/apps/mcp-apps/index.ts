@@ -78,8 +78,8 @@ interface WidgetContentRequest {
   /**
    * When true, injects the OpenAI Apps SDK `window.openai` shim into
    * the widget HTML before returning it. Default `false` — only hosts
-   * that emulate ChatGPT/Copilot/Codex should opt in. The flag is
-   * resolved client-side from the active host config's
+   * that emulate ChatGPT/Copilot or MCPJam's dev surface should opt in.
+   * The flag is resolved client-side from the active host config's
    * `mcpProfile.apps.compatRuntime` (with host style preset fallback)
    * so absent / non-boolean payloads here mean "no shim".
    */
@@ -259,11 +259,11 @@ apps.post("/widget-content", async (c) => {
     const isPermissive = effectiveCspMode === "permissive";
 
     // Optionally inject the OpenAI Apps SDK `window.openai` shim.
-    // Real Claude/Cursor/MCPJam hosts don't expose this surface, so
-    // the default is to leave the HTML untouched. The renderer
-    // resolves the flag from the active host config and forwards it
-    // here, so the injection decision travels with the request rather
-    // than living on the server.
+    // Claude/Cursor/Codex-style hosts leave this surface off; ChatGPT/
+    // Copilot and MCPJam's dev surface opt in. The renderer resolves
+    // the flag from the active host config and forwards it here, so the
+    // injection decision travels with the request rather than living on
+    // the server.
     const shouldInjectOpenAiCompat = injectOpenAiCompat === true;
     if (shouldInjectOpenAiCompat) {
       html = injectOpenAICompat(html, {

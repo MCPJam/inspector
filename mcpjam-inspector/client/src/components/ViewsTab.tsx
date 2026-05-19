@@ -627,6 +627,11 @@ export function ViewsTab({
           copyNumber === 1
             ? `${baseName} (copy)`
             : `${baseName} (copy ${copyNumber})`;
+        const injectedOpenAiCompatCopy =
+          widgetHtmlBlobId !== undefined &&
+          view.injectedOpenAiCompat !== undefined
+            ? { injectedOpenAiCompat: view.injectedOpenAiCompat }
+            : {};
 
         if (view.protocol === "mcp-apps") {
           await createMcpView({
@@ -641,8 +646,8 @@ export function ViewsTab({
             toolOutputBlobId,
             widgetHtmlBlobId,
             // Carry the cached-HTML provenance flag across duplicate
-            // so the copy's renderer reads the same byte truth.
-            injectedOpenAiCompat: view.injectedOpenAiCompat,
+            // only when the copy also carries cached widget bytes.
+            ...injectedOpenAiCompatCopy,
             toolErrorText: view.toolErrorText,
             toolMetadata: view.toolMetadata,
             prefersBorder: view.prefersBorder,
@@ -662,7 +667,7 @@ export function ViewsTab({
             toolInput: view.toolInput,
             toolOutputBlobId,
             widgetHtmlBlobId,
-            injectedOpenAiCompat: view.injectedOpenAiCompat,
+            ...injectedOpenAiCompatCopy,
             toolErrorText: view.toolErrorText,
             toolMetadata: view.toolMetadata,
             prefersBorder: view.prefersBorder,

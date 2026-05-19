@@ -14,6 +14,10 @@ import {
   resolveOrgModelConfig,
   type ResolvedOrgModelConfig,
 } from "../../utils/org-model-config.js";
+import {
+  loadSuiteHostConfig,
+  resolveOpenAiCompatForHostConfig,
+} from "./compat-runtime.js";
 
 export type ExecuteSuiteReplayFromRunParams = {
   convexClient: ConvexHttpClient;
@@ -75,7 +79,12 @@ export async function executeSuiteReplayFromRun(
     });
 
   try {
-    const { runId, recorder, config } = await startSuiteRunWithRecorder({
+    const {
+      runId,
+      recorder,
+      config,
+      hostConfig: runHostConfigSnapshot,
+    } = await startSuiteRunWithRecorder({
       convexClient,
       suiteId: replayMetadata.suiteId,
       notes,
@@ -90,6 +99,11 @@ export async function executeSuiteReplayFromRun(
       toolSnapshot,
       toolSnapshotDebug,
     });
+    const replayHostConfig =
+      runHostConfigSnapshot ??
+      (await loadSuiteHostConfig(convexClient, replayMetadata.suiteId));
+    const suiteInjectOpenAiCompat =
+      resolveOpenAiCompatForHostConfig(replayHostConfig);
 
     if (replayConfig.servers.length > 0) {
       try {
@@ -153,6 +167,7 @@ export async function executeSuiteReplayFromRun(
       convexAuthToken,
       mcpClientManager: replayManager,
       recorder,
+      suiteInjectOpenAiCompat,
     });
 
     return {

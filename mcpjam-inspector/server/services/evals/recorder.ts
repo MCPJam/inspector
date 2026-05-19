@@ -423,5 +423,9 @@ export const startSuiteRunWithRecorder = async ({
     suiteId,
     config,
     recorder,
+    hostConfig: response?.hostConfig as
+      | Record<string, unknown>
+      | null
+      | undefined,
   };
 };

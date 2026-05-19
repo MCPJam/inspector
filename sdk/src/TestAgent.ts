@@ -63,10 +63,10 @@ export interface TestAgentConfig {
   /**
    * When true, the agent injects the OpenAI Apps SDK `window.openai`
    * shim into captured widget HTML so replays under hosts that expect
-   * that surface (ChatGPT/Copilot/Codex emulators) render unchanged.
-   * Defaults to `false` — real Claude/Cursor/MCPJam hosts don't expose
-   * `window.openai`, and snapshots should match what the live host
-   * would have produced. Tests that need the shim must opt in.
+   * that surface (ChatGPT/Copilot or MCPJam's dev surface) render
+   * unchanged. Defaults to `false` — Claude/Cursor/Codex-style hosts
+   * don't expose `window.openai`, and snapshots should match what the
+   * live host would have produced. Tests that need the shim must opt in.
    */
   injectOpenAiCompat?: boolean;
 }
@@ -300,8 +300,8 @@ export class TestAgent implements EvalAgent {
 
       // Optionally inject the OpenAI Apps SDK `window.openai` shim into
       // the captured HTML. Default off so snapshots match SEP-1865
-      // honest behavior; callers emulating ChatGPT/Copilot/Codex opt
-      // in via `TestAgentConfig.injectOpenAiCompat`.
+      // honest behavior; callers emulating ChatGPT/Copilot or MCPJam's
+      // dev surface opt in via `TestAgentConfig.injectOpenAiCompat`.
       if (this.injectOpenAiCompat) {
         snapshot.widgetHtml = injectOpenAICompat(snapshot.widgetHtml ?? "", {
           toolId: toolCallId,
@@ -313,6 +313,7 @@ export class TestAgent implements EvalAgent {
           viewParams: {},
         });
       }
+      snapshot.injectedOpenAiCompat = this.injectOpenAiCompat;
 
       params.snapshotBuffer.set(toolCallId, snapshot);
     } catch (error) {

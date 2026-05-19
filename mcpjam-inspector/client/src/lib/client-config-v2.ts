@@ -162,10 +162,10 @@ export type HostConfigMcpProfileV1 = {
     };
     /**
      * Vendor compat-runtime shims the inspector injects into widget
-     * HTML before handing it to the sandbox. Real Claude/Cursor/MCPJam
-     * hosts don't expose these surfaces; ChatGPT/Copilot/Codex-style
-     * hosts do. Absent → resolver falls back to the host style preset
-     * (see `resolveEffectiveCompatRuntime`).
+     * HTML before handing it to the sandbox. Claude/Cursor/Codex-style
+     * hosts leave these surfaces off; ChatGPT/Copilot and MCPJam's dev
+     * surface enable them. Absent → resolver falls back to the host
+     * style preset (see `resolveEffectiveCompatRuntime`).
      */
     compatRuntime?: {
       /**
