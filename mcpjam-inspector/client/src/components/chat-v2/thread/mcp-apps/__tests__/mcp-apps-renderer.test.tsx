@@ -847,6 +847,170 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
   });
 
+  it("prefers the live fetch over cached HTML when liveFetchPreferred is set", async () => {
+    render(
+      <MCPAppsRenderer
+        {...baseProps}
+        cachedWidgetHtmlUrl="blob:cached"
+        liveFetchPreferred
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toBe(
+        "<html><body>live-widget</body></html>",
+      );
+    });
+
+    // authFetch is the live-fetch lever; the cached fetch goes through global.fetch.
+    // Successful live → cached blob URL must not be fetched.
+    expect(vi.mocked(authFetch)).toHaveBeenCalled();
+    expect(vi.mocked(global.fetch)).not.toHaveBeenCalledWith("blob:cached");
+    expect(sandboxedIframePropsRef.current?.permissive).toBe(false);
+  });
+
+  it("falls back to cached HTML when the live fetch throws (e.g. server disconnected)", async () => {
+    vi.mocked(authFetch).mockRejectedValueOnce(
+      new Error('Hosted server not found for "server-1"'),
+    );
+
+    render(
+      <MCPAppsRenderer
+        {...baseProps}
+        cachedWidgetHtmlUrl="blob:cached"
+        liveFetchPreferred
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toBe(
+        "<html><body>widget</body></html>",
+      );
+    });
+
+    // Live attempted, threw, then cached blob fetched.
+    expect(vi.mocked(authFetch)).toHaveBeenCalled();
+    expect(vi.mocked(global.fetch)).toHaveBeenCalledWith("blob:cached");
+    // Cached path forces permissive rendering.
+    expect(sandboxedIframePropsRef.current?.permissive).toBe(true);
+  });
+
+  it("drops stale live-fetch results when the source key has moved on (renderer reuse)", async () => {
+    // Hold the first live fetch open with a controllable promise so we can
+    // simulate the source key changing (e.g. session swap, cspMode toggle,
+    // different toolCallId) before it resolves.
+    let resolveStale!: (response: Response) => void;
+    const staleResponse = new Promise<Response>((r) => {
+      resolveStale = r;
+    });
+    vi.mocked(authFetch).mockImplementationOnce(() => staleResponse);
+
+    const { rerender } = render(
+      <MCPAppsRenderer
+        {...baseProps}
+        toolCallId="call-stale"
+        cachedWidgetHtmlUrl="blob:cached"
+        liveFetchPreferred
+      />,
+    );
+
+    // Wait for the stale fetch to start.
+    await vi.waitFor(() => {
+      expect(vi.mocked(authFetch)).toHaveBeenCalledTimes(1);
+    });
+
+    // Re-render with a new toolCallId. This rotates the source-identity key.
+    // A second live fetch is queued for the new key; we let it resolve
+    // normally with the default authFetch mock.
+    rerender(
+      <MCPAppsRenderer
+        {...baseProps}
+        toolCallId="call-fresh"
+        cachedWidgetHtmlUrl="blob:cached"
+        liveFetchPreferred
+      />,
+    );
+
+    // Wait for the fresh fetch to complete and paint the sandbox.
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toBe(
+        "<html><body>live-widget</body></html>",
+      );
+    });
+
+    // Now resolve the *stale* fetch with a different payload. The renderer
+    // must drop it — the iframe must keep showing the fresh HTML.
+    await act(async () => {
+      resolveStale({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            html: "<html><body>STALE-CONTENT</body></html>",
+            csp: null,
+            permissions: null,
+            permissive: true,
+            mimeTypeValid: true,
+            prefersBorder: true,
+          }),
+        status: 200,
+        headers: new Headers(),
+      } as Response);
+      // Flush microtasks so any guarded setState would have committed.
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(sandboxedIframePropsRef.current?.html).toBe(
+      "<html><body>live-widget</body></html>",
+    );
+    expect(sandboxedIframePropsRef.current?.html).not.toContain(
+      "STALE-CONTENT",
+    );
+  });
+
+  it("does not fall back to cached HTML when the live fetch returns an invalid mimetype", async () => {
+    // Server reachable but template misconfigured — invalid mimetype is a
+    // content error, not a transport error. The renderer must surface it
+    // and not silently mask it with stale cached HTML.
+    vi.mocked(authFetch).mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          html: "<html><body>live-widget</body></html>",
+          csp: null,
+          permissions: null,
+          permissive: false,
+          mimeTypeValid: false,
+          mimeTypeWarning:
+            'Resource served as "text/html" but SEP-1865 requires "text/html;profile=mcp-app"',
+          prefersBorder: true,
+        }),
+      status: 200,
+      headers: new Headers(),
+    } as Response);
+
+    render(
+      <MCPAppsRenderer
+        {...baseProps}
+        cachedWidgetHtmlUrl="blob:cached"
+        liveFetchPreferred
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(
+        screen.getByText(/SEP-1865 requires/i),
+      ).toBeInTheDocument();
+    });
+
+    // Cached blob must NOT be fetched on invalid mimetype.
+    expect(vi.mocked(global.fetch)).not.toHaveBeenCalledWith("blob:cached");
+    // No widget HTML should have made it to the sandbox — the renderer is
+    // showing the error UI in place of the iframe, so `html` is either null
+    // (iframe still mounted but unset) or the iframe is not mounted at all.
+    expect(sandboxedIframePropsRef.current?.html ?? null).toBeNull();
+  });
+
   it("waits for the bridge transport before loading widget HTML into the sandbox", async () => {
     let resolveConnect: (() => void) | undefined;
     mockBridge.connect.mockImplementation(

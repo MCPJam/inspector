@@ -118,12 +118,26 @@ export function snapshotsToTraceWidgetSnapshots(
  * Build toolRenderOverrides directly from TraceWidgetSnapshot[].
  * Used when loading a persisted session where we have snapshots
  * but don't need the full adaptTraceToUiMessages pipeline.
+ *
+ * When `preferLiveWhenPossible` is set, snapshots that have enough information
+ * to live-fetch (mcp-apps with a real `resourceUri`) get `liveFetchPreferred:
+ * true` so the renderer attempts the live MCP Apps path first and only falls
+ * back to the cached snapshot HTML if live fetch fails (e.g., the server is
+ * no longer connected). The cached URL is preserved as the fallback. OpenAI
+ * Apps snapshots (whose `toolMetadata["openai/outputTemplate"]` is
+ * `"__cached__"`) and mcp-apps snapshots missing `resourceUri` cannot
+ * live-fetch, so they stay on the cached path unconditionally.
  */
 export function buildToolRenderOverridesFromSnapshots(
   snapshots: TraceWidgetSnapshot[],
+  options: { preferLiveWhenPossible?: boolean } = {},
 ): Record<string, ToolRenderOverride> {
+  const preferLive = options.preferLiveWhenPossible ?? false;
   const overrides: Record<string, ToolRenderOverride> = {};
   for (const snap of snapshots) {
+    const canLiveFetch =
+      preferLive && snap.protocol === "mcp-apps" && !!snap.resourceUri;
+    const cachedWidgetHtmlUrl = snap.widgetHtmlUrl ?? undefined;
     const replay = buildPersistedExecutionReplay({
       protocol: snap.protocol,
       toolCallId: snap.toolCallId,
@@ -131,8 +145,9 @@ export function buildToolRenderOverridesFromSnapshots(
       toolOutput: snap.toolOutput,
       toolState: "output-available",
       serverId: snap.serverId,
-      isOffline: !!snap.widgetHtmlUrl,
-      cachedWidgetHtmlUrl: snap.widgetHtmlUrl ?? undefined,
+      isOffline: !!cachedWidgetHtmlUrl,
+      cachedWidgetHtmlUrl,
+      liveFetchPreferred: canLiveFetch,
       resourceUri: snap.resourceUri,
       toolMetadata: snap.toolMetadata,
       widgetCsp: snap.widgetCsp as any,

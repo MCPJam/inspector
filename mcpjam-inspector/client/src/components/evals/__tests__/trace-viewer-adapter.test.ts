@@ -728,6 +728,109 @@ describe("adaptTraceToUiMessages", () => {
     expect(overrides["call-1"].toolOutput).toBeUndefined();
   });
 
+  describe("buildToolRenderOverridesFromSnapshots / preferLiveWhenPossible", () => {
+    it("sets liveFetchPreferred for mcp-apps snapshots with a resourceUri but keeps the cached URL as fallback", () => {
+      const overrides = buildToolRenderOverridesFromSnapshots(
+        [
+          makeWidgetSnapshot({
+            toolCallId: "call-mcp-live",
+            protocol: "mcp-apps",
+            resourceUri: "ui://widget/create-view.html",
+            widgetHtmlUrl: "https://storage.example.com/mcp-widget.html",
+          }),
+        ],
+        { preferLiveWhenPossible: true },
+      );
+
+      const override = overrides["call-mcp-live"];
+      expect(override).toBeDefined();
+      expect(override.liveFetchPreferred).toBe(true);
+      expect(override.cachedWidgetHtmlUrl).toBe(
+        "https://storage.example.com/mcp-widget.html",
+      );
+      expect(override.isOffline).toBe(true);
+      expect(override.resourceUri).toBe("ui://widget/create-view.html");
+    });
+
+    it("leaves liveFetchPreferred unset for mcp-apps snapshots without a resourceUri", () => {
+      const overrides = buildToolRenderOverridesFromSnapshots(
+        [
+          makeWidgetSnapshot({
+            toolCallId: "call-mcp-no-uri",
+            protocol: "mcp-apps",
+            resourceUri: undefined,
+            widgetHtmlUrl: "https://storage.example.com/no-uri.html",
+          }),
+        ],
+        { preferLiveWhenPossible: true },
+      );
+
+      const override = overrides["call-mcp-no-uri"];
+      expect(override.liveFetchPreferred).toBe(false);
+      expect(override.cachedWidgetHtmlUrl).toBe(
+        "https://storage.example.com/no-uri.html",
+      );
+      expect(override.isOffline).toBe(true);
+    });
+
+    it("leaves liveFetchPreferred unset for openai-apps snapshots", () => {
+      const overrides = buildToolRenderOverridesFromSnapshots(
+        [
+          makeWidgetSnapshot({
+            toolCallId: "call-openai",
+            protocol: "openai-apps",
+            resourceUri: undefined,
+            toolMetadata: { "openai/outputTemplate": "__cached__" },
+            widgetHtmlUrl: "https://storage.example.com/openai-widget.html",
+          }),
+        ],
+        { preferLiveWhenPossible: true },
+      );
+
+      const override = overrides["call-openai"];
+      expect(override.liveFetchPreferred).toBe(false);
+      expect(override.cachedWidgetHtmlUrl).toBe(
+        "https://storage.example.com/openai-widget.html",
+      );
+      expect(override.isOffline).toBe(true);
+    });
+
+    it("defaults to liveFetchPreferred=false when the option is not set", () => {
+      const overrides = buildToolRenderOverridesFromSnapshots([
+        makeWidgetSnapshot({
+          toolCallId: "call-default",
+          widgetHtmlUrl: "https://storage.example.com/default.html",
+        }),
+      ]);
+
+      const override = overrides["call-default"];
+      expect(override.liveFetchPreferred).toBe(false);
+      expect(override.cachedWidgetHtmlUrl).toBe(
+        "https://storage.example.com/default.html",
+      );
+      expect(override.isOffline).toBe(true);
+    });
+
+    it("sets liveFetchPreferred without a cached fallback when the snapshot has no widget HTML", () => {
+      const overrides = buildToolRenderOverridesFromSnapshots(
+        [
+          makeWidgetSnapshot({
+            toolCallId: "call-no-url",
+            protocol: "mcp-apps",
+            resourceUri: "ui://widget/create-view.html",
+            widgetHtmlUrl: undefined,
+          }),
+        ],
+        { preferLiveWhenPossible: true },
+      );
+
+      const override = overrides["call-no-url"];
+      expect(override.liveFetchPreferred).toBe(true);
+      expect(override.cachedWidgetHtmlUrl).toBeUndefined();
+      expect(override.isOffline).toBe(false);
+    });
+  });
+
   it("treats nested result.isError tool-results as output errors", () => {
     const trace: TraceEnvelope = {
       messages: [

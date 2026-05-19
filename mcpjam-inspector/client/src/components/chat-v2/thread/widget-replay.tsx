@@ -167,6 +167,7 @@ export function WidgetReplay({
       onAppSupportedDisplayModesChange={onAppSupportedDisplayModesChange}
       isOffline={renderOverride?.isOffline}
       cachedWidgetHtmlUrl={renderOverride?.cachedWidgetHtmlUrl}
+      liveFetchPreferred={renderOverride?.liveFetchPreferred}
       widgetCsp={renderOverride?.widgetCsp}
       widgetPermissions={renderOverride?.widgetPermissions}
       widgetPermissive={renderOverride?.widgetPermissive}

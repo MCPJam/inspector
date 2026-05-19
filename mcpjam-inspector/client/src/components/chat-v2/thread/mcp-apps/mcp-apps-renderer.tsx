@@ -205,6 +205,14 @@ interface MCPAppsRendererProps {
   isOffline?: boolean;
   /** URL to cached widget HTML for offline rendering */
   cachedWidgetHtmlUrl?: string;
+  /**
+   * If true, attempt the live MCP Apps fetch first and only fall back to
+   * `cachedWidgetHtmlUrl` if the live fetch fails (e.g. the server is no
+   * longer connected). Used by in-flow session revisit; persisted offline
+   * replay (Views tab, eval traces) leaves this unset so the cached path
+   * stays primary.
+   */
+  liveFetchPreferred?: boolean;
   /** Persisted CSP metadata for cached/offline replay */
   widgetCsp?: McpUiResourceCsp | null;
   /** Persisted permissions metadata for cached/offline replay */
@@ -252,6 +260,7 @@ export function MCPAppsRenderer({
   onAppSupportedDisplayModesChange,
   isOffline,
   cachedWidgetHtmlUrl,
+  liveFetchPreferred,
   widgetCsp: initialWidgetCsp,
   widgetPermissions: initialWidgetPermissions,
   widgetPermissive: initialWidgetPermissive,
@@ -551,6 +560,14 @@ export function MCPAppsRenderer({
   toolOutputRef.current = toolOutput;
   const themeModeRef = useRef(themeMode);
 
+  // Source-identity guard for the async fetch effect. The renderer can be
+  // reused across session swaps and prop changes, so an older fetch can
+  // resolve after `{ toolCallId, resourceUri, cachedWidgetHtmlUrl, cspMode,
+  // liveFetchPreferred }` has moved on. Each effect run sets this ref to
+  // its own key; the helpers below drop any state writes that don't still
+  // match the latest key.
+  const latestFetchSourceKeyRef = useRef<string>("");
+
   const {
     canRenderStreamingInput,
     signalStreamingRender,
@@ -579,41 +596,183 @@ export function MCPAppsRenderer({
     // Re-fetch if CSP mode changed (widget needs to reload with new CSP policy)
     if (widgetHtml && loadedCspMode === cspMode) return;
 
+    // Source-identity key for this run. Any in-flight fetch whose key no
+    // longer matches `latestFetchSourceKeyRef.current` when it resolves is
+    // stale and MUST NOT mutate state.
+    const fetchSourceKey = [
+      toolCallId,
+      resourceUri ?? "",
+      cachedWidgetHtmlUrl ?? "",
+      cspMode,
+      liveFetchPreferred ? "live-pref" : "",
+    ].join("|");
+    latestFetchSourceKeyRef.current = fetchSourceKey;
+    const isStillCurrent = () =>
+      latestFetchSourceKeyRef.current === fetchSourceKey;
+
+    // Throws on failure. Caller is responsible for surfacing the error.
+    const loadFromCachedUrl = async (cachedUrl: string) => {
+      const cachedResponse = await fetch(cachedUrl);
+      if (!cachedResponse.ok) {
+        throw new Error(
+          `Failed to fetch cached widget HTML: ${cachedResponse.statusText}`,
+        );
+      }
+      const html = await cachedResponse.text();
+      if (!isStillCurrent()) return;
+      // Reset readiness so the previous bridge's transport doesn't
+      // get reused with the new HTML before its connect resolves.
+      setBridgeTransportReady(false);
+      setWidgetHtml(html);
+      setWidgetCsp(undefined);
+      setWidgetPermissions(undefined);
+      setWidgetPermissive(true);
+      setPrefersBorder(initialPrefersBorder ?? true);
+      setLoadedCspMode(cspMode);
+      setWidgetHtmlStore(toolCallId, html);
+      logWidgetDebug("host-to-ui", "debug/widget-content-ready", {
+        cached: true,
+        cspMode,
+        htmlLength: html.length,
+        permissive: true,
+      });
+    };
+
+    // Throws on failure. Returns true on success, false if the server
+    // returned an invalid mimetype (which is a content error — caller
+    // should surface it and NOT fall back to a cached blob).
+    const loadFromLiveFetch = async (): Promise<boolean> => {
+      const {
+        html,
+        csp,
+        permissions,
+        permissive,
+        mimeTypeWarning: warning,
+        mimeTypeValid: valid,
+        prefersBorder,
+      } = await fetchMcpAppsWidgetContent({
+        serverId,
+        resourceUri,
+        toolInput: toolInputRef.current,
+        toolOutput: toolOutputRef.current,
+        // Surface `_meta` from the tool response so the compat runtime
+        // can expose it as `window.openai.toolResponseMetadata`. Prefer
+        // the explicit `toolResponseMetadata` prop (which the caller
+        // computes from rawOutput where the `{ value, _meta }` wrapper
+        // is still intact); fall back to deriving from the resolved
+        // output for callers that don't pass it.
+        toolResponseMetadata:
+          toolResponseMetadata ??
+          readToolResultMeta(toolOutputRef.current) ??
+          null,
+        initialWidgetState,
+        toolId: toolCallId,
+        toolName,
+        theme: themeModeRef.current,
+        cspMode,
+      });
+
+      // Stale fetch: source key moved on (e.g. session swap, CSP toggle,
+      // tool call change) while this request was in flight. Drop the
+      // result so it can't overwrite the newer commit's state.
+      if (!isStillCurrent()) return true;
+
+      if (!valid) {
+        const errorMessage =
+          warning ||
+          `Invalid mimetype - SEP-1865 requires "text/html;profile=mcp-app"`;
+        setLoadError(errorMessage);
+        logWidgetDebug(
+          "host-to-ui",
+          "debug/widget-content-invalid-mimetype",
+          { cspMode, error: errorMessage },
+        );
+        return false;
+      }
+
+      // Reset readiness so the previous bridge's transport doesn't get
+      // reused with the new HTML before its connect resolves.
+      setBridgeTransportReady(false);
+      setWidgetHtml(html);
+      setWidgetCsp(csp);
+      setWidgetPermissions(permissions);
+      setWidgetPermissive(permissive ?? false);
+      setPrefersBorder(prefersBorder ?? true);
+      setLoadedCspMode(cspMode);
+
+      // Store widget HTML in debug store for save view feature
+      setWidgetHtmlStore(toolCallId, html);
+
+      // Update the widget debug store with CSP and permissions info
+      if (csp || permissions || !permissive) {
+        setWidgetCspStore(toolCallId, {
+          mode: permissive ? "permissive" : "widget-declared",
+          connectDomains: csp?.connectDomains || [],
+          resourceDomains: csp?.resourceDomains || [],
+          frameDomains: csp?.frameDomains || [],
+          baseUriDomains: csp?.baseUriDomains || [],
+          permissions: permissions,
+          widgetDeclared: csp
+            ? {
+                connectDomains: csp.connectDomains,
+                resourceDomains: csp.resourceDomains,
+                frameDomains: csp.frameDomains,
+                baseUriDomains: csp.baseUriDomains,
+              }
+            : null,
+        });
+      }
+      logWidgetDebug("host-to-ui", "debug/widget-content-ready", {
+        cached: false,
+        cspMode,
+        hasCsp: !!csp,
+        hasPermissions: !!permissions,
+        htmlLength: html.length,
+        permissive: permissive ?? false,
+        prefersBorder: prefersBorder ?? true,
+      });
+      return true;
+    };
+
     const fetchWidgetHtml = async () => {
       try {
         logWidgetDebug("host-to-ui", "debug/widget-content-requested", {
           cachedWidgetHtmlUrl: cachedWidgetHtmlUrl ?? null,
           cspMode,
           isOffline: !!isOffline,
+          liveFetchPreferred: !!liveFetchPreferred,
           resourceUri,
           toolState: toolState ?? null,
         });
-        // Use cached widget HTML whenever available (faster and works offline)
-        // This is for the Views tab offline rendering
-        if (cachedWidgetHtmlUrl) {
-          const cachedResponse = await fetch(cachedWidgetHtmlUrl);
-          if (!cachedResponse.ok) {
-            throw new Error(
-              `Failed to fetch cached widget HTML: ${cachedResponse.statusText}`,
+
+        // In-flow session revisit: try the live MCP Apps fetch first so the
+        // widget re-renders against the active host's current CSP / bridge
+        // state. If the server is no longer connected (or live fetch fails
+        // for any reason), fall back to the cached snapshot HTML.
+        if (liveFetchPreferred && cachedWidgetHtmlUrl) {
+          try {
+            await loadFromLiveFetch();
+            return;
+          } catch (liveErr) {
+            logWidgetDebug(
+              "host-to-ui",
+              "debug/widget-content-live-fallback",
+              {
+                error:
+                  liveErr instanceof Error
+                    ? liveErr.message
+                    : String(liveErr),
+              },
             );
+            await loadFromCachedUrl(cachedWidgetHtmlUrl);
+            return;
           }
-          const html = await cachedResponse.text();
-          // Reset readiness so the previous bridge's transport doesn't
-          // get reused with the new HTML before its connect resolves.
-          setBridgeTransportReady(false);
-          setWidgetHtml(html);
-          setWidgetCsp(undefined);
-          setWidgetPermissions(undefined);
-          setWidgetPermissive(true);
-          setPrefersBorder(initialPrefersBorder ?? true);
-          setLoadedCspMode(cspMode);
-          setWidgetHtmlStore(toolCallId, html);
-          logWidgetDebug("host-to-ui", "debug/widget-content-ready", {
-            cached: true,
-            cspMode,
-            htmlLength: html.length,
-            permissive: true,
-          });
+        }
+
+        // Persisted offline replay (Views tab, eval traces, openai-apps
+        // revisit): cached HTML is the only source.
+        if (cachedWidgetHtmlUrl) {
+          await loadFromCachedUrl(cachedWidgetHtmlUrl);
           return;
         }
 
@@ -629,90 +788,9 @@ export function MCPAppsRenderer({
           return;
         }
 
-        const {
-          html,
-          csp,
-          permissions,
-          permissive,
-          mimeTypeWarning: warning,
-          mimeTypeValid: valid,
-          prefersBorder,
-        } = await fetchMcpAppsWidgetContent({
-          serverId,
-          resourceUri,
-          toolInput: toolInputRef.current,
-          toolOutput: toolOutputRef.current,
-          // Surface `_meta` from the tool response so the compat runtime
-          // can expose it as `window.openai.toolResponseMetadata`. Prefer
-          // the explicit `toolResponseMetadata` prop (which the caller
-          // computes from rawOutput where the `{ value, _meta }` wrapper
-          // is still intact); fall back to deriving from the resolved
-          // output for callers that don't pass it.
-          toolResponseMetadata:
-            toolResponseMetadata ??
-            readToolResultMeta(toolOutputRef.current) ??
-            null,
-          initialWidgetState,
-          toolId: toolCallId,
-          toolName,
-          theme: themeModeRef.current,
-          cspMode,
-        });
-
-        if (!valid) {
-          const errorMessage =
-            warning ||
-            `Invalid mimetype - SEP-1865 requires "text/html;profile=mcp-app"`;
-          setLoadError(errorMessage);
-          logWidgetDebug("host-to-ui", "debug/widget-content-invalid-mimetype", {
-            cspMode,
-            error: errorMessage,
-          });
-          return;
-        }
-
-        // Reset readiness so the previous bridge's transport doesn't get
-        // reused with the new HTML before its connect resolves.
-        setBridgeTransportReady(false);
-        setWidgetHtml(html);
-        setWidgetCsp(csp);
-        setWidgetPermissions(permissions);
-        setWidgetPermissive(permissive ?? false);
-        setPrefersBorder(prefersBorder ?? true);
-        setLoadedCspMode(cspMode);
-
-        // Store widget HTML in debug store for save view feature
-        setWidgetHtmlStore(toolCallId, html);
-
-        // Update the widget debug store with CSP and permissions info
-        if (csp || permissions || !permissive) {
-          setWidgetCspStore(toolCallId, {
-            mode: permissive ? "permissive" : "widget-declared",
-            connectDomains: csp?.connectDomains || [],
-            resourceDomains: csp?.resourceDomains || [],
-            frameDomains: csp?.frameDomains || [],
-            baseUriDomains: csp?.baseUriDomains || [],
-            permissions: permissions,
-            widgetDeclared: csp
-              ? {
-                  connectDomains: csp.connectDomains,
-                  resourceDomains: csp.resourceDomains,
-                  frameDomains: csp.frameDomains,
-                  baseUriDomains: csp.baseUriDomains,
-                }
-              : null,
-          });
-        }
-        logWidgetDebug("host-to-ui", "debug/widget-content-ready", {
-          cached: false,
-          cspMode,
-          hasCsp: !!csp,
-          hasPermissions: !!permissions,
-          htmlLength: html.length,
-          permissive: permissive ?? false,
-          prefersBorder: prefersBorder ?? true,
-        });
+        await loadFromLiveFetch();
       } catch (err) {
+        if (!isStillCurrent()) return;
         const errorMessage =
           err instanceof Error ? err.message : "Failed to prepare widget";
         setLoadError(errorMessage);
@@ -736,6 +814,7 @@ export function MCPAppsRenderer({
     cspMode,
     isOffline,
     cachedWidgetHtmlUrl,
+    liveFetchPreferred,
     initialPrefersBorder,
   ]);
 
