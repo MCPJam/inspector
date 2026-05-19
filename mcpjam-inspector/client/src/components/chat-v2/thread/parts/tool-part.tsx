@@ -12,7 +12,7 @@ import {
   Shield,
   ShieldCheck,
   ShieldX,
-  X,
+  Terminal,
 } from "lucide-react";
 import { UITools, ToolUIPart, DynamicToolUIPart } from "ai";
 
@@ -29,7 +29,6 @@ import {
   isDynamicTool,
 } from "../thread-helpers";
 import { Badge } from "@mcpjam/design-system/badge";
-import { Button } from "@mcpjam/design-system/button";
 import {
   Tooltip,
   TooltipContent,
@@ -127,21 +126,16 @@ export function ToolPart({
   const resolvedThemeMode = chatboxHostTheme ?? themeMode;
   const mcpIconClassName =
     resolvedThemeMode === "dark" ? "h-3 w-3 filter invert" : "h-3 w-3";
-  const pendingApprovalClasses =
-    resolvedThemeMode === "dark"
-      ? "text-[11px] font-medium text-pending"
-      : "text-[11px] font-medium text-pending-foreground";
-  const approvedToolClasses =
-    "flex items-center gap-1 text-[11px] font-medium text-success";
   const needsApproval = state === "approval-requested" && !!approvalId;
   const [approvalVisualState, setApprovalVisualState] =
     useState<ApprovalVisualState>("pending");
   const isDenied =
     approvalVisualState === "denied" || state === "output-denied";
   const hideDiagnosticsUI = minimalMode;
-  const hideAppControls = isDenied || needsApproval;
+  const hideAppControls = isDenied;
   const [userExpanded, setUserExpanded] = useState(false);
-  const isExpanded = needsApproval || (!hideDiagnosticsUI && userExpanded);
+  const [paramsExpanded, setParamsExpanded] = useState(false);
+  const isExpanded = !hideDiagnosticsUI && userExpanded;
   const [activeDebugTab, setActiveDebugTab] = useState<
     "data" | "state" | "csp" | "context" | null
   >("data");
@@ -161,6 +155,14 @@ export function ToolPart({
     (traceDisplayMode === "markdown" || traceDisplayMode === "json-markdown"),
   );
   const hasInput = inputData !== undefined && inputData !== null;
+  const paramCount = useMemo(() => {
+    if (!hasInput) return 0;
+    if (Array.isArray(inputData)) return inputData.length;
+    if (typeof inputData === "object") {
+      return Object.keys(inputData as Record<string, unknown>).length;
+    }
+    return 1;
+  }, [hasInput, inputData]);
   const hasOutput = outputData !== undefined && outputData !== null;
   const hasError = state === "output-error" && !!errorText;
   const showRawResult = hasOutput && !hasAttachedTraceDisplay;
@@ -503,24 +505,117 @@ export function ToolPart({
     );
   };
 
+  if (needsApproval) {
+    return (
+      <div className="text-xs">
+        <div className="flex flex-col gap-2 w-full">
+          <div
+            className={cn(
+              "flex w-full items-center gap-3 pl-3.5 pr-1.5 py-1.5 rounded-full border",
+              approvalVisualState === "approved"
+                ? "border-success/40 bg-success/10"
+                : approvalVisualState === "denied"
+                  ? "border-destructive/40 bg-destructive/10"
+                  : "border-border/60 bg-muted/30",
+            )}
+          >
+            <span className="inline-flex items-center gap-1.5 text-muted-foreground text-[12px] shrink-0">
+              <Terminal className="h-3 w-3" />
+              <span>Run</span>
+            </span>
+            <span className="font-mono text-[13px] text-foreground truncate min-w-0">
+              {label}
+            </span>
+
+            {approvalVisualState === "pending" && (
+              <>
+                {paramCount > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => setParamsExpanded((v) => !v)}
+                    className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[12px] text-muted-foreground hover:bg-foreground/5 hover:text-foreground transition-colors cursor-pointer shrink-0"
+                    aria-expanded={paramsExpanded}
+                  >
+                    {paramCount} parameter{paramCount === 1 ? "" : "s"}
+                    <ChevronDown
+                      className={cn(
+                        "h-3 w-3 transition-transform",
+                        paramsExpanded && "rotate-180",
+                      )}
+                    />
+                  </button>
+                ) : (
+                  <span className="px-2 text-[12px] text-muted-foreground/60 shrink-0">
+                    no parameters
+                  </span>
+                )}
+                <span className="ml-auto h-4 w-px bg-border/60 shrink-0" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!approvalId) return;
+                    setApprovalVisualState("approved");
+                    onApprove?.(approvalId);
+                  }}
+                  className="inline-flex items-center gap-1 rounded-full bg-primary px-3 py-1 text-[12px] font-semibold text-primary-foreground hover:brightness-110 transition cursor-pointer"
+                >
+                  <Check className="h-3 w-3" />
+                  Approve
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!approvalId) return;
+                    setApprovalVisualState("denied");
+                    onDeny?.(approvalId);
+                  }}
+                  className="inline-flex items-center rounded-full px-3 py-1 text-[12px] font-medium text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition cursor-pointer"
+                >
+                  Deny
+                </button>
+              </>
+            )}
+
+            {approvalVisualState === "approved" && (
+              <span className="inline-flex items-center gap-1 px-2 text-[12px] font-medium text-success">
+                <ShieldCheck className="h-3 w-3" />
+                Approved
+              </span>
+            )}
+            {approvalVisualState === "denied" && (
+              <span className="inline-flex items-center gap-1 px-2 text-[12px] font-medium text-destructive">
+                <ShieldX className="h-3 w-3" />
+                Denied
+              </span>
+            )}
+          </div>
+
+          {paramsExpanded &&
+            hasInput &&
+            approvalVisualState === "pending" && (
+              <div className="w-full rounded-lg border border-border/40 bg-muted/20 max-h-[300px] overflow-auto">
+                <JsonEditor
+                  height="100%"
+                  viewOnly
+                  value={inputData}
+                  className="p-2 text-[11px]"
+                  collapsible
+                  defaultExpandDepth={2}
+                />
+              </div>
+            )}
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div
-      className={cn(
-        "@container rounded-lg border text-xs",
-        needsApproval && approvalVisualState === "pending"
-          ? "border-pending/40 bg-pending/5"
-          : needsApproval && approvalVisualState === "approved"
-            ? "border-success/40 bg-success/5"
-            : needsApproval && approvalVisualState === "denied"
-              ? "border-destructive/40 bg-destructive/5"
-              : "border-border/50 bg-background/70",
-      )}
-    >
+    <div className="@container rounded-lg border text-xs border-border/50 bg-background/70">
       <button
         type="button"
         className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer"
         onClick={() => {
-          if (hideDiagnosticsUI && !needsApproval) {
+          if (hideDiagnosticsUI) {
             return;
           }
           setUserExpanded((prev) => {
@@ -546,21 +641,6 @@ export function ToolPart({
               {label}
             </span>
           </span>
-          {needsApproval && approvalVisualState === "pending" && (
-            <span className={pendingApprovalClasses}>Approve tool call?</span>
-          )}
-          {needsApproval && approvalVisualState === "approved" && (
-            <span className={approvedToolClasses}>
-              <ShieldCheck className="h-3.5 w-3.5" />
-              Approved
-            </span>
-          )}
-          {needsApproval && approvalVisualState === "denied" && (
-            <span className="flex items-center gap-1 text-[11px] font-medium text-destructive">
-              <ShieldX className="h-3.5 w-3.5" />
-              Denied
-            </span>
-          )}
         </span>
         <span className="inline-flex items-center gap-1.5 text-muted-foreground">
           {showDisplayModeControls && (
@@ -729,42 +809,6 @@ export function ToolPart({
               )}
               {!hasWidgetDebug && renderToolData()}
             </>
-          )}
-          {needsApproval && approvalVisualState === "pending" && (
-            <div className="flex items-center gap-2 pt-2 border-t border-border/40 mt-3">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-7 px-3 text-xs border-success/40 text-success hover:bg-success/10"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (!approvalId) return;
-                  setApprovalVisualState("approved");
-                  setUserExpanded(false);
-                  onApprove?.(approvalId);
-                }}
-              >
-                <Check className="h-3 w-3 mr-1" />
-                Approve
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-7 px-3 text-xs border-destructive/40 text-destructive hover:bg-destructive/10"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (!approvalId) return;
-                  setApprovalVisualState("denied");
-                  setUserExpanded(false);
-                  onDeny?.(approvalId);
-                }}
-              >
-                <X className="h-3 w-3 mr-1" />
-                Deny
-              </Button>
-            </div>
           )}
         </div>
       )}
