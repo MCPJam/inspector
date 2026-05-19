@@ -774,6 +774,7 @@ export function MCPAppsRenderer({
   // Widget debug store
   const setWidgetDebugInfo = useWidgetDebugStore((s) => s.setWidgetDebugInfo);
   const setWidgetGlobals = useWidgetDebugStore((s) => s.setWidgetGlobals);
+  const setWidgetStateStore = useWidgetDebugStore((s) => s.setWidgetState);
   const setWidgetCspStore = useWidgetDebugStore((s) => s.setWidgetCsp);
   const addCspViolation = useWidgetDebugStore((s) => s.addCspViolation);
   const clearCspViolations = useWidgetDebugStore((s) => s.clearCspViolations);
@@ -823,7 +824,12 @@ export function MCPAppsRenderer({
     setWidgetDebugInfo(toolCallId, {
       toolName,
       protocol: "mcp-apps",
-      widgetState: null, // MCP Apps don't have widget state in the same way
+      // Seed from persisted state when a saved view / fork supplied one,
+      // so the Debug "Widget State" tab shows the restored value on
+      // first render instead of `null`. Apps SDK widgets that call
+      // window.openai.setWidgetState() later will overwrite this via
+      // setWidgetStateStore in the openai:setWidgetState handler below.
+      widgetState: initialWidgetState ?? null,
       prefersBorder,
       globals: {
         theme: resolvedTheme,
@@ -845,6 +851,7 @@ export function MCPAppsRenderer({
     deviceCapabilities,
     safeAreaInsets,
     prefersBorder,
+    initialWidgetState,
   ]);
 
   // Update globals in debug store when they change
@@ -1870,13 +1877,19 @@ export function MCPAppsRenderer({
     }
 
     // Apps SDK widget-state persistence (forwarded from the compat
-    // runtime in the inner iframe). Pass through to the host so saved
-    // views / replay / fork can restore it; matches the contract the
-    // legacy ChatGPTAppRenderer fulfilled.
+    // runtime in the inner iframe). Two destinations:
+    //   1) onWidgetStateChange — propagates upward for saved-view /
+    //      replay / fork persistence (matches the legacy
+    //      ChatGPTAppRenderer contract).
+    //   2) setWidgetStateStore — keeps the Debug "Widget State" panel
+    //      live; without it, Apps SDK setWidgetState updates silently
+    //      bypass the diagnostics surface that reads from
+    //      widgetDebugInfo.widgetState.
     if (data.type === "openai:setWidgetState") {
-      if (onWidgetStateChange && typeof toolCallId === "string") {
+      if (onWidgetStateChange) {
         onWidgetStateChange(toolCallId, data.state);
       }
+      setWidgetStateStore(toolCallId, data.state);
       return;
     }
 

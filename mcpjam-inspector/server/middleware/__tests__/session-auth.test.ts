@@ -44,6 +44,12 @@ function createTestApp(): Hono {
   app.get("/api/apps/mcp-apps/sandbox-proxy/content", (c) =>
     c.text("sandbox content"),
   );
+  // Widget file routes — DOWNLOAD is iframe-accessible (unauthenticated),
+  // UPLOAD is host-only (must require auth — see session-auth.ts).
+  app.get("/api/apps/files/file/file_abc", (c) => c.body("image-bytes"));
+  app.post("/api/apps/files/upload-file", (c) =>
+    c.json({ fileId: "file_abc" }),
+  );
 
   // Non-API routes (HTML pages, etc.)
   app.get("/", (c) => c.html("<html>Home</html>"));
@@ -227,6 +233,38 @@ describe("sessionAuthMiddleware", () => {
     it("allows /api/apps/mcp-apps/sandbox-proxy without token", async () => {
       const res = await app.request("/api/apps/mcp-apps/sandbox-proxy/content");
 
+      expect(res.status).toBe(200);
+    });
+
+    it("allows GET /api/apps/files/file/:fileId without token (iframe download)", async () => {
+      // The widget iframe fetches the download URL directly (img src, fetch,
+      // etc.) and can't carry session headers; download must stay public.
+      const res = await app.request("/api/apps/files/file/file_abc");
+      expect(res.status).toBe(200);
+    });
+
+    it("requires auth on POST /api/apps/files/upload-file (host-only)", async () => {
+      // Upload is called from the host page via authFetch, which CAN
+      // attach the session token. Allowing it through unauthenticated
+      // would let any caller fill the in-memory fileStore (20MB/req) by
+      // hitting this route directly. Pin the auth requirement.
+      const res = await app.request("/api/apps/files/upload-file", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ data: "dummy", mimeType: "image/png" }),
+      });
+      expect(res.status).toBe(401);
+    });
+
+    it("accepts upload-file POST when a valid session token is attached", async () => {
+      const res = await app.request("/api/apps/files/upload-file", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-MCP-Session-Auth": `Bearer ${validToken}`,
+        },
+        body: JSON.stringify({ data: "dummy", mimeType: "image/png" }),
+      });
       expect(res.status).toBe(200);
     });
   });
