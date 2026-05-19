@@ -118,12 +118,9 @@ Select a timezone from the toolbar to test time-aware widgets. The selector incl
 
 ### Protocol Selector
 
-When an MCP App includes ChatGPT compatibility metadata (`openai/outputTemplate` alongside `ui.resourceUri`), a protocol toggle appears in the left panel header. This lets you switch which host bridge the emulator uses to render the widget:
+All widgets — whether they declare `openai/outputTemplate` (ChatGPT Apps), `_meta.ui.resourceUri` (MCP Apps), or both — now render through a single unified renderer. The `window.openai` compat shim is always injected, so both `window.openai.*` calls and `ui/*` JSON-RPC messages work regardless of which metadata the tool declares.
 
-- **ChatGPT Apps** - Renders using the `window.openai` host bridge
-- **MCP Apps** - Renders using the `ui/*` JSON-RPC host bridge
-
-The toggle only appears for tools with both metadata keys. Tools that use a single protocol are rendered using that protocol automatically.
+The protocol toggle that previously appeared for dual-metadata tools has been removed. Tools with both metadata keys render through the same path as single-protocol tools.
 
 ### Display Modes
 
