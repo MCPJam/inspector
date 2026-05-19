@@ -134,16 +134,17 @@ export function usePersistedModel(): UsePersistedModelReturn {
     // Persist + notify other listeners. The lead-id subscription above
     // will then sync this hook's React state on the next event tick,
     // keeping the lead model id consistent across all consumers.
+    //
+    // This setter ONLY updates the lead. It must NOT touch
+    // `selectedModelIdsState` — every multi-model code path manages the
+    // compare array explicitly via `setSelectedModelIds`. Mutating the
+    // array here was an undocumented side effect that grew the column
+    // count by one on every host-switch (the host-snapshot helper calls
+    // `setSelectedModel(match)`, which routed through here), causing
+    // "switch from MCPJam (2 columns) to ChatGPT" to render 3 columns.
+    // Outside-seam writes that need to rotate the array (host switches)
+    // go through `replaceLeadModelId`, which preserves count by design.
     saveSelectedModelId(modelId);
-    setSelectedModelIdsState((previous) => {
-      if (!modelId) {
-        return [];
-      }
-      return normalizeSelectedModelIds([
-        modelId,
-        ...previous.filter((existingId) => existingId !== modelId),
-      ]);
-    });
   }, []);
 
   const setSelectedModelIds = useCallback((modelIds: string[]) => {
