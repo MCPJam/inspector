@@ -1054,12 +1054,15 @@ describe("MCPAppsRenderer tool input streaming", () => {
     );
 
     await vi.waitFor(() => {
-      // Third arg is the resolved compat-runtime flag (default off for
-      // the test's default MCPJam-style profile).
+      // Third arg is the persisted compat-runtime provenance for the
+      // cached HTML. The test props don't carry `injectedOpenAiCompat`,
+      // so there's no provenance to record — the renderer passes
+      // `undefined` rather than inferring from the live host config
+      // (HTML is byte-frozen at capture time; live state could lie).
       expect(stableStoreFns.setWidgetHtml).toHaveBeenCalledWith(
         "call-1",
         "<html><body>widget</body></html>",
-        false,
+        undefined,
       );
     });
 
