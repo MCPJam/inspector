@@ -4,6 +4,8 @@ import {
   seedFromHostTemplate,
   type HostTemplateId,
 } from "@/lib/client-templates";
+import { resolveEffectiveClientCapabilities } from "@/lib/effective-client";
+import { useOptionalSharedAppState } from "@/state/app-state-context";
 
 /**
  * Resolver returning the effective `clientCapabilities` blob the render
@@ -14,9 +16,11 @@ import {
  * surfaces without a wrapping `ActiveHostCapsResolverScope` keep
  * rendering widgets (test fixtures, edge surfaces).
  *
- * In commit 1 of the per-server-gate refactor, the resolver ignores its
- * `serverId` argument and returns host-level capabilities only.
- * Commit 2 wires `appState.servers` and the per-server override path.
+ * Calls `resolveEffectiveClientCapabilities` from `lib/effective-client`,
+ * the same function used by the connect path to build `initialize`. So
+ * the gate cannot drift from what the server was actually initialized
+ * with: per-server `clientCapabilities` overrides strip/add the UI
+ * extension here exactly as they do at initialize-time.
  */
 export type ActiveHostCapsResolver = (
   serverId?: string
@@ -26,7 +30,7 @@ const NO_OP_RESOLVER: ActiveHostCapsResolver = () => undefined;
 
 /**
  * Per-scope resolver that returns the effective `clientCapabilities` for
- * the active host (and, after commit 2, the tool's server). Mirrors
+ * the active host + the tool's server. Mirrors
  * {@link ActiveMcpProfileContext} / {@link ChatboxHostCapabilitiesOverrideContext}:
  * a single Provider sets the value for whatever scope owns the host
  * config (chatbox, eval suite, direct chat). Downstream readers call
@@ -60,19 +64,25 @@ export function useActiveHostCapsResolver(): ActiveHostCapsResolver {
 }
 
 /**
- * Convenience wrapper that builds the resolver and provides it. Falls
- * back to the template seed for `hostStyle` when no persisted
- * `activeHost` is in scope — preserves the prefs-only / hosted-chatbox
- * paths today.
+ * Convenience wrapper that builds the resolver and provides it.
+ *
+ * Resolution:
+ *   1. Looks up the tool's server config from `appState.servers`.
+ *   2. Passes `{ host, serverConfig }` to `resolveEffectiveClientCapabilities` —
+ *      same call as the connect path, so the render gate and `initialize`
+ *      always evaluate the same capability blob.
+ *   3. Falls back to the template seed for `hostStyle` when no persisted
+ *      `activeHost` is in scope — preserves prefs-only and hosted-chatbox
+ *      paths where the bootstrap doesn't carry full host capabilities.
  *
  * Apply once per chat surface root (analog to `ChatboxHostStyleProvider`).
  *
- * **Commit 1 note:** this resolver ignores `serverId` and returns
- * host-level capabilities only. The shape change lands first, with no
- * new dependency on `appState.servers`, so this commit is functionally
- * equivalent to the previous cached-caps provider. Commit 2 changes the
- * resolver body to call `resolveEffectiveClientCapabilities` with the
- * tool's server config.
+ * **Product note on per-server overrides:** a server with its own
+ * `clientCapabilities` advertising the UI extension will render widgets
+ * even when the host (e.g. Codex) strips it. This is intentional —
+ * server-level override beats host identity, matching the precedence in
+ * `resolveEffectiveClientCapabilities` and the inspector's role as a
+ * conformance/test surface.
  */
 export function ActiveHostCapsResolverScope({
   activeHost,
@@ -83,15 +93,51 @@ export function ActiveHostCapsResolverScope({
   hostStyle: string;
   children: ReactNode;
 }) {
-  const hostCaps = useMemo(() => {
-    if (activeHost?.clientCapabilities) return activeHost.clientCapabilities;
-    return seedFromHostTemplate(hostStyle as HostTemplateId).clientCapabilities;
+  // Optional: surfaces like isolated test mounts may render the scope
+  // without an AppStateProvider. When absent, per-server overrides are
+  // unavailable (resolver evaluates host-level caps only); the gate
+  // still works for the host axis.
+  const appState = useOptionalSharedAppState();
+  const servers = appState?.servers ?? null;
+
+  // Effective host. When the surface has no persisted active host
+  // (prefs-only Chat tab, hosted chatbox whose bootstrap doesn't carry
+  // clientCapabilities yet), synthesize one from the template seed for
+  // the current `hostStyle`. This keeps Codex etc. gating correctly even
+  // without a Convex host record.
+  const effectiveHost = useMemo<
+    Pick<HostConfigDtoV2, "clientCapabilities">
+  >(() => {
+    if (activeHost?.clientCapabilities) {
+      return { clientCapabilities: activeHost.clientCapabilities };
+    }
+    return {
+      clientCapabilities: seedFromHostTemplate(hostStyle as HostTemplateId)
+        .clientCapabilities,
+    };
   }, [activeHost?.clientCapabilities, hostStyle]);
 
-  const resolver = useMemo<ActiveHostCapsResolver>(
-    () => (_serverId?: string) => hostCaps,
-    [hostCaps]
-  );
+  const resolver = useMemo<ActiveHostCapsResolver>(() => {
+    // Per-render memo: repeated `resolveCaps(serverId)` calls for the
+    // same `serverId` inside one render (e.g. multiple tool parts from
+    // the same server) reuse the result. The outer `useMemo` keys on
+    // `(effectiveHost, servers)` so external changes invalidate.
+    const cache = new Map<
+      string | undefined,
+      Record<string, unknown> | undefined
+    >();
+    return (serverId?: string) => {
+      if (cache.has(serverId)) return cache.get(serverId);
+      const serverConfig =
+        serverId && servers ? servers[serverId]?.config ?? null : null;
+      const caps = resolveEffectiveClientCapabilities({
+        host: effectiveHost,
+        serverConfig,
+      }) as Record<string, unknown>;
+      cache.set(serverId, caps);
+      return caps;
+    };
+  }, [effectiveHost, servers]);
 
   return (
     <ActiveHostCapsResolverProvider value={resolver}>

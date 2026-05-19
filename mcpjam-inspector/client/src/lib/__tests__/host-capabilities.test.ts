@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { MCP_UI_EXTENSION_ID } from "@mcpjam/sdk/browser";
+import {
+  MCP_UI_EXTENSION_ID,
+  MCP_UI_RESOURCE_MIME_TYPE,
+} from "@mcpjam/sdk/browser";
 import { hostSupportsWidgetRendering } from "../host-capabilities";
 
 describe("hostSupportsWidgetRendering", () => {
@@ -42,11 +45,43 @@ describe("hostSupportsWidgetRendering", () => {
     ).toBe(false);
   });
 
-  it("returns true even when the extension entry is an empty object", () => {
-    // Presence of the key is the contract; value is opaque here. SDK
-    // ships `{ mimeTypes: [...] }` but profiles MAY emit a bare `{}`.
+  it("returns false when the extension entry has no mimeTypes (SEP-1865 strictness)", () => {
+    // Behavioral change: per SEP-1865, the extension MUST advertise
+    // `mimeTypes` including `text/html;profile=mcp-app`. Hand-crafted
+    // minimal blobs like `{ extensions: { [id]: {} } }` no longer count.
+    // The SDK default ships the correct shape, so default-using hosts
+    // (Claude/ChatGPT/MCPJam/Copilot templates) are unaffected.
     const caps = { extensions: { [MCP_UI_EXTENSION_ID]: {} } };
+    expect(hostSupportsWidgetRendering(caps)).toBe(false);
+  });
+
+  it("returns false when mimeTypes is present but doesn't include the spec mime", () => {
+    const caps = {
+      extensions: {
+        [MCP_UI_EXTENSION_ID]: { mimeTypes: ["application/json"] },
+      },
+    };
+    expect(hostSupportsWidgetRendering(caps)).toBe(false);
+  });
+
+  it("returns true when mimeTypes contains the spec mime alongside others", () => {
+    const caps = {
+      extensions: {
+        [MCP_UI_EXTENSION_ID]: {
+          mimeTypes: ["application/json", MCP_UI_RESOURCE_MIME_TYPE],
+        },
+      },
+    };
     expect(hostSupportsWidgetRendering(caps)).toBe(true);
+  });
+
+  it("returns false when mimeTypes is a non-array", () => {
+    const caps = {
+      extensions: {
+        [MCP_UI_EXTENSION_ID]: { mimeTypes: MCP_UI_RESOURCE_MIME_TYPE },
+      },
+    };
+    expect(hostSupportsWidgetRendering(caps)).toBe(false);
   });
 
   it("ignores unrelated extensions", () => {

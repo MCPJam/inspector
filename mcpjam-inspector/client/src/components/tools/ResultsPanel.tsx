@@ -15,6 +15,13 @@ interface ResultsPanelProps {
   structuredContentValid: boolean | undefined;
   toolMeta?: Record<string, any>;
   responseDurationMs?: number | null;
+  /**
+   * Name of the server this panel is showing results for. Passed into
+   * the host caps resolver so per-server `clientCapabilities` overrides
+   * are honored — keeps the "Use the App Builder" affordance gated on
+   * the same effective capabilities as `initialize`.
+   */
+  serverName?: string;
 }
 
 export function ResultsPanel({
@@ -23,6 +30,7 @@ export function ResultsPanel({
   structuredContentValid,
   toolMeta,
   responseDurationMs,
+  serverName,
 }: ResultsPanelProps) {
   const rawResult = result as unknown as Record<string, unknown> | null;
   const extractedDisplay = rawResult
@@ -34,15 +42,17 @@ export function ResultsPanel({
   const hasOpenAIComponent = uiType === UIType.OPENAI_SDK;
   const hasMCPAppsComponent = uiType === UIType.MCP_APPS;
   // Same gate as the chat thread (PartSwitch/WidgetReplay): suppress the
-  // "Use the App Builder" affordance when the active host doesn't advertise
+  // "Use the App Builder" affordance when the active host (resolved
+  // against this server's per-server cap overrides) doesn't advertise
   // the MCP UI extension. Codex etc. won't render the widget in the chat
   // surface either, so pointing the user there is misleading.
-  // Commit 1 passes `undefined` to the resolver (host-level caps only);
-  // commit 2 will look up the tool's serverId from a new `serverName`
-  // prop and pass it through so per-server overrides are honored.
+  //
+  // `serverName` is the key into `appState.servers` and matches the
+  // serverId the resolver looks up. The tools tab is single-server per
+  // panel, so one lookup per render is all we need.
   const resolveHostCaps = useActiveHostCapsResolver();
   const hostSupportsWidgets = hostSupportsWidgetRendering(
-    resolveHostCaps(undefined)
+    resolveHostCaps(serverName)
   );
   const hasUIComponent =
     hostSupportsWidgets && (hasOpenAIComponent || hasMCPAppsComponent);
