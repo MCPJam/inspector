@@ -1079,6 +1079,36 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
   });
 
+  it("publishes the resolved sandbox payload + lifecycle into widget-debug-store", async () => {
+    // Verifies the Phase 4 plumbing: as soon as the effectiveSandbox useMemo
+    // settles, setSandboxApplied fires; as widget-content-* / bridge-* events
+    // flow through logWidgetDebug, appendLifecycle fans them out into the
+    // store's lifecycle array. This is the runtime feed the Sandbox debug
+    // panel reads — if it stops happening the panel silently goes blank.
+    render(
+      <MCPAppsRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />,
+    );
+
+    await vi.waitFor(() => {
+      // setSandboxApplied is called with the resolved payload shape we
+      // documented in WidgetSandboxApplied. We don't pin the exact CSP
+      // values (those are the resolver's concern) — just the contract.
+      expect(stableStoreFns.setSandboxApplied).toHaveBeenCalledWith(
+        "call-1",
+        expect.objectContaining({
+          permissive: expect.any(Boolean),
+          hostPolicyApplied: expect.any(Boolean),
+        }),
+      );
+    });
+
+    await vi.waitFor(() => {
+      // At least one lifecycle event from the renderer's existing
+      // logWidgetDebug emissions made it through the bridge.
+      expect(stableStoreFns.appendLifecycle).toHaveBeenCalled();
+    });
+  });
+
   it("sends partial tool input during input-streaming", async () => {
     const partialInput = { elements: '[{"type":"rectangle"' };
     render(
