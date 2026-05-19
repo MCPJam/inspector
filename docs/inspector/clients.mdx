@@ -52,6 +52,28 @@ When your server exposes [MCP Apps](https://modelcontextprotocol.io/docs/extensi
   settings are what matter.
 </Note>
 
+<Note>
+  **SEP-1865 strictness:** for widget iframes to render, the client capabilities
+  blob must advertise the MCP UI extension with a `mimeTypes` array that includes
+  `"text/html;profile=mcp-app"` — for example:
+
+  ```json
+  {
+    "extensions": {
+      "io.modelcontextprotocol/ui": {
+        "mimeTypes": ["text/html;profile=mcp-app"]
+      }
+    }
+  }
+  ```
+
+  The SDK default ships this shape, so built-in host templates (Claude, ChatGPT,
+  MCPJam, Copilot, Cursor) work without any changes. Hand-crafted capability
+  blobs that include the extension key but omit `mimeTypes` (e.g.
+  `{ "extensions": { "io.modelcontextprotocol/ui": {} } }`) no longer render
+  widgets. Add the `mimeTypes` field to restore rendering.
+</Note>
+
 ## Creating a Client
 
 1. Open the **Clients** tab in the inspector.
