@@ -20,7 +20,7 @@ The App Builder is a local development environment for building [ChatGPT apps](h
 - **Widget Emulator** - Render widgets exposed via `openai/outputTemplate` (ChatGPT Apps) or `ui.resourceUri` (MCP Apps) the same way a real host would, with support for Inline, Picture-in-Picture, and Fullscreen display modes
 - **Chat with your Server** - Talk to your MCP server from inside the App Builder using frontier models (Claude, GPT, Gemini, and more) at no cost, with no API key required — widgets render inline in the thread as tools get called
 - **Manual Tool Invocation** - Invoke any tool directly from the Tools list with your own inputs to iterate on widgets without having to prompt a model
-- **Protocol Toggle** - For apps that declare both `openai/outputTemplate` and `ui.resourceUri`, flip between the `window.openai` host bridge and the `ui/*` JSON-RPC host bridge to see how each protocol renders the same widget
+- **Unified Widget Renderer** - All widgets render through a single path regardless of whether they use `openai/outputTemplate` (ChatGPT Apps), `_meta.ui.resourceUri` (MCP Apps), or both — the `window.openai` compat shim is always injected so both APIs work
 - **Display Context Controls** - Test across device viewports (desktop, tablet, mobile, custom), light/dark themes, Claude vs ChatGPT host styles, locales, timezones, CSP modes, device capabilities, and safe area insets
 - **Per-Widget Debugging** - Inspect raw tool input/output, `widgetState`, model context updates, and CSP violations for every tool call from a row of icons above each widget
 - **Traces and X-Ray** - Replay any conversation as a timestamped timeline with per-step latency and token counts, or open X-Ray to see the exact JSON payload sent to the model
