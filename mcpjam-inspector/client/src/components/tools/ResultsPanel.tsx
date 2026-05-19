@@ -6,7 +6,7 @@ import { detectUIType, UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { extractDisplayFromToolResult } from "@/components/chat-v2/shared/tool-result-text";
 import { navigateApp } from "@/lib/app-navigation";
-import { useActiveHostClientCapabilities } from "@/contexts/active-host-client-capabilities-context";
+import { useActiveHostCapsResolver } from "@/contexts/active-host-client-capabilities-context";
 import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
 
 interface ResultsPanelProps {
@@ -37,9 +37,12 @@ export function ResultsPanel({
   // "Use the App Builder" affordance when the active host doesn't advertise
   // the MCP UI extension. Codex etc. won't render the widget in the chat
   // surface either, so pointing the user there is misleading.
-  const hostClientCapabilities = useActiveHostClientCapabilities();
+  // Commit 1 passes `undefined` to the resolver (host-level caps only);
+  // commit 2 will look up the tool's serverId from a new `serverName`
+  // prop and pass it through so per-server overrides are honored.
+  const resolveHostCaps = useActiveHostCapsResolver();
   const hostSupportsWidgets = hostSupportsWidgetRendering(
-    hostClientCapabilities
+    resolveHostCaps(undefined)
   );
   const hasUIComponent =
     hostSupportsWidgets && (hasOpenAIComponent || hasMCPAppsComponent);

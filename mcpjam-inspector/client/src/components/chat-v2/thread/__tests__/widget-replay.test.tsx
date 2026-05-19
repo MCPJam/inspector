@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MCP_UI_EXTENSION_ID } from "@mcpjam/sdk/browser";
 import { WidgetReplay } from "../widget-replay";
-import { ActiveHostClientCapabilitiesProvider } from "@/contexts/active-host-client-capabilities-context";
+import { ActiveHostCapsResolverProvider } from "@/contexts/active-host-client-capabilities-context";
 
 const mockDetectUIType = vi.fn();
 
@@ -84,9 +84,9 @@ describe("WidgetReplay", () => {
         },
       };
       render(
-        <ActiveHostClientCapabilitiesProvider value={caps}>
+        <ActiveHostCapsResolverProvider value={() => caps}>
           <WidgetReplay {...baseProps} />
-        </ActiveHostClientCapabilitiesProvider>
+        </ActiveHostCapsResolverProvider>
       );
       expect(screen.getByTestId("mcp-apps-renderer")).toBeInTheDocument();
     });
@@ -95,9 +95,9 @@ describe("WidgetReplay", () => {
       mockDetectUIType.mockReturnValue("mcp-apps");
       const codexCaps = { elicitation: {} };
       const { container } = render(
-        <ActiveHostClientCapabilitiesProvider value={codexCaps}>
+        <ActiveHostCapsResolverProvider value={() => codexCaps}>
           <WidgetReplay {...baseProps} />
-        </ActiveHostClientCapabilitiesProvider>
+        </ActiveHostCapsResolverProvider>
       );
       expect(container.firstChild).toBeNull();
     });

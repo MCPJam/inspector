@@ -36,7 +36,7 @@ import {
 } from "@/contexts/chatbox-client-style-context";
 import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
-import { ActiveHostClientCapabilitiesScope } from "@/contexts/active-host-client-capabilities-context";
+import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
 import { ChatboxSurfaceProvider } from "@/contexts/chatbox-surface-context";
 import { ChatboxHostOnboardingOverlays } from "@/components/hosted/ChatboxHostOnboardingOverlays";
 import { useChatboxHostIntroGate } from "@/components/hosted/useChatboxHostIntroGate";
@@ -925,7 +925,7 @@ export function ChatboxChatPage({
         if a chatbox owner customizes capabilities, that will require a
         bootstrap-payload extension (out of scope here).
       */}
-            <ActiveHostClientCapabilitiesScope
+            <ActiveHostCapsResolverScope
               activeHost={null}
               hostStyle={hostStyle}
             >
@@ -972,7 +972,7 @@ export function ChatboxChatPage({
                   {renderContent()}
                 </div>
               </ChatboxSurfaceProvider>
-            </ActiveHostClientCapabilitiesScope>
+            </ActiveHostCapsResolverScope>
           </ActiveMcpProfileProvider>
         </ChatboxHostCapabilitiesOverrideProvider>
       </ChatboxChatUiOverrideProvider>

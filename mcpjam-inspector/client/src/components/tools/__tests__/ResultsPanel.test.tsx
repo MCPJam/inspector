@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MCP_UI_EXTENSION_ID } from "@mcpjam/sdk/browser";
 import { ResultsPanel } from "../ResultsPanel";
-import { ActiveHostClientCapabilitiesProvider } from "@/contexts/active-host-client-capabilities-context";
+import { ActiveHostCapsResolverProvider } from "@/contexts/active-host-client-capabilities-context";
 
 const { mockJsonEditor, mockDetectUIType } = vi.hoisted(() => ({
   mockJsonEditor: vi.fn((props: any) => (
@@ -95,13 +95,13 @@ describe("ResultsPanel", () => {
         },
       };
       render(
-        <ActiveHostClientCapabilitiesProvider value={caps}>
+        <ActiveHostCapsResolverProvider value={() => caps}>
           <ResultsPanel
             error=""
             structuredContentValid={false}
             result={uiResult}
           />
-        </ActiveHostClientCapabilitiesProvider>
+        </ActiveHostCapsResolverProvider>
       );
       expect(screen.getByText(/This tool renders UI/i)).toBeInTheDocument();
     });
@@ -110,13 +110,13 @@ describe("ResultsPanel", () => {
       mockDetectUIType.mockReturnValue("mcp-apps");
       const codexCaps = { elicitation: {} };
       render(
-        <ActiveHostClientCapabilitiesProvider value={codexCaps}>
+        <ActiveHostCapsResolverProvider value={() => codexCaps}>
           <ResultsPanel
             error=""
             structuredContentValid={false}
             result={uiResult}
           />
-        </ActiveHostClientCapabilitiesProvider>
+        </ActiveHostCapsResolverProvider>
       );
       expect(
         screen.queryByText(/This tool renders UI/i)

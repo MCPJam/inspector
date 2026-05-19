@@ -8,7 +8,7 @@ import {
   UIType,
 } from "@/lib/mcp-ui/mcp-apps-utils";
 import { getToolServerId, type ToolServerMap } from "@/lib/apis/mcp-tools-api";
-import { useActiveHostClientCapabilities } from "@/contexts/active-host-client-capabilities-context";
+import { useActiveHostCapsResolver } from "@/contexts/active-host-client-capabilities-context";
 import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
 import {
   readToolResultMeta,
@@ -89,7 +89,7 @@ export function WidgetReplay({
   minimalMode = false,
 }: WidgetReplayProps) {
   void _ignored;
-  const hostClientCapabilities = useActiveHostClientCapabilities();
+  const resolveHostCaps = useActiveHostCapsResolver();
   const effectiveToolMeta =
     renderOverride?.toolMetadata ??
     toolMetadata ??
@@ -114,9 +114,11 @@ export function WidgetReplay({
   // (which decides between ToolPart and WidgetReplay). Re-checking here
   // means a host that strips the MCP UI extension never renders a widget
   // even on code paths that mount WidgetReplay directly (transcript
-  // thread, trace viewer adapters, future callers).
+  // thread, trace viewer adapters, future callers). `serverId` (computed
+  // above) is passed through so any per-server `clientCapabilities`
+  // override is honored, matching `initialize`.
   const hasUi =
-    hostSupportsWidgetRendering(hostClientCapabilities) &&
+    hostSupportsWidgetRendering(resolveHostCaps(serverId ?? undefined)) &&
     (uiType === UIType.MCP_APPS ||
       uiType === UIType.OPENAI_SDK ||
       uiType === UIType.OPENAI_SDK_AND_MCP_APPS);

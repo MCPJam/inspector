@@ -6,7 +6,7 @@ import {
 } from "@/contexts/chatbox-client-style-context";
 import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
-import { ActiveHostClientCapabilitiesScope } from "@/contexts/active-host-client-capabilities-context";
+import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
 import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 import { cn } from "@/lib/utils";
@@ -48,7 +48,7 @@ export function ClientStyledChatTabV2({
       <ChatboxHostCapabilitiesOverrideProvider value={hostCapabilitiesOverride}>
         <ChatboxHostThemeProvider value={themeMode}>
           <ActiveMcpProfileProvider value={activeMcpProfile}>
-            <ActiveHostClientCapabilitiesScope
+            <ActiveHostCapsResolverScope
               activeHost={activeHost}
               hostStyle={hostStyle}
             >
@@ -73,7 +73,7 @@ export function ClientStyledChatTabV2({
                   onHostStyleChange={setHostStyle}
                 />
               </div>
-            </ActiveHostClientCapabilitiesScope>
+            </ActiveHostCapsResolverScope>
           </ActiveMcpProfileProvider>
         </ChatboxHostThemeProvider>
       </ChatboxHostCapabilitiesOverrideProvider>

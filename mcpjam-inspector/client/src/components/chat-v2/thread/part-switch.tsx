@@ -38,7 +38,7 @@ import {
   isToolPart,
 } from "./thread-helpers";
 import { useSharedAppState } from "@/state/app-state-context";
-import { useActiveHostClientCapabilities } from "@/contexts/active-host-client-capabilities-context";
+import { useActiveHostCapsResolver } from "@/contexts/active-host-client-capabilities-context";
 import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
@@ -113,7 +113,7 @@ export function PartSwitch({
   const { isAuthenticated } = useConvexAuth();
   const posthog = usePostHog();
   const appState = useSharedAppState();
-  const hostClientCapabilities = useActiveHostClientCapabilities();
+  const resolveHostCaps = useActiveHostCapsResolver();
   const savingEnabled = isAuthenticated && !minimalMode && interactive;
 
   // Get the Convex project ID (sharedProjectId) from the active project
@@ -295,12 +295,17 @@ export function PartSwitch({
       effectiveToolMeta as Record<string, unknown> | undefined
     );
 
-    // Gate widget render on the active host's advertised capabilities, not
-    // just the tool's metadata. Hosts that don't advertise the MCP UI
-    // extension (Codex — elicitation-only client) fall through to the plain
+    // Gate widget render on the active host's advertised capabilities for
+    // this tool's server. Hosts that don't advertise the MCP UI extension
+    // (Codex — elicitation-only client) fall through to the plain
     // ToolPart result row, even when the tool itself declares
     // `_meta.ui.resourceUri` / `openai/outputTemplate`. This mirrors what
     // real CLI clients do: tool runs, JSON result is shown, no iframe.
+    //
+    // `serverId` (computed above for save-view routing) is passed through
+    // so the resolver picks up any per-server `clientCapabilities`
+    // override — keeping the renderer in lockstep with `initialize`,
+    // which uses the same `resolveEffectiveClientCapabilities` function.
     //
     // Note on Apps SDK hosts (ChatGPT, Copilot): their templates KEEP the
     // SDK-default MCP UI extension in `clientCapabilities`, so they pass
@@ -308,7 +313,7 @@ export function PartSwitch({
     // HostConfigInputV2 will be OR-ed here to cover Apps-SDK hosts that
     // choose to strip the MCP UI extension.
     const shouldRenderWidget =
-      hostSupportsWidgetRendering(hostClientCapabilities) &&
+      hostSupportsWidgetRendering(resolveHostCaps(serverId ?? undefined)) &&
       (uiType === UIType.OPENAI_SDK ||
         uiType === UIType.MCP_APPS ||
         uiType === UIType.OPENAI_SDK_AND_MCP_APPS);

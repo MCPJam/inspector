@@ -22,7 +22,7 @@ import { SkillsTab } from "./components/SkillsTab";
 import { LearningTab } from "./components/LearningTab";
 import { TasksTab } from "./components/TasksTab";
 import { ClientStyledChatTabV2 } from "./components/ClientStyledChatTabV2";
-import { ActiveHostClientCapabilitiesScope } from "./contexts/active-host-client-capabilities-context";
+import { ActiveHostCapsResolverScope } from "./contexts/active-host-client-capabilities-context";
 import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
 import { EvalsTab } from "./components/EvalsTab";
 import { CiEvalsTab } from "./components/CiEvalsTab";
@@ -658,7 +658,7 @@ export function ToolsRoute() {
   const prefHostStyle = usePreferencesStore((state) => state.hostStyle);
   const hostStyle = activeHost?.hostStyle ?? prefHostStyle;
   return (
-    <ActiveHostClientCapabilitiesScope
+    <ActiveHostCapsResolverScope
       activeHost={activeHost}
       hostStyle={hostStyle}
     >
@@ -668,7 +668,7 @@ export function ToolsRoute() {
           serverName={appState.selectedServer}
         />
       </div>
-    </ActiveHostClientCapabilitiesScope>
+    </ActiveHostCapsResolverScope>
   );
 }
 

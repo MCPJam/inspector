@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MCP_UI_EXTENSION_ID } from "@mcpjam/sdk/browser";
 import { PartSwitch } from "../thread/part-switch";
-import { ActiveHostClientCapabilitiesProvider } from "@/contexts/active-host-client-capabilities-context";
+import { ActiveHostCapsResolverProvider } from "@/contexts/active-host-client-capabilities-context";
 import type { UIMessage } from "@ai-sdk/react";
 
 const { mockUseSaveView, mockDetectUIType, mockWidgetReplay } = vi.hoisted(
@@ -404,7 +404,7 @@ describe("PartSwitch", () => {
           },
         };
         render(
-          <ActiveHostClientCapabilitiesProvider value={caps}>
+          <ActiveHostCapsResolverProvider value={() => caps}>
             <PartSwitch
               {...defaultProps}
               part={part as any}
@@ -414,7 +414,7 @@ describe("PartSwitch", () => {
                 },
               }}
             />
-          </ActiveHostClientCapabilitiesProvider>
+          </ActiveHostCapsResolverProvider>
         );
         expect(screen.getByTestId("widget-replay")).toBeInTheDocument();
       });
@@ -433,7 +433,7 @@ describe("PartSwitch", () => {
         // clientCapabilities — see client-templates.ts:803-810.
         const codexCaps = { elicitation: {} };
         render(
-          <ActiveHostClientCapabilitiesProvider value={codexCaps}>
+          <ActiveHostCapsResolverProvider value={() => codexCaps}>
             <PartSwitch
               {...defaultProps}
               part={part as any}
@@ -443,7 +443,7 @@ describe("PartSwitch", () => {
                 },
               }}
             />
-          </ActiveHostClientCapabilitiesProvider>
+          </ActiveHostCapsResolverProvider>
         );
         expect(screen.queryByTestId("widget-replay")).not.toBeInTheDocument();
         expect(screen.getByTestId("tool-part")).toBeInTheDocument();
