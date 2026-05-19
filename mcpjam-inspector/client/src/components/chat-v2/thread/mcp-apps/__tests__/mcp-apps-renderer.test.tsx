@@ -67,6 +67,8 @@ const {
     clearCspViolations: vi.fn(),
     setWidgetModelContext: vi.fn(),
     setWidgetHtml: vi.fn(),
+    setSandboxApplied: vi.fn(),
+    appendLifecycle: vi.fn(),
   };
 
   return {
@@ -183,6 +185,8 @@ vi.mock("@/stores/widget-debug-store", () => ({
       clearCspViolations: stableStoreFns.clearCspViolations,
       setWidgetModelContext: stableStoreFns.setWidgetModelContext,
       setWidgetHtml: stableStoreFns.setWidgetHtml,
+      setSandboxApplied: stableStoreFns.setSandboxApplied,
+      appendLifecycle: stableStoreFns.appendLifecycle,
     }),
 }));
 
