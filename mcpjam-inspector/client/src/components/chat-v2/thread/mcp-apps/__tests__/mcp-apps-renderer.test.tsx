@@ -981,6 +981,65 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
   });
 
+  it("keeps iframe hidden until first size-change fires", async () => {
+    const toolInput = { elements: '[{"type":"rectangle"}]' };
+    render(
+      <MCPAppsRenderer
+        {...baseProps}
+        toolState="output-available"
+        toolInput={toolInput}
+        toolOutput={{ ok: true }}
+        cachedWidgetHtmlUrl="blob:cached"
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+    act(() => triggerReady());
+
+    const iframe = screen.getByTestId("sandboxed-iframe") as HTMLElement;
+    expect(iframe.style.opacity).toBe("0");
+    expect(iframe.style.position).toBe("absolute");
+
+    act(() => {
+      mockBridge.onsizechange?.({ width: 400, height: 300 });
+    });
+
+    await vi.waitFor(() => {
+      expect(iframe.style.opacity).toBe("1");
+      expect(iframe.style.position).toBe("");
+    });
+  });
+
+  it("renders host skeleton while waiting for first size-change", async () => {
+    const toolInput = { elements: '[{"type":"rectangle"}]' };
+    render(
+      <MCPAppsRenderer
+        {...baseProps}
+        toolState="output-available"
+        toolInput={toolInput}
+        toolOutput={{ ok: true }}
+        cachedWidgetHtmlUrl="blob:cached"
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+    act(() => triggerReady());
+
+    expect(screen.queryByTestId("mcp-app-loading-skeleton")).not.toBeNull();
+
+    act(() => {
+      mockBridge.onsizechange?.({ width: 400, height: 300 });
+    });
+
+    await vi.waitFor(() => {
+      expect(screen.queryByTestId("mcp-app-loading-skeleton")).toBeNull();
+    });
+  });
+
   it("streams updated partial input values while still streaming", async () => {
     const firstPartial = { elements: '[{"type":"rectangle"' };
     const secondPartial = {

@@ -24,6 +24,7 @@ import {
   type CspMode,
 } from "@/stores/ui-playground-store";
 import { X } from "lucide-react";
+import { Skeleton } from "@mcpjam/design-system/skeleton";
 import {
   SandboxedIframe,
   SandboxedIframeHandle,
@@ -466,6 +467,7 @@ export function MCPAppsRenderer({
   }, [effectiveDisplayMode, requestedDisplayMode, setDisplayMode]);
 
   const [isReady, setIsReady] = useState(false);
+  const [hasFirstSizeChange, setHasFirstSizeChange] = useState(false);
   const [reinitCount, setReinitCount] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [widgetHtml, setWidgetHtml] = useState<string | null>(null);
@@ -523,7 +525,7 @@ export function MCPAppsRenderer({
   const bridgeRef = useRef<AppBridge | null>(null);
   const hostContextRef = useRef<McpUiHostContext | null>(null);
   const isReadyRef = useRef(false);
-  const lastInlineHeightRef = useRef<string>("400px");
+  const lastInlineHeightRef = useRef<string>("0px");
 
   const onSendFollowUpRef = useRef(onSendFollowUp);
   const onCallToolRef = useRef(onCallTool);
@@ -794,6 +796,7 @@ export function MCPAppsRenderer({
   useEffect(() => {
     if (loadedCspMode !== null && loadedCspMode !== cspMode) {
       setIsReady(false);
+      setHasFirstSizeChange(false);
       isReadyRef.current = false;
       resetStreamingState();
     }
@@ -1571,6 +1574,7 @@ export function MCPAppsRenderer({
           from.height = `${iframe.offsetHeight}px`;
           iframe.style.height = to.height = `${adjustedHeight}px`;
           lastInlineHeightRef.current = `${adjustedHeight}px`;
+          setHasFirstSizeChange(true);
         }
 
         iframe.animate([from, to], { duration: 300, easing: "ease-out" });
@@ -1659,6 +1663,7 @@ export function MCPAppsRenderer({
 
     setBridgeTransportReady(false);
     setIsReady(false);
+    setHasFirstSizeChange(false);
     isReadyRef.current = false;
     logWidgetDebug("host-to-ui", "debug/bridge-connect-start", {
       cspMode,
@@ -1912,7 +1917,12 @@ export function MCPAppsRenderer({
       }
     }
   };
-  const showWidget = isReady && canRenderStreamingInput;
+  const isInlineDisplayMode =
+    effectiveDisplayMode !== "fullscreen" && effectiveDisplayMode !== "pip";
+  const showWidget =
+    isReady &&
+    canRenderStreamingInput &&
+    (!isInlineDisplayMode || hasFirstSizeChange);
 
   useEffect(() => {
     logWidgetDebug("host-to-ui", "debug/widget-visibility", {
@@ -2163,10 +2173,25 @@ export function MCPAppsRenderer({
           className="rounded-md"
           style={hostChromeStyle}
         >
+          {!showWidget && !isFullscreen && !isPip && (
+            <Skeleton
+              data-testid="mcp-app-loading-skeleton"
+              className="w-full min-h-[180px] rounded-md"
+              style={hostChromeStyle}
+            />
+          )}
           {iframe}
         </div>
       ) : (
-        iframe
+        <>
+          {!showWidget && !isFullscreen && !isPip && (
+            <Skeleton
+              data-testid="mcp-app-loading-skeleton"
+              className="w-full min-h-[180px] rounded-md"
+            />
+          )}
+          {iframe}
+        </>
       )}
 
       <McpAppsModal
