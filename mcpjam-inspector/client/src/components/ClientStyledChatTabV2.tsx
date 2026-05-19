@@ -9,6 +9,7 @@ import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context"
 import { ActiveHostClientCapabilitiesProvider } from "@/contexts/active-host-client-capabilities-context";
 import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
+import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
 import {
   seedFromHostTemplate,
   type HostTemplateId,
@@ -74,6 +75,12 @@ export function ClientStyledChatTabV2({
                   themeMode === "dark" && "dark",
                 )}
                 data-host-style={hostStyle}
+                data-host-supports-widgets={
+                  hostSupportsWidgetRendering(activeHostClientCapabilities)
+                    ? "true"
+                    : "false"
+                }
+                data-host-caps-source={activeHost?.clientCapabilities ? "host" : "template"}
                 style={shellStyle}
               >
                 <ChatTabV2
