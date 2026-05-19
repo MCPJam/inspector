@@ -1,4 +1,4 @@
-import { useMemo, type ComponentProps } from "react";
+import type { ComponentProps } from "react";
 import { ChatTabV2 } from "./ChatTabV2";
 import {
   ChatboxHostStyleProvider,
@@ -6,14 +6,9 @@ import {
 } from "@/contexts/chatbox-client-style-context";
 import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
-import { ActiveHostClientCapabilitiesProvider } from "@/contexts/active-host-client-capabilities-context";
+import { ActiveHostClientCapabilitiesScope } from "@/contexts/active-host-client-capabilities-context";
 import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
-import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
-import {
-  seedFromHostTemplate,
-  type HostTemplateId,
-} from "@/lib/client-templates";
 import { cn } from "@/lib/utils";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
@@ -46,17 +41,6 @@ export function ClientStyledChatTabV2({
   const hostCapabilitiesOverride =
     activeHost?.hostCapabilitiesOverride ?? prefHostCapabilitiesOverride;
   const activeMcpProfile = activeHost?.mcpProfile;
-  // clientCapabilities: prefer the persisted host config; fall back to the
-  // template seed for `hostStyle` so prefs-only surfaces (no Convex
-  // `activeHost` hydrated) still gate widget rendering correctly. Without
-  // this fallback, picking Codex via the host-style preference would still
-  // leave `clientCapabilities` undefined here, the gate in PartSwitch would
-  // read the legacy-preservation default (`undefined` → allow), and the
-  // widget would render even though Codex strips the MCP UI extension.
-  const activeHostClientCapabilities = useMemo(() => {
-    if (activeHost?.clientCapabilities) return activeHost.clientCapabilities;
-    return seedFromHostTemplate(hostStyle as HostTemplateId).clientCapabilities;
-  }, [activeHost?.clientCapabilities, hostStyle]);
   const shellStyle = getChatboxShellStyle(hostStyle, themeMode);
 
   return (
@@ -66,8 +50,9 @@ export function ClientStyledChatTabV2({
       >
         <ChatboxHostThemeProvider value={themeMode}>
           <ActiveMcpProfileProvider value={activeMcpProfile}>
-            <ActiveHostClientCapabilitiesProvider
-              value={activeHostClientCapabilities}
+            <ActiveHostClientCapabilitiesScope
+              activeHost={activeHost}
+              hostStyle={hostStyle}
             >
               <div
                 className={cn(
@@ -75,12 +60,6 @@ export function ClientStyledChatTabV2({
                   themeMode === "dark" && "dark",
                 )}
                 data-host-style={hostStyle}
-                data-host-supports-widgets={
-                  hostSupportsWidgetRendering(activeHostClientCapabilities)
-                    ? "true"
-                    : "false"
-                }
-                data-host-caps-source={activeHost?.clientCapabilities ? "host" : "template"}
                 style={shellStyle}
               >
                 <ChatTabV2
@@ -96,7 +75,7 @@ export function ClientStyledChatTabV2({
                   onHostStyleChange={setHostStyle}
                 />
               </div>
-            </ActiveHostClientCapabilitiesProvider>
+            </ActiveHostClientCapabilitiesScope>
           </ActiveMcpProfileProvider>
         </ChatboxHostThemeProvider>
       </ChatboxHostCapabilitiesOverrideProvider>

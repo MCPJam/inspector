@@ -36,6 +36,7 @@ import {
 } from "@/contexts/chatbox-client-style-context";
 import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
+import { ActiveHostClientCapabilitiesScope } from "@/contexts/active-host-client-capabilities-context";
 import { ChatboxSurfaceProvider } from "@/contexts/chatbox-surface-context";
 import { ChatboxHostOnboardingOverlays } from "@/components/hosted/ChatboxHostOnboardingOverlays";
 import { useChatboxHostIntroGate } from "@/components/hosted/useChatboxHostIntroGate";
@@ -919,6 +920,17 @@ export function ChatboxChatPage({
         value={session?.payload.hostCapabilitiesOverride}
       >
       <ActiveMcpProfileProvider value={session?.payload.mcpProfile}>
+      {/*
+        Hosted bootstrap payload doesn't (yet) carry clientCapabilities —
+        we pass `activeHost={null}` and let the scope fall back to the
+        template seed for `hostStyle`. Correct for unmodified host styles;
+        if a chatbox owner customizes capabilities, that will require a
+        bootstrap-payload extension (out of scope here).
+      */}
+      <ActiveHostClientCapabilitiesScope
+        activeHost={null}
+        hostStyle={hostStyle}
+      >
       <ChatboxSurfaceProvider value={true}>
       <div
         className="chatbox-host-shell flex h-svh min-h-0 flex-col overflow-hidden"
@@ -962,6 +974,7 @@ export function ChatboxChatPage({
         {renderContent()}
       </div>
       </ChatboxSurfaceProvider>
+      </ActiveHostClientCapabilitiesScope>
       </ActiveMcpProfileProvider>
       </ChatboxHostCapabilitiesOverrideProvider>
       </ChatboxChatUiOverrideProvider>

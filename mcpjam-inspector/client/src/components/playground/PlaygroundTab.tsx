@@ -11,6 +11,7 @@ import {
 } from "@/contexts/chatbox-client-style-context";
 import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
+import { ActiveHostClientCapabilitiesScope } from "@/contexts/active-host-client-capabilities-context";
 import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 import { cn } from "@/lib/utils";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -184,6 +185,10 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   return (
     <AppBuilderStateProvider value={appBuilderState}>
       <ActiveMcpProfileProvider value={activeMcpProfile}>
+        <ActiveHostClientCapabilitiesScope
+          activeHost={previewedHost?.config}
+          hostStyle={hostStyle}
+        >
         <ChatboxHostStyleProvider value={hostStyle}>
           <ChatboxHostCapabilitiesOverrideProvider
             value={hostCapabilitiesOverride}
@@ -304,6 +309,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
           </ChatboxChatUiOverrideProvider>
           </ChatboxHostCapabilitiesOverrideProvider>
         </ChatboxHostStyleProvider>
+        </ActiveHostClientCapabilitiesScope>
       </ActiveMcpProfileProvider>
     </AppBuilderStateProvider>
   );

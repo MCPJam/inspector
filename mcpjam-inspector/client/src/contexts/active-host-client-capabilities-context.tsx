@@ -1,4 +1,14 @@
-import { createContext, useContext } from "react";
+import {
+  createContext,
+  useContext,
+  useMemo,
+  type ReactNode,
+} from "react";
+import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
+import {
+  seedFromHostTemplate,
+  type HostTemplateId,
+} from "@/lib/client-templates";
 
 /**
  * Per-scope active `clientCapabilities` blob from the active host config.
@@ -37,4 +47,37 @@ export function useActiveHostClientCapabilities():
   | Record<string, unknown>
   | undefined {
   return useContext(ActiveHostClientCapabilitiesContext);
+}
+
+/**
+ * Convenience wrapper that resolves the active host's `clientCapabilities`
+ * and provides it to the context. Falls back to the template seed for the
+ * given `hostStyle` when no persisted `activeHost` is in scope — without
+ * this, prefs-only surfaces (no Convex `activeHost` hydrated) would leave
+ * the gate reading the legacy-preservation default and silently re-enable
+ * widget rendering for hosts whose template strips the MCP UI extension
+ * (Codex).
+ *
+ * Use this at the outer chat surface root (analog to
+ * `ChatboxHostStyleProvider`). Apply once per surface; nested scopes are
+ * fine — React context picks the closest provider.
+ */
+export function ActiveHostClientCapabilitiesScope({
+  activeHost,
+  hostStyle,
+  children,
+}: {
+  activeHost?: HostConfigDtoV2 | null;
+  hostStyle: string;
+  children: ReactNode;
+}) {
+  const value = useMemo(() => {
+    if (activeHost?.clientCapabilities) return activeHost.clientCapabilities;
+    return seedFromHostTemplate(hostStyle as HostTemplateId).clientCapabilities;
+  }, [activeHost?.clientCapabilities, hostStyle]);
+  return (
+    <ActiveHostClientCapabilitiesProvider value={value}>
+      {children}
+    </ActiveHostClientCapabilitiesProvider>
+  );
 }
