@@ -78,6 +78,22 @@ interface ProjectMembersQueryResult {
   canManageMembers: boolean;
 }
 
+const INVALID_PROJECT_ID_SENTINELS = new Set(["none", "null", "undefined"]);
+const UUID_PROJECT_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const LOCAL_PROJECT_ID_PREFIXES = ["local_", "project_"];
+
+export function shouldQueryProjectId(projectId: string | null | undefined) {
+  const normalized = projectId?.trim();
+  if (!normalized) return false;
+  const lower = normalized.toLowerCase();
+  return Boolean(
+    !INVALID_PROJECT_ID_SENTINELS.has(lower) &&
+      !UUID_PROJECT_ID_PATTERN.test(normalized) &&
+      !LOCAL_PROJECT_ID_PREFIXES.some((prefix) => lower.startsWith(prefix)),
+  );
+}
+
 function isProjectMembersQueryResult(
   value: unknown
 ): value is ProjectMembersQueryResult {
@@ -234,6 +250,9 @@ export function useProjectMutations() {
 // Server mutations for the flat servers table
 export function useServerMutations() {
   const createServer = useMutation("servers:createServer" as any);
+  const createServerIfMissing = useMutation(
+    "servers:createServerIfMissing" as any,
+  );
   const updateServer = useMutation("servers:updateServer" as any);
   const deleteServer = useMutation("servers:deleteServer" as any);
   const createServerWithClientSecret = useAction(
@@ -245,6 +264,7 @@ export function useServerMutations() {
 
   return {
     createServer,
+    createServerIfMissing,
     updateServer,
     createServerWithClientSecret,
     updateServerWithClientSecret,
@@ -259,12 +279,15 @@ export function useProjectServers({
   projectId: string | null;
   isAuthenticated: boolean;
 }) {
+  const shouldQuery = isAuthenticated && shouldQueryProjectId(projectId);
+  const queryProjectId = projectId?.trim() ?? "";
+
   const servers = useQuery(
     "servers:getProjectServers" as any,
-    isAuthenticated && projectId ? ({ projectId } as any) : "skip"
+    shouldQuery ? ({ projectId: queryProjectId } as any) : "skip"
   ) as RemoteServer[] | undefined;
 
-  const isLoading = isAuthenticated && projectId && servers === undefined;
+  const isLoading = shouldQuery && servers === undefined;
 
   // Convert array to record keyed by server name
   const serversRecord = useMemo(() => {

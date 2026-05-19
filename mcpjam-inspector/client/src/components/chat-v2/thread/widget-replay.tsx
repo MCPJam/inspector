@@ -2,8 +2,14 @@ import type { ContentBlock } from "@modelcontextprotocol/client";
 import { MCPAppsRenderer } from "./mcp-apps/mcp-apps-renderer";
 import type { ToolState } from "./mcp-apps/useToolInputStreaming";
 import type { ToolRenderOverride } from "./tool-render-overrides";
-import { detectUIType, getUIResourceUri, UIType } from "@/lib/mcp-ui/mcp-apps-utils";
+import {
+  detectUIType,
+  getUIResourceUri,
+  UIType,
+} from "@/lib/mcp-ui/mcp-apps-utils";
 import { getToolServerId, type ToolServerMap } from "@/lib/apis/mcp-tools-api";
+import { useActiveHostCapsResolver } from "@/contexts/active-host-client-capabilities-context";
+import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
 import {
   readToolResultMeta,
   readToolResultServerId,
@@ -25,7 +31,7 @@ export interface WidgetReplayProps {
   onSendFollowUp?: (text: string) => void;
   onCallTool?: (
     toolName: string,
-    params: Record<string, unknown>,
+    params: Record<string, unknown>
   ) => Promise<unknown>;
   onWidgetStateChange?: (toolCallId: string, state: unknown) => void;
   onModelContextUpdate?: (
@@ -33,7 +39,7 @@ export interface WidgetReplayProps {
     context: {
       content?: ContentBlock[];
       structuredContent?: Record<string, unknown>;
-    },
+    }
   ) => void;
   pipWidgetId?: string | null;
   fullscreenWidgetId?: string | null;
@@ -83,6 +89,7 @@ export function WidgetReplay({
   minimalMode = false,
 }: WidgetReplayProps) {
   void _ignored;
+  const resolveHostCaps = useActiveHostCapsResolver();
   const effectiveToolMeta =
     renderOverride?.toolMetadata ??
     toolMetadata ??
@@ -102,10 +109,19 @@ export function WidgetReplay({
   // window.openai compat shim is always injected, so widgets calling
   // window.openai.* and widgets using ui/* JSON-RPC both work without a
   // protocol switch. See plan: phase 3a.
+  //
+  // Defense-in-depth host gate: the primary check lives in PartSwitch
+  // (which decides between ToolPart and WidgetReplay). Re-checking here
+  // means a host that strips the MCP UI extension never renders a widget
+  // even on code paths that mount WidgetReplay directly (transcript
+  // thread, trace viewer adapters, future callers). `serverId` (computed
+  // above) is passed through so any per-server `clientCapabilities`
+  // override is honored, matching `initialize`.
   const hasUi =
-    uiType === UIType.MCP_APPS ||
-    uiType === UIType.OPENAI_SDK ||
-    uiType === UIType.OPENAI_SDK_AND_MCP_APPS;
+    hostSupportsWidgetRendering(resolveHostCaps(serverId ?? undefined)) &&
+    (uiType === UIType.MCP_APPS ||
+      uiType === UIType.OPENAI_SDK ||
+      uiType === UIType.OPENAI_SDK_AND_MCP_APPS);
   if (!hasUi) return null;
 
   if (
@@ -135,9 +151,7 @@ export function WidgetReplay({
   // (where `toolOutput` is the unwrapped value and lacks `_meta`)
   // resolves correctly via readToolResultMeta's two-level check.
   const toolResponseMetadata = (readToolResultMeta(rawOutput) ??
-    readToolResultMeta(toolOutput)) as
-    | Record<string, unknown>
-    | undefined;
+    readToolResultMeta(toolOutput)) as Record<string, unknown> | undefined;
 
   return (
     <MCPAppsRenderer
@@ -167,6 +181,7 @@ export function WidgetReplay({
       onAppSupportedDisplayModesChange={onAppSupportedDisplayModesChange}
       isOffline={renderOverride?.isOffline}
       cachedWidgetHtmlUrl={renderOverride?.cachedWidgetHtmlUrl}
+      liveFetchPreferred={renderOverride?.liveFetchPreferred}
       widgetCsp={renderOverride?.widgetCsp}
       widgetPermissions={renderOverride?.widgetPermissions}
       widgetPermissive={renderOverride?.widgetPermissive}

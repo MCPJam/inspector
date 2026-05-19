@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useQuery, useMutation } from "convex/react";
-import type { RemoteServer } from "./useProjects";
+import { shouldQueryProjectId, type RemoteServer } from "./useProjects";
 
 // Type definitions matching backend
 export type ViewProtocol = "mcp-apps" | "openai-apps";
@@ -98,11 +98,12 @@ export function useViewQueries({
   isAuthenticated: boolean;
   projectId: string | null;
 }) {
-  const enableQuery = isAuthenticated && !!projectId;
+  const enableQuery = isAuthenticated && shouldQueryProjectId(projectId);
+  const queryProjectId = projectId?.trim() ?? "";
 
   const views = useQuery(
     "views:listAllByProject" as any,
-    enableQuery ? ({ projectId } as any) : "skip",
+    enableQuery ? ({ projectId: queryProjectId } as any) : "skip",
   ) as AnyView[] | undefined;
 
   const isLoading = enableQuery && views === undefined;
@@ -199,11 +200,12 @@ export function useProjectServers({
   isAuthenticated: boolean;
   projectId: string | null;
 }) {
-  const enableQuery = isAuthenticated && !!projectId;
+  const enableQuery = isAuthenticated && shouldQueryProjectId(projectId);
+  const queryProjectId = projectId?.trim() ?? "";
 
   const servers = useQuery(
     "servers:getProjectServers" as any,
-    enableQuery ? ({ projectId } as any) : "skip",
+    enableQuery ? ({ projectId: queryProjectId } as any) : "skip",
   ) as RemoteServer[] | undefined;
 
   const isLoading = enableQuery && servers === undefined;

@@ -22,6 +22,7 @@ import { SkillsTab } from "./components/SkillsTab";
 import { LearningTab } from "./components/LearningTab";
 import { TasksTab } from "./components/TasksTab";
 import { ClientStyledChatTabV2 } from "./components/ClientStyledChatTabV2";
+import { ActiveHostCapsResolverScope } from "./contexts/active-host-client-capabilities-context";
 import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
 import { EvalsTab } from "./components/EvalsTab";
 import { CiEvalsTab } from "./components/CiEvalsTab";
@@ -69,7 +70,10 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { useAppState, type ServerWithName } from "./hooks/use-app-state";
 import { useActorKey } from "./hooks/use-actor-key";
-import { PreferencesStoreProvider } from "./stores/preferences/preferences-provider";
+import {
+  PreferencesStoreProvider,
+  usePreferencesStore,
+} from "./stores/preferences/preferences-provider";
 import { Toaster } from "@mcpjam/design-system/sonner";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
 import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
@@ -650,14 +654,21 @@ export function RegistryRoute() {
 }
 
 export function ToolsRoute() {
-  const { selectedMCPConfig, appState } = useAppRouteContext();
+  const { selectedMCPConfig, appState, activeHost } = useAppRouteContext();
+  const prefHostStyle = usePreferencesStore((state) => state.hostStyle);
+  const hostStyle = activeHost?.hostStyle ?? prefHostStyle;
   return (
-    <div className="h-full overflow-hidden">
-      <ToolsTab
-        serverConfig={selectedMCPConfig}
-        serverName={appState.selectedServer}
-      />
-    </div>
+    <ActiveHostCapsResolverScope
+      activeHost={activeHost}
+      hostStyle={hostStyle}
+    >
+      <div className="h-full overflow-hidden">
+        <ToolsTab
+          serverConfig={selectedMCPConfig}
+          serverName={appState.selectedServer}
+        />
+      </div>
+    </ActiveHostCapsResolverScope>
   );
 }
 
@@ -1022,6 +1033,7 @@ export function AppBuilderRoute() {
 
 export function PlaygroundRoute() {
   const {
+    activeHost,
     activeProject,
     activeProjectId,
     appState,
@@ -1059,6 +1071,7 @@ export function PlaygroundRoute() {
       ensureServersReady={ensureServersReady}
       onOnboardingChange={setAppBuilderOnboarding}
       playgroundServerSelectorProps={playgroundServerSelectorProps}
+      activeHost={activeHost}
       evalChatHandoff={evalChatHandoff}
       onEvalChatHandoffConsumed={(id) =>
         setEvalChatHandoff((current: EvalChatHandoff | null) =>

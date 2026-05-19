@@ -5,6 +5,7 @@ import type {
   ListToolsResult,
 } from "@modelcontextprotocol/client";
 import type { MCPTask, TaskOptions } from "@mcpjam/sdk/browser";
+import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
 import { authFetch } from "@/lib/session-token";
 import { executeHostedTool, listHostedTools } from "@/lib/apis/web/tools-api";
 import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
@@ -185,6 +186,13 @@ export interface ToolsMetadataAggregate {
   /** Bare tool names that appear on more than one server. */
   collidingToolNames: string[];
   tokenCounts: Record<string, number> | null;
+  /**
+   * Tool schemas advertised to the model (name + description + inputSchema),
+   * keyed by bare tool name. Used by the Raw view when rendering rehydrated
+   * sessions that never replayed `request_payload`. Last-seen wins on name
+   * collisions, mirroring `toolServerMap`.
+   */
+  serializedTools: Record<string, SerializedModelRequestTool>;
 }
 
 export function getToolServerId(
@@ -208,6 +216,7 @@ export async function getToolsMetadata(
     scopedMetadata: {},
     collidingToolNames: [],
     tokenCounts: modelId ? {} : null,
+    serializedTools: {},
   };
   // Track which servers have seen each tool name so we can surface collisions
   // to callers (e.g. the Playground tools pane uses this to disambiguate via
@@ -227,6 +236,14 @@ export async function getToolsMetadata(
         const servers = seenOn.get(toolName) ?? new Set<string>();
         servers.add(serverId);
         seenOn.set(toolName, servers);
+      }
+
+      for (const tool of data.tools ?? []) {
+        aggregate.serializedTools[tool.name] = {
+          name: tool.name,
+          description: tool.description,
+          inputSchema: tool.inputSchema as Record<string, unknown> | undefined,
+        };
       }
 
       // Collect token counts if modelId was provided

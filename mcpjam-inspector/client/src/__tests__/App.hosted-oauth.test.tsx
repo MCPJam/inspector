@@ -429,6 +429,7 @@ vi.mock("../state/app-state-context", () => ({
   // to compute connected/excess servers. Return an empty servers map so
   // the reconciler's reconciliation logic is a no-op in App-level tests.
   useSharedAppState: () => ({ servers: {} }),
+  useOptionalSharedAppState: () => ({ servers: {} }),
 }));
 vi.mock("../components/CompletingSignInLoading", () => ({
   default: () => <div />,

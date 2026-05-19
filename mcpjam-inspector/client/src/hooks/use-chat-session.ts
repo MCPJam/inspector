@@ -57,6 +57,7 @@ import {
 } from "@/lib/ollama-utils";
 import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
 import { getToolsMetadata, ToolServerMap } from "@/lib/apis/mcp-tools-api";
+import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
 import { countTextTokens } from "@/lib/apis/mcp-tokenizer-api";
 import {
   authFetch,
@@ -1018,6 +1019,9 @@ export function useChatSession(
     Record<string, Record<string, unknown>>
   >({});
   const [toolServerMap, setToolServerMap] = useState<ToolServerMap>({});
+  const [serializedTools, setSerializedTools] = useState<
+    Record<string, SerializedModelRequestTool>
+  >({});
   const [persistedSnapshotToolCallIds, setPersistedSnapshotToolCallIds] =
     useState<string[]>([]);
   const [mcpToolsTokenCount, setMcpToolsTokenCount] = useState<Record<
@@ -1595,6 +1599,45 @@ export function useChatSession(
   const hasLiveTimelineContent =
     livePreviewSpanCount > 0 || (liveTraceEnvelope?.spans?.length ?? 0) > 0;
 
+  /**
+   * Live SSE produces a `request_payload` event per turn; rehydrated stored
+   * sessions never replay it, so the Raw view would have nothing to render.
+   * When there's no live history but we have a converted transcript, synthesize
+   * a single entry from current `systemPrompt` + currently-resolved tool
+   * schemas + the rehydrated thread. This intentionally reflects what would
+   * be sent if the user typed next — tool schemas may differ from when the
+   * session originally ran, since they're fetched from currently-connected
+   * servers.
+   */
+  const requestPayloadHistory = useMemo<
+    LiveChatTraceRequestPayloadEntry[]
+  >(() => {
+    const live = liveTraceState.requestPayloadHistory;
+    if (live.length > 0) {
+      return live;
+    }
+    if (!traceTranscriptFromUi || traceTranscriptFromUi.length === 0) {
+      return live;
+    }
+    return [
+      {
+        turnId: "rehydrated",
+        promptIndex: 0,
+        stepIndex: 0,
+        payload: {
+          system: systemPrompt ?? "",
+          tools: serializedTools,
+          messages: traceTranscriptFromUi,
+        },
+      },
+    ];
+  }, [
+    liveTraceState.requestPayloadHistory,
+    traceTranscriptFromUi,
+    systemPrompt,
+    serializedTools,
+  ]);
+
   // useLayoutEffect (not useEffect) so the trace state is swapped out
   // before the browser paints the new chatSessionId render, preventing a
   // flash of the previous session's live-trace envelope on session switch
@@ -1792,7 +1835,13 @@ export function useChatSession(
         const traceSnapshots = snapshotsToTraceWidgetSnapshots(
           hydratedWidgetSnapshots
         );
-        overrides = buildToolRenderOverridesFromSnapshots(traceSnapshots);
+        // In-flow session revisit: prefer the live MCP Apps fetch over the
+        // cached snapshot HTML so the widget re-renders against the active
+        // host's current CSP / bridge state. The cached path is kept for
+        // OpenAI Apps and degenerate mcp-apps snapshots that can't live-fetch.
+        overrides = buildToolRenderOverridesFromSnapshots(traceSnapshots, {
+          preferLiveWhenPossible: true,
+        });
       }
 
       const hydratedTurnTraces = await resolveHydratedTurnTraces(
@@ -2028,6 +2077,9 @@ export function useChatSession(
         setToolServerMap((previous) =>
           Object.keys(previous).length > 0 ? {} : previous
         );
+        setSerializedTools((previous) =>
+          Object.keys(previous).length > 0 ? {} : previous
+        );
         setMcpToolsTokenCount((previous) =>
           previous !== null ? null : previous
         );
@@ -2047,12 +2099,11 @@ export function useChatSession(
       setMcpToolsTokenCountLoading(!!modelIdForTokens);
 
       try {
-        const { metadata, toolServerMap, tokenCounts } = await getToolsMetadata(
-          selectedServers,
-          modelIdForTokens
-        );
+        const { metadata, toolServerMap, serializedTools, tokenCounts } =
+          await getToolsMetadata(selectedServers, modelIdForTokens);
         setToolsMetadata(metadata);
         setToolServerMap(toolServerMap);
+        setSerializedTools(serializedTools);
         setMcpToolsTokenCount(
           tokenCounts && Object.keys(tokenCounts).length > 0
             ? tokenCounts
@@ -2069,6 +2120,7 @@ export function useChatSession(
         }
         setToolsMetadata({});
         setToolServerMap({});
+        setSerializedTools({});
         setMcpToolsTokenCount(null);
       } finally {
         setMcpToolsTokenCountLoading(false);
@@ -2247,7 +2299,7 @@ export function useChatSession(
 
     // Live trace state
     liveTraceEnvelope,
-    requestPayloadHistory: liveTraceState.requestPayloadHistory,
+    requestPayloadHistory,
     hasTraceSnapshot,
     hasLiveTimelineContent,
     traceViewsSupported,

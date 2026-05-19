@@ -1,6 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
+import { MCP_UI_EXTENSION_ID } from "@mcpjam/sdk/browser";
 import { WidgetReplay } from "../widget-replay";
+import { ActiveHostCapsResolverProvider } from "@/contexts/active-host-client-capabilities-context";
 
 const mockDetectUIType = vi.fn();
 
@@ -69,5 +71,35 @@ describe("WidgetReplay", () => {
     mockDetectUIType.mockReturnValue(null);
     const { container } = render(<WidgetReplay {...baseProps} />);
     expect(container.firstChild).toBeNull();
+  });
+
+  describe("host capability gate (Bug 1)", () => {
+    it("renders when the host advertises the MCP UI extension", () => {
+      mockDetectUIType.mockReturnValue("mcp-apps");
+      const caps = {
+        extensions: {
+          [MCP_UI_EXTENSION_ID]: {
+            mimeTypes: ["text/html;profile=mcp-app"],
+          },
+        },
+      };
+      render(
+        <ActiveHostCapsResolverProvider value={() => caps}>
+          <WidgetReplay {...baseProps} />
+        </ActiveHostCapsResolverProvider>
+      );
+      expect(screen.getByTestId("mcp-apps-renderer")).toBeInTheDocument();
+    });
+
+    it("renders nothing when the host strips the UI extension (Codex)", () => {
+      mockDetectUIType.mockReturnValue("mcp-apps");
+      const codexCaps = { elicitation: {} };
+      const { container } = render(
+        <ActiveHostCapsResolverProvider value={() => codexCaps}>
+          <WidgetReplay {...baseProps} />
+        </ActiveHostCapsResolverProvider>
+      );
+      expect(container.firstChild).toBeNull();
+    });
   });
 });
