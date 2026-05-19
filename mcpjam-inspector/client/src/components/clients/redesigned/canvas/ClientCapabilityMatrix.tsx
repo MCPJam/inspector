@@ -273,59 +273,6 @@ export const HostMatrixCard = memo(function HostMatrixCard({
           </div>
         ) : null}
 
-        {/* Compat shims — chip row showing which vendor compat
-            runtimes the inspector injects into widget HTML. SEP-1865
-            doesn't include `window.openai`, so this surface is
-            intentionally separate from the spec-portable Host
-            capabilities row above. Click routes to the Apps
-            Extension tab where the toggle lives.
-
-            Why this is its own row instead of a Host-capabilities
-            chip: capabilities are about what the host advertises to
-            the View over the wire; compat shims are about what the
-            host injects into the View's HTML before sandboxing — a
-            different layer with different on/off semantics. Mixing
-            them in one row would imply the shim is part of the
-            ui/initialize handshake. */}
-        {appsExtensionAdvertised ? (
-          <div className="hp-section">
-            <button
-              type="button"
-              className="hp-section-head"
-              onClick={(e) => {
-                e.stopPropagation();
-                onSelectNode(APPS_HUB_NODE_ID);
-              }}
-            >
-              <span className="hp-section-title">Compat shims</span>
-            </button>
-            <div className="hp-caps">
-              <button
-                type="button"
-                className={cn(
-                  "hp-cap",
-                  !compatRuntime.openaiApps && "hp-cap--off",
-                )}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onSelectNode(APPS_HUB_NODE_ID);
-                }}
-                title={
-                  compatRuntime.openaiApps
-                    ? "Inspector injects window.openai (OpenAI Apps SDK shim) into widget HTML for this host"
-                    : "Inspector does NOT inject window.openai for this host (SEP-1865-only)"
-                }
-              >
-                <span className="hp-cap-dot" aria-hidden />
-                <span className="hp-cap-name">window.openai</span>
-                {!compatRuntime.fromOverride ? (
-                  <span className="hp-cap-tag">from preset</span>
-                ) : null}
-              </button>
-            </div>
-          </div>
-        ) : null}
-
         {/* ===== Sandbox nested frame ===== */}
         {appsExtensionAdvertised ? (
           <div className="hp-sandbox">
@@ -358,7 +305,10 @@ export const HostMatrixCard = memo(function HostMatrixCard({
             {/* ===== View nested-nested frame =====
                 Empty state: surfaces `mcpProfile.apps.uiInitialize` — the
                 hostInfo line matches what a view receives over the wire when
-                one connects (SEP-1865). */}
+                one connects (SEP-1865). The "Injected globals" strip sits
+                inside this frame because that's literally where the host's
+                pre-sandbox script puts `window.openai` — visualizing the
+                injection target instead of floating it above the iframes. */}
             <div className="hp-view">
               <button
                 type="button"
@@ -371,6 +321,10 @@ export const HostMatrixCard = memo(function HostMatrixCard({
                 <span className="hp-view-title">View iframe</span>
               </button>
               <ViewIframeEmptyState hostInfo={hostInfo} />
+              <ViewIframeInjectedGlobals
+                compatRuntime={compatRuntime}
+                onClick={() => onSelectNode(APPS_HUB_NODE_ID)}
+              />
             </div>
           </div>
         ) : null}
@@ -404,6 +358,55 @@ function ViewIframeEmptyState({
           </>
         ) : null}
       </span>
+    </div>
+  );
+}
+
+/* Injected globals strip inside the View iframe frame.
+ *
+ * `window.openai` is not in SEP-1865 — it's a ChatGPT-only compatibility
+ * layer the inspector injects into widget HTML before sandboxing, so widgets
+ * written against the OpenAI Apps SDK keep working. Rendering this inside
+ * the View iframe block makes the spatial claim true: this is what the
+ * widget's JS actually sees on `window` at runtime.
+ *
+ * Clicking routes to the Apps Extension tab, where the per-host toggle
+ * (`mcpProfile.apps.compatRuntime.openaiApps`) lives.
+ */
+function ViewIframeInjectedGlobals({
+  compatRuntime,
+  onClick,
+}: {
+  compatRuntime: { openaiApps: boolean; fromOverride: boolean };
+  onClick: () => void;
+}) {
+  return (
+    <div className="hp-view-injected">
+      <span className="hp-view-injected-meta">
+        <span className="hp-view-injected-label">injected globals</span>
+        <span className="hp-view-injected-sub">
+          ChatGPT compatibility layer
+        </span>
+      </span>
+      <button
+        type="button"
+        className={cn("hp-cap", !compatRuntime.openaiApps && "hp-cap--off")}
+        onClick={(e) => {
+          e.stopPropagation();
+          onClick();
+        }}
+        title={
+          compatRuntime.openaiApps
+            ? "Inspector injects window.openai into widget HTML before sandboxing, so OpenAI Apps SDK widgets keep working on this host."
+            : "Inspector does NOT inject window.openai for this host. SEP-1865-only — widgets that rely on the OpenAI Apps SDK compatibility layer will not run."
+        }
+      >
+        <span className="hp-cap-dot" aria-hidden />
+        <span className="hp-cap-name">window.openai</span>
+        {!compatRuntime.fromOverride ? (
+          <span className="hp-cap-tag">from preset</span>
+        ) : null}
+      </button>
     </div>
   );
 }
@@ -922,6 +925,34 @@ const PAPER_STYLES = `
   border-left: 1px solid var(--hp-view-ring);
   color: var(--hp-view-sub);
   font-size: 10.5px;
+}
+
+/* Injected-globals strip inside the View iframe frame.
+   Layout mirrors hp-view-empty (mono key on the left, value on the right)
+   so the two lines read as a matched pair: what the view receives over the
+   wire (uiInitialize) and what is pre-injected onto its window object. */
+.host-paper-card .hp-view-injected {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 4px 2px;
+}
+.host-paper-card .hp-view-injected-meta {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.host-paper-card .hp-view-injected-label {
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  font-size: 11.5px;
+  color: var(--hp-view-sub);
+}
+.host-paper-card .hp-view-injected-sub {
+  font-size: 10.5px;
+  color: var(--hp-view-sub);
+  opacity: 0.85;
 }
 
 /* Off / selected variants of the host-level capability chip, used by

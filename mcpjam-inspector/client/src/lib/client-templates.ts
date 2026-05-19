@@ -334,7 +334,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           // template. Stamped explicitly on the template (rather than
           // relying on the host style preset fallback) so the JSON in the
           // Apps Extension tab surfaces the field on day one and the
-          // "Compat shims" chip reads as user-owned, not "(from preset)".
+          // "window.openai" injected-globals chip reads as user-owned,
+          // not "(from preset)".
           compatRuntime: { openaiApps: true },
           sandbox: {
             csp: {
@@ -636,7 +637,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           // as their authors intended. Stamped on the template so the
           // JSON editor surfaces the field on day one — without this,
           // the field would only appear after a manual edit and the
-          // Compat shims chip would read "(from preset)".
+          // injected-globals chip would read "(from preset)".
           compatRuntime: { openaiApps: true },
           sandbox: {
             csp: {
@@ -931,7 +932,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           // the OpenAI Apps SDK under the hood, so the `window.openai`
           // surface is expected. Stamped on the template (rather than
           // inherited from the preset) so the JSON editor surfaces the
-          // field on day one and the Compat shims chip reads as a
+          // field on day one and the injected-globals chip reads as a
           // template choice, not "(from preset)".
           compatRuntime: { openaiApps: true },
           sandbox: {
