@@ -66,6 +66,7 @@ import {
 } from "./widget-file-messages";
 import { CheckoutDialogV2 } from "./checkout-dialog-v2";
 import { fetchMcpAppsWidgetContent } from "./fetch-widget-content";
+import { readToolResultMeta } from "@/lib/tool-result-utils";
 import type { CheckoutSession } from "@/shared/acp-types";
 import { listResources, readResource } from "@/lib/apis/mcp-resources-api";
 import { listPrompts } from "@/lib/apis/mcp-prompts-api";
@@ -159,6 +160,16 @@ interface MCPAppsRendererProps {
   toolState?: ToolState;
   toolInput?: Record<string, unknown>;
   toolOutput?: unknown;
+  /**
+   * Tool response `_meta`, pre-extracted by the caller from the raw
+   * (still-wrapped) tool result. Required because `toolOutput` is
+   * typically the *unwrapped* value (e.g. `result.value`), at which
+   * point `_meta` from the wrapper is no longer reachable from the
+   * value alone. Passing this explicitly preserves Apps SDK's
+   * `window.openai.toolResponseMetadata` surface for widgets relying
+   * on it (timestamps, source IDs, etc.).
+   */
+  toolResponseMetadata?: Record<string, unknown> | null;
   toolErrorText?: string;
   resourceUri: string;
   toolMetadata?: Record<string, unknown>;
@@ -202,6 +213,14 @@ interface MCPAppsRendererProps {
   widgetPermissive?: boolean;
   /** Persisted prefersBorder value for cached/offline replay */
   prefersBorder?: boolean;
+  /**
+   * Persisted widget state from a saved view or fork. When set, the
+   * compat runtime seeds `window.openai.widgetState` with this value so
+   * the widget boots in the same state it was when the view was saved
+   * (Apps SDK parity — the legacy ChatGPTAppRenderer wired this the same
+   * way).
+   */
+  initialWidgetState?: unknown;
   /** Minimal mode hides diagnostics and metadata surfaces */
   minimalMode?: boolean;
 }
@@ -213,12 +232,14 @@ export function MCPAppsRenderer({
   toolState,
   toolInput,
   toolOutput,
+  toolResponseMetadata,
   toolErrorText,
   resourceUri,
   toolMetadata,
   toolsMetadata,
   onSendFollowUp,
   onCallTool,
+  onWidgetStateChange,
   pipWidgetId,
   fullscreenWidgetId,
   onRequestPip,
@@ -235,6 +256,7 @@ export function MCPAppsRenderer({
   widgetPermissions: initialWidgetPermissions,
   widgetPermissive: initialWidgetPermissive,
   prefersBorder: initialPrefersBorder,
+  initialWidgetState,
   minimalMode = false,
 }: MCPAppsRendererProps) {
   const sandboxRef = useRef<SandboxedIframeHandle>(null);
@@ -620,6 +642,17 @@ export function MCPAppsRenderer({
           resourceUri,
           toolInput: toolInputRef.current,
           toolOutput: toolOutputRef.current,
+          // Surface `_meta` from the tool response so the compat runtime
+          // can expose it as `window.openai.toolResponseMetadata`. Prefer
+          // the explicit `toolResponseMetadata` prop (which the caller
+          // computes from rawOutput where the `{ value, _meta }` wrapper
+          // is still intact); fall back to deriving from the resolved
+          // output for callers that don't pass it.
+          toolResponseMetadata:
+            toolResponseMetadata ??
+            readToolResultMeta(toolOutputRef.current) ??
+            null,
+          initialWidgetState,
           toolId: toolCallId,
           toolName,
           theme: themeModeRef.current,
@@ -741,6 +774,7 @@ export function MCPAppsRenderer({
   // Widget debug store
   const setWidgetDebugInfo = useWidgetDebugStore((s) => s.setWidgetDebugInfo);
   const setWidgetGlobals = useWidgetDebugStore((s) => s.setWidgetGlobals);
+  const setWidgetStateStore = useWidgetDebugStore((s) => s.setWidgetState);
   const setWidgetCspStore = useWidgetDebugStore((s) => s.setWidgetCsp);
   const addCspViolation = useWidgetDebugStore((s) => s.addCspViolation);
   const clearCspViolations = useWidgetDebugStore((s) => s.clearCspViolations);
@@ -790,7 +824,12 @@ export function MCPAppsRenderer({
     setWidgetDebugInfo(toolCallId, {
       toolName,
       protocol: "mcp-apps",
-      widgetState: null, // MCP Apps don't have widget state in the same way
+      // Seed from persisted state when a saved view / fork supplied one,
+      // so the Debug "Widget State" tab shows the restored value on
+      // first render instead of `null`. Apps SDK widgets that call
+      // window.openai.setWidgetState() later will overwrite this via
+      // setWidgetStateStore in the openai:setWidgetState handler below.
+      widgetState: initialWidgetState ?? null,
       prefersBorder,
       globals: {
         theme: resolvedTheme,
@@ -812,6 +851,7 @@ export function MCPAppsRenderer({
     deviceCapabilities,
     safeAreaInsets,
     prefersBorder,
+    initialWidgetState,
   ]);
 
   // Update globals in debug store when they change
@@ -1833,6 +1873,23 @@ export function MCPAppsRenderer({
       handleGetFileDownloadUrlMessage(data, (message) => {
         sandboxRef.current?.postMessage(message);
       });
+      return;
+    }
+
+    // Apps SDK widget-state persistence (forwarded from the compat
+    // runtime in the inner iframe). Two destinations:
+    //   1) onWidgetStateChange — propagates upward for saved-view /
+    //      replay / fork persistence (matches the legacy
+    //      ChatGPTAppRenderer contract).
+    //   2) setWidgetStateStore — keeps the Debug "Widget State" panel
+    //      live; without it, Apps SDK setWidgetState updates silently
+    //      bypass the diagnostics surface that reads from
+    //      widgetDebugInfo.widgetState.
+    if (data.type === "openai:setWidgetState") {
+      if (onWidgetStateChange) {
+        onWidgetStateChange(toolCallId, data.state);
+      }
+      setWidgetStateStore(toolCallId, data.state);
       return;
     }
 

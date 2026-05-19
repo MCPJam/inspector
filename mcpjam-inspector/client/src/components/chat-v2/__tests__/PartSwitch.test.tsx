@@ -72,11 +72,9 @@ vi.mock("../thread/parts/json-part", () => ({
   ),
 }));
 
-vi.mock("../thread/parts/mcp-ui-resource-part", () => ({
-  MCPUIResourcePart: ({ resource }: { resource: any }) => (
-    <div data-testid="mcp-ui-resource-part">{resource?.uri}</div>
-  ),
-}));
+// MCPUIResourcePart and ChatGPTAppRenderer were removed in the renderer
+// consolidation (Phase 4). All UI-bearing tools now route through
+// WidgetReplay → MCPAppsRenderer.
 
 vi.mock("../thread/widget-replay", () => ({
   WidgetReplay: (props: { toolName: string; renderOverride?: any }) => {
@@ -90,12 +88,6 @@ vi.mock("../thread/widget-replay", () => ({
       </div>
     );
   },
-}));
-
-vi.mock("../thread/chatgpt-app-renderer", () => ({
-  ChatGPTAppRenderer: ({ toolName }: { toolName: string }) => (
-    <div data-testid="chatgpt-app-renderer">{toolName}</div>
-  ),
 }));
 
 vi.mock("convex/react", () => ({
@@ -139,7 +131,6 @@ vi.mock("../thread/thread-helpers", () => ({
     rawOutput: part.output,
   }),
   getDataLabel: (type: string) => type.replace("-data", ""),
-  extractUIResource: () => null,
 }));
 
 // Mock mcp-tools-api

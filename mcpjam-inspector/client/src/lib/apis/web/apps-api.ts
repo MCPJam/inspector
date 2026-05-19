@@ -6,6 +6,8 @@ export async function fetchHostedMcpAppWidgetContent(request: {
   resourceUri: string;
   toolInput: Record<string, unknown>;
   toolOutput: unknown;
+  toolResponseMetadata?: Record<string, unknown> | null;
+  initialWidgetState?: unknown;
   toolId: string;
   toolName: string;
   theme?: "light" | "dark";
@@ -20,6 +22,8 @@ export async function fetchHostedMcpAppWidgetContent(request: {
     resourceUri: request.resourceUri,
     toolInput: request.toolInput,
     toolOutput: request.toolOutput,
+    toolResponseMetadata: request.toolResponseMetadata,
+    initialWidgetState: request.initialWidgetState,
     toolId: request.toolId,
     toolName: request.toolName,
     theme: request.theme,
