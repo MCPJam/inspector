@@ -29,7 +29,7 @@
  * `SandboxedIframe`) is left as a follow-up.
  */
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import {
   AlertCircle,
   ExternalLink,
@@ -37,9 +37,8 @@ import {
   Check,
   Lightbulb,
   ChevronRight,
-  CircleCheck,
-  CircleX,
-  CircleDashed,
+  X as XIcon,
+  Loader2,
 } from "lucide-react";
 import { Label } from "@mcpjam/design-system/label";
 import { Badge } from "@mcpjam/design-system/badge";
@@ -346,40 +345,12 @@ function summarizeLifecycle(
   return STAGE_ORDER.map((s) => acc[s]);
 }
 
-function LifecycleStrip({
-  events,
-  themeMode,
-}: {
-  events: WidgetLifecycleEvent[];
-  themeMode: "light" | "dark";
-}) {
+function LifecycleStrip({ events }: { events: WidgetLifecycleEvent[] }) {
   if (events.length === 0) return null;
   const summary = summarizeLifecycle(events);
-  const tintErr = themeMode === "dark" ? "text-red-400" : "text-red-600";
-  const tintOk = themeMode === "dark" ? "text-emerald-400" : "text-emerald-600";
-  const tintPending =
-    themeMode === "dark" ? "text-amber-400" : "text-amber-600";
-  const tintAbsent =
-    themeMode === "dark" ? "text-muted-foreground/50" : "text-muted-foreground/60";
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+    <div className="lifecycle-track">
       {summary.map((s, i) => {
-        const tint =
-          s.status === "error"
-            ? tintErr
-            : s.status === "ok"
-              ? tintOk
-              : s.status === "pending"
-                ? tintPending
-                : tintAbsent;
-        const Icon =
-          s.status === "error"
-            ? CircleX
-            : s.status === "ok"
-              ? CircleCheck
-              : s.status === "pending"
-                ? CircleDashed
-                : CircleDashed;
         const showRetries = s.attempts > 1;
         const title = [
           `${s.label} stage`,
@@ -392,25 +363,39 @@ function LifecycleStrip({
         ]
           .filter(Boolean)
           .join(" — ");
+        // Connector AFTER this node fills when this node is "ok" — the
+        // upstream stage has completed and data has flowed to the next.
+        // Errors paint it red so the eye locks onto the break.
+        const nextConnectorClass =
+          s.status === "ok"
+            ? "lifecycle-connector lifecycle-connector--filled"
+            : s.status === "error"
+              ? "lifecycle-connector lifecycle-connector--error"
+              : "lifecycle-connector";
         return (
-          <span
-            key={s.stage}
-            className={`inline-flex items-center gap-1 text-[11px] ${tint}`}
-            title={title}
-          >
-            <Icon className="h-3.5 w-3.5" />
-            <span className="font-medium">{s.label}</span>
-            {showRetries ? (
-              <span className="font-mono text-[10px] opacity-70">
-                ×{s.attempts}
-              </span>
-            ) : null}
+          <Fragment key={s.stage}>
+            <div
+              className={`lifecycle-node lifecycle-node--${s.status}`}
+              title={title}
+            >
+              <div className="lifecycle-dot">
+                {s.status === "ok" ? (
+                  <Check className="h-3.5 w-3.5" strokeWidth={3} />
+                ) : s.status === "error" ? (
+                  <XIcon className="h-3.5 w-3.5" strokeWidth={3} />
+                ) : s.status === "pending" ? (
+                  <Loader2 className="h-3 w-3" strokeWidth={2.5} />
+                ) : null}
+              </div>
+              <span className="lifecycle-label">{s.label}</span>
+              {showRetries ? (
+                <span className="lifecycle-retries">×{s.attempts}</span>
+              ) : null}
+            </div>
             {i < summary.length - 1 ? (
-              <span aria-hidden className="ml-1 text-muted-foreground/50">
-                →
-              </span>
+              <div className={nextConnectorClass} aria-hidden />
             ) : null}
-          </span>
+          </Fragment>
         );
       })}
     </div>
@@ -500,11 +485,8 @@ export function SandboxDebugPanel({
 
   return (
     <div className="space-y-4 text-xs">
-      {/* Lifecycle strip */}
-      <LifecycleStrip
-        events={lifecycle}
-        themeMode={resolvedThemeMode}
-      />
+      {/* Lifecycle progress track */}
+      <LifecycleStrip events={lifecycle} />
 
       {/* Suggested Fix */}
       {hasViolations && suggestedFixes.length > 0 && (

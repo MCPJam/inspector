@@ -232,3 +232,181 @@
   color: var(--hp-view-sub);
   font-size: 10.5px;
 }
+
+/* ============================================================
+   `LifecycleTrack` — animated 4-stage progress bar.
+
+   Visual model: 4 circles connected by a track. The track fills
+   left-to-right as each upstream stage completes, so a glance
+   tells you how far the widget got. Circles pop in when a stage
+   transitions to ok/error; pending stages show a soft pulse so
+   you can see *what's currently happening*.
+   ============================================================ */
+
+.lifecycle-track {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  width: 100%;
+  --lifecycle-ok: color-mix(in oklch, var(--diagram-server) 80%, var(--foreground));
+  --lifecycle-pending: var(--warning);
+  --lifecycle-error: var(--destructive);
+  --lifecycle-absent: color-mix(in oklch, var(--muted-foreground) 40%, transparent);
+  --lifecycle-track: color-mix(in oklch, var(--muted-foreground) 25%, transparent);
+}
+
+.lifecycle-node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  position: relative;
+}
+
+.lifecycle-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--popover);
+  color: var(--lifecycle-absent);
+  border: 1.5px dashed var(--lifecycle-absent);
+  transition:
+    background 280ms ease,
+    border-color 280ms ease,
+    color 280ms ease;
+}
+
+.lifecycle-node--ok .lifecycle-dot {
+  background: var(--lifecycle-ok);
+  border: 1.5px solid var(--lifecycle-ok);
+  color: var(--popover);
+  animation: lifecycle-pop 320ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.lifecycle-node--pending .lifecycle-dot {
+  background: color-mix(in oklch, var(--lifecycle-pending) 20%, var(--popover));
+  border: 1.5px solid var(--lifecycle-pending);
+  color: var(--lifecycle-pending);
+  animation: lifecycle-pulse 1.4s ease-in-out infinite;
+}
+
+.lifecycle-node--error .lifecycle-dot {
+  background: var(--lifecycle-error);
+  border: 1.5px solid var(--lifecycle-error);
+  color: var(--popover);
+  animation: lifecycle-shake 360ms ease-in-out;
+}
+
+.lifecycle-node--pending .lifecycle-dot svg {
+  animation: lifecycle-spin 1.2s linear infinite;
+}
+
+.lifecycle-label {
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+  font-weight: 500;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+}
+.lifecycle-node--ok .lifecycle-label,
+.lifecycle-node--pending .lifecycle-label,
+.lifecycle-node--error .lifecycle-label {
+  color: var(--foreground);
+}
+
+.lifecycle-retries {
+  position: absolute;
+  top: -4px;
+  right: -8px;
+  background: var(--popover);
+  border: 1px solid var(--lifecycle-track);
+  border-radius: 999px;
+  padding: 0 4px;
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  font-size: 9px;
+  color: var(--muted-foreground);
+  line-height: 1.2;
+}
+
+.lifecycle-connector {
+  flex: 1 1 auto;
+  height: 2px;
+  margin: 0 4px;
+  margin-bottom: 22px; /* align with circle centers, accounting for label below */
+  background: var(--lifecycle-track);
+  border-radius: 999px;
+  position: relative;
+  overflow: hidden;
+  min-width: 16px;
+}
+.lifecycle-connector::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--lifecycle-ok);
+  transform-origin: left center;
+  transform: scaleX(0);
+  transition: transform 480ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.lifecycle-connector--filled::after {
+  transform: scaleX(1);
+}
+.lifecycle-connector--error::after {
+  background: var(--lifecycle-error);
+  transform: scaleX(1);
+}
+
+@keyframes lifecycle-pop {
+  0% {
+    transform: scale(0.6);
+  }
+  60% {
+    transform: scale(1.18);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes lifecycle-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--lifecycle-pending) 35%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 5px color-mix(in oklch, var(--lifecycle-pending) 0%, transparent);
+  }
+}
+
+@keyframes lifecycle-shake {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-3px);
+  }
+  75% {
+    transform: translateX(3px);
+  }
+}
+
+@keyframes lifecycle-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lifecycle-node--ok .lifecycle-dot,
+  .lifecycle-node--pending .lifecycle-dot,
+  .lifecycle-node--error .lifecycle-dot,
+  .lifecycle-node--pending .lifecycle-dot svg {
+    animation: none;
+  }
+  .lifecycle-connector::after {
+    transition: none;
+  }
+}
