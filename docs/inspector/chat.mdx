@@ -40,6 +40,8 @@ Chat can render custom UI components from both [ChatGPT apps](https://developers
 
 Widgets can display interactive visualizations, trigger tool calls, send follow-up messages, and open external links. Whenever a widget is rendered, MCPJam gives you a row of [debugging tools](/inspector/app-builder#debugging-tools) to inspect and debug it directly from the chat thread.
 
+Widget rendering is gated on the active [Client's](/inspector/clients) `clientCapabilities`. Hosts that advertise the MCP UI extension (Claude, ChatGPT, MCPJam, Copilot, Cursor) render widgets as normal. Hosts that strip the extension — such as Codex, which is an elicitation-only CLI — show the plain tool result row instead. Per-server capability overrides are honored: a server that re-advertises the UI extension renders widgets even when the active host doesn't, matching the behavior of the `initialize` handshake.
+
 ## Chat, Trace, and Raw Views
 
 The chat surface has three views you can switch between at any time, so you can inspect a conversation from different angles without leaving it:
