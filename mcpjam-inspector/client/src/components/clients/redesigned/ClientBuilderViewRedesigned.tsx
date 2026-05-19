@@ -41,6 +41,7 @@ import {
   focusTabForNodeId,
   type HostFocusState,
   type HostFocusTabId,
+  type SandboxConfigSubKey,
 } from "./types";
 
 interface HostBuilderViewRedesignedProps {
@@ -277,8 +278,17 @@ export function ClientBuilderViewRedesigned({
   ]);
 
   const openFocus = useCallback(
-    (tab: HostFocusTabId, selectedServerId: string | null = null) => {
-      setFocusState({ open: true, tab, selectedServerId });
+    (
+      tab: HostFocusTabId,
+      selectedServerId: string | null = null,
+      focusSubKey?: SandboxConfigSubKey,
+    ) => {
+      setFocusState({
+        open: true,
+        tab,
+        selectedServerId,
+        ...(focusSubKey ? { focusSubKey } : {}),
+      });
     },
     [],
   );
@@ -291,7 +301,8 @@ export function ClientBuilderViewRedesigned({
     (nodeId: string) => {
       setSelectedNodeId(nodeId);
       const target = focusTabForNodeId(nodeId);
-      if (target) openFocus(target.tab, target.selectedServerId);
+      if (target)
+        openFocus(target.tab, target.selectedServerId, target.focusSubKey);
     },
     [openFocus],
   );
@@ -487,6 +498,7 @@ export function ClientBuilderViewRedesigned({
                     )
                   }
                   initialSelectedServerId={focusState.selectedServerId}
+                  focusSubKey={focusState.focusSubKey}
                   hostDisplayName={draftName}
                   onHostDisplayNameChange={setDraftName}
                   draft={draftConfig}

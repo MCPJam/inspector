@@ -6,7 +6,7 @@ import {
   type HostConfigMcpProfileV1,
 } from "@/lib/client-config-v2";
 import { stableStringifyJson } from "@/lib/client-config";
-import type { HostAttentionIssue } from "../types";
+import type { HostAttentionIssue, SandboxConfigSubKey } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 
 interface AppsExtensionTabProps {
@@ -15,6 +15,17 @@ interface AppsExtensionTabProps {
     updater: (prev: HostConfigInputV2) => HostConfigInputV2,
   ) => void;
   attention: ReadonlyArray<HostAttentionIssue>;
+  /**
+   * Sandbox-config row to focus when this tab opens from a
+   * `sandbox-cfg:<subKey>` matrix click (e.g. the Sandbox debug panel's
+   * deep-link).
+   *
+   * TODO: ignored today. `JsonEditor` exposes no programmatic
+   * scroll-to-key / highlight-key API; a future PR should add one (and
+   * the matching CSS for a brief flash on focused regions). Threading
+   * is in place end-to-end so that landing is a one-file change.
+   */
+  focusSubKey?: SandboxConfigSubKey;
 }
 
 /**
@@ -507,7 +518,12 @@ export function applyJsonToDraft(
 export function AppsExtensionTab({
   draft,
   onDraftChange,
+  focusSubKey: _focusSubKey,
 }: AppsExtensionTabProps) {
+  // _focusSubKey is intentionally unused — see prop doc. Destructured so
+  // the prop appears in TS signature checks and the linter doesn't warn
+  // about an undeclared prop on the call site.
+  void _focusSubKey;
   const [jsonMode, setJsonMode] = useState<JsonEditorMode>("edit");
   const { content, onRawChange } = useJsonDraftBuffer({
     draft,
