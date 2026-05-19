@@ -22,6 +22,8 @@ export interface PersistedExecutionReplayInput {
   widgetPermissions?: McpUiResourcePermissions | null;
   widgetPermissive?: boolean;
   prefersBorder?: boolean;
+  /** Persisted compat-runtime flag from the cached HTML blob. */
+  injectedOpenAiCompat?: boolean;
 }
 
 export interface PersistedExecutionReplay {
@@ -63,6 +65,7 @@ export function buildPersistedExecutionReplay(
         input.protocol === "mcp-apps" ? input.widgetPermissive : undefined,
       prefersBorder:
         input.protocol === "mcp-apps" ? input.prefersBorder : undefined,
+      injectedOpenAiCompat: input.injectedOpenAiCompat,
     },
   };
 }

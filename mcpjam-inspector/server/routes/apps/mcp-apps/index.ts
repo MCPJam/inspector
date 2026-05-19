@@ -75,6 +75,15 @@ interface WidgetContentRequest {
   toolName: string;
   theme?: "light" | "dark";
   cspMode?: CspMode;
+  /**
+   * When true, injects the OpenAI Apps SDK `window.openai` shim into
+   * the widget HTML before returning it. Default `false` — only hosts
+   * that emulate ChatGPT/Copilot/Codex should opt in. The flag is
+   * resolved client-side from the active host config's
+   * `mcpProfile.apps.compatRuntime` (with host style preset fallback)
+   * so absent / non-boolean payloads here mean "no shim".
+   */
+  injectOpenAiCompat?: boolean;
   template?: string;
   viewMode?: string;
   viewParams?: Record<string, unknown>;
@@ -135,6 +144,7 @@ apps.post("/widget-content", async (c) => {
       template: templateUri,
       viewMode,
       viewParams,
+      injectOpenAiCompat,
     } = body;
 
     if (!serverId || !resourceUri || !toolId || !toolName) {
@@ -248,24 +258,33 @@ apps.post("/widget-content", async (c) => {
     // When in widget-declared mode, use the widget's CSP metadata (or restrictive defaults)
     const isPermissive = effectiveCspMode === "permissive";
 
-    // Inject window.openai compat layer into every MCP App iframe
-    html = injectOpenAICompat(html, {
-      toolId,
-      toolName,
-      toolInput: toolInput ?? {},
-      toolOutput,
-      toolResponseMetadata: toolResponseMetadata ?? null,
-      initialWidgetState: initialWidgetState ?? null,
-      theme,
-      viewMode,
-      viewParams,
-    });
+    // Optionally inject the OpenAI Apps SDK `window.openai` shim.
+    // Real Claude/Cursor/MCPJam hosts don't expose this surface, so
+    // the default is to leave the HTML untouched. The renderer
+    // resolves the flag from the active host config and forwards it
+    // here, so the injection decision travels with the request rather
+    // than living on the server.
+    const shouldInjectOpenAiCompat = injectOpenAiCompat === true;
+    if (shouldInjectOpenAiCompat) {
+      html = injectOpenAICompat(html, {
+        toolId,
+        toolName,
+        toolInput: toolInput ?? {},
+        toolOutput,
+        toolResponseMetadata: toolResponseMetadata ?? null,
+        initialWidgetState: initialWidgetState ?? null,
+        theme,
+        viewMode,
+        viewParams,
+      });
+    }
 
     // Return JSON with HTML and metadata for CSP enforcement
     getRequestLogger(c, "routes.apps.mcp-apps").event("widget.resource.served", {
       widgetType: "mcp_apps",
       resourceUri: resolvedResourceUri,
       cspMode: effectiveCspMode,
+      injectedOpenAiCompat: shouldInjectOpenAiCompat,
       mimeTypeValid,
     });
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -276,6 +295,11 @@ apps.post("/widget-content", async (c) => {
       permissive: isPermissive, // Tell sandbox-proxy to skip CSP injection entirely
       cspMode: effectiveCspMode,
       prefersBorder,
+      // Echoed for trace clarity. The renderer's reload-key already
+      // uses the flag it sent (not this echoed value), but persisting
+      // the server-confirmed value alongside cached HTML makes saved
+      // views unambiguous about their contents.
+      injectedOpenAiCompat: shouldInjectOpenAiCompat,
       // SEP-1865 mimetype validation
       mimeType: contentMimeType,
       mimeTypeValid,

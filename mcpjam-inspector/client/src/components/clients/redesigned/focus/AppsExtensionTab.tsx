@@ -112,6 +112,16 @@ type AppsDoc = {
   uiInitialize?: {
     hostInfo?: Record<string, unknown>;
   };
+  /**
+   * User override for vendor compat-runtime shims the inspector
+   * injects into widget HTML. Defaults inherit from the active host
+   * style's preset (Apps SDK hosts → true; SEP-1865 hosts → false).
+   * Surface only the fields the inspector currently honors; new shims
+   * land here under additional booleans as they're added.
+   */
+  compatRuntime?: {
+    openaiApps?: boolean;
+  };
 };
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -328,6 +338,17 @@ function appsToJson(draft: HostConfigInputV2): AppsDoc {
     doc.uiInitialize = { hostInfo };
   }
 
+  // mcpProfile.apps.compatRuntime — only render when the user has set
+  // an explicit override (not the host style preset). Absent in the
+  // JSON means "use the preset"; present means "user has opinions".
+  const compatRuntime = draft.mcpProfile?.apps?.compatRuntime;
+  if (
+    compatRuntime &&
+    typeof compatRuntime.openaiApps === "boolean"
+  ) {
+    doc.compatRuntime = { openaiApps: compatRuntime.openaiApps };
+  }
+
   return doc;
 }
 
@@ -475,10 +496,27 @@ export function applyJsonToDraft(
     prev: prevSandbox,
   });
 
+  // compatRuntime — only present when the user explicitly typed a
+  // boolean. Absent (or non-boolean) → no override; the resolver falls
+  // back to the host style preset.
+  const incomingCompatRuntime = isPlainObject(parsed.compatRuntime)
+    ? parsed.compatRuntime
+    : undefined;
+  const newCompatRuntime: { openaiApps?: boolean } = {};
+  if (
+    incomingCompatRuntime &&
+    typeof incomingCompatRuntime.openaiApps === "boolean"
+  ) {
+    newCompatRuntime.openaiApps = incomingCompatRuntime.openaiApps;
+  }
+
   const appsBlock: NonNullable<HostConfigMcpProfileV1["apps"]> = {};
   if (nextSandbox) appsBlock.sandbox = nextSandbox;
   if (newAppsHostInfo) {
     appsBlock.uiInitialize = { hostInfo: newAppsHostInfo };
+  }
+  if (Object.keys(newCompatRuntime).length > 0) {
+    appsBlock.compatRuntime = newCompatRuntime;
   }
   const hasApps = Object.keys(appsBlock).length > 0;
 

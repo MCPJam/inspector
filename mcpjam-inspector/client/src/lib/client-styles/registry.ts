@@ -90,6 +90,24 @@ export function getHostCapabilitiesForStyle(
 }
 
 /**
+ * Resolve the vendor compat-runtime shim preset for a host style.
+ * Unknown/absent id → `{ openaiApps: false }` so the inspector defaults
+ * to honest SEP-1865 behavior; explicit preset values (Apps SDK hosts)
+ * flip the relevant shim on.
+ *
+ * The booleans here are presets; the end user can override per host via
+ * `mcpProfile.apps.compatRuntime`. See `resolveEffectiveCompatRuntime`
+ * in `lib/client-config-v2.ts` for the merge.
+ */
+export function getCompatRuntimeForStyle(
+  id: HostStyleId | null | undefined,
+): { openaiApps: boolean } {
+  return {
+    openaiApps: findHostStyle(id)?.mcp.compatRuntime?.openaiApps ?? false,
+  };
+}
+
+/**
  * Resolve the brand loading indicator component for a host style. Falls
  * back to the default host's indicator (MCPJam) when the id is unknown
  * or absent — matches the rest of the chrome-resolution surface.

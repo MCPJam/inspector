@@ -886,9 +886,12 @@ describe("MCPAppsRenderer tool input streaming", () => {
     );
 
     await vi.waitFor(() => {
+      // Third arg is the resolved compat-runtime flag (default off for
+      // the test's default MCPJam-style profile).
       expect(stableStoreFns.setWidgetHtml).toHaveBeenCalledWith(
         "call-1",
         "<html><body>widget</body></html>",
+        false,
       );
     });
 

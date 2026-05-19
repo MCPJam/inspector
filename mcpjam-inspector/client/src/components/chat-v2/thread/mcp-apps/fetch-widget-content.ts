@@ -28,6 +28,14 @@ export interface FetchMcpAppsWidgetContentRequest {
   toolName: string;
   theme: string;
   cspMode: CspMode;
+  /**
+   * Resolved compat-runtime flag — when true the server injects the
+   * OpenAI Apps SDK `window.openai` shim into the widget HTML. Caller
+   * must compute this from the active host config via
+   * `resolveEffectiveCompatRuntime` so the wire body and the renderer's
+   * reload-key state agree on what's about to be rendered.
+   */
+  injectOpenAiCompat: boolean;
   template?: string;
   viewMode?: string;
   viewParams?: Record<string, unknown>;
@@ -41,6 +49,13 @@ export interface FetchMcpAppsWidgetContentResponse {
   mimeTypeWarning?: string;
   mimeTypeValid?: boolean;
   prefersBorder?: boolean;
+  /**
+   * Server-confirmed compat-runtime flag — echoes what the route
+   * decided after applying its `injectOpenAiCompat === true` gate.
+   * Caller can persist this alongside cached HTML to remove ambiguity
+   * when replaying the snapshot under a different host config.
+   */
+  injectedOpenAiCompat?: boolean;
 }
 
 export async function fetchMcpAppsWidgetContent(
@@ -68,6 +83,7 @@ export async function fetchMcpAppsWidgetContent(
       toolName: request.toolName,
       theme: request.theme,
       cspMode: request.cspMode,
+      injectOpenAiCompat: request.injectOpenAiCompat,
       template: request.template,
       viewMode: request.viewMode,
       viewParams: request.viewParams,

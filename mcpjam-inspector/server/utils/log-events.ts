@@ -101,6 +101,12 @@ export type RequestEventMap = {
     resourceUri: string;
     cspMode: "permissive" | "widget-declared";
     mimeTypeValid?: boolean;
+    /**
+     * Whether the inspector injected the OpenAI Apps SDK
+     * `window.openai` shim into the served HTML. Helps audit
+     * which hosts are flipping the compat flag in practice.
+     */
+    injectedOpenAiCompat?: boolean;
   };
   "widget.resource.failed": {
     widgetType: "mcp_apps" | "chatgpt_apps";

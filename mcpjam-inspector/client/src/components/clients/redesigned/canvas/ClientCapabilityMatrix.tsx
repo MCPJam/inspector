@@ -58,6 +58,16 @@ export interface HostMatrixCardProps {
    */
   hostInfo: { name: string; version: string } | null;
   appsExtensionAdvertised: boolean;
+  /**
+   * Resolved vendor compat-runtime shim state. `openaiApps: true` →
+   * inspector injects `window.openai` into widget HTML; `false` → no
+   * shim. `fromOverride: false` means the value comes from the host
+   * style preset (drives the "(from preset)" chip qualifier).
+   */
+  compatRuntime: {
+    openaiApps: boolean;
+    fromOverride: boolean;
+  };
   selectedNodeId: string | null;
   onSelectNode: (nodeId: string) => void;
 }
@@ -71,6 +81,7 @@ export const HostMatrixCard = memo(function HostMatrixCard({
   sandbox,
   hostInfo,
   appsExtensionAdvertised,
+  compatRuntime,
   selectedNodeId,
   onSelectNode,
 }: HostMatrixCardProps) {
@@ -258,6 +269,59 @@ export const HostMatrixCard = memo(function HostMatrixCard({
                   </button>
                 );
               })}
+            </div>
+          </div>
+        ) : null}
+
+        {/* Compat shims — chip row showing which vendor compat
+            runtimes the inspector injects into widget HTML. SEP-1865
+            doesn't include `window.openai`, so this surface is
+            intentionally separate from the spec-portable Host
+            capabilities row above. Click routes to the Apps
+            Extension tab where the toggle lives.
+
+            Why this is its own row instead of a Host-capabilities
+            chip: capabilities are about what the host advertises to
+            the View over the wire; compat shims are about what the
+            host injects into the View's HTML before sandboxing — a
+            different layer with different on/off semantics. Mixing
+            them in one row would imply the shim is part of the
+            ui/initialize handshake. */}
+        {appsExtensionAdvertised ? (
+          <div className="hp-section">
+            <button
+              type="button"
+              className="hp-section-head"
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelectNode(APPS_HUB_NODE_ID);
+              }}
+            >
+              <span className="hp-section-title">Compat shims</span>
+            </button>
+            <div className="hp-caps">
+              <button
+                type="button"
+                className={cn(
+                  "hp-cap",
+                  !compatRuntime.openaiApps && "hp-cap--off",
+                )}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelectNode(APPS_HUB_NODE_ID);
+                }}
+                title={
+                  compatRuntime.openaiApps
+                    ? "Inspector injects window.openai (OpenAI Apps SDK shim) into widget HTML for this host"
+                    : "Inspector does NOT inject window.openai for this host (SEP-1865-only)"
+                }
+              >
+                <span className="hp-cap-dot" aria-hidden />
+                <span className="hp-cap-name">window.openai</span>
+                {!compatRuntime.fromOverride ? (
+                  <span className="hp-cap-tag">from preset</span>
+                ) : null}
+              </button>
             </div>
           </div>
         ) : null}
