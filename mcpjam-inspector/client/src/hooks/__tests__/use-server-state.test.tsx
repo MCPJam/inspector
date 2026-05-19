@@ -1786,6 +1786,7 @@ describe("syncServerToConvex name-collision recovery", () => {
       expect.objectContaining({ serverId: "srv_existing" })
     );
     expect(mockCreateServer).not.toHaveBeenCalled();
+    expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
   });
 
   it("uses create-if-missing when a stale-loaded snapshot misses the row", async () => {
