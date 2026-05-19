@@ -574,7 +574,8 @@ document.addEventListener('securitypolicyviolation', function(e) {
               data.jsonrpc === "2.0" ||
               data.type === "mcp-apps:csp-violation" ||
               data.type === "openai:uploadFile" ||
-              data.type === "openai:getFileDownloadUrl"
+              data.type === "openai:getFileDownloadUrl" ||
+              data.type === "openai:setWidgetState"
             ) {
               window.parent.postMessage(data, "*");
             }

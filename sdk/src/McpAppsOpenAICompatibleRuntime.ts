@@ -23,6 +23,20 @@ type OpenAICompatConfig = {
   toolName: string;
   toolInput: Record<string, unknown>;
   toolOutput: unknown;
+  /**
+   * Tool response `_meta` (per the Apps SDK contract — exposed to widgets
+   * as `window.openai.toolResponseMetadata`, distinct from
+   * `toolOutput` which is the structured result the widget renders).
+   * `null` when no `_meta` was attached to the tool result.
+   */
+  toolResponseMetadata: Record<string, unknown> | null;
+  /**
+   * Persisted widget state from a saved view or fork. Seeds
+   * `window.openai.widgetState` on bootstrap so widgets that read
+   * `widgetState` at first render see the saved value, not `null`.
+   * `null` when the widget should boot with fresh state.
+   */
+  initialWidgetState: unknown;
   theme: string;
   viewMode: string;
   viewParams: Record<string, unknown>;
@@ -56,7 +70,16 @@ type PendingCall = {
   const config = readConfig();
   if (!config) return;
 
-  const { toolId, toolInput, toolOutput, theme, viewMode, viewParams } = config;
+  const {
+    toolId,
+    toolInput,
+    toolOutput,
+    toolResponseMetadata,
+    initialWidgetState,
+    theme,
+    viewMode,
+    viewParams,
+  } = config;
 
   // JSON-RPC 2.0 call ID counter
   let callId = 0;
@@ -66,6 +89,23 @@ type PendingCall = {
 
   // Pending checkout calls awaiting responses (notification + callId pattern)
   const pendingCheckoutCalls = new Map<number, PendingCall>();
+
+  /**
+   * Dispatch the `openai:set_globals` CustomEvent. Apps SDK widgets (and the
+   * ChatGPT UI guide examples) subscribe to this event to learn about
+   * host-side state changes. The MCP-Apps path translates `ui/*`
+   * notifications into this event so a widget written against the Apps SDK
+   * contract sees the same surface here as it would in production ChatGPT.
+   */
+  const dispatchSetGlobals = (globals: Record<string, unknown>): void => {
+    try {
+      window.dispatchEvent(
+        new CustomEvent("openai:set_globals", { detail: { globals } }),
+      );
+    } catch {
+      // silent — CustomEvent should always succeed in a real DOM
+    }
+  };
 
   // Timeout for pending calls (30 seconds)
   const CALL_TIMEOUT_MS = 30_000;
@@ -169,11 +209,15 @@ type PendingCall = {
   const openaiAPI = {
     toolInput: toolInput ?? {},
     toolOutput: toolOutput ?? null,
+    toolResponseMetadata: toolResponseMetadata ?? null,
     theme: theme ?? "dark",
     displayMode: "inline",
     viewMode: viewMode ?? "inline",
     viewParams: viewParams ?? {},
-    widgetState: null as unknown,
+    // Seeded with the persisted widgetState from a saved view / fork
+    // (when present) so widgets that read window.openai.widgetState on
+    // first render see the previously-saved state instead of null.
+    widgetState: (initialWidgetState ?? null) as unknown,
 
     /**
      * Call an MCP tool by name. Returns a Promise resolved when the
@@ -254,18 +298,26 @@ type PendingCall = {
     },
 
     /**
-     * Store arbitrary widget state for persistence.
-     * Maps to ui/update-model-context which is a request expecting
-     * { content?: ContentBlock[], structuredContent?: Record }.
+     * Store arbitrary widget state for persistence. Mirrors the Apps SDK
+     * contract:
+     *   - update local `window.openai.widgetState`,
+     *   - notify the host so it can persist for replay / saved views,
+     *   - fire the `openai:set_globals` event for widgets that observe it.
+     *
+     * IMPORTANT: this does NOT call `ui/update-model-context`. That
+     * request is a SEP-1865 spec API for explicitly updating the host's
+     * model context (which is consumed by the LLM on the next turn) and
+     * should be opt-in — auto-posting on every state change would leak
+     * widget internals into the LLM prompt. Widgets that want to update
+     * model context must call it themselves.
      */
     setWidgetState(state: unknown): void {
       this.widgetState = state;
-      sendRequest("ui/update-model-context", {
-        structuredContent:
-          typeof state === "object" && state !== null
-            ? (state as Record<string, unknown>)
-            : { value: state },
-      });
+      window.parent.postMessage(
+        { type: "openai:setWidgetState", toolId, state },
+        "*",
+      );
+      dispatchSetGlobals({ widgetState: state });
     },
 
     /**
@@ -455,22 +507,51 @@ type PendingCall = {
       const params = data.params ?? {};
       switch (data.method) {
         // MCP Apps bridge notification names (SEP-1865)
-        case "ui/notifications/tool-input":
-          openaiAPI.toolInput = params.arguments ?? params;
+        case "ui/notifications/tool-input": {
+          const args = params.arguments ?? params;
+          openaiAPI.toolInput = args;
+          dispatchSetGlobals({ toolInput: args });
           break;
-        case "ui/notifications/tool-input-partial":
-          openaiAPI.toolInput = params.arguments ?? params;
+        }
+        case "ui/notifications/tool-input-partial": {
+          const args = params.arguments ?? params;
+          openaiAPI.toolInput = args;
+          dispatchSetGlobals({ toolInput: args });
           break;
-        case "ui/notifications/tool-result":
+        }
+        case "ui/notifications/tool-result": {
           openaiAPI.toolOutput = params;
+          // Apps SDK exposes the tool result's `_meta` as a separate
+          // `window.openai.toolResponseMetadata` surface (distinct from
+          // toolOutput, which is the structured result the widget renders).
+          // Surface it here when present so widgets can read timestamps,
+          // source IDs, etc. without rummaging in toolOutput.
+          const meta =
+            (params as { _meta?: Record<string, unknown> } | undefined)?._meta;
+          const detail: Record<string, unknown> = { toolOutput: params };
+          if (meta && typeof meta === "object") {
+            openaiAPI.toolResponseMetadata = meta;
+            detail.toolResponseMetadata = meta;
+          }
+          dispatchSetGlobals(detail);
           break;
+        }
         case "ui/notifications/tool-cancelled":
           // Tool was cancelled/errored
           break;
-        case "ui/notifications/host-context-changed":
-          if (params.theme) openaiAPI.theme = params.theme;
-          if (params.displayMode) openaiAPI.displayMode = params.displayMode;
+        case "ui/notifications/host-context-changed": {
+          const changed: Record<string, unknown> = {};
+          if (params.theme) {
+            openaiAPI.theme = params.theme;
+            changed.theme = params.theme;
+          }
+          if (params.displayMode) {
+            openaiAPI.displayMode = params.displayMode;
+            changed.displayMode = params.displayMode;
+          }
+          if (Object.keys(changed).length > 0) dispatchSetGlobals(changed);
           break;
+        }
         case "openai/requestCheckout:response": {
           const pending = pendingCheckoutCalls.get(params.callId as number);
           if (pending) {
@@ -553,10 +634,33 @@ type PendingCall = {
       }
       // Complete the handshake — this triggers bridge.oninitialized on the host
       sendNotification("ui/notifications/initialized", {});
+      // Initial set_globals dispatch with everything the runtime currently
+      // knows. Apps SDK widgets that subscribe at script load (or via the
+      // standard early-script pattern) will see this on the next tick.
+      dispatchSetGlobals({
+        toolInput: openaiAPI.toolInput,
+        toolOutput: openaiAPI.toolOutput,
+        toolResponseMetadata: openaiAPI.toolResponseMetadata,
+        theme: openaiAPI.theme,
+        displayMode: openaiAPI.displayMode,
+        widgetState: openaiAPI.widgetState,
+      });
     },
     reject: () => {
       // Initialization failed; still try to signal initialized so widget shows
       sendNotification("ui/notifications/initialized", {});
+      // Dispatch initial globals in the failure path too so event-driven
+      // widgets that subscribe to openai:set_globals get their initial
+      // state (toolInput/toolOutput from config + defaults). Mirrors the
+      // success branch above.
+      dispatchSetGlobals({
+        toolInput: openaiAPI.toolInput,
+        toolOutput: openaiAPI.toolOutput,
+        toolResponseMetadata: openaiAPI.toolResponseMetadata,
+        theme: openaiAPI.theme,
+        displayMode: openaiAPI.displayMode,
+        widgetState: openaiAPI.widgetState,
+      });
     },
   });
 

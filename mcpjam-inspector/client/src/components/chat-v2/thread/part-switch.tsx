@@ -16,7 +16,6 @@ import { SourceUrlPart } from "./parts/source-url-part";
 import { SourceDocumentPart } from "./parts/source-document-part";
 import { JsonPart } from "./parts/json-part";
 import { TextPart } from "./parts/text-part";
-import { MCPUIResourcePart } from "./parts/mcp-ui-resource-part";
 import { useViewQueries } from "@/hooks/useViews";
 import { useSaveView, type ToolDataForSave } from "@/hooks/useSaveView";
 import { type DisplayMode } from "@/stores/ui-playground-store";
@@ -32,7 +31,6 @@ import {
 } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
   AnyPart,
-  extractUIResource,
   getDataLabel,
   getToolInfo,
   isDataPart,
@@ -48,8 +46,6 @@ import {
   readToolResultMeta,
   readToolResultServerId,
 } from "@/lib/tool-result-utils";
-
-const NOOP_SEND_FOLLOW_UP = () => {};
 
 export function PartSwitch({
   part,
@@ -234,8 +230,10 @@ export function PartSwitch({
     const uiResourceUri =
       renderOverride?.resourceUri ??
       getUIResourceUri(uiType, effectiveToolMeta);
-    const uiResource =
-      uiType === UIType.MCP_UI ? extractUIResource(toolInfo.rawOutput) : null;
+    // MCP-UI legacy (inline ui:// resources via @mcp-ui/client) was
+    // removed during the renderer consolidation. Inline resources are no
+    // longer rendered; tools that want a widget must declare it via
+    // `_meta.ui.resourceUri` or `openai/outputTemplate`.
     const serverId =
       renderOverride?.serverId ??
       getToolServerId(toolInfo.toolName, toolServerMap) ??
@@ -294,26 +292,6 @@ export function PartSwitch({
       effectiveToolMeta as Record<string, unknown> | undefined,
     );
 
-    if (uiResource) {
-      return (
-        <>
-          <ToolPart
-            part={toolPart}
-            uiType={uiType}
-            onSaveView={allowSaveView ? handleSaveView : undefined}
-            canSaveView={allowSaveView ? canSaveView : undefined}
-            saveDisabledReason={allowSaveView ? saveDisabledReason : undefined}
-            isSaving={isSaving}
-            minimalMode={minimalMode}
-            {...approvalProps}
-          />
-          <MCPUIResourcePart
-            resource={uiResource.resource}
-            onSendFollowUp={interactive ? onSendFollowUp : NOOP_SEND_FOLLOW_UP}
-          />
-        </>
-      );
-    }
     const shouldRenderWidget =
       uiType === UIType.OPENAI_SDK ||
       uiType === UIType.MCP_APPS ||

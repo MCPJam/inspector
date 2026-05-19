@@ -6,7 +6,6 @@ import {
   DynamicToolUIPart,
 } from "ai";
 import type { UIMessage } from "@ai-sdk/react";
-import { isUIResource } from "@mcp-ui/client";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -148,17 +147,6 @@ export function getToolInfo(
     rawOutput,
     errorText: toolPart.errorText ?? toolPart.error,
   };
-}
-
-export function extractUIResource(
-  toolResult: unknown,
-): { resource: McpResource } | null {
-  const content =
-    (toolResult as { value?: { content?: unknown[] } })?.value?.content ??
-    (toolResult as { content?: unknown[] })?.content;
-  if (!Array.isArray(content)) return null;
-  const found = content.find((item) => isUIResource(item as any));
-  return (found as { resource: McpResource } | undefined) ?? null;
 }
 
 export function isDataPart(part: AnyPart): boolean {

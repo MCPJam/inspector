@@ -1,5 +1,19 @@
-import { isUIResource } from "@mcp-ui/client";
 import type { DynamicToolUIPart, ModelMessage, UIMessage } from "ai";
+
+// Inline replacement for the @mcp-ui/client `isUIResource` predicate after
+// the MCP-UI legacy renderer was removed. Matches the same shapes the trace
+// viewer needs to scrub from display: an EmbeddedResource with a `ui://`
+// uri, or a UIResource wrapper with `resource.uri.startsWith("ui://")`.
+function isUIResourceShape(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  if (typeof v.uri === "string" && v.uri.startsWith("ui://")) return true;
+  if (v.resource && typeof v.resource === "object") {
+    const r = v.resource as Record<string, unknown>;
+    if (typeof r.uri === "string" && r.uri.startsWith("ui://")) return true;
+  }
+  return false;
+}
 import { buildPersistedExecutionReplay } from "@/components/chat-v2/thread/persisted-execution-replay";
 import { extractTextFromToolResult } from "@/components/chat-v2/shared/tool-result-text";
 import type { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
@@ -203,7 +217,7 @@ function isWidgetUiType(uiType: UIType | null): boolean {
 
 function isUiResourceLike(value: unknown): boolean {
   if (!isRecord(value)) return false;
-  if (isUIResource(value as never)) return true;
+  if (isUIResourceShape(value)) return true;
   const resource = value.resource;
   return isRecord(resource) && typeof resource.uri === "string";
 }
