@@ -1,0 +1,121 @@
+/*
+ * sandbox-config-grid.css
+ *
+ * Portable CSS for `SandboxConfigGrid`. The matrix's "Sandbox proxy iframe"
+ * card declares `--hp-sandbox-*` and `--hp-region-*` under
+ * `.host-paper-card` (see PAPER_STYLES in ClientCapabilityMatrix.tsx). When
+ * the grid renders inside the matrix the cascade picks up the matrix's
+ * declarations and these rules work unchanged.
+ *
+ * When the grid renders OUTSIDE the matrix — e.g. the chat-thread Sandbox
+ * debug panel — there's no `.host-paper-card` ancestor, so we redeclare
+ * the var block on `.sandbox-config-grid` itself. Both selectors resolve
+ * the same vars to the same values; the grid never inherits the wrong
+ * palette regardless of mount context.
+ */
+
+.sandbox-config-grid {
+  --hp-ink: var(--foreground);
+  --hp-muted: var(--muted-foreground);
+  --hp-muted-dim: color-mix(in oklch, var(--muted-foreground) 65%, transparent);
+  --hp-hairline: var(--border);
+  --hp-region-hover: color-mix(in oklch, var(--foreground) 4%, transparent);
+  --hp-region-selected: color-mix(in oklch, var(--foreground) 7%, transparent);
+
+  --hp-sandbox-bg: color-mix(in oklch, var(--diagram-sandbox) 8%, var(--popover));
+  --hp-sandbox-ring: color-mix(in oklch, var(--diagram-sandbox) 35%, var(--border));
+  --hp-sandbox-ink: var(--foreground);
+  --hp-sandbox-accent: var(--diagram-sandbox);
+  --hp-sandbox-sub: var(--muted-foreground);
+  --hp-sandbox-hairline: color-mix(in oklch, var(--diagram-sandbox) 20%, var(--border));
+  --hp-sandbox-row-hover: color-mix(in oklch, var(--diagram-sandbox) 6%, transparent);
+  --hp-sandbox-row-selected: color-mix(in oklch, var(--diagram-sandbox) 12%, transparent);
+
+  --hp-amber: var(--warning);
+  --hp-danger: var(--destructive);
+
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px 18px;
+  color: var(--hp-sandbox-ink);
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.sandbox-config-grid .hp-sb-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font-size: 12.5px;
+  color: var(--hp-sandbox-ink);
+  border-bottom: 1px dashed var(--hp-sandbox-hairline);
+  transition: background 120ms ease;
+  min-width: 0;
+}
+.sandbox-config-grid .hp-sb-row:hover {
+  background: var(--hp-sandbox-row-hover);
+}
+.sandbox-config-grid .hp-sb-row--static {
+  cursor: default;
+}
+.sandbox-config-grid .hp-sb-row--static:hover {
+  background: transparent;
+}
+.sandbox-config-grid .hp-sb-row--selected {
+  background: var(--hp-sandbox-row-selected);
+}
+.sandbox-config-grid .hp-sb-row--warn {
+  background: color-mix(in oklch, var(--warning) 12%, transparent);
+}
+.sandbox-config-grid .hp-sb-row--warn:hover {
+  background: color-mix(in oklch, var(--warning) 18%, transparent);
+}
+.sandbox-config-grid .hp-sb-row--danger {
+  background: color-mix(in oklch, var(--destructive) 12%, transparent);
+}
+.sandbox-config-grid .hp-sb-row--danger:hover {
+  background: color-mix(in oklch, var(--destructive) 18%, transparent);
+}
+.sandbox-config-grid .hp-sb-key {
+  color: var(--hp-sandbox-sub);
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  font-size: 11.5px;
+}
+.sandbox-config-grid .hp-sb-value-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  min-width: 0;
+}
+.sandbox-config-grid .hp-sb-value {
+  text-align: left;
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  font-size: 11.5px;
+  color: var(--hp-sandbox-ink);
+  font-weight: 500;
+  min-width: 0;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.sandbox-config-grid .hp-sb-value--italic {
+  font-style: italic;
+  font-weight: 400;
+  color: var(--hp-sandbox-sub);
+  font-family: inherit;
+  font-size: 12.5px;
+}
+.sandbox-config-grid .hp-sb-qual {
+  text-align: left;
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  font-size: 10.5px;
+  color: var(--hp-sandbox-sub);
+  flex: 0 0 auto;
+}

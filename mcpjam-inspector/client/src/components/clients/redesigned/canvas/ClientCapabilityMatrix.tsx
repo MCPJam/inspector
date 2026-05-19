@@ -18,7 +18,9 @@ import {
   type ClientCapRow,
   type ProtocolLeafNodeData,
   type SandboxConfigNodeData,
+  type SandboxConfigSubKey,
 } from "../types";
+import { SandboxConfigGrid } from "./sandbox-config-grid";
 
 function getClientLogo(
   clientInfoName: string | undefined,
@@ -276,20 +278,27 @@ export const HostMatrixCard = memo(function HostMatrixCard({
               <span className="hp-sandbox-title">Sandbox proxy iframe</span>
             </button>
 
-            <div className="hp-sb-grid">
-              {sandbox.map((row) => (
-                <SandboxConfigCell
-                  key={row.subKey}
-                  row={row}
-                  selected={
-                    selectedNodeId === sandboxConfigLeafNodeId(row.subKey)
+            <SandboxConfigGrid
+              rows={sandbox}
+              selectedSubKey={
+                (() => {
+                  // Map back from the selected node id ("sandbox-cfg:<subKey>")
+                  // to a subKey so the grid can render its own selected state.
+                  // Unrelated selected nodes simply produce `null`.
+                  const prefix = "sandbox-cfg:";
+                  if (
+                    selectedNodeId &&
+                    selectedNodeId.startsWith(prefix)
+                  ) {
+                    return selectedNodeId.slice(prefix.length) as SandboxConfigSubKey;
                   }
-                  onClick={() =>
-                    onSelectNode(sandboxConfigLeafNodeId(row.subKey))
-                  }
-                />
-              ))}
-            </div>
+                  return null;
+                })()
+              }
+              onRowSelect={(subKey) =>
+                onSelectNode(sandboxConfigLeafNodeId(subKey))
+              }
+            />
 
             {/* ===== View nested-nested frame =====
                 Empty state: surfaces `mcpProfile.apps.uiInitialize` — the
@@ -377,104 +386,6 @@ function ClickableRegion({
       {children}
     </button>
   );
-}
-
-/**
- * One sandbox config row. Severity drives a left-edge dot color but the
- * row sits inside the amber Sandbox frame, so danger/warn render as
- * subtler in-frame tints than they did on the old dark card.
- */
-function SandboxConfigCell({
-  row,
-  selected,
-  onClick,
-}: {
-  row: SandboxConfigNodeData;
-  selected: boolean;
-  onClick: () => void;
-}) {
-  const displayValue =
-    row.summary && row.summary !== "—" ? row.summary : semanticAbsence(row.subKey);
-  // Per-directive token chips intentionally NOT rendered inline. For rows
-  // like cspDirectives with 10+ directives × multiple tokens each, an
-  // always-expanded chip list overwhelms the matrix and pushes downstream
-  // sections (View iframe, Servers) off-screen. The row's summary
-  // ("10 directives · 25 source expressions") conveys cardinality at a glance; the
-  // structured editor in ClientConfigEditor.tsx is where the per-directive
-  // detail belongs. We surface the breakdown as a `title=` tooltip on the
-  // qualifier so power users can hover without losing the layout.
-  const directives = row.directives ?? [];
-  const directivesTooltip =
-    directives.length > 0
-      ? directives
-          .map((d) => `${d.label}: ${d.domains.join(" ")}`)
-          .join("\n")
-      : undefined;
-  return (
-    <button
-      type="button"
-      onClick={(e) => {
-        e.stopPropagation();
-        onClick();
-      }}
-      className={cn(
-        "hp-sb-row",
-        selected && "hp-sb-row--selected",
-        row.severity === "danger" && "hp-sb-row--danger",
-        row.severity === "warn" && "hp-sb-row--warn",
-        row.isChanged && "host-matrix-changed",
-      )}
-    >
-      <span className="hp-sb-key">{row.label}</span>
-      <span className="hp-sb-value-line">
-        <span
-          className={cn(
-            "hp-sb-value",
-            row.summary === "—" && "hp-sb-value--italic",
-          )}
-          title={directivesTooltip ?? row.summary}
-        >
-          {displayValue}
-        </span>
-        {row.qualifier ? (
-          <span
-            className="hp-sb-qual"
-            title={directivesTooltip ?? row.qualifier}
-          >
-            {row.qualifier}
-          </span>
-        ) : null}
-      </span>
-    </button>
-  );
-}
-
-/**
- * Map an absent sandbox slice ("—" summary) to a semantic word, so the
- * reader sees "default" / "none granted" instead of an em-dash that
- * could be confused with "unknown".
- *
- * Note: `restrictTo` / `cspDirectives` / `sandboxAttrs` / `allowFeatures`
- * are not listed here — canvasBuilder skips those rows entirely when at
- * the safe default, so this helper is only called for `mode` and
- * `permissions`.
- */
-function semanticAbsence(key: SandboxConfigNodeData["subKey"]): string {
-  switch (key) {
-    case "permissions":
-      // SEP-1865 is allowlist-only: an empty `allow` map means no permission
-      // is granted, regardless of the inspector-internal resolver mode.
-      return "none granted";
-    case "mode":
-      return "default";
-    case "restrictTo":
-    case "cspDirectives":
-    case "sandboxAttrs":
-    case "allowFeatures":
-      // Unreachable — canvasBuilder drops these rows when they're at the
-      // safe default. Kept for type exhaustiveness.
-      return "";
-  }
 }
 
 /* ---------------- inline styles ---------------- */
@@ -736,77 +647,10 @@ const PAPER_STYLES = `
   letter-spacing: -0.01em;
 }
 
-.host-paper-card .hp-sb-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 6px 18px;
-}
-.host-paper-card .hp-sb-row {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 6px 8px;
-  border-radius: 8px;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-  text-align: left;
-  font-size: 12.5px;
-  color: var(--hp-sandbox-ink);
-  border-bottom: 1px dashed var(--hp-sandbox-hairline);
-  transition: background 120ms ease;
-  min-width: 0;
-}
-.host-paper-card .hp-sb-row:hover { background: var(--hp-sandbox-row-hover); }
-.host-paper-card .hp-sb-row--selected { background: var(--hp-sandbox-row-selected); }
-.host-paper-card .hp-sb-row--warn {
-  background: color-mix(in oklch, var(--warning) 12%, transparent);
-}
-.host-paper-card .hp-sb-row--warn:hover {
-  background: color-mix(in oklch, var(--warning) 18%, transparent);
-}
-.host-paper-card .hp-sb-row--danger {
-  background: color-mix(in oklch, var(--destructive) 12%, transparent);
-}
-.host-paper-card .hp-sb-row--danger:hover {
-  background: color-mix(in oklch, var(--destructive) 18%, transparent);
-}
-.host-paper-card .hp-sb-key {
-  color: var(--hp-sandbox-sub);
-  font-family: ui-monospace, "JetBrains Mono", monospace;
-  font-size: 11.5px;
-}
-.host-paper-card .hp-sb-value-line {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 8px;
-  min-width: 0;
-}
-.host-paper-card .hp-sb-value {
-  text-align: left;
-  font-family: ui-monospace, "JetBrains Mono", monospace;
-  font-size: 11.5px;
-  color: var(--hp-sandbox-ink);
-  font-weight: 500;
-  min-width: 0;
-  word-break: break-word;
-  overflow-wrap: anywhere;
-}
-.host-paper-card .hp-sb-value--italic {
-  font-style: italic;
-  font-weight: 400;
-  color: var(--hp-sandbox-sub);
-  font-family: inherit;
-  font-size: 12.5px;
-}
-.host-paper-card .hp-sb-qual {
-  text-align: left;
-  font-family: ui-monospace, "JetBrains Mono", monospace;
-  font-size: 10.5px;
-  color: var(--hp-sandbox-sub);
-  flex: 0 0 auto;
-}
+/* hp-sb-* rules now live in sandbox-config-grid.css, scoped under the
+   .sandbox-config-grid selector. The matrix renders that component
+   directly, so dropping these duplicates avoids drift between the two
+   call sites. */
 
 /* === View nested-nested frame === */
 .host-paper-card .hp-view {
