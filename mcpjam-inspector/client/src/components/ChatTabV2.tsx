@@ -1626,7 +1626,9 @@ export function ChatTabV2({
   // Submit blocking with server check
   const submitBlocked = baseSubmitBlocked;
   const { isStreamingActive, stopActiveChat } = useChatStopControls({
-    isMultiModelMode,
+    // Chat tab doesn't have a multi-host axis — its compare mode is
+    // exactly multi-model. Pass through directly.
+    isCompareMode: isMultiModelMode,
     isStreaming,
     multiModelSummaries,
     setStopBroadcastRequestId,
