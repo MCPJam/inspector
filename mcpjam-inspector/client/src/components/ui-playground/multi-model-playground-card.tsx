@@ -52,11 +52,8 @@ import {
   useActiveMcpProfile,
 } from "@/contexts/active-mcp-profile-context";
 import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
-import type { ChatUiOverride } from "@/lib/client-styles";
-import type {
-  HostConfigDtoV2,
-  HostConfigMcpProfileV1,
-} from "@/lib/client-config-v2";
+import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
+import type { HostSnapshot } from "@/lib/host-snapshot";
 import type { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
   getChatboxChatBackground,
@@ -157,34 +154,36 @@ interface MultiModelPlaygroundCardProps {
   addColumnSeed?: { version: number; messages: UIMessage[] } | null;
   onTranscriptSync?: (compareId: string, messages: UIMessage[]) => void;
   /**
-   * Optional per-card host-snapshot props (Phase 3 plumbing for Phase 4
-   * multi-host render path). When undefined, the card falls back to the
-   * tab-root provider value via `useContext` so model-mode callers don't
-   * need to thread these. When defined, the card's inner provider shadows
-   * the tab-root one so per-column overrides apply to trace + raw views
-   * (not just chat — this is the whole point of the Phase 3 lift).
+   * Optional per-column host snapshot. Consolidates what Phase 3 had as
+   * five separate optional props with `*Set` discriminator booleans
+   * (`hostCapabilitiesOverride[+Set]`, `chatUiOverride[+Set]`,
+   * `mcpProfile[+Set]`). One prop instead of five — a reviewer sees
+   * `hostSnapshot={...}` at the call site and knows what fields shadow.
    *
-   * NOTE: `hostCapabilitiesOverride` and `chatUiOverride` have `undefined`
-   * as a meaningful runtime value ("no override; preset wins"). We use a
-   * separate `*Set` discriminator below to distinguish "no prop passed"
-   * (fall back to context) from "prop passed as undefined" (shadow with
-   * undefined). Model-mode callers don't pass either flag.
+   * Semantics: when `hostSnapshot` is `undefined` (the multi-model caller
+   * and any single-host caller), the card reads each context via
+   * `useContext` from the tab-root provider — behavior-identical to today.
+   * When `hostSnapshot` is set (the multi-host caller, Phase 4), the
+   * card's inner providers shadow the tab-root ones for THIS subtree so
+   * per-column host UX surface (style, caps, chat UI, MCP profile) flows
+   * into chat + trace + raw views.
+   *
+   * Note: `hostStyle` lives on the snapshot too but is already a required
+   * card prop above (`hostStyle: ChatboxHostStyle`) — the multi-host
+   * caller passes both, and they must agree. Documenting here so future
+   * refactors don't accidentally diverge them.
    */
-  hostCapabilitiesOverride?: Record<string, unknown> | undefined;
-  /** When true, treat `hostCapabilitiesOverride` as an explicit prop even if undefined (shadow context). */
-  hostCapabilitiesOverrideSet?: boolean;
-  chatUiOverride?: ChatUiOverride | undefined;
-  /** When true, treat `chatUiOverride` as an explicit prop even if undefined (shadow context). */
-  chatUiOverrideSet?: boolean;
-  mcpProfile?: HostConfigMcpProfileV1 | undefined;
-  /** When true, treat `mcpProfile` as an explicit prop even if undefined (shadow context). */
-  mcpProfileSet?: boolean;
+  hostSnapshot?: HostSnapshot;
   /**
    * Optional host config used to build a per-card
-   * `ActiveHostCapsResolverScope`. When undefined, the tab-root scope's
-   * resolver is inherited (no per-card shadow).
+   * `ActiveHostCapsResolverScope`. Kept as a separate prop from
+   * `hostSnapshot` because the resolver is a runtime function/object,
+   * not part of the persisted host config shape — it lives on a different
+   * abstraction layer (execution-plane resolver vs. control-plane
+   * config). When undefined, the tab-root scope's resolver is inherited
+   * (no per-card shadow).
    */
-  activeHost?: HostConfigDtoV2 | null;
+  hostCapsResolver?: HostConfigDtoV2 | null;
 }
 
 export function MultiModelPlaygroundCard({
@@ -222,32 +221,34 @@ export function MultiModelPlaygroundCard({
   compareEnterMessages = [],
   addColumnSeed = null,
   onTranscriptSync,
-  hostCapabilitiesOverride: hostCapabilitiesOverrideProp,
-  hostCapabilitiesOverrideSet = false,
-  chatUiOverride: chatUiOverrideProp,
-  chatUiOverrideSet = false,
-  mcpProfile: mcpProfileProp,
-  mcpProfileSet = false,
-  activeHost,
+  hostSnapshot,
+  hostCapsResolver,
 }: MultiModelPlaygroundCardProps) {
-  // Resolve effective per-card values from props with fall-back to the
-  // tab-root provider context. Model-mode callers (today) don't pass any
-  // of these; the card inherits the tab-root values via `useContext` so
-  // the rendered tree is behavior-identical to pre-refactor. Phase 4
-  // host-render path passes explicit per-column values to take advantage
-  // of the provider shadowing.
-  const tabRootHostCapabilitiesOverride =
-    useChatboxHostCapabilitiesOverride();
+  // Resolve effective per-card values from `hostSnapshot` with fall-back
+  // to the tab-root provider context. Callers in model mode (or any
+  // single-host caller) leave `hostSnapshot` undefined: the card inherits
+  // the tab-root values via `useContext` so the rendered tree is
+  // behavior-identical to pre-Phase-4. The Phase 4 multi-host caller
+  // passes a `hostSnapshot` per column to take advantage of the provider
+  // shadowing.
+  //
+  // We always read all three tab-root contexts (rules-of-hooks): the
+  // `hostSnapshot` presence check only picks which value to forward into
+  // the inner provider. Note that `undefined` for any individual field on
+  // the snapshot is meaningful ("no override; preset wins") — when the
+  // snapshot itself is set, we forward the field verbatim including
+  // undefined, NOT fall back to the tab-root value.
+  const tabRootHostCapabilitiesOverride = useChatboxHostCapabilitiesOverride();
   const tabRootChatUiOverride = useChatboxChatUiOverride();
   const tabRootMcpProfile = useActiveMcpProfile();
-  const effectiveHostCapabilitiesOverride = hostCapabilitiesOverrideSet
-    ? hostCapabilitiesOverrideProp
+  const effectiveHostCapabilitiesOverride = hostSnapshot
+    ? hostSnapshot.hostCapabilitiesOverride
     : tabRootHostCapabilitiesOverride;
-  const effectiveChatUiOverride = chatUiOverrideSet
-    ? chatUiOverrideProp
+  const effectiveChatUiOverride = hostSnapshot
+    ? hostSnapshot.chatUiOverride
     : tabRootChatUiOverride;
-  const effectiveMcpProfile = mcpProfileSet
-    ? mcpProfileProp
+  const effectiveMcpProfile = hostSnapshot
+    ? hostSnapshot.mcpProfile
     : tabRootMcpProfile;
   const [modelContextQueue, setModelContextQueue] = useState<
     {
@@ -650,16 +651,17 @@ export function MultiModelPlaygroundCard({
 
   // Provider stack wraps the WHOLE card body — header + trace branch +
   // chat branch — so per-card host overrides (Phase 4) flow into all
-  // three. Pre-refactor only the chat branch had this stack.
+  // three. Pre-Phase-3 only the chat branch had this stack.
   //
   // Two of the providers (`ActiveMcpProfileProvider`,
   // `ActiveHostCapsResolverScope`) are conditional: they shadow the
-  // tab-root only when the caller explicitly passes the prop. This
-  // matters because (a) model-mode wants the tab-root values to flow
-  // through unchanged, and (b) the contexts' default values aren't
-  // meaningful sentinels (their `undefined` defaults represent real
-  // states, not "no scope"). The "*Set" discriminator booleans handle
-  // the value-providers analogously.
+  // tab-root only when the caller explicitly passes the relevant prop
+  // (`hostSnapshot` and `hostCapsResolver` respectively). This matters
+  // because (a) model-mode wants the tab-root values to flow through
+  // unchanged, and (b) the contexts' default values aren't meaningful
+  // sentinels (their `undefined` defaults represent real states, not
+  // "no scope"). The value-providers above use the same gating
+  // (`hostSnapshot` presence) to decide between prop and context.
   const cardBody = (
     <div
       data-testid="multi-model-playground-card-root"
@@ -849,16 +851,19 @@ export function MultiModelPlaygroundCard({
   // Optional shadow providers — only wrap when the caller explicitly
   // passed the corresponding prop. Without the prop, the tab-root
   // scope's value flows through, preserving today's behavior.
-  if (mcpProfileSet) {
+  if (hostSnapshot) {
     wrapped = (
       <ActiveMcpProfileProvider value={effectiveMcpProfile}>
         {wrapped}
       </ActiveMcpProfileProvider>
     );
   }
-  if (activeHost !== undefined) {
+  if (hostCapsResolver !== undefined) {
     wrapped = (
-      <ActiveHostCapsResolverScope activeHost={activeHost} hostStyle={hostStyle}>
+      <ActiveHostCapsResolverScope
+        activeHost={hostCapsResolver}
+        hostStyle={hostStyle}
+      >
         {wrapped}
       </ActiveHostCapsResolverScope>
     );
