@@ -102,6 +102,21 @@ function getPartKey(part: MessagePart, stepIndex: number, partIndex: number) {
   return `${stepIndex}-${partIndex}`;
 }
 
+function isSameSenderAvatar(
+  prev: ProjectThreadOwnerAvatar | undefined,
+  next: ProjectThreadOwnerAvatar | undefined,
+) {
+  if (prev === next) return true;
+  if (!prev || !next) return false;
+  if (prev.status !== next.status) return false;
+  if (prev.status === "show" && next.status === "show") {
+    return (
+      prev.displayName === next.displayName && prev.imageUrl === next.imageUrl
+    );
+  }
+  return true;
+}
+
 function areMessageViewPropsEqual(
   prev: Readonly<MessageViewProps>,
   next: Readonly<MessageViewProps>,
@@ -132,7 +147,7 @@ function areMessageViewPropsEqual(
     prev.reasoningDisplayMode === next.reasoningDisplayMode &&
     prev.claudeFooterMode === next.claudeFooterMode &&
     prev.renderUserMessageActions === next.renderUserMessageActions &&
-    prev.senderAvatar === next.senderAvatar &&
+    isSameSenderAvatar(prev.senderAvatar, next.senderAvatar) &&
     prev.showSenderAvatar === next.showSenderAvatar
   );
 }
