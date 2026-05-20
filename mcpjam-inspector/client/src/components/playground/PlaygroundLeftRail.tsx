@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Hammer, History } from "lucide-react";
-import { useFeatureFlagEnabled } from "posthog-js/react";
+import { useFeatureFlagEnabled, usePostHog } from "posthog-js/react";
+import { standardEventProps } from "@/lib/PosthogUtils";
 import { ChatHistoryRail } from "@/components/chat-v2/history/ChatHistoryRail";
 import { useAppBuilderStateContext } from "@/components/ui-playground/hooks/use-app-builder-state";
 import { PlaygroundLeft } from "@/components/ui-playground/PlaygroundLeft";
@@ -27,6 +28,20 @@ export function PlaygroundLeftRail() {
     }
   }, [sessionsTabEnabled, activeTab]);
 
+  const posthog = usePostHog();
+  const handleTabClick = useCallback(
+    (next: LeftRailTab) => {
+      if (next === activeTab) return;
+      posthog?.capture("playground_left_rail_tab_changed", {
+        ...standardEventProps("playground_left_rail"),
+        from: activeTab,
+        to: next,
+      });
+      setActiveTab(next);
+    },
+    [activeTab, posthog],
+  );
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <div className="flex shrink-0 items-center gap-0.5 border-b border-border px-2 py-1">
@@ -34,14 +49,14 @@ export function PlaygroundLeftRail() {
           icon={Hammer}
           label="Tools"
           isActive={activeTab === "tools"}
-          onClick={() => setActiveTab("tools")}
+          onClick={() => handleTabClick("tools")}
         />
         {sessionsTabEnabled ? (
           <TabButton
             icon={History}
             label="Sessions"
             isActive={activeTab === "sessions"}
-            onClick={() => setActiveTab("sessions")}
+            onClick={() => handleTabClick("sessions")}
           />
         ) : null}
       </div>
