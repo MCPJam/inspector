@@ -26,6 +26,13 @@ interface Props {
   protocol: UIType | null;
   isMultiModelLayoutMode: boolean;
   trailing?: ReactNode;
+  /**
+   * Optional leading control rendered at the start of the chrome row,
+   * ahead of the `ClientContextHeader` chips. Used by the playground to
+   * surface the multi-host picker (Phase 2). Kept generic so future
+   * leading controls (e.g. saved-view picker) can slot in here too.
+   */
+  leading?: ReactNode;
 }
 
 export function PlaygroundCenterHeaderBar({
@@ -37,11 +44,13 @@ export function PlaygroundCenterHeaderBar({
   protocol,
   isMultiModelLayoutMode,
   trailing,
+  leading,
 }: Props) {
   const chromeRowClass = cn(
     "relative flex min-w-0 items-center justify-center gap-2 text-xs text-muted-foreground",
     showTraceTabs ? "border-b border-border/60 px-3 py-1.5" : "h-11 px-3",
     trailing && "pe-11",
+    leading && "ps-11",
   );
 
   return (
@@ -53,6 +62,11 @@ export function PlaygroundCenterHeaderBar({
       data-testid="playground-main-header"
     >
       <div className={chromeRowClass}>
+        {leading ? (
+          <div className="pointer-events-none absolute inset-y-0 start-3 z-10 flex items-center">
+            <div className="pointer-events-auto">{leading}</div>
+          </div>
+        ) : null}
         <div className="flex min-w-0 w-full justify-center overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <ClientContextHeader
             activeProjectId={activeProjectId}
