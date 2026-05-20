@@ -971,16 +971,17 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             },
             permissions: {
               mode: "custom",
-              // This is the *host-side iframe `allow=` grant*, not a
-              // resource-declared permission. Microsoft's doc marks
+              // Deny by default. Microsoft's doc marks
               // `_meta.ui.permissions` ❌ (Copilot ignores permissions
-              // a widget declares in its resource `_meta.ui`), but says
+              // a widget declares in its resource `_meta.ui`) and says
               // nothing about which Permissions-Policy features Copilot
-              // attaches to its own iframe. `clipboardWrite: true` is a
-              // best-guess host-grant kept for parity with the other
-              // vendor templates — no probe data confirms Copilot
-              // actually grants it.
-              allow: { clipboardWrite: true },
+              // attaches to its own iframe. The only documented signal
+              // is "no permissions surface", so MCPJam-as-Copilot
+              // mirrors that: granting nothing rather than inventing a
+              // host-side grant. Other vendor templates set
+              // `clipboardWrite: true` from live probes — Copilot has
+              // no equivalent capture, so we hold the line.
+              allow: {},
             },
           },
         },
