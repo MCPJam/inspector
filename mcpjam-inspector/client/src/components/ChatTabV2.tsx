@@ -10,7 +10,7 @@ import {
 import type { UIMessage } from "ai";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
 import { useAuth } from "@workos-inc/authkit-react";
-import { useConvexAuth, useQuery } from "convex/react";
+import { useConvexAuth } from "convex/react";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import { toast } from "sonner";
 import { ModelDefinition } from "@/shared/types";
@@ -88,7 +88,7 @@ import {
 import { useProjectServers } from "@/hooks/useViews";
 import { HOSTED_MODE } from "@/lib/config";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
-import type { OrgModelProvider } from "@/hooks/use-org-model-config";
+import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
@@ -288,12 +288,16 @@ export function ChatTabV2({
   const activeProject = appState.projects[appState.activeProjectId];
   const convexProjectId = activeProject?.sharedProjectId ?? null;
   const organizationId = activeProject?.organizationId ?? null;
-  const hostedOrgModelConfig = useQuery(
-    "organizationModelProviders:getVisibleConfig" as any,
-    HOSTED_MODE && isConvexAuthenticated && organizationId
-      ? ({ organizationId } as any)
-      : "skip",
-  ) as { providers: OrgModelProvider[] } | undefined;
+  const hostedChatboxId = hostedContext?.chatboxId;
+  const hostedChatboxSurface = hostedContext?.chatboxSurface;
+  const effectiveHostedProjectId = hostedContext?.projectId ?? convexProjectId;
+  const modelConfigOrganizationId = hostedContext?.projectId
+    ? null
+    : organizationId;
+  const hostedOrgModelConfig = useHostedOrgModelConfig({
+    projectId: effectiveHostedProjectId,
+    organizationId: modelConfigOrganizationId,
+  });
   const { serversById, serversByName } = useProjectServers({
     isAuthenticated: isConvexAuthenticated,
     projectId: convexProjectId,
@@ -314,10 +318,6 @@ export function ChatTabV2({
       ),
     [selectedConnectedServerNames, serversByName, appState.servers]
   );
-  const hostedChatboxId = hostedContext?.chatboxId;
-  const hostedChatboxSurface = hostedContext?.chatboxSurface;
-  const effectiveHostedProjectId =
-    hostedContext?.projectId ?? convexProjectId;
   const effectiveHostedSelectedServerIds =
     hostedContext?.selectedServerIds ?? hostedSelectedServerIds;
   const effectiveHostedOAuthTokens = hostedChatboxId
@@ -390,9 +390,8 @@ export function ChatTabV2({
     // defaulting to `'claude'` regardless of user choice. Backend
     // ingestion ignores it for chatbox flows (those resolve from the
     // chatbox row), so it's safe to forward unconditionally.
-    hostStyle: hostStyle === "claude" || hostStyle === "chatgpt"
-      ? hostStyle
-      : undefined,
+    hostStyle:
+      hostStyle === "claude" || hostStyle === "chatgpt" ? hostStyle : undefined,
     minimalMode,
     onReset: (reason?: ChatSessionResetReason) => {
       if (reason === "auth-bootstrap" || reason === "hydrate") {
@@ -414,10 +413,7 @@ export function ChatTabV2({
 
   // Chat history handlers
   const showHistoryRail = Boolean(
-    HOSTED_MODE &&
-      !minimalMode &&
-      !hostedChatboxId &&
-      chatHistoryRailEnabled,
+    HOSTED_MODE && !minimalMode && !hostedChatboxId && chatHistoryRailEnabled
   );
   const {
     session: reactiveHistorySession,
@@ -2429,15 +2425,16 @@ export function ChatTabV2({
                           renderUserMessageActions={
                             chatSessionId && effectiveHostedProjectId
                               ? (message) => {
-                                  const promptIndex =
-                                    userPromptIndexById.get(message.id);
+                                  const promptIndex = userPromptIndexById.get(
+                                    message.id
+                                  );
                                   if (promptIndex === undefined) return null;
                                   return (
                                     <SaveAsTestCaseAction
                                       chatSessionId={chatSessionId}
                                       promptIndex={promptIndex}
                                       promptPreview={extractUserMessageText(
-                                        message,
+                                        message
                                       )}
                                       projectId={effectiveHostedProjectId}
                                     />

@@ -53,7 +53,14 @@ import {
   toTraceRecord,
   writeTraceEvent,
 } from "./live-chat-trace-stream.js";
-import { buildResolvedModelRequestPayload } from "./model-request-payload.js";
+import {
+  buildResolvedModelRequestPayload,
+  normalizeSystemPromptForProvider,
+} from "./model-request-payload.js";
+import {
+  formatProviderOverloadError,
+  isProviderOverloadError,
+} from "./provider-error-normalization.js";
 import {
   mergeLiveChatTraceUsage,
   type LiveChatTraceUsage,
@@ -110,19 +117,22 @@ function toLiveChatTraceUsageLocal(
         totalTokens?: number;
       }
     | null
-    | undefined,
+    | undefined
 ): LiveChatTraceUsage | undefined {
   if (!usage) return undefined;
   const next: LiveChatTraceUsage = {};
-  if (typeof usage.inputTokens === "number") next.inputTokens = usage.inputTokens;
-  if (typeof usage.outputTokens === "number") next.outputTokens = usage.outputTokens;
-  if (typeof usage.totalTokens === "number") next.totalTokens = usage.totalTokens;
+  if (typeof usage.inputTokens === "number")
+    next.inputTokens = usage.inputTokens;
+  if (typeof usage.outputTokens === "number")
+    next.outputTokens = usage.outputTokens;
+  if (typeof usage.totalTokens === "number")
+    next.totalTokens = usage.totalTokens;
   return Object.keys(next).length > 0 ? next : undefined;
 }
 
 function safelyEmitLiveTextDelta(
   onLiveTextDelta: ((delta: string) => void) | undefined,
-  delta: string,
+  delta: string
 ) {
   if (!onLiveTextDelta) return;
   try {
@@ -139,7 +149,7 @@ function safelyEmitLiveTextDelta(
 }
 
 function collectStepToolCallIdsLocal(
-  toolCalls: Array<{ toolCallId?: string } | undefined> | null | undefined,
+  toolCalls: Array<{ toolCallId?: string } | undefined> | null | undefined
 ): Set<string> {
   const ids = new Set<string>();
   if (!Array.isArray(toolCalls)) return ids;
@@ -158,6 +168,15 @@ function formatLocalStreamError(error: unknown): string {
   if (!(error instanceof Error)) return String(error);
   const statusCode = (error as any).statusCode as number | undefined;
   const responseBody = (error as any).responseBody as string | undefined;
+  if (
+    isProviderOverloadError({
+      message: error.message,
+      statusCode,
+      responseBody,
+    })
+  ) {
+    return formatProviderOverloadError({ statusCode, responseBody });
+  }
   const lowerBody = responseBody?.toLowerCase() ?? "";
   const isAuthError =
     statusCode === 401 ||
@@ -296,6 +315,7 @@ export function handleLocalOrgChatModel(
     turnUsage: undefined as LiveChatTraceUsage | undefined,
   };
   const traceContext = createAiSdkEvalTraceContext(traceTurn.turnStartedAt);
+  const providerSystemPrompt = normalizeSystemPromptForProvider(systemPrompt);
   let currentStepIndex = 0;
   let turnFinished = false;
   let streamErrored = false;
@@ -332,14 +352,14 @@ export function handleLocalOrgChatModel(
       const tracedTools = wrapToolSetForEvalTrace(
         tools as Record<string, unknown>,
         traceContext,
-        traceTurn.promptIndex,
+        traceTurn.promptIndex
       ) as ToolSet;
 
       const result = streamText({
         model: llmModel,
         messages,
         ...(temperature !== undefined ? { temperature } : {}),
-        system: systemPrompt,
+        system: providerSystemPrompt,
         tools: tracedTools,
         stopWhen: stepCountIs(20),
         prepareStep: ({ stepNumber }) => {
@@ -405,7 +425,7 @@ export function handleLocalOrgChatModel(
 
           traceTurn.turnUsage = mergeLiveChatTraceUsage(
             traceTurn.turnUsage,
-            stepUsage,
+            stepUsage
           );
 
           emitAiSdkOnStepFinish(traceContext, Date.now(), {
@@ -422,7 +442,7 @@ export function handleLocalOrgChatModel(
             traceHistory,
             traceTurn.promptIndex,
             currentStepIndex,
-            collectStepToolCallIdsLocal(step.toolCalls),
+            collectStepToolCallIdsLocal(step.toolCalls)
           );
 
           traceTurn.turnSpans = [...traceContext.recordedSpans];
@@ -460,7 +480,7 @@ export function handleLocalOrgChatModel(
             traceContext.recordedSpans,
             initialMessageHistoryLength,
             event.steps,
-            traceTurn.promptIndex,
+            traceTurn.promptIndex
           );
           traceTurn.turnSpans = [...traceContext.recordedSpans];
           traceTurn.turnUsage =
@@ -578,7 +598,9 @@ async function postLocalUsage(params: {
         model: params.model,
         ...(params.usage ? { usage: params.usage } : {}),
         ...(params.finishReason ? { finishReason: params.finishReason } : {}),
-        ...(params.chatSessionId ? { chatSessionId: params.chatSessionId } : {}),
+        ...(params.chatSessionId
+          ? { chatSessionId: params.chatSessionId }
+          : {}),
         ...(params.sourceType ? { sourceType: params.sourceType } : {}),
         ...(params.turnId ? { turnId: params.turnId } : {}),
         ...(typeof params.promptIndex === "number"

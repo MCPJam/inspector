@@ -53,3 +53,12 @@ export function buildResolvedModelRequestPayload(options: {
     messages: options.messages,
   };
 }
+
+export function normalizeSystemPromptForProvider(
+  systemPrompt: string | null | undefined
+): string | undefined {
+  if (typeof systemPrompt !== "string") {
+    return undefined;
+  }
+  return systemPrompt.trim().length > 0 ? systemPrompt : undefined;
+}
