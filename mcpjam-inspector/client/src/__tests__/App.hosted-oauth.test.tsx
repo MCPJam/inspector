@@ -1299,7 +1299,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(window.location.hash).toBe("#settings");
   });
 
-  it("preserves the org models section when switching active organization", async () => {
+  it("lands on servers when switching active organization from org models", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();
     window.history.replaceState({}, "", "/organizations/org-a/models");
@@ -1366,7 +1366,7 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(setActiveOrganizationIdSpy).toHaveBeenCalledWith("org-b");
       expect(getLastSidebarProps().activeOrganizationId).toBe("org-b");
-      expect(window.location.pathname).toBe("/organizations/org-b/models");
+      expect(window.location.pathname).toBe("/servers");
     });
   });
 

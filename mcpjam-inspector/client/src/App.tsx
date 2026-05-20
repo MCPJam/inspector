@@ -142,10 +142,7 @@ import {
   type CheckoutIntentWithOrganization,
   writeBillingSignInReturnPath,
 } from "./lib/billing-deep-link";
-import {
-  isHostedHashTabAllowed,
-  normalizeHostedHashTab,
-} from "./lib/hosted-tab-policy";
+import { isHostedHashTabAllowed } from "./lib/hosted-tab-policy";
 import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
 import type { OAuthTrace } from "./lib/oauth/oauth-trace";
 import {
@@ -231,13 +228,6 @@ function getHostedOAuthCallbackErrorMessage(): string {
     description || error,
     "Authorization could not be completed. Try again."
   );
-}
-
-function getNormalizedPathParts(pathname: string): string[] {
-  const parts = pathname.replace(/^\/+/, "").split("/").filter(Boolean);
-  if (parts.length === 0) return ["servers"];
-  parts[0] = normalizeHostedHashTab(parts[0] || "servers");
-  return parts;
 }
 
 function clearHostedCallbackRetryState() {
@@ -1258,16 +1248,7 @@ export default function App() {
     return hostsHubFlagEnabled && isAuthenticated ? "connect" : "servers";
   }, [evaluateRunsFlagsLoaded, hostsHubFlagEnabled, isAuthenticated]);
   const isHostedChatRoute = isChatboxChatRoute;
-  // Resolve the current route from the React Router pathname. Read via context
-  // directly (not useLocation) to keep the hook-call shape unconditional.
   const locationContext = useContext(UNSAFE_LocationContext);
-  const locationForRoute = locationContext?.location ?? null;
-  const currentPathname =
-    locationForRoute?.pathname ?? window.location.pathname ?? "/";
-  const currentPathParts = useMemo(
-    () => getNormalizedPathParts(currentPathname),
-    [currentPathname]
-  );
   const routeOrganizationId = currentOrgRoute?.orgId;
   const routeOrganizationSection = currentOrgRoute?.orgSection;
   const { sortedOrganizations, isLoading: isLoadingOrganizations } =
@@ -2042,6 +2023,15 @@ export default function App() {
     },
     []
   );
+  const navigateToServers = useCallback(
+    (options?: { replace?: boolean }) => {
+      if (window.location.pathname === routePaths.servers) {
+        return;
+      }
+      navigateToTarget(routePaths.servers, options);
+    },
+    [navigateToTarget]
+  );
 
   const previousActiveTabRef = useRef(activeTab);
   useEffect(() => {
@@ -2261,14 +2251,13 @@ export default function App() {
     ) {
       return;
     }
-    navigateToTarget(defaultHubRoute);
+    navigateToServers();
   }, [
     activeProjectId,
-    defaultHubRoute,
     isAuthLoading,
     isLoadingRemoteProjects,
     isWorkOsLoading,
-    navigateToTarget,
+    navigateToServers,
   ]);
 
   const consumeCheckoutIntent = useCallback(() => {
@@ -2493,30 +2482,9 @@ export default function App() {
       // carry servers from earlier sessions) bleeds through during the
       // transition.
       setActiveOrganizationId(organizationId);
-      // If the user is currently on an org-scoped route (e.g. the org's
-      // overview or billing page), redirect to the same section under the
-      // new org so the page they're looking at actually changes.
-      if (routeOrganizationId) {
-        const section = routeOrganizationSection ?? "overview";
-        navigateApp(buildOrganizationPath(organizationId, section));
-        return;
-      }
-      // If the URL embeds an org-A resource id (e.g. `/evals/suite/abc`,
-      // `/chat-v2/threadId`, `/views/viewId`), strip the sub-path so the
-      // user lands on the tab's clean root view for the new org instead of
-      // a "not found" page.
-      if (currentPathParts.length > 1) {
-        navigateToTarget(currentPathParts[0] ?? "servers");
-      }
+      navigateToServers();
     },
-    [
-      activeOrganizationId,
-      setActiveOrganizationId,
-      routeOrganizationId,
-      routeOrganizationSection,
-      currentPathParts,
-      navigateToTarget,
-    ]
+    [activeOrganizationId, setActiveOrganizationId, navigateToServers]
   );
 
   const handleContinueEvalInChat = useCallback(
@@ -2554,18 +2522,17 @@ export default function App() {
     }
 
     setActiveOrganizationId(undefined);
-    navigateToTarget(
-      navigationTarget === routePaths.servers
-        ? defaultHubRoute
-        : navigationTarget,
-      { replace: true }
-    );
+    if (navigationTarget === routePaths.servers) {
+      navigateToServers({ replace: true });
+    } else {
+      navigateToTarget(navigationTarget, { replace: true });
+    }
   }, [
     activeTab,
-    defaultHubRoute,
     hasRouteOrganization,
     isAuthenticated,
     isLoadingOrganizations,
+    navigateToServers,
     navigateToTarget,
     optimisticallyDeletedOrganizationIds,
     routeOrganizationId,
@@ -2609,7 +2576,7 @@ export default function App() {
       }
 
       setActiveOrganizationId(fallbackOrganizationId);
-      navigateToTarget(defaultHubRoute);
+      navigateToServers();
     },
     [
       activeOrganizationId,
@@ -2617,8 +2584,7 @@ export default function App() {
       clearLocalFallbackProjectSelection,
       clearConvexActiveProjectSelection,
       effectiveOrganizations,
-      defaultHubRoute,
-      navigateToTarget,
+      navigateToServers,
       routeOrganizationId,
       setActiveOrganizationId,
     ]
@@ -2635,17 +2601,12 @@ export default function App() {
         nextProjectOrganizationId: nextProject?.organizationId,
       });
       if (navigationTarget) {
-        navigateToTarget(
-          navigationTarget === routePaths.servers
-            ? defaultHubRoute
-            : navigationTarget
-        );
+        navigateToTarget(navigationTarget);
       }
     },
     [
       activeOrganizationId,
       activeTab,
-      defaultHubRoute,
       handleSwitchProject,
       navigateToTarget,
       projects,
