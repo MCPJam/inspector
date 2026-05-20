@@ -51,7 +51,14 @@ import {
   toTraceRecord,
   writeTraceEvent,
 } from "../../utils/live-chat-trace-stream";
-import { buildResolvedModelRequestPayload } from "../../utils/model-request-payload";
+import {
+  buildResolvedModelRequestPayload,
+  normalizeSystemPromptForProvider,
+} from "../../utils/model-request-payload";
+import {
+  formatProviderOverloadError,
+  isProviderOverloadError,
+} from "../../utils/provider-error-normalization";
 import {
   mergeLiveChatTraceUsage,
   type LiveChatTraceUsage,
@@ -66,6 +73,15 @@ function formatStreamError(error: unknown, provider?: ModelProvider): string {
   // when multiple copies of @ai-sdk/provider are bundled (symbol mismatch).
   const statusCode = (error as any).statusCode as number | undefined;
   const responseBody = (error as any).responseBody as string | undefined;
+  if (
+    isProviderOverloadError({
+      message: error.message,
+      statusCode,
+      responseBody,
+    })
+  ) {
+    return formatProviderOverloadError({ statusCode, responseBody });
+  }
 
   // 401 is the standard "unauthorized" HTTP status — always means bad/missing key.
   const isAuthStatus = statusCode === 401;
@@ -111,7 +127,7 @@ function toLiveChatTraceUsage(
         totalTokens?: number;
       }
     | null
-    | undefined,
+    | undefined
 ): LiveChatTraceUsage | undefined {
   if (!usage) {
     return undefined;
@@ -132,7 +148,7 @@ function toLiveChatTraceUsage(
 }
 
 function toPersistedUsage(
-  usage: LiveChatTraceUsage | undefined,
+  usage: LiveChatTraceUsage | undefined
 ): { inputTokens: number; outputTokens: number } | undefined {
   if (
     typeof usage?.inputTokens !== "number" ||
@@ -148,7 +164,7 @@ function toPersistedUsage(
 }
 
 function collectStepToolCallIds(
-  toolCalls: Array<{ toolCallId?: string } | undefined> | null | undefined,
+  toolCalls: Array<{ toolCallId?: string } | undefined> | null | undefined
 ): Set<string> {
   const toolCallIds = new Set<string>();
   if (!Array.isArray(toolCalls)) {
@@ -213,6 +229,7 @@ function streamDirectChatWithLiveTrace(options: {
     turnUsage: undefined as LiveChatTraceUsage | undefined,
   };
   const traceContext = createAiSdkEvalTraceContext(traceTurn.turnStartedAt);
+  const providerSystemPrompt = normalizeSystemPromptForProvider(systemPrompt);
   let currentStepIndex = 0;
   let turnFinished = false;
 
@@ -243,14 +260,14 @@ function streamDirectChatWithLiveTrace(options: {
       const tracedTools = wrapToolSetForEvalTrace(
         tools as Record<string, unknown>,
         traceContext,
-        traceTurn.promptIndex,
+        traceTurn.promptIndex
       ) as ToolSet;
 
       const result = streamText({
         model: llmModel,
         messages: messageHistory,
         ...(temperature !== undefined ? { temperature } : {}),
-        system: systemPrompt,
+        system: providerSystemPrompt,
         tools: tracedTools,
         stopWhen: stepCountIs(20),
         prepareStep: ({ stepNumber }) => {
@@ -315,7 +332,7 @@ function streamDirectChatWithLiveTrace(options: {
 
           traceTurn.turnUsage = mergeLiveChatTraceUsage(
             traceTurn.turnUsage,
-            stepUsage,
+            stepUsage
           );
 
           emitAiSdkOnStepFinish(traceContext, Date.now(), {
@@ -332,7 +349,7 @@ function streamDirectChatWithLiveTrace(options: {
             traceHistory,
             traceTurn.promptIndex,
             currentStepIndex,
-            collectStepToolCallIds(step.toolCalls),
+            collectStepToolCallIds(step.toolCalls)
           );
 
           traceTurn.turnSpans = [...traceContext.recordedSpans];
@@ -372,7 +389,7 @@ function streamDirectChatWithLiveTrace(options: {
             traceContext.recordedSpans,
             initialMessageHistoryLength,
             event.steps,
-            traceTurn.promptIndex,
+            traceTurn.promptIndex
           );
           traceTurn.turnSpans = [...traceContext.recordedSpans];
           traceTurn.turnUsage =
@@ -395,7 +412,7 @@ function streamDirectChatWithLiveTrace(options: {
               responseMessages,
               Array.isArray(step?.response?.messages)
                 ? (step.response.messages as ModelMessage[])
-                : [],
+                : []
             );
           }
 
@@ -405,7 +422,7 @@ function streamDirectChatWithLiveTrace(options: {
               assistantText: event.text,
               toolCalls: event.steps.flatMap((step) => step.toolCalls ?? []),
               toolResults: event.steps.flatMap(
-                (step) => step.toolResults ?? [],
+                (step) => step.toolResults ?? []
               ),
               usage: traceTurn.turnUsage,
               finishReason: event.finishReason,
@@ -516,7 +533,7 @@ chatV2.post("/", async (c) => {
                   chatboxId: bodyChatboxId,
                   body: model.id,
                   host: cfg.modelId,
-                },
+                }
               );
               resolvedModelOverride = hostModel;
             } else {
@@ -526,7 +543,7 @@ chatV2.post("/", async (c) => {
                   chatboxId: bodyChatboxId,
                   body: model.id,
                   host: cfg.modelId,
-                },
+                }
               );
               resolvedModelOverride = { ...model, id: cfg.modelId };
             }
@@ -538,7 +555,7 @@ chatV2.post("/", async (c) => {
               chatboxId: bodyChatboxId,
               status: runtime.status,
               error: runtime.error,
-            },
+            }
           );
         }
       }
@@ -586,7 +603,7 @@ chatV2.post("/", async (c) => {
           error:
             "This MCPJam model is not available for guest access. Sign in to continue.",
         },
-        403,
+        403
       );
     }
 
@@ -645,7 +662,7 @@ chatV2.post("/", async (c) => {
       if (!process.env.CONVEX_HTTP_URL) {
         return c.json(
           { error: "Server missing CONVEX_HTTP_URL configuration" },
-          500,
+          500
         );
       }
 
@@ -663,7 +680,7 @@ chatV2.post("/", async (c) => {
               error:
                 "Unable to authenticate with MCPJam servers. Please try again or sign in.",
             },
-            503,
+            503
           );
         }
       }
@@ -746,7 +763,7 @@ chatV2.post("/", async (c) => {
       }
       const providerKey = providerKeyResult.key;
       const modelMessages = scrubMessages(
-        (await convertToModelMessages(messages)) as ModelMessage[],
+        (await convertToModelMessages(messages)) as ModelMessage[]
       );
       const sessionStartedAt = Date.now();
       const chatSessionId = body.chatSessionId;
@@ -811,7 +828,7 @@ chatV2.post("/", async (c) => {
         ollama: body.ollamaBaseUrl,
         azure: body.azureBaseUrl,
       },
-      body.customProviders,
+      body.customProviders
     );
 
     const modelMessages = await convertToModelMessages(messages);
@@ -821,7 +838,7 @@ chatV2.post("/", async (c) => {
     const chatSessionId = body.chatSessionId;
 
     const scrubbedModelMessages = scrubMessages(
-      modelMessages as ModelMessage[],
+      modelMessages as ModelMessage[]
     );
 
     return streamDirectChatWithLiveTrace({

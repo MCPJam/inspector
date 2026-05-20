@@ -98,6 +98,7 @@ import { usePersistedHost } from "@/hooks/use-persisted-host";
 import { usePlaygroundHostSlots } from "@/hooks/use-playground-host-slots";
 import { replaceLeadHostId } from "@/lib/selected-host-storage";
 import { useProjectServers } from "@/hooks/useViews";
+import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import {
   snapshotFromHostConfig,
@@ -537,6 +538,10 @@ export function PlaygroundMain({
   // Hosted mode context (projectId, serverIds, OAuth tokens)
   const activeProject = appState.projects[appState.activeProjectId];
   const convexProjectId = activeProject?.sharedProjectId ?? null;
+  const hostedOrgModelConfig = useHostedOrgModelConfig({
+    projectId: convexProjectId,
+    organizationId: activeProject?.organizationId ?? null,
+  });
   const { serversById, serversByName } = useProjectServers({
     isAuthenticated: isConvexAuthenticated,
     projectId: convexProjectId,
@@ -630,6 +635,7 @@ export function PlaygroundMain({
   } = useChatSession({
     selectedServers,
     directVisibility: pendingDirectVisibility,
+    hostedOrgModelConfig,
     hostedContext: {
       projectId: convexProjectId,
       selectedServerIds: hostedSelectedServerIds,
@@ -3136,6 +3142,7 @@ export function PlaygroundMain({
                           selectedServerIds: hostedSelectedServerIds,
                           oauthTokens: hostedOAuthTokens,
                         }}
+                        hostedOrgModelConfig={hostedOrgModelConfig}
                         displayMode={displayMode}
                         onDisplayModeChange={handleDisplayModeChange}
                         hostStyle={column.hostSnapshot.hostStyle}
