@@ -29,7 +29,6 @@ import {
   pickEnrichmentHeaders,
   type PersistedTurnTrace,
 } from "../../utils/chat-ingestion.js";
-import { createDirectChatLiveTurnPublisher } from "../../utils/direct-chat-live-turn.js";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration";
 import { appendDedupedModelMessages } from "@/shared/eval-trace";
@@ -57,8 +56,6 @@ import {
   mergeLiveChatTraceUsage,
   type LiveChatTraceUsage,
 } from "@/shared/live-chat-trace";
-
-const DIRECT_LIVE_SESSION_SEED_TIMEOUT_MS = 2_000;
 
 function formatStreamError(error: unknown, provider?: ModelProvider): string {
   if (!(error instanceof Error)) {
@@ -187,8 +184,6 @@ function streamDirectChatWithLiveTrace(options: {
     finishReason?: string;
     turnTrace: PersistedTurnTrace;
   }) => Promise<void> | void;
-  onLiveTextDelta?: (delta: string) => void;
-  onStreamError?: () => Promise<void> | void;
 }): Response {
   const {
     llmModel,
@@ -199,8 +194,6 @@ function streamDirectChatWithLiveTrace(options: {
     temperature,
     tools,
     onPersist,
-    onLiveTextDelta,
-    onStreamError,
   } = options;
 
   // Separate array for tracing — we must NOT mutate `messageHistory` because
@@ -270,15 +263,6 @@ function streamDirectChatWithLiveTrace(options: {
         },
         onChunk: async ({ chunk }) => {
           if (chunk.type === "text-delta") {
-            if (chunk.text) {
-              try {
-                onLiveTextDelta?.(chunk.text);
-              } catch (error) {
-                logger.warn("[mcp/chat-v2] onLiveTextDelta callback failed", {
-                  error: error instanceof Error ? error.message : String(error),
-                });
-              }
-            }
             writeTraceEvent(writer, {
               type: "text_delta",
               turnId: traceTurn.turnId,
@@ -382,17 +366,6 @@ function streamDirectChatWithLiveTrace(options: {
             usage: traceTurn.turnUsage,
           });
           turnFinished = true;
-
-          try {
-            await onStreamError?.();
-          } catch (liveTurnError) {
-            logger.warn("[mcp/chat-v2] live-turn error callback failed", {
-              error:
-                liveTurnError instanceof Error
-                  ? liveTurnError.message
-                  : String(liveTurnError),
-            });
-          }
         },
         onFinish: async (event) => {
           patchAiSdkRecordedSpansMessageRangesFromSteps(
@@ -665,94 +638,6 @@ chatV2.post("/", async (c) => {
         })
       : undefined;
 
-    let liveTurnPublisher: ReturnType<
-      typeof createDirectChatLiveTurnPublisher
-    > = null;
-    let liveTurnCompleted = false;
-    const shouldPublishLiveTurn = (chatSessionId?: string) =>
-      !isChatboxSession &&
-      Boolean(chatSessionId) &&
-      typeof body.projectId === "string" &&
-      body.projectId.length > 0;
-    const seedDirectSessionForLiveTurn = async ({
-      authHeader,
-      chatSessionId,
-      modelId,
-      modelSource,
-      sessionMessages,
-      startedAt,
-    }: {
-      authHeader?: string;
-      chatSessionId?: string;
-      modelId: string;
-      modelSource: "mcpjam" | "byok" | "local_byok";
-      sessionMessages: ModelMessage[];
-      startedAt: number;
-    }) => {
-      if (!shouldPublishLiveTurn(chatSessionId)) {
-        return;
-      }
-
-      await persistChatSessionToConvex({
-        chatSessionId: chatSessionId!,
-        modelId,
-        modelSource,
-        projectId: body.projectId,
-        sourceType: "direct",
-        authHeader,
-        sessionMessages,
-        startedAt,
-        lastActivityAt: Date.now(),
-        timeoutMs: DIRECT_LIVE_SESSION_SEED_TIMEOUT_MS,
-        directVisibility: body.directVisibility,
-        resumeConfig: {
-          systemPrompt,
-          temperature,
-          requireToolApproval,
-          selectedServers,
-        },
-        ...(directHostConfig ? { hostConfig: directHostConfig } : {}),
-        forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
-      });
-    };
-    const startLiveTurnPublisher = ({
-      authHeader,
-      chatSessionId,
-      modelId,
-      modelSource,
-      messages,
-    }: {
-      authHeader?: string;
-      chatSessionId?: string;
-      modelId: string;
-      modelSource: "mcpjam" | "byok" | "local_byok";
-      messages: ModelMessage[];
-    }) => {
-      if (!shouldPublishLiveTurn(chatSessionId)) {
-        return;
-      }
-
-      liveTurnPublisher = createDirectChatLiveTurnPublisher({
-        authHeader,
-        chatSessionId,
-        projectId: body.projectId,
-        modelId,
-        modelSource,
-        directVisibility: body.directVisibility,
-        messages,
-      });
-      liveTurnPublisher?.start();
-    };
-    const completeLiveTurn = async () => {
-      liveTurnCompleted = true;
-      await liveTurnPublisher?.complete();
-    };
-    const markLiveTurnErrored = async () => {
-      if (!liveTurnCompleted) {
-        await liveTurnPublisher?.error();
-      }
-    };
-
     // MCPJam-provided models: delegate to stream handler
     if (modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)) {
       let authHeader = requestAuthHeader;
@@ -783,32 +668,14 @@ chatV2.post("/", async (c) => {
         }
       }
 
-      const modelMessages = (await convertToModelMessages(
-        messages,
-      )) as ModelMessage[];
+      const modelMessages = await convertToModelMessages(messages);
       const sessionStartedAt = Date.now();
-      const chatSessionId = body.chatSessionId;
-      const modelId = String(modelDefinition.id);
 
-      await seedDirectSessionForLiveTurn({
-        authHeader,
-        chatSessionId,
-        modelId,
-        modelSource: "mcpjam",
-        sessionMessages: modelMessages,
-        startedAt: sessionStartedAt,
-      });
-      startLiveTurnPublisher({
-        authHeader,
-        chatSessionId,
-        modelId,
-        modelSource: "mcpjam",
-        messages: modelMessages,
-      });
+      const chatSessionId = body.chatSessionId;
 
       return handleMCPJamFreeChatModel({
-        messages: modelMessages,
-        modelId,
+        messages: modelMessages as ModelMessage[],
+        modelId: String(modelDefinition.id),
         systemPrompt: enhancedSystemPrompt,
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
@@ -821,7 +688,7 @@ chatV2.post("/", async (c) => {
           ? async (fullHistory, turnTrace) => {
               await persistChatSessionToConvex({
                 chatSessionId,
-                modelId,
+                modelId: String(modelDefinition.id),
                 modelSource: "mcpjam",
                 sourceType: chatSessionSourceType,
                 ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
@@ -852,11 +719,8 @@ chatV2.post("/", async (c) => {
                 turnTrace,
                 forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
               });
-              await completeLiveTurn();
             }
           : undefined,
-        onStreamComplete: markLiveTurnErrored,
-        onLiveTextDelta: (delta) => liveTurnPublisher?.appendText(delta),
       });
     }
 
@@ -886,34 +750,15 @@ chatV2.post("/", async (c) => {
       );
       const sessionStartedAt = Date.now();
       const chatSessionId = body.chatSessionId;
-      const authHeader = c.req.header("authorization");
-      const modelId = String(modelDefinition.id);
-
-      await seedDirectSessionForLiveTurn({
-        authHeader,
-        chatSessionId,
-        modelId,
-        modelSource: "byok",
-        sessionMessages: modelMessages,
-        startedAt: sessionStartedAt,
-      });
-      startLiveTurnPublisher({
-        authHeader,
-        chatSessionId,
-        modelId,
-        modelSource: "byok",
-        messages: modelMessages,
-      });
-
       return handleHostedOrgChatModel({
         projectId: body.projectId,
         providerKey,
-        modelId,
+        modelId: String(modelDefinition.id),
         messages: modelMessages,
         systemPrompt: enhancedSystemPrompt,
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
-        authHeader,
+        authHeader: c.req.header("authorization"),
         clientIp: getClientIp(c),
         mcpClientManager,
         selectedServers,
@@ -922,7 +767,7 @@ chatV2.post("/", async (c) => {
           ? async (fullHistory, turnTrace) => {
               await persistChatSessionToConvex({
                 chatSessionId,
-                modelId,
+                modelId: String(modelDefinition.id),
                 modelSource: "byok",
                 sourceType: chatSessionSourceType,
                 ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
@@ -930,7 +775,7 @@ chatV2.post("/", async (c) => {
                 ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)
                   ? { accessVersion: bodyAccessVersion }
                   : {}),
-                authHeader,
+                authHeader: c.req.header("authorization"),
                 sessionMessages: fullHistory,
                 startedAt: sessionStartedAt,
                 lastActivityAt: Date.now(),
@@ -953,11 +798,8 @@ chatV2.post("/", async (c) => {
                 turnTrace,
                 forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
               });
-              await completeLiveTurn();
             }
           : undefined,
-        onStreamComplete: markLiveTurnErrored,
-        onLiveTextDelta: (delta) => liveTurnPublisher?.appendText(delta),
       });
     }
 
@@ -972,35 +814,19 @@ chatV2.post("/", async (c) => {
       body.customProviders,
     );
 
-    const modelMessages = (await convertToModelMessages(
-      messages,
-    )) as ModelMessage[];
+    const modelMessages = await convertToModelMessages(messages);
+
     const streamStartedAt = Date.now();
     const authHeader = c.req.header("authorization");
     const chatSessionId = body.chatSessionId;
-    const modelId = String(modelDefinition.id);
 
-    const scrubbedModelMessages = scrubMessages(modelMessages);
-
-    await seedDirectSessionForLiveTurn({
-      authHeader,
-      chatSessionId,
-      modelId,
-      modelSource: "byok",
-      sessionMessages: scrubbedModelMessages,
-      startedAt: streamStartedAt,
-    });
-    startLiveTurnPublisher({
-      authHeader,
-      chatSessionId,
-      modelId,
-      modelSource: "byok",
-      messages: scrubbedModelMessages,
-    });
+    const scrubbedModelMessages = scrubMessages(
+      modelMessages as ModelMessage[],
+    );
 
     return streamDirectChatWithLiveTrace({
       llmModel,
-      modelId,
+      modelId: String(modelDefinition.id),
       provider: modelDefinition.provider,
       messageHistory: [...scrubbedModelMessages],
       systemPrompt: enhancedSystemPrompt,
@@ -1019,7 +845,7 @@ chatV2.post("/", async (c) => {
             const persistedUsage = toPersistedUsage(usage);
             await persistChatSessionToConvex({
               chatSessionId,
-              modelId,
+              modelId: String(modelDefinition.id),
               modelSource: "byok",
               sourceType: chatSessionSourceType,
               ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
@@ -1027,7 +853,7 @@ chatV2.post("/", async (c) => {
               ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)
                 ? { accessVersion: bodyAccessVersion }
                 : {}),
-              messages: modelMessages,
+              messages: modelMessages as ModelMessage[],
               systemPrompt: enhancedSystemPrompt,
               ...(responseMessages.length > 0 ? { responseMessages } : {}),
               assistantText,
@@ -1057,11 +883,8 @@ chatV2.post("/", async (c) => {
               turnTrace,
               forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
             });
-            await completeLiveTurn();
           }
         : undefined,
-      onLiveTextDelta: (delta) => liveTurnPublisher?.appendText(delta),
-      onStreamError: markLiveTurnErrored,
     });
   } catch (error) {
     logger.error("[mcp/chat-v2] failed to process chat request", error);

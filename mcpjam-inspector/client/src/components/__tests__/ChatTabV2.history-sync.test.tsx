@@ -10,7 +10,6 @@ const mockUseFeatureFlagEnabled = vi.hoisted(() => vi.fn(() => true));
 const mockReactiveHistoryState = vi.hoisted(() => ({
   session: undefined as any,
   widgetSnapshots: undefined as any,
-  liveTurn: undefined as any,
 }));
 const chatSessionOnResetRef = vi.hoisted(() => ({
   current: undefined as undefined | ((reason?: string) => void),
@@ -72,9 +71,6 @@ vi.mock("convex/react", () => ({
     }
     if (name === "directChatHistory:getCurrentSessionWidgetSnapshots") {
       return mockReactiveHistoryState.widgetSnapshots;
-    }
-    if (name === "directChatHistory:getCurrentSessionLiveTurn") {
-      return mockReactiveHistoryState.liveTurn;
     }
     return undefined;
   },
@@ -442,7 +438,6 @@ describe("ChatTabV2 history sync", () => {
     lastUseChatSessionOptionsRef.current = undefined;
     mockReactiveHistoryState.session = undefined;
     mockReactiveHistoryState.widgetSnapshots = undefined;
-    mockReactiveHistoryState.liveTurn = undefined;
     Object.assign(mockUseChatSession, {
       messages: [
         {
@@ -850,62 +845,6 @@ describe("ChatTabV2 history sync", () => {
     expect(mockUseChatSession.loadChatSession).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("textbox", { name: "Chat input" })).toHaveValue(
       "Local draft reply"
-    );
-  });
-
-  it("renders a collaborator live turn into the active shared thread", async () => {
-    const initialDetailResponse = {
-      ok: true,
-      session: {
-        ...mockHistorySession,
-        directVisibility: "project" as const,
-        messagesBlobUrl: "https://storage.test/blob",
-      },
-      widgetSnapshots: [],
-    };
-
-    mockGetChatHistoryDetail.mockResolvedValue(initialDetailResponse);
-    const view = render(<ChatTabV2 {...defaultProps} />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
-    fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
-    await flushMicrotasks();
-
-    mockUseChatSession.setMessages.mockClear();
-    mockReactiveHistoryState.liveTurn = {
-      _id: "live-1",
-      sessionId: "history-1",
-      chatSessionId: "chat-session-1",
-      turnId: "turn-1",
-      promptIndex: 1,
-      promptText: "what did you find?",
-      assistantText: "Here is the live answer",
-      status: "streaming",
-      startedAt: 10,
-      updatedAt: 20,
-    };
-
-    view.rerender(<ChatTabV2 {...defaultProps} />);
-    await flushMicrotasks();
-
-    expect(mockUseChatSession.setMessages).toHaveBeenCalledTimes(1);
-    const updater = mockUseChatSession.setMessages.mock.calls[0]?.[0] as (
-      messages: any[],
-    ) => any[];
-    const nextMessages = updater(mockUseChatSession.messages);
-    expect(nextMessages).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "remote-live-user-turn-1",
-          role: "user",
-          parts: [{ type: "text", text: "what did you find?" }],
-        }),
-        expect.objectContaining({
-          id: "remote-live-assistant-turn-1",
-          role: "assistant",
-          parts: [{ type: "text", text: "Here is the live answer" }],
-        }),
-      ])
     );
   });
 

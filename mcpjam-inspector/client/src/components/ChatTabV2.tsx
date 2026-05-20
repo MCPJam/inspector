@@ -106,7 +106,6 @@ import {
   resolveRestorableServerNames,
   shouldPreserveGuestServerSelection,
 } from "@/components/chat-v2/history/session-restore";
-import { applyDirectChatLiveTurn } from "@/components/chat-v2/history/live-turn-messages";
 import {
   getChatComposerInteractivity,
   useChatStopControls,
@@ -423,7 +422,6 @@ export function ChatTabV2({
   const {
     session: reactiveHistorySession,
     widgetSnapshots: reactiveHistoryWidgetSnapshots,
-    liveTurn: reactiveHistoryLiveTurn,
   } = useDirectChatSessionSubscription({
     sessionId: activeHistorySessionId,
     projectId: effectiveHostedProjectId,
@@ -796,27 +794,6 @@ export function ChatTabV2({
     loadHistorySession,
     reactiveHistorySession,
     reactiveHistoryWidgetSnapshots,
-    showHistoryRail,
-  ]);
-
-  useEffect(() => {
-    if (
-      !showHistoryRail ||
-      !activeHistorySessionId ||
-      isStreaming ||
-      !reactiveHistoryLiveTurn
-    ) {
-      return;
-    }
-
-    setMessages((currentMessages) =>
-      applyDirectChatLiveTurn(currentMessages, reactiveHistoryLiveTurn)
-    );
-  }, [
-    activeHistorySessionId,
-    isStreaming,
-    reactiveHistoryLiveTurn,
-    setMessages,
     showHistoryRail,
   ]);
 

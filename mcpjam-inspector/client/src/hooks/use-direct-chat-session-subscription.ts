@@ -4,20 +4,6 @@ import type {
   ChatHistoryWidgetSnapshot,
 } from "@/lib/apis/web/chat-history-api";
 
-export interface DirectChatLiveTurn {
-  _id: string;
-  sessionId: string;
-  chatSessionId: string;
-  turnId: string;
-  promptIndex: number;
-  promptText?: string;
-  assistantText: string;
-  status: "streaming" | "complete" | "error";
-  modelId?: string;
-  startedAt: number;
-  updatedAt: number;
-}
-
 export function useDirectChatSessionSubscription({
   sessionId,
   projectId,
@@ -42,16 +28,11 @@ export function useDirectChatSessionSubscription({
     enabled && sessionId ? ({ sessionId } as const) : "skip",
   ) as ChatHistoryWidgetSnapshot[] | undefined;
 
-  const liveTurn = useQuery(
-    "directChatHistory:getCurrentSessionLiveTurn" as any,
-    enabled && sessionId ? ({ sessionId } as const) : "skip",
-  ) as DirectChatLiveTurn | null | undefined;
-
   // Note: turnTraces are intentionally NOT subscribed here. They're fetched
   // once per thread via the REST /chat-history/detail seed path and retained
   // in liveTraceState for the lifetime of the session. On a reactive refresh
   // we pass `undefined` for turnTraces to loadChatSession, which treats it as
   // "preserve existing trace state" rather than wiping it. This keeps the
   // component safe to render when the paired backend function isn't deployed.
-  return { session, widgetSnapshots, liveTurn };
+  return { session, widgetSnapshots };
 }

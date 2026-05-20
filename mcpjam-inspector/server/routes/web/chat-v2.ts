@@ -42,9 +42,6 @@ import {
 import { getClientIp } from "../../utils/client-ip.js";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
 import { logger } from "../../utils/logger.js";
-import { createDirectChatLiveTurnPublisher } from "../../utils/direct-chat-live-turn.js";
-
-const DIRECT_LIVE_SESSION_SEED_TIMEOUT_MS = 2_000;
 
 function deriveOrgProviderKey(modelDefinition: ModelDefinition): string {
   const result = deriveOrgProviderKeyResult(modelDefinition);
@@ -210,11 +207,6 @@ chatV2.post("/", async (c) => {
     );
     oauthServerUrls = urls;
 
-    let liveTurnPublisher: ReturnType<
-      typeof createDirectChatLiveTurnPublisher
-    > = null;
-    let liveTurnCompleted = false;
-
     try {
       const sessionStartedAt = Date.now();
       let prepared;
@@ -244,89 +236,8 @@ chatV2.post("/", async (c) => {
       } = prepared;
       const hostedChatSessionId = body.chatSessionId;
 
-      const modelMessages = (await convertToModelMessages(
-        messages,
-      )) as ModelMessage[];
-      const directSelectedServers =
-        Array.isArray(selectedServerNames) &&
-        selectedServerNames.length === selectedServerIds.length
-          ? selectedServerNames
-          : selectedServerIds;
-      const buildDirectPersistenceFields = (modelId: string) => ({
-        directVisibility: body.directVisibility,
-        resumeConfig: {
-          systemPrompt,
-          temperature,
-          requireToolApproval,
-          selectedServers: directSelectedServers,
-        },
-        hostConfig: buildDirectHostConfig({
-          modelId,
-          hostStyle: body.hostStyle,
-          systemPrompt,
-          requestedTemperature: temperature,
-          resolvedTemperature,
-          requireToolApproval,
-          selectedServerIds,
-        }),
-      });
-      const seedDirectSessionForLiveTurn = async ({
-        modelId,
-        modelSource,
-        sessionMessages,
-      }: {
-        modelId: string;
-        modelSource: "mcpjam" | "byok" | "local_byok";
-        sessionMessages: ModelMessage[];
-      }) => {
-        if (isChatboxSession || !hostedChatSessionId) {
-          return;
-        }
-
-        // Live-turn writes attach to an existing Convex chatSessions row, so
-        // seed the direct chat with the current prompt before the first token.
-        await persistChatSessionToConvex({
-          chatSessionId: hostedChatSessionId,
-          modelId,
-          modelSource,
-          projectId: hostedBody.projectId,
-          sourceType: "direct",
-          authHeader: c.req.header("authorization"),
-          sessionMessages,
-          startedAt: sessionStartedAt,
-          lastActivityAt: Date.now(),
-          timeoutMs: DIRECT_LIVE_SESSION_SEED_TIMEOUT_MS,
-          ...buildDirectPersistenceFields(modelId),
-          forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
-        });
-      };
-      const startLiveTurnPublisher = (
-        modelId: string,
-        modelSource: "mcpjam" | "byok" | "local_byok",
-      ) => {
-        if (isChatboxSession || !hostedChatSessionId) {
-          return;
-        }
-
-        liveTurnPublisher = createDirectChatLiveTurnPublisher({
-          authHeader: c.req.header("authorization"),
-          chatSessionId: hostedChatSessionId,
-          projectId: hostedBody.projectId,
-          modelId,
-          modelSource,
-          directVisibility: body.directVisibility,
-          messages: modelMessages,
-        });
-        liveTurnPublisher?.start();
-      };
-      const completeLiveTurn = async () => {
-        liveTurnCompleted = true;
-        await liveTurnPublisher?.complete();
-      };
+      const modelMessages = await convertToModelMessages(messages);
       const cleanupStream = async () => {
-        if (!liveTurnCompleted) {
-          await liveTurnPublisher?.error();
-        }
         await manager.disconnectAllServers();
       };
       const isMCPJam =
@@ -353,7 +264,7 @@ chatV2.post("/", async (c) => {
         // Local → LLM executes in the inspector using the decrypted API key.
         const providerKey = deriveOrgProviderKey(modelDefinition);
         const modelId = String(modelDefinition.id);
-        const scrubbedMessages = scrubMessages(modelMessages);
+        const scrubbedMessages = scrubMessages(modelMessages as ModelMessage[]);
         const sourceType = isChatboxSession ? "chatbox" : "direct";
 
         // Cloud-only providers (everything that isn't on the local-runtime
@@ -375,15 +286,6 @@ chatV2.post("/", async (c) => {
               },
             )
           : { runtimeLocation: "cloud", providerKey };
-        const modelSource =
-          runtime.runtimeLocation === "local" ? "local_byok" : "byok";
-
-        await seedDirectSessionForLiveTurn({
-          modelId,
-          modelSource,
-          sessionMessages: scrubbedMessages,
-        });
-        startLiveTurnPublisher(modelId, modelSource);
 
         const onConversationComplete = hostedChatSessionId
           ? async (fullHistory: ModelMessage[], turnTrace: PersistedTurnTrace) => {
@@ -391,7 +293,8 @@ chatV2.post("/", async (c) => {
               await persistChatSessionToConvex({
                 chatSessionId: hostedChatSessionId,
                 modelId,
-                modelSource,
+                modelSource:
+                  runtime.runtimeLocation === "local" ? "local_byok" : "byok",
                 projectId: hostedBody.projectId,
                 sourceType,
                 ...(isChatboxSession && surface ? { surface } : {}),
@@ -432,7 +335,6 @@ chatV2.post("/", async (c) => {
                 turnTrace,
                 forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
               });
-              await completeLiveTurn();
             }
           : undefined;
 
@@ -457,7 +359,6 @@ chatV2.post("/", async (c) => {
             onStreamComplete: cleanupStream,
             onStreamWriterReady: (writer) =>
               rpcCollector?.attachStreamWriter(writer),
-            onLiveTextDelta: (delta) => liveTurnPublisher?.appendText(delta),
           });
         }
 
@@ -483,7 +384,6 @@ chatV2.post("/", async (c) => {
           onStreamComplete: cleanupStream,
           onStreamWriterReady: (writer) =>
             rpcCollector?.attachStreamWriter(writer),
-          onLiveTextDelta: (delta) => liveTurnPublisher?.appendText(delta),
         });
       }
 
@@ -497,15 +397,8 @@ chatV2.post("/", async (c) => {
         );
       }
 
-      await seedDirectSessionForLiveTurn({
-        modelId: String(modelDefinition.id),
-        modelSource: "mcpjam",
-        sessionMessages: modelMessages,
-      });
-      startLiveTurnPublisher(String(modelDefinition.id), "mcpjam");
-
       return handleMCPJamFreeChatModel({
-        messages: modelMessages,
+        messages: modelMessages as ModelMessage[],
         modelId: String(modelDefinition.id),
         chatSessionId: hostedChatSessionId,
         sourceType: isChatboxSession ? "chatbox" : "direct",
@@ -570,18 +463,13 @@ chatV2.post("/", async (c) => {
                 turnTrace,
                 forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
               });
-              await completeLiveTurn();
             }
           : undefined,
         onStreamComplete: cleanupStream,
         onStreamWriterReady: (writer) =>
           rpcCollector?.attachStreamWriter(writer),
-        onLiveTextDelta: (delta) => liveTurnPublisher?.appendText(delta),
       });
     } catch (error) {
-      if (!liveTurnCompleted) {
-        await liveTurnPublisher?.error();
-      }
       await manager.disconnectAllServers();
       throw error;
     }

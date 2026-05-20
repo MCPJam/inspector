@@ -139,7 +139,6 @@ import {
   type ChatHistoryTurnTrace,
 } from "@/lib/apis/web/chat-history-api";
 import { resolveRestorableServerNames } from "@/components/chat-v2/history/session-restore";
-import { applyDirectChatLiveTurn } from "@/components/chat-v2/history/live-turn-messages";
 import {
   getCachedChatHistoryDetail,
   prefetchChatHistorySession,
@@ -1150,7 +1149,6 @@ export function PlaygroundMain({
   const {
     session: reactiveHistorySession,
     widgetSnapshots: reactiveHistoryWidgetSnapshots,
-    liveTurn: reactiveHistoryLiveTurn,
   } = useDirectChatSessionSubscription({
     sessionId: activeHistorySessionId,
     projectId: convexProjectId,
@@ -1236,21 +1234,6 @@ export function PlaygroundMain({
     reactiveHistorySession,
     reactiveHistoryWidgetSnapshots,
     resumedVersion,
-  ]);
-
-  useEffect(() => {
-    if (!activeHistorySessionId || isStreaming || !reactiveHistoryLiveTurn) {
-      return;
-    }
-
-    setMessages((currentMessages) =>
-      applyDirectChatLiveTurn(currentMessages, reactiveHistoryLiveTurn),
-    );
-  }, [
-    activeHistorySessionId,
-    isStreaming,
-    reactiveHistoryLiveTurn,
-    setMessages,
   ]);
 
   const refreshCurrentHistorySession = useCallback(
