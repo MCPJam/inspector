@@ -6,6 +6,8 @@ import {
   type HostConfigMcpProfileV1,
 } from "@/lib/client-config-v2";
 import { stableStringifyJson } from "@/lib/client-config";
+import { getCompatRuntimeForStyle } from "@/lib/client-styles";
+import { Switch } from "@mcpjam/design-system/switch";
 import type { HostAttentionIssue, SandboxConfigSubKey } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 
@@ -553,6 +555,68 @@ export function applyJsonToDraft(
   };
 }
 
+/**
+ * Inline toggle for `mcpProfile.apps.compatRuntime.openaiApps` — surfaced
+ * above the JSON editor so users don't need to know the schema shape to
+ * flip the shim. Switch reflects the effective value (override OR preset);
+ * flipping it writes an explicit boolean override into the draft.
+ *
+ * Round-trips through the same draft path as the JSON editor:
+ * `useJsonDraftBuffer` reseeds the raw content from `appsToJson(draft)`
+ * whenever the draft changes semantically, so toggling here inserts the
+ * `"compatRuntime": { "openaiApps": true }` block into the editor below
+ * and vice versa.
+ */
+function setOpenaiAppsOverrideOnDraft(
+  prev: HostConfigInputV2,
+  next: boolean,
+): HostConfigInputV2 {
+  const prevProfile: HostConfigMcpProfileV1 =
+    prev.mcpProfile ?? { profileVersion: 1 };
+  const prevApps = prevProfile.apps ?? {};
+  const nextApps: NonNullable<HostConfigMcpProfileV1["apps"]> = {
+    ...prevApps,
+    compatRuntime: { openaiApps: next },
+  };
+  return {
+    ...prev,
+    mcpProfile: { ...prevProfile, apps: nextApps },
+  };
+}
+
+function OpenaiAppsToggle({
+  draft,
+  onDraftChange,
+}: {
+  draft: HostConfigInputV2;
+  onDraftChange: (
+    updater: (prev: HostConfigInputV2) => HostConfigInputV2,
+  ) => void;
+}) {
+  const override = draft.mcpProfile?.apps?.compatRuntime?.openaiApps;
+  const presetValue = getCompatRuntimeForStyle(draft.hostStyle).openaiApps;
+  const effective = typeof override === "boolean" ? override : presetValue;
+
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-[10px] border border-border bg-background px-3.5 py-2.5">
+      <label
+        htmlFor="apps-extension-openai-toggle"
+        className="text-[12px] font-medium"
+      >
+        Enable <span className="font-mono">window.openai</span>
+      </label>
+      <Switch
+        id="apps-extension-openai-toggle"
+        checked={effective}
+        onCheckedChange={(checked) =>
+          onDraftChange((prev) => setOpenaiAppsOverrideOnDraft(prev, checked))
+        }
+        aria-label="Enable window.openai"
+      />
+    </div>
+  );
+}
+
 export function AppsExtensionTab({
   draft,
   onDraftChange,
@@ -571,18 +635,21 @@ export function AppsExtensionTab({
   });
 
   return (
-    <div className="flex h-full min-h-[480px] flex-col">
-      <JsonEditor
-        rawContent={content}
-        onRawChange={onRawChange}
-        mode={jsonMode}
-        onModeChange={setJsonMode}
-        showModeToggle
-        showToolbar
-        showLineNumbers
-        autoFormatOnEdit={false}
-        height="100%"
-      />
+    <div className="flex h-full min-h-[480px] flex-col gap-3">
+      <OpenaiAppsToggle draft={draft} onDraftChange={onDraftChange} />
+      <div className="min-h-0 flex-1">
+        <JsonEditor
+          rawContent={content}
+          onRawChange={onRawChange}
+          mode={jsonMode}
+          onModeChange={setJsonMode}
+          showModeToggle
+          showToolbar
+          showLineNumbers
+          autoFormatOnEdit={false}
+          height="100%"
+        />
+      </div>
     </div>
   );
 }

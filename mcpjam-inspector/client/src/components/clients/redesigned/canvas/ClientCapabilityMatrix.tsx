@@ -332,12 +332,6 @@ function ViewIframeInjectedGlobals({
 }) {
   return (
     <div className="hp-view-injected">
-      <span className="hp-view-injected-meta">
-        <span className="hp-view-injected-label">injected globals</span>
-        <span className="hp-view-injected-sub">
-          ChatGPT compatibility layer
-        </span>
-      </span>
       <button
         type="button"
         className={cn("hp-cap", !compatRuntime.openaiApps && "hp-cap--off")}
@@ -631,32 +625,12 @@ const PAPER_STYLES = `
    duplicates avoids drift between the two call sites (matrix and the
    chat-thread Sandbox debug panel). */
 
-/* Injected-globals strip inside the View iframe frame.
-   Layout mirrors hp-view-empty (mono key on the left, value on the right)
-   so the two lines read as a matched pair: what the view receives over the
-   wire (uiInitialize) and what is pre-injected onto its window object. */
+/* Injected-globals strip inside the View iframe frame — single chip
+   showing what is pre-injected onto the widget's window object. */
 .host-paper-card .hp-view-injected {
   display: flex;
   align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
   padding: 8px 4px 2px;
-}
-.host-paper-card .hp-view-injected-meta {
-  display: inline-flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-}
-.host-paper-card .hp-view-injected-label {
-  font-family: ui-monospace, "JetBrains Mono", monospace;
-  font-size: 11.5px;
-  color: var(--hp-view-sub);
-}
-.host-paper-card .hp-view-injected-sub {
-  font-size: 10.5px;
-  color: var(--hp-view-sub);
-  opacity: 0.85;
 }
 
 /* Off / selected variants of the host-level capability chip, used by
