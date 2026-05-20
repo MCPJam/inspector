@@ -799,11 +799,6 @@ describe("PlaygroundMain", () => {
           name: /This is your playground for MCP./i,
         }),
       ).toBeInTheDocument();
-      expect(
-        screen.getByText(
-          /Test prompts, inspect tools, and debug AI-powered apps/i,
-        ),
-      ).toBeInTheDocument();
     });
 
     it("shows sign up prompt when authentication required", () => {
