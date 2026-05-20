@@ -36,13 +36,13 @@ describe("MCPClientManager", () => {
       await manager.connectToServer("configured", {
         command: "npx",
         args: ["-y", "@modelcontextprotocol/server-everything"],
-        timeout: 5000,
+        timeout: 30000,
       });
 
       const config = manager.getServerConfig("configured");
       expect(config).toBeDefined();
       expect((config as any).command).toBe("npx");
-      expect((config as any).timeout).toBe(5000);
+      expect((config as any).timeout).toBe(30000);
     }, 30000);
 
     it("should get server summaries", async () => {
