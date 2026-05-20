@@ -3,6 +3,7 @@ import type { Context } from "hono";
 import {
   buildDirectHostConfig,
   persistChatSessionToConvex,
+  stampSenderUserIdsOnSessionMessages,
 } from "../chat-ingestion";
 import type { RequestLogContext } from "../log-events";
 
@@ -104,6 +105,48 @@ describe("chat-ingestion", () => {
       },
     ]);
     expect(body.surface).toBe("share_link");
+  });
+
+  it("stamps senderUserId onto persisted user messages by ordinal", () => {
+    const sessionMessages = [
+      { role: "system", content: "system" },
+      { role: "user", content: "first" },
+      { role: "assistant", content: "ok" },
+      { role: "user", content: "internal context" },
+      { role: "user", content: "second" },
+    ];
+    const sourceMessages = [
+      { role: "system", parts: [{ type: "text", text: "system" }] },
+      {
+        role: "user",
+        parts: [{ type: "text", text: "first" }],
+        metadata: { senderUserId: "u-alice" },
+      },
+      { role: "assistant", parts: [{ type: "text", text: "ok" }] },
+      {
+        role: "user",
+        parts: [{ type: "text", text: "internal context" }],
+        metadata: { source: "widget-model-context" },
+      },
+      {
+        role: "user",
+        parts: [{ type: "text", text: "second" }],
+        senderUserId: "u-bob",
+      },
+    ];
+
+    const stamped = stampSenderUserIdsOnSessionMessages(
+      sessionMessages,
+      sourceMessages,
+    );
+
+    expect(stamped).toEqual([
+      { role: "system", content: "system" },
+      { role: "user", content: "first", senderUserId: "u-alice" },
+      { role: "assistant", content: "ok" },
+      { role: "user", content: "internal context" },
+      { role: "user", content: "second", senderUserId: "u-bob" },
+    ]);
   });
 
   it("logs a bounded sanitized response preview on ingest failures", async () => {

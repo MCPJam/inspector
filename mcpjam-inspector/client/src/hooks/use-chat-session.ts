@@ -243,6 +243,9 @@ export interface UseChatSessionReturn {
       filename?: string;
       url: string;
     }>;
+    /** Stamped onto the outgoing UIMessage so transcript renderers can
+     *  attribute it before persistence round-trips (shared sessions). */
+    metadata?: Record<string, unknown>;
   }) => void;
   stop: () => void;
   status: "submitted" | "streaming" | "ready" | "error";
@@ -1815,13 +1818,15 @@ export function useChatSession(
         filename?: string;
         url: string;
       }>;
+      metadata?: Record<string, unknown>;
     }) => {
-      const { text, files } = options;
+      const { text, files, metadata } = options;
+      const extra = metadata ? ({ metadata } as { metadata: unknown }) : {};
       if (files && files.length > 0) {
         // AI SDK accepts FileUIPart[] with data URLs
-        baseSendMessage({ text, files });
+        baseSendMessage({ text, files, ...extra });
       } else {
-        baseSendMessage({ text });
+        baseSendMessage({ text, ...extra });
       }
     },
     [baseSendMessage]

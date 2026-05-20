@@ -91,13 +91,16 @@ import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-over
 import { useSharedAppState } from "@/state/app-state-context";
 import { Settings2 } from "lucide-react";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
-import { useConvexAuth } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import { useHost, useHostList, type HostDetail } from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { usePersistedHost } from "@/hooks/use-persisted-host";
 import { usePlaygroundHostSlots } from "@/hooks/use-playground-host-slots";
 import { replaceLeadHostId } from "@/lib/selected-host-storage";
 import { useProjectServers } from "@/hooks/useViews";
+import { useProjectMembers } from "@/hooks/useProjects";
+import { buildProjectOwnerProfileByUserId } from "@/components/chat-v2/history/project-thread-owner-avatar";
+import { buildSenderAvatarResolver } from "@/components/chat-v2/shared/sender-avatar";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import {
@@ -358,6 +361,12 @@ export function PlaygroundMain({
   // Chat-history coordination — Playground equivalent of ChatTabV2's history
   // machinery, scoped down to what the docked rail actually needs.
   const [activeHistorySessionId, setActiveHistorySessionId] = useState<
+    string | null
+  >(null);
+  // Stable thread-owner userId captured at history-load time so sender-avatar
+  // resolution doesn't flash the current user's avatar in the window before
+  // the reactive Convex subscription lands. Cleared on detach/reset/new-chat.
+  const [loadedThreadOwnerUserId, setLoadedThreadOwnerUserId] = useState<
     string | null
   >(null);
   // True only when the user is viewing an OLD history session they explicitly
@@ -1338,6 +1347,7 @@ export function PlaygroundMain({
     invalidatePendingReactiveHistoryLoad();
     setLoadingHistorySessionId(null);
     setActiveHistorySessionId(null);
+    setLoadedThreadOwnerUserId(null);
     setViewingHistoryReplay(false);
   }, [invalidatePendingReactiveHistoryLoad]);
 
@@ -1445,6 +1455,7 @@ export function PlaygroundMain({
         }
       }
       setActiveHistorySessionId(detail._id);
+      setLoadedThreadOwnerUserId(detail.userId ?? null);
       setPendingDirectVisibility(detail.directVisibility);
       appliedHistoryContentSignatureRef.current =
         buildHistoryContentSignature(detail, widgetSnapshots);
@@ -1470,11 +1481,52 @@ export function PlaygroundMain({
       isConvexAuthenticated && !!activeHistorySessionId && !isStreaming,
   });
 
+  // Shared-session sender attribution: only active for project-visible
+  // threads. Members load via Convex for authenticated users with a
+  // projectId; private sessions skip the avatar entirely.
+  const { activeMembers: senderActiveMembers } = useProjectMembers({
+    isAuthenticated: isConvexAuthenticated,
+    projectId: convexProjectId ?? null,
+  });
+  const senderProfileByUserId = useMemo(
+    () => buildProjectOwnerProfileByUserId(senderActiveMembers),
+    [senderActiveMembers],
+  );
+  const currentUserForSender = useQuery(
+    "users:getCurrentUser" as any,
+    isConvexAuthenticated ? ({} as any) : "skip",
+  ) as { _id?: string } | undefined;
+  const senderFallbackUserId =
+    reactiveHistorySession?.userId ??
+    loadedThreadOwnerUserId ??
+    currentUserForSender?._id ??
+    null;
+  const showSenderAvatars = pendingDirectVisibility === "project";
+  const resolveSenderAvatar = useMemo(
+    () =>
+      buildSenderAvatarResolver({
+        profileByUserId: senderProfileByUserId,
+        fallbackOwnerUserId: senderFallbackUserId,
+      }),
+    [senderProfileByUserId, senderFallbackUserId],
+  );
+  // Stamp current user onto live outgoing prompts in shared sessions so the
+  // transcript can attribute them before persistence round-trips.
+  const outgoingSenderMetadata = useMemo<
+    Record<string, unknown> | undefined
+  >(() => {
+    if (!showSenderAvatars) return undefined;
+    const id = currentUserForSender?._id;
+    if (!id) return undefined;
+    return { senderUserId: id };
+  }, [showSenderAvatars, currentUserForSender?._id]);
+
   const detachHistorySession = useCallback(
     (toastMessage: string) => {
       resumedThreadSendBaselineRef.current = null;
       cancelPendingHistorySelection();
       setPendingDirectVisibility("private");
+      setLoadedThreadOwnerUserId(null);
       syncResumedVersion(null);
       if (effectiveHasMessages) {
         startChatWithMessages(cloneUiMessages(messagesRef.current), {
@@ -1576,6 +1628,7 @@ export function PlaygroundMain({
             projectId: convexProjectId ?? undefined,
           });
           setActiveHistorySessionId(detail.session._id);
+          setLoadedThreadOwnerUserId(detail.session.userId ?? null);
           setPendingDirectVisibility(detail.session.directVisibility);
           syncResumedVersion(detail.session.version);
           if (markRead) {
@@ -1728,6 +1781,7 @@ export function PlaygroundMain({
       cancelPendingHistorySelection();
       syncResumedVersion(null);
       resetChat();
+      setLoadedThreadOwnerUserId(null);
       setPendingDirectVisibility(options?.shared ? "project" : "private");
     },
     [
@@ -1750,6 +1804,7 @@ export function PlaygroundMain({
       cancelPendingHistorySelection();
       syncResumedVersion(null);
       resetChat();
+      setLoadedThreadOwnerUserId(null);
       setPendingDirectVisibility("private");
     },
     [cancelPendingHistorySelection, clearComposerDraft, resetChat, syncResumedVersion],
@@ -2205,10 +2260,10 @@ export function PlaygroundMain({
         if (!(await ensureSelectedServerReadyForChat())) {
           return;
         }
-        sendMessage({ text });
+        sendMessage({ text, metadata: outgoingSenderMetadata });
       })();
     },
-    [ensureSelectedServerReadyForChat, sendMessage]
+    [ensureSelectedServerReadyForChat, sendMessage, outgoingSenderMetadata]
   );
 
   // Handle model context updates from widgets (SEP-1865 ui/update-model-context)
@@ -2532,7 +2587,11 @@ export function PlaygroundMain({
           },
           { single_model_send: true }
         );
-        sendMessage({ text: composer.input, files });
+        sendMessage({
+          text: composer.input,
+          files,
+          metadata: outgoingSenderMetadata,
+        });
         setModelContextQueue([]); // Clear after sending
       }
 
@@ -2841,6 +2900,8 @@ export function PlaygroundMain({
                       }
                     : undefined
                 }
+                showSenderAvatars={showSenderAvatars}
+                resolveSenderAvatar={resolveSenderAvatar}
               />
               {/* Invoking indicator while tool execution is in progress */}
               {isExecuting && executingToolName && (
@@ -2904,7 +2965,10 @@ export function PlaygroundMain({
               if (!(await ensureSelectedServerReadyForChat())) {
                 return;
               }
-              sendMessage({ text: composer.input });
+              sendMessage({
+                text: composer.input,
+                metadata: outgoingSenderMetadata,
+              });
               composer.setInput("");
               setMcpPromptResults([]);
             })();
@@ -3170,6 +3234,9 @@ export function PlaygroundMain({
                           compareAddColumnSeeds[column.compareId] ?? null
                         }
                         onTranscriptSync={handleMultiModelTranscriptSync}
+                        showSenderAvatars={showSenderAvatars}
+                        resolveSenderAvatar={resolveSenderAvatar}
+                        outgoingSenderMetadata={outgoingSenderMetadata}
                         hostSnapshot={column.hostSnapshot}
                         hostCapsResolver={column.hostConfig}
                       />

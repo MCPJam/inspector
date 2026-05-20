@@ -26,6 +26,9 @@ vi.mock("../thread/user-message-bubble", () => ({
 // Mock thread-helpers
 vi.mock("../thread/thread-helpers", () => ({
   groupAssistantPartsIntoSteps: (parts: any[]) => [parts],
+  isHiddenInternalMessage: (message: { id?: string }) =>
+    message.id?.startsWith("widget-state-") === true ||
+    message.id?.startsWith("model-context-") === true,
 }));
 
 describe("MessageView", () => {

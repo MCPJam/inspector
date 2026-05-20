@@ -5,6 +5,7 @@ import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { UIMessage } from "ai";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import { Thread } from "@/components/chat-v2/thread";
+import type { ProjectThreadOwnerAvatar } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import type { ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/reasoning-part";
 import { ErrorBox } from "@/components/chat-v2/error";
 import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
@@ -60,6 +61,9 @@ interface MultiModelChatCardProps {
   /** Seed a newly added compare column from the lead transcript. */
   addColumnSeed?: { version: number; messages: UIMessage[] } | null;
   onTranscriptSync?: (modelId: string, messages: UIMessage[]) => void;
+  showSenderAvatars?: boolean;
+  resolveSenderAvatar?: (senderUserId?: string) => ProjectThreadOwnerAvatar;
+  outgoingSenderMetadata?: Record<string, unknown>;
 }
 
 export function MultiModelChatCard({
@@ -81,6 +85,9 @@ export function MultiModelChatCard({
   compareEnterMessages = [],
   addColumnSeed = null,
   onTranscriptSync,
+  showSenderAvatars = false,
+  resolveSenderAvatar,
+  outgoingSenderMetadata,
 }: MultiModelChatCardProps) {
   const [widgetStateQueue, setWidgetStateQueue] = useState<
     { toolCallId: string; state: unknown }[]
@@ -420,8 +427,15 @@ export function MultiModelChatCard({
     sendMessage({
       text: broadcastRequest.text,
       files: broadcastRequest.files,
+      metadata: outgoingSenderMetadata,
     });
-  }, [broadcastRequest, queueContextMessages, sendMessage, setMessages]);
+  }, [
+    broadcastRequest,
+    queueContextMessages,
+    sendMessage,
+    setMessages,
+    outgoingSenderMetadata,
+  ]);
 
   useEffect(() => {
     if (stopRequestId <= 0) {
@@ -434,9 +448,9 @@ export function MultiModelChatCard({
   const handleSendFollowUp = useCallback(
     (text: string) => {
       queueContextMessages();
-      sendMessage({ text });
+      sendMessage({ text, metadata: outgoingSenderMetadata });
     },
-    [queueContextMessages, sendMessage],
+    [queueContextMessages, sendMessage, outgoingSenderMetadata],
   );
 
   useEffect(() => {
@@ -629,6 +643,8 @@ export function MultiModelChatCard({
                   onFullscreenChatStop={stop}
                   onToolApprovalResponse={addToolApprovalResponse}
                   reasoningDisplayMode={reasoningDisplayMode}
+                  showSenderAvatars={showSenderAvatars}
+                  resolveSenderAvatar={resolveSenderAvatar}
                 />
               </StickToBottom.Content>
               <ScrollToBottomButton />

@@ -1,6 +1,21 @@
 import { authFetch } from "@/lib/session-token";
 import { WebApiError } from "./base";
 
+/**
+ * Per-message shape inside the JSON pointed at by `messagesBlobUrl`.
+ * The backend currently produces `{ role, content, ... }`; once Convex begins
+ * stamping `senderUserId` on user-role messages, the transcript reader will
+ * surface it directly via this type.
+ */
+export interface PersistedChatMessage {
+  id?: string;
+  role?: string;
+  content?: unknown;
+  /** Set by the backend on newly appended user messages once shipped. */
+  senderUserId?: string;
+  [key: string]: unknown;
+}
+
 export interface ChatHistorySession {
   _id: string;
   chatSessionId: string;

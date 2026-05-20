@@ -69,6 +69,12 @@ interface ThreadProps {
    * is active; other consumers can omit it.
    */
   renderUserMessageActions?: TranscriptThreadProps["renderUserMessageActions"];
+  /**
+   * Per-message sender attribution in shared sessions. Both must be supplied
+   * for avatars to render; otherwise the transcript looks identical to today.
+   */
+  showSenderAvatars?: TranscriptThreadProps["showSenderAvatars"];
+  resolveSenderAvatar?: TranscriptThreadProps["resolveSenderAvatar"];
 }
 
 export function Thread({
@@ -102,6 +108,8 @@ export function Thread({
   contentClassName,
   getMessageWrapperProps,
   renderUserMessageActions,
+  showSenderAvatars,
+  resolveSenderAvatar,
 }: ThreadProps) {
   const [pipWidgetId, setPipWidgetId] = useState<string | null>(null);
   const [fullscreenWidgetId, setFullscreenWidgetId] = useState<string | null>(
@@ -230,6 +238,8 @@ export function Thread({
         }
         getMessageWrapperProps={getMessageWrapperProps}
         renderUserMessageActions={renderUserMessageActions}
+        showSenderAvatars={showSenderAvatars}
+        resolveSenderAvatar={resolveSenderAvatar}
       />
       {shouldShowStandaloneThinkingIndicator && (
         <div className="min-w-0 w-full max-w-4xl mx-auto px-4">

@@ -160,6 +160,75 @@ interface PersistChatSessionOptions {
   forwardHeaders?: Record<string, string>;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function readSenderUserId(message: unknown): string | undefined {
+  if (!isRecord(message)) {
+    return undefined;
+  }
+
+  if (
+    typeof message.senderUserId === "string" &&
+    message.senderUserId.length > 0
+  ) {
+    return message.senderUserId;
+  }
+
+  const metadata = message.metadata;
+  if (!isRecord(metadata)) {
+    return undefined;
+  }
+
+  return typeof metadata.senderUserId === "string" &&
+    metadata.senderUserId.length > 0
+    ? metadata.senderUserId
+    : undefined;
+}
+
+/**
+ * AI SDK model-message conversion intentionally drops UI-only metadata. For
+ * shared direct sessions, carry `senderUserId` from the incoming UI transcript
+ * onto the persisted trace by user-message ordinal so other collaborators can
+ * render the same per-message avatar after the stream is saved.
+ */
+export function stampSenderUserIdsOnSessionMessages(
+  sessionMessages: unknown[],
+  sourceMessages: unknown[],
+): unknown[] {
+  if (!Array.isArray(sessionMessages) || !Array.isArray(sourceMessages)) {
+    return sessionMessages;
+  }
+
+  const senderUserIdsByUserOrdinal = sourceMessages
+    .filter((message) => isRecord(message) && message.role === "user")
+    .map(readSenderUserId);
+
+  if (!senderUserIdsByUserOrdinal.some(Boolean)) {
+    return sessionMessages;
+  }
+
+  let userOrdinal = 0;
+  let changed = false;
+  const stampedMessages = sessionMessages.map((message) => {
+    if (!isRecord(message) || message.role !== "user") {
+      return message;
+    }
+
+    const senderUserId = senderUserIdsByUserOrdinal[userOrdinal];
+    userOrdinal += 1;
+    if (!senderUserId || message.senderUserId === senderUserId) {
+      return message;
+    }
+
+    changed = true;
+    return { ...message, senderUserId };
+  });
+
+  return changed ? stampedMessages : sessionMessages;
+}
+
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
 }

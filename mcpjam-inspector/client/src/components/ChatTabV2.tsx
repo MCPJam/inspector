@@ -10,7 +10,7 @@ import {
 import type { UIMessage } from "ai";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
 import { useAuth } from "@workos-inc/authkit-react";
-import { useConvexAuth } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import { toast } from "sonner";
 import { ModelDefinition } from "@/shared/types";
@@ -86,6 +86,9 @@ import {
   type ChatHistoryWidgetSnapshot,
 } from "@/lib/apis/web/chat-history-api";
 import { useProjectServers } from "@/hooks/useViews";
+import { useProjectMembers } from "@/hooks/useProjects";
+import { buildProjectOwnerProfileByUserId } from "@/components/chat-v2/history/project-thread-owner-avatar";
+import { buildSenderAvatarResolver } from "@/components/chat-v2/shared/sender-avatar";
 import { HOSTED_MODE } from "@/lib/config";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
@@ -236,6 +239,11 @@ export function ChatTabV2({
   const [activeHistorySessionId, setActiveHistorySessionId] = useState<
     string | null
   >(null);
+  // Cached thread-owner userId so sender-avatar resolution doesn't flash the
+  // current user's avatar before the reactive Convex subscription lands.
+  const [loadedThreadOwnerUserId, setLoadedThreadOwnerUserId] = useState<
+    string | null
+  >(null);
   const [loadingHistorySessionId, setLoadingHistorySessionId] = useState<
     string | null
   >(null);
@@ -273,6 +281,7 @@ export function ChatTabV2({
     setLoadingHistorySessionId(null);
     invalidatePendingReactiveHistoryLoad();
     setActiveHistorySessionId(null);
+    setLoadedThreadOwnerUserId(null);
   }, [invalidatePendingReactiveHistoryLoad]);
 
   // Filter to only connected servers
@@ -437,6 +446,49 @@ export function ChatTabV2({
 
   const historyRailTakesLayoutSpace =
     showHistoryRail && isHistorySidebarVisible;
+
+  // Shared-session sender attribution: only relevant when the active thread
+  // is project-visible. Members are loaded for authenticated users with a
+  // projectId; otherwise the resolver still works (returns "generic"), but
+  // `showSenderAvatars` is gated on `directVisibility === "project"` so
+  // private sessions stay visually identical to today.
+  const { activeMembers: senderActiveMembers } = useProjectMembers({
+    isAuthenticated: isConvexAuthenticated,
+    projectId: convexProjectId ?? null,
+  });
+  const senderProfileByUserId = useMemo(
+    () => buildProjectOwnerProfileByUserId(senderActiveMembers),
+    [senderActiveMembers],
+  );
+  const currentUserForSender = useQuery(
+    "users:getCurrentUser" as any,
+    isConvexAuthenticated ? ({} as any) : "skip",
+  ) as { _id?: string } | undefined;
+  const senderFallbackUserId =
+    reactiveHistorySession?.userId ??
+    loadedThreadOwnerUserId ??
+    currentUserForSender?._id ??
+    null;
+  const showSenderAvatars = pendingDirectVisibility === "project";
+  const resolveSenderAvatar = useMemo(
+    () =>
+      buildSenderAvatarResolver({
+        profileByUserId: senderProfileByUserId,
+        fallbackOwnerUserId: senderFallbackUserId,
+      }),
+    [senderProfileByUserId, senderFallbackUserId],
+  );
+  // Stamp the current user onto live outgoing prompts in shared sessions so
+  // the transcript can attribute them immediately, before persistence
+  // round-trips Convex. Private sessions skip the field entirely.
+  const outgoingSenderMetadata = useMemo<
+    Record<string, unknown> | undefined
+  >(() => {
+    if (!showSenderAvatars) return undefined;
+    const id = currentUserForSender?._id;
+    if (!id) return undefined;
+    return { senderUserId: id };
+  }, [showSenderAvatars, currentUserForSender?._id]);
   const hasConversationMessages = messages.some(
     (msg) => msg.role === "user" || msg.role === "assistant"
   );
@@ -560,6 +612,7 @@ export function ChatTabV2({
       resumedThreadSendBaselineRef.current = null;
       cancelPendingHistorySelection();
       setPendingDirectVisibility("private");
+      setLoadedThreadOwnerUserId(null);
       syncResumedVersion(null);
       if (hasConversationMessages) {
         startChatWithMessages(cloneUiMessages(messages), {
@@ -624,6 +677,7 @@ export function ChatTabV2({
         }
       }
       setActiveHistorySessionId(detail._id);
+      setLoadedThreadOwnerUserId(detail.userId ?? null);
       setPendingDirectVisibility(detail.directVisibility);
       syncResumedVersion(detail.version);
       lastAppliedReactiveVersionRef.current = {
@@ -659,6 +713,7 @@ export function ChatTabV2({
             projectId: effectiveHostedProjectId ?? undefined,
           });
           setActiveHistorySessionId(detail.session._id);
+          setLoadedThreadOwnerUserId(detail.session.userId ?? null);
           setPendingDirectVisibility(detail.session.directVisibility);
           syncResumedVersion(detail.session.version);
           if (markRead) {
@@ -1653,8 +1708,8 @@ export function ChatTabV2({
   const handleRetryConcurrencyMessage = useCallback(() => {
     const text = lastSentUserMessageRef.current;
     if (!text) return;
-    sendMessage({ text });
-  }, [sendMessage]);
+    sendMessage({ text, metadata: outgoingSenderMetadata });
+  }, [sendMessage, outgoingSenderMetadata]);
 
   const isConcurrencyThrottle =
     errorMessage?.code === "user_rate_limit" &&
@@ -1895,7 +1950,7 @@ export function ChatTabV2({
           single_model_send: true,
         });
         lastSentUserMessageRef.current = input;
-        sendMessage({ text: input, files });
+        sendMessage({ text: input, files, metadata: outgoingSenderMetadata });
         setModelContextQueue([]);
       }
 
@@ -1938,7 +1993,7 @@ export function ChatTabV2({
         single_model_send: true,
       });
       lastSentUserMessageRef.current = prompt;
-      sendMessage({ text: prompt });
+      sendMessage({ text: prompt, metadata: outgoingSenderMetadata });
     }
     setInput("");
     revokeFileAttachmentUrls(fileAttachments);
@@ -2280,6 +2335,9 @@ export function ChatTabV2({
                             multiAddColumnSeeds[String(model.id)] ?? null
                           }
                           onTranscriptSync={handleMultiModelTranscriptSync}
+                          showSenderAvatars={showSenderAvatars}
+                          resolveSenderAvatar={resolveSenderAvatar}
+                          outgoingSenderMetadata={outgoingSenderMetadata}
                         />
                       ))}
                     </div>
@@ -2340,7 +2398,10 @@ export function ChatTabV2({
                           activeTraceViewMode === "chat" && revealedInChat
                             ? (text: string) => {
                                 lastSentUserMessageRef.current = text;
-                                sendMessage({ text });
+                                sendMessage({
+                                  text,
+                                  metadata: outgoingSenderMetadata,
+                                });
                               }
                             : undefined
                         }
@@ -2406,7 +2467,10 @@ export function ChatTabV2({
                           messages={messages}
                           sendFollowUpMessage={(text: string) => {
                             lastSentUserMessageRef.current = text;
-                            sendMessage({ text });
+                            sendMessage({
+                              text,
+                              metadata: outgoingSenderMetadata,
+                            });
                           }}
                           model={selectedModel}
                           isLoading={isStreaming}
@@ -2444,6 +2508,8 @@ export function ChatTabV2({
                                 }
                               : undefined
                           }
+                          showSenderAvatars={showSenderAvatars}
+                          resolveSenderAvatar={resolveSenderAvatar}
                         />
                       </StickToBottom.Content>
                       <ScrollToBottomButton />

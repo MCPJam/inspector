@@ -12,6 +12,8 @@ import {
 import type { UIMessage } from "@ai-sdk/react";
 import { motion, useReducedMotion } from "framer-motion";
 import { MessageView } from "./message-view";
+import { isHiddenInternalMessage } from "./thread-helpers";
+import type { ProjectThreadOwnerAvatar } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import type { ModelDefinition } from "@/shared/types";
 import type { DisplayMode } from "@/stores/ui-playground-store";
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
@@ -53,7 +55,31 @@ type MessageViewPassthroughProps = Omit<
   | "onExitPip"
   | "onRequestFullscreen"
   | "onExitFullscreen"
+  | "senderAvatar"
+  | "showSenderAvatar"
 >;
+
+/**
+ * Surfaces both legacy (UIMessage.metadata) and persisted (top-level) sender
+ * ids. Persisted reads route through `transcriptToUIMessages`, which copies
+ * the field into `metadata`; the top-level field is only present on freshly
+ * constructed UIMessages that haven't been re-hydrated yet.
+ */
+export function getMessageSenderUserId(message: UIMessage): string | undefined {
+  const top = (message as { senderUserId?: unknown }).senderUserId;
+  if (typeof top === "string" && top.length > 0) return top;
+  const metadata = (message as { metadata?: { senderUserId?: unknown } })
+    .metadata;
+  if (
+    metadata &&
+    typeof metadata === "object" &&
+    typeof metadata.senderUserId === "string" &&
+    metadata.senderUserId.length > 0
+  ) {
+    return metadata.senderUserId;
+  }
+  return undefined;
+}
 
 export interface TranscriptThreadProps extends MessageViewPassthroughProps {
   messages: UIMessage[];
@@ -81,6 +107,13 @@ export interface TranscriptThreadProps extends MessageViewPassthroughProps {
   getMessageWrapperProps?: (
     args: MessageWrapperArgs,
   ) => MessageWrapperProps | undefined;
+  /**
+   * When true, attribute each user message to its sender via a small avatar
+   * above the bubble (shared-session sessions only). The transcript coalesces
+   * consecutive prompts from the same sender into one avatar row.
+   */
+  showSenderAvatars?: boolean;
+  resolveSenderAvatar?: (senderUserId?: string) => ProjectThreadOwnerAvatar;
 }
 
 function assignRef<T>(ref: Ref<T> | undefined, value: T) {
@@ -200,6 +233,8 @@ export function TranscriptThread({
   lastRenderableMessageId = null,
   getMessageWrapperProps,
   renderUserMessageActions,
+  showSenderAvatars = false,
+  resolveSenderAvatar,
 }: TranscriptThreadProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -357,7 +392,7 @@ export function TranscriptThread({
       }}
       className={cn("min-w-0", contentClassName)}
     >
-      {messages.map((message) => {
+      {messages.map((message, index) => {
         const isFocused = message.id === focusMessageId;
         const isHighlighted = highlightedMessageIdSet.has(message.id);
         const wrapperProps =
@@ -367,6 +402,35 @@ export function TranscriptThread({
             isHighlighted,
           }) ?? {};
         const { className, ...restWrapperProps } = wrapperProps;
+        const senderUserId =
+          showSenderAvatars && message.role === "user"
+            ? getMessageSenderUserId(message)
+            : undefined;
+        const senderAvatar =
+          showSenderAvatars && message.role === "user" && resolveSenderAvatar
+            ? resolveSenderAvatar(senderUserId)
+            : undefined;
+        // Coalesce consecutive prompts: render an avatar only on the first
+        // user message of a run by a given sender. `undefined`-vs-`undefined`
+        // counts as the same author so legacy single-author threads collapse.
+        let showSenderAvatarForMessage = false;
+        if (showSenderAvatars && message.role === "user" && senderAvatar) {
+          let prevUserSenderId: string | undefined;
+          let hadPrevUser = false;
+          for (let i = index - 1; i >= 0; i -= 1) {
+            const prior = messages[i];
+            if (prior.role !== "user") continue;
+            // Skip hidden internal messages (model-context-*, widget-state-*):
+            // they're never rendered, so they shouldn't break coalescing
+            // between two visible prompts from the same sender.
+            if (isHiddenInternalMessage(prior)) continue;
+            hadPrevUser = true;
+            prevUserSenderId = getMessageSenderUserId(prior);
+            break;
+          }
+          showSenderAvatarForMessage =
+            !hadPrevUser || prevUserSenderId !== senderUserId;
+        }
         const claudeFooterMode =
           isClaudeFamily &&
           message.role === "assistant" &&
@@ -452,6 +516,8 @@ export function TranscriptThread({
               reasoningDisplayMode={reasoningDisplayMode}
               claudeFooterMode={claudeFooterMode}
               renderUserMessageActions={renderUserMessageActions}
+              senderAvatar={senderAvatar}
+              showSenderAvatar={showSenderAvatarForMessage}
             />
           </div>
         );
