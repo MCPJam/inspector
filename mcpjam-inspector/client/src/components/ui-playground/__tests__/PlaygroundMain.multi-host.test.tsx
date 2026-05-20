@@ -2,7 +2,7 @@
  * PlaygroundMain — Phase 4 multi-host render path.
  *
  * Asserts the render-branch contract:
- *   - When `enableMultiHostChat=true`, `multiHostEnabled=true`, and the
+ *   - When `multiHostEnabled=true`, the project has >1 host, and the
  *     hook stack resolves >=2 hosts, the grid renders one card per host.
  *   - All columns share the project's `selectedServers` (project-scoped
  *     server config invariant).
@@ -543,7 +543,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     multiHostFixture.multiHostEnabled = true;
 
     render(
-      <PlaygroundMain {...defaultProps} enableMultiHostChat={true} />,
+      <PlaygroundMain {...defaultProps} />,
     );
 
     const grid = screen.getByTestId("playground-multi-host-grid");
@@ -567,7 +567,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     multiHostFixture.hosts = { "h-A": hostA, "h-B": hostB };
     multiHostFixture.selectedHostIds = ["h-A", "h-B"];
 
-    render(<PlaygroundMain {...defaultProps} enableMultiHostChat={true} />);
+    render(<PlaygroundMain {...defaultProps} />);
 
     const calls = mockMultiModelPlaygroundCard.mock.calls;
     expect(calls.length).toBeGreaterThanOrEqual(2);
@@ -598,7 +598,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     multiHostFixture.hosts = { "h-A": hostA, "h-B": hostB };
     multiHostFixture.selectedHostIds = ["h-A", "h-B"];
 
-    render(<PlaygroundMain {...defaultProps} enableMultiHostChat={true} />);
+    render(<PlaygroundMain {...defaultProps} />);
 
     // Find the most-recent props each card received (last call per
     // compareId).
@@ -642,7 +642,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     multiHostFixture.hosts = { "h-A": hostA, "h-B": hostB };
     multiHostFixture.selectedHostIds = ["h-A", "h-B"];
 
-    render(<PlaygroundMain {...defaultProps} enableMultiHostChat={true} />);
+    render(<PlaygroundMain {...defaultProps} />);
 
     const cards = screen.getAllByTestId("multi-host-card");
     expect(cards).toHaveLength(2);
@@ -659,23 +659,22 @@ describe("PlaygroundMain — multi-host render path", () => {
     multiHostFixture.hosts = {}; // ids point at nothing
     multiHostFixture.selectedHostIds = ["h-A", "h-B"];
 
-    render(<PlaygroundMain {...defaultProps} enableMultiHostChat={true} />);
+    render(<PlaygroundMain {...defaultProps} />);
 
     expect(screen.queryByTestId("playground-multi-host-grid")).toBeNull();
   });
 
-  it("does NOT render the multi-host grid when enableMultiHostChat is false (Phase 5 flag default)", () => {
+  it("does NOT render the multi-host grid when the project has only one host (host-count gate)", () => {
     const hostA = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
-    const hostB = makeHost("h-B", "Host B", { hostStyle: "claude" });
-    multiHostFixture.hostList = [
-      { hostId: "h-A", name: "Host A" },
-      { hostId: "h-B", name: "Host B" },
-    ];
-    multiHostFixture.hosts = { "h-A": hostA, "h-B": hostB };
-    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    // Only one host in the project — `canEnableMultiHost` is gated on
+    // `hostList.length > 1`, so the grid stays disabled even if the
+    // persisted `multiHostEnabled` flag flips true.
+    multiHostFixture.hostList = [{ hostId: "h-A", name: "Host A" }];
+    multiHostFixture.hosts = { "h-A": hostA };
+    multiHostFixture.selectedHostIds = ["h-A"];
     multiHostFixture.multiHostEnabled = true;
 
-    render(<PlaygroundMain {...defaultProps} enableMultiHostChat={false} />);
+    render(<PlaygroundMain {...defaultProps} />);
 
     expect(screen.queryByTestId("playground-multi-host-grid")).toBeNull();
   });
@@ -699,7 +698,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     multiHostFixture.selectedHostIds = ["h-A", "h-B"];
     multiHostFixture.multiHostEnabled = true;
 
-    render(<PlaygroundMain {...defaultProps} enableMultiHostChat={true} />);
+    render(<PlaygroundMain {...defaultProps} />);
 
     // Picker rendered at least once and got the same array (by ref)
     // and the same setters that PlaygroundMain owns. This guards against
@@ -751,7 +750,6 @@ describe("PlaygroundMain — multi-host render path", () => {
       <PlaygroundMain
         {...defaultProps}
         activeProjectId="local-project"
-        enableMultiHostChat={true}
       />,
     );
 
@@ -782,7 +780,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     multiHostFixture.selectedHostIds = ["h-A", "h-C"];
     multiHostFixture.multiHostEnabled = true;
 
-    render(<PlaygroundMain {...defaultProps} enableMultiHostChat={true} />);
+    render(<PlaygroundMain {...defaultProps} />);
 
     expect(screen.queryByTestId("playground-multi-host-grid")).toBeNull();
   });
@@ -812,7 +810,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     multiHostFixture.selectedHostIds = ["h-A", "h-B", "h-C"];
     multiHostFixture.multiHostEnabled = true;
 
-    render(<PlaygroundMain {...defaultProps} enableMultiHostChat={true} />);
+    render(<PlaygroundMain {...defaultProps} />);
 
     const cards = screen.getAllByTestId("multi-host-card");
     expect(cards).toHaveLength(2);
@@ -866,7 +864,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     multiHostFixture.selectedHostIds = ["h-A", "h-B"];
     multiHostFixture.multiHostEnabled = true;
 
-    render(<PlaygroundMain {...defaultProps} enableMultiHostChat={true} />);
+    render(<PlaygroundMain {...defaultProps} />);
 
     // The lead's model can't resolve into the chat-session's
     // `availableModels`; render falls through to single-pane.

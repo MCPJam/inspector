@@ -339,7 +339,7 @@ export function MultiHostPicker({
                   >
                     <Server className="size-3" />
                     <span className="truncate">{compactHostLabel(name)}</span>
-                    {effectiveSelectedHostIds.length > 1 ? (
+                    {!isLead && effectiveSelectedHostIds.length > 1 ? (
                       <span
                         role="button"
                         tabIndex={-1}

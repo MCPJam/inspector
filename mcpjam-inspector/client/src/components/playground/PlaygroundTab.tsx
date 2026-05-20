@@ -77,13 +77,6 @@ interface PlaygroundTabProps {
    * Preview mode (when set) still wins over this fallback.
    */
   activeHost?: HostConfigDtoV2 | null;
-  /**
-   * Phase 4 (multi-host plan): defaults to `false` here. Phase 5 flips
-   * this to `true` after verifying the lead-host contract. While false,
-   * `MultiHostPicker` still persists `multiHostEnabled` + selected hosts
-   * but the playground stays single-host.
-   */
-  enableMultiHostChat?: boolean;
   evalChatHandoff?: EvalChatHandoff | null;
   onEvalChatHandoffConsumed?: (id: string) => void;
 }
@@ -281,9 +274,6 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                           activeProjectId={props.activeProjectId}
                           serverName={props.serverName}
                           enableMultiModelChat={true}
-                          enableMultiHostChat={
-                            props.enableMultiHostChat ?? false
-                          }
                           onSaveHostContext={props.onSaveHostContext}
                           ensureServersReady={props.ensureServersReady}
                           playgroundServerSelectorProps={

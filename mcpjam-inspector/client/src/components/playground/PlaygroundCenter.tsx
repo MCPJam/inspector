@@ -24,8 +24,6 @@ interface PlaygroundCenterProps {
   activeProjectId?: string | null;
   serverName?: string;
   enableMultiModelChat: boolean;
-  /** Phase 4 (multi-host plan): defaults false; Phase 5 flips on. */
-  enableMultiHostChat?: boolean;
   onSaveHostContext?: (
     projectId: string,
     hostContext: ProjectHostContextDraft,
@@ -42,7 +40,6 @@ export function PlaygroundCenter({
   activeProjectId = null,
   serverName,
   enableMultiModelChat,
-  enableMultiHostChat = false,
   onSaveHostContext,
   ensureServersReady,
   playgroundServerSelectorProps,
@@ -82,7 +79,6 @@ export function PlaygroundCenter({
         serverName={serverName || ""}
         onSaveHostContext={onSaveHostContext}
         enableMultiModelChat={enableMultiModelChat}
-        enableMultiHostChat={enableMultiHostChat}
         isExecuting={state.isExecuting}
         executingToolName={state.selectedTool}
         invokingMessage={state.invokingMessage}

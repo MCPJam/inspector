@@ -182,16 +182,6 @@ interface PlaygroundMainProps {
     hostContext: ProjectHostContextDraft
   ) => Promise<void>;
   enableMultiModelChat?: boolean;
-  /**
-   * Phase 4 (multi-host plan): when true AND the user toggles
-   * `multiHostEnabled` AND the project has >1 host, the playground
-   * renders a multi-host compare grid (one card per selected host).
-   * Defaults to false through Phase 5 — Phase 5 flips this on after
-   * verifying the lead-host contract. Independent of
-   * `enableMultiModelChat`; the two modes are mutually exclusive at the
-   * toggle layer.
-   */
-  enableMultiHostChat?: boolean;
   onWidgetStateChange?: (toolCallId: string, state: unknown) => void;
   playgroundServerSelectorProps?: PlaygroundServerSelectorProps;
   // Execution state for "Invoking" indicator
@@ -301,7 +291,6 @@ export function PlaygroundMain({
   ensureServersReady,
   onSaveHostContext,
   enableMultiModelChat = false,
-  enableMultiHostChat = false,
   onWidgetStateChange,
   playgroundServerSelectorProps,
   isExecuting,
@@ -800,7 +789,7 @@ export function PlaygroundMain({
         .filter((host): host is HostDetail => host !== null),
     [hostSlots, selectedHostIds.length],
   );
-  const canEnableMultiHost = enableMultiHostChat && hostList.length > 1;
+  const canEnableMultiHost = hostList.length > 1;
 
   // Lead identity check — we cannot compact away the lead slot. If
   // `selectedHostIds[0]` is still loading from Convex (or its

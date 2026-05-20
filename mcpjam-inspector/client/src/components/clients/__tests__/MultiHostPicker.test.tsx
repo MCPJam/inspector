@@ -252,6 +252,58 @@ describe("MultiHostPicker", () => {
     expect(rowA).not.toHaveAttribute("data-disabled", "true");
   });
 
+  it("does not render an X (remove) affordance on the lead chip, but does on secondary chips", async () => {
+    const user = userEvent.setup();
+    renderPicker({
+      hosts: [hostA, hostB, hostC],
+      currentHostId: "host-a",
+      selectedHostIds: ["host-a", "host-b", "host-c"],
+      multiHostEnabled: true,
+    });
+
+    await user.click(screen.getByTestId("multi-host-picker-trigger"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("multi-host-chip-strip")).toBeInTheDocument(),
+    );
+
+    // Lead (slot 0) has NO remove button.
+    expect(
+      screen.queryByTestId("multi-host-chip-remove-host-a"),
+    ).not.toBeInTheDocument();
+    // Secondaries DO have remove buttons.
+    expect(
+      screen.getByTestId("multi-host-chip-remove-host-b"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("multi-host-chip-remove-host-c"),
+    ).toBeInTheDocument();
+  });
+
+  it("clicking a secondary chip's X removes only that host from selectedHostIds", async () => {
+    const user = userEvent.setup();
+    const onSelectedHostIdsChange = vi.fn();
+    renderPicker({
+      hosts: [hostA, hostB, hostC],
+      currentHostId: "host-a",
+      selectedHostIds: ["host-a", "host-b", "host-c"],
+      multiHostEnabled: true,
+      onSelectedHostIdsChange,
+    });
+
+    await user.click(screen.getByTestId("multi-host-picker-trigger"));
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("multi-host-chip-remove-host-b"),
+      ).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByTestId("multi-host-chip-remove-host-b"));
+
+    expect(onSelectedHostIdsChange).toHaveBeenCalledWith(["host-a", "host-c"]);
+  });
+
   it("shows +N in the trigger when multi-host has more than one selected", () => {
     renderPicker({
       hosts: [hostA, hostB, hostC],
