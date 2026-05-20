@@ -65,8 +65,8 @@ vi.mock("@mcpjam/design-system/badge", () => ({
   Badge: ({ children, ...props }: any) => <span {...props}>{children}</span>,
 }));
 
-vi.mock("../../sandbox-debug-panel", () => ({
-  SandboxDebugPanel: () => null,
+vi.mock("../../csp-workbench", () => ({
+  CspWorkbench: () => null,
 }));
 
 // Mock JsonEditor to avoid pulling in additional lucide icons
