@@ -9,6 +9,15 @@ import { MultiHostPicker } from "@/components/clients/MultiHostPicker";
 interface PlaygroundHostPickerProps {
   projectId: string | null;
   disabled?: boolean;
+  /**
+   * Optional override for the "Multiple hosts" toggle. When set, the
+   * picker calls this instead of the internal `setMultiHostEnabled` —
+   * lets `PlaygroundMain` (Phase 4) inject mutual exclusion with
+   * multi-model mode without forking the picker. The picker still reads
+   * the current toggle value from `usePersistedHost` so the trigger and
+   * popover stay in sync regardless of who flipped it.
+   */
+  onMultiHostEnabledChange?: (enabled: boolean) => void;
 }
 
 /**
@@ -28,6 +37,7 @@ interface PlaygroundHostPickerProps {
 export function PlaygroundHostPicker({
   projectId,
   disabled,
+  onMultiHostEnabledChange,
 }: PlaygroundHostPickerProps) {
   const { isAuthenticated } = useConvexAuth();
   const { hosts, isLoading } = useHostList({
@@ -61,7 +71,7 @@ export function PlaygroundHostPicker({
       currentHostId={previewedHostId}
       selectedHostIds={selectedHostIds}
       multiHostEnabled={multiHostEnabled}
-      onMultiHostEnabledChange={setMultiHostEnabled}
+      onMultiHostEnabledChange={onMultiHostEnabledChange ?? setMultiHostEnabled}
       onSelectedHostIdsChange={setSelectedHostIds}
       onPromoteLead={handlePromoteLead}
       disabled={disabled || !projectId}

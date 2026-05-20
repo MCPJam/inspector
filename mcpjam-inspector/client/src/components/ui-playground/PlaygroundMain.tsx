@@ -92,10 +92,19 @@ import { useSharedAppState } from "@/state/app-state-context";
 import { Settings2 } from "lucide-react";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { useConvexAuth } from "convex/react";
-import { useHost } from "@/hooks/useClients";
+import { useHost, useHostList, type HostDetail } from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
+import { usePersistedHost } from "@/hooks/use-persisted-host";
+import { usePlaygroundHostSlots } from "@/hooks/use-playground-host-slots";
 import { useProjectServers } from "@/hooks/useViews";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
+import { resolvePlaygroundModelId } from "@/lib/playground/apply-client-defaults";
+import {
+  snapshotFromHostConfig,
+  type HostSnapshot,
+} from "@/lib/host-snapshot";
+import type { ExecutionConfig } from "@/lib/chat-execution-config";
+import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 import { useHostContextStore } from "@/stores/client-context-store";
 import {
   extractEffectiveHostDisplayMode,
@@ -172,6 +181,16 @@ interface PlaygroundMainProps {
     hostContext: ProjectHostContextDraft
   ) => Promise<void>;
   enableMultiModelChat?: boolean;
+  /**
+   * Phase 4 (multi-host plan): when true AND the user toggles
+   * `multiHostEnabled` AND the project has >1 host, the playground
+   * renders a multi-host compare grid (one card per selected host).
+   * Defaults to false through Phase 5 — Phase 5 flips this on after
+   * verifying the lead-host contract. Independent of
+   * `enableMultiModelChat`; the two modes are mutually exclusive at the
+   * toggle layer.
+   */
+  enableMultiHostChat?: boolean;
   onWidgetStateChange?: (toolCallId: string, state: unknown) => void;
   playgroundServerSelectorProps?: PlaygroundServerSelectorProps;
   // Execution state for "Invoking" indicator
@@ -229,6 +248,26 @@ interface PlaygroundMainProps {
 
 type PlaygroundTraceViewMode = "chat" | "timeline" | "raw";
 
+/**
+ * Per-column data for the Phase 4 multi-host compare grid. Mirrors the
+ * shape `MultiModelPlaygroundCard` consumes; one entry per resolved host.
+ *
+ * `hostConfig` is the full DTO (used for the `hostCapsResolver` scope
+ * prop, which evaluates per-server capability resolution at render
+ * time). `hostSnapshot` is the projected subset used for the value-
+ * provider shadows (style, caps, chat UI, MCP profile).
+ */
+interface MultiHostColumn {
+  compareId: string;
+  compareLabel: string;
+  compareKind: "host";
+  compareSubLabel: string;
+  model: ModelDefinition;
+  executionConfig: ExecutionConfig;
+  hostSnapshot: HostSnapshot;
+  hostConfig: HostConfigDtoV2;
+}
+
 // Invoking indicator component (ChatGPT-style "Invoking [toolName]")
 function InvokingIndicator({
   toolName,
@@ -261,6 +300,7 @@ export function PlaygroundMain({
   ensureServersReady,
   onSaveHostContext,
   enableMultiModelChat = false,
+  enableMultiHostChat = false,
   onWidgetStateChange,
   playgroundServerSelectorProps,
   isExecuting,
@@ -720,18 +760,128 @@ export function PlaygroundMain({
   }, [multiModelAvailableModels, selectedModel, selectedModelIds]);
   const canEnableMultiModel =
     enableMultiModelChat && availableModels.length > 1;
+
+  // Phase 4 (multi-host plan): read multi-host state in parallel to
+  // multi-model. Lead host is derived inside `usePersistedHost` from the
+  // per-project `usePreviewedHostId`, so `selectedHostIds[0]` is always
+  // the lead.
+  const multiHostProjectId = convexProjectId ?? activeProjectId ?? null;
+  const {
+    selectedHostIds,
+    multiHostEnabled,
+    setMultiHostEnabled,
+  } = usePersistedHost(multiHostProjectId);
+  const { hosts: hostList } = useHostList({
+    isAuthenticated: isConvexAuthenticated,
+    projectId: multiHostProjectId,
+  });
+  // Fixed 3-slot `useHost` calls (the multi-host cap is 3). Each slot
+  // short-circuits on null id so passing fewer ids is free. See
+  // `usePlaygroundHostSlots` for the rules-of-hooks reasoning.
+  const hostSlots = usePlaygroundHostSlots(
+    isConvexAuthenticated,
+    selectedHostIds,
+  );
+  const resolvedSelectedHosts = useMemo<HostDetail[]>(
+    () =>
+      hostSlots
+        .slice(0, selectedHostIds.length)
+        .map((slot) => slot.host)
+        .filter((host): host is HostDetail => host !== null),
+    [hostSlots, selectedHostIds.length],
+  );
+  const canEnableMultiHost = enableMultiHostChat && hostList.length > 1;
+  // Same gating as multi-model: history mode wins (transcript replay lives
+  // on the single session). When `multiHostEnabled` is true but no hosts
+  // resolved yet (loading, deleted, etc.), fall through to single-pane —
+  // don't render an empty grid.
+  const isMultiHostMode =
+    canEnableMultiHost &&
+    multiHostEnabled &&
+    !activeHistorySessionId &&
+    resolvedSelectedHosts.length > 0;
+
   // When viewing a history session the transcript lives on the single chat
   // session; compare layout would override that render. Matches ChatTabV2.
+  // Multi-host wins over multi-model when both flags accidentally race
+  // (mutually exclusive at the toggle layer below, but defense in depth).
   const isMultiModelMode =
-    canEnableMultiModel && multiModelEnabled && !activeHistorySessionId;
+    canEnableMultiModel &&
+    multiModelEnabled &&
+    !activeHistorySessionId &&
+    !isMultiHostMode;
   const { isMultiModelLayoutMode, onModelSelectorOpenChange } =
-    useModelSelectorLayoutLock(isMultiModelMode);
+    useModelSelectorLayoutLock(isMultiModelMode || isMultiHostMode);
 
   useEffect(() => {
     if (isMultiModelMode && resolvedSelectedModels[0]) {
       lastCompareLeadIdRef.current = String(resolvedSelectedModels[0].id);
     }
   }, [isMultiModelMode, resolvedSelectedModels]);
+
+  // Phase 4 (multi-host plan): per-column derivations for the multi-host
+  // grid. Only computed when `isMultiHostMode`; in any other mode the
+  // memo bails to an empty array so the render branch reads `.length`
+  // safely.
+  //
+  // Lead column (`index === 0`) executes with the global chip-edited
+  // `executionConfig` so toolbar chips still affect lead's chat session.
+  // Secondary columns execute under their own host's persisted config —
+  // matches the Phase 4 plan's "lead drives the global stores;
+  // secondaries are read-only snapshots fed via props" contract.
+  const multiHostColumns = useMemo<MultiHostColumn[]>(() => {
+    if (!isMultiHostMode) return [];
+    const columns: MultiHostColumn[] = [];
+    for (let index = 0; index < resolvedSelectedHosts.length; index++) {
+      const host = resolvedSelectedHosts[index];
+      const isLead = index === 0;
+      const modelId = resolvePlaygroundModelId(
+        host.config.modelId,
+        host.config.hostStyle,
+      );
+      // Skip hosts whose configured model doesn't resolve to a usable
+      // available model — better an empty column than a card stuck on a
+      // missing model. (Plan: secondaries use host's own default model;
+      // there's no per-column override in v1.)
+      const model = modelId
+        ? availableModels.find((m) => String(m.id) === modelId)
+        : null;
+      if (!model) continue;
+      const executionConfig: ExecutionConfig = isLead
+        ? {
+            // Lead column drives the global chip state. Reuse the same
+            // `(systemPrompt, temperature, requireToolApproval)` values
+            // the single-pane and multi-model branches use, so any chip
+            // edit propagates into lead's session config.
+            systemPrompt,
+            temperature,
+            requireToolApproval,
+          }
+        : {
+            systemPrompt: host.config.systemPrompt,
+            temperature: host.config.temperature,
+            requireToolApproval: host.config.requireToolApproval,
+          };
+      columns.push({
+        compareId: host.hostId,
+        compareLabel: host.name,
+        compareKind: "host",
+        compareSubLabel: model.name,
+        model,
+        executionConfig,
+        hostSnapshot: snapshotFromHostConfig(host.config),
+        hostConfig: host.config,
+      });
+    }
+    return columns;
+  }, [
+    isMultiHostMode,
+    resolvedSelectedHosts,
+    availableModels,
+    systemPrompt,
+    temperature,
+    requireToolApproval,
+  ]);
 
   const handleMultiModelTranscriptSync = useCallback(
     (compareId: string, transcript: UIMessage[]) => {
@@ -1904,8 +2054,30 @@ export function PlaygroundMain({
   const handleMultiModelEnabledChange = useCallback(
     (enabled: boolean) => {
       setMultiModelEnabled(enabled);
+      // Lightweight mutual exclusion (Phase 4 scope). Flipping multi-model
+      // ON force-clears multi-host. Full transcript-cloning swap lives in
+      // Phase 6 — for now we just stop both compare modes from being on
+      // at once; the new mode resets each card's session to empty.
+      if (enabled && multiHostEnabled) {
+        setMultiHostEnabled(false);
+      }
     },
-    [setMultiModelEnabled]
+    [setMultiModelEnabled, multiHostEnabled, setMultiHostEnabled]
+  );
+
+  // Phase 4 lightweight mutual exclusion (see comment on
+  // `handleMultiModelEnabledChange`). Wired into `PlaygroundHostPicker`
+  // via `onMultiHostEnabledChange`; the picker continues to read the
+  // current toggle value via its internal `usePersistedHost` call, so
+  // both surfaces stay in sync.
+  const handleMultiHostEnabledChange = useCallback(
+    (enabled: boolean) => {
+      setMultiHostEnabled(enabled);
+      if (enabled && multiModelEnabled) {
+        setMultiModelEnabled(false);
+      }
+    },
+    [setMultiHostEnabled, multiModelEnabled, setMultiModelEnabled]
   );
 
   const handleRequireToolApprovalChange = useCallback(
@@ -2518,7 +2690,10 @@ export function PlaygroundMain({
             // change the playground render path (that lands in Phase 4).
             // The global `GlobalClientBar` remains the host pill for other
             // tabs; both surfaces stay in sync via shared `usePreviewedHostId`.
-            <PlaygroundHostPicker projectId={activeProjectId} />
+            <PlaygroundHostPicker
+              projectId={activeProjectId}
+              onMultiHostEnabledChange={handleMultiHostEnabledChange}
+            />
           }
           trailing={
             effectiveHasMessages ? (
@@ -2627,7 +2802,11 @@ export function PlaygroundMain({
             ) : null}
 
             <div
-              data-testid="playground-multi-model-compare-section"
+              data-testid={
+                isMultiHostMode
+                  ? "playground-multi-host-compare-section"
+                  : "playground-multi-model-compare-section"
+              }
               className={cn(
                 "flex flex-1 min-h-0 flex-col overflow-hidden",
                 !effectiveHasMessages && "hidden"
@@ -2635,29 +2814,42 @@ export function PlaygroundMain({
               aria-hidden={!effectiveHasMessages}
             >
               <div className="flex min-h-64 flex-1 flex-col overflow-hidden px-4 py-4">
-                <div
-                  data-testid="playground-multi-model-grid"
-                  className={cn(
-                    "grid h-full min-h-0 w-full min-w-0 gap-4 auto-rows-[minmax(0,1fr)] [&>*]:min-h-0",
-                    resolvedSelectedModels.length <= 1 && "grid-cols-1",
-                    resolvedSelectedModels.length === 2 &&
-                      "grid-cols-1 xl:grid-cols-2",
-                    resolvedSelectedModels.length >= 3 &&
-                      "grid-cols-1 xl:grid-cols-3"
-                  )}
-                >
-                  {resolvedSelectedModels.map((model) => {
-                    const compareId = String(model.id);
-                    return (
+                {isMultiHostMode ? (
+                  // Phase 4 multi-host compare grid. Project-scoped
+                  // server config means `selectedServers`,
+                  // `hostedSelectedServerIds`, and `hostedOAuthTokens`
+                  // are SHARED across all columns — there is no
+                  // per-host server set in v1 (see plan §"What v1 does
+                  // NOT compare"). Each column gets its own
+                  // `hostSnapshot` (style, caps, chat UI, MCP profile)
+                  // and its own `hostCapsResolver` so per-server
+                  // capability gating evaluates under the right host
+                  // identity. Lead column's `executionConfig` is the
+                  // global chip state; secondaries use their persisted
+                  // host config — see `multiHostColumns` memo above.
+                  <div
+                    data-testid="playground-multi-host-grid"
+                    className={cn(
+                      "grid h-full min-h-0 w-full min-w-0 gap-4 auto-rows-[minmax(0,1fr)] [&>*]:min-h-0",
+                      multiHostColumns.length <= 1 && "grid-cols-1",
+                      multiHostColumns.length === 2 &&
+                        "grid-cols-1 xl:grid-cols-2",
+                      multiHostColumns.length >= 3 &&
+                        "grid-cols-1 xl:grid-cols-3"
+                    )}
+                  >
+                    {multiHostColumns.map((column) => (
                       <MultiModelPlaygroundCard
-                        // Phase 3 (multi-host plan): include `compareKind` in
-                        // the key so model-mode and (future) host-mode keys
-                        // never collide during mode-swap transitions.
-                        key={`${multiModelSessionGeneration}:model:${compareId}`}
-                        compareId={compareId}
-                        compareLabel={model.name}
-                        compareKind="model"
-                        model={model}
+                        // Include `compareKind` in the key so a mode
+                        // swap between multi-model and multi-host can't
+                        // accidentally reuse a card instance keyed by a
+                        // hostId that happens to equal a modelId string.
+                        key={`${multiModelSessionGeneration}:host:${column.compareId}`}
+                        compareId={column.compareId}
+                        compareLabel={column.compareLabel}
+                        compareKind="host"
+                        compareSubLabel={column.compareSubLabel}
+                        model={column.model}
                         comparisonSummaries={Object.values(compareSummaries)}
                         selectedServers={selectedServers}
                         broadcastRequest={broadcastRequest}
@@ -2665,11 +2857,7 @@ export function PlaygroundMain({
                           deterministicExecutionRequest
                         }
                         stopRequestId={stopBroadcastRequestId}
-                        executionConfig={{
-                          systemPrompt,
-                          temperature,
-                          requireToolApproval,
-                        }}
+                        executionConfig={column.executionConfig}
                         hostedContext={{
                           projectId: convexProjectId,
                           selectedServerIds: hostedSelectedServerIds,
@@ -2677,7 +2865,7 @@ export function PlaygroundMain({
                         }}
                         displayMode={displayMode}
                         onDisplayModeChange={handleDisplayModeChange}
-                        hostStyle={hostStyle}
+                        hostStyle={column.hostSnapshot.hostStyle}
                         effectiveThreadTheme={effectiveThreadTheme}
                         deviceType={storeDeviceType}
                         selectedProtocol={selectedProtocol}
@@ -2689,23 +2877,93 @@ export function PlaygroundMain({
                         invokingMessage={invokingMessage}
                         onSummaryChange={handleMultiModelSummaryChange}
                         onHasMessagesChange={handleMultiModelHasMessagesChange}
-                        showComparisonChrome={resolvedSelectedModels.length > 1}
+                        showComparisonChrome={multiHostColumns.length > 1}
                         suppressThreadEmptyHint={false}
                         compareEnterVersion={multiCompareEnterVersion}
                         compareEnterMessages={multiCompareEnterMessages}
                         addColumnSeed={
-                          compareAddColumnSeeds[compareId] ?? null
+                          compareAddColumnSeeds[column.compareId] ?? null
                         }
                         onTranscriptSync={handleMultiModelTranscriptSync}
-                        // Phase 3: model-mode does NOT pass per-card host
-                        // snapshot props. The card falls back to tab-root
-                        // provider values via `useContext`, so the rendered
-                        // tree is behavior-identical to today. Phase 4 host
-                        // mode passes explicit per-column values here.
+                        hostSnapshot={column.hostSnapshot}
+                        hostCapsResolver={column.hostConfig}
                       />
-                    );
-                  })}
-                </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div
+                    data-testid="playground-multi-model-grid"
+                    className={cn(
+                      "grid h-full min-h-0 w-full min-w-0 gap-4 auto-rows-[minmax(0,1fr)] [&>*]:min-h-0",
+                      resolvedSelectedModels.length <= 1 && "grid-cols-1",
+                      resolvedSelectedModels.length === 2 &&
+                        "grid-cols-1 xl:grid-cols-2",
+                      resolvedSelectedModels.length >= 3 &&
+                        "grid-cols-1 xl:grid-cols-3"
+                    )}
+                  >
+                    {resolvedSelectedModels.map((model) => {
+                      const compareId = String(model.id);
+                      return (
+                        <MultiModelPlaygroundCard
+                          // Phase 3: include `compareKind` in the key so
+                          // model-mode and host-mode keys never collide
+                          // during mode-swap transitions.
+                          key={`${multiModelSessionGeneration}:model:${compareId}`}
+                          compareId={compareId}
+                          compareLabel={model.name}
+                          compareKind="model"
+                          model={model}
+                          comparisonSummaries={Object.values(compareSummaries)}
+                          selectedServers={selectedServers}
+                          broadcastRequest={broadcastRequest}
+                          deterministicExecutionRequest={
+                            deterministicExecutionRequest
+                          }
+                          stopRequestId={stopBroadcastRequestId}
+                          executionConfig={{
+                            systemPrompt,
+                            temperature,
+                            requireToolApproval,
+                          }}
+                          hostedContext={{
+                            projectId: convexProjectId,
+                            selectedServerIds: hostedSelectedServerIds,
+                            oauthTokens: hostedOAuthTokens,
+                          }}
+                          displayMode={displayMode}
+                          onDisplayModeChange={handleDisplayModeChange}
+                          hostStyle={hostStyle}
+                          effectiveThreadTheme={effectiveThreadTheme}
+                          deviceType={storeDeviceType}
+                          selectedProtocol={selectedProtocol}
+                          hideSaveViewButton={hideSaveViewButton}
+                          onWidgetStateChange={onWidgetStateChange}
+                          toolRenderOverrides={externalToolRenderOverrides}
+                          isExecuting={isExecuting}
+                          executingToolName={executingToolName}
+                          invokingMessage={invokingMessage}
+                          onSummaryChange={handleMultiModelSummaryChange}
+                          onHasMessagesChange={handleMultiModelHasMessagesChange}
+                          showComparisonChrome={
+                            resolvedSelectedModels.length > 1
+                          }
+                          suppressThreadEmptyHint={false}
+                          compareEnterVersion={multiCompareEnterVersion}
+                          compareEnterMessages={multiCompareEnterMessages}
+                          addColumnSeed={
+                            compareAddColumnSeeds[compareId] ?? null
+                          }
+                          onTranscriptSync={handleMultiModelTranscriptSync}
+                          // Model-mode does NOT pass `hostSnapshot`. The
+                          // card falls back to tab-root provider values
+                          // via `useContext`, so the rendered tree is
+                          // behavior-identical to today.
+                        />
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               {!showMultiModelTraceEmptyPanel ? (
