@@ -102,12 +102,103 @@ import { ingestHostedRpcLogsFromResponse } from "@/lib/apis/web/rpc-logs";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
 import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
 
+const GUEST_LOCKED_MODEL_REASON = "Sign in to use MCPJam provided models";
+
+function resolveSystemPrompt(value: string | null | undefined): string {
+  return typeof value === "string" && value.trim().length > 0
+    ? value
+    : DEFAULT_SYSTEM_PROMPT;
+}
+
+function applyGuestModelLocks(
+  models: ModelDefinition[],
+  isAuthenticated: boolean
+): ModelDefinition[] {
+  if (isAuthenticated) return models;
+
+  return models.map((model) => {
+    const modelId = String(model.id);
+    if (!isMCPJamProvidedModel(modelId) || isMCPJamGuestAllowedModel(modelId)) {
+      return model;
+    }
+
+    return {
+      ...model,
+      disabled: true,
+      disabledReason: GUEST_LOCKED_MODEL_REASON,
+    };
+  });
+}
+
+function appendDetectedLocalOllamaModels(
+  models: ModelDefinition[],
+  isOllamaRunning: boolean,
+  ollamaModels: ModelDefinition[]
+): ModelDefinition[] {
+  if (!isOllamaRunning || ollamaModels.length === 0) return models;
+  return models.concat(
+    ollamaModels.filter(
+      (ollamaModel) =>
+        !models.some((model) => String(model.id) === String(ollamaModel.id))
+    )
+  );
+}
+
+function getOrgProviderKeyForModel(model: ModelDefinition): string | null {
+  if (model.provider === "custom") {
+    return model.customProviderName
+      ? `custom:${model.customProviderName}`
+      : null;
+  }
+  return model.provider;
+}
+
+function isOrgManagedModel(
+  orgConfig: OrgVisibleConfig | undefined,
+  model: ModelDefinition
+): boolean {
+  if (isMCPJamProvidedModel(String(model.id))) return false;
+  const providerKey = getOrgProviderKeyForModel(model);
+  if (!providerKey) return false;
+  const provider = orgConfig?.providers.find(
+    (p) => p.providerKey === providerKey && p.enabled
+  );
+  if (!provider) return false;
+
+  if (provider.providerKey === "ollama") {
+    return Boolean(
+      provider.baseUrl && provider.modelIds?.includes(String(model.id))
+    );
+  }
+
+  if (provider.providerKey.startsWith("custom:")) {
+    const prefix = `${provider.providerKey}:`;
+    const modelId = String(model.id).startsWith(prefix)
+      ? String(model.id).slice(prefix.length)
+      : String(model.id);
+    return Boolean(
+      provider.baseUrl &&
+        provider.modelIds?.includes(modelId)
+    );
+  }
+
+  if (
+    provider.providerKey === "openrouter" &&
+    provider.selectedModels &&
+    provider.selectedModels.length > 0
+  ) {
+    return provider.hasSecret && provider.selectedModels.includes(String(model.id));
+  }
+
+  return provider.hasSecret;
+}
+
 export interface UseChatSessionOptions {
   /** Server names to connect to */
   selectedServers: string[];
   /** Visibility to apply when persisting a new direct chat */
   directVisibility?: "private" | "project";
-  /** Sanitized organization provider config for hosted org-backed projects */
+  /** Sanitized organization provider config for org-backed projects */
   hostedOrgModelConfig?: OrgVisibleConfig;
   /** Hosted runtime context (project, server IDs, OAuth tokens, share/chatbox scope) */
   hostedContext?: HostedRuntimeContext;
@@ -275,8 +366,6 @@ export interface UseChatSessionReturn {
   submitBlocked: boolean;
   inputDisabled: boolean;
 }
-
-const GUEST_LOCKED_MODEL_REASON = "Sign in to use MCPJam provided models";
 
 function inferModelProviderFromId(modelId: string): ModelProvider {
   const providerPrefix = modelId.split("/")[0];
@@ -969,8 +1058,7 @@ export function useChatSession(
   const hostedChatboxSurface = hostedContext?.chatboxSurface;
   const requestRefreshAccessVersion = hostedContext?.requestRefreshAccessVersion;
   const initialModelId = executionConfig?.modelId;
-  const initialSystemPrompt =
-    executionConfig?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+  const initialSystemPrompt = resolveSystemPrompt(executionConfig?.systemPrompt);
   const initialTemperature = executionConfig?.temperature ?? 0.7;
   const initialRequireToolApproval =
     executionConfig?.requireToolApproval ?? false;
@@ -1003,7 +1091,10 @@ export function useChatSession(
   >(undefined);
   const [isSessionBootstrapComplete, setIsSessionBootstrapComplete] =
     useState(false);
-  const [systemPrompt, setSystemPrompt] = useState(initialSystemPrompt);
+  const [systemPrompt, setSystemPromptState] = useState(initialSystemPrompt);
+  const setSystemPrompt = useCallback((prompt: string) => {
+    setSystemPromptState(resolveSystemPrompt(prompt));
+  }, []);
   const [temperature, setTemperature] = useState(initialTemperature);
   const [chatSessionId, setChatSessionId] = useState(generateId());
   const chatSessionIdRef = useRef(chatSessionId);
@@ -1127,7 +1218,17 @@ export function useChatSession(
 
   // Build available models
   const availableModels = useMemo(() => {
-    const models = buildAvailableModels({
+    if ((hostedOrgModelConfig?.providers.length ?? 0) > 0) {
+      const orgModels = buildAvailableModelsFromOrgConfig(hostedOrgModelConfig);
+      const orgModelsWithLocalOllama = appendDetectedLocalOllamaModels(
+        orgModels,
+        isOllamaRunning,
+        ollamaModels
+      );
+      return applyGuestModelLocks(orgModelsWithLocalOllama, isAuthenticated);
+    }
+
+    const localModels = buildAvailableModels({
       hasToken,
       getOpenRouterSelectedModels,
       isOllamaRunning,
@@ -1135,45 +1236,8 @@ export function useChatSession(
       getAzureBaseUrl,
       customProviders,
     });
-    const visibleModels = !isAuthenticated
-      ? models.map((model) => {
-          const modelId = String(model.id);
-          if (
-            !isMCPJamProvidedModel(modelId) ||
-            isMCPJamGuestAllowedModel(modelId)
-          ) {
-            return model;
-          }
-
-          return {
-            ...model,
-            disabled: true,
-            disabledReason: GUEST_LOCKED_MODEL_REASON,
-          };
-        })
-      : models;
+    const visibleModels = applyGuestModelLocks(localModels, isAuthenticated);
     if (HOSTED_MODE) {
-      if (hostedOrgModelConfig) {
-        const orgModels =
-          buildAvailableModelsFromOrgConfig(hostedOrgModelConfig);
-        return !isAuthenticated
-          ? orgModels.map((model) => {
-              const modelId = String(model.id);
-              if (
-                !isMCPJamProvidedModel(modelId) ||
-                isMCPJamGuestAllowedModel(modelId)
-              ) {
-                return model;
-              }
-
-              return {
-                ...model,
-                disabled: true,
-                disabledReason: GUEST_LOCKED_MODEL_REASON,
-              };
-            })
-          : orgModels;
-      }
       return visibleModels.filter((model) =>
         isMCPJamProvidedModel(String(model.id))
       );
@@ -1253,6 +1317,10 @@ export function useChatSession(
       ? isMCPJamProvidedModel(String(selectedModel.id))
       : false;
   }, [selectedModel]);
+  const selectedModelUsesOrgRuntime = useMemo(
+    () => isOrgManagedModel(hostedOrgModelConfig, selectedModel),
+    [hostedOrgModelConfig, selectedModel]
+  );
   const traceViewsSupported = HOSTED_MODE ? isMcpJamModel : true;
 
   const chatFetch = useCallback(
@@ -1295,6 +1363,8 @@ export function useChatSession(
 
   // Create transport
   const transport = useMemo(() => {
+    const shouldUseOrgAwareChatApi =
+      HOSTED_MODE || selectedModelUsesOrgRuntime;
     let apiKey: string;
     if (
       selectedModel.provider === "custom" &&
@@ -1319,7 +1389,9 @@ export function useChatSession(
       ? mergedHeaders
       : undefined;
 
-    const chatApi = HOSTED_MODE ? "/api/web/chat-v2" : "/api/mcp/chat-v2";
+    const chatApi = shouldUseOrgAwareChatApi
+      ? "/api/web/chat-v2"
+      : "/api/mcp/chat-v2";
 
     // Hosted dashboard guests and signed-in users both require a project id.
     // Submit is blocked until hostedProjectId and selected server ids resolve.
@@ -1357,7 +1429,7 @@ export function useChatSession(
       fetch: chatFetch,
       body: () => ({
         model: selectedModel,
-        ...(HOSTED_MODE ? {} : { apiKey }),
+        ...(shouldUseOrgAwareChatApi ? {} : { apiKey }),
         // Always send the user's slider value. The server's `prepareChatV2`
         // already drops temperature for GPT-5 before the LLM call (its API
         // rejects the field), so what lands here is purely the user's
@@ -1366,7 +1438,7 @@ export function useChatSession(
         // helper's 0.7 fallback regardless of the slider.
         temperature,
         systemPrompt,
-        ...(HOSTED_MODE
+        ...(shouldUseOrgAwareChatApi
           ? buildHostedBody()
           : {
               selectedServers,
@@ -1400,6 +1472,12 @@ export function useChatSession(
               ...(hostedChatboxId && hostedChatboxSurface
                 ? { surface: hostedChatboxSurface }
                 : {}),
+              ...(selectedModel.provider === "ollama"
+                ? { ollamaBaseUrl: getOllamaBaseUrl() }
+                : {}),
+              ...(selectedModel.provider === "azure"
+                ? { azureBaseUrl: getAzureBaseUrl() }
+                : {}),
             }),
         requireToolApproval: requireToolApprovalRef.current,
         // Phase 3: forward the chat tab's resolved host style so
@@ -1407,7 +1485,7 @@ export function useChatSession(
         // hostStyle (no more legacy `'direct'`). Omitted body falls
         // back to the backend default of `'claude'`.
         ...(hostStyle ? { hostStyle } : {}),
-        ...(!HOSTED_MODE && customProviders.length > 0
+        ...(!shouldUseOrgAwareChatApi && customProviders.length > 0
           ? { customProviders }
           : {}),
         ...(resumedVersionRef.current !== null
@@ -1422,6 +1500,7 @@ export function useChatSession(
     getCustomProviderByName,
     customProviders,
     authHeaders,
+    selectedModelUsesOrgRuntime,
     temperature,
     systemPrompt,
     selectedServers,
@@ -1433,6 +1512,8 @@ export function useChatSession(
     hostedChatboxId,
     hostedAccessVersion,
     hostedChatboxSurface,
+    getOllamaBaseUrl,
+    getAzureBaseUrl,
     hostStyle,
     chatFetch,
     // requireToolApproval read from ref at request time
@@ -1884,7 +1965,7 @@ export function useChatSession(
       });
       onResetRef.current?.("hydrate");
     },
-    [queueSessionHydration]
+    [queueSessionHydration, setSystemPrompt]
   );
 
   // When controlled, mirror `executionConfig` fields into local state; when
@@ -1900,7 +1981,7 @@ export function useChatSession(
   useEffect(() => {
     if (!isExecutionConfigControlled) return;
     setSystemPrompt(executionSystemPrompt ?? DEFAULT_SYSTEM_PROMPT);
-  }, [isExecutionConfigControlled, executionSystemPrompt]);
+  }, [isExecutionConfigControlled, executionSystemPrompt, setSystemPrompt]);
 
   useEffect(() => {
     if (!isExecutionConfigControlled) return;
@@ -2216,11 +2297,12 @@ export function useChatSession(
   // Compute share/chatbox guest access from React state instead of the global
   // apiContext.
   // In hosted mode: always require auth (guest JWT or WorkOS — handled by authFetch).
-  // In non-hosted mode: auth is only needed for sign-in-only MCPJam models.
+  // In non-hosted mode: auth is needed for org-managed BYOK and sign-in-only MCPJam models.
   const requiresAuthForChat = HOSTED_MODE
     ? true
-    : isMcpJamModel &&
-      !isMCPJamGuestAllowedModel(String(selectedModel?.id ?? ""));
+    : selectedModelUsesOrgRuntime ||
+      (isMcpJamModel &&
+        !isMCPJamGuestAllowedModel(String(selectedModel?.id ?? "")));
   const isAuthReady =
     !requiresAuthForChat || guestMode || (isAuthenticated && !!authHeaders);
   // Guest users don't need WorkOS auth — authFetch handles guest bearer tokens
@@ -2229,7 +2311,7 @@ export function useChatSession(
   const authHeadersNotReady =
     requiresAuthForChat && isAuthenticated && !authHeaders;
   const hostedContextNotReady =
-    HOSTED_MODE &&
+    (HOSTED_MODE || selectedModelUsesOrgRuntime) &&
     (!hostedProjectId ||
       (selectedServers.length > 0 &&
         hostedSelectedServerIds.length !== selectedServers.length));

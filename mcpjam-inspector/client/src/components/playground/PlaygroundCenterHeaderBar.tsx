@@ -67,7 +67,9 @@ export function PlaygroundCenterHeaderBar({
       data-testid="playground-main-header"
     >
       <div className={chromeRowClass}>
-        {leading ? <div className="shrink-0">{leading}</div> : null}
+        {leading ? (
+          <div className="flex shrink-0 items-center">{leading}</div>
+        ) : null}
         <div className="flex min-w-0 flex-1 justify-center overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <ClientContextHeader
             activeProjectId={activeProjectId}
@@ -78,7 +80,9 @@ export function PlaygroundCenterHeaderBar({
             leadHostInMultiHost={leadHostInMultiHost}
           />
         </div>
-        {trailing ? <div className="shrink-0">{trailing}</div> : null}
+        {trailing ? (
+          <div className="flex shrink-0 items-center">{trailing}</div>
+        ) : null}
       </div>
 
       {showTraceTabs ? (

@@ -32,6 +32,7 @@ import { useChatSession } from "@/hooks/use-chat-session";
 import { getChatComposerInteractivity } from "@/hooks/use-chat-stop-controls";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
 import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
+import type { OrgVisibleConfig } from "@/components/chat-v2/shared/model-helpers";
 import { createDeterministicToolMessages } from "@/components/ui-playground/playground-helpers";
 import {
   buildPreludeTraceEnvelope,
@@ -130,6 +131,7 @@ interface MultiModelPlaygroundCardProps {
   reasoningDisplayMode?: ReasoningDisplayMode;
   executionConfig: ExecutionConfig;
   hostedContext?: HostedRuntimeContext;
+  hostedOrgModelConfig?: OrgVisibleConfig;
   displayMode: DisplayMode;
   onDisplayModeChange: (mode: DisplayMode) => void;
   hostStyle: ChatboxHostStyle;
@@ -202,6 +204,7 @@ export function MultiModelPlaygroundCard({
   reasoningDisplayMode = "inline",
   executionConfig,
   hostedContext,
+  hostedOrgModelConfig,
   displayMode,
   onDisplayModeChange,
   hostStyle,
@@ -299,6 +302,7 @@ export function MultiModelPlaygroundCard({
   } = useChatSession({
     selectedServers,
     hostedContext,
+    hostedOrgModelConfig,
     executionConfig: {
       ...executionConfig,
       modelId: String(model.id),

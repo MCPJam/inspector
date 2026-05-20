@@ -90,7 +90,7 @@ describe("ClientFocusPanel", () => {
       />,
     );
 
-    const appsTab = screen.getByRole("tab", { name: /^Apps Extension$/ });
+    const appsTab = screen.getByRole("tab", { name: /^Apps$/ });
     expect(appsTab).toBeInTheDocument();
     expect(within(appsTab).queryByText(/SEP-1865/)).toBeNull();
     expect(appsTab.className).not.toMatch(/var\(--info|bg-info\b/);
