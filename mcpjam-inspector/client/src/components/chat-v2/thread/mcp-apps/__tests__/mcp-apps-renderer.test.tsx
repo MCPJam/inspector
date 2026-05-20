@@ -75,6 +75,7 @@ const {
     setWidgetHtml: vi.fn(),
     setSandboxApplied: vi.fn(),
     appendLifecycle: vi.fn(),
+    recordMount: vi.fn(),
   };
 
   return {
@@ -203,6 +204,7 @@ vi.mock("@/stores/widget-debug-store", () => ({
       setWidgetHtml: stableStoreFns.setWidgetHtml,
       setSandboxApplied: stableStoreFns.setSandboxApplied,
       appendLifecycle: stableStoreFns.appendLifecycle,
+      recordMount: stableStoreFns.recordMount,
     }),
 }));
 
@@ -241,6 +243,7 @@ import {
   ChatboxHostThemeProvider,
 } from "@/contexts/chatbox-client-style-context";
 import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
+import { WidgetSurfaceProvider } from "@/contexts/widget-surface-context";
 import type { McpUiHostCapabilities } from "@modelcontextprotocol/ext-apps/app-bridge";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -1002,6 +1005,62 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(vi.mocked(global.fetch)).toHaveBeenCalledWith("blob:cached");
     // Cached path forces permissive rendering.
     expect(sandboxedIframePropsRef.current?.permissive).toBe(true);
+  });
+
+  it("first-render cspMode derives from WidgetSurfaceProvider, not isPlaygroundActive", async () => {
+    // Regression for the "draw a cat, then it vanishes" iframe re-mount
+    // bug. Previously `cspMode` came from `isPlaygroundActive`, which was
+    // set in a passive useEffect by PlaygroundMain. First render saw
+    // `false` → cspMode = "widget-declared" → live fetch with that
+    // mode; the effect then committed → flag flipped → cspMode flipped
+    // → fetch-source key changed → iframe remounted and lost View state.
+    //
+    // The fix routes cspMode through WidgetSurfaceContext, which
+    // propagates synchronously on the first render. This test pins
+    // that contract so a future refactor reintroducing a global-flag
+    // dependency on cspMode would flip the assertion.
+    Object.assign(mockPlaygroundStoreState, {
+      isPlaygroundActive: false,
+      mcpAppsCspMode: "permissive",
+    });
+
+    render(
+      <WidgetSurfaceProvider value="playground">
+        <MCPAppsRenderer {...baseProps} />
+      </WidgetSurfaceProvider>,
+    );
+
+    await vi.waitFor(() => {
+      expect(vi.mocked(authFetch)).toHaveBeenCalled();
+    });
+
+    // First live fetch must already carry the playground cspMode —
+    // proves no race, no second fetch with the corrected mode.
+    expect(vi.mocked(authFetch)).toHaveBeenCalledTimes(1);
+    const firstCall = vi.mocked(authFetch).mock.calls[0];
+    const body = JSON.parse(firstCall[1]!.body as string);
+    expect(body.cspMode).toBe("permissive");
+  });
+
+  it("first-render cspMode falls back to 'widget-declared' outside the playground surface", async () => {
+    // Symmetric guard: without the WidgetSurfaceProvider, the renderer
+    // is on the chat surface and must use the strict default —
+    // regardless of any leaked store flag value.
+    Object.assign(mockPlaygroundStoreState, {
+      isPlaygroundActive: true,
+      mcpAppsCspMode: "permissive",
+    });
+
+    render(<MCPAppsRenderer {...baseProps} />);
+
+    await vi.waitFor(() => {
+      expect(vi.mocked(authFetch)).toHaveBeenCalled();
+    });
+
+    expect(vi.mocked(authFetch)).toHaveBeenCalledTimes(1);
+    const firstCall = vi.mocked(authFetch).mock.calls[0];
+    const body = JSON.parse(firstCall[1]!.body as string);
+    expect(body.cspMode).toBe("widget-declared");
   });
 
   it("drops stale live-fetch results when the source key has moved on (renderer reuse)", async () => {

@@ -93,6 +93,24 @@ export interface WidgetSandboxApplied {
 }
 
 /**
+ * One iframe-load attempt for a widget. The renderer records a mount
+ * each time its fetch-source key flips (toolCallId, resourceUri,
+ * cachedWidgetHtmlUrl, cspMode, liveFetchPreferred) — i.e. every time
+ * the iframe is torn down and re-mounted with new HTML. `reason`
+ * names the segments that changed so devs can spot self-induced
+ * reloads ("rendered then disappeared" usually = an unexpected
+ * second mount triggered by a snapshot landing or a prop flip).
+ */
+export interface WidgetMount {
+  /** 1-based index. */
+  index: number;
+  /** Human reason this mount fired. "initial" for the first one. */
+  reason: string;
+  /** Mount start timestamp. */
+  at: number;
+}
+
+/**
  * One lifecycle event from the widget's load/connect sequence. Recorded
  * by `mcp-apps-renderer` from the same `logWidgetDebug` callsites that
  * already feed the traffic log, so this never invents events — it just
@@ -212,6 +230,12 @@ export interface WidgetDebugInfo {
    * to a single entry whose timestamp/message reflect the latest.
    */
   lifecycle: WidgetLifecycleEvent[];
+  /**
+   * Iframe re-mount log. Each entry = one new fetch-source key. A
+   * healthy widget has exactly one entry; more than one signals the
+   * iframe was torn down and rebuilt mid-session.
+   */
+  mounts: WidgetMount[];
   /** Model context set by the widget (SEP-1865 ui/update-model-context) */
   modelContext?: {
     content?: unknown[];
@@ -313,6 +337,13 @@ interface WidgetDebugStore {
     toolCallId: string,
     event: WidgetLifecycleEvent,
   ) => void;
+
+  /**
+   * Append one mount entry. Create-if-missing for the same reason as
+   * `appendLifecycle` — the renderer's first mount is recorded before
+   * `setWidgetDebugInfo`'s init effect settles.
+   */
+  recordMount: (toolCallId: string, reason: string) => void;
 }
 
 export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
@@ -346,6 +377,7 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         hostProfileId: existing?.hostProfileId,
         hostInfo: existing?.hostInfo,
         lifecycle: existing?.lifecycle ?? [],
+        mounts: existing?.mounts ?? [],
         widgetHtml: existing?.widgetHtml, // Preserve cached HTML for save view feature
         // Preserve the cached compat-runtime flag across debug-info
         // merges so the save path keeps seeing the value the renderer
@@ -504,6 +536,7 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         hostProfileId: existing?.hostProfileId,
         hostInfo: existing?.hostInfo,
         lifecycle: existing?.lifecycle ?? [],
+        mounts: existing?.mounts ?? [],
         modelContext: existing?.modelContext,
         widgetHtml: html,
         injectedOpenAiCompat:
@@ -535,6 +568,7 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         hostProfileId: hostProfileId ?? existing?.hostProfileId,
         hostInfo: hostInfo !== undefined ? hostInfo : existing?.hostInfo,
         lifecycle: existing?.lifecycle ?? [],
+        mounts: existing?.mounts ?? [],
         modelContext: existing?.modelContext,
         widgetHtml: existing?.widgetHtml,
         updatedAt: Date.now(),
@@ -573,6 +607,37 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         hostProfileId: existing?.hostProfileId,
         hostInfo: existing?.hostInfo,
         lifecycle: nextLifecycle,
+        mounts: existing?.mounts ?? [],
+        modelContext: existing?.modelContext,
+        widgetHtml: existing?.widgetHtml,
+        updatedAt: Date.now(),
+      });
+      return { widgets };
+    });
+  },
+
+  recordMount: (toolCallId, reason) => {
+    set((state) => {
+      const widgets = new Map(state.widgets);
+      const existing = widgets.get(toolCallId);
+      const existingMounts = existing?.mounts ?? [];
+      const nextMounts: WidgetMount[] = [
+        ...existingMounts,
+        { index: existingMounts.length + 1, reason, at: Date.now() },
+      ];
+      widgets.set(toolCallId, {
+        toolCallId,
+        toolName: existing?.toolName ?? "unknown",
+        protocol: existing?.protocol ?? "mcp-apps",
+        widgetState: existing?.widgetState ?? null,
+        globals: existing?.globals ?? { theme: "dark", displayMode: "inline" },
+        prefersBorder: existing?.prefersBorder,
+        csp: existing?.csp,
+        applied: existing?.applied,
+        hostProfileId: existing?.hostProfileId,
+        hostInfo: existing?.hostInfo,
+        lifecycle: existing?.lifecycle ?? [],
+        mounts: nextMounts,
         modelContext: existing?.modelContext,
         widgetHtml: existing?.widgetHtml,
         updatedAt: Date.now(),
