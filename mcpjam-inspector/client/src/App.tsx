@@ -644,7 +644,8 @@ export function RegistryRoute() {
 }
 
 export function ToolsRoute() {
-  const { selectedMCPConfig, appState, activeHost } = useAppRouteContext();
+  const { selectedMCPConfig, selectedServerEntry, appState, activeHost } =
+    useAppRouteContext();
   const prefHostStyle = usePreferencesStore((state) => state.hostStyle);
   const hostStyle = activeHost?.hostStyle ?? prefHostStyle;
   return (
@@ -656,6 +657,9 @@ export function ToolsRoute() {
         <ToolsTab
           serverConfig={selectedMCPConfig}
           serverName={appState.selectedServer}
+          serverConnectionStatus={
+            selectedServerEntry?.connectionStatus ?? "disconnected"
+          }
         />
       </div>
     </ActiveHostCapsResolverScope>
@@ -766,24 +770,32 @@ export function ChatboxesRoute() {
 }
 
 export function ResourcesRoute() {
-  const { selectedMCPConfig, appState } = useAppRouteContext();
+  const { selectedMCPConfig, selectedServerEntry, appState } =
+    useAppRouteContext();
   return (
     <div className="h-full overflow-hidden">
       <ResourcesTab
         serverConfig={selectedMCPConfig}
         serverName={appState.selectedServer}
+        serverConnectionStatus={
+          selectedServerEntry?.connectionStatus ?? "disconnected"
+        }
       />
     </div>
   );
 }
 
 export function PromptsRoute() {
-  const { selectedMCPConfig, appState } = useAppRouteContext();
+  const { selectedMCPConfig, selectedServerEntry, appState } =
+    useAppRouteContext();
   return (
     <div className="h-full overflow-hidden">
       <PromptsTab
         serverConfig={selectedMCPConfig}
         serverName={appState.selectedServer}
+        serverConnectionStatus={
+          selectedServerEntry?.connectionStatus ?? "disconnected"
+        }
       />
     </div>
   );

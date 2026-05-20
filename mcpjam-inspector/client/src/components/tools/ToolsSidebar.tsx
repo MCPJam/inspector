@@ -43,6 +43,7 @@ interface ToolsSidebarProps {
   sentinelRef: RefObject<HTMLDivElement | null>;
   loadingMore: boolean;
   cursor: string;
+  serverConnected?: boolean;
   // Parameters form props (for full-page replacement pattern)
   formFields?: FormField[];
   onFieldChange?: (name: string, value: unknown) => void;
@@ -83,6 +84,7 @@ export function ToolsSidebar({
   sentinelRef,
   loadingMore,
   cursor,
+  serverConnected = true,
   // Parameters form props
   formFields,
   onFieldChange,
@@ -108,7 +110,7 @@ export function ToolsSidebar({
   useEffect(() => {
     setOpenSections(hasParameters ? ["parameters"] : ["description"]);
   }, [selectedToolName, hasParameters]);
-  const canExecute = !!selectedToolName && !!onExecute;
+  const canExecute = serverConnected && !!selectedToolName && !!onExecute;
   const canSave = !!selectedToolName && !!onSave;
 
   const handleExecute = () => {
@@ -194,7 +196,7 @@ export function ToolsSidebar({
               onClick={handleRefresh}
               variant="ghost"
               size="sm"
-              disabled={fetchingTools}
+              disabled={fetchingTools || !serverConnected}
               className="h-7 w-7 p-0"
               title="Refresh tools"
             >
@@ -406,7 +408,9 @@ export function ToolsSidebar({
                     <div className="text-center py-8">
                       <p className="text-sm text-muted-foreground">
                         {tools && toolNames.length === 0
-                          ? "No tools were found. Try refreshing. Make sure you selected the correct server and the server is running."
+                          ? serverConnected
+                            ? "No tools were found. Try refreshing. Make sure you selected the correct server and the server is running."
+                            : "Connect this server to load tools."
                           : "No tools match your search."}
                       </p>
                     </div>
