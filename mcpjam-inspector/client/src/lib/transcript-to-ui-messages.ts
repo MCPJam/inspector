@@ -21,6 +21,8 @@ interface TranscriptMessage {
   id?: string;
   role?: string;
   content?: string | TranscriptPart[];
+  /** Stamped by the backend on persisted user messages in shared sessions. */
+  senderUserId?: string;
   [key: string]: unknown;
 }
 
@@ -253,10 +255,18 @@ export function transcriptToUIMessages(transcript: unknown[]): UIMessage[] {
           ? ("user" as const)
           : ("assistant" as const);
 
+    const senderUserId =
+      typeof msg.senderUserId === "string" && msg.senderUserId.length > 0
+        ? msg.senderUserId
+        : undefined;
+
     messages.push({
       id: getStableMessageId(msg, index),
       role: uiRole,
       parts: convertParts(msg.content, index),
+      ...(senderUserId
+        ? { metadata: { senderUserId } as Record<string, unknown> }
+        : {}),
     } as UIMessage);
   }
 

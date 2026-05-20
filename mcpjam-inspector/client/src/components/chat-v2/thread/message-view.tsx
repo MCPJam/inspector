@@ -19,6 +19,8 @@ import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-over
 import { type ReasoningDisplayMode } from "./parts/reasoning-part";
 import { ClaudeLoadingIndicator } from "@/lib/client-styles/indicators/claude-mark";
 import { getAssistantAvatarDescriptor } from "@/components/chat-v2/shared/assistant-avatar";
+import { SenderAvatar } from "@/components/chat-v2/shared/sender-avatar";
+import type { ProjectThreadOwnerAvatar } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import { CopilotMessageHeader } from "./copilot-message-header";
 
 type ClaudeFooterMode = "none" | "animated" | "static";
@@ -61,6 +63,16 @@ interface MessageViewProps {
    * sessionId + per-message id.
    */
   renderUserMessageActions?: (message: UIMessage) => React.ReactNode;
+  /**
+   * Resolved sender for this message (shared sessions only). When absent, the
+   * transcript renders today's identical-bubble behavior.
+   */
+  senderAvatar?: ProjectThreadOwnerAvatar;
+  /**
+   * Render the avatar above the bubble. Used by `TranscriptThread` to
+   * coalesce consecutive prompts from the same sender (Slack/Linear style).
+   */
+  showSenderAvatar?: boolean;
 }
 
 function shouldRerenderMessage(prevMessage: UIMessage, nextMessage: UIMessage) {
@@ -119,7 +131,9 @@ function areMessageViewPropsEqual(
     prev.interactive === next.interactive &&
     prev.reasoningDisplayMode === next.reasoningDisplayMode &&
     prev.claudeFooterMode === next.claudeFooterMode &&
-    prev.renderUserMessageActions === next.renderUserMessageActions
+    prev.renderUserMessageActions === next.renderUserMessageActions &&
+    prev.senderAvatar === next.senderAvatar &&
+    prev.showSenderAvatar === next.showSenderAvatar
   );
 }
 
@@ -148,6 +162,8 @@ function MessageViewImpl({
   reasoningDisplayMode = "inline",
   claudeFooterMode = "none",
   renderUserMessageActions,
+  senderAvatar,
+  showSenderAvatar = false,
 }: MessageViewProps) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const chatboxHostStyle = useChatboxHostStyle();
@@ -178,6 +194,11 @@ function MessageViewImpl({
 
     return (
       <div className="group/user-message flex w-full min-w-0 flex-col items-end gap-2">
+        {showSenderAvatar && senderAvatar ? (
+          <div className="flex max-w-[min(100%,48rem)] justify-end">
+            <SenderAvatar avatar={senderAvatar} />
+          </div>
+        ) : null}
         {/* File attachments above the bubble */}
         {fileParts.length > 0 && (
           <div className="flex max-w-[min(100%,48rem)] flex-wrap justify-end gap-2">
