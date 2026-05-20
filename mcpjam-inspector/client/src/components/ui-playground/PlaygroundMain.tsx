@@ -148,10 +148,35 @@ import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/pla
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { WebApiError } from "@/lib/apis/web/base";
 import { useDirectChatSessionSubscription } from "@/hooks/use-direct-chat-session-subscription";
+import { WidgetSurfaceProvider } from "@/contexts/widget-surface-context";
 
 // On post-stream reconcile, the Convex-side detail row may not yet reflect the
 // version bump from the turn that just finished. Retry a couple of times.
 const RESUMED_THREAD_REFRESH_RETRIES = 2;
+
+function buildHistoryContentSignature(
+  session: ChatHistoryDetailSession,
+  widgetSnapshots?: ChatHistoryWidgetSnapshot[],
+) {
+  const snapshotSignature = (widgetSnapshots ?? [])
+    .map((snapshot) =>
+      [
+        snapshot._id,
+        snapshot.toolCallId,
+        snapshot.resourceUri ?? "",
+        snapshot.widgetHtmlUrl ?? "",
+        snapshot.toolOutputUrl ?? "",
+      ].join(":"),
+    )
+    .sort()
+    .join("|");
+  return [
+    session._id,
+    session.chatSessionId,
+    session.messagesBlobUrl ?? "",
+    snapshotSignature,
+  ].join("::");
+}
 
 /** Custom device config - dimensions come from store */
 const CUSTOM_DEVICE_BASE = {
@@ -315,6 +340,7 @@ export function PlaygroundMain({
   const historySelectionRequestIdRef = useRef(0);
   const activeHistorySessionIdRef = useRef<string | null>(null);
   const reactiveHistoryLoadRequestIdRef = useRef(0);
+  const appliedHistoryContentSignatureRef = useRef<string | null>(null);
   const resumedThreadSendBaselineRef = useRef<{
     sessionId: string;
     version: number;
@@ -323,6 +349,9 @@ export function PlaygroundMain({
   useEffect(() => {
     activeHistorySessionIdRef.current = activeHistorySessionId;
     reactiveHistoryLoadRequestIdRef.current += 1;
+    if (!activeHistorySessionId) {
+      appliedHistoryContentSignatureRef.current = null;
+    }
   }, [activeHistorySessionId]);
 
   /** Invalidate reactive history loads immediately (refs otherwise lag behind state until useEffect). */
@@ -1146,6 +1175,8 @@ export function PlaygroundMain({
       }
       setActiveHistorySessionId(detail._id);
       setPendingDirectVisibility(detail.directVisibility);
+      appliedHistoryContentSignatureRef.current =
+        buildHistoryContentSignature(detail, widgetSnapshots);
       syncResumedVersion(detail.version);
       void markHistorySessionRead(detail._id);
     },
@@ -1195,6 +1226,10 @@ export function PlaygroundMain({
       return;
     }
 
+    if (loadingHistorySessionId === activeHistorySessionId) {
+      return;
+    }
+
     if (reactiveHistorySession === undefined) {
       return;
     }
@@ -1214,6 +1249,16 @@ export function PlaygroundMain({
       resumedVersion !== null &&
       reactiveHistorySession.version <= resumedVersion
     ) {
+      return;
+    }
+
+    const contentSignature = buildHistoryContentSignature(
+      reactiveHistorySession,
+      reactiveHistoryWidgetSnapshots,
+    );
+    if (appliedHistoryContentSignatureRef.current === contentSignature) {
+      setPendingDirectVisibility(reactiveHistorySession.directVisibility);
+      syncResumedVersion(reactiveHistorySession.version);
       return;
     }
 
@@ -1242,6 +1287,7 @@ export function PlaygroundMain({
     activeHistorySessionId,
     detachHistorySession,
     isStreaming,
+    loadingHistorySessionId,
     loadHistorySession,
     reactiveHistorySession,
     reactiveHistoryWidgetSnapshots,
@@ -2488,7 +2534,16 @@ export function PlaygroundMain({
 
   // Device frame container - display mode is passed to widgets via Thread
   return (
-    <>
+    // Surface signal for `MCPAppsRenderer` / `chatgpt-app-renderer`: the
+    // `cspMode` they compute on first render must already see
+    // "playground" before any descendant subscribes. The legacy
+    // `isPlaygroundActive` store flag was set in a passive `useEffect`,
+    // which committed on render #2 and flipped `cspMode` mid-session —
+    // tearing down the iframe and dropping View state (the
+    // "draw a cat, then it vanishes" bug). Context propagates
+    // synchronously on the first render, so the fetch-source key is
+    // stable from mount #1.
+    <WidgetSurfaceProvider value="playground">
     <div
       className={cn(
         "relative h-full flex flex-col overflow-hidden",
@@ -2885,6 +2940,6 @@ export function PlaygroundMain({
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
-    </>
+    </WidgetSurfaceProvider>
   );
 }
