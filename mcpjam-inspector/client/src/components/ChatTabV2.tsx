@@ -239,6 +239,11 @@ export function ChatTabV2({
   const [activeHistorySessionId, setActiveHistorySessionId] = useState<
     string | null
   >(null);
+  // Cached thread-owner userId so sender-avatar resolution doesn't flash the
+  // current user's avatar before the reactive Convex subscription lands.
+  const [loadedThreadOwnerUserId, setLoadedThreadOwnerUserId] = useState<
+    string | null
+  >(null);
   const [loadingHistorySessionId, setLoadingHistorySessionId] = useState<
     string | null
   >(null);
@@ -276,6 +281,7 @@ export function ChatTabV2({
     setLoadingHistorySessionId(null);
     invalidatePendingReactiveHistoryLoad();
     setActiveHistorySessionId(null);
+    setLoadedThreadOwnerUserId(null);
   }, [invalidatePendingReactiveHistoryLoad]);
 
   // Filter to only connected servers
@@ -463,7 +469,10 @@ export function ChatTabV2({
     isConvexAuthenticated ? ({} as any) : "skip",
   ) as { _id?: string } | undefined;
   const senderFallbackUserId =
-    reactiveHistorySession?.userId ?? currentUserForSender?._id ?? null;
+    reactiveHistorySession?.userId ??
+    loadedThreadOwnerUserId ??
+    currentUserForSender?._id ??
+    null;
   const showSenderAvatars = pendingDirectVisibility === "project";
   const resolveSenderAvatar = useMemo(
     () =>
@@ -607,6 +616,7 @@ export function ChatTabV2({
       resumedThreadSendBaselineRef.current = null;
       cancelPendingHistorySelection();
       setPendingDirectVisibility("private");
+      setLoadedThreadOwnerUserId(null);
       syncResumedVersion(null);
       if (hasConversationMessages) {
         startChatWithMessages(cloneUiMessages(messages), {
@@ -671,6 +681,7 @@ export function ChatTabV2({
         }
       }
       setActiveHistorySessionId(detail._id);
+      setLoadedThreadOwnerUserId(detail.userId ?? null);
       setPendingDirectVisibility(detail.directVisibility);
       syncResumedVersion(detail.version);
       lastAppliedReactiveVersionRef.current = {
@@ -706,6 +717,7 @@ export function ChatTabV2({
             projectId: effectiveHostedProjectId ?? undefined,
           });
           setActiveHistorySessionId(detail.session._id);
+          setLoadedThreadOwnerUserId(detail.session.userId ?? null);
           setPendingDirectVisibility(detail.session.directVisibility);
           syncResumedVersion(detail.session.version);
           if (markRead) {

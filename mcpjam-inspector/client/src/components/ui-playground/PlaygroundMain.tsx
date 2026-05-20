@@ -362,6 +362,12 @@ export function PlaygroundMain({
   const [activeHistorySessionId, setActiveHistorySessionId] = useState<
     string | null
   >(null);
+  // Stable thread-owner userId captured at history-load time so sender-avatar
+  // resolution doesn't flash the current user's avatar in the window before
+  // the reactive Convex subscription lands. Cleared on detach/reset/new-chat.
+  const [loadedThreadOwnerUserId, setLoadedThreadOwnerUserId] = useState<
+    string | null
+  >(null);
   // True only when the user is viewing an OLD history session they explicitly
   // selected (or that was restored on bootstrap). `activeHistorySessionId`
   // alone is too coarse: it also gets auto-assigned to the LIVE current chat
@@ -1335,6 +1341,7 @@ export function PlaygroundMain({
     invalidatePendingReactiveHistoryLoad();
     setLoadingHistorySessionId(null);
     setActiveHistorySessionId(null);
+    setLoadedThreadOwnerUserId(null);
     setViewingHistoryReplay(false);
   }, [invalidatePendingReactiveHistoryLoad]);
 
@@ -1442,6 +1449,7 @@ export function PlaygroundMain({
         }
       }
       setActiveHistorySessionId(detail._id);
+      setLoadedThreadOwnerUserId(detail.userId ?? null);
       setPendingDirectVisibility(detail.directVisibility);
       appliedHistoryContentSignatureRef.current =
         buildHistoryContentSignature(detail, widgetSnapshots);
@@ -1483,7 +1491,10 @@ export function PlaygroundMain({
     isConvexAuthenticated ? ({} as any) : "skip",
   ) as { _id?: string } | undefined;
   const senderFallbackUserId =
-    reactiveHistorySession?.userId ?? currentUserForSender?._id ?? null;
+    reactiveHistorySession?.userId ??
+    loadedThreadOwnerUserId ??
+    currentUserForSender?._id ??
+    null;
   const showSenderAvatars = pendingDirectVisibility === "project";
   const resolveSenderAvatar = useMemo(
     () =>
@@ -1509,6 +1520,7 @@ export function PlaygroundMain({
       resumedThreadSendBaselineRef.current = null;
       cancelPendingHistorySelection();
       setPendingDirectVisibility("private");
+      setLoadedThreadOwnerUserId(null);
       syncResumedVersion(null);
       if (effectiveHasMessages) {
         startChatWithMessages(cloneUiMessages(messagesRef.current), {
@@ -1610,6 +1622,7 @@ export function PlaygroundMain({
             projectId: convexProjectId ?? undefined,
           });
           setActiveHistorySessionId(detail.session._id);
+          setLoadedThreadOwnerUserId(detail.session.userId ?? null);
           setPendingDirectVisibility(detail.session.directVisibility);
           syncResumedVersion(detail.session.version);
           if (markRead) {
@@ -1762,6 +1775,7 @@ export function PlaygroundMain({
       cancelPendingHistorySelection();
       syncResumedVersion(null);
       resetChat();
+      setLoadedThreadOwnerUserId(null);
       setPendingDirectVisibility(options?.shared ? "project" : "private");
     },
     [
@@ -1784,6 +1798,7 @@ export function PlaygroundMain({
       cancelPendingHistorySelection();
       syncResumedVersion(null);
       resetChat();
+      setLoadedThreadOwnerUserId(null);
       setPendingDirectVisibility("private");
     },
     [cancelPendingHistorySelection, clearComposerDraft, resetChat, syncResumedVersion],
