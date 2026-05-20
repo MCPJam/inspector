@@ -113,6 +113,10 @@ const mcpAppsWidgetContentSchema = projectServerSchema.extend({
   toolName: z.string().min(1),
   theme: z.enum(["light", "dark"]).optional(),
   cspMode: z.enum(["permissive", "widget-declared"]).optional(),
+  // Default false: Claude/Cursor/Codex-style hosts don't expose
+  // `window.openai`. ChatGPT/Copilot and MCPJam dev host configs flip
+  // this on per request via the resolver in the renderer.
+  injectOpenAiCompat: z.boolean().optional().default(false),
   template: z.string().optional(),
   viewMode: z.string().optional(),
   viewParams: z.record(z.string(), z.unknown()).optional(),
@@ -230,17 +234,25 @@ apps.post("/mcp-apps/widget-content", async (c) =>
           ? (resourceMeta["openai/widgetPrefersBorder"] as boolean)
           : undefined);
 
-      html = injectOpenAICompat(html, {
-        toolId: body.toolId,
-        toolName: body.toolName,
-        toolInput: body.toolInput ?? {},
-        toolOutput: body.toolOutput,
-        toolResponseMetadata: body.toolResponseMetadata ?? null,
-        initialWidgetState: body.initialWidgetState ?? null,
-        theme: body.theme,
-        viewMode: body.viewMode,
-        viewParams: body.viewParams,
-      });
+      // Mirror the local CLI route's behavior: only inject the
+      // OpenAI Apps SDK shim when the caller has opted in. Hosted
+      // chatboxes resolve this from the active host config's
+      // `mcpProfile.apps.compatRuntime` (preset fallback applied),
+      // so SEP-1865-native hosts get clean HTML by default.
+      const shouldInjectOpenAiCompat = body.injectOpenAiCompat === true;
+      if (shouldInjectOpenAiCompat) {
+        html = injectOpenAICompat(html, {
+          toolId: body.toolId,
+          toolName: body.toolName,
+          toolInput: body.toolInput ?? {},
+          toolOutput: body.toolOutput,
+          toolResponseMetadata: body.toolResponseMetadata ?? null,
+          initialWidgetState: body.initialWidgetState ?? null,
+          theme: body.theme,
+          viewMode: body.viewMode,
+          viewParams: body.viewParams,
+        });
+      }
 
       return {
         html,
@@ -249,6 +261,7 @@ apps.post("/mcp-apps/widget-content", async (c) =>
         permissive: effectiveCspMode === "permissive",
         cspMode: effectiveCspMode,
         prefersBorder: prefersBorderFromMeta,
+        injectedOpenAiCompat: shouldInjectOpenAiCompat,
         mimeType: contentMimeType,
         mimeTypeValid,
         mimeTypeWarning,

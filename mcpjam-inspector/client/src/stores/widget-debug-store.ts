@@ -220,6 +220,13 @@ export interface WidgetDebugInfo {
   } | null;
   /** Cached widget HTML for offline rendering */
   widgetHtml?: string;
+  /**
+   * Whether `widgetHtml` was captured with the OpenAI Apps SDK
+   * `window.openai` shim injected. Mirrors the renderer's resolved
+   * compat flag at fetch time and travels into saved views so replay
+   * agrees with the bytes.
+   */
+  injectedOpenAiCompat?: boolean;
 }
 
 interface WidgetDebugStore {
@@ -270,8 +277,15 @@ interface WidgetDebugStore {
     } | null,
   ) => void;
 
-  // Set widget HTML for offline rendering cache
-  setWidgetHtml: (toolCallId: string, html: string) => void;
+  // Set widget HTML for offline rendering cache. Optional
+  // injectedOpenAiCompat carries the compat-runtime flag that was
+  // resolved when the HTML was fetched, so consumers (e.g. ViewsTab
+  // save path) can persist it alongside the blob.
+  setWidgetHtml: (
+    toolCallId: string,
+    html: string,
+    injectedOpenAiCompat?: boolean,
+  ) => void;
 
   /**
    * Publish the resolved sandbox payload from the MCP-Apps renderer.
@@ -333,6 +347,10 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         hostInfo: existing?.hostInfo,
         lifecycle: existing?.lifecycle ?? [],
         widgetHtml: existing?.widgetHtml, // Preserve cached HTML for save view feature
+        // Preserve the cached compat-runtime flag across debug-info
+        // merges so the save path keeps seeing the value the renderer
+        // stamped at fetch time.
+        injectedOpenAiCompat: existing?.injectedOpenAiCompat,
         modelContext: existing?.modelContext, // Preserve model context across updates
         updatedAt: Date.now(),
       });
@@ -468,7 +486,7 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
     });
   },
 
-  setWidgetHtml: (toolCallId, html) => {
+  setWidgetHtml: (toolCallId, html, injectedOpenAiCompat) => {
     set((state) => {
       const widgets = new Map(state.widgets);
       const existing = widgets.get(toolCallId);
@@ -488,6 +506,8 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         lifecycle: existing?.lifecycle ?? [],
         modelContext: existing?.modelContext,
         widgetHtml: html,
+        injectedOpenAiCompat:
+          injectedOpenAiCompat ?? existing?.injectedOpenAiCompat,
         updatedAt: Date.now(),
       });
       return { widgets };

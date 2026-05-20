@@ -81,6 +81,7 @@ const HostMatrixNodeRenderer = memo(
           sandbox={data.sandbox}
           hostInfo={data.hostInfo}
           appsExtensionAdvertised={data.appsExtensionAdvertised}
+          compatRuntime={data.compatRuntime}
           selectedNodeId={ctx?.selectedNodeId ?? null}
           onSelectNode={ctx?.onSelectNode ?? (() => {})}
         />

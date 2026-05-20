@@ -265,6 +265,19 @@ export interface HostMatrixNodeData extends Record<string, unknown> {
    * matrix hides the entire Apps section to avoid implying support.
    */
   appsExtensionAdvertised: boolean;
+  /**
+   * Resolved vendor compat-runtime shim state for the host. Rendered
+   * as chips inside the Apps section so the user can see at a glance
+   * whether `window.openai` is being injected. Source of truth is
+   * `resolveEffectiveCompatRuntime(profile, hostStyle)` so preset and
+   * override stay in lockstep. `fromOverride` is true when the user
+   * has explicitly toggled the flag on the profile — drives the
+   * "(from preset)" qualifier on the chip.
+   */
+  compatRuntime: {
+    openaiApps: boolean;
+    fromOverride: boolean;
+  };
 }
 
 export interface ServersHubNodeData extends Record<string, unknown> {

@@ -94,6 +94,10 @@ export const CHATGPT_HOST_STYLE: HostStyleDefinition = {
       message: { text: {} },
     },
     resolveStyleVariables: getChatGPTStyleVariables,
+    // Real ChatGPT exposes the OpenAI Apps SDK `window.openai` surface
+    // to widget HTML; emulating it here keeps existing Apps SDK widgets
+    // rendering as their authors intended.
+    compatRuntime: { openaiApps: true },
   },
   chatUi: {
     label: "ChatGPT",
@@ -164,6 +168,9 @@ export const COPILOT_HOST_STYLE: HostStyleDefinition = {
       message: { text: {} },
     },
     resolveStyleVariables: getChatGPTStyleVariables,
+    // Copilot routes widgets through the OpenAI Apps SDK under the
+    // hood, so the `window.openai` shim is expected.
+    compatRuntime: { openaiApps: true },
   },
   chatUi: {
     label: "Copilot",
@@ -210,6 +217,9 @@ export const CODEX_HOST_STYLE: HostStyleDefinition = {
       message: { text: {} },
     },
     resolveStyleVariables: getChatGPTStyleVariables,
+    // Codex is a CLI (no widget rendering surface), so the `window.openai`
+    // shim is moot in practice. Keep it off so the inspector's emulated
+    // Codex doesn't lie about a surface real Codex doesn't expose.
   },
   chatUi: {
     label: "Codex",
@@ -243,6 +253,13 @@ export const MCPJAM_HOST_STYLE: HostStyleDefinition = {
       message: { text: {} },
     },
     resolveStyleVariables: getMcpJamStyleVariables,
+    // MCPJam is the inspector's own house chrome and intentionally
+    // maximalist: developers testing here should see the `window.openai`
+    // surface so widgets authored against OpenAI's Apps SDK can be
+    // debugged in MCPJam without swapping to the ChatGPT host. Real
+    // MCPJam exposes the shim deliberately (it's not SEP-1865 honest,
+    // but it's the right call for a dev surface).
+    compatRuntime: { openaiApps: true },
   },
   chatUi: {
     label: "MCPJam",

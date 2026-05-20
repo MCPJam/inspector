@@ -103,6 +103,19 @@ export interface HostMcpProfile {
   resolveStyleVariables: (theme: HostThemeMode) => McpUiStyles;
   /** Inline @font-face / @import CSS injected into MCP App iframes. */
   fontCss: string;
+  /**
+   * Vendor compat-runtime shims this preset expects the inspector to
+   * inject into widget HTML before sandboxing. Claude/Cursor/Codex-style
+   * hosts leave this undefined or set everything to `false`; ChatGPT/
+   * Copilot and MCPJam's dev surface flip the relevant shim on. End
+   * users override per host config via
+   * `mcpProfile.apps.compatRuntime`. Read through
+   * `getCompatRuntimeForStyle` so undefined → `false`.
+   */
+  compatRuntime?: {
+    /** Inject the OpenAI Apps SDK `window.openai` shim. */
+    openaiApps?: boolean;
+  };
 }
 
 /**

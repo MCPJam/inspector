@@ -20,6 +20,7 @@ export {
   DEFAULT_HOST_STYLE,
   SPEC_DEFAULT_HOST_CAPABILITIES,
   findHostStyle,
+  getCompatRuntimeForStyle,
   getHostCapabilitiesForStyle,
   getHostStyleOrDefault,
   getLoadingIndicatorForStyle,

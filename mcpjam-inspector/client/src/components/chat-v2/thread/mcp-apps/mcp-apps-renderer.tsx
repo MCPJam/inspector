@@ -86,6 +86,7 @@ import {
   extractHostTheme,
 } from "@/lib/client-config";
 import {
+  resolveEffectiveCompatRuntime,
   resolveEffectiveHostCapabilities,
   resolveHostInfo,
 } from "@/lib/client-config-v2";
@@ -225,6 +226,15 @@ interface MCPAppsRendererProps {
   /** Persisted prefersBorder value for cached/offline replay */
   prefersBorder?: boolean;
   /**
+   * Persisted compat-runtime flag from a saved view or eval snapshot.
+   * When set, the renderer trusts the cached blob as the source of
+   * truth for whether `window.openai` was injected at capture time —
+   * the live profile's flag is ignored for cached replay because the
+   * HTML is byte-frozen. When undefined (no snapshot metadata), the
+   * renderer falls back to the resolved live flag for fresh fetches.
+   */
+  injectedOpenAiCompat?: boolean;
+  /**
    * Persisted widget state from a saved view or fork. When set, the
    * compat runtime seeds `window.openai.widgetState` with this value so
    * the widget boots in the same state it was when the view was saved
@@ -324,6 +334,7 @@ export function MCPAppsRenderer({
   widgetPermissions: initialWidgetPermissions,
   widgetPermissive: initialWidgetPermissive,
   prefersBorder: initialPrefersBorder,
+  injectedOpenAiCompat: initialInjectedOpenAiCompat,
   initialWidgetState,
   minimalMode = false,
 }: MCPAppsRendererProps) {
@@ -337,6 +348,23 @@ export function MCPAppsRenderer({
   // session, project default, eval suite). Drives the resolver below
   // when set; undefined preserves widget-derived sandbox behavior.
   const activeMcpProfile = useActiveMcpProfile();
+  // Resolved compat-runtime flag for the active host. Claude/Cursor/
+  // Codex-style hosts leave it off; ChatGPT/Copilot and MCPJam's dev
+  // surface enable it. User override on the profile wins. The resolved
+  // boolean travels into the widget-content request body and into the
+  // renderer's reload-key so toggling the flag forces a refetch instead
+  // of silently reusing the old HTML.
+  const liveInjectOpenAiCompat = resolveEffectiveCompatRuntime({
+    profile: activeMcpProfile,
+    hostStyle: chatboxHostStyle ?? sharedHostStyle,
+  }).openaiApps;
+  // Cached replay: when a saved view / eval snapshot persisted the
+  // flag, trust it (HTML is byte-frozen at capture time). Fall back
+  // to the live flag for fresh fetches.
+  const effectiveInjectOpenAiCompat =
+    typeof initialInjectedOpenAiCompat === "boolean"
+      ? initialInjectedOpenAiCompat
+      : liveInjectOpenAiCompat;
   const draftHostContext = useHostContextStore((s) => s.draftHostContext);
   const baseHostContext = useMemo(
     () =>
@@ -540,6 +568,13 @@ export function MCPAppsRenderer({
   const [sandboxProxyReady, setSandboxProxyReady] = useState(false);
   const [bridgeTransportReady, setBridgeTransportReady] = useState(false);
   const isCachedReplay = !!cachedWidgetHtmlUrl;
+  const cachedReplayInjectOpenAiCompat =
+    typeof initialInjectedOpenAiCompat === "boolean"
+      ? initialInjectedOpenAiCompat
+      : null;
+  const widgetInjectOpenAiCompatReloadKey = isCachedReplay
+    ? cachedReplayInjectOpenAiCompat
+    : effectiveInjectOpenAiCompat;
   const [widgetCsp, setWidgetCsp] = useState<McpUiResourceCsp | undefined>(
     isCachedReplay ? undefined : (initialWidgetCsp ?? undefined),
   );
@@ -553,6 +588,18 @@ export function MCPAppsRenderer({
     initialPrefersBorder ?? true,
   );
   const [loadedCspMode, setLoadedCspMode] = useState<CspMode | null>(null);
+  // Reload-key sibling to `loadedCspMode`: tracks the compat-runtime
+  // flag the currently-loaded HTML was fetched with. Toggling the live
+  // flag must force a refetch, otherwise the short-circuit at the top
+  // of the fetch effect would silently reuse already-shimmed (or
+  // already-non-shimmed) HTML. Set to the effective flag in both the
+  // cached and the live branches. Cached replays use the persisted
+  // provenance flag as the reload key; legacy cached blobs without that
+  // metadata use `null` so live host toggles don't rewrite byte-frozen
+  // HTML provenance.
+  const [loadedInjectOpenAiCompat, setLoadedInjectOpenAiCompat] = useState<
+    boolean | null
+  >(null);
   // Modal state
   const [modalOpen, setModalOpen] = useState(false);
   const [modalParams, setModalParams] = useState<Record<string, unknown>>({});
@@ -570,6 +617,7 @@ export function MCPAppsRenderer({
     setWidgetHtml(null);
     setBridgeTransportReady(false);
     setLoadedCspMode(null);
+    setLoadedInjectOpenAiCompat(null);
     setLoadError(null);
     setWidgetCsp(isCachedReplay ? undefined : (initialWidgetCsp ?? undefined));
     setWidgetPermissions(
@@ -652,8 +700,17 @@ export function MCPAppsRenderer({
       toolState === "input-available" ||
       toolState === "output-available";
     if (!isActiveToolState) return;
-    // Re-fetch if CSP mode changed (widget needs to reload with new CSP policy)
-    if (widgetHtml && loadedCspMode === cspMode) return;
+    // Re-fetch if CSP mode changed (widget needs to reload with new CSP
+    // policy) OR if the compat-runtime flag changed (HTML needs to be
+    // rebuilt with/without the `window.openai` shim). Both belong in
+    // the reload key — silently keeping HTML across a flag flip would
+    // leave the wrong shape baked into the bytes.
+    if (
+      widgetHtml &&
+      loadedCspMode === cspMode &&
+      loadedInjectOpenAiCompat === widgetInjectOpenAiCompatReloadKey
+    )
+      return;
 
     // Source-identity key for this run. Any in-flight fetch whose key no
     // longer matches `latestFetchSourceKeyRef.current` when it resolves is
@@ -688,11 +745,20 @@ export function MCPAppsRenderer({
       setWidgetPermissive(true);
       setPrefersBorder(initialPrefersBorder ?? true);
       setLoadedCspMode(cspMode);
-      setWidgetHtmlStore(toolCallId, html);
+      // Cached replay: HTML is byte-frozen at capture time. Trust persisted
+      // provenance when available; otherwise keep it unknown instead of
+      // inferring from the current live host.
+      setLoadedInjectOpenAiCompat(cachedReplayInjectOpenAiCompat);
+      setWidgetHtmlStore(
+        toolCallId,
+        html,
+        cachedReplayInjectOpenAiCompat ?? undefined,
+      );
       logWidgetDebug("host-to-ui", "debug/widget-content-ready", {
         cached: true,
         cspMode,
         htmlLength: html.length,
+        injectOpenAiCompat: cachedReplayInjectOpenAiCompat,
         permissive: true,
       });
     };
@@ -709,6 +775,7 @@ export function MCPAppsRenderer({
         mimeTypeWarning: warning,
         mimeTypeValid: valid,
         prefersBorder,
+        injectedOpenAiCompat: serverInjectedOpenAiCompat,
       } = await fetchMcpAppsWidgetContent({
         serverId,
         resourceUri,
@@ -729,7 +796,12 @@ export function MCPAppsRenderer({
         toolName,
         theme: themeModeRef.current,
         cspMode,
+        injectOpenAiCompat: effectiveInjectOpenAiCompat,
       });
+      const resolvedInjectedOpenAiCompat =
+        typeof serverInjectedOpenAiCompat === "boolean"
+          ? serverInjectedOpenAiCompat
+          : effectiveInjectOpenAiCompat;
 
       // Stale fetch: source key moved on (e.g. session swap, CSP toggle,
       // tool call change) while this request was in flight. Drop the
@@ -758,9 +830,12 @@ export function MCPAppsRenderer({
       setWidgetPermissive(permissive ?? false);
       setPrefersBorder(prefersBorder ?? true);
       setLoadedCspMode(cspMode);
+      setLoadedInjectOpenAiCompat(resolvedInjectedOpenAiCompat);
 
-      // Store widget HTML in debug store for save view feature
-      setWidgetHtmlStore(toolCallId, html);
+      // Store widget HTML in debug store for save view feature. Stamp the
+      // resolved flag alongside it so saved views can persist what was
+      // actually injected at fetch time.
+      setWidgetHtmlStore(toolCallId, html, resolvedInjectedOpenAiCompat);
 
       // Update the widget debug store with CSP and permissions info
       if (csp || permissions || !permissive) {
@@ -787,6 +862,7 @@ export function MCPAppsRenderer({
         hasCsp: !!csp,
         hasPermissions: !!permissions,
         htmlLength: html.length,
+        injectOpenAiCompat: resolvedInjectedOpenAiCompat,
         permissive: permissive ?? false,
         prefersBorder: prefersBorder ?? true,
       });
@@ -867,6 +943,9 @@ export function MCPAppsRenderer({
     toolCallId,
     widgetHtml,
     loadedCspMode,
+    loadedInjectOpenAiCompat,
+    widgetInjectOpenAiCompatReloadKey,
+    effectiveInjectOpenAiCompat,
     serverId,
     resourceUri,
     toolName,
@@ -875,6 +954,7 @@ export function MCPAppsRenderer({
     cachedWidgetHtmlUrl,
     liveFetchPreferred,
     initialPrefersBorder,
+    cachedReplayInjectOpenAiCompat,
   ]);
 
   // UI logging
@@ -940,15 +1020,30 @@ export function MCPAppsRenderer({
   const appendLifecycleRef = useRef(appendLifecycleStore);
   appendLifecycleRef.current = appendLifecycleStore;
 
-  // Clear CSP violations when CSP mode changes (stale data from previous mode)
+  // Clear CSP violations when CSP mode OR compat flag changes (stale
+  // data from previous load — both reload-key axes trigger a refetch
+  // so violation history from the prior bytes is no longer relevant).
   useEffect(() => {
     if (loadedCspMode !== null && loadedCspMode !== cspMode) {
       clearCspViolations(toolCallId);
     }
   }, [cspMode, loadedCspMode, toolCallId, clearCspViolations]);
+  useEffect(() => {
+    if (
+      loadedInjectOpenAiCompat !== null &&
+      loadedInjectOpenAiCompat !== widgetInjectOpenAiCompatReloadKey
+    ) {
+      clearCspViolations(toolCallId);
+    }
+  }, [
+    widgetInjectOpenAiCompatReloadKey,
+    loadedInjectOpenAiCompat,
+    toolCallId,
+    clearCspViolations,
+  ]);
 
-  // Reset ready state and refs when CSP mode changes (widget will reinitialize)
-  // This ensures tool input/output are re-sent after CSP mode switch
+  // Reset ready state and refs when CSP mode OR compat flag changes
+  // (widget will reinitialize — tool input/output must be re-sent).
   useEffect(() => {
     if (loadedCspMode !== null && loadedCspMode !== cspMode) {
       setIsReady(false);
@@ -956,6 +1051,20 @@ export function MCPAppsRenderer({
       resetStreamingState();
     }
   }, [cspMode, loadedCspMode, resetStreamingState]);
+  useEffect(() => {
+    if (
+      loadedInjectOpenAiCompat !== null &&
+      loadedInjectOpenAiCompat !== widgetInjectOpenAiCompatReloadKey
+    ) {
+      setIsReady(false);
+      isReadyRef.current = false;
+      resetStreamingState();
+    }
+  }, [
+    widgetInjectOpenAiCompatReloadKey,
+    loadedInjectOpenAiCompat,
+    resetStreamingState,
+  ]);
 
   // Sync displayMode from playground store when it changes (SEP-1865)
   // Only sync when not in controlled mode (parent controls displayMode via props)
@@ -2416,6 +2525,7 @@ export function MCPAppsRenderer({
         toolCallId={toolCallId}
         toolName={toolName}
         cspMode={cspMode}
+        injectOpenAiCompat={effectiveInjectOpenAiCompat}
         toolInputRef={toolInputRef}
         toolOutputRef={toolOutputRef}
         themeModeRef={themeModeRef}

@@ -140,6 +140,15 @@ export type RunEvalSuiteOptions = {
   recorder?: SuiteRunRecorder | null;
   testCaseId?: string; // For quick runs, associate iterations with a specific test case
   compareRunId?: string; // For quick compare runs, group related iterations in metadata
+  /**
+   * Resolved compat-runtime flag for the suite's host config. When
+   * true, widget snapshots captured during this run will have the
+   * OpenAI Apps SDK `window.openai` shim injected before they're
+   * persisted. Default `false` — caller (route handler) resolves
+   * from the suite's `mcpProfile.apps.compatRuntime` + `hostStyle`
+   * preset. Absent/undefined preserves SEP-1865 honest behavior.
+   */
+  suiteInjectOpenAiCompat?: boolean;
 };
 
 /** One executed iteration inside a suite/quick run (evaluation + optional persisted iteration id). */
@@ -408,6 +417,13 @@ async function captureEvalTraceWidgetSnapshots(params: {
   messages: ModelMessage[];
   mcpClientManager: MCPClientManager;
   convexClient: ConvexHttpClient;
+  /**
+   * Whether to inject the OpenAI Apps SDK `window.openai` shim into the
+   * captured widget HTML. Resolved upstream from the suite's host
+   * config (preset + override). Default `false` — SEP-1865 honest
+   * behavior, matching the rest of the widget injection paths.
+   */
+  injectOpenAiCompat?: boolean;
 }): Promise<EvalTraceWidgetSnapshot[] | undefined> {
   const sources = collectToolSnapshotSources(params.messages);
   if (sources.length === 0) {
@@ -476,12 +492,15 @@ async function captureEvalTraceWidgetSnapshots(params: {
             return snapshot;
           }
 
-          const widgetHtml = injectOpenAICompat(html, {
-            toolId: source.toolCallId,
-            toolName: source.toolName,
-            toolInput: source.toolInput,
-            toolOutput: source.toolOutput,
-          });
+          const shouldInjectOpenAiCompat = params.injectOpenAiCompat === true;
+          const widgetHtml = shouldInjectOpenAiCompat
+            ? injectOpenAICompat(html, {
+                toolId: source.toolCallId,
+                toolName: source.toolName,
+                toolInput: source.toolInput,
+                toolOutput: source.toolOutput,
+              })
+            : html;
           const widgetHtmlBlobId = await uploadEvalWidgetHtmlBlob(
             params.convexClient,
             widgetHtml,
@@ -489,6 +508,10 @@ async function captureEvalTraceWidgetSnapshots(params: {
           if (widgetHtmlBlobId) {
             snapshot.widgetHtmlBlobId = widgetHtmlBlobId;
           }
+          // Stamp the flag onto the snapshot so the replay viewer can
+          // distinguish "captured with shim" from "captured without"
+          // without re-reading the bytes.
+          snapshot.injectedOpenAiCompat = shouldInjectOpenAiCompat;
         } catch (error) {
           logger.warn("[evals] Failed to capture MCP App widget snapshot", {
             toolCallId: source.toolCallId,
@@ -1034,6 +1057,14 @@ type RunIterationBaseParams = {
    * #1 finishes.
    */
   precreatedIterationId?: string;
+  /**
+   * Suite-level resolved compat-runtime flag — propagated from
+   * `RunEvalSuiteOptions.suiteInjectOpenAiCompat`. When true, widget
+   * snapshots captured during this iteration get the OpenAI Apps SDK
+   * `window.openai` shim injected before persistence. Default behavior
+   * (absent/undefined or false) leaves snapshots un-shimmed.
+   */
+  injectOpenAiCompat?: boolean;
 };
 
 type RunIterationAiSdkParams = RunIterationBaseParams & {
@@ -1136,6 +1167,7 @@ const runIterationWithAiSdk = async ({
   abortSignal,
   compareRunId,
   precreatedIterationId,
+  injectOpenAiCompat,
 }: RunIterationAiSdkParams) => {
   const resolvedTest = resolveEvalTestCase(test);
 
@@ -1439,7 +1471,7 @@ const runIterationWithAiSdk = async ({
       outputTokens: accumulatedUsage.outputTokens,
       totalTokens: accumulatedUsage.totalTokens,
     };
-    const widgetSnapshots = await captureEvalTraceWidgetSnapshots({
+    const widgetSnapshots = await captureEvalTraceWidgetSnapshots({ injectOpenAiCompat,
       messages: conversationMessages,
       mcpClientManager,
       convexClient,
@@ -1536,7 +1568,7 @@ const runIterationWithAiSdk = async ({
       test.matchOptions,
     );
     const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
-    const widgetSnapshots = await captureEvalTraceWidgetSnapshots({
+    const widgetSnapshots = await captureEvalTraceWidgetSnapshots({ injectOpenAiCompat,
       messages: failMessages,
       mcpClientManager,
       convexClient,
@@ -1593,6 +1625,7 @@ const runIterationViaBackend = async ({
   abortSignal,
   compareRunId,
   precreatedIterationId,
+  injectOpenAiCompat,
 }: RunIterationBackendParams) => {
   const resolvedTest = resolveEvalTestCase(test);
 
@@ -2081,7 +2114,7 @@ const runIterationViaBackend = async ({
     iterationError,
     failOnToolError,
   });
-  const widgetSnapshots = await captureEvalTraceWidgetSnapshots({
+  const widgetSnapshots = await captureEvalTraceWidgetSnapshots({ injectOpenAiCompat,
     messages: messageHistory,
     mcpClientManager,
     convexClient,
@@ -2134,6 +2167,8 @@ const runTestCase = async (params: {
   runId: string | null;
   abortSignal?: AbortSignal;
   compareRunId?: string;
+  /** Suite-level compat-runtime flag; forwarded to each iteration. */
+  injectOpenAiCompat?: boolean;
 }) => {
   const {
     test,
@@ -2150,6 +2185,7 @@ const runTestCase = async (params: {
     runId,
     abortSignal,
     compareRunId,
+    injectOpenAiCompat,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const modelDefinition = buildModelDefinition(test);
@@ -2235,6 +2271,7 @@ const runTestCase = async (params: {
         abortSignal,
         compareRunId,
         precreatedIterationId,
+        injectOpenAiCompat,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -2256,6 +2293,7 @@ const runTestCase = async (params: {
       abortSignal,
       compareRunId,
       precreatedIterationId,
+      injectOpenAiCompat,
     });
     outcomes.push(iterationOutcome);
   }
@@ -2276,7 +2314,9 @@ export const runEvalSuiteWithAiSdk = async ({
   recorder: providedRecorder,
   testCaseId,
   compareRunId,
+  suiteInjectOpenAiCompat,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
+  const injectOpenAiCompat = suiteInjectOpenAiCompat === true;
   const tests = config.tests ?? [];
   const serverIds = resolveConfiguredServerIds({
     environment: config.environment,
@@ -2350,6 +2390,7 @@ export const runEvalSuiteWithAiSdk = async ({
         suiteId,
         runId,
         abortSignal: abortController.signal,
+        injectOpenAiCompat,
       }),
     );
 
@@ -2508,6 +2549,7 @@ const streamIterationWithAiSdk = async ({
   emit,
   compareRunId,
   precreatedIterationId,
+  injectOpenAiCompat,
 }: RunIterationAiSdkParams & {
   emit: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
@@ -2891,7 +2933,7 @@ const streamIterationWithAiSdk = async ({
       outputTokens: accumulatedUsage.outputTokens,
       totalTokens: accumulatedUsage.totalTokens,
     };
-    const widgetSnapshots = await captureEvalTraceWidgetSnapshots({
+    const widgetSnapshots = await captureEvalTraceWidgetSnapshots({ injectOpenAiCompat,
       messages: conversationMessages,
       mcpClientManager,
       convexClient,
@@ -2986,7 +3028,7 @@ const streamIterationWithAiSdk = async ({
       test.matchOptions,
     );
     const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
-    const widgetSnapshots = await captureEvalTraceWidgetSnapshots({
+    const widgetSnapshots = await captureEvalTraceWidgetSnapshots({ injectOpenAiCompat,
       messages: failMessages,
       mcpClientManager,
       convexClient,
@@ -3070,6 +3112,7 @@ const streamIterationViaBackend = async ({
   emit,
   compareRunId,
   precreatedIterationId,
+  injectOpenAiCompat,
 }: RunIterationBackendParams & {
   emit: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
@@ -3788,7 +3831,7 @@ const streamIterationViaBackend = async ({
     iterationError,
     failOnToolError,
   });
-  const widgetSnapshots = await captureEvalTraceWidgetSnapshots({
+  const widgetSnapshots = await captureEvalTraceWidgetSnapshots({ injectOpenAiCompat,
     messages: messageHistory,
     mcpClientManager,
     convexClient,
@@ -3842,6 +3885,13 @@ export const streamTestCase = async (params: {
   abortSignal?: AbortSignal;
   emit: StreamEmit;
   compareRunId?: string;
+  /**
+   * Resolved compat-runtime flag for the suite. Forwarded to widget
+   * snapshot capture in each iteration so persisted blobs match the
+   * host config's `mcpProfile.apps.compatRuntime`. Absent → default
+   * off (SEP-1865 honest behavior).
+   */
+  injectOpenAiCompat?: boolean;
 }) => {
   const {
     test,
@@ -3859,6 +3909,7 @@ export const streamTestCase = async (params: {
     abortSignal,
     emit,
     compareRunId,
+    injectOpenAiCompat,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const modelDefinition = buildModelDefinition(test);
@@ -3948,6 +3999,7 @@ export const streamTestCase = async (params: {
         emit,
         compareRunId,
         precreatedIterationId,
+        injectOpenAiCompat,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -3970,6 +4022,7 @@ export const streamTestCase = async (params: {
       emit,
       compareRunId,
       precreatedIterationId,
+      injectOpenAiCompat,
     });
     outcomes.push(iterationOutcome);
   }
