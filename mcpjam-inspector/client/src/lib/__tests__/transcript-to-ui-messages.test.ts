@@ -266,6 +266,30 @@ describe("transcriptToUIMessages", () => {
     expect(typeof messages[0].id).toBe("string");
   });
 
+  it("uses stable fallback IDs across repeated hydration", () => {
+    const transcript = [
+      { role: "user", content: "draw a dog" },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolName: "create_view",
+            args: { prompt: "draw a dog" },
+          },
+        ],
+      },
+    ];
+
+    const first = transcriptToUIMessages(transcript);
+    const second = transcriptToUIMessages(transcript);
+
+    expect(first.map((message) => message.id)).toEqual(
+      second.map((message) => message.id),
+    );
+    expect(first[1].parts[0]).toMatchObject(second[1].parts[0]);
+  });
+
   it("preserves existing IDs", () => {
     const transcript = [{ id: "msg-123", role: "user", content: "Hi" }];
     const messages = transcriptToUIMessages(transcript);

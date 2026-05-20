@@ -33,6 +33,7 @@ import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
 import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
 import { useIsChatboxSurface } from "@/contexts/chatbox-surface-context";
+import { useWidgetSurface } from "@/contexts/widget-surface-context";
 import {
   resolveSandboxCsp,
   resolveSandboxPermissions,
@@ -303,6 +304,30 @@ function mapLogToLifecycle(
   return { kind, status, message, timestamp: Date.now() };
 }
 
+/**
+ * Segments of the fetch-source key, in the same order as the renderer
+ * builds it below. Used to describe re-mount reasons for the Sandbox
+ * debug panel — e.g. "cachedWidgetHtmlUrl, liveFetchPreferred" when a
+ * Convex history snapshot lands.
+ */
+const FETCH_SOURCE_KEY_SEGMENTS = [
+  "toolCallId",
+  "resourceUri",
+  "cachedWidgetHtmlUrl",
+  "cspMode",
+  "liveFetchPreferred",
+] as const;
+
+function describeFetchSourceKeyDiff(prev: string, next: string): string {
+  const prevSegs = prev.split("|");
+  const nextSegs = next.split("|");
+  const changes: string[] = [];
+  for (let i = 0; i < FETCH_SOURCE_KEY_SEGMENTS.length; i += 1) {
+    if (prevSegs[i] !== nextSegs[i]) changes.push(FETCH_SOURCE_KEY_SEGMENTS[i]);
+  }
+  return changes.length === 0 ? "remount" : changes.join(", ");
+}
+
 export function MCPAppsRenderer({
   serverId,
   toolCallId,
@@ -402,10 +427,22 @@ export function MCPAppsRenderer({
   // under strict CSP — surprising and inconsistent with the published
   // chatbox runtime when opened in a top-level window.
   const isChatboxSurface = useIsChatboxSurface();
+  // Surface-derived cspMode: read from the WidgetSurfaceContext set by
+  // PlaygroundMain, NOT from `isPlaygroundActive` in the store. The
+  // store flag was set in a passive `useEffect`, so descendants
+  // observed `false` on the first render and resolved cspMode to
+  // "widget-declared"; the effect then flipped it to true, cspMode
+  // flipped to playgroundCspMode, the fetch-source key changed, and
+  // the iframe was torn down and rebuilt — losing View state. Context
+  // propagates synchronously on first render, so cspMode is stable
+  // from mount #1. Other readers of `isPlaygroundActive` below keep
+  // the store source — those don't gate the iframe-creation-time
+  // policy, so the same race is benign for them.
+  const widgetSurface = useWidgetSurface();
   const cspMode: CspMode =
     isChatboxSurface || minimalMode
       ? "permissive"
-      : isPlaygroundActive
+      : widgetSurface === "playground"
         ? playgroundCspMode
         : "widget-declared";
 
@@ -675,6 +712,18 @@ export function MCPAppsRenderer({
   // its own key; the helpers below drop any state writes that don't still
   // match the latest key.
   const latestFetchSourceKeyRef = useRef<string>("");
+  /**
+   * Previous fetch-source key, kept for the debug-panel mount log. We
+   * can't reuse `latestFetchSourceKeyRef` because it's bumped before the
+   * fetch starts; this one only advances after the mount has been
+   * recorded so the diff is always prev→current.
+   */
+  const prevLoggedFetchSourceKeyRef = useRef<string | null>(null);
+  // Bound before the fetch effect below references it in its deps array —
+  // the other widget-debug-store bindings live further down because they
+  // only fire from async callbacks, but `recordMountStore` is called
+  // synchronously inside the effect body, so it has to be in scope here.
+  const recordMountStore = useWidgetDebugStore((s) => s.recordMount);
 
   const {
     canRenderStreamingInput,
@@ -724,6 +773,18 @@ export function MCPAppsRenderer({
       liveFetchPreferred ? "live-pref" : "",
     ].join("|");
     latestFetchSourceKeyRef.current = fetchSourceKey;
+    // Mount log for the Sandbox debug panel. Record one entry per real
+    // key change (not per effect re-run) so devs can spot self-induced
+    // reloads — e.g. a Convex history snapshot landing and flipping
+    // `cachedWidgetHtmlUrl`/`liveFetchPreferred` mid-session, which
+    // remounts the iframe and visually wipes the previous render.
+    if (prevLoggedFetchSourceKeyRef.current !== fetchSourceKey) {
+      const prev = prevLoggedFetchSourceKeyRef.current;
+      const reason =
+        prev === null ? "initial" : describeFetchSourceKeyDiff(prev, fetchSourceKey);
+      prevLoggedFetchSourceKeyRef.current = fetchSourceKey;
+      recordMountStore(toolCallId, reason);
+    }
     const isStillCurrent = () =>
       latestFetchSourceKeyRef.current === fetchSourceKey;
 
@@ -956,6 +1017,7 @@ export function MCPAppsRenderer({
     liveFetchPreferred,
     initialPrefersBorder,
     cachedReplayInjectOpenAiCompat,
+    recordMountStore,
   ]);
 
   // UI logging

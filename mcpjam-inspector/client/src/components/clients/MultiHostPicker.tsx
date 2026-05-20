@@ -79,6 +79,12 @@ function compactHostLabel(name: string): string {
   return name;
 }
 
+const PLAYGROUND_HEADER_TOOLTIP = {
+  variant: "muted" as const,
+  sideOffset: 6,
+  collisionPadding: 12,
+};
+
 export function MultiHostPicker({
   projectId: _projectId,
   hosts,
@@ -265,17 +271,30 @@ export function MultiHostPicker({
               variant="ghost"
               size="sm"
               disabled={disabled || isLoading}
-              className="h-8 max-w-[200px] rounded-full px-2 text-xs transition-colors hover:bg-muted/80"
+              className="h-7 max-w-[200px] shrink-0 gap-1.5 border bg-background px-2 text-xs shadow-xs"
               data-testid="multi-host-picker-trigger"
             >
               <Server className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate text-[10px] font-medium">
+              <span className="truncate whitespace-nowrap @max-[820px]/playground-header:sr-only">
                 {triggerLabel}
               </span>
             </Button>
           </PopoverTrigger>
         </TooltipTrigger>
-        <TooltipContent side="top">{triggerLabel}</TooltipContent>
+        <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
+          <p className="font-medium">
+            {multiHostEnabled && effectiveSelectedHostIds.length > 1
+              ? "Hosts"
+              : "Host"}
+          </p>
+          {multiHostEnabled && effectiveSelectedHostIds.length > 1 ? (
+            <p className="text-xs font-light text-muted-foreground">
+              {effectiveSelectedHostIds
+                .map((id) => hostsById.get(id)?.name ?? id)
+                .join(", ")}
+            </p>
+          ) : null}
+        </TooltipContent>
       </Tooltip>
 
       <PopoverContent align="start" className="w-[280px] p-0" sideOffset={8}>

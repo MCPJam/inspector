@@ -740,6 +740,7 @@ export function ToolPart({
                           ...widgetDebugInfo.csp,
                           applied: widgetDebugInfo.applied,
                           lifecycle: widgetDebugInfo.lifecycle,
+                          mounts: widgetDebugInfo.mounts,
                           hostInfo: widgetDebugInfo.hostInfo ?? null,
                         }
                       : undefined

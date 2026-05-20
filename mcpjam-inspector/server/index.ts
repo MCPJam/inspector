@@ -512,13 +512,75 @@ const server = serve({
   hostname,
 });
 
+const expectedParentPid = Number.parseInt(
+  process.env.MCPJAM_INSPECTOR_PARENT_PID ?? "",
+  10,
+);
+let orphanCheckInterval: ReturnType<typeof setInterval> | undefined;
+let shuttingDown = false;
+const shutdownForceExitMs = 5000;
+const logFlushExitMs = 1000;
+
+function exitAfterLogFlush(code: number) {
+  const exitFallbackTimer = setTimeout(
+    () => process.exit(code),
+    logFlushExitMs,
+  );
+  exitFallbackTimer.unref();
+
+  void appLogger.flush().finally(() => {
+    clearTimeout(exitFallbackTimer);
+    process.exit(code);
+  });
+}
+
 // Handle graceful shutdown
 async function shutdown() {
-  console.log("\n🛑 Shutting down gracefully...");
-  await tunnelManager.closeAll();
-  server.close();
-  await appLogger.flush();
-  process.exit(0);
+  if (shuttingDown) {
+    return;
+  }
+
+  shuttingDown = true;
+  if (orphanCheckInterval) {
+    clearInterval(orphanCheckInterval);
+    orphanCheckInterval = undefined;
+  }
+
+  const forceExitTimer = setTimeout(() => {
+    appLogger.error(
+      "Shutdown timed out; forcing process exit.",
+      new Error("Shutdown timed out; forcing process exit."),
+    );
+    exitAfterLogFlush(1);
+  }, shutdownForceExitMs);
+  forceExitTimer.unref();
+
+  appLogger.info("Shutting down gracefully...");
+  try {
+    await tunnelManager.closeAll();
+    server.close();
+    await appLogger.flush();
+    clearTimeout(forceExitTimer);
+    process.exit(0);
+  } catch (error) {
+    clearTimeout(forceExitTimer);
+    appLogger.error("Error during shutdown", error);
+    exitAfterLogFlush(1);
+  }
+}
+
+if (
+  Number.isFinite(expectedParentPid) &&
+  expectedParentPid > 1 &&
+  process.env.MCPJAM_INSPECTOR_DISABLE_ORPHAN_CHECK !== "1" &&
+  !process.versions.electron
+) {
+  orphanCheckInterval = setInterval(() => {
+    if (process.ppid !== expectedParentPid) {
+      void shutdown();
+    }
+  }, 1000);
+  orphanCheckInterval.unref();
 }
 
 process.on("SIGINT", shutdown);
