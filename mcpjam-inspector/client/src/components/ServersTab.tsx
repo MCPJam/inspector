@@ -72,7 +72,10 @@ import type {
   ProjectServerConfigDto,
   ProjectServerConfigInput,
 } from "@/lib/project-server-config";
-import { useAutoConnectProjectServers } from "@/hooks/useAutoConnectProjectServers";
+import {
+  resetAutoConnectAttempts,
+  useAutoConnectProjectServers,
+} from "@/hooks/useAutoConnectProjectServers";
 import { useHost } from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useProjectServers as useViewProjectServers } from "@/hooks/useViews";
@@ -656,6 +659,10 @@ export function ServersTab({
     async (next: boolean) => {
       if (!sharedProjectIdForHostScope) return;
       setIsTogglingAutoConnect(true);
+      // Treat an explicit project toggle like a fresh host transition so the
+      // current host re-runs reconciliation instead of reusing stale attempts.
+      resetAutoConnectAttempts(activeProjectId);
+      resetAutoConnectAttempts(sharedProjectIdForHostScope);
       try {
         if (next) {
           // Preserve overrides for servers that remain in the catalog —
@@ -691,6 +698,7 @@ export function ServersTab({
       }
     },
     [
+      activeProjectId,
       sharedProjectIdForHostScope,
       catalogServerIds,
       projectServerConfigDto,
