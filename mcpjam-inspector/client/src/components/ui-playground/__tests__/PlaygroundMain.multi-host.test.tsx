@@ -340,8 +340,19 @@ vi.mock("@/components/shared/ClientContextHeader", () => ({
   },
 }));
 
+// Capture the props the parent threads into the picker so we can assert
+// that:
+//   - After Blocker 1 (lift state ownership), the picker receives the
+//     SAME `selectedHostIds` array as the grid uses, plus setters.
+//   - After Blocker 2 (project-id alignment), the `projectId` prop
+//     matches the project id used for `usePersistedHost` (the grid's
+//     storage scope).
+const mockPlaygroundHostPicker = vi.fn();
 vi.mock("@/components/playground/PlaygroundHostPicker", () => ({
-  PlaygroundHostPicker: () => <div />,
+  PlaygroundHostPicker: (props: any) => {
+    mockPlaygroundHostPicker(props);
+    return <div data-testid="playground-host-picker-stub" />;
+  },
 }));
 
 vi.mock("@/stores/traffic-log-store", () => ({
@@ -389,13 +400,23 @@ const multiHostFixture = {
   hosts: {} as Record<string, HostDetail>,
 };
 
+// Track the project id `PlaygroundMain` passes to `usePersistedHost`
+// (a.k.a. `multiHostProjectId`). After Blocker 2 (project-id alignment)
+// the picker must receive the SAME id; we assert both reads.
+const usePersistedHostProjectIds: (string | null)[] = [];
+const mockSetSelectedHostIds = vi.fn();
+const mockSetMultiHostEnabled = vi.fn();
+
 vi.mock("@/hooks/use-persisted-host", () => ({
-  usePersistedHost: () => ({
-    selectedHostIds: multiHostFixture.selectedHostIds,
-    setSelectedHostIds: vi.fn(),
-    multiHostEnabled: multiHostFixture.multiHostEnabled,
-    setMultiHostEnabled: vi.fn(),
-  }),
+  usePersistedHost: (projectId: string | null) => {
+    usePersistedHostProjectIds.push(projectId);
+    return {
+      selectedHostIds: multiHostFixture.selectedHostIds,
+      setSelectedHostIds: mockSetSelectedHostIds,
+      multiHostEnabled: multiHostFixture.multiHostEnabled,
+      setMultiHostEnabled: mockSetMultiHostEnabled,
+    };
+  },
 }));
 
 vi.mock("@/hooks/use-playground-host-slots", () => ({
@@ -485,6 +506,19 @@ describe("PlaygroundMain — multi-host render path", () => {
       selectedModelIds: [],
     });
     mockMultiModelPlaygroundCard.mockClear();
+    mockPlaygroundHostPicker.mockClear();
+    mockSetSelectedHostIds.mockClear();
+    mockSetMultiHostEnabled.mockClear();
+    usePersistedHostProjectIds.length = 0;
+    // Reset fixture defaults — individual tests opt in to deviations.
+    multiHostFixture.multiHostEnabled = true;
+    multiHostFixture.selectedHostIds = [];
+    multiHostFixture.hostList = [];
+    multiHostFixture.hosts = {};
+    // Reset shared-app-state to the default project; the shared-project
+    // test mutates this to force `convexProjectId !== activeProjectId`.
+    mockSharedAppState.projects = {};
+    mockSharedAppState.activeProjectId = "default";
   });
 
   it("renders one card per resolved host in a multi-host grid", () => {
@@ -643,6 +677,199 @@ describe("PlaygroundMain — multi-host render path", () => {
 
     render(<PlaygroundMain {...defaultProps} enableMultiHostChat={false} />);
 
+    expect(screen.queryByTestId("playground-multi-host-grid")).toBeNull();
+  });
+
+  // --- Reviewer-flagged blockers ---
+
+  it("picker is a controlled component: receives the SAME selectedHostIds + setters as the grid uses (Blocker 1)", () => {
+    const hostA = makeHost("h-A", "Host A", {
+      hostStyle: "chatgpt",
+      modelId: "openai/gpt-5-mini",
+    });
+    const hostB = makeHost("h-B", "Host B", {
+      hostStyle: "claude",
+      modelId: "anthropic/claude-sonnet-4.5",
+    });
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = { "h-A": hostA, "h-B": hostB };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    multiHostFixture.multiHostEnabled = true;
+
+    render(<PlaygroundMain {...defaultProps} enableMultiHostChat={true} />);
+
+    // Picker rendered at least once and got the same array (by ref)
+    // and the same setters that PlaygroundMain owns. This guards against
+    // a regression to the "picker calls its own usePersistedHost" anti-
+    // pattern — separate hook instances would yield separate array
+    // refs and separate setter identities.
+    expect(mockPlaygroundHostPicker).toHaveBeenCalled();
+    const lastProps =
+      mockPlaygroundHostPicker.mock.calls[
+        mockPlaygroundHostPicker.mock.calls.length - 1
+      ][0];
+    expect(lastProps.selectedHostIds).toBe(multiHostFixture.selectedHostIds);
+    expect(lastProps.multiHostEnabled).toBe(true);
+    expect(typeof lastProps.onSelectedHostIdsChange).toBe("function");
+    expect(typeof lastProps.onMultiHostEnabledChange).toBe("function");
+    expect(typeof lastProps.onPromoteLead).toBe("function");
+
+    // Setter from the picker maps to the parent's hook setter (single
+    // source of truth — no separate hook instance to drift away).
+    lastProps.onSelectedHostIdsChange(["h-B", "h-A"]);
+    expect(mockSetSelectedHostIds).toHaveBeenCalledWith(["h-B", "h-A"]);
+
+    // `usePersistedHost` was called with `multiHostProjectId` — the
+    // grid's storage scope. The picker doesn't call it at all anymore.
+    expect(usePersistedHostProjectIds.length).toBeGreaterThan(0);
+  });
+
+  it("picker projectId matches multiHostProjectId in shared-project flows (Blocker 2)", () => {
+    // Mirror the shared-project shape: `appState.projects[active]`
+    // has a `sharedProjectId` distinct from the local `activeProjectId`.
+    // Pre-fix, the picker received `activeProjectId` directly so its
+    // storage scope (`mcp-inspector-selected-hosts:{activeProjectId}`)
+    // diverged from the grid's (`...:{convexProjectId}`).
+    mockSharedAppState.projects = {
+      "local-project": { sharedProjectId: "convex-shared-id" } as any,
+    };
+    mockSharedAppState.activeProjectId = "local-project";
+
+    const hostA = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
+    const hostB = makeHost("h-B", "Host B", { hostStyle: "claude" });
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = { "h-A": hostA, "h-B": hostB };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+
+    render(
+      <PlaygroundMain
+        {...defaultProps}
+        activeProjectId="local-project"
+        enableMultiHostChat={true}
+      />,
+    );
+
+    // Grid's `usePersistedHost` is scoped to `convexProjectId`.
+    expect(usePersistedHostProjectIds.at(-1)).toBe("convex-shared-id");
+
+    // Picker received the SAME id — its `useHostList` /
+    // `usePreviewedHostId` reads must align with the grid's storage.
+    const lastProps =
+      mockPlaygroundHostPicker.mock.calls[
+        mockPlaygroundHostPicker.mock.calls.length - 1
+      ][0];
+    expect(lastProps.projectId).toBe("convex-shared-id");
+  });
+
+  it("slot 0 unresolved (lead host missing) → single-pane fallback (Blocker 3)", () => {
+    const hostC = makeHost("h-C", "Host C", { hostStyle: "claude" });
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-C", name: "Host C" },
+    ];
+    // Lead id "h-A" intentionally NOT in `hosts` map — still loading
+    // or deleted. The compacted `resolvedSelectedHosts` would have
+    // collapsed slot 0 to host C; the pre-fix code would treat host C
+    // as lead (wrong). The fix gates `isMultiHostMode` on lead being
+    // fully resolved, so the grid does not render.
+    multiHostFixture.hosts = { "h-C": hostC };
+    multiHostFixture.selectedHostIds = ["h-A", "h-C"];
+    multiHostFixture.multiHostEnabled = true;
+
+    render(<PlaygroundMain {...defaultProps} enableMultiHostChat={true} />);
+
+    expect(screen.queryByTestId("playground-multi-host-grid")).toBeNull();
+  });
+
+  it("slot 1 unresolved with slot 0 + slot 2 resolved → 2 columns, lead preserved (Blocker 3)", () => {
+    const hostA = makeHost("h-A", "Host A", {
+      hostStyle: "chatgpt",
+      modelId: "openai/gpt-5-mini",
+      systemPrompt: "host-A-prompt",
+      temperature: 0.1,
+    });
+    const hostC = makeHost("h-C", "Host C", {
+      hostStyle: "claude",
+      modelId: "anthropic/claude-sonnet-4.5",
+      systemPrompt: "host-C-prompt",
+      temperature: 0.9,
+    });
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+      { hostId: "h-C", name: "Host C" },
+    ];
+    // Slot 1 ("h-B") deliberately missing. The fix iterates
+    // `selectedHostIds` (not the compacted list), so the lead stays
+    // pinned to `selectedHostIds[0]`.
+    multiHostFixture.hosts = { "h-A": hostA, "h-C": hostC };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B", "h-C"];
+    multiHostFixture.multiHostEnabled = true;
+
+    render(<PlaygroundMain {...defaultProps} enableMultiHostChat={true} />);
+
+    const cards = screen.getAllByTestId("multi-host-card");
+    expect(cards).toHaveLength(2);
+    // Order is preserved: lead first, slot 2 second. Slot 1's hole
+    // does NOT promote slot 2 into the lead position.
+    expect(cards[0].getAttribute("data-compare-id")).toBe("h-A");
+    expect(cards[1].getAttribute("data-compare-id")).toBe("h-C");
+
+    // Lead identity assertion: `executionConfig` for `h-A` reflects the
+    // GLOBAL chip state (lead path); `h-C` uses its own host config
+    // (secondary path). Pre-fix, with slot 0 lead present this passed
+    // anyway, but the regression test below makes the contract explicit.
+    const lastByCompareId = new Map<string, any>();
+    for (const [props] of mockMultiModelPlaygroundCard.mock.calls) {
+      lastByCompareId.set(props.compareId, props);
+    }
+    expect(lastByCompareId.get("h-A").executionConfig).toEqual({
+      systemPrompt: "GLOBAL_SYSTEM_PROMPT",
+      temperature: 0.42,
+      requireToolApproval: false,
+    });
+    expect(lastByCompareId.get("h-C").executionConfig).toEqual({
+      systemPrompt: "host-C-prompt",
+      temperature: 0.9,
+      requireToolApproval: false,
+    });
+  });
+
+  it("lead host's modelId not in availableModels → single-pane fallback (Blocker 3)", () => {
+    // Use an unsupported model id; `resolvePlaygroundModelId` falls back
+    // to the host-template default for `hostStyle`. To force a "no
+    // resolution", pick a hostStyle whose template default also isn't in
+    // the test fixture's `availableModels` (we mock those to just two
+    // ids). Easiest path: stub a model id the test fixture explicitly
+    // does NOT include; the `resolvePlaygroundModelId` chain may
+    // canonicalize it but it still won't be found in `availableModels`.
+    const hostA = makeHost("h-A", "Host A", {
+      hostStyle: "chatgpt",
+      // This id is NOT in the test's mocked `availableModels`.
+      modelId: "openai/gpt-4o",
+    });
+    const hostB = makeHost("h-B", "Host B", {
+      hostStyle: "claude",
+      modelId: "anthropic/claude-sonnet-4.5",
+    });
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = { "h-A": hostA, "h-B": hostB };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    multiHostFixture.multiHostEnabled = true;
+
+    render(<PlaygroundMain {...defaultProps} enableMultiHostChat={true} />);
+
+    // The lead's model can't resolve into the chat-session's
+    // `availableModels`; render falls through to single-pane.
     expect(screen.queryByTestId("playground-multi-host-grid")).toBeNull();
   });
 });

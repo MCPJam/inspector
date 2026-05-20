@@ -96,6 +96,7 @@ import { useHost, useHostList, type HostDetail } from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { usePersistedHost } from "@/hooks/use-persisted-host";
 import { usePlaygroundHostSlots } from "@/hooks/use-playground-host-slots";
+import { replaceLeadHostId } from "@/lib/selected-host-storage";
 import { useProjectServers } from "@/hooks/useViews";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import { resolvePlaygroundModelId } from "@/lib/playground/apply-client-defaults";
@@ -765,9 +766,18 @@ export function PlaygroundMain({
   // multi-model. Lead host is derived inside `usePersistedHost` from the
   // per-project `usePreviewedHostId`, so `selectedHostIds[0]` is always
   // the lead.
+  //
+  // This is the SINGLE source of truth for picker + grid. The
+  // `PlaygroundHostPicker` rendered below is a controlled component —
+  // it does NOT call `usePersistedHost` itself. Two sibling hooks
+  // wouldn't stay in sync because `selected-host-storage.ts` doesn't
+  // dispatch same-tab events on `saveSelectedHostIds` (deliberate, per
+  // the Phase-1 multi-select regression fix); lifting state to this
+  // common parent is the correct fix instead of adding event traffic.
   const multiHostProjectId = convexProjectId ?? activeProjectId ?? null;
   const {
     selectedHostIds,
+    setSelectedHostIds,
     multiHostEnabled,
     setMultiHostEnabled,
   } = usePersistedHost(multiHostProjectId);
@@ -791,15 +801,42 @@ export function PlaygroundMain({
     [hostSlots, selectedHostIds.length],
   );
   const canEnableMultiHost = enableMultiHostChat && hostList.length > 1;
+
+  // Lead identity check — we cannot compact away the lead slot. If
+  // `selectedHostIds[0]` is still loading from Convex (or its
+  // `modelId` doesn't resolve into `availableModels`), the resolved
+  // list would collapse so `resolvedSelectedHosts[0]` would no longer
+  // be the lead — secondary slot 1 would inherit the global chip
+  // `executionConfig` and be misidentified as lead. Gate `isMultiHostMode`
+  // on lead being fully resolved (host + model) and fall through to
+  // single-pane otherwise. Secondaries are still allowed to be missing
+  // — those just render fewer columns until their data arrives.
+  const leadHostId = selectedHostIds[0] ?? null;
+  const leadHost = leadHostId
+    ? resolvedSelectedHosts.find((host) => host.hostId === leadHostId) ?? null
+    : null;
+  const leadModelId = leadHost
+    ? resolvePlaygroundModelId(
+        leadHost.config.modelId,
+        leadHost.config.hostStyle,
+      )
+    : null;
+  const leadModel = leadModelId
+    ? availableModels.find((m) => String(m.id) === leadModelId) ?? null
+    : null;
+
   // Same gating as multi-model: history mode wins (transcript replay lives
-  // on the single session). When `multiHostEnabled` is true but no hosts
-  // resolved yet (loading, deleted, etc.), fall through to single-pane —
-  // don't render an empty grid.
+  // on the single session). When `multiHostEnabled` is true but the lead
+  // host or its model isn't resolved yet (loading, deleted, missing from
+  // `availableModels`), fall through to single-pane — don't render a
+  // degraded grid where the lead identity is wrong.
   const isMultiHostMode =
     canEnableMultiHost &&
     multiHostEnabled &&
     !activeHistorySessionId &&
-    resolvedSelectedHosts.length > 0;
+    resolvedSelectedHosts.length > 0 &&
+    !!leadHost &&
+    !!leadModel;
 
   // When viewing a history session the transcript lives on the single chat
   // session; compare layout would override that render. Matches ChatTabV2.
@@ -832,9 +869,17 @@ export function PlaygroundMain({
   const multiHostColumns = useMemo<MultiHostColumn[]>(() => {
     if (!isMultiHostMode) return [];
     const columns: MultiHostColumn[] = [];
-    for (let index = 0; index < resolvedSelectedHosts.length; index++) {
-      const host = resolvedSelectedHosts[index];
-      const isLead = index === 0;
+    // Iterate `selectedHostIds` (not the compacted `resolvedSelectedHosts`)
+    // so the lead is determined by the SLOT INDEX in the canonical
+    // line-up — not by whichever resolved host happens to land at
+    // index 0 of the compacted array. If slot 1 is missing while
+    // slot 0 + slot 2 are present, the output is
+    // `[leadCol, /* nothing */, slot2Col]` → grid renders 2 columns
+    // where the lead is still the SAME host as `selectedHostIds[0]`.
+    for (let slotIndex = 0; slotIndex < selectedHostIds.length; slotIndex++) {
+      const hostId = selectedHostIds[slotIndex];
+      const host = resolvedSelectedHosts.find((h) => h.hostId === hostId);
+      if (!host) continue;
       const modelId = resolvePlaygroundModelId(
         host.config.modelId,
         host.config.hostStyle,
@@ -842,11 +887,13 @@ export function PlaygroundMain({
       // Skip hosts whose configured model doesn't resolve to a usable
       // available model — better an empty column than a card stuck on a
       // missing model. (Plan: secondaries use host's own default model;
-      // there's no per-column override in v1.)
+      // there's no per-column override in v1.) The lead is gated by
+      // `isMultiHostMode` so we never reach this skip for slot 0.
       const model = modelId
         ? availableModels.find((m) => String(m.id) === modelId)
         : null;
       if (!model) continue;
+      const isLead = slotIndex === 0;
       const executionConfig: ExecutionConfig = isLead
         ? {
             // Lead column drives the global chip state. Reuse the same
@@ -876,6 +923,7 @@ export function PlaygroundMain({
     return columns;
   }, [
     isMultiHostMode,
+    selectedHostIds,
     resolvedSelectedHosts,
     availableModels,
     systemPrompt,
@@ -2067,9 +2115,10 @@ export function PlaygroundMain({
 
   // Phase 4 lightweight mutual exclusion (see comment on
   // `handleMultiModelEnabledChange`). Wired into `PlaygroundHostPicker`
-  // via `onMultiHostEnabledChange`; the picker continues to read the
-  // current toggle value via its internal `usePersistedHost` call, so
-  // both surfaces stay in sync.
+  // via `onMultiHostEnabledChange`. After the "lift state ownership"
+  // fix the picker no longer calls `usePersistedHost` itself — both
+  // the toggle value and its setter come from THIS component's single
+  // hook instance, so any flip propagates without storage events.
   const handleMultiHostEnabledChange = useCallback(
     (enabled: boolean) => {
       setMultiHostEnabled(enabled);
@@ -2078,6 +2127,23 @@ export function PlaygroundMain({
       }
     },
     [setMultiHostEnabled, multiModelEnabled, setMultiModelEnabled]
+  );
+
+  // Lead-host promotion: the picker delegates the "make this host the
+  // lead" gesture to the parent so the canonical write
+  // (`replaceLeadHostId(projectId, hostId)`) targets the SAME project
+  // id as `usePersistedHost` above. If the picker called
+  // `replaceLeadHostId` itself with a different project id (e.g.
+  // `activeProjectId` while the grid was scoped to `convexProjectId`),
+  // the storage scope would split and the grid wouldn't see the
+  // promotion. See `selected-host-storage.ts` for the canonical-write
+  // contract.
+  const handlePromoteLead = useCallback(
+    (hostId: string) => {
+      if (!multiHostProjectId) return;
+      replaceLeadHostId(multiHostProjectId, hostId);
+    },
+    [multiHostProjectId],
   );
 
   const handleRequireToolApprovalChange = useCallback(
@@ -2691,8 +2757,12 @@ export function PlaygroundMain({
             // The global `GlobalClientBar` remains the host pill for other
             // tabs; both surfaces stay in sync via shared `usePreviewedHostId`.
             <PlaygroundHostPicker
-              projectId={activeProjectId}
+              projectId={multiHostProjectId}
+              selectedHostIds={selectedHostIds}
+              multiHostEnabled={multiHostEnabled}
+              onSelectedHostIdsChange={setSelectedHostIds}
               onMultiHostEnabledChange={handleMultiHostEnabledChange}
+              onPromoteLead={handlePromoteLead}
             />
           }
           trailing={
