@@ -1412,15 +1412,26 @@ export function MCPAppsRenderer({
             return true;
           }),
       );
-    // Permissive means permissive: ignore the saved profile's CSP hardening
-    // (restrictTo, cspDirectives) and skip CSP injection entirely. To get the
-    // host profile applied, the user picks Strict. No HOSTED_MODE carve-out:
-    // PR #2164 moves the sandbox proxy to a separate origin so the iframe is
-    // no longer same-origin with mcpjam.com, and a permissive CSP can't be
-    // used to fetch /api/* with the user's session cookies.
+    // Permissive means permissive — when the user explicitly toggles it in
+    // the playground toolbar — ignore the saved profile's CSP hardening
+    // (restrictTo, cspDirectives) and skip CSP injection entirely. Strict
+    // applies the host profile.
+    //
+    // Gate on `isPlaygroundActive`: chatbox/minimal-mode surfaces also hardcode
+    // `cspMode = "permissive"` (line 405) as a UX-friendliness default for
+    // end-user demos, NOT as a user choice. The host's `restrictTo` /
+    // `cspDirectives` MUST still apply on those surfaces — otherwise a
+    // developer who configures `restrictTo: { connectDomains: ["https://api.acme"] }`
+    // on their chatbox host would have it honored on Connect → Chat but
+    // silently dropped on the public chatbox runtime / Sessions transcript.
+    //
+    // No HOSTED_MODE carve-out: PR #2164 moves the sandbox proxy to a separate
+    // origin so the iframe is no longer same-origin with mcpjam.com, and a
+    // permissive CSP can't be used to fetch /api/* with the user's session
+    // cookies.
     //
     // Permissions policy still resolves below — it's orthogonal to CSP.
-    if (cspMode === "permissive") {
+    if (cspMode === "permissive" && isPlaygroundActive) {
       let resolvedPermissions: McpUiResourcePermissions | undefined;
       if (sandboxPermissionsPolicy) {
         const resourcePermsMap: Record<string, boolean> = {};
@@ -1587,6 +1598,7 @@ export function MCPAppsRenderer({
     };
   }, [
     cspMode,
+    isPlaygroundActive,
     sandboxCspPolicy,
     sandboxPermissionsPolicy,
     widgetCsp,
