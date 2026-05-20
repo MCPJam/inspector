@@ -358,6 +358,14 @@ export function PlaygroundMain({
   const [activeHistorySessionId, setActiveHistorySessionId] = useState<
     string | null
   >(null);
+  // True only when the user is viewing an OLD history session they explicitly
+  // selected (or that was restored on bootstrap). `activeHistorySessionId`
+  // alone is too coarse: it also gets auto-assigned to the LIVE current chat
+  // after the first stream completes via `refreshCurrentHistorySession`,
+  // which would otherwise collapse the multi-host / multi-model grid on
+  // every send. Compare gates key off this flag so the layout only steps
+  // aside for genuine replay.
+  const [viewingHistoryReplay, setViewingHistoryReplay] = useState(false);
   const [loadingHistorySessionId, setLoadingHistorySessionId] = useState<
     string | null
   >(null);
@@ -857,7 +865,7 @@ export function PlaygroundMain({
   const isMultiHostMode =
     canEnableMultiHost &&
     multiHostEnabled &&
-    !activeHistorySessionId &&
+    !viewingHistoryReplay &&
     resolvedSelectedHosts.length > 0 &&
     !!leadHost &&
     !!leadModel;
@@ -869,7 +877,7 @@ export function PlaygroundMain({
   const isMultiModelMode =
     canEnableMultiModel &&
     multiModelEnabled &&
-    !activeHistorySessionId &&
+    !viewingHistoryReplay &&
     !isMultiHostMode;
   const { isMultiModelLayoutMode, onModelSelectorOpenChange } =
     useModelSelectorLayoutLock(isMultiModelMode || isMultiHostMode);
@@ -1255,6 +1263,7 @@ export function PlaygroundMain({
     invalidatePendingReactiveHistoryLoad();
     setLoadingHistorySessionId(null);
     setActiveHistorySessionId(null);
+    setViewingHistoryReplay(false);
   }, [invalidatePendingReactiveHistoryLoad]);
 
   const markHistorySessionRead = useCallback(async (sessionId: string) => {
@@ -1584,6 +1593,7 @@ export function PlaygroundMain({
       const selectionRequestId = historySelectionRequestIdRef.current + 1;
       historySelectionRequestIdRef.current = selectionRequestId;
       setActiveHistorySessionId(session._id);
+      setViewingHistoryReplay(true);
       setLoadingHistorySessionId(session._id);
 
       try {
@@ -1612,6 +1622,7 @@ export function PlaygroundMain({
       } catch (err) {
         if (historySelectionRequestIdRef.current === selectionRequestId) {
           setActiveHistorySessionId(null);
+          setViewingHistoryReplay(false);
         }
         console.error("[PlaygroundMain] Failed to load chat session", err);
         toast.error("Failed to load chat history.");
@@ -2108,6 +2119,7 @@ export function PlaygroundMain({
     setInjectedToolRenderOverrides({});
     setPreludeTraceExecutions([]);
     resetMultiModelSessions();
+    setViewingHistoryReplay(false);
   }, [clearLogs, composer, resetChat, resetMultiModelSessions]);
 
   const handleClearChat = useCallback(() => {
