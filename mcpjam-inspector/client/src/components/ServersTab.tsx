@@ -747,7 +747,7 @@ export function ServersTab({
       .filter((name): name is string => !!name);
   }, [previewedHost?.config?.serverIds, viewProjectServersList]);
   useAutoConnectProjectServers({
-    projectId: activeProjectId || null,
+    projectId: sharedProjectIdForHostScope ?? activeProjectId ?? null,
     hostScopeKey: previewedHostId,
     requiredServerNames: previewedHostRequiredNames,
   });
