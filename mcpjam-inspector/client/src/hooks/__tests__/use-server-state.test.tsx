@@ -34,6 +34,7 @@ const {
   mockCreateServerWithClientSecret,
   mockUpdateServer,
   mockUpdateServerWithClientSecret,
+  mockUseDbUserReady,
 } = vi.hoisted(() => ({
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
@@ -55,6 +56,7 @@ const {
   mockCreateServerWithClientSecret: vi.fn(),
   mockUpdateServer: vi.fn(),
   mockUpdateServerWithClientSecret: vi.fn(),
+  mockUseDbUserReady: vi.fn(() => false),
 }));
 
 vi.mock("sonner", () => ({
@@ -68,6 +70,10 @@ vi.mock("convex/react", () => ({
   useConvex: () => ({
     query: mockConvexQuery,
   }),
+}));
+
+vi.mock("@/contexts/db-user-ready-context", () => ({
+  useDbUserReady: mockUseDbUserReady,
 }));
 
 vi.mock("@/state/mcp-api", () => ({
@@ -184,12 +190,17 @@ function renderUseServerState(
   options?: {
     hasSignedInUser?: boolean;
     isAuthenticated?: boolean;
+    isUserReady?: boolean;
     useLocalFallback?: boolean;
     effectiveProjects?: AppState["projects"];
     effectiveActiveProjectId?: string;
     activeProjectServersFlat?: any;
   }
 ) {
+  mockUseDbUserReady.mockReturnValue(
+    options?.isUserReady ?? options?.isAuthenticated ?? false,
+  );
+
   return renderHook(() =>
     useServerState({
       appState,
@@ -221,6 +232,7 @@ async function flushAsyncWork(iterations = 5): Promise<void> {
 }
 
 beforeEach(() => {
+  mockUseDbUserReady.mockReturnValue(true);
   tryResolveProjectServerMock.mockReturnValue({
     projectId: "project_default",
     serverId: "srv_demo",
@@ -1789,6 +1801,34 @@ describe("syncServerToConvex name-collision recovery", () => {
     expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
   });
 
+  it("skips the loading-window project servers query until the user row is ready", async () => {
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    const dispatch = vi.fn();
+
+    mockCreateServerIfMissing.mockResolvedValue("srv_created");
+
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true,
+      isUserReady: false,
+      hasSignedInUser: true,
+      useLocalFallback: false,
+      effectiveProjects: appState.projects,
+      activeProjectServersFlat: undefined,
+    });
+
+    await act(async () => {
+      await result.current.saveServerConfigWithoutConnecting({
+        name: "Excalidraw (App)",
+        type: "http",
+        url: "https://mcp.excalidraw.com/mcp",
+      });
+    });
+
+    expect(mockConvexQuery).not.toHaveBeenCalled();
+    expect(mockCreateServerIfMissing).toHaveBeenCalled();
+  });
+
   it("uses create-if-missing when a stale-loaded snapshot misses the row", async () => {
     const appState = createAppState();
     appState.projects.default.sharedProjectId = "project_default";
@@ -2409,6 +2449,7 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
       useLocalFallback: false,
       effectiveActiveProjectId: "none",
     };
+    mockUseDbUserReady.mockImplementation(() => readiness.isAuthenticated);
 
     const { result, rerender } = renderHook(() =>
       useServerState({

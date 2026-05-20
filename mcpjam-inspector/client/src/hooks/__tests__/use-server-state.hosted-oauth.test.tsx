@@ -15,6 +15,7 @@ const {
   mockTryResolveProjectServer,
   readStoredOAuthConfigMock,
   toastSuccess,
+  mockUseDbUserReady,
 } = vi.hoisted(() => ({
   mockHandleOAuthCallback: vi.fn(),
   mockListServers: vi.fn(),
@@ -32,12 +33,17 @@ const {
   >(() => ({ projectId: "ws_1", serverId: "srv_asana" })),
   readStoredOAuthConfigMock: vi.fn(),
   toastSuccess: vi.fn(),
+  mockUseDbUserReady: vi.fn(() => true),
 }));
 
 vi.mock("convex/react", () => ({
   useConvex: () => ({
     query: mockConvexQuery,
   }),
+}));
+
+vi.mock("@/contexts/db-user-ready-context", () => ({
+  useDbUserReady: mockUseDbUserReady,
 }));
 
 vi.mock("@/lib/config", () => ({
@@ -206,6 +212,7 @@ describe("useServerState hosted OAuth callback guards", () => {
     mockReconnectServer.mockReset();
     mockEnsureAuthorizedForReconnect.mockReset();
     mockConvexQuery.mockReset();
+    mockUseDbUserReady.mockReturnValue(true);
     testConnectionMock.mockReset();
     readStoredOAuthConfigMock.mockReset();
     toastSuccess.mockReset();

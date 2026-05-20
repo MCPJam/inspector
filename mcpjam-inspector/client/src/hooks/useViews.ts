@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useQuery, useMutation } from "convex/react";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { shouldQueryProjectId, type RemoteServer } from "./useProjects";
 
 // Type definitions matching backend
@@ -200,7 +201,9 @@ export function useProjectServers({
   isAuthenticated: boolean;
   projectId: string | null;
 }) {
-  const enableQuery = isAuthenticated && shouldQueryProjectId(projectId);
+  const isUserReady = useDbUserReady();
+  const enableQuery =
+    isAuthenticated && isUserReady && shouldQueryProjectId(projectId);
   const queryProjectId = projectId?.trim() ?? "";
 
   const servers = useQuery(

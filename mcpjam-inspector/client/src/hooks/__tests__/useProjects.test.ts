@@ -10,7 +10,8 @@ import {
   type ProjectMember,
 } from "../useProjects";
 
-const { mockUseMutation, mockUseQuery } = vi.hoisted(() => ({
+const { mockUseDbUserReady, mockUseMutation, mockUseQuery } = vi.hoisted(() => ({
+  mockUseDbUserReady: vi.fn(() => true),
   mockUseMutation: vi.fn(),
   mockUseQuery: vi.fn(),
 }));
@@ -18,6 +19,10 @@ const { mockUseMutation, mockUseQuery } = vi.hoisted(() => ({
 vi.mock("convex/react", () => ({
   useMutation: mockUseMutation,
   useQuery: mockUseQuery,
+}));
+
+vi.mock("@/contexts/db-user-ready-context", () => ({
+  useDbUserReady: mockUseDbUserReady,
 }));
 
 function createProject(
@@ -63,6 +68,7 @@ describe("filterProjectsForOrganization", () => {
 describe("useProjectQueries", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockUseDbUserReady.mockReturnValue(true);
     mockUseMutation.mockReturnValue(vi.fn());
   });
 
@@ -121,6 +127,22 @@ describe("useProjectServers", () => {
     expect(mockUseQuery).toHaveBeenCalledWith("servers:getProjectServers", {
       projectId: "project-id",
     });
+  });
+
+  it("skips the project servers query until the user row is ready", () => {
+    mockUseDbUserReady.mockReturnValue(false);
+
+    renderHook(() =>
+      useProjectServers({
+        isAuthenticated: true,
+        projectId: "project-id",
+      }),
+    );
+
+    expect(mockUseQuery).toHaveBeenCalledWith(
+      "servers:getProjectServers",
+      "skip",
+    );
   });
 });
 

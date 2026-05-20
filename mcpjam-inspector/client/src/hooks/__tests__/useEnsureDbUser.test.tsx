@@ -55,6 +55,32 @@ describe("useEnsureDbUser", () => {
     vi.useRealTimers();
   });
 
+  it("reports the user as ready only after ensureUser succeeds", async () => {
+    let resolveEnsureUser: (() => void) | undefined;
+    mockState.ensureUser.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveEnsureUser = resolve;
+        })
+    );
+
+    const { result } = renderHook(() => useEnsureDbUser());
+
+    expect(result.current.isUserReady).toBe(false);
+    await waitFor(() => {
+      expect(mockState.ensureUser).toHaveBeenCalledTimes(1);
+    });
+    expect(result.current.isUserReady).toBe(false);
+
+    await act(async () => {
+      resolveEnsureUser?.();
+    });
+
+    await waitFor(() => {
+      expect(result.current.isUserReady).toBe(true);
+    });
+  });
+
   it("re-runs ensureUser when the guest actor key rotates", async () => {
     const { rerender } = renderHook(() => useEnsureDbUser());
 

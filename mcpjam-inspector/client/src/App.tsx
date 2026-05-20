@@ -76,9 +76,9 @@ import {
 } from "./stores/preferences/preferences-provider";
 import { Toaster } from "@mcpjam/design-system/sonner";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
-import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
+import { useDbUserBootstrapStatus } from "./contexts/db-user-ready-context";
 import { AppStateProvider } from "./state/app-state-context";
 import { ServerActionsProvider } from "./state/server-actions-context";
 import { usePreviewedHostId } from "./hooks/use-previewed-client-id";
@@ -1457,8 +1457,7 @@ export default function App() {
 
   // Set up Electron OAuth callback handling
   useElectronOAuth();
-  // Ensure a `users` row exists after Convex auth
-  const { isEnsuringUser } = useEnsureDbUser();
+  const { isEnsuringUser, isUserReady } = useDbUserBootstrapStatus();
 
   const isDebugCallback = window.location.pathname.startsWith(
     "/oauth/callback/debug"
@@ -1622,7 +1621,7 @@ export default function App() {
   // hosted mode and after the first successful run; safe to keep in the tree.
   useLocalStateMigration({
     isAuthenticated,
-    isUserBootstrapping: isEnsuringUser,
+    isUserBootstrapping: isAuthenticated && !isUserReady,
     organizationId: activeOrganizationId,
   });
   const oauthDebuggerServersRef = useRef(appState.servers);
