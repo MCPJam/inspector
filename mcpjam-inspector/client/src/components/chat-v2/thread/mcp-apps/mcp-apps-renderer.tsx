@@ -1412,29 +1412,38 @@ export function MCPAppsRenderer({
             return true;
           }),
       );
-    const hasExplicitCspHardening =
-      restrictToConfigured || cspDirectivesConfigured || HOSTED_MODE;
-
-    // Chatbox / Playground / minimal-mode surfaces opted into `permissive`
-    // CSP up at line 285. Permissive means "default to permissive when the
-    // host hasn't asked for tightening" — short-circuit the host CSP
-    // resolver only when the saved profile carries NO explicit hardening
-    // (restrictTo) and we're not in hosted mode. Otherwise fall through to
-    // the resolver so the documented guarantees still hold even when the
-    // surface is permissive-by-default:
-    //   * restrictTo intersects whatever the resource declares
-    //   * hosted clamp is non-bypassable (MCPJam-origin SDK-internal strip)
+    // Permissive means permissive — when the user explicitly toggles it in
+    // the playground toolbar — ignore the saved profile's CSP hardening
+    // (restrictTo, cspDirectives) and skip CSP injection entirely. Strict
+    // applies the host profile.
     //
-    // Without this fall-through, a host could save `restrictTo:
-    // { connectDomains: ["https://api.acme"] }` on its chatbox host and
-    // the inspector would silently honor it on Connect → Chat but ignore
-    // it on the public chatbox URL — a policy bypass tied to surface
-    // type.
+    // Chatbox / minimal-mode surfaces also hardcode `cspMode = "permissive"`
+    // (line 405) as a UX-friendliness default for end-user demos, NOT as a
+    // user choice. The host's `restrictTo` / `cspDirectives` MUST still apply
+    // there — otherwise a developer who configures `restrictTo: { connectDomains: ["https://api.acme"] }`
+    // on their chatbox host would have it honored on Connect → Chat but
+    // silently dropped on the public chatbox runtime / Sessions transcript.
     //
-    // Permissions policy still resolves below — it's orthogonal to CSP
-    // and the chatbox-surface decision is specifically about content
-    // loading, not device access.
-    if (cspMode === "permissive" && !hasExplicitCspHardening) {
+    // We can't gate on `isPlaygroundActive` alone: the Playground store is
+    // localStorage and leaks across browsing contexts on the same origin
+    // (see line 396), so a chatbox preview iframe can read
+    // `isPlaygroundActive = true` from the parent inspector tab even though
+    // it's a chatbox surface. Require `!isChatboxSurface && !minimalMode` so
+    // the short-circuit is gated on the actual rendering surface, not just
+    // the (leakable) playground flag.
+    //
+    // No HOSTED_MODE carve-out: PR #2164 moves the sandbox proxy to a separate
+    // origin so the iframe is no longer same-origin with mcpjam.com, and a
+    // permissive CSP can't be used to fetch /api/* with the user's session
+    // cookies.
+    //
+    // Permissions policy still resolves below — it's orthogonal to CSP.
+    const userTogglePermissive =
+      cspMode === "permissive" &&
+      isPlaygroundActive &&
+      !isChatboxSurface &&
+      !minimalMode;
+    if (userTogglePermissive) {
       let resolvedPermissions: McpUiResourcePermissions | undefined;
       if (sandboxPermissionsPolicy) {
         const resourcePermsMap: Record<string, boolean> = {};
@@ -1601,6 +1610,9 @@ export function MCPAppsRenderer({
     };
   }, [
     cspMode,
+    isPlaygroundActive,
+    isChatboxSurface,
+    minimalMode,
     sandboxCspPolicy,
     sandboxPermissionsPolicy,
     widgetCsp,
