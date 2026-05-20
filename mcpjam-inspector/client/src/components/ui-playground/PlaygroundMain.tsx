@@ -116,6 +116,7 @@ import {
 } from "@/hooks/use-chat-stop-controls";
 import { HandDrawnSendHint } from "./HandDrawnSendHint";
 import { PlaygroundCenterHeaderBar } from "@/components/playground/PlaygroundCenterHeaderBar";
+import { PlaygroundHostPicker } from "@/components/playground/PlaygroundHostPicker";
 import { SingleModelTraceDiagnosticsBody } from "@/components/evals/single-model-trace-diagnostics-body";
 import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSelector";
 import {
@@ -2443,6 +2444,14 @@ export function PlaygroundMain({
           onSaveHostContext={onSaveHostContext}
           protocol={selectedProtocol}
           isMultiModelLayoutMode={isMultiModelLayoutMode}
+          leading={
+            // Phase 2: playground-scoped multi-host picker. Persists the
+            // multi-host array + toggle to localStorage but does NOT yet
+            // change the playground render path (that lands in Phase 4).
+            // The global `GlobalClientBar` remains the host pill for other
+            // tabs; both surfaces stay in sync via shared `usePreviewedHostId`.
+            <PlaygroundHostPicker projectId={activeProjectId} />
+          }
           trailing={
             effectiveHasMessages ? (
               <Tooltip>
