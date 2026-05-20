@@ -938,4 +938,73 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(leadProps.model).toBe(mockUseChatSession.selectedModel);
     expect(secondaryProps.model).toBe(mockUseChatSession.selectedModel);
   });
+
+  it("adding a host while compare is active seeds the new column from the lead's CURRENT transcript (not the original enter snapshot)", async () => {
+    // Regression for the reviewer-flagged P2 bug. Pre-fix:
+    //   - The model-mode added-column effect was the only place that
+    //     wrote to `compareAddColumnSeeds`. It returned early when
+    //     `isMultiModelMode` was false (i.e. during host mode).
+    //   - So a host added mid-conversation in host-compare mode would
+    //     fall back to the global `compareEnterMessages` snapshot
+    //     (frozen at the moment compare was first entered) instead of
+    //     the lead's CURRENT transcript.
+    //
+    // The new host-mode sibling effect closes that gap.
+    const hostA = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
+    const hostB = makeHost("h-B", "Host B", { hostStyle: "claude" });
+    const hostC = makeHost("h-C", "Host C", { hostStyle: "chatgpt" });
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+      { hostId: "h-C", name: "Host C" },
+    ];
+    multiHostFixture.hosts = { "h-A": hostA, "h-B": hostB, "h-C": hostC };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    multiHostFixture.multiHostEnabled = true;
+
+    const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+
+    // Grab the most recent props the lead card was rendered with so we
+    // can drive `onTranscriptSync` ourselves. The transcript that flows
+    // through here is the lead's LIVE state; the effect should pick it
+    // up from `compareTranscriptsRef` on the next render.
+    const leadCallBefore = mockMultiModelPlaygroundCard.mock.calls
+      .map(([props]) => props)
+      .filter((props) => props.compareId === "h-A")
+      .at(-1);
+    expect(leadCallBefore).toBeDefined();
+    const liveTranscript = [
+      { id: "u-1", role: "user", parts: [{ type: "text", text: "live-msg" }] },
+      {
+        id: "a-1",
+        role: "assistant",
+        parts: [{ type: "text", text: "live-reply" }],
+      },
+    ] as any[];
+    leadCallBefore.onTranscriptSync("h-A", liveTranscript);
+
+    // Now the user adds a 3rd host while compare is still running.
+    multiHostFixture.selectedHostIds = ["h-A", "h-B", "h-C"];
+    rerender(<PlaygroundMain {...defaultProps} />);
+
+    // After the re-render, the host-mode added-column effect should
+    // have written an `addColumnSeed` for h-C with the LIVE transcript
+    // we synced above — not the empty `compareEnterMessages` array.
+    const hostCCall = mockMultiModelPlaygroundCard.mock.calls
+      .map(([props]) => props)
+      .filter((props) => props.compareId === "h-C")
+      .at(-1);
+    expect(hostCCall).toBeDefined();
+    expect(hostCCall.addColumnSeed).not.toBeNull();
+    expect(hostCCall.addColumnSeed.messages).toHaveLength(2);
+    expect(hostCCall.addColumnSeed.messages[0].id).toBe("u-1");
+    expect(hostCCall.addColumnSeed.messages[1].id).toBe("a-1");
+    // The pre-existing columns (h-A, h-B) should NOT receive a fresh
+    // seed — only the newly-added column does.
+    const hostBCall = mockMultiModelPlaygroundCard.mock.calls
+      .map(([props]) => props)
+      .filter((props) => props.compareId === "h-B")
+      .at(-1);
+    expect(hostBCall.addColumnSeed).toBeNull();
+  });
 });

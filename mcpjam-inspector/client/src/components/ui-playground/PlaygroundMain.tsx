@@ -1052,6 +1052,42 @@ export function PlaygroundMain({
     prevCompareIdsRef.current = current;
   }, [isMultiModelMode, resolvedSelectedModels]);
 
+  // Host-mode sibling of the multi-model added-column effect above.
+  // Without this, adding a host after the conversation has continued
+  // in compare mode would seed the new column from the original
+  // `compareEnterMessages` snapshot (the transcript at the moment
+  // compare was first entered) instead of the lead's current state.
+  // Mirrors the model branch: diff `prev` vs current host column ids,
+  // and for any newly-added id, seed it from the lead's live
+  // `compareTranscriptsRef` entry. `prevCompareIdsRef` is shared with
+  // the model effect; that's safe because `isMultiHostMode` and
+  // `isMultiModelMode` are mutually exclusive — whichever mode is off
+  // clears the ref on its first run, so the active mode never sees a
+  // foreign-id `prev` set.
+  useEffect(() => {
+    if (!isMultiHostMode) {
+      prevCompareIdsRef.current = new Set();
+      return;
+    }
+    const current = new Set(multiHostColumns.map((c) => c.compareId));
+    const prev = prevCompareIdsRef.current;
+    const added = [...current].filter((id) => !prev.has(id));
+    const leadId = multiHostColumns[0]?.compareId ?? null;
+    if (prev.size > 0 && added.length > 0 && leadId) {
+      const src = compareTranscriptsRef.current[leadId] ?? [];
+      multiAddColumnSeqRef.current += 1;
+      const v = multiAddColumnSeqRef.current;
+      setCompareAddColumnSeeds((s) => {
+        const next = { ...s };
+        for (const id of added) {
+          next[id] = { version: v, messages: cloneUiMessages(src) };
+        }
+        return next;
+      });
+    }
+    prevCompareIdsRef.current = current;
+  }, [isMultiHostMode, multiHostColumns]);
+
   const effectiveHasMessages = isMultiModelLayoutMode
     ? Object.values(compareHasMessages).some(Boolean)
     : !isThreadEmpty;
