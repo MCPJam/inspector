@@ -22,8 +22,9 @@ describe("ClientFocusTabBar", () => {
 
     onTabChange.mockClear();
     await user.keyboard("{ArrowLeft}");
-    // Arrow-left from the first tab (Agent) wraps to the last tab,
-    // which is Servers while the Appearance tab is hidden.
-    expect(onTabChange).toHaveBeenCalledWith("servers" satisfies HostFocusTabId);
+    // Arrow-left from the first tab (Agent) wraps to the last tab.
+    // After the project-scoped server config rollout removed the
+    // per-host Servers tab, the last visible tab is Apps Extension.
+    expect(onTabChange).toHaveBeenCalledWith("apps" satisfies HostFocusTabId);
   });
 });

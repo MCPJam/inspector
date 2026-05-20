@@ -17,7 +17,10 @@ import {
   DEFAULT_REQUEST_TIMEOUT_MS,
   stableStringifyJson,
 } from "@/lib/client-config";
-import { getHostCapabilitiesForStyle } from "@/lib/client-styles";
+import {
+  getCompatRuntimeForStyle,
+  getHostCapabilitiesForStyle,
+} from "@/lib/client-styles";
 import type { ChatUiOverride } from "@/lib/client-styles";
 import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
 
@@ -156,6 +159,22 @@ export type HostConfigMcpProfileV1 = {
        * Mirror of `initialize.clientInfo`.
        */
       hostInfo?: Record<string, unknown>;
+    };
+    /**
+     * Vendor compat-runtime shims the inspector injects into widget
+     * HTML before handing it to the sandbox. Claude/Cursor/Codex-style
+     * hosts leave these surfaces off; ChatGPT/Copilot and MCPJam's dev
+     * surface enable them. Absent → resolver falls back to the host
+     * style preset (see `resolveEffectiveCompatRuntime`).
+     */
+    compatRuntime?: {
+      /**
+       * Inject the OpenAI Apps SDK `window.openai` shim
+       * (`@mcpjam/sdk`'s `injectOpenAICompat`). Only enable when
+       * emulating a host that historically exposed this surface, or
+       * when the widget under test depends on it.
+       */
+      openaiApps?: boolean;
     };
   };
   extensions?: Record<string, unknown>;
@@ -461,6 +480,30 @@ export function resolveHostInfo(
   profile: HostConfigMcpProfileV1 | undefined,
 ): Record<string, unknown> | undefined {
   return profile?.apps?.uiInitialize?.hostInfo;
+}
+
+/**
+ * Resolve the effective compat-runtime shim flags for a host config:
+ *   1. user override on the profile (when explicitly boolean)
+ *   2. host style preset (Apps SDK hosts → true; SEP-1865 hosts → false)
+ *   3. honest "no shim" default when neither resolves
+ *
+ * Mirror of {@link resolveEffectiveHostCapabilities}: presets live in
+ * the host style registry, overrides live on the persisted profile,
+ * and the resolver decides per call. Consumers (renderer, modal,
+ * server routes) pass the resolved boolean across the wire so the
+ * decision is made once and travels with the request.
+ */
+export function resolveEffectiveCompatRuntime(args: {
+  profile: HostConfigMcpProfileV1 | undefined;
+  hostStyle: ChatboxHostStyle | string | null | undefined;
+}): { openaiApps: boolean } {
+  const preset = getCompatRuntimeForStyle(args.hostStyle);
+  const override = args.profile?.apps?.compatRuntime?.openaiApps;
+  return {
+    openaiApps:
+      typeof override === "boolean" ? override : preset.openaiApps,
+  };
 }
 
 /**

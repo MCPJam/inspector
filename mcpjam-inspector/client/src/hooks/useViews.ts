@@ -56,6 +56,14 @@ export interface ViewBase {
   updatedBy?: string;
   createdAt: number;
   updatedAt: number;
+  /**
+   * Whether the cached widget HTML blob (`widgetHtmlUrl`) was
+   * captured with the OpenAI Apps SDK `window.openai` shim injected.
+   * Surfaced from the backend `mcpAppViews` / `openaiAppViews` row.
+   * Absent on pre-feature rows (`undefined` → renderer falls back to
+   * the live host's compat flag for non-cached fetches).
+   */
+  injectedOpenAiCompat?: boolean;
 }
 
 // MCP-specific view

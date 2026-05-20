@@ -428,6 +428,12 @@ export function ViewsTab({
           ? selectedView.widgetPermissive
           : undefined,
       prefersBorder: selectedView.prefersBorder,
+      // Persisted compat flag — propagated so the renderer's
+      // cached-replay branch knows what the bytes contain. Absent on
+      // pre-feature view rows; falls back to undefined which the
+      // renderer interprets as "let the live profile decide" (safe
+      // for views without cached HTML).
+      injectedOpenAiCompat: selectedView.injectedOpenAiCompat,
     });
 
     setPendingExecution({
@@ -621,6 +627,11 @@ export function ViewsTab({
           copyNumber === 1
             ? `${baseName} (copy)`
             : `${baseName} (copy ${copyNumber})`;
+        const injectedOpenAiCompatCopy =
+          widgetHtmlBlobId !== undefined &&
+          view.injectedOpenAiCompat !== undefined
+            ? { injectedOpenAiCompat: view.injectedOpenAiCompat }
+            : {};
 
         if (view.protocol === "mcp-apps") {
           await createMcpView({
@@ -634,6 +645,9 @@ export function ViewsTab({
             toolInput: view.toolInput,
             toolOutputBlobId,
             widgetHtmlBlobId,
+            // Carry the cached-HTML provenance flag across duplicate
+            // only when the copy also carries cached widget bytes.
+            ...injectedOpenAiCompatCopy,
             toolErrorText: view.toolErrorText,
             toolMetadata: view.toolMetadata,
             prefersBorder: view.prefersBorder,
@@ -653,6 +667,7 @@ export function ViewsTab({
             toolInput: view.toolInput,
             toolOutputBlobId,
             widgetHtmlBlobId,
+            ...injectedOpenAiCompatCopy,
             toolErrorText: view.toolErrorText,
             toolMetadata: view.toolMetadata,
             prefersBorder: view.prefersBorder,
@@ -823,6 +838,15 @@ export function ViewsTab({
 
       if (widgetHtmlBlobId) {
         updates.widgetHtmlBlobId = widgetHtmlBlobId;
+        // Persist the renderer's resolved compat flag alongside the
+        // new blob so the cached-replay branch agrees with the bytes.
+        // Undefined when the renderer hasn't recorded one yet — leave
+        // the field untouched in that case (don't overwrite a prior
+        // stored value with `undefined`).
+        if (previewWidgetDebugInfo?.injectedOpenAiCompat !== undefined) {
+          updates.injectedOpenAiCompat =
+            previewWidgetDebugInfo.injectedOpenAiCompat;
+        }
       }
 
       if (contextChanged) {

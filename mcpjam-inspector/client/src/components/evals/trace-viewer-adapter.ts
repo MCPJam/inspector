@@ -66,6 +66,12 @@ export interface TraceWidgetSnapshot {
   prefersBorder?: boolean;
   widgetHtmlUrl?: string | null;
   toolOutput?: unknown;
+  /**
+   * Whether the cached widget HTML was captured with the OpenAI Apps
+   * SDK `window.openai` shim injected. Propagated to the renderer so
+   * replay matches what the bytes contain.
+   */
+  injectedOpenAiCompat?: boolean;
 }
 
 /**
@@ -85,6 +91,7 @@ export function snapshotsToTraceWidgetSnapshots(
     prefersBorder: boolean;
     widgetHtmlUrl?: string | null;
     toolOutput?: unknown;
+    injectedOpenAiCompat?: boolean;
   }>,
 ): TraceWidgetSnapshot[] {
   return snapshots.map((snap) => {
@@ -110,6 +117,7 @@ export function snapshotsToTraceWidgetSnapshots(
       prefersBorder: snap.prefersBorder,
       widgetHtmlUrl: snap.widgetHtmlUrl,
       toolOutput: snap.toolOutput,
+      injectedOpenAiCompat: snap.injectedOpenAiCompat,
     };
   });
 }
@@ -154,6 +162,7 @@ export function buildToolRenderOverridesFromSnapshots(
       widgetPermissions: snap.widgetPermissions as any,
       widgetPermissive: snap.widgetPermissive,
       prefersBorder: snap.prefersBorder,
+      injectedOpenAiCompat: snap.injectedOpenAiCompat,
     });
     overrides[snap.toolCallId] = replay.renderOverride;
   }
@@ -500,6 +509,7 @@ function createReplayOverride(
     widgetPermissions: snapshot.widgetPermissions as any,
     widgetPermissive: snapshot.widgetPermissive,
     prefersBorder: snapshot.prefersBorder,
+    injectedOpenAiCompat: snapshot.injectedOpenAiCompat,
   }).renderOverride;
 }
 
@@ -513,6 +523,7 @@ function createLiveSnapshotOverride(snapshot: TraceWidgetSnapshot) {
     widgetPermissions: snapshot.widgetPermissions as any,
     widgetPermissive: snapshot.widgetPermissive,
     prefersBorder: snapshot.prefersBorder,
+    injectedOpenAiCompat: snapshot.injectedOpenAiCompat,
   } satisfies ToolRenderOverride;
 }
 

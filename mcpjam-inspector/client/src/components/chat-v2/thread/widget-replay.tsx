@@ -186,6 +186,7 @@ export function WidgetReplay({
       widgetPermissions={renderOverride?.widgetPermissions}
       widgetPermissive={renderOverride?.widgetPermissive}
       prefersBorder={renderOverride?.prefersBorder}
+      injectedOpenAiCompat={renderOverride?.injectedOpenAiCompat}
       initialWidgetState={renderOverride?.initialWidgetState}
       minimalMode={minimalMode}
     />

@@ -46,6 +46,14 @@ export interface McpAppsModalProps {
   toolCallId: string;
   toolName: string;
   cspMode: CspMode;
+  /**
+   * Resolved compat-runtime flag the inline renderer already computed
+   * for this host. The modal mounts its own iframe and fetches its own
+   * HTML; passing the flag down (rather than re-resolving here) keeps
+   * the modal and inline fetches in lockstep so the modal can't end up
+   * shimmed while the inline view isn't (or vice versa).
+   */
+  injectOpenAiCompat: boolean;
   toolInputRef: React.RefObject<Record<string, unknown> | undefined>;
   toolOutputRef: React.RefObject<unknown>;
   themeModeRef: React.RefObject<string>;
@@ -79,6 +87,7 @@ export function McpAppsModal({
   toolCallId,
   toolName,
   cspMode,
+  injectOpenAiCompat,
   toolInputRef,
   toolOutputRef,
   themeModeRef,
@@ -120,6 +129,7 @@ export function McpAppsModal({
           toolName,
           theme: themeModeRef.current,
           cspMode,
+          injectOpenAiCompat,
           template: template ?? undefined,
           viewMode: "modal",
           viewParams: params,
@@ -140,6 +150,7 @@ export function McpAppsModal({
     toolCallId,
     toolName,
     cspMode,
+    injectOpenAiCompat,
     toolInputRef,
     toolOutputRef,
     themeModeRef,

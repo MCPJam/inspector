@@ -11,14 +11,11 @@ describe("ClientFocusPanel", () => {
         hostId="host-test"
         tab="behavior"
         onTabChange={vi.fn()}
-        initialSelectedServerId={null}
         hostDisplayName="Test Host"
         onHostDisplayNameChange={vi.fn()}
         draft={emptyHostConfigInputV2()}
         onDraftChange={vi.fn()}
         attention={[]}
-        availableServers={[]}
-        onAddServer={vi.fn()}
         onClose={vi.fn()}
       />,
     );
@@ -33,7 +30,6 @@ describe("ClientFocusPanel", () => {
         hostId="host-test"
         tab="behavior"
         onTabChange={vi.fn()}
-        initialSelectedServerId={null}
         hostDisplayName="Test Host"
         onHostDisplayNameChange={vi.fn()}
         draft={emptyHostConfigInputV2()}
@@ -52,8 +48,6 @@ describe("ClientFocusPanel", () => {
             message: "Empty prompt",
           },
         ]}
-        availableServers={[]}
-        onAddServer={vi.fn()}
         onClose={vi.fn()}
       />,
     );
@@ -66,26 +60,18 @@ describe("ClientFocusPanel", () => {
         hostId="host-test"
         tab="protocol"
         onTabChange={vi.fn()}
-        initialSelectedServerId={null}
         hostDisplayName="Test Host"
         onHostDisplayNameChange={vi.fn()}
         draft={emptyHostConfigInputV2()}
         onDraftChange={vi.fn()}
         attention={[]}
-        availableServers={[]}
-        onAddServer={vi.fn()}
         onClose={vi.fn()}
       />,
     );
 
-    const tablist = screen.getByRole("tablist");
-    expect(tablist).toHaveAttribute("aria-orientation", "horizontal");
-
     const agentTab = screen.getByRole("tab", { name: /^Agent$/ });
     expect(agentTab).toBeInTheDocument();
     expect(within(agentTab).queryByText("AGENT")).toBeNull();
-    // Tab bar is text-only after the icon-well simplification — there
-    // should be no primary-tinted decoration on inactive tabs.
     expect(agentTab.className).not.toMatch(/var\(--primary\)|bg-primary\b/);
   });
 
@@ -95,14 +81,11 @@ describe("ClientFocusPanel", () => {
         hostId="host-test"
         tab="protocol"
         onTabChange={vi.fn()}
-        initialSelectedServerId={null}
         hostDisplayName="Test Host"
         onHostDisplayNameChange={vi.fn()}
         draft={emptyHostConfigInputV2()}
         onDraftChange={vi.fn()}
         attention={[]}
-        availableServers={[]}
-        onAddServer={vi.fn()}
         onClose={vi.fn()}
       />,
     );
@@ -110,8 +93,6 @@ describe("ClientFocusPanel", () => {
     const appsTab = screen.getByRole("tab", { name: /^Apps Extension$/ });
     expect(appsTab).toBeInTheDocument();
     expect(within(appsTab).queryByText(/SEP-1865/)).toBeNull();
-    // Tab bar is text-only after the icon-well simplification — there
-    // should be no info-tinted decoration on inactive tabs.
     expect(appsTab.className).not.toMatch(/var\(--info|bg-info\b/);
   });
 
@@ -122,14 +103,11 @@ describe("ClientFocusPanel", () => {
         hostId="host-test"
         tab="protocol"
         onTabChange={vi.fn()}
-        initialSelectedServerId={null}
         hostDisplayName="Test Host"
         onHostDisplayNameChange={vi.fn()}
         draft={emptyHostConfigInputV2()}
         onDraftChange={vi.fn()}
         attention={[]}
-        availableServers={[]}
-        onAddServer={vi.fn()}
         onClose={vi.fn()}
       />,
     );
@@ -147,14 +125,11 @@ describe("ClientFocusPanel", () => {
         hostId="host-test"
         tab="apps"
         onTabChange={vi.fn()}
-        initialSelectedServerId={null}
         hostDisplayName="Test Host"
         onHostDisplayNameChange={vi.fn()}
         draft={emptyHostConfigInputV2()}
         onDraftChange={vi.fn()}
         attention={[]}
-        availableServers={[]}
-        onAddServer={vi.fn()}
         onClose={vi.fn()}
       />,
     );
@@ -172,14 +147,11 @@ describe("ClientFocusPanel", () => {
         hostId="host-test"
         tab="behavior"
         onTabChange={vi.fn()}
-        initialSelectedServerId={null}
         hostDisplayName="My Host"
         onHostDisplayNameChange={vi.fn()}
         draft={emptyHostConfigInputV2()}
         onDraftChange={vi.fn()}
         attention={[]}
-        availableServers={[]}
-        onAddServer={vi.fn()}
         onClose={vi.fn()}
       />,
     );
@@ -194,47 +166,39 @@ describe("ClientFocusPanel", () => {
     );
   });
 
-  it("does not surface uses client defaults next to the overrides switch", () => {
+  it("does not surface a Servers tab in the per-host editor", () => {
+    // Servers moved to Project Settings → Servers as part of the
+    // project-scoped server config rollout. The per-host editor must
+    // not advertise the tab anymore — server selection is project-
+    // wide now.
     render(
       <ClientFocusPanel
         hostId="host-test"
-        tab="servers"
+        tab="behavior"
         onTabChange={vi.fn()}
-        initialSelectedServerId="s1"
         hostDisplayName="Test Host"
         onHostDisplayNameChange={vi.fn()}
         draft={emptyHostConfigInputV2()}
         onDraftChange={vi.fn()}
         attention={[]}
-        availableServers={[
-          { id: "s1", name: "Bench", url: "https://example.com" },
-        ]}
-        onAddServer={vi.fn()}
         onClose={vi.fn()}
       />,
     );
 
-    expect(screen.queryByText("uses client defaults")).toBeNull();
-    expect(screen.queryByText(/^active$/)).toBeNull();
-    expect(
-      screen.getByRole("switch", { name: "Enable overrides" }),
-    ).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /^Servers$/ })).toBeNull();
   });
 
   it("does not show a placeholder Advanced tab", () => {
     render(
       <ClientFocusPanel
         hostId="host-test"
-        tab="servers"
+        tab="behavior"
         onTabChange={vi.fn()}
-        initialSelectedServerId={null}
         hostDisplayName="Test Host"
         onHostDisplayNameChange={vi.fn()}
         draft={emptyHostConfigInputV2()}
         onDraftChange={vi.fn()}
         attention={[]}
-        availableServers={[]}
-        onAddServer={vi.fn()}
         onClose={vi.fn()}
       />,
     );

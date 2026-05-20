@@ -2,6 +2,7 @@ import type { Edge } from "@xyflow/react";
 import { getModelById } from "@/shared/types";
 import { findHostStyle } from "@/lib/client-styles";
 import {
+  resolveEffectiveCompatRuntime,
   resolveEffectiveHostCapabilities,
   resolveClientInfo,
   resolveSupportedProtocolVersions,
@@ -725,6 +726,21 @@ export function buildRedesignedHostCanvas(
     return isRecord(exts["io.modelcontextprotocol/ui"]);
   })();
 
+  // Resolved vendor compat-runtime shim state. Drives the "Compat
+  // shims" chip in the matrix. The "fromOverride" flag tracks whether
+  // the value came from the user-set profile (`apps.compatRuntime`)
+  // or from the host style preset — the chip's "(from preset)"
+  // qualifier surfaces this distinction so users know whether their
+  // edit is doing something.
+  const compatRuntimeOverride = draft.mcpProfile?.apps?.compatRuntime?.openaiApps;
+  const compatRuntime = {
+    openaiApps: resolveEffectiveCompatRuntime({
+      profile: draft.mcpProfile,
+      hostStyle: draft.hostStyle,
+    }).openaiApps,
+    fromOverride: typeof compatRuntimeOverride === "boolean",
+  };
+
   // ---- Nodes / edges ----
   const nodes: HostRedesignFlowNode[] = [];
   const edges: Edge[] = [];
@@ -745,6 +761,7 @@ export function buildRedesignedHostCanvas(
       sandbox,
       hostInfo,
       appsExtensionAdvertised,
+      compatRuntime,
     },
     draggable: false,
     selectable: false,

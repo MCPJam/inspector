@@ -19,7 +19,7 @@
  * the `.sandbox-config-grid` selector itself so the grid keeps working
  * regardless of context.
  */
-import { memo } from "react";
+import { memo, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import type {
   SandboxConfigNodeData,
@@ -105,6 +105,14 @@ export interface SandboxProxyIframeCardProps extends SandboxConfigGridProps {
   hostInfo: { name: string; version: string } | null;
   onTitleClick?: () => void;
   onViewTitleClick?: () => void;
+  /**
+   * Optional slot rendered inside the View iframe sub-card, below the
+   * `uiInitialize` empty-state line. The matrix uses this to surface the
+   * "injected globals" chip (window.openai compat layer) so the chip lives
+   * spatially where the host actually injects the API; the chat-thread
+   * runtime panel leaves it undefined.
+   */
+  viewIframeInjectedGlobals?: ReactNode;
 }
 
 /**
@@ -122,6 +130,7 @@ export const SandboxProxyIframeCard = memo(function SandboxProxyIframeCard({
   onRowSelect,
   selectedSubKey,
   className,
+  viewIframeInjectedGlobals,
 }: SandboxProxyIframeCardProps) {
   return (
     <div className={cn("sandbox-proxy-iframe-card", className)}>
@@ -182,6 +191,7 @@ export const SandboxProxyIframeCard = memo(function SandboxProxyIframeCard({
             </span>
           </button>
           <ViewIframeEmptyState hostInfo={hostInfo} />
+          {viewIframeInjectedGlobals}
         </div>
       ) : null}
     </div>

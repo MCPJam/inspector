@@ -58,6 +58,13 @@ export type EvalTraceWidgetSnapshot = {
   prefersBorder?: boolean;
   widgetHtmlBlobId?: string;
   widgetHtmlUrl?: string | null;
+  /**
+   * Whether the OpenAI Apps SDK `window.openai` shim was injected into
+   * `widgetHtml` at capture time. Persisted so replay can render the
+   * blob faithfully under a different host config without rewriting
+   * the bytes — see `MCPAppsRenderer.injectedOpenAiCompat`.
+   */
+  injectedOpenAiCompat?: boolean;
 };
 
 /** Versioned blob written by `testSuites:updateTestIteration` when messages are stored. */
@@ -127,6 +134,7 @@ const evalTraceWidgetSnapshotZ = z.object({
   prefersBorder: z.boolean().optional(),
   widgetHtmlBlobId: z.string().optional(),
   widgetHtmlUrl: z.string().nullable().optional(),
+  injectedOpenAiCompat: z.boolean().optional(),
 });
 
 export const evalTraceBlobV1Z = z.object({

@@ -60,6 +60,16 @@ export interface HostMatrixCardProps {
    */
   hostInfo: { name: string; version: string } | null;
   appsExtensionAdvertised: boolean;
+  /**
+   * Resolved vendor compat-runtime shim state. `openaiApps: true` →
+   * inspector injects `window.openai` into widget HTML; `false` → no
+   * shim. `fromOverride: false` means the value comes from the host
+   * style preset (drives the "(from preset)" chip qualifier).
+   */
+  compatRuntime: {
+    openaiApps: boolean;
+    fromOverride: boolean;
+  };
   selectedNodeId: string | null;
   onSelectNode: (nodeId: string) => void;
 }
@@ -73,6 +83,7 @@ export const HostMatrixCard = memo(function HostMatrixCard({
   sandbox,
   hostInfo,
   appsExtensionAdvertised,
+  compatRuntime,
   selectedNodeId,
   onSelectNode,
 }: HostMatrixCardProps) {
@@ -287,12 +298,62 @@ export const HostMatrixCard = memo(function HostMatrixCard({
             onRowSelect={(subKey) =>
               onSelectNode(sandboxConfigLeafNodeId(subKey))
             }
+            viewIframeInjectedGlobals={
+              <ViewIframeInjectedGlobals
+                compatRuntime={compatRuntime}
+                onClick={() => onSelectNode(APPS_HUB_NODE_ID)}
+              />
+            }
           />
+
         ) : null}
       </div>
     </article>
   );
 });
+
+/* Injected globals strip inside the View iframe frame.
+ *
+ * `window.openai` is not in SEP-1865 — it's a ChatGPT-only compatibility
+ * layer the inspector injects into widget HTML before sandboxing, so widgets
+ * written against the OpenAI Apps SDK keep working. Rendering this inside
+ * the View iframe block makes the spatial claim true: this is what the
+ * widget's JS actually sees on `window` at runtime.
+ *
+ * Clicking routes to the Apps Extension tab, where the per-host toggle
+ * (`mcpProfile.apps.compatRuntime.openaiApps`) lives.
+ */
+function ViewIframeInjectedGlobals({
+  compatRuntime,
+  onClick,
+}: {
+  compatRuntime: { openaiApps: boolean; fromOverride: boolean };
+  onClick: () => void;
+}) {
+  return (
+    <div className="hp-view-injected">
+      <button
+        type="button"
+        className={cn("hp-cap", !compatRuntime.openaiApps && "hp-cap--off")}
+        onClick={(e) => {
+          e.stopPropagation();
+          onClick();
+        }}
+        title={
+          compatRuntime.openaiApps
+            ? "Inspector injects window.openai into widget HTML before sandboxing, so OpenAI Apps SDK widgets keep working on this host."
+            : "Inspector does NOT inject window.openai for this host. SEP-1865-only — widgets that rely on the OpenAI Apps SDK compatibility layer will not run."
+        }
+      >
+        <span className="hp-cap-dot" aria-hidden />
+        <span className="hp-cap-name">window.openai</span>
+        {!compatRuntime.fromOverride ? (
+          <span className="hp-cap-tag">from preset</span>
+        ) : null}
+      </button>
+    </div>
+  );
+}
 
 /* ---------------- subcomponents ---------------- */
 
@@ -563,6 +624,14 @@ const PAPER_STYLES = `
    mounts <SandboxProxyIframeCard /> directly so dropping these
    duplicates avoids drift between the two call sites (matrix and the
    chat-thread Sandbox debug panel). */
+
+/* Injected-globals strip inside the View iframe frame — single chip
+   showing what is pre-injected onto the widget's window object. */
+.host-paper-card .hp-view-injected {
+  display: flex;
+  align-items: center;
+  padding: 8px 4px 2px;
+}
 
 /* Off / selected variants of the host-level capability chip, used by
    the new Host capabilities section (mirrors the spec's hostCapabilities
