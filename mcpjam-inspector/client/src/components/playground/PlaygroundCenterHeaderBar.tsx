@@ -47,10 +47,8 @@ export function PlaygroundCenterHeaderBar({
   leading,
 }: Props) {
   const chromeRowClass = cn(
-    "relative flex min-w-0 items-center justify-center gap-2 text-xs text-muted-foreground",
+    "flex min-w-0 items-center gap-2 text-xs text-muted-foreground",
     showTraceTabs ? "border-b border-border/60 px-3 py-1.5" : "h-11 px-3",
-    trailing && "pe-11",
-    leading && "ps-11",
   );
 
   return (
@@ -63,11 +61,9 @@ export function PlaygroundCenterHeaderBar({
     >
       <div className={chromeRowClass}>
         {leading ? (
-          <div className="pointer-events-none absolute inset-y-0 start-3 z-10 flex items-center">
-            <div className="pointer-events-auto">{leading}</div>
-          </div>
+          <div className="flex shrink-0 items-center">{leading}</div>
         ) : null}
-        <div className="flex min-w-0 w-full justify-center overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="flex min-w-0 flex-1 justify-center overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <ClientContextHeader
             activeProjectId={activeProjectId}
             onSaveHostContext={onSaveHostContext}
@@ -77,9 +73,7 @@ export function PlaygroundCenterHeaderBar({
           />
         </div>
         {trailing ? (
-          <div className="pointer-events-none absolute inset-y-0 end-3 z-10 flex items-center">
-            <div className="pointer-events-auto">{trailing}</div>
-          </div>
+          <div className="flex shrink-0 items-center">{trailing}</div>
         ) : null}
       </div>
 

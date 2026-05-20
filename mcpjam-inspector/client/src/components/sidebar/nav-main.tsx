@@ -232,6 +232,9 @@ function AnnouncementNavRow({
           sideOffset={12}
           className="w-72"
           onOpenAutoFocus={(event) => event.preventDefault()}
+          onPointerDownOutside={(event) => event.preventDefault()}
+          onFocusOutside={(event) => event.preventDefault()}
+          onEscapeKeyDown={(event) => event.preventDefault()}
         >
           <div className="font-medium">{announcement.title}</div>
           <p className="mt-1 text-sm text-muted-foreground">

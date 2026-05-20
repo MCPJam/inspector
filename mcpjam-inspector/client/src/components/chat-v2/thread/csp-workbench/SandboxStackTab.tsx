@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type {
   WidgetLifecycleEvent,
   WidgetMount,
@@ -12,48 +13,33 @@ interface SandboxStackTabProps {
   protocol?: "openai-apps" | "mcp-apps";
 }
 
-interface StackRow {
-  tone: "ok" | "warn" | "live" | "muted";
+/** Compact label/value chip — the workbench's atomic unit. */
+function Chip({
+  label,
+  value,
+  tone = "neutral",
+}: {
   label: string;
   value: React.ReactNode;
-}
-
-function markerFor(tone: StackRow["tone"]): { glyph: string; cls: string } {
-  switch (tone) {
-    case "ok":
-      return { glyph: "→", cls: "text-emerald-600 dark:text-emerald-400" };
-    case "warn":
-      return { glyph: "!", cls: "text-amber-600 dark:text-amber-400" };
-    case "live":
-      return { glyph: "●", cls: "text-emerald-600 dark:text-emerald-400" };
-    case "muted":
-      return { glyph: "→", cls: "text-muted-foreground/60" };
-  }
-}
-
-function StackRows({ rows }: { rows: StackRow[] }) {
+  tone?: "neutral" | "warn" | "muted";
+}) {
+  const valueClass =
+    tone === "warn"
+      ? "text-amber-600 dark:text-amber-400"
+      : tone === "muted"
+        ? "text-muted-foreground italic"
+        : "text-foreground";
   return (
-    <div className="flex flex-col">
-      {rows.map((r, i) => {
-        const m = markerFor(r.tone);
-        return (
-          <div
-            key={i}
-            className="grid grid-cols-[18px_1fr_auto] gap-3.5 items-center py-1 text-[11.5px]"
-          >
-            <span className={`font-mono text-center ${m.cls}`}>{m.glyph}</span>
-            <span className="font-mono text-foreground">{r.label}</span>
-            <span className="font-mono text-[11px] text-muted-foreground text-right truncate min-w-0 max-w-full">
-              {r.value}
-            </span>
-          </div>
-        );
-      })}
+    <div className="min-w-0">
+      <div className="text-[10.5px] text-muted-foreground/80 mb-1">{label}</div>
+      <div className={`font-mono text-[11.5px] truncate ${valueClass}`}>
+        {value}
+      </div>
     </div>
   );
 }
 
-function lifecycleStatus(
+function lastEvent(
   events: WidgetLifecycleEvent[] | undefined,
   kind: WidgetLifecycleEvent["kind"],
 ): WidgetLifecycleEvent | undefined {
@@ -61,78 +47,54 @@ function lifecycleStatus(
   return [...events].reverse().find((e) => e.kind === kind);
 }
 
-function bridgeRow(events: WidgetLifecycleEvent[] | undefined): StackRow {
-  const ready = lifecycleStatus(events, "bridge-connect-ready");
-  const error = lifecycleStatus(events, "bridge-connect-error");
-  if (error) {
-    return {
-      tone: "warn",
-      label: "postMessage bridge",
-      value: <span className="text-amber-600 dark:text-amber-400">error</span>,
-    };
-  }
-  if (ready) {
-    return {
-      tone: "live",
-      label: "postMessage bridge",
-      value: (
-        <>
-          <span className="text-emerald-600 dark:text-emerald-400">live</span>
-          {" · forwarding "}
-          <span className="text-foreground">ui/*</span>
-        </>
-      ),
-    };
-  }
-  return {
-    tone: "muted",
-    label: "postMessage bridge",
-    value: <span className="italic text-muted-foreground">pending</span>,
-  };
+function lifecycleStatus(events: WidgetLifecycleEvent[] | undefined): {
+  tone: "live" | "muted";
+  text: string;
+} {
+  if (lastEvent(events, "app-initialized"))
+    return { tone: "live", text: "initialized" };
+  if (lastEvent(events, "bridge-connect-ready"))
+    return { tone: "live", text: "bridge connected" };
+  return { tone: "muted", text: "loading" };
 }
 
-function lifecycleRow(
-  events: WidgetLifecycleEvent[] | undefined,
-): StackRow | null {
-  if (!events || events.length === 0) return null;
-  const initialized = lifecycleStatus(events, "app-initialized");
-  if (initialized) {
-    return {
-      tone: "ok",
-      label: "Lifecycle",
-      value: (
-        <>
-          <span className="text-foreground">initialized</span>
-        </>
-      ),
-    };
+/** Wrap a comma-joined list so the chip can show "N, M, …" + "+K more". */
+function TruncatedList({ items, max = 2 }: { items: string[]; max?: number }) {
+  const [expanded, setExpanded] = useState(false);
+  if (items.length === 0)
+    return <span className="text-muted-foreground italic">none</span>;
+  if (expanded || items.length <= max) {
+    return <span>{items.join(", ")}</span>;
   }
-  const bridgeReady = lifecycleStatus(events, "bridge-connect-ready");
-  if (bridgeReady) {
-    return {
-      tone: "ok",
-      label: "Lifecycle",
-      value: <span className="text-foreground">bridge connected</span>,
-    };
-  }
-  return {
-    tone: "muted",
-    label: "Lifecycle",
-    value: <span className="italic text-muted-foreground">loading</span>,
-  };
+  const visible = items.slice(0, max).join(", ");
+  const rest = items.length - max;
+  return (
+    <span>
+      {visible}
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setExpanded(true);
+        }}
+        className="ml-1.5 text-[10.5px] text-muted-foreground hover:text-foreground"
+      >
+        +{rest} more
+      </button>
+    </span>
+  );
 }
 
 export function SandboxStackTab({
   applied,
   lifecycle,
   mounts,
-  hostInfo,
   protocol,
 }: SandboxStackTabProps) {
   const sandboxAttrs =
     applied?.sandboxAttrs && applied.sandboxAttrs.length > 0
-      ? applied.sandboxAttrs.join(", ")
-      : "allow-scripts, allow-same-origin";
+      ? applied.sandboxAttrs
+      : ["allow-scripts", "allow-same-origin"];
 
   const permissionsList = applied?.permissions
     ? Object.keys(applied.permissions).map((p) =>
@@ -142,112 +104,77 @@ export function SandboxStackTab({
       ? Object.keys(applied.allowFeatures)
       : [];
 
-  const outerRows: StackRow[] = [
-    {
-      tone: "ok",
-      label: "Sandbox attributes",
-      value: <span className="text-foreground">{sandboxAttrs}</span>,
-    },
-    {
-      tone: permissionsList.length > 0 ? "ok" : "muted",
-      label: "Permissions policy",
-      value:
-        permissionsList.length > 0 ? (
-          <span className="text-foreground">{permissionsList.join(", ")}</span>
-        ) : (
-          <span className="italic text-muted-foreground">none granted</span>
-        ),
-    },
-    bridgeRow(lifecycle),
-  ];
-
-  const innerRows: StackRow[] = [];
-  const lc = lifecycleRow(lifecycle);
-  if (lc) innerRows.push(lc);
-  if (protocol) {
-    innerRows.push({
-      tone: "ok",
-      label: "Protocol",
-      value: (
-        <span className="text-foreground">
-          {protocol === "mcp-apps" ? "MCP Apps · SEP-1865" : "OpenAI Apps SDK"}
-        </span>
-      ),
-    });
-  }
-  if (mounts && mounts.length > 0) {
-    innerRows.push({
-      tone: mounts.length > 1 ? "warn" : "ok",
-      label: "Mount count",
-      value: (
-        <span
-          className={
-            mounts.length > 1
-              ? "text-amber-600 dark:text-amber-400"
-              : "text-foreground"
-          }
-        >
-          {mounts.length} {mounts.length === 1 ? "mount" : "mounts"}
-          {mounts.length > 1 ? " · check fetch-source key changes" : ""}
-        </span>
-      ),
-    });
-  }
-  if (hostInfo) {
-    innerRows.push({
-      tone: "ok",
-      label: "Host info",
-      value: (
-        <span className="text-foreground">
-          {hostInfo.name} {hostInfo.version}
-        </span>
-      ),
-    });
-  }
-
-  if (innerRows.length === 0) {
-    innerRows.push({
-      tone: "muted",
-      label: "View iframe",
-      value: <span className="italic text-muted-foreground">awaiting first mount</span>,
-    });
-  }
+  const lc = lifecycleStatus(lifecycle);
+  const mountCount = mounts?.length ?? 0;
 
   return (
     <div className="space-y-3">
-      <div>
-        <h3 className="text-[12.5px] font-medium">Sandbox stack</h3>
-        <p className="text-[11px] text-muted-foreground">
-          double iframe — outer enforces, inner runs
-        </p>
-      </div>
-
-      <div className="rounded-md border border-border/40 bg-card p-4 relative">
+      <div className="rounded-md border border-border/40 bg-card p-3.5">
         <div className="flex items-baseline justify-between mb-3">
           <span className="text-[12.5px] font-medium text-amber-600 dark:text-amber-400">
             Sandbox proxy iframe
           </span>
           <span className="font-mono text-[10.5px] text-muted-foreground">
-            outer · enforces CSP + permissions
+            outer
           </span>
         </div>
 
-        <StackRows rows={outerRows} />
-
-        <div className="relative mt-4 rounded-md border border-border/40 bg-muted/15 p-4">
-          <span
-            aria-hidden
-            className="absolute -top-2.5 left-5 block h-2.5 w-px bg-border/60"
+        <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+          <Chip
+            label="Sandbox attributes"
+            value={<TruncatedList items={sandboxAttrs} max={2} />}
           />
+          <Chip
+            label="Permissions"
+            value={
+              permissionsList.length === 0 ? (
+                <span className="text-muted-foreground italic">none</span>
+              ) : (
+                <TruncatedList items={permissionsList} max={3} />
+              )
+            }
+            tone={permissionsList.length === 0 ? "muted" : "neutral"}
+          />
+        </div>
+
+        <div className="mt-3.5 rounded-md border border-border/40 bg-muted/15 p-3">
           <div className="flex items-baseline justify-between mb-3">
             <span className="text-[12.5px] font-medium text-purple-600 dark:text-purple-400">
               View iframe
             </span>
             <span className="font-mono text-[10.5px] text-muted-foreground">
-              inner · runs widget
+              inner
             </span>
           </div>
-          <StackRows rows={innerRows} />
+
+          <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+            <Chip
+              label="Lifecycle"
+              value={
+                <span
+                  className={
+                    lc.tone === "muted"
+                      ? "text-muted-foreground italic"
+                      : "text-foreground"
+                  }
+                >
+                  {lc.text}
+                </span>
+              }
+              tone={lc.tone === "muted" ? "muted" : "neutral"}
+            />
+            {mountCount > 1 && (
+              <Chip
+                label="Mount count"
+                value={
+                  <span className="text-amber-600 dark:text-amber-400">
+                    {mountCount} mounts · check fetch-source key
+                  </span>
+                }
+                tone="warn"
+              />
+            )}
+          </div>
 
           {protocol === "openai-apps" && (
             <div className="mt-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-background border border-border/40 font-mono text-[11px]">
@@ -266,9 +193,7 @@ export function SandboxStackTab({
                   50% { opacity: 0.4; }
                 }
                 @media (prefers-reduced-motion: reduce) {
-                  span[style*="csp-live-pulse"] {
-                    animation: none !important;
-                  }
+                  span[style*="csp-live-pulse"] { animation: none !important; }
                 }
               `}</style>
             </div>

@@ -9,28 +9,10 @@ interface FindingsTabProps {
   onViewPolicyDiff: (host: string) => void;
 }
 
-interface SummaryItem {
+interface MeterPart {
   count: number;
   label: string;
-  tone: "csp" | "cors" | "host-stripped" | "runtime-mismatch" | "fixes" | "declaration";
-  show: boolean;
-}
-
-function summaryClasses(tone: SummaryItem["tone"]): string {
-  switch (tone) {
-    case "csp":
-      return "text-destructive";
-    case "cors":
-      return "text-amber-600 dark:text-amber-400";
-    case "host-stripped":
-      return "text-purple-600 dark:text-purple-400";
-    case "runtime-mismatch":
-      return "text-sky-600 dark:text-sky-400";
-    case "fixes":
-      return "text-emerald-600 dark:text-emerald-400";
-    case "declaration":
-      return "text-foreground";
-  }
+  cls: string;
 }
 
 export function FindingsTab({ diagnoses, onViewPolicyDiff }: FindingsTabProps) {
@@ -44,66 +26,55 @@ export function FindingsTab({ diagnoses, onViewPolicyDiff }: FindingsTabProps) {
         <div className="text-[11.5px] text-muted-foreground max-w-md">
           The widget loaded without tripping any{" "}
           <span className="font-mono">securitypolicyviolation</span> events.
-          The Policy Diff tab still shows what the host applied if you want to
-          inspect the declared / effective allowlists.
+          Check Policy Diff to inspect the declared / effective allowlists.
         </div>
       </div>
     );
   }
 
-  const partition: SummaryItem[] = [
-    { count: summary.csp,             label: "CSP",              tone: "csp",              show: summary.csp > 0 },
-    { count: summary.cors,            label: "CORS",             tone: "cors",             show: summary.cors > 0 },
-    { count: summary.hostStripped,    label: "Host-stripped",    tone: "host-stripped",    show: summary.hostStripped > 0 },
-    { count: summary.runtimeMismatch, label: "Runtime-mismatch", tone: "runtime-mismatch", show: summary.runtimeMismatch > 0 },
-  ];
-  const ctas: SummaryItem[] = [
-    { count: summary.fixes,        label: summary.fixes === 1 ? "fix" : "fixes", tone: "fixes", show: summary.fixes > 0 },
-    { count: summary.declarations, label: summary.declarations === 1 ? "declaration" : "declarations", tone: "declaration", show: summary.declarations > 0 },
-  ];
+  const parts: MeterPart[] = [
+    { count: summary.csp, label: "CSP", cls: "text-destructive" },
+    {
+      count: summary.cors,
+      label: "CORS",
+      cls: "text-amber-600 dark:text-amber-400",
+    },
+    {
+      count: summary.hostStripped,
+      label: "host-stripped",
+      cls: "text-purple-600 dark:text-purple-400",
+    },
+    {
+      count: summary.runtimeMismatch,
+      label: "mismatch",
+      cls: "text-sky-600 dark:text-sky-400",
+    },
+  ].filter((p) => p.count > 0);
 
-  const subText = [
-    `${summary.total} ${summary.total === 1 ? "finding" : "findings"}`,
-    summary.fixes > 0 ? `${summary.fixes} ${summary.fixes === 1 ? "fix" : "fixes"}` : null,
+  const fixesPart =
+    summary.fixes > 0
+      ? `${summary.fixes} ${summary.fixes === 1 ? "fix" : "fixes"}`
+      : null;
+  const declPart =
     summary.declarations > 0
       ? `${summary.declarations} ${summary.declarations === 1 ? "declaration" : "declarations"}`
-      : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+      : null;
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-md border border-border/40 bg-card px-3 py-2.5 flex flex-wrap items-center gap-x-5 gap-y-1.5">
-        {partition.filter((p) => p.show).map((p) => (
-          <div key={p.label} className="flex items-baseline gap-1.5">
-            <span className={`font-mono text-[15px] font-semibold ${summaryClasses(p.tone)}`}>
-              {p.count}
-            </span>
-            <span className="text-[11.5px] text-muted-foreground">{p.label}</span>
-          </div>
-        ))}
-        <span className="flex-1" />
-        {ctas.filter((c) => c.show).map((c, idx, arr) => (
-          <div key={c.label} className="flex items-baseline gap-1.5">
-            <span className={`font-mono text-[15px] font-semibold ${summaryClasses(c.tone)}`}>
-              {c.count}
-            </span>
-            <span className="text-[11.5px] text-muted-foreground">{c.label}</span>
-            {idx < arr.length - 1 && (
-              <span className="text-[11px] text-muted-foreground/60 ml-2">·</span>
-            )}
-          </div>
-        ))}
-      </div>
-
+    <div className="space-y-3">
       <div className="flex items-baseline gap-3 px-1">
         <h3 className="text-[12.5px] font-medium">Blocked requests</h3>
-        <span className="inline-flex items-center font-mono text-[10.5px] text-muted-foreground border border-border/40 rounded-full px-2 py-0.5">
-          {summary.total}
-        </span>
-        <span className="ml-auto text-[11.5px] text-muted-foreground font-mono">
-          {subText}
+        <div className="flex items-baseline gap-2 font-mono text-[11px]">
+          {parts.map((p, i) => (
+            <span key={p.label} className="flex items-baseline gap-1">
+              {i > 0 && <span className="text-muted-foreground/40">·</span>}
+              <span className={`font-semibold ${p.cls}`}>{p.count}</span>
+              <span className="text-muted-foreground">{p.label}</span>
+            </span>
+          ))}
+        </div>
+        <span className="ml-auto text-[11px] text-muted-foreground font-mono">
+          {[fixesPart, declPart].filter(Boolean).join(" · ")}
         </span>
       </div>
 

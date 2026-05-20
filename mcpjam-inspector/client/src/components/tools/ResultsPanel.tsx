@@ -105,7 +105,7 @@ export function ResultsPanel({
                   {hasMCPAppsComponent
                     ? "with MCP Apps extension"
                     : "with OpenAI Apps SDK"}
-                  . Use the <strong>App Builder</strong>.
+                  . Use the <strong>Playground</strong>.
                 </span>
               </div>
               <Button
@@ -113,11 +113,11 @@ export function ResultsPanel({
                 size="sm"
                 className="h-6 text-xs px-2"
                 onClick={() => {
-                  navigateApp("/app-builder");
+                  navigateApp("/playground");
                 }}
               >
                 <ExternalLink className="h-3 w-3 mr-1" />
-                App Builder
+                Playground
               </Button>
             </div>
           )}

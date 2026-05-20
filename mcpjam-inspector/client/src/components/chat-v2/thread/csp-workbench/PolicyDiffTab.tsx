@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import type { ClassifierInput, Diagnosis } from "./types";
 import { extractOrigin, originAllowedByAny } from "./match-source";
 
 interface PolicyDiffTabProps {
   input: ClassifierInput;
   diagnoses: Diagnosis[];
-  /** When set, scroll to and flash the matching row in Effective + Observed. */
+  /** When set, expand the relevant columns and scroll to the matching row. */
   jumpToHost?: string | null;
   /** Cleared after the jump animation completes. */
   onJumpHandled?: () => void;
@@ -17,7 +18,6 @@ interface Row {
   host: string;
   directive: string;
   state: RowState;
-  /** Whether to render a small "effective ≠ observed" badge */
   showMismatchTag?: boolean;
 }
 
@@ -77,10 +77,6 @@ function buildEffectiveRows(
   return rows;
 }
 
-/**
- * "Stripped" rows = declared but not in effective. Renders alongside
- * the Effective column with a strike-through.
- */
 function buildStrippedRows(
   declared: ClassifierInput["widgetDeclared"] | undefined,
   effective: ClassifierInput["effective"],
@@ -116,10 +112,8 @@ function buildStrippedRows(
 }
 
 function extractOriginOrSelf(expr: string): string {
-  // For declared *expressions* we feed back through extractOrigin where
-  // possible (gives a real URL); for wildcards we pass through as-is so
-  // originAllowedByAny matches by host pattern.
-  if (expr.includes("*")) return `https://${expr.replace(/^https?:\/\//, "").replace(/^\*\./, "x.")}`;
+  if (expr.includes("*"))
+    return `https://${expr.replace(/^https?:\/\//, "").replace(/^\*\./, "x.")}`;
   const o = extractOrigin(expr);
   return o ?? expr;
 }
@@ -146,50 +140,100 @@ function buildObservedRows(diagnoses: Diagnosis[]): Row[] {
   });
 }
 
-function marker(state: RowState): { glyph: string; cls: string; label: string } {
+function marker(state: RowState): { glyph: string; cls: string } {
   switch (state) {
     case "allowed":
-      return { glyph: "→", cls: "text-emerald-600 dark:text-emerald-400", label: "allowed" };
+      return { glyph: "→", cls: "text-emerald-600 dark:text-emerald-400" };
     case "blocked":
-      return { glyph: "×", cls: "text-destructive", label: "blocked" };
+      return { glyph: "×", cls: "text-destructive" };
     case "stripped":
-      return { glyph: "×", cls: "text-destructive", label: "stripped" };
+      return { glyph: "×", cls: "text-destructive" };
     case "cors":
-      return { glyph: "!", cls: "text-amber-600 dark:text-amber-400", label: "CORS" };
+      return { glyph: "!", cls: "text-amber-600 dark:text-amber-400" };
     case "mismatch":
-      return { glyph: "×", cls: "text-sky-600 dark:text-sky-400", label: "blocked" };
+      return { glyph: "×", cls: "text-sky-600 dark:text-sky-400" };
   }
+}
+
+function summarize(rows: Row[]): { directives: number; sources: number } {
+  const directives = new Set<string>();
+  for (const r of rows) directives.add(r.directive);
+  return { directives: directives.size, sources: rows.length };
+}
+
+function summaryTone(rows: Row[]): "ok" | "warn" | "muted" {
+  if (rows.length === 0) return "muted";
+  if (rows.some((r) => r.state === "blocked" || r.state === "stripped"))
+    return "warn";
+  if (rows.some((r) => r.state === "cors" || r.state === "mismatch"))
+    return "warn";
+  return "ok";
 }
 
 function PolicyColumn({
   title,
   subtitle,
   rows,
-  showLabels,
-  jumpHost,
   emptyLabel,
+  jumpHost,
+  forceOpen,
 }: {
   title: string;
   subtitle: string;
   rows: Row[];
-  showLabels: boolean;
-  jumpHost?: string | null;
   emptyLabel: string;
+  jumpHost?: string | null;
+  forceOpen?: boolean;
 }) {
+  const [open, setOpen] = useState(false);
+  const summary = summarize(rows);
+  const tone = summaryTone(rows);
+  const isOpen = open || Boolean(forceOpen);
+
+  const summaryText =
+    rows.length === 0
+      ? emptyLabel
+      : tone === "warn" && (title === "Observed")
+        ? `${rows.length} ${rows.length === 1 ? "block" : "blocks"}`
+        : `${summary.directives} ${summary.directives === 1 ? "directive" : "directives"} · ${summary.sources} ${summary.sources === 1 ? "source" : "sources"}`;
+
   return (
-    <div className="rounded-md border border-border/40 bg-card p-3 min-w-0">
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-[12px] font-medium">{title}</span>
-        <span className="font-mono text-[10.5px] text-muted-foreground">
-          {subtitle}
-        </span>
-      </div>
-      {rows.length === 0 ? (
-        <div className="text-[11px] text-muted-foreground italic py-2">
-          {emptyLabel}
+    <div className="rounded-md border border-border/40 bg-card min-w-0">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={isOpen}
+        className="w-full text-left px-3 py-2.5 flex items-start justify-between gap-2 hover:bg-muted/30 transition-colors rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <div className="min-w-0">
+          <div className="flex items-baseline gap-2">
+            <span className="text-[12px] font-medium">{title}</span>
+            <span className="font-mono text-[10.5px] text-muted-foreground">
+              {subtitle}
+            </span>
+          </div>
+          <div
+            className={`mt-1 font-mono text-[11.5px] truncate ${
+              rows.length === 0
+                ? "text-muted-foreground italic"
+                : tone === "warn"
+                  ? title === "Observed"
+                    ? "text-destructive"
+                    : "text-amber-600 dark:text-amber-400"
+                  : "text-foreground"
+            }`}
+          >
+            {summaryText}
+          </div>
         </div>
-      ) : (
-        <div className="flex flex-col gap-1">
+        <ChevronDown
+          aria-hidden
+          className={`size-3.5 text-muted-foreground shrink-0 mt-1 transition-transform ${isOpen ? "rotate-180" : ""}`}
+        />
+      </button>
+
+      {isOpen && rows.length > 0 && (
+        <div className="border-t border-border/40 px-3 py-2 flex flex-col gap-1">
           {rows.map((r, i) => {
             const m = marker(r.state);
             const matches = jumpHost && hostMatches(r.host, jumpHost);
@@ -197,19 +241,13 @@ function PolicyColumn({
               <div
                 key={`${r.host}-${r.directive}-${i}`}
                 data-policy-host={r.host}
-                className={`grid grid-cols-[14px_auto_1fr_auto] gap-2 items-center px-1.5 py-1 rounded text-[11.5px] font-mono ${
+                className={`grid grid-cols-[14px_1fr_auto] gap-2 items-center px-1.5 py-1 rounded text-[11.5px] font-mono ${
                   r.state === "mismatch"
                     ? "bg-sky-500/5 border border-sky-500/25 border-l-2 border-l-sky-500/60"
                     : "border border-transparent"
                 } ${matches ? "ring-1 ring-sky-500 bg-sky-500/15" : ""} transition-colors motion-reduce:transition-none`}
               >
                 <span className={`text-center ${m.cls}`}>{m.glyph}</span>
-                {showLabels && (
-                  <span className="text-[10.5px] text-muted-foreground">
-                    {m.label}
-                  </span>
-                )}
-                {!showLabels && <span aria-hidden />}
                 <span
                   className={`truncate min-w-0 ${
                     r.state === "blocked" || r.state === "stripped"
@@ -224,13 +262,8 @@ function PolicyColumn({
                 >
                   {r.host}
                 </span>
-                <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground/70">
-                  {r.showMismatchTag && (
-                    <span className="font-mono text-[9.5px] text-sky-600 dark:text-sky-400 border border-sky-500/30 rounded px-1.5 py-0.5">
-                      effective ≠ observed
-                    </span>
-                  )}
-                  <span>{r.directive}</span>
+                <span className="text-[10px] text-muted-foreground/70">
+                  {r.directive}
                 </span>
               </div>
             );
@@ -254,10 +287,8 @@ export function PolicyDiffTab({
   jumpToHost,
   onJumpHandled,
 }: PolicyDiffTabProps) {
-  const [showLabels, setShowLabels] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  // Hosts that appear allowed by the host (effective) but observed-blocked.
   const mismatchHosts = useMemo(() => {
     const s = new Set<string>();
     for (const d of diagnoses) {
@@ -285,7 +316,6 @@ export function PolicyDiffTab({
   );
   const observedRows = useMemo(() => buildObservedRows(diagnoses), [diagnoses]);
 
-  // Scroll & flash on jumpToHost
   useEffect(() => {
     if (!jumpToHost || !containerRef.current) return;
     const target = containerRef.current.querySelector(
@@ -300,47 +330,37 @@ export function PolicyDiffTab({
 
   return (
     <div className="space-y-3" ref={containerRef}>
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h3 className="text-[12.5px] font-medium">Policy divergence</h3>
-          <p className="text-[11px] text-muted-foreground">
-            server → host → browser
-          </p>
-        </div>
-        <button
-          type="button"
-          aria-pressed={showLabels}
-          onClick={() => setShowLabels((s) => !s)}
-          className="h-7 px-2.5 rounded border border-border/60 bg-transparent font-mono text-[10.5px] text-muted-foreground hover:text-foreground hover:bg-muted/30 data-[active=true]:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          {showLabels ? "Hide labels" : "Show labels"}
-        </button>
+      <div>
+        <h3 className="text-[12.5px] font-medium">Policy divergence</h3>
+        <p className="text-[11px] text-muted-foreground">
+          server → host → browser
+        </p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
         <PolicyColumn
           title="Requested"
-          subtitle="from your server"
+          subtitle="from server"
           rows={requestedRows}
-          showLabels={showLabels}
+          emptyLabel="No CSP declared"
           jumpHost={jumpToHost}
-          emptyLabel="No CSP declared by the widget."
+          forceOpen={Boolean(jumpToHost)}
         />
         <PolicyColumn
           title="Effective"
-          subtitle="what host granted"
+          subtitle="host granted"
           rows={effectiveRows}
-          showLabels={showLabels}
+          emptyLabel="No allowlist captured"
           jumpHost={jumpToHost}
-          emptyLabel="No effective allowlist captured."
+          forceOpen={Boolean(jumpToHost)}
         />
         <PolicyColumn
           title="Observed"
-          subtitle="what browser saw"
+          subtitle="browser saw"
           rows={observedRows}
-          showLabels={showLabels}
+          emptyLabel="No violations"
           jumpHost={jumpToHost}
-          emptyLabel="No violations recorded."
+          forceOpen={Boolean(jumpToHost)}
         />
       </div>
 
@@ -351,9 +371,7 @@ export function PolicyDiffTab({
             effective ≠ observed
           </span>{" "}
           are where the host reported the origin as allowed but the browser
-          still recorded a block. The cause cannot be inferred from the policy
-          alone — see the runtime-mismatch cards in Findings for the
-          candidate causes.
+          still blocked it. See Findings for the candidate causes.
         </div>
       )}
     </div>
