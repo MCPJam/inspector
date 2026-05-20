@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  act,
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+} from "@testing-library/react";
 import { ResourcesTab } from "../ResourcesTab";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 
@@ -99,6 +105,103 @@ describe("ResourcesTab", () => {
           undefined,
         );
       });
+    });
+
+    it("does not fetch resources when the server is disconnected", () => {
+      const serverConfig = createServerConfig();
+
+      render(
+        <ResourcesTab
+          serverConfig={serverConfig}
+          serverName="test-server"
+          serverConnectionStatus="disconnected"
+        />,
+      );
+
+      expect(mockListResources).not.toHaveBeenCalled();
+      expect(
+        screen.getByText("Connect this server to load resources."),
+      ).toBeInTheDocument();
+    });
+
+    it("clears loaded resources when the selected server disconnects", async () => {
+      const serverConfig = createServerConfig();
+
+      mockListResources.mockResolvedValue({
+        resources: [{ name: "test.txt", uri: "file:///test.txt" }],
+      });
+
+      const { rerender } = render(
+        <ResourcesTab
+          serverConfig={serverConfig}
+          serverName="test-server"
+          serverConnectionStatus="connected"
+        />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("test.txt")).toBeInTheDocument();
+      });
+      expect(mockListResources).toHaveBeenCalledTimes(1);
+
+      rerender(
+        <ResourcesTab
+          serverConfig={serverConfig}
+          serverName="test-server"
+          serverConnectionStatus="disconnected"
+        />,
+      );
+
+      await waitFor(() => {
+        expect(screen.queryByText("test.txt")).not.toBeInTheDocument();
+      });
+      expect(
+        screen.getByText("Connect this server to load resources."),
+      ).toBeInTheDocument();
+      expect(mockListResources).toHaveBeenCalledTimes(1);
+    });
+
+    it("ignores a stale resources response after the selected server disconnects", async () => {
+      const serverConfig = createServerConfig();
+      let resolveResources!: (value: {
+        resources: Array<Record<string, unknown>>;
+      }) => void;
+      mockListResources.mockReturnValue(
+        new Promise((resolve) => {
+          resolveResources = resolve;
+        }),
+      );
+
+      const { rerender } = render(
+        <ResourcesTab
+          serverConfig={serverConfig}
+          serverName="test-server"
+          serverConnectionStatus="connected"
+        />,
+      );
+
+      await waitFor(() => {
+        expect(mockListResources).toHaveBeenCalledTimes(1);
+      });
+
+      rerender(
+        <ResourcesTab
+          serverConfig={serverConfig}
+          serverName="test-server"
+          serverConnectionStatus="disconnected"
+        />,
+      );
+
+      await act(async () => {
+        resolveResources({
+          resources: [{ name: "late.txt", uri: "file:///late.txt" }],
+        });
+      });
+
+      expect(screen.queryByText("late.txt")).not.toBeInTheDocument();
+      expect(
+        screen.getByText("Connect this server to load resources."),
+      ).toBeInTheDocument();
     });
 
     it("displays resources after fetching", async () => {
