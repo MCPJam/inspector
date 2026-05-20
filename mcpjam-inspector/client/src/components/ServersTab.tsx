@@ -83,7 +83,10 @@ import {
   writePendingQuickConnect,
   type PendingQuickConnectState,
 } from "@/lib/quick-connect-pending";
-import { useProjectServers as useRemoteProjectServers } from "@/hooks/useProjects";
+import {
+  useProjectServers as useRemoteProjectServers,
+  useProjectMembers,
+} from "@/hooks/useProjects";
 import { projectClientCapabilitiesNeedReconnect } from "@/lib/client-config";
 import {
   DndContext,
@@ -616,6 +619,16 @@ export function ServersTab({
   // the catalog later, the new server isn't auto-included — they'd
   // toggle OFF/ON to refresh. Acceptable for v1; a later pass can fold
   // newly-added servers in automatically when the toggle is on.
+  // Permission gate for the Auto-connect toggle. Backend
+  // `projectServerConfig:setConfig` requires project admin
+  // (`canManageProjectMembers`); mirror that check on the client so
+  // non-admins see a disabled switch instead of an enabled control that
+  // toasts an authorization error when toggled. Matches the
+  // canManageProjectSettings pattern in ProjectSettingsTab.
+  const { canManageMembers: canManageProjectServers } = useProjectMembers({
+    isAuthenticated,
+    projectId: sharedProjectIdForHostScope,
+  });
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as any,
     sharedProjectIdForHostScope && isAuthenticated
@@ -692,14 +705,22 @@ export function ServersTab({
     if (!sharedProjectIdForHostScope || !isAuthenticated) return null;
     if (catalogServerIds.length === 0) return null;
     if (projectServerConfigDto === undefined) return null;
+    const disabled = isTogglingAutoConnect || !canManageProjectServers;
     return (
       <label
-        className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none"
-        title="Auto-connect every project server when a host opens"
+        className={cn(
+          "flex items-center gap-2 text-xs text-muted-foreground select-none",
+          disabled ? "cursor-not-allowed" : "cursor-pointer",
+        )}
+        title={
+          canManageProjectServers
+            ? "Auto-connect every project server when a host opens"
+            : "Only project admins can change auto-connect"
+        }
       >
         <Switch
           checked={autoConnectAll}
-          disabled={isTogglingAutoConnect}
+          disabled={disabled}
           onCheckedChange={handleToggleAutoConnect}
           aria-label="Auto-connect project servers"
         />

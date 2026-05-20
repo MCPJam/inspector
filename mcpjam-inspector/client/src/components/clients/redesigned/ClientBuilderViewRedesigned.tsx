@@ -357,22 +357,21 @@ export function ClientBuilderViewRedesigned({
           oauthScopes: formData.oauthScopes,
           clientId: formData.clientId,
         })) as string;
-        setDraftConfig((prev) =>
-          prev
-            ? {
-                ...prev,
-                serverIds: [...(prev.serverIds ?? []), serverId],
-              }
-            : prev,
-        );
+        // Per the project-scoped server config rollout: the host draft
+        // no longer owns serverIds — `projects.serverIds` does, and the
+        // backend fan-out re-materializes every host's hostConfigId.
+        // We intentionally do NOT append to draftConfig.serverIds here
+        // (that's the bypass the audit flagged) and we do NOT open the
+        // now-removed Servers focus tab. The new server lands in the
+        // project catalog; if Auto-connect is ON on the Servers tab,
+        // toggle OFF/ON to refresh and include the new server.
         setSelectedNodeId(`server-card:${serverId}`);
-        openFocus("servers", serverId);
         toast.success(`Server "${formData.name}" added`);
       } catch (err) {
         toast.error(getBillingErrorMessage(err, "Failed to add server"));
       }
     },
-    [createServer, projectId, openFocus],
+    [createServer, projectId],
   );
 
   // Only show the skeleton on the very first mount when there's nothing
