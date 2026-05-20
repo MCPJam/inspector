@@ -20,7 +20,6 @@ import { AppearanceTab } from "./AppearanceTab";
 import { BehaviorTab } from "./BehaviorTab";
 import { ProtocolTab } from "./ProtocolTab";
 import { AppsExtensionTab } from "./AppsExtensionTab";
-import { ServersTab } from "./ServersTab";
 import { ClientFocusTabBar } from "./ClientFocusTabBar";
 import {
   hostFocusShellDialogChromeClass,
@@ -40,9 +39,6 @@ interface HostFocusDialogProps {
   /** Tab change handler — keyboard nav + header tabs. */
   onTabChange: (next: HostFocusTabId) => void;
 
-  /** Initial server id selected by canvas click; ServersTab consumes this. */
-  initialSelectedServerId: string | null;
-
   hostDisplayName: string;
   onHostDisplayNameChange: (value: string) => void;
 
@@ -59,21 +55,9 @@ interface HostFocusDialogProps {
     updater: (prev: HostConfigInputV2) => HostConfigInputV2,
   ) => void;
   attention: ReadonlyArray<HostAttentionIssue>;
-
-  /** Project servers list for the Servers tab. */
-  availableServers: ReadonlyArray<{
-    id: string;
-    name: string;
-    url?: string | null;
-    connectionStatus?:
-      | "connected"
-      | "connecting"
-      | "failed"
-      | "disconnected"
-      | "oauth-flow"
-      | "unknown";
-  }>;
-  onAddServer: () => void;
+  // `availableServers`, `onAddServer`, and `initialSelectedServerId`
+  // were dropped when the per-host Servers tab moved to Project
+  // Settings → Servers.
 
   /** Header actions. */
   onClose: () => void;
@@ -86,7 +70,6 @@ export function ClientFocusDialog({
   hostId,
   tab,
   onTabChange,
-  initialSelectedServerId,
   hostDisplayName,
   onHostDisplayNameChange,
   hostName,
@@ -97,8 +80,6 @@ export function ClientFocusDialog({
   draft,
   onDraftChange,
   attention,
-  availableServers,
-  onAddServer,
   onClose,
   onRevert,
   onSave,
@@ -291,15 +272,9 @@ export function ClientFocusDialog({
                 attention={attention}
               />
             ) : null}
-            {tab === "servers" ? (
-              <ServersTab
-                draft={draft}
-                onDraftChange={onDraftChange}
-                availableServers={availableServers}
-                initialSelectedServerId={initialSelectedServerId}
-                onAddServer={onAddServer}
-              />
-            ) : null}
+            {/* Servers tab moved to Project Settings → Servers. Legacy
+                state may still report `tab === "servers"`; we render
+                nothing and the tab bar no longer surfaces the entry. */}
             {tab === "appearance" ? (
               <AppearanceTab draft={draft} onDraftChange={onDraftChange} />
             ) : null}

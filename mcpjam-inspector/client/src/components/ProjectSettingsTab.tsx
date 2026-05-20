@@ -179,6 +179,9 @@ export function ProjectSettingsTab({
           />
         ) : null}
 
+        {/* Project Servers auto-connect lives on the Servers tab header
+            (single toggle next to "Add Server"), not here. */}
+
         {/* Danger Zone */}
         <div className="space-y-2">
           <h2 className="text-sm font-medium text-muted-foreground">

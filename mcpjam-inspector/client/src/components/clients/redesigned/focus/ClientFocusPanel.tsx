@@ -12,7 +12,6 @@ import { AppearanceTab } from "./AppearanceTab";
 import { BehaviorTab } from "./BehaviorTab";
 import { ProtocolTab } from "./ProtocolTab";
 import { AppsExtensionTab } from "./AppsExtensionTab";
-import { ServersTab } from "./ServersTab";
 import { ClientFocusTabBar } from "./ClientFocusTabBar";
 import { ClientIdentityRow } from "./ClientIdentityRow";
 import {
@@ -30,7 +29,6 @@ interface HostFocusPanelProps {
   hostId: string;
   tab: HostFocusTabId;
   onTabChange: (next: HostFocusTabId) => void;
-  initialSelectedServerId: string | null;
   /**
    * Sandbox-config subKey to focus inside the Apps tab when opened from a
    * sandbox-cfg matrix click. Currently threaded through but ignored by
@@ -45,35 +43,24 @@ interface HostFocusPanelProps {
     updater: (prev: HostConfigInputV2) => HostConfigInputV2,
   ) => void;
   attention: ReadonlyArray<HostAttentionIssue>;
-  availableServers: ReadonlyArray<{
-    id: string;
-    name: string;
-    url?: string | null;
-    connectionStatus?:
-      | "connected"
-      | "connecting"
-      | "failed"
-      | "disconnected"
-      | "oauth-flow"
-      | "unknown";
-  }>;
-  onAddServer: () => void;
   onClose: () => void;
+  // `availableServers`, `onAddServer`, and `initialSelectedServerId`
+  // were dropped when the per-host Servers tab moved to Project
+  // Settings → Servers (project-scoped server config rollout). Server
+  // selection is no longer a per-host concern; canvas-level "Add
+  // server" is wired separately on the parent.
 }
 
 export function ClientFocusPanel({
   hostId,
   tab,
   onTabChange,
-  initialSelectedServerId,
   focusSubKey,
   hostDisplayName,
   onHostDisplayNameChange,
   draft,
   onDraftChange,
   attention,
-  availableServers,
-  onAddServer,
   onClose,
 }: HostFocusPanelProps) {
   // Host-name validation was retagged from "general" → "behavior" when
@@ -137,15 +124,11 @@ export function ClientFocusPanel({
             focusSubKey={focusSubKey}
           />
         ) : null}
-        {tab === "servers" ? (
-          <ServersTab
-            draft={draft}
-            onDraftChange={onDraftChange}
-            availableServers={availableServers}
-            initialSelectedServerId={initialSelectedServerId}
-            onAddServer={onAddServer}
-          />
-        ) : null}
+        {/* Servers tab moved to Project Settings → Servers. Persisted
+            UI state may still set `tab === "servers"` for legacy
+            sessions; we render nothing and the tab bar (which no
+            longer surfaces a "servers" entry) will route the user
+            elsewhere on next interaction. */}
       </div>
     </div>
   );
