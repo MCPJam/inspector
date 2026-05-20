@@ -1412,29 +1412,15 @@ export function MCPAppsRenderer({
             return true;
           }),
       );
-    const hasExplicitCspHardening =
-      restrictToConfigured || cspDirectivesConfigured || HOSTED_MODE;
-
-    // Chatbox / Playground / minimal-mode surfaces opted into `permissive`
-    // CSP up at line 285. Permissive means "default to permissive when the
-    // host hasn't asked for tightening" — short-circuit the host CSP
-    // resolver only when the saved profile carries NO explicit hardening
-    // (restrictTo) and we're not in hosted mode. Otherwise fall through to
-    // the resolver so the documented guarantees still hold even when the
-    // surface is permissive-by-default:
-    //   * restrictTo intersects whatever the resource declares
-    //   * hosted clamp is non-bypassable (MCPJam-origin SDK-internal strip)
+    // Permissive means permissive: ignore the saved profile's CSP hardening
+    // (restrictTo, cspDirectives) and skip CSP injection entirely. To get the
+    // host profile applied, the user picks Strict. No HOSTED_MODE carve-out:
+    // PR #2164 moves the sandbox proxy to a separate origin so the iframe is
+    // no longer same-origin with mcpjam.com, and a permissive CSP can't be
+    // used to fetch /api/* with the user's session cookies.
     //
-    // Without this fall-through, a host could save `restrictTo:
-    // { connectDomains: ["https://api.acme"] }` on its chatbox host and
-    // the inspector would silently honor it on Connect → Chat but ignore
-    // it on the public chatbox URL — a policy bypass tied to surface
-    // type.
-    //
-    // Permissions policy still resolves below — it's orthogonal to CSP
-    // and the chatbox-surface decision is specifically about content
-    // loading, not device access.
-    if (cspMode === "permissive" && !hasExplicitCspHardening) {
+    // Permissions policy still resolves below — it's orthogonal to CSP.
+    if (cspMode === "permissive") {
       let resolvedPermissions: McpUiResourcePermissions | undefined;
       if (sandboxPermissionsPolicy) {
         const resourcePermsMap: Record<string, boolean> = {};
