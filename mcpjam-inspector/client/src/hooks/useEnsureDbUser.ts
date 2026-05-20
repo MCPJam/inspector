@@ -129,12 +129,26 @@ export function useEnsureDbUser() {
     promise: Promise<void>;
   } | null>(null);
   const [isEnsuringUser, setIsEnsuringUser] = useState(false);
+  const [ensuredIdentityKey, setEnsuredIdentityKey] = useState<string | null>(
+    null
+  );
+  const identityKey =
+    !isLoading && isAuthenticated
+      ? workosUserId
+        ? `workos:${workosUserId}`
+        : actorKey
+        ? `guest:${actorKey}`
+        : null
+      : null;
+  const isUserReady =
+    identityKey !== null && ensuredIdentityKey === identityKey;
 
   // Reset cache on Convex logout so we re-run for the next login in the same session.
   useEffect(() => {
     if (!isAuthenticated) {
       lastEnsuredIdentityRef.current = null;
       activeEnsureIdentityRef.current = null;
+      setEnsuredIdentityKey(null);
       setIsEnsuringUser(false);
     }
   }, [isAuthenticated]);
@@ -153,22 +167,20 @@ export function useEnsureDbUser() {
     }
     if (!isAuthenticated) {
       activeEnsureIdentityRef.current = null;
+      setEnsuredIdentityKey(null);
       setIsEnsuringUser(false);
       return;
     }
 
-    const identityKey = workosUserId
-      ? `workos:${workosUserId}`
-      : actorKey
-      ? `guest:${actorKey}`
-      : null;
     if (!identityKey) {
       activeEnsureIdentityRef.current = null;
+      setEnsuredIdentityKey(null);
       setIsEnsuringUser(false);
       return;
     }
 
     if (lastEnsuredIdentityRef.current === identityKey) {
+      setEnsuredIdentityKey(identityKey);
       setIsEnsuringUser(false);
       return;
     }
@@ -224,6 +236,7 @@ export function useEnsureDbUser() {
           // eslint-disable-next-line no-console
           console.error("[auth] ensureUser failed", err);
           lastEnsuredIdentityRef.current = null;
+          setEnsuredIdentityKey(null);
           setIsEnsuringUser(false);
         }
         return;
@@ -232,6 +245,7 @@ export function useEnsureDbUser() {
       if (cancelled || activeEnsureIdentityRef.current !== identityKey) return;
 
       lastEnsuredIdentityRef.current = identityKey;
+      setEnsuredIdentityKey(identityKey);
       if (workosUserId) {
         Sentry.setUser({ id: workosUserId });
       }
@@ -259,7 +273,7 @@ export function useEnsureDbUser() {
         activeEnsureIdentityRef.current = null;
       }
     };
-  }, [actorKey, isAuthenticated, isLoading, workosUserId, ensureUser]);
+  }, [identityKey, isAuthenticated, isLoading, workosUserId, ensureUser]);
 
-  return { isEnsuringUser };
+  return { isEnsuringUser, isUserReady };
 }

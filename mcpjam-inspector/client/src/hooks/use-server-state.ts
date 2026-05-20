@@ -64,6 +64,7 @@ import { EXCALIDRAW_SERVER_NAME } from "@/lib/excalidraw-quick-connect";
 import { readOnboardingState } from "@/lib/onboarding-state";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 import { resolveServerConnectionSettings } from "@/lib/client-connection-resolve";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 
 /** Skip noisy connect toast while first-run App Builder onboarding is in progress. */
 function shouldSuppressExcalidrawConnectToastForOnboarding(
@@ -564,6 +565,7 @@ export function useServerState({
   activeHostConfig,
   logger,
 }: UseServerStateParams) {
+  const isUserReady = useDbUserReady();
   const convex = useConvex();
   const {
     createServerIfMissing: convexCreateServerIfMissing,
@@ -577,6 +579,8 @@ export function useServerState({
   hasSignedInUserRef.current = hasSignedInUser;
   const isAuthenticatedRef = useRef(isAuthenticated);
   isAuthenticatedRef.current = isAuthenticated;
+  const isUserReadyRef = useRef(isUserReady);
+  isUserReadyRef.current = isUserReady;
   const isAuthLoadingRef = useRef(isAuthLoading);
   isAuthLoadingRef.current = isAuthLoading;
   const isLoadingProjectsRef = useRef(isLoadingProjects);
@@ -1085,6 +1089,9 @@ export function useServerState({
         const local = snapshot?.find((s) => s.name === serverName);
         if (local) return local;
         if (snapshot !== undefined && options?.queryWhenLoaded !== true) {
+          return undefined;
+        }
+        if (!isUserReadyRef.current) {
           return undefined;
         }
         try {

@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import type { ProjectVisibility } from "@/state/app-types";
 import type { ProjectClientConfig } from "@/lib/client-config";
 
@@ -279,7 +280,9 @@ export function useProjectServers({
   projectId: string | null;
   isAuthenticated: boolean;
 }) {
-  const shouldQuery = isAuthenticated && shouldQueryProjectId(projectId);
+  const isUserReady = useDbUserReady();
+  const shouldQuery =
+    isAuthenticated && isUserReady && shouldQueryProjectId(projectId);
   const queryProjectId = projectId?.trim() ?? "";
 
   const servers = useQuery(

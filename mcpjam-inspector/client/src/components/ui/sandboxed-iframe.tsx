@@ -13,7 +13,7 @@
  * and potentially future OpenAI SDK consolidation.
  */
 
-import { HOSTED_MODE } from "@/lib/config";
+import { HOSTED_MODE, SANDBOX_ORIGIN } from "@/lib/config";
 import {
   useRef,
   useState,
@@ -114,8 +114,27 @@ export const SandboxedIframe = forwardRef<
   const outerRef = useRef<HTMLIFrameElement>(null);
   const [proxyReady, setProxyReady] = useState(false);
 
-  // SEP-1865: Host and Sandbox MUST have different origins
+  // SEP-1865: Host and Sandbox MUST have different origins.
+  //
+  // Hosted: prefer the operator-configured SANDBOX_ORIGIN
+  // (`VITE_MCPJAM_SANDBOX_ORIGIN`). It MUST be a distinct origin from the
+  // host app so the sandboxed iframe cannot reach host cookies or storage
+  // even when its sandbox carries `allow-same-origin`.
+  //
+  // Local: keep the localhost ↔ 127.0.0.1 swap so dev gets the same
+  // origin-separation property without operator config.
+  //
+  // Same-origin fallback exists only as a soft-fail for misconfigured
+  // hosted deploys; it emits a loud security warning.
   const [sandboxProxyUrl] = useState(() => {
+    const proxyPath = HOSTED_MODE
+      ? "/api/web/apps/mcp-apps/sandbox-proxy"
+      : "/api/apps/mcp-apps/sandbox-proxy";
+
+    if (HOSTED_MODE && SANDBOX_ORIGIN) {
+      return `${SANDBOX_ORIGIN}${proxyPath}?v=${Date.now()}`;
+    }
+
     const currentHost = window.location.hostname;
     const currentPort = window.location.port;
     const protocol = window.location.protocol;
@@ -126,20 +145,25 @@ export const SandboxedIframe = forwardRef<
     } else if (currentHost === "127.0.0.1") {
       sandboxHost = "localhost";
     } else {
-      // In production/hosted environments, fall back to same-origin
-      // Note: SEP-1865 recommends different origins, but same-origin works with sandbox attribute
-      console.warn(
-        "[SandboxedIframe] Cross-origin isolation not available for hostname:",
-        currentHost,
-        "- falling back to same-origin sandbox",
-      );
+      if (HOSTED_MODE) {
+        console.warn(
+          "[SandboxedIframe] VITE_MCPJAM_SANDBOX_ORIGIN is not configured;" +
+            " sandbox iframe is falling back to same-origin." +
+            " This is a security regression — the sandbox shares cookies and" +
+            " storage with the host app. Configure a distinct origin" +
+            " (e.g. https://sandbox.mcpjam.com) and redeploy.",
+        );
+      } else {
+        console.warn(
+          "[SandboxedIframe] Cross-origin isolation not available for hostname:",
+          currentHost,
+          "- falling back to same-origin sandbox",
+        );
+      }
       sandboxHost = currentHost;
     }
 
     const portSuffix = currentPort ? `:${currentPort}` : "";
-    const proxyPath = HOSTED_MODE
-      ? "/api/web/apps/mcp-apps/sandbox-proxy"
-      : "/api/apps/mcp-apps/sandbox-proxy";
     return `${protocol}//${sandboxHost}${portSuffix}${proxyPath}?v=${Date.now()}`;
   });
 

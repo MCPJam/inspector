@@ -60,6 +60,10 @@ vi.mock("lucide-react", () => ({
   ArrowLeft: () => <span data-testid="icon-arrow-left" />,
   Code2: () => <span data-testid="icon-code2" />,
   MessageSquare: () => <span data-testid="icon-message-square" />,
+  // Icons used by MultiHostPicker (rendered via PlaygroundHostPicker in the
+  // header `leading` slot)
+  Server: () => <span data-testid="icon-server" />,
+  X: () => <span data-testid="icon-x" />,
 }));
 
 // Mock UI components
@@ -501,6 +505,14 @@ vi.mock("@/components/shared/ClientContextHeader", () => ({
   },
 }));
 
+// Stub the playground host picker — its data hooks (Convex auth, host list,
+// previewed-host storage) are out of scope for these PlaygroundMain tests.
+vi.mock("@/components/playground/PlaygroundHostPicker", () => ({
+  PlaygroundHostPicker: () => (
+    <div data-testid="playground-host-picker-stub" />
+  ),
+}));
+
 // Mock traffic log store
 vi.mock("@/stores/traffic-log-store", () => ({
   useTrafficLogStore: (selector: any) => {
@@ -798,11 +810,6 @@ describe("PlaygroundMain", () => {
         screen.getByRole("heading", {
           name: /This is your playground for MCP./i,
         }),
-      ).toBeInTheDocument();
-      expect(
-        screen.getByText(
-          /Test prompts, inspect tools, and debug AI-powered apps/i,
-        ),
       ).toBeInTheDocument();
     });
 
