@@ -13,6 +13,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import { usePostHog } from "posthog-js/react";
 import { standardEventProps } from "@/lib/PosthogUtils";
@@ -82,6 +83,32 @@ const PLAYGROUND_HEADER_TOOLTIP = {
   collisionPadding: 12,
 };
 
+/**
+ * Tooltip body shared by every chip in the toolbar. When multi-host
+ * compare is active, every chip in this row only edits the LEAD host —
+ * secondaries are read-only snapshots. The optional hint surfaces that
+ * fact ("Editing lead host: <name>") so the user isn't surprised when
+ * a toolbar change doesn't repaint the secondary cards.
+ */
+function HeaderTooltipBody({
+  label,
+  leadHostHint,
+}: {
+  label: ReactNode;
+  leadHostHint?: string | null;
+}) {
+  return (
+    <>
+      <p className="font-medium">{label}</p>
+      {leadHostHint ? (
+        <p className="text-[10px] text-muted-foreground">
+          Editing lead host: {leadHostHint}
+        </p>
+      ) : null}
+    </>
+  );
+}
+
 export interface HostContextHeaderProps {
   activeProjectId: string | null;
   onSaveHostContext?: (
@@ -91,6 +118,12 @@ export interface HostContextHeaderProps {
   protocol: UIType | null;
   showThemeToggle?: boolean;
   className?: string;
+  /**
+   * When multi-host compare is active, the name of the lead host being
+   * edited. Surfaces as a secondary line on every chip's tooltip so the
+   * user understands the toolbar only affects the lead column.
+   */
+  leadHostInMultiHost?: string | null;
 }
 
 export function ClientContextHeader({
@@ -99,6 +132,7 @@ export function ClientContextHeader({
   protocol,
   showThemeToggle = false,
   className,
+  leadHostInMultiHost,
 }: HostContextHeaderProps) {
   const [devicePopoverOpen, setDevicePopoverOpen] = useState(false);
   const [localePopoverOpen, setLocalePopoverOpen] = useState(false);
@@ -274,7 +308,10 @@ export function ClientContextHeader({
               </PopoverTrigger>
             </TooltipTrigger>
             <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
-              <p className="font-medium">Device</p>
+              <HeaderTooltipBody
+                label="Device"
+                leadHostHint={leadHostInMultiHost}
+              />
             </TooltipContent>
           </Tooltip>
           <PopoverContent className="w-56 p-2" align="start">
@@ -321,7 +358,10 @@ export function ClientContextHeader({
               </PopoverTrigger>
             </TooltipTrigger>
             <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
-              <p className="font-medium">Locale</p>
+              <HeaderTooltipBody
+                label="Locale"
+                leadHostHint={leadHostInMultiHost}
+              />
             </TooltipContent>
           </Tooltip>
           <PopoverContent className="w-48 p-2" align="start">
@@ -365,7 +405,10 @@ export function ClientContextHeader({
               </PopoverTrigger>
             </TooltipTrigger>
             <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
-              <p className="font-medium">Timezone</p>
+              <HeaderTooltipBody
+                label="Timezone"
+                leadHostHint={leadHostInMultiHost}
+              />
             </TooltipContent>
           </Tooltip>
           <PopoverContent className="w-56 p-2" align="start">
@@ -418,7 +461,10 @@ export function ClientContextHeader({
               </PopoverTrigger>
             </TooltipTrigger>
             <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
-              <p className="font-medium">CSP</p>
+              <HeaderTooltipBody
+                label="CSP"
+                leadHostHint={leadHostInMultiHost}
+              />
             </TooltipContent>
           </Tooltip>
           <PopoverContent className="w-56 p-2" align="start">
@@ -451,7 +497,10 @@ export function ClientContextHeader({
               </Button>
             </TooltipTrigger>
             <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
-              <p className="font-medium">Hover</p>
+              <HeaderTooltipBody
+                label="Hover"
+                leadHostHint={leadHostInMultiHost}
+              />
               <p className="text-xs font-light text-muted-foreground">
                 {capabilities.hover ? "Enabled" : "Disabled"}
               </p>
@@ -470,7 +519,10 @@ export function ClientContextHeader({
               </Button>
             </TooltipTrigger>
             <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
-              <p className="font-medium">Touch</p>
+              <HeaderTooltipBody
+                label="Touch"
+                leadHostHint={leadHostInMultiHost}
+              />
               <p className="text-xs font-light text-muted-foreground">
                 {capabilities.touch ? "Enabled" : "Disabled"}
               </p>
@@ -485,7 +537,10 @@ export function ClientContextHeader({
             </div>
           </TooltipTrigger>
           <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
-            <p className="font-medium">Safe Area</p>
+            <HeaderTooltipBody
+              label="Safe Area"
+              leadHostHint={leadHostInMultiHost}
+            />
           </TooltipContent>
         </Tooltip>
 
@@ -508,7 +563,10 @@ export function ClientContextHeader({
             </Button>
           </TooltipTrigger>
           <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP} className="max-w-sm">
-            <p className="font-medium">Client Context</p>
+            <HeaderTooltipBody
+              label="Client Context"
+              leadHostHint={leadHostInMultiHost}
+            />
             <p className="text-xs text-muted-foreground">
               Edit raw `hostContext` JSON
             </p>
@@ -534,7 +592,10 @@ export function ClientContextHeader({
             </Button>
           </TooltipTrigger>
           <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP} className="max-w-sm">
-            <p className="font-medium">Host Capabilities</p>
+            <HeaderTooltipBody
+              label="Host Capabilities"
+              leadHostHint={leadHostInMultiHost}
+            />
             <p className="text-xs text-muted-foreground">
               JSON payload for `hostCapabilities` in ui/initialize
             </p>
@@ -572,7 +633,10 @@ export function ClientContextHeader({
               </PopoverTrigger>
             </TooltipTrigger>
             <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
-              <p className="font-medium">Client styles</p>
+              <HeaderTooltipBody
+                label="Client styles"
+                leadHostHint={leadHostInMultiHost}
+              />
               <p className="text-xs font-light text-muted-foreground">
                 {activeHostStyle.chatUi.label}
               </p>
@@ -621,9 +685,12 @@ export function ClientContextHeader({
               </Button>
             </TooltipTrigger>
             <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
-              <p className="font-medium">
-                {effectiveThemeMode === "dark" ? "Light mode" : "Dark mode"}
-              </p>
+              <HeaderTooltipBody
+                label={
+                  effectiveThemeMode === "dark" ? "Light mode" : "Dark mode"
+                }
+                leadHostHint={leadHostInMultiHost}
+              />
             </TooltipContent>
           </Tooltip>
         ) : null}

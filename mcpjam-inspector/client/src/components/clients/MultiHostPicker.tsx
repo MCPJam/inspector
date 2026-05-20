@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Server, X } from "lucide-react";
+import { Check, Columns2, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@mcpjam/design-system/popover";
-import { Switch } from "@mcpjam/design-system/switch";
 import {
   Command,
   CommandEmpty,
@@ -23,26 +22,27 @@ import { cn } from "@/lib/utils";
 import type { HostListItem } from "@/hooks/useClients";
 
 /**
- * MultiHostPicker — playground host pill that supports comparing up to N
- * hosts side-by-side. Structurally mirrors `chat-v2/chat-input/model-selector.tsx`:
+ * MultiHostPicker — playground "Compare" affordance that lets the user
+ * stack 2–N clients side-by-side. The navbar `ClientOverlayBar` is the
+ * canonical lead-client picker; this component is exclusively for
+ * entering/leaving compare mode and managing the comparison lineup.
  *
- *   - Trigger button shows the lead host name; when multi-host is enabled
- *     with more than one host selected, appends "+N".
- *   - Popover contains: search input, "Multiple hosts" switch row, chip
- *     strip (lead + secondaries; clicking a secondary promotes it to lead),
- *     and a flat host list. Each row gets a checkbox when multi-host is
- *     enabled.
+ *   - Trigger button shows "Compare" by default; once the user has >1
+ *     client selected it flips to "<Lead> +N" so the compare badge is
+ *     legible at a glance.
+ *   - Popover contains: search input, chip strip (only when >1
+ *     selected; clicking a non-lead chip promotes it to lead), and a
+ *     flat client list with always-on checkboxes. `multiHostEnabled` is
+ *     derived from `selectedHostIds.length > 1` — there is no separate
+ *     toggle, since clicking "Compare" already signals the intent.
  *
- * This component is intentionally dumb about WHERE the data comes from. The
- * wrapper (`PlaygroundHostPicker`) calls all hooks (`useHostList`,
- * `usePersistedHost`, `usePreviewedHostId`) and threads the values in. The
- * only promotion primitive the picker uses is `onPromoteLead`, which the
- * wrapper implements as `replaceLeadHostId(projectId, hostId)` per the
- * canonical-write contract from Phase 1 (`selected-host-storage.ts`).
- *
- * Phase 2 scope (this PR): UI + state writes only. Toggling "Multiple hosts"
- * on persists `multiHostEnabled` + `selectedHostIds` to localStorage but
- * does NOT change the playground render path; that lands in Phase 4.
+ * This component is intentionally dumb about WHERE the data comes from.
+ * The wrapper (`PlaygroundHostPicker`) calls all hooks (`useHostList`,
+ * `usePersistedHost`, `usePreviewedHostId`) and threads the values in.
+ * The only promotion primitive the picker uses is `onPromoteLead`,
+ * which the wrapper implements as `replaceLeadHostId(projectId,
+ * hostId)` per the canonical-write contract from Phase 1
+ * (`selected-host-storage.ts`).
  */
 
 export interface MultiHostPickerProps {
@@ -65,9 +65,11 @@ export interface MultiHostPickerProps {
   maxSelectedHosts?: number;
 }
 
-type PendingHostSelectionChange =
-  | { type: "single"; nextHostId: string }
-  | { type: "multi"; enabled: boolean; selectedHostIds: string[] };
+type PendingHostSelectionChange = {
+  type: "multi";
+  enabled: boolean;
+  selectedHostIds: string[];
+};
 
 function sameHostIdOrder(left: string[], right: string[]): boolean {
   if (left.length !== right.length) return false;
@@ -170,74 +172,41 @@ export function MultiHostPicker({
   const leadHost = leadHostId ? (hostsById.get(leadHostId) ?? null) : null;
   const leadHostName = leadHost?.name ?? "Select host";
 
-  const triggerLabel =
-    multiHostEnabled && effectiveSelectedHostIds.length > 1
-      ? `${compactHostLabel(leadHostName)} +${effectiveSelectedHostIds.length - 1}`
-      : compactHostLabel(leadHostName);
+  // When NOT actively comparing (single-host, or multi-host enabled but
+  // only the lead is selected), the navbar `ClientOverlayBar` already
+  // shows the lead host name + cycle controls. Surfacing the same name
+  // here is pure duplication, so collapse the trigger into a "Compare"
+  // affordance whose only job is to open the multi-host popover. The
+  // pill earns the host name back the moment we're actually comparing
+  // (≥2 hosts selected) — that's the state the navbar can't represent.
+  const isActiveCompareMode =
+    multiHostEnabled && effectiveSelectedHostIds.length > 1;
+  const triggerLabel = isActiveCompareMode
+    ? `${compactHostLabel(leadHostName)} +${effectiveSelectedHostIds.length - 1}`
+    : "Compare";
 
-  // Toggle is only usable when there are at least 2 hosts to compare;
-  // otherwise display a tooltip explaining the requirement. Matches the
-  // plan's "single-host project guard" decision (table row 7).
+  // Two or more clients in the project are required to enter compare
+  // mode. Used for an empty-state hint inside the popover.
   const canUseMultiHost = hosts.length > 1;
   const selectedLimitReached =
-    multiHostEnabled && effectiveSelectedHostIds.length >= maxSelectedHosts;
+    effectiveSelectedHostIds.length >= maxSelectedHosts;
 
   const requestSelectionChange = (nextChange: PendingHostSelectionChange) => {
-    const isSingleNoOp =
-      nextChange.type === "single" &&
-      nextChange.nextHostId === (currentHostId ?? "");
     const isMultiNoOp =
-      nextChange.type === "multi" &&
       nextChange.enabled === multiHostEnabled &&
-      sameHostIdOrder(
-        nextChange.selectedHostIds,
-        effectiveSelectedHostIds,
-      );
-
-    if (isSingleNoOp) {
-      setIsOpen(false);
-      return;
-    }
+      sameHostIdOrder(nextChange.selectedHostIds, effectiveSelectedHostIds);
     if (isMultiNoOp) return;
 
-    if (nextChange.type === "single") {
-      onPromoteLead(nextChange.nextHostId);
-      setIsOpen(false);
-    } else {
-      onSelectedHostIdsChange(nextChange.selectedHostIds);
-      onMultiHostEnabledChange(nextChange.enabled);
-    }
+    onSelectedHostIdsChange(nextChange.selectedHostIds);
+    onMultiHostEnabledChange(nextChange.enabled);
   };
 
-  const handleToggleMultiHost = (enabled: boolean) => {
-    if (!canUseMultiHost) return;
-
-    requestPopoverStayOpen();
-
-    if (enabled) {
-      // Seed the array with the current lead so multi-host opens with the
-      // lead already selected; the user adds others incrementally.
-      requestSelectionChange({
-        type: "multi",
-        enabled: true,
-        selectedHostIds:
-          effectiveSelectedHostIds.length > 0
-            ? effectiveSelectedHostIds
-            : leadHostId
-              ? [leadHostId]
-              : [],
-      });
-      return;
-    }
-
-    requestSelectionChange({
-      type: "multi",
-      enabled: false,
-      selectedHostIds: leadHostId ? [leadHostId] : [],
-    });
-  };
-
-  const handleMultiHostSelect = (hostId: string) => {
+  // The trigger is now a "Compare" affordance, so every popover
+  // interaction is implicitly about compare mode. Adding a second
+  // client enters compare; removing back to one client exits.
+  // `multiHostEnabled` is derived from `nextIds.length > 1` instead
+  // of being driven by a separate toggle.
+  const handleHostRowToggle = (hostId: string) => {
     requestPopoverStayOpen();
 
     const isSelected = selectedIds.has(hostId);
@@ -245,13 +214,13 @@ export function MultiHostPicker({
       ? effectiveSelectedHostIds.filter((id) => id !== hostId)
       : [...effectiveSelectedHostIds, hostId];
 
-    // Mirror model-selector.tsx:338-340: never allow the array to collapse
-    // to empty — at least the lead has to stay.
+    // Never collapse to empty — at least the lead has to stay. Clicking
+    // the only selected client (the lead) is a no-op.
     if (nextSelectedHostIds.length === 0) return;
 
     requestSelectionChange({
       type: "multi",
-      enabled: true,
+      enabled: nextSelectedHostIds.length > 1,
       selectedHostIds: nextSelectedHostIds,
     });
   };
@@ -273,8 +242,9 @@ export function MultiHostPicker({
               disabled={disabled || isLoading}
               className="h-7 max-w-[200px] shrink-0 gap-1.5 border bg-background px-2 text-xs shadow-xs"
               data-testid="multi-host-picker-trigger"
+              data-compare-mode={isActiveCompareMode ? "active" : "idle"}
             >
-              <Server className="h-3.5 w-3.5 shrink-0" />
+              <Columns2 className="h-3.5 w-3.5 shrink-0" />
               <span className="truncate whitespace-nowrap @max-[820px]/playground-header:sr-only">
                 {triggerLabel}
               </span>
@@ -283,60 +253,30 @@ export function MultiHostPicker({
         </TooltipTrigger>
         <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
           <p className="font-medium">
-            {multiHostEnabled && effectiveSelectedHostIds.length > 1
-              ? "Hosts"
-              : "Host"}
+            {isActiveCompareMode ? "Clients" : "Compare clients"}
           </p>
-          {multiHostEnabled && effectiveSelectedHostIds.length > 1 ? (
+          {isActiveCompareMode ? (
             <p className="text-xs font-light text-muted-foreground">
               {effectiveSelectedHostIds
                 .map((id) => hostsById.get(id)?.name ?? id)
                 .join(", ")}
             </p>
-          ) : null}
+          ) : (
+            <p className="text-xs font-light text-muted-foreground">
+              Run multiple clients side by side
+            </p>
+          )}
         </TooltipContent>
       </Tooltip>
 
       <PopoverContent align="start" className="w-[280px] p-0" sideOffset={8}>
         <Command shouldFilter={true}>
-          <CommandInput placeholder="Search hosts" />
+          <CommandInput placeholder="Search clients" />
 
-          <div className="flex cursor-default items-center justify-between gap-2 border-b px-2.5 py-2">
-            <span className="text-xs text-muted-foreground">
-              Multiple hosts
-            </span>
-            {canUseMultiHost ? (
-              <Switch
-                checked={multiHostEnabled}
-                onCheckedChange={handleToggleMultiHost}
-                aria-label="Use multiple hosts"
-                disabled={disabled || isLoading}
-                data-testid="multi-host-toggle"
-              />
-            ) : (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span>
-                    <Switch
-                      checked={false}
-                      onCheckedChange={() => {}}
-                      aria-label="Use multiple hosts"
-                      disabled
-                      data-testid="multi-host-toggle"
-                    />
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent side="left">
-                  Add a second host to compare
-                </TooltipContent>
-              </Tooltip>
-            )}
-          </div>
-
-          {multiHostEnabled ? (
+          {effectiveSelectedHostIds.length > 1 ? (
             <div
               className="flex flex-wrap gap-1 border-b px-2.5 py-1.5"
-              title="First chip is the lead host. Click a chip to promote it."
+              title="First chip is the lead client. Click a chip to promote it."
               data-testid="multi-host-chip-strip"
             >
               {effectiveSelectedHostIds.map((hostId, index) => {
@@ -356,9 +296,8 @@ export function MultiHostPicker({
                     )}
                     onClick={() => handlePromoteLeadFromChip(hostId)}
                   >
-                    <Server className="size-3" />
                     <span className="truncate">{compactHostLabel(name)}</span>
-                    {effectiveSelectedHostIds.length > 1 ? (
+                    {!isLead ? (
                       <span
                         role="button"
                         tabIndex={-1}
@@ -367,7 +306,7 @@ export function MultiHostPicker({
                         className="inline-flex size-3.5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
                         onClick={(event) => {
                           event.stopPropagation();
-                          handleMultiHostSelect(hostId);
+                          handleHostRowToggle(hostId);
                         }}
                       >
                         <X className="h-2.5 w-2.5" />
@@ -385,61 +324,53 @@ export function MultiHostPicker({
           ) : null}
 
           <CommandList className="max-h-[min(320px,45vh)]">
-            <CommandEmpty>No matching hosts.</CommandEmpty>
+            <CommandEmpty>No matching clients.</CommandEmpty>
+
+            {!canUseMultiHost ? (
+              <div className="px-2.5 py-2 text-[11px] text-muted-foreground">
+                Add a second client to start comparing.
+              </div>
+            ) : null}
 
             {hosts.map((host) => {
               const isSelected = selectedIds.has(host.hostId);
               const isLimitedOut =
-                multiHostEnabled && !isSelected && selectedLimitReached;
+                !isSelected && selectedLimitReached;
               const isDisabled = isLimitedOut;
               const disabledReason = isLimitedOut
-                ? `You can compare up to ${maxSelectedHosts} hosts at once`
+                ? `You can compare up to ${maxSelectedHosts} clients at once`
                 : undefined;
 
               const row = (
                 <CommandItem
                   key={host.hostId}
                   value={`${host.name} ${host.hostId}`}
-                  onSelect={() => {
-                    if (multiHostEnabled) {
-                      handleMultiHostSelect(host.hostId);
-                    } else {
-                      requestSelectionChange({
-                        type: "single",
-                        nextHostId: host.hostId,
-                      });
-                    }
-                  }}
+                  onSelect={() => handleHostRowToggle(host.hostId)}
                   disabled={isDisabled}
                   className="cursor-pointer rounded-sm px-2 py-1 data-[disabled=true]:cursor-not-allowed"
                   data-testid={`multi-host-row-${host.hostId}`}
                 >
-                  <Server className="size-3.5 shrink-0" />
                   <span className="min-w-0 flex-1 truncate text-sm">
                     {compactHostLabel(host.name)}
                   </span>
-                  {multiHostEnabled ? (
-                    <div
-                      className={cn(
-                        "ml-auto flex size-4 shrink-0 items-center justify-center rounded-[5px] border transition-[background-color,border-color,box-shadow] duration-200 ease-[cubic-bezier(0.33,1,0.68,1)]",
-                        isSelected
-                          ? "border-primary bg-primary shadow-sm"
-                          : "border-border/60 bg-transparent hover:border-border",
-                      )}
-                      aria-hidden
-                      data-testid={`multi-host-checkbox-${host.hostId}`}
-                      data-checked={isSelected ? "true" : "false"}
-                    >
-                      {isSelected ? (
-                        <Check
-                          strokeWidth={3}
-                          className="size-2.5 animate-in zoom-in-95 fade-in duration-200 fill-none text-primary-foreground"
-                        />
-                      ) : null}
-                    </div>
-                  ) : host.hostId === currentHostId ? (
-                    <div className="ml-auto size-1.5 shrink-0 rounded-full bg-primary" />
-                  ) : null}
+                  <div
+                    className={cn(
+                      "ml-auto flex size-4 shrink-0 items-center justify-center rounded-[5px] border transition-[background-color,border-color,box-shadow] duration-200 ease-[cubic-bezier(0.33,1,0.68,1)]",
+                      isSelected
+                        ? "border-primary bg-primary shadow-sm"
+                        : "border-border/60 bg-transparent hover:border-border",
+                    )}
+                    aria-hidden
+                    data-testid={`multi-host-checkbox-${host.hostId}`}
+                    data-checked={isSelected ? "true" : "false"}
+                  >
+                    {isSelected ? (
+                      <Check
+                        strokeWidth={3}
+                        className="size-2.5 animate-in zoom-in-95 fade-in duration-200 fill-none text-primary-foreground"
+                      />
+                    ) : null}
+                  </div>
                 </CommandItem>
               );
 
