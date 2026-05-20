@@ -137,7 +137,10 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     isAuthenticated: isConvexAuthenticated,
     hostId: previewedHostId,
   });
-  const activeMcpProfile = previewedHost?.config.mcpProfile;
+  const effectiveHostConfig = previewedHostId
+    ? previewedHost?.config ?? null
+    : props.activeHost ?? null;
+  const activeMcpProfile = effectiveHostConfig?.mcpProfile;
 
   // Host-derived widget runtime values. The preferences store is the
   // editing surface for ad-hoc previews; once a host is selected its
@@ -150,23 +153,25 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   const prefChatUiOverride = usePreferencesStore(
     (state) => state.chatUiOverride
   );
-  const hostStyle = previewedHost?.config.hostStyle ?? prefHostStyle;
+  const hostStyle = effectiveHostConfig?.hostStyle ?? prefHostStyle;
   const hostCapabilitiesOverride =
-    previewedHost?.config.hostCapabilitiesOverride ??
+    effectiveHostConfig?.hostCapabilitiesOverride ??
     prefHostCapabilitiesOverride;
   const chatUiOverride =
-    previewedHost?.config.chatUiOverride ?? prefChatUiOverride;
+    effectiveHostConfig?.chatUiOverride ?? prefChatUiOverride;
   const shellStyle = getChatboxShellStyle(hostStyle, themeMode);
 
-  // Auto-connect the previewed host's REQUIRED servers once per session.
-  // No previewed host = no auto-connect. Optional servers stay
-  // disconnected until the user manually toggles them in the Servers tab.
+  // Auto-connect the effective host's REQUIRED servers once per session.
+  // Preview mode wins; otherwise fall back to the project default host so
+  // the connect path matches the host config this surface renders with.
+  // Optional servers stay disconnected until the user manually toggles them
+  // in the Servers tab.
   const { servers: projectServersList } = useProjectServers({
     projectId: props.sharedProjectId ?? null,
     isAuthenticated: isConvexAuthenticated,
   });
-  const previewedHostRequiredNames = useMemo(() => {
-    const requiredIds = previewedHost?.config?.serverIds ?? [];
+  const effectiveHostRequiredNames = useMemo(() => {
+    const requiredIds = effectiveHostConfig?.serverIds ?? [];
     if (requiredIds.length === 0 || !projectServersList) return [];
     const byId = new Map(
       projectServersList.map((s) => [s._id, s.name] as const)
@@ -174,11 +179,11 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     return requiredIds
       .map((id) => byId.get(id))
       .filter((name): name is string => !!name);
-  }, [previewedHost?.config?.serverIds, projectServersList]);
+  }, [effectiveHostConfig?.serverIds, projectServersList]);
   useAutoConnectProjectServers({
-    projectId: props.activeProjectId ?? null,
-    hostScopeKey: previewedHostId,
-    requiredServerNames: previewedHostRequiredNames,
+    projectId: props.sharedProjectId ?? props.activeProjectId ?? null,
+    hostScopeKey: previewedHostId ?? effectiveHostConfig?.id ?? null,
+    requiredServerNames: effectiveHostRequiredNames,
   });
 
   const appBuilderState = useAppBuilderState({
@@ -228,7 +233,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
           // project whose default is Codex would render widgets in
           // Playground while connect knows the server was init'd as
           // Codex.
-          activeHost={previewedHost?.config ?? props.activeHost ?? null}
+          activeHost={effectiveHostConfig}
           hostStyle={hostStyle}
         >
           <ChatboxHostStyleProvider value={hostStyle}>

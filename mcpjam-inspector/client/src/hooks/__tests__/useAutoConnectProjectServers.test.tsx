@@ -238,7 +238,7 @@ describe("useAutoConnectProjectServers", () => {
     expect(ensureServersReady).toHaveBeenLastCalledWith(["alpha"]);
   });
 
-  it("disconnects EVERY connected server on host switch (incl. ones the new host still requires)", async () => {
+  it("disconnects only connected servers required by the active host on host switch", async () => {
     const ensureServersReady = vi.fn().mockResolvedValue({
       readyServerNames: [],
       failedServerNames: [],
@@ -247,10 +247,9 @@ describe("useAutoConnectProjectServers", () => {
     });
     const runtimeDisconnectServer = vi.fn();
     // Three servers connected from a prior host; current host requires only
-    // "alpha". With the reconnect-on-host-switch policy, alpha gets torn
-    // down alongside beta/gamma; its reconnect fires on the next render
-    // once the DISCONNECT dispatch propagates and it re-enters the
-    // candidate set (see ensureServersReady call path in use-server-state).
+    // "alpha". Only alpha needs a recycle so it can reconnect with the
+    // active host's initialize payload. beta/gamma may have been connected
+    // manually or by project-level auto-connect and should remain up.
     const appState = {
       servers: {
         alpha: { name: "alpha", connectionStatus: "connected" },
@@ -282,13 +281,13 @@ describe("useAutoConnectProjectServers", () => {
     // state, so it's filtered out of the candidate set. In production the
     // next render (after DISCONNECT lands) would pick it up.
     expect(ensureServersReady).not.toHaveBeenCalled();
-    // Disconnect side: every connected server comes down, alpha included.
-    expect(runtimeDisconnectServer).toHaveBeenCalledTimes(3);
+    // Disconnect side: only the host-required connected server comes down.
+    expect(runtimeDisconnectServer).toHaveBeenCalledTimes(1);
     const disconnected = runtimeDisconnectServer.mock.calls.map((c) => c[0]);
-    expect(disconnected.sort()).toEqual(["alpha", "beta", "gamma"]);
+    expect(disconnected).toEqual(["alpha"]);
   });
 
-  it("disconnects ALL connected servers when the active host requires none (e.g. MCPJam default)", async () => {
+  it("keeps connected servers up when the active host requires none", async () => {
     const ensureServersReady = vi.fn();
     const runtimeDisconnectServer = vi.fn();
     const appState = {
@@ -318,9 +317,7 @@ describe("useAutoConnectProjectServers", () => {
 
     await flushMicrotasks();
     expect(ensureServersReady).not.toHaveBeenCalled();
-    expect(runtimeDisconnectServer).toHaveBeenCalledTimes(2);
-    const disconnected = runtimeDisconnectServer.mock.calls.map((c) => c[0]);
-    expect(disconnected.sort()).toEqual(["alpha", "beta"]);
+    expect(runtimeDisconnectServer).not.toHaveBeenCalled();
   });
 
   it("syncs setSelectedServerNames to the host's required set on each new scope", async () => {
@@ -364,10 +361,11 @@ describe("useAutoConnectProjectServers", () => {
     await flushMicrotasks();
     expect(setSelectedServerNames).toHaveBeenLastCalledWith(["alpha", "beta"]);
 
-    // Switch to a host with empty required set → playground selection clears.
+    // Empty required set is no-op; surfaces with no explicit host selection
+    // must not clear the project/default host's selected servers.
     rerender({ hostScopeKey: "host-mcpjam", requiredServerNames: [] });
     await flushMicrotasks();
-    expect(setSelectedServerNames).toHaveBeenLastCalledWith([]);
+    expect(setSelectedServerNames).toHaveBeenCalledTimes(1);
   });
 
   it("re-attempts on every host transition, including returning to a previously-visited host", async () => {
@@ -453,8 +451,8 @@ describe("useAutoConnectProjectServers", () => {
     );
 
     await flushMicrotasks();
-    // First pass: every connected server is torn down (including the
-    // required `learn`, which will reconnect once its DISCONNECT lands).
+    // First pass: the host-required connected server is torn down so it
+    // can reconnect once its DISCONNECT lands.
     expect(runtimeDisconnectServer).toHaveBeenCalledTimes(1);
     expect(runtimeDisconnectServer).toHaveBeenCalledWith("learn");
 
