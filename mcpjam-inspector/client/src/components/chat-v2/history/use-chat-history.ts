@@ -185,7 +185,13 @@ export function useChatHistory({
           await unarchiveCurrentSession(payload);
           return;
         case "share":
-          await shareCurrentSession(payload);
+          if (!projectId) {
+            throw new Error("Cannot share a session without a project.");
+          }
+          await shareCurrentSession({
+            ...payload,
+            projectId: projectId as any,
+          });
           return;
         case "unshare":
           await unshareCurrentSession(payload);
@@ -201,6 +207,7 @@ export function useChatHistory({
     [
       archiveCurrentSession,
       pinCurrentSession,
+      projectId,
       renameCurrentSession,
       shareCurrentSession,
       unarchiveCurrentSession,
@@ -219,12 +226,19 @@ export function useChatHistory({
         await performReactiveAction(action, sessionId, params);
         return;
       }
-      await chatHistoryAction(action, sessionId, params, {
+      let scopedParams = params;
+      if (action === "share") {
+        if (!projectId) {
+          throw new Error("Cannot share a session without a project.");
+        }
+        scopedParams = { ...params, projectId };
+      }
+      await chatHistoryAction(action, sessionId, scopedParams, {
         headers: requestHeaders,
       });
       await fetchHistory();
     },
-    [fetchHistory, isReactive, performReactiveAction, requestHeaders],
+    [fetchHistory, isReactive, performReactiveAction, projectId, requestHeaders],
   );
 
   const archiveManySessionIds = useCallback(

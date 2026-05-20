@@ -81,6 +81,7 @@ export interface OrgModelHandlerOptions {
   onStreamWriterReady?: (writer: {
     write: (chunk: UIMessageChunk) => void;
   }) => void;
+  onLiveTextDelta?: (delta: string) => void;
   /**
    * The end user's Authorization header from the inbound request. Forwarded
    * to /stream/org so Convex can re-authorize the user against the project.
@@ -117,6 +118,24 @@ function toLiveChatTraceUsageLocal(
   if (typeof usage.outputTokens === "number") next.outputTokens = usage.outputTokens;
   if (typeof usage.totalTokens === "number") next.totalTokens = usage.totalTokens;
   return Object.keys(next).length > 0 ? next : undefined;
+}
+
+function safelyEmitLiveTextDelta(
+  onLiveTextDelta: ((delta: string) => void) | undefined,
+  delta: string,
+) {
+  if (!onLiveTextDelta) return;
+  try {
+    void Promise.resolve(onLiveTextDelta(delta)).catch((error) => {
+      logger.warn("[org/local] onLiveTextDelta callback failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  } catch (error) {
+    logger.warn("[org/local] onLiveTextDelta callback failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 function collectStepToolCallIdsLocal(
@@ -192,6 +211,7 @@ export interface OrgLocalModelHandlerOptions {
   onStreamWriterReady?: (writer: {
     write: (chunk: UIMessageChunk) => void;
   }) => void;
+  onLiveTextDelta?: (delta: string) => void;
 }
 
 export function handleLocalOrgChatModel(
@@ -215,6 +235,7 @@ export function handleLocalOrgChatModel(
     onConversationComplete,
     onStreamComplete,
     onStreamWriterReady,
+    onLiveTextDelta,
   } = options;
 
   if (requireToolApproval && Object.keys(tools).length > 0) {
@@ -331,6 +352,9 @@ export function handleLocalOrgChatModel(
         },
         onChunk: async ({ chunk }) => {
           if (chunk.type === "text-delta") {
+            if (chunk.text) {
+              safelyEmitLiveTextDelta(onLiveTextDelta, chunk.text);
+            }
             writeTraceEvent(writer, {
               type: "text_delta",
               turnId: traceTurn.turnId,
@@ -615,6 +639,7 @@ export async function handleHostedOrgChatModel(
     onConversationComplete: options.onConversationComplete,
     onStreamComplete: options.onStreamComplete,
     onStreamWriterReady: options.onStreamWriterReady,
+    onLiveTextDelta: options.onLiveTextDelta,
     clientIp: options.clientIp,
     endpointPath: "/stream/org",
     extraHeaders: {

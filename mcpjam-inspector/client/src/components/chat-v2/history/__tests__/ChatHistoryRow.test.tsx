@@ -37,8 +37,16 @@ const actions = {
 };
 
 vi.mock("@mcpjam/design-system/dropdown-menu", () => ({
-  DropdownMenu: ({ children }: { children: ReactNode }) => (
-    <div>{children}</div>
+  DropdownMenu: ({
+    children,
+    open,
+  }: {
+    children: ReactNode;
+    open?: boolean;
+  }) => (
+    <div data-testid="dropdown-menu" data-state={open ? "open" : "closed"}>
+      {children}
+    </div>
   ),
   DropdownMenuTrigger: ({ children }: { children: ReactNode }) => (
     <button type="button">{children}</button>
@@ -219,6 +227,67 @@ describe("ChatHistoryRow", () => {
     expect(
       screen.queryByTestId("chat-history-owner-avatar"),
     ).not.toBeInTheDocument();
+  });
+
+  it("opens the row menu on right-click and suppresses the browser menu", async () => {
+    const user = userEvent.setup();
+    const session = sessionStub({ _id: "row-ctx" });
+
+    render(
+      <ChatHistoryRow
+        session={session}
+        isActive={false}
+        isAuthenticated
+        isStreaming={false}
+        onSelect={vi.fn()}
+        actions={actions}
+      />,
+    );
+
+    const dropdown = screen.getByTestId("dropdown-menu");
+    expect(dropdown).toHaveAttribute("data-state", "closed");
+
+    const rowTitle = screen.getByText("hello world");
+    let contextMenuEvent: Event | null = null;
+    rowTitle.addEventListener(
+      "contextmenu",
+      (event) => {
+        contextMenuEvent = event;
+      },
+      { once: true },
+    );
+
+    await user.pointer({
+      target: rowTitle,
+      keys: "[MouseRight]",
+    });
+
+    expect(contextMenuEvent).not.toBeNull();
+    expect(contextMenuEvent?.defaultPrevented).toBe(true);
+    expect(dropdown).toHaveAttribute("data-state", "open");
+  });
+
+  it("does not open the row menu on right-click while streaming", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ChatHistoryRow
+        session={sessionStub({ _id: "row-ctx-streaming" })}
+        isActive={false}
+        isAuthenticated
+        isStreaming
+        onSelect={vi.fn()}
+        actions={actions}
+      />,
+    );
+
+    const dropdown = screen.getByTestId("dropdown-menu");
+    await user.pointer({
+      target: screen.getByText("hello world"),
+      keys: "[MouseRight]",
+    });
+
+    expect(dropdown).toHaveAttribute("data-state", "closed");
   });
 
   it("selects thread on row click when not streaming", async () => {

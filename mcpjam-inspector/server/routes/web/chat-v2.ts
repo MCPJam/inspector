@@ -237,6 +237,9 @@ chatV2.post("/", async (c) => {
       const hostedChatSessionId = body.chatSessionId;
 
       const modelMessages = await convertToModelMessages(messages);
+      const cleanupStream = async () => {
+        await manager.disconnectAllServers();
+      };
       const isMCPJam =
         Boolean(modelDefinition.id) &&
         isMCPJamProvidedModel(String(modelDefinition.id));
@@ -353,7 +356,7 @@ chatV2.post("/", async (c) => {
             selectedServers: selectedServerIds,
             requireToolApproval,
             onConversationComplete,
-            onStreamComplete: () => manager.disconnectAllServers(),
+            onStreamComplete: cleanupStream,
             onStreamWriterReady: (writer) =>
               rpcCollector?.attachStreamWriter(writer),
           });
@@ -378,7 +381,7 @@ chatV2.post("/", async (c) => {
           selectedServers: selectedServerIds,
           requireToolApproval,
           onConversationComplete,
-          onStreamComplete: () => manager.disconnectAllServers(),
+          onStreamComplete: cleanupStream,
           onStreamWriterReady: (writer) =>
             rpcCollector?.attachStreamWriter(writer),
         });
@@ -462,7 +465,7 @@ chatV2.post("/", async (c) => {
               });
             }
           : undefined,
-        onStreamComplete: () => manager.disconnectAllServers(),
+        onStreamComplete: cleanupStream,
         onStreamWriterReady: (writer) =>
           rpcCollector?.attachStreamWriter(writer),
       });

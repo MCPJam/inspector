@@ -254,11 +254,16 @@ vi.mock("@/components/chat-v2/history/ChatHistoryRail", () => ({
     sharedThreadsEnabled = true,
     onNewChat,
     onSelectThread,
+    onSessionAction,
   }: {
     activeSessionId?: string | null;
     sharedThreadsEnabled?: boolean;
     onNewChat: (options?: { shared?: boolean }) => void;
     onSelectThread: (session: typeof mockHistorySession) => void;
+    onSessionAction?: (event: {
+      action: "share";
+      session: typeof mockHistorySession;
+    }) => void | Promise<void>;
   }) => (
     <div
       data-testid="history-rail"
@@ -274,6 +279,16 @@ vi.mock("@/components/chat-v2/history/ChatHistoryRail", () => ({
           New shared thread
         </button>
       ) : null}
+      <button
+        onClick={() =>
+          void onSessionAction?.({
+            action: "share",
+            session: { ...mockHistorySession },
+          })
+        }
+      >
+        Share active thread
+      </button>
     </div>
   ),
 }));
@@ -718,6 +733,52 @@ describe("ChatTabV2 history sync", () => {
       "project"
     );
     expect(mockGetChatHistoryDetail).not.toHaveBeenCalled();
+  });
+
+  it("keeps direct visibility in sync when the active thread is shared", async () => {
+    const privateDetailResponse = {
+      ok: true,
+      session: {
+        ...mockHistorySession,
+        directVisibility: "private" as const,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: {
+          selectedServers: ["server-1"],
+        },
+      },
+      widgetSnapshots: [],
+    };
+    const sharedDetailResponse = {
+      ...privateDetailResponse,
+      session: {
+        ...privateDetailResponse.session,
+        directVisibility: "project" as const,
+        version: 5,
+      },
+    };
+
+    mockGetChatHistoryDetail
+      .mockResolvedValueOnce(privateDetailResponse)
+      .mockResolvedValueOnce(sharedDetailResponse);
+
+    render(<ChatTabV2 {...defaultProps} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
+    await flushMicrotasks();
+
+    expect(lastUseChatSessionOptionsRef.current?.directVisibility).toBe(
+      "private"
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Share active thread" })
+    );
+    await flushMicrotasks();
+
+    expect(lastUseChatSessionOptionsRef.current?.directVisibility).toBe(
+      "project"
+    );
   });
 
   it("keeps the history rail visible while hiding shared-thread affordances when the flag is off", async () => {

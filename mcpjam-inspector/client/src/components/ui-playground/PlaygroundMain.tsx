@@ -146,6 +146,7 @@ import {
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { WebApiError } from "@/lib/apis/web/base";
+import { useDirectChatSessionSubscription } from "@/hooks/use-direct-chat-session-subscription";
 
 // On post-stream reconcile, the Convex-side detail row may not yet reflect the
 // version bump from the turn that just finished. Retry a couple of times.
@@ -311,10 +312,17 @@ export function PlaygroundMain({
   // follow-up. The rail re-fetches on initial mount + whenever signal changes.
   const historyRefreshSignal = 0;
   const historySelectionRequestIdRef = useRef(0);
+  const activeHistorySessionIdRef = useRef<string | null>(null);
+  const reactiveHistoryLoadRequestIdRef = useRef(0);
   const resumedThreadSendBaselineRef = useRef<{
     sessionId: string;
     version: number;
   } | null>(null);
+
+  useEffect(() => {
+    activeHistorySessionIdRef.current = activeHistorySessionId;
+    reactiveHistoryLoadRequestIdRef.current += 1;
+  }, [activeHistorySessionId]);
 
   const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
     []
@@ -537,6 +545,7 @@ export function PlaygroundMain({
     status,
   } = useChatSession({
     selectedServers,
+    directVisibility: pendingDirectVisibility,
     hostedContext: {
       projectId: convexProjectId,
       selectedServerIds: hostedSelectedServerIds,
@@ -1137,6 +1146,16 @@ export function PlaygroundMain({
     ],
   );
 
+  const {
+    session: reactiveHistorySession,
+    widgetSnapshots: reactiveHistoryWidgetSnapshots,
+  } = useDirectChatSessionSubscription({
+    sessionId: activeHistorySessionId,
+    projectId: convexProjectId,
+    enabled:
+      isConvexAuthenticated && !!activeHistorySessionId && !isStreaming,
+  });
+
   const detachHistorySession = useCallback(
     (toastMessage: string) => {
       resumedThreadSendBaselineRef.current = null;
@@ -1159,6 +1178,64 @@ export function PlaygroundMain({
     ],
   );
 
+  useEffect(() => {
+    if (!activeHistorySessionId || isStreaming) {
+      return;
+    }
+
+    if (reactiveHistorySession === undefined) {
+      return;
+    }
+
+    if (reactiveHistorySession === null) {
+      detachHistorySession(
+        "This chat is no longer available. Continuing locally in a new thread.",
+      );
+      return;
+    }
+
+    if (reactiveHistoryWidgetSnapshots === undefined) {
+      return;
+    }
+
+    if (
+      resumedVersion !== null &&
+      reactiveHistorySession.version <= resumedVersion
+    ) {
+      return;
+    }
+
+    const requestId = reactiveHistoryLoadRequestIdRef.current + 1;
+    reactiveHistoryLoadRequestIdRef.current = requestId;
+
+    void loadHistorySession(
+      reactiveHistorySession,
+      reactiveHistoryWidgetSnapshots,
+      {
+        shouldRestoreComposerState: () =>
+          !hasUnsavedDraftRef.current &&
+          activeHistorySessionIdRef.current === reactiveHistorySession._id,
+        shouldApply: () =>
+          reactiveHistoryLoadRequestIdRef.current === requestId &&
+          activeHistorySessionIdRef.current === reactiveHistorySession._id,
+        turnTraces: undefined,
+      },
+    ).catch((error) => {
+      console.error(
+        "[PlaygroundMain] Failed to apply reactive chat history",
+        error,
+      );
+    });
+  }, [
+    activeHistorySessionId,
+    detachHistorySession,
+    isStreaming,
+    loadHistorySession,
+    reactiveHistorySession,
+    reactiveHistoryWidgetSnapshots,
+    resumedVersion,
+  ]);
+
   const refreshCurrentHistorySession = useCallback(
     async ({ retries = 0, markRead = false } = {}) => {
       if (!activeHistorySessionId && !chatSessionId) return null;
@@ -1170,6 +1247,7 @@ export function PlaygroundMain({
             projectId: convexProjectId ?? undefined,
           });
           setActiveHistorySessionId(detail.session._id);
+          setPendingDirectVisibility(detail.session.directVisibility);
           syncResumedVersion(detail.session.version);
           if (markRead) {
             void markHistorySessionRead(detail.session._id);
@@ -1361,7 +1439,10 @@ export function PlaygroundMain({
         | "unpin";
       session: ChatHistorySession;
     }) => {
-      if (action === "unshare" && session._id === activeHistorySessionId) {
+      if (
+        (action === "share" || action === "unshare") &&
+        session._id === activeHistorySessionId
+      ) {
         try {
           const detail = await refreshCurrentHistorySession();
           if (!detail) {
@@ -1524,10 +1605,6 @@ export function PlaygroundMain({
     resumedVersion,
     status,
   ]);
-
-  // Reserved for a follow-up (direct/project visibility toggle when starting
-  // a new chat from a shared row context).
-  void pendingDirectVisibility;
 
   // Delay the spinner so a hover-prefetched (instant) load doesn't flash an
   // overlay for one frame. After ~120 ms the load is "slow enough" to warrant

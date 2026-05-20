@@ -590,6 +590,56 @@ describe("ChatHistoryRail", () => {
     ).toBe(false);
   });
 
+  it("hides project sharing when there is no project scope", () => {
+    useChatHistoryMock.mockImplementation(() => ({
+      personal: [sessionStub("p1")],
+      project: [sessionStub("w1", { directVisibility: "project" })],
+      loading: false,
+      error: null,
+      isReactive: false,
+      refetch: refetchMock,
+      actions: {
+        rename: vi.fn(),
+        archive: vi.fn(),
+        unarchive: vi.fn(),
+        share: vi.fn(),
+        unshare: vi.fn(),
+        pin: vi.fn(),
+        unpin: vi.fn(),
+        archiveManySessionIds: archiveManySessionIdsMock,
+        archiveAllActive: vi.fn(),
+      },
+    }));
+
+    render(
+      <ChatHistoryRail
+        activeSessionId={null}
+        isAuthenticated
+        isStreaming={false}
+        projectId={null}
+        onSelectThread={vi.fn()}
+        onNewChat={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Sessions")).toBeInTheDocument();
+    expect(screen.queryByText("Shared Sessions")).not.toBeInTheDocument();
+
+    const personalCall = chatHistoryRowPropsSpy.mock.calls.find(
+      (c) =>
+        (c[0] as { session?: ChatHistorySession }).session?._id === "p1",
+    );
+    expect(personalCall?.[0]).toMatchObject({
+      sharedThreadsEnabled: false,
+    });
+    expect(
+      chatHistoryRowPropsSpy.mock.calls.some(
+        (c) =>
+          (c[0] as { session?: ChatHistorySession }).session?._id === "w1",
+      ),
+    ).toBe(false);
+  });
+
   it("awaits async beforeResetChatAfterArchiveAll and skips archive-all when false", async () => {
     archiveManySessionIdsMock.mockResolvedValue(undefined);
     const beforeReset = vi.fn().mockResolvedValue(false);
