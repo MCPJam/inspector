@@ -325,6 +325,12 @@ export function PlaygroundMain({
     reactiveHistoryLoadRequestIdRef.current += 1;
   }, [activeHistorySessionId]);
 
+  /** Invalidate reactive history loads immediately (refs otherwise lag behind state until useEffect). */
+  const invalidatePendingReactiveHistoryLoad = useCallback(() => {
+    activeHistorySessionIdRef.current = null;
+    reactiveHistoryLoadRequestIdRef.current += 1;
+  }, []);
+
   const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
     []
   );
@@ -1030,9 +1036,10 @@ export function PlaygroundMain({
 
   const cancelPendingHistorySelection = useCallback(() => {
     historySelectionRequestIdRef.current += 1;
+    invalidatePendingReactiveHistoryLoad();
     setLoadingHistorySessionId(null);
     setActiveHistorySessionId(null);
-  }, []);
+  }, [invalidatePendingReactiveHistoryLoad]);
 
   const markHistorySessionRead = useCallback(async (sessionId: string) => {
     try {

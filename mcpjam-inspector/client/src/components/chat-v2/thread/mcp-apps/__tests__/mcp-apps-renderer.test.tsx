@@ -773,9 +773,11 @@ describe("MCPAppsRenderer tool input streaming", () => {
     const { rerender } = render(renderInline());
 
     await screen.findByTestId("sandboxed-iframe");
+    await vi.waitFor(() => {
+      expect(sandboxedIframeMountsRef.current).toBe(1);
+    });
     const initialIframeElement = sandboxedIframeElementRef.current;
     expect(initialIframeElement).not.toBeNull();
-    expect(sandboxedIframeMountsRef.current).toBe(1);
 
     rerender(
       <MCPAppsRenderer
