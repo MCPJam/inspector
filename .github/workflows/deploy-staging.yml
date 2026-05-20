@@ -49,13 +49,76 @@ jobs:
       - name: Install Railway CLI
         run: npm install -g @railway/cli@4.57.1
 
+      # Capture the most recent deployment id before we trigger a new one so
+      # the wait step below can detect when *our* deploy appears (instead of
+      # racing on the previous-good deploy's status).
+      - name: Snapshot latest deployment id
+        id: previous_deploy
+        run: |
+          PREV=$(.github/scripts/railway-retry.sh railway deployment list \
+            --service "$RAILWAY_INSPECTOR_SERVICE" \
+            --environment "$RAILWAY_STAGING_ENVIRONMENT" \
+            --limit 1 \
+            --json | jq -r '.[0].id // empty')
+          echo "id=$PREV" >> "$GITHUB_OUTPUT"
+          echo "Previous deployment: ${PREV:-<none>}"
+
+      # `--detach` uploads and returns immediately. The `--ci` log-stream
+      # mode regularly times out against backboard.railway.com even though
+      # the deploy itself succeeds; that mismatch was failing the workflow
+      # while staging was getting updated correctly. We poll status below
+      # instead of relying on the streaming connection.
       - name: Deploy inspector to Railway staging
         run: |
           .github/scripts/railway-retry.sh railway up \
-            --ci \
+            --detach \
             --project "$RAILWAY_PROJECT_ID" \
             --environment "$RAILWAY_STAGING_ENVIRONMENT" \
             --service "$RAILWAY_INSPECTOR_SERVICE"
+
+      # We can't reliably capture the deployment id railway up creates, and
+      # railway-retry.sh may have triggered duplicate deploys (if a Railway
+      # API blip dropped an otherwise-successful upload response). Strategy:
+      # poll the topmost deployment. If it differs from the pre-upload
+      # snapshot, treat it as ours and wait for terminal status. If a newer
+      # deploy supersedes it mid-wait (retry duplicate), follow the new top.
+      - name: Wait for Railway staging deploy to finish
+        timeout-minutes: 20
+        env:
+          PREVIOUS_DEPLOY_ID: ${{ steps.previous_deploy.outputs.id }}
+        run: |
+          set -uo pipefail
+          while :; do
+            ROW=$(.github/scripts/railway-retry.sh railway deployment list \
+              --service "$RAILWAY_INSPECTOR_SERVICE" \
+              --environment "$RAILWAY_STAGING_ENVIRONMENT" \
+              --limit 1 \
+              --json | jq -r '.[0] | "\(.id // "")\t\(.status // "")"')
+            ID="${ROW%%	*}"
+            STATUS="${ROW##*	}"
+            if [ -z "$ID" ] || [ "$ID" = "$PREVIOUS_DEPLOY_ID" ]; then
+              echo "Waiting for new deployment to appear (latest=${ID:-none}, prev=$PREVIOUS_DEPLOY_ID)"
+              sleep 10
+              continue
+            fi
+            case "$STATUS" in
+              SUCCESS)
+                echo "Deploy $ID succeeded"
+                exit 0
+                ;;
+              FAILED|CRASHED)
+                echo "::error::Deploy $ID ended in status $STATUS"
+                exit 1
+                ;;
+              "")
+                echo "Status not readable yet for $ID"
+                ;;
+              *)
+                echo "Deploy $ID status: $STATUS"
+                ;;
+            esac
+            sleep 15
+          done
 
   smoke:
     needs: deploy
