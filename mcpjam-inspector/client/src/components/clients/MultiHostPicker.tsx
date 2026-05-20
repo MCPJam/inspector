@@ -231,17 +231,22 @@ export function MultiHostPicker({
     // the only selected client (the lead) is a no-op.
     if (nextSelectedHostIds.length === 0) return;
 
-    const nextEnabled = nextSelectedHostIds.length > 1;
+    const prevCount = effectiveSelectedHostIds.length;
+    const nextCount = nextSelectedHostIds.length;
+    const nextEnabled = nextCount > 1;
     captureCompare(
       isSelected
         ? "playground_compare_host_removed"
         : "playground_compare_host_added",
       {
-        selected_count: nextSelectedHostIds.length,
+        selected_count: nextCount,
         compare_active: nextEnabled,
-        entered_compare:
-          !isSelected && !multiHostEnabled && nextEnabled,
-        exited_compare: isSelected && multiHostEnabled && !nextEnabled,
+        // Derive transitions from the host count crossing 1 ↔ 2 rather than
+        // the persisted `multiHostEnabled` flag, which can drift from the
+        // count (e.g. if the wrapper toggles the flag without changing the
+        // selection). Bugbot 2026-05-20.
+        entered_compare: !isSelected && prevCount <= 1 && nextEnabled,
+        exited_compare: isSelected && prevCount > 1 && !nextEnabled,
       },
     );
 
