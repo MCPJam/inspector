@@ -283,6 +283,38 @@ maxSteps: 5; // Stop after 5 tool calls
   it too high may allow runaway loops.
 </Warning>
 
+### injectOpenAiCompat
+
+Controls whether the OpenAI Apps SDK `window.openai` shim is injected into captured widget HTML snapshots. Defaults to `false`.
+
+Set this to `true` when your widget is written against the OpenAI Apps SDK (i.e. it targets ChatGPT or Copilot). Leave it `false` for SEP-1865-native widgets targeting Claude, Cursor, Codex, or other hosts that don't expose `window.openai` — snapshots should match what the live host would have produced.
+
+```typescript
+// Testing an OpenAI Apps SDK widget (ChatGPT / Copilot host)
+const agent = new TestAgent({
+  tools,
+  model: "openai/gpt-4o",
+  apiKey: process.env.OPENAI_API_KEY,
+  mcpClientManager: manager,
+  injectOpenAiCompat: true,
+});
+
+// Testing a SEP-1865 widget (Claude / Cursor / Codex host) — default
+const agent = new TestAgent({
+  tools,
+  model: "anthropic/claude-sonnet-4-20250514",
+  apiKey: process.env.ANTHROPIC_API_KEY,
+  mcpClientManager: manager,
+  // injectOpenAiCompat defaults to false
+});
+```
+
+<Note>
+  This flag is stamped onto each widget snapshot (`injectedOpenAiCompat`) so the
+  MCPJam trace viewer can replay the widget faithfully under a different host
+  config without rewriting the cached bytes.
+</Note>
+
 ---
 
 ## Control Multi-Step Loops with stopWhen
