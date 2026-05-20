@@ -47,11 +47,11 @@ jobs:
           npm run prettier-fix
 
       - name: Install Railway CLI
-        run: npm install -g @railway/cli
+        run: npm install -g @railway/cli@4.57.1
 
       - name: Deploy inspector to Railway staging
         run: |
-          railway up \
+          .github/scripts/railway-retry.sh railway up \
             --ci \
             --project "$RAILWAY_PROJECT_ID" \
             --environment "$RAILWAY_STAGING_ENVIRONMENT" \
