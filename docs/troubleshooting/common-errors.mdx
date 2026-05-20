@@ -8,6 +8,16 @@ This guide covers common errors you might encounter when working with MCP server
 
 ## Connection Issues
 
+### Port still in use after stopping the inspector
+
+If you kill the `npx` / `npm exec` process (e.g. with Ctrl+C or SIGKILL), the inspector server now shuts itself down automatically. If you find the port is still occupied after a hard kill, wait a moment for the server to detect the launcher is gone and exit on its own.
+
+If you need to disable this behaviour (for example in certain CI environments), set the environment variable before launching:
+
+```bash
+MCPJAM_INSPECTOR_DISABLE_ORPHAN_CHECK=1 npx @mcpjam/inspector@latest
+```
+
 ### Server fails to start or connect
 
 - **Use absolute paths**: Specify the full path to your server
