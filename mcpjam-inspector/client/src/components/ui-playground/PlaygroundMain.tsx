@@ -358,23 +358,27 @@ export function PlaygroundMain({
   const [stopBroadcastRequestId, setStopBroadcastRequestId] = useState(0);
   const [multiModelSessionGeneration, setMultiModelSessionGeneration] =
     useState(0);
-  const [multiModelSummaries, setMultiModelSummaries] = useState<
+  // Phase 3 (multi-host plan): per-column state is keyed by `compareId` — a
+  // mode-neutral column identifier. In model mode `compareId === String(model.id)`
+  // (unchanged from today); in host mode (Phase 4) it'll be the hostId, so two
+  // columns running the same default model can't collide.
+  const [compareSummaries, setCompareSummaries] = useState<
     Record<string, MultiModelCardSummary>
   >({});
-  const [multiModelHasMessages, setMultiModelHasMessages] = useState<
+  const [compareHasMessages, setCompareHasMessages] = useState<
     Record<string, boolean>
   >({});
   const [multiCompareEnterVersion, setMultiCompareEnterVersion] = useState(0);
   const [multiCompareEnterMessages, setMultiCompareEnterMessages] = useState<
     UIMessage[]
   >([]);
-  const [multiAddColumnSeeds, setMultiAddColumnSeeds] = useState<
+  const [compareAddColumnSeeds, setCompareAddColumnSeeds] = useState<
     Record<string, { version: number; messages: UIMessage[] }>
   >({});
-  const multiTranscriptsRef = useRef<Record<string, UIMessage[]>>({});
+  const compareTranscriptsRef = useRef<Record<string, UIMessage[]>>({});
   const prevCompareModeRef = useRef(false);
-  const lastMultiLeadIdRef = useRef<string | null>(null);
-  const prevCompareModelIdsRef = useRef<Set<string>>(new Set());
+  const lastCompareLeadIdRef = useRef<string | null>(null);
+  const prevCompareIdsRef = useRef<Set<string>>(new Set());
   const multiAddColumnSeqRef = useRef(0);
   // Device config from store (managed by ClientContextHeader)
   const storeDeviceType = useUIPlaygroundStore((s) => s.deviceType);
@@ -725,13 +729,13 @@ export function PlaygroundMain({
 
   useEffect(() => {
     if (isMultiModelMode && resolvedSelectedModels[0]) {
-      lastMultiLeadIdRef.current = String(resolvedSelectedModels[0].id);
+      lastCompareLeadIdRef.current = String(resolvedSelectedModels[0].id);
     }
   }, [isMultiModelMode, resolvedSelectedModels]);
 
   const handleMultiModelTranscriptSync = useCallback(
-    (modelId: string, transcript: UIMessage[]) => {
-      multiTranscriptsRef.current[modelId] = cloneUiMessages(transcript);
+    (compareId: string, transcript: UIMessage[]) => {
+      compareTranscriptsRef.current[compareId] = cloneUiMessages(transcript);
     },
     []
   );
@@ -740,18 +744,18 @@ export function PlaygroundMain({
     setBroadcastRequest(null);
     setDeterministicExecutionRequest(null);
     setStopBroadcastRequestId(0);
-    setMultiModelSummaries({});
-    setMultiModelHasMessages({});
-    setMultiAddColumnSeeds({});
-    prevCompareModelIdsRef.current = new Set();
+    setCompareSummaries({});
+    setCompareHasMessages({});
+    setCompareAddColumnSeeds({});
+    prevCompareIdsRef.current = new Set();
   }, []);
 
   useLayoutEffect(() => {
     const prev = prevCompareModeRef.current;
     if (prev && !isMultiModelMode) {
-      const leadId = lastMultiLeadIdRef.current;
+      const leadId = lastCompareLeadIdRef.current;
       if (leadId) {
-        const transcript = multiTranscriptsRef.current[leadId];
+        const transcript = compareTranscriptsRef.current[leadId];
         const hasConversation =
           transcript?.some(
             (m) => m.role === "user" || m.role === "assistant"
@@ -776,20 +780,20 @@ export function PlaygroundMain({
 
   useEffect(() => {
     if (!isMultiModelMode) {
-      prevCompareModelIdsRef.current = new Set();
+      prevCompareIdsRef.current = new Set();
       return;
     }
     const current = new Set(resolvedSelectedModels.map((m) => String(m.id)));
-    const prev = prevCompareModelIdsRef.current;
+    const prev = prevCompareIdsRef.current;
     const added = [...current].filter((id) => !prev.has(id));
     const leadId = resolvedSelectedModels[0]
       ? String(resolvedSelectedModels[0].id)
       : null;
     if (prev.size > 0 && added.length > 0 && leadId) {
-      const src = multiTranscriptsRef.current[leadId] ?? [];
+      const src = compareTranscriptsRef.current[leadId] ?? [];
       multiAddColumnSeqRef.current += 1;
       const v = multiAddColumnSeqRef.current;
-      setMultiAddColumnSeeds((s) => {
+      setCompareAddColumnSeeds((s) => {
         const next = { ...s };
         for (const id of added) {
           next[id] = { version: v, messages: cloneUiMessages(src) };
@@ -797,11 +801,11 @@ export function PlaygroundMain({
         return next;
       });
     }
-    prevCompareModelIdsRef.current = current;
+    prevCompareIdsRef.current = current;
   }, [isMultiModelMode, resolvedSelectedModels]);
 
   const effectiveHasMessages = isMultiModelLayoutMode
-    ? Object.values(multiModelHasMessages).some(Boolean)
+    ? Object.values(compareHasMessages).some(Boolean)
     : !isThreadEmpty;
   const preludeTraceEnvelope = useMemo(
     () => buildPreludeTraceEnvelope(preludeTraceExecutions),
@@ -829,7 +833,7 @@ export function PlaygroundMain({
   const { isStreamingActive, stopActiveChat } = useChatStopControls({
     isMultiModelMode,
     isStreaming,
-    multiModelSummaries,
+    multiModelSummaries: compareSummaries,
     setStopBroadcastRequestId,
     stop,
   });
@@ -1625,17 +1629,17 @@ export function PlaygroundMain({
       resolvedSelectedModels.map((model) => String(model.id))
     );
 
-    setMultiModelSummaries((previous) =>
+    setCompareSummaries((previous) =>
       Object.fromEntries(
-        Object.entries(previous).filter(([modelId]) =>
-          activeModelIds.has(modelId)
+        Object.entries(previous).filter(([compareId]) =>
+          activeModelIds.has(compareId)
         )
       )
     );
-    setMultiModelHasMessages((previous) =>
+    setCompareHasMessages((previous) =>
       Object.fromEntries(
-        Object.entries(previous).filter(([modelId]) =>
-          activeModelIds.has(modelId)
+        Object.entries(previous).filter(([compareId]) =>
+          activeModelIds.has(compareId)
         )
       )
     );
@@ -1916,8 +1920,10 @@ export function PlaygroundMain({
 
   const handleMultiModelSummaryChange = useCallback(
     (summary: MultiModelCardSummary) => {
-      setMultiModelSummaries((previous) => ({
+      setCompareSummaries((previous) => ({
         ...previous,
+        // `summary.modelId` is the legacy field name; in multi-host mode
+        // (Phase 4) it carries the host's `compareId` — see the card.
         [summary.modelId]: summary,
       }));
     },
@@ -1925,10 +1931,10 @@ export function PlaygroundMain({
   );
 
   const handleMultiModelHasMessagesChange = useCallback(
-    (modelId: string, hasMessages: boolean) => {
-      setMultiModelHasMessages((previous) => ({
+    (compareId: string, hasMessages: boolean) => {
+      setCompareHasMessages((previous) => ({
         ...previous,
-        [modelId]: hasMessages,
+        [compareId]: hasMessages,
       }));
     },
     []
@@ -2640,51 +2646,65 @@ export function PlaygroundMain({
                       "grid-cols-1 xl:grid-cols-3"
                   )}
                 >
-                  {resolvedSelectedModels.map((model) => (
-                    <MultiModelPlaygroundCard
-                      key={`${multiModelSessionGeneration}:${String(model.id)}`}
-                      model={model}
-                      comparisonSummaries={Object.values(multiModelSummaries)}
-                      selectedServers={selectedServers}
-                      broadcastRequest={broadcastRequest}
-                      deterministicExecutionRequest={
-                        deterministicExecutionRequest
-                      }
-                      stopRequestId={stopBroadcastRequestId}
-                      executionConfig={{
-                        systemPrompt,
-                        temperature,
-                        requireToolApproval,
-                      }}
-                      hostedContext={{
-                        projectId: convexProjectId,
-                        selectedServerIds: hostedSelectedServerIds,
-                        oauthTokens: hostedOAuthTokens,
-                      }}
-                      displayMode={displayMode}
-                      onDisplayModeChange={handleDisplayModeChange}
-                      hostStyle={hostStyle}
-                      effectiveThreadTheme={effectiveThreadTheme}
-                      deviceType={storeDeviceType}
-                      selectedProtocol={selectedProtocol}
-                      hideSaveViewButton={hideSaveViewButton}
-                      onWidgetStateChange={onWidgetStateChange}
-                      toolRenderOverrides={externalToolRenderOverrides}
-                      isExecuting={isExecuting}
-                      executingToolName={executingToolName}
-                      invokingMessage={invokingMessage}
-                      onSummaryChange={handleMultiModelSummaryChange}
-                      onHasMessagesChange={handleMultiModelHasMessagesChange}
-                      showComparisonChrome={resolvedSelectedModels.length > 1}
-                      suppressThreadEmptyHint={false}
-                      compareEnterVersion={multiCompareEnterVersion}
-                      compareEnterMessages={multiCompareEnterMessages}
-                      addColumnSeed={
-                        multiAddColumnSeeds[String(model.id)] ?? null
-                      }
-                      onTranscriptSync={handleMultiModelTranscriptSync}
-                    />
-                  ))}
+                  {resolvedSelectedModels.map((model) => {
+                    const compareId = String(model.id);
+                    return (
+                      <MultiModelPlaygroundCard
+                        // Phase 3 (multi-host plan): include `compareKind` in
+                        // the key so model-mode and (future) host-mode keys
+                        // never collide during mode-swap transitions.
+                        key={`${multiModelSessionGeneration}:model:${compareId}`}
+                        compareId={compareId}
+                        compareLabel={model.name}
+                        compareKind="model"
+                        model={model}
+                        comparisonSummaries={Object.values(compareSummaries)}
+                        selectedServers={selectedServers}
+                        broadcastRequest={broadcastRequest}
+                        deterministicExecutionRequest={
+                          deterministicExecutionRequest
+                        }
+                        stopRequestId={stopBroadcastRequestId}
+                        executionConfig={{
+                          systemPrompt,
+                          temperature,
+                          requireToolApproval,
+                        }}
+                        hostedContext={{
+                          projectId: convexProjectId,
+                          selectedServerIds: hostedSelectedServerIds,
+                          oauthTokens: hostedOAuthTokens,
+                        }}
+                        displayMode={displayMode}
+                        onDisplayModeChange={handleDisplayModeChange}
+                        hostStyle={hostStyle}
+                        effectiveThreadTheme={effectiveThreadTheme}
+                        deviceType={storeDeviceType}
+                        selectedProtocol={selectedProtocol}
+                        hideSaveViewButton={hideSaveViewButton}
+                        onWidgetStateChange={onWidgetStateChange}
+                        toolRenderOverrides={externalToolRenderOverrides}
+                        isExecuting={isExecuting}
+                        executingToolName={executingToolName}
+                        invokingMessage={invokingMessage}
+                        onSummaryChange={handleMultiModelSummaryChange}
+                        onHasMessagesChange={handleMultiModelHasMessagesChange}
+                        showComparisonChrome={resolvedSelectedModels.length > 1}
+                        suppressThreadEmptyHint={false}
+                        compareEnterVersion={multiCompareEnterVersion}
+                        compareEnterMessages={multiCompareEnterMessages}
+                        addColumnSeed={
+                          compareAddColumnSeeds[compareId] ?? null
+                        }
+                        onTranscriptSync={handleMultiModelTranscriptSync}
+                        // Phase 3: model-mode does NOT pass per-card host
+                        // snapshot props. The card falls back to tab-root
+                        // provider values via `useContext`, so the rendered
+                        // tree is behavior-identical to today. Phase 4 host
+                        // mode passes explicit per-column values here.
+                      />
+                    );
+                  })}
                 </div>
               </div>
 
