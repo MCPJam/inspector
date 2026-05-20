@@ -159,6 +159,10 @@ When a widget violates CSP rules in strict mode, you'll see a badge showing the 
 - **Blocked requests** - List of CSP violations with the directive and source that was blocked
 - **Declared domains** - The connect, resource, frame, and base URI domains your widget currently declares
 
+#### Mounts
+
+The debug panel includes a **Mounts** section that appears only when a widget iframe has been torn down and rebuilt more than once during a session. Each entry shows the mount index, the reason it fired (e.g. `cachedWidgetHtmlUrl, liveFetchPreferred`), and a timestamp. A healthy widget has exactly one mount; multiple entries indicate an unexpected re-mount that may have wiped widget state.
+
 #### Save View
 
 Save a snapshot of the tool execution to the [Views](/inspector/views) tab for later browsing, editing, and sharing.
