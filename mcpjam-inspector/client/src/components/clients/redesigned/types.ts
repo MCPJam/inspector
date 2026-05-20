@@ -451,14 +451,17 @@ export function focusTabForNodeId(nodeId: string): {
       ...(focusSubKey ? { focusSubKey } : {}),
     };
   }
-  if (nodeId === SERVERS_HUB_NODE_ID) {
-    return { tab: "servers", selectedServerId: null };
-  }
-  if (nodeId.startsWith("server-card:")) {
-    return {
-      tab: "servers",
-      selectedServerId: nodeId.slice("server-card:".length),
-    };
+  if (
+    nodeId === SERVERS_HUB_NODE_ID ||
+    nodeId.startsWith("server-card:")
+  ) {
+    // Server-related canvas clicks intentionally do NOT open the focus
+    // panel anymore. The per-host Servers tab was removed when project-
+    // scoped server config shipped; the project Servers tab header now
+    // owns server selection (single Auto-connect toggle). Returning
+    // null leaves the click as a visual selection only — `handleSelectNode`
+    // skips `openFocus` when the resolver is null.
+    return null;
   }
   return null;
 }
