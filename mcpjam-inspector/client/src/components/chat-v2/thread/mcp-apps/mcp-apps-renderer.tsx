@@ -1417,13 +1417,20 @@ export function MCPAppsRenderer({
     // (restrictTo, cspDirectives) and skip CSP injection entirely. Strict
     // applies the host profile.
     //
-    // Gate on `isPlaygroundActive`: chatbox/minimal-mode surfaces also hardcode
-    // `cspMode = "permissive"` (line 405) as a UX-friendliness default for
-    // end-user demos, NOT as a user choice. The host's `restrictTo` /
-    // `cspDirectives` MUST still apply on those surfaces — otherwise a
-    // developer who configures `restrictTo: { connectDomains: ["https://api.acme"] }`
+    // Chatbox / minimal-mode surfaces also hardcode `cspMode = "permissive"`
+    // (line 405) as a UX-friendliness default for end-user demos, NOT as a
+    // user choice. The host's `restrictTo` / `cspDirectives` MUST still apply
+    // there — otherwise a developer who configures `restrictTo: { connectDomains: ["https://api.acme"] }`
     // on their chatbox host would have it honored on Connect → Chat but
     // silently dropped on the public chatbox runtime / Sessions transcript.
+    //
+    // We can't gate on `isPlaygroundActive` alone: the Playground store is
+    // localStorage and leaks across browsing contexts on the same origin
+    // (see line 396), so a chatbox preview iframe can read
+    // `isPlaygroundActive = true` from the parent inspector tab even though
+    // it's a chatbox surface. Require `!isChatboxSurface && !minimalMode` so
+    // the short-circuit is gated on the actual rendering surface, not just
+    // the (leakable) playground flag.
     //
     // No HOSTED_MODE carve-out: PR #2164 moves the sandbox proxy to a separate
     // origin so the iframe is no longer same-origin with mcpjam.com, and a
@@ -1431,7 +1438,12 @@ export function MCPAppsRenderer({
     // cookies.
     //
     // Permissions policy still resolves below — it's orthogonal to CSP.
-    if (cspMode === "permissive" && isPlaygroundActive) {
+    const userTogglePermissive =
+      cspMode === "permissive" &&
+      isPlaygroundActive &&
+      !isChatboxSurface &&
+      !minimalMode;
+    if (userTogglePermissive) {
       let resolvedPermissions: McpUiResourcePermissions | undefined;
       if (sandboxPermissionsPolicy) {
         const resourcePermsMap: Record<string, boolean> = {};
@@ -1599,6 +1611,8 @@ export function MCPAppsRenderer({
   }, [
     cspMode,
     isPlaygroundActive,
+    isChatboxSurface,
+    minimalMode,
     sandboxCspPolicy,
     sandboxPermissionsPolicy,
     widgetCsp,
