@@ -898,7 +898,17 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       // matching Copilot's documented `viewport.maxHeight` model — the doc
       // maps `window.openai.maxHeight` → `app.getHostContext()?.viewport?.maxHeight`,
       // i.e. a flexible vertical bound (widget scrolls up to a max), not a
-      // fixed render-at-400 directive. `availableDisplayModes` is kept as
+      // fixed render-at-400 directive. NOTE: the MCPJam renderer currently
+      // applies `ui/notifications/size-changed.height` directly to the
+      // iframe without clamping against `containerDimensions.maxHeight`
+      // (mcp-apps-renderer.tsx), so a widget reporting `height: 900` will
+      // render at 900px in MCPJam-as-Copilot even though real Copilot
+      // would scroll/cap at 400px. Renderer-level enforcement is a
+      // follow-up that affects every template with a `maxHeight` (Claude
+      // 5000, MCPJam 5000); until it lands, treat this profile as a
+      // best-effort "tells widgets the cap" advertise — overflowing
+      // widgets will look fine here but not in production Copilot.
+      // `availableDisplayModes` is kept as
       // ["inline", "fullscreen"] because omitting it falls back to the
       // inspector default ["inline", "pip", "fullscreen"], which would
       // claim `pip` support Copilot doesn't have — a worse lie than the
@@ -961,8 +971,15 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             },
             permissions: {
               mode: "custom",
-              // Undocumented for Copilot (no probe data and the doc lists
-              // no permissions table); kept as a best-guess sane default.
+              // This is the *host-side iframe `allow=` grant*, not a
+              // resource-declared permission. Microsoft's doc marks
+              // `_meta.ui.permissions` ❌ (Copilot ignores permissions
+              // a widget declares in its resource `_meta.ui`), but says
+              // nothing about which Permissions-Policy features Copilot
+              // attaches to its own iframe. `clipboardWrite: true` is a
+              // best-guess host-grant kept for parity with the other
+              // vendor templates — no probe data confirms Copilot
+              // actually grants it.
               allow: { clipboardWrite: true },
             },
           },
