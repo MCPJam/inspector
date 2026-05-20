@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
+import { usePostHog } from "posthog-js/react";
+import { standardEventProps } from "@/lib/PosthogUtils";
 import {
   ChevronRight,
   AlertCircle,
@@ -359,7 +361,34 @@ export function LoggerView({
     });
   };
 
+  const posthog = usePostHog();
+  const captureLogger = useCallback(
+    (event: string, props?: Record<string, unknown>) => {
+      posthog?.capture(event, {
+        ...standardEventProps("logger_view"),
+        ...props,
+      });
+    },
+    [posthog],
+  );
+
+  // Fire `logger_search_used` once per non-empty search session — i.e. the
+  // first character typed after an empty query — so we measure usage of the
+  // feature without flooding PostHog with one event per keystroke.
+  const searchUsedFiredRef = useRef(false);
+  useEffect(() => {
+    if (searchQuery.trim() === "") {
+      searchUsedFiredRef.current = false;
+      return;
+    }
+    if (!searchUsedFiredRef.current) {
+      searchUsedFiredRef.current = true;
+      captureLogger("logger_search_used");
+    }
+  }, [searchQuery, captureLogger]);
+
   const clearMessages = () => {
+    captureLogger("logger_cleared", { item_count: totalItemCount });
     clearLogs();
     setExpanded(new Set());
   };
@@ -376,6 +405,7 @@ export function LoggerView({
     }));
 
   const copyLogs = async () => {
+    captureLogger("logger_copy_clicked", { item_count: filteredItemCount });
     try {
       await navigator.clipboard.writeText(
         JSON.stringify(serializeLogs(), null, 2),
@@ -387,6 +417,9 @@ export function LoggerView({
   };
 
   const downloadLogs = () => {
+    captureLogger("logger_download_clicked", {
+      item_count: filteredItemCount,
+    });
     const json = JSON.stringify(serializeLogs(), null, 2);
     const blob = new Blob([json], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -500,9 +533,16 @@ export function LoggerView({
                 <DropdownMenuContent align="end">
                   <DropdownMenuRadioGroup
                     value={sourceFilter}
-                    onValueChange={(value) =>
-                      setSourceFilter(value as "all" | TrafficSource)
-                    }
+                    onValueChange={(value) => {
+                      const next = value as "all" | TrafficSource;
+                      if (next !== sourceFilter) {
+                        captureLogger("logger_source_filter_changed", {
+                          from: sourceFilter,
+                          to: next,
+                        });
+                      }
+                      setSourceFilter(next);
+                    }}
                   >
                     <DropdownMenuRadioItem value="all" className="text-xs">
                       All
@@ -561,6 +601,9 @@ export function LoggerView({
                                 value={serverLogLevels[server.id] || "debug"}
                                 onValueChange={(val) => {
                                   const level = val as LoggingLevel;
+                                  captureLogger("logger_log_level_changed", {
+                                    to: level,
+                                  });
                                   setServerLogLevels((prev) => ({
                                     ...prev,
                                     [server.id]: level,
@@ -645,7 +688,10 @@ export function LoggerView({
           <Button
             variant="ghost"
             size="icon"
-            onClick={onClose}
+            onClick={() => {
+              captureLogger("logger_collapsed");
+              onClose();
+            }}
             className="h-7 w-7 flex-shrink-0"
             title="Hide JSON-RPC panel"
           >

@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Columns2, X } from "lucide-react";
+import { usePostHog } from "posthog-js/react";
+import { standardEventProps } from "@/lib/PosthogUtils";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Popover,
@@ -206,6 +208,17 @@ export function MultiHostPicker({
   // client enters compare; removing back to one client exits.
   // `multiHostEnabled` is derived from `nextIds.length > 1` instead
   // of being driven by a separate toggle.
+  const posthog = usePostHog();
+  const captureCompare = useCallback(
+    (event: string, props?: Record<string, unknown>) => {
+      posthog?.capture(event, {
+        ...standardEventProps("playground_multi_host_picker"),
+        ...props,
+      });
+    },
+    [posthog],
+  );
+
   const handleHostRowToggle = (hostId: string) => {
     requestPopoverStayOpen();
 
@@ -218,9 +231,23 @@ export function MultiHostPicker({
     // the only selected client (the lead) is a no-op.
     if (nextSelectedHostIds.length === 0) return;
 
+    const nextEnabled = nextSelectedHostIds.length > 1;
+    captureCompare(
+      isSelected
+        ? "playground_compare_host_removed"
+        : "playground_compare_host_added",
+      {
+        selected_count: nextSelectedHostIds.length,
+        compare_active: nextEnabled,
+        entered_compare:
+          !isSelected && !multiHostEnabled && nextEnabled,
+        exited_compare: isSelected && multiHostEnabled && !nextEnabled,
+      },
+    );
+
     requestSelectionChange({
       type: "multi",
-      enabled: nextSelectedHostIds.length > 1,
+      enabled: nextEnabled,
       selectedHostIds: nextSelectedHostIds,
     });
   };
@@ -228,6 +255,9 @@ export function MultiHostPicker({
   const handlePromoteLeadFromChip = (hostId: string) => {
     if (!multiHostEnabled || hostId === leadHostId) return;
     requestPopoverStayOpen();
+    captureCompare("playground_compare_lead_promoted", {
+      selected_count: effectiveSelectedHostIds.length,
+    });
     onPromoteLead(hostId);
   };
 

@@ -1,5 +1,7 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useConvexAuth } from "convex/react";
+import { usePostHog } from "posthog-js/react";
+import { standardEventProps } from "@/lib/PosthogUtils";
 import {
   AppBuilderStateProvider,
   useAppBuilderState,
@@ -97,6 +99,19 @@ interface PlaygroundTabProps {
  */
 export function PlaygroundTab(props: PlaygroundTabProps) {
   const themeMode = usePreferencesStore((state) => state.themeMode);
+
+  const posthog = usePostHog();
+  useEffect(() => {
+    posthog?.capture("playground_tab_viewed", {
+      ...standardEventProps("playground_tab"),
+      has_active_project: !!props.activeProjectId,
+      has_shared_project: !!props.sharedProjectId,
+      is_signed_in: !!props.isSignedInWithWorkOs,
+    });
+    // Fire once per mount; deps intentionally limited to posthog so the
+    // event isn't refired when project ids hydrate after auth.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [posthog]);
 
   // Resolve the previewed host once at the tab root so the host-config-
   // derived providers (Active MCP Profile, hostStyle, capabilities override,
