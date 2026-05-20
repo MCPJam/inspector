@@ -1522,7 +1522,7 @@ export function ServersTab({
           {/* Header Section */}
           <div className="flex flex-wrap items-center justify-end gap-2">
             <div className="flex items-center gap-2">
-              {renderAutoConnectToggle()}
+              {showServerActionsInHostsHeader ? null : renderAutoConnectToggle()}
               {shouldShowBrowseRegistryOnly && onNavigateToRegistry ? (
                 <Button
                   variant="outline"
@@ -1655,7 +1655,7 @@ export function ServersTab({
       {/* Header Section */}
       <div className="flex flex-wrap items-center justify-end gap-2">
         <div className="flex items-center gap-2">
-          {renderAutoConnectToggle()}
+          {showServerActionsInHostsHeader ? null : renderAutoConnectToggle()}
           {shouldShowBrowseRegistryOnly && onNavigateToRegistry ? (
             <Button
               variant="outline"
@@ -1770,7 +1770,13 @@ export function ServersTab({
       )}
 
       {showServerActionsInHostsHeader && hostsConnectAddServerSlot
-        ? createPortal(renderServerActionsMenu(), hostsConnectAddServerSlot)
+        ? createPortal(
+            <>
+              {renderAutoConnectToggle()}
+              {renderServerActionsMenu()}
+            </>,
+            hostsConnectAddServerSlot,
+          )
         : null}
     </div>
   );
