@@ -956,18 +956,30 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           compatRuntime: { openaiApps: true },
           sandbox: {
             csp: {
-              // No host-side `restrictTo` — see the Claude template for
-              // the full rationale. Real Copilot publishes its own
-              // allowlist (AI APIs + jsDelivr + Microsoft Graph + Office
-              // CDN), but mirroring it here would only narrow the view's
-              // declared CSP via the SEP-1865 intersection rule and
-              // silently break widgets reaching anything else. Note:
-              // Microsoft's doc marks `frameDomains` as ❌ for Copilot
-              // (real Copilot drops the field), but with `mode: "declared"`
-              // MCPJam-as-Copilot honors a widget's declared `frameDomains`
-              // and lets it nest iframes — so iframe-nesting widgets will
-              // work here but fail in production Copilot.
+              // No host-side `restrictTo` on connect/resource/baseUri
+              // — see the Claude template for the full rationale. Real
+              // Copilot publishes its own allowlist (AI APIs + jsDelivr
+              // + Microsoft Graph + Office CDN), but mirroring it here
+              // would only narrow the view's declared CSP via the
+              // SEP-1865 intersection rule and silently break widgets
+              // reaching anything else.
+              //
+              // `frameDomains: []` IS set below — Microsoft's doc marks
+              // `frameDomains` as ❌ for Copilot (real Copilot drops the
+              // field), and the symmetric move is to deny iframe nesting
+              // at the host layer too. Encoded as an explicit empty
+              // allowlist so the intent is captured in the config; the
+              // SEP-1865 schema is allowlist-only by design (no deny
+              // primitive — see CspDomainSet in client-config-v2.ts), and
+              // the current MCP Apps renderer gates `restrictToConfigured`
+              // on non-empty arrays, so this empty-list intent is not yet
+              // enforced at runtime. Renderer-side enforcement (treat an
+              // explicit empty allowlist as deny) is a follow-up that
+              // pairs with the `containerDimensions.maxHeight` clamp
+              // noted above — until both land, iframe-nesting widgets
+              // will work in MCPJam-as-Copilot but fail in production.
               mode: "declared",
+              restrictTo: { frameDomains: [] },
             },
             permissions: {
               mode: "custom",
