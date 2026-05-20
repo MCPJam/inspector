@@ -85,9 +85,9 @@
     "electron:publish": "electron-forge publish",
     "electron:dev": "electron-forge start",
     "pretest": "node scripts/bundle-sandbox-proxy-html.js",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage",
+    "test": "cross-env NODE_OPTIONS=--max-old-space-size=6144 vitest run",
+    "test:watch": "cross-env NODE_OPTIONS=--max-old-space-size=6144 vitest",
+    "test:coverage": "cross-env NODE_OPTIONS=--max-old-space-size=6144 vitest run --coverage",
     "test:e2e": "playwright test",
     "ship": "bash scripts/ship.sh"
   },

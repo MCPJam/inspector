@@ -65,7 +65,10 @@ import {
   toTraceRecord,
   writeTraceEvent,
 } from "./live-chat-trace-stream";
-import { buildResolvedModelRequestPayload } from "./model-request-payload";
+import {
+  buildResolvedModelRequestPayload,
+  normalizeSystemPromptForProvider,
+} from "./model-request-payload";
 import { hashGuestSpendIp } from "./guest-spend-ip.js";
 
 const MAX_STEPS = 20;
@@ -414,7 +417,7 @@ function scrubMessagesForBackend(
 
 function safelyEmitLiveTextDelta(
   onLiveTextDelta: ((delta: string) => void) | undefined,
-  delta: string,
+  delta: string
 ) {
   if (!onLiveTextDelta) return;
   try {
@@ -920,7 +923,9 @@ async function handlePendingApprovals(
       if (existingResultIds.has(toolCallId)) continue;
       const assistantIdx = toolCallIdToAssistantIdx.get(toolCallId);
       if (assistantIdx === undefined) continue;
-      const assistantMsg = messageHistory[assistantIdx] as AssistantModelMessage;
+      const assistantMsg = messageHistory[
+        assistantIdx
+      ] as AssistantModelMessage;
       if (!Array.isArray(assistantMsg.content)) continue;
       for (const part of assistantMsg.content) {
         if (part.type === "tool-call" && part.toolCallId === toolCallId) {
@@ -982,6 +987,7 @@ async function processOneStep(
   const beforeStepLength = messageHistory.length;
   const stepStartAbs = Date.now();
   const llmStartAbs = stepStartAbs;
+  const providerSystemPrompt = normalizeSystemPromptForProvider(systemPrompt);
 
   // Scrub messages before sending to backend
   const scrubbedMessages = scrubMessagesForBackend(
@@ -1047,7 +1053,7 @@ async function processOneStep(
       skipChatIngestion: true,
       messages: JSON.stringify(scrubbedMessages),
       model: modelId,
-      systemPrompt,
+      systemPrompt: providerSystemPrompt,
       ...(temperature !== undefined ? { temperature } : {}),
       tools: toolDefs,
       ...(chatboxId ? { chatboxId } : {}),

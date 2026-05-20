@@ -80,29 +80,64 @@ describe("MultiHostPicker", () => {
     vi.clearAllMocks();
   });
 
-  it("renders the lead host name in the trigger", () => {
+  it("renders a 'Compare' affordance in the trigger when not actively comparing (single-host or multi-host with <=1 selected)", () => {
+    // The navbar `ClientOverlayBar` already shows the lead host name +
+    // cycle controls. Repeating the name here would just duplicate it,
+    // so the playground trigger collapses to a `Compare` affordance
+    // until the user actually has >1 host selected.
     renderPicker({ hosts: [hostA], currentHostId: "host-a" });
+    const trigger = screen.getByTestId("multi-host-picker-trigger");
+    expect(trigger).toHaveTextContent("Compare");
+    expect(trigger).not.toHaveTextContent("MCPJam");
+    expect(trigger).toHaveAttribute("data-compare-mode", "idle");
+  });
+
+  it("trigger flips to the 'lead +N' label only once multi-host has >1 selected", () => {
+    renderPicker({
+      hosts: [hostA, hostB],
+      currentHostId: "host-a",
+      // Multi-host enabled but only the lead is in the slot — still
+      // shows "Compare" (no comparison happening yet).
+      selectedHostIds: ["host-a"],
+      multiHostEnabled: true,
+    });
     expect(screen.getByTestId("multi-host-picker-trigger")).toHaveTextContent(
-      "MCPJam",
+      "Compare",
+    );
+    expect(screen.getByTestId("multi-host-picker-trigger")).toHaveAttribute(
+      "data-compare-mode",
+      "idle",
     );
   });
 
-  it("disables the Multiple hosts switch with a tooltip when only one host exists", async () => {
+  it("shows an empty-state hint inside the popover when the project has only one client", async () => {
+    // The 'Multiple hosts' toggle was removed — compare mode is now
+    // implicit on selection count. With only one client there's
+    // nothing to compare against, so we surface a hint instead of a
+    // disabled toggle.
     const user = userEvent.setup();
     renderPicker({ hosts: [hostA], currentHostId: "host-a" });
 
     await user.click(screen.getByTestId("multi-host-picker-trigger"));
 
-    const toggle = await screen.findByTestId("multi-host-toggle");
-    expect(toggle).toBeDisabled();
+    expect(
+      await screen.findByText("Add a second client to start comparing."),
+    ).toBeInTheDocument();
+    // The old toggle is gone entirely.
+    expect(screen.queryByTestId("multi-host-toggle")).toBeNull();
   });
 
-  it("calls onPromoteLead when picking another host in single-mode", async () => {
+  it("selecting a second client from single-host implicitly enters compare mode", async () => {
+    // Old behavior: a separate toggle had to be flipped first. New
+    // behavior: the trigger is a "Compare" affordance and the popover
+    // is multi-select from the jump — adding a 2nd client both grows
+    // `selectedHostIds` and enables `multiHostEnabled`.
     const user = userEvent.setup();
-    const { onPromoteLead } = renderPicker({
-      hosts: [hostA, hostB],
-      currentHostId: "host-a",
-    });
+    const { onPromoteLead, onMultiHostEnabledChange, onSelectedHostIdsChange } =
+      renderPicker({
+        hosts: [hostA, hostB],
+        currentHostId: "host-a",
+      });
 
     await user.click(screen.getByTestId("multi-host-picker-trigger"));
 
@@ -112,32 +147,39 @@ describe("MultiHostPicker", () => {
 
     await user.click(screen.getByTestId("multi-host-row-host-b"));
 
-    expect(onPromoteLead).toHaveBeenCalledWith("host-b");
+    expect(onSelectedHostIdsChange).toHaveBeenCalledWith(["host-a", "host-b"]);
+    expect(onMultiHostEnabledChange).toHaveBeenCalledWith(true);
+    // Lead-swap is the navbar's job now; the playground popover never
+    // calls `onPromoteLead` from row clicks.
+    expect(onPromoteLead).not.toHaveBeenCalled();
   });
 
-  it("toggles Multiple hosts on, shows chip strip with current lead, and renders checkboxes", async () => {
+  it("removing back to a single client exits compare mode (multi-host disabled)", async () => {
     const user = userEvent.setup();
-    const onMultiHostEnabledChange = vi.fn();
-    const onSelectedHostIdsChange = vi.fn();
-    renderPicker({
+    const { onMultiHostEnabledChange, onSelectedHostIdsChange } = renderPicker({
       hosts: [hostA, hostB],
       currentHostId: "host-a",
-      onMultiHostEnabledChange,
-      onSelectedHostIdsChange,
+      selectedHostIds: ["host-a", "host-b"],
+      multiHostEnabled: true,
     });
 
     await user.click(screen.getByTestId("multi-host-picker-trigger"));
 
-    const toggle = await screen.findByTestId("multi-host-toggle");
-    expect(toggle).not.toBeDisabled();
+    await waitFor(() =>
+      expect(screen.getByTestId("multi-host-row-host-b")).toBeInTheDocument(),
+    );
 
-    await user.click(toggle);
+    // Deselecting host-b leaves just the lead → compare collapses.
+    await user.click(screen.getByTestId("multi-host-row-host-b"));
 
-    expect(onMultiHostEnabledChange).toHaveBeenCalledWith(true);
     expect(onSelectedHostIdsChange).toHaveBeenCalledWith(["host-a"]);
+    expect(onMultiHostEnabledChange).toHaveBeenCalledWith(false);
   });
 
-  it("with multi-host enabled, shows the chip strip including the lead and renders checkbox affordances", async () => {
+  it("chip strip only appears once compare is active (>1 selected)", async () => {
+    // With only the lead present, the strip is hidden — there's
+    // nothing to compare yet, so showing a single chip would be
+    // visual noise.
     const user = userEvent.setup();
     renderPicker({
       hosts: [hostA, hostB],
@@ -149,11 +191,11 @@ describe("MultiHostPicker", () => {
     await user.click(screen.getByTestId("multi-host-picker-trigger"));
 
     await waitFor(() =>
-      expect(screen.getByTestId("multi-host-chip-strip")).toBeInTheDocument(),
+      expect(screen.getByTestId("multi-host-row-host-a")).toBeInTheDocument(),
     );
-    expect(screen.getByTestId("multi-host-chip-host-a")).toHaveTextContent(
-      "MCPJam",
-    );
+
+    expect(screen.queryByTestId("multi-host-chip-strip")).toBeNull();
+    // Checkboxes still render (popover is always multi-select).
     expect(
       screen.getByTestId("multi-host-checkbox-host-a"),
     ).toHaveAttribute("data-checked", "true");
@@ -252,7 +294,8 @@ describe("MultiHostPicker", () => {
     expect(rowA).not.toHaveAttribute("data-disabled", "true");
   });
 
-  it("shows +N in the trigger when multi-host has more than one selected", () => {
+  it("does not render an X (remove) affordance on the lead chip, but does on secondary chips", async () => {
+    const user = userEvent.setup();
     renderPicker({
       hosts: [hostA, hostB, hostC],
       currentHostId: "host-a",
@@ -260,8 +303,59 @@ describe("MultiHostPicker", () => {
       multiHostEnabled: true,
     });
 
-    expect(screen.getByTestId("multi-host-picker-trigger")).toHaveTextContent(
-      "MCPJam +2",
+    await user.click(screen.getByTestId("multi-host-picker-trigger"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("multi-host-chip-strip")).toBeInTheDocument(),
     );
+
+    // Lead (slot 0) has NO remove button.
+    expect(
+      screen.queryByTestId("multi-host-chip-remove-host-a"),
+    ).not.toBeInTheDocument();
+    // Secondaries DO have remove buttons.
+    expect(
+      screen.getByTestId("multi-host-chip-remove-host-b"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("multi-host-chip-remove-host-c"),
+    ).toBeInTheDocument();
+  });
+
+  it("clicking a secondary chip's X removes only that host from selectedHostIds", async () => {
+    const user = userEvent.setup();
+    const onSelectedHostIdsChange = vi.fn();
+    renderPicker({
+      hosts: [hostA, hostB, hostC],
+      currentHostId: "host-a",
+      selectedHostIds: ["host-a", "host-b", "host-c"],
+      multiHostEnabled: true,
+      onSelectedHostIdsChange,
+    });
+
+    await user.click(screen.getByTestId("multi-host-picker-trigger"));
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("multi-host-chip-remove-host-b"),
+      ).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByTestId("multi-host-chip-remove-host-b"));
+
+    expect(onSelectedHostIdsChange).toHaveBeenCalledWith(["host-a", "host-c"]);
+  });
+
+  it("shows the lead name + N badge in the trigger when multi-host has more than one selected", () => {
+    renderPicker({
+      hosts: [hostA, hostB, hostC],
+      currentHostId: "host-a",
+      selectedHostIds: ["host-a", "host-b", "host-c"],
+      multiHostEnabled: true,
+    });
+
+    const trigger = screen.getByTestId("multi-host-picker-trigger");
+    expect(trigger).toHaveTextContent("MCPJam +2");
+    expect(trigger).toHaveAttribute("data-compare-mode", "active");
   });
 });

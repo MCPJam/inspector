@@ -17,6 +17,9 @@ const chatSessionOnResetRef = vi.hoisted(() => ({
 const lastUseChatSessionOptionsRef = vi.hoisted(() => ({
   current: undefined as any,
 }));
+const convexQueryCallsRef = vi.hoisted(() => ({
+  current: [] as Array<{ name: string; args: unknown }>,
+}));
 const mockHistorySession = vi.hoisted(() => ({
   _id: "history-1",
   chatSessionId: "chat-session-1",
@@ -63,6 +66,7 @@ vi.mock("convex/react", () => ({
     isLoading: false,
   }),
   useQuery: (name: string, args: unknown) => {
+    convexQueryCallsRef.current.push({ name, args });
     if (args === "skip") {
       return undefined;
     }
@@ -436,6 +440,7 @@ describe("ChatTabV2 history sync", () => {
     );
     chatSessionOnResetRef.current = undefined;
     lastUseChatSessionOptionsRef.current = undefined;
+    convexQueryCallsRef.current = [];
     mockReactiveHistoryState.session = undefined;
     mockReactiveHistoryState.widgetSnapshots = undefined;
     Object.assign(mockUseChatSession, {
@@ -481,7 +486,8 @@ describe("ChatTabV2 history sync", () => {
       <ChatTabV2
         {...defaultProps}
         hostedContext={{
-          chatboxId: "cbx_test", accessVersion: 1,
+          chatboxId: "cbx_test",
+          accessVersion: 1,
           projectId: "project-1",
           selectedServerIds: ["server-1"],
         }}
@@ -489,11 +495,33 @@ describe("ChatTabV2 history sync", () => {
     );
 
     expect(lastUseChatSessionOptionsRef.current?.hostedContext).toMatchObject({
-      chatboxId: "cbx_test", accessVersion: 1,
+      chatboxId: "cbx_test",
+      accessVersion: 1,
     });
     expect(
       lastUseChatSessionOptionsRef.current?.hostedContext?.oauthTokens
     ).toBeUndefined();
+  });
+
+  it("loads org model config from the effective hosted project id", () => {
+    render(
+      <ChatTabV2
+        {...defaultProps}
+        hostedContext={{
+          projectId: "hosted-project-1",
+          selectedServerIds: ["server-id-1"],
+        }}
+      />
+    );
+
+    expect(convexQueryCallsRef.current).toContainEqual({
+      name: "organizationModelProviders:getVisibleConfigForProject",
+      args: { projectId: "hosted-project-1" },
+    });
+    expect(convexQueryCallsRef.current).toContainEqual({
+      name: "organizationModelProviders:getVisibleConfig",
+      args: "skip",
+    });
   });
 
   it("does not auto-reconnect project chat when oauth is required", async () => {

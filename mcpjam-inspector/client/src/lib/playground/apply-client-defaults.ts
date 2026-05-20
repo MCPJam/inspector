@@ -47,7 +47,7 @@ type HostConfigForPlayground = Pick<
  * empty — returns `undefined`, which the caller treats as "leave the
  * picker alone."
  */
-function resolvePlaygroundModelId(
+export function resolvePlaygroundModelId(
   desiredModelId: string | undefined,
   hostStyle: string,
 ): string | undefined {

@@ -705,6 +705,43 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(result).toBe("Network connection failed");
     });
 
+    it("normalizes retry-exhausted provider overload errors", async () => {
+      const onError = await getOnError("anthropic");
+      const error = new Error("Failed after 3 attempts. Last error: Overloaded");
+
+      const result = JSON.parse(onError(error));
+      expect(result).toEqual({
+        code: "provider_overloaded",
+        message:
+          "That model is temporarily overloaded. Try again in a moment or switch models.",
+        isRetryable: true,
+      });
+    });
+
+    it("normalizes Anthropic overload APICallErrors", async () => {
+      const onError = await getOnError("anthropic");
+      const error = new APICallError({
+        message: "Overloaded",
+        url: "https://api.anthropic.com/v1/messages",
+        requestBodyValues: {},
+        statusCode: 529,
+        responseBody:
+          '{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+        isRetryable: true,
+      });
+
+      const result = JSON.parse(onError(error));
+      expect(result).toEqual({
+        code: "provider_overloaded",
+        message:
+          "That model is temporarily overloaded. Try again in a moment or switch models.",
+        statusCode: 529,
+        isRetryable: true,
+        details:
+          '{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+      });
+    });
+
     it("converts non-Error values to string", async () => {
       const onError = await getOnError("openai");
       const result = onError("something broke");

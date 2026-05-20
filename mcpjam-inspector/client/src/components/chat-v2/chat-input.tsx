@@ -40,6 +40,7 @@ import { ModelDefinition, ServerFormData } from "@/shared/types";
 import { AddServerModal } from "@/components/connection/AddServerModal";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import { SystemPromptSelector } from "@/components/chat-v2/chat-input/system-prompt-selector";
+import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
 import { useTextareaCaretPosition } from "@/hooks/use-textarea-caret-position";
 import {
   Context,
@@ -964,10 +965,7 @@ export function ChatInput({
 
       {!minimalMode && (
         <SystemPromptSelector
-          systemPrompt={
-            systemPrompt ||
-            "You are a helpful assistant with access to MCP tools."
-          }
+          systemPrompt={systemPrompt || DEFAULT_SYSTEM_PROMPT}
           onSystemPromptChange={onSystemPromptChange}
           temperature={temperature}
           onTemperatureChange={onTemperatureChange}
