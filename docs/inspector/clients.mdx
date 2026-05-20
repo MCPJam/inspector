@@ -45,6 +45,7 @@ When your server exposes [MCP Apps](https://modelcontextprotocol.io/docs/extensi
 - **Permission Policy** — Per-feature toggles for `camera`, `microphone`, `geolocation`, and `clipboard-write`. Choose `resource-declared` (grant what the app's resource metadata asks for), `deny-all`, or `custom` (your own allow map).
 - **Display modes** — Which of `inline`, `fullscreen`, and `pip` the inspector advertises in `HostContext.availableDisplayModes`. Test how your app responds when a requested mode isn't available.
 - **Theme and styles** — The CSS variables and font block the inspector injects into `HostContext.styles` so you can verify your app picks up host theming.
+- **`window.openai` injection** — Toggle whether the inspector injects the OpenAI Apps SDK `window.openai` shim into widget HTML before sandboxing. ChatGPT, Copilot, and MCPJam host presets enable this by default; Claude, Cursor, and Codex presets leave it off. You can override the preset per host using the toggle in the **Apps Extension** tab. The chip in the host capability matrix shows the current state and whether it comes from the preset or a manual override.
 
 <Note>
   All MCP App settings only take effect when the connected server actually
