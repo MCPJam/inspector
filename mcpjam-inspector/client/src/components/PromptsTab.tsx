@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Textarea } from "@mcpjam/design-system/textarea";
@@ -28,10 +28,12 @@ import {
   listPrompts as listPromptsApi,
 } from "@/lib/apis/mcp-prompts-api";
 import { SelectedToolHeader } from "./ui-playground/SelectedToolHeader";
+import type { ConnectionStatus } from "@/state/app-types";
 
 interface PromptsTabProps {
   serverConfig?: MCPServerConfig;
   serverName?: string;
+  serverConnectionStatus?: ConnectionStatus;
 }
 
 type PromptArgument = NonNullable<MCPPrompt["arguments"]>[number];
@@ -47,7 +49,11 @@ interface FormField {
   maximum?: number;
 }
 
-export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
+export function PromptsTab({
+  serverConfig,
+  serverName,
+  serverConnectionStatus,
+}: PromptsTabProps) {
   const [prompts, setPrompts] = useState<MCPPrompt[]>([]);
   const [selectedPrompt, setSelectedPrompt] = useState<string>("");
   const [formFields, setFormFields] = useState<FormField[]>([]);
@@ -56,17 +62,43 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
   const [fetchingPrompts, setFetchingPrompts] = useState(false);
   const [error, setError] = useState<string>("");
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
+  const promptsFetchVersionRef = useRef(0);
+  const promptGetVersionRef = useRef(0);
+  const isServerConnected =
+    serverConnectionStatus === undefined ||
+    serverConnectionStatus === "connected";
 
   const selectedPromptData = useMemo(() => {
     return prompts.find((prompt) => prompt.name === selectedPrompt) ?? null;
   }, [prompts, selectedPrompt]);
   const promptDisplay = extractDisplayFromValue(promptContent);
 
-  useEffect(() => {
-    if (serverConfig && serverName) {
-      fetchPrompts();
+  const resetLoadedPromptState = (
+    invalidateRequests = true,
+    stopLoading = true,
+  ) => {
+    if (invalidateRequests) {
+      promptsFetchVersionRef.current += 1;
+      promptGetVersionRef.current += 1;
     }
-  }, [serverConfig, serverName]);
+    if (stopLoading) {
+      setLoading(false);
+      setFetchingPrompts(false);
+    }
+    setPrompts([]);
+    setSelectedPrompt("");
+    setFormFields([]);
+    setPromptContent(null);
+    setError("");
+  };
+
+  useEffect(() => {
+    if (!serverConfig || !serverName || !isServerConnected) {
+      resetLoadedPromptState();
+      return;
+    }
+    fetchPrompts();
+  }, [serverConfig, serverName, isServerConnected]);
 
   useEffect(() => {
     if (selectedPromptData?.arguments) {
@@ -78,12 +110,18 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
 
   const fetchPrompts = async () => {
     if (!serverName) return;
+    if (!isServerConnected) {
+      resetLoadedPromptState();
+      return;
+    }
 
     setFetchingPrompts(true);
     setError("");
+    const fetchVersion = ++promptsFetchVersionRef.current;
 
     try {
       const serverPrompts = await listPromptsApi(serverName);
+      if (fetchVersion !== promptsFetchVersionRef.current) return;
       setPrompts(serverPrompts);
 
       // Clear selection if the selected prompt no longer exists
@@ -95,11 +133,14 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
         setPromptContent(null);
       }
     } catch (err) {
+      if (fetchVersion !== promptsFetchVersionRef.current) return;
       const message =
         err instanceof Error ? err.message : `Could not fetch prompts: ${err}`;
       setError(message);
     } finally {
-      setFetchingPrompts(false);
+      if (fetchVersion === promptsFetchVersionRef.current) {
+        setFetchingPrompts(false);
+      }
     }
   };
 
@@ -162,9 +203,14 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
     async (promptName?: string, params?: Record<string, string>) => {
       const targetPrompt = promptName ?? selectedPrompt;
       if (!targetPrompt || !serverName) return;
+      if (!isServerConnected) {
+        setError("Connect this server before running prompts.");
+        return;
+      }
 
       setLoading(true);
       setError("");
+      const getVersion = ++promptGetVersionRef.current;
 
       try {
         const resolvedParams = params ?? buildParameters();
@@ -173,23 +219,27 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
           targetPrompt,
           resolvedParams,
         );
+        if (getVersion !== promptGetVersionRef.current) return;
         setPromptContent(data.content);
       } catch (err) {
+        if (getVersion !== promptGetVersionRef.current) return;
         const message =
           err instanceof Error ? err.message : `Error getting prompt: ${err}`;
         setError(message);
       } finally {
-        setLoading(false);
+        if (getVersion === promptGetVersionRef.current) {
+          setLoading(false);
+        }
       }
     },
-    [selectedPrompt, serverName, buildParameters],
+    [selectedPrompt, serverName, isServerConnected, buildParameters],
   );
 
   const promptNames = prompts.map((prompt) => prompt.name);
 
   // Handle Enter key in input fields
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" && !loading) {
+    if (e.key === "Enter" && isServerConnected && !loading) {
       e.preventDefault();
       getPrompt();
     }
@@ -198,7 +248,13 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
   // Handle Enter key to get prompt globally
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Enter" && !e.shiftKey && selectedPrompt && !loading) {
+      if (
+        e.key === "Enter" &&
+        !e.shiftKey &&
+        selectedPrompt &&
+        isServerConnected &&
+        !loading
+      ) {
         const target = e.target as HTMLElement;
         const tagName = target.tagName;
         const isEditable = target.isContentEditable;
@@ -214,7 +270,7 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedPrompt, loading, getPrompt]);
+  }, [selectedPrompt, isServerConnected, loading, getPrompt]);
 
   if (!serverConfig || !serverName) {
     return (
@@ -247,7 +303,7 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
               onClick={fetchPrompts}
               variant="ghost"
               size="sm"
-              disabled={fetchingPrompts}
+              disabled={fetchingPrompts || !isServerConnected}
               className="h-7 w-7 p-0"
               title="Refresh prompts"
             >
@@ -269,7 +325,7 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
           {/* Run button */}
           <Button
             onClick={() => getPrompt()}
-            disabled={loading || !selectedPrompt}
+            disabled={loading || !selectedPrompt || !isServerConnected}
             size="sm"
             className="h-8 px-3 text-xs ml-auto"
           >
@@ -426,7 +482,9 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
               ) : promptNames.length === 0 ? (
                 <div className="text-center py-8">
                   <p className="text-sm text-muted-foreground">
-                    No prompts available
+                    {isServerConnected
+                      ? "No prompts available"
+                      : "Connect this server to load prompts."}
                   </p>
                 </div>
               ) : (

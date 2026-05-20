@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  act,
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+} from "@testing-library/react";
 import { PromptsTab } from "../PromptsTab";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 
@@ -94,6 +100,99 @@ describe("PromptsTab", () => {
       await waitFor(() => {
         expect(mockListPrompts).toHaveBeenCalledWith("test-server");
       });
+    });
+
+    it("does not fetch prompts when the server is disconnected", () => {
+      const serverConfig = createServerConfig();
+
+      render(
+        <PromptsTab
+          serverConfig={serverConfig}
+          serverName="test-server"
+          serverConnectionStatus="disconnected"
+        />,
+      );
+
+      expect(mockListPrompts).not.toHaveBeenCalled();
+      expect(
+        screen.getByText("Connect this server to load prompts."),
+      ).toBeInTheDocument();
+    });
+
+    it("clears loaded prompts when the selected server disconnects", async () => {
+      const serverConfig = createServerConfig();
+
+      mockListPrompts.mockResolvedValue([
+        { name: "greeting", description: "A greeting prompt" },
+      ]);
+
+      const { rerender } = render(
+        <PromptsTab
+          serverConfig={serverConfig}
+          serverName="test-server"
+          serverConnectionStatus="connected"
+        />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("greeting")).toBeInTheDocument();
+      });
+      expect(mockListPrompts).toHaveBeenCalledTimes(1);
+
+      rerender(
+        <PromptsTab
+          serverConfig={serverConfig}
+          serverName="test-server"
+          serverConnectionStatus="disconnected"
+        />,
+      );
+
+      await waitFor(() => {
+        expect(screen.queryByText("greeting")).not.toBeInTheDocument();
+      });
+      expect(
+        screen.getByText("Connect this server to load prompts."),
+      ).toBeInTheDocument();
+      expect(mockListPrompts).toHaveBeenCalledTimes(1);
+    });
+
+    it("ignores a stale prompts response after the selected server disconnects", async () => {
+      const serverConfig = createServerConfig();
+      let resolvePrompts!: (value: Array<Record<string, unknown>>) => void;
+      mockListPrompts.mockReturnValue(
+        new Promise((resolve) => {
+          resolvePrompts = resolve;
+        }),
+      );
+
+      const { rerender } = render(
+        <PromptsTab
+          serverConfig={serverConfig}
+          serverName="test-server"
+          serverConnectionStatus="connected"
+        />,
+      );
+
+      await waitFor(() => {
+        expect(mockListPrompts).toHaveBeenCalledTimes(1);
+      });
+
+      rerender(
+        <PromptsTab
+          serverConfig={serverConfig}
+          serverName="test-server"
+          serverConnectionStatus="disconnected"
+        />,
+      );
+
+      await act(async () => {
+        resolvePrompts([{ name: "late-prompt" }]);
+      });
+
+      expect(screen.queryByText("late-prompt")).not.toBeInTheDocument();
+      expect(
+        screen.getByText("Connect this server to load prompts."),
+      ).toBeInTheDocument();
     });
 
     it("displays prompts after fetching", async () => {

@@ -44,6 +44,7 @@ import { validateToolOutput } from "@/lib/schema-utils";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { usePostHog } from "posthog-js/react";
+import type { ConnectionStatus } from "@/state/app-types";
 
 type ToolMap = Record<string, Tool>;
 type FormField = ToolFormField;
@@ -89,9 +90,14 @@ function normalizeElicitationContent(
 interface ToolsTabProps {
   serverConfig?: MCPServerConfig;
   serverName?: string;
+  serverConnectionStatus?: ConnectionStatus;
 }
 
-export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
+export function ToolsTab({
+  serverConfig,
+  serverName,
+  serverConnectionStatus,
+}: ToolsTabProps) {
   const logger = useLogger("ToolsTab");
   const posthog = usePostHog();
   const [tools, setTools] = useState<ToolMap>({});
@@ -132,7 +138,12 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   const [taskTtl, setTaskTtl] = useState<number>(0);
   // Infinite scroll state
   const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const toolFetchVersionRef = useRef(0);
+  const taskCapabilitiesFetchVersionRef = useRef(0);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
+  const isServerConnected =
+    serverConnectionStatus === undefined ||
+    serverConnectionStatus === "connected";
   const serverKey = useMemo(() => {
     if (!serverConfig) return "none";
     try {
@@ -183,22 +194,46 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   const serverSupportsTaskToolCalls =
     taskCapabilities?.supportsToolCalls ?? false;
 
-  useEffect(() => {
-    if (!serverConfig || !serverName) {
-      setTools({});
-      setSelectedTool("");
-      setFormFields([]);
-      setResult(null);
-      setStructuredContentValid(undefined);
-      setError("");
-      setResponseDurationMs(null);
-      setActiveElicitation(null);
+  const resetLoadedToolState = ({
+    invalidateRequests = true,
+    stopLoading = true,
+    clearTaskCapabilities = true,
+  }: {
+    invalidateRequests?: boolean;
+    stopLoading?: boolean;
+    clearTaskCapabilities?: boolean;
+  } = {}) => {
+    if (invalidateRequests) {
+      toolFetchVersionRef.current += 1;
+      taskCapabilitiesFetchVersionRef.current += 1;
+    }
+    if (stopLoading) {
+      setFetchingTools(false);
+      setLoadingExecuteTool(false);
+      setElicitationLoading(false);
+    }
+    setTools({});
+    setSelectedTool("");
+    setFormFields([]);
+    setResult(null);
+    setStructuredContentValid(undefined);
+    setError("");
+    setResponseDurationMs(null);
+    setActiveElicitation(null);
+    if (clearTaskCapabilities) {
       setTaskCapabilities(null);
+    }
+    setCursor(undefined);
+  };
+
+  useEffect(() => {
+    if (!serverConfig || !serverName || !isServerConnected) {
+      resetLoadedToolState();
       return;
     }
     void fetchTools(true);
     void fetchTaskCapabilities();
-  }, [serverConfig, serverName]);
+  }, [serverConfig, serverName, isServerConnected]);
 
   const toolNames = Object.keys(tools);
   const filteredToolNames = searchQuery.trim()
@@ -235,8 +270,11 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   // Fetch task capabilities for the server
   const fetchTaskCapabilities = async () => {
     if (!serverName) return;
+    if (!isServerConnected) return;
+    const fetchVersion = ++taskCapabilitiesFetchVersionRef.current;
     try {
       const capabilities = await getTaskCapabilities(serverName);
+      if (fetchVersion !== taskCapabilitiesFetchVersionRef.current) return;
       setTaskCapabilities(capabilities);
       logger.info("Task capabilities fetched", {
         serverId: serverName,
@@ -245,6 +283,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         supportsCancel: capabilities.supportsCancel,
       });
     } catch (err) {
+      if (fetchVersion !== taskCapabilitiesFetchVersionRef.current) return;
       // Server may not support tasks - this is fine, just log it
       logger.debug("Could not fetch task capabilities", {
         error: err instanceof Error ? err.message : "Unknown error",
@@ -279,18 +318,21 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       logger.warn("Cannot fetch tools: no serverId available");
       return;
     }
+    if (!isServerConnected) {
+      resetLoadedToolState();
+      return;
+    }
 
     setError("");
     setFetchingTools(true);
     if (reset) {
-      setSelectedTool("");
-      setFormFields([]);
-      setResult(null);
-      setStructuredContentValid(undefined);
-      setResponseDurationMs(null);
-      setTools({});
-      setCursor(undefined);
+      resetLoadedToolState({
+        invalidateRequests: false,
+        stopLoading: false,
+        clearTaskCapabilities: false,
+      });
     }
+    const fetchVersion = ++toolFetchVersionRef.current;
 
     try {
       // Call to get all of the tools for server
@@ -298,6 +340,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         serverId: serverName,
         cursor: reset ? undefined : cursor,
       });
+      if (fetchVersion !== toolFetchVersionRef.current) return;
       const toolArray = data.tools ?? [];
       const dictionary = Object.fromEntries(
         toolArray.map((tool: Tool) => [tool.name, tool]),
@@ -309,11 +352,14 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         toolCount: toolArray.length,
       });
     } catch (err) {
+      if (fetchVersion !== toolFetchVersionRef.current) return;
       const message = err instanceof Error ? err.message : "Unknown error";
       logger.error("Failed to fetch tools", { error: message });
       setError(message);
     } finally {
-      setFetchingTools(false);
+      if (fetchVersion === toolFetchVersionRef.current) {
+        setFetchingTools(false);
+      }
     }
   };
 
@@ -432,6 +478,14 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       logger.warn("Cannot execute tool: no serverId available");
       return;
     }
+    if (!isServerConnected) {
+      logger.warn("Cannot execute tool: server is not connected", {
+        serverId: serverName,
+        connectionStatus: serverConnectionStatus,
+      });
+      setError("Connect this server before running tools.");
+      return;
+    }
 
     setLoadingExecuteTool(true);
     setError("");
@@ -482,6 +536,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         e.key === "Enter" &&
         !e.shiftKey &&
         selectedTool &&
+        isServerConnected &&
         !loadingExecuteTool
       ) {
         // Don't trigger if user is typing in an input, textarea, or contenteditable
@@ -500,7 +555,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedTool, loadingExecuteTool]);
+  }, [selectedTool, isServerConnected, loadingExecuteTool]);
 
   const handleElicitationResponse = async (
     action: "accept" | "decline" | "cancel",
@@ -625,6 +680,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       sentinelRef={sentinelRef}
       loadingMore={fetchingTools}
       cursor={cursor ?? ""}
+      serverConnected={isServerConnected}
       formFields={formFields}
       onFieldChange={updateFieldValue}
       onToggleField={updateFieldIsSet}

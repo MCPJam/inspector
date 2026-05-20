@@ -30,10 +30,12 @@ import {
 import { listResourceTemplates } from "@/lib/apis/mcp-resource-templates-api";
 import { parseTemplate } from "url-template";
 import { HOSTED_MODE } from "@/lib/config";
+import type { ConnectionStatus } from "@/state/app-types";
 
 interface ResourcesTabProps {
   serverConfig?: MCPServerConfig;
   serverName?: string;
+  serverConnectionStatus?: ConnectionStatus;
 }
 
 // RFC 6570 compliant URI template parameter extraction
@@ -89,7 +91,11 @@ function renderResourceTextContent(
   );
 }
 
-export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
+export function ResourcesTab({
+  serverConfig,
+  serverName,
+  serverConnectionStatus,
+}: ResourcesTabProps) {
   const [activeTab, setActiveTab] = useState<"resources" | "templates">(
     "resources",
   );
@@ -120,6 +126,13 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
   // Panel state
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const resourcesFetchVersionRef = useRef(0);
+  const resourceReadVersionRef = useRef(0);
+  const templatesFetchVersionRef = useRef(0);
+  const templateReadVersionRef = useRef(0);
+  const isServerConnected =
+    serverConnectionStatus === undefined ||
+    serverConnectionStatus === "connected";
 
   const selectedTemplateData = useMemo(() => {
     return templates.find((t) => t.uriTemplate === selectedTemplate) ?? null;
@@ -138,15 +151,46 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
     return [];
   }, [selectedTemplateData?.uriTemplate, templateOverrides]);
 
+  const resetLoadedResourceState = (
+    invalidateRequests = true,
+    stopLoading = true,
+  ) => {
+    if (invalidateRequests) {
+      resourcesFetchVersionRef.current += 1;
+      resourceReadVersionRef.current += 1;
+      templatesFetchVersionRef.current += 1;
+      templateReadVersionRef.current += 1;
+    }
+    if (stopLoading) {
+      setLoading(false);
+      setFetchingResources(false);
+      setLoadingMore(false);
+      setTemplateLoading(false);
+      setFetchingTemplates(false);
+    }
+    setResources([]);
+    setSelectedResource("");
+    setResourceContent(null);
+    setError("");
+    setNextCursor(undefined);
+    setTemplates([]);
+    setSelectedTemplate("");
+    setTemplateContent(null);
+    setTemplateError("");
+    setTemplateOverrides({});
+  };
+
   // Fetch resources and templates on mount
   useEffect(() => {
-    if (serverConfig && serverName) {
-      fetchResources();
-      if (!HOSTED_MODE) {
-        fetchTemplates();
-      }
+    if (!serverConfig || !serverName || !isServerConnected) {
+      resetLoadedResourceState();
+      return;
     }
-  }, [serverConfig, serverName]);
+    fetchResources();
+    if (!HOSTED_MODE) {
+      fetchTemplates();
+    }
+  }, [serverConfig, serverName, isServerConnected]);
 
   useEffect(() => {
     if (HOSTED_MODE && activeTab === "templates") {
@@ -156,6 +200,10 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
 
   const fetchResources = async (cursor?: string, append = false) => {
     if (!serverName) return;
+    if (!isServerConnected) {
+      resetLoadedResourceState();
+      return;
+    }
 
     if (append) {
       setLoadingMore(true);
@@ -167,9 +215,11 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
       setResourceContent(null);
       setNextCursor(undefined);
     }
+    const fetchVersion = ++resourcesFetchVersionRef.current;
 
     try {
       const result = await listResources(serverName, cursor);
+      if (fetchVersion !== resourcesFetchVersionRef.current) return;
       const serverResources: MCPResource[] = Array.isArray(result.resources)
         ? result.resources
         : [];
@@ -189,15 +239,22 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
       }
       setNextCursor(result.nextCursor);
     } catch (err) {
+      if (fetchVersion !== resourcesFetchVersionRef.current) return;
       setError(`Network error fetching resources: ${err}`);
     } finally {
-      setFetchingResources(false);
-      setLoadingMore(false);
+      if (fetchVersion === resourcesFetchVersionRef.current) {
+        setFetchingResources(false);
+        setLoadingMore(false);
+      }
     }
   };
 
   const fetchTemplates = async () => {
     if (!serverName) return;
+    if (!isServerConnected) {
+      resetLoadedResourceState();
+      return;
+    }
 
     setFetchingTemplates(true);
     setTemplateError("");
@@ -205,14 +262,19 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
     setSelectedTemplate("");
     setTemplateOverrides({});
     setTemplateContent(null);
+    const fetchVersion = ++templatesFetchVersionRef.current;
 
     try {
       const serverTemplates = await listResourceTemplates(serverName);
+      if (fetchVersion !== templatesFetchVersionRef.current) return;
       setTemplates(serverTemplates);
     } catch (err) {
+      if (fetchVersion !== templatesFetchVersionRef.current) return;
       setTemplateError(`Could not fetch resource templates: ${err}`);
     } finally {
-      setFetchingTemplates(false);
+      if (fetchVersion === templatesFetchVersionRef.current) {
+        setFetchingTemplates(false);
+      }
     }
   };
 
@@ -247,16 +309,25 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
   // Read resource
   const readResource = async (uri: string) => {
     if (!serverName) return;
+    if (!isServerConnected) {
+      setError("Connect this server before reading resources.");
+      return;
+    }
     setLoading(true);
     setError("");
+    const readVersion = ++resourceReadVersionRef.current;
 
     try {
       const data = await readResourceApi(serverName, uri);
+      if (readVersion !== resourceReadVersionRef.current) return;
       setResourceContent(data?.content ?? null);
     } catch (err) {
+      if (readVersion !== resourceReadVersionRef.current) return;
       setError(`Error reading resource: ${err}`);
     } finally {
-      setLoading(false);
+      if (readVersion === resourceReadVersionRef.current) {
+        setLoading(false);
+      }
     }
   };
 
@@ -284,26 +355,35 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
   // Read template resource
   const readTemplateResource = useCallback(async () => {
     if (!selectedTemplate || !serverName) return;
+    if (!isServerConnected) {
+      setTemplateError("Connect this server before reading resources.");
+      return;
+    }
 
     setTemplateLoading(true);
     setTemplateError("");
+    const readVersion = ++templateReadVersionRef.current;
 
     try {
       const uri = getResolvedUri();
       const data = await readResourceApi(serverName, uri);
+      if (readVersion !== templateReadVersionRef.current) return;
       setTemplateContent(data?.content ?? null);
     } catch (err) {
+      if (readVersion !== templateReadVersionRef.current) return;
       setTemplateError(`Error reading resource: ${err}`);
     } finally {
-      setTemplateLoading(false);
+      if (readVersion === templateReadVersionRef.current) {
+        setTemplateLoading(false);
+      }
     }
-  }, [selectedTemplate, serverName, getResolvedUri]);
+  }, [selectedTemplate, serverName, isServerConnected, getResolvedUri]);
 
   // Handle Enter key in template input fields
   const handleTemplateInputKeyDown = (
     e: React.KeyboardEvent<HTMLInputElement>,
   ) => {
-    if (e.key === "Enter" && !templateLoading) {
+    if (e.key === "Enter" && isServerConnected && !templateLoading) {
       e.preventDefault();
       readTemplateResource();
     }
@@ -322,12 +402,18 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
         return;
       }
 
-      if (activeTab === "resources" && selectedResource && !loading) {
+      if (
+        activeTab === "resources" &&
+        selectedResource &&
+        isServerConnected &&
+        !loading
+      ) {
         e.preventDefault();
         readResource(selectedResource);
       } else if (
         activeTab === "templates" &&
         selectedTemplate &&
+        isServerConnected &&
         !templateLoading
       ) {
         e.preventDefault();
@@ -339,6 +425,7 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
     selectedResource,
+    isServerConnected,
     loading,
     activeTab,
     selectedTemplate,
@@ -408,7 +495,7 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
               }}
               variant="ghost"
               size="sm"
-              disabled={isFetching}
+              disabled={isFetching || !isServerConnected}
               className="h-7 w-7 p-0"
               title={
                 activeTab === "resources"
@@ -434,7 +521,9 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
           {activeTab === "templates" && (
             <Button
               onClick={readTemplateResource}
-              disabled={templateLoading || !selectedTemplate}
+              disabled={
+                templateLoading || !selectedTemplate || !isServerConnected
+              }
               size="sm"
               className="h-8 px-3 text-xs"
             >
@@ -552,7 +641,9 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
                 ) : resources.length === 0 ? (
                   <div className="text-center py-8">
                     <p className="text-sm text-muted-foreground">
-                      No resources available
+                      {isServerConnected
+                        ? "No resources available"
+                        : "Connect this server to load resources."}
                     </p>
                   </div>
                 ) : (
@@ -612,7 +703,9 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
               ) : templates.length === 0 ? (
                 <div className="text-center py-8">
                   <p className="text-sm text-muted-foreground">
-                    No resource templates available
+                    {isServerConnected
+                      ? "No resource templates available"
+                      : "Connect this server to load resource templates."}
                   </p>
                 </div>
               ) : (
