@@ -200,6 +200,44 @@ describe("useAutoConnectProjectServers", () => {
     expect(ensureServersReady).toHaveBeenCalledTimes(1);
   });
 
+  it("re-attempts after the project auto-connect toggle resets attempts", async () => {
+    const ensureServersReady = vi.fn().mockResolvedValue({
+      readyServerNames: ["alpha"],
+      failedServerNames: [],
+      missingServerNames: [],
+      reauthServerNames: [],
+    });
+    const appState = makeAppState(["alpha"]);
+
+    const { rerender } = renderHook(
+      ({ requiredServerNames }: { requiredServerNames: string[] }) =>
+        useAutoConnectProjectServers({
+          projectId: "proj-toggle",
+          hostScopeKey: "host-a",
+          requiredServerNames,
+        }),
+      {
+        initialProps: { requiredServerNames: ["alpha"] },
+        wrapper: ({ children }) =>
+          wrapper({ children, ensureServersReady, appState }),
+      },
+    );
+
+    await flushMicrotasks();
+    expect(ensureServersReady).toHaveBeenCalledTimes(1);
+
+    rerender({ requiredServerNames: [] });
+    await flushMicrotasks();
+    expect(ensureServersReady).toHaveBeenCalledTimes(1);
+
+    resetAutoConnectAttempts("proj-toggle");
+    rerender({ requiredServerNames: ["alpha"] });
+    await flushMicrotasks();
+
+    expect(ensureServersReady).toHaveBeenCalledTimes(2);
+    expect(ensureServersReady).toHaveBeenLastCalledWith(["alpha"]);
+  });
+
   it("disconnects EVERY connected server on host switch (incl. ones the new host still requires)", async () => {
     const ensureServersReady = vi.fn().mockResolvedValue({
       readyServerNames: [],
