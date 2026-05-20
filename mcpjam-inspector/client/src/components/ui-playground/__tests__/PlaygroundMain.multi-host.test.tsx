@@ -6,8 +6,8 @@
  *     hook stack resolves >=2 hosts, the grid renders one card per host.
  *   - All columns share the project's `selectedServers` (project-scoped
  *     server config invariant).
- *   - Lead column's `executionConfig` is the global chip-edited state;
- *     secondaries' configs come from each host's persisted config.
+ *   - Every column shares the lead's model and the global chip-edited
+ *     `executionConfig` — multi-host varies the host axis only.
  *   - Two hosts with the SAME default model still render as two cards
  *     with distinct `compareId`s — the polymorphic-card regression the
  *     Phase 3 refactor enabled.
@@ -578,15 +578,17 @@ describe("PlaygroundMain — multi-host render path", () => {
     }
   });
 
-  it("lead column's executionConfig is the global chip state; secondaries use the host's persisted config", () => {
+  it("every column shares the global chip state and the lead's model (multi-host varies host only)", () => {
     const hostA = makeHost("h-A", "Host A", {
       hostStyle: "chatgpt",
+      modelId: "openai/gpt-5-mini",
       systemPrompt: "host-A-prompt",
       temperature: 0.1,
       requireToolApproval: true,
     });
     const hostB = makeHost("h-B", "Host B", {
       hostStyle: "claude",
+      modelId: "anthropic/claude-sonnet-4.5",
       systemPrompt: "host-B-prompt",
       temperature: 0.9,
       requireToolApproval: false,
@@ -600,8 +602,6 @@ describe("PlaygroundMain — multi-host render path", () => {
 
     render(<PlaygroundMain {...defaultProps} />);
 
-    // Find the most-recent props each card received (last call per
-    // compareId).
     const calls = mockMultiModelPlaygroundCard.mock.calls;
     const lastByCompareId = new Map<string, any>();
     for (const [props] of calls) {
@@ -610,18 +610,46 @@ describe("PlaygroundMain — multi-host render path", () => {
     const leadProps = lastByCompareId.get("h-A");
     const secondaryProps = lastByCompareId.get("h-B");
 
-    // Lead uses the global mock chip values from useChatSession.
-    expect(leadProps.executionConfig).toEqual({
+    // Both columns receive the global chip state — host's own persisted
+    // systemPrompt/temperature/requireToolApproval are NOT used at the
+    // execution-config layer (the host axis varies via hostSnapshot,
+    // hostConfig, and the per-card capability resolver, not via chip
+    // state).
+    const expectedExecutionConfig = {
       systemPrompt: "GLOBAL_SYSTEM_PROMPT",
       temperature: 0.42,
       requireToolApproval: false,
-    });
-    // Secondary uses host-B's config.
-    expect(secondaryProps.executionConfig).toEqual({
-      systemPrompt: "host-B-prompt",
-      temperature: 0.9,
-      requireToolApproval: false,
-    });
+    };
+    expect(leadProps.executionConfig).toEqual(expectedExecutionConfig);
+    expect(secondaryProps.executionConfig).toEqual(expectedExecutionConfig);
+
+    // Both columns also share the lead host's resolved model — the
+    // secondary's persisted modelId is ignored.
+    expect(secondaryProps.model).toBe(leadProps.model);
+    expect(String(leadProps.model.id)).toBe("openai/gpt-5-mini");
+    expect(leadProps.compareSubLabel).toBe(secondaryProps.compareSubLabel);
+  });
+
+  it("multi-host card chrome is hidden — Trace/Chat/Raw tab strip is the only header content", () => {
+    const hostA = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
+    const hostB = makeHost("h-B", "Host B", { hostStyle: "claude" });
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = { "h-A": hostA, "h-B": hostB };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    const calls = mockMultiModelPlaygroundCard.mock.calls;
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    // `showComparisonChrome=false` removes the per-card model title +
+    // Latency/Tokens block. The tab strip stays because it's gated on
+    // `showTraceTabs` inside `ModelCompareCardHeader`.
+    for (const [props] of calls) {
+      expect(props.showComparisonChrome).toBe(false);
+    }
   });
 
   it("two hosts with the SAME default model still render as two cards with distinct compareIds (polymorphic-card regression)", () => {
@@ -819,37 +847,67 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(cards[0].getAttribute("data-compare-id")).toBe("h-A");
     expect(cards[1].getAttribute("data-compare-id")).toBe("h-C");
 
-    // Lead identity assertion: `executionConfig` for `h-A` reflects the
-    // GLOBAL chip state (lead path); `h-C` uses its own host config
-    // (secondary path). Pre-fix, with slot 0 lead present this passed
-    // anyway, but the regression test below makes the contract explicit.
+    // Lead identity assertion: with the host-only-axis contract, every
+    // column shares the GLOBAL chip state. Before, `h-C` (secondary)
+    // would have used its own host config; now host config is consumed
+    // via `hostSnapshot`/`hostConfig` only — chip state is shared.
     const lastByCompareId = new Map<string, any>();
     for (const [props] of mockMultiModelPlaygroundCard.mock.calls) {
       lastByCompareId.set(props.compareId, props);
     }
-    expect(lastByCompareId.get("h-A").executionConfig).toEqual({
+    const expectedExecutionConfig = {
       systemPrompt: "GLOBAL_SYSTEM_PROMPT",
       temperature: 0.42,
       requireToolApproval: false,
-    });
-    expect(lastByCompareId.get("h-C").executionConfig).toEqual({
-      systemPrompt: "host-C-prompt",
-      temperature: 0.9,
-      requireToolApproval: false,
-    });
+    };
+    expect(lastByCompareId.get("h-A").executionConfig).toEqual(
+      expectedExecutionConfig,
+    );
+    expect(lastByCompareId.get("h-C").executionConfig).toEqual(
+      expectedExecutionConfig,
+    );
   });
 
-  it("lead host's modelId not in availableModels → single-pane fallback (Blocker 3)", () => {
-    // Use an unsupported model id; `resolvePlaygroundModelId` falls back
-    // to the host-template default for `hostStyle`. To force a "no
-    // resolution", pick a hostStyle whose template default also isn't in
-    // the test fixture's `availableModels` (we mock those to just two
-    // ids). Easiest path: stub a model id the test fixture explicitly
-    // does NOT include; the `resolvePlaygroundModelId` chain may
-    // canonicalize it but it still won't be found in `availableModels`.
+  it("chat-input model unset → single-pane fallback", () => {
+    // Multi-host columns inherit the chat-input `selectedModel` for
+    // every column. If the picker has no model selected, the grid
+    // can't render a coherent execution, so we fall through to
+    // single-pane. Host modelIds are intentionally NOT consulted.
     const hostA = makeHost("h-A", "Host A", {
       hostStyle: "chatgpt",
-      // This id is NOT in the test's mocked `availableModels`.
+      modelId: "openai/gpt-5-mini",
+    });
+    const hostB = makeHost("h-B", "Host B", {
+      hostStyle: "claude",
+      modelId: "anthropic/claude-sonnet-4.5",
+    });
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = { "h-A": hostA, "h-B": hostB };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    multiHostFixture.multiHostEnabled = true;
+
+    const previousSelectedModel = mockUseChatSession.selectedModel;
+    mockUseChatSession.selectedModel = null;
+    try {
+      render(<PlaygroundMain {...defaultProps} />);
+      expect(screen.queryByTestId("playground-multi-host-grid")).toBeNull();
+    } finally {
+      mockUseChatSession.selectedModel = previousSelectedModel;
+    }
+  });
+
+  it("host modelIds are ignored — every column inherits the chat-input model regardless of host config", () => {
+    // Hosts ship their own persisted `modelId`, but in multi-host mode
+    // those are not the source of truth for the column model. The
+    // chat-input picker's `selectedModel` drives every column.
+    const hostA = makeHost("h-A", "Host A", {
+      hostStyle: "chatgpt",
+      // Intentionally a modelId NOT present in `availableModels` — the
+      // previous contract would have refused to render. Under the new
+      // contract this is irrelevant; grid still renders.
       modelId: "openai/gpt-4o",
     });
     const hostB = makeHost("h-B", "Host B", {
@@ -866,8 +924,18 @@ describe("PlaygroundMain — multi-host render path", () => {
 
     render(<PlaygroundMain {...defaultProps} />);
 
-    // The lead's model can't resolve into the chat-session's
-    // `availableModels`; render falls through to single-pane.
-    expect(screen.queryByTestId("playground-multi-host-grid")).toBeNull();
+    const cards = screen.getAllByTestId("multi-host-card");
+    expect(cards).toHaveLength(2);
+    const lastByCompareId = new Map<string, any>();
+    for (const [props] of mockMultiModelPlaygroundCard.mock.calls) {
+      lastByCompareId.set(props.compareId, props);
+    }
+    const leadProps = lastByCompareId.get("h-A");
+    const secondaryProps = lastByCompareId.get("h-B");
+    // Both columns receive the chat-input `selectedModel` from the
+    // mocked `useChatSession` fixture (openai/gpt-5-mini), NOT any
+    // host's persisted modelId.
+    expect(leadProps.model).toBe(mockUseChatSession.selectedModel);
+    expect(secondaryProps.model).toBe(mockUseChatSession.selectedModel);
   });
 });

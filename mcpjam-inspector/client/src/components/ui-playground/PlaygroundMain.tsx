@@ -99,7 +99,6 @@ import { usePlaygroundHostSlots } from "@/hooks/use-playground-host-slots";
 import { replaceLeadHostId } from "@/lib/selected-host-storage";
 import { useProjectServers } from "@/hooks/useViews";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
-import { resolvePlaygroundModelId } from "@/lib/playground/apply-client-defaults";
 import {
   snapshotFromHostConfig,
   type HostSnapshot,
@@ -842,27 +841,22 @@ export function PlaygroundMain({
   const canEnableMultiHost = hostList.length > 1;
 
   // Lead identity check — we cannot compact away the lead slot. If
-  // `selectedHostIds[0]` is still loading from Convex (or its
-  // `modelId` doesn't resolve into `availableModels`), the resolved
+  // `selectedHostIds[0]` is still loading from Convex, the resolved
   // list would collapse so `resolvedSelectedHosts[0]` would no longer
-  // be the lead — secondary slot 1 would inherit the global chip
-  // `executionConfig` and be misidentified as lead. Gate `isMultiHostMode`
-  // on lead being fully resolved (host + model) and fall through to
-  // single-pane otherwise. Secondaries are still allowed to be missing
-  // — those just render fewer columns until their data arrives.
+  // be the lead — secondary slot 1 would be misidentified as lead.
+  // Gate `isMultiHostMode` on the lead host being resolved AND the
+  // chat-input model being selected; fall through to single-pane
+  // otherwise. Secondaries are still allowed to be missing — those
+  // just render fewer columns until their data arrives.
+  //
+  // Note: the column model is the chat-input picker's `selectedModel`,
+  // NOT the lead host's persisted modelId. Multi-host varies the host
+  // axis only — the input model applies to every column.
   const leadHostId = selectedHostIds[0] ?? null;
   const leadHost = leadHostId
     ? resolvedSelectedHosts.find((host) => host.hostId === leadHostId) ?? null
     : null;
-  const leadModelId = leadHost
-    ? resolvePlaygroundModelId(
-        leadHost.config.modelId,
-        leadHost.config.hostStyle,
-      )
-    : null;
-  const leadModel = leadModelId
-    ? availableModels.find((m) => String(m.id) === leadModelId) ?? null
-    : null;
+  const sharedHostColumnModel = selectedModel ?? null;
 
   // Same gating as multi-model: history mode wins (transcript replay lives
   // on the single session). When `multiHostEnabled` is true but the lead
@@ -875,7 +869,7 @@ export function PlaygroundMain({
     !viewingHistoryReplay &&
     resolvedSelectedHosts.length > 0 &&
     !!leadHost &&
-    !!leadModel;
+    !!sharedHostColumnModel;
 
   // When viewing a history session the transcript lives on the single chat
   // session; compare layout would override that render. Matches ChatTabV2.
@@ -906,66 +900,35 @@ export function PlaygroundMain({
     }
   }, [isMultiHostMode, resolvedSelectedHosts]);
 
-  // Phase 4 (multi-host plan): per-column derivations for the multi-host
-  // grid. Only computed when `isMultiHostMode`; in any other mode the
-  // memo bails to an empty array so the render branch reads `.length`
-  // safely.
-  //
-  // Lead column (`index === 0`) executes with the global chip-edited
-  // `executionConfig` so toolbar chips still affect lead's chat session.
-  // Secondary columns execute under their own host's persisted config —
-  // matches the Phase 4 plan's "lead drives the global stores;
-  // secondaries are read-only snapshots fed via props" contract.
+  // Multi-host axis is HOST only: every column shares the lead's model
+  // and the global chip-edited `executionConfig`. The host axis varies
+  // via `hostSnapshot`/`hostConfig` (capabilities, chat UI, MCP profile,
+  // style). This mirrors multi-model mode's inverse: there model varies
+  // with host pinned; here host varies with model + chat input pinned.
   const multiHostColumns = useMemo<MultiHostColumn[]>(() => {
-    if (!isMultiHostMode) return [];
+    if (!isMultiHostMode || !sharedHostColumnModel) return [];
+    const sharedExecutionConfig: ExecutionConfig = {
+      systemPrompt,
+      temperature,
+      requireToolApproval,
+    };
     const columns: MultiHostColumn[] = [];
     // Iterate `selectedHostIds` (not the compacted `resolvedSelectedHosts`)
     // so the lead is determined by the SLOT INDEX in the canonical
-    // line-up — not by whichever resolved host happens to land at
-    // index 0 of the compacted array. If slot 1 is missing while
-    // slot 0 + slot 2 are present, the output is
-    // `[leadCol, /* nothing */, slot2Col]` → grid renders 2 columns
-    // where the lead is still the SAME host as `selectedHostIds[0]`.
+    // line-up. If slot 1 is missing while slot 0 + slot 2 are present,
+    // the output is `[leadCol, /* nothing */, slot2Col]` → grid renders
+    // 2 columns where the lead is still `selectedHostIds[0]`.
     for (let slotIndex = 0; slotIndex < selectedHostIds.length; slotIndex++) {
       const hostId = selectedHostIds[slotIndex];
       const host = resolvedSelectedHosts.find((h) => h.hostId === hostId);
       if (!host) continue;
-      const modelId = resolvePlaygroundModelId(
-        host.config.modelId,
-        host.config.hostStyle,
-      );
-      // Skip hosts whose configured model doesn't resolve to a usable
-      // available model — better an empty column than a card stuck on a
-      // missing model. (Plan: secondaries use host's own default model;
-      // there's no per-column override in v1.) The lead is gated by
-      // `isMultiHostMode` so we never reach this skip for slot 0.
-      const model = modelId
-        ? availableModels.find((m) => String(m.id) === modelId)
-        : null;
-      if (!model) continue;
-      const isLead = slotIndex === 0;
-      const executionConfig: ExecutionConfig = isLead
-        ? {
-            // Lead column drives the global chip state. Reuse the same
-            // `(systemPrompt, temperature, requireToolApproval)` values
-            // the single-pane and multi-model branches use, so any chip
-            // edit propagates into lead's session config.
-            systemPrompt,
-            temperature,
-            requireToolApproval,
-          }
-        : {
-            systemPrompt: host.config.systemPrompt,
-            temperature: host.config.temperature,
-            requireToolApproval: host.config.requireToolApproval,
-          };
       columns.push({
         compareId: host.hostId,
         compareLabel: host.name,
         compareKind: "host",
-        compareSubLabel: model.name,
-        model,
-        executionConfig,
+        compareSubLabel: sharedHostColumnModel.name,
+        model: sharedHostColumnModel,
+        executionConfig: sharedExecutionConfig,
         hostSnapshot: snapshotFromHostConfig(host.config),
         hostConfig: host.config,
       });
@@ -973,9 +936,9 @@ export function PlaygroundMain({
     return columns;
   }, [
     isMultiHostMode,
+    sharedHostColumnModel,
     selectedHostIds,
     resolvedSelectedHosts,
-    availableModels,
     systemPrompt,
     temperature,
     requireToolApproval,
@@ -3015,9 +2978,9 @@ export function PlaygroundMain({
                   // `hostSnapshot` (style, caps, chat UI, MCP profile)
                   // and its own `hostCapsResolver` so per-server
                   // capability gating evaluates under the right host
-                  // identity. Lead column's `executionConfig` is the
-                  // global chip state; secondaries use their persisted
-                  // host config — see `multiHostColumns` memo above.
+                  // identity. Every column shares the lead's model and
+                  // the global chip `executionConfig` — host is the only
+                  // varying axis. See `multiHostColumns` memo above.
                   <div
                     data-testid="playground-multi-host-grid"
                     className={cn(
@@ -3068,7 +3031,12 @@ export function PlaygroundMain({
                         invokingMessage={invokingMessage}
                         onSummaryChange={handleMultiModelSummaryChange}
                         onHasMessagesChange={handleMultiModelHasMessagesChange}
-                        showComparisonChrome={multiHostColumns.length > 1}
+                        // Multi-host mode varies only the host; per-card
+                        // model title + Latency/Tokens chrome is redundant
+                        // (same model in every column) and noisy. Keep the
+                        // Trace/Chat/Raw tab strip — that comes from
+                        // `showTraceTabs` inside the header.
+                        showComparisonChrome={false}
                         suppressThreadEmptyHint={false}
                         compareEnterVersion={multiCompareEnterVersion}
                         compareEnterMessages={multiCompareEnterMessages}
