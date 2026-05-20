@@ -349,6 +349,44 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(persistArgs.hostConfig.temperature).toBe(0.3);
   });
 
+  it("carries outgoing sender metadata into persisted direct session messages", async () => {
+    const { app, token } = createWebTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        chatSessionId: "chat-session-senders",
+        directVisibility: "project",
+        messages: [
+          {
+            role: "user",
+            content: "hello from alice",
+            metadata: { senderUserId: "u-alice" },
+          },
+        ],
+        model: {
+          id: "openai/gpt-5-mini",
+          provider: "openai",
+          name: "GPT-5 Mini",
+        },
+      },
+      token
+    );
+
+    expect(response.status).toBe(200);
+    const persistArgs = persistChatSessionToConvexMock.mock.calls[0][0];
+    expect(persistArgs.sessionMessages).toEqual([
+      {
+        role: "user",
+        content: "preview request",
+        senderUserId: "u-alice",
+      },
+    ]);
+  });
+
   it("returns server names in hosted oauth-required chat errors", async () => {
     const { app, token } = createWebTestApp();
 

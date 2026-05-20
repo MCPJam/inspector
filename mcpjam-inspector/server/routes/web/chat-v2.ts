@@ -22,6 +22,7 @@ import {
   buildDirectHostConfig,
   persistChatSessionToConvex,
   pickEnrichmentHeaders,
+  stampSenderUserIdsOnSessionMessages,
   type PersistedTurnTrace,
 } from "../../utils/chat-ingestion.js";
 import {
@@ -301,7 +302,10 @@ chatV2.post("/", async (c) => {
                 chatboxId,
                 accessVersion,
                 authHeader: c.req.header("authorization"),
-                sessionMessages: fullHistory,
+                sessionMessages: stampSenderUserIdsOnSessionMessages(
+                  fullHistory,
+                  messages,
+                ),
                 startedAt: sessionStartedAt,
                 lastActivityAt: Date.now(),
                 ...(isDirectChat
@@ -426,7 +430,10 @@ chatV2.post("/", async (c) => {
                 chatboxId,
                 accessVersion,
                 authHeader: c.req.header("authorization"),
-                sessionMessages: fullHistory,
+                sessionMessages: stampSenderUserIdsOnSessionMessages(
+                  fullHistory,
+                  messages,
+                ),
                 startedAt: sessionStartedAt,
                 lastActivityAt: Date.now(),
                 ...(isDirectChat

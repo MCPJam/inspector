@@ -27,6 +27,7 @@ import {
   buildDirectHostConfig,
   persistChatSessionToConvex,
   pickEnrichmentHeaders,
+  stampSenderUserIdsOnSessionMessages,
   type PersistedTurnTrace,
 } from "../../utils/chat-ingestion.js";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
@@ -697,7 +698,10 @@ chatV2.post("/", async (c) => {
                   ? { accessVersion: bodyAccessVersion }
                   : {}),
                 authHeader,
-                sessionMessages: fullHistory,
+                sessionMessages: stampSenderUserIdsOnSessionMessages(
+                  fullHistory,
+                  messages,
+                ),
                 startedAt: sessionStartedAt,
                 lastActivityAt: Date.now(),
                 ...(body.projectId ? { projectId: body.projectId } : {}),
@@ -776,7 +780,10 @@ chatV2.post("/", async (c) => {
                   ? { accessVersion: bodyAccessVersion }
                   : {}),
                 authHeader: c.req.header("authorization"),
-                sessionMessages: fullHistory,
+                sessionMessages: stampSenderUserIdsOnSessionMessages(
+                  fullHistory,
+                  messages,
+                ),
                 startedAt: sessionStartedAt,
                 lastActivityAt: Date.now(),
                 projectId: body.projectId,
@@ -853,7 +860,10 @@ chatV2.post("/", async (c) => {
               ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)
                 ? { accessVersion: bodyAccessVersion }
                 : {}),
-              messages: modelMessages as ModelMessage[],
+              messages: stampSenderUserIdsOnSessionMessages(
+                modelMessages as ModelMessage[],
+                messages,
+              ),
               systemPrompt: enhancedSystemPrompt,
               ...(responseMessages.length > 0 ? { responseMessages } : {}),
               assistantText,
