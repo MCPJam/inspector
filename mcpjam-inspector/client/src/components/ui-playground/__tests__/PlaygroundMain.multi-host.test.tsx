@@ -1217,6 +1217,43 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(latestStopRequestId).toBeGreaterThan(baselineStopRequestId);
   });
 
+  it("enabling multi-model while in host compare clears the host lineup too (no 'two checked, Compare off' limbo)", () => {
+    // Reviewer-flagged UX blocker. Pre-fix `handleMultiModelEnabledChange`
+    // set `multiHostEnabled=false` but kept `selectedHostIds` intact.
+    // The picker then read `effectiveSelectedHostIds.length === 2` and
+    // showed two clients still ticked in the popover — with the
+    // trigger displaying "Compare" (idle) — so the user had to
+    // uncheck/recheck a client to re-enter compare. Now we also
+    // collapse `selectedHostIds` so the next compare entry starts
+    // clean from the live lead.
+    const hostA = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
+    const hostB = makeHost("h-B", "Host B", { hostStyle: "claude" });
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = { "h-A": hostA, "h-B": hostB };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    multiHostFixture.multiHostEnabled = true;
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    // Grab the picker's `onMultiModelEnabledChange` from the parent-
+    // owned chat input props and fire it. (The chat input is the
+    // surface that toggles the model-mode flag.)
+    const inputProps = mockChatInput.mock.calls.at(-1)![0];
+    expect(typeof inputProps.onMultiModelEnabledChange).toBe("function");
+
+    act(() => {
+      inputProps.onMultiModelEnabledChange(true);
+    });
+
+    // Multi-host was force-cleared AND the host lineup was collapsed
+    // — those are the two mutations that prevent the limbo state.
+    expect(mockSetMultiHostEnabled).toHaveBeenCalledWith(false);
+    expect(mockSetSelectedHostIds).toHaveBeenCalledWith([]);
+  });
+
   it("falls back to single-pane when multi-host is persisted on but only one host resolves (length>1 gate)", () => {
     // Valid-but-lower reviewer finding. The picker auto-disables
     // `multiHostEnabled` on the 2 → 1 transition, but a stale

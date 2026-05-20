@@ -1944,14 +1944,35 @@ export function PlaygroundMain({
     return () => window.clearTimeout(timerId);
   }, [loadingHistorySessionId]);
 
+  // `compareSummaries` / `compareHasMessages` are keyed by `compareId`,
+  // which is a modelId in multi-model mode and a hostId in multi-host
+  // mode. Pre-fix the prune set was model-ids only, so changing the
+  // chat-input model in host compare would evict every host-keyed
+  // entry — the grid would hide despite the cards still holding live
+  // transcripts. Include both axes in the active set.
+  //
+  // Depend on a derived STRING KEY of the live compareIds, not the
+  // array refs themselves: `multiHostColumns` recomputes every render
+  // (`resolvedSelectedHosts` is fed by `usePlaygroundHostSlots`, which
+  // returns a fresh tuple per call). With the arrays in `useEffect`'s
+  // deps the effect re-ran every render, `setCompareSummaries({})`
+  // wrote a new ref, that triggered another render, and so on
+  // — "Maximum update depth exceeded". Primitives are compared by
+  // value so the key is stable across renders when the id set hasn't
+  // changed.
+  const activeCompareIdsKey = useMemo(() => {
+    const parts: string[] = [];
+    for (const model of resolvedSelectedModels) {
+      parts.push(`m:${String(model.id)}`);
+    }
+    for (const column of multiHostColumns) {
+      parts.push(`h:${column.compareId}`);
+    }
+    parts.sort();
+    return parts.join("|");
+  }, [resolvedSelectedModels, multiHostColumns]);
+
   useEffect(() => {
-    // `compareSummaries` / `compareHasMessages` are keyed by
-    // `compareId`, which is a modelId in multi-model mode and a hostId
-    // in multi-host mode. Pre-fix the prune set was model-ids only, so
-    // changing the chat-input model in host compare would evict every
-    // host-keyed entry — the grid would hide despite the cards still
-    // holding live transcripts. Include both axes in the active set
-    // and depend on both inputs.
     const activeIds = new Set<string>();
     for (const model of resolvedSelectedModels) {
       activeIds.add(String(model.id));
@@ -1960,21 +1981,33 @@ export function PlaygroundMain({
       activeIds.add(column.compareId);
     }
 
-    setCompareSummaries((previous) =>
-      Object.fromEntries(
+    setCompareSummaries((previous) => {
+      const filtered = Object.fromEntries(
         Object.entries(previous).filter(([compareId]) =>
-          activeIds.has(compareId)
-        )
-      )
-    );
-    setCompareHasMessages((previous) =>
-      Object.fromEntries(
+          activeIds.has(compareId),
+        ),
+      );
+      // Bail when the filter would be a no-op so we don't write a new
+      // reference into state for an unchanged value.
+      return Object.keys(filtered).length === Object.keys(previous).length
+        ? previous
+        : filtered;
+    });
+    setCompareHasMessages((previous) => {
+      const filtered = Object.fromEntries(
         Object.entries(previous).filter(([compareId]) =>
-          activeIds.has(compareId)
-        )
-      )
-    );
-  }, [resolvedSelectedModels, multiHostColumns]);
+          activeIds.has(compareId),
+        ),
+      );
+      return Object.keys(filtered).length === Object.keys(previous).length
+        ? previous
+        : filtered;
+    });
+    // The set itself is read from `resolvedSelectedModels` and
+    // `multiHostColumns` (latest values via closure). The dep is a
+    // stable string key — see the comment above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCompareIdsKey]);
 
   useEffect(() => {
     if (!traceViewsSupported) {
@@ -2240,15 +2273,24 @@ export function PlaygroundMain({
   const handleMultiModelEnabledChange = useCallback(
     (enabled: boolean) => {
       setMultiModelEnabled(enabled);
-      // Lightweight mutual exclusion (Phase 4 scope). Flipping multi-model
-      // ON force-clears multi-host. Full transcript-cloning swap lives in
-      // Phase 6 — for now we just stop both compare modes from being on
-      // at once; the new mode resets each card's session to empty.
+      // Lightweight mutual exclusion (Phase 4 scope). Flipping multi-
+      // model ON force-clears multi-host. Also collapse the host
+      // compare lineup so it doesn't linger as "two clients checked,
+      // Compare off" — that left the user having to manually
+      // uncheck/recheck a host to re-enter compare. Falling back to
+      // an empty array lets `effectiveSelectedHostIds` in
+      // `MultiHostPicker` pick up the live lead from `currentHostId`.
       if (enabled && multiHostEnabled) {
         setMultiHostEnabled(false);
+        setSelectedHostIds([]);
       }
     },
-    [setMultiModelEnabled, multiHostEnabled, setMultiHostEnabled]
+    [
+      setMultiModelEnabled,
+      multiHostEnabled,
+      setMultiHostEnabled,
+      setSelectedHostIds,
+    ],
   );
 
   // Phase 4 lightweight mutual exclusion (see comment on
