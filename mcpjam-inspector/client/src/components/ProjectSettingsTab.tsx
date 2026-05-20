@@ -7,6 +7,7 @@ import { ProjectMembersFacepile } from "./project/ProjectMembersFacepile";
 import { ProjectShareButton } from "./project/ProjectShareButton";
 import { ProjectIconPicker } from "./project/ProjectEmojiPicker";
 import { ProjectDefaultClientConfigSection } from "./client-config/ProjectDefaultClientConfigSection";
+import { ProjectServersSection } from "./project/ProjectServersSection";
 
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -173,6 +174,20 @@ export function ProjectSettingsTab({
             chatboxes or suites. */}
         {isAuthenticated && convexProjectId ? (
           <ProjectDefaultClientConfigSection
+            convexProjectId={convexProjectId}
+            projectServers={projectServers}
+            canManage={canManageProjectSettings}
+          />
+        ) : null}
+
+        {/* Project Servers — single source of truth for which servers
+            auto-connect across every host in this project, plus
+            per-server connection overrides. Saves fan out into every
+            host's `hostConfigId` via the backend control-plane mutation;
+            pinned chatboxes (created before this edit) keep their
+            snapshot. */}
+        {isAuthenticated && convexProjectId ? (
+          <ProjectServersSection
             convexProjectId={convexProjectId}
             projectServers={projectServers}
             canManage={canManageProjectSettings}

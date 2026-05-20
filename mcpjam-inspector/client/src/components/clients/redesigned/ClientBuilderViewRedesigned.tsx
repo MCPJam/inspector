@@ -212,18 +212,10 @@ export function ClientBuilderViewRedesigned({
     requiredServerNames,
   });
 
-  const availableServers = useMemo(
-    () =>
-      servers?.map((s) => ({
-        id: s._id,
-        name: s.name,
-        url: s.url ?? null,
-        connectionStatus:
-          connectionStatusByName[s.name]?.connectionStatus ?? "disconnected",
-      })) ?? [],
-    [servers, connectionStatusByName],
-  );
-
+  // `availableServers` (the focus-panel-shaped catalog) was retired
+  // alongside the per-host Servers tab — server selection lives in
+  // Project Settings → Servers now. The canvas still needs the
+  // catalog for layout, so `availableServersForCanvas` stays.
   const availableServersForCanvas = useMemo(
     () =>
       (servers ?? []).map((s) => ({
@@ -497,7 +489,6 @@ export function ClientBuilderViewRedesigned({
                       prev.open ? { ...prev, tab: next } : prev,
                     )
                   }
-                  initialSelectedServerId={focusState.selectedServerId}
                   focusSubKey={focusState.focusSubKey}
                   hostDisplayName={draftName}
                   onHostDisplayNameChange={setDraftName}
@@ -506,8 +497,6 @@ export function ClientBuilderViewRedesigned({
                     setDraftConfig((prev) => (prev ? updater(prev) : prev))
                   }
                   attention={attention}
-                  availableServers={availableServers}
-                  onAddServer={() => setShowAddServer(true)}
                   onClose={closeFocus}
                 />
               </ResizablePanel>
