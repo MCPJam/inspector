@@ -33,6 +33,12 @@ interface Props {
    * leading controls (e.g. saved-view picker) can slot in here too.
    */
   leading?: ReactNode;
+  /**
+   * When multi-host compare is active, the lead host's display name.
+   * Threads into every chip tooltip ("Editing lead host: <name>") so the
+   * user understands the toolbar only edits the lead column.
+   */
+  leadHostInMultiHost?: string | null;
 }
 
 export function PlaygroundCenterHeaderBar({
@@ -45,6 +51,7 @@ export function PlaygroundCenterHeaderBar({
   isMultiModelLayoutMode,
   trailing,
   leading,
+  leadHostInMultiHost,
 }: Props) {
   const chromeRowClass = cn(
     "flex min-w-0 items-center gap-2 text-xs text-muted-foreground",
@@ -68,6 +75,7 @@ export function PlaygroundCenterHeaderBar({
             protocol={protocol}
             showThemeToggle
             className="w-max max-w-full"
+            leadHostInMultiHost={leadHostInMultiHost}
           />
         </div>
         {trailing ? <div className="shrink-0">{trailing}</div> : null}

@@ -310,6 +310,8 @@ function InvokingIndicator({
   );
 }
 
+type CompareMode = "none" | "model" | "host";
+
 export function PlaygroundMain({
   activeProjectId = null,
   serverName,
@@ -449,7 +451,12 @@ export function PlaygroundMain({
     Record<string, { version: number; messages: UIMessage[] }>
   >({});
   const compareTranscriptsRef = useRef<Record<string, UIMessage[]>>({});
-  const prevCompareModeRef = useRef(false);
+  // Three-state compare mode tracked across renders so transition effects
+  // can tell "off → multi-host" from "multi-model → multi-host" (the
+  // latter needs cross-mode transcript handoff). Refs are mode-neutral
+  // after Phase 3, so harvest/seed reads the same `compareTranscriptsRef`
+  // shape regardless of which mode held it.
+  const prevCompareModeRef = useRef<CompareMode>("none");
   const lastCompareLeadIdRef = useRef<string | null>(null);
   const prevCompareIdsRef = useRef<Set<string>>(new Set());
   const multiAddColumnSeqRef = useRef(0);
@@ -888,6 +895,17 @@ export function PlaygroundMain({
     }
   }, [isMultiModelMode, resolvedSelectedModels]);
 
+  // Mirror of the multi-model lead tracker for host mode. The transition
+  // effect reads `lastCompareLeadIdRef` to harvest the outgoing lead's
+  // transcript on exit/swap; since `compareTranscriptsRef` is keyed by
+  // `compareId` (hostId in host mode, modelId in model mode), one ref is
+  // enough — but only the in-mode tracker should write to it.
+  useEffect(() => {
+    if (isMultiHostMode && resolvedSelectedHosts[0]) {
+      lastCompareLeadIdRef.current = resolvedSelectedHosts[0].hostId;
+    }
+  }, [isMultiHostMode, resolvedSelectedHosts]);
+
   // Phase 4 (multi-host plan): per-column derivations for the multi-host
   // grid. Only computed when `isMultiHostMode`; in any other mode the
   // memo bails to an empty array so the render branch reads `.length`
@@ -980,29 +998,66 @@ export function PlaygroundMain({
     prevCompareIdsRef.current = new Set();
   }, []);
 
+  // Three-mode transition machinery (Phase 6 core). Handles every direction:
+  //
+  //   none → model   : seed each column with current single-pane messages.
+  //   none → host    : same — seed columns with single-pane messages.
+  //   model → none   : harvest lead column's transcript, replay into single.
+  //   host  → none   : same — harvest lead, replay into single.
+  //   model ↔ host   : harvest outgoing lead, seed incoming columns with it
+  //                    (the mutual-exclusion writes batch into one render,
+  //                    so we observe a direct cross-mode transition here).
+  //
+  // Without this, toggling the picker drops the conversation on the floor —
+  // either the single-pane transcript vanishes when entering compare, or
+  // the lead column's transcript vanishes when exiting. That's the
+  // "dead-on-arrival" UX the multi-host plan warned about.
+  const currentCompareMode: CompareMode = isMultiHostMode
+    ? "host"
+    : isMultiModelMode
+      ? "model"
+      : "none";
   useLayoutEffect(() => {
     const prev = prevCompareModeRef.current;
-    if (prev && !isMultiModelMode) {
+    if (prev === currentCompareMode) return;
+
+    const harvestLeadTranscript = (): UIMessage[] | null => {
       const leadId = lastCompareLeadIdRef.current;
-      if (leadId) {
-        const transcript = compareTranscriptsRef.current[leadId];
-        const hasConversation =
-          transcript?.some(
-            (m) => m.role === "user" || m.role === "assistant"
-          ) ?? false;
-        if (hasConversation && transcript) {
-          startChatWithMessages(cloneUiMessages(transcript));
-        }
-      }
-      clearMultiModelUiState();
-    }
-    if (!prev && isMultiModelMode) {
+      if (!leadId) return null;
+      const transcript = compareTranscriptsRef.current[leadId];
+      const hasConversation =
+        transcript?.some(
+          (m) => m.role === "user" || m.role === "assistant",
+        ) ?? false;
+      return hasConversation && transcript ? cloneUiMessages(transcript) : null;
+    };
+
+    if (prev === "none" && currentCompareMode !== "none") {
+      // Enter compare from single-pane: seed every column with the
+      // current single-pane transcript so the conversation continues
+      // visibly in each card.
       setMultiCompareEnterVersion((v) => v + 1);
       setMultiCompareEnterMessages(cloneUiMessages(messages));
+    } else if (prev !== "none" && currentCompareMode === "none") {
+      // Exit compare to single-pane: replay the lead column's transcript
+      // into the single chat so the user doesn't lose work.
+      const harvested = harvestLeadTranscript();
+      if (harvested) startChatWithMessages(harvested);
+      clearMultiModelUiState();
+    } else if (prev !== "none" && currentCompareMode !== "none") {
+      // Direct model ↔ host swap (mutual exclusion fires both writes in
+      // one batched render). Harvest the outgoing lead and seed the
+      // incoming columns with the same transcript. Reset the in-flight
+      // per-column UI state so the new mode starts clean.
+      const harvested = harvestLeadTranscript();
+      clearMultiModelUiState();
+      setMultiCompareEnterVersion((v) => v + 1);
+      setMultiCompareEnterMessages(harvested ?? cloneUiMessages(messages));
     }
-    prevCompareModeRef.current = isMultiModelMode;
+
+    prevCompareModeRef.current = currentCompareMode;
   }, [
-    isMultiModelMode,
+    currentCompareMode,
     messages,
     startChatWithMessages,
     clearMultiModelUiState,
@@ -2813,6 +2868,9 @@ export function PlaygroundMain({
           onSaveHostContext={onSaveHostContext}
           protocol={selectedProtocol}
           isMultiModelLayoutMode={isMultiModelLayoutMode}
+          leadHostInMultiHost={
+            isMultiHostMode ? leadHost?.name ?? null : null
+          }
           leading={
             // Phase 2: playground-scoped multi-host picker. Persists the
             // multi-host array + toggle to localStorage but does NOT yet
