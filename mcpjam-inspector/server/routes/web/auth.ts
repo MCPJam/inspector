@@ -27,9 +27,7 @@ import {
   readJsonBody,
   parseWithSchema,
 } from "./errors.js";
-import {
-  buildHostedOAuthUnauthorizedHandler,
-} from "../../utils/hosted-oauth-refresh.js";
+import { buildHostedOAuthUnauthorizedHandler } from "../../utils/hosted-oauth-refresh.js";
 
 // ── Zod Schemas ──────────────────────────────────────────────────────
 
@@ -226,7 +224,7 @@ export type ConvexBatchAuthorizeResponse = {
 // path (`local-server-resolver.ts`).
 const STDIO_ONLY_FIELDS = ["command", "args", "env"] as const;
 function stripStdioFieldsFromHostedConfig<
-  T extends { serverConfig?: Record<string, unknown> },
+  T extends { serverConfig?: Record<string, unknown> }
 >(holder: T): T {
   const cfg = holder.serverConfig;
   if (!cfg || typeof cfg !== "object") return holder;
@@ -319,7 +317,9 @@ export async function authorizeServer(
   if (internalLogContext) {
     setRequestLogContext(c, mapInternalToRequestContext(internalLogContext));
   }
-  return stripStdioFieldsFromHostedConfig(clientSafe) as ClientSafeAuthorizeResponse;
+  return stripStdioFieldsFromHostedConfig(
+    clientSafe
+  ) as ClientSafeAuthorizeResponse;
 }
 
 export async function authorizeBatch(
@@ -431,7 +431,7 @@ export async function authorizeBatch(
     if (result.ok) {
       const { internalLogContext: _omit, ...clientSafeResult } = result;
       strippedResults[serverId] = stripStdioFieldsFromHostedConfig(
-        clientSafeResult,
+        clientSafeResult
       ) as ConvexBatchAuthorizeSuccess;
     } else {
       strippedResults[serverId] = result;
@@ -515,6 +515,8 @@ export interface AuthorizedManagerResult {
   manager: MCPClientManager;
   /** Maps serverId → serverUrl for servers that have useOAuth enabled */
   oauthServerUrls: Record<string, string>;
+  /** Server-authenticated Convex user/guest id for this request, when known. */
+  authenticatedUserId?: string | null;
 }
 
 export async function createAuthorizedManager(
@@ -561,6 +563,7 @@ export async function createAuthorizedManager(
         }
       ),
       oauthServerUrls: {},
+      authenticatedUserId: null,
     };
   }
 
@@ -650,7 +653,11 @@ export async function createAuthorizedManager(
     rpcLogger: options?.rpcLogger,
     retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
   });
-  return { manager, oauthServerUrls };
+  return {
+    manager,
+    oauthServerUrls,
+    authenticatedUserId: c.var.requestLogContext?.userId ?? null,
+  };
 }
 
 export async function withManager<T>(
@@ -798,7 +805,8 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
         ? raw.chatboxId
         : undefined;
     const accessVersion =
-      typeof raw.accessVersion === "number" && Number.isFinite(raw.accessVersion)
+      typeof raw.accessVersion === "number" &&
+      Number.isFinite(raw.accessVersion)
         ? raw.accessVersion
         : undefined;
 

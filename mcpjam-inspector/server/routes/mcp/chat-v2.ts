@@ -655,6 +655,7 @@ chatV2.post("/", async (c) => {
           selectedServerIds: hostConfigServerIds,
         })
       : undefined;
+    const authenticatedUserId = c.var.requestLogContext?.userId ?? null;
 
     // MCPJam-provided models: delegate to stream handler
     if (modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)) {
@@ -718,6 +719,7 @@ chatV2.post("/", async (c) => {
                 sessionMessages: stampSenderUserIdsOnSessionMessages(
                   fullHistory,
                   messages,
+                  { authenticatedUserId }
                 ),
                 startedAt: sessionStartedAt,
                 lastActivityAt: Date.now(),
@@ -800,6 +802,7 @@ chatV2.post("/", async (c) => {
                 sessionMessages: stampSenderUserIdsOnSessionMessages(
                   fullHistory,
                   messages,
+                  { authenticatedUserId }
                 ),
                 startedAt: sessionStartedAt,
                 lastActivityAt: Date.now(),
@@ -880,6 +883,7 @@ chatV2.post("/", async (c) => {
               messages: stampSenderUserIdsOnSessionMessages(
                 modelMessages as ModelMessage[],
                 messages,
+                { authenticatedUserId }
               ),
               systemPrompt: enhancedSystemPrompt,
               ...(responseMessages.length > 0 ? { responseMessages } : {}),

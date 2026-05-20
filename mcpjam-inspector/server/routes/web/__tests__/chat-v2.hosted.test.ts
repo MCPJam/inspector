@@ -121,6 +121,11 @@ describe("web routes — chat-v2 hosted mode", () => {
                   role: "member",
                   accessLevel: "shared_chat",
                   permissions: { chatOnly: false },
+                  internalLogContext: {
+                    authType: "signedIn",
+                    userId: "u-alice",
+                    projectId: payload.projectId ?? null,
+                  },
                   serverConfig: {
                     transportType: "http",
                     url: `https://${serverId}.example.com/mcp`,
@@ -383,6 +388,43 @@ describe("web routes — chat-v2 hosted mode", () => {
         role: "user",
         content: "preview request",
         senderUserId: "u-alice",
+      },
+    ]);
+  });
+
+  it("does not persist spoofed sender metadata from the client", async () => {
+    const { app, token } = createWebTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        chatSessionId: "chat-session-spoofed-sender",
+        directVisibility: "project",
+        messages: [
+          {
+            role: "user",
+            content: "hello from alice",
+            metadata: { senderUserId: "u-bob" },
+          },
+        ],
+        model: {
+          id: "openai/gpt-5-mini",
+          provider: "openai",
+          name: "GPT-5 Mini",
+        },
+      },
+      token
+    );
+
+    expect(response.status).toBe(200);
+    const persistArgs = persistChatSessionToConvexMock.mock.calls[0][0];
+    expect(persistArgs.sessionMessages).toEqual([
+      {
+        role: "user",
+        content: "preview request",
       },
     ]);
   });
