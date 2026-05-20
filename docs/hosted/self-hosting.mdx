@@ -1,0 +1,50 @@
+---
+title: "Self-hosting"
+description: "Configuration notes for operators self-hosting MCPJam Inspector"
+icon: "Server"
+---
+
+Configuration notes for operators self-hosting MCPJam Inspector. Not relevant when running locally via `npx @mcpjam/inspector`.
+
+## Sandbox origin
+
+The MCP Apps / ChatGPT Apps widget sandbox **must** be served from an origin distinct from the host app. Without origin separation, widget code running inside the sandbox iframe shares cookies and `localStorage` with the host app even though the iframe carries `sandbox="... allow-same-origin"`. CSP is not a substitute — origin separation is what enforces isolation.
+
+### Configuration
+
+Set `VITE_MCPJAM_SANDBOX_ORIGIN` at client build time:
+
+```bash
+VITE_MCPJAM_SANDBOX_ORIGIN=https://sandbox.example.com
+```
+
+`VITE_MCPJAM_SANDBOX_ORIGIN` must be:
+
+- A **different registrable origin** from the host app (e.g. host on `app.example.com`, sandbox on `sandbox.example.com`), so the browser scopes cookies and storage separately.
+- Reachable by browsers. The same MCPJam backend can serve both DNS names — no separate deploy is required. The sandbox host only needs to answer two routes:
+  - `GET /api/web/apps/mcp-apps/sandbox-proxy`
+  - `GET /api/web/apps/chatgpt-apps/sandbox-proxy`
+
+### DNS and routing
+
+Point the sandbox hostname at the same backend that serves the host app. There is no shared state between the host app and the sandbox proxy — the proxy is a static bootstrap document that receives widget HTML via `postMessage`.
+
+### CSP
+
+The sandbox proxy emits a `frame-ancestors` directive that includes every `https://` entry from `CORS_ORIGINS`. Add the host app origin (e.g. `https://app.example.com`) to `CORS_ORIGINS` so the host page is allowed to frame the sandbox.
+
+### Fallback behavior
+
+If `VITE_MCPJAM_SANDBOX_ORIGIN` is unset in a hosted build, the iframe falls back to same-origin and the client logs a security warning to the browser console:
+
+```
+[SandboxedIframe] VITE_MCPJAM_SANDBOX_ORIGIN is not configured;
+sandbox iframe is falling back to same-origin.
+This is a security regression — configure a distinct origin and redeploy.
+```
+
+The fallback exists only as a soft-fail for misconfigured deploys. Production deployments must set the variable.
+
+### Local development
+
+Local development is unaffected. The dev client swaps between `localhost` and `127.0.0.1` to get origin separation without operator configuration.
