@@ -151,7 +151,7 @@ export function ClientsTab({
                 <div className="flex min-w-0 items-center justify-end gap-3">
                   <div
                     ref={setAddServerSlotEl}
-                    className="flex shrink-0 items-center gap-2"
+                    className="flex shrink-0 items-center gap-4"
                     data-testid="hosts-tab-add-server-slot"
                   />
                 </div>
