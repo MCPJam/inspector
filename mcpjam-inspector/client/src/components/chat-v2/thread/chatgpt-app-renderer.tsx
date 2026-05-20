@@ -47,6 +47,7 @@ import {
   extractHostTheme,
   extractHostTimeZone,
 } from "@/lib/client-config";
+import { useWidgetSurface } from "@/contexts/widget-surface-context";
 
 type ToolState =
   | "input-streaming"
@@ -745,11 +746,17 @@ export function ChatGPTAppRenderer({
   const playgroundSafeAreaInsets = useUIPlaygroundStore(
     (s) => s.safeAreaInsets,
   );
-  const cspMode = isPlaygroundActive
-    ? playgroundCspMode
-    : minimalMode
-      ? "permissive"
-      : "widget-declared";
+  // Surface-derived cspMode: read from WidgetSurfaceContext, NOT
+  // `isPlaygroundActive`. See mcp-apps-renderer.tsx for the rationale —
+  // the store flag is set in a passive `useEffect` and flips on commit
+  // #2, which used to remount the iframe and drop View state.
+  const widgetSurface = useWidgetSurface();
+  const cspMode =
+    widgetSurface === "playground"
+      ? playgroundCspMode
+      : minimalMode
+        ? "permissive"
+        : "widget-declared";
   // Use playground settings when active, otherwise compute from window
   const deviceType = isPlaygroundActive
     ? playgroundDeviceType

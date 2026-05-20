@@ -46,6 +46,7 @@ import type { CspMode } from "@/stores/ui-playground-store";
 import type {
   CspViolation,
   WidgetLifecycleEvent,
+  WidgetMount,
   WidgetSandboxApplied,
 } from "@/stores/widget-debug-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -78,6 +79,7 @@ interface SandboxDebugPanelProps {
     } | null;
     applied?: WidgetSandboxApplied;
     lifecycle?: WidgetLifecycleEvent[];
+    mounts?: WidgetMount[];
     hostInfo?: { name: string; version: string } | null;
   };
   protocol?: "openai-apps" | "mcp-apps";
@@ -415,6 +417,7 @@ export function SandboxDebugPanel({
   const resolvedThemeMode = chatboxHostTheme ?? themeMode;
   const violations = sandboxInfo?.violations ?? [];
   const lifecycle = sandboxInfo?.lifecycle ?? [];
+  const mounts = sandboxInfo?.mounts ?? [];
   const applied = sandboxInfo?.applied;
   const hasViolations = violations.length > 0;
   const [copied, setCopied] = useState(false);
@@ -487,6 +490,45 @@ export function SandboxDebugPanel({
     <div className="space-y-4 text-xs">
       {/* Lifecycle progress track */}
       <LifecycleStrip events={lifecycle} />
+
+      {/* Mount log — hidden in the healthy case (exactly one mount).
+          When the iframe re-mounted, list each entry with the segments of
+          the fetch-source key that changed, so devs can spot self-induced
+          reloads (e.g. a history snapshot landing flipping
+          `cachedWidgetHtmlUrl` / `liveFetchPreferred`). */}
+      {mounts.length > 1 && (
+        <details className="group" open>
+          <summary className="flex items-center gap-1.5 cursor-pointer list-none text-amber-600 dark:text-amber-400">
+            <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
+            <span className="font-medium">Mounts</span>
+            <Badge
+              variant="outline"
+              className="text-[9px] px-1 py-0 h-4 ml-0.5"
+              title="Iframe was torn down and rebuilt"
+            >
+              {mounts.length}
+            </Badge>
+          </summary>
+          <div className="mt-2 pl-5 space-y-1">
+            {mounts.map((m) => (
+              <div
+                key={m.index}
+                className="flex items-baseline gap-2 text-[10px]"
+              >
+                <span className="text-muted-foreground tabular-nums w-4 shrink-0">
+                  #{m.index}
+                </span>
+                <span className="font-mono text-foreground truncate">
+                  {m.reason}
+                </span>
+                <span className="ml-auto text-muted-foreground/60 tabular-nums shrink-0">
+                  {new Date(m.at).toLocaleTimeString()}
+                </span>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
 
       {/* Suggested Fix */}
       {hasViolations && suggestedFixes.length > 0 && (

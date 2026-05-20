@@ -1,5 +1,4 @@
 import { type UIMessage } from "@ai-sdk/react";
-import { generateId } from "ai";
 
 /**
  * Convert a persisted transcript blob (array of message objects from the
@@ -23,6 +22,53 @@ interface TranscriptMessage {
   role?: string;
   content?: string | TranscriptPart[];
   [key: string]: unknown;
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) ?? String(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(",")}]`;
+  }
+  const obj = value as Record<string, unknown>;
+  return `{${Object.keys(obj)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(obj[key])}`)
+    .join(",")}}`;
+}
+
+function stableHash(value: unknown): string {
+  const input = stableStringify(value);
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function getStableMessageId(msg: TranscriptMessage, index: number): string {
+  if (typeof msg.id === "string" && msg.id.length > 0) {
+    return msg.id;
+  }
+  return `transcript-${index}-${msg.role ?? "unknown"}-${stableHash(
+    msg.content,
+  )}`;
+}
+
+function getStableToolCallId(
+  part: TranscriptPart,
+  messageIndex: number,
+  partIndex: number,
+): string {
+  const explicitId = readToolCallId(part);
+  if (explicitId) return explicitId;
+
+  return `transcript-tool-${messageIndex}-${partIndex}-${stableHash({
+    args: part.args ?? part.input,
+    toolName: part.toolName,
+  })}`;
 }
 
 function readToolCallId(part: TranscriptPart): string | undefined {
@@ -133,7 +179,10 @@ function extractTextContent(content: unknown): string {
     .join("\n");
 }
 
-function convertParts(content: unknown): UIMessage["parts"] {
+function convertParts(
+  content: unknown,
+  messageIndex: number,
+): UIMessage["parts"] {
   if (typeof content === "string") {
     return [{ type: "text", text: content }];
   }
@@ -143,7 +192,7 @@ function convertParts(content: unknown): UIMessage["parts"] {
   }
 
   const parts: UIMessage["parts"] = [];
-  for (const part of content) {
+  for (const [partIndex, part] of content.entries()) {
     if (typeof part === "string") {
       parts.push({ type: "text", text: part });
       continue;
@@ -161,7 +210,7 @@ function convertParts(content: unknown): UIMessage["parts"] {
       // widget metadata like `_meta.ui.resourceUri` and `_serverId`.
       parts.push({
         type: "dynamic-tool",
-        toolCallId: part.toolCallId ?? part.id ?? generateId(),
+        toolCallId: getStableToolCallId(part, messageIndex, partIndex),
         toolName: part.toolName ?? "unknown",
         state: "output-available" as const,
         input: part.args ?? part.input ?? {},
@@ -189,7 +238,7 @@ export function transcriptToUIMessages(transcript: unknown[]): UIMessage[] {
 
   const mergedTranscript = mergeTranscriptToolResults(transcript);
   const messages: UIMessage[] = [];
-  for (const raw of mergedTranscript) {
+  for (const [index, raw] of mergedTranscript.entries()) {
     const msg = raw as TranscriptMessage;
     if (!msg || typeof msg !== "object") continue;
 
@@ -205,9 +254,9 @@ export function transcriptToUIMessages(transcript: unknown[]): UIMessage[] {
           : ("assistant" as const);
 
     messages.push({
-      id: msg.id ?? generateId(),
+      id: getStableMessageId(msg, index),
       role: uiRole,
-      parts: convertParts(msg.content),
+      parts: convertParts(msg.content, index),
     } as UIMessage);
   }
 

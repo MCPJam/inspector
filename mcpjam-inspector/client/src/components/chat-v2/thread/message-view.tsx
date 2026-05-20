@@ -22,6 +22,7 @@ import { getAssistantAvatarDescriptor } from "@/components/chat-v2/shared/assist
 import { CopilotMessageHeader } from "./copilot-message-header";
 
 type ClaudeFooterMode = "none" | "animated" | "static";
+type MessagePart = UIMessage["parts"][number];
 
 interface MessageViewProps {
   message: UIMessage;
@@ -69,6 +70,24 @@ function shouldRerenderMessage(prevMessage: UIMessage, nextMessage: UIMessage) {
       prevMessage.role === nextMessage.role &&
       prevMessage.parts === nextMessage.parts)
   );
+}
+
+function getPartKey(part: MessagePart, stepIndex: number, partIndex: number) {
+  const candidate = part as {
+    type?: string;
+    toolCallId?: unknown;
+    id?: unknown;
+  };
+  if (
+    typeof candidate.toolCallId === "string" &&
+    candidate.toolCallId.length > 0
+  ) {
+    return `tool-${candidate.toolCallId}`;
+  }
+  if (typeof candidate.id === "string" && candidate.id.length > 0) {
+    return `${candidate.type ?? "part"}-${candidate.id}`;
+  }
+  return `${stepIndex}-${partIndex}`;
 }
 
 function areMessageViewPropsEqual(
@@ -275,7 +294,7 @@ function MessageViewImpl({
             <div key={sIdx} className="space-y-3">
               {stepParts.map((part, pIdx) => (
                 <PartSwitch
-                  key={`${sIdx}-${pIdx}`}
+                  key={getPartKey(part, sIdx, pIdx)}
                   part={part}
                   role={role}
                   onSendFollowUp={onSendFollowUp}

@@ -102,6 +102,12 @@ vi.mock("@/contexts/chatbox-client-style-context", () => ({
   ChatboxHostThemeProvider: ({ children }: { children: React.ReactNode }) => (
     <>{children}</>
   ),
+  ChatboxChatUiOverrideProvider: ({
+    children,
+  }: {
+    children: React.ReactNode;
+  }) => <>{children}</>,
+  useChatboxChatUiOverride: () => undefined,
 }));
 
 vi.mock("@/contexts/chatbox-client-capabilities-override-context", () => ({
@@ -110,7 +116,22 @@ vi.mock("@/contexts/chatbox-client-capabilities-override-context", () => ({
   }: {
     children: React.ReactNode;
   }) => <>{children}</>,
-  useChatboxHostCapabilitiesOverride: () => null,
+  useChatboxHostCapabilitiesOverride: () => undefined,
+}));
+
+vi.mock("@/contexts/active-mcp-profile-context", () => ({
+  ActiveMcpProfileProvider: ({ children }: { children: React.ReactNode }) => (
+    <>{children}</>
+  ),
+  useActiveMcpProfile: () => undefined,
+}));
+
+vi.mock("@/contexts/active-host-client-capabilities-context", () => ({
+  ActiveHostCapsResolverScope: ({
+    children,
+  }: {
+    children: React.ReactNode;
+  }) => <>{children}</>,
 }));
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
@@ -136,6 +157,9 @@ function Harness() {
         {Object.keys(messageFlags).length}
       </div>
       <MultiModelPlaygroundCard
+        compareId={String(model.id)}
+        compareLabel={model.name}
+        compareKind="model"
         model={model}
         comparisonSummaries={Object.values(summaries)}
         selectedServers={[]}
@@ -184,6 +208,9 @@ describe("MultiModelPlaygroundCard", () => {
   it("omits compare header chrome when showComparisonChrome is false (matches chat tab single-column compare)", () => {
     render(
       <MultiModelPlaygroundCard
+        compareId={String(model.id)}
+        compareLabel={model.name}
+        compareKind="model"
         model={model}
         comparisonSummaries={[]}
         selectedServers={[]}
@@ -208,6 +235,9 @@ describe("MultiModelPlaygroundCard", () => {
   it("hides shared-message empty hint when suppressThreadEmptyHint is true", () => {
     render(
       <MultiModelPlaygroundCard
+        compareId={String(model.id)}
+        compareLabel={model.name}
+        compareKind="model"
         model={model}
         comparisonSummaries={[]}
         selectedServers={[]}
@@ -234,6 +264,9 @@ describe("MultiModelPlaygroundCard", () => {
   it("calls stop when stopRequestId changes", async () => {
     const { rerender } = render(
       <MultiModelPlaygroundCard
+        compareId={String(model.id)}
+        compareLabel={model.name}
+        compareKind="model"
         model={model}
         comparisonSummaries={[]}
         selectedServers={[]}
@@ -253,6 +286,9 @@ describe("MultiModelPlaygroundCard", () => {
 
     rerender(
       <MultiModelPlaygroundCard
+        compareId={String(model.id)}
+        compareLabel={model.name}
+        compareKind="model"
         model={model}
         comparisonSummaries={[]}
         selectedServers={[]}
@@ -284,6 +320,9 @@ describe("MultiModelPlaygroundCard", () => {
     it("card root has no forced min-height so it can shrink inside a short grid row", () => {
       render(
         <MultiModelPlaygroundCard
+          compareId={String(model.id)}
+          compareLabel={model.name}
+          compareKind="model"
           model={model}
           comparisonSummaries={[]}
           selectedServers={[]}
@@ -318,6 +357,9 @@ describe("MultiModelPlaygroundCard", () => {
 
       const { container } = render(
         <MultiModelPlaygroundCard
+          compareId={String(model.id)}
+          compareLabel={model.name}
+          compareKind="model"
           model={model}
           comparisonSummaries={[]}
           selectedServers={[]}
@@ -352,6 +394,9 @@ describe("MultiModelPlaygroundCard", () => {
 
       const { container } = render(
         <MultiModelPlaygroundCard
+          compareId={String(model.id)}
+          compareLabel={model.name}
+          compareKind="model"
           model={model}
           comparisonSummaries={[]}
           selectedServers={[]}
