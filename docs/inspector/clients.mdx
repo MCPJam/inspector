@@ -57,9 +57,15 @@ When your server exposes [MCP Apps](https://modelcontextprotocol.io/docs/extensi
 1. Open the **Clients** tab in the inspector.
 2. Click **New Client**.
 3. Give it a name (e.g. `Claude Desktop`, `ChatGPT`, `Strict CSP`).
-4. Pick the servers it should attach to.
-5. Open the focus panel to drill into protocol or MCP App settings.
-6. Click **Save**.
+4. Open the focus panel to drill into protocol or MCP App settings.
+5. Click **Save**.
+
+<Note>
+  Server selection is project-wide, not per-client. Use the **Auto-connect**
+  toggle in the Servers tab header to enroll all project servers for
+  auto-connection. Per-server overrides (headers, timeout) are also configured
+  there.
+</Note>
 
 The canvas on the left shows a live diagram of the Client — the model, attached servers, and any per-server overrides. Cards flash briefly when you switch between Clients so you can see what changed.
 
