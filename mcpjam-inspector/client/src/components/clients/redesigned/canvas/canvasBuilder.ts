@@ -45,7 +45,10 @@ const MATRIX_W = 580;
 const MATRIX_H_BASE = 280;
 const MATRIX_H_APPS_SECTION = 230;
 const MATRIX_H_SANDBOX_SECTION = 180;
-const SERVERS_HUB_GAP = 40;
+// Exported because the canvas measures the matrix card's real rendered
+// height at runtime (sandbox CSP/permission rows make it variable) and
+// shifts the servers hub + cards by the delta vs. these estimates.
+export const SERVERS_HUB_GAP = 40;
 const SERVERS_HUB_W_BASE = 220;
 const SERVERS_HUB_W_PER_SERVER = 38;
 const SERVERS_HUB_H = 48;
