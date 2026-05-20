@@ -194,10 +194,17 @@ export async function ensureAuthorizedForReconnect(
     return { kind: "ready", serverConfig: server.config, tokens: undefined };
   }
 
-  // If OAuth was configured, try to refresh or re-initiate
+  // If OAuth was configured, try to refresh or re-initiate. Local mode does
+  // not hydrate `server.oauthTokens` from localStorage at startup, so a
+  // page-reload + auto-reconnect arrives here with `oauthTokens: undefined`
+  // even when a refresh_token sits in localStorage. Probe getStoredTokens
+  // too so the silent refresh runs; refreshOAuthTokens self-reads from
+  // localStorage anyway and returns success: false cleanly if nothing is
+  // persisted.
   let refreshTrace: OAuthTrace | undefined;
-  if (server.oauthTokens) {
-    // Try refresh first
+  const hasRefreshCandidate =
+    server.oauthTokens || getStoredTokens(server.name);
+  if (hasRefreshCandidate) {
     const refreshed = await refreshOAuthTokens(server.name, {
       onTraceUpdate: options?.onTraceUpdate,
     });

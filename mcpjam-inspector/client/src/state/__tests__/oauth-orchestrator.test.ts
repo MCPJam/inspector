@@ -226,6 +226,69 @@ describe("ensureAuthorizedForReconnect", () => {
     );
   });
 
+  it("uses stored localStorage tokens to refresh silently when server.oauthTokens is undefined (post-reload local mode)", async () => {
+    // After a page reload in local (non-hosted) mode, `server.oauthTokens`
+    // is undefined because nothing hydrates the reducer state from
+    // localStorage at startup. The auto-reconnect path must still find the
+    // persisted refresh token via `getStoredTokens` and run a silent
+    // refresh — otherwise OAuth servers land in `reauth_required` even
+    // though valid tokens sit on disk.
+    getStoredTokensMock.mockReturnValue({
+      access_token: "stored-access",
+      refresh_token: "stored-refresh",
+    });
+    refreshOAuthTokensMock.mockResolvedValue({
+      success: true,
+      serverConfig: {
+        type: "http",
+        url: "https://mcp.asana.com/sse",
+      },
+      oauthTrace: { steps: [] },
+    });
+
+    const result = await ensureAuthorizedForReconnect(
+      createServer({ oauthTokens: undefined }),
+      { allowInteractiveOAuthFlow: false },
+    );
+
+    expect(refreshOAuthTokensMock).toHaveBeenCalledWith(
+      "asana",
+      expect.any(Object),
+    );
+    expect(initiateOAuthMock).not.toHaveBeenCalled();
+    expect(result).toEqual(
+      expect.objectContaining({
+        kind: "ready",
+        serverConfig: expect.objectContaining({
+          url: "https://mcp.asana.com/sse",
+        }),
+        tokens: expect.objectContaining({
+          access_token: "stored-access",
+        }),
+      }),
+    );
+  });
+
+  it("skips refresh and returns reauth_required when no in-memory or stored tokens exist", async () => {
+    // Mirror of the case above: OAuth-enabled server with neither
+    // reducer-state tokens nor localStorage-persisted tokens. The new
+    // `hasRefreshCandidate` gate must not fire a refresh (no token to
+    // refresh against) — and with interactive OAuth disabled, the result
+    // is reauth_required.
+    getStoredTokensMock.mockReturnValue(undefined);
+
+    const result = await ensureAuthorizedForReconnect(
+      createServer({ oauthTokens: undefined }),
+      { allowInteractiveOAuthFlow: false },
+    );
+
+    expect(refreshOAuthTokensMock).not.toHaveBeenCalled();
+    expect(initiateOAuthMock).not.toHaveBeenCalled();
+    expect(result).toEqual(
+      expect.objectContaining({ kind: "reauth_required" }),
+    );
+  });
+
   it("does not launch OAuth for a server explicitly saved without OAuth", async () => {
     const server = createServer({
       useOAuth: false,
