@@ -893,9 +893,12 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         message: { text: {} },
         updateModelContext: { text: {} },
       };
-      // Per-resource environment context. `containerDimensions` mirrors
-      // ChatGPT's "fill your container" intent (md breakpoint width
-      // policy, modest fixed height). `availableDisplayModes` is kept as
+      // Per-resource environment context. `containerDimensions` communicates
+      // a flexible-height policy (widget can grow up to `maxHeight: 400`),
+      // matching Copilot's documented `viewport.maxHeight` model — the doc
+      // maps `window.openai.maxHeight` → `app.getHostContext()?.viewport?.maxHeight`,
+      // i.e. a flexible vertical bound (widget scrolls up to a max), not a
+      // fixed render-at-400 directive. `availableDisplayModes` is kept as
       // ["inline", "fullscreen"] because omitting it falls back to the
       // inspector default ["inline", "pip", "fullscreen"], which would
       // claim `pip` support Copilot doesn't have — a worse lie than the
@@ -906,10 +909,13 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         theme,
         displayMode: "inline",
         availableDisplayModes: ["inline", "fullscreen"],
-        containerDimensions: { height: 400, maxWidth: 768 },
+        containerDimensions: { maxHeight: 400, maxWidth: 768 },
         locale: "en-US",
         timeZone: "America/Los_Angeles",
+        // Undocumented; chosen to match the `clientInfo.name` convention.
         userAgent: "ms-copilot",
+        // Undocumented; Copilot is also a web app at `m365.cloud.microsoft`,
+        // but kept as "desktop" to match the ChatGPT template behavior.
         platform: "desktop",
         deviceCapabilities: { touch: false, hover: true },
         safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
@@ -918,14 +924,17 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         profileVersion: 1,
         initialize: {
           // Base MCP protocol: clientInfo sent during MCP `initialize`.
-          // Matches Microsoft's "ms-copilot" identity convention.
+          // Matches Microsoft's "ms-copilot" identity convention. The
+          // specific name/version values are guesses (no live probe and no
+          // learn.microsoft.com source confirms them).
           clientInfo: { name: "ms-copilot", version: "1.0.0" },
         },
         apps: {
           uiInitialize: {
             // MCP Apps extension: hostInfo sent in `ui/initialize`. Apps
             // that branch on `hostInfo.name === "Copilot"` need this to
-            // take that path.
+            // take that path. The specific name/version values are guesses
+            // (no live probe and no learn.microsoft.com source confirms them).
             hostInfo: { name: "Copilot", version: "1.0.0" },
           },
           // Vendor compat-runtime shims. Copilot routes widgets through
@@ -942,11 +951,18 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               // allowlist (AI APIs + jsDelivr + Microsoft Graph + Office
               // CDN), but mirroring it here would only narrow the view's
               // declared CSP via the SEP-1865 intersection rule and
-              // silently break widgets reaching anything else.
+              // silently break widgets reaching anything else. Note:
+              // Microsoft's doc marks `frameDomains` as ❌ for Copilot
+              // (real Copilot drops the field), but with `mode: "declared"`
+              // MCPJam-as-Copilot honors a widget's declared `frameDomains`
+              // and lets it nest iframes — so iframe-nesting widgets will
+              // work here but fail in production Copilot.
               mode: "declared",
             },
             permissions: {
               mode: "custom",
+              // Undocumented for Copilot (no probe data and the doc lists
+              // no permissions table); kept as a best-guess sane default.
               allow: { clipboardWrite: true },
             },
           },
