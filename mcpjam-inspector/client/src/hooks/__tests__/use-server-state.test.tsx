@@ -34,6 +34,7 @@ const {
   mockCreateServerWithClientSecret,
   mockUpdateServer,
   mockUpdateServerWithClientSecret,
+  mockUseDbUserReady,
 } = vi.hoisted(() => ({
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
@@ -55,6 +56,7 @@ const {
   mockCreateServerWithClientSecret: vi.fn(),
   mockUpdateServer: vi.fn(),
   mockUpdateServerWithClientSecret: vi.fn(),
+  mockUseDbUserReady: vi.fn(() => false),
 }));
 
 vi.mock("sonner", () => ({
@@ -68,6 +70,10 @@ vi.mock("convex/react", () => ({
   useConvex: () => ({
     query: mockConvexQuery,
   }),
+}));
+
+vi.mock("@/contexts/db-user-ready-context", () => ({
+  useDbUserReady: mockUseDbUserReady,
 }));
 
 vi.mock("@/state/mcp-api", () => ({
@@ -191,13 +197,16 @@ function renderUseServerState(
     activeProjectServersFlat?: any;
   }
 ) {
+  mockUseDbUserReady.mockReturnValue(
+    options?.isUserReady ?? options?.isAuthenticated ?? false,
+  );
+
   return renderHook(() =>
     useServerState({
       appState,
       dispatch,
       isLoading: false,
       isAuthenticated: options?.isAuthenticated ?? false,
-      isUserReady: options?.isUserReady ?? options?.isAuthenticated ?? false,
       hasSignedInUser: options?.hasSignedInUser ?? false,
       isAuthLoading: false,
       isLoadingProjects: false,
@@ -223,6 +232,7 @@ async function flushAsyncWork(iterations = 5): Promise<void> {
 }
 
 beforeEach(() => {
+  mockUseDbUserReady.mockReturnValue(true);
   tryResolveProjectServerMock.mockReturnValue({
     projectId: "project_default",
     serverId: "srv_demo",
@@ -2011,7 +2021,6 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
         dispatch,
         isLoading: false,
         isAuthenticated: true,
-        isUserReady: true,
         hasSignedInUser: true,
         isAuthLoading: false,
         isLoadingProjects: false,
@@ -2172,7 +2181,6 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
         dispatch,
         isLoading: false,
         isAuthenticated: true,
-        isUserReady: true,
         hasSignedInUser: true,
         isAuthLoading: false,
         isLoadingProjects: false,
@@ -2218,7 +2226,6 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
         dispatch,
         isLoading: false,
         isAuthenticated: true,
-        isUserReady: true,
         hasSignedInUser: true,
         isAuthLoading: false,
         isLoadingProjects: false,
@@ -2266,7 +2273,6 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
         dispatch,
         isLoading: false,
         isAuthenticated: true,
-        isUserReady: true,
         hasSignedInUser: true,
         isAuthLoading: false,
         isLoadingProjects: false,
@@ -2320,7 +2326,6 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
         dispatch,
         isLoading: false,
         isAuthenticated: true,
-        isUserReady: true,
         hasSignedInUser: true,
         isAuthLoading: false,
         isLoadingProjects: false,
@@ -2378,7 +2383,6 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
         dispatch,
         isLoading: false,
         isAuthenticated: true,
-        isUserReady: true,
         hasSignedInUser: true,
         isAuthLoading: false,
         isLoadingProjects: false,
@@ -2445,6 +2449,7 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
       useLocalFallback: false,
       effectiveActiveProjectId: "none",
     };
+    mockUseDbUserReady.mockImplementation(() => readiness.isAuthenticated);
 
     const { result, rerender } = renderHook(() =>
       useServerState({
@@ -2452,7 +2457,6 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
         dispatch,
         isLoading: false,
         isAuthenticated: readiness.isAuthenticated,
-        isUserReady: readiness.isAuthenticated,
         hasSignedInUser: readiness.hasSignedInUser,
         isAuthLoading: readiness.isAuthLoading,
         isLoadingProjects: readiness.isLoadingProjects,

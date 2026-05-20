@@ -276,17 +276,13 @@ export function useServerMutations() {
 export function useProjectServers({
   projectId,
   isAuthenticated,
-  isUserReady,
 }: {
   projectId: string | null;
   isAuthenticated: boolean;
-  isUserReady?: boolean;
 }) {
-  const contextUserReady = useDbUserReady();
+  const isUserReady = useDbUserReady();
   const shouldQuery =
-    isAuthenticated &&
-    (isUserReady ?? contextUserReady) &&
-    shouldQueryProjectId(projectId);
+    isAuthenticated && isUserReady && shouldQueryProjectId(projectId);
   const queryProjectId = projectId?.trim() ?? "";
 
   const servers = useQuery(

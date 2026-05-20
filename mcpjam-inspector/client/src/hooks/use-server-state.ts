@@ -64,6 +64,7 @@ import { EXCALIDRAW_SERVER_NAME } from "@/lib/excalidraw-quick-connect";
 import { readOnboardingState } from "@/lib/onboarding-state";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 import { resolveServerConnectionSettings } from "@/lib/client-connection-resolve";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 
 /** Skip noisy connect toast while first-run App Builder onboarding is in progress. */
 function shouldSuppressExcalidrawConnectToastForOnboarding(
@@ -477,7 +478,6 @@ interface UseServerStateParams {
   dispatch: Dispatch<AppAction>;
   isLoading: boolean;
   isAuthenticated: boolean;
-  isUserReady: boolean;
   /** True when a signed-in WorkOS user is present (not guest Convex-only auth). */
   hasSignedInUser: boolean;
   isAuthLoading: boolean;
@@ -554,7 +554,6 @@ export function useServerState({
   dispatch,
   isLoading,
   isAuthenticated,
-  isUserReady,
   hasSignedInUser,
   isAuthLoading,
   isLoadingProjects,
@@ -566,6 +565,7 @@ export function useServerState({
   activeHostConfig,
   logger,
 }: UseServerStateParams) {
+  const isUserReady = useDbUserReady();
   const convex = useConvex();
   const {
     createServerIfMissing: convexCreateServerIfMissing,

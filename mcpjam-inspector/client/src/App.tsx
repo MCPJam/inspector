@@ -76,10 +76,9 @@ import {
 } from "./stores/preferences/preferences-provider";
 import { Toaster } from "@mcpjam/design-system/sonner";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
-import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
-import { DbUserReadyProvider } from "./contexts/db-user-ready-context";
+import { useDbUserBootstrapStatus } from "./contexts/db-user-ready-context";
 import { AppStateProvider } from "./state/app-state-context";
 import { ServerActionsProvider } from "./state/server-actions-context";
 import { usePreviewedHostId } from "./hooks/use-previewed-client-id";
@@ -1477,8 +1476,7 @@ export default function App() {
 
   // Set up Electron OAuth callback handling
   useElectronOAuth();
-  // Ensure a `users` row exists after Convex auth
-  const { isEnsuringUser, isUserReady } = useEnsureDbUser();
+  const { isEnsuringUser, isUserReady } = useDbUserBootstrapStatus();
 
   const isDebugCallback = window.location.pathname.startsWith(
     "/oauth/callback/debug"
@@ -1604,7 +1602,6 @@ export default function App() {
   } = useAppState({
     currentUserId: workOsUser?.id ?? null,
     currentActorKey: actorKey,
-    isUserReady,
     hasOrganizations: effectiveOrganizations.length > 0,
     isLoadingOrganizations,
     validOrganizations: effectiveOrganizations,
@@ -1989,7 +1986,6 @@ export default function App() {
   // Fetch project servers to map server IDs to names
   const { serversById } = useProjectServers({
     isAuthenticated,
-    isUserReady,
     projectId: convexProjectId,
   });
   const hostedServerIdsByName = useMemo(
@@ -3061,7 +3057,6 @@ export default function App() {
         activeProjectId={activeProjectId}
         savedClientConfig={activeProject?.clientConfig}
       />
-      <DbUserReadyProvider isUserReady={isUserReady}>
       <AppStateProvider appState={effectiveAppState}>
         <ServerActionsProvider
         actions={{
@@ -3133,7 +3128,6 @@ export default function App() {
         </AppReadyProvider>
         </ServerActionsProvider>
       </AppStateProvider>
-      </DbUserReadyProvider>
     </PreferencesStoreProvider>
   );
 }

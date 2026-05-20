@@ -146,7 +146,6 @@ function renderUseProjectState({
   activeOrganizationId,
   routeOrganizationId,
   isAuthenticated = true,
-  isUserReady = isAuthenticated,
   hasOrganizations = true,
   isLoadingOrganizations = false,
   validOrganizationIds,
@@ -157,7 +156,6 @@ function renderUseProjectState({
   activeOrganizationId?: string;
   routeOrganizationId?: string;
   isAuthenticated?: boolean;
-  isUserReady?: boolean;
   hasOrganizations?: boolean;
   isLoadingOrganizations?: boolean;
   validOrganizationIds?: string[];
@@ -189,7 +187,6 @@ function renderUseProjectState({
         appState,
         dispatch,
         isAuthenticated,
-        isUserReady,
         isAuthLoading: false,
         hasOrganizations: hasOrganizationsOverride ?? hasOrganizations,
         isLoadingOrganizations:

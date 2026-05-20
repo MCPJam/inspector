@@ -196,18 +196,14 @@ export function useViewMutations() {
 // Hook to get servers for a project (for server ID resolution)
 export function useProjectServers({
   isAuthenticated,
-  isUserReady,
   projectId,
 }: {
   isAuthenticated: boolean;
-  isUserReady?: boolean;
   projectId: string | null;
 }) {
-  const contextUserReady = useDbUserReady();
+  const isUserReady = useDbUserReady();
   const enableQuery =
-    isAuthenticated &&
-    (isUserReady ?? contextUserReady) &&
-    shouldQueryProjectId(projectId);
+    isAuthenticated && isUserReady && shouldQueryProjectId(projectId);
   const queryProjectId = projectId?.trim() ?? "";
 
   const servers = useQuery(
