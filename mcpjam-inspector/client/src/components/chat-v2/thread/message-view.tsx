@@ -12,7 +12,10 @@ import {
   useChatboxHostStyle,
   useChatboxHostTheme,
 } from "@/contexts/chatbox-client-style-context";
-import { groupAssistantPartsIntoSteps } from "./thread-helpers";
+import {
+  groupAssistantPartsIntoSteps,
+  isHiddenInternalMessage,
+} from "./thread-helpers";
 import { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
@@ -193,10 +196,7 @@ function MessageViewImpl({
   // message content (faithful to real M365 Copilot's avatar/name header).
   // Other host styles keep the inspector's existing layout.
   const shouldRenderCopilotHeader = chatboxHostStyle === "copilot";
-  // Hide widget state messages (these are internal and sent to the model)
-  if (message.id?.startsWith("widget-state-")) return null;
-  // Hide model context messages (these are internal and sent to the model)
-  if (message.id?.startsWith("model-context-")) return null;
+  if (isHiddenInternalMessage(message)) return null;
   const role = message.role;
   if (role !== "user" && role !== "assistant") return null;
 

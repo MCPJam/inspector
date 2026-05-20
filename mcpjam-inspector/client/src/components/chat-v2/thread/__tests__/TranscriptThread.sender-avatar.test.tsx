@@ -120,6 +120,37 @@ describe("TranscriptThread sender avatars", () => {
     expect(getByTestId("mv-u3").dataset.showSenderAvatar).toBe("false");
   });
 
+  it("coalesces across hidden internal context messages between two visible prompts from the same sender", () => {
+    const messages = [
+      userMessage("u1", "first by alice", "u-alice"),
+      // Hidden internal message (role: "user"). MessageView would suppress
+      // it; the coalescing scan must skip it too so the next visible prompt
+      // by Alice still coalesces with `u1`.
+      {
+        id: "model-context-injection-1",
+        role: "user",
+        parts: [{ type: "text", text: "(internal context)" }],
+      } as UIMessage,
+      userMessage("u2", "second by alice", "u-alice"),
+    ];
+    const resolve = (): ProjectThreadOwnerAvatar => ({
+      status: "show",
+      displayName: "Alice",
+    });
+
+    const { getByTestId } = render(
+      <TranscriptThread
+        {...baseProps}
+        messages={messages}
+        showSenderAvatars={true}
+        resolveSenderAvatar={resolve}
+      />,
+    );
+
+    expect(getByTestId("mv-u1").dataset.showSenderAvatar).toBe("true");
+    expect(getByTestId("mv-u2").dataset.showSenderAvatar).toBe("false");
+  });
+
   it("renders the avatar again when the sender changes", () => {
     const messages = [
       userMessage("u1", "alice 1", "u-alice"),

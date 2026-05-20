@@ -12,6 +12,7 @@ import {
 import type { UIMessage } from "@ai-sdk/react";
 import { motion, useReducedMotion } from "framer-motion";
 import { MessageView } from "./message-view";
+import { isHiddenInternalMessage } from "./thread-helpers";
 import type { ProjectThreadOwnerAvatar } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import type { ModelDefinition } from "@/shared/types";
 import type { DisplayMode } from "@/stores/ui-playground-store";
@@ -419,6 +420,10 @@ export function TranscriptThread({
           for (let i = index - 1; i >= 0; i -= 1) {
             const prior = messages[i];
             if (prior.role !== "user") continue;
+            // Skip hidden internal messages (model-context-*, widget-state-*):
+            // they're never rendered, so they shouldn't break coalescing
+            // between two visible prompts from the same sender.
+            if (isHiddenInternalMessage(prior)) continue;
             hadPrevUser = true;
             prevUserSenderId = getMessageSenderUserId(prior);
             break;
