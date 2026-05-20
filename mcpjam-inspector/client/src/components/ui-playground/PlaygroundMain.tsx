@@ -2317,21 +2317,6 @@ export function PlaygroundMain({
                         >
                           This is your playground for MCP.
                         </h3>
-                        <p
-                          className={cn(
-                            "text-base leading-7",
-                            hostStyleFamily === "chatgpt"
-                              ? effectiveThreadTheme === "dark"
-                                ? "text-neutral-400"
-                                : "text-neutral-600"
-                              : effectiveThreadTheme === "dark"
-                              ? "text-[#F1F0ED]/80"
-                              : "text-[rgba(61,57,41,0.72)]"
-                          )}
-                        >
-                          Test prompts, inspect tools, and debug AI-powered
-                          apps. Type a message here, or run a tool on the left.
-                        </p>
                       </div>
                     </div>
                     {errorMessage && (
