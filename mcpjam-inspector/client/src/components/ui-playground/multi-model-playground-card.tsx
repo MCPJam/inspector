@@ -14,6 +14,7 @@ import type { UIMessage } from "ai";
 import { cn } from "@/lib/utils";
 import type { ModelDefinition } from "@/shared/types";
 import { Thread } from "@/components/chat-v2/thread";
+import type { ProjectThreadOwnerAvatar } from "@/components/chat-v2/history/project-thread-owner-avatar";
 import type { ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/reasoning-part";
 import { ErrorBox } from "@/components/chat-v2/error";
 import {
@@ -183,6 +184,9 @@ interface MultiModelPlaygroundCardProps {
    * resolver is inherited (no per-card shadow).
    */
   activeHost?: HostConfigDtoV2 | null;
+  showSenderAvatars?: boolean;
+  resolveSenderAvatar?: (senderUserId?: string) => ProjectThreadOwnerAvatar;
+  outgoingSenderMetadata?: Record<string, unknown>;
 }
 
 export function MultiModelPlaygroundCard({
@@ -226,6 +230,9 @@ export function MultiModelPlaygroundCard({
   mcpProfile: mcpProfileProp,
   mcpProfileSet = false,
   activeHost,
+  showSenderAvatars = false,
+  resolveSenderAvatar,
+  outgoingSenderMetadata,
 }: MultiModelPlaygroundCardProps) {
   // Resolve effective per-card values from props with fall-back to the
   // tab-root provider context. Model-mode callers (today) don't pass any
@@ -497,8 +504,15 @@ export function MultiModelPlaygroundCard({
     sendMessage({
       text: broadcastRequest.text,
       files: broadcastRequest.files,
+      metadata: outgoingSenderMetadata,
     });
-  }, [broadcastRequest, queueContextMessages, sendMessage, setMessages]);
+  }, [
+    broadcastRequest,
+    queueContextMessages,
+    sendMessage,
+    setMessages,
+    outgoingSenderMetadata,
+  ]);
 
   useEffect(() => {
     if (!deterministicExecutionRequest) {
@@ -621,9 +635,9 @@ export function MultiModelPlaygroundCard({
   const handleSendFollowUp = useCallback(
     (text: string) => {
       queueContextMessages();
-      sendMessage({ text });
+      sendMessage({ text, metadata: outgoingSenderMetadata });
     },
-    [queueContextMessages, sendMessage],
+    [queueContextMessages, sendMessage, outgoingSenderMetadata],
   );
 
   const handleModelContextUpdate = useCallback(
@@ -806,6 +820,8 @@ export function MultiModelPlaygroundCard({
                       fullscreenChatSendBlocked={fullscreenChatSendBlocked}
                       onFullscreenChatStop={stop}
                       reasoningDisplayMode={reasoningDisplayMode}
+                      showSenderAvatars={showSenderAvatars}
+                      resolveSenderAvatar={resolveSenderAvatar}
                     />
                     {isExecuting && executingToolName ? (
                       <InvokingIndicator

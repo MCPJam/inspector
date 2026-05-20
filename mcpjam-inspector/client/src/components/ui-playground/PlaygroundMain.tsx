@@ -91,10 +91,13 @@ import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-over
 import { useSharedAppState } from "@/state/app-state-context";
 import { Settings2 } from "lucide-react";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
-import { useConvexAuth } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import { useHost } from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useProjectServers } from "@/hooks/useViews";
+import { useProjectMembers } from "@/hooks/useProjects";
+import { buildProjectOwnerProfileByUserId } from "@/components/chat-v2/history/project-thread-owner-avatar";
+import { buildSenderAvatarResolver } from "@/components/chat-v2/shared/sender-avatar";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import { useHostContextStore } from "@/stores/client-context-store";
 import {
@@ -1199,6 +1202,43 @@ export function PlaygroundMain({
       isConvexAuthenticated && !!activeHistorySessionId && !isStreaming,
   });
 
+  // Shared-session sender attribution: only active for project-visible
+  // threads. Members load via Convex for authenticated users with a
+  // projectId; private sessions skip the avatar entirely.
+  const { activeMembers: senderActiveMembers } = useProjectMembers({
+    isAuthenticated: isConvexAuthenticated,
+    projectId: convexProjectId ?? null,
+  });
+  const senderProfileByUserId = useMemo(
+    () => buildProjectOwnerProfileByUserId(senderActiveMembers),
+    [senderActiveMembers],
+  );
+  const currentUserForSender = useQuery(
+    "users:getCurrentUser" as any,
+    isConvexAuthenticated ? ({} as any) : "skip",
+  ) as { _id?: string } | undefined;
+  const senderFallbackUserId =
+    reactiveHistorySession?.userId ?? currentUserForSender?._id ?? null;
+  const showSenderAvatars = pendingDirectVisibility === "project";
+  const resolveSenderAvatar = useMemo(
+    () =>
+      buildSenderAvatarResolver({
+        profileByUserId: senderProfileByUserId,
+        fallbackOwnerUserId: senderFallbackUserId,
+      }),
+    [senderProfileByUserId, senderFallbackUserId],
+  );
+  // Stamp current user onto live outgoing prompts in shared sessions so the
+  // transcript can attribute them before persistence round-trips.
+  const outgoingSenderMetadata = useMemo<
+    Record<string, unknown> | undefined
+  >(() => {
+    if (!showSenderAvatars) return undefined;
+    const id = currentUserForSender?._id;
+    if (!id) return undefined;
+    return { senderUserId: id };
+  }, [showSenderAvatars, currentUserForSender?._id]);
+
   const detachHistorySession = useCallback(
     (toastMessage: string) => {
       resumedThreadSendBaselineRef.current = null;
@@ -1884,10 +1924,10 @@ export function PlaygroundMain({
         if (!(await ensureSelectedServerReadyForChat())) {
           return;
         }
-        sendMessage({ text });
+        sendMessage({ text, metadata: outgoingSenderMetadata });
       })();
     },
-    [ensureSelectedServerReadyForChat, sendMessage]
+    [ensureSelectedServerReadyForChat, sendMessage, outgoingSenderMetadata]
   );
 
   // Handle model context updates from widgets (SEP-1865 ui/update-model-context)
@@ -2150,7 +2190,11 @@ export function PlaygroundMain({
           },
           { single_model_send: true }
         );
-        sendMessage({ text: composer.input, files });
+        sendMessage({
+          text: composer.input,
+          files,
+          metadata: outgoingSenderMetadata,
+        });
         setModelContextQueue([]); // Clear after sending
       }
 
@@ -2459,6 +2503,8 @@ export function PlaygroundMain({
                       }
                     : undefined
                 }
+                showSenderAvatars={showSenderAvatars}
+                resolveSenderAvatar={resolveSenderAvatar}
               />
               {/* Invoking indicator while tool execution is in progress */}
               {isExecuting && executingToolName && (
@@ -2522,7 +2568,10 @@ export function PlaygroundMain({
               if (!(await ensureSelectedServerReadyForChat())) {
                 return;
               }
-              sendMessage({ text: composer.input });
+              sendMessage({
+                text: composer.input,
+                metadata: outgoingSenderMetadata,
+              });
               composer.setInput("");
               setMcpPromptResults([]);
             })();
@@ -2759,6 +2808,9 @@ export function PlaygroundMain({
                           compareAddColumnSeeds[compareId] ?? null
                         }
                         onTranscriptSync={handleMultiModelTranscriptSync}
+                        showSenderAvatars={showSenderAvatars}
+                        resolveSenderAvatar={resolveSenderAvatar}
+                        outgoingSenderMetadata={outgoingSenderMetadata}
                         // Phase 3: model-mode does NOT pass per-card host
                         // snapshot props. The card falls back to tab-root
                         // provider values via `useContext`, so the rendered
