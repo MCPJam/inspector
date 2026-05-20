@@ -518,6 +518,7 @@ const expectedParentPid = Number.parseInt(
 );
 let orphanCheckInterval: ReturnType<typeof setInterval> | undefined;
 let shuttingDown = false;
+const shutdownForceExitMs = 5000;
 
 // Handle graceful shutdown
 async function shutdown() {
@@ -531,11 +532,24 @@ async function shutdown() {
     orphanCheckInterval = undefined;
   }
 
+  const forceExitTimer = setTimeout(() => {
+    console.error("Shutdown timed out; forcing process exit.");
+    process.exit(1);
+  }, shutdownForceExitMs);
+  forceExitTimer.unref();
+
   console.log("\n🛑 Shutting down gracefully...");
-  await tunnelManager.closeAll();
-  server.close();
-  await appLogger.flush();
-  process.exit(0);
+  try {
+    await tunnelManager.closeAll();
+    server.close();
+    await appLogger.flush();
+    clearTimeout(forceExitTimer);
+    process.exit(0);
+  } catch (error) {
+    clearTimeout(forceExitTimer);
+    console.error("Error during shutdown:", error);
+    process.exit(1);
+  }
 }
 
 if (

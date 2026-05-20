@@ -543,10 +543,7 @@ async function main() {
       continue;
     }
 
-    if (
-      parsingFlags &&
-      (arg === "--no-open" || arg === "--no-browser")
-    ) {
+    if (parsingFlags && (arg === "--no-open" || arg === "--no-browser")) {
       openBrowser = false;
       continue;
     }
@@ -632,7 +629,9 @@ async function main() {
         if (mcpServerName) {
           if (!configData.mcpServers[mcpServerName]) {
             logError(
-              `Server '${mcpServerName}' not found in config file. Available servers: ${Object.keys(configData.mcpServers).join(", ")}`,
+              `Server '${mcpServerName}' not found in config file. Available servers: ${Object.keys(
+                configData.mcpServers,
+              ).join(", ")}`,
             );
             process.exit(1);
           }
@@ -705,7 +704,9 @@ async function main() {
     // Handle single MCP server command if provided (legacy mode)
     logStep(
       "MCP Server",
-      `Configuring auto-connection to: ${mcpServerCommand} ${mcpServerArgs.join(" ")}`,
+      `Configuring auto-connection to: ${mcpServerCommand} ${mcpServerArgs.join(
+        " ",
+      )}`,
     );
 
     // Pass MCP server config via environment variables
@@ -837,8 +838,6 @@ async function main() {
     logWarning("Shutdown signal received...");
     logProgress("Stopping MCP Inspector server");
     logInfo("Cleaning up resources...");
-    logSuccess("Server stopped gracefully");
-    logDivider();
   }
 
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
@@ -904,20 +903,49 @@ async function main() {
     });
 
     let serverProcessClosed = false;
+    let forceKillTimer = null;
+
+    function clearForceKillTimer() {
+      if (forceKillTimer) {
+        clearTimeout(forceKillTimer);
+        forceKillTimer = null;
+      }
+    }
+
     const serverExit = new Promise((resolve, reject) => {
-      serverProcess.on("close", (code) => {
+      serverProcess.on("close", (code, signal) => {
         serverProcessClosed = true;
+        clearForceKillTimer();
         if (code === 0 || cancelled) {
-          resolve(code);
+          resolve({ code, signal });
         } else {
-          reject(new Error(`Server process exited with code ${code}`));
+          reject(
+            new Error(
+              signal
+                ? `Server process exited from signal ${signal}`
+                : `Server process exited with code ${code}`,
+            ),
+          );
         }
       });
     });
 
     function killServerProcess() {
-      if (!serverProcessClosed && !serverProcess.killed) {
-        serverProcess.kill("SIGTERM");
+      if (serverProcessClosed) {
+        return;
+      }
+
+      serverProcess.kill("SIGTERM");
+      if (!forceKillTimer) {
+        forceKillTimer = setTimeout(() => {
+          if (!serverProcessClosed) {
+            logWarning(
+              "Server did not exit after SIGTERM; forcing shutdown...",
+            );
+            serverProcess.kill("SIGKILL");
+          }
+        }, 5000);
+        forceKillTimer.unref?.();
       }
     }
 
@@ -973,7 +1001,15 @@ async function main() {
     }
 
     // Wait for the server process to exit
-    await serverExit;
+    const result = await serverExit;
+    if (cancelled) {
+      if (result.signal === "SIGKILL") {
+        logWarning("Server process was force-killed after shutdown timeout");
+      } else {
+        logSuccess("Server stopped gracefully");
+      }
+      logDivider();
+    }
   } catch (e) {
     if (!cancelled || process.env.DEBUG) {
       logDivider();
