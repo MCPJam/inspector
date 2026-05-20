@@ -271,11 +271,11 @@ export function MultiHostPicker({
               variant="ghost"
               size="sm"
               disabled={disabled || isLoading}
-              className="h-8 max-w-[200px] rounded-full px-2 text-xs transition-colors hover:bg-muted/80"
+              className="h-7 max-w-[200px] shrink-0 gap-1.5 border bg-background px-2 text-xs shadow-xs"
               data-testid="multi-host-picker-trigger"
             >
               <Server className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate text-[10px] font-medium">
+              <span className="truncate whitespace-nowrap @max-[820px]/playground-header:sr-only">
                 {triggerLabel}
               </span>
             </Button>
