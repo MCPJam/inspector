@@ -8,12 +8,14 @@
     "build:ui": "vite build --config vite.config.ts",
     "bundle:ui:html": "node scripts/bundle-mcp-app-html.mjs",
     "test": "npm run build -w @mcpjam/sdk && vitest run",
+    "test:fast": "vitest run",
     "ui:watch": "vite build --config vite.config.ts --watch --mode development",
     "dev": "npm run build:ui && wrangler dev --env staging",
     "start": "npm run build:ui && wrangler dev --env staging",
     "deploy:staging": "npm run build:ui && wrangler deploy --env staging",
     "deploy": "npm run build:ui && wrangler deploy",
     "typecheck": "npm run build -w @mcpjam/sdk && npm run build:ui && tsc --noEmit",
+    "typecheck:fast": "npm run build:ui && tsc --noEmit",
     "cf-typegen": "wrangler types"
   },
   "dependencies": {
