@@ -19,7 +19,7 @@
  * drive the test fixtures.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { PlaygroundMain } from "../PlaygroundMain";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
 import { useHostContextStore } from "@/stores/client-context-store";
@@ -234,8 +234,15 @@ vi.mock("@/components/chat-v2/thread", () => ({
   Thread: () => <div />,
 }));
 
+// Capture-mock so submit/stop routing tests can drive the composer's
+// `onSubmit` and `stop` props directly. `mockChatInput.mock.calls.at(-1)[0]`
+// gives the most-recent props.
+const mockChatInput = vi.fn();
 vi.mock("@/components/chat-v2/chat-input", () => ({
-  ChatInput: () => <div data-testid="chat-input" />,
+  ChatInput: (props: any) => {
+    mockChatInput(props);
+    return <div data-testid="chat-input" />;
+  },
 }));
 
 vi.mock("@/components/chat-v2/error", () => ({
@@ -507,6 +514,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     });
     mockMultiModelPlaygroundCard.mockClear();
     mockPlaygroundHostPicker.mockClear();
+    mockChatInput.mockClear();
     mockSetSelectedHostIds.mockClear();
     mockSetMultiHostEnabled.mockClear();
     usePersistedHostProjectIds.length = 0;
@@ -1006,5 +1014,228 @@ describe("PlaygroundMain — multi-host render path", () => {
       .filter((props) => props.compareId === "h-B")
       .at(-1);
     expect(hostBCall.addColumnSeed).toBeNull();
+  });
+
+  // -----------------------------------------------------------------
+  // Reviewer-flagged P1 routing blockers — every spot in PlaygroundMain
+  // that previously branched on `isMultiModelMode` and writes to (or
+  // reads from) the compare cards needs to fire for host-axis compare
+  // too. These tests pin down each routing decision so a future
+  // mode-flag refactor can't silently regress host compare.
+  // -----------------------------------------------------------------
+
+  it("submit in multi-host mode broadcasts to the compare cards and does NOT also fire the hidden root sendMessage", async () => {
+    // P1 #1. Pre-fix the submit handler branched on `isMultiModelMode`,
+    // so multi-host mode fell through the `else` branch which called
+    // BOTH `queueBroadcastRequest` AND `sendMessage`. The hidden run
+    // produced a duplicate stream and broke the transcript-handoff
+    // baseline.
+    const hostA = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
+    const hostB = makeHost("h-B", "Host B", { hostStyle: "claude" });
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = { "h-A": hostA, "h-B": hostB };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    multiHostFixture.multiHostEnabled = true;
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    // The composer's input lives inside `useComposerOnboarding`. Drive
+    // it via the captured `onChange` so `composer.input` becomes
+    // non-empty; otherwise `onSubmit` short-circuits on the empty-
+    // content guard.
+    const initialInputProps = mockChatInput.mock.calls.at(-1)![0];
+    await act(async () => {
+      initialInputProps.onChange("hello hosts");
+    });
+
+    const updatedInputProps = mockChatInput.mock.calls.at(-1)![0];
+    await act(async () => {
+      await updatedInputProps.onSubmit({
+        preventDefault: () => {},
+      } as any);
+    });
+
+    // The hidden parent chat session must NOT have been kicked off —
+    // multi-host mode broadcasts only to the visible cards.
+    expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+
+    // The compare cards must have received a fresh broadcast request.
+    const broadcastsAfter = mockMultiModelPlaygroundCard.mock.calls
+      .map(([props]) => props.broadcastRequest)
+      .filter(Boolean);
+    expect(broadcastsAfter.length).toBeGreaterThan(0);
+    const latestBroadcast = broadcastsAfter.at(-1)!;
+    expect(latestBroadcast.text).toBe("hello hosts");
+  });
+
+  it("deterministic tool execution in multi-host mode fans out to the visible cards (not the hidden root session)", () => {
+    // P1 #2. Pre-fix the deterministic-execution effect branched on
+    // `isMultiModelMode`, so in host compare a `pendingExecution` was
+    // appended to the hidden root `messages` via `setMessages` instead
+    // of being broadcast via `deterministicExecutionRequest`.
+    const hostA = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
+    const hostB = makeHost("h-B", "Host B", { hostStyle: "claude" });
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = { "h-A": hostA, "h-B": hostB };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    multiHostFixture.multiHostEnabled = true;
+
+    const pendingExecution = {
+      toolName: "echo",
+      params: { value: "ping" },
+      result: { value: "ping" },
+      toolMeta: {},
+      state: "output-available" as const,
+      errorText: undefined,
+      renderOverride: undefined,
+      toolCallId: "tc-1",
+      replaceExisting: false,
+    };
+
+    const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+    rerender(
+      <PlaygroundMain {...defaultProps} pendingExecution={pendingExecution} />,
+    );
+
+    // Every visible card should have received the broadcast.
+    const latestByCompareId = new Map<string, any>();
+    for (const [props] of mockMultiModelPlaygroundCard.mock.calls) {
+      latestByCompareId.set(props.compareId, props);
+    }
+    for (const id of ["h-A", "h-B"]) {
+      const props = latestByCompareId.get(id);
+      expect(props.deterministicExecutionRequest).not.toBeNull();
+      expect(props.deterministicExecutionRequest.toolName).toBe("echo");
+      expect(props.deterministicExecutionRequest.toolCallId).toBe("tc-1");
+    }
+    // The hidden root chat must NOT have grown — the host-mode branch
+    // can't fall through to `setMessages` like single-pane does.
+    expect(mockUseChatSession.setMessages).not.toHaveBeenCalled();
+  });
+
+  it("compare state (compareHasMessages) survives a chat-input model change in multi-host mode (host-id entries not pruned)", () => {
+    // P1 #3. Pre-fix the prune effect computed activeIds from
+    // `resolvedSelectedModels` only, so any time the user changed the
+    // chat-input model the host-keyed entries (compareHasMessages,
+    // compareSummaries) were evicted — the grid would visually
+    // collapse to its empty state despite the cards still holding
+    // live transcripts. Active-id set now includes host compareIds.
+    const hostA = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
+    const hostB = makeHost("h-B", "Host B", { hostStyle: "claude" });
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = { "h-A": hostA, "h-B": hostB };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    multiHostFixture.multiHostEnabled = true;
+
+    const previousSelectedModel = mockUseChatSession.selectedModel;
+    try {
+      const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+
+      // Mark h-A as having messages via the card's captured callback
+      // (mirrors what `useChatSession.messages` length flips would do
+      // in the real card).
+      const hostACard = mockMultiModelPlaygroundCard.mock.calls
+        .map(([props]) => props)
+        .filter((props) => props.compareId === "h-A")
+        .at(-1);
+      expect(hostACard).toBeDefined();
+      act(() => {
+        hostACard.onHasMessagesChange("h-A", true);
+      });
+
+      const compareSection = screen.getByTestId(
+        "playground-multi-host-compare-section",
+      );
+      expect(compareSection).toHaveAttribute("aria-hidden", "false");
+
+      // Now swap the chat-input model. Pre-fix this triggered the
+      // model-only prune effect which dropped h-A from
+      // `compareHasMessages` even though the card transcript still
+      // exists. The section would flip to aria-hidden=true.
+      mockUseChatSession.selectedModel = {
+        id: "anthropic/claude-sonnet-4.5",
+        name: "Claude Sonnet 4.5",
+        provider: "anthropic",
+        contextWindow: 8192,
+        maxOutputTokens: 4096,
+        supportsTools: true,
+        supportsVision: false,
+        supportsStreaming: true,
+      } as any;
+      rerender(<PlaygroundMain {...defaultProps} />);
+
+      expect(
+        screen.getByTestId("playground-multi-host-compare-section"),
+      ).toHaveAttribute("aria-hidden", "false");
+    } finally {
+      mockUseChatSession.selectedModel = previousSelectedModel;
+    }
+  });
+
+  it("stop control in multi-host mode bumps the broadcast stop-request and does NOT hit the hidden root stop()", () => {
+    // P1 #4. `useChatStopControls` previously took `isMultiModelMode`
+    // and would call the root `stop()` in host compare — leaving the
+    // visible per-card streams running. Renamed to `isCompareMode` so
+    // host compare routes through `setStopBroadcastRequestId`.
+    const hostA = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
+    const hostB = makeHost("h-B", "Host B", { hostStyle: "claude" });
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = { "h-A": hostA, "h-B": hostB };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    multiHostFixture.multiHostEnabled = true;
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    const stopRequestIdsBefore = mockMultiModelPlaygroundCard.mock.calls.map(
+      ([props]) => props.stopRequestId,
+    );
+    const baselineStopRequestId =
+      stopRequestIdsBefore.at(-1) ?? 0;
+
+    const inputProps = mockChatInput.mock.calls.at(-1)![0];
+    act(() => {
+      inputProps.stop();
+    });
+
+    expect(mockUseChatSession.stop).not.toHaveBeenCalled();
+
+    const latestStopRequestId = mockMultiModelPlaygroundCard.mock.calls
+      .map(([props]) => props.stopRequestId)
+      .at(-1);
+    expect(latestStopRequestId).toBeGreaterThan(baselineStopRequestId);
+  });
+
+  it("falls back to single-pane when multi-host is persisted on but only one host resolves (length>1 gate)", () => {
+    // Valid-but-lower reviewer finding. The picker auto-disables
+    // `multiHostEnabled` on the 2 → 1 transition, but a stale
+    // localStorage value (or a secondary that briefly unresolves)
+    // would otherwise let the grid render as a one-column variant
+    // of single-pane — routing submit / stop / state through the
+    // compare path with no compare value. `isMultiHostMode` now
+    // requires `resolvedSelectedHosts.length > 1`.
+    const hostA = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" }, // exists in project — canEnableMultiHost passes
+    ];
+    multiHostFixture.hosts = { "h-A": hostA }; // h-B intentionally unresolved
+    multiHostFixture.selectedHostIds = ["h-A"];
+    multiHostFixture.multiHostEnabled = true;
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    expect(screen.queryByTestId("playground-multi-host-grid")).toBeNull();
   });
 });

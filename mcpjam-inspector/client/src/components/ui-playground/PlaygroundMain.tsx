@@ -863,11 +863,19 @@ export function PlaygroundMain({
   // host or its model isn't resolved yet (loading, deleted, missing from
   // `availableModels`), fall through to single-pane — don't render a
   // degraded grid where the lead identity is wrong.
+  // Multi-host compare requires at least 2 resolved columns. Without
+  // this guard a stale persisted `multiHostEnabled = true` paired with
+  // a single selected host (or only the lead resolving) would render
+  // the compare grid as a one-column variant of single-pane — visually
+  // confusing and routed through the compare submit/stop/state path
+  // unnecessarily. The picker auto-disables `multiHostEnabled` when
+  // selection drops to one, but we still want a defensive gate for
+  // unresolved secondaries and migrated localStorage.
   const isMultiHostMode =
     canEnableMultiHost &&
     multiHostEnabled &&
     !viewingHistoryReplay &&
-    resolvedSelectedHosts.length > 0 &&
+    resolvedSelectedHosts.length > 1 &&
     !!leadHost &&
     !!sharedHostColumnModel;
 
@@ -880,8 +888,15 @@ export function PlaygroundMain({
     multiModelEnabled &&
     !viewingHistoryReplay &&
     !isMultiHostMode;
+  // Unified "the compare grid is live" flag. Submit/stop/deterministic-
+  // execution/state-pruning all branch on this — anything that used to
+  // gate on `isMultiModelMode` and writes to (or reads from) the
+  // compare cards needs to fire for the host-axis grid too. Keep the
+  // mode-specific flags around for code that still needs to know
+  // WHICH compare grid is up (e.g. the per-column derivation memos).
+  const isCompareMode = isMultiModelMode || isMultiHostMode;
   const { isMultiModelLayoutMode, onModelSelectorOpenChange } =
-    useModelSelectorLayoutLock(isMultiModelMode || isMultiHostMode);
+    useModelSelectorLayoutLock(isCompareMode);
 
   useEffect(() => {
     if (isMultiModelMode && resolvedSelectedModels[0]) {
@@ -1115,7 +1130,7 @@ export function PlaygroundMain({
   const multiModelTracePanelModel =
     selectedModel ?? resolvedSelectedModels[0] ?? null;
   const { isStreamingActive, stopActiveChat } = useChatStopControls({
-    isMultiModelMode,
+    isCompareMode,
     isStreaming,
     multiModelSummaries: compareSummaries,
     setStopBroadcastRequestId,
@@ -1930,25 +1945,36 @@ export function PlaygroundMain({
   }, [loadingHistorySessionId]);
 
   useEffect(() => {
-    const activeModelIds = new Set(
-      resolvedSelectedModels.map((model) => String(model.id))
-    );
+    // `compareSummaries` / `compareHasMessages` are keyed by
+    // `compareId`, which is a modelId in multi-model mode and a hostId
+    // in multi-host mode. Pre-fix the prune set was model-ids only, so
+    // changing the chat-input model in host compare would evict every
+    // host-keyed entry — the grid would hide despite the cards still
+    // holding live transcripts. Include both axes in the active set
+    // and depend on both inputs.
+    const activeIds = new Set<string>();
+    for (const model of resolvedSelectedModels) {
+      activeIds.add(String(model.id));
+    }
+    for (const column of multiHostColumns) {
+      activeIds.add(column.compareId);
+    }
 
     setCompareSummaries((previous) =>
       Object.fromEntries(
         Object.entries(previous).filter(([compareId]) =>
-          activeModelIds.has(compareId)
+          activeIds.has(compareId)
         )
       )
     );
     setCompareHasMessages((previous) =>
       Object.fromEntries(
         Object.entries(previous).filter(([compareId]) =>
-          activeModelIds.has(compareId)
+          activeIds.has(compareId)
         )
       )
     );
-  }, [resolvedSelectedModels]);
+  }, [resolvedSelectedModels, multiHostColumns]);
 
   useEffect(() => {
     if (!traceViewsSupported) {
@@ -1982,7 +2008,11 @@ export function PlaygroundMain({
   // Handle deterministic execution injection
   useEffect(() => {
     if (!pendingExecution) return;
-    if (isMultiModelMode) {
+    // Both compare modes fan out via `deterministicExecutionRequest`;
+    // the hidden-root path is only for single-pane. Pre-fix, host
+    // compare wrote to the hidden root session instead of the visible
+    // cards.
+    if (isCompareMode) {
       const requestId = Date.now();
       const toolCallId =
         pendingExecution.toolCallId ?? `playground-tool-${requestId}`;
@@ -2075,13 +2105,13 @@ export function PlaygroundMain({
       return [...prev, nextExecution];
     });
     onExecutionInjected(toolCallId);
-  }, [isMultiModelMode, onExecutionInjected, pendingExecution, setMessages]);
+  }, [isCompareMode, onExecutionInjected, pendingExecution, setMessages]);
 
   useEffect(() => {
-    if (!isMultiModelMode && hasTraceSnapshot) {
+    if (!isCompareMode && hasTraceSnapshot) {
       setPreludeTraceExecutions([]);
     }
-  }, [hasTraceSnapshot, isMultiModelMode]);
+  }, [hasTraceSnapshot, isCompareMode]);
 
   // Handle widget state changes
   const handleWidgetStateChange = useCallback(
@@ -2257,11 +2287,15 @@ export function PlaygroundMain({
   const handleRequireToolApprovalChange = useCallback(
     (enabled: boolean) => {
       setRequireToolApproval(enabled);
-      if (isMultiModelMode) {
+      // Approval is plumbed into per-card sessions via `executionConfig`,
+      // not the hidden root chat. Both compare grids need a fresh
+      // session generation so the new approval setting takes effect on
+      // the next turn.
+      if (isCompareMode) {
         handleResetAllChats();
       }
     },
-    [handleResetAllChats, isMultiModelMode, setRequireToolApproval]
+    [handleResetAllChats, isCompareMode, setRequireToolApproval]
   );
 
   const handleMultiModelSummaryChange = useCallback(
@@ -2351,10 +2385,11 @@ export function PlaygroundMain({
     return map;
   }, [messages]);
 
-  // Placeholder: Chat tab strings for multi-model; playground default for single-model
+  // Placeholder: Chat tab strings for either compare grid; playground
+  // default for true single-pane.
   let placeholder = showPostConnectGuide
     ? MINIMAL_CHAT_COMPOSER_PLACEHOLDER
-    : isMultiModelMode
+    : isCompareMode
     ? DEFAULT_CHAT_COMPOSER_PLACEHOLDER
     : "Try a prompt that could call your tools...";
   if (disableChatInput) {
@@ -2363,7 +2398,7 @@ export function PlaygroundMain({
   if (isAuthLoading) {
     placeholder = "Loading...";
   } else if (disableForAuthentication) {
-    placeholder = isMultiModelMode
+    placeholder = isCompareMode
       ? "Sign in to use free chat"
       : "Sign in to use chat";
   }
@@ -2392,7 +2427,7 @@ export function PlaygroundMain({
       }
 
       if (
-        !isMultiModelMode &&
+        !isCompareMode &&
         displayMode === "fullscreen" &&
         isWidgetFullscreen
       ) {
@@ -2424,7 +2459,13 @@ export function PlaygroundMain({
           ? await attachmentsToFileUIParts(fileAttachments)
           : undefined;
 
-      if (isMultiModelMode) {
+      // Multi-host and multi-model both broadcast to per-card chat
+      // sessions; the hidden parent `sendMessage` is exclusively for
+      // true single-pane (one card, one root session). Pre-fix, host
+      // compare fell through the `else` branch and fired BOTH
+      // queueBroadcastRequest AND sendMessage, producing a duplicate
+      // hidden run plus a broken transcript-handoff baseline.
+      if (isCompareMode) {
         queueBroadcastRequest({
           text: composer.input,
           files,
