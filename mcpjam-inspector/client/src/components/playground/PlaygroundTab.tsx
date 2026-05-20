@@ -1,5 +1,7 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useConvexAuth } from "convex/react";
+import { usePostHog } from "posthog-js/react";
+import { standardEventProps } from "@/lib/PosthogUtils";
 import {
   AppBuilderStateProvider,
   useAppBuilderState,
@@ -97,6 +99,30 @@ interface PlaygroundTabProps {
  */
 export function PlaygroundTab(props: PlaygroundTabProps) {
   const themeMode = usePreferencesStore((state) => state.themeMode);
+
+  const posthog = usePostHog();
+  const hasCapturedViewRef = useRef(false);
+  useEffect(() => {
+    // Wait until auth is settled so the boolean flags reflect the user's
+    // real state, not a pre-hydration false. After that, fire exactly once
+    // per mount.
+    if (hasCapturedViewRef.current) return;
+    if (!posthog) return;
+    if (props.isWorkOsAuthLoading) return;
+    hasCapturedViewRef.current = true;
+    posthog.capture("playground_tab_viewed", {
+      ...standardEventProps("playground_tab"),
+      has_active_project: !!props.activeProjectId,
+      has_shared_project: !!props.sharedProjectId,
+      is_signed_in: !!props.isSignedInWithWorkOs,
+    });
+  }, [
+    posthog,
+    props.activeProjectId,
+    props.sharedProjectId,
+    props.isSignedInWithWorkOs,
+    props.isWorkOsAuthLoading,
+  ]);
 
   // Resolve the previewed host once at the tab root so the host-config-
   // derived providers (Active MCP Profile, hostStyle, capabilities override,
