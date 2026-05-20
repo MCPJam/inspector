@@ -36,6 +36,7 @@ new TestAgent(options: TestAgentOptions)
 | `maxSteps`        | `number`                         | No       | `10`        | Maximum agentic loop iterations                               |
 | `customProviders` | `Record<string, CustomProvider>` | No       | `undefined` | Custom LLM provider definitions                               |
 | `mcpClientManager`| `MCPClientManager`               | No       | `undefined` | Same connected manager used for `connectToServer` / `getToolsForAiSdk`. **Required** to populate [`getWidgetSnapshots()`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) on each [`PromptResult`](/sdk/reference/prompt-result) (see note below). |
+| `injectOpenAiCompat` | `boolean`                     | No       | `false`     | When `true`, injects the OpenAI Apps SDK `window.openai` shim into captured widget HTML snapshots. Enable this when testing widgets written against the OpenAI Apps SDK (ChatGPT / Copilot hosts). Leave it off for SEP-1865-native widgets (Claude, Cursor, Codex) — those hosts don't expose `window.openai` and snapshots should match what the live host produces. |
 
 ### Example
 
