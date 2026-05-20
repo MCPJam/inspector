@@ -8,7 +8,7 @@ export interface HostFocusTabDef {
 export const HOST_FOCUS_TAB_DEFS: ReadonlyArray<HostFocusTabDef> = [
   { id: "behavior", label: "Agent" },
   { id: "protocol", label: "MCP Protocol" },
-  { id: "apps", label: "Apps Extension" },
+  { id: "apps", label: "Apps" },
   // Servers moved to Project Settings → Servers (one server set across
   // every host in the project). Removed from the per-host tab list as
   // part of the project-scoped server config rollout. The "servers"

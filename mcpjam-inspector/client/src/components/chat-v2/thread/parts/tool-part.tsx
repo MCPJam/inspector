@@ -34,7 +34,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
-import { SandboxDebugPanel } from "../sandbox-debug-panel";
+import { CspWorkbench } from "../csp-workbench";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { cn } from "@/lib/chat-utils";
 import { TextPart } from "./text-part";
@@ -733,7 +733,7 @@ export function ToolPart({
                 </div>
               )}
               {hasWidgetDebug && activeDebugTab === "sandbox" && (
-                <SandboxDebugPanel
+                <CspWorkbench
                   sandboxInfo={
                     widgetDebugInfo.csp
                       ? {
