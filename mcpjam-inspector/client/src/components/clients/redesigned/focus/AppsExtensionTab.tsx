@@ -788,61 +788,84 @@ function OpenaiAppsCapabilityMatrix({
     ? Object.keys(overridesRecord).length
     : 0;
 
+  // Subline shows the live method count + any override count. Omitted when
+  // injection is off — the master Switch already communicates that state.
+  const sublineParts: string[] = [];
+  if (injected) {
+    sublineParts.push(
+      `${enabledCount} of ${OPENAI_APPS_METHOD_LABELS.length} methods`,
+    );
+    if (overrideCount > 0) {
+      sublineParts.push(`${overrideCount} overridden`);
+    }
+  }
+  const subline = sublineParts.join(" · ");
+
   return (
     <div className="rounded-[10px] border border-border bg-background">
-      {/* Master row */}
-      <div className="flex items-center justify-between gap-3 border-b border-border px-3.5 py-2.5">
-        <div className="flex flex-col gap-0.5">
-          <label
-            htmlFor="apps-extension-openai-toggle"
-            className="text-[12px] font-medium"
-          >
-            Inject <span className="font-mono">window.openai</span>
-          </label>
-          <span className="text-[11px] text-muted-foreground">
-            {presetInjected ? "Preset: on" : "Preset: off"}
-            {typeof override === "boolean" ? " · overridden" : ""}
-          </span>
-        </div>
-        <Switch
-          id="apps-extension-openai-toggle"
-          checked={injected}
-          onCheckedChange={setInjected}
-          aria-label="Inject window.openai"
-        />
-      </div>
-
-      {/* Per-method matrix lives behind a disclosure — the row count
-          is large, and the host template's preset already provides
-          sensible defaults for the selected vendor (ChatGPT / Copilot /
-          etc., see client-templates.ts). Expand to override individual
-          methods. */}
-      {injected ? (
-        <>
+      {/* Single header row: left half is the disclosure (label + subline +
+          chevron), right half is the master Switch in its own hit zone.
+          A hairline `border-l` between them telegraphs that they're
+          distinct controls — clicking near the Switch can't open the
+          disclosure because the Switch lives outside the disclosure
+          button entirely. When injection is off the disclosure renders
+          as static (chevron hidden, no hover) since the method list is
+          meaningless without injection. */}
+      <div className="flex items-stretch border-b border-border">
+        {injected ? (
           <button
             type="button"
             onClick={() => setMethodsOpen((v) => !v)}
             aria-expanded={methodsOpen}
-            className="flex w-full items-center justify-between gap-3 border-b border-border px-3.5 py-2 text-left hover:bg-muted/40"
+            aria-controls="apps-extension-openai-methods"
+            className="flex flex-1 items-center justify-between gap-2 px-3.5 py-2.5 text-left hover:bg-muted/40"
           >
             <div className="flex flex-col gap-0.5">
               <span className="text-[12px] font-medium">
-                Configure methods
+                Inject <span className="font-mono">window.openai</span>
               </span>
-              <span className="text-[11px] text-muted-foreground">
-                {enabledCount} of {OPENAI_APPS_METHOD_LABELS.length} enabled
-                {overrideCount > 0 ? ` · ${overrideCount} overridden` : ""}
-              </span>
+              {subline ? (
+                <span className="text-[11px] text-muted-foreground">
+                  {subline}
+                </span>
+              ) : null}
             </div>
             <ChevronDown
-              className={`h-4 w-4 text-muted-foreground transition-transform ${
+              className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${
                 methodsOpen ? "rotate-180" : ""
               }`}
             />
           </button>
+        ) : (
+          <div className="flex flex-1 items-center px-3.5 py-2.5">
+            <label
+              htmlFor="apps-extension-openai-toggle"
+              className="text-[12px] font-medium"
+            >
+              Inject <span className="font-mono">window.openai</span>
+            </label>
+          </div>
+        )}
+        <div className="flex items-center border-l border-border pl-3 pr-3.5">
+          <Switch
+            id="apps-extension-openai-toggle"
+            checked={injected}
+            onCheckedChange={setInjected}
+            aria-label="Inject window.openai"
+          />
+        </div>
+      </div>
+
+      {/* Per-method matrix — expand to override individual methods on
+          top of the host template's defaults. */}
+      {injected ? (
+        <>
           {methodsOpen ? (
             <>
-              <div className="flex flex-col">
+              <div
+                id="apps-extension-openai-methods"
+                className="flex flex-col"
+              >
                 {OPENAI_APPS_METHOD_LABELS.map(({ key, label }) => {
                   const effective = effectiveCapabilities[key];
                   const presetValue = presetCapabilities[key];
