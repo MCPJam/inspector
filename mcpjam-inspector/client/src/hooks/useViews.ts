@@ -171,7 +171,11 @@ export function useViewMutations() {
     "mcpAppViews:generateUploadUrl" as any,
   );
 
-  // OpenAI mutations
+  // OpenAI mutations (legacy table). New writes MUST go through
+  // `createMcpView` per SEP-1865; these stay registered only so the
+  // inspector can list and delete pre-backfill rows during the
+  // transition. After `migrations/backfillOpenaiAppViews` finishes and
+  // the table is drained, these will be removed in a cleanup PR.
   const createOpenaiView = useMutation("openaiAppViews:create" as any);
   const updateOpenaiView = useMutation("openaiAppViews:update" as any);
   const removeOpenaiView = useMutation("openaiAppViews:remove" as any);
