@@ -34,7 +34,6 @@ const {
     createMcpView: vi.fn(),
     updateMcpView: vi.fn(),
     removeMcpView: vi.fn(),
-    removeOpenaiView: vi.fn(),
     generateMcpUploadUrl: vi.fn(),
   },
 }));
