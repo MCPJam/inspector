@@ -35,7 +35,64 @@ import { CursorShineIndicator } from "./indicators/cursor-shine";
 import { CopilotPulseIndicator } from "./indicators/copilot-pulse";
 import { CodexShineIndicator } from "./indicators/codex-shine";
 import { MCPJamMarkIndicator } from "./indicators/mcpjam-mark";
-import type { HostStyleDefinition } from "./types";
+import type {
+  HostStyleDefinition,
+  ResolvedOpenAiAppsCapabilities,
+} from "./types";
+
+/**
+ * Full `window.openai.*` method surface — every method on, every display
+ * mode allowed. This is what ChatGPT (the original Apps SDK host) and the
+ * MCPJam dev shim advertise.
+ *
+ * `selectFiles` / `setOpenInAppUrl` are `true` here for type completeness
+ * and forward compatibility, but the SDK runtime in
+ * `sdk/src/McpAppsOpenAICompatibleRuntime.ts` does NOT install them —
+ * widgets that feature-detect on them must see `typeof
+ * window.openai.selectFiles === "undefined"` to take their fallback path.
+ * See plan §3 (feedback_feature_detection_over_rejection memory).
+ */
+export const OPENAI_APPS_FULL_SURFACE: ResolvedOpenAiAppsCapabilities = {
+  callTool: true,
+  sendFollowUpMessage: true,
+  setWidgetState: true,
+  requestDisplayMode: "all",
+  notifyIntrinsicHeight: true,
+  openExternal: true,
+  setOpenInAppUrl: true,
+  requestModal: true,
+  uploadFile: true,
+  selectFiles: true,
+  getFileDownloadUrl: true,
+  requestCheckout: true,
+  requestClose: true,
+};
+
+/**
+ * Microsoft 365 Copilot's published per-method surface, verbatim from
+ * the "Supported MCP Apps capabilities in Copilot" → "Component bridge"
+ * table at
+ * https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-mcp-apps
+ *
+ * Diffs from FULL: `requestDisplayMode` is fullscreen-only;
+ * `requestModal`, `uploadFile`, `getFileDownloadUrl`, `requestCheckout`,
+ * `selectFiles` are off. Everything else is on.
+ */
+export const OPENAI_APPS_COPILOT_SURFACE: ResolvedOpenAiAppsCapabilities = {
+  callTool: true,
+  sendFollowUpMessage: true,
+  setWidgetState: true,
+  requestDisplayMode: "fullscreen-only",
+  notifyIntrinsicHeight: true,
+  openExternal: true,
+  setOpenInAppUrl: true,
+  requestModal: false,
+  uploadFile: false,
+  selectFiles: false,
+  getFileDownloadUrl: false,
+  requestCheckout: false,
+  requestClose: true,
+};
 
 // NOTE: capability presets are best-effort mocks of what each vendor publicly
 // supports today. Treat them as starting points — verify against vendor docs
@@ -96,8 +153,12 @@ export const CHATGPT_HOST_STYLE: HostStyleDefinition = {
     resolveStyleVariables: getChatGPTStyleVariables,
     // Real ChatGPT exposes the OpenAI Apps SDK `window.openai` surface
     // to widget HTML; emulating it here keeps existing Apps SDK widgets
-    // rendering as their authors intended.
-    compatRuntime: { openaiApps: true },
+    // rendering as their authors intended. Per-method capabilities = the
+    // full surface (every method on, requestDisplayMode unconstrained).
+    compatRuntime: {
+      openaiApps: true,
+      openaiAppsCapabilities: OPENAI_APPS_FULL_SURFACE,
+    },
   },
   chatUi: {
     label: "ChatGPT",
@@ -169,8 +230,12 @@ export const COPILOT_HOST_STYLE: HostStyleDefinition = {
     },
     resolveStyleVariables: getChatGPTStyleVariables,
     // Copilot routes widgets through the OpenAI Apps SDK under the
-    // hood, so the `window.openai` shim is expected.
-    compatRuntime: { openaiApps: true },
+    // hood, but exposes only a subset of `window.openai.*` — see
+    // OPENAI_APPS_COPILOT_SURFACE for the per-method matrix.
+    compatRuntime: {
+      openaiApps: true,
+      openaiAppsCapabilities: OPENAI_APPS_COPILOT_SURFACE,
+    },
   },
   chatUi: {
     label: "Copilot",
@@ -254,12 +319,15 @@ export const MCPJAM_HOST_STYLE: HostStyleDefinition = {
     },
     resolveStyleVariables: getMcpJamStyleVariables,
     // MCPJam is the inspector's own house chrome and intentionally
-    // maximalist: developers testing here should see the `window.openai`
-    // surface so widgets authored against OpenAI's Apps SDK can be
-    // debugged in MCPJam without swapping to the ChatGPT host. Real
-    // MCPJam exposes the shim deliberately (it's not SEP-1865 honest,
-    // but it's the right call for a dev surface).
-    compatRuntime: { openaiApps: true },
+    // maximalist: developers testing here should see the full
+    // `window.openai` surface so widgets authored against OpenAI's
+    // Apps SDK can be debugged in MCPJam without swapping to the
+    // ChatGPT host. Real MCPJam exposes the shim deliberately (it's
+    // not SEP-1865 honest, but it's the right call for a dev surface).
+    compatRuntime: {
+      openaiApps: true,
+      openaiAppsCapabilities: OPENAI_APPS_FULL_SURFACE,
+    },
   },
   chatUi: {
     label: "MCPJam",

@@ -277,6 +277,25 @@ export interface HostMatrixNodeData extends Record<string, unknown> {
   compatRuntime: {
     openaiApps: boolean;
     fromOverride: boolean;
+    /**
+     * Whether the user has flipped any per-method override on top of
+     * the preset's `openaiAppsCapabilities`. Drives the chip's
+     * "custom (N/M methods)" subtitle vs. "from preset".
+     */
+    hasMethodOverrides: boolean;
+    /**
+     * Count of methods currently "on" in the effective per-method
+     * matrix. Used in the chip subtitle. `requestDisplayMode` counts
+     * as 1 when its value is "all" or "fullscreen-only" (anything
+     * other than "none").
+     */
+    methodCount: number;
+    /**
+     * Total method count in the matrix. Constant; lives here so the
+     * chip subtitle reads "N/13 methods" without the chip importing
+     * the matrix's method list.
+     */
+    methodTotal: number;
   };
 }
 

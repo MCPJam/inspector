@@ -3,10 +3,15 @@ import type {
   McpUiHostCapabilities,
   McpUiStyles,
 } from "@modelcontextprotocol/ext-apps/app-bridge";
-import { BUILT_IN_HOST_STYLES, MCPJAM_HOST_STYLE } from "./built-ins";
+import {
+  BUILT_IN_HOST_STYLES,
+  MCPJAM_HOST_STYLE,
+  OPENAI_APPS_FULL_SURFACE,
+} from "./built-ins";
 import { HostIndicatorDispatch } from "./indicators/client-indicator-dispatch";
 import type {
   ChatUiOverride,
+  EffectiveCompatRuntime,
   HostChatUi,
   HostMcpProfile,
   HostStyleDefinition,
@@ -91,19 +96,26 @@ export function getHostCapabilitiesForStyle(
 
 /**
  * Resolve the vendor compat-runtime shim preset for a host style.
- * Unknown/absent id → `{ openaiApps: false }` so the inspector defaults
- * to honest SEP-1865 behavior; explicit preset values (Apps SDK hosts)
- * flip the relevant shim on.
  *
- * The booleans here are presets; the end user can override per host via
- * `mcpProfile.apps.compatRuntime`. See `resolveEffectiveCompatRuntime`
- * in `lib/client-config-v2.ts` for the merge.
+ * - Unknown/absent id → `{ injected: false }` (honest SEP-1865 default).
+ * - Host with `compatRuntime.openaiApps: false` (or unset) → `{ injected: false }`.
+ * - Host that injects but specifies no per-method preset → injected + the
+ *   full ChatGPT surface (`OPENAI_APPS_FULL_SURFACE`).
+ * - Host with a per-method preset → injected + that preset.
+ *
+ * The preset is the BASELINE; the end user can override per host via
+ * `mcpProfile.apps.compatRuntime` (master toggle + sparse per-method
+ * overrides). See `resolveEffectiveCompatRuntime` in
+ * `lib/client-config-v2.ts` for the merge.
  */
 export function getCompatRuntimeForStyle(
   id: HostStyleId | null | undefined,
-): { openaiApps: boolean } {
+): EffectiveCompatRuntime {
+  const profile = findHostStyle(id)?.mcp.compatRuntime;
+  if (!profile?.openaiApps) return { injected: false };
   return {
-    openaiApps: findHostStyle(id)?.mcp.compatRuntime?.openaiApps ?? false,
+    injected: true,
+    capabilities: profile.openaiAppsCapabilities ?? OPENAI_APPS_FULL_SURFACE,
   };
 }
 

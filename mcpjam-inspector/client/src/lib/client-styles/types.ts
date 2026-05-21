@@ -110,13 +110,84 @@ export interface HostMcpProfile {
    * Copilot and MCPJam's dev surface flip the relevant shim on. End
    * users override per host config via
    * `mcpProfile.apps.compatRuntime`. Read through
-   * `getCompatRuntimeForStyle` so undefined → `false`.
+   * `getCompatRuntimeForStyle` so undefined → `{ injected: false }`.
    */
   compatRuntime?: {
     /** Inject the OpenAI Apps SDK `window.openai` shim. */
     openaiApps?: boolean;
+    /**
+     * Per-method `window.openai.*` surface this host's preset advertises
+     * when `openaiApps` is true. Optional; absent → the FULL ChatGPT
+     * surface (see `OPENAI_APPS_FULL_SURFACE` in `built-ins.ts`). Hosts
+     * like Microsoft 365 Copilot which expose only a subset point at a
+     * dedicated constant (`OPENAI_APPS_COPILOT_SURFACE`).
+     *
+     * Typed as the fully-resolved record (not the sparse type used for
+     * user overrides) because presets are the *baseline* — leaving a
+     * field undefined here would force the resolver to invent a value,
+     * masking the difference between "preset claims false" and "preset
+     * forgot to mention this method".
+     */
+    openaiAppsCapabilities?: ResolvedOpenAiAppsCapabilities;
   };
 }
+
+/**
+ * Per-method capability surface for the `window.openai` shim injected into
+ * widget HTML by `injectOpenAICompat`. Sparse here (every field optional)
+ * — presets supply the full record, user overrides on
+ * `mcpProfile.apps.compatRuntime.openaiAppsOverrides` are sparse and merge
+ * field-by-field over the preset.
+ *
+ * The shape mirrors Microsoft 365 Copilot's published per-method matrix
+ * (Component bridge table on
+ * https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-mcp-apps).
+ * `requestDisplayMode` is tri-state to model Copilot's "fullscreen only"
+ * constraint. `selectFiles` / `setOpenInAppUrl` appear in the OpenAI
+ * reference and Copilot's table; they're typed here so presets/UI can
+ * express them, but the SDK runtime intentionally does NOT install them
+ * as methods on `window.openai` (no-op stubs would defeat feature
+ * detection — widgets that test `if (window.openai.selectFiles)` must
+ * see `undefined` to take their fallback path).
+ */
+export type OpenAiAppsCapabilities = {
+  callTool?: boolean;
+  sendFollowUpMessage?: boolean;
+  setWidgetState?: boolean;
+  requestDisplayMode?: "all" | "fullscreen-only" | "none";
+  notifyIntrinsicHeight?: boolean;
+  openExternal?: boolean;
+  setOpenInAppUrl?: boolean;
+  requestModal?: boolean;
+  uploadFile?: boolean;
+  selectFiles?: boolean;
+  getFileDownloadUrl?: boolean;
+  requestCheckout?: boolean;
+  requestClose?: boolean;
+};
+
+/**
+ * Fully-resolved per-method surface — preset merged with user overrides,
+ * no undefineds. Returned by `getCompatRuntimeForStyle` and
+ * `resolveEffectiveCompatRuntime` in the `injected: true` branch so
+ * downstream consumers never need to think about field absence.
+ */
+export type ResolvedOpenAiAppsCapabilities = Required<OpenAiAppsCapabilities>;
+
+/**
+ * Result of resolving the compat-runtime preset/override stack for a host
+ * config. Sum-typed so consumers can't accidentally read per-method caps
+ * when the shim isn't being injected — `EffectiveCompatRuntime.injected`
+ * is the only switch that gates the others.
+ *
+ * `{ injected: false }` means the inspector does NOT add the `window.openai`
+ * shim to widget HTML; widgets feature-detecting on `typeof window.openai`
+ * see the global as undefined, which matches what SEP-1865-only hosts
+ * (Claude, Cursor, Codex) advertise.
+ */
+export type EffectiveCompatRuntime =
+  | { injected: false }
+  | { injected: true; capabilities: ResolvedOpenAiAppsCapabilities };
 
 /**
  * Inspector-side chat chrome for a host style. None of this travels over

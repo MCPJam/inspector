@@ -6,7 +6,15 @@ import {
   type HostConfigMcpProfileV1,
 } from "@/lib/client-config-v2";
 import { stableStringifyJson } from "@/lib/client-config";
-import { getCompatRuntimeForStyle } from "@/lib/client-styles";
+import {
+  getCompatRuntimeForStyle,
+  OPENAI_APPS_COPILOT_SURFACE,
+  OPENAI_APPS_FULL_SURFACE,
+} from "@/lib/client-styles";
+import type {
+  OpenAiAppsCapabilities,
+  ResolvedOpenAiAppsCapabilities,
+} from "@/lib/client-styles";
 import { Switch } from "@mcpjam/design-system/switch";
 import type { HostAttentionIssue, SandboxConfigSubKey } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
@@ -131,9 +139,17 @@ type AppsDoc = {
    * style's preset (Apps SDK hosts → true; SEP-1865 hosts → false).
    * Surface only the fields the inspector currently honors; new shims
    * land here under additional booleans as they're added.
+   *
+   * `openaiAppsOverrides` is a SPARSE per-method overlay applied on
+   * top of the preset when the shim is injected — present fields
+   * replace the preset value, absent fields fall back to the preset.
+   * Disabled methods become `typeof window.openai.X === "undefined"`
+   * in the widget (the SDK runtime omits them), so feature detection
+   * works correctly.
    */
   compatRuntime?: {
     openaiApps?: boolean;
+    openaiAppsOverrides?: OpenAiAppsCapabilities;
   };
 };
 
@@ -355,11 +371,23 @@ function appsToJson(draft: HostConfigInputV2): AppsDoc {
   // an explicit override (not the host style preset). Absent in the
   // JSON means "use the preset"; present means "user has opinions".
   const compatRuntime = draft.mcpProfile?.apps?.compatRuntime;
-  if (
-    compatRuntime &&
-    typeof compatRuntime.openaiApps === "boolean"
-  ) {
-    doc.compatRuntime = { openaiApps: compatRuntime.openaiApps };
+  if (compatRuntime) {
+    const compatOut: NonNullable<AppsDoc["compatRuntime"]> = {};
+    if (typeof compatRuntime.openaiApps === "boolean") {
+      compatOut.openaiApps = compatRuntime.openaiApps;
+    }
+    // Per-method overrides — emit verbatim when present so the JSON
+    // reflects exactly what's persisted. Empty `{}` is preserved
+    // (treated as "no overrides" but signals intent — matches backend
+    // canonicalizer behavior). The matrix UI keeps the override sparse
+    // so editing back to preset values cleanly clears the block.
+    if (
+      compatRuntime.openaiAppsOverrides !== undefined &&
+      Object.keys(compatRuntime.openaiAppsOverrides).length > 0
+    ) {
+      compatOut.openaiAppsOverrides = { ...compatRuntime.openaiAppsOverrides };
+    }
+    if (Object.keys(compatOut).length > 0) doc.compatRuntime = compatOut;
   }
 
   return doc;
@@ -515,12 +543,59 @@ export function applyJsonToDraft(
   const incomingCompatRuntime = isPlainObject(parsed.compatRuntime)
     ? parsed.compatRuntime
     : undefined;
-  const newCompatRuntime: { openaiApps?: boolean } = {};
+  const newCompatRuntime: {
+    openaiApps?: boolean;
+    openaiAppsOverrides?: OpenAiAppsCapabilities;
+  } = {};
   if (
     incomingCompatRuntime &&
     typeof incomingCompatRuntime.openaiApps === "boolean"
   ) {
     newCompatRuntime.openaiApps = incomingCompatRuntime.openaiApps;
+  }
+  // Parse per-method overrides. Soft-validate each field (boolean for
+  // most, tri-state for requestDisplayMode); silently drop unknown
+  // keys at this layer — the backend canonicalizer is strict, but the
+  // editor accepts hand-typed JSON that may be one rev behind. Drop
+  // the whole block when no valid entries remain so editing back to
+  // the preset cleanly clears the override.
+  if (incomingCompatRuntime && isPlainObject(incomingCompatRuntime.openaiAppsOverrides)) {
+    const incomingOverrides = incomingCompatRuntime.openaiAppsOverrides as Record<
+      string,
+      unknown
+    >;
+    const parsedOverrides: OpenAiAppsCapabilities = {};
+    const booleanKeys: Array<keyof OpenAiAppsCapabilities> = [
+      "callTool",
+      "sendFollowUpMessage",
+      "setWidgetState",
+      "notifyIntrinsicHeight",
+      "openExternal",
+      "setOpenInAppUrl",
+      "requestModal",
+      "uploadFile",
+      "selectFiles",
+      "getFileDownloadUrl",
+      "requestCheckout",
+      "requestClose",
+    ];
+    for (const key of booleanKeys) {
+      const value = incomingOverrides[key];
+      if (typeof value === "boolean") {
+        (parsedOverrides as Record<string, unknown>)[key] = value;
+      }
+    }
+    const requestDisplayMode = incomingOverrides.requestDisplayMode;
+    if (
+      requestDisplayMode === "all" ||
+      requestDisplayMode === "fullscreen-only" ||
+      requestDisplayMode === "none"
+    ) {
+      parsedOverrides.requestDisplayMode = requestDisplayMode;
+    }
+    if (Object.keys(parsedOverrides).length > 0) {
+      newCompatRuntime.openaiAppsOverrides = parsedOverrides;
+    }
   }
 
   const appsBlock: NonNullable<HostConfigMcpProfileV1["apps"]> = {};
@@ -556,27 +631,38 @@ export function applyJsonToDraft(
 }
 
 /**
- * Inline toggle for `mcpProfile.apps.compatRuntime.openaiApps` — surfaced
- * above the JSON editor so users don't need to know the schema shape to
- * flip the shim. Switch reflects the effective value (override OR preset);
- * flipping it writes an explicit boolean override into the draft.
- *
- * Round-trips through the same draft path as the JSON editor:
- * `useJsonDraftBuffer` reseeds the raw content from `appsToJson(draft)`
- * whenever the draft changes semantically, so toggling here inserts the
- * `"compatRuntime": { "openaiApps": true }` block into the editor below
- * and vice versa.
+ * Update the draft's `compatRuntime` block, preserving sibling fields
+ * and the parent envelope. Pass `undefined` for a field to clear that
+ * field; pass an object to replace it. Empty `compatRuntime` blocks
+ * collapse to undefined so editing back to preset values cleanly clears
+ * the override.
  */
-function setOpenaiAppsOverrideOnDraft(
+function setCompatRuntimeOnDraft(
   prev: HostConfigInputV2,
-  next: boolean,
+  next: {
+    openaiApps?: boolean;
+    openaiAppsOverrides?: OpenAiAppsCapabilities;
+  },
 ): HostConfigInputV2 {
   const prevProfile: HostConfigMcpProfileV1 =
     prev.mcpProfile ?? { profileVersion: 1 };
   const prevApps = prevProfile.apps ?? {};
+  const compatBlock: NonNullable<
+    NonNullable<HostConfigMcpProfileV1["apps"]>["compatRuntime"]
+  > = {};
+  if (typeof next.openaiApps === "boolean") {
+    compatBlock.openaiApps = next.openaiApps;
+  }
+  if (
+    next.openaiAppsOverrides !== undefined &&
+    Object.keys(next.openaiAppsOverrides).length > 0
+  ) {
+    compatBlock.openaiAppsOverrides = next.openaiAppsOverrides;
+  }
   const nextApps: NonNullable<HostConfigMcpProfileV1["apps"]> = {
     ...prevApps,
-    compatRuntime: { openaiApps: next },
+    compatRuntime:
+      Object.keys(compatBlock).length > 0 ? compatBlock : undefined,
   };
   return {
     ...prev,
@@ -584,7 +670,56 @@ function setOpenaiAppsOverrideOnDraft(
   };
 }
 
-function OpenaiAppsToggle({
+/** Field labels rendered in the matrix. Order matches Copilot's published table. */
+const OPENAI_APPS_METHOD_LABELS: Array<{
+  key: keyof OpenAiAppsCapabilities;
+  label: string;
+  /**
+   * When true, the toggle is disabled in the UI: the inspector's SDK
+   * runtime doesn't yet implement this method, so flipping the flag
+   * would be misleading (the matrix would claim the method is
+   * available while `typeof window.openai.X` stays `undefined`). See
+   * plan §3.
+   */
+  notImplemented?: true;
+}> = [
+  { key: "callTool", label: "callTool" },
+  { key: "sendFollowUpMessage", label: "sendFollowUpMessage" },
+  { key: "setWidgetState", label: "setWidgetState" },
+  { key: "requestDisplayMode", label: "requestDisplayMode" },
+  { key: "notifyIntrinsicHeight", label: "notifyIntrinsicHeight" },
+  { key: "openExternal", label: "openExternal" },
+  { key: "setOpenInAppUrl", label: "setOpenInAppUrl", notImplemented: true },
+  { key: "requestModal", label: "requestModal" },
+  { key: "uploadFile", label: "uploadFile" },
+  { key: "selectFiles", label: "selectFiles", notImplemented: true },
+  { key: "getFileDownloadUrl", label: "getFileDownloadUrl" },
+  { key: "requestCheckout", label: "requestCheckout" },
+  { key: "requestClose", label: "requestClose" },
+];
+
+/**
+ * Per-method capability matrix for `window.openai.*`. Replaces the
+ * single "Enable window.openai" toggle with one row per method so users
+ * can match a specific host's published subset (e.g. Copilot's
+ * "fullscreen-only displayMode, no requestModal / uploadFile").
+ *
+ * Layout:
+ * - Master row at the top mirrors the old behavior: inject the shim
+ *   or don't. When off, sub-rows hide (they're meaningless without
+ *   injection).
+ * - Preset chips below the master set the override block to a
+ *   well-known shape (Match ChatGPT, Match Copilot, Match host preset).
+ * - Method rows show the effective value with an "Overridden" badge
+ *   when the user has diverged from the preset, plus a "Not
+ *   implemented" badge for `selectFiles` / `setOpenInAppUrl` (the
+ *   inspector's SDK runtime doesn't install those, regardless of the
+ *   flag — see plan §3).
+ *
+ * The matrix round-trips through `appsToJson` / `applyJsonToDraft`,
+ * so the JSON editor below stays in sync.
+ */
+function OpenaiAppsCapabilityMatrix({
   draft,
   onDraftChange,
 }: {
@@ -594,25 +729,250 @@ function OpenaiAppsToggle({
   ) => void;
 }) {
   const override = draft.mcpProfile?.apps?.compatRuntime?.openaiApps;
-  const presetValue = getCompatRuntimeForStyle(draft.hostStyle).openaiApps;
-  const effective = typeof override === "boolean" ? override : presetValue;
+  const overridesRecord =
+    draft.mcpProfile?.apps?.compatRuntime?.openaiAppsOverrides;
+  const presetEffective = getCompatRuntimeForStyle(draft.hostStyle);
+  const presetInjected = presetEffective.injected;
+  const presetCapabilities: ResolvedOpenAiAppsCapabilities = presetEffective.injected
+    ? presetEffective.capabilities
+    : OPENAI_APPS_FULL_SURFACE;
+  const injected = typeof override === "boolean" ? override : presetInjected;
+
+  // Effective per-method capabilities — preset merged with sparse overrides.
+  // Mirrors `mergeOpenAiAppsCapabilities` in client-config-v2.ts but with
+  // a local merge so the matrix doesn't pull in the resolver (which we
+  // already use via `getCompatRuntimeForStyle` for the preset).
+  const effectiveCapabilities: ResolvedOpenAiAppsCapabilities = {
+    ...presetCapabilities,
+    ...(overridesRecord ?? {}),
+  };
+
+  const setInjected = (next: boolean) => {
+    onDraftChange((prev) =>
+      setCompatRuntimeOnDraft(prev, {
+        openaiApps: next,
+        // Clear per-method overrides on master toggle off — they're
+        // meaningless without injection and a stale override would
+        // confuse "Match host preset" diffs later.
+        openaiAppsOverrides: next ? overridesRecord : undefined,
+      }),
+    );
+  };
+
+  const setMethodOverride = (
+    key: keyof OpenAiAppsCapabilities,
+    value: boolean | "all" | "fullscreen-only" | "none" | undefined,
+  ) => {
+    onDraftChange((prev) => {
+      const prevOverrides =
+        prev.mcpProfile?.apps?.compatRuntime?.openaiAppsOverrides ?? {};
+      const nextOverrides: OpenAiAppsCapabilities = { ...prevOverrides };
+      // value === undefined removes the field — "revert this method
+      // to preset". Lets users build up sparse overrides incrementally.
+      if (value === undefined) {
+        delete (nextOverrides as Record<string, unknown>)[key];
+      } else {
+        (nextOverrides as Record<string, unknown>)[key] = value;
+      }
+      const prevInjection = prev.mcpProfile?.apps?.compatRuntime?.openaiApps;
+      return setCompatRuntimeOnDraft(prev, {
+        openaiApps: prevInjection,
+        openaiAppsOverrides: nextOverrides,
+      });
+    });
+  };
+
+  const applyPresetSurface = (
+    surface: ResolvedOpenAiAppsCapabilities | "host-preset",
+  ) => {
+    onDraftChange((prev) => {
+      const prevInjection = prev.mcpProfile?.apps?.compatRuntime?.openaiApps;
+      if (surface === "host-preset") {
+        // Clearing the override block snaps every method back to the
+        // active host style's preset — the canonical hash collapses
+        // because absent overrides hash distinctly from `{}`.
+        return setCompatRuntimeOnDraft(prev, {
+          openaiApps: prevInjection,
+          openaiAppsOverrides: undefined,
+        });
+      }
+      // Diff the target surface against the preset and persist only
+      // the differing fields (sparse override). Two identical
+      // configurations produced via different preset chips → same
+      // canonical hash because the sparse shape is identical.
+      const sparse: OpenAiAppsCapabilities = {};
+      for (const { key } of OPENAI_APPS_METHOD_LABELS) {
+        if (surface[key] !== presetCapabilities[key]) {
+          (sparse as Record<string, unknown>)[key] = surface[key] as never;
+        }
+      }
+      return setCompatRuntimeOnDraft(prev, {
+        // Force injection on — preset surfaces are meaningless without
+        // the shim, and users hitting a preset chip clearly want the
+        // matrix active.
+        openaiApps: true,
+        openaiAppsOverrides: Object.keys(sparse).length > 0 ? sparse : undefined,
+      });
+    });
+  };
 
   return (
-    <div className="flex items-center justify-between gap-3 rounded-[10px] border border-border bg-background px-3.5 py-2.5">
-      <label
-        htmlFor="apps-extension-openai-toggle"
-        className="text-[12px] font-medium"
-      >
-        Enable <span className="font-mono">window.openai</span>
-      </label>
-      <Switch
-        id="apps-extension-openai-toggle"
-        checked={effective}
-        onCheckedChange={(checked) =>
-          onDraftChange((prev) => setOpenaiAppsOverrideOnDraft(prev, checked))
-        }
-        aria-label="Enable window.openai"
-      />
+    <div className="rounded-[10px] border border-border bg-background">
+      {/* Master row */}
+      <div className="flex items-center justify-between gap-3 border-b border-border px-3.5 py-2.5">
+        <div className="flex flex-col gap-0.5">
+          <label
+            htmlFor="apps-extension-openai-toggle"
+            className="text-[12px] font-medium"
+          >
+            Inject <span className="font-mono">window.openai</span>
+          </label>
+          <span className="text-[11px] text-muted-foreground">
+            {presetInjected ? "Preset: on" : "Preset: off"}
+            {typeof override === "boolean" ? " · overridden" : ""}
+          </span>
+        </div>
+        <Switch
+          id="apps-extension-openai-toggle"
+          checked={injected}
+          onCheckedChange={setInjected}
+          aria-label="Inject window.openai"
+        />
+      </div>
+
+      {/* Preset chips + method matrix only when injected */}
+      {injected ? (
+        <>
+          <div className="flex flex-wrap items-center gap-1.5 border-b border-border px-3.5 py-2">
+            <span className="text-[11px] text-muted-foreground">Match:</span>
+            <button
+              type="button"
+              className="rounded-md border border-border px-2 py-0.5 text-[11px] hover:bg-muted"
+              onClick={() => applyPresetSurface(OPENAI_APPS_FULL_SURFACE)}
+            >
+              ChatGPT (full)
+            </button>
+            <button
+              type="button"
+              className="rounded-md border border-border px-2 py-0.5 text-[11px] hover:bg-muted"
+              onClick={() => applyPresetSurface(OPENAI_APPS_COPILOT_SURFACE)}
+            >
+              Copilot
+            </button>
+            <button
+              type="button"
+              className="rounded-md border border-border px-2 py-0.5 text-[11px] hover:bg-muted"
+              onClick={() => applyPresetSurface("host-preset")}
+            >
+              Host preset
+            </button>
+          </div>
+          <div className="flex flex-col">
+            {OPENAI_APPS_METHOD_LABELS.map(({ key, label, notImplemented }) => {
+              const effective = effectiveCapabilities[key];
+              const presetValue = presetCapabilities[key];
+              const overridden =
+                overridesRecord !== undefined && key in overridesRecord;
+              return (
+                <div
+                  key={key}
+                  className="flex items-center justify-between gap-3 border-b border-border/50 px-3.5 py-2 last:border-b-0"
+                >
+                  <div className="flex flex-col gap-0.5">
+                    <span className="font-mono text-[12px]">{label}</span>
+                    <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                      <span>
+                        Preset: {String(presetValue)}
+                      </span>
+                      {overridden ? (
+                        <span className="rounded bg-orange-500/15 px-1 py-px text-orange-600 dark:text-orange-300">
+                          Overridden
+                        </span>
+                      ) : null}
+                      {notImplemented ? (
+                        <span className="rounded bg-muted px-1 py-px">
+                          Not implemented in Inspector
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+                  {key === "requestDisplayMode" ? (
+                    <RequestDisplayModeControl
+                      value={effective as "all" | "fullscreen-only" | "none"}
+                      onChange={(next) =>
+                        setMethodOverride(key, next === presetValue ? undefined : next)
+                      }
+                    />
+                  ) : (
+                    <Switch
+                      checked={Boolean(effective)}
+                      disabled={notImplemented}
+                      onCheckedChange={(checked) =>
+                        setMethodOverride(key, checked === presetValue ? undefined : checked)
+                      }
+                      aria-label={label}
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          {/* Footnote: clarify which surface lives on the matrix vs.
+              static-data globals. Statics aren't methods — feature
+              detection against them doesn't apply, so they're outside
+              the per-method matrix. */}
+          <div className="border-t border-border px-3.5 py-2 text-[10px] text-muted-foreground">
+            Static globals (
+            <span className="font-mono">toolInput</span>,{" "}
+            <span className="font-mono">toolOutput</span>,{" "}
+            <span className="font-mono">widgetState</span>,{" "}
+            <span className="font-mono">theme</span>,{" "}
+            <span className="font-mono">locale</span>,{" "}
+            <span className="font-mono">displayMode</span>,{" "}
+            <span className="font-mono">maxHeight</span>,{" "}
+            <span className="font-mono">safeArea</span>,{" "}
+            <span className="font-mono">userAgent</span>,{" "}
+            <span className="font-mono">view</span>) are injected with
+            the shim and have no per-method toggle.
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+/** Tri-state segmented control for the requestDisplayMode capability. */
+function RequestDisplayModeControl({
+  value,
+  onChange,
+}: {
+  value: "all" | "fullscreen-only" | "none";
+  onChange: (next: "all" | "fullscreen-only" | "none") => void;
+}) {
+  const options: Array<{
+    value: "all" | "fullscreen-only" | "none";
+    label: string;
+  }> = [
+    { value: "all", label: "All" },
+    { value: "fullscreen-only", label: "Fullscreen only" },
+    { value: "none", label: "Off" },
+  ];
+  return (
+    <div className="inline-flex overflow-hidden rounded-md border border-border text-[11px]">
+      {options.map((opt) => (
+        <button
+          key={opt.value}
+          type="button"
+          className={
+            opt.value === value
+              ? "bg-foreground/10 px-2 py-0.5 font-medium"
+              : "px-2 py-0.5 text-muted-foreground hover:bg-muted"
+          }
+          onClick={() => onChange(opt.value)}
+        >
+          {opt.label}
+        </button>
+      ))}
     </div>
   );
 }
@@ -636,7 +996,10 @@ export function AppsExtensionTab({
 
   return (
     <div className="flex h-full min-h-[480px] flex-col gap-3">
-      <OpenaiAppsToggle draft={draft} onDraftChange={onDraftChange} />
+      <OpenaiAppsCapabilityMatrix
+        draft={draft}
+        onDraftChange={onDraftChange}
+      />
       <div className="min-h-0 flex-1">
         <JsonEditor
           rawContent={content}
