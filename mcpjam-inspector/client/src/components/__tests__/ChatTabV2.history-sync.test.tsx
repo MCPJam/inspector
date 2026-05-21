@@ -419,6 +419,20 @@ vi.mock("@/lib/apis/web/chat-history-api", () => ({
   getChatHistoryDetail: (...args: unknown[]) =>
     mockGetChatHistoryDetail(...args),
   chatHistoryAction: (...args: unknown[]) => mockChatHistoryAction(...args),
+  getChatHistoryWidgetSnapshotSignature: (
+    snapshots: Array<Record<string, unknown>> | undefined,
+  ): string =>
+    (snapshots ?? [])
+      .map((snapshot) =>
+        JSON.stringify([
+          snapshot._id,
+          snapshot.toolCallId,
+          snapshot.resourceUri ?? "",
+          snapshot.createdAt ?? 0,
+        ]),
+      )
+      .sort()
+      .join("|"),
 }));
 
 describe("ChatTabV2 history sync", () => {
@@ -956,5 +970,128 @@ describe("ChatTabV2 history sync", () => {
       "archive",
       "history-1"
     );
+  });
+
+  it("reloads when a new widget snapshot arrives at the same session version", async () => {
+    const initialDetailResponse = {
+      ok: true,
+      session: {
+        ...mockHistorySession,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: {
+          selectedServers: ["server-1"],
+        },
+      },
+      widgetSnapshots: [],
+    };
+
+    mockGetChatHistoryDetail.mockResolvedValue(initialDetailResponse);
+
+    const view = render(<ChatTabV2 {...defaultProps} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
+    await flushMicrotasks();
+
+    expect(mockUseChatSession.loadChatSession).toHaveBeenCalledTimes(1);
+
+    mockUseChatSession.loadChatSession.mockClear();
+
+    // Reactive query emits the same session version, but with a newly
+    // inserted widget snapshot row.
+    mockReactiveHistoryState.session = {
+      ...initialDetailResponse.session,
+    };
+    mockReactiveHistoryState.widgetSnapshots = [
+      {
+        _id: "snap-1",
+        sessionId: "history-1",
+        toolCallId: "call-1",
+        toolName: "search",
+        serverId: "server-1",
+        uiType: "mcp-apps" as const,
+        resourceUri: "ui://widget.html",
+        widgetCsp: null,
+        widgetPermissions: null,
+        widgetPermissive: false,
+        prefersBorder: false,
+        widgetHtmlUrl: "https://storage.test/widget-html-1",
+        toolOutputUrl: "https://storage.test/tool-output-1",
+        createdAt: 1_700_000_000_000,
+      },
+    ];
+
+    view.rerender(<ChatTabV2 {...defaultProps} />);
+    await flushMicrotasks();
+
+    expect(mockUseChatSession.loadChatSession).toHaveBeenCalledTimes(1);
+    const loadArgs = mockUseChatSession.loadChatSession.mock.calls[0][0];
+    expect(loadArgs.widgetSnapshots).toHaveLength(1);
+    expect(loadArgs.widgetSnapshots[0]._id).toBe("snap-1");
+  });
+
+  it("does not reload when only signed snapshot URLs change", async () => {
+    const baseSnapshot = {
+      _id: "snap-1",
+      sessionId: "history-1",
+      toolCallId: "call-1",
+      toolName: "search",
+      serverId: "server-1",
+      uiType: "mcp-apps" as const,
+      resourceUri: "ui://widget.html",
+      widgetCsp: null,
+      widgetPermissions: null,
+      widgetPermissive: false,
+      prefersBorder: false,
+      createdAt: 1_700_000_000_000,
+    };
+
+    const initialDetailResponse = {
+      ok: true,
+      session: {
+        ...mockHistorySession,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: {
+          selectedServers: ["server-1"],
+        },
+      },
+      widgetSnapshots: [
+        {
+          ...baseSnapshot,
+          widgetHtmlUrl: "https://storage.test/widget-html-old?sig=A",
+          toolOutputUrl: "https://storage.test/tool-output-old?sig=A",
+        },
+      ],
+    };
+
+    mockGetChatHistoryDetail.mockResolvedValue(initialDetailResponse);
+
+    const view = render(<ChatTabV2 {...defaultProps} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
+    await flushMicrotasks();
+
+    expect(mockUseChatSession.loadChatSession).toHaveBeenCalledTimes(1);
+    mockUseChatSession.loadChatSession.mockClear();
+
+    // Same session version, identical snapshot signature — only the signed
+    // storage URLs change. The reactive effect must not call
+    // loadChatSession again.
+    mockReactiveHistoryState.session = {
+      ...initialDetailResponse.session,
+    };
+    mockReactiveHistoryState.widgetSnapshots = [
+      {
+        ...baseSnapshot,
+        widgetHtmlUrl: "https://storage.test/widget-html-old?sig=B",
+        toolOutputUrl: "https://storage.test/tool-output-old?sig=B",
+      },
+    ];
+
+    view.rerender(<ChatTabV2 {...defaultProps} />);
+    await flushMicrotasks();
+
+    expect(mockUseChatSession.loadChatSession).not.toHaveBeenCalled();
   });
 });

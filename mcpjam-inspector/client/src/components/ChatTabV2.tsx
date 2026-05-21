@@ -80,6 +80,7 @@ import { ChatHistoryRail } from "@/components/chat-v2/history/ChatHistoryRail";
 import {
   chatHistoryAction,
   getChatHistoryDetail,
+  getChatHistoryWidgetSnapshotSignature,
   type ChatHistoryDetailSession,
   type ChatHistorySession,
   type ChatHistoryTurnTrace,
@@ -265,6 +266,7 @@ export function ChatTabV2({
   const lastAppliedReactiveVersionRef = useRef<{
     sessionId: string;
     version: number;
+    widgetSnapshotSignature: string | null;
   } | null>(null);
   const hasUnsavedDraftRef = useRef(false);
 
@@ -566,6 +568,12 @@ export function ChatTabV2({
     lastAppliedReactiveVersionRef.current = {
       sessionId: activeHistorySessionId,
       version: resumedVersion,
+      // Preserve any signature stamped by loadHistorySession when the
+      // session id matches; otherwise we don't yet have one to track.
+      widgetSnapshotSignature:
+        lastApplied?.sessionId === activeHistorySessionId
+          ? lastApplied.widgetSnapshotSignature
+          : null,
     };
   }, [activeHistorySessionId, resumedVersion]);
 
@@ -683,6 +691,8 @@ export function ChatTabV2({
       lastAppliedReactiveVersionRef.current = {
         sessionId: detail._id,
         version: detail.version,
+        widgetSnapshotSignature:
+          getChatHistoryWidgetSnapshotSignature(widgetSnapshots),
       };
       void markHistorySessionRead(detail._id);
     },
@@ -810,9 +820,14 @@ export function ChatTabV2({
     }
 
     const lastApplied = lastAppliedReactiveVersionRef.current;
+    const incomingSignature = getChatHistoryWidgetSnapshotSignature(
+      reactiveHistoryWidgetSnapshots,
+    );
+
     if (
       lastApplied?.sessionId === reactiveHistorySession._id &&
-      lastApplied.version >= reactiveHistorySession.version
+      lastApplied.version >= reactiveHistorySession.version &&
+      lastApplied.widgetSnapshotSignature === incomingSignature
     ) {
       return;
     }

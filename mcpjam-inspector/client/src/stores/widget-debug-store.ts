@@ -195,6 +195,17 @@ export interface WidgetDebugInfo {
   prefersBorder?: boolean;
   updatedAt: number;
   /**
+   * Renderer-known server identity. Set by the renderer's init effect from
+   * the tool-call provenance; lets the snapshot capture hook persist saves
+   * even when the tool-result envelope omits `_meta._serverId`.
+   */
+  serverId?: string;
+  /**
+   * MCP Apps resource URI, or OpenAI Apps `openai/outputTemplate`. Same
+   * fallback role as `serverId` above.
+   */
+  resourceUri?: string;
+  /**
    * CSP configuration and violation tracking. Historical field name —
    * keeps the existing `setWidgetCsp` / `addCspViolation` /
    * `clearCspViolations` API surface unchanged. The Sandbox debug panel
@@ -370,6 +381,8 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
           info.prefersBorder !== undefined
             ? info.prefersBorder
             : existing?.prefersBorder,
+        serverId: info.serverId ?? existing?.serverId,
+        resourceUri: info.resourceUri ?? existing?.resourceUri,
         csp: existing?.csp, // Preserve CSP violations across updates
         // Preserve runtime-only fields populated by the renderer's
         // create-if-missing setters (setSandboxApplied / appendLifecycle).
@@ -531,6 +544,8 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         widgetState: existing?.widgetState ?? null,
         globals: existing?.globals ?? { theme: "dark", displayMode: "inline" },
         prefersBorder: existing?.prefersBorder,
+        serverId: existing?.serverId,
+        resourceUri: existing?.resourceUri,
         csp: existing?.csp,
         applied: existing?.applied,
         hostProfileId: existing?.hostProfileId,
@@ -563,6 +578,8 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         widgetState: existing?.widgetState ?? null,
         globals: existing?.globals ?? { theme: "dark", displayMode: "inline" },
         prefersBorder: existing?.prefersBorder,
+        serverId: existing?.serverId,
+        resourceUri: existing?.resourceUri,
         csp: existing?.csp,
         applied,
         hostProfileId: hostProfileId ?? existing?.hostProfileId,
@@ -602,6 +619,8 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         widgetState: existing?.widgetState ?? null,
         globals: existing?.globals ?? { theme: "dark", displayMode: "inline" },
         prefersBorder: existing?.prefersBorder,
+        serverId: existing?.serverId,
+        resourceUri: existing?.resourceUri,
         csp: existing?.csp,
         applied: existing?.applied,
         hostProfileId: existing?.hostProfileId,
@@ -632,6 +651,8 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         widgetState: existing?.widgetState ?? null,
         globals: existing?.globals ?? { theme: "dark", displayMode: "inline" },
         prefersBorder: existing?.prefersBorder,
+        serverId: existing?.serverId,
+        resourceUri: existing?.resourceUri,
         csp: existing?.csp,
         applied: existing?.applied,
         hostProfileId: existing?.hostProfileId,

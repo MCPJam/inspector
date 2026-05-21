@@ -72,6 +72,32 @@ export interface ChatHistoryWidgetSnapshot {
   prefersBorder: boolean;
   widgetHtmlUrl?: string | null;
   toolOutputUrl?: string | null;
+  createdAt?: number;
+}
+
+/**
+ * Stable signature for a list of widget snapshots, used to detect when a
+ * reactive history refresh carries newly inserted or updated snapshot rows
+ * even though the parent chat session `version` did not advance. Signed
+ * storage URLs (`widgetHtmlUrl`, `toolInputUrl`, `toolOutputUrl`) are
+ * intentionally excluded — they can change between reactive emissions
+ * without any underlying snapshot content change and would otherwise force
+ * redundant reloads.
+ */
+export function getChatHistoryWidgetSnapshotSignature(
+  snapshots: ChatHistoryWidgetSnapshot[] | undefined,
+): string {
+  return (snapshots ?? [])
+    .map((snapshot) =>
+      JSON.stringify([
+        snapshot._id,
+        snapshot.toolCallId,
+        snapshot.resourceUri ?? "",
+        snapshot.createdAt ?? 0,
+      ]),
+    )
+    .sort()
+    .join("|");
 }
 
 export interface ChatHistoryTurnTrace {

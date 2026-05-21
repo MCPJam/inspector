@@ -923,6 +923,8 @@ export function ChatGPTAppRenderer({
     setWidgetDebugInfo(resolvedToolCallId, {
       toolName,
       protocol: "openai-apps",
+      serverId,
+      resourceUri: outputTemplate,
       widgetState: initialWidgetState ?? null,
       prefersBorder,
       globals: {
@@ -942,6 +944,8 @@ export function ChatGPTAppRenderer({
     resolvedToolCallId,
     toolName,
     setWidgetDebugInfo,
+    serverId,
+    outputTemplate,
     resolvedTheme,
     effectiveDisplayMode,
     maxHeight,

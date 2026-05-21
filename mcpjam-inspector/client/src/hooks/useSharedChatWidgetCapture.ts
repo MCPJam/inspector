@@ -408,7 +408,13 @@ export function useSharedChatWidgetCapture({
     if (persistedSnapshotToolCallIdsRef.current.has(toolCallId)) {
       return;
     }
-    if (!toolSource.serverId) {
+    // Fall back to renderer-known identity when the tool-result envelope
+    // omits `_meta._serverId` / `_meta["openai/outputTemplate"]`. The
+    // renderer stamps these into the widget debug store from its own props
+    // before the snapshot hook runs.
+    const serverId = toolSource.serverId ?? widget.serverId;
+    const resourceUri = toolSource.resourceUri ?? widget.resourceUri;
+    if (!serverId) {
       return;
     }
 
@@ -490,12 +496,12 @@ export function useSharedChatWidgetCapture({
           ? { accessVersion }
           : {}),
         chatSessionId: sessionIdRef.current,
-        ...(toolSource.serverId ? { serverId: toolSource.serverId } : {}),
+        serverId,
         toolCallId,
         toolName: toolSource.toolName,
         widgetHtmlBlobId: cached.widgetHtmlBlobId,
         uiType: widget.protocol,
-        resourceUri: toolSource.resourceUri,
+        resourceUri,
         toolInputBlobId: cached.toolInputBlobId,
         toolOutputBlobId: cached.toolOutputBlobId,
         widgetCsp: toWidgetCsp(widget),

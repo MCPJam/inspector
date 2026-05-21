@@ -147,6 +147,7 @@ import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import {
   chatHistoryAction,
   getChatHistoryDetail,
+  getChatHistoryWidgetSnapshotSignature,
   type ChatHistorySession,
   type ChatHistoryDetailSession,
   type ChatHistoryWidgetSnapshot,
@@ -171,18 +172,12 @@ function buildHistoryContentSignature(
   session: ChatHistoryDetailSession,
   widgetSnapshots?: ChatHistoryWidgetSnapshot[],
 ) {
-  const snapshotSignature = (widgetSnapshots ?? [])
-    .map((snapshot) =>
-      [
-        snapshot._id,
-        snapshot.toolCallId,
-        snapshot.resourceUri ?? "",
-        snapshot.widgetHtmlUrl ?? "",
-        snapshot.toolOutputUrl ?? "",
-      ].join(":"),
-    )
-    .sort()
-    .join("|");
+  // Delegate the snapshot portion to the shared helper so it intentionally
+  // excludes signed storage URLs (`widgetHtmlUrl`, `toolOutputUrl`), which
+  // can change between reactive emissions even when underlying snapshot
+  // content has not changed.
+  const snapshotSignature =
+    getChatHistoryWidgetSnapshotSignature(widgetSnapshots);
   return [
     session._id,
     session.chatSessionId,
@@ -1584,18 +1579,19 @@ export function PlaygroundMain({
       return;
     }
 
-    if (
-      resumedVersion !== null &&
-      reactiveHistorySession.version <= resumedVersion
-    ) {
-      return;
-    }
-
     const contentSignature = buildHistoryContentSignature(
       reactiveHistorySession,
       reactiveHistoryWidgetSnapshots,
     );
-    if (appliedHistoryContentSignatureRef.current === contentSignature) {
+    const signatureUnchanged =
+      appliedHistoryContentSignatureRef.current === contentSignature;
+    const versionNotAdvanced =
+      resumedVersion !== null &&
+      reactiveHistorySession.version <= resumedVersion;
+
+    if (versionNotAdvanced && signatureUnchanged) return;
+
+    if (signatureUnchanged) {
       setPendingDirectVisibility(reactiveHistorySession.directVisibility);
       syncResumedVersion(reactiveHistorySession.version);
       return;

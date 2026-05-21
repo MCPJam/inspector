@@ -1153,6 +1153,8 @@ export function MCPAppsRenderer({
     setWidgetDebugInfo(toolCallId, {
       toolName,
       protocol: "mcp-apps",
+      serverId,
+      resourceUri,
       // Seed from persisted state when a saved view / fork supplied one,
       // so the Debug "Widget State" tab shows the restored value on
       // first render instead of `null`. Apps SDK widgets that call
@@ -1173,6 +1175,8 @@ export function MCPAppsRenderer({
     toolCallId,
     toolName,
     setWidgetDebugInfo,
+    serverId,
+    resourceUri,
     resolvedTheme,
     effectiveDisplayMode,
     locale,

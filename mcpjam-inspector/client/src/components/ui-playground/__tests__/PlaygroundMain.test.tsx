@@ -176,6 +176,29 @@ vi.mock("@/lib/apis/web/chat-history-api", () => ({
   getChatHistoryDetail: (...args: unknown[]) =>
     mockGetChatHistoryDetail(...args),
   chatHistoryAction: (...args: unknown[]) => mockChatHistoryAction(...args),
+  getChatHistoryWidgetSnapshotSignature: (
+    snapshots: Array<Record<string, unknown>> | undefined,
+  ): string =>
+    (snapshots ?? [])
+      .map((snapshot) =>
+        JSON.stringify([
+          snapshot._id,
+          snapshot.toolCallId,
+          snapshot.resourceUri ?? "",
+          snapshot.createdAt ?? 0,
+        ]),
+      )
+      .sort()
+      .join("|"),
+}));
+
+const mockReactiveDirectSession = vi.hoisted(() => ({
+  session: undefined as any,
+  widgetSnapshots: undefined as any,
+}));
+
+vi.mock("@/hooks/use-direct-chat-session-subscription", () => ({
+  useDirectChatSessionSubscription: () => mockReactiveDirectSession,
 }));
 
 // Mock useChatSession hook
@@ -589,6 +612,8 @@ describe("PlaygroundMain", () => {
     mockGetChatHistoryDetail.mockReset();
     mockChatHistoryAction.mockReset();
     mockChatHistoryAction.mockResolvedValue({ ok: true });
+    mockReactiveDirectSession.session = undefined;
+    mockReactiveDirectSession.widgetSnapshots = undefined;
     mockPreferencesState.themeMode = "light";
     mockPreferencesState.themePreset = "soft-pop";
     mockPreferencesState.hostStyle = "claude";
@@ -1849,4 +1874,144 @@ describe("PlaygroundMain", () => {
       });
     });
   });
+
+  describe("reactive widget snapshot refresh", () => {
+    function makeSession(suffix: string) {
+      return {
+        _id: `history-reactive-${suffix}`,
+        chatSessionId: `chat-session-reactive-${suffix}`,
+        firstMessagePreview: "Hello",
+        status: "active" as const,
+        directVisibility: "private" as const,
+        messageCount: 2,
+        version: 4,
+        startedAt: 1,
+        lastActivityAt: 1,
+        isPinned: false,
+        manualUnread: false,
+        isUnread: false,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: { selectedServers: ["test-server"] },
+      };
+    }
+
+    function makeSnapshot(sessionId: string) {
+      return {
+        _id: "snap-1",
+        sessionId,
+        toolCallId: "call-1",
+        toolName: "search",
+        serverId: "server-1",
+        uiType: "mcp-apps" as const,
+        resourceUri: "ui://widget.html",
+        widgetCsp: null,
+        widgetPermissions: null,
+        widgetPermissive: false,
+        prefersBorder: false,
+        createdAt: 1_700_000_000_000,
+      };
+    }
+
+    it("reloads when a new widget snapshot arrives at the same session version", async () => {
+      const session = makeSession("snapshot-add");
+      const snapshot = makeSnapshot(session._id);
+      mockGetChatHistoryDetail.mockResolvedValueOnce({
+        ok: true,
+        session,
+        widgetSnapshots: [],
+      });
+
+      const view = render(<PlaygroundMain {...defaultProps} />);
+
+      await waitFor(() => {
+        expect(
+          usePlaygroundChatHistoryBridgeStore.getState().bridge,
+        ).not.toBe(null);
+      });
+
+      await act(async () => {
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await Promise.resolve(bridge?.onSelectThread(session));
+      });
+      await waitFor(() => {
+        expect(mockUseChatSession.loadChatSession).toHaveBeenCalledTimes(1);
+      });
+
+      mockUseChatSession.loadChatSession.mockClear();
+
+      mockReactiveDirectSession.session = { ...session };
+      mockReactiveDirectSession.widgetSnapshots = [
+        {
+          ...snapshot,
+          widgetHtmlUrl: "https://storage.test/widget-html-1?sig=A",
+          toolOutputUrl: "https://storage.test/tool-output-1?sig=A",
+        },
+      ];
+
+      view.rerender(<PlaygroundMain {...defaultProps} />);
+      await waitFor(() => {
+        expect(mockUseChatSession.loadChatSession).toHaveBeenCalledTimes(1);
+      });
+
+      const loadArgs = mockUseChatSession.loadChatSession.mock.calls[0][0];
+      expect(loadArgs.widgetSnapshots).toHaveLength(1);
+      expect(loadArgs.widgetSnapshots[0]._id).toBe("snap-1");
+      expect(loadArgs.turnTraces).toBeUndefined();
+    });
+
+    it("does not reload when only signed snapshot URLs change", async () => {
+      const session = makeSession("signed-url-only");
+      const snapshot = makeSnapshot(session._id);
+      mockGetChatHistoryDetail.mockResolvedValueOnce({
+        ok: true,
+        session,
+        widgetSnapshots: [
+          {
+            ...snapshot,
+            widgetHtmlUrl: "https://storage.test/widget-html?sig=A",
+            toolOutputUrl: "https://storage.test/tool-output?sig=A",
+          },
+        ],
+      });
+
+      const view = render(<PlaygroundMain {...defaultProps} />);
+
+      await waitFor(() => {
+        expect(
+          usePlaygroundChatHistoryBridgeStore.getState().bridge,
+        ).not.toBe(null);
+      });
+
+      await act(async () => {
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await Promise.resolve(bridge?.onSelectThread(session));
+      });
+      await waitFor(() => {
+        expect(mockUseChatSession.loadChatSession).toHaveBeenCalledTimes(1);
+      });
+
+      mockUseChatSession.loadChatSession.mockClear();
+
+      mockReactiveDirectSession.session = { ...session };
+      mockReactiveDirectSession.widgetSnapshots = [
+        {
+          ...snapshot,
+          widgetHtmlUrl: "https://storage.test/widget-html?sig=B",
+          toolOutputUrl: "https://storage.test/tool-output?sig=B",
+        },
+      ];
+
+      view.rerender(<PlaygroundMain {...defaultProps} />);
+      await flushMicrotasksWithAct();
+
+      expect(mockUseChatSession.loadChatSession).not.toHaveBeenCalled();
+    });
+  });
 });
+
+async function flushMicrotasksWithAct() {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}

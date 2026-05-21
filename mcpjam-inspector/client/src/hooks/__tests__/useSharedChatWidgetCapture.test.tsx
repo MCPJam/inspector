@@ -1060,4 +1060,123 @@ describe("useSharedChatWidgetCapture", () => {
 
     unmount();
   });
+
+  it("falls back to renderer-known serverId/resourceUri when the tool result omits _meta._serverId", async () => {
+    const { unmount } = renderHook(() =>
+      useSharedChatWidgetCapture({
+        enabled: true,
+        chatSessionId: "chat-session-fallback",
+        hostedChatboxId: "cbx_1",
+        hostedAccessVersion: 1,
+        messages: [
+          {
+            id: "assistant-1",
+            role: "assistant",
+            parts: [
+              {
+                type: "tool-search",
+                toolCallId: "call-fallback",
+                input: { q: "hello" },
+                // Intentionally no _meta._serverId / outputTemplate. The
+                // renderer-stamped fields on the widget debug store should
+                // fill in.
+                output: { result: "world" },
+              },
+            ],
+          } as any,
+        ],
+      }),
+    );
+
+    act(() => {
+      useWidgetDebugStore.setState({
+        widgets: new Map([
+          [
+            "call-fallback",
+            {
+              toolCallId: "call-fallback",
+              toolName: "search",
+              protocol: "mcp-apps",
+              widgetState: null,
+              globals: { theme: "dark", displayMode: "inline" },
+              widgetHtml: "<div>Widget</div>",
+              serverId: "server-1",
+              resourceUri: "ui://widget.html",
+              updatedAt: Date.now(),
+            },
+          ],
+        ]),
+      });
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+
+    await flushMicrotasks();
+
+    expect(mockCreateWidgetSnapshot).toHaveBeenCalledTimes(1);
+    expect(mockCreateWidgetSnapshot.mock.calls[0][0]).toMatchObject({
+      serverId: "server-1",
+      resourceUri: "ui://widget.html",
+      toolCallId: "call-fallback",
+    });
+
+    unmount();
+  });
+
+  it("skips snapshot capture when neither the tool result nor the widget store has a serverId", async () => {
+    const { unmount } = renderHook(() =>
+      useSharedChatWidgetCapture({
+        enabled: true,
+        chatSessionId: "chat-session-no-server",
+        hostedChatboxId: "cbx_1",
+        hostedAccessVersion: 1,
+        messages: [
+          {
+            id: "assistant-1",
+            role: "assistant",
+            parts: [
+              {
+                type: "tool-search",
+                toolCallId: "call-no-server",
+                input: { q: "hello" },
+                output: { result: "world" },
+              },
+            ],
+          } as any,
+        ],
+      }),
+    );
+
+    act(() => {
+      useWidgetDebugStore.setState({
+        widgets: new Map([
+          [
+            "call-no-server",
+            {
+              toolCallId: "call-no-server",
+              toolName: "search",
+              protocol: "mcp-apps",
+              widgetState: null,
+              globals: { theme: "dark", displayMode: "inline" },
+              widgetHtml: "<div>Widget</div>",
+              updatedAt: Date.now(),
+            },
+          ],
+        ]),
+      });
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+
+    await flushMicrotasks();
+
+    expect(mockGenerateSnapshotUploadUrl).not.toHaveBeenCalled();
+    expect(mockCreateWidgetSnapshot).not.toHaveBeenCalled();
+
+    unmount();
+  });
 });
