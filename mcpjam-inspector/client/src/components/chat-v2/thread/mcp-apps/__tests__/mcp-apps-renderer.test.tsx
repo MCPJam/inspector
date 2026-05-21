@@ -485,6 +485,65 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
   });
 
+  it("still waits for completed compat output when live fetch is preferred over a cached URL", async () => {
+    const { rerender } = render(
+      <ChatboxHostStyleProvider value="chatgpt">
+        <MCPAppsRenderer
+          {...baseProps}
+          toolState="input-streaming"
+          toolInput={{ query: "yellow" }}
+          toolOutput={undefined}
+          toolMetadata={{ "openai/outputTemplate": "ui://widget/test.html" }}
+          cachedWidgetHtmlUrl="blob:cached"
+          liveFetchPreferred
+        />
+      </ChatboxHostStyleProvider>,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(authFetch).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalledWith("blob:cached");
+    expect(mockBridge.connect).not.toHaveBeenCalled();
+
+    rerender(
+      <ChatboxHostStyleProvider value="chatgpt">
+        <MCPAppsRenderer
+          {...baseProps}
+          toolState="output-available"
+          toolInput={{ query: "yellow" }}
+          toolOutput={{
+            content: [{ type: "text", text: "done" }],
+            structuredContent: { route: "Yellow-N" },
+          }}
+          toolMetadata={{ "openai/outputTemplate": "ui://widget/test.html" }}
+          cachedWidgetHtmlUrl="blob:cached"
+          liveFetchPreferred
+        />
+      </ChatboxHostStyleProvider>,
+    );
+
+    await vi.waitFor(() => {
+      expect(authFetch).toHaveBeenCalled();
+    });
+
+    expect(global.fetch).not.toHaveBeenCalledWith("blob:cached");
+
+    const requestInit = vi.mocked(authFetch).mock.calls[0]?.[1] as
+      | RequestInit
+      | undefined;
+    const body = JSON.parse(String(requestInit?.body ?? "{}")) as Record<
+      string,
+      unknown
+    >;
+    expect(body.toolOutput).toEqual({
+      content: [{ type: "text", text: "done" }],
+      structuredContent: { route: "Yellow-N" },
+    });
+  });
+
   it("user override wins over the host style preset", async () => {
     const override = {
       openLinks: {},
