@@ -155,8 +155,19 @@ export function buildToolRenderOverridesFromSnapshots(
   const preferLive = options.preferLiveWhenPossible ?? false;
   const overrides: Record<string, ToolRenderOverride> = {};
   for (const snap of snapshots) {
+    // If the serverId still looks like a Convex `Id<'servers'>`
+    // (32-char alphanumeric), the reverse resolver didn't translate it
+    // back to a local runtime identifier — most likely because the
+    // server doc isn't visible to the current project. Forcing a live
+    // fetch in that state hits the local widget-content route with a
+    // Convex Id that the MCP client manager doesn't recognise and 500s
+    // in a loop. Pin to the cached path so replay stays stable.
+    const serverIdLooksLikeConvexId = /^[a-z0-9]{32}$/.test(snap.serverId);
     const canLiveFetch =
-      preferLive && snap.protocol === "mcp-apps" && !!snap.resourceUri;
+      preferLive &&
+      snap.protocol === "mcp-apps" &&
+      !!snap.resourceUri &&
+      !serverIdLooksLikeConvexId;
     const cachedWidgetHtmlUrl = snap.widgetHtmlUrl ?? undefined;
     const replay = buildPersistedExecutionReplay({
       protocol: snap.protocol,
