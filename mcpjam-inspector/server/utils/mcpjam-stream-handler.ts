@@ -330,21 +330,19 @@ function readUsageFromFinishChunk(
 
 function createClientFinishChunk(
   finishChunk: UIMessageChunk | null,
+  traceTurn: LiveTraceTurnContext | null,
   fallbackReason: "length" | "stop"
 ): UIMessageChunk {
   type FinishUIMessageChunk = Extract<UIMessageChunk, { type: "finish" }>;
-  const source = finishChunk as
-    | (Partial<FinishUIMessageChunk> & {
-        totalUsage?: {
-          inputTokens?: number;
-          outputTokens?: number;
-          totalTokens?: number;
-        };
-      })
-    | null;
-  const usage = finishChunk
-    ? readUsageFromFinishChunk(finishChunk)
-    : { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+  const source = finishChunk as Partial<FinishUIMessageChunk> | null;
+  // Prefer the turn-level aggregate so multi-step (tool-call) turns report the
+  // sum across all LLM calls, not just the final step.
+  const aggregateUsage = traceTurn?.turnUsage;
+  const usage =
+    aggregateUsage ??
+    (finishChunk
+      ? readUsageFromFinishChunk(finishChunk)
+      : { inputTokens: 0, outputTokens: 0, totalTokens: 0 });
   const metadata = source?.messageMetadata;
   const messageMetadata =
     metadata &&
@@ -1211,7 +1209,7 @@ async function processOneStep(
       );
       emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
       if (finishChunk) {
-        writer.write(createClientFinishChunk(finishChunk, "stop"));
+        writer.write(createClientFinishChunk(finishChunk, traceTurn, "stop"));
       }
       return { shouldContinue: false, didEmitFinish: !!finishChunk };
     }
@@ -1382,7 +1380,7 @@ async function processOneStep(
   // No more tool calls - emit finish and stop
   const didEmitFinish = !!finishChunk;
   if (finishChunk) {
-    writer.write(createClientFinishChunk(finishChunk, "stop"));
+    writer.write(createClientFinishChunk(finishChunk, traceTurn, "stop"));
   }
 
   // We're done with this conversation turn
@@ -1513,6 +1511,7 @@ export async function handleMCPJamFreeChatModel(
           writer.write(
             createClientFinishChunk(
               null,
+              traceTurn,
               steps >= MAX_STEPS ? "length" : "stop"
             )
           );

@@ -662,6 +662,99 @@ describe("mcpjam-stream-handler", () => {
     expect(finishChunk).not.toHaveProperty("totalUsage");
   });
 
+  it("aggregates usage across steps when emitting the final UI finish chunk", async () => {
+    const stepOne = [
+      {
+        type: "tool-input-available",
+        toolCallId: "call-1",
+        toolName: "read_docs",
+        input: { topic: "latency" },
+      },
+      {
+        type: "finish",
+        finishReason: "stop",
+        messageMetadata: { inputTokens: 3, outputTokens: 4, totalTokens: 7 },
+      },
+    ];
+    const stepTwo = [
+      { type: "text-start", id: "text-1" },
+      { type: "text-delta", id: "text-1", delta: "ok" },
+      { type: "text-end", id: "text-1" },
+      {
+        type: "finish",
+        finishReason: "stop",
+        messageMetadata: {
+          inputTokens: 10,
+          outputTokens: 5,
+          totalTokens: 15,
+        },
+      },
+    ];
+    let call = 0;
+    global.fetch = vi.fn().mockImplementation(async () => {
+      const events = call === 0 ? stepOne : stepTwo;
+      call += 1;
+      return createSseResponse(events);
+    });
+    vi.mocked(hasUnresolvedToolCalls).mockImplementation(
+      (messages) =>
+        messages.some(
+          (message: any) =>
+            message?.role === "assistant" &&
+            Array.isArray(message.content) &&
+            message.content.some((part: any) => part.type === "tool-call")
+        ) && !messages.some((message: any) => message?.role === "tool")
+    );
+    vi.mocked(executeToolCallsFromMessages).mockImplementation(
+      async (messages: any[]) => {
+        const toolResultMessage = {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "read_docs",
+              output: { type: "json", value: { ok: true } },
+              result: { ok: true },
+              serverId: "docs-server",
+            },
+          ],
+        };
+        messages.splice(2, 0, toolResultMessage);
+        return [toolResultMessage] as any;
+      }
+    );
+
+    await handleMCPJamFreeChatModel({
+      messages: [{ role: "user", content: "Fetch the docs" }] as any,
+      modelId: "openai/gpt-5-mini",
+      systemPrompt: "You are helpful",
+      tools: {
+        read_docs: { _serverId: "docs-server" },
+      } as any,
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({ read_docs: {} }),
+      } as any,
+    });
+
+    await lastExecution;
+
+    const finishChunks = writtenChunks.filter(
+      (chunk) => chunk?.type === "finish"
+    );
+    expect(finishChunks).toHaveLength(1);
+    expect(finishChunks[0]).toMatchObject({
+      type: "finish",
+      finishReason: "stop",
+      messageMetadata: {
+        inputTokens: 13,
+        outputTokens: 9,
+        totalTokens: 22,
+      },
+    });
+    expect(finishChunks[0]).not.toHaveProperty("totalUsage");
+  });
+
   it("flushes buffered hosted rpc logs first and streams live hosted rpc logs as data parts", async () => {
     let resolveFetch: ((response: Response) => void) | undefined;
     global.fetch = vi.fn().mockImplementation(
