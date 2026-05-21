@@ -19,7 +19,10 @@ import { getClientIp } from "../../utils/client-ip.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config";
-import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler";
+import {
+  handleMCPJamFreeChatModel,
+  warnIfChatAbortSignalMissing,
+} from "../../utils/mcpjam-stream-handler";
 import {
   handleHostedOrgChatModel,
   handleLocalOrgChatModel,
@@ -698,6 +701,11 @@ chatV2.post("/", async (c) => {
 
       const chatSessionId = body.chatSessionId;
 
+      const inboundAbortSignalMcp = c.req.raw.signal as
+        | AbortSignal
+        | undefined;
+      warnIfChatAbortSignalMissing(inboundAbortSignalMcp, "mcp/chat-v2");
+
       return handleMCPJamFreeChatModel({
         messages: modelMessages as ModelMessage[],
         modelId: String(modelDefinition.id),
@@ -709,6 +717,7 @@ chatV2.post("/", async (c) => {
         mcpClientManager,
         selectedServers,
         requireToolApproval,
+        abortSignal: inboundAbortSignalMcp,
         onConversationComplete: chatSessionId
           ? async (fullHistory, turnTrace) => {
               await persistChatSessionToConvex({
@@ -773,6 +782,10 @@ chatV2.post("/", async (c) => {
       const sessionStartedAt = Date.now();
       const chatSessionId = body.chatSessionId;
       const modelId = String(modelDefinition.id);
+      const inboundAbortSignalOrg = c.req.raw.signal as
+        | AbortSignal
+        | undefined;
+      warnIfChatAbortSignalMissing(inboundAbortSignalOrg, "mcp/chat-v2");
       const runtime: OrgProviderRuntime = isLocalRuntimeEligible(providerKey)
         ? await resolveOrgProviderRuntime(
             body.projectId,
@@ -845,6 +858,7 @@ chatV2.post("/", async (c) => {
           selectedServers,
           serverIds: hostConfigServerIds,
           requireToolApproval,
+          abortSignal: inboundAbortSignalOrg,
           onConversationComplete,
         });
       }
@@ -863,6 +877,7 @@ chatV2.post("/", async (c) => {
         selectedServers,
         serverIds: hostConfigServerIds,
         requireToolApproval,
+        abortSignal: inboundAbortSignalOrg,
         onConversationComplete,
       });
     }

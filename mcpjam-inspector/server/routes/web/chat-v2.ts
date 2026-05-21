@@ -3,7 +3,10 @@ import { convertToModelMessages, type ToolSet } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { isMCPAuthError } from "@mcpjam/sdk";
-import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler.js";
+import {
+  handleMCPJamFreeChatModel,
+  warnIfChatAbortSignalMissing,
+} from "../../utils/mcpjam-stream-handler.js";
 import {
   handleHostedOrgChatModel,
   handleLocalOrgChatModel,
@@ -334,6 +337,9 @@ chatV2.post("/", async (c) => {
             }
           : undefined;
 
+        const inboundAbortSignal = c.req.raw.signal as AbortSignal | undefined;
+        warnIfChatAbortSignalMissing(inboundAbortSignal, "web/chat-v2");
+
         if (runtime.runtimeLocation === "local") {
           return handleLocalOrgChatModel({
             provider: runtime.provider,
@@ -356,6 +362,7 @@ chatV2.post("/", async (c) => {
             onStreamComplete: cleanupStream,
             onStreamWriterReady: (writer) =>
               rpcCollector?.attachStreamWriter(writer),
+            abortSignal: inboundAbortSignal,
           });
         }
 
@@ -382,6 +389,7 @@ chatV2.post("/", async (c) => {
           onStreamComplete: cleanupStream,
           onStreamWriterReady: (writer) =>
             rpcCollector?.attachStreamWriter(writer),
+          abortSignal: inboundAbortSignal,
         });
       }
 
@@ -394,6 +402,11 @@ chatV2.post("/", async (c) => {
           "Server missing CONVEX_HTTP_URL configuration",
         );
       }
+
+      const inboundAbortSignalFree = c.req.raw.signal as
+        | AbortSignal
+        | undefined;
+      warnIfChatAbortSignalMissing(inboundAbortSignalFree, "web/chat-v2");
 
       return handleMCPJamFreeChatModel({
         messages: modelMessages as ModelMessage[],
@@ -411,6 +424,7 @@ chatV2.post("/", async (c) => {
         mcpClientManager: manager,
         selectedServers: selectedServerIds,
         requireToolApproval,
+        abortSignal: inboundAbortSignalFree,
         onConversationComplete: hostedChatSessionId
           ? async (fullHistory, turnTrace) => {
               const isDirectChat = !isChatboxSession;
