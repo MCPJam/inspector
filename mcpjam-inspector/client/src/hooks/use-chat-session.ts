@@ -224,6 +224,15 @@ export interface UseChatSessionOptions {
    * Typically wired from `useProjectServers().serversByName`.
    */
   resolveServerConvexId?: (localServerId: string) => string | undefined;
+  /**
+   * Reverse of `resolveServerConvexId` — translate a Convex `Id<'servers'>`
+   * from a persisted snapshot back to the local runtime identifier the
+   * MCP client manager understands (display name in local mode). Without
+   * this, replay tries to live-fetch widget content using the Convex Id,
+   * which the local widget-content route can't resolve → 500.
+   * Typically wired from `useProjectServers().serversById`.
+   */
+  resolveServerLocalId?: (convexServerId: string) => string | undefined;
 }
 
 export type ChatSessionResetReason =
@@ -1057,7 +1066,12 @@ export function useChatSession(
     hostStyle,
     onReset,
     resolveServerConvexId,
+    resolveServerLocalId,
   } = options;
+  const resolveServerLocalIdRef = useRef(resolveServerLocalId);
+  useEffect(() => {
+    resolveServerLocalIdRef.current = resolveServerLocalId;
+  }, [resolveServerLocalId]);
   // Surfaces that omit `executionConfig` entirely (e.g. Playground) own their
   // chat-execution state imperatively and must not be re-synced from prop
   // defaults. Surfaces that pass `executionConfig` are in controlled mode and
@@ -1939,7 +1953,8 @@ export function useChatSession(
         hydratedWidgetSnapshots?.map((snapshot) => snapshot.toolCallId) ?? [];
       if (hydratedWidgetSnapshots && hydratedWidgetSnapshots.length > 0) {
         const traceSnapshots = snapshotsToTraceWidgetSnapshots(
-          hydratedWidgetSnapshots
+          hydratedWidgetSnapshots,
+          resolveServerLocalIdRef.current,
         );
         // In-flow session revisit: prefer the live MCP Apps fetch over the
         // cached snapshot HTML so the widget re-renders against the active

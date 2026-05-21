@@ -652,6 +652,7 @@ export function PlaygroundMain({
     },
     resolveServerConvexId: (localServerId) =>
       serversByName.get(localServerId),
+    resolveServerLocalId: (convexServerId) => serversById.get(convexServerId),
     onReset: (reason?: ChatSessionResetReason) => {
       setModelContextQueue([]);
       setPreludeTraceExecutions([]);

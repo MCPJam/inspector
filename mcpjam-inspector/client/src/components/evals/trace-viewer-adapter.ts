@@ -77,6 +77,14 @@ export interface TraceWidgetSnapshot {
 /**
  * Convert raw SharedChatWidgetSnapshot records (from Convex) into the
  * TraceWidgetSnapshot shape used by the trace viewer adapter.
+ *
+ * `resolveServerLocalId` translates the snapshot's Convex `Id<'servers'>`
+ * (the only shape the backend accepts on the write path) back to the
+ * runtime identifier the local renderer / MCP client manager understands.
+ * In hosted mode the two are already the same. In local mode the renderer
+ * keys connections by display name (e.g. "Champions"), so without this
+ * translation the live-fetch path POSTs the Convex Id and the local
+ * widget-content route returns 500.
  */
 export function snapshotsToTraceWidgetSnapshots(
   snapshots: Array<{
@@ -93,6 +101,7 @@ export function snapshotsToTraceWidgetSnapshots(
     toolOutput?: unknown;
     injectedOpenAiCompat?: boolean;
   }>,
+  resolveServerLocalId?: (convexServerId: string) => string | undefined,
 ): TraceWidgetSnapshot[] {
   return snapshots.map((snap) => {
     // Reconstruct toolMetadata so detectUIType returns the correct widget type.
@@ -104,11 +113,14 @@ export function snapshotsToTraceWidgetSnapshots(
           ? { "openai/outputTemplate": "__cached__" }
           : {};
 
+    const resolvedServerId =
+      resolveServerLocalId?.(snap.serverId) ?? snap.serverId;
+
     return {
       toolCallId: snap.toolCallId,
       toolName: snap.toolName,
       protocol: snap.uiType,
-      serverId: snap.serverId,
+      serverId: resolvedServerId,
       resourceUri: snap.resourceUri,
       toolMetadata,
       widgetCsp: snap.widgetCsp,
