@@ -161,6 +161,16 @@ export async function executeToolCallsFromMessages(
             ...(signal ? { abortSignal: signal } : {}),
           });
 
+          // If a tool ignored the signal (or returned `result` after the
+          // signal fired) the result must NOT be serialized into a
+          // tool-result — that would persist into conversation history
+          // and look like a completed tool call to the next turn.
+          if (signal?.aborted) {
+            throw signal.reason instanceof Error
+              ? signal.reason
+              : Object.assign(new Error("Aborted"), { name: "AbortError" });
+          }
+
           let output: ToolResultPart;
           if (result !== undefined && result !== null) {
             if (typeof result === "object") {

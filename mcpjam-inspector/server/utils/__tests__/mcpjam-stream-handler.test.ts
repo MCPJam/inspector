@@ -1111,6 +1111,63 @@ describe("mcpjam-stream-handler", () => {
       );
     });
 
+    it("does not emit finish or turn_finish when abort fires between steps (post-loop epilogue is gated)", async () => {
+      // Regression for the silent-cancel epilogue leak: an abort that
+      // lands AFTER a step returns but BEFORE the next iteration must
+      // not fall through to the success epilogue (synthetic finish +
+      // turn_finish trace + runSucceeded=true).
+      const controller = new AbortController();
+      const onConversationComplete = vi.fn();
+      const onStreamComplete = vi.fn();
+
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(true);
+      // Simulate a tool execution that completes AND fires the abort
+      // signal as a side effect. The handler's external abort listener
+      // sets `aborted = true`. On the next loop iteration the top-of-
+      // loop guard breaks out, and the post-loop early return must
+      // skip the success epilogue.
+      vi.mocked(executeToolCallsFromMessages).mockImplementationOnce(
+        async () => {
+          controller.abort();
+          return [];
+        }
+      );
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "hi" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        abortSignal: controller.signal,
+        heartbeatIntervalMs: 0,
+        onConversationComplete,
+        onStreamComplete,
+      });
+      await lastExecution;
+
+      const visibleChunks = writtenChunks.filter(
+        (c: any) =>
+          c?.type !== "data-trace-event" || c?.data?.type !== "heartbeat"
+      );
+      // Silent-cancel invariant: no finish, no error, no turn_finish.
+      expect(
+        visibleChunks.find((c: any) => c?.type === "finish")
+      ).toBeUndefined();
+      expect(
+        visibleChunks.find((c: any) => c?.type === "error")
+      ).toBeUndefined();
+      const traceTypes = visibleChunks
+        .filter((c: any) => c?.type === "data-trace-event")
+        .map((c: any) => c?.data?.type);
+      expect(traceTypes).not.toContain("turn_finish");
+      // And no persistence — aborted turns are partial by definition.
+      expect(onConversationComplete).not.toHaveBeenCalled();
+      expect(onStreamComplete).toHaveBeenCalledTimes(1);
+    });
+
     it("aborts silently before fetch when signal is already aborted: no fetch, no finish, no persistence, onStreamComplete runs", async () => {
       const controller = new AbortController();
       controller.abort();

@@ -1768,6 +1768,18 @@ export async function handleMCPJamFreeChatModel(
           }
         }
 
+        // Silent cancellation gate: an abort that fired between steps
+        // exits the loop above via `if (aborted) break`, but the rest of
+        // the success epilogue (high-step log, synthetic finish,
+        // turn_finish, runSucceeded=true) would still run. Bail here so
+        // the writer sees no terminal chunk and `onFinish` keeps the
+        // turn out of persistence. `onStreamComplete` still runs via the
+        // `finally` below.
+        if (aborted || abortSignal?.aborted) {
+          aborted = true;
+          return;
+        }
+
         // One structured log per turn that reached the historical "loose"
         // cap so we can validate whether 30 is the right new default
         // before tuning down. Fires only on success paths to avoid
