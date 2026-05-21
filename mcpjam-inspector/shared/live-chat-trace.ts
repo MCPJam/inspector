@@ -114,6 +114,15 @@ export type LiveChatTraceEvent =
       promptIndex: number;
       stepIndex?: number;
       errorText: string;
+    }
+  | {
+      // Transient idle-heartbeat. Emitted only while the stream has been
+      // quiet, so LB/proxy idle timers don't sever the SSE connection during
+      // long upstream provider waits. Consumers MUST ignore this event:
+      // it does not represent any state change.
+      type: "heartbeat";
+      turnId: string;
+      promptIndex: number;
     };
 
 export function mergeLiveChatTraceUsage(

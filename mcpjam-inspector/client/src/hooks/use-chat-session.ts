@@ -692,6 +692,12 @@ function applyLiveTraceEvent(
   state: LiveTraceAccumulatorState,
   event: LiveChatTraceEvent
 ): LiveTraceAccumulatorState {
+  // Heartbeat events carry no state. Drop them before any allocation so a
+  // long idle stream doesn't bloat the visible event list or trigger
+  // re-renders that depend on `state.events.length`.
+  if (event.type === "heartbeat") {
+    return state;
+  }
   const nextEvents = [...state.events, event];
   const baseState: LiveTraceAccumulatorState = {
     ...state,
