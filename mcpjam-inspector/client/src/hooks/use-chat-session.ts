@@ -1739,7 +1739,11 @@ export function useChatSession(
   }, [chatSessionId]);
 
   useSharedChatWidgetCapture({
-    enabled: HOSTED_MODE && isAuthenticated,
+    // Convex-backed chat history works in both hosted and local mode for
+    // authenticated users. Reads (loadChatSession) are unconditional, so
+    // gating writes on HOSTED_MODE leaves local-mode chats with rendered
+    // widgets that vanish on reopen.
+    enabled: isAuthenticated,
     readyToPersist: status === "ready",
     chatSessionId,
     hostedChatboxId,
