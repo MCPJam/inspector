@@ -65,6 +65,13 @@ import {
   mergeLiveChatTraceUsage,
   type LiveChatTraceUsage,
 } from "@/shared/live-chat-trace";
+import { isAbortError } from "@/shared/abort-errors";
+
+// Mirror DEFAULT_MAX_STEPS in mcpjam-stream-handler. Local org BYOK uses
+// the AI SDK's `stepCountIs` instead of a hand-rolled loop, but the
+// per-turn ceiling should match so a user doesn't see fewer steps just
+// because they routed through a local provider.
+const DEFAULT_MAX_STEPS_LOCAL_ORG = 30;
 
 export interface OrgModelHandlerOptions {
   projectId: string;
@@ -103,6 +110,20 @@ export interface OrgModelHandlerOptions {
   chatboxId?: string;
   accessVersion?: number;
   clientIp?: string | null;
+  /**
+   * Inbound request abort signal. Forwarded to the wrapped MCPJam handler so
+   * a client disconnect cancels the Convex fetch, the SSE reader, and the
+   * local tool executor end-to-end.
+   */
+  abortSignal?: AbortSignal;
+  /**
+   * See MCPJamHandlerOptions.heartbeatIntervalMs. Forwarded as-is.
+   */
+  heartbeatIntervalMs?: number;
+  /**
+   * See MCPJamHandlerOptions.maxSteps. Forwarded as-is.
+   */
+  maxSteps?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -231,6 +252,17 @@ export interface OrgLocalModelHandlerOptions {
     write: (chunk: UIMessageChunk) => void;
   }) => void;
   onLiveTextDelta?: (delta: string) => void;
+  /**
+   * Inbound request abort signal. Passed to streamText so a client
+   * disconnect cancels the upstream provider call.
+   */
+  abortSignal?: AbortSignal;
+  /**
+   * Total per-turn step budget enforced via the AI SDK's `stepCountIs`.
+   * Defaults to 30 to match the hosted MCPJam path so users don't see
+   * fewer agentic steps when routed through a local provider.
+   */
+  maxSteps?: number;
 }
 
 export function handleLocalOrgChatModel(
@@ -319,6 +351,30 @@ export function handleLocalOrgChatModel(
   let currentStepIndex = 0;
   let turnFinished = false;
   let streamErrored = false;
+  let aborted = false;
+  const resolvedMaxSteps =
+    typeof options.maxSteps === "number" &&
+    Number.isFinite(options.maxSteps) &&
+    options.maxSteps > 0
+      ? Math.floor(options.maxSteps)
+      : DEFAULT_MAX_STEPS_LOCAL_ORG;
+
+  // Mark `aborted` as soon as the inbound signal fires so the
+  // onFinish/onError branches below can gate their side effects without
+  // racing against the SDK's own abort propagation.
+  if (options.abortSignal) {
+    if (options.abortSignal.aborted) {
+      aborted = true;
+    } else {
+      options.abortSignal.addEventListener(
+        "abort",
+        () => {
+          aborted = true;
+        },
+        { once: true }
+      );
+    }
+  }
 
   const stream = createUIMessageStream({
     onError: (error) => {
@@ -361,7 +417,8 @@ export function handleLocalOrgChatModel(
         ...(temperature !== undefined ? { temperature } : {}),
         system: providerSystemPrompt,
         tools: tracedTools,
-        stopWhen: stepCountIs(20),
+        stopWhen: stepCountIs(resolvedMaxSteps),
+        ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
         prepareStep: ({ stepNumber }) => {
           currentStepIndex = stepNumber;
           registerAiSdkPrepareStep(traceContext, stepNumber, {
@@ -450,6 +507,14 @@ export function handleLocalOrgChatModel(
         },
         onError: async ({ error }) => {
           if (turnFinished) return;
+          // Aborts are not failures — silent-cancel invariant applies
+          // here too: no error chunk, no turn_finish, no fail span.
+          if (aborted || isAbortError(error)) {
+            aborted = true;
+            turnFinished = true;
+            streamErrored = true;
+            return;
+          }
           const failAt = Date.now();
           finalizeAiSdkTraceOnFailure(traceContext, failAt, {
             completedStepCount: currentStepIndex,
@@ -476,6 +541,17 @@ export function handleLocalOrgChatModel(
           turnFinished = true;
         },
         onFinish: async (event) => {
+          // Silent-cancel invariant for the local org BYOK path: an
+          // aborted turn must not emit turn_finish, post usage to
+          // Convex, or run conversation persistence. `onStreamComplete`
+          // still runs via createUIMessageStream's onFinish below so
+          // per-request resources are released.
+          if (aborted || options.abortSignal?.aborted) {
+            aborted = true;
+            turnFinished = true;
+            return;
+          }
+
           patchAiSdkRecordedSpansMessageRangesFromSteps(
             traceContext.recordedSpans,
             initialMessageHistoryLength,
@@ -663,6 +739,9 @@ export async function handleHostedOrgChatModel(
     onStreamWriterReady: options.onStreamWriterReady,
     onLiveTextDelta: options.onLiveTextDelta,
     clientIp: options.clientIp,
+    abortSignal: options.abortSignal,
+    heartbeatIntervalMs: options.heartbeatIntervalMs,
+    maxSteps: options.maxSteps,
     endpointPath: "/stream/org",
     extraHeaders: {
       "X-Inspector-Service-Token": inspectorServiceToken,

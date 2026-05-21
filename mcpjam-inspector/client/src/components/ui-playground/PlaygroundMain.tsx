@@ -1782,6 +1782,11 @@ export function PlaygroundMain({
     ],
   );
 
+  const resetMultiModelSessions = useCallback(() => {
+    clearMultiModelUiState();
+    setMultiModelSessionGeneration((previous) => previous + 1);
+  }, [clearMultiModelUiState]);
+
   const handleNewChat = useCallback(
     async (options?: { shared?: boolean }) => {
       if (isStreaming) return;
@@ -1793,6 +1798,10 @@ export function PlaygroundMain({
       cancelPendingHistorySelection();
       syncResumedVersion(null);
       resetChat();
+      // Compare lanes hold their own useChatSession state; resetting the
+      // root single-model session alone leaves the visible lane transcripts
+      // intact and the user sees nothing happen.
+      resetMultiModelSessions();
       setLoadedThreadOwnerUserId(null);
       setPendingDirectVisibility(options?.shared ? "project" : "private");
     },
@@ -1802,6 +1811,7 @@ export function PlaygroundMain({
       ensureDiscardDraftConfirmed,
       isStreaming,
       resetChat,
+      resetMultiModelSessions,
       syncResumedVersion,
     ],
   );
@@ -1816,10 +1826,17 @@ export function PlaygroundMain({
       cancelPendingHistorySelection();
       syncResumedVersion(null);
       resetChat();
+      resetMultiModelSessions();
       setLoadedThreadOwnerUserId(null);
       setPendingDirectVisibility("private");
     },
-    [cancelPendingHistorySelection, clearComposerDraft, resetChat, syncResumedVersion],
+    [
+      cancelPendingHistorySelection,
+      clearComposerDraft,
+      resetChat,
+      resetMultiModelSessions,
+      syncResumedVersion,
+    ],
   );
 
   const handleHistorySessionAction = useCallback(
@@ -2296,11 +2313,6 @@ export function PlaygroundMain({
     },
     []
   );
-
-  const resetMultiModelSessions = useCallback(() => {
-    clearMultiModelUiState();
-    setMultiModelSessionGeneration((previous) => previous + 1);
-  }, [clearMultiModelUiState]);
 
   const handleResetAllChats = useCallback(() => {
     composer.prepareForClearChat();
