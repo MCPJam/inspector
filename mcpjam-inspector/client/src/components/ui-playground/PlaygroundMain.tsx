@@ -1179,6 +1179,17 @@ export function PlaygroundMain({
       isPreparingServerForSend,
   });
 
+  // Mirror of the `canEnableMultiModel` cleanup below: when the multi-host
+  // gate flips false (host count drops, or the session becomes shared) and
+  // the persisted `multiHostEnabled` is still true, reset it. Without this,
+  // a user who had compare on in a private session would silently re-enter
+  // compare the next time `canEnableMultiHost` flips back to true.
+  useEffect(() => {
+    if (!canEnableMultiHost && multiHostEnabled) {
+      setMultiHostEnabled(false);
+    }
+  }, [canEnableMultiHost, multiHostEnabled, setMultiHostEnabled]);
+
   useEffect(() => {
     if (!canEnableMultiModel && multiModelEnabled) {
       setMultiModelEnabled(false);
