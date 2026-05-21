@@ -2,6 +2,7 @@ import type {
   McpUiResourceCsp,
   McpUiResourcePermissions,
 } from "@modelcontextprotocol/ext-apps/app-bridge";
+import type { OpenAiAppsCapabilities } from "@/lib/client-styles";
 import type { ToolRenderOverride } from "./tool-render-overrides";
 
 export interface PersistedExecutionReplayInput {
@@ -26,6 +27,14 @@ export interface PersistedExecutionReplayInput {
   prefersBorder?: boolean;
   /** Persisted compat-runtime flag from the cached HTML blob. */
   injectedOpenAiCompat?: boolean;
+  /**
+   * Persisted per-method `window.openai.*` capability surface that
+   * was injected into the cached HTML blob. Sibling of
+   * `injectedOpenAiCompat`. Threads through the replay path so the
+   * renderer can advertise the same matrix the cached bytes were
+   * built against. Absent for pre-feature snapshots.
+   */
+  injectedOpenAiCompatCapabilities?: OpenAiAppsCapabilities;
 }
 
 export interface PersistedExecutionReplay {
@@ -69,6 +78,8 @@ export function buildPersistedExecutionReplay(
       prefersBorder:
         input.protocol === "mcp-apps" ? input.prefersBorder : undefined,
       injectedOpenAiCompat: input.injectedOpenAiCompat,
+      injectedOpenAiCompatCapabilities:
+        input.injectedOpenAiCompatCapabilities,
     },
   };
 }

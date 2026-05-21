@@ -84,6 +84,18 @@ interface WidgetContentRequest {
    * so absent / non-boolean payloads here mean "no shim".
    */
   injectOpenAiCompat?: boolean;
+  /**
+   * Resolved per-method `window.openai.*` capability surface. Caller
+   * (client renderer) computes this from the active host config's
+   * preset + override stack and forwards it verbatim. The local server
+   * route does NOT resolve from a hostConfig — it doesn't own one —
+   * so missing payloads here mean "use the SDK runtime's default full
+   * surface", preserving legacy behavior.
+   *
+   * When present, methods whose capability resolves false will be
+   * absent on `window.openai` in the widget (feature-detection truth).
+   */
+  openAiCompatCapabilities?: Record<string, unknown>;
   template?: string;
   viewMode?: string;
   viewParams?: Record<string, unknown>;
@@ -145,6 +157,7 @@ apps.post("/widget-content", async (c) => {
       viewMode,
       viewParams,
       injectOpenAiCompat,
+      openAiCompatCapabilities,
     } = body;
 
     if (!serverId || !resourceUri || !toolId || !toolName) {
@@ -276,6 +289,13 @@ apps.post("/widget-content", async (c) => {
         theme,
         viewMode,
         viewParams,
+        // Cast: the wire body declares `Record<string, unknown>` for
+        // forward compatibility (server doesn't structurally validate
+        // the matrix here — the SDK runtime accepts a sparse partial
+        // and fills in defaults). Type-checking happens client-side.
+        capabilities: openAiCompatCapabilities as
+          | Parameters<typeof injectOpenAICompat>[1]["capabilities"]
+          | undefined,
       });
     }
 
@@ -300,6 +320,15 @@ apps.post("/widget-content", async (c) => {
       // the server-confirmed value alongside cached HTML makes saved
       // views unambiguous about their contents.
       injectedOpenAiCompat: shouldInjectOpenAiCompat,
+      // Per plan §6.5: replay/debug needs to know *which* surface was
+      // injected, not just yes/no. Echo the capability record alongside
+      // the boolean so saved views are self-describing. Absent when
+      // injection was off or when no capabilities were passed (legacy
+      // call sites — defaults to full surface, which is implied).
+      injectedOpenAiCompatCapabilities:
+        shouldInjectOpenAiCompat && openAiCompatCapabilities !== undefined
+          ? openAiCompatCapabilities
+          : undefined,
       // SEP-1865 mimetype validation
       mimeType: contentMimeType,
       mimeTypeValid,

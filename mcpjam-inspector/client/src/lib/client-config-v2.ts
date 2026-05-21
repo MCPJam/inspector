@@ -20,8 +20,14 @@ import {
 import {
   getCompatRuntimeForStyle,
   getHostCapabilitiesForStyle,
+  OPENAI_APPS_FULL_SURFACE,
 } from "@/lib/client-styles";
-import type { ChatUiOverride } from "@/lib/client-styles";
+import type {
+  ChatUiOverride,
+  EffectiveCompatRuntime,
+  OpenAiAppsCapabilities,
+  ResolvedOpenAiAppsCapabilities,
+} from "@/lib/client-styles";
 import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
 
 export type HostStyleId = ChatboxHostStyle;
@@ -173,8 +179,26 @@ export type HostConfigMcpProfileV1 = {
        * (`@mcpjam/sdk`'s `injectOpenAICompat`). Only enable when
        * emulating a host that historically exposed this surface, or
        * when the widget under test depends on it.
+       *
+       * Semantics:
+       * - `undefined` (or field absent) → fall back to the host style preset.
+       * - `true` → inject the shim (per-method surface controlled by
+       *   `openaiAppsOverrides` merged over the preset's `openaiAppsCapabilities`).
+       * - `false` → do NOT inject the shim. Per-method overrides are
+       *   ignored when injection is off; `window.openai` is `undefined`
+       *   in the widget, which is what SEP-1865-only hosts advertise.
        */
       openaiApps?: boolean;
+      /**
+       * Sparse per-method overrides applied on top of the host style
+       * preset when the shim IS injected. Each present field replaces
+       * the corresponding preset value; absent fields fall back to the
+       * preset. Use this to model a specific host's published subset
+       * (e.g. Microsoft 365 Copilot's "no requestModal, no uploadFile,
+       * fullscreen-only display mode") without redefining the whole
+       * surface.
+       */
+      openaiAppsOverrides?: OpenAiAppsCapabilities;
     };
   };
   extensions?: Record<string, unknown>;
@@ -483,26 +507,92 @@ export function resolveHostInfo(
 }
 
 /**
- * Resolve the effective compat-runtime shim flags for a host config:
- *   1. user override on the profile (when explicitly boolean)
- *   2. host style preset (Apps SDK hosts → true; SEP-1865 hosts → false)
- *   3. honest "no shim" default when neither resolves
+ * Resolve the effective compat-runtime state for a host config. Returns a
+ * sum type so consumers can't accidentally read per-method capabilities
+ * when the shim isn't being injected.
+ *
+ * Resolution order:
+ *   1. `compatRuntime.openaiApps === false` → `{ injected: false }`
+ *      (per-method overrides ignored — injection is off).
+ *   2. `compatRuntime.openaiApps === true` → injected; capabilities =
+ *      preset's per-method baseline (or the full surface if the preset
+ *      doesn't specify), with `openaiAppsOverrides` merged on top.
+ *   3. `compatRuntime.openaiApps === undefined` → fall back to the host
+ *      style preset's injection decision; if the preset injects, merge
+ *      `openaiAppsOverrides` on top of its per-method baseline.
  *
  * Mirror of {@link resolveEffectiveHostCapabilities}: presets live in
  * the host style registry, overrides live on the persisted profile,
  * and the resolver decides per call. Consumers (renderer, modal,
- * server routes) pass the resolved boolean across the wire so the
+ * server routes) pass the resolved value across the wire so the
  * decision is made once and travels with the request.
  */
 export function resolveEffectiveCompatRuntime(args: {
   profile: HostConfigMcpProfileV1 | undefined;
   hostStyle: ChatboxHostStyle | string | null | undefined;
-}): { openaiApps: boolean } {
+}): EffectiveCompatRuntime {
   const preset = getCompatRuntimeForStyle(args.hostStyle);
-  const override = args.profile?.apps?.compatRuntime?.openaiApps;
+  const override = args.profile?.apps?.compatRuntime;
+  const injectOverride = override?.openaiApps;
+
+  // Explicit `false` override short-circuits — injection off, per-method
+  // overrides are meaningless without the shim.
+  if (injectOverride === false) return { injected: false };
+
+  // Effective injection: explicit override wins; otherwise the preset.
+  const injected =
+    typeof injectOverride === "boolean" ? injectOverride : preset.injected;
+  if (!injected) return { injected: false };
+
+  // Inject path: pick the base per-method surface (preset's, or the full
+  // surface if the preset doesn't claim one — happens when a user flips
+  // injection on for a host style that defaults to off).
+  const baseCapabilities: ResolvedOpenAiAppsCapabilities = preset.injected
+    ? preset.capabilities
+    : OPENAI_APPS_FULL_SURFACE;
+
   return {
-    openaiApps:
-      typeof override === "boolean" ? override : preset.openaiApps,
+    injected: true,
+    capabilities: mergeOpenAiAppsCapabilities(
+      baseCapabilities,
+      override?.openaiAppsOverrides,
+    ),
+  };
+}
+
+/**
+ * Apply a sparse per-method override on top of a fully-resolved baseline.
+ * Each present field in `override` replaces the corresponding baseline
+ * field; absent fields pass through. Returns a new object — neither
+ * input is mutated.
+ *
+ * Centralized here (rather than inlined in callers) so canvas summary
+ * code, the UI matrix, and the resolver share one merge contract — a
+ * UI that displays "what's effective" agrees with the wire payload.
+ */
+export function mergeOpenAiAppsCapabilities(
+  base: ResolvedOpenAiAppsCapabilities,
+  override: OpenAiAppsCapabilities | undefined,
+): ResolvedOpenAiAppsCapabilities {
+  if (!override) return base;
+  return {
+    callTool: override.callTool ?? base.callTool,
+    sendFollowUpMessage:
+      override.sendFollowUpMessage ?? base.sendFollowUpMessage,
+    setWidgetState: override.setWidgetState ?? base.setWidgetState,
+    requestDisplayMode:
+      override.requestDisplayMode ?? base.requestDisplayMode,
+    notifyIntrinsicHeight:
+      override.notifyIntrinsicHeight ?? base.notifyIntrinsicHeight,
+    openExternal: override.openExternal ?? base.openExternal,
+    setOpenInAppUrl: override.setOpenInAppUrl ?? base.setOpenInAppUrl,
+    requestModal: override.requestModal ?? base.requestModal,
+    uploadFile: override.uploadFile ?? base.uploadFile,
+    selectFiles: override.selectFiles ?? base.selectFiles,
+    getFileDownloadUrl:
+      override.getFileDownloadUrl ?? base.getFileDownloadUrl,
+    requestCheckout: override.requestCheckout ?? base.requestCheckout,
+    requestClose: override.requestClose ?? base.requestClose,
   };
 }
 

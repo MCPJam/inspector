@@ -24,9 +24,15 @@ import {
   emptyHostConfigInputV2,
   hostConfigDtoToInput,
   hostConfigInputsEqual,
+  mergeOpenAiAppsCapabilities,
   resolveClientInfo,
+  resolveEffectiveCompatRuntime,
   resolveSupportedProtocolVersions,
 } from "../client-config-v2";
+import {
+  OPENAI_APPS_COPILOT_SURFACE,
+  OPENAI_APPS_FULL_SURFACE,
+} from "@/lib/client-styles";
 
 const SAMPLE_PROFILE: HostConfigMcpProfileV1 = {
   profileVersion: 1,
@@ -270,5 +276,107 @@ describe("hostConfigInputsEqual mcpProfile semantics", () => {
       },
     };
     expect(hostConfigInputsEqual(a, b)).toBe(false);
+  });
+});
+
+describe("resolveEffectiveCompatRuntime — per-method capability matrix", () => {
+  test('host style with `compatRuntime.openaiApps: false` resolves to `{ injected: false }` regardless of overrides', () => {
+    // Claude doesn't inject the shim. Per-method overrides without
+    // injection are meaningless — the resolver must short-circuit.
+    const result = resolveEffectiveCompatRuntime({
+      profile: {
+        profileVersion: 1,
+        apps: {
+          compatRuntime: {
+            // Explicit user override flipping injection off.
+            openaiApps: false,
+            // Stale per-method overrides from a previous "on" state.
+            openaiAppsOverrides: { requestModal: true },
+          },
+        },
+      },
+      hostStyle: "chatgpt",
+    });
+    expect(result).toEqual({ injected: false });
+  });
+
+  test("preset injection on, no overrides → preset capabilities verbatim", () => {
+    const result = resolveEffectiveCompatRuntime({
+      profile: undefined,
+      hostStyle: "copilot",
+    });
+    // Copilot's preset = the published Copilot surface (fullscreen-only
+    // displayMode, requestModal off, etc.).
+    expect(result).toEqual({
+      injected: true,
+      capabilities: OPENAI_APPS_COPILOT_SURFACE,
+    });
+  });
+
+  test("sparse overrides merge field-by-field over preset", () => {
+    const result = resolveEffectiveCompatRuntime({
+      profile: {
+        profileVersion: 1,
+        apps: {
+          compatRuntime: {
+            openaiAppsOverrides: {
+              // Override one field; everything else should fall back
+              // to the chatgpt preset (full surface).
+              requestModal: false,
+            },
+          },
+        },
+      },
+      hostStyle: "chatgpt",
+    });
+    expect(result.injected).toBe(true);
+    if (!result.injected) throw new Error("unreachable");
+    expect(result.capabilities.requestModal).toBe(false);
+    // Untouched fields stay at the preset value.
+    expect(result.capabilities.callTool).toBe(true);
+    expect(result.capabilities.requestDisplayMode).toBe("all");
+  });
+
+  test("user flipping injection on for a Claude-style host → full ChatGPT surface", () => {
+    // Claude's preset has no per-method `openaiAppsCapabilities` (the
+    // preset doesn't inject the shim at all). If the user explicitly
+    // turns injection on, the resolver must pick the full ChatGPT
+    // surface as the baseline — anything sparser would have weird
+    // undefined-method semantics.
+    const result = resolveEffectiveCompatRuntime({
+      profile: {
+        profileVersion: 1,
+        apps: { compatRuntime: { openaiApps: true } },
+      },
+      hostStyle: "claude",
+    });
+    expect(result).toEqual({
+      injected: true,
+      capabilities: OPENAI_APPS_FULL_SURFACE,
+    });
+  });
+
+  test("requestDisplayMode override survives merge as the tri-state value", () => {
+    const result = resolveEffectiveCompatRuntime({
+      profile: {
+        profileVersion: 1,
+        apps: {
+          compatRuntime: {
+            openaiAppsOverrides: { requestDisplayMode: "fullscreen-only" },
+          },
+        },
+      },
+      // chatgpt's preset uses "all" — override flips it to fullscreen-only.
+      hostStyle: "chatgpt",
+    });
+    expect(result.injected).toBe(true);
+    if (!result.injected) throw new Error("unreachable");
+    expect(result.capabilities.requestDisplayMode).toBe("fullscreen-only");
+  });
+
+  test("mergeOpenAiAppsCapabilities — undefined override returns baseline unchanged", () => {
+    const baseline = OPENAI_APPS_FULL_SURFACE;
+    const merged = mergeOpenAiAppsCapabilities(baseline, undefined);
+    expect(merged).toEqual(baseline);
   });
 });

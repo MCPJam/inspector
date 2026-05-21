@@ -1,5 +1,6 @@
 export type {
   ChatUiOverride,
+  EffectiveCompatRuntime,
   HostChatUi,
   HostMcpProfile,
   HostStyleDefinition,
@@ -7,6 +8,8 @@ export type {
   HostStyleId,
   HostThemeMode,
   IndicatorDef,
+  OpenAiAppsCapabilities,
+  ResolvedOpenAiAppsCapabilities,
 } from "./types";
 export {
   CHATGPT_HOST_STYLE,
@@ -15,6 +18,8 @@ export {
   COPILOT_HOST_STYLE,
   MCPJAM_HOST_STYLE,
   BUILT_IN_HOST_STYLES,
+  OPENAI_APPS_COPILOT_SURFACE,
+  OPENAI_APPS_FULL_SURFACE,
 } from "./built-ins";
 export {
   DEFAULT_HOST_STYLE,

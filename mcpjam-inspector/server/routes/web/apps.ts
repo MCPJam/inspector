@@ -117,6 +117,13 @@ const mcpAppsWidgetContentSchema = projectServerSchema.extend({
   // `window.openai`. ChatGPT/Copilot and MCPJam dev host configs flip
   // this on per request via the resolver in the renderer.
   injectOpenAiCompat: z.boolean().optional().default(false),
+  // Per-method `window.openai.*` capability surface — client-resolved
+  // and forwarded verbatim. The hosted server doesn't own the active
+  // host config (capability resolution stays client-side), so this is
+  // a passthrough into `injectOpenAICompat`. `z.unknown()` because the
+  // SDK runtime accepts a sparse partial — strict validation lives on
+  // the client where the type is known.
+  openAiCompatCapabilities: z.record(z.string(), z.unknown()).optional(),
   template: z.string().optional(),
   viewMode: z.string().optional(),
   viewParams: z.record(z.string(), z.unknown()).optional(),
@@ -251,6 +258,9 @@ apps.post("/mcp-apps/widget-content", async (c) =>
           theme: body.theme,
           viewMode: body.viewMode,
           viewParams: body.viewParams,
+          capabilities: body.openAiCompatCapabilities as
+            | Parameters<typeof injectOpenAICompat>[1]["capabilities"]
+            | undefined,
         });
       }
 
@@ -262,6 +272,11 @@ apps.post("/mcp-apps/widget-content", async (c) =>
         cspMode: effectiveCspMode,
         prefersBorder: prefersBorderFromMeta,
         injectedOpenAiCompat: shouldInjectOpenAiCompat,
+        injectedOpenAiCompatCapabilities:
+          shouldInjectOpenAiCompat &&
+          body.openAiCompatCapabilities !== undefined
+            ? body.openAiCompatCapabilities
+            : undefined,
         mimeType: contentMimeType,
         mimeTypeValid,
         mimeTypeWarning,

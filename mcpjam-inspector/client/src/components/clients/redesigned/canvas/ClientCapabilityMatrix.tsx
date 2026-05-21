@@ -63,12 +63,17 @@ export interface HostMatrixCardProps {
   /**
    * Resolved vendor compat-runtime shim state. `openaiApps: true` →
    * inspector injects `window.openai` into widget HTML; `false` → no
-   * shim. `fromOverride: false` means the value comes from the host
-   * style preset (drives the "(from preset)" chip qualifier).
+   * shim. `fromOverride: false` means the injection flag comes from
+   * the host style preset (drives the "from preset" chip qualifier).
+   * `hasMethodOverrides` / `methodCount` / `methodTotal` summarize the
+   * per-method matrix for the chip's "custom (N/M methods)" subtitle.
    */
   compatRuntime: {
     openaiApps: boolean;
     fromOverride: boolean;
+    hasMethodOverrides: boolean;
+    methodCount: number;
+    methodTotal: number;
   };
   selectedNodeId: string | null;
   onSelectNode: (nodeId: string) => void;
@@ -327,9 +332,24 @@ function ViewIframeInjectedGlobals({
   compatRuntime,
   onClick,
 }: {
-  compatRuntime: { openaiApps: boolean; fromOverride: boolean };
+  compatRuntime: {
+    openaiApps: boolean;
+    fromOverride: boolean;
+    hasMethodOverrides: boolean;
+    methodCount: number;
+    methodTotal: number;
+  };
   onClick: () => void;
 }) {
+  // Tri-state label: off / preset / custom. "Custom" wins whenever the
+  // user has flipped at least one per-method override, even if injection
+  // itself is at the preset default. Matches what the Apps tab matrix
+  // shows — the chip is a summary of the same state.
+  const customSubtitle = compatRuntime.hasMethodOverrides
+    ? `custom (${compatRuntime.methodCount}/${compatRuntime.methodTotal} methods)`
+    : compatRuntime.fromOverride
+      ? "overridden"
+      : "from preset";
   return (
     <div className="hp-view-injected">
       <button
@@ -341,14 +361,16 @@ function ViewIframeInjectedGlobals({
         }}
         title={
           compatRuntime.openaiApps
-            ? "Inspector injects window.openai into widget HTML before sandboxing, so OpenAI Apps SDK widgets keep working on this host."
+            ? compatRuntime.hasMethodOverrides
+              ? `Inspector injects window.openai with a custom per-method surface (${compatRuntime.methodCount}/${compatRuntime.methodTotal} methods active). Click to view the matrix.`
+              : "Inspector injects window.openai into widget HTML before sandboxing, so OpenAI Apps SDK widgets keep working on this host."
             : "Inspector does NOT inject window.openai for this host. SEP-1865-only — widgets that rely on the OpenAI Apps SDK compatibility layer will not run."
         }
       >
         <span className="hp-cap-dot" aria-hidden />
         <span className="hp-cap-name">window.openai</span>
-        {!compatRuntime.fromOverride ? (
-          <span className="hp-cap-tag">from preset</span>
+        {compatRuntime.openaiApps ? (
+          <span className="hp-cap-tag">{customSubtitle}</span>
         ) : null}
       </button>
     </div>

@@ -431,6 +431,17 @@ export function ViewsTab({
       // renderer interprets as "let the live profile decide" (safe
       // for views without cached HTML).
       injectedOpenAiCompat: selectedView.injectedOpenAiCompat,
+      // Per-method `window.openai.*` surface that was injected at
+      // capture time. Replay reconstructs the same set of methods so
+      // a Copilot-subset snapshot doesn't accidentally render against
+      // the full ChatGPT surface when the live host has flipped. Pre-
+      // feature view rows omit this; the renderer falls back to the
+      // full ChatGPT surface (the runtime default at capture time).
+      injectedOpenAiCompatCapabilities: (
+        selectedView as { injectedOpenAiCompatCapabilities?: unknown }
+      ).injectedOpenAiCompatCapabilities as
+        | import("@/lib/client-styles").OpenAiAppsCapabilities
+        | undefined,
     });
 
     setPendingExecution({
@@ -614,10 +625,29 @@ export function ViewsTab({
           copyNumber === 1
             ? `${baseName} (copy)`
             : `${baseName} (copy ${copyNumber})`;
+        // Carry both the boolean and the per-method capability
+        // surface across a duplicate so the copy reproduces the
+        // original's `window.openai` API surface byte-for-byte. Only
+        // carry when the duplicate also carries cached widget bytes
+        // (the fields describe what was baked into the HTML; carrying
+        // them without HTML would lie about what the copy renders).
+        const viewWithCapabilities = view as {
+          injectedOpenAiCompat?: boolean;
+          injectedOpenAiCompatCapabilities?: import("@/lib/client-styles").OpenAiAppsCapabilities;
+        };
         const injectedOpenAiCompatCopy =
           widgetHtmlBlobId !== undefined &&
-          view.injectedOpenAiCompat !== undefined
-            ? { injectedOpenAiCompat: view.injectedOpenAiCompat }
+          viewWithCapabilities.injectedOpenAiCompat !== undefined
+            ? {
+                injectedOpenAiCompat: viewWithCapabilities.injectedOpenAiCompat,
+                ...(viewWithCapabilities.injectedOpenAiCompatCapabilities !==
+                undefined
+                  ? {
+                      injectedOpenAiCompatCapabilities:
+                        viewWithCapabilities.injectedOpenAiCompatCapabilities,
+                    }
+                  : {}),
+              }
             : {};
 
         await createMcpView({
@@ -784,14 +814,23 @@ export function ViewsTab({
 
       if (widgetHtmlBlobId) {
         updates.widgetHtmlBlobId = widgetHtmlBlobId;
-        // Persist the renderer's resolved compat flag alongside the
-        // new blob so the cached-replay branch agrees with the bytes.
-        // Undefined when the renderer hasn't recorded one yet — leave
-        // the field untouched in that case (don't overwrite a prior
-        // stored value with `undefined`).
+        // Persist the renderer's resolved compat flag + per-method
+        // capability surface alongside the new blob so the cached-
+        // replay branch agrees with the bytes AND knows which
+        // `window.openai.*` methods the SDK runtime exposed.
+        // Undefined when the renderer hasn't recorded a value yet —
+        // leave the field untouched (don't overwrite a prior stored
+        // value with `undefined`).
         if (previewWidgetDebugInfo?.injectedOpenAiCompat !== undefined) {
           updates.injectedOpenAiCompat =
             previewWidgetDebugInfo.injectedOpenAiCompat;
+        }
+        if (
+          previewWidgetDebugInfo?.injectedOpenAiCompatCapabilities !==
+          undefined
+        ) {
+          updates.injectedOpenAiCompatCapabilities =
+            previewWidgetDebugInfo.injectedOpenAiCompatCapabilities;
         }
       }
 

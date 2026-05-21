@@ -736,12 +736,38 @@ export function buildRedesignedHostCanvas(
   // qualifier surfaces this distinction so users know whether their
   // edit is doing something.
   const compatRuntimeOverride = draft.mcpProfile?.apps?.compatRuntime?.openaiApps;
+  const overridesRecord =
+    draft.mcpProfile?.apps?.compatRuntime?.openaiAppsOverrides;
+  const effectiveCompatRuntime = resolveEffectiveCompatRuntime({
+    profile: draft.mcpProfile,
+    hostStyle: draft.hostStyle,
+  });
+  // Total method count for the "N/M methods" custom subtitle. Counts
+  // every method whose effective value is "on" (boolean true) OR a
+  // non-`none` requestDisplayMode. Mirrors how the matrix UI counts
+  // active methods so the chip subtitle and the matrix agree.
+  const methodCount = effectiveCompatRuntime.injected
+    ? Object.values(effectiveCompatRuntime.capabilities).reduce(
+        (sum, value) =>
+          sum +
+          (value === true || (typeof value === "string" && value !== "none")
+            ? 1
+            : 0),
+        0,
+      )
+    : 0;
   const compatRuntime = {
-    openaiApps: resolveEffectiveCompatRuntime({
-      profile: draft.mcpProfile,
-      hostStyle: draft.hostStyle,
-    }).openaiApps,
+    openaiApps: effectiveCompatRuntime.injected,
     fromOverride: typeof compatRuntimeOverride === "boolean",
+    // Whether the user has set any per-method override on top of the
+    // preset — drives the "custom" vs "preset" label in the chip.
+    hasMethodOverrides:
+      overridesRecord !== undefined && Object.keys(overridesRecord).length > 0,
+    methodCount,
+    // Total methods in the matrix (13 today). Constant; lives here so
+    // the chip subtitle reads "N/13 methods" without the chip needing
+    // to import the matrix's method list.
+    methodTotal: 13,
   };
 
   // ---- Nodes / edges ----
