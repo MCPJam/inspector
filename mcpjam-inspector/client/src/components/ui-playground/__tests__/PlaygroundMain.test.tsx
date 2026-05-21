@@ -681,6 +681,79 @@ describe("PlaygroundMain", () => {
       expect(mockUseChatSession.resetChat).toHaveBeenCalled();
     });
 
+    it("hides the multi-host compare picker after the active session is shared", async () => {
+      const privateSessionLocal = {
+        _id: "history-share-gate-1",
+        chatSessionId: "chat-session-share-gate-1",
+        firstMessagePreview: "Hello",
+        status: "active" as const,
+        directVisibility: "private" as const,
+        messageCount: 2,
+        version: 4,
+        startedAt: 1,
+        lastActivityAt: 1,
+        isPinned: false,
+        manualUnread: false,
+        isUnread: false,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: { selectedServers: ["test-server"] },
+      };
+      const sharedSessionLocal = {
+        ...privateSessionLocal,
+        directVisibility: "project" as const,
+        version: 5,
+      };
+      mockGetChatHistoryDetail
+        .mockResolvedValueOnce({
+          ok: true,
+          session: privateSessionLocal,
+          widgetSnapshots: [],
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          session: sharedSessionLocal,
+          widgetSnapshots: [],
+        });
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      await waitFor(() => {
+        expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
+          null,
+        );
+      });
+
+      // Private sessions show the host picker by default.
+      expect(
+        screen.getByTestId("playground-host-picker-stub"),
+      ).toBeInTheDocument();
+
+      await act(async () => {
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await Promise.resolve(bridge?.onSelectThread(privateSessionLocal));
+      });
+      await waitFor(() => {
+        expect(capturedChatSessionOptions.directVisibility).toBe("private");
+      });
+
+      await act(async () => {
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await Promise.resolve(
+          bridge?.onSessionAction?.({
+            action: "share",
+            session: privateSessionLocal,
+          }),
+        );
+      });
+
+      await waitFor(() => {
+        expect(capturedChatSessionOptions.directVisibility).toBe("project");
+      });
+      expect(
+        screen.queryByTestId("playground-host-picker-stub"),
+      ).toBeNull();
+    });
+
     it("keeps active playground thread visibility in sync after sharing", async () => {
       const privateSession = {
         _id: "history-1",

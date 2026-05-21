@@ -1161,12 +1161,16 @@ export function ChatTabV2({
     selectedModel,
     selectedModelIds,
   ]);
+  // Shared (project-visible) sessions are collaborative artifacts; the
+  // multi-model toggle would mutate session state for every collaborator,
+  // so it's hidden in that scope. Single-model selection stays available.
   const canEnableMultiModel =
     enableMultiModelChat &&
     !minimalMode &&
     !executionConfig?.modelId &&
     !hostedChatboxId &&
     !hostedChatboxSurface &&
+    pendingDirectVisibility !== "project" &&
     availableModels.length > 1;
   // When viewing a history session, fall back to single-model rendering so
   // the ChatTabV2 messages (which hold the hydrated transcript) are displayed.

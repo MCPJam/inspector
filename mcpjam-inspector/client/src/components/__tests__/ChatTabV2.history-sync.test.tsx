@@ -233,13 +233,16 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
   ChatInput: ({
     value,
     onChange,
+    enableMultiModel,
   }: {
     value: string;
     onChange: (value: string) => void;
+    enableMultiModel?: boolean;
   }) => (
     <input
       aria-label="Chat input"
       data-testid="chat-input"
+      data-enable-multi-model={enableMultiModel ? "true" : "false"}
       value={value}
       onChange={(event) => onChange(event.target.value)}
     />
@@ -761,6 +764,64 @@ describe("ChatTabV2 history sync", () => {
       "project"
     );
     expect(mockGetChatHistoryDetail).not.toHaveBeenCalled();
+  });
+
+  it("hides the multi-model toggle when the active thread is shared", async () => {
+    mockUseChatSession.availableModels = [
+      { id: "openai/gpt-5-mini", name: "GPT-5 Mini", provider: "openai" },
+      {
+        id: "anthropic/claude-sonnet-4-5",
+        name: "Claude Sonnet 4.5",
+        provider: "anthropic",
+      },
+    ];
+    const privateDetailResponse = {
+      ok: true,
+      session: {
+        ...mockHistorySession,
+        directVisibility: "private" as const,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: { selectedServers: ["server-1"] },
+      },
+      widgetSnapshots: [],
+    };
+    const sharedDetailResponse = {
+      ...privateDetailResponse,
+      session: {
+        ...privateDetailResponse.session,
+        directVisibility: "project" as const,
+        version: 5,
+      },
+    };
+    mockGetChatHistoryDetail
+      .mockResolvedValueOnce(privateDetailResponse)
+      .mockResolvedValueOnce(sharedDetailResponse);
+
+    render(<ChatTabV2 {...defaultProps} enableMultiModelChat={true} />);
+
+    expect(screen.getByTestId("chat-input")).toHaveAttribute(
+      "data-enable-multi-model",
+      "true",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
+    await flushMicrotasks();
+
+    expect(screen.getByTestId("chat-input")).toHaveAttribute(
+      "data-enable-multi-model",
+      "true",
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Share active thread" }),
+    );
+    await flushMicrotasks();
+
+    expect(screen.getByTestId("chat-input")).toHaveAttribute(
+      "data-enable-multi-model",
+      "false",
+    );
   });
 
   it("keeps direct visibility in sync when the active thread is shared", async () => {
