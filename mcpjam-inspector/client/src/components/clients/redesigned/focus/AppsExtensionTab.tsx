@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ChevronDown } from "lucide-react";
 import { JsonEditor, type JsonEditorMode } from "@/components/ui/json-editor";
 import {
   resolveEffectiveHostCapabilities,
@@ -8,7 +9,6 @@ import {
 import { stableStringifyJson } from "@/lib/client-config";
 import {
   getCompatRuntimeForStyle,
-  OPENAI_APPS_COPILOT_SURFACE,
   OPENAI_APPS_FULL_SURFACE,
 } from "@/lib/client-styles";
 import type {
@@ -674,14 +674,6 @@ function setCompatRuntimeOnDraft(
 const OPENAI_APPS_METHOD_LABELS: Array<{
   key: keyof OpenAiAppsCapabilities;
   label: string;
-  /**
-   * When true, the toggle is disabled in the UI: the inspector's SDK
-   * runtime doesn't yet implement this method, so flipping the flag
-   * would be misleading (the matrix would claim the method is
-   * available while `typeof window.openai.X` stays `undefined`). See
-   * plan §3.
-   */
-  notImplemented?: true;
 }> = [
   { key: "callTool", label: "callTool" },
   { key: "sendFollowUpMessage", label: "sendFollowUpMessage" },
@@ -689,10 +681,10 @@ const OPENAI_APPS_METHOD_LABELS: Array<{
   { key: "requestDisplayMode", label: "requestDisplayMode" },
   { key: "notifyIntrinsicHeight", label: "notifyIntrinsicHeight" },
   { key: "openExternal", label: "openExternal" },
-  { key: "setOpenInAppUrl", label: "setOpenInAppUrl", notImplemented: true },
+  { key: "setOpenInAppUrl", label: "setOpenInAppUrl" },
   { key: "requestModal", label: "requestModal" },
   { key: "uploadFile", label: "uploadFile" },
-  { key: "selectFiles", label: "selectFiles", notImplemented: true },
+  { key: "selectFiles", label: "selectFiles" },
   { key: "getFileDownloadUrl", label: "getFileDownloadUrl" },
   { key: "requestCheckout", label: "requestCheckout" },
   { key: "requestClose", label: "requestClose" },
@@ -706,15 +698,13 @@ const OPENAI_APPS_METHOD_LABELS: Array<{
  *
  * Layout:
  * - Master row at the top mirrors the old behavior: inject the shim
- *   or don't. When off, sub-rows hide (they're meaningless without
- *   injection).
- * - Preset chips below the master set the override block to a
- *   well-known shape (Match ChatGPT, Match Copilot, Match host preset).
+ *   or don't. When off, the per-method disclosure hides.
+ * - A collapsed disclosure summarizes "N of 13 enabled" and expands to
+ *   the full per-method list. Defaults inherit from the active host
+ *   template (`client-templates.ts`), so picking ChatGPT / Copilot /
+ *   etc. is already the "preset" — no second affordance needed.
  * - Method rows show the effective value with an "Overridden" badge
- *   when the user has diverged from the preset, plus a "Not
- *   implemented" badge for `selectFiles` / `setOpenInAppUrl` (the
- *   inspector's SDK runtime doesn't install those, regardless of the
- *   flag — see plan §3).
+ *   when the user has diverged from the preset.
  *
  * The matrix round-trips through `appsToJson` / `applyJsonToDraft`,
  * so the JSON editor below stays in sync.
@@ -728,6 +718,7 @@ function OpenaiAppsCapabilityMatrix({
     updater: (prev: HostConfigInputV2) => HostConfigInputV2,
   ) => void;
 }) {
+  const [methodsOpen, setMethodsOpen] = useState(false);
   const override = draft.mcpProfile?.apps?.compatRuntime?.openaiApps;
   const overridesRecord =
     draft.mcpProfile?.apps?.compatRuntime?.openaiAppsOverrides;
@@ -752,8 +743,7 @@ function OpenaiAppsCapabilityMatrix({
       setCompatRuntimeOnDraft(prev, {
         openaiApps: next,
         // Clear per-method overrides on master toggle off — they're
-        // meaningless without injection and a stale override would
-        // confuse "Match host preset" diffs later.
+        // meaningless without injection.
         openaiAppsOverrides: next ? overridesRecord : undefined,
       }),
     );
@@ -782,39 +772,21 @@ function OpenaiAppsCapabilityMatrix({
     });
   };
 
-  const applyPresetSurface = (
-    surface: ResolvedOpenAiAppsCapabilities | "host-preset",
-  ) => {
-    onDraftChange((prev) => {
-      const prevInjection = prev.mcpProfile?.apps?.compatRuntime?.openaiApps;
-      if (surface === "host-preset") {
-        // Clearing the override block snaps every method back to the
-        // active host style's preset — the canonical hash collapses
-        // because absent overrides hash distinctly from `{}`.
-        return setCompatRuntimeOnDraft(prev, {
-          openaiApps: prevInjection,
-          openaiAppsOverrides: undefined,
-        });
-      }
-      // Diff the target surface against the preset and persist only
-      // the differing fields (sparse override). Two identical
-      // configurations produced via different preset chips → same
-      // canonical hash because the sparse shape is identical.
-      const sparse: OpenAiAppsCapabilities = {};
-      for (const { key } of OPENAI_APPS_METHOD_LABELS) {
-        if (surface[key] !== presetCapabilities[key]) {
-          (sparse as Record<string, unknown>)[key] = surface[key] as never;
-        }
-      }
-      return setCompatRuntimeOnDraft(prev, {
-        // Force injection on — preset surfaces are meaningless without
-        // the shim, and users hitting a preset chip clearly want the
-        // matrix active.
-        openaiApps: true,
-        openaiAppsOverrides: Object.keys(sparse).length > 0 ? sparse : undefined,
-      });
-    });
-  };
+  // Summary line for the collapsed disclosure. Count methods whose
+  // effective value is "on" — booleans true, requestDisplayMode anything
+  // other than "none".
+  let enabledCount = 0;
+  for (const { key } of OPENAI_APPS_METHOD_LABELS) {
+    const value = { ...presetCapabilities, ...(overridesRecord ?? {}) }[key];
+    if (key === "requestDisplayMode") {
+      if (value !== "none") enabledCount += 1;
+    } else if (value === true) {
+      enabledCount += 1;
+    }
+  }
+  const overrideCount = overridesRecord
+    ? Object.keys(overridesRecord).length
+    : 0;
 
   return (
     <div className="rounded-[10px] border border-border bg-background">
@@ -840,101 +812,86 @@ function OpenaiAppsCapabilityMatrix({
         />
       </div>
 
-      {/* Preset chips + method matrix only when injected */}
+      {/* Per-method matrix lives behind a disclosure — the row count
+          is large, and the host template's preset already provides
+          sensible defaults for the selected vendor (ChatGPT / Copilot /
+          etc., see client-templates.ts). Expand to override individual
+          methods. */}
       {injected ? (
         <>
-          <div className="flex flex-wrap items-center gap-1.5 border-b border-border px-3.5 py-2">
-            <span className="text-[11px] text-muted-foreground">Match:</span>
-            <button
-              type="button"
-              className="rounded-md border border-border px-2 py-0.5 text-[11px] hover:bg-muted"
-              onClick={() => applyPresetSurface(OPENAI_APPS_FULL_SURFACE)}
-            >
-              ChatGPT (full)
-            </button>
-            <button
-              type="button"
-              className="rounded-md border border-border px-2 py-0.5 text-[11px] hover:bg-muted"
-              onClick={() => applyPresetSurface(OPENAI_APPS_COPILOT_SURFACE)}
-            >
-              Copilot
-            </button>
-            <button
-              type="button"
-              className="rounded-md border border-border px-2 py-0.5 text-[11px] hover:bg-muted"
-              onClick={() => applyPresetSurface("host-preset")}
-            >
-              Host preset
-            </button>
-          </div>
-          <div className="flex flex-col">
-            {OPENAI_APPS_METHOD_LABELS.map(({ key, label, notImplemented }) => {
-              const effective = effectiveCapabilities[key];
-              const presetValue = presetCapabilities[key];
-              const overridden =
-                overridesRecord !== undefined && key in overridesRecord;
-              return (
-                <div
-                  key={key}
-                  className="flex items-center justify-between gap-3 border-b border-border/50 px-3.5 py-2 last:border-b-0"
-                >
-                  <div className="flex flex-col gap-0.5">
-                    <span className="font-mono text-[12px]">{label}</span>
-                    <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                      <span>
-                        Preset: {String(presetValue)}
-                      </span>
-                      {overridden ? (
-                        <span className="rounded bg-orange-500/15 px-1 py-px text-orange-600 dark:text-orange-300">
-                          Overridden
-                        </span>
-                      ) : null}
-                      {notImplemented ? (
-                        <span className="rounded bg-muted px-1 py-px">
-                          Not implemented in Inspector
-                        </span>
-                      ) : null}
+          <button
+            type="button"
+            onClick={() => setMethodsOpen((v) => !v)}
+            aria-expanded={methodsOpen}
+            className="flex w-full items-center justify-between gap-3 border-b border-border px-3.5 py-2 text-left hover:bg-muted/40"
+          >
+            <div className="flex flex-col gap-0.5">
+              <span className="text-[12px] font-medium">
+                Configure methods
+              </span>
+              <span className="text-[11px] text-muted-foreground">
+                {enabledCount} of {OPENAI_APPS_METHOD_LABELS.length} enabled
+                {overrideCount > 0 ? ` · ${overrideCount} overridden` : ""}
+              </span>
+            </div>
+            <ChevronDown
+              className={`h-4 w-4 text-muted-foreground transition-transform ${
+                methodsOpen ? "rotate-180" : ""
+              }`}
+            />
+          </button>
+          {methodsOpen ? (
+            <>
+              <div className="flex flex-col">
+                {OPENAI_APPS_METHOD_LABELS.map(({ key, label }) => {
+                  const effective = effectiveCapabilities[key];
+                  const presetValue = presetCapabilities[key];
+                  const overridden =
+                    overridesRecord !== undefined && key in overridesRecord;
+                  return (
+                    <div
+                      key={key}
+                      className="flex items-center justify-between gap-3 border-b border-border/50 px-3.5 py-2 last:border-b-0"
+                    >
+                      <div className="flex flex-col gap-0.5">
+                        <span className="font-mono text-[12px]">{label}</span>
+                        <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                          <span>Preset: {String(presetValue)}</span>
+                          {overridden ? (
+                            <span className="rounded bg-orange-500/15 px-1 py-px text-orange-600 dark:text-orange-300">
+                              Overridden
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+                      {key === "requestDisplayMode" ? (
+                        <RequestDisplayModeControl
+                          value={effective as "all" | "fullscreen-only" | "none"}
+                          onChange={(next) =>
+                            setMethodOverride(
+                              key,
+                              next === presetValue ? undefined : next,
+                            )
+                          }
+                        />
+                      ) : (
+                        <Switch
+                          checked={Boolean(effective)}
+                          onCheckedChange={(checked) =>
+                            setMethodOverride(
+                              key,
+                              checked === presetValue ? undefined : checked,
+                            )
+                          }
+                          aria-label={label}
+                        />
+                      )}
                     </div>
-                  </div>
-                  {key === "requestDisplayMode" ? (
-                    <RequestDisplayModeControl
-                      value={effective as "all" | "fullscreen-only" | "none"}
-                      onChange={(next) =>
-                        setMethodOverride(key, next === presetValue ? undefined : next)
-                      }
-                    />
-                  ) : (
-                    <Switch
-                      checked={Boolean(effective)}
-                      disabled={notImplemented}
-                      onCheckedChange={(checked) =>
-                        setMethodOverride(key, checked === presetValue ? undefined : checked)
-                      }
-                      aria-label={label}
-                    />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          {/* Footnote: clarify which surface lives on the matrix vs.
-              static-data globals. Statics aren't methods — feature
-              detection against them doesn't apply, so they're outside
-              the per-method matrix. */}
-          <div className="border-t border-border px-3.5 py-2 text-[10px] text-muted-foreground">
-            Static globals (
-            <span className="font-mono">toolInput</span>,{" "}
-            <span className="font-mono">toolOutput</span>,{" "}
-            <span className="font-mono">widgetState</span>,{" "}
-            <span className="font-mono">theme</span>,{" "}
-            <span className="font-mono">locale</span>,{" "}
-            <span className="font-mono">displayMode</span>,{" "}
-            <span className="font-mono">maxHeight</span>,{" "}
-            <span className="font-mono">safeArea</span>,{" "}
-            <span className="font-mono">userAgent</span>,{" "}
-            <span className="font-mono">view</span>) are injected with
-            the shim and have no per-method toggle.
-          </div>
+                  );
+                })}
+              </div>
+            </>
+          ) : null}
         </>
       ) : null}
     </div>
