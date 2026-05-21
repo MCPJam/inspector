@@ -1,39 +1,38 @@
-diff --git a/.changeset/release-rollup-2026-05-21.md b/.changeset/release-rollup-2026-05-21.md
+diff --git a/.changeset/byok-no-service-token-2218.md b/.changeset/byok-no-service-token-2218.md
 deleted file mode 100644
-index 992c2fd22..000000000
---- a/.changeset/release-rollup-2026-05-21.md
+index 40dcd9f23..000000000
+--- a/.changeset/byok-no-service-token-2218.md
 +++ /dev/null
-@@ -1,7 +0,0 @@
+@@ -1,6 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
 -### `@mcpjam/inspector`
--- **MCP Apps / widgets**: fix compat-mode output boot so apps render on first turn instead of waiting for a refresh (#2219); gate compat streaming so live-preferred widget fetches don't get short-circuited; prevent the blank MCP app reveal flicker on stream start; tighten streaming reveal + abort handling so cancelled tool calls don't leave half-rendered widgets.
--- **App views**: unify app view saves on `mcpAppViews` and fix the `ui://` fallback path so views with synthesized URIs round-trip correctly (#2216); add `synthesize-fallback-uri` helper with coverage.
+-- **BYOK auth**: stop sending `INSPECTOR_SERVICE_TOKEN` on normal BYOK chat and eval traffic (#2218). Hosted and local/npx now share one path — user auth goes to Convex, Convex checks project access, then runs or resolves the provider. Raw-key routes that return decrypted org model config still require the service token. Adds `/stream/org` eval step-mode parity with `/stream` so cloud BYOK evals can run in Convex without exposing provider keys. Local-runtime providers (Ollama, custom Base URL) keep resolving through `/stream/org/resolve` and running in the inspector.
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 7e79a514d..e3dbc1e23 100644
+index e3dbc1e23..8db6e1f6f 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.4.13",
-+  "version": "2.4.14",
+-  "version": "2.4.14",
++  "version": "2.4.15",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
 diff --git a/package-lock.json b/package-lock.json
-index 2cf6c79be..6bf40c872 100644
+index 6bf40c872..21d4bd9fb 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -289,7 +289,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.4.13",
-+      "version": "2.4.14",
+-      "version": "2.4.14",
++      "version": "2.4.15",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/anthropic": "^3.0.36",

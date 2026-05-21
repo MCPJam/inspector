@@ -1,6 +1,0 @@
----
-"@mcpjam/inspector": patch
----
-
-### `@mcpjam/inspector`
-- **BYOK auth**: stop sending `INSPECTOR_SERVICE_TOKEN` on normal BYOK chat and eval traffic (#2218). Hosted and local/npx now share one path — user auth goes to Convex, Convex checks project access, then runs or resolves the provider. Raw-key routes that return decrypted org model config still require the service token. Adds `/stream/org` eval step-mode parity with `/stream` so cloud BYOK evals can run in Convex without exposing provider keys. Local-runtime providers (Ollama, custom Base URL) keep resolving through `/stream/org/resolve` and running in the inspector.
