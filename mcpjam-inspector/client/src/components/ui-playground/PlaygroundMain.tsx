@@ -383,6 +383,11 @@ export function PlaygroundMain({
   const [pendingDirectVisibility, setPendingDirectVisibility] = useState<
     "private" | "project"
   >("private");
+  // Shared (project-visible) sessions are collaborative artifacts. Treat
+  // multi-model and multi-host compare as experiment-mode controls that
+  // would mutate the shared session state for every collaborator, and
+  // hide them. The single-model + single-host path stays usable.
+  const isSharedSession = pendingDirectVisibility === "project";
   // ChatTabV2 holds this at 0 today; bumping after each completed turn is a
   // follow-up. The rail re-fetches on initial mount + whenever signal changes.
   const historyRefreshSignal = 0;
@@ -813,7 +818,7 @@ export function PlaygroundMain({
     return selectedModel ? [selectedModel] : [];
   }, [multiModelAvailableModels, selectedModel, selectedModelIds]);
   const canEnableMultiModel =
-    enableMultiModelChat && availableModels.length > 1;
+    enableMultiModelChat && availableModels.length > 1 && !isSharedSession;
 
   // Phase 4 (multi-host plan): read multi-host state in parallel to
   // multi-model. Lead host is derived inside `usePersistedHost` from the
@@ -853,7 +858,7 @@ export function PlaygroundMain({
         .filter((host): host is HostDetail => host !== null),
     [hostSlots, selectedHostIds.length],
   );
-  const canEnableMultiHost = hostList.length > 1;
+  const canEnableMultiHost = hostList.length > 1 && !isSharedSession;
 
   // Lead identity check — we cannot compact away the lead slot. If
   // `selectedHostIds[0]` is still loading from Convex, the resolved
@@ -3029,14 +3034,16 @@ export function PlaygroundMain({
             // change the playground render path (that lands in Phase 4).
             // The global `GlobalClientBar` remains the host pill for other
             // tabs; both surfaces stay in sync via shared `usePreviewedHostId`.
-            <PlaygroundHostPicker
-              projectId={multiHostProjectId}
-              selectedHostIds={selectedHostIds}
-              multiHostEnabled={multiHostEnabled}
-              onSelectedHostIdsChange={setSelectedHostIds}
-              onMultiHostEnabledChange={handleMultiHostEnabledChange}
-              onPromoteLead={handlePromoteLead}
-            />
+            isSharedSession ? null : (
+              <PlaygroundHostPicker
+                projectId={multiHostProjectId}
+                selectedHostIds={selectedHostIds}
+                multiHostEnabled={multiHostEnabled}
+                onSelectedHostIdsChange={setSelectedHostIds}
+                onMultiHostEnabledChange={handleMultiHostEnabledChange}
+                onPromoteLead={handlePromoteLead}
+              />
+            )
           }
           trailing={
             effectiveHasMessages ? (
