@@ -602,6 +602,11 @@ describe("mcpjam-stream-handler", () => {
             outputTokens: 5,
             totalTokens: 15,
           },
+          totalUsage: {
+            inputTokens: 999,
+            outputTokens: 999,
+            totalTokens: 1998,
+          },
         },
       ])
     );
@@ -643,6 +648,18 @@ describe("mcpjam-stream-handler", () => {
       outputTokens: 5,
       totalTokens: 15,
     });
+
+    const finishChunk = writtenChunks.find((chunk) => chunk?.type === "finish");
+    expect(finishChunk).toMatchObject({
+      type: "finish",
+      finishReason: "stop",
+      messageMetadata: {
+        inputTokens: 10,
+        outputTokens: 5,
+        totalTokens: 15,
+      },
+    });
+    expect(finishChunk).not.toHaveProperty("totalUsage");
   });
 
   it("flushes buffered hosted rpc logs first and streams live hosted rpc logs as data parts", async () => {
