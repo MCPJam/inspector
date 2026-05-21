@@ -92,6 +92,13 @@ When multiple servers are selected at the same time, the Tools rail aggregates e
 
 Send one prompt to up to 3 models simultaneously. Open the model picker, toggle **Multiple models** on, and select the models you want to compare. Each model's response — including tool calls and rendered widgets — appears in its own column.
 
+<Note>
+  The **Multiple models** toggle is hidden when the active session is shared
+  with the project (project-visible). Enabling it on a shared session would
+  mutate experiment state for every collaborator. Switch the session back to
+  private to use multi-model compare.
+</Note>
+
 <Frame>
   <img
     className="block"
@@ -108,6 +115,13 @@ Toggle **Multiple hosts** on in the host picker (top-left of the center header) 
 One column is designated the **lead host**; chip tooltips in the toolbar say "Editing lead host: \<name\>" so it's clear which column the host controls (theme, device, locale, etc.) currently bind to. Click another column's chip to promote it to lead.
 
 This is the fastest way to verify that a widget renders correctly across the host environments you intend to ship to.
+
+<Note>
+  The **Multiple hosts** toggle and the host picker are hidden when the active
+  session is shared with the project (project-visible), for the same reason as
+  multi-model compare. Switch the session back to private to use multi-host
+  compare.
+</Note>
 
 ## Sessions
 
