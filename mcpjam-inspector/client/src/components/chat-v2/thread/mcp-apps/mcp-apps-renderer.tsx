@@ -616,13 +616,15 @@ export function MCPAppsRenderer({
   // The OpenAI Apps SDK compatibility runtime bakes toolInput/toolOutput into
   // `window.openai` during HTML injection. Pure SEP-1865 views can boot while
   // input is still streaming and receive the final result via
-  // ui/notifications/tool-result, but many Apps SDK widgets read
-  // window.openai.toolOutput once on mount. Booting those widgets before the
-  // tool has completed leaves them looking stuck even though the bridge later
-  // delivers the result event.
+  // ui/notifications/tool-result. Legacy Apps SDK templates declared through
+  // `openai/outputTemplate` are different: many read window.openai.toolOutput
+  // once on mount, so they still need the completed output before boot.
+  const requiresCompatOutputAtBoot =
+    effectiveInjectOpenAiCompat &&
+    typeof toolMetadata?.["openai/outputTemplate"] === "string";
   const shouldWaitForCompatToolOutput =
     !isCachedReplay &&
-    effectiveInjectOpenAiCompat &&
+    requiresCompatOutputAtBoot &&
     toolState !== "output-available";
   const [widgetCsp, setWidgetCsp] = useState<McpUiResourceCsp | undefined>(
     isCachedReplay ? undefined : (initialWidgetCsp ?? undefined),

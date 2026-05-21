@@ -413,7 +413,27 @@ describe("MCPAppsRenderer tool input streaming", () => {
     );
   });
 
-  it("waits for completed tool output before booting the OpenAI compat runtime", async () => {
+  it("does not block pure MCP Apps from booting while ChatGPT compat is enabled", async () => {
+    render(
+      <ChatboxHostStyleProvider value="chatgpt">
+        <MCPAppsRenderer
+          {...baseProps}
+          toolState="input-streaming"
+          toolInput={{ query: "yellow" }}
+          toolOutput={undefined}
+        />
+      </ChatboxHostStyleProvider>,
+    );
+
+    await vi.waitFor(() => {
+      expect(authFetch).toHaveBeenCalled();
+    });
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+  });
+
+  it("waits for completed tool output before booting legacy OpenAI outputTemplate widgets", async () => {
     const { rerender } = render(
       <ChatboxHostStyleProvider value="chatgpt">
         <MCPAppsRenderer
@@ -421,6 +441,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
           toolState="input-streaming"
           toolInput={{ query: "yellow" }}
           toolOutput={undefined}
+          toolMetadata={{ "openai/outputTemplate": "ui://widget/test.html" }}
         />
       </ChatboxHostStyleProvider>,
     );
@@ -442,6 +463,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
             content: [{ type: "text", text: "done" }],
             structuredContent: { route: "Yellow-N" },
           }}
+          toolMetadata={{ "openai/outputTemplate": "ui://widget/test.html" }}
         />
       </ChatboxHostStyleProvider>,
     );
