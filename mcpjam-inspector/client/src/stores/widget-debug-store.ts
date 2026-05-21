@@ -565,9 +565,19 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         widgetHtml: html,
         injectedOpenAiCompat:
           injectedOpenAiCompat ?? existing?.injectedOpenAiCompat,
+        // Clear caps whenever the shim flips off — they describe the
+        // surface that WAS injected, and a shim-off refetch on the
+        // same toolCallId means no surface was injected this time.
+        // Without the explicit clear, a same-tool-call save would
+        // persist stale caps next to shim-off HTML, lying about what
+        // the bytes contain. `?? existing` preserves caps only when
+        // the new refetch ALSO has the shim on but happens to omit
+        // the new caps (e.g., older server response without echo).
         injectedOpenAiCompatCapabilities:
-          injectedOpenAiCompatCapabilities ??
-          existing?.injectedOpenAiCompatCapabilities,
+          injectedOpenAiCompat === false
+            ? undefined
+            : (injectedOpenAiCompatCapabilities ??
+              existing?.injectedOpenAiCompatCapabilities),
         updatedAt: Date.now(),
       });
       return { widgets };

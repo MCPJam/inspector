@@ -655,12 +655,25 @@ export function MCPAppsRenderer({
   // a stable hash of the capability record into the reload key forces
   // the iframe to refetch on per-method changes too. See
   // feedback_capability_in_render_recipe memory.
-  // Cached replays use `null` so legacy snapshots without persisted
-  // capability provenance don't constantly mismatch the live state.
-  const widgetCompatCapabilitiesReloadKey =
-    isCachedReplay || !effectiveInjectOpenAiCompat
-      ? null
-      : stableStringifyJson(liveOpenAiCompatCapabilities ?? null);
+  // Cached replays read the hash from PERSISTED capabilities (what the
+  // byte-frozen HTML was built against). Critical: this MUST match
+  // what `loadFromCachedUrl` later stamps into
+  // `loadedCompatCapabilitiesHash` — if the two diverge, the
+  // "already loaded" guard at the top of the fetch effect fails on
+  // every render, fires a second cached fetch, and that fetch's
+  // `setBridgeTransportReady(false)` blanks the iframe out from
+  // under an already-connected bridge.
+  //
+  // Legacy snapshots (no persisted caps) use `null` on both sides so
+  // live host per-method changes don't trigger spurious refetches
+  // against byte-frozen HTML.
+  const widgetCompatCapabilitiesReloadKey = isCachedReplay
+    ? initialInjectedOpenAiCompatCapabilities
+      ? stableStringifyJson(initialInjectedOpenAiCompatCapabilities)
+      : null
+    : effectiveInjectOpenAiCompat
+      ? stableStringifyJson(liveOpenAiCompatCapabilities ?? null)
+      : null;
   // The OpenAI Apps SDK compatibility runtime bakes toolInput/toolOutput into
   // `window.openai` during HTML injection. Pure SEP-1865 views can boot while
   // input is still streaming and receive the final result via
@@ -896,21 +909,16 @@ export function MCPAppsRenderer({
         ? cachedReplayInjectOpenAiCompat
         : widgetInjectOpenAiCompatReloadKey;
       setLoadedInjectOpenAiCompat(loadedCachedCompatKey);
-      // For cached replays, lock the capability hash to whatever the
-      // snapshot's persisted `injectedOpenAiCompatCapabilities` says
-      // (matches what the byte-frozen HTML was built against). Pre-
-      // feature snapshots persist no capability metadata — fall back
-      // to the legacy boolean-only key so live-host per-method changes
-      // don't trigger spurious refetches against byte-frozen HTML.
-      const cachedReplayCompatHash =
-        isCachedReplay && initialInjectedOpenAiCompatCapabilities
-          ? stableStringifyJson(initialInjectedOpenAiCompatCapabilities)
-          : null;
-      setLoadedCompatCapabilitiesHash(
-        isCachedReplay
-          ? cachedReplayCompatHash
-          : widgetCompatCapabilitiesReloadKey,
-      );
+      // `widgetCompatCapabilitiesReloadKey` already encodes the right
+      // value for both branches: cached replays compute it from the
+      // persisted `initialInjectedOpenAiCompatCapabilities` (matches
+      // the byte-frozen HTML), live fetches compute it from the
+      // resolver. Stamp it verbatim so the fetch effect's
+      // "already loaded" guard passes — earlier divergence between
+      // this stamp and the reload key triggered a second cached
+      // fetch that called `setBridgeTransportReady(false)` after the
+      // bridge had already connected.
+      setLoadedCompatCapabilitiesHash(widgetCompatCapabilitiesReloadKey);
       setWidgetHtmlStore(
         toolCallId,
         html,
@@ -2467,6 +2475,14 @@ export function MCPAppsRenderer({
     // before a host swap, or hand-crafted the postMessage, would still
     // reach here. Send a clear policy error back so the widget's
     // pending-call resolver rejects rather than hanging.
+    //
+    // STRICT `=== false` semantics: the persisted/sparse
+    // `OpenAiAppsCapabilities` shape omits fields added after capture
+    // time, and the SDK runtime treats missing as "default on"
+    // (FULL_SURFACE_DEFAULT). Mirroring that here means an absent
+    // field is allowed, not denied — only an explicit `false` triggers
+    // the gate. `!liveCaps.foo` would lock out forward-compatible
+    // legacy snapshots; `liveCaps.foo === false` matches the runtime.
     const liveCaps = liveOpenAiCompatCapabilitiesRef.current;
     const policyError = (
       callId: number,
@@ -2481,7 +2497,7 @@ export function MCPAppsRenderer({
 
     // Handle file upload messages (non-JSON-RPC, same protocol as ChatGPT widget)
     if (data.type === "openai:uploadFile") {
-      if (liveCaps !== null && !liveCaps.uploadFile) {
+      if (liveCaps !== null && liveCaps.uploadFile === false) {
         policyError(data.callId, "openai:uploadFile");
         return;
       }
@@ -2492,7 +2508,7 @@ export function MCPAppsRenderer({
     }
 
     if (data.type === "openai:getFileDownloadUrl") {
-      if (liveCaps !== null && !liveCaps.getFileDownloadUrl) {
+      if (liveCaps !== null && liveCaps.getFileDownloadUrl === false) {
         policyError(data.callId, "openai:getFileDownloadUrl");
         return;
       }
@@ -2516,7 +2532,7 @@ export function MCPAppsRenderer({
       // matrix has setWidgetState disabled. Silent drop (no response
       // message) — setWidgetState is fire-and-forget in the spec, so
       // there's nothing to reject. Mirrors the runtime-level omission.
-      if (liveCaps !== null && !liveCaps.setWidgetState) return;
+      if (liveCaps !== null && liveCaps.setWidgetState === false) return;
       if (onWidgetStateChange) {
         onWidgetStateChange(toolCallId, data.state);
       }
@@ -2546,19 +2562,19 @@ export function MCPAppsRenderer({
       // requestCheckout uses a callId pattern so we respond with an
       // error so the widget's pending resolver doesn't hang.
       if (data.method === "openai/requestModal") {
-        if (liveCaps !== null && !liveCaps.requestModal) return;
+        if (liveCaps !== null && liveCaps.requestModal === false) return;
         const params = data.params ?? {};
         setModalTitle(params.title || "Modal");
         setModalParams(params.params || {});
         setModalTemplate(params.template || null);
         setModalOpen(true);
       } else if (data.method === "openai/requestClose") {
-        if (liveCaps !== null && !liveCaps.requestClose) return;
+        if (liveCaps !== null && liveCaps.requestClose === false) return;
         setModalOpen(false);
       } else if (data.method === "openai/requestCheckout") {
         const params = data.params ?? {};
         const { callId: cId, ...sessionData } = params;
-        if (liveCaps !== null && !liveCaps.requestCheckout) {
+        if (liveCaps !== null && liveCaps.requestCheckout === false) {
           sandboxRef.current?.postMessage({
             jsonrpc: "2.0",
             method: "openai/requestCheckout:response",
