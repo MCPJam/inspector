@@ -73,7 +73,7 @@ describe("host-styles registry", () => {
         protocolOverride: CLAUDE_HOST_STYLE.mcp.protocolOverride,
         platform: "web",
         fontCss: "",
-        hostCapabilities: {},
+        mcpAppsCapabilities: CLAUDE_HOST_STYLE.mcp.mcpAppsCapabilities,
         resolveStyleVariables: CLAUDE_HOST_STYLE.mcp.resolveStyleVariables,
       },
       chatUi: {
@@ -94,13 +94,24 @@ describe("host-styles registry", () => {
     expect(listHostStyles()).toContain(fakeStyle);
   });
 
-  it("returns the host style's hostCapabilities preset by id", () => {
-    expect(getHostCapabilitiesForStyle("claude")).toBe(
-      CLAUDE_HOST_STYLE.mcp.hostCapabilities,
-    );
-    expect(getHostCapabilitiesForStyle("chatgpt")).toBe(
-      CHATGPT_HOST_STYLE.mcp.hostCapabilities,
-    );
+  it("derives the host style's hostCapabilities blob from the matrix preset by id", () => {
+    // Identity equality no longer holds — buildHostCapabilities returns a
+    // fresh object each call. Verify the derived blob's shape instead.
+    expect(getHostCapabilitiesForStyle("claude")).toEqual({
+      openLinks: {},
+      serverTools: {},
+      serverResources: {},
+      logging: {},
+      updateModelContext: { text: {} },
+      message: { text: {} },
+    });
+    // ChatGPT drops serverResources / logging per its matrix.
+    expect(getHostCapabilitiesForStyle("chatgpt")).toEqual({
+      openLinks: {},
+      serverTools: {},
+      updateModelContext: { text: {} },
+      message: { text: {} },
+    });
   });
 
   it("falls back to the spec-default capabilities for unknown ids (NOT claude)", () => {
@@ -121,8 +132,8 @@ describe("host-styles registry", () => {
     // Two profiles MUST differ in at least one observable key — otherwise
     // host-style switching is cosmetic only and provides no signal to
     // widget authors testing cross-client.
-    expect(CLAUDE_HOST_STYLE.mcp.hostCapabilities).not.toEqual(
-      CHATGPT_HOST_STYLE.mcp.hostCapabilities,
+    expect(getHostCapabilitiesForStyle("claude")).not.toEqual(
+      getHostCapabilitiesForStyle("chatgpt"),
     );
   });
 

@@ -8,7 +8,9 @@ export type {
   HostStyleId,
   HostThemeMode,
   IndicatorDef,
+  McpAppsCapabilities,
   OpenAiAppsCapabilities,
+  ResolvedMcpAppsCapabilities,
   ResolvedOpenAiAppsCapabilities,
 } from "./types";
 export {
@@ -16,14 +18,18 @@ export {
   CLAUDE_HOST_STYLE,
   CODEX_HOST_STYLE,
   COPILOT_HOST_STYLE,
+  CURSOR_HOST_STYLE,
   MCPJAM_HOST_STYLE,
   BUILT_IN_HOST_STYLES,
+  MCP_APPS_COPILOT_SURFACE,
+  MCP_APPS_FULL_SURFACE,
   OPENAI_APPS_COPILOT_SURFACE,
   OPENAI_APPS_FULL_SURFACE,
 } from "./built-ins";
 export {
   DEFAULT_HOST_STYLE,
   SPEC_DEFAULT_HOST_CAPABILITIES,
+  buildHostCapabilities,
   findHostStyle,
   getCompatRuntimeForStyle,
   getHostCapabilitiesForStyle,

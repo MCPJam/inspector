@@ -18,6 +18,7 @@ import type {
   HostStyleId,
   HostThemeMode,
   IndicatorDef,
+  ResolvedMcpAppsCapabilities,
 } from "./types";
 
 /**
@@ -81,7 +82,65 @@ export function getHostStyleOrDefault(
 }
 
 /**
- * Resolve the `hostCapabilities` blob this host style advertises.
+ * Build the `HostCapabilities` blob advertised in `ui/initialize` from a
+ * resolved per-dimension matrix + optional preset-only augment. This is
+ * the single derivation point for advertisement — the matrix is the
+ * source of truth (per the foundation PR's D1 decision).
+ *
+ * Decision per advertised field:
+ *   - `openLinks` / `serverTools` — fixed-on baseline (every preset
+ *     advertises). Not user-controllable.
+ *   - `serverResources` / `logging` / `updateModelContext` / `message` —
+ *     matrix-controlled; advertised when the matrix sets `true`.
+ *   - `downloadFile` — fixed-off (no preset advertises it; renderer
+ *     doesn't honor the spec request yet). TODO: surface when a host
+ *     wants to advertise it.
+ *   - `sandbox` — NOT added here; the renderer composes it separately
+ *     via `resolveSandboxCsp` / `resolveSandboxPermissions` and adds it
+ *     onto the advertised blob before passing to AppBridge.
+ *
+ * The `augment` argument carries preset-specific sub-field detail the
+ * M365-grain matrix can't express (currently only Cursor's
+ * `listChanged: false` markers). Augment keys are merged onto the
+ * advertised value of the matching matrix-derived key — augment is NEVER
+ * additive (if the matrix dropped a key, the augment doesn't bring it
+ * back).
+ */
+export function buildHostCapabilities(
+  matrix: ResolvedMcpAppsCapabilities,
+  augment?: Partial<Omit<McpUiHostCapabilities, "sandbox">>,
+): Omit<McpUiHostCapabilities, "sandbox"> {
+  const caps: Omit<McpUiHostCapabilities, "sandbox"> = {
+    openLinks: {},
+    serverTools: {},
+  };
+  if (matrix.serverResources) caps.serverResources = {};
+  if (matrix.logging) caps.logging = {};
+  if (matrix.updateModelContext) caps.updateModelContext = { text: {} };
+  if (matrix.message) caps.message = { text: {} };
+  if (!augment) return caps;
+  for (const [key, value] of Object.entries(augment) as Array<
+    [
+      keyof Omit<McpUiHostCapabilities, "sandbox">,
+      Omit<McpUiHostCapabilities, "sandbox">[keyof Omit<
+        McpUiHostCapabilities,
+        "sandbox"
+      >],
+    ]
+  >) {
+    if (caps[key] === undefined) continue;
+    (caps as Record<string, unknown>)[key] = {
+      ...(caps[key] as object),
+      ...(value as object),
+    };
+  }
+  return caps;
+}
+
+/**
+ * Resolve the `HostCapabilities` blob this host style advertises before
+ * any user override is applied. User overrides flow through
+ * `resolveEffectiveHostCapabilities` in `lib/client-config-v2.ts`.
  *
  * Unlike {@link getHostStyleOrDefault} this does NOT silently fall back to
  * Claude's preset — an unknown/absent id returns
@@ -91,7 +150,12 @@ export function getHostStyleOrDefault(
 export function getHostCapabilitiesForStyle(
   id: HostStyleId | null | undefined,
 ): Omit<McpUiHostCapabilities, "sandbox"> {
-  return findHostStyle(id)?.mcp.hostCapabilities ?? SPEC_DEFAULT_HOST_CAPABILITIES;
+  const def = findHostStyle(id);
+  if (!def) return SPEC_DEFAULT_HOST_CAPABILITIES;
+  return buildHostCapabilities(
+    def.mcp.mcpAppsCapabilities,
+    def.mcp.hostCapabilitiesAugment,
+  );
 }
 
 /**
