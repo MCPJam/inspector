@@ -613,6 +613,17 @@ export function MCPAppsRenderer({
   const widgetInjectOpenAiCompatReloadKey = isCachedReplay
     ? cachedReplayInjectOpenAiCompat
     : effectiveInjectOpenAiCompat;
+  // The OpenAI Apps SDK compatibility runtime bakes toolInput/toolOutput into
+  // `window.openai` during HTML injection. Pure SEP-1865 views can boot while
+  // input is still streaming and receive the final result via
+  // ui/notifications/tool-result, but many Apps SDK widgets read
+  // window.openai.toolOutput once on mount. Booting those widgets before the
+  // tool has completed leaves them looking stuck even though the bridge later
+  // delivers the result event.
+  const shouldWaitForCompatToolOutput =
+    !isCachedReplay &&
+    effectiveInjectOpenAiCompat &&
+    toolState !== "output-available";
   const [widgetCsp, setWidgetCsp] = useState<McpUiResourceCsp | undefined>(
     isCachedReplay ? undefined : (initialWidgetCsp ?? undefined),
   );
@@ -750,6 +761,7 @@ export function MCPAppsRenderer({
       toolState === "input-available" ||
       toolState === "output-available";
     if (!isActiveToolState) return;
+    if (shouldWaitForCompatToolOutput) return;
     // Re-fetch if CSP mode changed (widget needs to reload with new CSP
     // policy) OR if the compat-runtime flag changed (HTML needs to be
     // rebuilt with/without the `window.openai` shim). Both belong in
@@ -1017,6 +1029,7 @@ export function MCPAppsRenderer({
     liveFetchPreferred,
     initialPrefersBorder,
     cachedReplayInjectOpenAiCompat,
+    shouldWaitForCompatToolOutput,
     recordMountStore,
   ]);
 
