@@ -214,7 +214,6 @@ export function ViewsTab({
     createMcpView,
     updateMcpView,
     removeMcpView,
-    removeOpenaiView,
     generateMcpUploadUrl,
   } = useViewMutations();
 
@@ -480,11 +479,7 @@ export function ViewsTab({
     async (view: AnyView) => {
       setDeletingViewId(view._id);
       try {
-        if (view.protocol === "mcp-apps") {
-          await removeMcpView({ viewId: view._id });
-        } else {
-          await removeOpenaiView({ viewId: view._id });
-        }
+        await removeMcpView({ viewId: view._id });
 
         toast.success(`View "${view.name}" deleted`);
 
@@ -505,7 +500,7 @@ export function ViewsTab({
         setDeletingViewId(null);
       }
     },
-    [selectedViewId, removeMcpView, removeOpenaiView, posthog],
+    [selectedViewId, removeMcpView, posthog],
   );
 
   // Handle edit
