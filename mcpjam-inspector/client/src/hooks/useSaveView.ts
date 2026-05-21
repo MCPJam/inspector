@@ -9,7 +9,10 @@ import {
   type ServerInfo,
 } from "./useViews";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
-import { synthesizeFallbackResourceUri } from "@/lib/mcp-ui/synthesize-fallback-uri";
+import {
+  resolveCanonicalResourceUri,
+  synthesizeFallbackResourceUri,
+} from "@/lib/mcp-ui/synthesize-fallback-uri";
 import { useCurrentDisplayContext } from "@/lib/display-context-utils";
 
 // Data extracted from ToolPart for saving
@@ -247,11 +250,17 @@ export function useSaveView({
         const liveOutputTemplate = toolData.outputTemplate?.trim();
         const liveOutputTemplateIsUi =
           !!liveOutputTemplate && liveOutputTemplate.startsWith("ui://");
-        const resourceUri =
-          toolData.resourceUri ||
-          (liveOutputTemplateIsUi
-            ? liveOutputTemplate!
-            : fallbackResourceUri);
+        // `toolData.resourceUri` comes from `getUIResourceUri()` in
+        // part-switch.tsx, which for OpenAI-origin tools returns the
+        // raw `openai/outputTemplate` value verbatim — any scheme. We
+        // must gate on `ui://` here, otherwise a non-compliant
+        // template like `https://...` lands in the canonical column
+        // bypassing the fallback synthesizer entirely.
+        const resourceUri = resolveCanonicalResourceUri({
+          candidate: toolData.resourceUri,
+          legacyOutputTemplate: liveOutputTemplate,
+          fallback: fallbackResourceUri,
+        });
 
         const isOpenAIOrigin = protocol === "openai-apps";
 

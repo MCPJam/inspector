@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
-  synthesizeFallbackResourceUri,
   djb2Hex16,
+  resolveCanonicalResourceUri,
+  synthesizeFallbackResourceUri,
 } from "../synthesize-fallback-uri";
 
 describe("synthesizeFallbackResourceUri", () => {
@@ -57,5 +58,93 @@ describe("synthesizeFallbackResourceUri", () => {
 
   it("hash output is 16 hex chars", () => {
     expect(djb2Hex16("anything")).toMatch(/^[0-9a-f]{16}$/);
+  });
+});
+
+describe("resolveCanonicalResourceUri", () => {
+  const fallback = "ui://mcpjam/inspector/srv_1/abc1234567890def";
+
+  it("accepts a ui:// candidate verbatim", () => {
+    expect(
+      resolveCanonicalResourceUri({
+        candidate: "ui://weather/dashboard",
+        legacyOutputTemplate: undefined,
+        fallback,
+      })
+    ).toBe("ui://weather/dashboard");
+  });
+
+  it("trims whitespace around a ui:// candidate", () => {
+    expect(
+      resolveCanonicalResourceUri({
+        candidate: "  ui://weather/dashboard  ",
+        legacyOutputTemplate: undefined,
+        fallback,
+      })
+    ).toBe("ui://weather/dashboard");
+  });
+
+  it("REGRESSION: a non-ui:// candidate does NOT pass through (OpenAI bug)", () => {
+    // `getUIResourceUri(UIType.OPENAI_SDK, toolMeta)` returns the raw
+    // `openai/outputTemplate` value verbatim — any scheme. Pre-fix,
+    // that flowed straight into the canonical column. We must reject
+    // the non-compliant value and fall through.
+    expect(
+      resolveCanonicalResourceUri({
+        candidate: "https://example.com/widget",
+        legacyOutputTemplate: undefined,
+        fallback,
+      })
+    ).toBe(fallback);
+  });
+
+  it("rejects a legacy mcp:// candidate too", () => {
+    expect(
+      resolveCanonicalResourceUri({
+        candidate: "mcp://server/tool",
+        legacyOutputTemplate: undefined,
+        fallback,
+      })
+    ).toBe(fallback);
+  });
+
+  it("falls through to legacy outputTemplate when it is ui:// and candidate is not", () => {
+    expect(
+      resolveCanonicalResourceUri({
+        candidate: "https://bad",
+        legacyOutputTemplate: "ui://weather/dashboard",
+        fallback,
+      })
+    ).toBe("ui://weather/dashboard");
+  });
+
+  it("returns fallback when both candidate and legacy template are non-ui://", () => {
+    expect(
+      resolveCanonicalResourceUri({
+        candidate: "https://bad-a",
+        legacyOutputTemplate: "https://bad-b",
+        fallback,
+      })
+    ).toBe(fallback);
+  });
+
+  it("returns fallback when neither field is provided", () => {
+    expect(
+      resolveCanonicalResourceUri({
+        candidate: undefined,
+        legacyOutputTemplate: undefined,
+        fallback,
+      })
+    ).toBe(fallback);
+  });
+
+  it("treats empty / whitespace-only candidate as absent", () => {
+    expect(
+      resolveCanonicalResourceUri({
+        candidate: "   ",
+        legacyOutputTemplate: undefined,
+        fallback,
+      })
+    ).toBe(fallback);
   });
 });
