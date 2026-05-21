@@ -20,9 +20,16 @@ import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config";
 import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler";
-import { handleHostedOrgChatModel } from "../../utils/org-model-stream-handler.js";
-import { deriveOrgProviderKey } from "../../utils/org-model-config.js";
-import { HOSTED_MODE } from "../../config";
+import {
+  handleHostedOrgChatModel,
+  handleLocalOrgChatModel,
+} from "../../utils/org-model-stream-handler.js";
+import {
+  deriveOrgProviderKey,
+  isLocalRuntimeEligible,
+  resolveOrgProviderRuntime,
+  type OrgProviderRuntime,
+} from "../../utils/org-model-config.js";
 import {
   buildDirectHostConfig,
   persistChatSessionToConvex,
@@ -745,18 +752,12 @@ chatV2.post("/", async (c) => {
       });
     }
 
-    // Hosted org BYOK: only in hosted mode, only when Convex is reachable,
-    // only when the request carries a projectId, and only when the caller
-    // hasn't supplied a client-side apiKey. A client-supplied apiKey is the
-    // strongest signal that the caller wants direct BYOK, so it wins —
-    // matches the precedence used in the eval flows (modelApiKeys ?? org).
-    // Otherwise we route the LLM call through Convex (/stream/org) so the
-    // org's vault-resolved provider keys never leave Convex. Local-mode BYOK
-    // (CLI / no Convex) falls through to createLlmModel + streamText below.
+    // Org BYOK: when Convex is reachable, the request carries a projectId,
+    // and the caller hasn't supplied a client-side apiKey, use the org's
+    // Convex config. Cloud runtime stays in Convex; local runtime resolves a
+    // scoped provider config and executes in this inspector.
     if (
-      HOSTED_MODE &&
       process.env.CONVEX_HTTP_URL &&
-      process.env.INSPECTOR_SERVICE_TOKEN &&
       typeof body.projectId === "string" &&
       body.projectId &&
       !apiKey
@@ -771,59 +772,98 @@ chatV2.post("/", async (c) => {
       );
       const sessionStartedAt = Date.now();
       const chatSessionId = body.chatSessionId;
+      const modelId = String(modelDefinition.id);
+      const runtime: OrgProviderRuntime = isLocalRuntimeEligible(providerKey)
+        ? await resolveOrgProviderRuntime(
+            body.projectId,
+            providerKey,
+            modelId,
+            {
+              authHeader: requestAuthHeader,
+              chatboxId: bodyChatboxId,
+              accessVersion: bodyAccessVersion,
+              serverIds: hostConfigServerIds,
+            },
+          )
+        : { runtimeLocation: "cloud", providerKey };
+      const onConversationComplete = chatSessionId
+        ? async (fullHistory: ModelMessage[], turnTrace: PersistedTurnTrace) => {
+            await persistChatSessionToConvex({
+              chatSessionId,
+              modelId,
+              modelSource:
+                runtime.runtimeLocation === "local" ? "local_byok" : "byok",
+              sourceType: chatSessionSourceType,
+              ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
+              ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
+              ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)
+                ? { accessVersion: bodyAccessVersion }
+                : {}),
+              authHeader: requestAuthHeader,
+              sessionMessages: stampSenderUserIdsOnSessionMessages(
+                fullHistory,
+                messages,
+              ),
+              startedAt: sessionStartedAt,
+              lastActivityAt: Date.now(),
+              projectId: body.projectId,
+              ...(isChatboxSession
+                ? {}
+                : {
+                    directVisibility: body.directVisibility,
+                    resumeConfig: {
+                      systemPrompt,
+                      temperature,
+                      requireToolApproval,
+                      selectedServers,
+                    },
+                    ...(directHostConfig
+                      ? { hostConfig: directHostConfig }
+                      : {}),
+                  }),
+              expectedVersion: body.expectedVersion,
+              turnTrace,
+              forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
+            });
+          }
+        : undefined;
+
+      if (runtime.runtimeLocation === "local") {
+        return handleLocalOrgChatModel({
+          provider: runtime.provider,
+          projectId: body.projectId,
+          modelId,
+          chatSessionId,
+          sourceType: chatSessionSourceType,
+          messages: modelMessages,
+          systemPrompt: enhancedSystemPrompt,
+          temperature: resolvedTemperature,
+          tools: allTools as ToolSet,
+          authHeader: requestAuthHeader,
+          chatboxId: bodyChatboxId,
+          accessVersion: bodyAccessVersion,
+          selectedServers,
+          serverIds: hostConfigServerIds,
+          requireToolApproval,
+          onConversationComplete,
+        });
+      }
+
       return handleHostedOrgChatModel({
         projectId: body.projectId,
         providerKey,
-        modelId: String(modelDefinition.id),
+        modelId,
         messages: modelMessages,
         systemPrompt: enhancedSystemPrompt,
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
-        authHeader: c.req.header("authorization"),
+        authHeader: requestAuthHeader,
         clientIp: getClientIp(c),
         mcpClientManager,
         selectedServers,
+        serverIds: hostConfigServerIds,
         requireToolApproval,
-        onConversationComplete: chatSessionId
-          ? async (fullHistory, turnTrace) => {
-              await persistChatSessionToConvex({
-                chatSessionId,
-                modelId: String(modelDefinition.id),
-                modelSource: "byok",
-                sourceType: chatSessionSourceType,
-                ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
-                ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
-                ...(bodyChatboxId && Number.isFinite(bodyAccessVersion)
-                  ? { accessVersion: bodyAccessVersion }
-                  : {}),
-                authHeader: c.req.header("authorization"),
-                sessionMessages: stampSenderUserIdsOnSessionMessages(
-                  fullHistory,
-                  messages,
-                ),
-                startedAt: sessionStartedAt,
-                lastActivityAt: Date.now(),
-                projectId: body.projectId,
-                ...(isChatboxSession
-                  ? {}
-                  : {
-                      directVisibility: body.directVisibility,
-                      resumeConfig: {
-                        systemPrompt,
-                        temperature,
-                        requireToolApproval,
-                        selectedServers,
-                      },
-                      ...(directHostConfig
-                        ? { hostConfig: directHostConfig }
-                        : {}),
-                    }),
-                expectedVersion: body.expectedVersion,
-                turnTrace,
-                forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
-              });
-            }
-          : undefined,
+        onConversationComplete,
       });
     }
 

@@ -105,10 +105,9 @@ export interface MCPJamHandlerOptions {
    */
   endpointPath?: string;
   /**
-   * Extra headers added to every per-step Convex request. Used by org BYOK
-   * chat to send the X-Inspector-Service-Token (the org route doesn't use
-   * Convex user auth). The standard authHeader is still forwarded so MCPJam
-   * billing identity can be derived on the /stream route.
+   * Extra headers added to every per-step Convex request. The standard
+   * authHeader is forwarded so Convex can resolve the caller for /stream and
+   * /stream/org.
    */
   extraHeaders?: Record<string, string>;
   /**
@@ -259,15 +258,6 @@ function createToolCallIdNormalizer(
     usedToolCallIds.add(normalized);
     return normalized;
   };
-}
-
-function getLatestUserMessageIndex(messageHistory: ModelMessage[]): number {
-  for (let index = messageHistory.length - 1; index >= 0; index -= 1) {
-    if (messageHistory[index]?.role === "user") {
-      return index;
-    }
-  }
-  return -1;
 }
 
 function getPromptAssistantStepBaseIndex(
@@ -691,7 +681,7 @@ function emitToolResults(
               : undefined;
           const rawOutput = part.output ?? (part as any).result;
 
-          let outputForUi = rawOutput;
+          let outputForUi: unknown = rawOutput;
           if (rawOutput && typeof rawOutput === "object") {
             const rawOutputObj = rawOutput as Record<string, unknown>;
             const existingMeta =
@@ -1046,7 +1036,7 @@ async function processOneStep(
 
   // Call the Convex streaming endpoint. The default endpoint is /stream
   // (MCPJam-provided models); org BYOK chat targets /stream/org and adds
-  // a service-token header via extraHeaders.
+  // provider/project fields via extraBodyFields.
   const {
     endpointPath,
     extraHeaders,

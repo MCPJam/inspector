@@ -37,7 +37,6 @@ import {
   mapRuntimeError,
 } from "./auth.js";
 import {
-  attachHostedRpcLogs,
   createHostedRpcLogCollector,
 } from "./hosted-rpc-logs.js";
 import { getClientIp } from "../../utils/client-ip.js";
@@ -253,13 +252,6 @@ chatV2.post("/", async (c) => {
             "Server missing CONVEX_HTTP_URL configuration",
           );
         }
-        if (!process.env.INSPECTOR_SERVICE_TOKEN) {
-          throw new WebRouteError(
-            500,
-            ErrorCode.INTERNAL_ERROR,
-            "Server missing INSPECTOR_SERVICE_TOKEN configuration",
-          );
-        }
         // Hosted org BYOK: resolve runtime location first.
         // Cloud → LLM executes in Convex (/stream/org), keys never leave Convex.
         // Local → LLM executes in the inspector using the decrypted API key.
@@ -358,6 +350,7 @@ chatV2.post("/", async (c) => {
             chatboxId,
             accessVersion,
             selectedServers: selectedServerIds,
+            serverIds: selectedServerIds,
             requireToolApproval,
             onConversationComplete,
             onStreamComplete: cleanupStream,
@@ -383,6 +376,7 @@ chatV2.post("/", async (c) => {
           accessVersion,
           mcpClientManager: manager,
           selectedServers: selectedServerIds,
+          serverIds: selectedServerIds,
           requireToolApproval,
           onConversationComplete,
           onStreamComplete: cleanupStream,
@@ -494,7 +488,7 @@ chatV2.post("/", async (c) => {
           oauthRequired: true,
           serverUrl: firstUrl,
         },
-        rpcCollector?.buildEnvelope()
+        rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
       );
     }
     const routeError = mapRuntimeError(error);
@@ -504,7 +498,7 @@ chatV2.post("/", async (c) => {
       routeError.code,
       routeError.message,
       routeError.details,
-      rpcCollector?.buildEnvelope()
+      rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
     );
   }
 });

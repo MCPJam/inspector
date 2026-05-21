@@ -6,7 +6,7 @@
  * (local runtime, API key returned by /stream/org/resolve for this request only).
  *
  * handleHostedOrgChatModel → cloud: wraps handleMCPJamFreeChatModel and
- *   points it at /stream/org with the inspector service token + providerKey.
+ *   points it at /stream/org with the user auth header + providerKey.
  *
  * handleLocalOrgChatModel → local: builds the AI SDK model directly in the
  *   inspector using buildOrgModelFromResolvedConfig, runs streamText with the
@@ -79,6 +79,7 @@ export interface OrgModelHandlerOptions {
   tools: ToolSet;
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
+  serverIds?: string[];
   requireToolApproval?: boolean;
   onConversationComplete?: (
     fullHistory: ModelMessage[],
@@ -92,8 +93,7 @@ export interface OrgModelHandlerOptions {
   /**
    * The end user's Authorization header from the inbound request. Forwarded
    * to /stream/org so Convex can re-authorize the user against the project.
-   * Without this, /stream/org can only authenticate the inspector backend
-   * (via the service token) and will reject the request as unauthenticated.
+   * This is the auth boundary for org BYOK runtime requests.
    */
   authHeader?: string;
   /**
@@ -217,6 +217,7 @@ export interface OrgLocalModelHandlerOptions {
   temperature?: number;
   tools: ToolSet;
   selectedServers?: string[];
+  serverIds?: string[];
   requireToolApproval?: boolean;
   /** Forwarded to /stream/org/local-usage for identity resolution. */
   authHeader?: string;
@@ -513,6 +514,7 @@ export function handleLocalOrgChatModel(
             chatboxId,
             accessVersion,
             selectedServers: options.selectedServers,
+            serverIds: options.serverIds,
           }).catch((err) => {
             logger.warn("[org/local] Failed to post local usage", {
               error: err instanceof Error ? err.message : String(err),
@@ -575,10 +577,10 @@ async function postLocalUsage(params: {
   chatboxId?: string;
   accessVersion?: number;
   selectedServers?: string[];
+  serverIds?: string[];
 }): Promise<void> {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
-  const inspectorServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
-  if (!convexHttpUrl || !inspectorServiceToken) return;
+  if (!convexHttpUrl) return;
 
   const url = `${convexHttpUrl.replace(/\/$/, "")}/stream/org/local-usage`;
   const controller = new AbortController();
@@ -588,7 +590,6 @@ async function postLocalUsage(params: {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Inspector-Service-Token": inspectorServiceToken,
         ...(params.authHeader ? { Authorization: params.authHeader } : {}),
       },
       body: JSON.stringify({
@@ -610,8 +611,8 @@ async function postLocalUsage(params: {
         ...(params.chatboxId && Number.isFinite(params.accessVersion)
           ? { accessVersion: params.accessVersion }
           : {}),
-        ...(params.selectedServers && params.selectedServers.length > 0
-          ? { serverIds: params.selectedServers }
+        ...((params.serverIds ?? params.selectedServers)?.length
+          ? { serverIds: params.serverIds ?? params.selectedServers }
           : {}),
       }),
       signal: controller.signal,
@@ -638,10 +639,6 @@ export async function handleHostedOrgChatModel(
   if (!process.env.CONVEX_HTTP_URL) {
     throw new Error("CONVEX_HTTP_URL is not set");
   }
-  const inspectorServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
-  if (!inspectorServiceToken) {
-    throw new Error("INSPECTOR_SERVICE_TOKEN is not set");
-  }
 
   return handleMCPJamFreeChatModel({
     messages: options.messages,
@@ -664,16 +661,13 @@ export async function handleHostedOrgChatModel(
     onLiveTextDelta: options.onLiveTextDelta,
     clientIp: options.clientIp,
     endpointPath: "/stream/org",
-    extraHeaders: {
-      "X-Inspector-Service-Token": inspectorServiceToken,
-    },
     extraBodyFields: {
       providerKey: options.providerKey,
       ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
       // chatboxId / accessVersion are set on the body by
       // handleMCPJamFreeChatModel itself.
-      ...(options.selectedServers && options.selectedServers.length > 0
-        ? { serverIds: options.selectedServers }
+      ...((options.serverIds ?? options.selectedServers)?.length
+        ? { serverIds: options.serverIds ?? options.selectedServers }
         : {}),
     },
   });
