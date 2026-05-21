@@ -45,6 +45,12 @@ const createAsyncIterable = (events: any[]) => ({
   },
 });
 
+const createThrowingAsyncIterable = (error: unknown) => ({
+  async *[Symbol.asyncIterator]() {
+    throw error;
+  },
+});
+
 // Mock the AI SDK
 vi.mock("ai", async () => {
   const actual = await vi.importActual<typeof import("ai")>("ai");
@@ -507,6 +513,44 @@ describe("POST /api/mcp/chat-v2", () => {
 
       expect(status).toBe(500);
       expect(data.error).toBe("Unexpected error");
+    });
+
+    it("swallows abort errors without emitting a user-visible stream error", async () => {
+      const { streamText } = await import("ai");
+      const abortError = new Error("The operation was aborted");
+      abortError.name = "AbortError";
+      let capturedToUiMessageStreamOnError:
+        | ((error: unknown) => string)
+        | undefined;
+
+      vi.mocked(streamText).mockImplementationOnce(
+        (() => ({
+          toUIMessageStream: vi.fn((options?: { onError?: unknown }) => {
+            capturedToUiMessageStreamOnError = options?.onError as
+              | ((error: unknown) => string)
+              | undefined;
+            return createThrowingAsyncIterable(abortError);
+          }),
+          toUIMessageStreamResponse: vi.fn(),
+        })) as any,
+      );
+
+      const res = await postJson(app, "/api/mcp/chat-v2", {
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: "gpt-4", provider: "openai" },
+        apiKey: "test-key",
+      });
+
+      expect(res.status).toBe(200);
+      await expect(lastStreamExecution).resolves.toBeUndefined();
+      expect(capturedCreateUiStreamOnError?.(abortError)).toBe("");
+      expect(capturedToUiMessageStreamOnError?.(abortError)).toBe("");
+      expect(
+        capturedStreamEvents.some(
+          (event) =>
+            event?.type === "data-trace-event" && event.data?.type === "error",
+        ),
+      ).toBe(false);
     });
   });
 

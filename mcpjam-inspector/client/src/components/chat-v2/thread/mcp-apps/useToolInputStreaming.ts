@@ -204,7 +204,8 @@ export function useToolInputStreaming({
     if (toolState !== "input-streaming") return true;
     // Some providers do not surface parseable partial tool args before the
     // complete input arrives. Reveal after the fallback signal so the iframe can
-    // initialize and show its own loading state instead of staying invisible.
+    // initialize and show its own loading state instead of staying invisible;
+    // views still receive ui/notifications/tool-input once final args arrive.
     return streamingRenderSignaled || hasDeliveredStreamingInput;
   }, [hasDeliveredStreamingInput, streamingRenderSignaled, toolState]);
 
@@ -418,7 +419,8 @@ export function useToolInputStreaming({
     reinitCount,
   ]);
 
-  // 8. Reset on toolCallId change
+  // 8. Reset on toolCallId change. Do this before paint so a recycled renderer
+  // cannot briefly expose the previous call's delivery guards.
   useLayoutEffect(() => {
     if (previousToolCallIdRef.current === toolCallId) return;
     previousToolCallIdRef.current = toolCallId;

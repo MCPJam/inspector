@@ -278,7 +278,7 @@ function streamDirectChatWithLiveTrace(options: {
         traceTurn.promptIndex
       ) as ToolSet;
 
-      const result = streamText({
+      const streamTextOptions: Parameters<typeof streamText>[0] = {
         model: llmModel,
         messages: messageHistory,
         ...(temperature !== undefined ? { temperature } : {}),
@@ -470,7 +470,19 @@ function streamDirectChatWithLiveTrace(options: {
             });
           }
         },
-      });
+      };
+
+      let result: ReturnType<typeof streamText>;
+      try {
+        result = streamText(streamTextOptions);
+      } catch (error) {
+        abortSignal?.removeEventListener("abort", markAborted);
+        if (aborted || isAbortError(error)) {
+          aborted = true;
+          return;
+        }
+        throw error;
+      }
 
       try {
         for await (const chunk of result.toUIMessageStream({
