@@ -9,6 +9,7 @@ import {
   type ServerInfo,
 } from "./useViews";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
+import { synthesizeFallbackResourceUri } from "@/lib/mcp-ui/synthesize-fallback-uri";
 import { useCurrentDisplayContext } from "@/lib/display-context-utils";
 
 // Data extracted from ToolPart for saving
@@ -232,14 +233,24 @@ export function useSaveView({
           : undefined;
 
         // Canonical fallback URI is `ui://` per SEP-1865. The previous
-        // `mcp://` fallback was a SEP violation and is what motivates
-        // the paired backend Phase A loosening; once that ships we can
-        // tighten the server back to a hard reject.
-        const fallbackResourceUri = `ui://mcpjam/${serverName}/${toolData.toolName}`;
+        // `mcp://` fallback was a SEP violation; this form is also
+        // collision-safe (uses the immutable `serverId` rather than
+        // the display `serverName`) and URI-safe (`toolName` is hashed
+        // so spaces, slashes, and other unescaped characters cannot
+        // produce ambiguous paths). Two saves of the same tool on the
+        // same server are idempotent because the hash is
+        // deterministic.
+        const fallbackResourceUri = synthesizeFallbackResourceUri({
+          serverId,
+          toolName: toolData.toolName,
+        });
+        const liveOutputTemplate = toolData.outputTemplate?.trim();
+        const liveOutputTemplateIsUi =
+          !!liveOutputTemplate && liveOutputTemplate.startsWith("ui://");
         const resourceUri =
           toolData.resourceUri ||
-          (toolData.outputTemplate?.startsWith("ui://")
-            ? toolData.outputTemplate
+          (liveOutputTemplateIsUi
+            ? liveOutputTemplate!
             : fallbackResourceUri);
 
         const isOpenAIOrigin = protocol === "openai-apps";
@@ -252,8 +263,16 @@ export function useSaveView({
           widgetPermissions: toolData.widgetPermissions,
           widgetPermissive: toolData.widgetPermissive,
           widgetHtmlBlobId,
-          // Legacy aliases (input-only on the backend normalizer):
-          outputTemplate: isOpenAIOrigin ? toolData.outputTemplate : undefined,
+          // Legacy aliases (input-only on the backend normalizer). The
+          // backend validates `outputTemplate` whenever it is supplied,
+          // even when `resourceUri` wins precedence, so we only
+          // forward it when it is itself spec-compliant. A non-ui://
+          // OpenAI template (e.g. `https://...`) is dropped on the
+          // floor here — the canonical `resourceUri` is what matters.
+          outputTemplate:
+            isOpenAIOrigin && liveOutputTemplateIsUi
+              ? liveOutputTemplate
+              : undefined,
           serverInfo: isOpenAIOrigin ? toolData.serverInfo : undefined,
           // Documentation-only provenance:
           viewOriginProtocol: isOpenAIOrigin ? "openai-apps" : "mcp-apps",
