@@ -27,6 +27,12 @@ interface UseSharedChatWidgetCaptureOptions {
   // /web/chatbox/redeem fetch so a fresh `hostedAccessVersion` flows back
   // into this hook and the capture loop re-fires.
   onStaleHostedAccess?: () => void;
+  // Resolve a local server identifier (e.g. display name in local mode)
+  // to a Convex `Id<'servers'>` for the snapshot mutation. Local-mode tool
+  // results stamp `_meta._serverId` with the local connection name, which
+  // the backend would otherwise reject. Caller supplies this via
+  // `useProjectServers().serversByName` (or equivalent).
+  resolveServerConvexId?: (localServerId: string) => string | undefined;
 }
 
 const MAX_PENDING_SESSION_RETRIES = 5;
@@ -199,6 +205,7 @@ export function useSharedChatWidgetCapture({
   persistedSnapshotToolCallIds = [],
   messages,
   onStaleHostedAccess,
+  resolveServerConvexId,
 }: UseSharedChatWidgetCaptureOptions): void {
   const widgets = useWidgetDebugStore((state) => state.widgets);
   const generateSnapshotUploadUrl = useMutation(
@@ -234,6 +241,7 @@ export function useSharedChatWidgetCapture({
     new Set(persistedSnapshotToolCallIds),
   );
   const onStaleHostedAccessRef = useRef(onStaleHostedAccess);
+  const resolveServerConvexIdRef = useRef(resolveServerConvexId);
   // ToolCallIds whose upload was abandoned mid-flight because the backend
   // reported `chatbox_access_stale`. Replayed once the next
   // `hostedAccessVersion` arrives — without this, the parent's re-redeem
@@ -267,6 +275,10 @@ export function useSharedChatWidgetCapture({
   useEffect(() => {
     onStaleHostedAccessRef.current = onStaleHostedAccess;
   }, [onStaleHostedAccess]);
+
+  useEffect(() => {
+    resolveServerConvexIdRef.current = resolveServerConvexId;
+  }, [resolveServerConvexId]);
 
   // Re-fire the parent's refresh callback on a backoff while the queue is
   // non-empty and accessVersion hasn't advanced. The parent's redeem can
@@ -412,8 +424,22 @@ export function useSharedChatWidgetCapture({
     // omits `_meta._serverId` / `_meta["openai/outputTemplate"]`. The
     // renderer stamps these into the widget debug store from its own props
     // before the snapshot hook runs.
-    const serverId = toolSource.serverId ?? widget.serverId;
+    const rawServerId = toolSource.serverId ?? widget.serverId;
     const resourceUri = toolSource.resourceUri ?? widget.resourceUri;
+    if (!rawServerId) {
+      return;
+    }
+    // Capture backend validates `serverId: v.id('servers')` and the direct
+    // path also throws "serverId is required". In hosted mode the live
+    // tool result's `_meta._serverId` is already a Convex Id. In local
+    // mode `_serverId` is a local connection name (e.g. "Champions") —
+    // we resolve it to a Convex Id via the caller-supplied map before
+    // sending. If we still don't have a Convex Id, give up rather than
+    // letting the mutation reject silently.
+    const looksLikeConvexId = /^[a-z0-9]{32}$/.test(rawServerId);
+    const serverId = looksLikeConvexId
+      ? rawServerId
+      : resolveServerConvexIdRef.current?.(rawServerId);
     if (!serverId) {
       return;
     }

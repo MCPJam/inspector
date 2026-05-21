@@ -395,6 +395,8 @@ export function ChatTabV2({
       selectedServerIds: effectiveHostedSelectedServerIds,
       oauthTokens: effectiveHostedOAuthTokens,
     },
+    resolveServerConvexId: (localServerId) =>
+      serversByName.get(localServerId),
     executionConfig,
     // Phase 3: forward the resolved chat-tab host style so direct
     // chat traces persist with `claude`/`chatgpt` rather than

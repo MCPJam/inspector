@@ -216,6 +216,14 @@ export interface UseChatSessionOptions {
   hostStyle?: "claude" | "chatgpt";
   /** Callback when chat is reset */
   onReset?: (reason?: ChatSessionResetReason) => void;
+  /**
+   * Resolve a local server identifier (display name in local mode, Convex
+   * Id in hosted) to a Convex `Id<'servers'>`. Used by the widget snapshot
+   * capture path because the backend mutation requires a Convex Id and
+   * local-mode tool results stamp `_meta._serverId` with the local name.
+   * Typically wired from `useProjectServers().serversByName`.
+   */
+  resolveServerConvexId?: (localServerId: string) => string | undefined;
 }
 
 export type ChatSessionResetReason =
@@ -1048,6 +1056,7 @@ export function useChatSession(
     executionConfig,
     hostStyle,
     onReset,
+    resolveServerConvexId,
   } = options;
   // Surfaces that omit `executionConfig` entirely (e.g. Playground) own their
   // chat-execution state imperatively and must not be re-synced from prop
@@ -1751,6 +1760,7 @@ export function useChatSession(
     persistedSnapshotToolCallIds,
     messages,
     onStaleHostedAccess: requestRefreshAccessVersion,
+    resolveServerConvexId,
   });
 
   const setMessages = useCallback<

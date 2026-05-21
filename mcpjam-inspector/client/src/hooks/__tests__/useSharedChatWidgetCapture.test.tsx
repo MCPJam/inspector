@@ -76,7 +76,7 @@ describe("useSharedChatWidgetCapture", () => {
                   result: "world",
                   _meta: {
                     "openai/outputTemplate": "ui://widget.html",
-                    _serverId: "server-1",
+                    _serverId: "p57f6yjbcv8dg5qge7msrsy7sx86pydr",
                   },
                 },
               },
@@ -134,7 +134,7 @@ describe("useSharedChatWidgetCapture", () => {
     expect(mockCreateWidgetSnapshot).toHaveBeenCalledWith({
       chatboxId: "cbx_1", accessVersion: 1,
       chatSessionId: "chat-session-1",
-      serverId: "server-1",
+      serverId: "p57f6yjbcv8dg5qge7msrsy7sx86pydr",
       toolCallId: "call-1",
       toolName: "search",
       widgetHtmlBlobId: expect.stringMatching(/^blob-/),
@@ -187,7 +187,7 @@ describe("useSharedChatWidgetCapture", () => {
                   type: "tool-search",
                   toolCallId: "call-1",
                   input: { q: "hello" },
-                  output: { result: "world", _serverId: "server-1" },
+                  output: { result: "world", _serverId: "p57f6yjbcv8dg5qge7msrsy7sx86pydr" },
                 },
               ],
             } as any,
@@ -266,7 +266,7 @@ describe("useSharedChatWidgetCapture", () => {
                   type: "tool-search",
                   toolCallId: "call-1",
                   input: { q: "hello" },
-                  output: { result: "world", _serverId: "server-1" },
+                  output: { result: "world", _serverId: "p57f6yjbcv8dg5qge7msrsy7sx86pydr" },
                 },
               ],
             } as any,
@@ -373,7 +373,7 @@ describe("useSharedChatWidgetCapture", () => {
                   type: "tool-search",
                   toolCallId: "call-pending",
                   input: { q: "hello" },
-                  output: { result: "world", _serverId: "server-1" },
+                  output: { result: "world", _serverId: "p57f6yjbcv8dg5qge7msrsy7sx86pydr" },
                 },
               ],
             } as any,
@@ -441,7 +441,7 @@ describe("useSharedChatWidgetCapture", () => {
                   result: "ok",
                   _meta: {
                     "openai/outputTemplate": "ui://widget.html",
-                    _serverId: "srv_123",
+                    _serverId: "p57f6yjbcv8dg5qge7msrsy7sx86pydr",
                   },
                 },
               },
@@ -483,7 +483,7 @@ describe("useSharedChatWidgetCapture", () => {
     expect(mockCreateWidgetSnapshot).toHaveBeenCalledWith({
       chatboxId: "cbx_1", accessVersion: 1,
       chatSessionId: "chat-session-2",
-      serverId: "srv_123",
+      serverId: "p57f6yjbcv8dg5qge7msrsy7sx86pydr",
       toolCallId: "call-2",
       toolName: "search",
       widgetHtmlBlobId: expect.stringMatching(/^blob-/),
@@ -538,7 +538,7 @@ describe("useSharedChatWidgetCapture", () => {
                 type: "tool-search",
                 toolCallId: "call-stale",
                 input: { q: "hello" },
-                output: { result: "world", _serverId: "server-1" },
+                output: { result: "world", _serverId: "p57f6yjbcv8dg5qge7msrsy7sx86pydr" },
               },
             ],
           } as any,
@@ -630,13 +630,13 @@ describe("useSharedChatWidgetCapture", () => {
                 type: "tool-search",
                 toolCallId: "call-a",
                 input: { q: "a" },
-                output: { result: "a", _serverId: "server-1" },
+                output: { result: "a", _serverId: "p57f6yjbcv8dg5qge7msrsy7sx86pydr" },
               },
               {
                 type: "tool-search",
                 toolCallId: "call-b",
                 input: { q: "b" },
-                output: { result: "b", _serverId: "server-1" },
+                output: { result: "b", _serverId: "p57f6yjbcv8dg5qge7msrsy7sx86pydr" },
               },
             ],
           } as any,
@@ -734,7 +734,7 @@ describe("useSharedChatWidgetCapture", () => {
                 type: "tool-search",
                 toolCallId: "call-backoff",
                 input: { q: "hello" },
-                output: { result: "world", _serverId: "server-1" },
+                output: { result: "world", _serverId: "p57f6yjbcv8dg5qge7msrsy7sx86pydr" },
               },
             ],
           } as any,
@@ -815,7 +815,7 @@ describe("useSharedChatWidgetCapture", () => {
                   type: "tool-search",
                   toolCallId: "call-race",
                   input: { q: "race" },
-                  output: { result: "ok", _serverId: "server-1" },
+                  output: { result: "ok", _serverId: "p57f6yjbcv8dg5qge7msrsy7sx86pydr" },
                 },
               ],
             } as any,
@@ -937,7 +937,7 @@ describe("useSharedChatWidgetCapture", () => {
                   type: "tool-search",
                   toolCallId: "call-replay",
                   input: { q: "hello" },
-                  output: { result: "world", _serverId: "server-1" },
+                  output: { result: "world", _serverId: "p57f6yjbcv8dg5qge7msrsy7sx86pydr" },
                 },
               ],
             } as any,
@@ -1018,7 +1018,7 @@ describe("useSharedChatWidgetCapture", () => {
                 input: { q: "history" },
                 output: {
                   result: "ok",
-                  _meta: { _serverId: "server-1" },
+                  _meta: { _serverId: "p57f6yjbcv8dg5qge7msrsy7sx86pydr" },
                 },
               },
             ],
@@ -1100,7 +1100,7 @@ describe("useSharedChatWidgetCapture", () => {
               widgetState: null,
               globals: { theme: "dark", displayMode: "inline" },
               widgetHtml: "<div>Widget</div>",
-              serverId: "server-1",
+              serverId: "p57f6yjbcv8dg5qge7msrsy7sx86pydr",
               resourceUri: "ui://widget.html",
               updatedAt: Date.now(),
             },
@@ -1117,7 +1117,7 @@ describe("useSharedChatWidgetCapture", () => {
 
     expect(mockCreateWidgetSnapshot).toHaveBeenCalledTimes(1);
     expect(mockCreateWidgetSnapshot.mock.calls[0][0]).toMatchObject({
-      serverId: "server-1",
+      serverId: "p57f6yjbcv8dg5qge7msrsy7sx86pydr",
       resourceUri: "ui://widget.html",
       toolCallId: "call-fallback",
     });
@@ -1157,6 +1157,133 @@ describe("useSharedChatWidgetCapture", () => {
             {
               toolCallId: "call-no-server",
               toolName: "search",
+              protocol: "mcp-apps",
+              widgetState: null,
+              globals: { theme: "dark", displayMode: "inline" },
+              widgetHtml: "<div>Widget</div>",
+              updatedAt: Date.now(),
+            },
+          ],
+        ]),
+      });
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+
+    await flushMicrotasks();
+
+    expect(mockGenerateSnapshotUploadUrl).not.toHaveBeenCalled();
+    expect(mockCreateWidgetSnapshot).not.toHaveBeenCalled();
+
+    unmount();
+  });
+
+  it("resolves a local server name to a Convex Id via resolveServerConvexId", async () => {
+    const convexId = "p57f6yjbcv8dg5qge7msrsy7sx86pydr";
+    const resolveServerConvexId = vi.fn(
+      (local: string) => (local === "Champions" ? convexId : undefined),
+    );
+
+    const { unmount } = renderHook(() =>
+      useSharedChatWidgetCapture({
+        enabled: true,
+        chatSessionId: "chat-session-local",
+        resolveServerConvexId,
+        messages: [
+          {
+            id: "assistant-1",
+            role: "assistant",
+            parts: [
+              {
+                type: "tool-show-squad",
+                toolCallId: "call-local",
+                input: { team: "Arsenal" },
+                // Local-mode stamp: `_meta._serverId` is the connection
+                // *name*, not a Convex Id.
+                output: {
+                  result: "ok",
+                  _meta: {
+                    _serverId: "Champions",
+                    ui: { resourceUri: "ui://squad-manager/mcp-app.html" },
+                  },
+                },
+              },
+            ],
+          } as any,
+        ],
+      }),
+    );
+
+    act(() => {
+      useWidgetDebugStore.setState({
+        widgets: new Map([
+          [
+            "call-local",
+            {
+              toolCallId: "call-local",
+              toolName: "show-squad",
+              protocol: "mcp-apps",
+              widgetState: null,
+              globals: { theme: "dark", displayMode: "inline" },
+              widgetHtml: "<div>Widget</div>",
+              updatedAt: Date.now(),
+            },
+          ],
+        ]),
+      });
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+
+    await flushMicrotasks();
+
+    expect(resolveServerConvexId).toHaveBeenCalledWith("Champions");
+    expect(mockCreateWidgetSnapshot).toHaveBeenCalledTimes(1);
+    expect(mockCreateWidgetSnapshot.mock.calls[0][0]).toMatchObject({
+      serverId: convexId,
+      toolCallId: "call-local",
+    });
+
+    unmount();
+  });
+
+  it("skips capture when no resolver is supplied and the serverId is not Convex-shaped", async () => {
+    const { unmount } = renderHook(() =>
+      useSharedChatWidgetCapture({
+        enabled: true,
+        chatSessionId: "chat-session-noresolver",
+        messages: [
+          {
+            id: "assistant-1",
+            role: "assistant",
+            parts: [
+              {
+                type: "tool-show-squad",
+                toolCallId: "call-bad-id",
+                input: {},
+                output: {
+                  result: "ok",
+                  _meta: { _serverId: "Champions" },
+                },
+              },
+            ],
+          } as any,
+        ],
+      }),
+    );
+
+    act(() => {
+      useWidgetDebugStore.setState({
+        widgets: new Map([
+          [
+            "call-bad-id",
+            {
+              toolCallId: "call-bad-id",
+              toolName: "show-squad",
               protocol: "mcp-apps",
               widgetState: null,
               globals: { theme: "dark", displayMode: "inline" },
