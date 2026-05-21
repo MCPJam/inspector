@@ -605,7 +605,10 @@ export function MCPAppsRenderer({
   const [widgetHtml, setWidgetHtml] = useState<string | null>(null);
   const [sandboxProxyReady, setSandboxProxyReady] = useState(false);
   const [bridgeTransportReady, setBridgeTransportReady] = useState(false);
-  const isCachedReplay = !!cachedWidgetHtmlUrl;
+  // A cached URL can exist during an in-flow revisit while the renderer still
+  // prefers live HTML. Treat only cached-only renders as replay; live compat
+  // fetches still need completed tool output baked into window.openai at boot.
+  const isCachedReplay = !!cachedWidgetHtmlUrl && !liveFetchPreferred;
   const cachedReplayInjectOpenAiCompat =
     typeof initialInjectedOpenAiCompat === "boolean"
       ? initialInjectedOpenAiCompat
@@ -613,6 +616,19 @@ export function MCPAppsRenderer({
   const widgetInjectOpenAiCompatReloadKey = isCachedReplay
     ? cachedReplayInjectOpenAiCompat
     : effectiveInjectOpenAiCompat;
+  // The OpenAI Apps SDK compatibility runtime bakes toolInput/toolOutput into
+  // `window.openai` during HTML injection. Pure SEP-1865 views can boot while
+  // input is still streaming and receive the final result via
+  // ui/notifications/tool-result. Legacy Apps SDK templates declared through
+  // `openai/outputTemplate` are different: many read window.openai.toolOutput
+  // once on mount, so they still need the completed output before boot.
+  const requiresCompatOutputAtBoot =
+    effectiveInjectOpenAiCompat &&
+    typeof toolMetadata?.["openai/outputTemplate"] === "string";
+  const shouldWaitForCompatToolOutput =
+    !isCachedReplay &&
+    requiresCompatOutputAtBoot &&
+    toolState !== "output-available";
   const [widgetCsp, setWidgetCsp] = useState<McpUiResourceCsp | undefined>(
     isCachedReplay ? undefined : (initialWidgetCsp ?? undefined),
   );
@@ -750,6 +766,7 @@ export function MCPAppsRenderer({
       toolState === "input-available" ||
       toolState === "output-available";
     if (!isActiveToolState) return;
+    if (shouldWaitForCompatToolOutput) return;
     // Re-fetch if CSP mode changed (widget needs to reload with new CSP
     // policy) OR if the compat-runtime flag changed (HTML needs to be
     // rebuilt with/without the `window.openai` shim). Both belong in
@@ -809,18 +826,24 @@ export function MCPAppsRenderer({
       setLoadedCspMode(cspMode);
       // Cached replay: HTML is byte-frozen at capture time. Trust persisted
       // provenance when available; otherwise keep it unknown instead of
-      // inferring from the current live host.
-      setLoadedInjectOpenAiCompat(cachedReplayInjectOpenAiCompat);
+      // inferring from the current live host. When this is the fallback path
+      // after a preferred live fetch failed, mark the loaded fallback as
+      // satisfying the current reload key so the effect doesn't immediately
+      // retry live and overwrite the cached render.
+      const loadedCachedCompatKey = isCachedReplay
+        ? cachedReplayInjectOpenAiCompat
+        : widgetInjectOpenAiCompatReloadKey;
+      setLoadedInjectOpenAiCompat(loadedCachedCompatKey);
       setWidgetHtmlStore(
         toolCallId,
         html,
-        cachedReplayInjectOpenAiCompat ?? undefined,
+        loadedCachedCompatKey ?? undefined,
       );
       logWidgetDebug("host-to-ui", "debug/widget-content-ready", {
         cached: true,
         cspMode,
         htmlLength: html.length,
-        injectOpenAiCompat: cachedReplayInjectOpenAiCompat,
+        injectOpenAiCompat: loadedCachedCompatKey,
         permissive: true,
       });
     };
@@ -1017,6 +1040,7 @@ export function MCPAppsRenderer({
     liveFetchPreferred,
     initialPrefersBorder,
     cachedReplayInjectOpenAiCompat,
+    shouldWaitForCompatToolOutput,
     recordMountStore,
   ]);
 

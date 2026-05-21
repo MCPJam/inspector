@@ -67,6 +67,7 @@ import {
   mergeLiveChatTraceUsage,
   type LiveChatTraceUsage,
 } from "@/shared/live-chat-trace";
+import { isAbortError } from "@/shared/abort-errors";
 
 function formatStreamError(error: unknown, provider?: ModelProvider): string {
   if (!(error instanceof Error)) {
@@ -195,6 +196,7 @@ function streamDirectChatWithLiveTrace(options: {
   systemPrompt: string;
   temperature?: number;
   tools: ToolSet;
+  abortSignal?: AbortSignal;
   onPersist?: (event: {
     responseMessages: ModelMessage[];
     assistantText: string;
@@ -213,6 +215,7 @@ function streamDirectChatWithLiveTrace(options: {
     systemPrompt,
     temperature,
     tools,
+    abortSignal,
     onPersist,
   } = options;
 
@@ -236,9 +239,17 @@ function streamDirectChatWithLiveTrace(options: {
   const providerSystemPrompt = normalizeSystemPromptForProvider(systemPrompt);
   let currentStepIndex = 0;
   let turnFinished = false;
+  let aborted = abortSignal?.aborted === true;
+  const markAborted = () => {
+    aborted = true;
+  };
+  abortSignal?.addEventListener("abort", markAborted, { once: true });
 
   const stream = createUIMessageStream({
     onError: (error) => {
+      if (aborted || isAbortError(error)) {
+        return "";
+      }
       logger.error("[mcp/chat-v2] stream error", error);
       return formatStreamError(error, provider);
     },
@@ -267,13 +278,14 @@ function streamDirectChatWithLiveTrace(options: {
         traceTurn.promptIndex
       ) as ToolSet;
 
-      const result = streamText({
+      const streamTextOptions: Parameters<typeof streamText>[0] = {
         model: llmModel,
         messages: messageHistory,
         ...(temperature !== undefined ? { temperature } : {}),
         system: providerSystemPrompt,
         tools: tracedTools,
         stopWhen: stepCountIs(20),
+        ...(abortSignal ? { abortSignal } : {}),
         prepareStep: ({ stepNumber }) => {
           currentStepIndex = stepNumber;
           registerAiSdkPrepareStep(traceContext, stepNumber, {
@@ -363,6 +375,11 @@ function streamDirectChatWithLiveTrace(options: {
           if (turnFinished) {
             return;
           }
+          if (aborted || isAbortError(error)) {
+            aborted = true;
+            turnFinished = true;
+            return;
+          }
 
           const failAt = Date.now();
           finalizeAiSdkTraceOnFailure(traceContext, failAt, {
@@ -389,6 +406,12 @@ function streamDirectChatWithLiveTrace(options: {
           turnFinished = true;
         },
         onFinish: async (event) => {
+          if (aborted || abortSignal?.aborted) {
+            aborted = true;
+            turnFinished = true;
+            return;
+          }
+
           patchAiSdkRecordedSpansMessageRangesFromSteps(
             traceContext.recordedSpans,
             initialMessageHistoryLength,
@@ -447,21 +470,46 @@ function streamDirectChatWithLiveTrace(options: {
             });
           }
         },
-      });
+      };
 
-      for await (const chunk of result.toUIMessageStream({
-        messageMetadata: ({ part }) => {
-          if (part.type === "finish-step") {
-            return {
-              inputTokens: part.usage.inputTokens,
-              outputTokens: part.usage.outputTokens,
-              totalTokens: part.usage.totalTokens,
-            };
-          }
-        },
-        onError: (error) => formatStreamError(error, provider),
-      })) {
-        writer.write(chunk);
+      let result: ReturnType<typeof streamText>;
+      try {
+        result = streamText(streamTextOptions);
+      } catch (error) {
+        abortSignal?.removeEventListener("abort", markAborted);
+        if (aborted || isAbortError(error)) {
+          aborted = true;
+          return;
+        }
+        throw error;
+      }
+
+      try {
+        for await (const chunk of result.toUIMessageStream({
+          messageMetadata: ({ part }) => {
+            if (part.type === "finish-step") {
+              return {
+                inputTokens: part.usage.inputTokens,
+                outputTokens: part.usage.outputTokens,
+                totalTokens: part.usage.totalTokens,
+              };
+            }
+          },
+          onError: (error) => {
+            if (aborted || isAbortError(error)) return "";
+            return formatStreamError(error, provider);
+          },
+        })) {
+          writer.write(chunk);
+        }
+      } catch (error) {
+        if (aborted || isAbortError(error)) {
+          aborted = true;
+          return;
+        }
+        throw error;
+      } finally {
+        abortSignal?.removeEventListener("abort", markAborted);
       }
     },
   });
@@ -858,6 +906,10 @@ chatV2.post("/", async (c) => {
     const streamStartedAt = Date.now();
     const authHeader = c.req.header("authorization");
     const chatSessionId = body.chatSessionId;
+    const inboundAbortSignalDirect = c.req.raw.signal as
+      | AbortSignal
+      | undefined;
+    warnIfChatAbortSignalMissing(inboundAbortSignalDirect, "mcp/chat-v2");
 
     const scrubbedModelMessages = scrubMessages(
       modelMessages as ModelMessage[]
@@ -871,6 +923,7 @@ chatV2.post("/", async (c) => {
       systemPrompt: enhancedSystemPrompt,
       temperature: resolvedTemperature,
       tools: allTools as ToolSet,
+      abortSignal: inboundAbortSignalDirect,
       onPersist: chatSessionId
         ? async ({
             responseMessages,
