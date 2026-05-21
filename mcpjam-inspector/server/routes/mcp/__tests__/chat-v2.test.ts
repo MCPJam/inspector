@@ -453,6 +453,22 @@ describe("POST /api/mcp/chat-v2", () => {
       );
     });
 
+    it("passes the inbound abort signal to user-provided streamText calls", async () => {
+      const { streamText } = await import("ai");
+
+      await postJson(app, "/api/mcp/chat-v2", {
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: "gpt-4", provider: "openai" },
+        apiKey: "test-key",
+      });
+
+      expect(streamText).toHaveBeenCalledWith(
+        expect.objectContaining({
+          abortSignal: expect.any(AbortSignal),
+        }),
+      );
+    });
+
     it("includes system prompt when provided", async () => {
       const { streamText } = await import("ai");
 

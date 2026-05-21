@@ -323,16 +323,14 @@ describe("useToolInputStreaming", () => {
   it("signalStreamingRender sets the render signal", () => {
     const props = createDefaultProps(bridge);
     props.toolState = "input-streaming";
-    // Start without toolInput — the reset-on-toolCallId effect also fires on
-    // the first render and would undo the partial delivery state.
     props.toolInput = undefined;
 
     const { result, rerender } = renderHook(() => useToolInputStreaming(props));
 
     expect(result.current.canRenderStreamingInput).toBe(false);
 
-    // Now set toolInput — only the partial delivery effect re-fires,
-    // the reset effect does NOT (toolCallId hasn't changed).
+    // Now set toolInput — only the partial delivery effect re-fires
+    // because toolCallId hasn't changed.
     props.toolInput = { code: "hello" };
     rerender();
 
@@ -372,10 +370,7 @@ describe("useToolInputStreaming", () => {
       vi.advanceTimersByTime(STREAMING_REVEAL_FALLBACK_MS + 10);
     });
 
-    // Fallback timer sets streamingRenderSignaled, but hasDeliveredStreamingInput
-    // is still false — so canRenderStreamingInput remains false
-    // (both conditions must be true)
-    expect(result.current.canRenderStreamingInput).toBe(false);
+    expect(result.current.canRenderStreamingInput).toBe(true);
   });
 
   it("does not send partial when bridge is null", () => {

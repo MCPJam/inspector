@@ -7,7 +7,14 @@
  * without touching the renderer component.
  */
 
-import { useRef, useState, useMemo, useCallback, useEffect } from "react";
+import {
+  useRef,
+  useState,
+  useMemo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+} from "react";
 import type { AppBridge } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { CallToolResult } from "@modelcontextprotocol/client";
 
@@ -178,6 +185,7 @@ export function useToolInputStreaming({
   const lastToolErrorRef = useRef<string | null>(null);
   const toolInputSentRef = useRef(false);
   const previousToolStateRef = useRef<ToolState | undefined>(toolState);
+  const previousToolCallIdRef = useRef(toolCallId);
 
   // ── Internal state ───────────────────────────────────────────────────────
 
@@ -194,7 +202,10 @@ export function useToolInputStreaming({
 
   const canRenderStreamingInput = useMemo(() => {
     if (toolState !== "input-streaming") return true;
-    return streamingRenderSignaled && hasDeliveredStreamingInput;
+    // Some providers do not surface parseable partial tool args before the
+    // complete input arrives. Reveal after the fallback signal so the iframe can
+    // initialize and show its own loading state instead of staying invisible.
+    return streamingRenderSignaled || hasDeliveredStreamingInput;
   }, [hasDeliveredStreamingInput, streamingRenderSignaled, toolState]);
 
   // ── Callbacks ────────────────────────────────────────────────────────────
@@ -321,7 +332,15 @@ export function useToolInputStreaming({
       partialInputTimerRef.current = null;
       flushPartialInput();
     }, PARTIAL_INPUT_THROTTLE_MS - elapsed);
-  }, [hasToolInputData, isReady, toolInput, toolState, bridgeRef, isReadyRef]);
+  }, [
+    hasToolInputData,
+    isReady,
+    toolCallId,
+    toolInput,
+    toolState,
+    bridgeRef,
+    isReadyRef,
+  ]);
 
   // 5. Complete input delivery
   useEffect(() => {
@@ -356,7 +375,7 @@ export function useToolInputStreaming({
       toolInputSentRef.current = false;
       lastToolInputRef.current = null;
     });
-  }, [isReady, toolInput, toolState, bridgeRef, reinitCount]);
+  }, [isReady, toolCallId, toolInput, toolState, bridgeRef, reinitCount]);
 
   // 6. Tool result delivery
   useEffect(() => {
@@ -368,7 +387,7 @@ export function useToolInputStreaming({
     if (lastToolOutputRef.current === serialized) return;
     lastToolOutputRef.current = serialized;
     bridge.sendToolResult(toolOutput as CallToolResult);
-  }, [isReady, toolOutput, toolState, bridgeRef, reinitCount]);
+  }, [isReady, toolCallId, toolOutput, toolState, bridgeRef, reinitCount]);
 
   // 7. Tool error/cancellation delivery
   useEffect(() => {
@@ -389,10 +408,20 @@ export function useToolInputStreaming({
 
     // SEP-1865: Send tool-cancelled for errors instead of tool-result with isError
     bridge.sendToolCancelled({ reason: errorMessage });
-  }, [isReady, toolErrorText, toolOutput, toolState, bridgeRef, reinitCount]);
+  }, [
+    isReady,
+    toolCallId,
+    toolErrorText,
+    toolOutput,
+    toolState,
+    bridgeRef,
+    reinitCount,
+  ]);
 
   // 8. Reset on toolCallId change
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (previousToolCallIdRef.current === toolCallId) return;
+    previousToolCallIdRef.current = toolCallId;
     resetStreamingState();
   }, [toolCallId, resetStreamingState]);
 
