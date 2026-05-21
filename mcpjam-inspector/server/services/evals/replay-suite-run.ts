@@ -162,6 +162,7 @@ export async function executeSuiteReplayFromRun(
       config,
       modelApiKeys: resolvedModelApiKeys ?? undefined,
       orgModelConfig: resolvedOrgModelConfig,
+      orgModelConfigTarget: replayOrgConfigTarget,
       convexClient,
       convexHttpUrl,
       convexAuthToken,

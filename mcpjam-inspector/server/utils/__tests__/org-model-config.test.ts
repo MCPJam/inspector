@@ -157,6 +157,9 @@ describe("isLocalRuntimeEligible", () => {
     expect(isLocalRuntimeEligible("azure")).toBe(false);
     expect(isLocalRuntimeEligible("google")).toBe(false);
     expect(isLocalRuntimeEligible("openrouter")).toBe(false);
-    expect(isLocalRuntimeEligible("custom:my-llm")).toBe(false);
+  });
+
+  it("returns true for custom providers because they can run locally", () => {
+    expect(isLocalRuntimeEligible("custom:my-llm")).toBe(true);
   });
 });

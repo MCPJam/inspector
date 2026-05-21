@@ -28,6 +28,10 @@ import { logger } from "../utils/logger";
 import { injectOpenAICompat } from "../utils/widget-helpers.js";
 import {
   buildLlmRuntimeConfigFromOrgConfig,
+  deriveOrgProviderKey,
+  isLocalRuntimeEligible,
+  resolveOrgProviderRuntimeForTarget,
+  type ResolveOrgModelConfigTarget,
   type ResolvedOrgModelConfig,
 } from "../utils/org-model-config";
 import {
@@ -133,6 +137,7 @@ export type RunEvalSuiteOptions = {
   };
   modelApiKeys?: Record<string, string>;
   orgModelConfig?: ResolvedOrgModelConfig;
+  orgModelConfigTarget?: ResolveOrgModelConfigTarget;
   convexClient: ConvexHttpClient;
   convexHttpUrl: string;
   convexAuthToken: string;
@@ -1046,6 +1051,7 @@ type RunIterationBaseParams = {
   suiteId?: string;
   modelApiKeys?: Record<string, string>;
   orgModelConfig?: ResolvedOrgModelConfig;
+  orgModelConfigTarget?: ResolveOrgModelConfigTarget;
   convexClient: ConvexHttpClient;
   runId: string | null; // For cancellation checks
   abortSignal?: AbortSignal; // For aborting in-flight requests
@@ -1075,6 +1081,8 @@ type RunIterationBackendParams = RunIterationBaseParams & {
   convexHttpUrl: string;
   convexAuthToken: string;
   modelId: string;
+  endpointPath?: "/stream" | "/stream/org";
+  extraBodyFields?: Record<string, unknown>;
 };
 
 function parseCustomProviderName(modelId: string): string | undefined {
@@ -1148,6 +1156,106 @@ function resolveEvalModelRuntime(args: {
     ...(orgRuntime?.customProviders.length
       ? { customProviders: orgRuntime.customProviders }
       : {}),
+  };
+}
+
+function hasExplicitModelApiKeys(
+  modelApiKeys: Record<string, string> | undefined,
+): boolean {
+  return Boolean(modelApiKeys && Object.keys(modelApiKeys).length > 0);
+}
+
+function readBackendUsage(usage: unknown): {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+} {
+  const record =
+    usage && typeof usage === "object"
+      ? (usage as Record<string, unknown>)
+      : {};
+  const inputTokens =
+    typeof record.inputTokens === "number"
+      ? record.inputTokens
+      : typeof record.promptTokens === "number"
+        ? record.promptTokens
+        : 0;
+  const outputTokens =
+    typeof record.outputTokens === "number"
+      ? record.outputTokens
+      : typeof record.completionTokens === "number"
+        ? record.completionTokens
+        : 0;
+  const totalTokens =
+    typeof record.totalTokens === "number" ? record.totalTokens : 0;
+  return { inputTokens, outputTokens, totalTokens };
+}
+
+function resolveOrgTargetForEval(
+  test: EvalTestCase,
+  explicitTarget?: ResolveOrgModelConfigTarget,
+): ResolveOrgModelConfigTarget | undefined {
+  if (explicitTarget) return explicitTarget;
+  const maybeProjectId = (test as { projectId?: unknown }).projectId;
+  if (typeof maybeProjectId === "string" && maybeProjectId.trim()) {
+    return { projectId: maybeProjectId.trim() };
+  }
+  const maybeWorkspaceId = (test as { workspaceId?: unknown }).workspaceId;
+  if (typeof maybeWorkspaceId === "string" && maybeWorkspaceId.trim()) {
+    return { workspaceId: maybeWorkspaceId.trim() };
+  }
+  return undefined;
+}
+
+async function resolveOrgByokEvalRuntime(args: {
+  test: EvalTestCase;
+  modelDefinition: ModelDefinition;
+  modelApiKeys?: Record<string, string>;
+  orgModelConfig?: ResolvedOrgModelConfig;
+  orgModelConfigTarget?: ResolveOrgModelConfigTarget;
+  convexAuthToken: string;
+}): Promise<
+  | {
+      kind: "cloud";
+      providerKey: string;
+      target: ResolveOrgModelConfigTarget;
+    }
+  | {
+      kind: "local";
+      orgModelConfig: ResolvedOrgModelConfig;
+    }
+  | undefined
+> {
+  if (hasExplicitModelApiKeys(args.modelApiKeys)) return undefined;
+
+  const providerKeyResult = deriveOrgProviderKey(args.modelDefinition);
+  if (!providerKeyResult.ok) return undefined;
+
+  const target = resolveOrgTargetForEval(args.test, args.orgModelConfigTarget);
+  if (!target) return undefined;
+
+  const providerKey = providerKeyResult.key;
+  if (!isLocalRuntimeEligible(providerKey)) {
+    return { kind: "cloud", providerKey, target };
+  }
+
+  if ("organizationId" in target) {
+    return { kind: "cloud", providerKey, target };
+  }
+
+  const runtime = await resolveOrgProviderRuntimeForTarget(
+    target,
+    providerKey,
+    String(args.modelDefinition.id),
+    { bearerToken: args.convexAuthToken },
+  );
+  if (runtime.runtimeLocation === "cloud") {
+    return { kind: "cloud", providerKey: runtime.providerKey, target };
+  }
+
+  return {
+    kind: "local",
+    orgModelConfig: { providers: [runtime.provider] },
   };
 }
 
@@ -1620,6 +1728,8 @@ const runIterationViaBackend = async ({
   convexHttpUrl,
   convexAuthToken,
   modelId,
+  endpointPath = "/stream",
+  extraBodyFields,
   convexClient,
   runId,
   abortSignal,
@@ -1792,7 +1902,7 @@ const runIterationViaBackend = async ({
       const llmStartAbs = stepStartAbs;
       const stepMessageStartIndex = messageHistory.length;
       try {
-        const res = await fetch(`${convexHttpUrl}/stream`, {
+        const res = await fetch(`${convexHttpUrl}${endpointPath}`, {
           method: "POST",
           headers: {
             "content-type": "application/json",
@@ -1807,6 +1917,7 @@ const runIterationViaBackend = async ({
             ...(toolChoice ? { toolChoice } : {}),
             tools: toolDefs,
             maxOutputTokens: 16384,
+            ...(extraBodyFields ?? {}),
           }),
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
@@ -1857,16 +1968,13 @@ const runIterationViaBackend = async ({
           break;
         }
 
-        if (json.usage) {
-          accumulatedUsage.inputTokens =
-            (accumulatedUsage.inputTokens || 0) +
-            (json.usage.promptTokens || 0);
-          accumulatedUsage.outputTokens =
-            (accumulatedUsage.outputTokens || 0) +
-            (json.usage.completionTokens || 0);
-          accumulatedUsage.totalTokens =
-            (accumulatedUsage.totalTokens || 0) + (json.usage.totalTokens || 0);
-        }
+        const stepUsage = readBackendUsage(json.usage);
+        accumulatedUsage.inputTokens =
+          (accumulatedUsage.inputTokens || 0) + stepUsage.inputTokens;
+        accumulatedUsage.outputTokens =
+          (accumulatedUsage.outputTokens || 0) + stepUsage.outputTokens;
+        accumulatedUsage.totalTokens =
+          (accumulatedUsage.totalTokens || 0) + stepUsage.totalTokens;
 
         for (const msg of json.messages as any[]) {
           if (msg?.role === "assistant" && Array.isArray(msg.content)) {
@@ -1957,9 +2065,9 @@ const runIterationViaBackend = async ({
               },
               {
                 modelId,
-                inputTokens: json.usage?.promptTokens,
-                outputTokens: json.usage?.completionTokens,
-                totalTokens: json.usage?.totalTokens,
+                inputTokens: stepUsage.inputTokens,
+                outputTokens: stepUsage.outputTokens,
+                totalTokens: stepUsage.totalTokens,
                 messageStartIndex:
                   stepMessageEndIndex != null
                     ? stepMessageStartIndex
@@ -1985,9 +2093,9 @@ const runIterationViaBackend = async ({
               failAbs,
               {
                 modelId,
-                inputTokens: json.usage?.promptTokens,
-                outputTokens: json.usage?.completionTokens,
-                totalTokens: json.usage?.totalTokens,
+                inputTokens: stepUsage.inputTokens,
+                outputTokens: stepUsage.outputTokens,
+                totalTokens: stepUsage.totalTokens,
                 messageStartIndex:
                   stepMessageEndIndex != null
                     ? stepMessageStartIndex
@@ -2016,9 +2124,9 @@ const runIterationViaBackend = async ({
             undefined,
             {
               modelId,
-              inputTokens: json.usage?.promptTokens,
-              outputTokens: json.usage?.completionTokens,
-              totalTokens: json.usage?.totalTokens,
+              inputTokens: stepUsage.inputTokens,
+              outputTokens: stepUsage.outputTokens,
+              totalTokens: stepUsage.totalTokens,
               messageStartIndex:
                 stepMessageEndIndex != null ? stepMessageStartIndex : undefined,
               messageEndIndex: stepMessageEndIndex,
@@ -2159,6 +2267,7 @@ const runTestCase = async (params: {
   recorder: SuiteRunRecorder | null;
   modelApiKeys?: Record<string, string>;
   orgModelConfig?: ResolvedOrgModelConfig;
+  orgModelConfigTarget?: ResolveOrgModelConfigTarget;
   convexHttpUrl: string;
   convexAuthToken: string;
   convexClient: ConvexHttpClient;
@@ -2177,6 +2286,7 @@ const runTestCase = async (params: {
     recorder,
     modelApiKeys,
     orgModelConfig,
+    orgModelConfigTarget,
     convexHttpUrl,
     convexAuthToken,
     convexClient,
@@ -2197,6 +2307,16 @@ const runTestCase = async (params: {
     resolvedModelId,
     modelDefinition.provider,
   );
+  const orgByokRuntime = isJamModel
+    ? undefined
+    : await resolveOrgByokEvalRuntime({
+        test,
+        modelDefinition,
+        modelApiKeys,
+        orgModelConfig,
+        orgModelConfigTarget,
+        convexAuthToken,
+      });
 
   const outcomes: EvalIterationOutcome[] = [];
 
@@ -2277,6 +2397,37 @@ const runTestCase = async (params: {
       continue;
     }
 
+    if (orgByokRuntime?.kind === "cloud") {
+      const iterationOutcome = await runIterationViaBackend({
+        test,
+        runIndex,
+        tools,
+        mcpClientManager,
+        recorder,
+        testCaseId,
+        suiteId,
+        convexHttpUrl,
+        convexAuthToken,
+        modelId: String(modelDefinition.id),
+        endpointPath: "/stream/org",
+        extraBodyFields: {
+          providerKey: orgByokRuntime.providerKey,
+          ...orgByokRuntime.target,
+        },
+        convexClient,
+        modelApiKeys,
+        orgModelConfig,
+        orgModelConfigTarget,
+        runId,
+        abortSignal,
+        compareRunId,
+        precreatedIterationId,
+        injectOpenAiCompat,
+      });
+      outcomes.push(iterationOutcome);
+      continue;
+    }
+
     const iterationOutcome = await runIterationWithAiSdk({
       test,
       runIndex,
@@ -2287,7 +2438,11 @@ const runTestCase = async (params: {
       suiteId,
       modelDefinition,
       modelApiKeys,
-      orgModelConfig,
+      orgModelConfig:
+        orgByokRuntime?.kind === "local"
+          ? orgByokRuntime.orgModelConfig
+          : orgModelConfig,
+      orgModelConfigTarget,
       convexClient,
       runId,
       abortSignal,
@@ -2307,6 +2462,7 @@ export const runEvalSuiteWithAiSdk = async ({
   config,
   modelApiKeys,
   orgModelConfig,
+  orgModelConfigTarget,
   convexClient,
   convexHttpUrl,
   convexAuthToken,
@@ -2382,6 +2538,7 @@ export const runEvalSuiteWithAiSdk = async ({
         recorder,
         modelApiKeys,
         orgModelConfig,
+        orgModelConfigTarget,
         convexHttpUrl,
         convexAuthToken,
         convexClient,
@@ -3106,6 +3263,8 @@ const streamIterationViaBackend = async ({
   convexHttpUrl,
   convexAuthToken,
   modelId,
+  endpointPath = "/stream",
+  extraBodyFields,
   convexClient,
   runId,
   abortSignal,
@@ -3286,7 +3445,7 @@ const streamIterationViaBackend = async ({
       const llmStartAbs = stepStartAbs;
       const stepMessageStartIndex = messageHistory.length;
       try {
-        const res = await fetch(`${convexHttpUrl}/stream`, {
+        const res = await fetch(`${convexHttpUrl}${endpointPath}`, {
           method: "POST",
           headers: {
             "content-type": "application/json",
@@ -3301,6 +3460,7 @@ const streamIterationViaBackend = async ({
             ...(toolChoice ? { toolChoice } : {}),
             tools: toolDefs,
             maxOutputTokens: 16384,
+            ...(extraBodyFields ?? {}),
           }),
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
@@ -3876,6 +4036,7 @@ export const streamTestCase = async (params: {
   recorder: SuiteRunRecorder | null;
   modelApiKeys?: Record<string, string>;
   orgModelConfig?: ResolvedOrgModelConfig;
+  orgModelConfigTarget?: ResolveOrgModelConfigTarget;
   convexHttpUrl: string;
   convexAuthToken: string;
   convexClient: ConvexHttpClient;
@@ -3900,6 +4061,7 @@ export const streamTestCase = async (params: {
     recorder,
     modelApiKeys,
     orgModelConfig,
+    orgModelConfigTarget,
     convexHttpUrl,
     convexAuthToken,
     convexClient,
@@ -3921,6 +4083,16 @@ export const streamTestCase = async (params: {
     resolvedModelId,
     modelDefinition.provider,
   );
+  const orgByokRuntime = isJamModel
+    ? undefined
+    : await resolveOrgByokEvalRuntime({
+        test,
+        modelDefinition,
+        modelApiKeys,
+        orgModelConfig,
+        orgModelConfigTarget,
+        convexAuthToken,
+      });
 
   const outcomes: EvalIterationOutcome[] = [];
 
@@ -4005,6 +4177,38 @@ export const streamTestCase = async (params: {
       continue;
     }
 
+    if (orgByokRuntime?.kind === "cloud") {
+      const iterationOutcome = await streamIterationViaBackend({
+        test,
+        runIndex,
+        tools,
+        mcpClientManager,
+        recorder,
+        testCaseId,
+        suiteId,
+        convexHttpUrl,
+        convexAuthToken,
+        modelId: String(modelDefinition.id),
+        endpointPath: "/stream/org",
+        extraBodyFields: {
+          providerKey: orgByokRuntime.providerKey,
+          ...orgByokRuntime.target,
+        },
+        convexClient,
+        modelApiKeys,
+        orgModelConfig,
+        orgModelConfigTarget,
+        runId,
+        abortSignal,
+        emit,
+        compareRunId,
+        precreatedIterationId,
+        injectOpenAiCompat,
+      });
+      outcomes.push(iterationOutcome);
+      continue;
+    }
+
     const iterationOutcome = await streamIterationWithAiSdk({
       test,
       runIndex,
@@ -4015,7 +4219,11 @@ export const streamTestCase = async (params: {
       suiteId,
       modelDefinition,
       modelApiKeys,
-      orgModelConfig,
+      orgModelConfig:
+        orgByokRuntime?.kind === "local"
+          ? orgByokRuntime.orgModelConfig
+          : orgModelConfig,
+      orgModelConfigTarget,
       convexClient,
       runId,
       abortSignal,
