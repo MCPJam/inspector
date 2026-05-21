@@ -1352,13 +1352,15 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
     await vi.waitFor(() => {
       // Third arg is the persisted compat-runtime provenance for the
-      // cached HTML. The test props don't carry `injectedOpenAiCompat`,
+      // cached HTML; fourth is the persisted per-method capability
+      // surface that accompanies it. The test props don't carry either,
       // so there's no provenance to record — the renderer passes
-      // `undefined` rather than inferring from the live host config
-      // (HTML is byte-frozen at capture time; live state could lie).
+      // `undefined` for both rather than inferring from the live host
+      // config (HTML is byte-frozen at capture time; live state could lie).
       expect(stableStoreFns.setWidgetHtml).toHaveBeenCalledWith(
         "call-1",
         "<html><body>widget</body></html>",
+        undefined,
         undefined,
       );
     });

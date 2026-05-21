@@ -200,6 +200,14 @@ export function PartSwitch({
           toolMetadata,
           // Include cached widget HTML for offline rendering (MCP Apps only)
           widgetHtml: widgetDebugInfo?.widgetHtml,
+          // Compat provenance — the renderer stamps these onto the
+          // debug-store entry at fetch time. Persisting them with
+          // the saved view lets replay reproduce the original
+          // `window.openai` API surface even when the live host
+          // config has since changed.
+          injectedOpenAiCompat: widgetDebugInfo?.injectedOpenAiCompat,
+          injectedOpenAiCompatCapabilities:
+            widgetDebugInfo?.injectedOpenAiCompatCapabilities,
         };
 
         await saveViewInstant(data);

@@ -34,4 +34,14 @@ export interface ToolRenderOverride {
    * branch (live host flag is ignored when HTML is frozen).
    */
   injectedOpenAiCompat?: boolean;
+  /**
+   * Persisted per-method `window.openai.*` surface that was injected
+   * into the cached HTML blob. Sibling of `injectedOpenAiCompat`; the
+   * boolean tells the renderer "shim or not", the matrix tells it
+   * "which methods" so replay reproduces the same API surface even
+   * when the live host config has since changed. Absent for
+   * pre-feature snapshots — replay treats those as the full ChatGPT
+   * surface (runtime default at capture time).
+   */
+  injectedOpenAiCompatCapabilities?: import("@/lib/client-styles").OpenAiAppsCapabilities;
 }

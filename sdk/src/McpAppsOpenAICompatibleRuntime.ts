@@ -395,9 +395,16 @@ type PendingCall = {
       options: { mode?: string; maxHeight?: number | null } = {},
     ): { mode: string } {
       const requested = options.mode || "inline";
+      // `fullscreen-only` is the Copilot intent: fullscreen is the
+      // sole opt-in escalation, but `inline` must remain reachable —
+      // it's the default rendering mode AND the exit from fullscreen.
+      // Denying it would trap widgets in fullscreen after their
+      // first `requestDisplayMode({ mode: "fullscreen" })` call.
+      // `pip` and unknown modes stay denied.
       const allowed =
         displayModeMode === "all" ||
-        (displayModeMode === "fullscreen-only" && requested === "fullscreen");
+        (displayModeMode === "fullscreen-only" &&
+          (requested === "fullscreen" || requested === "inline"));
       if (!allowed) {
         return { mode: openaiAPI.displayMode as string };
       }

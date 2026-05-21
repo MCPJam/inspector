@@ -7,6 +7,7 @@
 
 import { create } from "zustand";
 import type { CspMode } from "./ui-playground-store";
+import type { OpenAiAppsCapabilities } from "@/lib/client-styles";
 
 export interface CspViolation {
   /** The CSP directive that was violated (e.g., "script-src") */
@@ -251,6 +252,18 @@ export interface WidgetDebugInfo {
    * agrees with the bytes.
    */
   injectedOpenAiCompat?: boolean;
+  /**
+   * Per-method `window.openai.*` surface the runtime was configured
+   * with when `widgetHtml` was captured. Sibling of
+   * `injectedOpenAiCompat`: the boolean alone only answers "was a
+   * shim injected?", whereas the matrix tells replay/debug *which*
+   * surface was injected. Saved views and eval snapshots persist
+   * this so a replay can show the diff vs. preset, and the SDK
+   * runtime can reconstruct the same set of methods on `window.openai`.
+   * Absent for pre-feature snapshots — replay treats those as the
+   * full ChatGPT surface (the SDK runtime's default at capture time).
+   */
+  injectedOpenAiCompatCapabilities?: OpenAiAppsCapabilities;
 }
 
 interface WidgetDebugStore {
@@ -303,12 +316,15 @@ interface WidgetDebugStore {
 
   // Set widget HTML for offline rendering cache. Optional
   // injectedOpenAiCompat carries the compat-runtime flag that was
-  // resolved when the HTML was fetched, so consumers (e.g. ViewsTab
-  // save path) can persist it alongside the blob.
+  // resolved when the HTML was fetched; injectedOpenAiCompatCapabilities
+  // carries the per-method surface the SDK runtime exposed. Both
+  // travel into save-view payloads so replay agrees with the bytes
+  // AND the matrix on disk.
   setWidgetHtml: (
     toolCallId: string,
     html: string,
     injectedOpenAiCompat?: boolean,
+    injectedOpenAiCompatCapabilities?: OpenAiAppsCapabilities,
   ) => void;
 
   /**
@@ -379,10 +395,13 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         lifecycle: existing?.lifecycle ?? [],
         mounts: existing?.mounts ?? [],
         widgetHtml: existing?.widgetHtml, // Preserve cached HTML for save view feature
-        // Preserve the cached compat-runtime flag across debug-info
-        // merges so the save path keeps seeing the value the renderer
-        // stamped at fetch time.
+        // Preserve the cached compat-runtime flag + per-method
+        // capability surface across debug-info merges so the save
+        // path keeps seeing the values the renderer stamped at fetch
+        // time.
         injectedOpenAiCompat: existing?.injectedOpenAiCompat,
+        injectedOpenAiCompatCapabilities:
+          existing?.injectedOpenAiCompatCapabilities,
         modelContext: existing?.modelContext, // Preserve model context across updates
         updatedAt: Date.now(),
       });
@@ -518,7 +537,12 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
     });
   },
 
-  setWidgetHtml: (toolCallId, html, injectedOpenAiCompat) => {
+  setWidgetHtml: (
+    toolCallId,
+    html,
+    injectedOpenAiCompat,
+    injectedOpenAiCompatCapabilities,
+  ) => {
     set((state) => {
       const widgets = new Map(state.widgets);
       const existing = widgets.get(toolCallId);
@@ -541,6 +565,9 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         widgetHtml: html,
         injectedOpenAiCompat:
           injectedOpenAiCompat ?? existing?.injectedOpenAiCompat,
+        injectedOpenAiCompatCapabilities:
+          injectedOpenAiCompatCapabilities ??
+          existing?.injectedOpenAiCompatCapabilities,
         updatedAt: Date.now(),
       });
       return { widgets };
@@ -571,6 +598,9 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         mounts: existing?.mounts ?? [],
         modelContext: existing?.modelContext,
         widgetHtml: existing?.widgetHtml,
+        injectedOpenAiCompat: existing?.injectedOpenAiCompat,
+        injectedOpenAiCompatCapabilities:
+          existing?.injectedOpenAiCompatCapabilities,
         updatedAt: Date.now(),
       });
       return { widgets };
@@ -610,6 +640,9 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         mounts: existing?.mounts ?? [],
         modelContext: existing?.modelContext,
         widgetHtml: existing?.widgetHtml,
+        injectedOpenAiCompat: existing?.injectedOpenAiCompat,
+        injectedOpenAiCompatCapabilities:
+          existing?.injectedOpenAiCompatCapabilities,
         updatedAt: Date.now(),
       });
       return { widgets };
@@ -640,6 +673,9 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         mounts: nextMounts,
         modelContext: existing?.modelContext,
         widgetHtml: existing?.widgetHtml,
+        injectedOpenAiCompat: existing?.injectedOpenAiCompat,
+        injectedOpenAiCompatCapabilities:
+          existing?.injectedOpenAiCompatCapabilities,
         updatedAt: Date.now(),
       });
       return { widgets };
