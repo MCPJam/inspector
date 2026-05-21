@@ -708,4 +708,102 @@ describe("executeToolCallsFromMessages", () => {
       expect((messages[2] as any).content[0].toolCallId).toBe("call-1");
     });
   });
+
+  describe("abort signal", () => {
+    it("throws AbortError without calling the tool when the signal is already aborted", async () => {
+      const execute = vi.fn();
+      const tools = {
+        my_tool: { description: "test", execute },
+      };
+      const controller = new AbortController();
+      controller.abort();
+      const messages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "my_tool",
+              input: {},
+            },
+          ],
+        },
+      ] as unknown as ModelMessage[];
+
+      await expect(
+        executeToolCallsFromMessages(messages, {
+          tools,
+          abortSignal: controller.signal,
+        })
+      ).rejects.toMatchObject({ name: "AbortError" });
+      expect(execute).not.toHaveBeenCalled();
+    });
+
+    it("forwards the abort signal into tool.execute", async () => {
+      const execute = vi.fn().mockResolvedValue({ ok: true });
+      const tools = {
+        my_tool: { description: "test", execute },
+      };
+      const controller = new AbortController();
+      const messages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "my_tool",
+              input: {},
+            },
+          ],
+        },
+      ] as unknown as ModelMessage[];
+
+      await executeToolCallsFromMessages(messages, {
+        tools,
+        abortSignal: controller.signal,
+      });
+
+      expect(execute).toHaveBeenCalledTimes(1);
+      const call = execute.mock.calls[0];
+      expect(call[1]?.abortSignal).toBe(controller.signal);
+    });
+
+    it("rethrows tool aborts instead of storing them as error-text results", async () => {
+      const abortError = Object.assign(new Error("aborted"), {
+        name: "AbortError",
+      });
+      const execute = vi.fn().mockRejectedValue(abortError);
+      const tools = {
+        my_tool: { description: "test", execute },
+      };
+      const controller = new AbortController();
+      const messages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "my_tool",
+              input: {},
+            },
+          ],
+        },
+      ] as unknown as ModelMessage[];
+
+      await expect(
+        executeToolCallsFromMessages(messages, {
+          tools,
+          abortSignal: controller.signal,
+        })
+      ).rejects.toBe(abortError);
+
+      // Crucially: no synthesized tool-result was inserted. Persisting
+      // an "AbortError" string into history would poison subsequent turns.
+      expect(messages).toHaveLength(1);
+      expect(messages[0].role).toBe("assistant");
+    });
+  });
 });

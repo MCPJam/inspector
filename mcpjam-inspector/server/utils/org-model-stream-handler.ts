@@ -103,6 +103,20 @@ export interface OrgModelHandlerOptions {
   chatboxId?: string;
   accessVersion?: number;
   clientIp?: string | null;
+  /**
+   * Inbound request abort signal. Forwarded to the wrapped MCPJam handler so
+   * a client disconnect cancels the Convex fetch, the SSE reader, and the
+   * local tool executor end-to-end.
+   */
+  abortSignal?: AbortSignal;
+  /**
+   * See MCPJamHandlerOptions.heartbeatIntervalMs. Forwarded as-is.
+   */
+  heartbeatIntervalMs?: number;
+  /**
+   * See MCPJamHandlerOptions.maxSteps. Forwarded as-is.
+   */
+  maxSteps?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -231,6 +245,11 @@ export interface OrgLocalModelHandlerOptions {
     write: (chunk: UIMessageChunk) => void;
   }) => void;
   onLiveTextDelta?: (delta: string) => void;
+  /**
+   * Inbound request abort signal. Passed to streamText so a client
+   * disconnect cancels the upstream provider call.
+   */
+  abortSignal?: AbortSignal;
 }
 
 export function handleLocalOrgChatModel(
@@ -362,6 +381,7 @@ export function handleLocalOrgChatModel(
         system: providerSystemPrompt,
         tools: tracedTools,
         stopWhen: stepCountIs(20),
+        ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
         prepareStep: ({ stepNumber }) => {
           currentStepIndex = stepNumber;
           registerAiSdkPrepareStep(traceContext, stepNumber, {
@@ -663,6 +683,9 @@ export async function handleHostedOrgChatModel(
     onStreamWriterReady: options.onStreamWriterReady,
     onLiveTextDelta: options.onLiveTextDelta,
     clientIp: options.clientIp,
+    abortSignal: options.abortSignal,
+    heartbeatIntervalMs: options.heartbeatIntervalMs,
+    maxSteps: options.maxSteps,
     endpointPath: "/stream/org",
     extraHeaders: {
       "X-Inspector-Service-Token": inspectorServiceToken,

@@ -45,6 +45,10 @@ vi.mock("../../../utils/chat-v2-orchestration.js", () => ({
 
 vi.mock("../../../utils/mcpjam-stream-handler.js", () => ({
   handleMCPJamFreeChatModel: handleMCPJamFreeChatModelMock,
+  // No-op dev-only diagnostic; tests don't need real signal-missing
+  // logging behavior but must surface the symbol so the route module
+  // can import it without ReferenceError.
+  warnIfChatAbortSignalMissing: () => {},
 }));
 
 vi.mock("../../../utils/chat-ingestion.js", async () => {

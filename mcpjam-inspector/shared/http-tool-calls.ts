@@ -5,6 +5,7 @@ import {
   scrubMetaAndStructuredContentFromToolResult,
 } from "@mcpjam/sdk";
 import { ToolResultPart } from "ai";
+import { isAbortError } from "./abort-errors";
 
 type ToolsMap = Record<string, any>;
 type Toolsets = Record<string, ToolsMap>;
@@ -64,15 +65,34 @@ export const hasUnresolvedToolCalls = (messages: ModelMessage[]): boolean => {
   return false;
 };
 
-type ExecuteToolCallOptions =
-  | { tools: ToolsMap }
-  | { toolsets: Toolsets }
-  | { clientManager: MCPClientManager; serverIds?: string[] };
+type ExecuteToolCallOptionsBase = {
+  /**
+   * When provided, `tool.execute(input, { ..., abortSignal })` receives the
+   * signal so each tool implementation can self-cancel its in-flight work.
+   * Abort propagates as a thrown `AbortError`; it is NOT stored as a
+   * tool-result error (that would poison conversation history with a fake
+   * model-visible failure).
+   */
+  abortSignal?: AbortSignal;
+};
+
+type ExecuteToolCallOptions = ExecuteToolCallOptionsBase &
+  (
+    | { tools: ToolsMap }
+    | { toolsets: Toolsets }
+    | { clientManager: MCPClientManager; serverIds?: string[] }
+  );
 
 export async function executeToolCallsFromMessages(
   messages: ModelMessage[],
   options: ExecuteToolCallOptions,
 ): Promise<ModelMessage[]> {
+  const signal = options.abortSignal;
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : Object.assign(new Error("Aborted"), { name: "AbortError" });
+  }
   // Build tools with serverId metadata
   let tools: ToolsMap = {};
 
@@ -121,6 +141,11 @@ export async function executeToolCallsFromMessages(
         content?.type === "tool-call" &&
         !existingToolResultIds.has(content.toolCallId)
       ) {
+        if (signal?.aborted) {
+          throw signal.reason instanceof Error
+            ? signal.reason
+            : Object.assign(new Error("Aborted"), { name: "AbortError" });
+        }
         try {
           const toolName: string = content.toolName;
           const tool = index[toolName];
@@ -133,6 +158,7 @@ export async function executeToolCallsFromMessages(
           const result = await tool.execute(input, {
             toolCallId: content.toolCallId,
             messages,
+            ...(signal ? { abortSignal: signal } : {}),
           });
 
           let output: ToolResultPart;
@@ -203,6 +229,13 @@ export async function executeToolCallsFromMessages(
           resultsByAssistantIdx.get(i)!.push(toolResultMessage);
           allNewResults.push(toolResultMessage);
         } catch (error: any) {
+          // Abort errors must propagate — they represent user/client
+          // cancellation, NOT a tool failure. Capturing them as an
+          // error-text result would persist a phantom "tool failed" into
+          // conversation history.
+          if (isAbortError(error)) {
+            throw error;
+          }
           const errorOutput: ToolResultPart = {
             type: "error-text",
             value: error instanceof Error ? error.message : String(error),
