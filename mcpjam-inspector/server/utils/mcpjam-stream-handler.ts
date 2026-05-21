@@ -309,7 +309,7 @@ function readUsageFromFinishChunk(
       totalTokens?: number;
     };
   };
-  const usage = chunk.totalUsage ?? chunk.messageMetadata;
+  const usage = chunk.messageMetadata ?? chunk.totalUsage;
   if (!usage) {
     return undefined;
   }
@@ -326,6 +326,37 @@ function readUsageFromFinishChunk(
   }
 
   return Object.keys(next).length > 0 ? next : undefined;
+}
+
+function createClientFinishChunk(
+  finishChunk: UIMessageChunk | null,
+  traceTurn: LiveTraceTurnContext | null,
+  fallbackReason: "length" | "stop"
+): UIMessageChunk {
+  type FinishUIMessageChunk = Extract<UIMessageChunk, { type: "finish" }>;
+  const source = finishChunk as Partial<FinishUIMessageChunk> | null;
+  // Prefer the turn-level aggregate so multi-step (tool-call) turns report the
+  // sum across all LLM calls, not just the final step.
+  const aggregateUsage = traceTurn?.turnUsage;
+  const usage =
+    aggregateUsage ??
+    (finishChunk
+      ? readUsageFromFinishChunk(finishChunk)
+      : { inputTokens: 0, outputTokens: 0, totalTokens: 0 });
+  const metadata = source?.messageMetadata;
+  const messageMetadata =
+    metadata &&
+    typeof metadata === "object" &&
+    !Array.isArray(metadata) &&
+    usage
+      ? { ...metadata, ...usage }
+      : metadata ?? usage;
+
+  return {
+    type: "finish",
+    finishReason: source?.finishReason ?? fallbackReason,
+    ...(messageMetadata != null ? { messageMetadata } : {}),
+  } as UIMessageChunk;
 }
 
 function setStepSpanMessageRanges(
@@ -1178,7 +1209,7 @@ async function processOneStep(
       );
       emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
       if (finishChunk) {
-        writer.write(finishChunk);
+        writer.write(createClientFinishChunk(finishChunk, traceTurn, "stop"));
       }
       return { shouldContinue: false, didEmitFinish: !!finishChunk };
     }
@@ -1349,7 +1380,7 @@ async function processOneStep(
   // No more tool calls - emit finish and stop
   const didEmitFinish = !!finishChunk;
   if (finishChunk) {
-    writer.write(finishChunk);
+    writer.write(createClientFinishChunk(finishChunk, traceTurn, "stop"));
   }
 
   // We're done with this conversation turn
@@ -1477,11 +1508,13 @@ export async function handleMCPJamFreeChatModel(
 
         // Safety: ensure we always emit a finish event
         if (!finishEmitted) {
-          writer.write({
-            type: "finish",
-            finishReason: steps >= MAX_STEPS ? "length" : "stop",
-            totalUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-          } as unknown as UIMessageChunk);
+          writer.write(
+            createClientFinishChunk(
+              null,
+              traceTurn,
+              steps >= MAX_STEPS ? "length" : "stop"
+            )
+          );
           finishEmitted = true;
         }
 
