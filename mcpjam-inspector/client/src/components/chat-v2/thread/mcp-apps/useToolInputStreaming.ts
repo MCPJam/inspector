@@ -202,11 +202,9 @@ export function useToolInputStreaming({
 
   const canRenderStreamingInput = useMemo(() => {
     if (toolState !== "input-streaming") return true;
-    // Some providers do not surface parseable partial tool args before the
-    // complete input arrives. Reveal after the fallback signal so the iframe can
-    // initialize and show its own loading state instead of staying invisible;
-    // views still receive ui/notifications/tool-input once final args arrive.
-    return streamingRenderSignaled || hasDeliveredStreamingInput;
+    // Avoid revealing a blank app shell on the fallback timer alone. The view
+    // becomes visible after we have both a render signal and delivered input.
+    return streamingRenderSignaled && hasDeliveredStreamingInput;
   }, [hasDeliveredStreamingInput, streamingRenderSignaled, toolState]);
 
   // ── Callbacks ────────────────────────────────────────────────────────────
