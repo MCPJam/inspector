@@ -212,13 +212,10 @@ export function ViewsTab({
   // Mutations
   const {
     createMcpView,
-    createOpenaiView,
     updateMcpView,
-    updateOpenaiView,
     removeMcpView,
     removeOpenaiView,
     generateMcpUploadUrl,
-    generateOpenaiUploadUrl,
   } = useViewMutations();
 
   // Get selected view (from filtered list)
@@ -537,11 +534,7 @@ export function ViewsTab({
           name: newName,
         };
 
-        if (view.protocol === "mcp-apps") {
-          await updateMcpView(updates);
-        } else {
-          await updateOpenaiView(updates);
-        }
+        await updateMcpView(updates);
 
         toast.success(`View renamed to "${newName}"`);
 
@@ -556,7 +549,7 @@ export function ViewsTab({
         throw error; // Re-throw so the sidebar knows to keep editing mode
       }
     },
-    [updateMcpView, updateOpenaiView, posthog],
+    [updateMcpView, posthog],
   );
 
   // Handle duplicate
@@ -574,10 +567,7 @@ export function ViewsTab({
           if (response.ok) {
             const data = await response.json();
             // Upload as a new blob
-            const uploadUrl =
-              view.protocol === "mcp-apps"
-                ? await generateMcpUploadUrl()
-                : await generateOpenaiUploadUrl();
+            const uploadUrl = await generateMcpUploadUrl();
 
             const uploadResponse = await fetch(uploadUrl, {
               method: "POST",
@@ -598,10 +588,7 @@ export function ViewsTab({
           const response = await fetch(view.widgetHtmlUrl);
           if (response.ok) {
             const htmlContent = await response.text();
-            const uploadUrl =
-              view.protocol === "mcp-apps"
-                ? await generateMcpUploadUrl()
-                : await generateOpenaiUploadUrl();
+            const uploadUrl = await generateMcpUploadUrl();
 
             const uploadResponse = await fetch(uploadUrl, {
               method: "POST",
@@ -633,51 +620,27 @@ export function ViewsTab({
             ? { injectedOpenAiCompat: view.injectedOpenAiCompat }
             : {};
 
-        if (view.protocol === "mcp-apps") {
-          await createMcpView({
-            projectId,
-            serverId: view.serverId,
-            name: newName,
-            description: view.description,
-            resourceUri: (view as any).resourceUri,
-            toolName: view.toolName,
-            toolState: view.toolState,
-            toolInput: view.toolInput,
-            toolOutputBlobId,
-            widgetHtmlBlobId,
-            // Carry the cached-HTML provenance flag across duplicate
-            // only when the copy also carries cached widget bytes.
-            ...injectedOpenAiCompatCopy,
-            toolErrorText: view.toolErrorText,
-            toolMetadata: view.toolMetadata,
-            prefersBorder: view.prefersBorder,
-            tags: view.tags,
-            category: view.category,
-            defaultContext: view.defaultContext,
-          });
-        } else {
-          await createOpenaiView({
-            projectId,
-            serverId: view.serverId,
-            name: newName,
-            description: view.description,
-            outputTemplate: (view as any).outputTemplate,
-            toolName: view.toolName,
-            toolState: view.toolState,
-            toolInput: view.toolInput,
-            toolOutputBlobId,
-            widgetHtmlBlobId,
-            ...injectedOpenAiCompatCopy,
-            toolErrorText: view.toolErrorText,
-            toolMetadata: view.toolMetadata,
-            prefersBorder: view.prefersBorder,
-            tags: view.tags,
-            category: view.category,
-            defaultContext: view.defaultContext,
-            serverInfo: (view as any).serverInfo,
-            widgetState: view.widgetState,
-          });
-        }
+        await createMcpView({
+          projectId,
+          serverId: view.serverId,
+          name: newName,
+          description: view.description,
+          resourceUri: (view as any).resourceUri,
+          toolName: view.toolName,
+          toolState: view.toolState,
+          toolInput: view.toolInput,
+          toolOutputBlobId,
+          widgetHtmlBlobId,
+          // Carry the cached-HTML provenance flag across duplicate
+          // only when the copy also carries cached widget bytes.
+          ...injectedOpenAiCompatCopy,
+          toolErrorText: view.toolErrorText,
+          toolMetadata: view.toolMetadata,
+          prefersBorder: view.prefersBorder,
+          tags: view.tags,
+          category: view.category,
+          defaultContext: view.defaultContext,
+        });
 
         toast.success(`View duplicated as "${newName}"`);
 
@@ -693,15 +656,7 @@ export function ViewsTab({
         setDuplicatingViewId(null);
       }
     },
-    [
-      projectId,
-      filteredViews,
-      createMcpView,
-      createOpenaiView,
-      generateMcpUploadUrl,
-      generateOpenaiUploadUrl,
-      posthog,
-    ],
+    [projectId, filteredViews, createMcpView, generateMcpUploadUrl, posthog],
   );
 
   // Handle live data changes from editor (for real-time preview)
@@ -772,19 +727,13 @@ export function ViewsTab({
         currentDisplayContext,
         selectedView.defaultContext,
       );
-      const widgetStateChanged =
-        selectedView.protocol === "openai-apps" &&
-        currentSignatures.widgetState !== baselineSignatures.widgetState;
 
       let toolOutputBlobId: string | undefined;
       let widgetHtmlBlobId: string | undefined;
 
       if (toolOutputChanged && liveToolOutput !== null) {
         // Upload new toolOutput as JSON blob
-        const uploadUrl =
-          selectedView.protocol === "mcp-apps"
-            ? await generateMcpUploadUrl()
-            : await generateOpenaiUploadUrl();
+        const uploadUrl = await generateMcpUploadUrl();
 
         const response = await fetch(uploadUrl, {
           method: "POST",
@@ -806,10 +755,7 @@ export function ViewsTab({
       const widgetHtml = previewWidgetDebugInfo?.widgetHtml;
       if (widgetHtml && widgetHtml !== lastUploadedWidgetHtmlRef.current) {
         // Upload new widget HTML blob
-        const uploadUrl =
-          selectedView.protocol === "mcp-apps"
-            ? await generateMcpUploadUrl()
-            : await generateOpenaiUploadUrl();
+        const uploadUrl = await generateMcpUploadUrl();
 
         const response = await fetch(uploadUrl, {
           method: "POST",
@@ -853,19 +799,7 @@ export function ViewsTab({
         updates.defaultContext = currentDisplayContext;
       }
 
-      if (selectedView.protocol === "openai-apps") {
-        if (widgetStateChanged) {
-          updates.widgetState = liveWidgetState ?? null;
-        } else if (previewWidgetDebugInfo !== undefined) {
-          updates.widgetState = previewWidgetDebugInfo.widgetState;
-        }
-      }
-
-      if (selectedView.protocol === "mcp-apps") {
-        await updateMcpView(updates);
-      } else {
-        await updateOpenaiView(updates);
-      }
+      await updateMcpView(updates);
 
       // Update original values to reflect saved state
       setOriginalToolOutput(liveToolOutput);
@@ -889,14 +823,11 @@ export function ViewsTab({
     hasLiveUnsavedChanges,
     liveToolInput,
     liveToolOutput,
-    liveWidgetState,
     currentSignatures,
     baselineSignatures,
     currentDisplayContext,
     generateMcpUploadUrl,
-    generateOpenaiUploadUrl,
     updateMcpView,
-    updateOpenaiView,
     widgetsMap,
     posthog,
   ]);
