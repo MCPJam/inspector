@@ -38,12 +38,30 @@ You can override the request timeout and headers **per server attached to the Cl
 
 When your server exposes [MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps) — interactive UIs delivered via `ui://` resources — the Client controls how the inspector renders and sandboxes them. These map to the fields a real host advertises in `HostCapabilities` and `HostContext`.
 
-- **Host capabilities** — Toggle which app-facing features the inspector advertises: `openLinks`, `serverTools`, `serverResources`, `logging`. Use this to simulate hosts that don't support all of them and confirm your app degrades gracefully.
+The Apps Extension tab contains **two independent capability matrices**, one for each host bridge. They never cross-gate — toggling a row in one matrix has no effect on the other.
+
+#### `window.openai` matrix (ChatGPT compat shim)
+
+Controls the `window.openai.*` surface advertised to apps that use the ChatGPT compatibility shim.
+
+#### `app.*` matrix (SEP-1865 spec bridge)
+
+Controls the `app.*` surface advertised to apps that use the primary MCP Apps protocol. The matrix is always active (there is no master inject toggle). Dimensions are split into two groups:
+
+- **Main dimensions** (always visible) — `toolInputPartial`, `toolCancelled`, `hostContextChanged`, `resourceTeardown`, `serverResources`, `logging`. These are the rows that vary most across published host tables (e.g. Microsoft 365 Copilot vs. Claude).
+- **Advanced dimensions** (collapsed by default) — `toolInfo`, `openLinks`, `serverTools`, `updateModelContext`, `message`, `sandbox.permissions`, `sandbox.csp.frameDomains`, `sandbox.csp.baseUriDomains`, `_meta.ui.prefersBorder`. Rarely differ across hosts but surfaced so legacy `hostCapabilitiesOverride` migrations are visible.
+- **`availableDisplayModes` cluster** — Multi-checkbox at the top of the matrix for the `inline`, `fullscreen`, and `pip` allowlist. The matrix enforces a non-empty invariant: if you uncheck the last mode, `inline` is force-enabled.
+- **Overridden badge** — Appears on any row where your override diverges from the host style preset, so you can see at a glance what you've changed.
+- **Match host preset chip** — Clears the entire `app.*` matrix in one click and reverts every dimension to the selected host style's defaults. Disabled when no overrides are set.
+
+Each row shows a **Preset: \<value\>** hint so you always know what the selected host style would advertise without an override.
+
+#### Shared sandbox settings
+
 - **Sandbox CSP mode** — `host-default`, `declared`, or `relaxed`. Controls the baseline Content Security Policy the inspector applies to your app's iframe.
 - **CSP restrictTo** — Per-directive intersections (`connectDomains`, `resourceDomains`, `frameDomains`, `baseUriDomains`) that further narrow what the app is allowed to fetch, embed, or set as a base URI. Restrict-only — the inspector never adds an undeclared domain.
 - **Custom CSP directives** — Verbatim source-expression overrides (e.g. `script-src: 'unsafe-eval' 'wasm-unsafe-eval'`) for cases where you need to model exactly what a particular host emits at the browser layer.
 - **Permission Policy** — Per-feature toggles for `camera`, `microphone`, `geolocation`, and `clipboard-write`. Choose `resource-declared` (grant what the app's resource metadata asks for), `deny-all`, or `custom` (your own allow map).
-- **Display modes** — Which of `inline`, `fullscreen`, and `pip` the inspector advertises in `HostContext.availableDisplayModes`. Test how your app responds when a requested mode isn't available.
 - **Theme and styles** — The CSS variables and font block the inspector injects into `HostContext.styles` so you can verify your app picks up host theming.
 
 <Note>
