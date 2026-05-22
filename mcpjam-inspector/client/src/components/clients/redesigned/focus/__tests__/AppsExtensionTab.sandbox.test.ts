@@ -471,23 +471,30 @@ describe("AppsExtensionTab — mcpAppsOverrides JSON round-trip", () => {
     expect(next?.hostCapabilitiesOverride).toBeUndefined();
   });
 
-  it("removing mcpAppsOverrides from JSON actually reverts the resolver to the host style preset", () => {
-    // Regression: when the user removes `mcpAppsOverrides`, the
-    // resolver should fall back to the preset. The pre-fix parser
-    // would create a stale legacy `hostCapabilitiesOverride` from
-    // the serialized matrix-derived `hostCapabilities`, keeping the
-    // same capability behavior alive even though the matrix was
-    // cleared.
+  it("removing only mcpAppsOverrides from JSON fully reverts to host style preset (stale hostCapabilities does NOT become a legacy override)", () => {
+    // Regression (caught by codex review): when the user removes
+    // `mcpAppsOverrides`, `appsToJson` may still be showing the
+    // pre-removal matrix-derived `hostCapabilities` (the editor
+    // serializer refreshes on next render, but the parse round-trip
+    // sees the intermediate state). The pre-fix parser diffed only
+    // against the post-parse matrix-resolved shape, so the stale
+    // serialization would silently persist as a legacy
+    // `hostCapabilitiesOverride` — keeping the override behavior
+    // alive through the legacy path even though the matrix was
+    // cleared. Removing the matrix has to actually disable the
+    // override.
+    //
+    // Fix: also diff against the PRE-parse matrix-resolved shape so
+    // stale `hostCapabilities` is recognized as a serialization
+    // artifact, not a deliberate legacy override.
     const prev = emptyHostConfigInputV2({ hostStyle: "claude" });
     prev.mcpProfile = {
       profileVersion: 1,
       apps: { mcpAppsOverrides: { serverResources: false, logging: false } },
     };
-    // User edits the JSON: removes `mcpAppsOverrides`, but the
-    // `hostCapabilities` field in the JSON might still be the
-    // pre-removal matrix-derived shape (the editor serializer would
-    // refresh it on next render, but parse needs to handle this
-    // intermediate state correctly).
+    // Stale `hostCapabilities` field reflects what `appsToJson` was
+    // emitting before the user deleted `mcpAppsOverrides` from the
+    // JSON. The save fires against this intermediate state.
     const stalehostCapabilities = resolveEffectiveHostCapabilities({
       hostStyle: "claude",
       profile: prev.mcpProfile,
@@ -496,38 +503,43 @@ describe("AppsExtensionTab — mcpAppsOverrides JSON round-trip", () => {
       {
         hostContext: {},
         hostCapabilities: stalehostCapabilities,
-        // mcpAppsOverrides removed
+        // mcpAppsOverrides removed — the only deliberate user action
       },
       prev,
     );
-    // Matrix cleared. The stale hostCapabilities serialization
-    // becomes a legacy override (the matrix can no longer produce
-    // it, so the user must have meant the literal value) — but
-    // that's a separate explicit choice the user is making by
-    // leaving the JSON in that state.
+    // Matrix cleared.
     expect(next?.mcpProfile?.apps?.mcpAppsOverrides).toBeUndefined();
-    // The KEY regression test: if the user removes BOTH
-    // `mcpAppsOverrides` AND clears `hostCapabilities` back to the
-    // preset shape, the resolver fully reverts.
+    // No stale legacy override. The user removed the matrix; the
+    // resolver MUST advertise the bare host style preset on the next
+    // read, not silently continue the override via the legacy path.
+    expect(next?.hostCapabilitiesOverride).toBeUndefined();
     const presetEffective = resolveEffectiveHostCapabilities({
       hostStyle: "claude",
     });
-    const fullyCleared = applyJsonToDraft(
+    const advertised = resolveEffectiveHostCapabilities({
+      hostStyle: next!.hostStyle,
+      profile: next!.mcpProfile,
+      hostCapabilitiesOverride: next!.hostCapabilitiesOverride,
+    });
+    expect(advertised).toEqual(presetEffective);
+  });
+
+  it("typing a hostCapabilities value the matrix can't produce still persists as a legacy override", () => {
+    // Counter-test for the regression above: when the user types
+    // something genuinely distinct (not the prev matrix shape, not
+    // the post-parse matrix shape, not the preset), the legacy
+    // `hostCapabilitiesOverride` path still works. The matrix-stale-
+    // serialization detection must not over-clear deliberate input.
+    const prev = emptyHostConfigInputV2({ hostStyle: "claude" });
+    const deliberate = { openLinks: {} }; // strictly less than Claude's preset
+    const next = applyJsonToDraft(
       {
         hostContext: {},
-        hostCapabilities: presetEffective,
+        hostCapabilities: deliberate,
       },
       prev,
     );
-    expect(fullyCleared?.mcpProfile?.apps?.mcpAppsOverrides).toBeUndefined();
-    expect(fullyCleared?.hostCapabilitiesOverride).toBeUndefined();
-    // Confirm the resolver advertises the bare preset.
-    const advertised = resolveEffectiveHostCapabilities({
-      hostStyle: fullyCleared!.hostStyle,
-      profile: fullyCleared!.mcpProfile,
-      hostCapabilitiesOverride: fullyCleared!.hostCapabilitiesOverride,
-    });
-    expect(advertised).toEqual(presetEffective);
+    expect(next?.hostCapabilitiesOverride).toEqual(deliberate);
   });
 
   it("preserves siblings (compatRuntime, sandbox, uiInitialize) when only mcpAppsOverrides changes", () => {

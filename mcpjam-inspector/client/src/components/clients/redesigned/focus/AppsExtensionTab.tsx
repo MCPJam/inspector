@@ -487,30 +487,36 @@ export function applyJsonToDraft(
   }
 
   // hostCapabilities — the user sees the EFFECTIVE merged value, so on
-  // parse-back we diff against the MATRIX-RESOLVED shape (preset +
-  // mcpAppsOverrides) to decide whether to store a legacy override:
-  //   - absent in JSON → undefined legacy override
-  //   - equal to matrix-resolved shape → undefined legacy override
-  //     (the user is just looking at a faithful serialization of the
-  //     matrix; no extra opinion expressed)
-  //   - different from matrix-resolved shape → legacy override = parsed
-  //     value (the user typed a `hostCapabilities` value the matrix
-  //     can't produce — persist as legacy `hostCapabilitiesOverride`
-  //     so it survives the round-trip)
+  // parse-back we decide whether the parsed value is a legacy override
+  // or just a stale serialization of the matrix. A legacy
+  // `hostCapabilitiesOverride` is only persisted when the user typed
+  // something the matrix cannot produce.
+  //
+  // We compare `parsed.hostCapabilities` against BOTH:
+  //   1. `matrixResolvedNext` — the wire shape the matrix WILL produce
+  //      after this save (preset + post-parse `mcpAppsOverrides`).
+  //   2. `matrixResolvedPrev` — the wire shape the matrix WAS
+  //      producing before this save (prev's `mcpAppsOverrides`).
+  //
+  // Match either → undefined legacy override:
+  //   - Matches (1): user is looking at a faithful serialization of
+  //     the matrix they're saving. No extra opinion expressed.
+  //   - Matches (2): user removed/changed `mcpAppsOverrides` but the
+  //     JSON's `hostCapabilities` still shows the pre-change matrix
+  //     shape — that's a stale artifact of `appsToJson` re-emitting
+  //     effective caps on every render, NOT a deliberate legacy
+  //     override. Removing only `mcpAppsOverrides` must actually revert
+  //     to preset; persisting the stale shape would keep the override
+  //     behavior alive through the legacy path.
+  //
+  // Match neither → the user typed something the matrix can't produce;
+  // persist as legacy `hostCapabilitiesOverride` so it survives the
+  // round-trip.
+  //
   // Sandbox is its own top-level block now; if a `sandbox` key sneaks
   // into hostCapabilities (paste from an older export, hand-edit),
   // strip it so it doesn't pollute the override diff.
-  //
-  // Why diff against the matrix-resolved shape, not the preset alone:
-  // when `mcpAppsOverrides` makes the matrix produce a non-preset wire
-  // shape (e.g. Claude with serverResources turned off), `appsToJson`
-  // serializes that non-preset shape into `hostCapabilities`. Diffing
-  // against the preset alone would falsely flag every such round-trip
-  // as a legacy override, creating a stale `hostCapabilitiesOverride`
-  // beside the matrix. Removing `mcpAppsOverrides` later would then
-  // appear to "do nothing" because the stale legacy keeps the same
-  // shape alive.
-  const matrixResolvedHostCapabilities = resolveEffectiveHostCapabilities({
+  const matrixResolvedNext = resolveEffectiveHostCapabilities({
     hostStyle: prev.hostStyle,
     profile:
       nextMcpAppsOverrides !== undefined
@@ -521,13 +527,19 @@ export function applyJsonToDraft(
         : undefined,
     hostCapabilitiesOverride: undefined,
   }) as Record<string, unknown>;
+  const matrixResolvedPrev = resolveEffectiveHostCapabilities({
+    hostStyle: prev.hostStyle,
+    profile: prev.mcpProfile,
+    hostCapabilitiesOverride: undefined,
+  }) as Record<string, unknown>;
   let nextOverride: Record<string, unknown> | undefined = undefined;
   if ("hostCapabilities" in parsed) {
     if (isPlainObject(parsed.hostCapabilities)) {
       const { sandbox: _ignored, ...incoming } = parsed.hostCapabilities;
+      const incomingStr = stableStringifyJson(incoming);
       if (
-        stableStringifyJson(incoming) ===
-        stableStringifyJson(matrixResolvedHostCapabilities)
+        incomingStr === stableStringifyJson(matrixResolvedNext) ||
+        incomingStr === stableStringifyJson(matrixResolvedPrev)
       ) {
         nextOverride = undefined;
       } else {
