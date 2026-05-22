@@ -481,7 +481,11 @@ describe("hostCapabilitiesOverrideToMatrix", () => {
 // presets/FULL_SURFACE constant without coupling these tests to a
 // specific import path that might shift around during the migration.
 const MCP_APPS_FULL_SURFACE_FOR_TEST = {
-  availableDisplayModes: ["inline", "fullscreen", "pip"] as const,
+  availableDisplayModes: ["inline", "fullscreen", "pip"] as (
+    | "inline"
+    | "fullscreen"
+    | "pip"
+  )[],
   toolInputPartial: true,
   toolCancelled: true,
   hostContextChanged: true,
