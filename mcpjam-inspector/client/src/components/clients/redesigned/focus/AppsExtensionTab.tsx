@@ -1384,21 +1384,21 @@ function McpAppsCapabilityMatrix({
       } else {
         delete exts[MCP_UI_EXTENSION_ID];
       }
-      nextCaps.extensions = exts;
-      let nextDraft: HostConfigInputV2 = {
-        ...prev,
-        clientCapabilities: nextCaps,
-      };
-      if (!next) {
-        // Host-side caps are inert without the client extension — clear
-        // overrides the same way turning off window.openai injection
-        // clears per-method overrides.
-        nextDraft = setMcpAppsOverridesOnDraft(nextDraft, undefined);
-        if (nextDraft.hostCapabilitiesOverride !== undefined) {
-          nextDraft = { ...nextDraft, hostCapabilitiesOverride: undefined };
-        }
+      // Preserve sibling extension keys when present; drop the envelope
+      // entirely when emptied so `appsToJson` / `applyJsonToDraft` and
+      // the JSON editor agree (an empty `extensions: {}` is the kind of
+      // hidden dirty shape the round-trip helpers collapse away).
+      if (Object.keys(exts).length === 0) {
+        delete nextCaps.extensions;
+      } else {
+        nextCaps.extensions = exts;
       }
-      return nextDraft;
+      // Overrides are preserved across master toggle — turning the
+      // master switch off leaves any configured `mcpAppsOverrides` /
+      // legacy `hostCapabilitiesOverride` dormant so toggling back on
+      // restores the user's prior per-dimension model. "Reset" is the
+      // explicit destructive action for clearing overrides.
+      return { ...prev, clientCapabilities: nextCaps };
     });
   };
 
@@ -1495,17 +1495,15 @@ function McpAppsCapabilityMatrix({
   const overrideCount = hasAnyOverride
     ? Object.keys(effectiveOverridesForDisplay!).length
     : 0;
-  const sublineParts: string[] = [];
-  if (advertised && hasAnyOverride) {
-    sublineParts.push(
-      `${overrideCount} ${overrideCount === 1 ? "override" : "overrides"} active${
-        rawOverridesRecord === undefined && legacyOverride !== undefined
-          ? " (legacy)"
-          : ""
-      }`,
-    );
-  }
-  const subline = sublineParts.join(" · ");
+  const showResetButton = advertised && hasAnyOverride;
+  const subline =
+    advertised && hasAnyOverride
+      ? `${overrideCount} ${overrideCount === 1 ? "override" : "overrides"} active${
+          rawOverridesRecord === undefined && legacyOverride !== undefined
+            ? " (legacy)"
+            : ""
+        }`
+      : "";
 
   return (
     <div className="rounded-[10px] border border-border bg-background">
@@ -1529,21 +1527,6 @@ function McpAppsCapabilityMatrix({
               {subline ? (
                 <span className="text-[11px] text-muted-foreground">
                   {subline}
-                  {" · "}
-                  <span
-                    role="link"
-                    tabIndex={0}
-                    className="cursor-pointer underline hover:text-foreground"
-                    onClick={(event) => clearOverride(event)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        clearOverride(event);
-                      }
-                    }}
-                  >
-                    Reset
-                  </span>
                 </span>
               ) : null}
             </div>
@@ -1563,6 +1546,20 @@ function McpAppsCapabilityMatrix({
             </label>
           </div>
         )}
+        {showResetButton ? (
+          // Sibling of the disclosure button — nesting an interactive
+          // Reset control inside a `<button>` is invalid and confuses
+          // keyboard / screen-reader users.
+          <div className="flex items-center border-l border-border px-3">
+            <button
+              type="button"
+              onClick={() => clearOverride()}
+              className="cursor-pointer text-[11px] text-muted-foreground underline hover:text-foreground"
+            >
+              Reset
+            </button>
+          </div>
+        ) : null}
         <div className="flex items-center border-l border-border pl-3 pr-3.5">
           <Switch
             id="apps-extension-mcp-apps-toggle"

@@ -210,14 +210,14 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
         attention={[]}
       />,
     );
-    const reset = screen.getByRole("link", { name: "Reset" });
+    const reset = screen.getByRole("button", { name: "Reset" });
     await user.click(reset);
     expect(draftRef.current.mcpProfile?.apps?.mcpAppsOverrides).toBeUndefined();
   });
 
-  it("hides the Reset link when no override is set", () => {
+  it("hides the Reset button when no override is set", () => {
     renderMatrix();
-    expect(screen.queryByRole("link", { name: "Reset" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reset" })).toBeNull();
   });
 
   it("renders the master advertise switch in the header", () => {
@@ -266,6 +266,50 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
       draftRef.current.mcpProfile?.apps?.mcpAppsOverrides
         ?.availableDisplayModes,
     ).toEqual(["inline"]);
+  });
+
+  it("master toggle off preserves mcpAppsOverrides as dormant state (Reset stays the destructive action)", async () => {
+    // The master switch turns advertising off without losing the
+    // user's per-dimension model — toggling back on must restore the
+    // exact override set, not start fresh.
+    const user = userEvent.setup();
+    const { draftRef } = renderMatrix();
+    await expandMcpAppsDimensions(user);
+    const row = screen.getByTestId("mcp-apps-dimension-toolInputPartial");
+    await user.click(within(row).getByRole("switch")); // write override
+    expect(
+      draftRef.current.mcpProfile?.apps?.mcpAppsOverrides,
+    ).toEqual({ toolInputPartial: false });
+    // Master off → overrides persist (dormant), only the extension
+    // advertisement flips.
+    await user.click(
+      screen.getByRole("switch", { name: "Advertise MCP App support" }),
+    );
+    expect(
+      draftRef.current.mcpProfile?.apps?.mcpAppsOverrides,
+    ).toEqual({ toolInputPartial: false });
+    // Master back on → user sees the same override they configured.
+    await user.click(
+      screen.getByRole("switch", { name: "Advertise MCP App support" }),
+    );
+    expect(
+      draftRef.current.mcpProfile?.apps?.mcpAppsOverrides,
+    ).toEqual({ toolInputPartial: false });
+  });
+
+  it("master toggle off does not leave a dirty empty `extensions: {}` envelope", async () => {
+    // After deleting the only extension key the envelope must collapse
+    // — `appsToJson` / `applyJsonToDraft` hide empty extensions, so a
+    // residual `{}` would diverge from what the JSON editor shows.
+    const user = userEvent.setup();
+    const { draftRef } = renderMatrix();
+    await user.click(
+      screen.getByRole("switch", { name: "Advertise MCP App support" }),
+    );
+    expect(
+      (draftRef.current.clientCapabilities as Record<string, unknown>)
+        ?.extensions,
+    ).toBeUndefined();
   });
 });
 
@@ -356,7 +400,7 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix legacy-override migration
         serverTools: {},
       },
     });
-    await user.click(screen.getByRole("link", { name: "Reset" }));
+    await user.click(screen.getByRole("button", { name: "Reset" }));
     expect(draftRef.current.hostCapabilitiesOverride).toBeUndefined();
     expect(
       draftRef.current.mcpProfile?.apps?.mcpAppsOverrides,
