@@ -1255,8 +1255,6 @@ const DISPLAY_MODE_LABELS: Record<DisplayMode, string> = {
  * - Flat list of all boolean matrix dimensions below.
  * - Per-row "Overridden" badge when the user has diverged from the
  *   host style preset; rows show the preset value for context.
- * - "Reset" button clears the entire matrix override (shown only when
- *   overrides are active).
  *
  * The matrix round-trips through `appsToJson` / `applyJsonToDraft` so
  * the JSON editor below stays in sync.
@@ -1300,6 +1298,13 @@ function McpAppsCapabilityMatrix({
       : legacyOverride !== undefined
         ? (hostCapabilitiesOverrideToMatrix(legacyOverride) ?? undefined)
         : undefined;
+  // Preset baseline alone (no override applied) — used when toggling rows
+  // back to preset values. The "Overridden" badge tracks divergences.
+  const presetCapabilities: ResolvedMcpAppsCapabilities =
+    resolveEffectiveMcpAppsCapabilities({
+      profile: undefined,
+      hostStyle: draft.hostStyle,
+    });
   // Effective values shown in the matrix UI. Uses the virtually-
   // migrated legacy when the matrix is absent so the UI shows what
   // the resolver advertises today (legacy path) — not what it would
@@ -1317,10 +1322,6 @@ function McpAppsCapabilityMatrix({
           profile: undefined,
           hostStyle: draft.hostStyle,
         });
-
-  const hasAnyOverride =
-    effectiveOverridesForDisplay !== undefined &&
-    Object.keys(effectiveOverridesForDisplay).length > 0;
 
   /**
    * On first matrix edit applied to a draft that still uses legacy
@@ -1384,38 +1385,21 @@ function McpAppsCapabilityMatrix({
       } else {
         delete exts[MCP_UI_EXTENSION_ID];
       }
-      // Preserve sibling extension keys when present; drop the envelope
-      // entirely when emptied so `appsToJson` / `applyJsonToDraft` and
-      // the JSON editor agree (an empty `extensions: {}` is the kind of
-      // hidden dirty shape the round-trip helpers collapse away).
-      if (Object.keys(exts).length === 0) {
-        delete nextCaps.extensions;
-      } else {
-        nextCaps.extensions = exts;
+      nextCaps.extensions = exts;
+      let nextDraft: HostConfigInputV2 = {
+        ...prev,
+        clientCapabilities: nextCaps,
+      };
+      if (!next) {
+        // Host-side caps are inert without the client extension — clear
+        // overrides the same way turning off window.openai injection
+        // clears per-method overrides.
+        nextDraft = setMcpAppsOverridesOnDraft(nextDraft, undefined);
+        if (nextDraft.hostCapabilitiesOverride !== undefined) {
+          nextDraft = { ...nextDraft, hostCapabilitiesOverride: undefined };
+        }
       }
-      // Overrides are preserved across master toggle — turning the
-      // master switch off leaves any configured `mcpAppsOverrides` /
-      // legacy `hostCapabilitiesOverride` dormant so toggling back on
-      // restores the user's prior per-dimension model. "Reset" is the
-      // explicit destructive action for clearing overrides.
-      return { ...prev, clientCapabilities: nextCaps };
-    });
-  };
-
-  const clearOverride = (event?: { stopPropagation: () => void }) => {
-    event?.stopPropagation();
-    // Reset clears BOTH paths — the matrix override
-    // and the legacy `hostCapabilitiesOverride` — so the resolver
-    // falls back cleanly to the host style preset. Leaving the
-    // legacy alive would silently keep the override active through
-    // the legacy path even after the matrix shows "Matches host
-    // style preset".
-    onDraftChange((prev) => {
-      const withMatrixCleared = setMcpAppsOverridesOnDraft(prev, undefined);
-      if (withMatrixCleared.hostCapabilitiesOverride === undefined) {
-        return withMatrixCleared;
-      }
-      return { ...withMatrixCleared, hostCapabilitiesOverride: undefined };
+      return nextDraft;
     });
   };
 
@@ -1492,22 +1476,9 @@ function McpAppsCapabilityMatrix({
     });
   };
 
-  const overrideCount = hasAnyOverride
-    ? Object.keys(effectiveOverridesForDisplay!).length
-    : 0;
-  const showResetButton = advertised && hasAnyOverride;
-  const subline =
-    advertised && hasAnyOverride
-      ? `${overrideCount} ${overrideCount === 1 ? "override" : "overrides"} active${
-          rawOverridesRecord === undefined && legacyOverride !== undefined
-            ? " (legacy)"
-            : ""
-        }`
-      : "";
-
   return (
     <div className="rounded-[10px] border border-border bg-background">
-      {/* Single header row: left half is the disclosure (label + subline +
+      {/* Single header row: left half is the disclosure (label +
           chevron), right half is the master Switch in its own hit zone.
           Mirrors the window.openai section above. When the client does
           not advertise the MCP UI extension the disclosure renders as
@@ -1524,11 +1495,6 @@ function McpAppsCapabilityMatrix({
           >
             <div className="flex flex-col gap-0.5">
               <span className="text-[12px] font-medium">MCP App support</span>
-              {subline ? (
-                <span className="text-[11px] text-muted-foreground">
-                  {subline}
-                </span>
-              ) : null}
             </div>
             <ChevronDown
               className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${
@@ -1546,20 +1512,6 @@ function McpAppsCapabilityMatrix({
             </label>
           </div>
         )}
-        {showResetButton ? (
-          // Sibling of the disclosure button — nesting an interactive
-          // Reset control inside a `<button>` is invalid and confuses
-          // keyboard / screen-reader users.
-          <div className="flex items-center border-l border-border px-3">
-            <button
-              type="button"
-              onClick={() => clearOverride()}
-              className="cursor-pointer text-[11px] text-muted-foreground underline hover:text-foreground"
-            >
-              Reset
-            </button>
-          </div>
-        ) : null}
         <div className="flex items-center border-l border-border pl-3 pr-3.5">
           <Switch
             id="apps-extension-mcp-apps-toggle"

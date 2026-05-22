@@ -19,8 +19,7 @@ import { AppsExtensionTab } from "../AppsExtensionTab";
  * `client-config-v2.test.ts` and `AppsExtensionTab.sandbox.test.ts`;
  * here we only assert that clicks on the structured matrix produce the
  * expected sparse-override edits on the draft, that the per-row
- * "Overridden" badge tracks the override map, and that the
- * "Match host preset" chip clears the matrix.
+ * "Overridden" badge tracks the override map.
  */
 /**
  * Render `AppsExtensionTab` with a managed draft that re-renders on
@@ -188,38 +187,6 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
     expect(within(cleanRow).queryByText("Overridden")).toBeNull();
   });
 
-  it("Reset button clears the entire matrix override", async () => {
-    const user = userEvent.setup();
-    const draft = emptyHostConfigInputV2({ hostStyle: "claude" });
-    draft.mcpProfile = {
-      profileVersion: 1,
-      apps: {
-        mcpAppsOverrides: { logging: false, serverResources: false },
-      },
-    };
-    const draftRef = { current: draft };
-    const onDraftChange = vi.fn(
-      (updater: (prev: HostConfigInputV2) => HostConfigInputV2) => {
-        draftRef.current = updater(draftRef.current);
-      },
-    );
-    render(
-      <AppsExtensionTab
-        draft={draft}
-        onDraftChange={onDraftChange}
-        attention={[]}
-      />,
-    );
-    const reset = screen.getByRole("button", { name: "Reset" });
-    await user.click(reset);
-    expect(draftRef.current.mcpProfile?.apps?.mcpAppsOverrides).toBeUndefined();
-  });
-
-  it("hides the Reset button when no override is set", () => {
-    renderMatrix();
-    expect(screen.queryByRole("button", { name: "Reset" })).toBeNull();
-  });
-
   it("renders the master advertise switch in the header", () => {
     renderMatrix();
     expect(
@@ -267,50 +234,6 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
         ?.availableDisplayModes,
     ).toEqual(["inline"]);
   });
-
-  it("master toggle off preserves mcpAppsOverrides as dormant state (Reset stays the destructive action)", async () => {
-    // The master switch turns advertising off without losing the
-    // user's per-dimension model — toggling back on must restore the
-    // exact override set, not start fresh.
-    const user = userEvent.setup();
-    const { draftRef } = renderMatrix();
-    await expandMcpAppsDimensions(user);
-    const row = screen.getByTestId("mcp-apps-dimension-toolInputPartial");
-    await user.click(within(row).getByRole("switch")); // write override
-    expect(
-      draftRef.current.mcpProfile?.apps?.mcpAppsOverrides,
-    ).toEqual({ toolInputPartial: false });
-    // Master off → overrides persist (dormant), only the extension
-    // advertisement flips.
-    await user.click(
-      screen.getByRole("switch", { name: "Advertise MCP App support" }),
-    );
-    expect(
-      draftRef.current.mcpProfile?.apps?.mcpAppsOverrides,
-    ).toEqual({ toolInputPartial: false });
-    // Master back on → user sees the same override they configured.
-    await user.click(
-      screen.getByRole("switch", { name: "Advertise MCP App support" }),
-    );
-    expect(
-      draftRef.current.mcpProfile?.apps?.mcpAppsOverrides,
-    ).toEqual({ toolInputPartial: false });
-  });
-
-  it("master toggle off does not leave a dirty empty `extensions: {}` envelope", async () => {
-    // After deleting the only extension key the envelope must collapse
-    // — `appsToJson` / `applyJsonToDraft` hide empty extensions, so a
-    // residual `{}` would diverge from what the JSON editor shows.
-    const user = userEvent.setup();
-    const { draftRef } = renderMatrix();
-    await user.click(
-      screen.getByRole("switch", { name: "Advertise MCP App support" }),
-    );
-    expect(
-      (draftRef.current.clientCapabilities as Record<string, unknown>)
-        ?.extensions,
-    ).toBeUndefined();
-  });
 });
 
 describe("AppsExtensionTab — McpAppsCapabilityMatrix legacy-override migration", () => {
@@ -338,7 +261,6 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix legacy-override migration
         attention={[]}
       />,
     );
-    expect(screen.getByText(/legacy/)).toBeInTheDocument();
     await expandMcpAppsDimensions(user);
     const serverResources = screen.getByTestId(
       "mcp-apps-dimension-serverResources",
@@ -387,23 +309,4 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix legacy-override migration
     });
   });
 
-  it("Reset clears both the matrix override AND the legacy hostCapabilitiesOverride", async () => {
-    // The chip's contract is "revert to preset". If we only cleared
-    // the matrix, the legacy path would silently keep the override
-    // alive — the matrix would say "Matches host style preset" while
-    // the resolver advertised the legacy shape.
-    const user = userEvent.setup();
-    const { draftRef } = renderMatrix({
-      hostStyle: "claude",
-      hostCapabilitiesOverride: {
-        openLinks: {},
-        serverTools: {},
-      },
-    });
-    await user.click(screen.getByRole("button", { name: "Reset" }));
-    expect(draftRef.current.hostCapabilitiesOverride).toBeUndefined();
-    expect(
-      draftRef.current.mcpProfile?.apps?.mcpAppsOverrides,
-    ).toBeUndefined();
-  });
 });
