@@ -771,6 +771,27 @@ export function buildRedesignedHostCanvas(
     methodTotal: 13,
   };
 
+  // SEP-1865 `app.*` spec-bridge state. Independent from `compatRuntime`
+  // (the OpenAI shim) — the spec bridge is always present (no
+  // "injected" toggle), so this only summarizes whether the user has
+  // sparse-overridden any of the matrix's dimensions for the canvas
+  // chip subtitle.
+  const mcpAppsOverridesRecord = draft.mcpProfile?.apps?.mcpAppsOverrides;
+  const mcpAppsBridge = {
+    hasOverrides:
+      mcpAppsOverridesRecord !== undefined &&
+      Object.keys(mcpAppsOverridesRecord).length > 0,
+    // Number of sparse-override keys the user has set. Chip reads this
+    // as "N overrides" — simpler than "N of M dimensions" because the
+    // matrix is heterogeneous (booleans + mode array + sandbox flags +
+    // resource-meta flags) and a flat "active" count would be hard to
+    // interpret across those buckets.
+    overrideCount:
+      mcpAppsOverridesRecord !== undefined
+        ? Object.keys(mcpAppsOverridesRecord).length
+        : 0,
+  };
+
   // ---- Nodes / edges ----
   const nodes: HostRedesignFlowNode[] = [];
   const edges: Edge[] = [];
@@ -792,6 +813,7 @@ export function buildRedesignedHostCanvas(
       hostInfo,
       appsExtensionAdvertised,
       compatRuntime,
+      mcpAppsBridge,
     },
     draggable: false,
     selectable: false,
