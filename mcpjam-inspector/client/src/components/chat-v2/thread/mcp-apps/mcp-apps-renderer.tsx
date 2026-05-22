@@ -765,6 +765,54 @@ export function MCPAppsRenderer({
   const [prefersBorder, setPrefersBorder] = useState<boolean>(
     initialPrefersBorder ?? true,
   );
+  // PR D matrix-gated resource-meta interpretation. The matrix
+  // dimensions `cspFrameDomains`, `cspBaseUriDomains`,
+  // `sandboxPermissions`, and `resourcePrefersBorder` model whether
+  // the simulated host HONORS the corresponding resource `_meta.ui`
+  // fields. Microsoft 365 Copilot's published Component-bridge table
+  // marks all four as ❌; on a simulated Copilot host these fields
+  // are silently ignored even when a widget declares them.
+  //
+  // We post-process the resource's `widgetCsp` / `widgetPermissions`
+  // / `prefersBorder` after fetch — the SDK's `resolveSandboxCsp` /
+  // `resolveSandboxPermissions` and the renderer's iframe-chrome
+  // logic all read these gated values transparently. Per the
+  // foundation plan's D3 decision, no SDK API change.
+  const matrixGatedWidgetCsp = useMemo<McpUiResourceCsp | undefined>(() => {
+    if (!widgetCsp) return widgetCsp;
+    const m = earlyEffectiveMcpAppsCapabilities;
+    if (m.cspFrameDomains && m.cspBaseUriDomains) return widgetCsp;
+    // Spread + selectively strip the gated sub-fields. Connect /
+    // resource domains are NOT matrix-gated today (no host's
+    // published table tracks them at this granularity); only frame
+    // and baseUri are.
+    const next: McpUiResourceCsp = { ...widgetCsp };
+    if (!m.cspFrameDomains) delete next.frameDomains;
+    if (!m.cspBaseUriDomains) delete next.baseUriDomains;
+    return next;
+  }, [widgetCsp, earlyEffectiveMcpAppsCapabilities]);
+  const matrixGatedWidgetPermissions = useMemo<
+    McpUiResourcePermissions | undefined
+  >(() => {
+    // `sandboxPermissions: false` means the simulated host doesn't
+    // honor the resource's permissions declarations AT ALL — return
+    // undefined so the downstream resolver behaves as if the widget
+    // declared no permissions. Spec-compliant simulation: the
+    // widget asked for the camera, the host doesn't grant it.
+    if (!earlyEffectiveMcpAppsCapabilities.sandboxPermissions) return undefined;
+    return widgetPermissions;
+  }, [widgetPermissions, earlyEffectiveMcpAppsCapabilities.sandboxPermissions]);
+  const matrixGatedPrefersBorder = useMemo(() => {
+    // `resourcePrefersBorder: false` means the simulated host
+    // ignores the resource's `_meta.ui.prefersBorder` hint. Iframe
+    // chrome falls back to host-default rendering (no border) for
+    // every widget on that host.
+    if (!earlyEffectiveMcpAppsCapabilities.resourcePrefersBorder) return false;
+    return prefersBorder;
+  }, [
+    prefersBorder,
+    earlyEffectiveMcpAppsCapabilities.resourcePrefersBorder,
+  ]);
   const [loadedCspMode, setLoadedCspMode] = useState<CspMode | null>(null);
   // Reload-key sibling to `loadedCspMode`: tracks the compat-runtime
   // flag the currently-loaded HTML was fetched with. Toggling the live
@@ -1834,9 +1882,18 @@ export function MCPAppsRenderer({
       let resolvedPermissions: McpUiResourcePermissions | undefined;
       if (sandboxPermissionsPolicy) {
         const resourcePermsMap: Record<string, boolean> = {};
-        if (widgetPermissions && typeof widgetPermissions === "object") {
+        // Matrix-gated: `sandboxPermissions: false` means the
+        // simulated host doesn't honor `_meta.ui.permissions`. Use
+        // the gated value here too — the playground's permissive
+        // CSP escape hatch is NOT a license to bypass host-level
+        // permission gating. Three bots converged on this miss in
+        // review of PR #2242.
+        if (
+          matrixGatedWidgetPermissions &&
+          typeof matrixGatedWidgetPermissions === "object"
+        ) {
           for (const [k, v] of Object.entries(
-            widgetPermissions as Record<string, unknown>,
+            matrixGatedWidgetPermissions as Record<string, unknown>,
           )) {
             if (v) resourcePermsMap[k] = true;
           }
@@ -1854,7 +1911,11 @@ export function MCPAppsRenderer({
       }
       return {
         csp: undefined,
-        permissions: resolvedPermissions ?? widgetPermissions,
+        // Same gate on the pass-through fallback: when no sandbox
+        // policy applies, the playground's permissive surface MUST
+        // NOT propagate widget-declared permissions that the host
+        // matrix says to ignore.
+        permissions: resolvedPermissions ?? matrixGatedWidgetPermissions,
         permissive: true,
         hostPolicyApplied: !!resolvedPermissions,
         sandboxAttrs: sandboxAttrsPolicy,
@@ -1888,7 +1949,11 @@ export function MCPAppsRenderer({
     let resolvedCsp: McpUiResourceCsp | undefined;
     if (sandboxCspPolicy && !isPureRelaxedCsp) {
       const resolved = resolveSandboxCsp({
-        resourceCsp: widgetCsp,
+        // Matrix-gated: `cspFrameDomains` / `cspBaseUriDomains` off
+        // strips those sub-fields from the widget-declared CSP before
+        // the resolver sees them, simulating hosts (Microsoft 365
+        // Copilot) that don't honor those `_meta.ui.csp.*` fields.
+        resourceCsp: matrixGatedWidgetCsp,
         policy: sandboxCspPolicy,
         // "host-default" mode falls back to an EMPTY allowlist inside
         // the resolver when `hostDefaultBaseline` is omitted (per
@@ -1899,7 +1964,7 @@ export function MCPAppsRenderer({
         // less if restrictTo narrows it). Without this, picking
         // "host-default" would silently emit `connect-src 'none'` and
         // break any widget that fetches external assets.
-        hostDefaultBaseline: widgetCsp,
+        hostDefaultBaseline: matrixGatedWidgetCsp,
         hostedMode: HOSTED_MODE,
         // Defense in depth: in hosted mode strip any widget-declared
         // domain matching MCPJam's own app/API origins. A hosted widget
@@ -1933,9 +1998,18 @@ export function MCPAppsRenderer({
     let resolvedPermissions: McpUiResourcePermissions | undefined;
     if (sandboxPermissionsPolicy) {
       const resourcePermsMap: Record<string, boolean> = {};
-      if (widgetPermissions && typeof widgetPermissions === "object") {
+      // Matrix-gated: `sandboxPermissions: false` means the simulated
+      // host doesn't honor resource permissions at all. The gated
+      // value is `undefined`, so the loop never runs and the
+      // resolver's policy alone decides what's granted (typically
+      // nothing, matching real Copilot which doesn't pipe widget-
+      // declared permissions to the iframe).
+      if (
+        matrixGatedWidgetPermissions &&
+        typeof matrixGatedWidgetPermissions === "object"
+      ) {
         for (const [k, v] of Object.entries(
-          widgetPermissions as Record<string, unknown>,
+          matrixGatedWidgetPermissions as Record<string, unknown>,
         )) {
           // SEP-1865 declares each permission as an empty object (`{}`)
           // when requested — i.e. a truthy value. Older shape gated on
@@ -1965,10 +2039,14 @@ export function MCPAppsRenderer({
       // tells SandboxedIframe to skip CSP injection). Otherwise pass
       // the resolver output through, falling back to the widget's own
       // derivation when no host CSP policy is in force.
+      // Use matrix-gated CSP / permissions as the fallback too, so a
+      // Copilot host whose matrix turns frameDomains off doesn't
+      // accidentally pass the un-gated value to the iframe via the
+      // `?? widgetCsp` branch.
       csp: isPureRelaxedCsp
         ? undefined
-        : (resolvedCsp ?? (widgetPermissive ? undefined : widgetCsp)),
-      permissions: resolvedPermissions ?? widgetPermissions,
+        : (resolvedCsp ?? (widgetPermissive ? undefined : matrixGatedWidgetCsp)),
+      permissions: resolvedPermissions ?? matrixGatedWidgetPermissions,
       // A host-applied CSP MUST be honored at the browser layer. When
       // a restrictive host policy is in force, force `permissive: false`
       // so the SandboxedIframe injects the meta-CSP. In pure-relaxed
@@ -2002,8 +2080,8 @@ export function MCPAppsRenderer({
     minimalMode,
     sandboxCspPolicy,
     sandboxPermissionsPolicy,
-    widgetCsp,
-    widgetPermissions,
+    matrixGatedWidgetCsp,
+    matrixGatedWidgetPermissions,
     widgetPermissive,
     sandboxAttrsPolicy,
     allowFeaturesPolicy,
@@ -2881,7 +2959,7 @@ export function MCPAppsRenderer({
     width: "100%",
     maxWidth: "100%",
     backgroundColor:
-      !isFullscreen && prefersBorder
+      !isFullscreen && matrixGatedPrefersBorder
         ? mergedStyleVariables["--color-background-primary"]
         : (hostChatBackground ?? "transparent"),
     opacity: showWidget ? 1 : 0,
@@ -2896,7 +2974,7 @@ export function MCPAppsRenderer({
       ? { position: "absolute" as const, pointerEvents: "none" as const }
       : {}),
   };
-  const showHostChrome = !isFullscreen && prefersBorder;
+  const showHostChrome = !isFullscreen && matrixGatedPrefersBorder;
   const hostChromeStyle: CSSProperties | undefined = showHostChrome
     ? {
         backgroundColor: mergedStyleVariables["--color-background-primary"],
@@ -2933,7 +3011,7 @@ export function MCPAppsRenderer({
       className={`bg-transparent overflow-hidden ${
         isFullscreen
           ? "flex-1 border-0 rounded-none"
-          : `rounded-md ${prefersBorder ? "border border-border/40" : ""}`
+          : `rounded-md ${matrixGatedPrefersBorder ? "border border-border/40" : ""}`
       }`}
       style={iframeStyle}
     />
