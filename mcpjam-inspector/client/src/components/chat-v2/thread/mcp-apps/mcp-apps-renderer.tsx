@@ -535,6 +535,37 @@ export function MCPAppsRenderer({
     [activeMcpProfile, earlyEffectiveHostStyle],
   );
 
+  // Intersection of the matrix's allowed modes with the playground /
+  // draft host context's configured modes — single source of truth for
+  // both the runtime clamp at `effectiveDisplayMode` below AND the
+  // value advertised in `HostContext.availableDisplayModes`. Computed
+  // here (early) so the clamp can use it.
+  //
+  // Without sharing the intersection between the two consumers, the
+  // matrix-only clamp inside `effectiveDisplayMode` could land on
+  // `matrix[0]` while `HostContext.availableDisplayModes` advertised a
+  // strict subset (the intersection). E.g. matrix=["pip","fullscreen"],
+  // configured=["inline","fullscreen"], requested="inline" →
+  // matrix-only clamp produced "pip" (matrix[0]) while advertised list
+  // was ["fullscreen"]. Fix: clamp against the intersection itself.
+  //
+  // Fallback to matrix alone when the intersection would be empty —
+  // matches the matrix invariant (`length >= 1`) and avoids advertising
+  // an unrenderable empty array. `configuredAvailableDisplayModes` is
+  // always a non-empty array (see `extractHostDisplayModes` fallbacks)
+  // so the only way intersection is empty is when the playground asks
+  // for modes the simulated host doesn't advertise.
+  const effectiveAvailableDisplayModes = useMemo(() => {
+    const matrixModes = earlyEffectiveMcpAppsCapabilities.availableDisplayModes;
+    const intersection = matrixModes.filter((m) =>
+      configuredAvailableDisplayModes.includes(m as DisplayMode),
+    );
+    return intersection.length > 0 ? intersection : matrixModes;
+  }, [
+    earlyEffectiveMcpAppsCapabilities.availableDisplayModes,
+    configuredAvailableDisplayModes,
+  ]);
+
   // Get device capabilities from playground store (SEP-1865)
   const playgroundCapabilities = useUIPlaygroundStore((s) => s.capabilities);
   const deviceCapabilities = useMemo(() => {
@@ -611,28 +642,20 @@ export function MCPAppsRenderer({
     if (displayMode === "pip" && pipWidgetId === toolCallId) return "pip";
     return "inline";
   }, [displayMode, fullscreenWidgetId, isControlled, pipWidgetId, toolCallId]);
-  // Clamp the requested display mode against BOTH the playground/
-  // configured allowlist AND the matrix allowlist. A Copilot host
-  // initializing in `pip` (parent's `displayMode` is sticky from a
-  // previous widget) must coerce down to `fullscreen` because the
-  // matrix's `availableDisplayModes` is `["fullscreen"]` — otherwise
-  // `HostContext.displayMode` would say "pip" while
-  // `HostContext.availableDisplayModes` advertises only fullscreen,
-  // an inconsistent payload.
-  const effectiveDisplayMode = useMemo<DisplayMode>(() => {
-    const configClamp = clampDisplayModeToAvailableModes(
-      requestedDisplayMode,
-      configuredAvailableDisplayModes,
-    );
-    return clampDisplayModeToAvailableModes(
-      configClamp,
-      earlyEffectiveMcpAppsCapabilities.availableDisplayModes,
-    );
-  }, [
-    configuredAvailableDisplayModes,
-    requestedDisplayMode,
-    earlyEffectiveMcpAppsCapabilities.availableDisplayModes,
-  ]);
+  // Clamp the requested display mode against the same intersection
+  // that gets advertised in `HostContext.availableDisplayModes` so
+  // the runtime mode is always a member of the advertised set. A
+  // Copilot host initializing in `pip` (parent's `displayMode` is
+  // sticky from a previous widget) coerces down to `fullscreen`
+  // because the intersection resolves to `["fullscreen"]`.
+  const effectiveDisplayMode = useMemo<DisplayMode>(
+    () =>
+      clampDisplayModeToAvailableModes(
+        requestedDisplayMode,
+        effectiveAvailableDisplayModes,
+      ),
+    [requestedDisplayMode, effectiveAvailableDisplayModes],
+  );
   const setDisplayMode = useCallback(
     (mode: DisplayMode) => {
       if (isControlled) {
@@ -1562,40 +1585,26 @@ export function MCPAppsRenderer({
   // Matrix-gated HostContext fields (PR C of the foundation series):
   //
   // - `availableDisplayModes`: intersection of the matrix's allowed
-  //   modes (`matrix.availableDisplayModes`) with whatever the
-  //   playground / draft host context configures. Both constraints
-  //   apply — the matrix says "what the simulated host's capability
-  //   advertises," the configured list says "what the user further
-  //   narrowed in the playground." If the intersection would be
-  //   empty (configured asks for modes the simulated host doesn't
-  //   advertise), fall back to the matrix value alone so the widget
-  //   still gets a usable allowlist instead of an unrenderable empty
-  //   array. Matches the matrix invariant (`length >= 1`).
+  //   modes with playground / draft configured modes, computed earlier
+  //   as `effectiveAvailableDisplayModes` so the runtime
+  //   `effectiveDisplayMode` clamp and the advertised list agree.
   //
   // - `toolInfo`: omitted entirely when `matrix.toolInfo === false`
   //   (Microsoft 365 Copilot doesn't deliver this HostContext field
   //   per its published Component-bridge table). A widget that
   //   probes `app.getHostContext()?.toolInfo` on a simulated Copilot
-  //   host now correctly sees undefined — same as real Copilot.
-  const effectiveAvailableDisplayModes = useMemo(() => {
-    const matrixModes = effectiveMcpAppsCapabilities.availableDisplayModes;
-    if (
-      configuredAvailableDisplayModes === undefined ||
-      configuredAvailableDisplayModes.length === 0
-    ) {
-      return matrixModes;
-    }
-    const intersection = matrixModes.filter((m) =>
-      configuredAvailableDisplayModes.includes(m as DisplayMode),
-    );
-    return intersection.length > 0 ? intersection : matrixModes;
-  }, [
-    effectiveMcpAppsCapabilities.availableDisplayModes,
-    configuredAvailableDisplayModes,
-  ]);
+  //   host now correctly sees undefined — same as real Copilot. The
+  //   gate strips any inherited `toolInfo` from `baseHostContext`
+  //   too: a draft host context that pre-populates `toolInfo` would
+  //   otherwise leak through the spread and defeat the gate.
   const hostContext = useMemo<McpUiHostContext>(() => {
+    // Strip toolInfo from the spread source so the matrix gate is
+    // authoritative — if the matrix says off, no upstream value
+    // (drafts, playground state) can reintroduce it via inheritance.
+    const { toolInfo: _toolInfoFromBase, ...baseWithoutToolInfo } =
+      baseHostContext as McpUiHostContext & { toolInfo?: unknown };
     const base: McpUiHostContext = {
-      ...baseHostContext,
+      ...baseWithoutToolInfo,
       theme: resolvedTheme,
       displayMode: effectiveDisplayMode,
       availableDisplayModes: effectiveAvailableDisplayModes,

@@ -255,8 +255,10 @@ import {
   ChatboxHostThemeProvider,
 } from "@/contexts/chatbox-client-style-context";
 import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
+import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
 import { WidgetSurfaceProvider } from "@/contexts/widget-surface-context";
 import type { McpUiHostCapabilities } from "@modelcontextprotocol/ext-apps/app-bridge";
+import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 const baseProps = {
@@ -499,6 +501,28 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(hostContext).not.toHaveProperty("toolInfo");
   });
 
+  it("strips inherited HostContext.toolInfo when the matrix has toolInfo: false", async () => {
+    mockHostContextStoreState.draftHostContext = {
+      toolInfo: {
+        id: "draft-call",
+        tool: { name: "draft-tool" },
+      },
+    };
+
+    render(
+      <ChatboxHostStyleProvider value="copilot">
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostStyleProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+    const hostContext = appBridgeArgsRef.current?.options?.hostContext as
+      | Record<string, unknown>
+      | undefined;
+    expect(hostContext).not.toHaveProperty("toolInfo");
+  });
+
   it("advertises matrix-clamped HostContext.availableDisplayModes (Copilot: ['fullscreen'] only)", async () => {
     // Copilot's published Component-bridge table says
     // requestDisplayMode is fullscreen-only. The matrix's
@@ -566,6 +590,40 @@ describe("MCPAppsRenderer tool input streaming", () => {
     // Matrix-clamped: only fullscreen is allowed, so pip coerces.
     expect(hostContext?.availableDisplayModes).toEqual(["fullscreen"]);
     expect(hostContext?.displayMode).toBe("fullscreen");
+  });
+
+  it("keeps HostContext.displayMode inside the advertised intersection for custom display-mode overrides", async () => {
+    const profile: HostConfigMcpProfileV1 = {
+      profileVersion: 1,
+      apps: {
+        mcpAppsOverrides: {
+          availableDisplayModes: ["inline", "pip"],
+        },
+      },
+    };
+    mockHostContextStoreState.draftHostContext = {
+      availableDisplayModes: ["fullscreen", "pip"],
+    };
+
+    render(
+      <ActiveMcpProfileProvider value={profile}>
+        <ChatboxHostStyleProvider value="claude">
+          <MCPAppsRenderer
+            {...baseProps}
+            displayMode="fullscreen"
+            fullscreenWidgetId="call-1"
+          />
+        </ChatboxHostStyleProvider>
+      </ActiveMcpProfileProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+    const hostContext = appBridgeArgsRef.current?.options?.hostContext as
+      | Record<string, unknown>
+      | undefined;
+    expect(hostContext?.availableDisplayModes).toEqual(["pip"]);
+    expect(hostContext?.displayMode).toBe("pip");
   });
 
   it("does not block pure MCP Apps from booting while ChatGPT compat is enabled", async () => {
