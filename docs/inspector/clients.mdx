@@ -38,7 +38,7 @@ You can override the request timeout and headers **per server attached to the Cl
 
 When your server exposes [MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps) — interactive UIs delivered via `ui://` resources — the Client controls how the inspector renders and sandboxes them. These map to the fields a real host advertises in `HostCapabilities` and `HostContext`.
 
-- **Host capabilities** — Toggle which app-facing features the inspector advertises: `openLinks`, `serverTools`, `serverResources`, `logging`. Use this to simulate hosts that don't support all of them and confirm your app degrades gracefully.
+- **Host capabilities** — The set of `HostCapabilities` keys the inspector advertises in the `ui/initialize` handshake. Each host preset reflects that host's published capability subset: for example, the **Copilot** preset advertises only `openLinks`, `serverTools`, `updateModelContext`, and `message` — matching Microsoft 365 Copilot's published Component-bridge table — and omits `serverResources` and `logging`. Use this to verify your app degrades gracefully when a capability it relies on is absent.
 - **Sandbox CSP mode** — `host-default`, `declared`, or `relaxed`. Controls the baseline Content Security Policy the inspector applies to your app's iframe.
 - **CSP restrictTo** — Per-directive intersections (`connectDomains`, `resourceDomains`, `frameDomains`, `baseUriDomains`) that further narrow what the app is allowed to fetch, embed, or set as a base URI. Restrict-only — the inspector never adds an undeclared domain.
 - **Custom CSP directives** — Verbatim source-expression overrides (e.g. `script-src: 'unsafe-eval' 'wasm-unsafe-eval'`) for cases where you need to model exactly what a particular host emits at the browser layer.
