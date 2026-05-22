@@ -176,6 +176,7 @@ interface AppsCapDescriptor {
 function buildAppsCaps(draft: HostConfigInputV2): AppsCapDescriptor[] {
   const blob = resolveEffectiveHostCapabilities({
     hostStyle: draft.hostStyle,
+    profile: draft.mcpProfile,
     hostCapabilitiesOverride: draft.hostCapabilitiesOverride,
   }) as Record<string, unknown>;
 

@@ -84,8 +84,11 @@ export type HostThemeMode = "light" | "dark";
  * over the MCP Apps `ui/initialize` handshake (capabilities advertise,
  * `hostContext.platform`, `hostContext.styles.variables`, `styles.css.fonts`).
  *
- * Sandbox is intentionally excluded — sandbox CSP/permissions are
- * resource-derived at runtime per SEP-1865, not a static vendor trait.
+ * Sandbox is intentionally excluded from the preset — sandbox CSP/permissions
+ * are resource-derived at runtime per SEP-1865, not a static vendor trait.
+ * The renderer composes sandbox separately via `resolveSandboxCsp` /
+ * `resolveSandboxPermissions` and adds it onto the advertised
+ * `HostCapabilities` blob before passing to AppBridge.
  */
 export interface HostMcpProfile {
   /** MCP-Apps UIType the host emulates inside chat widgets. */
@@ -93,13 +96,33 @@ export interface HostMcpProfile {
   /** Platform string passed to the MCP Apps bridge. */
   platform: "web" | "desktop" | "mobile";
   /**
-   * `hostCapabilities` blob advertised in the `ui/initialize` response.
+   * Per-dimension capability matrix the host advertises and honors for the
+   * SEP-1865 `app.*` spec bridge. Replaces an earlier flat
+   * `hostCapabilities` blob — the matrix is the single source of truth and
+   * `buildHostCapabilities(resolvedMatrix)` derives the wire blob.
    *
-   * NOTE: Advertising a capability is a runtime contract. Built-ins should
-   * only claim what the renderer actually services so widget authors are
-   * not misled when enforcement catches up.
+   * Typed as the fully-resolved record (not the sparse user-override type)
+   * because presets are the *baseline* — leaving a field undefined would
+   * force the resolver to invent a value, masking the difference between
+   * "preset claims false" and "preset forgot to mention this dimension".
+   *
+   * Mirrors Microsoft 365 Copilot's published table (Component bridge
+   * section on
+   * https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-mcp-apps)
+   * row-by-row for the Copilot preset; ChatGPT/Claude/Cursor/Codex/MCPJam
+   * advertise the full surface.
    */
-  hostCapabilities: Omit<McpUiHostCapabilities, "sandbox">;
+  mcpAppsCapabilities: ResolvedMcpAppsCapabilities;
+  /**
+   * Preset-only advertisement nuances merged into the matrix-derived
+   * `HostCapabilities` by `buildHostCapabilities`. Currently used by
+   * Cursor to set `serverTools.listChanged: false` /
+   * `serverResources.listChanged: false` — sub-field detail the M365-grain
+   * matrix doesn't model. NOT user-editable; presets carry their own
+   * quirks here and the resolver applies them only to keys the matrix
+   * already advertised.
+   */
+  hostCapabilitiesAugment?: Partial<Omit<McpUiHostCapabilities, "sandbox">>;
   resolveStyleVariables: (theme: HostThemeMode) => McpUiStyles;
   /** Inline @font-face / @import CSS injected into MCP App iframes. */
   fontCss: string;
@@ -188,6 +211,102 @@ export type ResolvedOpenAiAppsCapabilities = Required<OpenAiAppsCapabilities>;
 export type EffectiveCompatRuntime =
   | { injected: false }
   | { injected: true; capabilities: ResolvedOpenAiAppsCapabilities };
+
+/**
+ * Sibling of {@link OpenAiAppsCapabilities} for the SEP-1865 `app.*` spec
+ * bridge. Sparse here — presets supply the full resolved record via
+ * {@link ResolvedMcpAppsCapabilities}; user overrides on
+ * `mcpProfile.apps.mcpAppsOverrides` are sparse and merge field-by-field.
+ *
+ * Independent from the OpenAI shim matrix. `window.openai.callTool` and
+ * `app.callTool` are different surfaces representing different APIs;
+ * toggling a row here does not affect the OpenAI matrix and vice versa.
+ *
+ * Each row corresponds to one of three lever types:
+ *
+ *   - **advertise** — folded into the `HostCapabilities` blob the host
+ *     returns in `ui/initialize` (e.g. `serverResources`, `logging`).
+ *   - **emit** — gates whether the host actually sends a notification to
+ *     the View at runtime (e.g. `toolInputPartial`, `hostContextChanged`).
+ *   - **behavior** — gates how the host interprets resource `_meta.ui.*`
+ *     or other inbound data (e.g. `resourcePrefersBorder`).
+ *
+ * Row meanings:
+ *
+ *   - `availableDisplayModes` — host-advertised display modes via
+ *     `HostContext.availableDisplayModes`. The matrix only gates the
+ *     host-advertised side; the View also declares its own
+ *     `appCapabilities.availableDisplayModes` in `ui/initialize` (the
+ *     widget's responsibility).
+ *   - `toolInputPartial` / `toolCancelled` / `hostContextChanged` /
+ *     `resourceTeardown` — gate whether the host emits the corresponding
+ *     `ui/notifications/*` (or `ui/resource-teardown` request) to the View.
+ *   - `toolInfo` — gate the `HostContext.toolInfo` field.
+ *   - `serverResources` / `logging` — gate the matching `HostCapabilities`
+ *     keys. Disabling `logging` also blocks `app.sendLog()` (the
+ *     `notifications/message` View → Host channel is gated by this
+ *     capability per the spec).
+ *   - `sandboxPermissions` / `cspFrameDomains` / `cspBaseUriDomains` —
+ *     gate whether the renderer honors the matching resource `_meta.ui`
+ *     sandbox sub-fields when composing the iframe sandbox.
+ *   - `resourcePrefersBorder` — gate whether the renderer honors
+ *     `_meta.ui.prefersBorder` when rendering the iframe chrome.
+ */
+export type McpAppsCapabilities = {
+  /** Allow-list of display modes advertised in HostContext. */
+  availableDisplayModes?: ("inline" | "fullscreen" | "pip")[];
+  toolInputPartial?: boolean;
+  toolCancelled?: boolean;
+  hostContextChanged?: boolean;
+  resourceTeardown?: boolean;
+  toolInfo?: boolean;
+  openLinks?: boolean;
+  serverTools?: boolean;
+  serverResources?: boolean;
+  logging?: boolean;
+  updateModelContext?: boolean;
+  message?: boolean;
+  sandboxPermissions?: boolean;
+  cspFrameDomains?: boolean;
+  cspBaseUriDomains?: boolean;
+  resourcePrefersBorder?: boolean;
+};
+
+/**
+ * Fully-resolved per-dimension matrix — preset merged with user overrides,
+ * no undefineds. Returned by `resolveEffectiveMcpAppsCapabilities`.
+ * `availableDisplayModes` is non-empty (resolver coerces to `["inline"]`
+ * if a user override would otherwise empty it).
+ *
+ * `openLinks` and `serverTools` are matrix-controlled even though every
+ * built-in preset turns them on — keeping them in the matrix lets
+ * legacy `hostCapabilitiesOverride: {}` ("advertise nothing") survive
+ * migration without silently widening the advertised surface, and lets
+ * future host presets that legitimately don't advertise them
+ * (e.g. minimal SEP-1865-only hosts) sit in the same shape.
+ *
+ * `downloadFile` is intentionally absent — no preset advertises it; the
+ * renderer doesn't yet honor the spec's `ui/download-file` request.
+ * Surface as a matrix row when a host wants to advertise it.
+ */
+export type ResolvedMcpAppsCapabilities = {
+  availableDisplayModes: ("inline" | "fullscreen" | "pip")[];
+  toolInputPartial: boolean;
+  toolCancelled: boolean;
+  hostContextChanged: boolean;
+  resourceTeardown: boolean;
+  toolInfo: boolean;
+  openLinks: boolean;
+  serverTools: boolean;
+  serverResources: boolean;
+  logging: boolean;
+  updateModelContext: boolean;
+  message: boolean;
+  sandboxPermissions: boolean;
+  cspFrameDomains: boolean;
+  cspBaseUriDomains: boolean;
+  resourcePrefersBorder: boolean;
+};
 
 /**
  * Inspector-side chat chrome for a host style. None of this travels over
