@@ -87,14 +87,16 @@ export function getHostStyleOrDefault(
  * the single derivation point for advertisement — the matrix is the
  * source of truth (per the foundation PR's D1 decision).
  *
- * Decision per advertised field:
- *   - `openLinks` / `serverTools` — fixed-on baseline (every preset
- *     advertises). Not user-controllable.
- *   - `serverResources` / `logging` / `updateModelContext` / `message` —
- *     matrix-controlled; advertised when the matrix sets `true`.
- *   - `downloadFile` — fixed-off (no preset advertises it; renderer
- *     doesn't honor the spec request yet). TODO: surface when a host
- *     wants to advertise it.
+ * Every advertised field is matrix-controlled:
+ *   - `openLinks` / `serverTools` / `serverResources` / `logging` /
+ *     `updateModelContext` / `message` — advertised when the matrix
+ *     sets `true`. (`openLinks` and `serverTools` are conventionally on
+ *     for every built-in preset, but staying matrix-controlled lets
+ *     legacy `hostCapabilitiesOverride: {}` migrate to a truly empty
+ *     advertised blob without the resolver silently re-adding them.)
+ *   - `downloadFile` — not represented yet (no preset advertises it,
+ *     and the renderer doesn't honor the spec's `ui/download-file`
+ *     request). TODO: add a matrix row when a host wants to advertise.
  *   - `sandbox` — NOT added here; the renderer composes it separately
  *     via `resolveSandboxCsp` / `resolveSandboxPermissions` and adds it
  *     onto the advertised blob before passing to AppBridge.
@@ -110,10 +112,9 @@ export function buildHostCapabilities(
   matrix: ResolvedMcpAppsCapabilities,
   augment?: Partial<Omit<McpUiHostCapabilities, "sandbox">>,
 ): Omit<McpUiHostCapabilities, "sandbox"> {
-  const caps: Omit<McpUiHostCapabilities, "sandbox"> = {
-    openLinks: {},
-    serverTools: {},
-  };
+  const caps: Omit<McpUiHostCapabilities, "sandbox"> = {};
+  if (matrix.openLinks) caps.openLinks = {};
+  if (matrix.serverTools) caps.serverTools = {};
   if (matrix.serverResources) caps.serverResources = {};
   if (matrix.logging) caps.logging = {};
   if (matrix.updateModelContext) caps.updateModelContext = { text: {} };

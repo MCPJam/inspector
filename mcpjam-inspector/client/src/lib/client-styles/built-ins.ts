@@ -113,6 +113,8 @@ export const MCP_APPS_FULL_SURFACE: ResolvedMcpAppsCapabilities = {
   hostContextChanged: true,
   resourceTeardown: true,
   toolInfo: true,
+  openLinks: true,
+  serverTools: true,
   serverResources: true,
   logging: true,
   updateModelContext: true,
@@ -121,6 +123,34 @@ export const MCP_APPS_FULL_SURFACE: ResolvedMcpAppsCapabilities = {
   cspFrameDomains: true,
   cspBaseUriDomains: true,
   resourcePrefersBorder: true,
+};
+
+/**
+ * Spec-default "no claims" surface — every advertise key off, no
+ * notification gates, no behavior gates. `availableDisplayModes` stays
+ * `["inline"]` (the spec baseline; an empty array is not a valid
+ * resolved value). Used by the resolver as the fallback for unknown /
+ * unrecognized host styles so persisted `mcpAppsOverrides` cannot
+ * silently advertise near-full support on hosts that don't exist
+ * (mirrors `SPEC_DEFAULT_HOST_CAPABILITIES` in `registry.ts`).
+ */
+export const MCP_APPS_NO_CLAIMS_SURFACE: ResolvedMcpAppsCapabilities = {
+  availableDisplayModes: ["inline"],
+  toolInputPartial: false,
+  toolCancelled: false,
+  hostContextChanged: false,
+  resourceTeardown: false,
+  toolInfo: false,
+  openLinks: false,
+  serverTools: false,
+  serverResources: false,
+  logging: false,
+  updateModelContext: false,
+  message: false,
+  sandboxPermissions: false,
+  cspFrameDomains: false,
+  cspBaseUriDomains: false,
+  resourcePrefersBorder: false,
 };
 
 /**
@@ -153,6 +183,8 @@ export const MCP_APPS_COPILOT_SURFACE: ResolvedMcpAppsCapabilities = {
   hostContextChanged: false,
   resourceTeardown: false,
   toolInfo: false,
+  openLinks: true,
+  serverTools: true,
   serverResources: false,
   logging: false,
   updateModelContext: true,

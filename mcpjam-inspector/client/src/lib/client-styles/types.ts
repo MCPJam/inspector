@@ -260,6 +260,8 @@ export type McpAppsCapabilities = {
   hostContextChanged?: boolean;
   resourceTeardown?: boolean;
   toolInfo?: boolean;
+  openLinks?: boolean;
+  serverTools?: boolean;
   serverResources?: boolean;
   logging?: boolean;
   updateModelContext?: boolean;
@@ -276,10 +278,16 @@ export type McpAppsCapabilities = {
  * `availableDisplayModes` is non-empty (resolver coerces to `["inline"]`
  * if a user override would otherwise empty it).
  *
- * NOTE: `openLinks` and `serverTools` are not in the matrix — they're
- * fixed-on across every preset and the M365 published table treats them as
- * baseline capabilities. `downloadFile` is fixed-off (no preset advertises
- * it; the renderer doesn't yet honor the corresponding spec request).
+ * `openLinks` and `serverTools` are matrix-controlled even though every
+ * built-in preset turns them on — keeping them in the matrix lets
+ * legacy `hostCapabilitiesOverride: {}` ("advertise nothing") survive
+ * migration without silently widening the advertised surface, and lets
+ * future host presets that legitimately don't advertise them
+ * (e.g. minimal SEP-1865-only hosts) sit in the same shape.
+ *
+ * `downloadFile` is intentionally absent — no preset advertises it; the
+ * renderer doesn't yet honor the spec's `ui/download-file` request.
+ * Surface as a matrix row when a host wants to advertise it.
  */
 export type ResolvedMcpAppsCapabilities = {
   availableDisplayModes: ("inline" | "fullscreen" | "pip")[];
@@ -288,6 +296,8 @@ export type ResolvedMcpAppsCapabilities = {
   hostContextChanged: boolean;
   resourceTeardown: boolean;
   toolInfo: boolean;
+  openLinks: boolean;
+  serverTools: boolean;
   serverResources: boolean;
   logging: boolean;
   updateModelContext: boolean;

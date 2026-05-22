@@ -343,6 +343,7 @@ function appsToJson(draft: HostConfigInputV2): AppsDoc {
   // object defensively so the two views don't desync.
   const effectiveCaps = resolveEffectiveHostCapabilities({
     hostStyle: draft.hostStyle,
+    profile: draft.mcpProfile,
     hostCapabilitiesOverride: draft.hostCapabilitiesOverride,
   }) as Record<string, unknown>;
 
@@ -420,8 +421,16 @@ export function applyJsonToDraft(
   // Sandbox is its own top-level block now; if a `sandbox` key sneaks into
   // hostCapabilities (paste from an older export, hand-edit), strip it so
   // it doesn't pollute the override diff.
+  // `presetEffective` is the wire shape with NO override applied — the
+  // diff target used to decide whether a parsed JSON-editor value is a
+  // "real" override or a no-op revert to preset. Profile context-free on
+  // purpose: a user typing `hostCapabilities` in the editor is overriding
+  // both the preset AND any matrix override; the diff target should be
+  // the preset alone so the override clears cleanly when the user pastes
+  // back the preset value.
   const presetEffective = resolveEffectiveHostCapabilities({
     hostStyle: prev.hostStyle,
+    profile: undefined,
     hostCapabilitiesOverride: undefined,
   }) as Record<string, unknown>;
   let nextOverride: Record<string, unknown> | undefined = undefined;

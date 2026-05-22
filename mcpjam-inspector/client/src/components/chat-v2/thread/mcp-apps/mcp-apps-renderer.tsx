@@ -1426,9 +1426,10 @@ export function MCPAppsRenderer({
     () =>
       resolveEffectiveHostCapabilities({
         hostStyle: effectiveHostStyle,
+        profile: activeMcpProfile,
         hostCapabilitiesOverride,
       }),
-    [effectiveHostStyle, hostCapabilitiesOverride],
+    [effectiveHostStyle, activeMcpProfile, hostCapabilitiesOverride],
   );
   themeModeRef.current = resolvedTheme;
   const styleVariables = useMemo(

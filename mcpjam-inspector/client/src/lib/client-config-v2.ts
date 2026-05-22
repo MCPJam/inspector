@@ -22,7 +22,7 @@ import {
   findHostStyle,
   getCompatRuntimeForStyle,
   getHostCapabilitiesForStyle,
-  MCP_APPS_FULL_SURFACE,
+  MCP_APPS_NO_CLAIMS_SURFACE,
   OPENAI_APPS_FULL_SURFACE,
 } from "@/lib/client-styles";
 import type {
@@ -481,9 +481,10 @@ export function resolveEffectiveHostCapabilities(args: {
    */
   hostCapabilitiesOverride?: Record<string, unknown>;
 }): Omit<McpUiHostCapabilities, "sandbox"> {
-  // 1. New matrix path — wins when override matrix is present OR the
-  // profile is otherwise present (the matrix resolver always returns a
-  // fully resolved record, so this path is the new default).
+  // 1. New matrix path — wins whenever the profile carries an
+  // `mcpAppsOverrides`. Threaded through the renderer, canvas, Apps tab,
+  // and saved-view consumers so a persisted matrix actually affects the
+  // wire advertisement.
   if (args.profile?.apps?.mcpAppsOverrides !== undefined) {
     const matrix = resolveEffectiveMcpAppsCapabilities({
       profile: args.profile,
@@ -677,6 +678,8 @@ export function mergeMcpAppsCapabilities(
       override.hostContextChanged ?? base.hostContextChanged,
     resourceTeardown: override.resourceTeardown ?? base.resourceTeardown,
     toolInfo: override.toolInfo ?? base.toolInfo,
+    openLinks: override.openLinks ?? base.openLinks,
+    serverTools: override.serverTools ?? base.serverTools,
     serverResources: override.serverResources ?? base.serverResources,
     logging: override.logging ?? base.logging,
     updateModelContext:
@@ -707,9 +710,14 @@ export function resolveEffectiveMcpAppsCapabilities(args: {
   profile: HostConfigMcpProfileV1 | undefined;
   hostStyle: ChatboxHostStyle | string | null | undefined;
 }): ResolvedMcpAppsCapabilities {
+  // Unknown / unrecognized host styles fall back to NO_CLAIMS, not the
+  // full surface — matches `getHostCapabilitiesForStyle`'s honest "no
+  // claims" baseline (`registry.ts:SPEC_DEFAULT_HOST_CAPABILITIES`) so a
+  // persisted `mcpAppsOverrides` against a removed host can't silently
+  // advertise near-full capability support.
   const preset =
     findHostStyle(args.hostStyle)?.mcp.mcpAppsCapabilities ??
-    MCP_APPS_FULL_SURFACE;
+    MCP_APPS_NO_CLAIMS_SURFACE;
   return mergeMcpAppsCapabilities(
     preset,
     args.profile?.apps?.mcpAppsOverrides,
@@ -724,24 +732,26 @@ export function resolveEffectiveMcpAppsCapabilities(args: {
  * next save, then leave the legacy field alone (precedence rule:
  * `mcpAppsOverrides` wins if both are present).
  *
- * Maps the M365-grain advertise keys (`serverResources`, `logging`,
- * `updateModelContext`, `message`) — these are the only legacy fields
- * the matrix expresses one-to-one. Sub-field detail like
+ * Maps every M365-grain advertise key — including `openLinks` and
+ * `serverTools` so legacy `hostCapabilitiesOverride: {}` ("advertise
+ * nothing") survives migration losslessly. Sub-field detail like
  * `serverTools.listChanged: false` is preserved by the per-host preset
- * augment, not by the legacy override, so nothing is lost here.
+ * augment (`hostCapabilitiesAugment`), so a legacy override carrying
+ * that detail still resolves to the right wire shape after migration.
  *
- * NB: a legacy `hostCapabilitiesOverride: {}` means "advertise nothing"
- * — every M365 advertise row maps to `false`. A legacy override that
- * declares only a subset (e.g. `{ openLinks: {} }`) implies the user
- * wanted the WHOLE override blob, so non-mentioned keys are explicitly
- * `false`. This is the same strip-then-return semantics the old
- * resolver used at `resolveEffectiveHostCapabilities`.
+ * NB: a legacy override that declares only a subset (e.g.
+ * `{ openLinks: {} }`) implies the user wanted exactly that subset, so
+ * non-mentioned keys are explicitly `false`. Mirrors the old
+ * resolver's strip-then-return semantics in
+ * `resolveEffectiveHostCapabilities`.
  */
 export function hostCapabilitiesOverrideToMatrix(
   legacy: Record<string, unknown> | undefined,
 ): McpAppsCapabilities | undefined {
   if (legacy === undefined) return undefined;
   return {
+    openLinks: legacy.openLinks !== undefined,
+    serverTools: legacy.serverTools !== undefined,
     serverResources: legacy.serverResources !== undefined,
     logging: legacy.logging !== undefined,
     updateModelContext: legacy.updateModelContext !== undefined,
