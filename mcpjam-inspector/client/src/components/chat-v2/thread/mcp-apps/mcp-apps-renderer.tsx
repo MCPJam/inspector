@@ -62,6 +62,7 @@ import {
   DEFAULT_HOST_STYLE,
   getHostStyleOrDefault,
 } from "@/lib/client-styles";
+import type { OpenAiAppsCapabilities } from "@/lib/client-styles";
 import { isVisibleToModelOnly } from "@/lib/mcp-ui/mcp-apps-utils";
 import { LoggingTransport } from "./mcp-apps-logging-transport";
 import { McpAppsModal } from "./mcp-apps-modal";
@@ -86,6 +87,7 @@ import {
   extractHostDisplayMode,
   extractHostDisplayModes,
   extractHostTheme,
+  stableStringifyJson,
 } from "@/lib/client-config";
 import {
   resolveEffectiveCompatRuntime,
@@ -237,6 +239,16 @@ interface MCPAppsRendererProps {
    */
   injectedOpenAiCompat?: boolean;
   /**
+   * Persisted per-method `window.openai.*` surface that was injected
+   * into the cached HTML blob. Threads through the saved-view replay
+   * path so the SDK runtime reproduces the same set of methods on
+   * `window.openai` that the original capture had, even after the
+   * active host config has flipped. Absent for pre-feature snapshots
+   * — those replay against the runtime's full ChatGPT surface
+   * default (matches behavior at capture time).
+   */
+  injectedOpenAiCompatCapabilities?: OpenAiAppsCapabilities;
+  /**
    * Persisted widget state from a saved view or fork. When set, the
    * compat runtime seeds `window.openai.widgetState` with this value so
    * the widget boots in the same state it was when the view was saved
@@ -316,6 +328,15 @@ const FETCH_SOURCE_KEY_SEGMENTS = [
   "cachedWidgetHtmlUrl",
   "cspMode",
   "liveFetchPreferred",
+  // `injectOpenAiCompat` boolean and the per-method capability hash
+  // are part of the rendering recipe: a host swap from ChatGPT-full
+  // to Copilot-subset (or a master-toggle flip) changes the bytes
+  // baked into the iframe, so a fetch issued under the old recipe
+  // is stale by the time it resolves and must NOT overwrite the
+  // newer commit's state. See plan §5.5 +
+  // feedback_capability_in_render_recipe memory.
+  "injectOpenAiCompat",
+  "compatCapabilitiesHash",
 ] as const;
 
 function describeFetchSourceKeyDiff(prev: string, next: string): string {
@@ -361,6 +382,7 @@ export function MCPAppsRenderer({
   widgetPermissive: initialWidgetPermissive,
   prefersBorder: initialPrefersBorder,
   injectedOpenAiCompat: initialInjectedOpenAiCompat,
+  injectedOpenAiCompatCapabilities: initialInjectedOpenAiCompatCapabilities,
   initialWidgetState,
   minimalMode = false,
 }: MCPAppsRendererProps) {
@@ -380,10 +402,19 @@ export function MCPAppsRenderer({
   // boolean travels into the widget-content request body and into the
   // renderer's reload-key so toggling the flag forces a refetch instead
   // of silently reusing the old HTML.
-  const liveInjectOpenAiCompat = resolveEffectiveCompatRuntime({
+  const liveEffectiveCompatRuntime = resolveEffectiveCompatRuntime({
     profile: activeMcpProfile,
     hostStyle: chatboxHostStyle ?? sharedHostStyle,
-  }).openaiApps;
+  });
+  const liveInjectOpenAiCompat = liveEffectiveCompatRuntime.injected;
+  // Capability surface accompanying `liveInjectOpenAiCompat`. Travels
+  // into the widget-content request alongside the boolean so the SDK
+  // runtime omits methods that the active host's resolved matrix has
+  // disabled (feature-detection truthfulness — see plan §4).
+  // Null when injection is off (no surface to advertise).
+  const liveOpenAiCompatCapabilities = liveEffectiveCompatRuntime.injected
+    ? liveEffectiveCompatRuntime.capabilities
+    : null;
   // Cached replay: when a saved view / eval snapshot persisted the
   // flag, trust it (HTML is byte-frozen at capture time). Fall back
   // to the live flag for fresh fetches.
@@ -605,7 +636,10 @@ export function MCPAppsRenderer({
   const [widgetHtml, setWidgetHtml] = useState<string | null>(null);
   const [sandboxProxyReady, setSandboxProxyReady] = useState(false);
   const [bridgeTransportReady, setBridgeTransportReady] = useState(false);
-  const isCachedReplay = !!cachedWidgetHtmlUrl;
+  // A cached URL can exist during an in-flow revisit while the renderer still
+  // prefers live HTML. Treat only cached-only renders as replay; live compat
+  // fetches still need completed tool output baked into window.openai at boot.
+  const isCachedReplay = !!cachedWidgetHtmlUrl && !liveFetchPreferred;
   const cachedReplayInjectOpenAiCompat =
     typeof initialInjectedOpenAiCompat === "boolean"
       ? initialInjectedOpenAiCompat
@@ -613,6 +647,46 @@ export function MCPAppsRenderer({
   const widgetInjectOpenAiCompatReloadKey = isCachedReplay
     ? cachedReplayInjectOpenAiCompat
     : effectiveInjectOpenAiCompat;
+  // Companion reload key carrying the per-method capability surface.
+  // The boolean reload key above only catches injection on/off changes;
+  // a user flipping the active host from ChatGPT-full to Copilot-subset
+  // (or toggling a single method in the matrix) leaves the boolean at
+  // `true` but changes the surface the runtime should expose. Folding
+  // a stable hash of the capability record into the reload key forces
+  // the iframe to refetch on per-method changes too. See
+  // feedback_capability_in_render_recipe memory.
+  // Cached replays read the hash from PERSISTED capabilities (what the
+  // byte-frozen HTML was built against). Critical: this MUST match
+  // what `loadFromCachedUrl` later stamps into
+  // `loadedCompatCapabilitiesHash` — if the two diverge, the
+  // "already loaded" guard at the top of the fetch effect fails on
+  // every render, fires a second cached fetch, and that fetch's
+  // `setBridgeTransportReady(false)` blanks the iframe out from
+  // under an already-connected bridge.
+  //
+  // Legacy snapshots (no persisted caps) use `null` on both sides so
+  // live host per-method changes don't trigger spurious refetches
+  // against byte-frozen HTML.
+  const widgetCompatCapabilitiesReloadKey = isCachedReplay
+    ? initialInjectedOpenAiCompatCapabilities
+      ? stableStringifyJson(initialInjectedOpenAiCompatCapabilities)
+      : null
+    : effectiveInjectOpenAiCompat
+      ? stableStringifyJson(liveOpenAiCompatCapabilities ?? null)
+      : null;
+  // The OpenAI Apps SDK compatibility runtime bakes toolInput/toolOutput into
+  // `window.openai` during HTML injection. Pure SEP-1865 views can boot while
+  // input is still streaming and receive the final result via
+  // ui/notifications/tool-result. Legacy Apps SDK templates declared through
+  // `openai/outputTemplate` are different: many read window.openai.toolOutput
+  // once on mount, so they still need the completed output before boot.
+  const requiresCompatOutputAtBoot =
+    effectiveInjectOpenAiCompat &&
+    typeof toolMetadata?.["openai/outputTemplate"] === "string";
+  const shouldWaitForCompatToolOutput =
+    !isCachedReplay &&
+    requiresCompatOutputAtBoot &&
+    toolState !== "output-available";
   const [widgetCsp, setWidgetCsp] = useState<McpUiResourceCsp | undefined>(
     isCachedReplay ? undefined : (initialWidgetCsp ?? undefined),
   );
@@ -638,6 +712,17 @@ export function MCPAppsRenderer({
   const [loadedInjectOpenAiCompat, setLoadedInjectOpenAiCompat] = useState<
     boolean | null
   >(null);
+  // Sibling of `loadedInjectOpenAiCompat`: tracks the stable hash of
+  // the per-method capability surface the currently-loaded HTML was
+  // fetched with. Set to `null` for legacy cached replays (no persisted
+  // capability provenance) so live host toggles don't churn the iframe
+  // on byte-frozen snapshots. Compared against
+  // `widgetCompatCapabilitiesReloadKey` to detect per-method surface
+  // changes that the boolean key would miss.
+  const [
+    loadedCompatCapabilitiesHash,
+    setLoadedCompatCapabilitiesHash,
+  ] = useState<string | null>(null);
   // Modal state
   const [modalOpen, setModalOpen] = useState(false);
   const [modalParams, setModalParams] = useState<Record<string, unknown>>({});
@@ -656,6 +741,7 @@ export function MCPAppsRenderer({
     setBridgeTransportReady(false);
     setLoadedCspMode(null);
     setLoadedInjectOpenAiCompat(null);
+    setLoadedCompatCapabilitiesHash(null);
     setLoadError(null);
     setWidgetCsp(isCachedReplay ? undefined : (initialWidgetCsp ?? undefined));
     setWidgetPermissions(
@@ -750,6 +836,7 @@ export function MCPAppsRenderer({
       toolState === "input-available" ||
       toolState === "output-available";
     if (!isActiveToolState) return;
+    if (shouldWaitForCompatToolOutput) return;
     // Re-fetch if CSP mode changed (widget needs to reload with new CSP
     // policy) OR if the compat-runtime flag changed (HTML needs to be
     // rebuilt with/without the `window.openai` shim). Both belong in
@@ -758,7 +845,8 @@ export function MCPAppsRenderer({
     if (
       widgetHtml &&
       loadedCspMode === cspMode &&
-      loadedInjectOpenAiCompat === widgetInjectOpenAiCompatReloadKey
+      loadedInjectOpenAiCompat === widgetInjectOpenAiCompatReloadKey &&
+      loadedCompatCapabilitiesHash === widgetCompatCapabilitiesReloadKey
     )
       return;
 
@@ -771,6 +859,10 @@ export function MCPAppsRenderer({
       cachedWidgetHtmlUrl ?? "",
       cspMode,
       liveFetchPreferred ? "live-pref" : "",
+      // String() so `null` (cached-replay sentinel), `true`, and
+      // `false` all serialize distinctly into the pipe-joined key.
+      String(widgetInjectOpenAiCompatReloadKey),
+      widgetCompatCapabilitiesReloadKey ?? "",
     ].join("|");
     latestFetchSourceKeyRef.current = fetchSourceKey;
     // Mount log for the Sandbox debug panel. Record one entry per real
@@ -809,18 +901,41 @@ export function MCPAppsRenderer({
       setLoadedCspMode(cspMode);
       // Cached replay: HTML is byte-frozen at capture time. Trust persisted
       // provenance when available; otherwise keep it unknown instead of
-      // inferring from the current live host.
-      setLoadedInjectOpenAiCompat(cachedReplayInjectOpenAiCompat);
+      // inferring from the current live host. When this is the fallback path
+      // after a preferred live fetch failed, mark the loaded fallback as
+      // satisfying the current reload key so the effect doesn't immediately
+      // retry live and overwrite the cached render.
+      const loadedCachedCompatKey = isCachedReplay
+        ? cachedReplayInjectOpenAiCompat
+        : widgetInjectOpenAiCompatReloadKey;
+      setLoadedInjectOpenAiCompat(loadedCachedCompatKey);
+      // `widgetCompatCapabilitiesReloadKey` already encodes the right
+      // value for both branches: cached replays compute it from the
+      // persisted `initialInjectedOpenAiCompatCapabilities` (matches
+      // the byte-frozen HTML), live fetches compute it from the
+      // resolver. Stamp it verbatim so the fetch effect's
+      // "already loaded" guard passes — earlier divergence between
+      // this stamp and the reload key triggered a second cached
+      // fetch that called `setBridgeTransportReady(false)` after the
+      // bridge had already connected.
+      setLoadedCompatCapabilitiesHash(widgetCompatCapabilitiesReloadKey);
       setWidgetHtmlStore(
         toolCallId,
         html,
-        cachedReplayInjectOpenAiCompat ?? undefined,
+        loadedCachedCompatKey ?? undefined,
+        // Persisted capabilities flow into the debug store so a
+        // "save view" round-trip from a cached replay (e.g. user
+        // duplicates an old view) carries the original surface
+        // forward instead of stamping the current live matrix.
+        isCachedReplay
+          ? initialInjectedOpenAiCompatCapabilities
+          : (liveOpenAiCompatCapabilities ?? undefined),
       );
       logWidgetDebug("host-to-ui", "debug/widget-content-ready", {
         cached: true,
         cspMode,
         htmlLength: html.length,
-        injectOpenAiCompat: cachedReplayInjectOpenAiCompat,
+        injectOpenAiCompat: loadedCachedCompatKey,
         permissive: true,
       });
     };
@@ -838,6 +953,7 @@ export function MCPAppsRenderer({
         mimeTypeValid: valid,
         prefersBorder,
         injectedOpenAiCompat: serverInjectedOpenAiCompat,
+        injectedOpenAiCompatCapabilities: serverInjectedOpenAiCompatCapabilities,
       } = await fetchMcpAppsWidgetContent({
         serverId,
         resourceUri,
@@ -859,11 +975,31 @@ export function MCPAppsRenderer({
         theme: themeModeRef.current,
         cspMode,
         injectOpenAiCompat: effectiveInjectOpenAiCompat,
+        // Per-method capability surface forwarded to the SDK runtime.
+        // Sending this alongside `injectOpenAiCompat: true` is what
+        // makes disabled methods omitted from `window.openai` in the
+        // widget — without it, the runtime falls back to its full
+        // surface default and feature detection lies. Send only when
+        // we're actually injecting (capabilities are meaningless
+        // without the shim).
+        openAiCompatCapabilities:
+          effectiveInjectOpenAiCompat && liveOpenAiCompatCapabilities
+            ? liveOpenAiCompatCapabilities
+            : undefined,
       });
       const resolvedInjectedOpenAiCompat =
         typeof serverInjectedOpenAiCompat === "boolean"
           ? serverInjectedOpenAiCompat
           : effectiveInjectOpenAiCompat;
+      // Server echoes the resolved capability surface (per plan §6.5)
+      // so the renderer doesn't need to re-resolve to know exactly
+      // what was baked into the HTML. Falls back to the live caps the
+      // request sent — covers older servers that don't echo yet.
+      const resolvedInjectedOpenAiCompatCapabilities =
+        serverInjectedOpenAiCompatCapabilities ??
+        (resolvedInjectedOpenAiCompat
+          ? (liveOpenAiCompatCapabilities ?? undefined)
+          : undefined);
 
       // Stale fetch: source key moved on (e.g. session swap, CSP toggle,
       // tool call change) while this request was in flight. Drop the
@@ -893,11 +1029,22 @@ export function MCPAppsRenderer({
       setPrefersBorder(prefersBorder ?? true);
       setLoadedCspMode(cspMode);
       setLoadedInjectOpenAiCompat(resolvedInjectedOpenAiCompat);
+      // Capability hash for the fetched HTML — pair with the boolean
+      // so future per-method changes detect this snapshot as stale and
+      // force a refetch.
+      setLoadedCompatCapabilitiesHash(widgetCompatCapabilitiesReloadKey);
 
       // Store widget HTML in debug store for save view feature. Stamp the
-      // resolved flag alongside it so saved views can persist what was
-      // actually injected at fetch time.
-      setWidgetHtmlStore(toolCallId, html, resolvedInjectedOpenAiCompat);
+      // resolved flag + per-method capability surface alongside it so
+      // saved views and eval snapshots can persist what was actually
+      // injected at fetch time. Replay reads both back when reproducing
+      // the original render.
+      setWidgetHtmlStore(
+        toolCallId,
+        html,
+        resolvedInjectedOpenAiCompat,
+        resolvedInjectedOpenAiCompatCapabilities,
+      );
 
       // Update the widget debug store with CSP and permissions info
       if (csp || permissions || !permissive) {
@@ -1007,7 +1154,10 @@ export function MCPAppsRenderer({
     loadedCspMode,
     loadedInjectOpenAiCompat,
     widgetInjectOpenAiCompatReloadKey,
+    loadedCompatCapabilitiesHash,
+    widgetCompatCapabilitiesReloadKey,
     effectiveInjectOpenAiCompat,
+    liveOpenAiCompatCapabilities,
     serverId,
     resourceUri,
     toolName,
@@ -1017,6 +1167,8 @@ export function MCPAppsRenderer({
     liveFetchPreferred,
     initialPrefersBorder,
     cachedReplayInjectOpenAiCompat,
+    initialInjectedOpenAiCompatCapabilities,
+    shouldWaitForCompatToolOutput,
     recordMountStore,
   ]);
 
@@ -1092,15 +1244,20 @@ export function MCPAppsRenderer({
     }
   }, [cspMode, loadedCspMode, toolCallId, clearCspViolations]);
   useEffect(() => {
-    if (
+    const injectionChanged =
       loadedInjectOpenAiCompat !== null &&
-      loadedInjectOpenAiCompat !== widgetInjectOpenAiCompatReloadKey
-    ) {
+      loadedInjectOpenAiCompat !== widgetInjectOpenAiCompatReloadKey;
+    const capabilitiesChanged =
+      loadedCompatCapabilitiesHash !== null &&
+      loadedCompatCapabilitiesHash !== widgetCompatCapabilitiesReloadKey;
+    if (injectionChanged || capabilitiesChanged) {
       clearCspViolations(toolCallId);
     }
   }, [
     widgetInjectOpenAiCompatReloadKey,
     loadedInjectOpenAiCompat,
+    widgetCompatCapabilitiesReloadKey,
+    loadedCompatCapabilitiesHash,
     toolCallId,
     clearCspViolations,
   ]);
@@ -1115,10 +1272,13 @@ export function MCPAppsRenderer({
     }
   }, [cspMode, loadedCspMode, resetStreamingState]);
   useEffect(() => {
-    if (
+    const injectionChanged =
       loadedInjectOpenAiCompat !== null &&
-      loadedInjectOpenAiCompat !== widgetInjectOpenAiCompatReloadKey
-    ) {
+      loadedInjectOpenAiCompat !== widgetInjectOpenAiCompatReloadKey;
+    const capabilitiesChanged =
+      loadedCompatCapabilitiesHash !== null &&
+      loadedCompatCapabilitiesHash !== widgetCompatCapabilitiesReloadKey;
+    if (injectionChanged || capabilitiesChanged) {
       setIsReady(false);
       isReadyRef.current = false;
       resetStreamingState();
@@ -1126,6 +1286,8 @@ export function MCPAppsRenderer({
   }, [
     widgetInjectOpenAiCompatReloadKey,
     loadedInjectOpenAiCompat,
+    widgetCompatCapabilitiesReloadKey,
+    loadedCompatCapabilitiesHash,
     resetStreamingState,
   ]);
 
@@ -1225,13 +1387,49 @@ export function MCPAppsRenderer({
   // ClientStyledChatTabV2 / PlaygroundTab / ChatboxChatPage) read from
   // Zustand selectors that return stable refs until the underlying field
   // mutates.
+  // Ref-route the active `window.openai` shim capability surface so
+  // the host-side `openai:*` postMessage handlers (uploadFile,
+  // getFileDownloadUrl, setWidgetState, requestModal, requestClose,
+  // requestCheckout) can read the current value without forcing
+  // their closures to rebuild on every host swap. These gates are
+  // defense-in-depth for the shim surface — the SDK runtime already
+  // omits the corresponding methods on `window.openai`, but a widget
+  // that captured a method reference before a host swap, or a
+  // hand-crafted postMessage, would still arrive here.
+  //
+  // Cached replays use the PERSISTED capabilities (what was baked
+  // into the HTML bytes) instead of the live profile's matrix — the
+  // byte-frozen runtime config inside the iframe is the source of
+  // truth for which methods the widget can call.
+  //
+  // SCOPED TO THE SHIM ONLY. The SEP-1865 `bridge.on*` handlers are
+  // a distinct surface and follow `effectiveHostCapabilities`
+  // exclusively — see the comment in `registerBridgeHandlers`. Null
+  // when the shim isn't injected.
+  // Sparse `OpenAiAppsCapabilities` (not Required) because the
+  // cached-replay branch reads a persisted value that may be missing
+  // fields added after capture time. Consumers of this ref
+  // (postMessage gates) read each field with `caps[key] === false` /
+  // `caps[key] !== true`, so missing → treated as "default on", which
+  // matches the SDK runtime's FULL_SURFACE_DEFAULT fallback baked
+  // into the original capture.
+  const activeShimCapabilities: OpenAiAppsCapabilities | null =
+    isCachedReplay
+      ? (initialInjectedOpenAiCompatCapabilities ?? null)
+      : liveOpenAiCompatCapabilities;
+  const liveOpenAiCompatCapabilitiesRef = useRef<
+    OpenAiAppsCapabilities | null
+  >(activeShimCapabilities);
+  liveOpenAiCompatCapabilitiesRef.current = activeShimCapabilities;
+
   const effectiveHostCapabilities = useMemo(
     () =>
       resolveEffectiveHostCapabilities({
         hostStyle: effectiveHostStyle,
+        profile: activeMcpProfile,
         hostCapabilitiesOverride,
       }),
-    [effectiveHostStyle, hostCapabilitiesOverride],
+    [effectiveHostStyle, activeMcpProfile, hostCapabilitiesOverride],
   );
   themeModeRef.current = resolvedTheme;
   const styleVariables = useMemo(
@@ -1826,6 +2024,18 @@ export function MCPAppsRenderer({
         }
       };
 
+      // SEP-1865 bridge handlers are gated by `effectiveHostCapabilities`
+      // alone. They are a SEPARATE surface from the `window.openai`
+      // shim — `ui/initialize` advertises `serverTools`, `openLinks`,
+      // `message`, etc. via that blob, and the advertise/enforce
+      // contract requires the handlers to honor whatever is
+      // advertised. Folding the shim matrix in here would break it:
+      // a Copilot-preset host advertises `serverTools` (the SEP
+      // contract) but disables `window.openai.callTool` (the shim
+      // surface), and gating the bridge by the shim would silently
+      // drop bridge tool calls while still claiming support. The
+      // shim caps stay scoped to the shim, enforced inside the
+      // runtime + the host-side `openai:*` postMessage handlers.
       if (effectiveHostCapabilities.message) {
         bridge.onmessage = async ({ content }) => {
           const textContent = content.find(
@@ -2258,8 +2468,40 @@ export function MCPAppsRenderer({
       return;
     }
 
+    // Defense-in-depth: if the live capability matrix has the file ops
+    // disabled, drop incoming `openai:uploadFile` / `getFileDownloadUrl`
+    // messages from the iframe. The SDK runtime should already be
+    // omitting these methods (so widgets that feature-detect take the
+    // fallback path), but a widget that captured a method reference
+    // before a host swap, or hand-crafted the postMessage, would still
+    // reach here. Send a clear policy error back so the widget's
+    // pending-call resolver rejects rather than hanging.
+    //
+    // STRICT `=== false` semantics: the persisted/sparse
+    // `OpenAiAppsCapabilities` shape omits fields added after capture
+    // time, and the SDK runtime treats missing as "default on"
+    // (FULL_SURFACE_DEFAULT). Mirroring that here means an absent
+    // field is allowed, not denied — only an explicit `false` triggers
+    // the gate. `!liveCaps.foo` would lock out forward-compatible
+    // legacy snapshots; `liveCaps.foo === false` matches the runtime.
+    const liveCaps = liveOpenAiCompatCapabilitiesRef.current;
+    const policyError = (
+      callId: number,
+      method: "openai:uploadFile" | "openai:getFileDownloadUrl",
+    ) => {
+      sandboxRef.current?.postMessage({
+        type: `${method}:response`,
+        callId,
+        error: `${method} denied by host capability policy`,
+      });
+    };
+
     // Handle file upload messages (non-JSON-RPC, same protocol as ChatGPT widget)
     if (data.type === "openai:uploadFile") {
+      if (liveCaps !== null && liveCaps.uploadFile === false) {
+        policyError(data.callId, "openai:uploadFile");
+        return;
+      }
       void handleUploadFileMessage(data, (message) => {
         sandboxRef.current?.postMessage(message);
       });
@@ -2267,6 +2509,10 @@ export function MCPAppsRenderer({
     }
 
     if (data.type === "openai:getFileDownloadUrl") {
+      if (liveCaps !== null && liveCaps.getFileDownloadUrl === false) {
+        policyError(data.callId, "openai:getFileDownloadUrl");
+        return;
+      }
       handleGetFileDownloadUrlMessage(data, (message) => {
         sandboxRef.current?.postMessage(message);
       });
@@ -2283,6 +2529,11 @@ export function MCPAppsRenderer({
     //      bypass the diagnostics surface that reads from
     //      widgetDebugInfo.widgetState.
     if (data.type === "openai:setWidgetState") {
+      // Defense-in-depth: drop persistence + propagation when the
+      // matrix has setWidgetState disabled. Silent drop (no response
+      // message) — setWidgetState is fire-and-forget in the spec, so
+      // there's nothing to reject. Mirrors the runtime-level omission.
+      if (liveCaps !== null && liveCaps.setWidgetState === false) return;
       if (onWidgetStateChange) {
         onWidgetStateChange(toolCallId, data.state);
       }
@@ -2305,17 +2556,36 @@ export function MCPAppsRenderer({
         message: data,
       });
 
+      // Defense-in-depth for the openai/* JSON-RPC notification family.
+      // Same rationale as the file-op branch above: SDK runtime should
+      // omit these methods, but a stale closure or hand-crafted
+      // postMessage would still arrive. Silent drop on notifications;
+      // requestCheckout uses a callId pattern so we respond with an
+      // error so the widget's pending resolver doesn't hang.
       if (data.method === "openai/requestModal") {
+        if (liveCaps !== null && liveCaps.requestModal === false) return;
         const params = data.params ?? {};
         setModalTitle(params.title || "Modal");
         setModalParams(params.params || {});
         setModalTemplate(params.template || null);
         setModalOpen(true);
       } else if (data.method === "openai/requestClose") {
+        if (liveCaps !== null && liveCaps.requestClose === false) return;
         setModalOpen(false);
       } else if (data.method === "openai/requestCheckout") {
         const params = data.params ?? {};
         const { callId: cId, ...sessionData } = params;
+        if (liveCaps !== null && liveCaps.requestCheckout === false) {
+          sandboxRef.current?.postMessage({
+            jsonrpc: "2.0",
+            method: "openai/requestCheckout:response",
+            params: {
+              callId: cId,
+              error: "openai/requestCheckout denied by host capability policy",
+            },
+          });
+          return;
+        }
         setCheckoutCallId(cId as number);
         setCheckoutSession(sessionData as unknown as CheckoutSession);
         setCheckoutOpen(true);
@@ -2600,6 +2870,11 @@ export function MCPAppsRenderer({
         toolName={toolName}
         cspMode={cspMode}
         injectOpenAiCompat={effectiveInjectOpenAiCompat}
+        // Same resolved blob the inline AppBridge advertises. Inline +
+        // modal must speak an identical surface to the widget so
+        // app.getHostCapabilities() returns the same record regardless
+        // of which iframe the widget is mounted in.
+        effectiveHostCapabilities={effectiveHostCapabilities}
         toolInputRef={toolInputRef}
         toolOutputRef={toolOutputRef}
         themeModeRef={themeModeRef}

@@ -2,6 +2,7 @@ import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
 import { buildServerRequest } from "@/lib/apis/web/context";
 import type { CspMode } from "@/stores/ui-playground-store";
+import type { ResolvedOpenAiAppsCapabilities } from "@/lib/client-styles";
 import type {
   McpUiResourceCsp,
   McpUiResourcePermissions,
@@ -36,6 +37,17 @@ export interface FetchMcpAppsWidgetContentRequest {
    * reload-key state agree on what's about to be rendered.
    */
   injectOpenAiCompat: boolean;
+  /**
+   * Resolved per-method `window.openai.*` capability surface. Sent
+   * alongside `injectOpenAiCompat: true` so the server can pass the
+   * full capability record into `injectOpenAICompat` and disabled
+   * methods are omitted from the runtime — widgets feature-detecting on
+   * (e.g.) `window.openai.requestModal` see `undefined` and take their
+   * fallback path. Omit when `injectOpenAiCompat` is false. Capability
+   * resolution stays client-side (the local server doesn't own the
+   * active hostConfig); the server passes the value through verbatim.
+   */
+  openAiCompatCapabilities?: ResolvedOpenAiAppsCapabilities;
   template?: string;
   viewMode?: string;
   viewParams?: Record<string, unknown>;
@@ -56,6 +68,15 @@ export interface FetchMcpAppsWidgetContentResponse {
    * when replaying the snapshot under a different host config.
    */
   injectedOpenAiCompat?: boolean;
+  /**
+   * Server-confirmed per-method capability surface — echoes the
+   * resolved capabilities the route used to build the runtime config.
+   * Caller persists this alongside the snapshot HTML so replay can
+   * answer "which `window.openai.*` surface was injected", not just
+   * "shim was injected: yes/no". Absent when the shim wasn't injected
+   * or when the caller didn't supply capabilities (legacy path).
+   */
+  injectedOpenAiCompatCapabilities?: ResolvedOpenAiAppsCapabilities;
 }
 
 export async function fetchMcpAppsWidgetContent(
@@ -84,6 +105,7 @@ export async function fetchMcpAppsWidgetContent(
       theme: request.theme,
       cspMode: request.cspMode,
       injectOpenAiCompat: request.injectOpenAiCompat,
+      openAiCompatCapabilities: request.openAiCompatCapabilities,
       template: request.template,
       viewMode: request.viewMode,
       viewParams: request.viewParams,

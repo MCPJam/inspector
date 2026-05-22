@@ -59,7 +59,6 @@ function createSecureTestApp(): Hono {
     return c.json({ token: getSessionToken() });
   });
   app.get("/api/apps/mcp-apps/widget", (c) => c.json({ widget: true }));
-  app.get("/api/apps/chatgpt-apps/widget", (c) => c.json({ chatgpt: true }));
 
   return app;
 }
@@ -120,7 +119,6 @@ describe("Auth Integration", () => {
       { path: "/health", description: "health check" },
       { path: "/api/mcp/health", description: "MCP health check" },
       { path: "/api/apps/mcp-apps/widget", description: "MCP apps widget" },
-      { path: "/api/apps/chatgpt-apps/widget", description: "ChatGPT widget" },
     ];
 
     for (const { path, description } of unprotectedRoutes) {

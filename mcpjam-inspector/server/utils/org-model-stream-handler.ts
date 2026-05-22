@@ -6,7 +6,7 @@
  * (local runtime, API key returned by /stream/org/resolve for this request only).
  *
  * handleHostedOrgChatModel → cloud: wraps handleMCPJamFreeChatModel and
- *   points it at /stream/org with the inspector service token + providerKey.
+ *   points it at /stream/org with the user auth header + providerKey.
  *
  * handleLocalOrgChatModel → local: builds the AI SDK model directly in the
  *   inspector using buildOrgModelFromResolvedConfig, runs streamText with the
@@ -65,6 +65,13 @@ import {
   mergeLiveChatTraceUsage,
   type LiveChatTraceUsage,
 } from "@/shared/live-chat-trace";
+import { isAbortError } from "@/shared/abort-errors";
+
+// Mirror DEFAULT_MAX_STEPS in mcpjam-stream-handler. Local org BYOK uses
+// the AI SDK's `stepCountIs` instead of a hand-rolled loop, but the
+// per-turn ceiling should match so a user doesn't see fewer steps just
+// because they routed through a local provider.
+const DEFAULT_MAX_STEPS_LOCAL_ORG = 30;
 
 export interface OrgModelHandlerOptions {
   projectId: string;
@@ -79,6 +86,7 @@ export interface OrgModelHandlerOptions {
   tools: ToolSet;
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
+  serverIds?: string[];
   requireToolApproval?: boolean;
   onConversationComplete?: (
     fullHistory: ModelMessage[],
@@ -92,8 +100,7 @@ export interface OrgModelHandlerOptions {
   /**
    * The end user's Authorization header from the inbound request. Forwarded
    * to /stream/org so Convex can re-authorize the user against the project.
-   * Without this, /stream/org can only authenticate the inspector backend
-   * (via the service token) and will reject the request as unauthenticated.
+   * This is the auth boundary for org BYOK runtime requests.
    */
   authHeader?: string;
   /**
@@ -103,6 +110,20 @@ export interface OrgModelHandlerOptions {
   chatboxId?: string;
   accessVersion?: number;
   clientIp?: string | null;
+  /**
+   * Inbound request abort signal. Forwarded to the wrapped MCPJam handler so
+   * a client disconnect cancels the Convex fetch, the SSE reader, and the
+   * local tool executor end-to-end.
+   */
+  abortSignal?: AbortSignal;
+  /**
+   * See MCPJamHandlerOptions.heartbeatIntervalMs. Forwarded as-is.
+   */
+  heartbeatIntervalMs?: number;
+  /**
+   * See MCPJamHandlerOptions.maxSteps. Forwarded as-is.
+   */
+  maxSteps?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -217,6 +238,7 @@ export interface OrgLocalModelHandlerOptions {
   temperature?: number;
   tools: ToolSet;
   selectedServers?: string[];
+  serverIds?: string[];
   requireToolApproval?: boolean;
   /** Forwarded to /stream/org/local-usage for identity resolution. */
   authHeader?: string;
@@ -231,6 +253,17 @@ export interface OrgLocalModelHandlerOptions {
     write: (chunk: UIMessageChunk) => void;
   }) => void;
   onLiveTextDelta?: (delta: string) => void;
+  /**
+   * Inbound request abort signal. Passed to streamText so a client
+   * disconnect cancels the upstream provider call.
+   */
+  abortSignal?: AbortSignal;
+  /**
+   * Total per-turn step budget enforced via the AI SDK's `stepCountIs`.
+   * Defaults to 30 to match the hosted MCPJam path so users don't see
+   * fewer agentic steps when routed through a local provider.
+   */
+  maxSteps?: number;
 }
 
 export function handleLocalOrgChatModel(
@@ -319,6 +352,30 @@ export function handleLocalOrgChatModel(
   let currentStepIndex = 0;
   let turnFinished = false;
   let streamErrored = false;
+  let aborted = false;
+  const resolvedMaxSteps =
+    typeof options.maxSteps === "number" &&
+    Number.isFinite(options.maxSteps) &&
+    options.maxSteps > 0
+      ? Math.floor(options.maxSteps)
+      : DEFAULT_MAX_STEPS_LOCAL_ORG;
+
+  // Mark `aborted` as soon as the inbound signal fires so the
+  // onFinish/onError branches below can gate their side effects without
+  // racing against the SDK's own abort propagation.
+  if (options.abortSignal) {
+    if (options.abortSignal.aborted) {
+      aborted = true;
+    } else {
+      options.abortSignal.addEventListener(
+        "abort",
+        () => {
+          aborted = true;
+        },
+        { once: true }
+      );
+    }
+  }
 
   const stream = createUIMessageStream({
     onError: (error) => {
@@ -361,7 +418,8 @@ export function handleLocalOrgChatModel(
         ...(temperature !== undefined ? { temperature } : {}),
         system: providerSystemPrompt,
         tools: tracedTools,
-        stopWhen: stepCountIs(20),
+        stopWhen: stepCountIs(resolvedMaxSteps),
+        ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
         prepareStep: ({ stepNumber }) => {
           currentStepIndex = stepNumber;
           registerAiSdkPrepareStep(traceContext, stepNumber, {
@@ -450,6 +508,14 @@ export function handleLocalOrgChatModel(
         },
         onError: async ({ error }) => {
           if (turnFinished) return;
+          // Aborts are not failures — silent-cancel invariant applies
+          // here too: no error chunk, no turn_finish, no fail span.
+          if (aborted || isAbortError(error)) {
+            aborted = true;
+            turnFinished = true;
+            streamErrored = true;
+            return;
+          }
           const failAt = Date.now();
           finalizeAiSdkTraceOnFailure(traceContext, failAt, {
             completedStepCount: currentStepIndex,
@@ -476,6 +542,17 @@ export function handleLocalOrgChatModel(
           turnFinished = true;
         },
         onFinish: async (event) => {
+          // Silent-cancel invariant for the local org BYOK path: an
+          // aborted turn must not emit turn_finish, post usage to
+          // Convex, or run conversation persistence. `onStreamComplete`
+          // still runs via createUIMessageStream's onFinish below so
+          // per-request resources are released.
+          if (aborted || options.abortSignal?.aborted) {
+            aborted = true;
+            turnFinished = true;
+            return;
+          }
+
           patchAiSdkRecordedSpansMessageRangesFromSteps(
             traceContext.recordedSpans,
             initialMessageHistoryLength,
@@ -513,6 +590,7 @@ export function handleLocalOrgChatModel(
             chatboxId,
             accessVersion,
             selectedServers: options.selectedServers,
+            serverIds: options.serverIds,
           }).catch((err) => {
             logger.warn("[org/local] Failed to post local usage", {
               error: err instanceof Error ? err.message : String(err),
@@ -575,10 +653,10 @@ async function postLocalUsage(params: {
   chatboxId?: string;
   accessVersion?: number;
   selectedServers?: string[];
+  serverIds?: string[];
 }): Promise<void> {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
-  const inspectorServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
-  if (!convexHttpUrl || !inspectorServiceToken) return;
+  if (!convexHttpUrl) return;
 
   const url = `${convexHttpUrl.replace(/\/$/, "")}/stream/org/local-usage`;
   const controller = new AbortController();
@@ -588,7 +666,6 @@ async function postLocalUsage(params: {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Inspector-Service-Token": inspectorServiceToken,
         ...(params.authHeader ? { Authorization: params.authHeader } : {}),
       },
       body: JSON.stringify({
@@ -610,8 +687,8 @@ async function postLocalUsage(params: {
         ...(params.chatboxId && Number.isFinite(params.accessVersion)
           ? { accessVersion: params.accessVersion }
           : {}),
-        ...(params.selectedServers && params.selectedServers.length > 0
-          ? { serverIds: params.selectedServers }
+        ...((params.serverIds ?? params.selectedServers)?.length
+          ? { serverIds: params.serverIds ?? params.selectedServers }
           : {}),
       }),
       signal: controller.signal,
@@ -638,10 +715,6 @@ export async function handleHostedOrgChatModel(
   if (!process.env.CONVEX_HTTP_URL) {
     throw new Error("CONVEX_HTTP_URL is not set");
   }
-  const inspectorServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
-  if (!inspectorServiceToken) {
-    throw new Error("INSPECTOR_SERVICE_TOKEN is not set");
-  }
 
   return handleMCPJamFreeChatModel({
     messages: options.messages,
@@ -663,17 +736,17 @@ export async function handleHostedOrgChatModel(
     onStreamWriterReady: options.onStreamWriterReady,
     onLiveTextDelta: options.onLiveTextDelta,
     clientIp: options.clientIp,
+    abortSignal: options.abortSignal,
+    heartbeatIntervalMs: options.heartbeatIntervalMs,
+    maxSteps: options.maxSteps,
     endpointPath: "/stream/org",
-    extraHeaders: {
-      "X-Inspector-Service-Token": inspectorServiceToken,
-    },
     extraBodyFields: {
       providerKey: options.providerKey,
       ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
       // chatboxId / accessVersion are set on the body by
       // handleMCPJamFreeChatModel itself.
-      ...(options.selectedServers && options.selectedServers.length > 0
-        ? { serverIds: options.selectedServers }
+      ...((options.serverIds ?? options.selectedServers)?.length
+        ? { serverIds: options.serverIds ?? options.selectedServers }
         : {}),
     },
   });

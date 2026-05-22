@@ -2,6 +2,7 @@ import {
   buildChatGptRuntimeHead,
   buildCspHeader,
   buildCspMetaContent,
+  injectOpenAICompat,
   normalizeWidgetCspMeta,
 } from "../src/widget-helpers.js";
 
@@ -130,5 +131,62 @@ describe("buildChatGptRuntimeHead", () => {
 
     expect(result).toContain('<base href="/">');
     expect(result).not.toContain("window.__widgetBaseUrl");
+  });
+});
+
+describe("injectOpenAICompat — per-method capability surface", () => {
+  const baseWidgetData = {
+    toolId: "t1",
+    toolName: "demo",
+    toolInput: {},
+    toolOutput: null,
+  };
+
+  function extractConfigJson(html: string): Record<string, unknown> {
+    const match = html.match(
+      /<script type="application\/json" id="openai-compat-config">([^<]+)<\/script>/,
+    );
+    if (!match) throw new Error("config script not found in injected HTML");
+    return JSON.parse(match[1]!) as Record<string, unknown>;
+  }
+
+  it("omits `capabilities` from the runtime config when caller doesn't pass it (legacy default = full surface)", () => {
+    const html = injectOpenAICompat("<html><head></head><body></body></html>", {
+      ...baseWidgetData,
+    });
+    const config = extractConfigJson(html);
+    // Absent field = SDK runtime applies its FULL_SURFACE_DEFAULT.
+    // Preserves byte-identical config for callers that pre-date the
+    // capability matrix.
+    expect(config).not.toHaveProperty("capabilities");
+  });
+
+  it("serializes the capabilities record into the runtime config when supplied", () => {
+    const html = injectOpenAICompat("<html><head></head><body></body></html>", {
+      ...baseWidgetData,
+      capabilities: {
+        requestModal: false,
+        uploadFile: false,
+        requestDisplayMode: "fullscreen-only",
+      },
+    });
+    const config = extractConfigJson(html);
+    expect(config.capabilities).toEqual({
+      requestModal: false,
+      uploadFile: false,
+      requestDisplayMode: "fullscreen-only",
+    });
+  });
+
+  it("is idempotent — second call on already-injected HTML returns unchanged", () => {
+    const first = injectOpenAICompat(
+      "<html><head></head><body></body></html>",
+      { ...baseWidgetData, capabilities: { requestModal: false } },
+    );
+    const second = injectOpenAICompat(first, {
+      ...baseWidgetData,
+      capabilities: { requestModal: true }, // would conflict if not idempotent
+    });
+    expect(second).toBe(first);
   });
 });

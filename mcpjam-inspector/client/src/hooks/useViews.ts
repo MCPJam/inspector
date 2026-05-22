@@ -163,7 +163,9 @@ export function useViewQueries({
 
 // Mutation hook for view operations
 export function useViewMutations() {
-  // MCP mutations
+  // MCP mutations — canonical write path per SEP-1865. All saved views
+  // live in mcpAppViews after the Phase B backfill; the legacy
+  // openaiAppViews table is being dropped in backend Phase C2.
   const createMcpView = useMutation("mcpAppViews:create" as any);
   const updateMcpView = useMutation("mcpAppViews:update" as any);
   const removeMcpView = useMutation("mcpAppViews:remove" as any);
@@ -171,25 +173,11 @@ export function useViewMutations() {
     "mcpAppViews:generateUploadUrl" as any,
   );
 
-  // OpenAI mutations
-  const createOpenaiView = useMutation("openaiAppViews:create" as any);
-  const updateOpenaiView = useMutation("openaiAppViews:update" as any);
-  const removeOpenaiView = useMutation("openaiAppViews:remove" as any);
-  const generateOpenaiUploadUrl = useMutation(
-    "openaiAppViews:generateUploadUrl" as any,
-  );
-
   return {
-    // MCP
     createMcpView,
     updateMcpView,
     removeMcpView,
     generateMcpUploadUrl,
-    // OpenAI
-    createOpenaiView,
-    updateOpenaiView,
-    removeOpenaiView,
-    generateOpenaiUploadUrl,
   };
 }
 

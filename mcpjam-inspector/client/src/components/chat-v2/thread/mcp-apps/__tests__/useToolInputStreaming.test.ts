@@ -323,16 +323,14 @@ describe("useToolInputStreaming", () => {
   it("signalStreamingRender sets the render signal", () => {
     const props = createDefaultProps(bridge);
     props.toolState = "input-streaming";
-    // Start without toolInput — the reset-on-toolCallId effect also fires on
-    // the first render and would undo the partial delivery state.
     props.toolInput = undefined;
 
     const { result, rerender } = renderHook(() => useToolInputStreaming(props));
 
     expect(result.current.canRenderStreamingInput).toBe(false);
 
-    // Now set toolInput — only the partial delivery effect re-fires,
-    // the reset effect does NOT (toolCallId hasn't changed).
+    // Now set toolInput — only the partial delivery effect re-fires
+    // because toolCallId hasn't changed.
     props.toolInput = { code: "hello" };
     rerender();
 
@@ -357,7 +355,7 @@ describe("useToolInputStreaming", () => {
     expect(result.current.canRenderStreamingInput).toBe(true);
   });
 
-  it("fallback reveal timer fires after STREAMING_REVEAL_FALLBACK_MS", () => {
+  it("fallback reveal timer does not render before parseable partial args arrive", () => {
     const props = createDefaultProps(bridge);
     props.toolState = "input-streaming";
     // No toolInput — so no partial will be sent, relying on fallback timer
@@ -367,14 +365,12 @@ describe("useToolInputStreaming", () => {
     // Before fallback timer: not signaled, no delivery
     expect(result.current.canRenderStreamingInput).toBe(false);
 
-    // Advance past fallback timer
+    // Advance past fallback timer. This is only a render signal; without
+    // delivered input, revealing the iframe produces a blank-shell flicker.
     act(() => {
       vi.advanceTimersByTime(STREAMING_REVEAL_FALLBACK_MS + 10);
     });
 
-    // Fallback timer sets streamingRenderSignaled, but hasDeliveredStreamingInput
-    // is still false — so canRenderStreamingInput remains false
-    // (both conditions must be true)
     expect(result.current.canRenderStreamingInput).toBe(false);
   });
 

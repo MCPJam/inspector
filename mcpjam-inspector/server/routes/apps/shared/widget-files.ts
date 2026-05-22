@@ -2,9 +2,7 @@ import { Hono } from "hono";
 import "../../../types/hono";
 import { logger } from "../../../utils/logger";
 
-// In-memory file store for widget uploads. Lives at module scope so all
-// route mounts (canonical `/api/apps/files/*` and legacy `/api/apps/chatgpt-apps/*`
-// alias) share the same backing map.
+// In-memory file store for widget uploads. Mounted at `/api/apps/files/*`.
 
 interface StoredFile {
   buffer: Buffer;

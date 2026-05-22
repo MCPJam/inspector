@@ -35,7 +35,165 @@ import { CursorShineIndicator } from "./indicators/cursor-shine";
 import { CopilotPulseIndicator } from "./indicators/copilot-pulse";
 import { CodexShineIndicator } from "./indicators/codex-shine";
 import { MCPJamMarkIndicator } from "./indicators/mcpjam-mark";
-import type { HostStyleDefinition } from "./types";
+import type {
+  HostStyleDefinition,
+  ResolvedMcpAppsCapabilities,
+  ResolvedOpenAiAppsCapabilities,
+} from "./types";
+
+/**
+ * Full `window.openai.*` method surface — every method on, every display
+ * mode allowed. This is what ChatGPT (the original Apps SDK host) and the
+ * MCPJam dev shim advertise.
+ *
+ * `selectFiles` / `setOpenInAppUrl` are `true` here for type completeness
+ * and forward compatibility, but the SDK runtime in
+ * `sdk/src/McpAppsOpenAICompatibleRuntime.ts` does NOT install them —
+ * widgets that feature-detect on them must see `typeof
+ * window.openai.selectFiles === "undefined"` to take their fallback path.
+ * See plan §3 (feedback_feature_detection_over_rejection memory).
+ */
+export const OPENAI_APPS_FULL_SURFACE: ResolvedOpenAiAppsCapabilities = {
+  callTool: true,
+  sendFollowUpMessage: true,
+  setWidgetState: true,
+  requestDisplayMode: "all",
+  notifyIntrinsicHeight: true,
+  openExternal: true,
+  setOpenInAppUrl: true,
+  requestModal: true,
+  uploadFile: true,
+  selectFiles: true,
+  getFileDownloadUrl: true,
+  requestCheckout: true,
+  requestClose: true,
+};
+
+/**
+ * Microsoft 365 Copilot's published per-method surface, verbatim from
+ * the "Supported MCP Apps capabilities in Copilot" → "Component bridge"
+ * table at
+ * https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-mcp-apps
+ *
+ * Diffs from FULL: `requestDisplayMode` is fullscreen-only;
+ * `requestModal`, `uploadFile`, `getFileDownloadUrl`, `requestCheckout`,
+ * `selectFiles` are off. Everything else is on.
+ */
+export const OPENAI_APPS_COPILOT_SURFACE: ResolvedOpenAiAppsCapabilities = {
+  callTool: true,
+  sendFollowUpMessage: true,
+  setWidgetState: true,
+  requestDisplayMode: "fullscreen-only",
+  notifyIntrinsicHeight: true,
+  openExternal: true,
+  setOpenInAppUrl: true,
+  requestModal: false,
+  uploadFile: false,
+  selectFiles: false,
+  getFileDownloadUrl: false,
+  requestCheckout: false,
+  requestClose: true,
+};
+
+/**
+ * Full MCP Apps `app.*` spec-bridge surface — every spec dimension on,
+ * every display mode allowed. Used by Claude / ChatGPT / Cursor / Codex /
+ * MCPJam as the per-host baseline before per-preset overrides
+ * (`hostCapabilitiesAugment`, sparser `mcpAppsCapabilities` keys) tighten
+ * specific rows.
+ *
+ * Independent from {@link OPENAI_APPS_FULL_SURFACE} — the two surfaces
+ * model different APIs (`window.openai.*` shim vs `app.*` spec) and never
+ * cross-gate.
+ */
+export const MCP_APPS_FULL_SURFACE: ResolvedMcpAppsCapabilities = {
+  availableDisplayModes: ["inline", "fullscreen", "pip"],
+  toolInputPartial: true,
+  toolCancelled: true,
+  hostContextChanged: true,
+  resourceTeardown: true,
+  toolInfo: true,
+  openLinks: true,
+  serverTools: true,
+  serverResources: true,
+  logging: true,
+  updateModelContext: true,
+  message: true,
+  sandboxPermissions: true,
+  cspFrameDomains: true,
+  cspBaseUriDomains: true,
+  resourcePrefersBorder: true,
+};
+
+/**
+ * Spec-default "no claims" surface — every advertise key off, no
+ * notification gates, no behavior gates. `availableDisplayModes` stays
+ * `["inline"]` (the spec baseline; an empty array is not a valid
+ * resolved value). Used by the resolver as the fallback for unknown /
+ * unrecognized host styles so persisted `mcpAppsOverrides` cannot
+ * silently advertise near-full support on hosts that don't exist
+ * (mirrors `SPEC_DEFAULT_HOST_CAPABILITIES` in `registry.ts`).
+ */
+export const MCP_APPS_NO_CLAIMS_SURFACE: ResolvedMcpAppsCapabilities = {
+  availableDisplayModes: ["inline"],
+  toolInputPartial: false,
+  toolCancelled: false,
+  hostContextChanged: false,
+  resourceTeardown: false,
+  toolInfo: false,
+  openLinks: false,
+  serverTools: false,
+  serverResources: false,
+  logging: false,
+  updateModelContext: false,
+  message: false,
+  sandboxPermissions: false,
+  cspFrameDomains: false,
+  cspBaseUriDomains: false,
+  resourcePrefersBorder: false,
+};
+
+/**
+ * Microsoft 365 Copilot's published MCP Apps spec-bridge surface, verbatim
+ * from the "Supported MCP Apps capabilities in Copilot" → "Component
+ * bridge" table at
+ * https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-mcp-apps
+ *
+ * Diffs from FULL:
+ *   - `availableDisplayModes` clamped to `["fullscreen"]` (only fullscreen
+ *     is honored; the docs say `requestDisplayMode` is supported as
+ *     "fullscreen only").
+ *   - `toolInputPartial`, `toolCancelled`, `hostContextChanged`,
+ *     `resourceTeardown` off — these `ui/notifications/*` are not
+ *     delivered by Copilot.
+ *   - `toolInfo` off — `app.getHostContext()?.toolInfo` is not provided.
+ *   - `serverResources`, `logging` off — Copilot does not advertise these
+ *     `HostCapabilities` keys.
+ *   - Sandbox `permissions`, `frameDomains`, `baseUriDomains` off —
+ *     Copilot does not honor those resource `_meta.ui` sub-fields.
+ *   - `resourcePrefersBorder` off — Copilot does not honor
+ *     `_meta.ui.prefersBorder`.
+ *
+ * Note: `updateModelContext` and `message` stay on (Copilot honors both).
+ */
+export const MCP_APPS_COPILOT_SURFACE: ResolvedMcpAppsCapabilities = {
+  availableDisplayModes: ["fullscreen"],
+  toolInputPartial: false,
+  toolCancelled: false,
+  hostContextChanged: false,
+  resourceTeardown: false,
+  toolInfo: false,
+  openLinks: true,
+  serverTools: true,
+  serverResources: false,
+  logging: false,
+  updateModelContext: true,
+  message: true,
+  sandboxPermissions: false,
+  cspFrameDomains: false,
+  cspBaseUriDomains: false,
+  resourcePrefersBorder: false,
+};
 
 // NOTE: capability presets are best-effort mocks of what each vendor publicly
 // supports today. Treat them as starting points — verify against vendor docs
@@ -48,19 +206,13 @@ export const CLAUDE_HOST_STYLE: HostStyleDefinition = {
     protocolOverride: UIType.MCP_APPS,
     platform: CLAUDE_DESKTOP_PLATFORM,
     fontCss: CLAUDE_DESKTOP_FONT_CSS,
-    // Only claim capabilities the renderer actually implements. listChanged
-    // notifications are not forwarded into the iframe yet, so omit them here
-    // — apps that gate on `listChanged: true` would otherwise hit dead paths.
-    // Re-add per field when the renderer wires the corresponding notification
-    // (see the enforcement landing pad in mcp-apps-renderer.tsx).
-    hostCapabilities: {
-      openLinks: {},
-      serverTools: {},
-      serverResources: {},
-      logging: {},
-      updateModelContext: { text: {} },
-      message: { text: {} },
-    },
+    // Claude advertises the full MCP Apps spec-bridge surface. `openLinks`
+    // and `serverTools` are fixed-on baseline (not in matrix);
+    // serverResources / logging / updateModelContext / message are matrix-
+    // controlled and all on. listChanged sub-fields stay omitted because
+    // the renderer doesn't forward those notifications yet — apps that
+    // gate on `listChanged: true` would otherwise hit dead paths.
+    mcpAppsCapabilities: MCP_APPS_FULL_SURFACE,
     resolveStyleVariables: getClaudeDesktopStyleVariables,
   },
   chatUi: {
@@ -80,24 +232,25 @@ export const CHATGPT_HOST_STYLE: HostStyleDefinition = {
     protocolOverride: UIType.OPENAI_SDK,
     platform: CHATGPT_PLATFORM,
     fontCss: CHATGPT_FONT_CSS,
-    // Only claim capabilities the renderer actually implements (see comment
-    // on CLAUDE_HOST_STYLE.mcp.hostCapabilities). `downloadFile` is a renderer
-    // TODO and `listChanged` notifications aren't forwarded yet — both are
-    // omitted to keep advertise and behavior in sync.
-    hostCapabilities: {
-      openLinks: {},
-      serverTools: {},
-      // Differs from Claude: ChatGPT's Apps SDK historically focuses on tool
-      // calls rather than proxying server resources/logging. Adjust once
-      // verified against the current OpenAI Apps SDK documentation.
-      updateModelContext: { text: {} },
-      message: { text: {} },
+    // ChatGPT differs from Claude on the SDK surface: ChatGPT's Apps SDK
+    // historically focuses on tool calls rather than proxying server
+    // resources/logging, so those rows are off here. `updateModelContext`
+    // and `message` stay on. Adjust once verified against the current
+    // OpenAI Apps SDK documentation.
+    mcpAppsCapabilities: {
+      ...MCP_APPS_FULL_SURFACE,
+      serverResources: false,
+      logging: false,
     },
     resolveStyleVariables: getChatGPTStyleVariables,
     // Real ChatGPT exposes the OpenAI Apps SDK `window.openai` surface
     // to widget HTML; emulating it here keeps existing Apps SDK widgets
-    // rendering as their authors intended.
-    compatRuntime: { openaiApps: true },
+    // rendering as their authors intended. Per-method capabilities = the
+    // full surface (every method on, requestDisplayMode unconstrained).
+    compatRuntime: {
+      openaiApps: true,
+      openaiAppsCapabilities: OPENAI_APPS_FULL_SURFACE,
+    },
   },
   chatUi: {
     label: "ChatGPT",
@@ -118,16 +271,21 @@ export const CURSOR_HOST_STYLE: HostStyleDefinition = {
     protocolOverride: UIType.MCP_APPS,
     platform: CURSOR_PLATFORM,
     fontCss: CURSOR_FONT_CSS,
-    // Capability blob captured verbatim from a Cursor 3.4.17 probe. Notably
-    // Cursor does NOT advertise `updateModelContext` or `message`, and it
-    // explicitly disables `listChanged` notifications on serverTools /
-    // serverResources. Don't widen this without evidence — apps that gate
-    // on `listChanged: true` need to know real Cursor doesn't send them.
-    hostCapabilities: {
-      openLinks: {},
+    // Matrix captured verbatim from a Cursor 3.4.17 probe. Notably Cursor
+    // does NOT advertise `updateModelContext` or `message`. The
+    // `listChanged: false` markers on serverTools/serverResources don't
+    // fit the M365-grain matrix (which is advertise-or-not booleans), so
+    // they're carried as a preset-only `hostCapabilitiesAugment` below.
+    // Don't widen without evidence — apps that gate on `listChanged: true`
+    // need to know real Cursor doesn't send them.
+    mcpAppsCapabilities: {
+      ...MCP_APPS_FULL_SURFACE,
+      updateModelContext: false,
+      message: false,
+    },
+    hostCapabilitiesAugment: {
       serverTools: { listChanged: false },
       serverResources: { listChanged: false },
-      logging: {},
     },
     resolveStyleVariables: getCursorStyleVariables,
   },
@@ -161,16 +319,20 @@ export const COPILOT_HOST_STYLE: HostStyleDefinition = {
     protocolOverride: UIType.OPENAI_SDK,
     platform: CHATGPT_PLATFORM,
     fontCss: CHATGPT_FONT_CSS,
-    hostCapabilities: {
-      openLinks: {},
-      serverTools: {},
-      updateModelContext: { text: {} },
-      message: { text: {} },
-    },
+    // Microsoft 365 Copilot's published MCP Apps subset (see
+    // MCP_APPS_COPILOT_SURFACE for the per-row M365 table mapping).
+    // Strips serverResources / logging / notification gates / sandbox
+    // sub-fields / resource prefersBorder; clamps display modes to
+    // fullscreen-only.
+    mcpAppsCapabilities: MCP_APPS_COPILOT_SURFACE,
     resolveStyleVariables: getChatGPTStyleVariables,
     // Copilot routes widgets through the OpenAI Apps SDK under the
-    // hood, so the `window.openai` shim is expected.
-    compatRuntime: { openaiApps: true },
+    // hood, but exposes only a subset of `window.openai.*` — see
+    // OPENAI_APPS_COPILOT_SURFACE for the per-method matrix.
+    compatRuntime: {
+      openaiApps: true,
+      openaiAppsCapabilities: OPENAI_APPS_COPILOT_SURFACE,
+    },
   },
   chatUi: {
     label: "Copilot",
@@ -210,11 +372,13 @@ export const CODEX_HOST_STYLE: HostStyleDefinition = {
     protocolOverride: UIType.OPENAI_SDK,
     platform: CHATGPT_PLATFORM,
     fontCss: CHATGPT_FONT_CSS,
-    hostCapabilities: {
-      openLinks: {},
-      serverTools: {},
-      updateModelContext: { text: {} },
-      message: { text: {} },
+    // Codex shares ChatGPT's matrix (CLI surface mostly unused, but the
+    // OpenAI-flavored protocol bucket carries over). serverResources /
+    // logging off; updateModelContext / message on.
+    mcpAppsCapabilities: {
+      ...MCP_APPS_FULL_SURFACE,
+      serverResources: false,
+      logging: false,
     },
     resolveStyleVariables: getChatGPTStyleVariables,
     // Codex is a CLI (no widget rendering surface), so the `window.openai`
@@ -244,22 +408,21 @@ export const MCPJAM_HOST_STYLE: HostStyleDefinition = {
     protocolOverride: UIType.MCP_APPS,
     platform: MCPJAM_PLATFORM,
     fontCss: MCPJAM_FONT_CSS,
-    hostCapabilities: {
-      openLinks: {},
-      serverTools: {},
-      serverResources: {},
-      logging: {},
-      updateModelContext: { text: {} },
-      message: { text: {} },
-    },
+    // MCPJam is the inspector's own dev surface and intentionally
+    // maximalist — full MCP Apps spec surface advertised so developers
+    // testing here see every dimension a widget might touch.
+    mcpAppsCapabilities: MCP_APPS_FULL_SURFACE,
     resolveStyleVariables: getMcpJamStyleVariables,
     // MCPJam is the inspector's own house chrome and intentionally
-    // maximalist: developers testing here should see the `window.openai`
-    // surface so widgets authored against OpenAI's Apps SDK can be
-    // debugged in MCPJam without swapping to the ChatGPT host. Real
-    // MCPJam exposes the shim deliberately (it's not SEP-1865 honest,
-    // but it's the right call for a dev surface).
-    compatRuntime: { openaiApps: true },
+    // maximalist: developers testing here should see the full
+    // `window.openai` surface so widgets authored against OpenAI's
+    // Apps SDK can be debugged in MCPJam without swapping to the
+    // ChatGPT host. Real MCPJam exposes the shim deliberately (it's
+    // not SEP-1865 honest, but it's the right call for a dev surface).
+    compatRuntime: {
+      openaiApps: true,
+      openaiAppsCapabilities: OPENAI_APPS_FULL_SURFACE,
+    },
   },
   chatUi: {
     label: "MCPJam",

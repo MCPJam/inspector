@@ -1,94 +1,38 @@
-diff --git a/.changeset/release-rollup-2026-05-18.md b/.changeset/release-rollup-2026-05-18.md
+diff --git a/.changeset/byok-no-service-token-2218.md b/.changeset/byok-no-service-token-2218.md
 deleted file mode 100644
-index bdc376c5a..000000000
---- a/.changeset/release-rollup-2026-05-18.md
+index 40dcd9f23..000000000
+--- a/.changeset/byok-no-service-token-2218.md
 +++ /dev/null
-@@ -1,23 +0,0 @@
+@@ -1,6 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
--"@mcpjam/sdk": minor
 ----
 -
--Inspector + SDK rollup since the last release.
--
--**@mcpjam/sdk**
--
--- New `normalizeWidgetCspMeta` export and hardening of CSP/runtime-head helpers used by the ChatGPT widget surface (#2149, #2153).
--
--**@mcpjam/inspector**
--
--- Clients (formerly Hosts) tab: canvas redesign as a single host matrix with diagram color tokens, snappier Servers→Host transition, host routes, and Rename Hosts→Clients in UI (#2126, #2128, #2132, #2133, #2136).
--- Playground / Chat: new IDE-style Playground tab, renamed to Chat with NEW announcement, refactored Chat UX, chatbox surface, playground routing, evals host config override, and copilot/cursor animation with thread-color abstraction (#2121, #2129, #2130, #2131, #2135, #2138, #2144).
--- React Router v7 shell + path-based navigation adapter (#2115).
--- Sandbox: model real-host iframe attributes via 3 new sandbox config fields; stop pre-populating `restrictTo` and hide safe-default sandbox rows (#2142, #2143).
--- ChatGPT client: patches CSP and addresses follow-up CSP review feedback; fix auto-create client (#2147, #2149, #2153, #2154).
--- Tool approvals: default Require tool approval off in client templates; fix tool approvals (#2146, #2150).
--- Host previews and theming: read global theme on host creation + icons, fix system-prompt race, align previewed-host scope across surfaces, hide per-server OAuth errors in playground Tools tab, revert per-client primary color (#2134, #2139, #2140, #2141).
--- Servers spinner held across sign-out gap with snap-to-Servers on project switch; don't send org id from inspector; don't error on invite when guest/UI changes on org modal (#2123, #2125, #2127).
--- Electron: Squirrel + update detector (#2114).
--- PostHog instrumentation for Clients feature launch (#2137).
+-### `@mcpjam/inspector`
+-- **BYOK auth**: stop sending `INSPECTOR_SERVICE_TOKEN` on normal BYOK chat and eval traffic (#2218). Hosted and local/npx now share one path — user auth goes to Convex, Convex checks project access, then runs or resolves the provider. Raw-key routes that return decrypted org model config still require the service token. Adds `/stream/org` eval step-mode parity with `/stream` so cloud BYOK evals can run in Convex without exposing provider keys. Local-runtime providers (Ollama, custom Base URL) keep resolving through `/stream/org/resolve` and running in the inspector.
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index d5e9a1424..76d88fe74 100644
+index e3dbc1e23..8db6e1f6f 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.4.11",
-+  "version": "2.4.12",
+-  "version": "2.4.14",
++  "version": "2.4.15",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
-@@ -111,7 +111,7 @@
-     "@hono/node-server": "^1.13.7",
-     "@hookform/resolvers": "^3.10.0",
-     "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^1.6.0",
-+    "@mcpjam/sdk": "^1.7.0",
-     "@modelcontextprotocol/client": "^2.0.0-alpha.2",
-     "@modelcontextprotocol/ext-apps": "^1.0.1",
-     "@ngrok/ngrok": "^1.6.0",
 diff --git a/package-lock.json b/package-lock.json
-index cb172d190..bdf5cba97 100644
+index 6bf40c872..21d4bd9fb 100644
 --- a/package-lock.json
 +++ b/package-lock.json
-@@ -288,7 +288,7 @@
+@@ -289,7 +289,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.4.11",
-+      "version": "2.4.12",
+-      "version": "2.4.14",
++      "version": "2.4.15",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/anthropic": "^3.0.36",
-@@ -310,7 +310,7 @@
-         "@hono/node-server": "^1.13.7",
-         "@hookform/resolvers": "^3.10.0",
-         "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^1.6.0",
-+        "@mcpjam/sdk": "^1.7.0",
-         "@modelcontextprotocol/client": "^2.0.0-alpha.2",
-         "@modelcontextprotocol/ext-apps": "^1.0.1",
-         "@ngrok/ngrok": "^1.6.0",
-@@ -35862,7 +35862,7 @@
-     },
-     "sdk": {
-       "name": "@mcpjam/sdk",
--      "version": "1.6.0",
-+      "version": "1.7.0",
-       "license": "MIT",
-       "dependencies": {
-         "@ai-sdk/anthropic": "^2.0.17",
-diff --git a/sdk/package.json b/sdk/package.json
-index 36f3ecf73..8366dec04 100644
---- a/sdk/package.json
-+++ b/sdk/package.json
-@@ -1,6 +1,6 @@
- {
-   "name": "@mcpjam/sdk",
--  "version": "1.6.0",
-+  "version": "1.7.0",
-   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
-   "type": "module",
-   "main": "dist/index.js",

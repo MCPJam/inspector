@@ -72,6 +72,15 @@ export interface TraceWidgetSnapshot {
    * replay matches what the bytes contain.
    */
   injectedOpenAiCompat?: boolean;
+  /**
+   * Per-method `window.openai.*` capability surface the runtime was
+   * configured with at capture time. Travels into the renderer so
+   * replay reconstructs the same set of methods on `window.openai`
+   * the original capture had. Absent for pre-feature snapshots —
+   * the renderer falls back to the runtime's full ChatGPT surface
+   * (matches the default at capture time).
+   */
+  injectedOpenAiCompatCapabilities?: import("@/lib/client-styles").OpenAiAppsCapabilities;
 }
 
 /**
@@ -92,6 +101,7 @@ export function snapshotsToTraceWidgetSnapshots(
     widgetHtmlUrl?: string | null;
     toolOutput?: unknown;
     injectedOpenAiCompat?: boolean;
+    injectedOpenAiCompatCapabilities?: import("@/lib/client-styles").OpenAiAppsCapabilities;
   }>,
 ): TraceWidgetSnapshot[] {
   return snapshots.map((snap) => {
@@ -118,6 +128,8 @@ export function snapshotsToTraceWidgetSnapshots(
       widgetHtmlUrl: snap.widgetHtmlUrl,
       toolOutput: snap.toolOutput,
       injectedOpenAiCompat: snap.injectedOpenAiCompat,
+      injectedOpenAiCompatCapabilities:
+        snap.injectedOpenAiCompatCapabilities,
     };
   });
 }
@@ -163,6 +175,8 @@ export function buildToolRenderOverridesFromSnapshots(
       widgetPermissive: snap.widgetPermissive,
       prefersBorder: snap.prefersBorder,
       injectedOpenAiCompat: snap.injectedOpenAiCompat,
+      injectedOpenAiCompatCapabilities:
+        snap.injectedOpenAiCompatCapabilities,
     });
     overrides[snap.toolCallId] = replay.renderOverride;
   }
@@ -510,6 +524,8 @@ function createReplayOverride(
     widgetPermissive: snapshot.widgetPermissive,
     prefersBorder: snapshot.prefersBorder,
     injectedOpenAiCompat: snapshot.injectedOpenAiCompat,
+    injectedOpenAiCompatCapabilities:
+      snapshot.injectedOpenAiCompatCapabilities,
   }).renderOverride;
 }
 
@@ -524,6 +540,8 @@ function createLiveSnapshotOverride(snapshot: TraceWidgetSnapshot) {
     widgetPermissive: snapshot.widgetPermissive,
     prefersBorder: snapshot.prefersBorder,
     injectedOpenAiCompat: snapshot.injectedOpenAiCompat,
+    injectedOpenAiCompatCapabilities:
+      snapshot.injectedOpenAiCompatCapabilities,
   } satisfies ToolRenderOverride;
 }
 

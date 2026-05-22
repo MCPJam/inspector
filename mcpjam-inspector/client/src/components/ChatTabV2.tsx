@@ -967,6 +967,20 @@ export function ChatTabV2({
     ]
   );
 
+  const clearMultiModelUiState = useCallback(() => {
+    setBroadcastRequest(null);
+    setStopBroadcastRequestId(0);
+    setMultiModelSummaries({});
+    setMultiModelHasMessages({});
+    setMultiAddColumnSeeds({});
+    prevCompareModelIdsRef.current = new Set();
+  }, []);
+
+  const resetMultiModelSessions = useCallback(() => {
+    clearMultiModelUiState();
+    setMultiModelSessionGeneration((previous) => previous + 1);
+  }, [clearMultiModelUiState]);
+
   const handleNewChat = useCallback(
     async (options?: { shared?: boolean }) => {
       if (isStreaming) return;
@@ -980,6 +994,10 @@ export function ChatTabV2({
       cancelPendingHistorySelection();
       syncResumedVersion(null);
       baseResetChat();
+      // Compare lanes hold their own useChatSession state; resetting the
+      // root session alone leaves the visible lane transcripts intact and
+      // the user sees nothing happen after clicking "+" in the rail.
+      resetMultiModelSessions();
       setPendingDirectVisibility(options?.shared ? "project" : "private");
     },
     [
@@ -989,6 +1007,7 @@ export function ChatTabV2({
       ensureDiscardDraftConfirmed,
       hasUnsavedDraft,
       isStreaming,
+      resetMultiModelSessions,
       syncResumedVersion,
     ]
   );
@@ -1002,6 +1021,7 @@ export function ChatTabV2({
       cancelPendingHistorySelection();
       syncResumedVersion(null);
       baseResetChat();
+      resetMultiModelSessions();
       setPendingDirectVisibility("private");
     },
     [
@@ -1009,6 +1029,7 @@ export function ChatTabV2({
       cancelPendingHistorySelection,
       clearComposerDraft,
       hasUnsavedDraft,
+      resetMultiModelSessions,
       syncResumedVersion,
     ]
   );
@@ -1161,12 +1182,16 @@ export function ChatTabV2({
     selectedModel,
     selectedModelIds,
   ]);
+  // Shared (project-visible) sessions are collaborative artifacts; the
+  // multi-model toggle would mutate session state for every collaborator,
+  // so it's hidden in that scope. Single-model selection stays available.
   const canEnableMultiModel =
     enableMultiModelChat &&
     !minimalMode &&
     !executionConfig?.modelId &&
     !hostedChatboxId &&
     !hostedChatboxSurface &&
+    pendingDirectVisibility !== "project" &&
     availableModels.length > 1;
   // When viewing a history session, fall back to single-model rendering so
   // the ChatTabV2 messages (which hold the hydrated transcript) are displayed.
@@ -1188,15 +1213,6 @@ export function ChatTabV2({
     },
     []
   );
-
-  const clearMultiModelUiState = useCallback(() => {
-    setBroadcastRequest(null);
-    setStopBroadcastRequestId(0);
-    setMultiModelSummaries({});
-    setMultiModelHasMessages({});
-    setMultiAddColumnSeeds({});
-    prevCompareModelIdsRef.current = new Set();
-  }, []);
 
   useLayoutEffect(() => {
     const prev = prevCompareModeRef.current;
@@ -1721,11 +1737,6 @@ export function ChatTabV2({
     traceVersion: 1 as const,
     messages: [],
   };
-  const resetMultiModelSessions = useCallback(() => {
-    clearMultiModelUiState();
-    setMultiModelSessionGeneration((previous) => previous + 1);
-  }, [clearMultiModelUiState]);
-
   const handleResetAllChats = useCallback(() => {
     posthog.capture("chat_cleared", standardEventProps("chat_tab"));
     baseResetChat();

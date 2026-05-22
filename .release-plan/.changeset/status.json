@@ -5,41 +5,21 @@
         {
           "name": "@mcpjam/inspector",
           "type": "patch"
-        },
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
         }
       ],
-      "summary": "Inspector + SDK rollup since the last release.\n\n**@mcpjam/sdk**\n\n- New `normalizeWidgetCspMeta` export and hardening of CSP/runtime-head helpers used by the ChatGPT widget surface (#2149, #2153).\n\n**@mcpjam/inspector**\n\n- Clients (formerly Hosts) tab: canvas redesign as a single host matrix with diagram color tokens, snappier Servers→Host transition, host routes, and Rename Hosts→Clients in UI (#2126, #2128, #2132, #2133, #2136).\n- Playground / Chat: new IDE-style Playground tab, renamed to Chat with NEW announcement, refactored Chat UX, chatbox surface, playground routing, evals host config override, and copilot/cursor animation with thread-color abstraction (#2121, #2129, #2130, #2131, #2135, #2138, #2144).\n- React Router v7 shell + path-based navigation adapter (#2115).\n- Sandbox: model real-host iframe attributes via 3 new sandbox config fields; stop pre-populating `restrictTo` and hide safe-default sandbox rows (#2142, #2143).\n- ChatGPT client: patches CSP and addresses follow-up CSP review feedback; fix auto-create client (#2147, #2149, #2153, #2154).\n- Tool approvals: default Require tool approval off in client templates; fix tool approvals (#2146, #2150).\n- Host previews and theming: read global theme on host creation + icons, fix system-prompt race, align previewed-host scope across surfaces, hide per-server OAuth errors in playground Tools tab, revert per-client primary color (#2134, #2139, #2140, #2141).\n- Servers spinner held across sign-out gap with snap-to-Servers on project switch; don't send org id from inspector; don't error on invite when guest/UI changes on org modal (#2123, #2125, #2127).\n- Electron: Squirrel + update detector (#2114).\n- PostHog instrumentation for Clients feature launch (#2137).",
-      "id": "release-rollup-2026-05-18"
+      "summary": "### `@mcpjam/inspector`\n- **BYOK auth**: stop sending `INSPECTOR_SERVICE_TOKEN` on normal BYOK chat and eval traffic (#2218). Hosted and local/npx now share one path — user auth goes to Convex, Convex checks project access, then runs or resolves the provider. Raw-key routes that return decrypted org model config still require the service token. Adds `/stream/org` eval step-mode parity with `/stream` so cloud BYOK evals can run in Convex without exposing provider keys. Local-runtime providers (Ollama, custom Base URL) keep resolving through `/stream/org/resolve` and running in the inspector.",
+      "id": "byok-no-service-token-2218"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
       "type": "patch",
-      "oldVersion": "2.4.11",
+      "oldVersion": "2.4.14",
       "changesets": [
-        "release-rollup-2026-05-18"
+        "byok-no-service-token-2218"
       ],
-      "newVersion": "2.4.12"
-    },
-    {
-      "name": "@mcpjam/sdk",
-      "type": "minor",
-      "oldVersion": "1.6.0",
-      "changesets": [
-        "release-rollup-2026-05-18"
-      ],
-      "newVersion": "1.7.0"
-    },
-    {
-      "name": "@mcpjam/mcp",
-      "type": "none",
-      "oldVersion": "0.0.1",
-      "changesets": [],
-      "newVersion": "0.0.1"
+      "newVersion": "2.4.15"
     }
   ]
 }

@@ -383,6 +383,11 @@ export function PlaygroundMain({
   const [pendingDirectVisibility, setPendingDirectVisibility] = useState<
     "private" | "project"
   >("private");
+  // Shared (project-visible) sessions are collaborative artifacts. Treat
+  // multi-model and multi-host compare as experiment-mode controls that
+  // would mutate the shared session state for every collaborator, and
+  // hide them. The single-model + single-host path stays usable.
+  const isSharedSession = pendingDirectVisibility === "project";
   // ChatTabV2 holds this at 0 today; bumping after each completed turn is a
   // follow-up. The rail re-fetches on initial mount + whenever signal changes.
   const historyRefreshSignal = 0;
@@ -813,7 +818,7 @@ export function PlaygroundMain({
     return selectedModel ? [selectedModel] : [];
   }, [multiModelAvailableModels, selectedModel, selectedModelIds]);
   const canEnableMultiModel =
-    enableMultiModelChat && availableModels.length > 1;
+    enableMultiModelChat && availableModels.length > 1 && !isSharedSession;
 
   // Phase 4 (multi-host plan): read multi-host state in parallel to
   // multi-model. Lead host is derived inside `usePersistedHost` from the
@@ -853,7 +858,7 @@ export function PlaygroundMain({
         .filter((host): host is HostDetail => host !== null),
     [hostSlots, selectedHostIds.length],
   );
-  const canEnableMultiHost = hostList.length > 1;
+  const canEnableMultiHost = hostList.length > 1 && !isSharedSession;
 
   // Lead identity check — we cannot compact away the lead slot. If
   // `selectedHostIds[0]` is still loading from Convex, the resolved
@@ -1173,6 +1178,17 @@ export function PlaygroundMain({
       composer.submitGatedByServer ||
       isPreparingServerForSend,
   });
+
+  // Mirror of the `canEnableMultiModel` cleanup below: when the multi-host
+  // gate flips false (host count drops, or the session becomes shared) and
+  // the persisted `multiHostEnabled` is still true, reset it. Without this,
+  // a user who had compare on in a private session would silently re-enter
+  // compare the next time `canEnableMultiHost` flips back to true.
+  useEffect(() => {
+    if (!canEnableMultiHost && multiHostEnabled) {
+      setMultiHostEnabled(false);
+    }
+  }, [canEnableMultiHost, multiHostEnabled, setMultiHostEnabled]);
 
   useEffect(() => {
     if (!canEnableMultiModel && multiModelEnabled) {
@@ -1770,6 +1786,11 @@ export function PlaygroundMain({
     ],
   );
 
+  const resetMultiModelSessions = useCallback(() => {
+    clearMultiModelUiState();
+    setMultiModelSessionGeneration((previous) => previous + 1);
+  }, [clearMultiModelUiState]);
+
   const handleNewChat = useCallback(
     async (options?: { shared?: boolean }) => {
       if (isStreaming) return;
@@ -1781,6 +1802,10 @@ export function PlaygroundMain({
       cancelPendingHistorySelection();
       syncResumedVersion(null);
       resetChat();
+      // Compare lanes hold their own useChatSession state; resetting the
+      // root single-model session alone leaves the visible lane transcripts
+      // intact and the user sees nothing happen.
+      resetMultiModelSessions();
       setLoadedThreadOwnerUserId(null);
       setPendingDirectVisibility(options?.shared ? "project" : "private");
     },
@@ -1790,6 +1815,7 @@ export function PlaygroundMain({
       ensureDiscardDraftConfirmed,
       isStreaming,
       resetChat,
+      resetMultiModelSessions,
       syncResumedVersion,
     ],
   );
@@ -1804,10 +1830,17 @@ export function PlaygroundMain({
       cancelPendingHistorySelection();
       syncResumedVersion(null);
       resetChat();
+      resetMultiModelSessions();
       setLoadedThreadOwnerUserId(null);
       setPendingDirectVisibility("private");
     },
-    [cancelPendingHistorySelection, clearComposerDraft, resetChat, syncResumedVersion],
+    [
+      cancelPendingHistorySelection,
+      clearComposerDraft,
+      resetChat,
+      resetMultiModelSessions,
+      syncResumedVersion,
+    ],
   );
 
   const handleHistorySessionAction = useCallback(
@@ -2284,11 +2317,6 @@ export function PlaygroundMain({
     },
     []
   );
-
-  const resetMultiModelSessions = useCallback(() => {
-    clearMultiModelUiState();
-    setMultiModelSessionGeneration((previous) => previous + 1);
-  }, [clearMultiModelUiState]);
 
   const handleResetAllChats = useCallback(() => {
     composer.prepareForClearChat();
@@ -3029,14 +3057,16 @@ export function PlaygroundMain({
             // change the playground render path (that lands in Phase 4).
             // The global `GlobalClientBar` remains the host pill for other
             // tabs; both surfaces stay in sync via shared `usePreviewedHostId`.
-            <PlaygroundHostPicker
-              projectId={multiHostProjectId}
-              selectedHostIds={selectedHostIds}
-              multiHostEnabled={multiHostEnabled}
-              onSelectedHostIdsChange={setSelectedHostIds}
-              onMultiHostEnabledChange={handleMultiHostEnabledChange}
-              onPromoteLead={handlePromoteLead}
-            />
+            isSharedSession ? null : (
+              <PlaygroundHostPicker
+                projectId={multiHostProjectId}
+                selectedHostIds={selectedHostIds}
+                multiHostEnabled={multiHostEnabled}
+                onSelectedHostIdsChange={setSelectedHostIds}
+                onMultiHostEnabledChange={handleMultiHostEnabledChange}
+                onPromoteLead={handlePromoteLead}
+              />
+            )
           }
           trailing={
             effectiveHasMessages ? (

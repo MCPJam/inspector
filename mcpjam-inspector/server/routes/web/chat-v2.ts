@@ -3,7 +3,10 @@ import { convertToModelMessages, type ToolSet } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { isMCPAuthError } from "@mcpjam/sdk";
-import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler.js";
+import {
+  handleMCPJamFreeChatModel,
+  warnIfChatAbortSignalMissing,
+} from "../../utils/mcpjam-stream-handler.js";
 import {
   handleHostedOrgChatModel,
   handleLocalOrgChatModel,
@@ -37,7 +40,6 @@ import {
   mapRuntimeError,
 } from "./auth.js";
 import {
-  attachHostedRpcLogs,
   createHostedRpcLogCollector,
 } from "./hosted-rpc-logs.js";
 import { getClientIp } from "../../utils/client-ip.js";
@@ -264,13 +266,6 @@ chatV2.post("/", async (c) => {
             "Server missing CONVEX_HTTP_URL configuration"
           );
         }
-        if (!process.env.INSPECTOR_SERVICE_TOKEN) {
-          throw new WebRouteError(
-            500,
-            ErrorCode.INTERNAL_ERROR,
-            "Server missing INSPECTOR_SERVICE_TOKEN configuration"
-          );
-        }
         // Hosted org BYOK: resolve runtime location first.
         // Cloud → LLM executes in Convex (/stream/org), keys never leave Convex.
         // Local → LLM executes in the inspector using the decrypted API key.
@@ -358,6 +353,9 @@ chatV2.post("/", async (c) => {
             }
           : undefined;
 
+        const inboundAbortSignal = c.req.raw.signal as AbortSignal | undefined;
+        warnIfChatAbortSignalMissing(inboundAbortSignal, "web/chat-v2");
+
         if (runtime.runtimeLocation === "local") {
           return handleLocalOrgChatModel({
             provider: runtime.provider,
@@ -374,11 +372,13 @@ chatV2.post("/", async (c) => {
             chatboxId,
             accessVersion,
             selectedServers: selectedServerIds,
+            serverIds: selectedServerIds,
             requireToolApproval,
             onConversationComplete,
             onStreamComplete: cleanupStream,
             onStreamWriterReady: (writer) =>
               rpcCollector?.attachStreamWriter(writer),
+            abortSignal: inboundAbortSignal,
           });
         }
 
@@ -399,11 +399,13 @@ chatV2.post("/", async (c) => {
           accessVersion,
           mcpClientManager: manager,
           selectedServers: selectedServerIds,
+          serverIds: selectedServerIds,
           requireToolApproval,
           onConversationComplete,
           onStreamComplete: cleanupStream,
           onStreamWriterReady: (writer) =>
             rpcCollector?.attachStreamWriter(writer),
+          abortSignal: inboundAbortSignal,
         });
       }
 
@@ -416,6 +418,11 @@ chatV2.post("/", async (c) => {
           "Server missing CONVEX_HTTP_URL configuration"
         );
       }
+
+      const inboundAbortSignalFree = c.req.raw.signal as
+        | AbortSignal
+        | undefined;
+      warnIfChatAbortSignalMissing(inboundAbortSignalFree, "web/chat-v2");
 
       return handleMCPJamFreeChatModel({
         messages: modelMessages as ModelMessage[],
@@ -433,6 +440,7 @@ chatV2.post("/", async (c) => {
         mcpClientManager: manager,
         selectedServers: selectedServerIds,
         requireToolApproval,
+        abortSignal: inboundAbortSignalFree,
         onConversationComplete: hostedChatSessionId
           ? async (fullHistory, turnTrace) => {
               const isDirectChat = !isChatboxSession;
@@ -511,7 +519,7 @@ chatV2.post("/", async (c) => {
           oauthRequired: true,
           serverUrl: firstUrl,
         },
-        rpcCollector?.buildEnvelope()
+        rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
       );
     }
     const routeError = mapRuntimeError(error);
@@ -521,7 +529,7 @@ chatV2.post("/", async (c) => {
       routeError.code,
       routeError.message,
       routeError.details,
-      rpcCollector?.buildEnvelope()
+      rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
     );
   }
 });

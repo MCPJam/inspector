@@ -602,6 +602,11 @@ describe("mcpjam-stream-handler", () => {
             outputTokens: 5,
             totalTokens: 15,
           },
+          totalUsage: {
+            inputTokens: 999,
+            outputTokens: 999,
+            totalTokens: 1998,
+          },
         },
       ])
     );
@@ -643,6 +648,111 @@ describe("mcpjam-stream-handler", () => {
       outputTokens: 5,
       totalTokens: 15,
     });
+
+    const finishChunk = writtenChunks.find((chunk) => chunk?.type === "finish");
+    expect(finishChunk).toMatchObject({
+      type: "finish",
+      finishReason: "stop",
+      messageMetadata: {
+        inputTokens: 10,
+        outputTokens: 5,
+        totalTokens: 15,
+      },
+    });
+    expect(finishChunk).not.toHaveProperty("totalUsage");
+  });
+
+  it("aggregates usage across steps when emitting the final UI finish chunk", async () => {
+    const stepOne = [
+      {
+        type: "tool-input-available",
+        toolCallId: "call-1",
+        toolName: "read_docs",
+        input: { topic: "latency" },
+      },
+      {
+        type: "finish",
+        finishReason: "stop",
+        messageMetadata: { inputTokens: 3, outputTokens: 4, totalTokens: 7 },
+      },
+    ];
+    const stepTwo = [
+      { type: "text-start", id: "text-1" },
+      { type: "text-delta", id: "text-1", delta: "ok" },
+      { type: "text-end", id: "text-1" },
+      {
+        type: "finish",
+        finishReason: "stop",
+        messageMetadata: {
+          inputTokens: 10,
+          outputTokens: 5,
+          totalTokens: 15,
+        },
+      },
+    ];
+    let call = 0;
+    global.fetch = vi.fn().mockImplementation(async () => {
+      const events = call === 0 ? stepOne : stepTwo;
+      call += 1;
+      return createSseResponse(events);
+    });
+    vi.mocked(hasUnresolvedToolCalls).mockImplementation(
+      (messages) =>
+        messages.some(
+          (message: any) =>
+            message?.role === "assistant" &&
+            Array.isArray(message.content) &&
+            message.content.some((part: any) => part.type === "tool-call")
+        ) && !messages.some((message: any) => message?.role === "tool")
+    );
+    vi.mocked(executeToolCallsFromMessages).mockImplementation(
+      async (messages: any[]) => {
+        const toolResultMessage = {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "read_docs",
+              output: { type: "json", value: { ok: true } },
+              result: { ok: true },
+              serverId: "docs-server",
+            },
+          ],
+        };
+        messages.splice(2, 0, toolResultMessage);
+        return [toolResultMessage] as any;
+      }
+    );
+
+    await handleMCPJamFreeChatModel({
+      messages: [{ role: "user", content: "Fetch the docs" }] as any,
+      modelId: "openai/gpt-5-mini",
+      systemPrompt: "You are helpful",
+      tools: {
+        read_docs: { _serverId: "docs-server" },
+      } as any,
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({ read_docs: {} }),
+      } as any,
+    });
+
+    await lastExecution;
+
+    const finishChunks = writtenChunks.filter(
+      (chunk) => chunk?.type === "finish"
+    );
+    expect(finishChunks).toHaveLength(1);
+    expect(finishChunks[0]).toMatchObject({
+      type: "finish",
+      finishReason: "stop",
+      messageMetadata: {
+        inputTokens: 13,
+        outputTokens: 9,
+        totalTokens: 22,
+      },
+    });
+    expect(finishChunks[0]).not.toHaveProperty("totalUsage");
   });
 
   it("flushes buffered hosted rpc logs first and streams live hosted rpc logs as data parts", async () => {
@@ -979,6 +1089,285 @@ describe("mcpjam-stream-handler", () => {
         ?.headers as Record<string, string>;
       expect(headers["x-mcpjam-guest-ip-hash"]).toBeUndefined();
       expect(headers["X-MCPJam-Guest-IP-Hash"]).toBeUndefined();
+    });
+
+    it("forwards the inbound AbortSignal into the Convex fetch", async () => {
+      const controller = new AbortController();
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "hi" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        abortSignal: controller.signal,
+        heartbeatIntervalMs: 0,
+      });
+      await lastExecution;
+
+      expect((global.fetch as any).mock.calls[0]?.[1]?.signal).toBe(
+        controller.signal
+      );
+    });
+
+    it("does not emit finish or turn_finish when abort fires between steps (post-loop epilogue is gated)", async () => {
+      // Regression for the silent-cancel epilogue leak: an abort that
+      // lands AFTER a step returns but BEFORE the next iteration must
+      // not fall through to the success epilogue (synthetic finish +
+      // turn_finish trace + runSucceeded=true).
+      const controller = new AbortController();
+      const onConversationComplete = vi.fn();
+      const onStreamComplete = vi.fn();
+
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(true);
+      // Simulate a tool execution that completes AND fires the abort
+      // signal as a side effect. The handler's external abort listener
+      // sets `aborted = true`. On the next loop iteration the top-of-
+      // loop guard breaks out, and the post-loop early return must
+      // skip the success epilogue.
+      vi.mocked(executeToolCallsFromMessages).mockImplementationOnce(
+        async () => {
+          controller.abort();
+          return [];
+        }
+      );
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "hi" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        abortSignal: controller.signal,
+        heartbeatIntervalMs: 0,
+        onConversationComplete,
+        onStreamComplete,
+      });
+      await lastExecution;
+
+      const visibleChunks = writtenChunks.filter(
+        (c: any) =>
+          c?.type !== "data-trace-event" || c?.data?.type !== "heartbeat"
+      );
+      // Silent-cancel invariant: no finish, no error, no turn_finish.
+      expect(
+        visibleChunks.find((c: any) => c?.type === "finish")
+      ).toBeUndefined();
+      expect(
+        visibleChunks.find((c: any) => c?.type === "error")
+      ).toBeUndefined();
+      const traceTypes = visibleChunks
+        .filter((c: any) => c?.type === "data-trace-event")
+        .map((c: any) => c?.data?.type);
+      expect(traceTypes).not.toContain("turn_finish");
+      // And no persistence — aborted turns are partial by definition.
+      expect(onConversationComplete).not.toHaveBeenCalled();
+      expect(onStreamComplete).toHaveBeenCalledTimes(1);
+    });
+
+    it("aborts silently before fetch when signal is already aborted: no fetch, no finish, no persistence, onStreamComplete runs", async () => {
+      const controller = new AbortController();
+      controller.abort();
+      const onConversationComplete = vi.fn();
+      const onStreamComplete = vi.fn();
+      (global.fetch as any).mockClear();
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "hi" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        abortSignal: controller.signal,
+        heartbeatIntervalMs: 0,
+        onConversationComplete,
+        onStreamComplete,
+      });
+      await lastExecution;
+
+      // Pre-aborted: the loop must not enter, so no Convex call happens.
+      expect((global.fetch as any).mock.calls).toHaveLength(0);
+      // Silent cancellation invariant: no error chunk, no synthetic finish,
+      // no turn_finish, no conversation persistence.
+      const visibleChunks = writtenChunks.filter(
+        (c: any) =>
+          c?.type !== "data-trace-event" || c?.data?.type !== "heartbeat"
+      );
+      expect(
+        visibleChunks.find((c: any) => c?.type === "finish")
+      ).toBeUndefined();
+      expect(
+        visibleChunks.find((c: any) => c?.type === "error")
+      ).toBeUndefined();
+      const traceTypes = visibleChunks
+        .filter((c: any) => c?.type === "data-trace-event")
+        .map((c: any) => c?.data?.type);
+      expect(traceTypes).not.toContain("turn_finish");
+      expect(onConversationComplete).not.toHaveBeenCalled();
+      // Cleanup still runs — callers rely on this to tear down per-request
+      // MCPClientManager state on disconnect.
+      expect(onStreamComplete).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not emit heartbeat trace events when heartbeatIntervalMs is 0", async () => {
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "hi" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        heartbeatIntervalMs: 0,
+      });
+      await lastExecution;
+
+      const heartbeats = writtenChunks.filter(
+        (c: any) =>
+          c?.type === "data-trace-event" && c?.data?.type === "heartbeat"
+      );
+      expect(heartbeats).toHaveLength(0);
+    });
+
+    it("preserves current-turn reasoning across steps in the backend payload", async () => {
+      const messages = [
+        { role: "user", content: "step 1" },
+        {
+          role: "assistant",
+          content: [
+            { type: "reasoning", text: "let me think", state: "done" },
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "search",
+              input: {},
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "search",
+              output: { type: "json", value: { ok: true } },
+            },
+          ],
+        },
+      ] as any;
+
+      await handleMCPJamFreeChatModel({
+        messages,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: {
+          search: { description: "search", inputSchema: {} as any },
+        },
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        heartbeatIntervalMs: 0,
+      });
+      await lastExecution;
+
+      const fetchBody = JSON.parse(
+        ((global.fetch as any).mock.calls[0]?.[1]?.body as string) ?? "{}"
+      );
+      const sentMessages = JSON.parse(fetchBody.messages);
+      const assistantWithReasoning = sentMessages.find(
+        (m: any) => m.role === "assistant"
+      );
+      const reasoningPart = assistantWithReasoning?.content?.find(
+        (p: any) => p?.type === "reasoning"
+      );
+      // Current-turn reasoning survives (so thinking models keep their
+      // scratchpad), but the UI-only `state` field is stripped.
+      expect(reasoningPart).toBeDefined();
+      expect(reasoningPart.text).toBe("let me think");
+      expect(reasoningPart.state).toBeUndefined();
+    });
+
+    it("respects maxSteps using promptStepBaseIndex + steps so resumed approval turns cannot extend the budget", async () => {
+      // 4 assistant steps already happened in the current turn (post the
+      // latest user message). With maxSteps=6, only 2 more steps may run.
+      const messages = [
+        { role: "user", content: "go" },
+        { role: "assistant", content: [{ type: "text", text: "s1" }] },
+        { role: "assistant", content: [{ type: "text", text: "s2" }] },
+        { role: "assistant", content: [{ type: "text", text: "s3" }] },
+        { role: "assistant", content: [{ type: "text", text: "s4" }] },
+      ] as any;
+
+      // Keep tools unresolved every step so the loop wants to continue.
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(true);
+      vi.mocked(executeToolCallsFromMessages).mockResolvedValue([]);
+
+      (global.fetch as any).mockClear();
+
+      await handleMCPJamFreeChatModel({
+        messages,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        maxSteps: 6,
+        heartbeatIntervalMs: 0,
+      });
+      await lastExecution;
+
+      // 4 existing + 2 new = 6 (the cap). Only 2 fetches should fire.
+      expect((global.fetch as any).mock.calls).toHaveLength(2);
+    });
+
+    it("emits the aggregated turn usage via messageMetadata (preserving #2213)", async () => {
+      // Single-step turn with non-trivial usage. Must surface as
+      // messageMetadata on the finish chunk, NOT totalUsage. Regression
+      // guard for the createClientFinishChunk wire shape.
+      (global.fetch as any).mockReset();
+      (global.fetch as any) = vi.fn().mockResolvedValue(
+        createSseResponse([
+          {
+            type: "finish",
+            finishReason: "stop",
+            messageMetadata: {
+              inputTokens: 50,
+              outputTokens: 25,
+              totalTokens: 75,
+            },
+          },
+        ])
+      );
+
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "hi" }] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        heartbeatIntervalMs: 0,
+      });
+      await lastExecution;
+
+      const finishChunk = writtenChunks.find((c: any) => c?.type === "finish");
+      expect(finishChunk).toBeDefined();
+      expect((finishChunk as any).messageMetadata).toMatchObject({
+        inputTokens: 50,
+        outputTokens: 25,
+        totalTokens: 75,
+      });
+      // #2213 invariant: totalUsage must NOT be emitted on the client
+      // finish chunk; clients read usage from messageMetadata.
+      expect((finishChunk as any).totalUsage).toBeUndefined();
     });
 
     it("hashes IPv4 and ::ffff:-mapped IPv6 of the same client identically", async () => {
