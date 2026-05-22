@@ -122,7 +122,7 @@ export function ServerConnectionCard({
   useExploreCasesPrefetchOnConnect(projectId ?? null, server, hostedServerId);
 
   const posthog = usePostHog();
-  const { getAccessToken } = useAuth();
+  const { getAccessToken, signIn } = useAuth();
   const { isAuthenticated } = useConvexAuth();
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -713,8 +713,10 @@ export function ServerConnectionCard({
                   ) : (
                     <button
                       data-server-card-context-menu-exempt
-                      onClick={handleCreateTunnel}
-                      disabled={isCreatingTunnel || !canManageTunnels}
+                      onClick={
+                        canManageTunnels ? handleCreateTunnel : () => signIn()
+                      }
+                      disabled={isCreatingTunnel}
                       className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/30 px-2 py-0.5 text-[11px] text-foreground transition-colors hover:bg-accent/60 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
                     >
                       {isCreatingTunnel ? (
@@ -725,7 +727,7 @@ export function ServerConnectionCard({
                       <span>
                         {canManageTunnels
                           ? "Create ngrok tunnel"
-                          : "Sign in for tunnel"}
+                          : "Sign in to create ngrok tunnels"}
                       </span>
                     </button>
                   )}
