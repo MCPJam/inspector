@@ -507,6 +507,64 @@ export function MCPAppsRenderer({
     () => extractHostDisplayModes(draftHostContext),
     [draftHostContext],
   );
+  // Resolve `effectiveHostStyle` early (it's a 3-way ternary on values
+  // already available above) so the SEP-1865 matrix can be computed
+  // before the display-mode clamp at `effectiveDisplayMode` below. The
+  // duplicate-looking `effectiveHostStyle = ...` further down (around
+  // the original `hostStyleDefinition`) reads the same value; both
+  // assignments produce identical strings because the dependencies are
+  // identical, so the bridge handshake / sandbox composition see the
+  // same host style id.
+  //
+  // Matrix-resolved `availableDisplayModes` is what we advertise in
+  // `HostContext.availableDisplayModes` AND what we clamp the
+  // current/initial `effectiveDisplayMode` against. Without this
+  // earlier clamp, a Copilot-preset host could initialize in (or
+  // remain in) `pip` because the parent's `displayMode === "pip"`,
+  // while advertising `availableDisplayModes: ["fullscreen"]` —
+  // the View would see inconsistent HostContext.
+  const earlyEffectiveHostStyle = isPlaygroundActive
+    ? sharedHostStyle
+    : chatboxHostStyle;
+  const earlyEffectiveMcpAppsCapabilities = useMemo(
+    () =>
+      resolveEffectiveMcpAppsCapabilities({
+        profile: activeMcpProfile,
+        hostStyle: earlyEffectiveHostStyle,
+      }),
+    [activeMcpProfile, earlyEffectiveHostStyle],
+  );
+
+  // Intersection of the matrix's allowed modes with the playground /
+  // draft host context's configured modes — single source of truth for
+  // both the runtime clamp at `effectiveDisplayMode` below AND the
+  // value advertised in `HostContext.availableDisplayModes`. Computed
+  // here (early) so the clamp can use it.
+  //
+  // Without sharing the intersection between the two consumers, the
+  // matrix-only clamp inside `effectiveDisplayMode` could land on
+  // `matrix[0]` while `HostContext.availableDisplayModes` advertised a
+  // strict subset (the intersection). E.g. matrix=["pip","fullscreen"],
+  // configured=["inline","fullscreen"], requested="inline" →
+  // matrix-only clamp produced "pip" (matrix[0]) while advertised list
+  // was ["fullscreen"]. Fix: clamp against the intersection itself.
+  //
+  // Fallback to matrix alone when the intersection would be empty —
+  // matches the matrix invariant (`length >= 1`) and avoids advertising
+  // an unrenderable empty array. `configuredAvailableDisplayModes` is
+  // always a non-empty array (see `extractHostDisplayModes` fallbacks)
+  // so the only way intersection is empty is when the playground asks
+  // for modes the simulated host doesn't advertise.
+  const effectiveAvailableDisplayModes = useMemo(() => {
+    const matrixModes = earlyEffectiveMcpAppsCapabilities.availableDisplayModes;
+    const intersection = matrixModes.filter((m) =>
+      configuredAvailableDisplayModes.includes(m as DisplayMode),
+    );
+    return intersection.length > 0 ? intersection : matrixModes;
+  }, [
+    earlyEffectiveMcpAppsCapabilities.availableDisplayModes,
+    configuredAvailableDisplayModes,
+  ]);
 
   // Get device capabilities from playground store (SEP-1865)
   const playgroundCapabilities = useUIPlaygroundStore((s) => s.capabilities);
@@ -584,13 +642,19 @@ export function MCPAppsRenderer({
     if (displayMode === "pip" && pipWidgetId === toolCallId) return "pip";
     return "inline";
   }, [displayMode, fullscreenWidgetId, isControlled, pipWidgetId, toolCallId]);
+  // Clamp the requested display mode against the same intersection
+  // that gets advertised in `HostContext.availableDisplayModes` so
+  // the runtime mode is always a member of the advertised set. A
+  // Copilot host initializing in `pip` (parent's `displayMode` is
+  // sticky from a previous widget) coerces down to `fullscreen`
+  // because the intersection resolves to `["fullscreen"]`.
   const effectiveDisplayMode = useMemo<DisplayMode>(
     () =>
       clampDisplayModeToAvailableModes(
         requestedDisplayMode,
-        configuredAvailableDisplayModes,
+        effectiveAvailableDisplayModes,
       ),
-    [configuredAvailableDisplayModes, requestedDisplayMode],
+    [requestedDisplayMode, effectiveAvailableDisplayModes],
   );
   const setDisplayMode = useCallback(
     (mode: DisplayMode) => {
@@ -1463,14 +1527,12 @@ export function MCPAppsRenderer({
   // `liveOpenAiCompatCapabilitiesRef` pattern has, and the gate
   // contract reads `null` as "default on" so the brief window emits
   // notifications (matches pre-matrix behavior).
-  const effectiveMcpAppsCapabilities = useMemo(
-    () =>
-      resolveEffectiveMcpAppsCapabilities({
-        profile: activeMcpProfile,
-        hostStyle: effectiveHostStyle,
-      }),
-    [activeMcpProfile, effectiveHostStyle],
-  );
+  //
+  // The matrix itself is computed earlier in the render
+  // (`earlyEffectiveMcpAppsCapabilities` near the display-mode
+  // resolution) so the `effectiveDisplayMode` clamp can use it. We
+  // alias the same value here for downstream consumers.
+  const effectiveMcpAppsCapabilities = earlyEffectiveMcpAppsCapabilities;
   mcpAppsCapabilitiesRef.current = effectiveMcpAppsCapabilities;
   themeModeRef.current = resolvedTheme;
   const styleVariables = useMemo(
@@ -1519,12 +1581,33 @@ export function MCPAppsRenderer({
 
   // containerDimensions (maxWidth/maxHeight) was previously sent here but
   // removed — width is now fully host-controlled.
-  const hostContext = useMemo<McpUiHostContext>(
-    () => ({
-      ...baseHostContext,
+  //
+  // Matrix-gated HostContext fields (PR C of the foundation series):
+  //
+  // - `availableDisplayModes`: intersection of the matrix's allowed
+  //   modes with playground / draft configured modes, computed earlier
+  //   as `effectiveAvailableDisplayModes` so the runtime
+  //   `effectiveDisplayMode` clamp and the advertised list agree.
+  //
+  // - `toolInfo`: omitted entirely when `matrix.toolInfo === false`
+  //   (Microsoft 365 Copilot doesn't deliver this HostContext field
+  //   per its published Component-bridge table). A widget that
+  //   probes `app.getHostContext()?.toolInfo` on a simulated Copilot
+  //   host now correctly sees undefined — same as real Copilot. The
+  //   gate strips any inherited `toolInfo` from `baseHostContext`
+  //   too: a draft host context that pre-populates `toolInfo` would
+  //   otherwise leak through the spread and defeat the gate.
+  const hostContext = useMemo<McpUiHostContext>(() => {
+    // Strip toolInfo from the spread source so the matrix gate is
+    // authoritative — if the matrix says off, no upstream value
+    // (drafts, playground state) can reintroduce it via inheritance.
+    const { toolInfo: _toolInfoFromBase, ...baseWithoutToolInfo } =
+      baseHostContext as McpUiHostContext & { toolInfo?: unknown };
+    const base: McpUiHostContext = {
+      ...baseWithoutToolInfo,
       theme: resolvedTheme,
       displayMode: effectiveDisplayMode,
-      availableDisplayModes: configuredAvailableDisplayModes,
+      availableDisplayModes: effectiveAvailableDisplayModes,
       locale,
       timeZone,
       platform:
@@ -1537,7 +1620,9 @@ export function MCPAppsRenderer({
       deviceCapabilities,
       safeAreaInsets,
       styles: mergedStyles,
-      toolInfo: {
+    };
+    if (effectiveMcpAppsCapabilities.toolInfo) {
+      base.toolInfo = {
         id: toolCallId,
         tool: {
           name: toolName,
@@ -1549,24 +1634,25 @@ export function MCPAppsRenderer({
             }) ?? DEFAULT_INPUT_SCHEMA,
           description: toolMetadata?.description as string | undefined,
         },
-      },
-    }),
-    [
-      baseHostContext,
-      resolvedTheme,
-      effectiveDisplayMode,
-      configuredAvailableDisplayModes,
-      locale,
-      timeZone,
-      deviceCapabilities,
-      safeAreaInsets,
-      mergedStyles,
-      hostStyleDefinition,
-      toolCallId,
-      toolName,
-      toolMetadata,
-    ],
-  );
+      };
+    }
+    return base;
+  }, [
+    baseHostContext,
+    resolvedTheme,
+    effectiveDisplayMode,
+    effectiveAvailableDisplayModes,
+    locale,
+    timeZone,
+    deviceCapabilities,
+    safeAreaInsets,
+    mergedStyles,
+    hostStyleDefinition,
+    toolCallId,
+    toolName,
+    toolMetadata,
+    effectiveMcpAppsCapabilities.toolInfo,
+  ]);
 
   useEffect(() => {
     hostContextRef.current = hostContext;
