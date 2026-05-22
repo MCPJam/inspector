@@ -245,6 +245,8 @@ chatV2.post("/", async (c) => {
         enhancedSystemPrompt,
         resolvedTemperature,
         scrubMessages,
+        progressivePlan,
+        discoveryState,
       } = prepared;
       const hostedChatSessionId = body.chatSessionId;
 
@@ -366,6 +368,8 @@ chatV2.post("/", async (c) => {
             systemPrompt: enhancedSystemPrompt,
             temperature: resolvedTemperature,
             tools: allTools as ToolSet,
+            progressivePlan,
+            discoveryState,
             authHeader: c.req.header("authorization"),
             chatboxId,
             accessVersion,
@@ -391,6 +395,8 @@ chatV2.post("/", async (c) => {
           systemPrompt: enhancedSystemPrompt,
           temperature: resolvedTemperature,
           tools: allTools as ToolSet,
+          progressivePlan,
+          discoveryState,
           authHeader: c.req.header("authorization"),
           clientIp: getClientIp(c),
           chatboxId,
@@ -430,6 +436,8 @@ chatV2.post("/", async (c) => {
         systemPrompt: enhancedSystemPrompt,
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
+        progressivePlan,
+        discoveryState,
         authHeader: c.req.header("authorization"),
         clientIp: getClientIp(c),
         chatboxId,

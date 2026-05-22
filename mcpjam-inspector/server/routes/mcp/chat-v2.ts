@@ -75,6 +75,12 @@ import {
   type LiveChatTraceUsage,
 } from "@/shared/live-chat-trace";
 import { isAbortError } from "@/shared/abort-errors";
+import {
+  commitNewlyLoaded,
+  resolveActiveToolNames,
+  type ProgressiveToolPlan,
+  type ToolDiscoveryState,
+} from "@/shared/progressive-tool-discovery";
 
 function formatStreamError(error: unknown, provider?: ModelProvider): string {
   if (!(error instanceof Error)) {
@@ -203,6 +209,8 @@ function streamDirectChatWithLiveTrace(options: {
   systemPrompt: string;
   temperature?: number;
   tools: ToolSet;
+  progressivePlan?: ProgressiveToolPlan;
+  discoveryState?: ToolDiscoveryState;
   abortSignal?: AbortSignal;
   onPersist?: (event: {
     responseMessages: ModelMessage[];
@@ -285,6 +293,7 @@ function streamDirectChatWithLiveTrace(options: {
         traceTurn.promptIndex
       ) as ToolSet;
 
+      const { progressivePlan, discoveryState } = options;
       const streamTextOptions: Parameters<typeof streamText>[0] = {
         model: llmModel,
         messages: messageHistory,
@@ -299,6 +308,14 @@ function streamDirectChatWithLiveTrace(options: {
             modelId,
             promptIndex: traceTurn.promptIndex,
           });
+          if (progressivePlan?.enabled && discoveryState) {
+            commitNewlyLoaded(discoveryState);
+            const active = resolveActiveToolNames(
+              progressivePlan,
+              discoveryState,
+            );
+            return { activeTools: active };
+          }
           return {};
         },
         onChunk: async ({ chunk }) => {
@@ -693,6 +710,8 @@ chatV2.post("/", async (c) => {
       enhancedSystemPrompt,
       resolvedTemperature,
       scrubMessages,
+      progressivePlan,
+      discoveryState,
     } = prepared;
 
     // Shared across all three persist call sites below. All three paths are
@@ -759,6 +778,8 @@ chatV2.post("/", async (c) => {
         systemPrompt: enhancedSystemPrompt,
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
+        progressivePlan,
+        discoveryState,
         authHeader,
         clientIp: getClientIp(c),
         mcpClientManager,
@@ -902,6 +923,8 @@ chatV2.post("/", async (c) => {
           systemPrompt: enhancedSystemPrompt,
           temperature: resolvedTemperature,
           tools: allTools as ToolSet,
+          progressivePlan,
+          discoveryState,
           authHeader: requestAuthHeader,
           chatboxId: bodyChatboxId,
           accessVersion: bodyAccessVersion,
@@ -921,6 +944,8 @@ chatV2.post("/", async (c) => {
         systemPrompt: enhancedSystemPrompt,
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
+        progressivePlan,
+        discoveryState,
         authHeader: requestAuthHeader,
         clientIp: getClientIp(c),
         mcpClientManager,
@@ -965,6 +990,8 @@ chatV2.post("/", async (c) => {
       systemPrompt: enhancedSystemPrompt,
       temperature: resolvedTemperature,
       tools: allTools as ToolSet,
+      progressivePlan,
+      discoveryState,
       abortSignal: inboundAbortSignalDirect,
       onPersist: chatSessionId
         ? async ({
