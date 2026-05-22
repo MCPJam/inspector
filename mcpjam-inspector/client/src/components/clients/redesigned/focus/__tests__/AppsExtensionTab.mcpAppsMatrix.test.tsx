@@ -54,25 +54,27 @@ function renderMatrix(initial?: Partial<HostConfigInputV2>) {
 }
 
 describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
-  it("renders the spec-bridge section with the SEP-1865 label", () => {
+  it("renders the MCP Apps section header", () => {
     renderMatrix();
-    // Two-matrix architecture: window.openai and app.* are sibling
-    // sections in the same tab. The label disambiguates them.
-    expect(screen.getByText("app.*")).toBeInTheDocument();
-    expect(screen.getByText(/SEP-1865/)).toBeInTheDocument();
+    // Two-matrix architecture: window.openai and MCP Apps are sibling
+    // sections in the same tab.
+    expect(screen.getByText("MCP Apps")).toBeInTheDocument();
   });
 
-  it("starts at 'Matches host style preset' subline when no override is set", () => {
+  it("does not show Preset hints on matrix rows", () => {
     renderMatrix();
-    expect(screen.getByText(/Matches host style preset/)).toBeInTheDocument();
+    expect(screen.queryByText(/^Preset:/)).toBeNull();
+  });
+
+  it("shows an enabled-capability summary when no override is set", () => {
+    renderMatrix();
+    expect(screen.getByText("15 of 15 enabled")).toBeInTheDocument();
   });
 
   it("renders the availableDisplayModes cluster with Claude's preset (all three modes)", () => {
     renderMatrix();
     // Claude advertises the FULL surface: inline + fullscreen + pip.
-    const cluster = screen
-      .getByText("availableDisplayModes")
-      .closest("div")!.parentElement!;
+    const cluster = screen.getByTestId("mcp-apps-dimension-availableDisplayModes");
     for (const mode of ["inline", "fullscreen", "pip"] as const) {
       const button = within(cluster).getByRole("button", { name: mode });
       // Selected modes use the elevated background class.
@@ -171,7 +173,7 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
     expect(within(cleanRow).queryByText("Overridden")).toBeNull();
   });
 
-  it("'Match host preset' chip clears the entire matrix override", async () => {
+  it("Reset button clears the entire matrix override", async () => {
     const user = userEvent.setup();
     const draft = emptyHostConfigInputV2({ hostStyle: "claude" });
     draft.mcpProfile = {
@@ -193,29 +195,23 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
         attention={[]}
       />,
     );
-    const chip = screen.getByRole("button", { name: /Match host preset/ });
-    expect(chip).toBeEnabled();
-    await user.click(chip);
+    const reset = screen.getByRole("button", { name: "Reset" });
+    await user.click(reset);
     expect(draftRef.current.mcpProfile?.apps?.mcpAppsOverrides).toBeUndefined();
   });
 
-  it("'Match host preset' chip is disabled when no override is set", () => {
+  it("hides the Reset button when no override is set", () => {
     renderMatrix();
-    const chip = screen.getByRole("button", { name: /Match host preset/ });
-    expect(chip).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Reset" })).toBeNull();
   });
 
-  it("the Advanced disclosure hides rare dimensions until expanded", async () => {
-    const user = userEvent.setup();
+  it("renders all matrix dimensions in one flat list", () => {
     renderMatrix();
-    // Sandbox sub-fields live in Advanced — hidden by default.
-    expect(
-      screen.queryByTestId("mcp-apps-dimension-sandboxPermissions"),
-    ).toBeNull();
-    await user.click(screen.getByRole("button", { name: /Advanced/ }));
     expect(
       screen.getByTestId("mcp-apps-dimension-sandboxPermissions"),
     ).toBeInTheDocument();
+    expect(screen.queryByText("ADVANCED")).toBeNull();
+    expect(screen.queryByText(/Notifications & capabilities/i)).toBeNull();
   });
 
   it("clicking a display mode in the cluster updates the allowlist on the draft", async () => {
@@ -223,9 +219,7 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
     const { draftRef } = renderMatrix();
     // Claude's preset is [inline, fullscreen, pip]. Click "pip" to
     // remove it → override should be [inline, fullscreen].
-    const cluster = screen
-      .getByText("availableDisplayModes")
-      .closest("div")!.parentElement!;
+    const cluster = screen.getByTestId("mcp-apps-dimension-availableDisplayModes");
     await user.click(within(cluster).getByRole("button", { name: "pip" }));
     expect(
       draftRef.current.mcpProfile?.apps?.mcpAppsOverrides
@@ -238,9 +232,7 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
     const { draftRef } = renderMatrix({ hostStyle: "copilot" });
     // Copilot preset is already ["fullscreen"]; unchecking it should
     // coerce to ["inline"] (matrix invariant — never empty).
-    const cluster = screen
-      .getByText("availableDisplayModes")
-      .closest("div")!.parentElement!;
+    const cluster = screen.getByTestId("mcp-apps-dimension-availableDisplayModes");
     await user.click(
       within(cluster).getByRole("button", { name: "fullscreen" }),
     );
@@ -328,7 +320,7 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix legacy-override migration
     });
   });
 
-  it("'Match host preset' clears both the matrix override AND the legacy hostCapabilitiesOverride", async () => {
+  it("Reset clears both the matrix override AND the legacy hostCapabilitiesOverride", async () => {
     // The chip's contract is "revert to preset". If we only cleared
     // the matrix, the legacy path would silently keep the override
     // alive — the matrix would say "Matches host style preset" while
@@ -341,7 +333,7 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix legacy-override migration
         serverTools: {},
       },
     });
-    await user.click(screen.getByRole("button", { name: /Match host preset/ }));
+    await user.click(screen.getByRole("button", { name: "Reset" }));
     expect(draftRef.current.hostCapabilitiesOverride).toBeUndefined();
     expect(
       draftRef.current.mcpProfile?.apps?.mcpAppsOverrides,
