@@ -1289,13 +1289,6 @@ function McpAppsCapabilityMatrix({
       : legacyOverride !== undefined
         ? (hostCapabilitiesOverrideToMatrix(legacyOverride) ?? undefined)
         : undefined;
-  // Preset baseline alone (no override applied) — used when toggling rows
-  // back to preset values. The "Overridden" badge tracks divergences.
-  const presetCapabilities: ResolvedMcpAppsCapabilities =
-    resolveEffectiveMcpAppsCapabilities({
-      profile: undefined,
-      hostStyle: draft.hostStyle,
-    });
   // Effective values shown in the matrix UI. Uses the virtually-
   // migrated legacy when the matrix is absent so the UI shows what
   // the resolver advertises today (legacy path) — not what it would
