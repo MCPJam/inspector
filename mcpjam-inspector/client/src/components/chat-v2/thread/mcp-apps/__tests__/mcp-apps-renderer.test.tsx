@@ -463,6 +463,81 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(modalCaps).not.toHaveProperty("logging");
   });
 
+  it("includes HostContext.toolInfo when the matrix has toolInfo: true (Claude default)", async () => {
+    render(
+      <ChatboxHostStyleProvider value="claude">
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostStyleProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+    const hostContext = appBridgeArgsRef.current?.options?.hostContext as
+      | Record<string, unknown>
+      | undefined;
+    expect(hostContext).toHaveProperty("toolInfo");
+    expect((hostContext?.toolInfo as { tool: { name: string } }).tool.name).toBe(
+      "test-tool",
+    );
+  });
+
+  it("omits HostContext.toolInfo entirely when the matrix has toolInfo: false (Copilot)", async () => {
+    // Microsoft 365 Copilot doesn't deliver `app.getHostContext()?.toolInfo`
+    // per its published Component-bridge table. A widget that probes
+    // for that field must see undefined — same as real Copilot.
+    render(
+      <ChatboxHostStyleProvider value="copilot">
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostStyleProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+    const hostContext = appBridgeArgsRef.current?.options?.hostContext as
+      | Record<string, unknown>
+      | undefined;
+    expect(hostContext).not.toHaveProperty("toolInfo");
+  });
+
+  it("advertises matrix-clamped HostContext.availableDisplayModes (Copilot: ['fullscreen'] only)", async () => {
+    // Copilot's published Component-bridge table says
+    // requestDisplayMode is fullscreen-only. The matrix's
+    // availableDisplayModes is ["fullscreen"]; the host must
+    // advertise exactly that, not the inspector's permissive
+    // default of all three.
+    render(
+      <ChatboxHostStyleProvider value="copilot">
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostStyleProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+    const hostContext = appBridgeArgsRef.current?.options?.hostContext as
+      | Record<string, unknown>
+      | undefined;
+    expect(hostContext?.availableDisplayModes).toEqual(["fullscreen"]);
+  });
+
+  it("advertises all three modes on Claude (full surface matrix)", async () => {
+    render(
+      <ChatboxHostStyleProvider value="claude">
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostStyleProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+    const hostContext = appBridgeArgsRef.current?.options?.hostContext as
+      | Record<string, unknown>
+      | undefined;
+    expect(hostContext?.availableDisplayModes).toEqual([
+      "inline",
+      "fullscreen",
+      "pip",
+    ]);
+  });
+
   it("does not block pure MCP Apps from booting while ChatGPT compat is enabled", async () => {
     render(
       <ChatboxHostStyleProvider value="chatgpt">

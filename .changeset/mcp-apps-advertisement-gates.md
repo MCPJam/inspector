@@ -1,0 +1,6 @@
+---
+"@mcpjam/inspector": minor
+---
+
+### `@mcpjam/inspector`
+- **HostContext advertisement gates (PR C of the foundation series)**: the MCP Apps spec-bridge matrix now also gates the `HostContext` payload advertised in `ui/initialize`. (1) `HostContext.toolInfo` is omitted entirely when `matrix.toolInfo === false` — Microsoft 365 Copilot doesn't deliver `app.getHostContext()?.toolInfo` per its published Component-bridge table, so simulated Copilot widgets now see `undefined` matching real Copilot. (2) `HostContext.availableDisplayModes` is intersected with `matrix.availableDisplayModes` — Copilot's allowlist becomes `["fullscreen"]` instead of the inspector's permissive `["inline", "fullscreen", "pip"]` default. When the intersection would be empty (configured asks for modes the simulated host doesn't advertise), falls back to the matrix value alone so the widget never sees an unrenderable empty array (matrix invariant `length >= 1`). The existing `bridge.onrequestdisplaymode` clamp at the renderer already honors `HostContext.availableDisplayModes`, so this PR carries the matrix value through to the place that already enforces it. 4 new renderer tests cover Claude full-surface + Copilot subset for both fields.

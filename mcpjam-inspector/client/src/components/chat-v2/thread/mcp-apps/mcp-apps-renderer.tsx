@@ -1519,12 +1519,47 @@ export function MCPAppsRenderer({
 
   // containerDimensions (maxWidth/maxHeight) was previously sent here but
   // removed — width is now fully host-controlled.
-  const hostContext = useMemo<McpUiHostContext>(
-    () => ({
+  //
+  // Matrix-gated HostContext fields (PR C of the foundation series):
+  //
+  // - `availableDisplayModes`: intersection of the matrix's allowed
+  //   modes (`matrix.availableDisplayModes`) with whatever the
+  //   playground / draft host context configures. Both constraints
+  //   apply — the matrix says "what the simulated host's capability
+  //   advertises," the configured list says "what the user further
+  //   narrowed in the playground." If the intersection would be
+  //   empty (configured asks for modes the simulated host doesn't
+  //   advertise), fall back to the matrix value alone so the widget
+  //   still gets a usable allowlist instead of an unrenderable empty
+  //   array. Matches the matrix invariant (`length >= 1`).
+  //
+  // - `toolInfo`: omitted entirely when `matrix.toolInfo === false`
+  //   (Microsoft 365 Copilot doesn't deliver this HostContext field
+  //   per its published Component-bridge table). A widget that
+  //   probes `app.getHostContext()?.toolInfo` on a simulated Copilot
+  //   host now correctly sees undefined — same as real Copilot.
+  const effectiveAvailableDisplayModes = useMemo(() => {
+    const matrixModes = effectiveMcpAppsCapabilities.availableDisplayModes;
+    if (
+      configuredAvailableDisplayModes === undefined ||
+      configuredAvailableDisplayModes.length === 0
+    ) {
+      return matrixModes;
+    }
+    const intersection = matrixModes.filter((m) =>
+      configuredAvailableDisplayModes.includes(m as DisplayMode),
+    );
+    return intersection.length > 0 ? intersection : matrixModes;
+  }, [
+    effectiveMcpAppsCapabilities.availableDisplayModes,
+    configuredAvailableDisplayModes,
+  ]);
+  const hostContext = useMemo<McpUiHostContext>(() => {
+    const base: McpUiHostContext = {
       ...baseHostContext,
       theme: resolvedTheme,
       displayMode: effectiveDisplayMode,
-      availableDisplayModes: configuredAvailableDisplayModes,
+      availableDisplayModes: effectiveAvailableDisplayModes,
       locale,
       timeZone,
       platform:
@@ -1537,7 +1572,9 @@ export function MCPAppsRenderer({
       deviceCapabilities,
       safeAreaInsets,
       styles: mergedStyles,
-      toolInfo: {
+    };
+    if (effectiveMcpAppsCapabilities.toolInfo) {
+      base.toolInfo = {
         id: toolCallId,
         tool: {
           name: toolName,
@@ -1549,24 +1586,25 @@ export function MCPAppsRenderer({
             }) ?? DEFAULT_INPUT_SCHEMA,
           description: toolMetadata?.description as string | undefined,
         },
-      },
-    }),
-    [
-      baseHostContext,
-      resolvedTheme,
-      effectiveDisplayMode,
-      configuredAvailableDisplayModes,
-      locale,
-      timeZone,
-      deviceCapabilities,
-      safeAreaInsets,
-      mergedStyles,
-      hostStyleDefinition,
-      toolCallId,
-      toolName,
-      toolMetadata,
-    ],
-  );
+      };
+    }
+    return base;
+  }, [
+    baseHostContext,
+    resolvedTheme,
+    effectiveDisplayMode,
+    effectiveAvailableDisplayModes,
+    locale,
+    timeZone,
+    deviceCapabilities,
+    safeAreaInsets,
+    mergedStyles,
+    hostStyleDefinition,
+    toolCallId,
+    toolName,
+    toolMetadata,
+    effectiveMcpAppsCapabilities.toolInfo,
+  ]);
 
   useEffect(() => {
     hostContextRef.current = hostContext;
