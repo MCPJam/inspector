@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { JsonEditor, type JsonEditorMode } from "@/components/ui/json-editor";
 import {
+  hostCapabilitiesOverrideToMatrix,
   resolveEffectiveHostCapabilities,
   resolveEffectiveMcpAppsCapabilities,
   type HostConfigInputV2,
@@ -1078,16 +1079,29 @@ function RequestDisplayModeControl({
  * Update `mcpProfile.apps.mcpAppsOverrides` while preserving sibling
  * fields (`sandbox`, `uiInitialize`, `compatRuntime`) and collapsing
  * empties on the way out:
+ *
  *   - empty override object → omit `mcpAppsOverrides` from `apps`
  *   - empty `apps` block (no other siblings) → omit `apps` from profile
- *   - empty profile (only `profileVersion`) → set `mcpProfile: undefined`
+ *   - profile that's now content-less (only `profileVersion`) →
+ *     `mcpProfile: undefined`
  *
  * Mirrors the collapse the bottom of `applyJsonToDraft` already does.
  * Without it, toggling a row and toggling it back leaves a dirty
  * `{ profileVersion: 1, apps: {} }` shell on the draft —
- * `hostConfigInputsEqual` treats that as distinct from `undefined`, so
+ * `optionalMcpProfileEq` treats that as distinct from `undefined`, so
  * the save button stays armed and the matrix says "Matches host style
  * preset" while the draft is silently dirty.
+ *
+ * Trade-off: a user who deliberately opted into a content-less
+ * `{ profileVersion: 1 }` envelope (by hand-editing the JSON) will
+ * see that stub dropped when they touch the matrix. We accept that:
+ * the typed-in `{ profileVersion: 1 }` carries no semantic content
+ * the resolver consumes, and the common case (user toggles via
+ * matrix UI, expects clean revert) is overwhelmingly more frequent.
+ * If we ever model the matrix and the openai shim's
+ * `setCompatRuntimeOnDraft` consistently, we can revisit by tracking
+ * "synthesized vs opted-in" provenance — but that's bigger than this
+ * PR.
  */
 function setMcpAppsOverridesOnDraft(
   prev: HostConfigInputV2,
@@ -1111,9 +1125,8 @@ function setMcpAppsOverridesOnDraft(
   if (hasKeys) nextApps.mcpAppsOverrides = next;
   const appsEmpty = Object.keys(nextApps).length === 0;
 
-  // Fast path: if the draft had no profile to begin with and the new
-  // apps block is empty, leave the draft untouched (no envelope
-  // synthesized just to immediately collapse it).
+  // Fast path: no envelope before, no content now → leave draft alone
+  // (no envelope ever synthesized just to immediately collapse it).
   if (prevProfile === undefined && appsEmpty) {
     return prev;
   }
@@ -1213,7 +1226,30 @@ function McpAppsCapabilityMatrix({
   ) => void;
 }) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const overridesRecord = draft.mcpProfile?.apps?.mcpAppsOverrides;
+  const rawOverridesRecord = draft.mcpProfile?.apps?.mcpAppsOverrides;
+  const legacyOverride = draft.hostCapabilitiesOverride;
+  // Legacy `hostCapabilitiesOverride` is the pre-matrix way of
+  // narrowing the advertised host capabilities. When the matrix is
+  // absent but the legacy is present, the resolver advertises the
+  // legacy shape; the matrix UI must reflect that, not the bare
+  // preset. Otherwise a user with a legacy override sees the matrix
+  // show preset values, toggles a single row, and the resolver
+  // switches precedence to the (mostly-empty) matrix path —
+  // silently flipping every other legacy-overridden dimension back
+  // to the preset.
+  //
+  // The display fix: virtually migrate the legacy into matrix shape
+  // so the per-row effective values + "Overridden" badges reflect
+  // what the resolver actually advertises today. The matching write
+  // fix is in `migrateLegacyIfNeeded` below — the first edit
+  // commits the migration to persisted state so subsequent edits
+  // build on top.
+  const effectiveOverridesForDisplay: McpAppsCapabilities | undefined =
+    rawOverridesRecord !== undefined
+      ? rawOverridesRecord
+      : legacyOverride !== undefined
+        ? (hostCapabilitiesOverrideToMatrix(legacyOverride) ?? undefined)
+        : undefined;
   // Preset baseline alone (no override applied) — used to compute the
   // per-row "Preset: X" hint and the "Overridden" badge.
   const presetCapabilities: ResolvedMcpAppsCapabilities =
@@ -1221,19 +1257,81 @@ function McpAppsCapabilityMatrix({
       profile: undefined,
       hostStyle: draft.hostStyle,
     });
-  // Effective (preset + override). Source of truth for what the
-  // resolver advertises today.
+  // Effective values shown in the matrix UI. Uses the virtually-
+  // migrated legacy when the matrix is absent so the UI shows what
+  // the resolver advertises today (legacy path) — not what it would
+  // advertise after the first edit silently strips the legacy.
   const effectiveCapabilities: ResolvedMcpAppsCapabilities =
-    resolveEffectiveMcpAppsCapabilities({
-      profile: draft.mcpProfile,
-      hostStyle: draft.hostStyle,
-    });
+    effectiveOverridesForDisplay !== undefined
+      ? resolveEffectiveMcpAppsCapabilities({
+          profile: {
+            profileVersion: 1,
+            apps: { mcpAppsOverrides: effectiveOverridesForDisplay },
+          },
+          hostStyle: draft.hostStyle,
+        })
+      : resolveEffectiveMcpAppsCapabilities({
+          profile: undefined,
+          hostStyle: draft.hostStyle,
+        });
 
   const hasAnyOverride =
-    overridesRecord !== undefined && Object.keys(overridesRecord).length > 0;
+    effectiveOverridesForDisplay !== undefined &&
+    Object.keys(effectiveOverridesForDisplay).length > 0;
+
+  /**
+   * On first matrix edit applied to a draft that still uses legacy
+   * `hostCapabilitiesOverride` (matrix absent, legacy present),
+   * convert the legacy into matrix shape so the user's single-row
+   * edit can be applied on top without silently dropping all the
+   * other legacy-overridden dimensions. Also clears the legacy
+   * field — the matrix becomes the new source of truth.
+   *
+   * Returns `{ overrides, prevWithLegacyCleared }`. Callers apply
+   * their edit to `overrides`, then pipe through
+   * `setMcpAppsOverridesOnDraft(prevWithLegacyCleared, edited)`.
+   */
+  const migrateLegacyIfNeeded = (
+    prev: HostConfigInputV2,
+  ): {
+    overrides: McpAppsCapabilities;
+    prevWithLegacyCleared: HostConfigInputV2;
+  } => {
+    const matrix = prev.mcpProfile?.apps?.mcpAppsOverrides;
+    if (matrix !== undefined) {
+      // Matrix already owns the state; no migration needed.
+      return { overrides: { ...matrix }, prevWithLegacyCleared: prev };
+    }
+    const legacy = prev.hostCapabilitiesOverride;
+    if (legacy === undefined) {
+      // Neither override present — start from empty.
+      return { overrides: {}, prevWithLegacyCleared: prev };
+    }
+    // Legacy → matrix; clear the legacy so future reads use the
+    // matrix path consistently. Precedence-conflict between the two
+    // fields was the original motivation for the migration helper
+    // landing alongside the foundation PR.
+    const migrated = hostCapabilitiesOverrideToMatrix(legacy) ?? {};
+    return {
+      overrides: { ...migrated },
+      prevWithLegacyCleared: { ...prev, hostCapabilitiesOverride: undefined },
+    };
+  };
 
   const clearOverride = () => {
-    onDraftChange((prev) => setMcpAppsOverridesOnDraft(prev, undefined));
+    // "Match host preset" clears BOTH paths — the matrix override
+    // and the legacy `hostCapabilitiesOverride` — so the resolver
+    // falls back cleanly to the host style preset. Leaving the
+    // legacy alive would silently keep the override active through
+    // the legacy path even after the matrix shows "Matches host
+    // style preset".
+    onDraftChange((prev) => {
+      const withMatrixCleared = setMcpAppsOverridesOnDraft(prev, undefined);
+      if (withMatrixCleared.hostCapabilitiesOverride === undefined) {
+        return withMatrixCleared;
+      }
+      return { ...withMatrixCleared, hostCapabilitiesOverride: undefined };
+    });
   };
 
   /** Set or clear a boolean dimension override. Pass `undefined` to revert to preset. */
@@ -1242,7 +1340,8 @@ function McpAppsCapabilityMatrix({
     nextEffective: boolean,
   ) => {
     onDraftChange((prev) => {
-      const prevOverrides = prev.mcpProfile?.apps?.mcpAppsOverrides ?? {};
+      const { overrides: prevOverrides, prevWithLegacyCleared } =
+        migrateLegacyIfNeeded(prev);
       const prevPreset = resolveEffectiveMcpAppsCapabilities({
         profile: undefined,
         hostStyle: prev.hostStyle,
@@ -1255,7 +1354,7 @@ function McpAppsCapabilityMatrix({
       } else {
         (nextOverrides as Record<string, unknown>)[key] = nextEffective;
       }
-      return setMcpAppsOverridesOnDraft(prev, nextOverrides);
+      return setMcpAppsOverridesOnDraft(prevWithLegacyCleared, nextOverrides);
     });
   };
 
@@ -1271,16 +1370,18 @@ function McpAppsCapabilityMatrix({
    */
   const toggleDisplayMode = (mode: DisplayMode) => {
     onDraftChange((prev) => {
-      const prevOverrides = prev.mcpProfile?.apps?.mcpAppsOverrides ?? {};
+      const { overrides: prevOverrides, prevWithLegacyCleared } =
+        migrateLegacyIfNeeded(prev);
       const prevPreset = resolveEffectiveMcpAppsCapabilities({
         profile: undefined,
         hostStyle: prev.hostStyle,
       });
-      const prevEffective = resolveEffectiveMcpAppsCapabilities({
-        profile: prev.mcpProfile,
-        hostStyle: prev.hostStyle,
-      });
-      const currentModes = prevEffective.availableDisplayModes;
+      // Use displayed effective modes as the starting point so the
+      // user's click toggles relative to what they saw (legacy-
+      // migrated when applicable), not relative to the bare preset.
+      const currentModes =
+        prevOverrides.availableDisplayModes ??
+        prevPreset.availableDisplayModes;
       let nextModesList = currentModes.includes(mode)
         ? currentModes.filter((m) => m !== mode)
         : [...currentModes, mode];
@@ -1302,15 +1403,19 @@ function McpAppsCapabilityMatrix({
       } else {
         nextOverrides.availableDisplayModes = nextModesList as DisplayMode[];
       }
-      return setMcpAppsOverridesOnDraft(prev, nextOverrides);
+      return setMcpAppsOverridesOnDraft(prevWithLegacyCleared, nextOverrides);
     });
   };
 
-  const overrideCount = overridesRecord
-    ? Object.keys(overridesRecord).length
+  const overrideCount = hasAnyOverride
+    ? Object.keys(effectiveOverridesForDisplay!).length
     : 0;
   const subline = hasAnyOverride
-    ? `${overrideCount} ${overrideCount === 1 ? "override" : "overrides"} active`
+    ? `${overrideCount} ${overrideCount === 1 ? "override" : "overrides"} active${
+        rawOverridesRecord === undefined && legacyOverride !== undefined
+          ? " (legacy)"
+          : ""
+      }`
     : "Matches host style preset";
 
   return (
@@ -1353,7 +1458,8 @@ function McpAppsCapabilityMatrix({
                 [{presetCapabilities.availableDisplayModes.join(", ")}]
               </span>
             </span>
-            {overridesRecord?.availableDisplayModes !== undefined ? (
+            {effectiveOverridesForDisplay?.availableDisplayModes !==
+            undefined ? (
               <span className="rounded bg-orange-500/15 px-1 py-px text-orange-600 dark:text-orange-300">
                 Overridden
               </span>
@@ -1392,7 +1498,8 @@ function McpAppsCapabilityMatrix({
             effective={Boolean(effectiveCapabilities[key])}
             presetValue={Boolean(presetCapabilities[key])}
             overridden={
-              overridesRecord !== undefined && key in overridesRecord
+              effectiveOverridesForDisplay !== undefined &&
+              key in effectiveOverridesForDisplay
             }
             onToggle={(next) => setBooleanOverride(key, next)}
           />
@@ -1430,7 +1537,8 @@ function McpAppsCapabilityMatrix({
               effective={Boolean(effectiveCapabilities[key])}
               presetValue={Boolean(presetCapabilities[key])}
               overridden={
-                overridesRecord !== undefined && key in overridesRecord
+                effectiveOverridesForDisplay !== undefined &&
+                key in effectiveOverridesForDisplay
               }
               onToggle={(next) => setBooleanOverride(key, next)}
             />

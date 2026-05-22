@@ -250,3 +250,101 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
     ).toEqual(["inline"]);
   });
 });
+
+describe("AppsExtensionTab — McpAppsCapabilityMatrix legacy-override migration", () => {
+  it("displays a legacy hostCapabilitiesOverride as a virtually-migrated matrix (Overridden badges reflect what the resolver advertises)", () => {
+    // Regression (Codex Bot on #2236): if the draft has legacy
+    // `hostCapabilitiesOverride` and no `mcpAppsOverrides`, the matrix
+    // UI must reflect the legacy values — otherwise the first toggle
+    // would write a sparse override relative to the bare preset, and
+    // the resolver would silently flip every other legacy-overridden
+    // dimension back to the preset.
+    const draft = emptyHostConfigInputV2({ hostStyle: "claude" });
+    // Legacy override stripped serverResources + logging (advertise
+    // neither). Matrix UI must reflect both as Overridden.
+    draft.hostCapabilitiesOverride = {
+      openLinks: {},
+      serverTools: {},
+      updateModelContext: { text: {} },
+      message: { text: {} },
+    };
+    render(
+      <AppsExtensionTab
+        draft={draft}
+        onDraftChange={() => {}}
+        attention={[]}
+      />,
+    );
+    // serverResources and logging are missing from the legacy
+    // override → migrated matrix sets them to false → "Overridden"
+    // badge present because Claude's preset has them true.
+    const serverResources = screen.getByTestId(
+      "mcp-apps-dimension-serverResources",
+    );
+    expect(within(serverResources).getByText("Overridden")).toBeInTheDocument();
+    const logging = screen.getByTestId("mcp-apps-dimension-logging");
+    expect(within(logging).getByText("Overridden")).toBeInTheDocument();
+    // Subline annotated as legacy so the user knows where the values
+    // came from.
+    expect(screen.getByText(/legacy/)).toBeInTheDocument();
+  });
+
+  it("migrates legacy → matrix on the first row toggle and clears the legacy field", async () => {
+    // The key write-side fix: when the user toggles a single row on a
+    // legacy-only draft, the migration runs first so the user's edit
+    // doesn't silently drop the other legacy-overridden dimensions.
+    // Post-edit the legacy field is cleared (matrix becomes the new
+    // source of truth) and `mcpAppsOverrides` reflects legacy +
+    // user's edit, not just user's edit.
+    const user = userEvent.setup();
+    const { draftRef } = renderMatrix({
+      hostStyle: "claude",
+      hostCapabilitiesOverride: {
+        openLinks: {},
+        serverTools: {},
+        // serverResources, logging, updateModelContext, message all
+        // stripped — legacy says "advertise none of those four".
+      },
+    });
+    // Sanity: legacy is set, matrix is absent.
+    expect(draftRef.current.hostCapabilitiesOverride).toBeDefined();
+    expect(
+      draftRef.current.mcpProfile?.apps?.mcpAppsOverrides,
+    ).toBeUndefined();
+    // User toggles a single sibling row (toolInputPartial).
+    const row = screen.getByTestId("mcp-apps-dimension-toolInputPartial");
+    await user.click(within(row).getByRole("switch"));
+    // Legacy cleared.
+    expect(draftRef.current.hostCapabilitiesOverride).toBeUndefined();
+    // Matrix now carries the migrated legacy PLUS the new edit. The
+    // other legacy-overridden dimensions are NOT silently lost.
+    const matrix = draftRef.current.mcpProfile?.apps?.mcpAppsOverrides;
+    expect(matrix).toMatchObject({
+      serverResources: false,
+      logging: false,
+      updateModelContext: false,
+      message: false,
+      toolInputPartial: false, // the user's edit
+    });
+  });
+
+  it("'Match host preset' clears both the matrix override AND the legacy hostCapabilitiesOverride", async () => {
+    // The chip's contract is "revert to preset". If we only cleared
+    // the matrix, the legacy path would silently keep the override
+    // alive — the matrix would say "Matches host style preset" while
+    // the resolver advertised the legacy shape.
+    const user = userEvent.setup();
+    const { draftRef } = renderMatrix({
+      hostStyle: "claude",
+      hostCapabilitiesOverride: {
+        openLinks: {},
+        serverTools: {},
+      },
+    });
+    await user.click(screen.getByRole("button", { name: /Match host preset/ }));
+    expect(draftRef.current.hostCapabilitiesOverride).toBeUndefined();
+    expect(
+      draftRef.current.mcpProfile?.apps?.mcpAppsOverrides,
+    ).toBeUndefined();
+  });
+});
