@@ -32,6 +32,7 @@ import {
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import {
+  getModelById,
   ModelDefinition,
   type ModelProvider,
 } from "@/shared/types";
@@ -395,10 +396,12 @@ function inferModelProviderFromId(modelId: string): ModelProvider {
 }
 
 function createLockedInitialModel(modelId: string): ModelDefinition {
+  const knownModel = getModelById(modelId);
   return {
+    ...knownModel,
     id: modelId,
-    name: modelId,
-    provider: inferModelProviderFromId(modelId),
+    name: knownModel?.name ?? modelId,
+    provider: knownModel?.provider ?? inferModelProviderFromId(modelId),
     disabled: true,
     disabledReason: GUEST_LOCKED_MODEL_REASON,
   };
@@ -1036,6 +1039,27 @@ function isAuthDeniedError(error: unknown): boolean {
   return /\b(401|403)\b|unauthorized|forbidden/i.test(withStatus.message);
 }
 
+function getRequestPathname(input: RequestInfo | URL): string {
+  const rawUrl =
+    input instanceof URL
+      ? input.toString()
+      : typeof Request !== "undefined" && input instanceof Request
+      ? input.url
+      : String(input);
+  const baseOrigin =
+    typeof window !== "undefined" ? window.location.origin : "http://localhost";
+
+  try {
+    return new URL(rawUrl, baseOrigin).pathname;
+  } catch {
+    return rawUrl.split("?")[0] ?? rawUrl;
+  }
+}
+
+function shouldUseAuthenticatedChatFetch(input: RequestInfo | URL): boolean {
+  return HOSTED_MODE || getRequestPathname(input).startsWith("/api/web/");
+}
+
 export function useChatSession(
   options: UseChatSessionOptions
 ): UseChatSessionReturn {
@@ -1323,15 +1347,37 @@ export function useChatSession(
       ? isMCPJamProvidedModel(String(selectedModel.id))
       : false;
   }, [selectedModel]);
+  const selectedModelLocalApiKey = useMemo(() => {
+    if (
+      selectedModel.provider === "custom" &&
+      selectedModel.customProviderName
+    ) {
+      return (
+        getCustomProviderByName(selectedModel.customProviderName)?.apiKey || ""
+      );
+    }
+    return getToken(selectedModel.provider as keyof ProviderTokens);
+  }, [getCustomProviderByName, getToken, selectedModel]);
   const selectedModelUsesOrgRuntime = useMemo(
     () => isOrgManagedModel(hostedOrgModelConfig, selectedModel),
     [hostedOrgModelConfig, selectedModel]
   );
-  const traceViewsSupported = HOSTED_MODE ? isMcpJamModel : true;
+  const selectedModelCanUseProjectOrgRuntime =
+    Boolean(hostedProjectId) && !isMcpJamModel && !selectedModelLocalApiKey;
+  const shouldUseOrgAwareChatApi =
+    HOSTED_MODE ||
+    selectedModelUsesOrgRuntime ||
+    selectedModelCanUseProjectOrgRuntime;
+  const traceViewsSupported = HOSTED_MODE
+    ? isMcpJamModel ||
+      selectedModelUsesOrgRuntime ||
+      selectedModelCanUseProjectOrgRuntime
+    : true;
 
   const chatFetch = useCallback(
     async (input: RequestInfo | URL, init?: RequestInit) => {
-      const response = HOSTED_MODE
+      const useAuthFetch = shouldUseAuthenticatedChatFetch(input);
+      const response = useAuthFetch
         ? await authFetch(input, init)
         : await fetch(input, init);
       if (!response.ok) {
@@ -1369,19 +1415,7 @@ export function useChatSession(
 
   // Create transport
   const transport = useMemo(() => {
-    const shouldUseOrgAwareChatApi =
-      HOSTED_MODE || selectedModelUsesOrgRuntime;
-    let apiKey: string;
-    if (
-      selectedModel.provider === "custom" &&
-      selectedModel.customProviderName
-    ) {
-      // For custom providers, the API key is embedded in the provider config
-      const cp = getCustomProviderByName(selectedModel.customProviderName);
-      apiKey = cp?.apiKey || "";
-    } else {
-      apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
-    }
+    const apiKey = selectedModelLocalApiKey;
 
     // Merge session auth headers with workos auth headers
     const sessionHeaders = getSessionAuthHeaders();
@@ -1502,11 +1536,10 @@ export function useChatSession(
     });
   }, [
     selectedModel,
-    getToken,
-    getCustomProviderByName,
+    selectedModelLocalApiKey,
     customProviders,
     authHeaders,
-    selectedModelUsesOrgRuntime,
+    shouldUseOrgAwareChatApi,
     temperature,
     systemPrompt,
     selectedServers,
@@ -2306,7 +2339,7 @@ export function useChatSession(
   // In non-hosted mode: auth is needed for org-managed BYOK and sign-in-only MCPJam models.
   const requiresAuthForChat = HOSTED_MODE
     ? true
-    : selectedModelUsesOrgRuntime ||
+    : shouldUseOrgAwareChatApi ||
       (isMcpJamModel &&
         !isMCPJamGuestAllowedModel(String(selectedModel?.id ?? "")));
   const isAuthReady =
@@ -2317,7 +2350,7 @@ export function useChatSession(
   const authHeadersNotReady =
     requiresAuthForChat && isAuthenticated && !authHeaders;
   const hostedContextNotReady =
-    (HOSTED_MODE || selectedModelUsesOrgRuntime) &&
+    shouldUseOrgAwareChatApi &&
     (!hostedProjectId ||
       (selectedServers.length > 0 &&
         hostedSelectedServerIds.length !== selectedServers.length));
