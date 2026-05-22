@@ -1,7 +1,0 @@
----
-"@mcpjam/inspector": minor
----
-
-### `@mcpjam/inspector`
-- **Matrix-gated notification emissions (PR B of the foundation series)**: the MCP Apps spec-bridge matrix now actually suppresses runtime notification emissions on hosts that flip the matching row off. `bridge.sendToolInputPartial` and `bridge.sendToolCancelled` honor `mcpAppsOverrides.toolInputPartial` and `.toolCancelled` (in both `useToolInputStreaming.ts` and the renderer's `oncalltool` failure paths). `bridge.setHostContext` honors `mcpAppsOverrides.hostContextChanged` — Microsoft 365 Copilot doesn't deliver `host-context-changed` per its published Component-bridge table, so simulated Copilot hosts now match: the host context update is only applied at `ui/initialize` time and never emitted mid-session. Null matrix ref (initial render window) reads as "default on" so pre-matrix behavior survives every host the renderer hasn't classified yet.
-- **Resolver default-on for unknown hosts without override**: `resolveEffectiveMcpAppsCapabilities` now returns `MCP_APPS_FULL_SURFACE` when no host style is configured AND no override is set — preserves pre-matrix permissive defaults for callers that don't supply a host style (test renderers, edge cases during init). When an override IS present against an unknown host, the foundation PR's NO_CLAIMS fallback still applies so persisted opt-ins can't accidentally advertise near-full support.
