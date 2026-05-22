@@ -996,14 +996,11 @@ function OpenaiAppsCapabilityMatrix({
                     >
                       <div className="flex flex-col gap-0.5">
                         <span className="font-mono text-[12px]">{label}</span>
-                        <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                          <span>Preset: {String(presetValue)}</span>
-                          {overridden ? (
-                            <span className="rounded bg-orange-500/15 px-1 py-px text-orange-600 dark:text-orange-300">
-                              Overridden
-                            </span>
-                          ) : null}
-                        </div>
+                        {overridden ? (
+                          <span className="w-fit rounded bg-orange-500/15 px-1 py-px text-[10px] text-orange-600 dark:text-orange-300">
+                            Overridden
+                          </span>
+                        ) : null}
                       </div>
                       {key === "requestDisplayMode" ? (
                         <RequestDisplayModeControl
@@ -1149,46 +1146,93 @@ function setMcpAppsOverridesOnDraft(
   };
 }
 
-/**
- * Main-disclosure matrix dimensions — the rows that vary across
- * published host tables (Microsoft 365 Copilot's M365 reference). Order
- * matches the M365 Component-bridge table where applicable.
- */
-const MCP_APPS_MAIN_DIMENSIONS: Array<{
-  key: Exclude<keyof McpAppsCapabilities, "availableDisplayModes">;
-  label: string;
-}> = [
-  { key: "toolInputPartial", label: "toolInputPartial" },
-  { key: "toolCancelled", label: "toolCancelled" },
-  { key: "hostContextChanged", label: "hostContextChanged" },
-  { key: "resourceTeardown", label: "resourceTeardown" },
-  { key: "serverResources", label: "serverResources" },
-  { key: "logging", label: "logging" },
-];
+type McpAppsDimensionKey = Exclude<
+  keyof McpAppsCapabilities,
+  "availableDisplayModes"
+>;
 
-/**
- * Advanced disclosure — rare dimensions that rarely vary across hosts
- * but are needed for completeness (sandbox sub-fields, resource-meta
- * interpretation, HostContext fine grain, hands-off advertise rows
- * that almost every preset enables).
- */
-const MCP_APPS_ADVANCED_DIMENSIONS: Array<{
-  key: Exclude<keyof McpAppsCapabilities, "availableDisplayModes">;
-  label: string;
-}> = [
-  { key: "toolInfo", label: "toolInfo" },
-  { key: "openLinks", label: "openLinks" },
-  { key: "serverTools", label: "serverTools" },
-  { key: "updateModelContext", label: "updateModelContext" },
-  { key: "message", label: "message" },
-  { key: "sandboxPermissions", label: "sandbox.permissions" },
-  { key: "cspFrameDomains", label: "sandbox.csp.frameDomains" },
-  { key: "cspBaseUriDomains", label: "sandbox.csp.baseUriDomains" },
-  { key: "resourcePrefersBorder", label: "_meta.ui.prefersBorder" },
+/** Per-dimension matrix metadata. Description is shown on row hover. */
+type McpAppsDimensionMeta = {
+  key: McpAppsDimensionKey;
+  description: string;
+};
+
+/** All boolean MCP Apps matrix dimensions in display order. */
+const MCP_APPS_DIMENSIONS: McpAppsDimensionMeta[] = [
+  {
+    key: "toolInputPartial",
+    description:
+      "Send ui/notifications/tool-input-partial while the agent streams arguments",
+  },
+  {
+    key: "toolCancelled",
+    description:
+      "Notify the app when tool execution is cancelled (ui/notifications/tool-cancelled)",
+  },
+  {
+    key: "hostContextChanged",
+    description:
+      "Notify the app when theme, display mode, or other host context changes",
+  },
+  {
+    key: "resourceTeardown",
+    description:
+      "Send ui/resource-teardown before destroying the app view",
+  },
+  {
+    key: "serverResources",
+    description: "Advertise resources/read proxy capability in ui/initialize",
+  },
+  {
+    key: "logging",
+    description: "Accept notifications/message log calls from the app",
+  },
+  {
+    key: "toolInfo",
+    description: "Include calling-tool metadata in HostContext.toolInfo",
+  },
+  {
+    key: "openLinks",
+    description: "Advertise ui/open-link capability",
+  },
+  {
+    key: "serverTools",
+    description: "Advertise tools/call proxy capability",
+  },
+  {
+    key: "updateModelContext",
+    description: "Accept ui/update-model-context requests from the app",
+  },
+  {
+    key: "message",
+    description: "Accept ui/message requests that add content to the conversation",
+  },
+  {
+    key: "sandboxPermissions",
+    description: "Honor _meta.ui.permissions when configuring the iframe",
+  },
+  {
+    key: "cspFrameDomains",
+    description: "Honor _meta.ui.csp.frameDomains for nested iframes",
+  },
+  {
+    key: "cspBaseUriDomains",
+    description: "Honor _meta.ui.csp.baseUriDomains in CSP",
+  },
+  {
+    key: "resourcePrefersBorder",
+    description: "Honor _meta.ui.prefersBorder when rendering app chrome",
+  },
 ];
 
 const ALL_DISPLAY_MODES = ["inline", "fullscreen", "pip"] as const;
 type DisplayMode = (typeof ALL_DISPLAY_MODES)[number];
+
+const DISPLAY_MODE_LABELS: Record<DisplayMode, string> = {
+  inline: "Inline",
+  fullscreen: "Fullscreen",
+  pip: "PiP",
+};
 
 /**
  * Per-dimension capability matrix for the SEP-1865 `app.*` spec bridge.
@@ -1198,16 +1242,12 @@ type DisplayMode = (typeof ALL_DISPLAY_MODES)[number];
  * no tri-state (the matrix is always advertised).
  *
  * Layout:
- * - `availableDisplayModes` cluster at the top (multi-checkbox for the
- *   array allowlist; inline is force-enabled if user clears all three).
- * - Main disclosure: notification gates + serverResources / logging —
- *   the rows that vary across published host tables.
- * - Advanced disclosure: sandbox sub-fields, resource-meta, toolInfo,
- *   and advertise rows that almost every preset enables (still
- *   surfaced so legacy `{}` migrations are visible).
+ * - `availableDisplayModes` cluster at the top.
+ * - Flat list of all boolean matrix dimensions below.
  * - Per-row "Overridden" badge when the user has diverged from the
  *   host style preset; rows show the preset value for context.
- * - "Match host preset" chip clears the entire matrix override.
+ * - "Reset" button clears the entire matrix override (shown only when
+ *   overrides are active).
  *
  * The matrix round-trips through `appsToJson` / `applyJsonToDraft` so
  * the JSON editor below stays in sync.
@@ -1225,7 +1265,6 @@ function McpAppsCapabilityMatrix({
     updater: (prev: HostConfigInputV2) => HostConfigInputV2,
   ) => void;
 }) {
-  const [advancedOpen, setAdvancedOpen] = useState(false);
   const rawOverridesRecord = draft.mcpProfile?.apps?.mcpAppsOverrides;
   const legacyOverride = draft.hostCapabilitiesOverride;
   // Legacy `hostCapabilitiesOverride` is the pre-matrix way of
@@ -1250,13 +1289,6 @@ function McpAppsCapabilityMatrix({
       : legacyOverride !== undefined
         ? (hostCapabilitiesOverrideToMatrix(legacyOverride) ?? undefined)
         : undefined;
-  // Preset baseline alone (no override applied) — used to compute the
-  // per-row "Preset: X" hint and the "Overridden" badge.
-  const presetCapabilities: ResolvedMcpAppsCapabilities =
-    resolveEffectiveMcpAppsCapabilities({
-      profile: undefined,
-      hostStyle: draft.hostStyle,
-    });
   // Effective values shown in the matrix UI. Uses the virtually-
   // migrated legacy when the matrix is absent so the UI shows what
   // the resolver advertises today (legacy path) — not what it would
@@ -1410,63 +1442,59 @@ function McpAppsCapabilityMatrix({
   const overrideCount = hasAnyOverride
     ? Object.keys(effectiveOverridesForDisplay!).length
     : 0;
+  const enabledCount = MCP_APPS_DIMENSIONS.filter(({ key }) =>
+    Boolean(effectiveCapabilities[key]),
+  ).length;
   const subline = hasAnyOverride
     ? `${overrideCount} ${overrideCount === 1 ? "override" : "overrides"} active${
         rawOverridesRecord === undefined && legacyOverride !== undefined
           ? " (legacy)"
           : ""
       }`
-    : "Matches host style preset";
+    : `${enabledCount} of ${MCP_APPS_DIMENSIONS.length} enabled`;
 
   return (
     <div className="rounded-[10px] border border-border bg-background">
-      {/* Header strip: section label + override count + clear-to-preset chip. */}
+      {/* Header strip: title + status; reset only when the user has overrides. */}
       <div className="flex items-stretch border-b border-border">
         <div className="flex flex-1 flex-col gap-0.5 px-3.5 py-2.5">
-          <span className="text-[12px] font-medium">
-            <span className="font-mono">app.*</span> spec bridge
-            <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">
-              (SEP-1865)
-            </span>
-          </span>
+          <span className="text-[12px] font-medium">MCP Apps</span>
           <span className="text-[11px] text-muted-foreground">{subline}</span>
         </div>
-        <div className="flex items-center border-l border-border pr-3.5 pl-3">
-          <button
-            type="button"
-            disabled={!hasAnyOverride}
-            onClick={clearOverride}
-            className="rounded border border-border bg-background px-2 py-0.5 text-[11px] text-muted-foreground transition hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
-            title="Clear all overrides on this matrix and revert every dimension to the host style preset"
-          >
-            Match host preset
-          </button>
-        </div>
+        {hasAnyOverride ? (
+          <div className="flex items-center border-l border-border pr-3.5 pl-3">
+            <button
+              type="button"
+              onClick={clearOverride}
+              className="rounded border border-border bg-background px-2 py-0.5 text-[11px] text-muted-foreground transition hover:bg-muted"
+              title="Revert all overrides to the host style preset"
+            >
+              Reset
+            </button>
+          </div>
+        ) : null}
       </div>
 
       {/* availableDisplayModes — multi-checkbox cluster. Always visible
           (it's the most-edited dimension and the one published host
           tables most prominently differ on, e.g. Copilot is fullscreen-
           only). */}
-      <div className="flex items-center justify-between gap-3 border-b border-border/50 px-3.5 py-2">
-        <div className="flex flex-col gap-0.5">
-          <span className="font-mono text-[12px]">availableDisplayModes</span>
-          <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-            <span>
-              Preset:{" "}
-              <span className="font-mono">
-                [{presetCapabilities.availableDisplayModes.join(", ")}]
-              </span>
-            </span>
+      <div
+        data-testid="mcp-apps-dimension-availableDisplayModes"
+        className="flex items-center justify-between gap-3 border-b border-border/50 px-3.5 py-2"
+      >
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+            <span className="font-mono text-[12px]">availableDisplayModes</span>
             {effectiveOverridesForDisplay?.availableDisplayModes !==
             undefined ? (
-              <span className="rounded bg-orange-500/15 px-1 py-px text-orange-600 dark:text-orange-300">
+              <span className="rounded bg-orange-500/15 px-1 py-px text-[10px] text-orange-600 dark:text-orange-300">
                 Overridden
               </span>
             ) : null}
           </div>
         </div>
-        <div className="inline-flex overflow-hidden rounded-md border border-border text-[11px]">
+        <div className="inline-flex shrink-0 overflow-hidden rounded-md border border-border text-[11px]">
           {ALL_DISPLAY_MODES.map((mode) => {
             const enabled =
               effectiveCapabilities.availableDisplayModes.includes(mode);
@@ -1474,29 +1502,29 @@ function McpAppsCapabilityMatrix({
               <button
                 key={mode}
                 type="button"
+                aria-label={mode}
+                title={mode}
                 className={
                   enabled
-                    ? "bg-foreground/10 px-2 py-0.5 font-medium"
-                    : "px-2 py-0.5 text-muted-foreground hover:bg-muted"
+                    ? "bg-foreground/10 px-2.5 py-0.5 font-medium"
+                    : "px-2.5 py-0.5 text-muted-foreground hover:bg-muted"
                 }
                 onClick={() => toggleDisplayMode(mode)}
               >
-                {mode}
+                {DISPLAY_MODE_LABELS[mode]}
               </button>
             );
           })}
         </div>
       </div>
 
-      {/* Main dimensions — notification gates + serverResources / logging. */}
       <div className="flex flex-col">
-        {MCP_APPS_MAIN_DIMENSIONS.map(({ key, label }) => (
+        {MCP_APPS_DIMENSIONS.map(({ key, description }) => (
           <McpAppsDimensionRow
             key={key}
             dimensionKey={key}
-            label={label}
+            description={description}
             effective={Boolean(effectiveCapabilities[key])}
-            presetValue={Boolean(presetCapabilities[key])}
             overridden={
               effectiveOverridesForDisplay !== undefined &&
               key in effectiveOverridesForDisplay
@@ -1505,63 +1533,21 @@ function McpAppsCapabilityMatrix({
           />
         ))}
       </div>
-
-      {/* Advanced disclosure — sandbox sub-fields, resource-meta,
-          toolInfo, plus the "always on across every preset" advertise
-          rows. Surfaced so legacy `{}` migrations are visible and
-          unusual hosts can be modeled. */}
-      <button
-        type="button"
-        onClick={() => setAdvancedOpen((v) => !v)}
-        aria-expanded={advancedOpen}
-        aria-controls="apps-extension-mcp-apps-advanced"
-        className="flex w-full items-center justify-between gap-2 border-t border-border/50 px-3.5 py-2 text-left text-[11px] text-muted-foreground hover:bg-muted/40"
-      >
-        <span>Advanced ({MCP_APPS_ADVANCED_DIMENSIONS.length} dimensions)</span>
-        <ChevronDown
-          className={`h-3.5 w-3.5 shrink-0 transition-transform ${
-            advancedOpen ? "rotate-180" : ""
-          }`}
-        />
-      </button>
-      {advancedOpen ? (
-        <div
-          id="apps-extension-mcp-apps-advanced"
-          className="flex flex-col border-t border-border/50"
-        >
-          {MCP_APPS_ADVANCED_DIMENSIONS.map(({ key, label }) => (
-            <McpAppsDimensionRow
-              key={key}
-              dimensionKey={key}
-              label={label}
-              effective={Boolean(effectiveCapabilities[key])}
-              presetValue={Boolean(presetCapabilities[key])}
-              overridden={
-                effectiveOverridesForDisplay !== undefined &&
-                key in effectiveOverridesForDisplay
-              }
-              onToggle={(next) => setBooleanOverride(key, next)}
-            />
-          ))}
-        </div>
-      ) : null}
     </div>
   );
 }
 
-/** Single boolean dimension row — preset hint + overridden badge + toggle. */
+/** Single boolean dimension row — technical key + optional overridden badge. */
 function McpAppsDimensionRow({
   dimensionKey,
-  label,
+  description,
   effective,
-  presetValue,
   overridden,
   onToggle,
 }: {
-  dimensionKey: Exclude<keyof McpAppsCapabilities, "availableDisplayModes">;
-  label: string;
+  dimensionKey: McpAppsDimensionKey;
+  description: string;
   effective: boolean;
-  presetValue: boolean;
   overridden: boolean;
   onToggle: (next: boolean) => void;
 }) {
@@ -1569,22 +1555,20 @@ function McpAppsDimensionRow({
     <div
       data-testid={`mcp-apps-dimension-${dimensionKey}`}
       className="flex items-center justify-between gap-3 border-b border-border/50 px-3.5 py-2 last:border-b-0"
+      title={description}
     >
-      <div className="flex flex-col gap-0.5">
-        <span className="font-mono text-[12px]">{label}</span>
-        <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-          <span>Preset: {String(presetValue)}</span>
-          {overridden ? (
-            <span className="rounded bg-orange-500/15 px-1 py-px text-orange-600 dark:text-orange-300">
-              Overridden
-            </span>
-          ) : null}
-        </div>
+      <div className="min-w-0 flex flex-col gap-0.5">
+        <span className="font-mono text-[12px]">{dimensionKey}</span>
+        {overridden ? (
+          <span className="w-fit rounded bg-orange-500/15 px-1 py-px text-[10px] text-orange-600 dark:text-orange-300">
+            Overridden
+          </span>
+        ) : null}
       </div>
       <Switch
         checked={effective}
         onCheckedChange={onToggle}
-        aria-label={label}
+        aria-label={dimensionKey}
       />
     </div>
   );

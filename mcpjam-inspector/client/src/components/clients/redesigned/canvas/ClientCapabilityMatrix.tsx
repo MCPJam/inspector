@@ -63,10 +63,10 @@ export interface HostMatrixCardProps {
   /**
    * Resolved vendor compat-runtime shim state. `openaiApps: true` →
    * inspector injects `window.openai` into widget HTML; `false` → no
-   * shim. `fromOverride: false` means the injection flag comes from
-   * the host style preset (drives the "from preset" chip qualifier).
-   * `hasMethodOverrides` / `methodCount` / `methodTotal` summarize the
-   * per-method matrix for the chip's "custom (N/M methods)" subtitle.
+   * shim. `fromOverride: true` means injection differs from the host
+   * style preset (drives the chip's optional subtitle). `hasMethodOverrides`
+   * / `methodCount` / `methodTotal` summarize the per-method matrix for
+   * the chip's optional "N/M methods" subtitle.
    */
   compatRuntime: {
     openaiApps: boolean;
@@ -366,23 +366,18 @@ function ViewIframeInjectedGlobals({
   };
   onClick: () => void;
 }) {
-  // Tri-state label for window.openai: off / preset / custom. "Custom"
-  // wins whenever the user has flipped at least one per-method override,
-  // even if injection itself is at the preset default.
+  // Tag subtitles only when state differs from the host style preset.
+  // Default preset values need no qualifier — the green dot is enough.
   const openaiSubtitle = compatRuntime.hasMethodOverrides
-    ? `custom (${compatRuntime.methodCount}/${compatRuntime.methodTotal} methods)`
+    ? `${compatRuntime.methodCount}/${compatRuntime.methodTotal} methods`
     : compatRuntime.fromOverride
       ? "overridden"
-      : "from preset";
-  // Bi-state label for app.*: "from preset" or "custom (N overrides)".
-  // Counts sparse-override keys directly — heterogeneous dimensions
-  // (booleans + mode array + sandbox + resource-meta) make a flat
-  // "active" count harder to interpret than just "edits applied."
+      : null;
   const mcpAppsSubtitle = mcpAppsBridge.hasOverrides
-    ? `custom (${mcpAppsBridge.overrideCount} ${
+    ? `${mcpAppsBridge.overrideCount} ${
         mcpAppsBridge.overrideCount === 1 ? "override" : "overrides"
-      })`
-    : "from preset";
+      }`
+    : null;
   return (
     <div className="hp-view-injected">
       <button
@@ -402,7 +397,7 @@ function ViewIframeInjectedGlobals({
       >
         <span className="hp-cap-dot" aria-hidden />
         <span className="hp-cap-name">window.openai</span>
-        {compatRuntime.openaiApps ? (
+        {openaiSubtitle ? (
           <span className="hp-cap-tag">{openaiSubtitle}</span>
         ) : null}
       </button>
@@ -422,8 +417,10 @@ function ViewIframeInjectedGlobals({
         }
       >
         <span className="hp-cap-dot" aria-hidden />
-        <span className="hp-cap-name">app.*</span>
-        <span className="hp-cap-tag">{mcpAppsSubtitle}</span>
+        <span className="hp-cap-name">MCP Apps</span>
+        {mcpAppsSubtitle ? (
+          <span className="hp-cap-tag">{mcpAppsSubtitle}</span>
+        ) : null}
       </button>
     </div>
   );
