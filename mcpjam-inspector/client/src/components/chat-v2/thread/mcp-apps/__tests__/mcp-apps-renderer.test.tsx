@@ -626,6 +626,173 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(hostContext?.displayMode).toBe("pip");
   });
 
+  it("strips frameDomains and baseUriDomains from widgetCsp when matrix has those rows off (Copilot)", async () => {
+    // PR D: Microsoft 365 Copilot doesn't honor
+    // `_meta.ui.csp.frameDomains` or `_meta.ui.csp.baseUriDomains`
+    // per its published Component-bridge table. A widget that
+    // declares them should see them stripped on the simulated
+    // Copilot host so the iframe sandbox reflects what real Copilot
+    // applies. Uses the live-fetch path with a custom CSP payload —
+    // the cached-replay branch forces permissive (no CSP), so we
+    // bypass it here to exercise the gate.
+    vi.mocked(authFetch).mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          html: "<html><body>widget</body></html>",
+          csp: {
+            connectDomains: ["https://api.example.com"],
+            resourceDomains: ["https://cdn.example.com"],
+            frameDomains: ["https://embed.example.com"],
+            baseUriDomains: ["https://base.example.com"],
+          },
+          permissions: {},
+          permissive: false,
+          mimeTypeValid: true,
+          prefersBorder: true,
+        }),
+      status: 200,
+      headers: new Headers(),
+    } as Response);
+    render(
+      <ChatboxHostStyleProvider value="copilot">
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostStyleProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.csp).toBeDefined();
+    });
+    const csp = sandboxedIframePropsRef.current?.csp as
+      | Record<string, unknown>
+      | undefined;
+    // Matrix-gated sub-fields stripped before the resolver sees
+    // them; both routes (resolver output + pass-through fallback)
+    // honor the gate.
+    expect(csp?.frameDomains ?? []).toEqual([]);
+    expect(csp?.baseUriDomains ?? []).toEqual([]);
+    // Sibling allowlists (not matrix-gated today) survive.
+    expect(csp?.connectDomains).toEqual(["https://api.example.com"]);
+    expect(csp?.resourceDomains).toEqual(["https://cdn.example.com"]);
+  });
+
+  it("preserves frameDomains and baseUriDomains on Claude (full surface matrix)", async () => {
+    // Counter-test: same CSP, but Claude's matrix honors both sub-
+    // fields, so they round-trip into the iframe CSP. Guards
+    // against the gate over-stripping.
+    vi.mocked(authFetch).mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          html: "<html><body>widget</body></html>",
+          csp: {
+            connectDomains: ["https://api.example.com"],
+            resourceDomains: ["https://cdn.example.com"],
+            frameDomains: ["https://embed.example.com"],
+            baseUriDomains: ["https://base.example.com"],
+          },
+          permissions: {},
+          permissive: false,
+          mimeTypeValid: true,
+          prefersBorder: true,
+        }),
+      status: 200,
+      headers: new Headers(),
+    } as Response);
+    render(
+      <ChatboxHostStyleProvider value="claude">
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostStyleProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.csp).toBeDefined();
+    });
+    const csp = sandboxedIframePropsRef.current?.csp as
+      | Record<string, unknown>
+      | undefined;
+    expect(csp?.frameDomains).toEqual(["https://embed.example.com"]);
+    expect(csp?.baseUriDomains).toEqual(["https://base.example.com"]);
+  });
+
+  it("ignores widget-declared permissions on Copilot (sandboxPermissions: false)", async () => {
+    // PR D: simulated Copilot host doesn't pipe `_meta.ui.permissions`
+    // to the iframe. Widget declaring `camera` should NOT see the
+    // permission in the rendered iframe — the host treats the
+    // declaration as if it weren't there.
+    vi.mocked(authFetch).mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          html: "<html><body>widget</body></html>",
+          csp: {
+            connectDomains: [],
+            resourceDomains: [],
+            frameDomains: [],
+            baseUriDomains: [],
+          },
+          permissions: { camera: {} },
+          permissive: false,
+          mimeTypeValid: true,
+          prefersBorder: true,
+        }),
+      status: 200,
+      headers: new Headers(),
+    } as Response);
+    render(
+      <ChatboxHostStyleProvider value="copilot">
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostStyleProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toBe(
+        "<html><body>widget</body></html>",
+      );
+    });
+    // Permissions cleared on Copilot — matches what real Copilot does
+    // (it doesn't honor the widget's permission declarations at all).
+    expect(
+      sandboxedIframePropsRef.current?.permissions ?? undefined,
+    ).toBeUndefined();
+  });
+
+  it("honors widget-declared permissions on Claude", async () => {
+    vi.mocked(authFetch).mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          html: "<html><body>widget</body></html>",
+          csp: {
+            connectDomains: [],
+            resourceDomains: [],
+            frameDomains: [],
+            baseUriDomains: [],
+          },
+          permissions: { camera: {} },
+          permissive: false,
+          mimeTypeValid: true,
+          prefersBorder: true,
+        }),
+      status: 200,
+      headers: new Headers(),
+    } as Response);
+    render(
+      <ChatboxHostStyleProvider value="claude">
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostStyleProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toBe(
+        "<html><body>widget</body></html>",
+      );
+    });
+    // Claude's matrix honors permissions → widget declaration
+    // round-trips.
+    const perms = sandboxedIframePropsRef.current?.permissions as
+      | Record<string, unknown>
+      | undefined;
+    expect(perms).toBeDefined();
+    expect(perms).toHaveProperty("camera");
+  });
+
   it("does not block pure MCP Apps from booting while ChatGPT compat is enabled", async () => {
     render(
       <ChatboxHostStyleProvider value="chatgpt">
