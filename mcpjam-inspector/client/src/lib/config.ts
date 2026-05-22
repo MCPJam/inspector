@@ -23,14 +23,14 @@ export const HOSTED_MODE = import.meta.env.VITE_MCPJAM_HOSTED_MODE === "true";
 export const SANITIZE_OAUTH_TRACES = HOSTED_MODE;
 
 /**
- * Origin to serve the MCP Apps / ChatGPT Apps sandbox proxy from in hosted
- * mode. Must be a distinct origin from the host app (different eTLD+1 or at
- * minimum a different registrable subdomain that does not share cookies),
+ * Origin to serve the MCP Apps sandbox proxy from in hosted mode. Must be
+ * a distinct origin from the host app (different eTLD+1 or at minimum a
+ * different registrable subdomain that does not share cookies),
  * e.g. `https://sandbox.mcpjam.com`.
  *
  * Set via `VITE_MCPJAM_SANDBOX_ORIGIN` at build time. The configured origin
- * must serve the same sandbox-proxy routes the host app serves at
- * `/api/web/apps/{mcp-apps,chatgpt-apps}/sandbox-proxy`, and its
+ * must serve the same sandbox-proxy route the host app serves at
+ * `/api/web/apps/mcp-apps/sandbox-proxy`, and its
  * `frame-ancestors` CSP must include the host app origin (the existing
  * `buildFrameAncestors()` includes every `https://` origin from
  * `CORS_ORIGINS`, so adding the app origin to `CORS_ORIGINS` is enough).
