@@ -297,6 +297,31 @@ export interface HostMatrixNodeData extends Record<string, unknown> {
      */
     methodTotal: number;
   };
+  /**
+   * SEP-1865 `app.*` spec-bridge override state. Independent from
+   * {@link compatRuntime} (the OpenAI shim) — the two matrices represent
+   * different surfaces and are never cross-gated. Rendered as a sibling
+   * chip in the View iframe injected-globals strip so the user can see
+   * at a glance whether they've sparse-overridden the host's preset.
+   *
+   * No `injected` flag here: the spec bridge is always present (it's
+   * the primary protocol, not a vendor compat shim).
+   */
+  mcpAppsBridge: {
+    /**
+     * Whether the user has set any key on `mcpAppsOverrides`. Drives
+     * the chip's "custom (N overrides)" vs "from preset" subtitle.
+     */
+    hasOverrides: boolean;
+    /**
+     * Number of sparse-override keys the user has set. Surfaced in the
+     * chip subtitle. Counts edited dimensions (not "active" effective
+     * values) — the matrix is heterogeneous (booleans + mode array +
+     * sandbox flags + resource-meta flags) and an "active" count
+     * wouldn't cleanly compose across the buckets.
+     */
+    overrideCount: number;
+  };
 }
 
 export interface ServersHubNodeData extends Record<string, unknown> {
