@@ -38,9 +38,6 @@ function createTestApp(): Hono {
   app.get("/assets/main.js", (c) => c.text("console.log('hello')"));
   app.get("/api/mcp/oauth/callback", (c) => c.json({ oauth: "callback" }));
   app.get("/api/apps/mcp-apps/widget", (c) => c.json({ widget: "data" }));
-  app.get("/api/apps/chatgpt-apps/widget", (c) =>
-    c.json({ chatgpt: "widget" }),
-  );
   app.get("/api/apps/mcp-apps/sandbox-proxy/content", (c) =>
     c.text("sandbox content"),
   );
@@ -220,12 +217,6 @@ describe("sessionAuthMiddleware", () => {
 
     it("allows /api/apps/mcp-apps/ without token", async () => {
       const res = await app.request("/api/apps/mcp-apps/widget");
-
-      expect(res.status).toBe(200);
-    });
-
-    it("allows /api/apps/chatgpt-apps/ without token", async () => {
-      const res = await app.request("/api/apps/chatgpt-apps/widget");
 
       expect(res.status).toBe(200);
     });

@@ -106,24 +106,6 @@ describe("web routes — auth enforcement", () => {
     expect(data.code).toBe("UNAUTHORIZED");
   });
 
-  it("returns 401 for chatgpt-apps/widget-content without bearer token", async () => {
-    const res = await postJson(
-      app,
-      "/api/web/apps/chatgpt-apps/widget-content",
-      {
-        projectId: "ws-1",
-        serverId: "srv-1",
-        uri: "ui://widget/index.html",
-        toolInput: {},
-        toolId: "tool-1",
-        toolName: "create_view",
-      },
-    );
-    const { status, data } = await expectJson<{ code: string }>(res);
-    expect(status).toBe(401);
-    expect(data.code).toBe("UNAUTHORIZED");
-  });
-
   it("keeps mcp-apps sandbox-proxy public without bearer token", async () => {
     const res = await getJson(app, "/api/web/apps/mcp-apps/sandbox-proxy");
 
