@@ -436,6 +436,100 @@ describe("AppsExtensionTab — mcpAppsOverrides JSON round-trip", () => {
     expect(next?.mcpProfile?.apps?.mcpAppsOverrides).toBeUndefined();
   });
 
+  it("serialize/parse round-trip with mcpAppsOverrides does NOT create a stale legacy hostCapabilitiesOverride", () => {
+    // Regression: the diff target for `hostCapabilities` was the
+    // preset alone, so any matrix override that produced a non-preset
+    // wire shape (e.g. Claude with serverResources turned off) would
+    // round-trip into a stale legacy `hostCapabilitiesOverride` —
+    // every editor save would silently create one beside the matrix.
+    // The fix diffs against the matrix-resolved shape instead, so a
+    // faithful serialization round-trips with no legacy override.
+    const prev = emptyHostConfigInputV2({ hostStyle: "claude" });
+    prev.mcpProfile = {
+      profileVersion: 1,
+      apps: { mcpAppsOverrides: { serverResources: false, logging: false } },
+    };
+    // What the editor would actually show on serialize: the matrix-
+    // derived effective hostCapabilities + the matrix override.
+    const effectiveHostCapabilities = resolveEffectiveHostCapabilities({
+      hostStyle: "claude",
+      profile: prev.mcpProfile,
+    });
+    const next = applyJsonToDraft(
+      {
+        hostContext: {},
+        hostCapabilities: effectiveHostCapabilities,
+        mcpAppsOverrides: { serverResources: false, logging: false },
+      },
+      prev,
+    );
+    // Matrix preserved; legacy override NOT created.
+    expect(next?.mcpProfile?.apps?.mcpAppsOverrides).toEqual({
+      serverResources: false,
+      logging: false,
+    });
+    expect(next?.hostCapabilitiesOverride).toBeUndefined();
+  });
+
+  it("removing mcpAppsOverrides from JSON actually reverts the resolver to the host style preset", () => {
+    // Regression: when the user removes `mcpAppsOverrides`, the
+    // resolver should fall back to the preset. The pre-fix parser
+    // would create a stale legacy `hostCapabilitiesOverride` from
+    // the serialized matrix-derived `hostCapabilities`, keeping the
+    // same capability behavior alive even though the matrix was
+    // cleared.
+    const prev = emptyHostConfigInputV2({ hostStyle: "claude" });
+    prev.mcpProfile = {
+      profileVersion: 1,
+      apps: { mcpAppsOverrides: { serverResources: false, logging: false } },
+    };
+    // User edits the JSON: removes `mcpAppsOverrides`, but the
+    // `hostCapabilities` field in the JSON might still be the
+    // pre-removal matrix-derived shape (the editor serializer would
+    // refresh it on next render, but parse needs to handle this
+    // intermediate state correctly).
+    const stalehostCapabilities = resolveEffectiveHostCapabilities({
+      hostStyle: "claude",
+      profile: prev.mcpProfile,
+    });
+    const next = applyJsonToDraft(
+      {
+        hostContext: {},
+        hostCapabilities: stalehostCapabilities,
+        // mcpAppsOverrides removed
+      },
+      prev,
+    );
+    // Matrix cleared. The stale hostCapabilities serialization
+    // becomes a legacy override (the matrix can no longer produce
+    // it, so the user must have meant the literal value) — but
+    // that's a separate explicit choice the user is making by
+    // leaving the JSON in that state.
+    expect(next?.mcpProfile?.apps?.mcpAppsOverrides).toBeUndefined();
+    // The KEY regression test: if the user removes BOTH
+    // `mcpAppsOverrides` AND clears `hostCapabilities` back to the
+    // preset shape, the resolver fully reverts.
+    const presetEffective = resolveEffectiveHostCapabilities({
+      hostStyle: "claude",
+    });
+    const fullyCleared = applyJsonToDraft(
+      {
+        hostContext: {},
+        hostCapabilities: presetEffective,
+      },
+      prev,
+    );
+    expect(fullyCleared?.mcpProfile?.apps?.mcpAppsOverrides).toBeUndefined();
+    expect(fullyCleared?.hostCapabilitiesOverride).toBeUndefined();
+    // Confirm the resolver advertises the bare preset.
+    const advertised = resolveEffectiveHostCapabilities({
+      hostStyle: fullyCleared!.hostStyle,
+      profile: fullyCleared!.mcpProfile,
+      hostCapabilitiesOverride: fullyCleared!.hostCapabilitiesOverride,
+    });
+    expect(advertised).toEqual(presetEffective);
+  });
+
   it("preserves siblings (compatRuntime, sandbox, uiInitialize) when only mcpAppsOverrides changes", () => {
     // Sibling fields under `mcpProfile.apps` round-trip through their own
     // serializers; touching mcpAppsOverrides must not collateral-damage
