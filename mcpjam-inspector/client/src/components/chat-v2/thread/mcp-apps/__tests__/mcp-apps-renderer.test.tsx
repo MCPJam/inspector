@@ -235,8 +235,16 @@ vi.mock("lucide-react", () => ({
   X: (props: any) => <div {...props} />,
 }));
 
+// Capture props passed into the modal so tests can assert inline/modal
+// HostCapabilities parity without mounting a real second AppBridge.
+const mcpAppsModalPropsRef: { current: Record<string, unknown> | null } = {
+  current: null,
+};
 vi.mock("../mcp-apps-modal", () => ({
-  McpAppsModal: () => null,
+  McpAppsModal: (props: Record<string, unknown>) => {
+    mcpAppsModalPropsRef.current = props;
+    return null;
+  },
 }));
 
 // ── Import component under test (after mocks) ─────────────────────────────
@@ -418,6 +426,41 @@ describe("MCPAppsRenderer tool input streaming", () => {
     const advertised = appBridgeArgsRef.current?.hostCapabilities;
     expect(advertised).not.toHaveProperty("serverResources");
     expect(advertised).not.toHaveProperty("logging");
+  });
+
+  it("passes the same effectiveHostCapabilities to the modal as the inline AppBridge advertises", async () => {
+    // Inline + modal must speak an identical HostCapabilities surface.
+    // Previously the modal hardcoded {openLinks, serverTools,
+    // serverResources, logging, updateModelContext, message} — that
+    // disagreed with Copilot's matrix-derived blob (which drops
+    // serverResources / logging) and silently ignored user overrides
+    // in mcpProfile.apps.mcpAppsOverrides.
+    mcpAppsModalPropsRef.current = null;
+    render(
+      <ChatboxHostStyleProvider value="copilot">
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostStyleProvider>,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+    await vi.waitFor(() => {
+      expect(mcpAppsModalPropsRef.current).not.toBeNull();
+    });
+
+    const modalCaps = mcpAppsModalPropsRef.current
+      ?.effectiveHostCapabilities as Record<string, unknown>;
+    const { sandbox: _sandbox, ...inlineVendorOnly } =
+      (appBridgeArgsRef.current?.hostCapabilities ?? {}) as Record<
+        string,
+        unknown
+      >;
+    expect(modalCaps).toEqual(inlineVendorOnly);
+    // Sentinel: Copilot's preset matrix strips both keys in inline AND
+    // modal post-fix. (Pre-fix the modal would have included them.)
+    expect(modalCaps).not.toHaveProperty("serverResources");
+    expect(modalCaps).not.toHaveProperty("logging");
   });
 
   it("does not block pure MCP Apps from booting while ChatGPT compat is enabled", async () => {
