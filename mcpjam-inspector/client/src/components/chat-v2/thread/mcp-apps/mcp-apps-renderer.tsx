@@ -92,8 +92,10 @@ import {
 import {
   resolveEffectiveCompatRuntime,
   resolveEffectiveHostCapabilities,
+  resolveEffectiveMcpAppsCapabilities,
   resolveHostInfo,
 } from "@/lib/client-config-v2";
+import type { ResolvedMcpAppsCapabilities } from "@/lib/client-styles";
 
 // Injected by Vite at build time from package.json
 declare const __APP_VERSION__: string;
@@ -811,6 +813,15 @@ export function MCPAppsRenderer({
   // synchronously inside the effect body, so it has to be in scope here.
   const recordMountStore = useWidgetDebugStore((s) => s.recordMount);
 
+  // SEP-1865 MCP Apps spec-bridge matrix ref. Populated further down
+  // in the render (after `effectiveHostStyle` / `activeMcpProfile`
+  // resolve), but declared here so `useToolInputStreaming` below can
+  // read it without forward-reference issues. Null reads as "default
+  // on" — matches pre-matrix behavior during the brief initial-mount
+  // window before the matrix resolver runs.
+  const mcpAppsCapabilitiesRef =
+    useRef<ResolvedMcpAppsCapabilities | null>(null);
+
   const {
     canRenderStreamingInput,
     signalStreamingRender,
@@ -825,6 +836,7 @@ export function MCPAppsRenderer({
     toolErrorText,
     toolCallId,
     reinitCount,
+    mcpAppsCapabilitiesRef,
   });
   const hasWidgetHtml = widgetHtml !== null;
   const widgetHtmlLength = widgetHtml?.length ?? 0;
@@ -1431,6 +1443,35 @@ export function MCPAppsRenderer({
       }),
     [effectiveHostStyle, activeMcpProfile, hostCapabilitiesOverride],
   );
+  // SEP-1865 spec-bridge matrix resolved from the live profile +
+  // host style. Gates notification emissions (`tool-input-partial`,
+  // `tool-cancelled`, `host-context-changed`) so simulated hosts
+  // like Microsoft 365 Copilot match their published Component-
+  // bridge table. Sibling to `effectiveHostCapabilities` — the wire
+  // shape advertised in `ui/initialize` is derived from this matrix
+  // via `buildHostCapabilities`, but the matrix itself is what
+  // runtime notification gates read.
+  //
+  // INDEPENDENT from the OpenAI shim's `activeShimCapabilities`
+  // ref. Two-matrix architecture (see
+  // feedback_two_matrix_architecture memory): toggling a row on one
+  // matrix never reads the other.
+  //
+  // The ref is declared above (with initial `null`) so it's visible
+  // to `useToolInputStreaming` earlier in the render. We populate
+  // `.current` here — same one-step-behind-during-mount caveat the
+  // `liveOpenAiCompatCapabilitiesRef` pattern has, and the gate
+  // contract reads `null` as "default on" so the brief window emits
+  // notifications (matches pre-matrix behavior).
+  const effectiveMcpAppsCapabilities = useMemo(
+    () =>
+      resolveEffectiveMcpAppsCapabilities({
+        profile: activeMcpProfile,
+        hostStyle: effectiveHostStyle,
+      }),
+    [activeMcpProfile, effectiveHostStyle],
+  );
+  mcpAppsCapabilitiesRef.current = effectiveMcpAppsCapabilities;
   themeModeRef.current = resolvedTheme;
   const styleVariables = useMemo(
     () => hostStyleDefinition.mcp.resolveStyleVariables(resolvedTheme),
@@ -2058,6 +2099,20 @@ export function MCPAppsRenderer({
       }
 
       if (effectiveHostCapabilities.serverTools) {
+        // Matrix-gated `sendToolCancelled` for app-initiated tool
+        // calls failing in this handler. Microsoft 365 Copilot does
+        // not deliver `ui/notifications/tool-cancelled` per its
+        // published Component-bridge table; simulated Copilot hosts
+        // must not see the cancelled callback even when the
+        // underlying tool throws. The handler still THROWS so the
+        // AppBridge's request/response path reports an error to the
+        // calling widget — only the side-channel notification is
+        // suppressed.
+        const sendToolCancelledIfAllowed = (reason: string) => {
+          const matrix = mcpAppsCapabilitiesRef.current;
+          if (matrix !== null && matrix.toolCancelled === false) return;
+          bridge.sendToolCancelled({ reason });
+        };
         bridge.oncalltool = async ({ name, arguments: args }, _extra) => {
           // Check if tool is model-only (not callable by apps) per SEP-1865
           const calledToolMeta = toolsMetadataRef.current?.[name];
@@ -2065,13 +2120,13 @@ export function MCPAppsRenderer({
             const error = new Error(
               `Tool "${name}" is not callable by apps (visibility: model-only)`,
             );
-            bridge.sendToolCancelled({ reason: error.message });
+            sendToolCancelledIfAllowed(error.message);
             throw error;
           }
 
           if (!onCallToolRef.current) {
             const error = new Error("Tool calls not supported");
-            bridge.sendToolCancelled({ reason: error.message });
+            sendToolCancelledIfAllowed(error.message);
             throw error;
           }
 
@@ -2083,9 +2138,9 @@ export function MCPAppsRenderer({
             return result as CallToolResult;
           } catch (error) {
             // SEP-1865: Send tool-cancelled for failed app-initiated tool calls
-            bridge.sendToolCancelled({
-              reason: error instanceof Error ? error.message : String(error),
-            });
+            sendToolCancelledIfAllowed(
+              error instanceof Error ? error.message : String(error),
+            );
             throw error;
           }
         };
@@ -2411,6 +2466,22 @@ export function MCPAppsRenderer({
   useEffect(() => {
     const bridge = bridgeRef.current;
     if (!bridge || !isReady) return;
+    // `bridge.setHostContext` updates the AppBridge's cached
+    // `_hostContext` AND emits `ui/notifications/host-context-changed`
+    // to the View. Matrix gate: Microsoft 365 Copilot does not
+    // deliver this notification per its published Component-bridge
+    // table (theme / displayMode updates are one-shot at
+    // `ui/initialize` time on that host). Null matrix → default on.
+    //
+    // We still skip the call entirely when gated rather than only
+    // suppressing the wire notification — the bridge's internal
+    // cache also tracks `_hostContext`, but on Copilot-style hosts
+    // the spec says it doesn't update mid-session, so keeping the
+    // cache frozen matches the simulated host's behavior. (If a
+    // future host wants the cache to update without emitting the
+    // notification, we'll split this gate.)
+    const matrix = mcpAppsCapabilitiesRef.current;
+    if (matrix !== null && matrix.hostContextChanged === false) return;
     bridge.setHostContext(hostContext);
   }, [hostContext, isReady]);
 

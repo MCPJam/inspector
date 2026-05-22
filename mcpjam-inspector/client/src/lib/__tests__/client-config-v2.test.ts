@@ -384,10 +384,10 @@ describe("resolveEffectiveMcpAppsCapabilities", () => {
     expect(resolved.serverTools).toBe(true);
   });
 
-  it("falls back to NO_CLAIMS for unknown host styles (not FULL_SURFACE)", () => {
+  it("falls back to NO_CLAIMS for unknown host styles WHEN an override is present (so persisted opt-ins can't accidentally advertise near-full support)", () => {
     // Regression: a persisted mcpAppsOverrides against a removed host
-    // must NOT advertise near-full support. Mirrors getHostCapabilities-
-    // ForStyle's honest "no claims" baseline.
+    // must NOT advertise near-full support. The override only turns
+    // ON what the user asked for, against a no-claims baseline.
     const resolved = resolveEffectiveMcpAppsCapabilities({
       hostStyle: "does-not-exist",
       profile: {
@@ -397,10 +397,29 @@ describe("resolveEffectiveMcpAppsCapabilities", () => {
     });
     expect(resolved.openLinks).toBe(false);
     expect(resolved.serverTools).toBe(false);
-    // The override only turns ON what the user asked for, against a
-    // no-claims baseline.
     expect(resolved.serverResources).toBe(true);
     expect(resolved.logging).toBe(false);
+  });
+
+  it("falls back to FULL_SURFACE for unknown host styles WHEN no override is present (preserves pre-matrix runtime defaults)", () => {
+    // Counter-test for the gate above. Notification gates (added in
+    // PR B) suppress emissions when their matrix row is `false`. If
+    // the resolver returned NO_CLAIMS for "no host style + no
+    // override", any caller that doesn't supply a host style (test
+    // renderers, edge cases during init) would suddenly suppress
+    // every notification — a runtime regression the matrix
+    // shouldn't introduce when there's literally nothing to honor.
+    // The opt-in signal is the override; without it, fall back to
+    // permissive defaults.
+    const resolved = resolveEffectiveMcpAppsCapabilities({
+      hostStyle: "does-not-exist",
+      profile: undefined,
+    });
+    expect(resolved.toolInputPartial).toBe(true);
+    expect(resolved.toolCancelled).toBe(true);
+    expect(resolved.hostContextChanged).toBe(true);
+    expect(resolved.openLinks).toBe(true);
+    expect(resolved.serverTools).toBe(true);
   });
 });
 
