@@ -122,7 +122,7 @@ export function ServerConnectionCard({
   useExploreCasesPrefetchOnConnect(projectId ?? null, server, hostedServerId);
 
   const posthog = usePostHog();
-  const { getAccessToken, signIn } = useAuth();
+  const { getAccessToken } = useAuth();
   const { isAuthenticated } = useConvexAuth();
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -311,7 +311,11 @@ export function ServerConnectionCard({
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Failed to create tunnel";
-      toast.error(`Tunnel creation failed: ${errorMessage}`);
+      if (errorMessage.includes("No access token available")) {
+        toast.error("Sign in to create ngrok tunnels");
+      } else {
+        toast.error(`Tunnel creation failed: ${errorMessage}`);
+      }
     } finally {
       setIsCreatingTunnel(false);
     }
@@ -713,10 +717,8 @@ export function ServerConnectionCard({
                   ) : (
                     <button
                       data-server-card-context-menu-exempt
-                      onClick={
-                        canManageTunnels ? handleCreateTunnel : () => signIn()
-                      }
-                      disabled={isCreatingTunnel}
+                      onClick={handleCreateTunnel}
+                      disabled={isCreatingTunnel || !canManageTunnels}
                       className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/30 px-2 py-0.5 text-[11px] text-foreground transition-colors hover:bg-accent/60 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
                     >
                       {isCreatingTunnel ? (
@@ -727,7 +729,7 @@ export function ServerConnectionCard({
                       <span>
                         {canManageTunnels
                           ? "Create ngrok tunnel"
-                          : "Sign in to create ngrok tunnels"}
+                          : "Sign in for tunnel"}
                       </span>
                     </button>
                   )}
