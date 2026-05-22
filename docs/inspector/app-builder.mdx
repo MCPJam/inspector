@@ -82,7 +82,17 @@ Toggle between light and dark modes to test your widget's appearance in both the
 
 ### Host Styles
 
-Switch between Claude and ChatGPT host styles and chat thread look in each host environment. For MCP Apps that use the MCP Apps style variables, the ChatGPT toggle translates the widget's styles to ChatGPT's design tokens.
+Switch between host presets to simulate how different real-world hosts render your MCP App widget. Each preset adjusts both the visual style and the `HostContext` payload advertised to the widget in `ui/initialize`.
+
+| Preset | `HostContext.toolInfo` | `HostContext.availableDisplayModes` |
+|---|---|---|
+| Claude | Included (`{ id, tool }`) | `["inline", "fullscreen", "pip"]` |
+| Copilot | Omitted (`undefined`) | `["fullscreen"]` |
+| ChatGPT | Included (`{ id, tool }`) | `["inline", "fullscreen", "pip"]` |
+
+**Copilot** follows Microsoft 365 Copilot's published Component-bridge table: `toolInfo` is not delivered, and only `fullscreen` display mode is advertised. A widget that calls `app.getHostContext()?.toolInfo` on the Copilot preset correctly sees `undefined`, and a `requestDisplayMode({ mode: "pip" })` call is clamped to `"fullscreen"` automatically.
+
+For MCP Apps that use the MCP Apps style variables, the ChatGPT preset also translates the widget's styles to ChatGPT's design tokens.
 
 ### Locale Configuration
 
