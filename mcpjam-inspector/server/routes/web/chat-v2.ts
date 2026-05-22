@@ -39,9 +39,7 @@ import {
   webError,
   mapRuntimeError,
 } from "./auth.js";
-import {
-  createHostedRpcLogCollector,
-} from "./hosted-rpc-logs.js";
+import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
 import { getClientIp } from "../../utils/client-ip.js";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
 import { logger } from "../../utils/logger.js";
