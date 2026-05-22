@@ -1882,9 +1882,18 @@ export function MCPAppsRenderer({
       let resolvedPermissions: McpUiResourcePermissions | undefined;
       if (sandboxPermissionsPolicy) {
         const resourcePermsMap: Record<string, boolean> = {};
-        if (widgetPermissions && typeof widgetPermissions === "object") {
+        // Matrix-gated: `sandboxPermissions: false` means the
+        // simulated host doesn't honor `_meta.ui.permissions`. Use
+        // the gated value here too — the playground's permissive
+        // CSP escape hatch is NOT a license to bypass host-level
+        // permission gating. Three bots converged on this miss in
+        // review of PR #2242.
+        if (
+          matrixGatedWidgetPermissions &&
+          typeof matrixGatedWidgetPermissions === "object"
+        ) {
           for (const [k, v] of Object.entries(
-            widgetPermissions as Record<string, unknown>,
+            matrixGatedWidgetPermissions as Record<string, unknown>,
           )) {
             if (v) resourcePermsMap[k] = true;
           }
@@ -1902,7 +1911,11 @@ export function MCPAppsRenderer({
       }
       return {
         csp: undefined,
-        permissions: resolvedPermissions ?? widgetPermissions,
+        // Same gate on the pass-through fallback: when no sandbox
+        // policy applies, the playground's permissive surface MUST
+        // NOT propagate widget-declared permissions that the host
+        // matrix says to ignore.
+        permissions: resolvedPermissions ?? matrixGatedWidgetPermissions,
         permissive: true,
         hostPolicyApplied: !!resolvedPermissions,
         sandboxAttrs: sandboxAttrsPolicy,

@@ -754,6 +754,79 @@ describe("MCPAppsRenderer tool input streaming", () => {
     ).toBeUndefined();
   });
 
+  it("suppresses widget-declared permissions in the playground permissive escape hatch (Copilot)", async () => {
+    // Regression: three review bots independently flagged the same
+    // miss on #2242 — the `userTogglePermissive` branch (playground
+    // + cspMode === "permissive" + non-chatbox surface + non-
+    // minimal) still read raw `widgetPermissions`. On a Copilot
+    // host with `sandboxPermissions: false`, the gate is supposed
+    // to ignore widget-declared permissions; the permissive escape
+    // hatch in the playground was leaking them through to the
+    // iframe.
+    //
+    // Fix gates both sites in the userTogglePermissive return path
+    // (resolver-input loop + pass-through fallback). This test
+    // asserts widget-declared permissions stay suppressed even with
+    // the playground in permissive mode.
+    Object.assign(mockPlaygroundStoreState, {
+      isPlaygroundActive: true,
+      mcpAppsCspMode: "permissive" as const,
+    });
+    // In playground mode the matrix resolves against the
+    // preferences-store `sharedHostStyle`, not the chatbox provider
+    // — set it to a host whose `mcpAppsCapabilities.sandboxPermissions`
+    // is false. Copilot isn't in the `mockPreferencesState` enum
+    // (claude | chatgpt), so we route through chatgpt — its matrix
+    // also has sandboxPermissions: false per `OPENAI_APPS_FULL_SURFACE`
+    // → wait, chatgpt's MCP matrix is `MCP_APPS_FULL_SURFACE` which
+    // has sandboxPermissions: true. We need a host where the matrix
+    // explicitly turns it off. The shortcut: write copilot-like
+    // values directly via the matrix override.
+    mockPreferencesState.hostStyle = "claude" as const;
+    vi.mocked(authFetch).mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          html: "<html><body>widget</body></html>",
+          csp: {
+            connectDomains: [],
+            resourceDomains: [],
+            frameDomains: [],
+            baseUriDomains: [],
+          },
+          permissions: { camera: {} },
+          permissive: false,
+          mimeTypeValid: true,
+          prefersBorder: true,
+        }),
+      status: 200,
+      headers: new Headers(),
+    } as Response);
+    // ActiveMcpProfileProvider sets the matrix override directly,
+    // simulating a user who configured `sandboxPermissions: false`
+    // via the matrix UI. This avoids the
+    // playground-vs-chatbox-host-style routing wrinkle entirely:
+    // the override path always wins regardless of which host style
+    // is resolved.
+    const copilotPermissionsOff: HostConfigMcpProfileV1 = {
+      profileVersion: 1,
+      apps: { mcpAppsOverrides: { sandboxPermissions: false } },
+    };
+    render(
+      <ActiveMcpProfileProvider value={copilotPermissionsOff}>
+        <MCPAppsRenderer {...baseProps} />
+      </ActiveMcpProfileProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toBe(
+        "<html><body>widget</body></html>",
+      );
+    });
+    expect(
+      sandboxedIframePropsRef.current?.permissions ?? undefined,
+    ).toBeUndefined();
+  });
+
   it("honors widget-declared permissions on Claude", async () => {
     vi.mocked(authFetch).mockResolvedValueOnce({
       ok: true,
