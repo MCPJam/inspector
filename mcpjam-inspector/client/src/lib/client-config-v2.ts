@@ -22,6 +22,7 @@ import {
   findHostStyle,
   getCompatRuntimeForStyle,
   getHostCapabilitiesForStyle,
+  MCP_APPS_FULL_SURFACE,
   MCP_APPS_NO_CLAIMS_SURFACE,
   OPENAI_APPS_FULL_SURFACE,
 } from "@/lib/client-styles";
@@ -710,18 +711,32 @@ export function resolveEffectiveMcpAppsCapabilities(args: {
   profile: HostConfigMcpProfileV1 | undefined;
   hostStyle: ChatboxHostStyle | string | null | undefined;
 }): ResolvedMcpAppsCapabilities {
-  // Unknown / unrecognized host styles fall back to NO_CLAIMS, not the
-  // full surface — matches `getHostCapabilitiesForStyle`'s honest "no
-  // claims" baseline (`registry.ts:SPEC_DEFAULT_HOST_CAPABILITIES`) so a
-  // persisted `mcpAppsOverrides` against a removed host can't silently
-  // advertise near-full capability support.
+  const hostStylePreset = findHostStyle(args.hostStyle)?.mcp
+    .mcpAppsCapabilities;
+  const override = args.profile?.apps?.mcpAppsOverrides;
+  // Unknown / unrecognized host style fallback depends on whether the
+  // user has explicitly opted in via override:
+  //
+  // - **Override present + host style unknown** → start from
+  //   NO_CLAIMS so the user's sparse override only enables rows
+  //   they explicitly set. A persisted override against a removed
+  //   host can't silently advertise near-full support — matches
+  //   `getHostCapabilitiesForStyle`'s honest "no claims" baseline
+  //   (`registry.ts:SPEC_DEFAULT_HOST_CAPABILITIES`).
+  //
+  // - **No override + host style unknown** → fall back to
+  //   FULL_SURFACE so runtime behavior matches pre-matrix
+  //   permissive defaults. Without this, callers that don't supply
+  //   a host style (test renderers, edge cases during init) would
+  //   suddenly suppress every notification — a runtime regression
+  //   the matrix shouldn't introduce when there's literally nothing
+  //   to honor.
   const preset =
-    findHostStyle(args.hostStyle)?.mcp.mcpAppsCapabilities ??
-    MCP_APPS_NO_CLAIMS_SURFACE;
-  return mergeMcpAppsCapabilities(
-    preset,
-    args.profile?.apps?.mcpAppsOverrides,
-  );
+    hostStylePreset ??
+    (override !== undefined
+      ? MCP_APPS_NO_CLAIMS_SURFACE
+      : MCP_APPS_FULL_SURFACE);
+  return mergeMcpAppsCapabilities(preset, override);
 }
 
 /**

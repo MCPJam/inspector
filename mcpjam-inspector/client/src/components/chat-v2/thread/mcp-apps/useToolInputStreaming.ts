@@ -17,6 +17,7 @@ import {
 } from "react";
 import type { AppBridge } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { CallToolResult } from "@modelcontextprotocol/client";
+import type { ResolvedMcpAppsCapabilities } from "@/lib/client-styles";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -148,6 +149,25 @@ export interface UseToolInputStreamingParams {
   toolCallId: string;
   /** Incremented when the guest re-initializes (e.g. SDK app after openai-compat shim) */
   reinitCount: number;
+  /**
+   * Resolved SEP-1865 MCP Apps spec-bridge matrix. Gates the
+   * notifications this hook emits to the View:
+   *   - `toolInputPartial: false` → suppress
+   *     `bridge.sendToolInputPartial` (Microsoft 365 Copilot does
+   *     not deliver this notification — widgets running under that
+   *     simulated surface must not see partials).
+   *   - `toolCancelled: false` → suppress `bridge.sendToolCancelled`
+   *     (Copilot does not deliver this either).
+   *
+   * Passed as a ref so the hook reads the latest resolved value
+   * without rebuilding the effect closures on every host-style /
+   * profile change. Null while the renderer is still resolving the
+   * matrix (e.g. before host context is wired) — null reads as
+   * "default on" so the inspector keeps emitting notifications by
+   * default, matching the pre-matrix behavior for any host the
+   * renderer hasn't classified yet.
+   */
+  mcpAppsCapabilitiesRef: React.RefObject<ResolvedMcpAppsCapabilities | null>;
 }
 
 export interface UseToolInputStreamingReturn {
@@ -170,6 +190,7 @@ export function useToolInputStreaming({
   toolErrorText,
   toolCallId,
   reinitCount,
+  mcpAppsCapabilitiesRef,
 }: UseToolInputStreamingParams): UseToolInputStreamingReturn {
   // ── Internal refs ────────────────────────────────────────────────────────
 
@@ -305,6 +326,18 @@ export function useToolInputStreaming({
       lastToolInputPartialSentAtRef.current = Date.now();
       setHasDeliveredStreamingInput(true);
       setStreamingRenderSignaled(true);
+      // Matrix gate: SEP-1865 hosts that don't deliver
+      // `ui/notifications/tool-input-partial` (notably Microsoft 365
+      // Copilot per its published Component-bridge table) flip this
+      // dimension off in the matrix. Null ref → default on (matches
+      // pre-matrix behavior for any host the renderer hasn't
+      // classified yet). The streaming signature / streaming-render
+      // gating above still fires regardless so the inspector's
+      // internal streaming UX (which mirrors the bridge
+      // notification cadence) doesn't go silent on Copilot-style
+      // hosts — it's only the wire emission that's suppressed.
+      const matrix = mcpAppsCapabilitiesRef.current;
+      if (matrix !== null && matrix.toolInputPartial === false) return;
       Promise.resolve(
         bridge.sendToolInputPartial({ arguments: pending }),
       ).catch(() => {});
@@ -405,7 +438,14 @@ export function useToolInputStreaming({
     if (lastToolErrorRef.current === errorMessage) return;
     lastToolErrorRef.current = errorMessage;
 
-    // SEP-1865: Send tool-cancelled for errors instead of tool-result with isError
+    // SEP-1865: Send tool-cancelled for errors instead of tool-result
+    // with isError. Matrix gate: Microsoft 365 Copilot does not
+    // deliver this notification per its published Component-bridge
+    // table; widgets running under that simulated surface must not
+    // see a cancelled callback. Null matrix ref → default on (same
+    // fail-open contract as the partial-input gate above).
+    const matrix = mcpAppsCapabilitiesRef.current;
+    if (matrix !== null && matrix.toolCancelled === false) return;
     bridge.sendToolCancelled({ reason: errorMessage });
   }, [
     isReady,
@@ -415,6 +455,7 @@ export function useToolInputStreaming({
     toolState,
     bridgeRef,
     reinitCount,
+    mcpAppsCapabilitiesRef,
   ]);
 
   // 8. Reset on toolCallId change. Do this before paint so a recycled renderer
