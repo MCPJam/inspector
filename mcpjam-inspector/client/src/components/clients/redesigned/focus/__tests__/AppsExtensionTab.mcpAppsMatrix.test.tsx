@@ -53,12 +53,18 @@ function renderMatrix(initial?: Partial<HostConfigInputV2>) {
   return { draftRef, ...utils };
 }
 
+async function expandMcpAppsDimensions(
+  user: ReturnType<typeof userEvent.setup>,
+) {
+  await user.click(
+    screen.getByRole("button", { name: /MCP App support/i }),
+  );
+}
+
 describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
-  it("renders the MCP Apps section header", () => {
+  it("renders the MCP App support section header", () => {
     renderMatrix();
-    // Two-matrix architecture: window.openai and MCP Apps are sibling
-    // sections in the same tab.
-    expect(screen.getByText("MCP Apps")).toBeInTheDocument();
+    expect(screen.getByText("MCP App support")).toBeInTheDocument();
   });
 
   it("does not show Preset hints on matrix rows", () => {
@@ -66,13 +72,16 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
     expect(screen.queryByText(/^Preset:/)).toBeNull();
   });
 
-  it("shows an enabled-capability summary when no override is set", () => {
+  it("hides the header subline when no override is set", () => {
     renderMatrix();
-    expect(screen.getByText("15 of 15 enabled")).toBeInTheDocument();
+    expect(screen.queryByText(/enabled$/)).toBeNull();
+    expect(screen.queryByText(/Matches host style preset/)).toBeNull();
   });
 
-  it("renders the availableDisplayModes cluster with Claude's preset (all three modes)", () => {
+  it("renders the availableDisplayModes cluster with Claude's preset (all three modes)", async () => {
+    const user = userEvent.setup();
     renderMatrix();
+    await expandMcpAppsDimensions(user);
     // Claude advertises the FULL surface: inline + fullscreen + pip.
     const cluster = screen.getByTestId("mcp-apps-dimension-availableDisplayModes");
     for (const mode of ["inline", "fullscreen", "pip"] as const) {
@@ -85,6 +94,7 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
   it("toggling a boolean dimension produces a sparse override on the draft", async () => {
     const user = userEvent.setup();
     const { draftRef } = renderMatrix();
+    await expandMcpAppsDimensions(user);
     // toolInputPartial is on by default in Claude's preset; toggling
     // the switch should write `false` to mcpAppsOverrides.
     const row = screen.getByTestId("mcp-apps-dimension-toolInputPartial");
@@ -98,6 +108,7 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
   it("toggling back to the preset value drops the override key (sparse on save)", async () => {
     const user = userEvent.setup();
     const { draftRef } = renderMatrix();
+    await expandMcpAppsDimensions(user);
     const row = screen.getByTestId("mcp-apps-dimension-toolInputPartial");
     const toggle = within(row).getByRole("switch");
     await user.click(toggle); // off (override)
@@ -116,6 +127,7 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
     // toggling it back must round-trip the draft exactly.
     const user = userEvent.setup();
     const { draftRef } = renderMatrix();
+    await expandMcpAppsDimensions(user);
     expect(draftRef.current.mcpProfile).toBeUndefined();
     const row = screen.getByTestId("mcp-apps-dimension-toolInputPartial");
     const toggle = within(row).getByRole("switch");
@@ -141,6 +153,7 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
         },
       },
     });
+    await expandMcpAppsDimensions(user);
     const row = screen.getByTestId("mcp-apps-dimension-toolInputPartial");
     const toggle = within(row).getByRole("switch");
     await user.click(toggle); // back to preset → drop the override key
@@ -150,7 +163,8 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
     );
   });
 
-  it("'Overridden' badge appears on rows where the user has diverged from the preset", () => {
+  it("'Overridden' badge appears on rows where the user has diverged from the preset", async () => {
+    const user = userEvent.setup();
     const draft = emptyHostConfigInputV2({ hostStyle: "claude" });
     draft.mcpProfile = {
       profileVersion: 1,
@@ -164,6 +178,7 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
         attention={[]}
       />,
     );
+    await expandMcpAppsDimensions(user);
     const overriddenRow = screen.getByTestId("mcp-apps-dimension-logging");
     expect(within(overriddenRow).getByText("Overridden")).toBeInTheDocument();
     // Sibling row (no override) does NOT carry the badge.
@@ -205,8 +220,17 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
     expect(screen.queryByRole("button", { name: "Reset" })).toBeNull();
   });
 
-  it("renders all matrix dimensions in one flat list", () => {
+  it("renders the master advertise switch in the header", () => {
     renderMatrix();
+    expect(
+      screen.getByRole("switch", { name: "Advertise MCP App support" }),
+    ).toBeChecked();
+  });
+
+  it("renders all matrix dimensions in one flat list", async () => {
+    const user = userEvent.setup();
+    renderMatrix();
+    await expandMcpAppsDimensions(user);
     expect(
       screen.getByTestId("mcp-apps-dimension-sandboxPermissions"),
     ).toBeInTheDocument();
@@ -217,6 +241,7 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
   it("clicking a display mode in the cluster updates the allowlist on the draft", async () => {
     const user = userEvent.setup();
     const { draftRef } = renderMatrix();
+    await expandMcpAppsDimensions(user);
     // Claude's preset is [inline, fullscreen, pip]. Click "pip" to
     // remove it → override should be [inline, fullscreen].
     const cluster = screen.getByTestId("mcp-apps-dimension-availableDisplayModes");
@@ -230,6 +255,7 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
   it("force-enables inline when the user unchecks the last enabled mode", async () => {
     const user = userEvent.setup();
     const { draftRef } = renderMatrix({ hostStyle: "copilot" });
+    await expandMcpAppsDimensions(user);
     // Copilot preset is already ["fullscreen"]; unchecking it should
     // coerce to ["inline"] (matrix invariant — never empty).
     const cluster = screen.getByTestId("mcp-apps-dimension-availableDisplayModes");
@@ -241,10 +267,55 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
         ?.availableDisplayModes,
     ).toEqual(["inline"]);
   });
+
+  it("master toggle off preserves mcpAppsOverrides as dormant state (Reset stays the destructive action)", async () => {
+    // The master switch turns advertising off without losing the
+    // user's per-dimension model — toggling back on must restore the
+    // exact override set, not start fresh.
+    const user = userEvent.setup();
+    const { draftRef } = renderMatrix();
+    await expandMcpAppsDimensions(user);
+    const row = screen.getByTestId("mcp-apps-dimension-toolInputPartial");
+    await user.click(within(row).getByRole("switch")); // write override
+    expect(
+      draftRef.current.mcpProfile?.apps?.mcpAppsOverrides,
+    ).toEqual({ toolInputPartial: false });
+    // Master off → overrides persist (dormant), only the extension
+    // advertisement flips.
+    await user.click(
+      screen.getByRole("switch", { name: "Advertise MCP App support" }),
+    );
+    expect(
+      draftRef.current.mcpProfile?.apps?.mcpAppsOverrides,
+    ).toEqual({ toolInputPartial: false });
+    // Master back on → user sees the same override they configured.
+    await user.click(
+      screen.getByRole("switch", { name: "Advertise MCP App support" }),
+    );
+    expect(
+      draftRef.current.mcpProfile?.apps?.mcpAppsOverrides,
+    ).toEqual({ toolInputPartial: false });
+  });
+
+  it("master toggle off does not leave a dirty empty `extensions: {}` envelope", async () => {
+    // After deleting the only extension key the envelope must collapse
+    // — `appsToJson` / `applyJsonToDraft` hide empty extensions, so a
+    // residual `{}` would diverge from what the JSON editor shows.
+    const user = userEvent.setup();
+    const { draftRef } = renderMatrix();
+    await user.click(
+      screen.getByRole("switch", { name: "Advertise MCP App support" }),
+    );
+    expect(
+      (draftRef.current.clientCapabilities as Record<string, unknown>)
+        ?.extensions,
+    ).toBeUndefined();
+  });
 });
 
 describe("AppsExtensionTab — McpAppsCapabilityMatrix legacy-override migration", () => {
-  it("displays a legacy hostCapabilitiesOverride as a virtually-migrated matrix (Overridden badges reflect what the resolver advertises)", () => {
+  it("displays a legacy hostCapabilitiesOverride as a virtually-migrated matrix (Overridden badges reflect what the resolver advertises)", async () => {
+    const user = userEvent.setup();
     // Regression (Codex Bot on #2236): if the draft has legacy
     // `hostCapabilitiesOverride` and no `mcpAppsOverrides`, the matrix
     // UI must reflect the legacy values — otherwise the first toggle
@@ -267,18 +338,14 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix legacy-override migration
         attention={[]}
       />,
     );
-    // serverResources and logging are missing from the legacy
-    // override → migrated matrix sets them to false → "Overridden"
-    // badge present because Claude's preset has them true.
+    expect(screen.getByText(/legacy/)).toBeInTheDocument();
+    await expandMcpAppsDimensions(user);
     const serverResources = screen.getByTestId(
       "mcp-apps-dimension-serverResources",
     );
     expect(within(serverResources).getByText("Overridden")).toBeInTheDocument();
     const logging = screen.getByTestId("mcp-apps-dimension-logging");
     expect(within(logging).getByText("Overridden")).toBeInTheDocument();
-    // Subline annotated as legacy so the user knows where the values
-    // came from.
-    expect(screen.getByText(/legacy/)).toBeInTheDocument();
   });
 
   it("migrates legacy → matrix on the first row toggle and clears the legacy field", async () => {
@@ -303,7 +370,7 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix legacy-override migration
     expect(
       draftRef.current.mcpProfile?.apps?.mcpAppsOverrides,
     ).toBeUndefined();
-    // User toggles a single sibling row (toolInputPartial).
+    await expandMcpAppsDimensions(user);
     const row = screen.getByTestId("mcp-apps-dimension-toolInputPartial");
     await user.click(within(row).getByRole("switch"));
     // Legacy cleared.

@@ -28,6 +28,7 @@ import {
   type SandboxConfigSubKey,
 } from "../types";
 import { fieldsWithIssues } from "../focus/useClientDraftValidation";
+import { clientAdvertisesMcpApps } from "@/lib/host-capabilities";
 
 /* ============================================================
    Layout constants. The host renders as a single matrix node;
@@ -720,15 +721,17 @@ export function buildRedesignedHostCanvas(
     return { name, version };
   })();
 
-  // Whether the client advertises the MCP UI extension. Host-side Apps
-  // capabilities only matter when the client opts in to rendering iframes;
-  // a CLI like codex-mcp-client publishes neither the extension nor any
-  // UI ext block, so the matrix should hide the Apps section entirely.
-  const appsExtensionAdvertised = (() => {
-    const exts = draft.clientCapabilities?.extensions;
-    if (!isRecord(exts)) return false;
-    return isRecord(exts["io.modelcontextprotocol/ui"]);
-  })();
+  // Whether the client advertises the MCP UI extension with the spec-
+  // required MIME type. Host-side Apps capabilities only matter when the
+  // client opts in to rendering iframes; a CLI like codex-mcp-client
+  // publishes neither the extension nor any UI ext block, so the matrix
+  // should hide the Apps section entirely. Shared predicate keeps this
+  // gate aligned with `hostSupportsWidgetRendering` at runtime — earlier
+  // versions accepted a bare `{}` payload here while the renderer
+  // refused, which silently desynced the canvas from what would render.
+  const appsExtensionAdvertised = clientAdvertisesMcpApps(
+    draft.clientCapabilities,
+  );
 
   // Resolved vendor compat-runtime shim state. Drives the injected-globals
   // chips in the matrix. Tags on the chips only appear when the effective

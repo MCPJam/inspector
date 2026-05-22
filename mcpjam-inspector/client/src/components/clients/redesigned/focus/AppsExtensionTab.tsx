@@ -19,7 +19,16 @@ import type {
   ResolvedMcpAppsCapabilities,
   ResolvedOpenAiAppsCapabilities,
 } from "@/lib/client-styles";
+import {
+  getDefaultClientCapabilities,
+  MCP_UI_EXTENSION_ID,
+  MCP_UI_RESOURCE_MIME_TYPE,
+} from "@mcpjam/sdk/browser";
 import { Switch } from "@mcpjam/design-system/switch";
+import {
+  clientAdvertisesMcpApps,
+  isRecord,
+} from "@/lib/host-capabilities";
 import type { HostAttentionIssue, SandboxConfigSubKey } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 
@@ -1265,6 +1274,8 @@ function McpAppsCapabilityMatrix({
     updater: (prev: HostConfigInputV2) => HostConfigInputV2,
   ) => void;
 }) {
+  const [dimensionsOpen, setDimensionsOpen] = useState(false);
+  const advertised = clientAdvertisesMcpApps(draft.clientCapabilities);
   const rawOverridesRecord = draft.mcpProfile?.apps?.mcpAppsOverrides;
   const legacyOverride = draft.hostCapabilitiesOverride;
   // Legacy `hostCapabilitiesOverride` is the pre-matrix way of
@@ -1350,8 +1361,50 @@ function McpAppsCapabilityMatrix({
     };
   };
 
-  const clearOverride = () => {
-    // "Match host preset" clears BOTH paths — the matrix override
+  const setAdvertised = (next: boolean) => {
+    onDraftChange((prev) => {
+      const nextCaps: Record<string, unknown> = {
+        ...(prev.clientCapabilities ?? {}),
+      };
+      const exts: Record<string, unknown> = isRecord(nextCaps.extensions)
+        ? { ...nextCaps.extensions }
+        : {};
+      if (next) {
+        const defaultCaps = getDefaultClientCapabilities() as Record<
+          string,
+          unknown
+        >;
+        const defaultExts = isRecord(defaultCaps.extensions)
+          ? defaultCaps.extensions
+          : {};
+        const defaultUi = defaultExts[MCP_UI_EXTENSION_ID];
+        exts[MCP_UI_EXTENSION_ID] = isRecord(defaultUi)
+          ? { ...defaultUi }
+          : { mimeTypes: [MCP_UI_RESOURCE_MIME_TYPE] };
+      } else {
+        delete exts[MCP_UI_EXTENSION_ID];
+      }
+      // Preserve sibling extension keys when present; drop the envelope
+      // entirely when emptied so `appsToJson` / `applyJsonToDraft` and
+      // the JSON editor agree (an empty `extensions: {}` is the kind of
+      // hidden dirty shape the round-trip helpers collapse away).
+      if (Object.keys(exts).length === 0) {
+        delete nextCaps.extensions;
+      } else {
+        nextCaps.extensions = exts;
+      }
+      // Overrides are preserved across master toggle — turning the
+      // master switch off leaves any configured `mcpAppsOverrides` /
+      // legacy `hostCapabilitiesOverride` dormant so toggling back on
+      // restores the user's prior per-dimension model. "Reset" is the
+      // explicit destructive action for clearing overrides.
+      return { ...prev, clientCapabilities: nextCaps };
+    });
+  };
+
+  const clearOverride = (event?: { stopPropagation: () => void }) => {
+    event?.stopPropagation();
+    // Reset clears BOTH paths — the matrix override
     // and the legacy `hostCapabilitiesOverride` — so the resolver
     // falls back cleanly to the host style preset. Leaving the
     // legacy alive would silently keep the override active through
@@ -1442,47 +1495,88 @@ function McpAppsCapabilityMatrix({
   const overrideCount = hasAnyOverride
     ? Object.keys(effectiveOverridesForDisplay!).length
     : 0;
-  const enabledCount = MCP_APPS_DIMENSIONS.filter(({ key }) =>
-    Boolean(effectiveCapabilities[key]),
-  ).length;
-  const subline = hasAnyOverride
-    ? `${overrideCount} ${overrideCount === 1 ? "override" : "overrides"} active${
-        rawOverridesRecord === undefined && legacyOverride !== undefined
-          ? " (legacy)"
-          : ""
-      }`
-    : `${enabledCount} of ${MCP_APPS_DIMENSIONS.length} enabled`;
+  const showResetButton = advertised && hasAnyOverride;
+  const subline =
+    advertised && hasAnyOverride
+      ? `${overrideCount} ${overrideCount === 1 ? "override" : "overrides"} active${
+          rawOverridesRecord === undefined && legacyOverride !== undefined
+            ? " (legacy)"
+            : ""
+        }`
+      : "";
 
   return (
     <div className="rounded-[10px] border border-border bg-background">
-      {/* Header strip: title + status; reset only when the user has overrides. */}
+      {/* Single header row: left half is the disclosure (label + subline +
+          chevron), right half is the master Switch in its own hit zone.
+          Mirrors the window.openai section above. When the client does
+          not advertise the MCP UI extension the disclosure renders as
+          static (chevron hidden, no hover) since the dimension list is
+          inert without it. */}
       <div className="flex items-stretch border-b border-border">
-        <div className="flex flex-1 flex-col gap-0.5 px-3.5 py-2.5">
-          <span className="text-[12px] font-medium">MCP Apps</span>
-          <span className="text-[11px] text-muted-foreground">{subline}</span>
-        </div>
-        {hasAnyOverride ? (
-          <div className="flex items-center border-l border-border pr-3.5 pl-3">
+        {advertised ? (
+          <button
+            type="button"
+            onClick={() => setDimensionsOpen((v) => !v)}
+            aria-expanded={dimensionsOpen}
+            aria-controls="apps-extension-mcp-apps-dimensions"
+            className="flex flex-1 items-center justify-between gap-2 px-3.5 py-2.5 text-left hover:bg-muted/40"
+          >
+            <div className="flex flex-col gap-0.5">
+              <span className="text-[12px] font-medium">MCP App support</span>
+              {subline ? (
+                <span className="text-[11px] text-muted-foreground">
+                  {subline}
+                </span>
+              ) : null}
+            </div>
+            <ChevronDown
+              className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${
+                dimensionsOpen ? "rotate-180" : ""
+              }`}
+            />
+          </button>
+        ) : (
+          <div className="flex flex-1 items-center px-3.5 py-2.5">
+            <label
+              htmlFor="apps-extension-mcp-apps-toggle"
+              className="text-[12px] font-medium"
+            >
+              MCP App support
+            </label>
+          </div>
+        )}
+        {showResetButton ? (
+          // Sibling of the disclosure button — nesting an interactive
+          // Reset control inside a `<button>` is invalid and confuses
+          // keyboard / screen-reader users.
+          <div className="flex items-center border-l border-border px-3">
             <button
               type="button"
-              onClick={clearOverride}
-              className="rounded border border-border bg-background px-2 py-0.5 text-[11px] text-muted-foreground transition hover:bg-muted"
-              title="Revert all overrides to the host style preset"
+              onClick={() => clearOverride()}
+              className="cursor-pointer text-[11px] text-muted-foreground underline hover:text-foreground"
             >
               Reset
             </button>
           </div>
         ) : null}
+        <div className="flex items-center border-l border-border pl-3 pr-3.5">
+          <Switch
+            id="apps-extension-mcp-apps-toggle"
+            checked={advertised}
+            onCheckedChange={setAdvertised}
+            aria-label="Advertise MCP App support"
+          />
+        </div>
       </div>
 
-      {/* availableDisplayModes — multi-checkbox cluster. Always visible
-          (it's the most-edited dimension and the one published host
-          tables most prominently differ on, e.g. Copilot is fullscreen-
-          only). */}
-      <div
-        data-testid="mcp-apps-dimension-availableDisplayModes"
-        className="flex items-center justify-between gap-3 border-b border-border/50 px-3.5 py-2"
-      >
+      {advertised && dimensionsOpen ? (
+        <div id="apps-extension-mcp-apps-dimensions">
+          {/* availableDisplayModes — multi-checkbox cluster. */}
+          <div
+            data-testid="mcp-apps-dimension-availableDisplayModes"
+            className="flex items-center justify-between gap-3 border-b border-border/50 px-3.5 py-2"
+          >
         <div className="flex min-w-0 flex-col gap-0.5">
           <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
             <span className="font-mono text-[12px]">availableDisplayModes</span>
@@ -1518,21 +1612,23 @@ function McpAppsCapabilityMatrix({
         </div>
       </div>
 
-      <div className="flex flex-col">
-        {MCP_APPS_DIMENSIONS.map(({ key, description }) => (
-          <McpAppsDimensionRow
-            key={key}
-            dimensionKey={key}
-            description={description}
-            effective={Boolean(effectiveCapabilities[key])}
-            overridden={
-              effectiveOverridesForDisplay !== undefined &&
-              key in effectiveOverridesForDisplay
-            }
-            onToggle={(next) => setBooleanOverride(key, next)}
-          />
-        ))}
-      </div>
+          <div className="flex flex-col">
+            {MCP_APPS_DIMENSIONS.map(({ key, description }) => (
+              <McpAppsDimensionRow
+                key={key}
+                dimensionKey={key}
+                description={description}
+                effective={Boolean(effectiveCapabilities[key])}
+                overridden={
+                  effectiveOverridesForDisplay !== undefined &&
+                  key in effectiveOverridesForDisplay
+                }
+                onToggle={(next) => setBooleanOverride(key, next)}
+              />
+            ))}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
