@@ -1,7 +1,88 @@
-diff --git a/.changeset/byok-no-service-token-2218.md b/.changeset/byok-no-service-token-2218.md
+diff --git a/.changeset/chat-sender-spoof-guard.md b/.changeset/chat-sender-spoof-guard.md
 deleted file mode 100644
-index 40dcd9f23..000000000
---- a/.changeset/byok-no-service-token-2218.md
+index dc1381b9f..000000000
+--- a/.changeset/chat-sender-spoof-guard.md
++++ /dev/null
+@@ -1,8 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-### `@mcpjam/inspector`
+-- **Reject spoofed `senderUserId` on shared chat persistence**: the incoming UI transcript is client-controlled, so `stampSenderUserIdsOnSessionMessages` now only trusts the extracted `senderUserId` when it matches the server-authenticated principal for the request (`c.var.requestLogContext.userId`). A collaborator who hand-crafts a message with `metadata.senderUserId: "u-bob"` no longer gets that id stamped onto the persisted Convex trace — the per-message avatar on the saved session reflects who actually sent the message according to the auth context, not whoever the client claims sent it.
+-- **Wired through all three chat dispatch paths** in `server/routes/mcp/chat-v2.ts` (MCPJam free model, org provider runtime, web direct), each of which calls `stampSenderUserIdsOnSessionMessages` with the resolved `authenticatedUserId`. New `chat-v2.hosted.test.ts` case covers the spoof-rejection contract end-to-end; `chat-ingestion.test.ts` covers the unit-level helper.
+-- **Helper extraction**: new `normalizeSenderUserId` collapses the two prior copies of "string and non-empty" validation in `readSenderUserId`.
+diff --git a/.changeset/cleanup-legacy-view-aliases.md b/.changeset/cleanup-legacy-view-aliases.md
+deleted file mode 100644
+index ba8e781b0..000000000
+--- a/.changeset/cleanup-legacy-view-aliases.md
++++ /dev/null
+@@ -1,7 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-### `@mcpjam/inspector`
+-- **Stop sending `outputTemplate` + `serverInfo` legacy aliases to `createMcpView`**: `useSaveView` no longer forwards the input-only `outputTemplate` and `serverInfo` fields when persisting a view through `mcpAppViews:create`. The canonical `resourceUri` (from `getUIResourceUri()` in `part-switch.tsx`) is the single source of truth for what gets saved; the backend normalizer was validating `outputTemplate` whenever it was supplied even though `resourceUri` always won precedence, so the previous code path conditionally elided non-`ui://` OpenAI templates to avoid validation failures. With the aliases removed, that conditional and its `liveOutputTemplateIsUi` derivation are gone.
+-- `viewOriginProtocol` documentation-only provenance field is unchanged.
+diff --git a/.changeset/delete-legacy-chatgpt-app-renderer.md b/.changeset/delete-legacy-chatgpt-app-renderer.md
+deleted file mode 100644
+index 7bd57da1e..000000000
+--- a/.changeset/delete-legacy-chatgpt-app-renderer.md
++++ /dev/null
+@@ -1,9 +0,0 @@
+----
+-"@mcpjam/inspector": minor
+----
+-
+-### `@mcpjam/inspector`
+-- **Delete the legacy `ChatGPTAppRenderer` + `chatgpt-apps` server router**: ~3,400 lines of OpenAI Apps SDK-shaped code removed now that the MCP Apps renderer is the canonical path for both `mcp-apps` and `openai-apps` view-origin tools. Removed: `chatgpt-app-renderer.tsx` (1794 lines), `chatgpt-widget-loaders.ts`, `chatgpt-sandboxed-iframe.tsx`, the `apps-api.ts` client wrapper, the `server/routes/apps/chatgpt-apps/` router (`index.ts` + `sandbox-proxy.html`), and the associated test fixtures and middleware allowlist entries.
+-- **Renderer entry point unchanged for callers**: the canonical `McpAppsRenderer` already handled OpenAI-origin tools via the `injectOpenAICompat` shim path (covered by the `window-openai-capability-matrix` series), so removing the legacy renderer does not change the user-visible widget rendering surface. Auth-integration and session-auth tests prune their references to the deleted router; sandbox-proxy bundle fresh-check loses the `chatgpt-apps` variant.
+-- **HOSTED_DEPLOYMENT.md** updated to drop the legacy router from the deployable surface description.
+-- **No backwards-compat shim**: per the "no vestigial adapters" rule, the deletion is direct — no delegation wrappers, no dynamic-import workarounds. The MCP Apps renderer is the only renderer.
+diff --git a/.changeset/drop-legacy-openai-view-delete-hook.md b/.changeset/drop-legacy-openai-view-delete-hook.md
+deleted file mode 100644
+index 43894eee9..000000000
+--- a/.changeset/drop-legacy-openai-view-delete-hook.md
++++ /dev/null
+@@ -1,7 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-### `@mcpjam/inspector`
+-- **Drop the legacy `openaiAppViews:remove` delete hook from `ViewsTab`**: after the Phase B backfill, all saved views live in `mcpAppViews`, so `useViewMutations` no longer needs to expose `removeOpenaiView` and `ViewsTab.handleDelete` no longer needs to branch on `view.protocol`. Deletion always routes through `removeMcpView({ viewId })`. The `openaiAppViews:remove` Convex mutation itself is being dropped in the backend's Phase C2 cleanup; this commit removes the inspector-side caller in advance so that drop is a no-op for this repo.
+-- Test-side mock for `removeOpenaiView` removed from `ViewsTab.layout.test.tsx`; `useDeleteView` dep array slimmed accordingly.
+diff --git a/.changeset/mcp-app-master-toggle.md b/.changeset/mcp-app-master-toggle.md
+deleted file mode 100644
+index 02f723eb6..000000000
+--- a/.changeset/mcp-app-master-toggle.md
++++ /dev/null
+@@ -1,8 +0,0 @@
+----
+-"@mcpjam/inspector": minor
+----
+-
+-### `@mcpjam/inspector`
+-- **Master "MCP App" advertisement toggle in the Apps tab**: new switch at the top of the SEP-1865 spec-bridge matrix that controls whether the simulated host advertises the MCP UI extension at all. Off = `clientCapabilities.extensions["ui/mcp"]` is removed entirely, matching a host that doesn't speak MCP Apps (`app.*` calls fall to their feature-detected no-op path). On = the extension is restored to the SDK default (`getDefaultClientCapabilities()` → `mimeTypes: [MCP_UI_RESOURCE_MIME_TYPE]`). Sibling `extensions.*` keys are preserved when present; an emptied envelope is dropped entirely so `appsToJson` / `applyJsonToDraft` and the JSON editor agree on the same shape (no hidden `extensions: {}` round-trip drift).
+-- **Overrides are preserved across the master toggle**: turning advertisement off leaves any configured `mcpAppsOverrides` / legacy `hostCapabilitiesOverride` dormant on the draft, so toggling back on restores the user's prior per-dimension matrix. "Reset" remains the explicit destructive action that clears both override paths.
+-- **Per-dimension matrix collapses into a disclosure** when advertisement is on, and is hidden entirely when off — the "Overridden" badge per row and the dormant-overrides note when toggled off both surface the override state without forcing the dimension grid open. Two follow-up commits prune the inline "Preset: …" sublines and reset-button affordance to keep the row body honest about what the matrix can change vs. what's controlled by the toggle.
+diff --git a/.changeset/mcp-apps-advertisement-gates.md b/.changeset/mcp-apps-advertisement-gates.md
+deleted file mode 100644
+index ca191ef2e..000000000
+--- a/.changeset/mcp-apps-advertisement-gates.md
++++ /dev/null
+@@ -1,6 +0,0 @@
+----
+-"@mcpjam/inspector": minor
+----
+-
+-### `@mcpjam/inspector`
+-- **HostContext advertisement gates (PR C of the foundation series)**: the MCP Apps spec-bridge matrix now also gates the `HostContext` payload advertised in `ui/initialize`. (1) `HostContext.toolInfo` is omitted entirely when `matrix.toolInfo === false` — Microsoft 365 Copilot doesn't deliver `app.getHostContext()?.toolInfo` per its published Component-bridge table, so simulated Copilot widgets now see `undefined` matching real Copilot. (2) `HostContext.availableDisplayModes` is intersected with `matrix.availableDisplayModes` — Copilot's allowlist becomes `["fullscreen"]` instead of the inspector's permissive `["inline", "fullscreen", "pip"]` default. When the intersection would be empty (configured asks for modes the simulated host doesn't advertise), falls back to the matrix value alone so the widget never sees an unrenderable empty array (matrix invariant `length >= 1`). The existing `bridge.onrequestdisplaymode` clamp at the renderer already honors `HostContext.availableDisplayModes`, so this PR carries the matrix value through to the place that already enforces it. 4 new renderer tests cover Claude full-surface + Copilot subset for both fields.
+diff --git a/.changeset/mcp-apps-canvas-chip.md b/.changeset/mcp-apps-canvas-chip.md
+deleted file mode 100644
+index 674013345..000000000
+--- a/.changeset/mcp-apps-canvas-chip.md
 +++ /dev/null
 @@ -1,6 +0,0 @@
 ----
@@ -9,30 +90,193 @@ index 40dcd9f23..000000000
 ----
 -
 -### `@mcpjam/inspector`
--- **BYOK auth**: stop sending `INSPECTOR_SERVICE_TOKEN` on normal BYOK chat and eval traffic (#2218). Hosted and local/npx now share one path — user auth goes to Convex, Convex checks project access, then runs or resolves the provider. Raw-key routes that return decrypted org model config still require the service token. Adds `/stream/org` eval step-mode parity with `/stream` so cloud BYOK evals can run in Convex without exposing provider keys. Local-runtime providers (Ollama, custom Base URL) keep resolving through `/stream/org/resolve` and running in the inspector.
+-- **`app.*` chip in the canvas view-iframe injected-globals strip**: surfaces the SEP-1865 MCP Apps spec-bridge override state alongside the existing `window.openai` chip. Reads "from preset" when the user hasn't touched the matrix, or "custom (N overrides)" when `mcpProfile.apps.mcpAppsOverrides` has sparse keys. Clicking the chip routes to the Apps Extension tab (same destination as the `window.openai` chip). The two chips are independent — `window.openai` and `app.*` represent different surfaces and never cross-gate. Tooltip on the `app.*` chip explains the spec bridge is the primary protocol surface (always present, no injection toggle).
+diff --git a/.changeset/mcp-apps-capability-matrix-foundation.md b/.changeset/mcp-apps-capability-matrix-foundation.md
+deleted file mode 100644
+index 886ec3b83..000000000
+--- a/.changeset/mcp-apps-capability-matrix-foundation.md
++++ /dev/null
+@@ -1,11 +0,0 @@
+----
+-"@mcpjam/inspector": minor
+----
+-
+-### `@mcpjam/inspector`
+-- **MCP Apps spec-bridge per-dimension capability matrix (foundation)**: introduces `McpAppsCapabilities` / `ResolvedMcpAppsCapabilities` types and `MCP_APPS_FULL_SURFACE` / `MCP_APPS_COPILOT_SURFACE` presets that mirror Microsoft 365 Copilot's published Component-bridge table. Each host style now declares its SEP-1865 `HostCapabilities` advertisement via a 14-dimension matrix (`availableDisplayModes`, `toolInputPartial`, `toolCancelled`, `hostContextChanged`, `resourceTeardown`, `toolInfo`, `serverResources`, `logging`, `updateModelContext`, `message`, `sandboxPermissions`, `cspFrameDomains`, `cspBaseUriDomains`, `resourcePrefersBorder`) instead of a flat `hostCapabilities` blob — the new `buildHostCapabilities(matrix, augment?)` is the single derivation point. Independent from the existing `window.openai` shim matrix: `app.callTool` and `window.openai.callTool` are different surfaces and never cross-gate.
+-- **Per-host preset matrices wired**: Claude / ChatGPT / Cursor / Copilot / Codex / MCPJam each carry an `mcpAppsCapabilities` matrix tuned to match their currently-advertised `HostCapabilities` blob byte-for-byte. Copilot now advertises the M365-published subset (no `serverResources` / `logging`, fullscreen-only display, no notification gates). Cursor's `listChanged: false` sub-field detail is preserved via a new preset-only `hostCapabilitiesAugment` (not user-editable).
+-- **Sparse user override layer**: `mcpProfile.apps.mcpAppsOverrides` accepts a sparse `McpAppsCapabilities` and merges over the host style preset via `mergeMcpAppsCapabilities` + `resolveEffectiveMcpAppsCapabilities`. `availableDisplayModes` is replaced (not unioned); empty arrays coerce to `["inline"]` (spec default).
+-- **Migration helper for legacy `hostCapabilitiesOverride`**: `hostCapabilitiesOverrideToMatrix(legacy)` converts the existing top-level `HostConfigInputV2.hostCapabilitiesOverride` raw blob into the sparse matrix shape. Legacy field stays readable for one release window; new writes prefer `mcpAppsOverrides`. Precedence rule: matrix override wins if both are present.
+-- **No behavior change for non-Copilot hosts**: `resolveEffectiveHostCapabilities` now folds the matrix when the new override is set, otherwise routes through the legacy strip-then-return path and the matrix-derived preset blob. Snapshot equality preserved for Claude / ChatGPT / Cursor / Codex / MCPJam (verified in updated `registry.test.ts` + `mcp-apps-renderer.test.tsx`).
+-- **Foundation only**: no notification-emission gates, no resource-meta gates, no annotation gates, no matrix UI in `AppsExtensionTab.tsx` yet. Those land in subsequent PRs (B/C/D in the foundation series). This PR is behavior-neutral aside from Copilot's now-correct advertisement and is safe to ship before the matrix editor is built.
+diff --git a/.changeset/mcp-apps-isolation-and-threading-tests.md b/.changeset/mcp-apps-isolation-and-threading-tests.md
+deleted file mode 100644
+index 4c2ae82ff..000000000
+--- a/.changeset/mcp-apps-isolation-and-threading-tests.md
++++ /dev/null
+@@ -1,6 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-### `@mcpjam/inspector`
+-- **Defensive test coverage for the two-matrix architecture + override threading**: 11 new tests across three areas defending the foundation series' contracts. (1) **Cross-matrix isolation source-grep**: asserts `useToolInputStreaming.ts`, `mcp-apps-modal.tsx`, and the `McpAppsCapabilityMatrix` / `OpenaiAppsCapabilityMatrix` component bodies in `AppsExtensionTab.tsx` never reference the OTHER matrix's runtime gate identifiers. When the eventual PR B notification gates land, these tests catch any accidental cross-wiring at PR-review time. (2) **`draftToHostConfigInputV2` carries `mcpAppsOverrides`**: chatbox creation inherits the project default's matrix override through `mcpProfile`, same guarantee as the legacy `hostCapabilitiesOverride` inheritance. (3) **`projectHostConfigRunOverride` carries both override paths**: eval runs project the full `mcpProfile` (and the legacy field) into the per-Run snapshot, so eval traces match what the production host's resolver advertises.
+diff --git a/.changeset/mcp-apps-matrix-ui-simplify.md b/.changeset/mcp-apps-matrix-ui-simplify.md
+deleted file mode 100644
+index 8b9eb7062..000000000
+--- a/.changeset/mcp-apps-matrix-ui-simplify.md
++++ /dev/null
+@@ -1,9 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-### `@mcpjam/inspector`
+-- **Simplified Apps extension matrix UI**: the `McpAppsCapabilityMatrix` body now uses a single flat dimension list with per-row metadata (label + description shown on hover) instead of the previous "main vs. advanced" split disclosure. The two dimension arrays (`MCP_APPS_MAIN_DIMENSIONS` / `MCP_APPS_ADVANCED_DIMENSIONS`) collapse into one `MCP_APPS_DIMENSIONS` typed by `McpAppsDimensionKey` with a single `McpAppsDimensionMeta` record per row.
+-- **Tighter "Overridden" affordance on both matrices**: the per-row sublines on the `window.openai` capability matrix drop the redundant "Preset: <value>" text and keep only the orange "Overridden" badge — the preset value is already visible as the row's effective state when the user hasn't diverged. Same simplification applied to the `app.*` spec-bridge matrix rows.
+-- **Canvas client capability chip parity**: `ClientCapabilityMatrix` and `canvasBuilder` updated so the canvas-side surface stays in sync with the simplified matrix shape; 1 new `RedesignedClientCanvas` test asserts the chip reflects the matrix state.
+-- **No behavior change to the underlying override**: same `mcpAppsOverrides` sparse merge, same preset baselines, same JSON editor round-trip. Visual/structural refactor only.
+diff --git a/.changeset/mcp-apps-matrix-ui.md b/.changeset/mcp-apps-matrix-ui.md
+deleted file mode 100644
+index ddbd9c248..000000000
+--- a/.changeset/mcp-apps-matrix-ui.md
++++ /dev/null
+@@ -1,6 +0,0 @@
+----
+-"@mcpjam/inspector": minor
+----
+-
+-### `@mcpjam/inspector`
+-- **Structured matrix UI for the SEP-1865 `app.*` spec bridge in the Apps tab**: clickable surface for the per-dimension override added in #2226. Sits below the existing `window.openai` matrix as a sibling — two independent surfaces, never cross-gated. Layout: `availableDisplayModes` multi-checkbox cluster (always visible), main disclosure with notification gates + `serverResources` / `logging`, and an Advanced disclosure for sandbox sub-fields, resource-meta, `toolInfo`, and the rare advertise rows. "Overridden" badge on rows the user has diverged from the host style preset; "Match host preset" chip clears the entire matrix at once. The matrix invariant (`availableDisplayModes` non-empty) is enforced in the UI by force-enabling `"inline"` when the user unchecks the last mode. Round-trips with `appsToJson` / `applyJsonToDraft` so the JSON editor below stays in sync. 11 new component-level tests cover toggle → sparse override, toggle-back-to-preset → drop key, "Overridden" badge tracking, chip clear, disabled-when-clean, Advanced disclosure visibility, mode cluster edits, and the empty-allowlist coercion.
+diff --git a/.changeset/mcp-apps-modal-parity.md b/.changeset/mcp-apps-modal-parity.md
+deleted file mode 100644
+index 175f28fec..000000000
+--- a/.changeset/mcp-apps-modal-parity.md
++++ /dev/null
+@@ -1,6 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-### `@mcpjam/inspector`
+-- **Modal widget advertises the same `HostCapabilities` as the inline widget**: previously `mcp-apps-modal.tsx` hardcoded `{ openLinks, serverTools, serverResources, logging, updateModelContext, message }` at AppBridge construction, which masked Copilot's published M365 subset (no `serverResources` / `logging`) and silently ignored user overrides in `mcpProfile.apps.mcpAppsOverrides`. The modal now receives the resolved `effectiveHostCapabilities` from the inline renderer and advertises an identical surface — `app.getHostCapabilities()` returns the same record regardless of which iframe the widget is mounted in. Test added that asserts inline/modal parity on Copilot.
+diff --git a/.changeset/mcp-apps-notification-gates.md b/.changeset/mcp-apps-notification-gates.md
+deleted file mode 100644
+index 4d215ea80..000000000
+--- a/.changeset/mcp-apps-notification-gates.md
++++ /dev/null
+@@ -1,7 +0,0 @@
+----
+-"@mcpjam/inspector": minor
+----
+-
+-### `@mcpjam/inspector`
+-- **Matrix-gated notification emissions (PR B of the foundation series)**: the MCP Apps spec-bridge matrix now actually suppresses runtime notification emissions on hosts that flip the matching row off. `bridge.sendToolInputPartial` and `bridge.sendToolCancelled` honor `mcpAppsOverrides.toolInputPartial` and `.toolCancelled` (in both `useToolInputStreaming.ts` and the renderer's `oncalltool` failure paths). `bridge.setHostContext` honors `mcpAppsOverrides.hostContextChanged` — Microsoft 365 Copilot doesn't deliver `host-context-changed` per its published Component-bridge table, so simulated Copilot hosts now match: the host context update is only applied at `ui/initialize` time and never emitted mid-session. Null matrix ref (initial render window) reads as "default on" so pre-matrix behavior survives every host the renderer hasn't classified yet.
+-- **Resolver default-on for unknown hosts without override**: `resolveEffectiveMcpAppsCapabilities` now returns `MCP_APPS_FULL_SURFACE` when no host style is configured AND no override is set — preserves pre-matrix permissive defaults for callers that don't supply a host style (test renderers, edge cases during init). When an override IS present against an unknown host, the foundation PR's NO_CLAIMS fallback still applies so persisted opt-ins can't accidentally advertise near-full support.
+diff --git a/.changeset/mcp-apps-overrides-json-roundtrip.md b/.changeset/mcp-apps-overrides-json-roundtrip.md
+deleted file mode 100644
+index e18b98439..000000000
+--- a/.changeset/mcp-apps-overrides-json-roundtrip.md
++++ /dev/null
+@@ -1,6 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-### `@mcpjam/inspector`
+-- **Apps tab JSON editor surfaces `mcpAppsOverrides`**: round-trip serialize + parse for the SEP-1865 `app.*` spec-bridge sparse matrix override added in #2226. Until the structured matrix UI lands, users can configure the override by hand-editing JSON in the Apps tab — typing `{ "mcpAppsOverrides": { "serverResources": false, "logging": false } }` now persists to `mcpProfile.apps.mcpAppsOverrides` instead of being silently dropped. Soft-validated on parse: boolean rows require booleans, `availableDisplayModes` filters to known modes (`inline` / `fullscreen` / `pip`), and entirely-invalid blocks collapse to `undefined` so the resolver falls back cleanly to the host style preset. Sibling fields (`compatRuntime`, `sandbox`, `uiInitialize`) are preserved across edits. Sparse in serialize: omitted from the JSON when no override is persisted.
+diff --git a/.changeset/mcp-apps-resource-meta-gates.md b/.changeset/mcp-apps-resource-meta-gates.md
+deleted file mode 100644
+index 0d83955c4..000000000
+--- a/.changeset/mcp-apps-resource-meta-gates.md
++++ /dev/null
+@@ -1,6 +0,0 @@
+----
+-"@mcpjam/inspector": minor
+----
+-
+-### `@mcpjam/inspector`
+-- **Resource-meta interpretation gates (PR D of the foundation series)**: the SEP-1865 MCP Apps matrix now also gates how the renderer interprets resource `_meta.ui.*` fields. Four dimensions wired: (1) `cspFrameDomains: false` strips `widgetCsp.frameDomains` before the sandbox resolver sees it; (2) `cspBaseUriDomains: false` strips `widgetCsp.baseUriDomains`; (3) `sandboxPermissions: false` ignores the widget-declared permissions entirely (Microsoft 365 Copilot doesn't pipe `_meta.ui.permissions` to the iframe); (4) `resourcePrefersBorder: false` ignores `_meta.ui.prefersBorder`, so the iframe chrome falls back to host-default rendering regardless of the widget hint. SDK helpers (`resolveSandboxCsp` / `resolveSandboxPermissions`) are unchanged — the gates post-process the resource declaration on the renderer side (foundation plan's D3 decision: no SDK API change). 4 new renderer tests cover Copilot stripping + Claude pass-through for both CSP sub-fields and permissions; existing iframe-chrome rendering covers `prefersBorder` through the existing `matrixGatedPrefersBorder` derivation.
+diff --git a/.changeset/window-openai-capability-matrix.md b/.changeset/window-openai-capability-matrix.md
+deleted file mode 100644
+index 80dfdf6ff..000000000
+--- a/.changeset/window-openai-capability-matrix.md
++++ /dev/null
+@@ -1,13 +0,0 @@
+----
+-"@mcpjam/inspector": minor
+-"@mcpjam/sdk": minor
+----
+-
+-### `@mcpjam/sdk`
+-- **`injectOpenAICompat` per-method capability surface**: new optional `capabilities` field on `injectOpenAICompat(html, widgetData)` controls which `window.openai.*` methods the runtime exposes. Disabled methods are LITERALLY ABSENT on `window.openai` (`typeof window.openai.uploadFile === "undefined"`) so widgets that feature-detect take their fallback path — matching Microsoft 365 Copilot's published subset and OpenAI's recommended detection pattern. `requestDisplayMode` is tri-state (`"all" | "fullscreen-only" | "none"`) and enforced inside the runtime (synchronous return), not at the host. Backwards compatible: callers that don't pass `capabilities` get the full ChatGPT surface they had before.
+-
+-### `@mcpjam/inspector`
+-- **Per-method `window.openai` matrix in the Apps tab**: replaces the single "Enable `window.openai`" switch with a per-method matrix matching the OpenAI Apps SDK / Microsoft 365 Copilot Component-bridge table. Preset chips — "Match ChatGPT", "Match Copilot", "Match host preset" — set the override block to a well-known shape; the inspector now ships `OPENAI_APPS_FULL_SURFACE` and `OPENAI_APPS_COPILOT_SURFACE` constants. `selectFiles` / `setOpenInAppUrl` are typed for forward compatibility but flagged "Not implemented in Inspector" until the runtime wires them.
+-- **Capability changes invalidate the iframe reload key**: switching host styles from ChatGPT (full) to Copilot (subset) mid-session, or flipping a single method in the matrix, now refetches the widget HTML — the previous reload key only tracked injection on/off and would leave stale bytes in the iframe.
+-- **Persisted replay provenance**: eval traces and saved views now record `injectedOpenAiCompatCapabilities` next to `injectedOpenAiCompat`, so replay/debug can answer "which surface was injected", not just "shim: yes/no". Legacy records (boolean only) replay against the full ChatGPT surface — matches the runtime default at capture time.
+-- **Defense-in-depth host-side gates** on `openai:uploadFile` / `openai:getFileDownloadUrl` / `openai:setWidgetState` / `openai/requestModal` / `openai/requestClose` / `openai/requestCheckout` messages. The primary contract is "method absent on `window.openai`"; these gates only fire if a widget captured a stale method reference or hand-crafted the postMessage.
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index e3dbc1e23..8db6e1f6f 100644
+index 8db6e1f6f..9aaeb082a 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.4.14",
-+  "version": "2.4.15",
+-  "version": "2.4.15",
++  "version": "2.5.0",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
+@@ -111,7 +111,7 @@
+     "@hono/node-server": "^1.13.7",
+     "@hookform/resolvers": "^3.10.0",
+     "@mcp-ui/client": "^5.9.0",
+-    "@mcpjam/sdk": "^1.7.1",
++    "@mcpjam/sdk": "^1.8.0",
+     "@modelcontextprotocol/client": "^2.0.0-alpha.2",
+     "@modelcontextprotocol/ext-apps": "^1.0.1",
+     "@ngrok/ngrok": "^1.6.0",
 diff --git a/package-lock.json b/package-lock.json
-index 6bf40c872..21d4bd9fb 100644
+index 21d4bd9fb..5714efc28 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -289,7 +289,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.4.14",
-+      "version": "2.4.15",
+-      "version": "2.4.15",
++      "version": "2.5.0",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/anthropic": "^3.0.36",
+@@ -311,7 +311,7 @@
+         "@hono/node-server": "^1.13.7",
+         "@hookform/resolvers": "^3.10.0",
+         "@mcp-ui/client": "^5.9.0",
+-        "@mcpjam/sdk": "^1.7.1",
++        "@mcpjam/sdk": "^1.8.0",
+         "@modelcontextprotocol/client": "^2.0.0-alpha.2",
+         "@modelcontextprotocol/ext-apps": "^1.0.1",
+         "@ngrok/ngrok": "^1.6.0",
+@@ -35989,7 +35989,7 @@
+     },
+     "sdk": {
+       "name": "@mcpjam/sdk",
+-      "version": "1.7.1",
++      "version": "1.8.0",
+       "license": "MIT",
+       "dependencies": {
+         "@ai-sdk/anthropic": "^2.0.17",
+diff --git a/sdk/package.json b/sdk/package.json
+index d6fbd3421..96ce02708 100644
+--- a/sdk/package.json
++++ b/sdk/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@mcpjam/sdk",
+-  "version": "1.7.1",
++  "version": "1.8.0",
+   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
+   "type": "module",
+   "main": "dist/index.js",

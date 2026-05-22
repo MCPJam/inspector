@@ -1,6 +1,6 @@
 import type { Edge } from "@xyflow/react";
 import { getModelById } from "@/shared/types";
-import { findHostStyle } from "@/lib/client-styles";
+import { findHostStyle, getCompatRuntimeForStyle } from "@/lib/client-styles";
 import {
   resolveEffectiveCompatRuntime,
   resolveEffectiveHostCapabilities,
@@ -28,6 +28,7 @@ import {
   type SandboxConfigSubKey,
 } from "../types";
 import { fieldsWithIssues } from "../focus/useClientDraftValidation";
+import { clientAdvertisesMcpApps } from "@/lib/host-capabilities";
 
 /* ============================================================
    Layout constants. The host renders as a single matrix node;
@@ -720,25 +721,25 @@ export function buildRedesignedHostCanvas(
     return { name, version };
   })();
 
-  // Whether the client advertises the MCP UI extension. Host-side Apps
-  // capabilities only matter when the client opts in to rendering iframes;
-  // a CLI like codex-mcp-client publishes neither the extension nor any
-  // UI ext block, so the matrix should hide the Apps section entirely.
-  const appsExtensionAdvertised = (() => {
-    const exts = draft.clientCapabilities?.extensions;
-    if (!isRecord(exts)) return false;
-    return isRecord(exts["io.modelcontextprotocol/ui"]);
-  })();
+  // Whether the client advertises the MCP UI extension with the spec-
+  // required MIME type. Host-side Apps capabilities only matter when the
+  // client opts in to rendering iframes; a CLI like codex-mcp-client
+  // publishes neither the extension nor any UI ext block, so the matrix
+  // should hide the Apps section entirely. Shared predicate keeps this
+  // gate aligned with `hostSupportsWidgetRendering` at runtime — earlier
+  // versions accepted a bare `{}` payload here while the renderer
+  // refused, which silently desynced the canvas from what would render.
+  const appsExtensionAdvertised = clientAdvertisesMcpApps(
+    draft.clientCapabilities,
+  );
 
-  // Resolved vendor compat-runtime shim state. Drives the "Compat
-  // shims" chip in the matrix. The "fromOverride" flag tracks whether
-  // the value came from the user-set profile (`apps.compatRuntime`)
-  // or from the host style preset — the chip's "(from preset)"
-  // qualifier surfaces this distinction so users know whether their
-  // edit is doing something.
+  // Resolved vendor compat-runtime shim state. Drives the injected-globals
+  // chips in the matrix. Tags on the chips only appear when the effective
+  // surface diverges from the host style preset — not for the default case.
   const compatRuntimeOverride = draft.mcpProfile?.apps?.compatRuntime?.openaiApps;
   const overridesRecord =
     draft.mcpProfile?.apps?.compatRuntime?.openaiAppsOverrides;
+  const presetCompatRuntime = getCompatRuntimeForStyle(draft.hostStyle);
   const effectiveCompatRuntime = resolveEffectiveCompatRuntime({
     profile: draft.mcpProfile,
     hostStyle: draft.hostStyle,
@@ -759,7 +760,9 @@ export function buildRedesignedHostCanvas(
     : 0;
   const compatRuntime = {
     openaiApps: effectiveCompatRuntime.injected,
-    fromOverride: typeof compatRuntimeOverride === "boolean",
+    fromOverride:
+      typeof compatRuntimeOverride === "boolean" &&
+      compatRuntimeOverride !== presetCompatRuntime.injected,
     // Whether the user has set any per-method override on top of the
     // preset — drives the "custom" vs "preset" label in the chip.
     hasMethodOverrides:

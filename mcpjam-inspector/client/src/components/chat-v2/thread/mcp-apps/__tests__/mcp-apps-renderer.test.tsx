@@ -255,8 +255,10 @@ import {
   ChatboxHostThemeProvider,
 } from "@/contexts/chatbox-client-style-context";
 import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
+import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
 import { WidgetSurfaceProvider } from "@/contexts/widget-surface-context";
 import type { McpUiHostCapabilities } from "@modelcontextprotocol/ext-apps/app-bridge";
+import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 const baseProps = {
@@ -461,6 +463,407 @@ describe("MCPAppsRenderer tool input streaming", () => {
     // modal post-fix. (Pre-fix the modal would have included them.)
     expect(modalCaps).not.toHaveProperty("serverResources");
     expect(modalCaps).not.toHaveProperty("logging");
+  });
+
+  it("includes HostContext.toolInfo when the matrix has toolInfo: true (Claude default)", async () => {
+    render(
+      <ChatboxHostStyleProvider value="claude">
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostStyleProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+    const hostContext = appBridgeArgsRef.current?.options?.hostContext as
+      | Record<string, unknown>
+      | undefined;
+    expect(hostContext).toHaveProperty("toolInfo");
+    expect((hostContext?.toolInfo as { tool: { name: string } }).tool.name).toBe(
+      "test-tool",
+    );
+  });
+
+  it("omits HostContext.toolInfo entirely when the matrix has toolInfo: false (Copilot)", async () => {
+    // Microsoft 365 Copilot doesn't deliver `app.getHostContext()?.toolInfo`
+    // per its published Component-bridge table. A widget that probes
+    // for that field must see undefined — same as real Copilot.
+    render(
+      <ChatboxHostStyleProvider value="copilot">
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostStyleProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+    const hostContext = appBridgeArgsRef.current?.options?.hostContext as
+      | Record<string, unknown>
+      | undefined;
+    expect(hostContext).not.toHaveProperty("toolInfo");
+  });
+
+  it("strips inherited HostContext.toolInfo when the matrix has toolInfo: false", async () => {
+    mockHostContextStoreState.draftHostContext = {
+      toolInfo: {
+        id: "draft-call",
+        tool: { name: "draft-tool" },
+      },
+    };
+
+    render(
+      <ChatboxHostStyleProvider value="copilot">
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostStyleProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+    const hostContext = appBridgeArgsRef.current?.options?.hostContext as
+      | Record<string, unknown>
+      | undefined;
+    expect(hostContext).not.toHaveProperty("toolInfo");
+  });
+
+  it("advertises matrix-clamped HostContext.availableDisplayModes (Copilot: ['fullscreen'] only)", async () => {
+    // Copilot's published Component-bridge table says
+    // requestDisplayMode is fullscreen-only. The matrix's
+    // availableDisplayModes is ["fullscreen"]; the host must
+    // advertise exactly that, not the inspector's permissive
+    // default of all three.
+    render(
+      <ChatboxHostStyleProvider value="copilot">
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostStyleProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+    const hostContext = appBridgeArgsRef.current?.options?.hostContext as
+      | Record<string, unknown>
+      | undefined;
+    expect(hostContext?.availableDisplayModes).toEqual(["fullscreen"]);
+  });
+
+  it("advertises all three modes on Claude (full surface matrix)", async () => {
+    render(
+      <ChatboxHostStyleProvider value="claude">
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostStyleProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+    const hostContext = appBridgeArgsRef.current?.options?.hostContext as
+      | Record<string, unknown>
+      | undefined;
+    expect(hostContext?.availableDisplayModes).toEqual([
+      "inline",
+      "fullscreen",
+      "pip",
+    ]);
+  });
+
+  it("clamps HostContext.displayMode to the matrix allowlist (Copilot in pip parent state coerces to fullscreen)", async () => {
+    // Regression: previously the matrix-clamped allowlist was only
+    // written into `HostContext.availableDisplayModes`, but
+    // `effectiveDisplayMode` was still computed against the
+    // playground/configured allowlist alone. A Copilot host could
+    // initialize or remain in `pip` if the parent's display state
+    // was sticky `"pip"` from a previous widget, while advertising
+    // `availableDisplayModes: ["fullscreen"]` — an inconsistent
+    // HostContext. Fix clamps the displayMode against the matrix
+    // too.
+    render(
+      <ChatboxHostStyleProvider value="copilot">
+        <MCPAppsRenderer
+          {...baseProps}
+          displayMode="pip"
+          pipWidgetId="call-1"
+        />
+      </ChatboxHostStyleProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+    const hostContext = appBridgeArgsRef.current?.options?.hostContext as
+      | Record<string, unknown>
+      | undefined;
+    // Matrix-clamped: only fullscreen is allowed, so pip coerces.
+    expect(hostContext?.availableDisplayModes).toEqual(["fullscreen"]);
+    expect(hostContext?.displayMode).toBe("fullscreen");
+  });
+
+  it("keeps HostContext.displayMode inside the advertised intersection for custom display-mode overrides", async () => {
+    const profile: HostConfigMcpProfileV1 = {
+      profileVersion: 1,
+      apps: {
+        mcpAppsOverrides: {
+          availableDisplayModes: ["inline", "pip"],
+        },
+      },
+    };
+    mockHostContextStoreState.draftHostContext = {
+      availableDisplayModes: ["fullscreen", "pip"],
+    };
+
+    render(
+      <ActiveMcpProfileProvider value={profile}>
+        <ChatboxHostStyleProvider value="claude">
+          <MCPAppsRenderer
+            {...baseProps}
+            displayMode="fullscreen"
+            fullscreenWidgetId="call-1"
+          />
+        </ChatboxHostStyleProvider>
+      </ActiveMcpProfileProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+    const hostContext = appBridgeArgsRef.current?.options?.hostContext as
+      | Record<string, unknown>
+      | undefined;
+    expect(hostContext?.availableDisplayModes).toEqual(["pip"]);
+    expect(hostContext?.displayMode).toBe("pip");
+  });
+
+  it("strips frameDomains and baseUriDomains from widgetCsp when matrix has those rows off (Copilot)", async () => {
+    // PR D: Microsoft 365 Copilot doesn't honor
+    // `_meta.ui.csp.frameDomains` or `_meta.ui.csp.baseUriDomains`
+    // per its published Component-bridge table. A widget that
+    // declares them should see them stripped on the simulated
+    // Copilot host so the iframe sandbox reflects what real Copilot
+    // applies. Uses the live-fetch path with a custom CSP payload —
+    // the cached-replay branch forces permissive (no CSP), so we
+    // bypass it here to exercise the gate.
+    vi.mocked(authFetch).mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          html: "<html><body>widget</body></html>",
+          csp: {
+            connectDomains: ["https://api.example.com"],
+            resourceDomains: ["https://cdn.example.com"],
+            frameDomains: ["https://embed.example.com"],
+            baseUriDomains: ["https://base.example.com"],
+          },
+          permissions: {},
+          permissive: false,
+          mimeTypeValid: true,
+          prefersBorder: true,
+        }),
+      status: 200,
+      headers: new Headers(),
+    } as Response);
+    render(
+      <ChatboxHostStyleProvider value="copilot">
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostStyleProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.csp).toBeDefined();
+    });
+    const csp = sandboxedIframePropsRef.current?.csp as
+      | Record<string, unknown>
+      | undefined;
+    // Matrix-gated sub-fields stripped before the resolver sees
+    // them; both routes (resolver output + pass-through fallback)
+    // honor the gate.
+    expect(csp?.frameDomains ?? []).toEqual([]);
+    expect(csp?.baseUriDomains ?? []).toEqual([]);
+    // Sibling allowlists (not matrix-gated today) survive.
+    expect(csp?.connectDomains).toEqual(["https://api.example.com"]);
+    expect(csp?.resourceDomains).toEqual(["https://cdn.example.com"]);
+  });
+
+  it("preserves frameDomains and baseUriDomains on Claude (full surface matrix)", async () => {
+    // Counter-test: same CSP, but Claude's matrix honors both sub-
+    // fields, so they round-trip into the iframe CSP. Guards
+    // against the gate over-stripping.
+    vi.mocked(authFetch).mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          html: "<html><body>widget</body></html>",
+          csp: {
+            connectDomains: ["https://api.example.com"],
+            resourceDomains: ["https://cdn.example.com"],
+            frameDomains: ["https://embed.example.com"],
+            baseUriDomains: ["https://base.example.com"],
+          },
+          permissions: {},
+          permissive: false,
+          mimeTypeValid: true,
+          prefersBorder: true,
+        }),
+      status: 200,
+      headers: new Headers(),
+    } as Response);
+    render(
+      <ChatboxHostStyleProvider value="claude">
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostStyleProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.csp).toBeDefined();
+    });
+    const csp = sandboxedIframePropsRef.current?.csp as
+      | Record<string, unknown>
+      | undefined;
+    expect(csp?.frameDomains).toEqual(["https://embed.example.com"]);
+    expect(csp?.baseUriDomains).toEqual(["https://base.example.com"]);
+  });
+
+  it("ignores widget-declared permissions on Copilot (sandboxPermissions: false)", async () => {
+    // PR D: simulated Copilot host doesn't pipe `_meta.ui.permissions`
+    // to the iframe. Widget declaring `camera` should NOT see the
+    // permission in the rendered iframe — the host treats the
+    // declaration as if it weren't there.
+    vi.mocked(authFetch).mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          html: "<html><body>widget</body></html>",
+          csp: {
+            connectDomains: [],
+            resourceDomains: [],
+            frameDomains: [],
+            baseUriDomains: [],
+          },
+          permissions: { camera: {} },
+          permissive: false,
+          mimeTypeValid: true,
+          prefersBorder: true,
+        }),
+      status: 200,
+      headers: new Headers(),
+    } as Response);
+    render(
+      <ChatboxHostStyleProvider value="copilot">
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostStyleProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toBe(
+        "<html><body>widget</body></html>",
+      );
+    });
+    // Permissions cleared on Copilot — matches what real Copilot does
+    // (it doesn't honor the widget's permission declarations at all).
+    expect(
+      sandboxedIframePropsRef.current?.permissions ?? undefined,
+    ).toBeUndefined();
+  });
+
+  it("suppresses widget-declared permissions in the playground permissive escape hatch (Copilot)", async () => {
+    // Regression: three review bots independently flagged the same
+    // miss on #2242 — the `userTogglePermissive` branch (playground
+    // + cspMode === "permissive" + non-chatbox surface + non-
+    // minimal) still read raw `widgetPermissions`. On a Copilot
+    // host with `sandboxPermissions: false`, the gate is supposed
+    // to ignore widget-declared permissions; the permissive escape
+    // hatch in the playground was leaking them through to the
+    // iframe.
+    //
+    // Fix gates both sites in the userTogglePermissive return path
+    // (resolver-input loop + pass-through fallback). This test
+    // asserts widget-declared permissions stay suppressed even with
+    // the playground in permissive mode.
+    Object.assign(mockPlaygroundStoreState, {
+      isPlaygroundActive: true,
+      mcpAppsCspMode: "permissive" as const,
+    });
+    // In playground mode the matrix resolves against the
+    // preferences-store `sharedHostStyle`, not the chatbox provider
+    // — set it to a host whose `mcpAppsCapabilities.sandboxPermissions`
+    // is false. Copilot isn't in the `mockPreferencesState` enum
+    // (claude | chatgpt), so we route through chatgpt — its matrix
+    // also has sandboxPermissions: false per `OPENAI_APPS_FULL_SURFACE`
+    // → wait, chatgpt's MCP matrix is `MCP_APPS_FULL_SURFACE` which
+    // has sandboxPermissions: true. We need a host where the matrix
+    // explicitly turns it off. The shortcut: write copilot-like
+    // values directly via the matrix override.
+    mockPreferencesState.hostStyle = "claude" as const;
+    vi.mocked(authFetch).mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          html: "<html><body>widget</body></html>",
+          csp: {
+            connectDomains: [],
+            resourceDomains: [],
+            frameDomains: [],
+            baseUriDomains: [],
+          },
+          permissions: { camera: {} },
+          permissive: false,
+          mimeTypeValid: true,
+          prefersBorder: true,
+        }),
+      status: 200,
+      headers: new Headers(),
+    } as Response);
+    // ActiveMcpProfileProvider sets the matrix override directly,
+    // simulating a user who configured `sandboxPermissions: false`
+    // via the matrix UI. This avoids the
+    // playground-vs-chatbox-host-style routing wrinkle entirely:
+    // the override path always wins regardless of which host style
+    // is resolved.
+    const copilotPermissionsOff: HostConfigMcpProfileV1 = {
+      profileVersion: 1,
+      apps: { mcpAppsOverrides: { sandboxPermissions: false } },
+    };
+    render(
+      <ActiveMcpProfileProvider value={copilotPermissionsOff}>
+        <MCPAppsRenderer {...baseProps} />
+      </ActiveMcpProfileProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toBe(
+        "<html><body>widget</body></html>",
+      );
+    });
+    expect(
+      sandboxedIframePropsRef.current?.permissions ?? undefined,
+    ).toBeUndefined();
+  });
+
+  it("honors widget-declared permissions on Claude", async () => {
+    vi.mocked(authFetch).mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          html: "<html><body>widget</body></html>",
+          csp: {
+            connectDomains: [],
+            resourceDomains: [],
+            frameDomains: [],
+            baseUriDomains: [],
+          },
+          permissions: { camera: {} },
+          permissive: false,
+          mimeTypeValid: true,
+          prefersBorder: true,
+        }),
+      status: 200,
+      headers: new Headers(),
+    } as Response);
+    render(
+      <ChatboxHostStyleProvider value="claude">
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostStyleProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toBe(
+        "<html><body>widget</body></html>",
+      );
+    });
+    // Claude's matrix honors permissions → widget declaration
+    // round-trips.
+    const perms = sandboxedIframePropsRef.current?.permissions as
+      | Record<string, unknown>
+      | undefined;
+    expect(perms).toBeDefined();
+    expect(perms).toHaveProperty("camera");
   });
 
   it("does not block pure MCP Apps from booting while ChatGPT compat is enabled", async () => {

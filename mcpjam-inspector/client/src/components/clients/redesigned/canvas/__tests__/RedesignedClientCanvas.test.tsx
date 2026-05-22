@@ -89,6 +89,23 @@ describe("RedesignedClientCanvas", () => {
     expect(node!.querySelector(".hp-view-empty-label")).toBeNull();
   });
 
+  it("does not show 'from preset' on injected-globals chips at the host preset default", () => {
+    const { container } = renderCanvas({
+      draft: emptyHostConfigInputV2({ hostStyle: "chatgpt" }),
+    });
+    const node = container.querySelector(
+      `.react-flow__node[data-id="${HOST_MATRIX_NODE_ID}"]`,
+    ) as HTMLElement | null;
+    expect(node).not.toBeNull();
+    const injected = node!.querySelector(".hp-view-injected");
+    expect(injected).not.toBeNull();
+    expect(injected!.textContent).not.toMatch(/from preset/i);
+    const injectedScope = within(injected as HTMLElement);
+    expect(injectedScope.getByText("window.openai")).toBeInTheDocument();
+    expect(injectedScope.getByText("MCP Apps")).toBeInTheDocument();
+    expect(injectedScope.queryByText("overridden")).toBeNull();
+  });
+
   it("adds a client capability chip when that cap is enabled on the host", () => {
     const base = emptyHostConfigInputV2();
     const { container } = renderCanvas({

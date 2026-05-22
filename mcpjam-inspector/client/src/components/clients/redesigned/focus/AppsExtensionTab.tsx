@@ -2,7 +2,9 @@ import { useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { JsonEditor, type JsonEditorMode } from "@/components/ui/json-editor";
 import {
+  hostCapabilitiesOverrideToMatrix,
   resolveEffectiveHostCapabilities,
+  resolveEffectiveMcpAppsCapabilities,
   type HostConfigInputV2,
   type HostConfigMcpProfileV1,
 } from "@/lib/client-config-v2";
@@ -14,9 +16,19 @@ import {
 import type {
   McpAppsCapabilities,
   OpenAiAppsCapabilities,
+  ResolvedMcpAppsCapabilities,
   ResolvedOpenAiAppsCapabilities,
 } from "@/lib/client-styles";
+import {
+  getDefaultClientCapabilities,
+  MCP_UI_EXTENSION_ID,
+  MCP_UI_RESOURCE_MIME_TYPE,
+} from "@mcpjam/sdk/browser";
 import { Switch } from "@mcpjam/design-system/switch";
+import {
+  clientAdvertisesMcpApps,
+  isRecord,
+} from "@/lib/host-capabilities";
 import type { HostAttentionIssue, SandboxConfigSubKey } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 
@@ -993,14 +1005,11 @@ function OpenaiAppsCapabilityMatrix({
                     >
                       <div className="flex flex-col gap-0.5">
                         <span className="font-mono text-[12px]">{label}</span>
-                        <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                          <span>Preset: {String(presetValue)}</span>
-                          {overridden ? (
-                            <span className="rounded bg-orange-500/15 px-1 py-px text-orange-600 dark:text-orange-300">
-                              Overridden
-                            </span>
-                          ) : null}
-                        </div>
+                        {overridden ? (
+                          <span className="w-fit rounded bg-orange-500/15 px-1 py-px text-[10px] text-orange-600 dark:text-orange-300">
+                            Overridden
+                          </span>
+                        ) : null}
                       </div>
                       {key === "requestDisplayMode" ? (
                         <RequestDisplayModeControl
@@ -1072,6 +1081,517 @@ function RequestDisplayModeControl({
   );
 }
 
+/**
+ * Update `mcpProfile.apps.mcpAppsOverrides` while preserving sibling
+ * fields (`sandbox`, `uiInitialize`, `compatRuntime`) and collapsing
+ * empties on the way out:
+ *
+ *   - empty override object → omit `mcpAppsOverrides` from `apps`
+ *   - empty `apps` block (no other siblings) → omit `apps` from profile
+ *   - profile that's now content-less (only `profileVersion`) →
+ *     `mcpProfile: undefined`
+ *
+ * Mirrors the collapse the bottom of `applyJsonToDraft` already does.
+ * Without it, toggling a row and toggling it back leaves a dirty
+ * `{ profileVersion: 1, apps: {} }` shell on the draft —
+ * `optionalMcpProfileEq` treats that as distinct from `undefined`, so
+ * the save button stays armed and the matrix says "Matches host style
+ * preset" while the draft is silently dirty.
+ *
+ * Trade-off: a user who deliberately opted into a content-less
+ * `{ profileVersion: 1 }` envelope (by hand-editing the JSON) will
+ * see that stub dropped when they touch the matrix. We accept that:
+ * the typed-in `{ profileVersion: 1 }` carries no semantic content
+ * the resolver consumes, and the common case (user toggles via
+ * matrix UI, expects clean revert) is overwhelmingly more frequent.
+ * If we ever model the matrix and the openai shim's
+ * `setCompatRuntimeOnDraft` consistently, we can revisit by tracking
+ * "synthesized vs opted-in" provenance — but that's bigger than this
+ * PR.
+ */
+function setMcpAppsOverridesOnDraft(
+  prev: HostConfigInputV2,
+  next: McpAppsCapabilities | undefined,
+): HostConfigInputV2 {
+  const hasKeys = next !== undefined && Object.keys(next).length > 0;
+  const prevProfile = prev.mcpProfile;
+  const prevApps = prevProfile?.apps ?? {};
+
+  // Rebuild `apps` explicitly so the spread doesn't leak
+  // `mcpAppsOverrides: undefined` into `Object.keys` when we're
+  // clearing the override. Sibling fields (`sandbox`, `uiInitialize`,
+  // `compatRuntime`, future additions) round-trip verbatim.
+  const nextApps: NonNullable<HostConfigMcpProfileV1["apps"]> = {};
+  for (const [key, value] of Object.entries(prevApps)) {
+    if (key === "mcpAppsOverrides") continue;
+    if (value !== undefined) {
+      (nextApps as Record<string, unknown>)[key] = value;
+    }
+  }
+  if (hasKeys) nextApps.mcpAppsOverrides = next;
+  const appsEmpty = Object.keys(nextApps).length === 0;
+
+  // Fast path: no envelope before, no content now → leave draft alone
+  // (no envelope ever synthesized just to immediately collapse it).
+  if (prevProfile === undefined && appsEmpty) {
+    return prev;
+  }
+
+  const baseProfile: HostConfigMcpProfileV1 =
+    prevProfile ?? { profileVersion: 1 };
+  const hasInitialize =
+    baseProfile.initialize !== undefined &&
+    (baseProfile.initialize.clientInfo !== undefined ||
+      (baseProfile.initialize.supportedProtocolVersions &&
+        baseProfile.initialize.supportedProtocolVersions.length > 0));
+  const hasExtensions = baseProfile.extensions !== undefined;
+  const profileEmpty = appsEmpty && !hasInitialize && !hasExtensions;
+
+  return {
+    ...prev,
+    mcpProfile: profileEmpty
+      ? undefined
+      : { ...baseProfile, apps: appsEmpty ? undefined : nextApps },
+  };
+}
+
+type McpAppsDimensionKey = Exclude<
+  keyof McpAppsCapabilities,
+  "availableDisplayModes"
+>;
+
+/** Per-dimension matrix metadata. Description is shown on row hover. */
+type McpAppsDimensionMeta = {
+  key: McpAppsDimensionKey;
+  description: string;
+};
+
+/** All boolean MCP Apps matrix dimensions in display order. */
+const MCP_APPS_DIMENSIONS: McpAppsDimensionMeta[] = [
+  {
+    key: "toolInputPartial",
+    description:
+      "Send ui/notifications/tool-input-partial while the agent streams arguments",
+  },
+  {
+    key: "toolCancelled",
+    description:
+      "Notify the app when tool execution is cancelled (ui/notifications/tool-cancelled)",
+  },
+  {
+    key: "hostContextChanged",
+    description:
+      "Notify the app when theme, display mode, or other host context changes",
+  },
+  {
+    key: "resourceTeardown",
+    description:
+      "Send ui/resource-teardown before destroying the app view",
+  },
+  {
+    key: "serverResources",
+    description: "Advertise resources/read proxy capability in ui/initialize",
+  },
+  {
+    key: "logging",
+    description: "Accept notifications/message log calls from the app",
+  },
+  {
+    key: "toolInfo",
+    description: "Include calling-tool metadata in HostContext.toolInfo",
+  },
+  {
+    key: "openLinks",
+    description: "Advertise ui/open-link capability",
+  },
+  {
+    key: "serverTools",
+    description: "Advertise tools/call proxy capability",
+  },
+  {
+    key: "updateModelContext",
+    description: "Accept ui/update-model-context requests from the app",
+  },
+  {
+    key: "message",
+    description: "Accept ui/message requests that add content to the conversation",
+  },
+  {
+    key: "sandboxPermissions",
+    description: "Honor _meta.ui.permissions when configuring the iframe",
+  },
+  {
+    key: "cspFrameDomains",
+    description: "Honor _meta.ui.csp.frameDomains for nested iframes",
+  },
+  {
+    key: "cspBaseUriDomains",
+    description: "Honor _meta.ui.csp.baseUriDomains in CSP",
+  },
+  {
+    key: "resourcePrefersBorder",
+    description: "Honor _meta.ui.prefersBorder when rendering app chrome",
+  },
+];
+
+const ALL_DISPLAY_MODES = ["inline", "fullscreen", "pip"] as const;
+type DisplayMode = (typeof ALL_DISPLAY_MODES)[number];
+
+const DISPLAY_MODE_LABELS: Record<DisplayMode, string> = {
+  inline: "Inline",
+  fullscreen: "Fullscreen",
+  pip: "PiP",
+};
+
+/**
+ * Per-dimension capability matrix for the SEP-1865 `app.*` spec bridge.
+ * Sibling to {@link OpenaiAppsCapabilityMatrix} but represents a
+ * different surface — the spec bridge is the primary MCP Apps protocol,
+ * not a vendor compat shim, so there's no "inject" master toggle and
+ * no tri-state (the matrix is always advertised).
+ *
+ * Layout:
+ * - `availableDisplayModes` cluster at the top.
+ * - Flat list of all boolean matrix dimensions below.
+ *
+ * The matrix round-trips through `appsToJson` / `applyJsonToDraft` so
+ * the JSON editor below stays in sync.
+ *
+ * INDEPENDENT from the OpenAI shim matrix. Toggling a row here never
+ * affects `window.openai.*` and vice versa — see the two-matrix
+ * architecture notes in #2226 / #2230 / #2232.
+ */
+function McpAppsCapabilityMatrix({
+  draft,
+  onDraftChange,
+}: {
+  draft: HostConfigInputV2;
+  onDraftChange: (
+    updater: (prev: HostConfigInputV2) => HostConfigInputV2,
+  ) => void;
+}) {
+  const [dimensionsOpen, setDimensionsOpen] = useState(false);
+  const advertised = clientAdvertisesMcpApps(draft.clientCapabilities);
+  const rawOverridesRecord = draft.mcpProfile?.apps?.mcpAppsOverrides;
+  const legacyOverride = draft.hostCapabilitiesOverride;
+  // Legacy `hostCapabilitiesOverride` is the pre-matrix way of
+  // narrowing the advertised host capabilities. When the matrix is
+  // absent but the legacy is present, the resolver advertises the
+  // legacy shape; the matrix UI must reflect that, not the bare
+  // preset. Otherwise a user with a legacy override sees the matrix
+  // show preset values, toggles a single row, and the resolver
+  // switches precedence to the (mostly-empty) matrix path —
+  // silently flipping every other legacy-overridden dimension back
+  // to the preset.
+  //
+  // The display fix: virtually migrate the legacy into matrix shape
+  // so the per-row effective values reflect what the resolver actually
+  // what the resolver actually advertises today. The matching write
+  // fix is in `migrateLegacyIfNeeded` below — the first edit
+  // commits the migration to persisted state so subsequent edits
+  // build on top.
+  const effectiveOverridesForDisplay: McpAppsCapabilities | undefined =
+    rawOverridesRecord !== undefined
+      ? rawOverridesRecord
+      : legacyOverride !== undefined
+        ? (hostCapabilitiesOverrideToMatrix(legacyOverride) ?? undefined)
+        : undefined;
+  // Effective values shown in the matrix UI. Uses the virtually-
+  // migrated legacy when the matrix is absent so the UI shows what
+  // the resolver advertises today (legacy path) — not what it would
+  // advertise after the first edit silently strips the legacy.
+  const effectiveCapabilities: ResolvedMcpAppsCapabilities =
+    effectiveOverridesForDisplay !== undefined
+      ? resolveEffectiveMcpAppsCapabilities({
+          profile: {
+            profileVersion: 1,
+            apps: { mcpAppsOverrides: effectiveOverridesForDisplay },
+          },
+          hostStyle: draft.hostStyle,
+        })
+      : resolveEffectiveMcpAppsCapabilities({
+          profile: undefined,
+          hostStyle: draft.hostStyle,
+        });
+
+  /**
+   * On first matrix edit applied to a draft that still uses legacy
+   * `hostCapabilitiesOverride` (matrix absent, legacy present),
+   * convert the legacy into matrix shape so the user's single-row
+   * edit can be applied on top without silently dropping all the
+   * other legacy-overridden dimensions. Also clears the legacy
+   * field — the matrix becomes the new source of truth.
+   *
+   * Returns `{ overrides, prevWithLegacyCleared }`. Callers apply
+   * their edit to `overrides`, then pipe through
+   * `setMcpAppsOverridesOnDraft(prevWithLegacyCleared, edited)`.
+   */
+  const migrateLegacyIfNeeded = (
+    prev: HostConfigInputV2,
+  ): {
+    overrides: McpAppsCapabilities;
+    prevWithLegacyCleared: HostConfigInputV2;
+  } => {
+    const matrix = prev.mcpProfile?.apps?.mcpAppsOverrides;
+    if (matrix !== undefined) {
+      // Matrix already owns the state; no migration needed.
+      return { overrides: { ...matrix }, prevWithLegacyCleared: prev };
+    }
+    const legacy = prev.hostCapabilitiesOverride;
+    if (legacy === undefined) {
+      // Neither override present — start from empty.
+      return { overrides: {}, prevWithLegacyCleared: prev };
+    }
+    // Legacy → matrix; clear the legacy so future reads use the
+    // matrix path consistently. Precedence-conflict between the two
+    // fields was the original motivation for the migration helper
+    // landing alongside the foundation PR.
+    const migrated = hostCapabilitiesOverrideToMatrix(legacy) ?? {};
+    return {
+      overrides: { ...migrated },
+      prevWithLegacyCleared: { ...prev, hostCapabilitiesOverride: undefined },
+    };
+  };
+
+  const setAdvertised = (next: boolean) => {
+    onDraftChange((prev) => {
+      const nextCaps: Record<string, unknown> = {
+        ...(prev.clientCapabilities ?? {}),
+      };
+      const exts: Record<string, unknown> = isRecord(nextCaps.extensions)
+        ? { ...nextCaps.extensions }
+        : {};
+      if (next) {
+        const defaultCaps = getDefaultClientCapabilities() as Record<
+          string,
+          unknown
+        >;
+        const defaultExts = isRecord(defaultCaps.extensions)
+          ? defaultCaps.extensions
+          : {};
+        const defaultUi = defaultExts[MCP_UI_EXTENSION_ID];
+        exts[MCP_UI_EXTENSION_ID] = isRecord(defaultUi)
+          ? { ...defaultUi }
+          : { mimeTypes: [MCP_UI_RESOURCE_MIME_TYPE] };
+      } else {
+        delete exts[MCP_UI_EXTENSION_ID];
+      }
+      nextCaps.extensions = exts;
+      let nextDraft: HostConfigInputV2 = {
+        ...prev,
+        clientCapabilities: nextCaps,
+      };
+      if (!next) {
+        // Host-side caps are inert without the client extension — clear
+        // overrides the same way turning off window.openai injection
+        // clears per-method overrides.
+        nextDraft = setMcpAppsOverridesOnDraft(nextDraft, undefined);
+        if (nextDraft.hostCapabilitiesOverride !== undefined) {
+          nextDraft = { ...nextDraft, hostCapabilitiesOverride: undefined };
+        }
+      }
+      return nextDraft;
+    });
+  };
+
+  /** Set or clear a boolean dimension override. Pass `undefined` to revert to preset. */
+  const setBooleanOverride = (
+    key: Exclude<keyof McpAppsCapabilities, "availableDisplayModes">,
+    nextEffective: boolean,
+  ) => {
+    onDraftChange((prev) => {
+      const { overrides: prevOverrides, prevWithLegacyCleared } =
+        migrateLegacyIfNeeded(prev);
+      const prevPreset = resolveEffectiveMcpAppsCapabilities({
+        profile: undefined,
+        hostStyle: prev.hostStyle,
+      });
+      const nextOverrides: McpAppsCapabilities = { ...prevOverrides };
+      if (nextEffective === prevPreset[key]) {
+        // Toggle matches preset → drop the override (revert to preset
+        // semantics; sparse on save).
+        delete (nextOverrides as Record<string, unknown>)[key];
+      } else {
+        (nextOverrides as Record<string, unknown>)[key] = nextEffective;
+      }
+      return setMcpAppsOverridesOnDraft(prevWithLegacyCleared, nextOverrides);
+    });
+  };
+
+  /**
+   * Toggle a display mode in the allowlist. The matrix invariant is
+   * `availableDisplayModes.length >= 1` — if the user unchecks the
+   * last mode, force-enable `"inline"` (the spec default; an empty
+   * allowlist would be unrenderable). The resolver enforces this same
+   * invariant as a backstop, but doing it here keeps the UI honest.
+   *
+   * If the resulting allowlist equals the preset's array, drop the
+   * override key so the matrix reverts cleanly.
+   */
+  const toggleDisplayMode = (mode: DisplayMode) => {
+    onDraftChange((prev) => {
+      const { overrides: prevOverrides, prevWithLegacyCleared } =
+        migrateLegacyIfNeeded(prev);
+      const prevPreset = resolveEffectiveMcpAppsCapabilities({
+        profile: undefined,
+        hostStyle: prev.hostStyle,
+      });
+      // Use displayed effective modes as the starting point so the
+      // user's click toggles relative to what they saw (legacy-
+      // migrated when applicable), not relative to the bare preset.
+      const currentModes =
+        prevOverrides.availableDisplayModes ??
+        prevPreset.availableDisplayModes;
+      let nextModesList = currentModes.includes(mode)
+        ? currentModes.filter((m) => m !== mode)
+        : [...currentModes, mode];
+      if (nextModesList.length === 0) {
+        // Backstop: never persist an empty allowlist.
+        nextModesList = ["inline"];
+      }
+      // Preserve the canonical inline→fullscreen→pip order so equality
+      // checks against the preset don't false-negative on permutation.
+      nextModesList = ALL_DISPLAY_MODES.filter((m) =>
+        nextModesList.includes(m),
+      );
+      const nextOverrides: McpAppsCapabilities = { ...prevOverrides };
+      if (
+        stableStringifyJson(nextModesList) ===
+        stableStringifyJson(prevPreset.availableDisplayModes)
+      ) {
+        delete nextOverrides.availableDisplayModes;
+      } else {
+        nextOverrides.availableDisplayModes = nextModesList as DisplayMode[];
+      }
+      return setMcpAppsOverridesOnDraft(prevWithLegacyCleared, nextOverrides);
+    });
+  };
+
+  return (
+    <div className="rounded-[10px] border border-border bg-background">
+      {/* Single header row: left half is the disclosure (label +
+          chevron), right half is the master Switch in its own hit zone.
+          Mirrors the window.openai section above. When the client does
+          not advertise the MCP UI extension the disclosure renders as
+          static (chevron hidden, no hover) since the dimension list is
+          inert without it. */}
+      <div className="flex items-stretch border-b border-border">
+        {advertised ? (
+          <button
+            type="button"
+            onClick={() => setDimensionsOpen((v) => !v)}
+            aria-expanded={dimensionsOpen}
+            aria-controls="apps-extension-mcp-apps-dimensions"
+            className="flex flex-1 items-center justify-between gap-2 px-3.5 py-2.5 text-left hover:bg-muted/40"
+          >
+            <div className="flex flex-col gap-0.5">
+              <span className="text-[12px] font-medium">MCP App support</span>
+            </div>
+            <ChevronDown
+              className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${
+                dimensionsOpen ? "rotate-180" : ""
+              }`}
+            />
+          </button>
+        ) : (
+          <div className="flex flex-1 items-center px-3.5 py-2.5">
+            <label
+              htmlFor="apps-extension-mcp-apps-toggle"
+              className="text-[12px] font-medium"
+            >
+              MCP App support
+            </label>
+          </div>
+        )}
+        <div className="flex items-center border-l border-border pl-3 pr-3.5">
+          <Switch
+            id="apps-extension-mcp-apps-toggle"
+            checked={advertised}
+            onCheckedChange={setAdvertised}
+            aria-label="Advertise MCP App support"
+          />
+        </div>
+      </div>
+
+      {advertised && dimensionsOpen ? (
+        <div id="apps-extension-mcp-apps-dimensions">
+          {/* availableDisplayModes — multi-checkbox cluster. */}
+          <div
+            data-testid="mcp-apps-dimension-availableDisplayModes"
+            className="flex items-center justify-between gap-3 border-b border-border/50 px-3.5 py-2"
+          >
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <span className="font-mono text-[12px]">availableDisplayModes</span>
+        </div>
+        <div className="inline-flex shrink-0 overflow-hidden rounded-md border border-border text-[11px]">
+          {ALL_DISPLAY_MODES.map((mode) => {
+            const enabled =
+              effectiveCapabilities.availableDisplayModes.includes(mode);
+            return (
+              <button
+                key={mode}
+                type="button"
+                aria-label={mode}
+                title={mode}
+                className={
+                  enabled
+                    ? "bg-foreground/10 px-2.5 py-0.5 font-medium"
+                    : "px-2.5 py-0.5 text-muted-foreground hover:bg-muted"
+                }
+                onClick={() => toggleDisplayMode(mode)}
+              >
+                {DISPLAY_MODE_LABELS[mode]}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+          <div className="flex flex-col">
+            {MCP_APPS_DIMENSIONS.map(({ key, description }) => (
+              <McpAppsDimensionRow
+                key={key}
+                dimensionKey={key}
+                description={description}
+                effective={Boolean(effectiveCapabilities[key])}
+                onToggle={(next) => setBooleanOverride(key, next)}
+              />
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Single boolean dimension row — technical key + toggle. */
+function McpAppsDimensionRow({
+  dimensionKey,
+  description,
+  effective,
+  onToggle,
+}: {
+  dimensionKey: McpAppsDimensionKey;
+  description: string;
+  effective: boolean;
+  onToggle: (next: boolean) => void;
+}) {
+  return (
+    <div
+      data-testid={`mcp-apps-dimension-${dimensionKey}`}
+      className="flex items-center justify-between gap-3 border-b border-border/50 px-3.5 py-2 last:border-b-0"
+      title={description}
+    >
+      <span className="min-w-0 font-mono text-[12px]">{dimensionKey}</span>
+      <Switch
+        checked={effective}
+        onCheckedChange={onToggle}
+        aria-label={dimensionKey}
+      />
+    </div>
+  );
+}
+
 export function AppsExtensionTab({
   draft,
   onDraftChange,
@@ -1092,6 +1612,14 @@ export function AppsExtensionTab({
   return (
     <div className="flex h-full min-h-[480px] flex-col gap-3">
       <OpenaiAppsCapabilityMatrix
+        draft={draft}
+        onDraftChange={onDraftChange}
+      />
+      {/* Two-matrix architecture: window.openai (shim) and app.* (spec
+          bridge) are independent surfaces and never cross-gate. The
+          subtitle on each section makes this explicit so users don't
+          confuse them. */}
+      <McpAppsCapabilityMatrix
         draft={draft}
         onDraftChange={onDraftChange}
       />

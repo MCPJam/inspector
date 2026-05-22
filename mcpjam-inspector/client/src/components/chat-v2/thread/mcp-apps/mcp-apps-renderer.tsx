@@ -92,8 +92,10 @@ import {
 import {
   resolveEffectiveCompatRuntime,
   resolveEffectiveHostCapabilities,
+  resolveEffectiveMcpAppsCapabilities,
   resolveHostInfo,
 } from "@/lib/client-config-v2";
+import type { ResolvedMcpAppsCapabilities } from "@/lib/client-styles";
 
 // Injected by Vite at build time from package.json
 declare const __APP_VERSION__: string;
@@ -505,6 +507,64 @@ export function MCPAppsRenderer({
     () => extractHostDisplayModes(draftHostContext),
     [draftHostContext],
   );
+  // Resolve `effectiveHostStyle` early (it's a 3-way ternary on values
+  // already available above) so the SEP-1865 matrix can be computed
+  // before the display-mode clamp at `effectiveDisplayMode` below. The
+  // duplicate-looking `effectiveHostStyle = ...` further down (around
+  // the original `hostStyleDefinition`) reads the same value; both
+  // assignments produce identical strings because the dependencies are
+  // identical, so the bridge handshake / sandbox composition see the
+  // same host style id.
+  //
+  // Matrix-resolved `availableDisplayModes` is what we advertise in
+  // `HostContext.availableDisplayModes` AND what we clamp the
+  // current/initial `effectiveDisplayMode` against. Without this
+  // earlier clamp, a Copilot-preset host could initialize in (or
+  // remain in) `pip` because the parent's `displayMode === "pip"`,
+  // while advertising `availableDisplayModes: ["fullscreen"]` —
+  // the View would see inconsistent HostContext.
+  const earlyEffectiveHostStyle = isPlaygroundActive
+    ? sharedHostStyle
+    : chatboxHostStyle;
+  const earlyEffectiveMcpAppsCapabilities = useMemo(
+    () =>
+      resolveEffectiveMcpAppsCapabilities({
+        profile: activeMcpProfile,
+        hostStyle: earlyEffectiveHostStyle,
+      }),
+    [activeMcpProfile, earlyEffectiveHostStyle],
+  );
+
+  // Intersection of the matrix's allowed modes with the playground /
+  // draft host context's configured modes — single source of truth for
+  // both the runtime clamp at `effectiveDisplayMode` below AND the
+  // value advertised in `HostContext.availableDisplayModes`. Computed
+  // here (early) so the clamp can use it.
+  //
+  // Without sharing the intersection between the two consumers, the
+  // matrix-only clamp inside `effectiveDisplayMode` could land on
+  // `matrix[0]` while `HostContext.availableDisplayModes` advertised a
+  // strict subset (the intersection). E.g. matrix=["pip","fullscreen"],
+  // configured=["inline","fullscreen"], requested="inline" →
+  // matrix-only clamp produced "pip" (matrix[0]) while advertised list
+  // was ["fullscreen"]. Fix: clamp against the intersection itself.
+  //
+  // Fallback to matrix alone when the intersection would be empty —
+  // matches the matrix invariant (`length >= 1`) and avoids advertising
+  // an unrenderable empty array. `configuredAvailableDisplayModes` is
+  // always a non-empty array (see `extractHostDisplayModes` fallbacks)
+  // so the only way intersection is empty is when the playground asks
+  // for modes the simulated host doesn't advertise.
+  const effectiveAvailableDisplayModes = useMemo(() => {
+    const matrixModes = earlyEffectiveMcpAppsCapabilities.availableDisplayModes;
+    const intersection = matrixModes.filter((m) =>
+      configuredAvailableDisplayModes.includes(m as DisplayMode),
+    );
+    return intersection.length > 0 ? intersection : matrixModes;
+  }, [
+    earlyEffectiveMcpAppsCapabilities.availableDisplayModes,
+    configuredAvailableDisplayModes,
+  ]);
 
   // Get device capabilities from playground store (SEP-1865)
   const playgroundCapabilities = useUIPlaygroundStore((s) => s.capabilities);
@@ -582,13 +642,19 @@ export function MCPAppsRenderer({
     if (displayMode === "pip" && pipWidgetId === toolCallId) return "pip";
     return "inline";
   }, [displayMode, fullscreenWidgetId, isControlled, pipWidgetId, toolCallId]);
+  // Clamp the requested display mode against the same intersection
+  // that gets advertised in `HostContext.availableDisplayModes` so
+  // the runtime mode is always a member of the advertised set. A
+  // Copilot host initializing in `pip` (parent's `displayMode` is
+  // sticky from a previous widget) coerces down to `fullscreen`
+  // because the intersection resolves to `["fullscreen"]`.
   const effectiveDisplayMode = useMemo<DisplayMode>(
     () =>
       clampDisplayModeToAvailableModes(
         requestedDisplayMode,
-        configuredAvailableDisplayModes,
+        effectiveAvailableDisplayModes,
       ),
-    [configuredAvailableDisplayModes, requestedDisplayMode],
+    [requestedDisplayMode, effectiveAvailableDisplayModes],
   );
   const setDisplayMode = useCallback(
     (mode: DisplayMode) => {
@@ -699,6 +765,54 @@ export function MCPAppsRenderer({
   const [prefersBorder, setPrefersBorder] = useState<boolean>(
     initialPrefersBorder ?? true,
   );
+  // PR D matrix-gated resource-meta interpretation. The matrix
+  // dimensions `cspFrameDomains`, `cspBaseUriDomains`,
+  // `sandboxPermissions`, and `resourcePrefersBorder` model whether
+  // the simulated host HONORS the corresponding resource `_meta.ui`
+  // fields. Microsoft 365 Copilot's published Component-bridge table
+  // marks all four as ❌; on a simulated Copilot host these fields
+  // are silently ignored even when a widget declares them.
+  //
+  // We post-process the resource's `widgetCsp` / `widgetPermissions`
+  // / `prefersBorder` after fetch — the SDK's `resolveSandboxCsp` /
+  // `resolveSandboxPermissions` and the renderer's iframe-chrome
+  // logic all read these gated values transparently. Per the
+  // foundation plan's D3 decision, no SDK API change.
+  const matrixGatedWidgetCsp = useMemo<McpUiResourceCsp | undefined>(() => {
+    if (!widgetCsp) return widgetCsp;
+    const m = earlyEffectiveMcpAppsCapabilities;
+    if (m.cspFrameDomains && m.cspBaseUriDomains) return widgetCsp;
+    // Spread + selectively strip the gated sub-fields. Connect /
+    // resource domains are NOT matrix-gated today (no host's
+    // published table tracks them at this granularity); only frame
+    // and baseUri are.
+    const next: McpUiResourceCsp = { ...widgetCsp };
+    if (!m.cspFrameDomains) delete next.frameDomains;
+    if (!m.cspBaseUriDomains) delete next.baseUriDomains;
+    return next;
+  }, [widgetCsp, earlyEffectiveMcpAppsCapabilities]);
+  const matrixGatedWidgetPermissions = useMemo<
+    McpUiResourcePermissions | undefined
+  >(() => {
+    // `sandboxPermissions: false` means the simulated host doesn't
+    // honor the resource's permissions declarations AT ALL — return
+    // undefined so the downstream resolver behaves as if the widget
+    // declared no permissions. Spec-compliant simulation: the
+    // widget asked for the camera, the host doesn't grant it.
+    if (!earlyEffectiveMcpAppsCapabilities.sandboxPermissions) return undefined;
+    return widgetPermissions;
+  }, [widgetPermissions, earlyEffectiveMcpAppsCapabilities.sandboxPermissions]);
+  const matrixGatedPrefersBorder = useMemo(() => {
+    // `resourcePrefersBorder: false` means the simulated host
+    // ignores the resource's `_meta.ui.prefersBorder` hint. Iframe
+    // chrome falls back to host-default rendering (no border) for
+    // every widget on that host.
+    if (!earlyEffectiveMcpAppsCapabilities.resourcePrefersBorder) return false;
+    return prefersBorder;
+  }, [
+    prefersBorder,
+    earlyEffectiveMcpAppsCapabilities.resourcePrefersBorder,
+  ]);
   const [loadedCspMode, setLoadedCspMode] = useState<CspMode | null>(null);
   // Reload-key sibling to `loadedCspMode`: tracks the compat-runtime
   // flag the currently-loaded HTML was fetched with. Toggling the live
@@ -811,6 +925,15 @@ export function MCPAppsRenderer({
   // synchronously inside the effect body, so it has to be in scope here.
   const recordMountStore = useWidgetDebugStore((s) => s.recordMount);
 
+  // SEP-1865 MCP Apps spec-bridge matrix ref. Populated further down
+  // in the render (after `effectiveHostStyle` / `activeMcpProfile`
+  // resolve), but declared here so `useToolInputStreaming` below can
+  // read it without forward-reference issues. Null reads as "default
+  // on" — matches pre-matrix behavior during the brief initial-mount
+  // window before the matrix resolver runs.
+  const mcpAppsCapabilitiesRef =
+    useRef<ResolvedMcpAppsCapabilities | null>(null);
+
   const {
     canRenderStreamingInput,
     signalStreamingRender,
@@ -825,6 +948,7 @@ export function MCPAppsRenderer({
     toolErrorText,
     toolCallId,
     reinitCount,
+    mcpAppsCapabilitiesRef,
   });
   const hasWidgetHtml = widgetHtml !== null;
   const widgetHtmlLength = widgetHtml?.length ?? 0;
@@ -1431,6 +1555,33 @@ export function MCPAppsRenderer({
       }),
     [effectiveHostStyle, activeMcpProfile, hostCapabilitiesOverride],
   );
+  // SEP-1865 spec-bridge matrix resolved from the live profile +
+  // host style. Gates notification emissions (`tool-input-partial`,
+  // `tool-cancelled`, `host-context-changed`) so simulated hosts
+  // like Microsoft 365 Copilot match their published Component-
+  // bridge table. Sibling to `effectiveHostCapabilities` — the wire
+  // shape advertised in `ui/initialize` is derived from this matrix
+  // via `buildHostCapabilities`, but the matrix itself is what
+  // runtime notification gates read.
+  //
+  // INDEPENDENT from the OpenAI shim's `activeShimCapabilities`
+  // ref. Two-matrix architecture (see
+  // feedback_two_matrix_architecture memory): toggling a row on one
+  // matrix never reads the other.
+  //
+  // The ref is declared above (with initial `null`) so it's visible
+  // to `useToolInputStreaming` earlier in the render. We populate
+  // `.current` here — same one-step-behind-during-mount caveat the
+  // `liveOpenAiCompatCapabilitiesRef` pattern has, and the gate
+  // contract reads `null` as "default on" so the brief window emits
+  // notifications (matches pre-matrix behavior).
+  //
+  // The matrix itself is computed earlier in the render
+  // (`earlyEffectiveMcpAppsCapabilities` near the display-mode
+  // resolution) so the `effectiveDisplayMode` clamp can use it. We
+  // alias the same value here for downstream consumers.
+  const effectiveMcpAppsCapabilities = earlyEffectiveMcpAppsCapabilities;
+  mcpAppsCapabilitiesRef.current = effectiveMcpAppsCapabilities;
   themeModeRef.current = resolvedTheme;
   const styleVariables = useMemo(
     () => hostStyleDefinition.mcp.resolveStyleVariables(resolvedTheme),
@@ -1478,12 +1629,33 @@ export function MCPAppsRenderer({
 
   // containerDimensions (maxWidth/maxHeight) was previously sent here but
   // removed — width is now fully host-controlled.
-  const hostContext = useMemo<McpUiHostContext>(
-    () => ({
-      ...baseHostContext,
+  //
+  // Matrix-gated HostContext fields (PR C of the foundation series):
+  //
+  // - `availableDisplayModes`: intersection of the matrix's allowed
+  //   modes with playground / draft configured modes, computed earlier
+  //   as `effectiveAvailableDisplayModes` so the runtime
+  //   `effectiveDisplayMode` clamp and the advertised list agree.
+  //
+  // - `toolInfo`: omitted entirely when `matrix.toolInfo === false`
+  //   (Microsoft 365 Copilot doesn't deliver this HostContext field
+  //   per its published Component-bridge table). A widget that
+  //   probes `app.getHostContext()?.toolInfo` on a simulated Copilot
+  //   host now correctly sees undefined — same as real Copilot. The
+  //   gate strips any inherited `toolInfo` from `baseHostContext`
+  //   too: a draft host context that pre-populates `toolInfo` would
+  //   otherwise leak through the spread and defeat the gate.
+  const hostContext = useMemo<McpUiHostContext>(() => {
+    // Strip toolInfo from the spread source so the matrix gate is
+    // authoritative — if the matrix says off, no upstream value
+    // (drafts, playground state) can reintroduce it via inheritance.
+    const { toolInfo: _toolInfoFromBase, ...baseWithoutToolInfo } =
+      baseHostContext as McpUiHostContext & { toolInfo?: unknown };
+    const base: McpUiHostContext = {
+      ...baseWithoutToolInfo,
       theme: resolvedTheme,
       displayMode: effectiveDisplayMode,
-      availableDisplayModes: configuredAvailableDisplayModes,
+      availableDisplayModes: effectiveAvailableDisplayModes,
       locale,
       timeZone,
       platform:
@@ -1496,7 +1668,9 @@ export function MCPAppsRenderer({
       deviceCapabilities,
       safeAreaInsets,
       styles: mergedStyles,
-      toolInfo: {
+    };
+    if (effectiveMcpAppsCapabilities.toolInfo) {
+      base.toolInfo = {
         id: toolCallId,
         tool: {
           name: toolName,
@@ -1508,24 +1682,25 @@ export function MCPAppsRenderer({
             }) ?? DEFAULT_INPUT_SCHEMA,
           description: toolMetadata?.description as string | undefined,
         },
-      },
-    }),
-    [
-      baseHostContext,
-      resolvedTheme,
-      effectiveDisplayMode,
-      configuredAvailableDisplayModes,
-      locale,
-      timeZone,
-      deviceCapabilities,
-      safeAreaInsets,
-      mergedStyles,
-      hostStyleDefinition,
-      toolCallId,
-      toolName,
-      toolMetadata,
-    ],
-  );
+      };
+    }
+    return base;
+  }, [
+    baseHostContext,
+    resolvedTheme,
+    effectiveDisplayMode,
+    effectiveAvailableDisplayModes,
+    locale,
+    timeZone,
+    deviceCapabilities,
+    safeAreaInsets,
+    mergedStyles,
+    hostStyleDefinition,
+    toolCallId,
+    toolName,
+    toolMetadata,
+    effectiveMcpAppsCapabilities.toolInfo,
+  ]);
 
   useEffect(() => {
     hostContextRef.current = hostContext;
@@ -1707,9 +1882,18 @@ export function MCPAppsRenderer({
       let resolvedPermissions: McpUiResourcePermissions | undefined;
       if (sandboxPermissionsPolicy) {
         const resourcePermsMap: Record<string, boolean> = {};
-        if (widgetPermissions && typeof widgetPermissions === "object") {
+        // Matrix-gated: `sandboxPermissions: false` means the
+        // simulated host doesn't honor `_meta.ui.permissions`. Use
+        // the gated value here too — the playground's permissive
+        // CSP escape hatch is NOT a license to bypass host-level
+        // permission gating. Three bots converged on this miss in
+        // review of PR #2242.
+        if (
+          matrixGatedWidgetPermissions &&
+          typeof matrixGatedWidgetPermissions === "object"
+        ) {
           for (const [k, v] of Object.entries(
-            widgetPermissions as Record<string, unknown>,
+            matrixGatedWidgetPermissions as Record<string, unknown>,
           )) {
             if (v) resourcePermsMap[k] = true;
           }
@@ -1727,7 +1911,11 @@ export function MCPAppsRenderer({
       }
       return {
         csp: undefined,
-        permissions: resolvedPermissions ?? widgetPermissions,
+        // Same gate on the pass-through fallback: when no sandbox
+        // policy applies, the playground's permissive surface MUST
+        // NOT propagate widget-declared permissions that the host
+        // matrix says to ignore.
+        permissions: resolvedPermissions ?? matrixGatedWidgetPermissions,
         permissive: true,
         hostPolicyApplied: !!resolvedPermissions,
         sandboxAttrs: sandboxAttrsPolicy,
@@ -1761,7 +1949,11 @@ export function MCPAppsRenderer({
     let resolvedCsp: McpUiResourceCsp | undefined;
     if (sandboxCspPolicy && !isPureRelaxedCsp) {
       const resolved = resolveSandboxCsp({
-        resourceCsp: widgetCsp,
+        // Matrix-gated: `cspFrameDomains` / `cspBaseUriDomains` off
+        // strips those sub-fields from the widget-declared CSP before
+        // the resolver sees them, simulating hosts (Microsoft 365
+        // Copilot) that don't honor those `_meta.ui.csp.*` fields.
+        resourceCsp: matrixGatedWidgetCsp,
         policy: sandboxCspPolicy,
         // "host-default" mode falls back to an EMPTY allowlist inside
         // the resolver when `hostDefaultBaseline` is omitted (per
@@ -1772,7 +1964,7 @@ export function MCPAppsRenderer({
         // less if restrictTo narrows it). Without this, picking
         // "host-default" would silently emit `connect-src 'none'` and
         // break any widget that fetches external assets.
-        hostDefaultBaseline: widgetCsp,
+        hostDefaultBaseline: matrixGatedWidgetCsp,
         hostedMode: HOSTED_MODE,
         // Defense in depth: in hosted mode strip any widget-declared
         // domain matching MCPJam's own app/API origins. A hosted widget
@@ -1806,9 +1998,18 @@ export function MCPAppsRenderer({
     let resolvedPermissions: McpUiResourcePermissions | undefined;
     if (sandboxPermissionsPolicy) {
       const resourcePermsMap: Record<string, boolean> = {};
-      if (widgetPermissions && typeof widgetPermissions === "object") {
+      // Matrix-gated: `sandboxPermissions: false` means the simulated
+      // host doesn't honor resource permissions at all. The gated
+      // value is `undefined`, so the loop never runs and the
+      // resolver's policy alone decides what's granted (typically
+      // nothing, matching real Copilot which doesn't pipe widget-
+      // declared permissions to the iframe).
+      if (
+        matrixGatedWidgetPermissions &&
+        typeof matrixGatedWidgetPermissions === "object"
+      ) {
         for (const [k, v] of Object.entries(
-          widgetPermissions as Record<string, unknown>,
+          matrixGatedWidgetPermissions as Record<string, unknown>,
         )) {
           // SEP-1865 declares each permission as an empty object (`{}`)
           // when requested — i.e. a truthy value. Older shape gated on
@@ -1838,10 +2039,14 @@ export function MCPAppsRenderer({
       // tells SandboxedIframe to skip CSP injection). Otherwise pass
       // the resolver output through, falling back to the widget's own
       // derivation when no host CSP policy is in force.
+      // Use matrix-gated CSP / permissions as the fallback too, so a
+      // Copilot host whose matrix turns frameDomains off doesn't
+      // accidentally pass the un-gated value to the iframe via the
+      // `?? widgetCsp` branch.
       csp: isPureRelaxedCsp
         ? undefined
-        : (resolvedCsp ?? (widgetPermissive ? undefined : widgetCsp)),
-      permissions: resolvedPermissions ?? widgetPermissions,
+        : (resolvedCsp ?? (widgetPermissive ? undefined : matrixGatedWidgetCsp)),
+      permissions: resolvedPermissions ?? matrixGatedWidgetPermissions,
       // A host-applied CSP MUST be honored at the browser layer. When
       // a restrictive host policy is in force, force `permissive: false`
       // so the SandboxedIframe injects the meta-CSP. In pure-relaxed
@@ -1875,8 +2080,8 @@ export function MCPAppsRenderer({
     minimalMode,
     sandboxCspPolicy,
     sandboxPermissionsPolicy,
-    widgetCsp,
-    widgetPermissions,
+    matrixGatedWidgetCsp,
+    matrixGatedWidgetPermissions,
     widgetPermissive,
     sandboxAttrsPolicy,
     allowFeaturesPolicy,
@@ -2058,6 +2263,20 @@ export function MCPAppsRenderer({
       }
 
       if (effectiveHostCapabilities.serverTools) {
+        // Matrix-gated `sendToolCancelled` for app-initiated tool
+        // calls failing in this handler. Microsoft 365 Copilot does
+        // not deliver `ui/notifications/tool-cancelled` per its
+        // published Component-bridge table; simulated Copilot hosts
+        // must not see the cancelled callback even when the
+        // underlying tool throws. The handler still THROWS so the
+        // AppBridge's request/response path reports an error to the
+        // calling widget — only the side-channel notification is
+        // suppressed.
+        const sendToolCancelledIfAllowed = (reason: string) => {
+          const matrix = mcpAppsCapabilitiesRef.current;
+          if (matrix !== null && matrix.toolCancelled === false) return;
+          bridge.sendToolCancelled({ reason });
+        };
         bridge.oncalltool = async ({ name, arguments: args }, _extra) => {
           // Check if tool is model-only (not callable by apps) per SEP-1865
           const calledToolMeta = toolsMetadataRef.current?.[name];
@@ -2065,13 +2284,13 @@ export function MCPAppsRenderer({
             const error = new Error(
               `Tool "${name}" is not callable by apps (visibility: model-only)`,
             );
-            bridge.sendToolCancelled({ reason: error.message });
+            sendToolCancelledIfAllowed(error.message);
             throw error;
           }
 
           if (!onCallToolRef.current) {
             const error = new Error("Tool calls not supported");
-            bridge.sendToolCancelled({ reason: error.message });
+            sendToolCancelledIfAllowed(error.message);
             throw error;
           }
 
@@ -2083,9 +2302,9 @@ export function MCPAppsRenderer({
             return result as CallToolResult;
           } catch (error) {
             // SEP-1865: Send tool-cancelled for failed app-initiated tool calls
-            bridge.sendToolCancelled({
-              reason: error instanceof Error ? error.message : String(error),
-            });
+            sendToolCancelledIfAllowed(
+              error instanceof Error ? error.message : String(error),
+            );
             throw error;
           }
         };
@@ -2411,6 +2630,22 @@ export function MCPAppsRenderer({
   useEffect(() => {
     const bridge = bridgeRef.current;
     if (!bridge || !isReady) return;
+    // `bridge.setHostContext` updates the AppBridge's cached
+    // `_hostContext` AND emits `ui/notifications/host-context-changed`
+    // to the View. Matrix gate: Microsoft 365 Copilot does not
+    // deliver this notification per its published Component-bridge
+    // table (theme / displayMode updates are one-shot at
+    // `ui/initialize` time on that host). Null matrix → default on.
+    //
+    // We still skip the call entirely when gated rather than only
+    // suppressing the wire notification — the bridge's internal
+    // cache also tracks `_hostContext`, but on Copilot-style hosts
+    // the spec says it doesn't update mid-session, so keeping the
+    // cache frozen matches the simulated host's behavior. (If a
+    // future host wants the cache to update without emitting the
+    // notification, we'll split this gate.)
+    const matrix = mcpAppsCapabilitiesRef.current;
+    if (matrix !== null && matrix.hostContextChanged === false) return;
     bridge.setHostContext(hostContext);
   }, [hostContext, isReady]);
 
@@ -2724,7 +2959,7 @@ export function MCPAppsRenderer({
     width: "100%",
     maxWidth: "100%",
     backgroundColor:
-      !isFullscreen && prefersBorder
+      !isFullscreen && matrixGatedPrefersBorder
         ? mergedStyleVariables["--color-background-primary"]
         : (hostChatBackground ?? "transparent"),
     opacity: showWidget ? 1 : 0,
@@ -2739,7 +2974,7 @@ export function MCPAppsRenderer({
       ? { position: "absolute" as const, pointerEvents: "none" as const }
       : {}),
   };
-  const showHostChrome = !isFullscreen && prefersBorder;
+  const showHostChrome = !isFullscreen && matrixGatedPrefersBorder;
   const hostChromeStyle: CSSProperties | undefined = showHostChrome
     ? {
         backgroundColor: mergedStyleVariables["--color-background-primary"],
@@ -2776,7 +3011,7 @@ export function MCPAppsRenderer({
       className={`bg-transparent overflow-hidden ${
         isFullscreen
           ? "flex-1 border-0 rounded-none"
-          : `rounded-md ${prefersBorder ? "border border-border/40" : ""}`
+          : `rounded-md ${matrixGatedPrefersBorder ? "border border-border/40" : ""}`
       }`}
       style={iframeStyle}
     />
