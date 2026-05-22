@@ -365,3 +365,108 @@ describe("AppsExtensionTab — sandbox JSON round-trip", () => {
     );
   });
 });
+
+describe("AppsExtensionTab — mcpAppsOverrides JSON round-trip", () => {
+  it("parses a sparse mcpAppsOverrides block into mcpProfile.apps.mcpAppsOverrides", () => {
+    const next = applyJsonToDraft(
+      {
+        hostContext: {},
+        mcpAppsOverrides: {
+          serverResources: false,
+          logging: false,
+          availableDisplayModes: ["fullscreen"],
+        },
+      },
+      emptyHostConfigInputV2(),
+    );
+    expect(next?.mcpProfile?.apps?.mcpAppsOverrides).toEqual({
+      serverResources: false,
+      logging: false,
+      availableDisplayModes: ["fullscreen"],
+    });
+  });
+
+  it("drops non-boolean / non-mode-string entries silently (soft validation)", () => {
+    // Hand-typed JSON might be one rev behind the schema; tolerate stray
+    // fields rather than crashing the editor on parse.
+    const next = applyJsonToDraft(
+      {
+        hostContext: {},
+        mcpAppsOverrides: {
+          serverResources: false,
+          totallyBogus: "ignored",
+          availableDisplayModes: ["inline", "weirdmode", "pip"],
+        },
+      },
+      emptyHostConfigInputV2(),
+    );
+    expect(next?.mcpProfile?.apps?.mcpAppsOverrides).toEqual({
+      serverResources: false,
+      availableDisplayModes: ["inline", "pip"],
+    });
+  });
+
+  it("collapses an entirely-invalid block to undefined (falls back to preset)", () => {
+    // Nothing salvageable → no override persisted → the resolver uses
+    // the host style preset on the next read.
+    const next = applyJsonToDraft(
+      {
+        hostContext: {},
+        mcpAppsOverrides: {
+          totallyBogus: "ignored",
+          availableDisplayModes: ["weirdmode"],
+        },
+      },
+      emptyHostConfigInputV2(),
+    );
+    expect(next?.mcpProfile?.apps?.mcpAppsOverrides).toBeUndefined();
+  });
+
+  it("clears mcpAppsOverrides when the key is absent from the parsed JSON", () => {
+    // User edits the JSON to remove the entire mcpAppsOverrides block →
+    // the override clears so the resolver falls back to the preset.
+    const prev = emptyHostConfigInputV2();
+    prev.mcpProfile = {
+      profileVersion: 1,
+      apps: {
+        mcpAppsOverrides: { serverResources: false },
+      },
+    };
+    const next = applyJsonToDraft({ hostContext: {} }, prev);
+    expect(next?.mcpProfile?.apps?.mcpAppsOverrides).toBeUndefined();
+  });
+
+  it("preserves siblings (compatRuntime, sandbox, uiInitialize) when only mcpAppsOverrides changes", () => {
+    // Sibling fields under `mcpProfile.apps` round-trip through their own
+    // serializers; touching mcpAppsOverrides must not collateral-damage
+    // the other apps subsections.
+    const prev = emptyHostConfigInputV2();
+    prev.mcpProfile = {
+      profileVersion: 1,
+      apps: {
+        sandbox: {
+          permissions: { mode: "deny-all" },
+        },
+        compatRuntime: { openaiApps: false },
+        uiInitialize: { hostInfo: { name: "fakehost", version: "1.0" } },
+      },
+    };
+    const next = applyJsonToDraft(
+      {
+        hostContext: {},
+        compatRuntime: { openaiApps: false },
+        uiInitialize: { hostInfo: { name: "fakehost", version: "1.0" } },
+        mcpAppsOverrides: { logging: false },
+      },
+      prev,
+    );
+    expect(next?.mcpProfile?.apps?.mcpAppsOverrides).toEqual({
+      logging: false,
+    });
+    expect(next?.mcpProfile?.apps?.compatRuntime?.openaiApps).toBe(false);
+    expect(next?.mcpProfile?.apps?.uiInitialize?.hostInfo).toEqual({
+      name: "fakehost",
+      version: "1.0",
+    });
+  });
+});

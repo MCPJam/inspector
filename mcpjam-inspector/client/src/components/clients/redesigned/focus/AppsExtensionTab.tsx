@@ -12,6 +12,7 @@ import {
   OPENAI_APPS_FULL_SURFACE,
 } from "@/lib/client-styles";
 import type {
+  McpAppsCapabilities,
   OpenAiAppsCapabilities,
   ResolvedOpenAiAppsCapabilities,
 } from "@/lib/client-styles";
@@ -151,6 +152,19 @@ type AppsDoc = {
     openaiApps?: boolean;
     openaiAppsOverrides?: OpenAiAppsCapabilities;
   };
+  /**
+   * Sparse SEP-1865 `app.*` spec-bridge per-dimension override. Sibling
+   * to `compatRuntime` — `compatRuntime` covers vendor compat shims
+   * (`window.openai`), this covers the primary protocol surface. The
+   * two matrices are independent (toggling one never affects the other).
+   *
+   * Round-trips with `mcpProfile.apps.mcpAppsOverrides`. Present here
+   * only when non-empty so absent in the JSON means "use the host
+   * style preset". Booleans / mode-array soft-validated on parse; the
+   * backend canonicalizer is strict, but the editor accepts hand-typed
+   * JSON that may be one rev behind.
+   */
+  mcpAppsOverrides?: McpAppsCapabilities;
 };
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -391,6 +405,19 @@ function appsToJson(draft: HostConfigInputV2): AppsDoc {
     if (Object.keys(compatOut).length > 0) doc.compatRuntime = compatOut;
   }
 
+  // mcpProfile.apps.mcpAppsOverrides — sparse override on the SEP-1865
+  // `app.*` spec-bridge matrix. Sibling to `compatRuntime` so the JSON
+  // reflects what's persisted; absent here means "use the host style
+  // preset". Surfaced only when non-empty (matches `openaiAppsOverrides`'
+  // sparsity convention).
+  const mcpAppsOverrides = draft.mcpProfile?.apps?.mcpAppsOverrides;
+  if (
+    mcpAppsOverrides !== undefined &&
+    Object.keys(mcpAppsOverrides).length > 0
+  ) {
+    doc.mcpAppsOverrides = { ...mcpAppsOverrides };
+  }
+
   return doc;
 }
 
@@ -607,6 +634,52 @@ export function applyJsonToDraft(
     }
   }
 
+  // mcpAppsOverrides — sparse spec-bridge override. Soft-validated per
+  // field (booleans for boolean rows; mode-array filtered to known
+  // members). Empty / fully-invalid input collapses to undefined so the
+  // resolver falls back cleanly to the host style preset.
+  let nextMcpAppsOverrides: McpAppsCapabilities | undefined = undefined;
+  if (isPlainObject(parsed.mcpAppsOverrides)) {
+    const incoming = parsed.mcpAppsOverrides as Record<string, unknown>;
+    const out: McpAppsCapabilities = {};
+    const booleanKeys: Array<keyof McpAppsCapabilities> = [
+      "toolInputPartial",
+      "toolCancelled",
+      "hostContextChanged",
+      "resourceTeardown",
+      "toolInfo",
+      "openLinks",
+      "serverTools",
+      "serverResources",
+      "logging",
+      "updateModelContext",
+      "message",
+      "sandboxPermissions",
+      "cspFrameDomains",
+      "cspBaseUriDomains",
+      "resourcePrefersBorder",
+    ];
+    for (const key of booleanKeys) {
+      const value = incoming[key];
+      if (typeof value === "boolean") {
+        (out as Record<string, unknown>)[key] = value;
+      }
+    }
+    const modes = incoming.availableDisplayModes;
+    if (Array.isArray(modes)) {
+      const filtered = modes.filter(
+        (m): m is "inline" | "fullscreen" | "pip" =>
+          m === "inline" || m === "fullscreen" || m === "pip",
+      );
+      // Soft-validate: only emit the array when at least one valid
+      // member survived. An empty filter result reads as "user typed
+      // garbage" — fall through to the preset rather than persisting an
+      // empty allowlist the resolver would have to coerce to ["inline"].
+      if (filtered.length > 0) out.availableDisplayModes = filtered;
+    }
+    if (Object.keys(out).length > 0) nextMcpAppsOverrides = out;
+  }
+
   const appsBlock: NonNullable<HostConfigMcpProfileV1["apps"]> = {};
   if (nextSandbox) appsBlock.sandbox = nextSandbox;
   if (newAppsHostInfo) {
@@ -614,6 +687,9 @@ export function applyJsonToDraft(
   }
   if (Object.keys(newCompatRuntime).length > 0) {
     appsBlock.compatRuntime = newCompatRuntime;
+  }
+  if (nextMcpAppsOverrides !== undefined) {
+    appsBlock.mcpAppsOverrides = nextMcpAppsOverrides;
   }
   const hasApps = Object.keys(appsBlock).length > 0;
 
