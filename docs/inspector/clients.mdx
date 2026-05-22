@@ -45,6 +45,24 @@ When your server exposes [MCP Apps](https://modelcontextprotocol.io/docs/extensi
 - **Permission Policy** — Per-feature toggles for `camera`, `microphone`, `geolocation`, and `clipboard-write`. Choose `resource-declared` (grant what the app's resource metadata asks for), `deny-all`, or `custom` (your own allow map).
 - **Display modes** — Which of `inline`, `fullscreen`, and `pip` the inspector advertises in `HostContext.availableDisplayModes`. Test how your app responds when a requested mode isn't available.
 - **Theme and styles** — The CSS variables and font block the inspector injects into `HostContext.styles` so you can verify your app picks up host theming.
+- **`mcpAppsOverrides`** — Sparse per-dimension override for the SEP-1865 `app.*` spec-bridge capability matrix. Set this in the Apps tab JSON editor to suppress specific capabilities (e.g. `serverResources`, `logging`) or restrict `availableDisplayModes` independently of the host style preset. Absent from the JSON means "use the host style preset". Combine with the `copilot` host preset to simulate the M365-published capability subset exactly.
+
+<Tip>
+  Until a structured UI for `mcpAppsOverrides` is available, configure it by hand-editing the JSON in the Apps tab. Paste a block like the following, then save — it persists to `mcpProfile.apps.mcpAppsOverrides` and survives round-trips:
+
+  ```jsonc
+  {
+    "hostContext": { },
+    "mcpAppsOverrides": {
+      "serverResources": false,
+      "logging": false,
+      "availableDisplayModes": ["fullscreen"]
+    }
+  }
+  ```
+
+  Boolean fields require actual booleans; `availableDisplayModes` accepts `"inline"`, `"fullscreen"`, and `"pip"`. Unrecognized fields are silently ignored. An entirely invalid block is dropped and the resolver falls back to the host style preset.
+</Tip>
 
 <Note>
   All MCP App settings only take effect when the connected server actually
