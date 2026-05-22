@@ -105,6 +105,49 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
     expect(draftRef.current.mcpProfile?.apps?.mcpAppsOverrides).toBeUndefined();
   });
 
+  it("reverting the last matrix override returns the draft to its original profile state (no dirty empty envelope)", async () => {
+    // Regression: setMcpAppsOverridesOnDraft used to leave
+    // `{ profileVersion: 1, apps: {} }` behind after the last
+    // override was cleared. `hostConfigInputsEqual` treats that as
+    // distinct from `undefined`, so the draft stayed dirty while the
+    // matrix said "Matches host style preset". Toggling a row and
+    // toggling it back must round-trip the draft exactly.
+    const user = userEvent.setup();
+    const { draftRef } = renderMatrix();
+    expect(draftRef.current.mcpProfile).toBeUndefined();
+    const row = screen.getByTestId("mcp-apps-dimension-toolInputPartial");
+    const toggle = within(row).getByRole("switch");
+    await user.click(toggle); // off (override)
+    await user.click(toggle); // back on → matrix clean
+    // Profile must collapse back to undefined — no synthesized
+    // `{ profileVersion: 1, apps: {} }` left behind.
+    expect(draftRef.current.mcpProfile).toBeUndefined();
+  });
+
+  it("preserves sibling apps fields when clearing the last matrix override", async () => {
+    // Counter-test: the empty-collapse must NOT drop unrelated
+    // `apps.*` siblings. If the user has a `compatRuntime` block
+    // alongside, removing all matrix overrides leaves apps.{compat,
+    // sandbox, uiInitialize} intact and clears only mcpAppsOverrides.
+    const user = userEvent.setup();
+    const { draftRef } = renderMatrix({
+      mcpProfile: {
+        profileVersion: 1,
+        apps: {
+          compatRuntime: { openaiApps: false },
+          mcpAppsOverrides: { toolInputPartial: false },
+        },
+      },
+    });
+    const row = screen.getByTestId("mcp-apps-dimension-toolInputPartial");
+    const toggle = within(row).getByRole("switch");
+    await user.click(toggle); // back to preset → drop the override key
+    expect(draftRef.current.mcpProfile?.apps?.mcpAppsOverrides).toBeUndefined();
+    expect(draftRef.current.mcpProfile?.apps?.compatRuntime?.openaiApps).toBe(
+      false,
+    );
+  });
+
   it("'Overridden' badge appears on rows where the user has diverged from the preset", () => {
     const draft = emptyHostConfigInputV2({ hostStyle: "claude" });
     draft.mcpProfile = {

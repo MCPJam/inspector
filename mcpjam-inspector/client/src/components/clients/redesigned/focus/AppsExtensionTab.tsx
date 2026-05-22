@@ -1076,27 +1076,63 @@ function RequestDisplayModeControl({
 
 /**
  * Update `mcpProfile.apps.mcpAppsOverrides` while preserving sibling
- * fields (`sandbox`, `uiInitialize`, `compatRuntime`) and the parent
- * envelope. Empty override objects collapse to undefined so editing
- * back to preset values cleanly clears the matrix — `appsToJson` will
- * then omit the block entirely (matches the sparse-on-save convention
- * `setCompatRuntimeOnDraft` already uses for `openaiAppsOverrides`).
+ * fields (`sandbox`, `uiInitialize`, `compatRuntime`) and collapsing
+ * empties on the way out:
+ *   - empty override object → omit `mcpAppsOverrides` from `apps`
+ *   - empty `apps` block (no other siblings) → omit `apps` from profile
+ *   - empty profile (only `profileVersion`) → set `mcpProfile: undefined`
+ *
+ * Mirrors the collapse the bottom of `applyJsonToDraft` already does.
+ * Without it, toggling a row and toggling it back leaves a dirty
+ * `{ profileVersion: 1, apps: {} }` shell on the draft —
+ * `hostConfigInputsEqual` treats that as distinct from `undefined`, so
+ * the save button stays armed and the matrix says "Matches host style
+ * preset" while the draft is silently dirty.
  */
 function setMcpAppsOverridesOnDraft(
   prev: HostConfigInputV2,
   next: McpAppsCapabilities | undefined,
 ): HostConfigInputV2 {
-  const prevProfile: HostConfigMcpProfileV1 =
-    prev.mcpProfile ?? { profileVersion: 1 };
-  const prevApps = prevProfile.apps ?? {};
   const hasKeys = next !== undefined && Object.keys(next).length > 0;
-  const nextApps: NonNullable<HostConfigMcpProfileV1["apps"]> = {
-    ...prevApps,
-    mcpAppsOverrides: hasKeys ? next : undefined,
-  };
+  const prevProfile = prev.mcpProfile;
+  const prevApps = prevProfile?.apps ?? {};
+
+  // Rebuild `apps` explicitly so the spread doesn't leak
+  // `mcpAppsOverrides: undefined` into `Object.keys` when we're
+  // clearing the override. Sibling fields (`sandbox`, `uiInitialize`,
+  // `compatRuntime`, future additions) round-trip verbatim.
+  const nextApps: NonNullable<HostConfigMcpProfileV1["apps"]> = {};
+  for (const [key, value] of Object.entries(prevApps)) {
+    if (key === "mcpAppsOverrides") continue;
+    if (value !== undefined) {
+      (nextApps as Record<string, unknown>)[key] = value;
+    }
+  }
+  if (hasKeys) nextApps.mcpAppsOverrides = next;
+  const appsEmpty = Object.keys(nextApps).length === 0;
+
+  // Fast path: if the draft had no profile to begin with and the new
+  // apps block is empty, leave the draft untouched (no envelope
+  // synthesized just to immediately collapse it).
+  if (prevProfile === undefined && appsEmpty) {
+    return prev;
+  }
+
+  const baseProfile: HostConfigMcpProfileV1 =
+    prevProfile ?? { profileVersion: 1 };
+  const hasInitialize =
+    baseProfile.initialize !== undefined &&
+    (baseProfile.initialize.clientInfo !== undefined ||
+      (baseProfile.initialize.supportedProtocolVersions &&
+        baseProfile.initialize.supportedProtocolVersions.length > 0));
+  const hasExtensions = baseProfile.extensions !== undefined;
+  const profileEmpty = appsEmpty && !hasInitialize && !hasExtensions;
+
   return {
     ...prev,
-    mcpProfile: { ...prevProfile, apps: nextApps },
+    mcpProfile: profileEmpty
+      ? undefined
+      : { ...baseProfile, apps: appsEmpty ? undefined : nextApps },
   };
 }
 
