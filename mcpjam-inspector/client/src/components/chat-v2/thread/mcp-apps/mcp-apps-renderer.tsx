@@ -507,6 +507,33 @@ export function MCPAppsRenderer({
     () => extractHostDisplayModes(draftHostContext),
     [draftHostContext],
   );
+  // Resolve `effectiveHostStyle` early (it's a 3-way ternary on values
+  // already available above) so the SEP-1865 matrix can be computed
+  // before the display-mode clamp at `effectiveDisplayMode` below. The
+  // duplicate-looking `effectiveHostStyle = ...` further down (around
+  // the original `hostStyleDefinition`) reads the same value; both
+  // assignments produce identical strings because the dependencies are
+  // identical, so the bridge handshake / sandbox composition see the
+  // same host style id.
+  //
+  // Matrix-resolved `availableDisplayModes` is what we advertise in
+  // `HostContext.availableDisplayModes` AND what we clamp the
+  // current/initial `effectiveDisplayMode` against. Without this
+  // earlier clamp, a Copilot-preset host could initialize in (or
+  // remain in) `pip` because the parent's `displayMode === "pip"`,
+  // while advertising `availableDisplayModes: ["fullscreen"]` —
+  // the View would see inconsistent HostContext.
+  const earlyEffectiveHostStyle = isPlaygroundActive
+    ? sharedHostStyle
+    : chatboxHostStyle;
+  const earlyEffectiveMcpAppsCapabilities = useMemo(
+    () =>
+      resolveEffectiveMcpAppsCapabilities({
+        profile: activeMcpProfile,
+        hostStyle: earlyEffectiveHostStyle,
+      }),
+    [activeMcpProfile, earlyEffectiveHostStyle],
+  );
 
   // Get device capabilities from playground store (SEP-1865)
   const playgroundCapabilities = useUIPlaygroundStore((s) => s.capabilities);
@@ -584,14 +611,28 @@ export function MCPAppsRenderer({
     if (displayMode === "pip" && pipWidgetId === toolCallId) return "pip";
     return "inline";
   }, [displayMode, fullscreenWidgetId, isControlled, pipWidgetId, toolCallId]);
-  const effectiveDisplayMode = useMemo<DisplayMode>(
-    () =>
-      clampDisplayModeToAvailableModes(
-        requestedDisplayMode,
-        configuredAvailableDisplayModes,
-      ),
-    [configuredAvailableDisplayModes, requestedDisplayMode],
-  );
+  // Clamp the requested display mode against BOTH the playground/
+  // configured allowlist AND the matrix allowlist. A Copilot host
+  // initializing in `pip` (parent's `displayMode` is sticky from a
+  // previous widget) must coerce down to `fullscreen` because the
+  // matrix's `availableDisplayModes` is `["fullscreen"]` — otherwise
+  // `HostContext.displayMode` would say "pip" while
+  // `HostContext.availableDisplayModes` advertises only fullscreen,
+  // an inconsistent payload.
+  const effectiveDisplayMode = useMemo<DisplayMode>(() => {
+    const configClamp = clampDisplayModeToAvailableModes(
+      requestedDisplayMode,
+      configuredAvailableDisplayModes,
+    );
+    return clampDisplayModeToAvailableModes(
+      configClamp,
+      earlyEffectiveMcpAppsCapabilities.availableDisplayModes,
+    );
+  }, [
+    configuredAvailableDisplayModes,
+    requestedDisplayMode,
+    earlyEffectiveMcpAppsCapabilities.availableDisplayModes,
+  ]);
   const setDisplayMode = useCallback(
     (mode: DisplayMode) => {
       if (isControlled) {
@@ -1463,14 +1504,12 @@ export function MCPAppsRenderer({
   // `liveOpenAiCompatCapabilitiesRef` pattern has, and the gate
   // contract reads `null` as "default on" so the brief window emits
   // notifications (matches pre-matrix behavior).
-  const effectiveMcpAppsCapabilities = useMemo(
-    () =>
-      resolveEffectiveMcpAppsCapabilities({
-        profile: activeMcpProfile,
-        hostStyle: effectiveHostStyle,
-      }),
-    [activeMcpProfile, effectiveHostStyle],
-  );
+  //
+  // The matrix itself is computed earlier in the render
+  // (`earlyEffectiveMcpAppsCapabilities` near the display-mode
+  // resolution) so the `effectiveDisplayMode` clamp can use it. We
+  // alias the same value here for downstream consumers.
+  const effectiveMcpAppsCapabilities = earlyEffectiveMcpAppsCapabilities;
   mcpAppsCapabilitiesRef.current = effectiveMcpAppsCapabilities;
   themeModeRef.current = resolvedTheme;
   const styleVariables = useMemo(

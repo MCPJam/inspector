@@ -538,6 +538,36 @@ describe("MCPAppsRenderer tool input streaming", () => {
     ]);
   });
 
+  it("clamps HostContext.displayMode to the matrix allowlist (Copilot in pip parent state coerces to fullscreen)", async () => {
+    // Regression: previously the matrix-clamped allowlist was only
+    // written into `HostContext.availableDisplayModes`, but
+    // `effectiveDisplayMode` was still computed against the
+    // playground/configured allowlist alone. A Copilot host could
+    // initialize or remain in `pip` if the parent's display state
+    // was sticky `"pip"` from a previous widget, while advertising
+    // `availableDisplayModes: ["fullscreen"]` — an inconsistent
+    // HostContext. Fix clamps the displayMode against the matrix
+    // too.
+    render(
+      <ChatboxHostStyleProvider value="copilot">
+        <MCPAppsRenderer
+          {...baseProps}
+          displayMode="pip"
+          pipWidgetId="call-1"
+        />
+      </ChatboxHostStyleProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+    const hostContext = appBridgeArgsRef.current?.options?.hostContext as
+      | Record<string, unknown>
+      | undefined;
+    // Matrix-clamped: only fullscreen is allowed, so pip coerces.
+    expect(hostContext?.availableDisplayModes).toEqual(["fullscreen"]);
+    expect(hostContext?.displayMode).toBe("fullscreen");
+  });
+
   it("does not block pure MCP Apps from booting while ChatGPT compat is enabled", async () => {
     render(
       <ChatboxHostStyleProvider value="chatgpt">
