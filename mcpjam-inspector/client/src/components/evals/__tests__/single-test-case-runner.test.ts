@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { emptyHostConfigInputV2 } from "@/lib/client-config-v2";
 import {
   buildTestCaseModelOptions,
   getDefaultTestCaseModelValue,
   getPersistedTestCaseModelValue,
   prepareSingleTestCaseRun,
+  projectHostConfigRunOverride,
   resolveSelectedTestCaseModelValue,
   setPersistedTestCaseModelValue,
 } from "../single-test-case-runner";
@@ -170,5 +172,62 @@ describe("single-test-case-runner", () => {
         hasToken: vi.fn().mockReturnValue(true),
       }),
     ).rejects.toThrow("Add a model first");
+  });
+});
+
+describe("projectHostConfigRunOverride", () => {
+  // The projection from a full `HostConfigInputV2` into the subset
+  // sent to the server as the per-Run hostConfig snapshot. The
+  // projection MUST include `mcpProfile` whole so the SEP-1865
+  // `app.*` spec-bridge matrix (under
+  // `mcpProfile.apps.mcpAppsOverrides`) round-trips through eval
+  // runs — same guarantee the existing `hostCapabilitiesOverride`
+  // projection already provides for the legacy vendor-trait
+  // override. Without this, a host configured to simulate Microsoft
+  // 365 Copilot's M365 subset would have its per-run snapshots
+  // silently re-advertise the full spec surface, making eval runs
+  // not reflect the production host's behavior.
+  it("includes mcpProfile.apps.mcpAppsOverrides verbatim", () => {
+    const input = emptyHostConfigInputV2({ hostStyle: "copilot" });
+    input.mcpProfile = {
+      profileVersion: 1,
+      apps: {
+        mcpAppsOverrides: {
+          serverResources: false,
+          logging: false,
+          availableDisplayModes: ["fullscreen"],
+        },
+      },
+    };
+    const projected = projectHostConfigRunOverride(input);
+    const profile = projected.mcpProfile as
+      | { apps?: { mcpAppsOverrides?: unknown } }
+      | undefined;
+    expect(profile?.apps?.mcpAppsOverrides).toEqual({
+      serverResources: false,
+      logging: false,
+      availableDisplayModes: ["fullscreen"],
+    });
+  });
+
+  it("includes the legacy hostCapabilitiesOverride verbatim (sibling field, not subsumed by mcpProfile)", () => {
+    // The two override paths live on different fields (top-level vs
+    // nested under mcpProfile). The projection carries both so saved
+    // eval runs match what the resolver advertises today even for
+    // not-yet-migrated configs.
+    const input = emptyHostConfigInputV2({ hostStyle: "claude" });
+    input.hostCapabilitiesOverride = { openLinks: {}, serverTools: {} };
+    const projected = projectHostConfigRunOverride(input);
+    expect(projected.hostCapabilitiesOverride).toEqual({
+      openLinks: {},
+      serverTools: {},
+    });
+  });
+
+  it("omits both override paths when neither is set (clean preset run)", () => {
+    const input = emptyHostConfigInputV2({ hostStyle: "claude" });
+    const projected = projectHostConfigRunOverride(input);
+    expect(projected.mcpProfile).toBeUndefined();
+    expect(projected.hostCapabilitiesOverride).toBeUndefined();
   });
 });

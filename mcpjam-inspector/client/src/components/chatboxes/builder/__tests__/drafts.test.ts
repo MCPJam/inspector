@@ -202,4 +202,49 @@ describe("draftToHostConfigInputV2", () => {
     expect(input.clientCapabilities).toEqual({ custom: true });
     expect(input.hostContext).toEqual({ theme: "dark" });
   });
+
+  it("inherits mcpProfile.apps.mcpAppsOverrides from the project default (matrix override survives chatbox creation)", () => {
+    // The MCP Apps spec-bridge matrix lives under
+    // mcpProfile.apps.mcpAppsOverrides. draftToHostConfigInputV2 must
+    // pass the whole mcpProfile envelope through from the project
+    // default — otherwise a new chatbox created from a project that
+    // narrowed its spec-bridge surface (e.g. via "Match Copilot"
+    // preset chip) would silently re-advertise the full surface to
+    // widgets. Same guarantee the hostCapabilitiesOverride
+    // inheritance test enforces for the legacy override.
+    const draft = {
+      name: "n",
+      description: "",
+      hostStyle: "claude" as const,
+      systemPrompt: "",
+      modelId: "openai/gpt-5-mini",
+      temperature: 0.5,
+      requireToolApproval: false,
+      allowGuestAccess: false,
+      mode: "invited_only" as const,
+      selectedServerIds: [],
+      optionalServerIds: [],
+      chatUi: {
+        surfaces: {
+          welcome: { enabled: true, body: "" },
+          feedback: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+        },
+      },
+    };
+    const input = draftToHostConfigInputV2(draft, {
+      connectionDefaults: { headers: {}, requestTimeout: 30_000 },
+      clientCapabilities: {},
+      hostContext: {},
+      mcpProfile: {
+        profileVersion: 1,
+        apps: {
+          mcpAppsOverrides: { serverResources: false, logging: false },
+        },
+      },
+    });
+    expect(input.mcpProfile?.apps?.mcpAppsOverrides).toEqual({
+      serverResources: false,
+      logging: false,
+    });
+  });
 });
