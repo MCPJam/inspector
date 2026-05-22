@@ -18,7 +18,6 @@ vi.mock("@mcpjam/sdk", async () => {
 });
 
 vi.mock("../../apps/SandboxProxyHtml.bundled.js", () => ({
-  CHATGPT_APPS_SANDBOX_PROXY_HTML: "<html></html>",
   MCP_APPS_SANDBOX_PROXY_HTML: "<html></html>",
 }));
 

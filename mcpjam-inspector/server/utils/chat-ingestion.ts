@@ -21,7 +21,7 @@ const ENRICHMENT_HEADERS_TO_FORWARD = [
  * forwarded to the Convex `/ingest-chat` endpoint.
  */
 export function pickEnrichmentHeaders(
-  reqHeaders: { get(name: string): string | null | undefined } | Headers,
+  reqHeaders: { get(name: string): string | null | undefined } | Headers
 ): Record<string, string> {
   const result: Record<string, string> = {};
   for (const name of ENRICHMENT_HEADERS_TO_FORWARD) {
@@ -103,8 +103,8 @@ export function buildDirectHostConfig(input: {
       typeof resolvedTemperature === "number"
         ? resolvedTemperature
         : typeof requestedTemperature === "number"
-          ? requestedTemperature
-          : 0.7,
+        ? requestedTemperature
+        : 0.7,
     requireToolApproval: requireToolApproval === true,
     selectedServerIds: selectedServerIds ?? [],
   };
@@ -164,16 +164,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function normalizeSenderUserId(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
 function readSenderUserId(message: unknown): string | undefined {
   if (!isRecord(message)) {
     return undefined;
   }
 
-  if (
-    typeof message.senderUserId === "string" &&
-    message.senderUserId.length > 0
-  ) {
-    return message.senderUserId;
+  const senderUserId = normalizeSenderUserId(message.senderUserId);
+  if (senderUserId) {
+    return senderUserId;
   }
 
   const metadata = message.metadata;
@@ -181,29 +183,38 @@ function readSenderUserId(message: unknown): string | undefined {
     return undefined;
   }
 
-  return typeof metadata.senderUserId === "string" &&
-    metadata.senderUserId.length > 0
-    ? metadata.senderUserId
-    : undefined;
+  return normalizeSenderUserId(metadata.senderUserId);
 }
 
 /**
  * AI SDK model-message conversion intentionally drops UI-only metadata. For
- * shared direct sessions, carry `senderUserId` from the incoming UI transcript
- * onto the persisted trace by user-message ordinal so other collaborators can
- * render the same per-message avatar after the stream is saved.
+ * shared direct sessions, carry the current authenticated user's
+ * `senderUserId` from the incoming UI transcript onto the persisted trace by
+ * user-message ordinal so other collaborators can render the same per-message
+ * avatar after the stream is saved. The incoming transcript is client-
+ * controlled, so the extracted id is only trusted when it matches the
+ * server-authenticated principal for this request.
  */
 export function stampSenderUserIdsOnSessionMessages(
   sessionMessages: unknown[],
   sourceMessages: unknown[],
+  options?: {
+    authenticatedUserId?: string | null;
+  }
 ): unknown[] {
   if (!Array.isArray(sessionMessages) || !Array.isArray(sourceMessages)) {
     return sessionMessages;
   }
 
+  const authenticatedUserId = normalizeSenderUserId(
+    options?.authenticatedUserId
+  );
   const senderUserIdsByUserOrdinal = sourceMessages
     .filter((message) => isRecord(message) && message.role === "user")
-    .map(readSenderUserId);
+    .map((message) => {
+      const senderUserId = readSenderUserId(message);
+      return senderUserId === authenticatedUserId ? senderUserId : undefined;
+    });
 
   if (!senderUserIdsByUserOrdinal.some(Boolean)) {
     return sessionMessages;
@@ -240,12 +251,12 @@ function sanitizeDiagnosticText(text: string): string {
     .replace(
       /(\bauthorization\b\s*[:=]\s*)(bearer\s+)?([^"',\s}]+)/gi,
       (_match, prefix: string, scheme?: string) =>
-        `${prefix}${scheme ?? ""}[redacted-token]`,
+        `${prefix}${scheme ?? ""}[redacted-token]`
     )
     .replace(/\b(Bearer\s+)[A-Za-z0-9._\-+/=]+\b/gi, "$1[redacted-token]")
     .replace(
       /(["']?(?:api[_-]?key|token|access[_-]?token|refresh[_-]?token)["']?\s*[:=]\s*["']?)([^"',\s}]+)/gi,
-      "$1[redacted-secret]",
+      "$1[redacted-secret]"
     )
     .replace(/\bsk-[A-Za-z0-9]+\b/g, "[redacted-secret]");
 
@@ -263,7 +274,7 @@ async function readResponsePreview(response: Response): Promise<string> {
 
 export async function persistChatSessionToConvex(
   options: PersistChatSessionOptions,
-  c?: Context,
+  c?: Context
 ): Promise<void> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl || !options.authHeader || !options.chatSessionId) {
@@ -384,7 +395,7 @@ export async function persistChatSessionToConvex(
       } else {
         logger.warn(
           "[chat-session-persistence] Timed out persisting chat session",
-          { timeoutMs },
+          { timeoutMs }
         );
       }
       return;
@@ -395,7 +406,7 @@ export async function persistChatSessionToConvex(
       reqLogger.event(
         "chat.session.persist.failed",
         { failureKind: "exception", sourceType: options.sourceType },
-        { error: error instanceof Error ? error : undefined },
+        { error: error instanceof Error ? error : undefined }
       );
     } else {
       logger.warn("[chat-session-persistence] Error persisting chat session", {

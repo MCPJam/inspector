@@ -1426,9 +1426,10 @@ export function MCPAppsRenderer({
     () =>
       resolveEffectiveHostCapabilities({
         hostStyle: effectiveHostStyle,
+        profile: activeMcpProfile,
         hostCapabilitiesOverride,
       }),
-    [effectiveHostStyle, hostCapabilitiesOverride],
+    [effectiveHostStyle, activeMcpProfile, hostCapabilitiesOverride],
   );
   themeModeRef.current = resolvedTheme;
   const styleVariables = useMemo(
@@ -2869,6 +2870,11 @@ export function MCPAppsRenderer({
         toolName={toolName}
         cspMode={cspMode}
         injectOpenAiCompat={effectiveInjectOpenAiCompat}
+        // Same resolved blob the inline AppBridge advertises. Inline +
+        // modal must speak an identical surface to the widget so
+        // app.getHostCapabilities() returns the same record regardless
+        // of which iframe the widget is mounted in.
+        effectiveHostCapabilities={effectiveHostCapabilities}
         toolInputRef={toolInputRef}
         toolOutputRef={toolOutputRef}
         themeModeRef={themeModeRef}

@@ -12,6 +12,7 @@ import {
   OPENAI_APPS_FULL_SURFACE,
 } from "@/lib/client-styles";
 import type {
+  McpAppsCapabilities,
   OpenAiAppsCapabilities,
   ResolvedOpenAiAppsCapabilities,
 } from "@/lib/client-styles";
@@ -151,6 +152,19 @@ type AppsDoc = {
     openaiApps?: boolean;
     openaiAppsOverrides?: OpenAiAppsCapabilities;
   };
+  /**
+   * Sparse SEP-1865 `app.*` spec-bridge per-dimension override. Sibling
+   * to `compatRuntime` — `compatRuntime` covers vendor compat shims
+   * (`window.openai`), this covers the primary protocol surface. The
+   * two matrices are independent (toggling one never affects the other).
+   *
+   * Round-trips with `mcpProfile.apps.mcpAppsOverrides`. Present here
+   * only when non-empty so absent in the JSON means "use the host
+   * style preset". Booleans / mode-array soft-validated on parse; the
+   * backend canonicalizer is strict, but the editor accepts hand-typed
+   * JSON that may be one rev behind.
+   */
+  mcpAppsOverrides?: McpAppsCapabilities;
 };
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -343,6 +357,7 @@ function appsToJson(draft: HostConfigInputV2): AppsDoc {
   // object defensively so the two views don't desync.
   const effectiveCaps = resolveEffectiveHostCapabilities({
     hostStyle: draft.hostStyle,
+    profile: draft.mcpProfile,
     hostCapabilitiesOverride: draft.hostCapabilitiesOverride,
   }) as Record<string, unknown>;
 
@@ -390,6 +405,19 @@ function appsToJson(draft: HostConfigInputV2): AppsDoc {
     if (Object.keys(compatOut).length > 0) doc.compatRuntime = compatOut;
   }
 
+  // mcpProfile.apps.mcpAppsOverrides — sparse override on the SEP-1865
+  // `app.*` spec-bridge matrix. Sibling to `compatRuntime` so the JSON
+  // reflects what's persisted; absent here means "use the host style
+  // preset". Surfaced only when non-empty (matches `openaiAppsOverrides`'
+  // sparsity convention).
+  const mcpAppsOverrides = draft.mcpProfile?.apps?.mcpAppsOverrides;
+  if (
+    mcpAppsOverrides !== undefined &&
+    Object.keys(mcpAppsOverrides).length > 0
+  ) {
+    doc.mcpAppsOverrides = { ...mcpAppsOverrides };
+  }
+
   return doc;
 }
 
@@ -410,25 +438,109 @@ export function applyJsonToDraft(
     delete nextCaps.extensions;
   }
 
+  // mcpAppsOverrides — parsed FIRST so the `hostCapabilities` diff
+  // target below knows what wire shape the matrix would produce. Sparse
+  // spec-bridge override; soft-validated per field (booleans for
+  // boolean rows; mode-array filtered to known members). Empty /
+  // fully-invalid input collapses to undefined so the resolver falls
+  // back cleanly to the host style preset.
+  let nextMcpAppsOverrides: McpAppsCapabilities | undefined = undefined;
+  if (isPlainObject(parsed.mcpAppsOverrides)) {
+    const incoming = parsed.mcpAppsOverrides as Record<string, unknown>;
+    const out: McpAppsCapabilities = {};
+    const booleanKeys: Array<keyof McpAppsCapabilities> = [
+      "toolInputPartial",
+      "toolCancelled",
+      "hostContextChanged",
+      "resourceTeardown",
+      "toolInfo",
+      "openLinks",
+      "serverTools",
+      "serverResources",
+      "logging",
+      "updateModelContext",
+      "message",
+      "sandboxPermissions",
+      "cspFrameDomains",
+      "cspBaseUriDomains",
+      "resourcePrefersBorder",
+    ];
+    for (const key of booleanKeys) {
+      const value = incoming[key];
+      if (typeof value === "boolean") {
+        (out as Record<string, unknown>)[key] = value;
+      }
+    }
+    const modes = incoming.availableDisplayModes;
+    if (Array.isArray(modes)) {
+      const filtered = modes.filter(
+        (m): m is "inline" | "fullscreen" | "pip" =>
+          m === "inline" || m === "fullscreen" || m === "pip",
+      );
+      // Soft-validate: only emit the array when at least one valid
+      // member survived. An empty filter result reads as "user typed
+      // garbage" — fall through to the preset rather than persisting an
+      // empty allowlist the resolver would have to coerce to ["inline"].
+      if (filtered.length > 0) out.availableDisplayModes = filtered;
+    }
+    if (Object.keys(out).length > 0) nextMcpAppsOverrides = out;
+  }
+
   // hostCapabilities — the user sees the EFFECTIVE merged value, so on
-  // parse-back we diff against the preset to decide whether to store an
-  // override:
-  //   - absent in JSON → undefined override (revert to preset)
-  //   - equal to preset → undefined override (clean revert)
-  //   - different from preset → override = parsed value (incl. `{}` for
-  //     "advertise nothing")
-  // Sandbox is its own top-level block now; if a `sandbox` key sneaks into
-  // hostCapabilities (paste from an older export, hand-edit), strip it so
-  // it doesn't pollute the override diff.
-  const presetEffective = resolveEffectiveHostCapabilities({
+  // parse-back we decide whether the parsed value is a legacy override
+  // or just a stale serialization of the matrix. A legacy
+  // `hostCapabilitiesOverride` is only persisted when the user typed
+  // something the matrix cannot produce.
+  //
+  // We compare `parsed.hostCapabilities` against BOTH:
+  //   1. `matrixResolvedNext` — the wire shape the matrix WILL produce
+  //      after this save (preset + post-parse `mcpAppsOverrides`).
+  //   2. `matrixResolvedPrev` — the wire shape the matrix WAS
+  //      producing before this save (prev's `mcpAppsOverrides`).
+  //
+  // Match either → undefined legacy override:
+  //   - Matches (1): user is looking at a faithful serialization of
+  //     the matrix they're saving. No extra opinion expressed.
+  //   - Matches (2): user removed/changed `mcpAppsOverrides` but the
+  //     JSON's `hostCapabilities` still shows the pre-change matrix
+  //     shape — that's a stale artifact of `appsToJson` re-emitting
+  //     effective caps on every render, NOT a deliberate legacy
+  //     override. Removing only `mcpAppsOverrides` must actually revert
+  //     to preset; persisting the stale shape would keep the override
+  //     behavior alive through the legacy path.
+  //
+  // Match neither → the user typed something the matrix can't produce;
+  // persist as legacy `hostCapabilitiesOverride` so it survives the
+  // round-trip.
+  //
+  // Sandbox is its own top-level block now; if a `sandbox` key sneaks
+  // into hostCapabilities (paste from an older export, hand-edit),
+  // strip it so it doesn't pollute the override diff.
+  const matrixResolvedNext = resolveEffectiveHostCapabilities({
     hostStyle: prev.hostStyle,
+    profile:
+      nextMcpAppsOverrides !== undefined
+        ? {
+            profileVersion: 1,
+            apps: { mcpAppsOverrides: nextMcpAppsOverrides },
+          }
+        : undefined,
+    hostCapabilitiesOverride: undefined,
+  }) as Record<string, unknown>;
+  const matrixResolvedPrev = resolveEffectiveHostCapabilities({
+    hostStyle: prev.hostStyle,
+    profile: prev.mcpProfile,
     hostCapabilitiesOverride: undefined,
   }) as Record<string, unknown>;
   let nextOverride: Record<string, unknown> | undefined = undefined;
   if ("hostCapabilities" in parsed) {
     if (isPlainObject(parsed.hostCapabilities)) {
       const { sandbox: _ignored, ...incoming } = parsed.hostCapabilities;
-      if (stableStringifyJson(incoming) === stableStringifyJson(presetEffective)) {
+      const incomingStr = stableStringifyJson(incoming);
+      if (
+        incomingStr === stableStringifyJson(matrixResolvedNext) ||
+        incomingStr === stableStringifyJson(matrixResolvedPrev)
+      ) {
         nextOverride = undefined;
       } else {
         nextOverride = incoming;
@@ -605,6 +717,9 @@ export function applyJsonToDraft(
   }
   if (Object.keys(newCompatRuntime).length > 0) {
     appsBlock.compatRuntime = newCompatRuntime;
+  }
+  if (nextMcpAppsOverrides !== undefined) {
+    appsBlock.mcpAppsOverrides = nextMcpAppsOverrides;
   }
   const hasApps = Object.keys(appsBlock).length > 0;
 

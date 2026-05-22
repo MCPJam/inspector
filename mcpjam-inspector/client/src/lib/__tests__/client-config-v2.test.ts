@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   emptyHostConfigInputV2,
+  hostCapabilitiesOverrideToMatrix,
   hostConfigDtoToInput,
   hostConfigInputsEqual,
+  mergeMcpAppsCapabilities,
   resolveEffectiveHostCapabilities,
+  resolveEffectiveMcpAppsCapabilities,
   type HostConfigDtoV2,
   type HostConfigInputV2,
 } from "../client-config-v2";
@@ -309,4 +312,193 @@ describe("resolveEffectiveHostCapabilities", () => {
     // preset rather than the spec-default {}.
     expect(resolved).toHaveProperty("message");
   });
+
+  it("uses the new matrix path when profile carries mcpAppsOverrides", () => {
+    // Regression: the matrix override must actually flow through to the
+    // advertised wire shape. Previously this path was reachable only via
+    // explicit profile arg, but the four real callsites (renderer,
+    // canvas, AppsExtensionTab editor + JSON parser) didn't thread it,
+    // so a saved `mcpProfile.apps.mcpAppsOverrides` was dead.
+    const resolved = resolveEffectiveHostCapabilities({
+      hostStyle: "claude",
+      profile: {
+        profileVersion: 1,
+        apps: {
+          mcpAppsOverrides: { serverResources: false, logging: false },
+        },
+      },
+    });
+    // Claude preset advertises serverResources + logging; the matrix
+    // override strips both.
+    expect(resolved).not.toHaveProperty("serverResources");
+    expect(resolved).not.toHaveProperty("logging");
+    // Other Claude rows still advertised.
+    expect(resolved).toHaveProperty("openLinks");
+    expect(resolved).toHaveProperty("updateModelContext");
+    expect(resolved).toHaveProperty("message");
+  });
+
+  it("matrix override beats legacy hostCapabilitiesOverride when both are set", () => {
+    // Precedence rule: mcpAppsOverrides wins. Legacy field stays
+    // readable for one release window during migration.
+    const resolved = resolveEffectiveHostCapabilities({
+      hostStyle: "claude",
+      profile: {
+        profileVersion: 1,
+        apps: {
+          mcpAppsOverrides: { serverResources: false },
+        },
+      },
+      hostCapabilitiesOverride: { serverResources: {} },
+    });
+    expect(resolved).not.toHaveProperty("serverResources");
+  });
 });
+
+describe("resolveEffectiveMcpAppsCapabilities", () => {
+  it("returns the host style preset when profile is undefined", () => {
+    const resolved = resolveEffectiveMcpAppsCapabilities({
+      hostStyle: "copilot",
+      profile: undefined,
+    });
+    // Copilot preset: fullscreen-only, no serverResources / logging,
+    // no notification gates.
+    expect(resolved.availableDisplayModes).toEqual(["fullscreen"]);
+    expect(resolved.serverResources).toBe(false);
+    expect(resolved.logging).toBe(false);
+    expect(resolved.toolInputPartial).toBe(false);
+  });
+
+  it("merges sparse overrides over the preset", () => {
+    const resolved = resolveEffectiveMcpAppsCapabilities({
+      hostStyle: "claude",
+      profile: {
+        profileVersion: 1,
+        apps: { mcpAppsOverrides: { serverResources: false } },
+      },
+    });
+    // Claude preset is FULL_SURFACE; override flips one row.
+    expect(resolved.serverResources).toBe(false);
+    expect(resolved.logging).toBe(true);
+    expect(resolved.openLinks).toBe(true);
+    expect(resolved.serverTools).toBe(true);
+  });
+
+  it("falls back to NO_CLAIMS for unknown host styles (not FULL_SURFACE)", () => {
+    // Regression: a persisted mcpAppsOverrides against a removed host
+    // must NOT advertise near-full support. Mirrors getHostCapabilities-
+    // ForStyle's honest "no claims" baseline.
+    const resolved = resolveEffectiveMcpAppsCapabilities({
+      hostStyle: "does-not-exist",
+      profile: {
+        profileVersion: 1,
+        apps: { mcpAppsOverrides: { serverResources: true } },
+      },
+    });
+    expect(resolved.openLinks).toBe(false);
+    expect(resolved.serverTools).toBe(false);
+    // The override only turns ON what the user asked for, against a
+    // no-claims baseline.
+    expect(resolved.serverResources).toBe(true);
+    expect(resolved.logging).toBe(false);
+  });
+});
+
+describe("mergeMcpAppsCapabilities", () => {
+  it("returns the base unchanged when override is undefined", () => {
+    const base = {
+      ...MCP_APPS_FULL_SURFACE_FOR_TEST,
+    };
+    expect(mergeMcpAppsCapabilities(base, undefined)).toBe(base);
+  });
+
+  it("replaces availableDisplayModes (not unioned)", () => {
+    const merged = mergeMcpAppsCapabilities(
+      { ...MCP_APPS_FULL_SURFACE_FOR_TEST },
+      { availableDisplayModes: ["fullscreen"] },
+    );
+    expect(merged.availableDisplayModes).toEqual(["fullscreen"]);
+  });
+
+  it("coerces empty availableDisplayModes to ['inline'] (spec default)", () => {
+    const merged = mergeMcpAppsCapabilities(
+      { ...MCP_APPS_FULL_SURFACE_FOR_TEST },
+      { availableDisplayModes: [] },
+    );
+    expect(merged.availableDisplayModes).toEqual(["inline"]);
+  });
+
+  it("treats explicit false in override as a real value (not falsy passthrough)", () => {
+    // `?? base.x` semantics: false replaces, undefined falls through.
+    const merged = mergeMcpAppsCapabilities(
+      { ...MCP_APPS_FULL_SURFACE_FOR_TEST },
+      { serverResources: false, logging: false },
+    );
+    expect(merged.serverResources).toBe(false);
+    expect(merged.logging).toBe(false);
+    expect(merged.openLinks).toBe(true);
+  });
+});
+
+describe("hostCapabilitiesOverrideToMatrix", () => {
+  it("returns undefined for an undefined legacy override", () => {
+    expect(hostCapabilitiesOverrideToMatrix(undefined)).toBeUndefined();
+  });
+
+  it("maps legacy {} to all-false (advertise nothing) — lossless migration", () => {
+    // Previously lossy: the helper produced a matrix that still let
+    // buildHostCapabilities re-add openLinks / serverTools. Now every
+    // advertise key is represented so empty legacy maps cleanly.
+    const matrix = hostCapabilitiesOverrideToMatrix({});
+    expect(matrix).toEqual({
+      openLinks: false,
+      serverTools: false,
+      serverResources: false,
+      logging: false,
+      updateModelContext: false,
+      message: false,
+    });
+  });
+
+  it("maps a populated legacy override to the matching matrix rows", () => {
+    const matrix = hostCapabilitiesOverrideToMatrix({
+      openLinks: {},
+      serverTools: { listChanged: false },
+      message: { text: {} },
+    });
+    expect(matrix).toEqual({
+      openLinks: true,
+      serverTools: true,
+      serverResources: false,
+      logging: false,
+      updateModelContext: false,
+      message: true,
+    });
+  });
+});
+
+// Shared helper for mergeMcpAppsCapabilities tests; mirrors the
+// presets/FULL_SURFACE constant without coupling these tests to a
+// specific import path that might shift around during the migration.
+const MCP_APPS_FULL_SURFACE_FOR_TEST = {
+  availableDisplayModes: ["inline", "fullscreen", "pip"] as (
+    | "inline"
+    | "fullscreen"
+    | "pip"
+  )[],
+  toolInputPartial: true,
+  toolCancelled: true,
+  hostContextChanged: true,
+  resourceTeardown: true,
+  toolInfo: true,
+  openLinks: true,
+  serverTools: true,
+  serverResources: true,
+  logging: true,
+  updateModelContext: true,
+  message: true,
+  sandboxPermissions: true,
+  cspFrameDomains: true,
+  cspBaseUriDomains: true,
+  resourcePrefersBorder: true,
+};

@@ -265,8 +265,6 @@ export function useSaveView({
           toolName: toolData.toolName,
         });
         const liveOutputTemplate = toolData.outputTemplate?.trim();
-        const liveOutputTemplateIsUi =
-          !!liveOutputTemplate && liveOutputTemplate.startsWith("ui://");
         // `toolData.resourceUri` comes from `getUIResourceUri()` in
         // part-switch.tsx, which for OpenAI-origin tools returns the
         // raw `openai/outputTemplate` value verbatim — any scheme. We
@@ -302,17 +300,6 @@ export function useSaveView({
           injectedOpenAiCompatCapabilities: widgetHtmlBlobId
             ? toolData.injectedOpenAiCompatCapabilities
             : undefined,
-          // Legacy aliases (input-only on the backend normalizer). The
-          // backend validates `outputTemplate` whenever it is supplied,
-          // even when `resourceUri` wins precedence, so we only
-          // forward it when it is itself spec-compliant. A non-ui://
-          // OpenAI template (e.g. `https://...`) is dropped on the
-          // floor here — the canonical `resourceUri` is what matters.
-          outputTemplate:
-            isOpenAIOrigin && liveOutputTemplateIsUi
-              ? liveOutputTemplate
-              : undefined,
-          serverInfo: isOpenAIOrigin ? toolData.serverInfo : undefined,
           // Documentation-only provenance:
           viewOriginProtocol: isOpenAIOrigin ? "openai-apps" : "mcp-apps",
         });

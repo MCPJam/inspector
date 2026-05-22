@@ -713,6 +713,7 @@ chatV2.post("/", async (c) => {
           selectedServerIds: hostConfigServerIds,
         })
       : undefined;
+    const authenticatedUserId = c.var.requestLogContext?.userId ?? null;
 
     // MCPJam-provided models: delegate to stream handler
     if (modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)) {
@@ -749,9 +750,7 @@ chatV2.post("/", async (c) => {
 
       const chatSessionId = body.chatSessionId;
 
-      const inboundAbortSignalMcp = c.req.raw.signal as
-        | AbortSignal
-        | undefined;
+      const inboundAbortSignalMcp = c.req.raw.signal as AbortSignal | undefined;
       warnIfChatAbortSignalMissing(inboundAbortSignalMcp, "mcp/chat-v2");
 
       return handleMCPJamFreeChatModel({
@@ -782,6 +781,7 @@ chatV2.post("/", async (c) => {
                 sessionMessages: stampSenderUserIdsOnSessionMessages(
                   fullHistory,
                   messages,
+                  { authenticatedUserId }
                 ),
                 startedAt: sessionStartedAt,
                 lastActivityAt: Date.now(),
@@ -830,9 +830,7 @@ chatV2.post("/", async (c) => {
       const sessionStartedAt = Date.now();
       const chatSessionId = body.chatSessionId;
       const modelId = String(modelDefinition.id);
-      const inboundAbortSignalOrg = c.req.raw.signal as
-        | AbortSignal
-        | undefined;
+      const inboundAbortSignalOrg = c.req.raw.signal as AbortSignal | undefined;
       warnIfChatAbortSignalMissing(inboundAbortSignalOrg, "mcp/chat-v2");
       const runtime: OrgProviderRuntime = isLocalRuntimeEligible(providerKey)
         ? await resolveOrgProviderRuntime(
@@ -844,11 +842,14 @@ chatV2.post("/", async (c) => {
               chatboxId: bodyChatboxId,
               accessVersion: bodyAccessVersion,
               serverIds: hostConfigServerIds,
-            },
+            }
           )
         : { runtimeLocation: "cloud", providerKey };
       const onConversationComplete = chatSessionId
-        ? async (fullHistory: ModelMessage[], turnTrace: PersistedTurnTrace) => {
+        ? async (
+            fullHistory: ModelMessage[],
+            turnTrace: PersistedTurnTrace
+          ) => {
             await persistChatSessionToConvex({
               chatSessionId,
               modelId,
@@ -864,6 +865,7 @@ chatV2.post("/", async (c) => {
               sessionMessages: stampSenderUserIdsOnSessionMessages(
                 fullHistory,
                 messages,
+                { authenticatedUserId }
               ),
               startedAt: sessionStartedAt,
               lastActivityAt: Date.now(),
@@ -988,6 +990,7 @@ chatV2.post("/", async (c) => {
               messages: stampSenderUserIdsOnSessionMessages(
                 modelMessages as ModelMessage[],
                 messages,
+                { authenticatedUserId }
               ),
               systemPrompt: enhancedSystemPrompt,
               ...(responseMessages.length > 0 ? { responseMessages } : {}),

@@ -75,6 +75,14 @@ export interface HostMatrixCardProps {
     methodCount: number;
     methodTotal: number;
   };
+  /**
+   * SEP-1865 `app.*` spec-bridge override state. Independent from
+   * `compatRuntime` — see HostRedesignFlowNode types for the contract.
+   */
+  mcpAppsBridge: {
+    hasOverrides: boolean;
+    overrideCount: number;
+  };
   selectedNodeId: string | null;
   onSelectNode: (nodeId: string) => void;
 }
@@ -89,6 +97,7 @@ export const HostMatrixCard = memo(function HostMatrixCard({
   hostInfo,
   appsExtensionAdvertised,
   compatRuntime,
+  mcpAppsBridge,
   selectedNodeId,
   onSelectNode,
 }: HostMatrixCardProps) {
@@ -306,6 +315,7 @@ export const HostMatrixCard = memo(function HostMatrixCard({
             viewIframeInjectedGlobals={
               <ViewIframeInjectedGlobals
                 compatRuntime={compatRuntime}
+                mcpAppsBridge={mcpAppsBridge}
                 onClick={() => onSelectNode(APPS_HUB_NODE_ID)}
               />
             }
@@ -319,17 +329,28 @@ export const HostMatrixCard = memo(function HostMatrixCard({
 
 /* Injected globals strip inside the View iframe frame.
  *
- * `window.openai` is not in SEP-1865 — it's a ChatGPT-only compatibility
- * layer the inspector injects into widget HTML before sandboxing, so widgets
- * written against the OpenAI Apps SDK keep working. Rendering this inside
- * the View iframe block makes the spatial claim true: this is what the
- * widget's JS actually sees on `window` at runtime.
+ * Two chips rendered side by side, representing the two distinct surfaces
+ * the widget JS sees on `window` at runtime:
  *
- * Clicking routes to the Apps Extension tab, where the per-host toggle
- * (`mcpProfile.apps.compatRuntime.openaiApps`) lives.
+ *   - `window.openai` — ChatGPT-only compatibility shim (NOT in SEP-1865).
+ *     Inspector injects into widget HTML before sandboxing so widgets
+ *     written against the OpenAI Apps SDK keep working. Toggled by
+ *     `mcpProfile.apps.compatRuntime.openaiApps` + per-method overrides.
+ *
+ *   - `app.*` — SEP-1865 MCP Apps spec bridge. Always present (it's the
+ *     primary protocol). Sparse per-dimension overrides via
+ *     `mcpProfile.apps.mcpAppsOverrides` let users simulate a published
+ *     host's subset (e.g. Microsoft 365 Copilot's M365 table).
+ *
+ * The two surfaces are INDEPENDENT — toggling one never affects the
+ * other. They share this chip strip purely because spatially, both are
+ * "things the widget's JS sees on window at runtime."
+ *
+ * Clicking either chip routes to the Apps Extension tab.
  */
 function ViewIframeInjectedGlobals({
   compatRuntime,
+  mcpAppsBridge,
   onClick,
 }: {
   compatRuntime: {
@@ -339,17 +360,29 @@ function ViewIframeInjectedGlobals({
     methodCount: number;
     methodTotal: number;
   };
+  mcpAppsBridge: {
+    hasOverrides: boolean;
+    overrideCount: number;
+  };
   onClick: () => void;
 }) {
-  // Tri-state label: off / preset / custom. "Custom" wins whenever the
-  // user has flipped at least one per-method override, even if injection
-  // itself is at the preset default. Matches what the Apps tab matrix
-  // shows — the chip is a summary of the same state.
-  const customSubtitle = compatRuntime.hasMethodOverrides
+  // Tri-state label for window.openai: off / preset / custom. "Custom"
+  // wins whenever the user has flipped at least one per-method override,
+  // even if injection itself is at the preset default.
+  const openaiSubtitle = compatRuntime.hasMethodOverrides
     ? `custom (${compatRuntime.methodCount}/${compatRuntime.methodTotal} methods)`
     : compatRuntime.fromOverride
       ? "overridden"
       : "from preset";
+  // Bi-state label for app.*: "from preset" or "custom (N overrides)".
+  // Counts sparse-override keys directly — heterogeneous dimensions
+  // (booleans + mode array + sandbox + resource-meta) make a flat
+  // "active" count harder to interpret than just "edits applied."
+  const mcpAppsSubtitle = mcpAppsBridge.hasOverrides
+    ? `custom (${mcpAppsBridge.overrideCount} ${
+        mcpAppsBridge.overrideCount === 1 ? "override" : "overrides"
+      })`
+    : "from preset";
   return (
     <div className="hp-view-injected">
       <button
@@ -370,8 +403,27 @@ function ViewIframeInjectedGlobals({
         <span className="hp-cap-dot" aria-hidden />
         <span className="hp-cap-name">window.openai</span>
         {compatRuntime.openaiApps ? (
-          <span className="hp-cap-tag">{customSubtitle}</span>
+          <span className="hp-cap-tag">{openaiSubtitle}</span>
         ) : null}
+      </button>
+      <button
+        type="button"
+        className="hp-cap"
+        onClick={(e) => {
+          e.stopPropagation();
+          onClick();
+        }}
+        title={
+          mcpAppsBridge.hasOverrides
+            ? `SEP-1865 app.* spec bridge with ${mcpAppsBridge.overrideCount} sparse ${
+                mcpAppsBridge.overrideCount === 1 ? "override" : "overrides"
+              } on top of the host preset (e.g. Copilot's M365-published subset). Click to view the matrix.`
+            : "SEP-1865 app.* spec bridge — primary MCP Apps protocol surface, always present. Click to view the per-dimension matrix."
+        }
+      >
+        <span className="hp-cap-dot" aria-hidden />
+        <span className="hp-cap-name">app.*</span>
+        <span className="hp-cap-tag">{mcpAppsSubtitle}</span>
       </button>
     </div>
   );
