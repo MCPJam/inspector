@@ -18,8 +18,7 @@ import { AppsExtensionTab } from "../AppsExtensionTab";
  * trip are already exhaustively covered in
  * `client-config-v2.test.ts` and `AppsExtensionTab.sandbox.test.ts`;
  * here we only assert that clicks on the structured matrix produce the
- * expected sparse-override edits on the draft, that the per-row
- * "Overridden" badge tracks the override map.
+ * expected sparse-override edits on the draft.
  */
 /**
  * Render `AppsExtensionTab` with a managed draft that re-renders on
@@ -162,31 +161,6 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
     );
   });
 
-  it("'Overridden' badge appears on rows where the user has diverged from the preset", async () => {
-    const user = userEvent.setup();
-    const draft = emptyHostConfigInputV2({ hostStyle: "claude" });
-    draft.mcpProfile = {
-      profileVersion: 1,
-      apps: { mcpAppsOverrides: { logging: false } },
-    };
-    const onDraftChange = vi.fn();
-    render(
-      <AppsExtensionTab
-        draft={draft}
-        onDraftChange={onDraftChange}
-        attention={[]}
-      />,
-    );
-    await expandMcpAppsDimensions(user);
-    const overriddenRow = screen.getByTestId("mcp-apps-dimension-logging");
-    expect(within(overriddenRow).getByText("Overridden")).toBeInTheDocument();
-    // Sibling row (no override) does NOT carry the badge.
-    const cleanRow = screen.getByTestId(
-      "mcp-apps-dimension-serverResources",
-    );
-    expect(within(cleanRow).queryByText("Overridden")).toBeNull();
-  });
-
   it("renders the master advertise switch in the header", () => {
     renderMatrix();
     expect(
@@ -237,7 +211,7 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
 });
 
 describe("AppsExtensionTab — McpAppsCapabilityMatrix legacy-override migration", () => {
-  it("displays a legacy hostCapabilitiesOverride as a virtually-migrated matrix (Overridden badges reflect what the resolver advertises)", async () => {
+  it("displays a legacy hostCapabilitiesOverride as a virtually-migrated matrix (effective values reflect what the resolver advertises)", async () => {
     const user = userEvent.setup();
     // Regression (Codex Bot on #2236): if the draft has legacy
     // `hostCapabilitiesOverride` and no `mcpAppsOverrides`, the matrix
@@ -247,7 +221,7 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix legacy-override migration
     // dimension back to the preset.
     const draft = emptyHostConfigInputV2({ hostStyle: "claude" });
     // Legacy override stripped serverResources + logging (advertise
-    // neither). Matrix UI must reflect both as Overridden.
+    // neither). Matrix UI must reflect both as off.
     draft.hostCapabilitiesOverride = {
       openLinks: {},
       serverTools: {},
@@ -265,9 +239,9 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix legacy-override migration
     const serverResources = screen.getByTestId(
       "mcp-apps-dimension-serverResources",
     );
-    expect(within(serverResources).getByText("Overridden")).toBeInTheDocument();
+    expect(within(serverResources).getByRole("switch")).not.toBeChecked();
     const logging = screen.getByTestId("mcp-apps-dimension-logging");
-    expect(within(logging).getByText("Overridden")).toBeInTheDocument();
+    expect(within(logging).getByRole("switch")).not.toBeChecked();
   });
 
   it("migrates legacy → matrix on the first row toggle and clears the legacy field", async () => {

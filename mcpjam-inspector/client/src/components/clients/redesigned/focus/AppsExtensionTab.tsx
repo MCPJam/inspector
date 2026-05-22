@@ -1253,8 +1253,6 @@ const DISPLAY_MODE_LABELS: Record<DisplayMode, string> = {
  * Layout:
  * - `availableDisplayModes` cluster at the top.
  * - Flat list of all boolean matrix dimensions below.
- * - Per-row "Overridden" badge when the user has diverged from the
- *   host style preset; rows show the preset value for context.
  *
  * The matrix round-trips through `appsToJson` / `applyJsonToDraft` so
  * the JSON editor below stays in sync.
@@ -1287,7 +1285,7 @@ function McpAppsCapabilityMatrix({
   // to the preset.
   //
   // The display fix: virtually migrate the legacy into matrix shape
-  // so the per-row effective values + "Overridden" badges reflect
+  // so the per-row effective values reflect what the resolver actually
   // what the resolver actually advertises today. The matching write
   // fix is in `migrateLegacyIfNeeded` below — the first edit
   // commits the migration to persisted state so subsequent edits
@@ -1298,13 +1296,6 @@ function McpAppsCapabilityMatrix({
       : legacyOverride !== undefined
         ? (hostCapabilitiesOverrideToMatrix(legacyOverride) ?? undefined)
         : undefined;
-  // Preset baseline alone (no override applied) — used when toggling rows
-  // back to preset values. The "Overridden" badge tracks divergences.
-  const presetCapabilities: ResolvedMcpAppsCapabilities =
-    resolveEffectiveMcpAppsCapabilities({
-      profile: undefined,
-      hostStyle: draft.hostStyle,
-    });
   // Effective values shown in the matrix UI. Uses the virtually-
   // migrated legacy when the matrix is absent so the UI shows what
   // the resolver advertises today (legacy path) — not what it would
@@ -1530,15 +1521,7 @@ function McpAppsCapabilityMatrix({
             className="flex items-center justify-between gap-3 border-b border-border/50 px-3.5 py-2"
           >
         <div className="flex min-w-0 flex-col gap-0.5">
-          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-            <span className="font-mono text-[12px]">availableDisplayModes</span>
-            {effectiveOverridesForDisplay?.availableDisplayModes !==
-            undefined ? (
-              <span className="rounded bg-orange-500/15 px-1 py-px text-[10px] text-orange-600 dark:text-orange-300">
-                Overridden
-              </span>
-            ) : null}
-          </div>
+          <span className="font-mono text-[12px]">availableDisplayModes</span>
         </div>
         <div className="inline-flex shrink-0 overflow-hidden rounded-md border border-border text-[11px]">
           {ALL_DISPLAY_MODES.map((mode) => {
@@ -1571,10 +1554,6 @@ function McpAppsCapabilityMatrix({
                 dimensionKey={key}
                 description={description}
                 effective={Boolean(effectiveCapabilities[key])}
-                overridden={
-                  effectiveOverridesForDisplay !== undefined &&
-                  key in effectiveOverridesForDisplay
-                }
                 onToggle={(next) => setBooleanOverride(key, next)}
               />
             ))}
@@ -1585,18 +1564,16 @@ function McpAppsCapabilityMatrix({
   );
 }
 
-/** Single boolean dimension row — technical key + optional overridden badge. */
+/** Single boolean dimension row — technical key + toggle. */
 function McpAppsDimensionRow({
   dimensionKey,
   description,
   effective,
-  overridden,
   onToggle,
 }: {
   dimensionKey: McpAppsDimensionKey;
   description: string;
   effective: boolean;
-  overridden: boolean;
   onToggle: (next: boolean) => void;
 }) {
   return (
@@ -1605,14 +1582,7 @@ function McpAppsDimensionRow({
       className="flex items-center justify-between gap-3 border-b border-border/50 px-3.5 py-2 last:border-b-0"
       title={description}
     >
-      <div className="min-w-0 flex flex-col gap-0.5">
-        <span className="font-mono text-[12px]">{dimensionKey}</span>
-        {overridden ? (
-          <span className="w-fit rounded bg-orange-500/15 px-1 py-px text-[10px] text-orange-600 dark:text-orange-300">
-            Overridden
-          </span>
-        ) : null}
-      </div>
+      <span className="min-w-0 font-mono text-[12px]">{dimensionKey}</span>
       <Switch
         checked={effective}
         onCheckedChange={onToggle}
