@@ -70,10 +70,6 @@ chatV2.post("/", async (c) => {
 
     // ── Convex authorization path: guest and signed-in actors ─────
     const hostedBody = parseWithSchema(hostedChatSchema, rawBody);
-    const legacyWorkspaceId =
-      typeof (hostedBody as any).workspaceId === "string"
-        ? ((hostedBody as any).workspaceId as string)
-        : undefined;
     const body = rawBody as unknown as ChatV2Request & {
       projectId: string;
       selectedServerIds: string[];
@@ -344,7 +340,6 @@ chatV2.post("/", async (c) => {
           return handleLocalOrgChatModel({
             provider: runtime.provider,
             projectId: hostedBody.projectId,
-            workspaceId: legacyWorkspaceId,
             modelId,
             chatSessionId: hostedChatSessionId,
             sourceType,
@@ -368,7 +363,6 @@ chatV2.post("/", async (c) => {
 
         return handleHostedOrgChatModel({
           projectId: hostedBody.projectId,
-          workspaceId: legacyWorkspaceId,
           providerKey: runtime.providerKey,
           modelId,
           chatSessionId: hostedChatSessionId,

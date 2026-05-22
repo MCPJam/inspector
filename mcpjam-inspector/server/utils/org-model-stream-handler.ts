@@ -75,7 +75,6 @@ const DEFAULT_MAX_STEPS_LOCAL_ORG = 30;
 
 export interface OrgModelHandlerOptions {
   projectId: string;
-  workspaceId?: string;
   providerKey: string;
   modelId: string;
   chatSessionId?: string;
@@ -229,7 +228,6 @@ export interface OrgLocalModelHandlerOptions {
   /** The resolved local provider config (from /stream/org/resolve). */
   provider: OrgProviderResolvedConfig;
   projectId: string;
-  workspaceId?: string;
   modelId: string;
   chatSessionId?: string;
   sourceType?: string;
@@ -272,7 +270,6 @@ export function handleLocalOrgChatModel(
   const {
     provider,
     projectId,
-    workspaceId,
     modelId,
     chatSessionId,
     sourceType,
@@ -577,7 +574,6 @@ export function handleLocalOrgChatModel(
           // Post usage to Convex (best-effort, non-blocking on failure).
           postLocalUsage({
             projectId,
-            workspaceId,
             providerKey: provider.providerKey,
             model: modelId,
             usage: traceTurn.turnUsage,
@@ -640,7 +636,6 @@ export function handleLocalOrgChatModel(
 
 async function postLocalUsage(params: {
   projectId: string;
-  workspaceId?: string;
   providerKey: string;
   model: string;
   usage?: LiveChatTraceUsage;
@@ -670,7 +665,6 @@ async function postLocalUsage(params: {
       },
       body: JSON.stringify({
         projectId: params.projectId,
-        ...(params.workspaceId ? { workspaceId: params.workspaceId } : {}),
         providerKey: params.providerKey,
         model: params.model,
         ...(params.usage ? { usage: params.usage } : {}),
@@ -724,7 +718,7 @@ export async function handleHostedOrgChatModel(
     systemPrompt: options.systemPrompt,
     temperature: options.temperature,
     tools: options.tools,
-    projectId: options.workspaceId ? undefined : options.projectId,
+    projectId: options.projectId,
     authHeader: options.authHeader,
     chatboxId: options.chatboxId,
     accessVersion: options.accessVersion,
@@ -742,7 +736,6 @@ export async function handleHostedOrgChatModel(
     endpointPath: "/stream/org",
     extraBodyFields: {
       providerKey: options.providerKey,
-      ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
       // chatboxId / accessVersion are set on the body by
       // handleMCPJamFreeChatModel itself.
       ...((options.serverIds ?? options.selectedServers)?.length

@@ -102,30 +102,7 @@ export async function readJsonBody<T>(c: any): Promise<T> {
 }
 
 export function parseWithSchema<T>(schema: z.ZodSchema<T>, data: unknown): T {
-  let normalized = data;
-  if (data && typeof data === "object" && !Array.isArray(data)) {
-    const record = data as Record<string, unknown>;
-    const shouldMapProjectId =
-      typeof record.projectId !== "string" &&
-      typeof record.workspaceId === "string";
-    const shouldMapAccessScope = record.accessScope === "workspace_member";
-
-    if (shouldMapProjectId || shouldMapAccessScope) {
-      normalized = {
-        ...record,
-        ...(shouldMapProjectId ? { projectId: record.workspaceId } : {}),
-        ...(shouldMapAccessScope ? { accessScope: "project_member" } : {}),
-      };
-      if (shouldMapProjectId) {
-        console.warn("legacy workspaceId request field used");
-      }
-      if (shouldMapAccessScope) {
-        console.warn("legacy workspace_member accessScope used");
-      }
-    }
-  }
-
-  const parsed = schema.safeParse(normalized);
+  const parsed = schema.safeParse(data);
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
     throw new WebRouteError(
@@ -134,15 +111,5 @@ export function parseWithSchema<T>(schema: z.ZodSchema<T>, data: unknown): T {
       issue?.message ?? "Request validation failed"
     );
   }
-  const parsedData = parsed.data as T & { workspaceId?: unknown };
-  if (
-    data &&
-    typeof data === "object" &&
-    !Array.isArray(data) &&
-    typeof (data as Record<string, unknown>).workspaceId === "string" &&
-    typeof (data as Record<string, unknown>).projectId !== "string"
-  ) {
-    parsedData.workspaceId = (data as Record<string, unknown>).workspaceId;
-  }
-  return parsedData;
+  return parsed.data;
 }

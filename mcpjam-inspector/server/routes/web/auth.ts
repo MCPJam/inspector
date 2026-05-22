@@ -37,10 +37,6 @@ const clientCapabilitiesSchema = z.record(z.string(), z.unknown());
 
 export const projectServerSchema = z.object({
   projectId: z.string().min(1),
-  // Optional but declared so zod doesn't strip it. Downstream callers in
-  // servers.ts and conformance.ts read this when present to scope authorize
-  // calls to a workspace mirror instead of a project.
-  workspaceId: z.string().min(1).optional(),
   serverId: z.string().min(1),
   serverName: z.string().min(1).optional(),
   clientCapabilities: clientCapabilitiesSchema.optional(),
@@ -248,7 +244,6 @@ export async function authorizeServer(
   serverId: string,
   options?: {
     accessScope?: "project_member" | "chat_v2";
-    workspaceId?: string;
     chatboxId?: string;
     accessVersion?: number;
   }
@@ -271,9 +266,7 @@ export async function authorizeServer(
         Authorization: `Bearer ${bearerToken}`,
       },
       body: JSON.stringify({
-        ...(options?.workspaceId
-          ? { workspaceId: options.workspaceId }
-          : { projectId }),
+        projectId,
         serverId,
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
         ...(options?.chatboxId ? { chatboxId: options.chatboxId } : {}),
@@ -329,7 +322,6 @@ export async function authorizeBatch(
   serverIds: string[],
   options?: {
     accessScope?: "project_member" | "chat_v2";
-    workspaceId?: string;
     chatboxId?: string;
     accessVersion?: number;
   }
@@ -352,9 +344,7 @@ export async function authorizeBatch(
         Authorization: `Bearer ${bearerToken}`,
       },
       body: JSON.stringify({
-        ...(options?.workspaceId
-          ? { workspaceId: options.workspaceId }
-          : { projectId }),
+        projectId,
         serverIds,
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
         ...(options?.chatboxId ? { chatboxId: options.chatboxId } : {}),
@@ -527,7 +517,6 @@ export async function createAuthorizedManager(
   clientCapabilities?: Record<string, unknown>,
   options?: {
     accessScope?: "project_member" | "chat_v2";
-    workspaceId?: string;
     chatboxId?: string;
     accessVersion?: number;
     rpcLogger?: RpcLogger;
@@ -572,7 +561,6 @@ export async function createAuthorizedManager(
     uniqueServerIds,
     {
       accessScope: options?.accessScope,
-      workspaceId: options?.workspaceId,
       chatboxId: options?.chatboxId,
       accessVersion: options?.accessVersion,
     }
@@ -606,7 +594,6 @@ export async function createAuthorizedManager(
             serverId,
             serverName: displayServerName,
             accessScope: options?.accessScope,
-            workspaceId: options?.workspaceId,
             shareToken: (options as { shareToken?: string })?.shareToken,
             chatboxId: options?.chatboxId,
             accessVersion: options?.accessVersion,
@@ -852,8 +839,6 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
           undefined,
         {
           accessScope,
-          workspaceId:
-            typeof raw.workspaceId === "string" ? raw.workspaceId : undefined,
           chatboxId,
           accessVersion,
           rpcLogger: rpcCollector?.rpcLogger,

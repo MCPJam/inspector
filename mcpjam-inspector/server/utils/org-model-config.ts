@@ -25,12 +25,9 @@ export type ResolvedOrgModelConfig = {
 
 export type ResolveOrgModelConfigTarget =
   | { projectId: string }
-  | { workspaceId: string }
   | { organizationId: string };
 
-export type ResolveOrgProviderRuntimeTarget =
-  | { projectId: string }
-  | { workspaceId: string };
+export type ResolveOrgProviderRuntimeTarget = { projectId: string };
 
 export type ResolveOrgModelConfigAuth = {
   authHeader?: string;
@@ -111,8 +108,6 @@ function formatTargetForCache(
 ): string {
   return "projectId" in params
     ? `project:${params.projectId}`
-    : "workspaceId" in params
-    ? `legacy-workspace:${params.workspaceId}`
     : `org:${params.organizationId}`;
 }
 

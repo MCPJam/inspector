@@ -735,12 +735,8 @@ export async function runEvalsWithManager(
     !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
   const resolvedModelApiKeys = hasClientKeys ? modelApiKeys : undefined;
   let resolvedOrgModelConfig = orgModelConfig;
-  let resolvedOrgModelConfigTarget:
-    | { projectId: string }
-    | { workspaceId: string }
-    | undefined;
+  let resolvedOrgModelConfigTarget: { projectId: string } | undefined;
   let projectIdForOrgConfig: string | undefined = projectId;
-  let legacyWorkspaceIdForOrgConfig: string | undefined;
   if (!projectIdForOrgConfig && resolvedSuiteId) {
     try {
       const suite = await convexClient.query("testSuites:getTestSuite" as any, {
@@ -748,8 +744,6 @@ export async function runEvalsWithManager(
       });
       if (suite?.projectId) {
         projectIdForOrgConfig = String(suite.projectId);
-      } else if (suite?.workspaceId) {
-        legacyWorkspaceIdForOrgConfig = String(suite.workspaceId);
       }
     } catch (error) {
       logger.warn("[evals] Failed to load suite for projectId fallback", {
@@ -760,8 +754,6 @@ export async function runEvalsWithManager(
   }
   const orgConfigTarget = projectIdForOrgConfig
     ? { projectId: projectIdForOrgConfig }
-    : legacyWorkspaceIdForOrgConfig
-    ? { workspaceId: legacyWorkspaceIdForOrgConfig }
     : undefined;
   resolvedOrgModelConfigTarget = orgConfigTarget;
 
@@ -778,7 +770,6 @@ export async function runEvalsWithManager(
       } catch (error) {
         logger.warn("[evals] Failed to resolve org model config", {
           projectId: projectIdForOrgConfig,
-          legacyWorkspaceId: legacyWorkspaceIdForOrgConfig,
           error: error instanceof Error ? error.message : String(error),
         });
       }
@@ -898,14 +889,8 @@ export async function runEvalTestCaseWithManager(
   let resolvedOrgModelConfig = orgModelConfig;
   const testCaseProjectId =
     typeof testCase.projectId === "string" ? testCase.projectId : undefined;
-  const testCaseLegacyWorkspaceId =
-    !testCaseProjectId && typeof testCase.workspaceId === "string"
-      ? testCase.workspaceId
-      : undefined;
   const testCaseOrgConfigTarget = testCaseProjectId
     ? { projectId: testCaseProjectId }
-    : testCaseLegacyWorkspaceId
-    ? { workspaceId: testCaseLegacyWorkspaceId }
     : undefined;
   if (
     !resolvedModelApiKeys &&
@@ -1161,14 +1146,8 @@ export async function streamEvalTestCaseWithManager(
   let resolvedStreamOrgModelConfig = orgModelConfig;
   const streamTestCaseProjectId =
     typeof testCase.projectId === "string" ? testCase.projectId : undefined;
-  const streamTestCaseLegacyWorkspaceId =
-    !streamTestCaseProjectId && typeof testCase.workspaceId === "string"
-      ? testCase.workspaceId
-      : undefined;
   const streamTestCaseOrgConfigTarget = streamTestCaseProjectId
     ? { projectId: streamTestCaseProjectId }
-    : streamTestCaseLegacyWorkspaceId
-    ? { workspaceId: streamTestCaseLegacyWorkspaceId }
     : undefined;
   if (
     !resolvedStreamModelApiKeys &&
