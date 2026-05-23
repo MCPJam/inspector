@@ -270,6 +270,8 @@ export type McpAppsCapabilities = {
   cspFrameDomains?: boolean;
   cspBaseUriDomains?: boolean;
   resourcePrefersBorder?: boolean;
+  downloadFile?: boolean;
+  requestTeardown?: boolean;
   /**
    * Host policy for `ui/request-display-mode` originating from the widget.
    * SEP-1865 permits the host to decline these requests; this row exposes

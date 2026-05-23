@@ -473,6 +473,24 @@ describe("mergeMcpAppsCapabilities", () => {
     );
     expect(merged.widgetDisplayModeRequests).toBe("accept");
   });
+
+  it("applies downloadFile and requestTeardown overrides when set", () => {
+    const merged = mergeMcpAppsCapabilities(
+      { ...MCP_APPS_FULL_SURFACE_FOR_TEST },
+      { downloadFile: false, requestTeardown: false },
+    );
+    expect(merged.downloadFile).toBe(false);
+    expect(merged.requestTeardown).toBe(false);
+  });
+
+  it("falls through to base downloadFile and requestTeardown when override absent", () => {
+    const merged = mergeMcpAppsCapabilities(
+      { ...MCP_APPS_FULL_SURFACE_FOR_TEST },
+      { serverResources: false },
+    );
+    expect(merged.downloadFile).toBe(true);
+    expect(merged.requestTeardown).toBe(true);
+  });
 });
 
 describe("hostCapabilitiesOverrideToMatrix", () => {

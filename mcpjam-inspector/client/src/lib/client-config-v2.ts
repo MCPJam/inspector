@@ -693,8 +693,8 @@ export function mergeMcpAppsCapabilities(
       override.cspBaseUriDomains ?? base.cspBaseUriDomains,
     resourcePrefersBorder:
       override.resourcePrefersBorder ?? base.resourcePrefersBorder,
-    downloadFile: base.downloadFile,
-    requestTeardown: base.requestTeardown,
+    downloadFile: override.downloadFile ?? base.downloadFile,
+    requestTeardown: override.requestTeardown ?? base.requestTeardown,
     widgetDisplayModeRequests:
       override.widgetDisplayModeRequests ?? base.widgetDisplayModeRequests,
   };
