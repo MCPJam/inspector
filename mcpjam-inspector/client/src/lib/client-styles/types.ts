@@ -285,9 +285,17 @@ export type McpAppsCapabilities = {
  * future host presets that legitimately don't advertise them
  * (e.g. minimal SEP-1865-only hosts) sit in the same shape.
  *
- * `downloadFile` is intentionally absent — no preset advertises it; the
- * renderer doesn't yet honor the spec's `ui/download-file` request.
- * Surface as a matrix row when a host wants to advertise it.
+ * `downloadFile` advertises the host's support for the spec's
+ * `ui/download-file` request. When true the renderer wires
+ * `bridge.ondownloadfile` and advertises `hostCapabilities.downloadFile`
+ * in the ui/initialize blob.
+ *
+ * `requestTeardown` advertises that the host will honor a view-initiated
+ * `ui/notifications/request-teardown` by attempting a graceful
+ * `ui/resource-teardown` before unmounting the iframe. The notification
+ * itself is not capability-gated by SEP-1865, but the matrix row keeps
+ * the per-preset behavior honest (a host that ignores the request
+ * should set this false).
  */
 export type ResolvedMcpAppsCapabilities = {
   availableDisplayModes: ("inline" | "fullscreen" | "pip")[];
@@ -306,6 +314,8 @@ export type ResolvedMcpAppsCapabilities = {
   cspFrameDomains: boolean;
   cspBaseUriDomains: boolean;
   resourcePrefersBorder: boolean;
+  downloadFile: boolean;
+  requestTeardown: boolean;
 };
 
 /**

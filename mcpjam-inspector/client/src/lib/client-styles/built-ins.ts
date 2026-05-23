@@ -123,6 +123,8 @@ export const MCP_APPS_FULL_SURFACE: ResolvedMcpAppsCapabilities = {
   cspFrameDomains: true,
   cspBaseUriDomains: true,
   resourcePrefersBorder: true,
+  downloadFile: true,
+  requestTeardown: true,
 };
 
 /**
@@ -151,6 +153,8 @@ export const MCP_APPS_NO_CLAIMS_SURFACE: ResolvedMcpAppsCapabilities = {
   cspFrameDomains: false,
   cspBaseUriDomains: false,
   resourcePrefersBorder: false,
+  downloadFile: false,
+  requestTeardown: false,
 };
 
 /**
@@ -193,6 +197,11 @@ export const MCP_APPS_COPILOT_SURFACE: ResolvedMcpAppsCapabilities = {
   cspFrameDomains: false,
   cspBaseUriDomains: false,
   resourcePrefersBorder: false,
+  // Copilot's published spec-bridge table does not list downloadFile or
+  // a request-teardown ack — leave off until Microsoft publishes
+  // otherwise.
+  downloadFile: false,
+  requestTeardown: false,
 };
 
 // NOTE: capability presets are best-effort mocks of what each vendor publicly

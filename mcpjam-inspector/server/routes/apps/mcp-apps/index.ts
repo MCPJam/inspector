@@ -32,21 +32,27 @@ const MCP_APPS_MIMETYPE = RESOURCE_MIME_TYPE;
  *
  * - `text/html;profile=mcp-app` — SEP-1865 canonical.
  * - `text/html+skybridge` — legacy Apps SDK mimetype shipped by ChatGPT
- *   apps (see examples/chatgpt-apps/CoffeeShop/server.ts).
+ *   apps (see examples/chatgpt-apps/CoffeeShop/server.ts). Accepted for
+ *   backward compatibility ONLY; strict SEP-1865 conformance reports
+ *   this as a warning via `mimeTypeWarning`.
  * - `text/html` — older Apps SDK / hand-rolled widgets that just declare
- *   plain HTML. The legacy ChatGPTAppRenderer accepted these without any
- *   mimetype check; we mirror that for backward compatibility.
+ *   plain HTML. Accepted for backward compatibility ONLY; strict
+ *   conformance reports this as a warning via `mimeTypeWarning`.
  *
  * Anything else triggers a hard load error so a misconfigured resource
- * doesn't silently render the wrong content type. The renderer surfaces a
- * warning for the two non-canonical forms but still renders the content.
+ * doesn't silently render the wrong content type. `LEGACY_*` constants
+ * are tagged so the conformance suite can distinguish "accepted with
+ * warning" from "canonical".
  */
-const SKYBRIDGE_MIMETYPE = "text/html+skybridge";
-const PLAIN_HTML_MIMETYPE = "text/html";
+const LEGACY_SKYBRIDGE_MIMETYPE = "text/html+skybridge";
+const LEGACY_PLAIN_HTML_MIMETYPE = "text/html";
+const LEGACY_WIDGET_MIMETYPES: ReadonlySet<string> = new Set<string>([
+  LEGACY_SKYBRIDGE_MIMETYPE,
+  LEGACY_PLAIN_HTML_MIMETYPE,
+]);
 const ACCEPTED_WIDGET_MIMETYPES = new Set<string>([
   MCP_APPS_MIMETYPE,
-  SKYBRIDGE_MIMETYPE,
-  PLAIN_HTML_MIMETYPE,
+  ...LEGACY_WIDGET_MIMETYPES,
 ]);
 
 /**
@@ -167,9 +173,25 @@ apps.post("/widget-content", async (c) => {
       return c.json({ error: "Template must use ui:// protocol" }, 400);
     }
 
+    // SEP-1865 hardening: cspMode MUST be passed explicitly by the
+    // renderer — the previous implicit `"permissive"` default
+    // accidentally widened the policy when a caller forgot to set it.
+    // Spec-mode hosts that don't declare CSP fall through to the
+    // sandbox-proxy's restrictive defaults; permissive mode remains
+    // available for debugging but must be opt-in.
+    if (cspMode !== "permissive" && cspMode !== "widget-declared") {
+      return c.json(
+        {
+          error:
+            "cspMode is required and must be 'permissive' or 'widget-declared'",
+        },
+        400,
+      );
+    }
+
     const resolvedResourceUri = templateUri || resourceUri;
 
-    const effectiveCspMode = cspMode ?? "permissive";
+    const effectiveCspMode = cspMode;
     const mcpClientManager = c.mcpClientManager;
 
     // REUSE existing mcpClientManager.readResource (same as resources.ts)
@@ -228,27 +250,66 @@ apps.post("/widget-content", async (c) => {
       return c.json({ error: "No HTML content in resource" }, 404);
     }
 
-    // Extract CSP, permissions, and other UI metadata from resource _meta.
-    // SEP-1865 keys (`_meta.ui.csp`, `_meta.ui.prefersBorder`) are
-    // canonical; fall back to the legacy Apps SDK keys
-    // (`_meta["openai/widgetCSP"]`, `_meta["openai/widgetPrefersBorder"]`)
-    // when SEP-1865 keys are absent so widgets that haven't migrated still
-    // get their declared CSP/border preference honored.
+    // SEP-1865 effective UI metadata resolution (PR 2026-01):
+    //   1. content-item `_meta.ui` from the `resources/read` content   (canonical)
+    //   2. listing `_meta.ui` from `resources/list`                    (fallback)
+    //   3. legacy Apps SDK `openai/widget*` keys on either source      (last resort)
+    //
+    // The fallback chain is per-field, not all-or-nothing: a widget
+    // that publishes only `csp` at the content level and only
+    // `prefersBorder` at the listing level should see both honored.
+    // Listing lookup is best-effort — older servers that don't
+    // implement `resources/list` (or that fail to return the URI) just
+    // leave the listing source undefined and the content source wins.
     const resourceMeta = content._meta as Record<string, unknown> | undefined;
-    const uiMeta = (resourceMeta as { ui?: UIResourceMeta } | undefined)?.ui;
+    const contentUiMeta = (resourceMeta as { ui?: UIResourceMeta } | undefined)
+      ?.ui;
+
+    let listingMeta: Record<string, unknown> | undefined;
+    let listingUiMeta: UIResourceMeta | undefined;
+    let metadataSource: "content" | "listing" | "legacy" | "none" = "none";
+    try {
+      const listing = await mcpClientManager.listResources(serverId);
+      const match = listing?.resources?.find(
+        (r: { uri?: unknown }) => r?.uri === resolvedResourceUri,
+      ) as { _meta?: Record<string, unknown> } | undefined;
+      if (match?._meta) {
+        listingMeta = match._meta;
+        listingUiMeta = (match._meta as { ui?: UIResourceMeta }).ui;
+      }
+    } catch (err) {
+      logger.debug("[MCP Apps] resources/list fallback skipped", {
+        resourceUri: resolvedResourceUri,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
+
     const csp: McpUiResourceCsp | undefined =
-      uiMeta?.csp ?? extractLegacyOpenAICsp(resourceMeta);
-    const permissions = uiMeta?.permissions;
+      contentUiMeta?.csp ??
+      listingUiMeta?.csp ??
+      extractLegacyOpenAICsp(resourceMeta) ??
+      extractLegacyOpenAICsp(listingMeta);
+    const permissions =
+      contentUiMeta?.permissions ?? listingUiMeta?.permissions;
+    const prefersBorderLegacy = (m: Record<string, unknown> | undefined) =>
+      typeof m?.["openai/widgetPrefersBorder"] === "boolean"
+        ? (m["openai/widgetPrefersBorder"] as boolean)
+        : undefined;
     const prefersBorder: boolean | undefined =
-      uiMeta?.prefersBorder ??
-      (typeof resourceMeta?.["openai/widgetPrefersBorder"] === "boolean"
-        ? (resourceMeta["openai/widgetPrefersBorder"] as boolean)
-        : undefined);
+      contentUiMeta?.prefersBorder ??
+      listingUiMeta?.prefersBorder ??
+      prefersBorderLegacy(resourceMeta) ??
+      prefersBorderLegacy(listingMeta);
+
+    if (contentUiMeta) metadataSource = "content";
+    else if (listingUiMeta) metadataSource = "listing";
+    else if (csp || prefersBorder !== undefined) metadataSource = "legacy";
 
     // Log CSP and permissions configuration for security review (SEP-1865)
     logger.debug("[MCP Apps] Security configuration", {
       resourceUri: resolvedResourceUri,
       effectiveCspMode,
+      metadataSource,
       widgetDeclaredCsp: csp
         ? {
             connectDomains: csp.connectDomains || [],
@@ -333,6 +394,13 @@ apps.post("/widget-content", async (c) => {
       mimeType: contentMimeType,
       mimeTypeValid,
       mimeTypeWarning,
+      // SEP-1865 metadata precedence — "content" means the read
+      // content-item _meta.ui won; "listing" means the read content
+      // had no _meta.ui and the fallback from resources/list supplied
+      // CSP/permissions/prefersBorder; "legacy" means neither source
+      // had _meta.ui and the legacy openai/widget* keys were used;
+      // "none" means no UI metadata was found anywhere.
+      metadataSource,
     });
   } catch (error) {
     getRequestLogger(c, "routes.apps.mcp-apps").event("widget.resource.failed", {

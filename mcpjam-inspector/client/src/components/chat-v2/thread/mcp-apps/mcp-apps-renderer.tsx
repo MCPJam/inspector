@@ -211,6 +211,15 @@ interface MCPAppsRendererProps {
   ) => void;
   /** Callback when app declares its supported display modes during ui/initialize */
   onAppSupportedDisplayModesChange?: (modes: DisplayMode[] | undefined) => void;
+  /**
+   * Called when the widget sends `ui/notifications/request-teardown`
+   * and the host has agreed to honor it (matrix `requestTeardown !==
+   * false`). The renderer has already attempted a graceful
+   * `ui/resource-teardown` round-trip; the parent is now expected to
+   * unmount this tool call's MCP app surface (e.g. dismiss the modal,
+   * collapse the inline view).
+   */
+  onRequestTeardown?: (toolCallId: string) => void;
   /** Whether the server is offline (for using cached content) */
   isOffline?: boolean;
   /** URL to cached widget HTML for offline rendering */
@@ -376,6 +385,7 @@ export function MCPAppsRenderer({
   onExitFullscreen,
   onModelContextUpdate,
   onAppSupportedDisplayModesChange,
+  onRequestTeardown,
   isOffline,
   cachedWidgetHtmlUrl,
   liveFetchPreferred,
@@ -555,15 +565,38 @@ export function MCPAppsRenderer({
   // always a non-empty array (see `extractHostDisplayModes` fallbacks)
   // so the only way intersection is empty is when the playground asks
   // for modes the simulated host doesn't advertise.
+  // SEP-1865: after `ui/initialize` the view declares
+  // `appCapabilities.availableDisplayModes` — the modes it can render in.
+  // The host MUST clamp the advertised + runtime mode set to the
+  // intersection (host-supported) ∩ (app-supported), otherwise the host
+  // would advertise modes the app can't actually render. Stored as state
+  // because `oninitialized` is a bridge callback fired after mount.
+  const [appSupportedDisplayModes, setAppSupportedDisplayModes] = useState<
+    DisplayMode[] | undefined
+  >(undefined);
   const effectiveAvailableDisplayModes = useMemo(() => {
     const matrixModes = earlyEffectiveMcpAppsCapabilities.availableDisplayModes;
-    const intersection = matrixModes.filter((m) =>
+    const hostIntersection = matrixModes.filter((m) =>
       configuredAvailableDisplayModes.includes(m as DisplayMode),
     );
-    return intersection.length > 0 ? intersection : matrixModes;
+    const baseHostModes =
+      hostIntersection.length > 0 ? hostIntersection : matrixModes;
+    if (!appSupportedDisplayModes || appSupportedDisplayModes.length === 0) {
+      return baseHostModes;
+    }
+    const appIntersection = baseHostModes.filter((m) =>
+      appSupportedDisplayModes.includes(m as DisplayMode),
+    );
+    // SEP-1865: when the intersection is empty (the app advertises modes
+    // the host doesn't support at all) we fall back to host-supported
+    // rather than advertising nothing — the renderer will still clamp
+    // the actual mode to the host's set, and the empty case is a
+    // misconfigured app the host can't render anyway.
+    return appIntersection.length > 0 ? appIntersection : baseHostModes;
   }, [
     earlyEffectiveMcpAppsCapabilities.availableDisplayModes,
     configuredAvailableDisplayModes,
+    appSupportedDisplayModes,
   ]);
 
   // Get device capabilities from playground store (SEP-1865)
@@ -878,11 +911,18 @@ export function MCPAppsRenderer({
   const hostContextRef = useRef<McpUiHostContext | null>(null);
   const isReadyRef = useRef(false);
   const lastInlineHeightRef = useRef<string>("400px");
+  // SEP-1865: width is honored only when the host's outer container is
+  // unbounded (no `width` from `containerDimensions`). The chatbox bubble
+  // is the bounding box today, so this stays null until the host context
+  // explicitly publishes a flexible width. The renderer reads this ref
+  // when applying `ui/notifications/size-changed` width.
+  const lastInlineWidthRef = useRef<string | null>(null);
 
   const onSendFollowUpRef = useRef(onSendFollowUp);
   const onCallToolRef = useRef(onCallTool);
   const onRequestPipRef = useRef(onRequestPip);
   const onExitPipRef = useRef(onExitPip);
+  const onRequestTeardownRef = useRef(onRequestTeardown);
   const setDisplayModeRef = useRef(setDisplayMode);
   const isPlaygroundActiveRef = useRef(isPlaygroundActive);
   const playgroundDeviceTypeRef = useRef(playgroundDeviceType);
@@ -2160,6 +2200,7 @@ export function MCPAppsRenderer({
     onModelContextUpdateRef.current = onModelContextUpdate;
     onAppSupportedDisplayModesChangeRef.current =
       onAppSupportedDisplayModesChange;
+    onRequestTeardownRef.current = onRequestTeardown;
   }, [
     onSendFollowUp,
     onCallTool,
@@ -2175,6 +2216,7 @@ export function MCPAppsRenderer({
     toolsMetadata,
     onModelContextUpdate,
     onAppSupportedDisplayModesChange,
+    onRequestTeardown,
   ]);
 
   // ENFORCEMENT (live):
@@ -2192,6 +2234,12 @@ export function MCPAppsRenderer({
   //     onlistresources /
   //     onlistresourcetemplates      ← effectiveHostCapabilities.serverResources
   //   • bridge.onloggingmessage      ← effectiveHostCapabilities.logging
+  //   • bridge.ondownloadfile        ← effectiveHostCapabilities.downloadFile
+  //   • bridge.onrequestteardown     ← matrix.requestTeardown (behavior
+  //                                    gate; not wire-advertised — the
+  //                                    notification is always delivered
+  //                                    by the SDK, but the host can
+  //                                    decline to act on it)
   //
   // Intentionally unconditional (no chip / not capability-negotiated in
   // SEP-1865):
@@ -2202,9 +2250,10 @@ export function MCPAppsRenderer({
   //                                    granted, not whether requests reply
   //   • bridge.onlistprompts         — no serverPrompts cap exists yet
   //   • handleUploadFile / GetFileDownloadUrl
-  //                                  — gated by a separate `downloadFile`
-  //                                    cap that no template advertises and
-  //                                    no chip surfaces today
+  //                                  — legacy postMessage paths kept for
+  //                                    Apps SDK widgets; SEP-1865 hosts
+  //                                    use the matrix-gated
+  //                                    bridge.ondownloadfile above
   const registerBridgeHandlers = useCallback(
     (bridge: AppBridge) => {
       bridge.oninitialized = () => {
@@ -2218,9 +2267,16 @@ export function MCPAppsRenderer({
             null,
           wasReady,
         });
-        onAppSupportedDisplayModesChangeRef.current?.(
-          appCaps?.availableDisplayModes as DisplayMode[] | undefined,
-        );
+        const declaredAppModes = appCaps?.availableDisplayModes as
+          | DisplayMode[]
+          | undefined;
+        onAppSupportedDisplayModesChangeRef.current?.(declaredAppModes);
+        // SEP-1865: clamp the advertised + runtime mode set against the
+        // app's declaration. The next render of `hostContext` will pick
+        // up the new intersection and the post-init `setHostContext`
+        // effect will publish `host-context-changed` with the updated
+        // `availableDisplayModes` (matrix-gated by hostContextChanged).
+        setAppSupportedDisplayModes(declaredAppModes);
         // If the guest re-initialized (e.g. an SDK-based app completing its
         // own handshake after the openai-compat shim already initialized),
         // bump reinitCount so the delivery effects re-send tool data.
@@ -2374,13 +2430,26 @@ export function MCPAppsRenderer({
         };
       }
 
-      // Width resize handling was removed here — previously this destructured
-      // `width` and applied it to the iframe via `min(${width}px, 100%)`.
-      // Only height-based auto-resize is applied; width is host-controlled.
-      bridge.onsizechange = ({ height }) => {
+      // SEP-1865: apply both height AND width when the host outer
+      // container is flexible (no fixed `width` published via
+      // `containerDimensions`). The renderer caps the requested width
+      // to 100% of the parent via `min(${width}px, 100%)` so a
+      // misbehaving widget can't overflow the chatbox bubble. Fixed-
+      // width contexts (PIP/fullscreen, or future hosts that publish
+      // `containerDimensions.width`) ignore the width request — the
+      // height-only path remains.
+      bridge.onsizechange = ({ height, width }) => {
         if (effectiveDisplayModeRef.current !== "inline") return;
         const iframe = sandboxRef.current?.getIframeElement();
-        if (!iframe || height === undefined) return;
+        if (!iframe) return;
+        if (height === undefined && width === undefined) return;
+        const hostCtx = hostContextRef.current as
+          | (McpUiHostContext & {
+              containerDimensions?: { width?: number };
+            })
+          | null;
+        const hostHasFixedWidth =
+          typeof hostCtx?.containerDimensions?.width === "number";
 
         // The MCP App has requested a `height`, but if
         // `box-sizing: border-box` is applied to the outer iframe element, then we
@@ -2404,6 +2473,23 @@ export function MCPAppsRenderer({
           from.height = `${iframe.offsetHeight}px`;
           iframe.style.height = to.height = `${adjustedHeight}px`;
           lastInlineHeightRef.current = `${adjustedHeight}px`;
+        }
+
+        if (width !== undefined && !hostHasFixedWidth) {
+          let adjustedWidth = width;
+          if (isBorderBox) {
+            adjustedWidth +=
+              parseFloat(style.borderLeftWidth) +
+              parseFloat(style.borderRightWidth);
+          }
+          // Cap to parent so an over-eager widget can't escape the
+          // bounding bubble; the iframe's outer `maxWidth: 100%` would
+          // also catch this, but the `min()` keeps the inline style
+          // self-describing for debugging.
+          const widthCss = `min(${adjustedWidth}px, 100%)`;
+          from.width = `${iframe.offsetWidth}px`;
+          iframe.style.width = to.width = widthCss;
+          lastInlineWidthRef.current = widthCss;
         }
 
         iframe.animate([from, to], { duration: 300, easing: "ease-out" });
@@ -2462,6 +2548,89 @@ export function MCPAppsRenderer({
           });
 
           return {};
+        };
+      }
+
+      // SEP-1865 `ui/download-file`: the view passes embedded resource
+      // contents (`text` or `blob`) and/or resource links. The host
+      // mediates the actual download since the iframe sandbox blocks
+      // direct anchor-clicks. We use a Blob + object-URL anchor (no
+      // confirmation prompt yet — opt-in confirmation is a follow-up).
+      if (effectiveHostCapabilities.downloadFile) {
+        bridge.ondownloadfile = async ({ contents }) => {
+          try {
+            for (const item of contents) {
+              if (item.type === "resource" && item.resource) {
+                const res = item.resource as {
+                  uri: string;
+                  text?: string;
+                  blob?: string;
+                  mimeType?: string;
+                };
+                const mimeType = res.mimeType ?? "application/octet-stream";
+                let blob: Blob;
+                if (typeof res.blob === "string") {
+                  const binary = atob(res.blob);
+                  const bytes = new Uint8Array(binary.length);
+                  for (let i = 0; i < binary.length; i++) {
+                    bytes[i] = binary.charCodeAt(i);
+                  }
+                  blob = new Blob([bytes], { type: mimeType });
+                } else {
+                  blob = new Blob([res.text ?? ""], { type: mimeType });
+                }
+                const url = URL.createObjectURL(blob);
+                try {
+                  const anchor = document.createElement("a");
+                  anchor.href = url;
+                  anchor.download = res.uri.split("/").pop() ?? "download";
+                  anchor.rel = "noopener";
+                  document.body.appendChild(anchor);
+                  anchor.click();
+                  anchor.remove();
+                } finally {
+                  // Defer revocation so the browser has a chance to
+                  // start the download before the object URL goes away.
+                  setTimeout(() => URL.revokeObjectURL(url), 1000);
+                }
+              } else if (item.type === "resource_link") {
+                const link = item as { uri: string };
+                window.open(link.uri, "_blank", "noopener,noreferrer");
+              }
+            }
+            return {};
+          } catch (err) {
+            logWidgetDebug("ui-to-host", "ui/download-file", {
+              error: err instanceof Error ? err.message : String(err),
+            });
+            return { isError: true };
+          }
+        };
+      }
+
+      // SEP-1865 `ui/notifications/request-teardown`: the view asks the
+      // host to tear it down. Best-effort graceful close — fire
+      // `teardownResource` so the view can persist state, then bubble
+      // the request to the parent so it can actually unmount the
+      // iframe. `requestTeardown` is a behavior gate on the matrix
+      // (not a wire-advertised host capability); presets that set it
+      // false simulate hosts that ignore view-initiated teardown
+      // requests by leaving the handler unassigned, in which case the
+      // SDK logs the notification but does nothing.
+      if (mcpAppsCapabilitiesRef.current?.requestTeardown !== false) {
+        bridge.onrequestteardown = async () => {
+          logWidgetDebug("ui-to-host", "ui/notifications/request-teardown", {});
+          try {
+            await bridge.teardownResource({});
+          } catch (err) {
+            // Teardown best-effort; if the view never acks the
+            // resource-teardown request we still proceed to unmount so
+            // a misbehaving widget can't block its own removal.
+            logWidgetDebug("host-to-ui", "ui/resource-teardown", {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+          onRequestTeardownRef.current?.(toolCallIdRef.current);
         };
       }
     },
@@ -2956,7 +3125,12 @@ export function MCPAppsRenderer({
       : isPip
         ? PIP_MAX_HEIGHT
         : lastInlineHeightRef.current,
-    width: "100%",
+    // SEP-1865: when the widget has requested a width via
+    // `ui/notifications/size-changed`, the handler stashed it as a
+    // `min(...px, 100%)` CSS expression in `lastInlineWidthRef` so
+    // re-renders preserve the chosen width without overflowing the
+    // bubble. Default to 100% when the widget hasn't requested a width.
+    width: isFullscreen || isPip ? "100%" : (lastInlineWidthRef.current ?? "100%"),
     maxWidth: "100%",
     backgroundColor:
       !isFullscreen && matrixGatedPrefersBorder

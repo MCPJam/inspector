@@ -520,4 +520,6 @@ const MCP_APPS_FULL_SURFACE_FOR_TEST = {
   cspFrameDomains: true,
   cspBaseUriDomains: true,
   resourcePrefersBorder: true,
+  downloadFile: true,
+  requestTeardown: true,
 };

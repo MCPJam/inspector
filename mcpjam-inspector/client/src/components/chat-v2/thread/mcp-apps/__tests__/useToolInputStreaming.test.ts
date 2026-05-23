@@ -518,6 +518,8 @@ describe("useToolInputStreaming — MCP Apps matrix notification gates", () => {
       cspFrameDomains: true,
       cspBaseUriDomains: true,
       resourcePrefersBorder: true,
+      downloadFile: true,
+      requestTeardown: true,
       ...overrides,
     };
   }
