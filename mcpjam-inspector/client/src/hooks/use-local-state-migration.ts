@@ -74,7 +74,6 @@ function looksPermanent(errorMessage: string): boolean {
  */
 const FORBIDDEN_LEGACY_EXACT_KEYS = [
   "mcp-inspector-projects",
-  "mcp-inspector-workspaces",
   "mcp-inspector-state",
 ];
 const FORBIDDEN_LEGACY_PREFIXES = ["mcp-env-"];
