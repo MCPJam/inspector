@@ -982,6 +982,27 @@ export function MCPAppsRenderer({
   // when applying `ui/notifications/size-changed` width.
   const lastInlineWidthRef = useRef<string | null>(null);
 
+  // Reset widget-identity-scoped state when the renderer is reused for a
+  // different tool call / resource / widget bundle. Without this the next
+  // widget inherits the previous widget's intersected display modes, its
+  // narrowed inline width, and (if the user had dismissed to inline) its
+  // sticky inline preference. Also re-seeds the sticky flag from the
+  // current `widgetDisplayModeRequests` policy so flipping the Apps tab
+  // tri-state on an already-mounted renderer takes effect on the next
+  // identity change instead of waiting for an unmount.
+  useEffect(() => {
+    setAppSupportedDisplayModes(undefined);
+    lastInlineWidthRef.current = null;
+    userPreferInlineRef.current =
+      earlyEffectiveMcpAppsCapabilities.widgetDisplayModeRequests ===
+      "user-initiated-only";
+  }, [
+    toolCallId,
+    resourceUri,
+    cachedWidgetHtmlUrl,
+    earlyEffectiveMcpAppsCapabilities.widgetDisplayModeRequests,
+  ]);
+
   const onSendFollowUpRef = useRef(onSendFollowUp);
   const onCallToolRef = useRef(onCallTool);
   const onRequestPipRef = useRef(onRequestPip);
