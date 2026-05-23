@@ -1200,10 +1200,6 @@ function resolveOrgTargetForEval(
   if (typeof maybeProjectId === "string" && maybeProjectId.trim()) {
     return { projectId: maybeProjectId.trim() };
   }
-  const maybeWorkspaceId = (test as { workspaceId?: unknown }).workspaceId;
-  if (typeof maybeWorkspaceId === "string" && maybeWorkspaceId.trim()) {
-    return { workspaceId: maybeWorkspaceId.trim() };
-  }
   return undefined;
 }
 

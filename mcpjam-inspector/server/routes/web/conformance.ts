@@ -43,8 +43,6 @@ async function resolveHostedHttpConfig(
   customHeaders?: Record<string, string>;
 }> {
   const wsBody = parseWithSchema(projectServerSchema, body);
-  const workspaceId =
-    typeof body.workspaceId === "string" ? body.workspaceId : undefined;
   const auth = await authorizeServer(
     c,
     bearerToken,
@@ -52,7 +50,6 @@ async function resolveHostedHttpConfig(
     wsBody.serverId,
     {
       accessScope: wsBody.accessScope,
-      workspaceId,
       chatboxId: wsBody.chatboxId,
       accessVersion: wsBody.accessVersion,
     }
@@ -99,8 +96,6 @@ async function resolveHostedServerConfig(
   body: Record<string, unknown>
 ): Promise<MCPAppsConformanceConfig> {
   const wsBody = parseWithSchema(projectServerSchema, body);
-  const workspaceId =
-    typeof body.workspaceId === "string" ? body.workspaceId : undefined;
   const auth = await authorizeServer(
     c,
     bearerToken,
@@ -108,7 +103,6 @@ async function resolveHostedServerConfig(
     wsBody.serverId,
     {
       accessScope: wsBody.accessScope,
-      workspaceId,
       chatboxId: wsBody.chatboxId,
       accessVersion: wsBody.accessVersion,
     }

@@ -51,37 +51,6 @@ describe("forceRefreshHostedOAuthAccessToken", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("prefers workspaceId over projectId in the body when supplied", async () => {
-    const fetchMock = vi.fn(async (_input: any, init?: any) => {
-      expect(JSON.parse(init?.body)).toEqual({
-        workspaceId: "ws-1",
-        serverId: "server-1",
-        accessScope: "chat_v2",
-        chatboxId: "cbx_1",
-        accessVersion: 3,
-      });
-      return new Response(
-        JSON.stringify({ accessToken: "fresh-token" }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
-      );
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    await expect(
-      forceRefreshHostedOAuthAccessToken(
-        "bearer-token",
-        "project-1",
-        "server-1",
-        {
-          accessScope: "chat_v2",
-          workspaceId: "ws-1",
-          chatboxId: "cbx_1",
-          accessVersion: 3,
-        }
-      )
-    ).resolves.toBe("fresh-token");
-  });
-
   it("maps refresh_token_invalid to a WebRouteError with reconnect details", async () => {
     vi.stubGlobal(
       "fetch",

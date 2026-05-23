@@ -126,14 +126,8 @@ export async function executeSuiteReplayFromRun(
       typeof replayMetadata.projectId === "string"
         ? replayMetadata.projectId
         : undefined;
-    const replayLegacyWorkspaceId =
-      !replayProjectId && typeof replayMetadata.workspaceId === "string"
-        ? replayMetadata.workspaceId
-        : undefined;
     const replayOrgConfigTarget = replayProjectId
       ? { projectId: replayProjectId }
-      : replayLegacyWorkspaceId
-      ? { workspaceId: replayLegacyWorkspaceId }
       : undefined;
     if (
       !resolvedModelApiKeys &&
