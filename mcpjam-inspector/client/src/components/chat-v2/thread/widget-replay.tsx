@@ -50,6 +50,7 @@ export interface WidgetReplayProps {
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
   onAppSupportedDisplayModesChange?: (modes: DisplayMode[] | undefined) => void;
+  onRequestTeardown?: (toolCallId: string) => void;
   /**
    * @deprecated The renderer is now protocol-agnostic: both `openai/outputTemplate`
    * and `_meta.ui.resourceUri` route through MCPAppsRenderer, which always
@@ -85,6 +86,7 @@ export function WidgetReplay({
   displayMode,
   onDisplayModeChange,
   onAppSupportedDisplayModesChange,
+  onRequestTeardown,
   selectedProtocolOverrideIfBothExists: _ignored,
   minimalMode = false,
 }: WidgetReplayProps) {
@@ -182,6 +184,7 @@ export function WidgetReplay({
       onRequestFullscreen={onRequestFullscreen}
       onExitFullscreen={onExitFullscreen}
       onAppSupportedDisplayModesChange={onAppSupportedDisplayModesChange}
+      onRequestTeardown={onRequestTeardown}
       isOffline={renderOverride?.isOffline}
       cachedWidgetHtmlUrl={renderOverride?.cachedWidgetHtmlUrl}
       liveFetchPreferred={renderOverride?.liveFetchPreferred}
