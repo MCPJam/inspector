@@ -2714,7 +2714,18 @@ export function MCPAppsRenderer({
                 }
               } else if (item.type === "resource_link") {
                 const link = item as { uri: string };
-                window.open(link.uri, "_blank", "noopener,noreferrer");
+                // Refuse navigations that aren't a browser-fetchable scheme.
+                // `javascript:`/`data:` here would execute in the host origin,
+                // and MCP-style schemes (`ui://`, `file://`, server-defined)
+                // need host-side resolution that this path doesn't do yet —
+                // fail loud rather than silently opening an unusable tab.
+                const parsed = new URL(link.uri, window.location.href);
+                if (!["http:", "https:", "blob:"].includes(parsed.protocol)) {
+                  throw new Error(
+                    `Unsupported download URI protocol: ${parsed.protocol}`,
+                  );
+                }
+                window.open(parsed.href, "_blank", "noopener,noreferrer");
               }
             }
             return {};
