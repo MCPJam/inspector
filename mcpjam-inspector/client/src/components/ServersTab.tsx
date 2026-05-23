@@ -89,6 +89,7 @@ import {
 import {
   useProjectServers as useRemoteProjectServers,
   useProjectMembers,
+  shouldQueryProjectId,
 } from "@/hooks/useProjects";
 import { projectClientCapabilitiesNeedReconnect } from "@/lib/client-config";
 import {
@@ -266,26 +267,6 @@ function writePersistedLoggerFocus(input: PersistedLoggerFocus): void {
   } catch {
     // ignore
   }
-}
-
-function ServersSurfaceLoadingState({
-  testId,
-  message,
-}: {
-  testId: string;
-  message: string;
-}) {
-  return (
-    <div
-      className="flex h-full min-h-[320px] items-center justify-center p-8"
-      data-testid={testId}
-    >
-      <div className="text-center">
-        <Loader2 className="mx-auto h-8 w-8 animate-spin text-muted-foreground" />
-        <p className="mt-4 text-sm text-muted-foreground">{message}</p>
-      </div>
-    </div>
-  );
 }
 
 function ServersQuickConnectMiniCard({
@@ -553,6 +534,8 @@ interface ServersTabProps {
   organizationId: string | null;
   isBillingContextPending?: boolean;
   isLoadingProjects?: boolean;
+  isAuthHydrating?: boolean;
+  areServersHydrated?: boolean;
   onProjectShared?: (
     sharedProjectId: string,
     sourceProjectId?: string
@@ -575,6 +558,8 @@ export function ServersTab({
   organizationId,
   isBillingContextPending = false,
   isLoadingProjects,
+  isAuthHydrating = false,
+  areServersHydrated = true,
   onProjectShared: _onProjectShared,
   isRegistryEnabled = false,
   onNavigateToRegistry,
@@ -1723,7 +1708,33 @@ export function ServersTab({
     </div>
   );
 
-  const renderLoadingContent = () => <ServersLoadingSkeleton />;
+  const renderLoadingContent = () => (
+    <ResizablePanelGroup direction="horizontal" className="flex-1">
+      <ResizablePanel
+        defaultSize={isJsonRpcPanelVisible ? 65 : 100}
+        minSize={70}
+      >
+        <ServersLoadingSkeleton />
+      </ResizablePanel>
+      {isJsonRpcPanelVisible ? (
+        <>
+          <ResizableHandle withHandle />
+          <ResizablePanel
+            defaultSize={35}
+            minSize={4}
+            maxSize={50}
+            collapsible={true}
+            collapsedSize={0}
+            onCollapse={toggleJsonRpcPanel}
+          >
+            <div className="h-full bg-background border-l border-border" />
+          </ResizablePanel>
+        </>
+      ) : (
+        <CollapsedPanelStrip onOpen={toggleJsonRpcPanel} />
+      )}
+    </ResizablePanelGroup>
+  );
 
   const renderNoProjectContent = () => (
     <div className="space-y-6 p-8 h-full overflow-auto">
@@ -1741,15 +1752,17 @@ export function ServersTab({
 
   return (
     <div className="h-full flex flex-col">
-      {isBillingContextPending ? (
-        <ServersSurfaceLoadingState
-          testId="servers-billing-context-pending"
-          message="Checking your organization access..."
-        />
-      ) : isLoadingProjects ? (
+      {isAuthHydrating ||
+      isBillingContextPending ||
+      isLoadingProjects ||
+      !areServersHydrated ? (
         renderLoadingContent()
       ) : !selectedProject ? (
-        renderNoProjectContent()
+        shouldQueryProjectId(activeProjectId) ? (
+          renderLoadingContent()
+        ) : (
+          renderNoProjectContent()
+        )
       ) : hasAnyServers ? (
         renderConnectedContent()
       ) : (

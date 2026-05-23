@@ -26,6 +26,7 @@ import {
   HOSTED_OAUTH_PENDING_STORAGE_KEY,
 } from "@/lib/hosted-oauth-callback";
 import { clearPendingQuickConnect } from "@/lib/quick-connect-pending";
+import { shouldQueryProjectId } from "./useProjects";
 import { HOSTED_MODE } from "@/lib/config";
 
 export type { ServerWithName } from "@/state/app-types";
@@ -781,6 +782,14 @@ export function useAppState({
     appState,
     isLoading,
     isLoadingRemoteProjects,
+    // True once Convex has returned the flat-servers query for the active
+    // project, OR when there's no queryable project id (sentinel like
+    // "none"/"null" — query was skipped, so no data is ever coming).
+    // Lets ServersTab distinguish "still loading" from "no real project".
+    areServersHydrated:
+      !isAuthenticated ||
+      projectState.activeProjectServersFlat !== undefined ||
+      !shouldQueryProjectId(projectState.activeProjectServersFlatProjectId),
     isCloudSyncActive,
     activeOrganizationId,
     setActiveOrganizationId,
