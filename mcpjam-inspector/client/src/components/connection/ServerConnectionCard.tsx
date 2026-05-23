@@ -311,7 +311,11 @@ export function ServerConnectionCard({
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Failed to create tunnel";
-      toast.error(`Tunnel creation failed: ${errorMessage}`);
+      if (errorMessage.includes("No access token available")) {
+        toast.error("Sign in to create ngrok tunnels");
+      } else {
+        toast.error(`Tunnel creation failed: ${errorMessage}`);
+      }
     } finally {
       setIsCreatingTunnel(false);
     }
