@@ -32,13 +32,9 @@ const {
   },
   mockViewMutations: {
     createMcpView: vi.fn(),
-    createOpenaiView: vi.fn(),
     updateMcpView: vi.fn(),
-    updateOpenaiView: vi.fn(),
     removeMcpView: vi.fn(),
-    removeOpenaiView: vi.fn(),
     generateMcpUploadUrl: vi.fn(),
-    generateOpenaiUploadUrl: vi.fn(),
   },
 }));
 

@@ -47,6 +47,22 @@ export function hostSupportsWidgetRendering(
   clientCapabilities: Record<string, unknown> | undefined
 ): boolean {
   if (clientCapabilities === undefined) return true;
+  return clientAdvertisesMcpApps(clientCapabilities);
+}
+
+/**
+ * Strict predicate: does this `clientCapabilities` blob advertise the MCP
+ * UI extension with the spec-required MIME type?
+ *
+ * Same shape check as `hostSupportsWidgetRendering` but treats `undefined`
+ * as `false` — the matrix UI and the canvas's "Apps section visible" gate
+ * need a concrete advertised/not-advertised answer, not the legacy
+ * "no host modeled → assume capable" semantics.
+ */
+export function clientAdvertisesMcpApps(
+  clientCapabilities: Record<string, unknown> | undefined
+): boolean {
+  if (!clientCapabilities) return false;
   const extensions = clientCapabilities.extensions;
   if (!isRecord(extensions)) return false;
   const uiExt = extensions[MCP_UI_EXTENSION_ID];
@@ -56,6 +72,6 @@ export function hostSupportsWidgetRendering(
   return mimeTypes.includes(MCP_UI_RESOURCE_MIME_TYPE);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }

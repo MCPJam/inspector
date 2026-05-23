@@ -39,10 +39,7 @@ import {
   webError,
   mapRuntimeError,
 } from "./auth.js";
-import {
-  attachHostedRpcLogs,
-  createHostedRpcLogCollector,
-} from "./hosted-rpc-logs.js";
+import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
 import { getClientIp } from "../../utils/client-ip.js";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
 import { logger } from "../../utils/logger.js";
@@ -71,10 +68,6 @@ chatV2.post("/", async (c) => {
 
     // ── Convex authorization path: guest and signed-in actors ─────
     const hostedBody = parseWithSchema(hostedChatSchema, rawBody);
-    const legacyWorkspaceId =
-      typeof (hostedBody as any).workspaceId === "string"
-        ? ((hostedBody as any).workspaceId as string)
-        : undefined;
     const body = rawBody as unknown as ChatV2Request & {
       projectId: string;
       selectedServerIds: string[];
@@ -143,7 +136,11 @@ chatV2.post("/", async (c) => {
         ) {
           logger.warn(
             "[chat-v2] client requireToolApproval differs from host; using host value",
-            { chatboxId, body: bodyRequireToolApproval, host: cfg.requireToolApproval }
+            {
+              chatboxId,
+              body: bodyRequireToolApproval,
+              host: cfg.requireToolApproval,
+            }
           );
         }
         // Model is part of the host-owned contract: a tampered body
@@ -178,11 +175,14 @@ chatV2.post("/", async (c) => {
         // with potentially stale config, which is the current behavior;
         // the host-side override is best-effort hardening, not a
         // hard gate.
-        logger.warn("[chat-v2] runtime-config fetch failed; using body values", {
-          chatboxId,
-          status: runtime.status,
-          error: runtime.error,
-        });
+        logger.warn(
+          "[chat-v2] runtime-config fetch failed; using body values",
+          {
+            chatboxId,
+            status: runtime.status,
+            error: runtime.error,
+          }
+        );
       }
     }
     const systemPrompt = resolvedSystemPrompt;
@@ -193,7 +193,11 @@ chatV2.post("/", async (c) => {
     // authorizes via project ownership for both guest and authed users.
     // accessScope is only set when a token is in play (shared chat / chatbox)
     // since that's an orthogonal access path keyed on the token, not the actor.
-    const { manager, oauthServerUrls: urls } = await createAuthorizedManager(
+    const {
+      manager,
+      oauthServerUrls: urls,
+      authenticatedUserId,
+    } = await createAuthorizedManager(
       c,
       bearerToken,
       hostedBody.projectId,
@@ -253,14 +257,7 @@ chatV2.post("/", async (c) => {
           throw new WebRouteError(
             500,
             ErrorCode.INTERNAL_ERROR,
-            "Server missing CONVEX_HTTP_URL configuration",
-          );
-        }
-        if (!process.env.INSPECTOR_SERVICE_TOKEN) {
-          throw new WebRouteError(
-            500,
-            ErrorCode.INTERNAL_ERROR,
-            "Server missing INSPECTOR_SERVICE_TOKEN configuration",
+            "Server missing CONVEX_HTTP_URL configuration"
           );
         }
         // Hosted org BYOK: resolve runtime location first.
@@ -287,12 +284,15 @@ chatV2.post("/", async (c) => {
                 chatboxId,
                 accessVersion,
                 serverIds: selectedServerIds,
-              },
+              }
             )
           : { runtimeLocation: "cloud", providerKey };
 
         const onConversationComplete = hostedChatSessionId
-          ? async (fullHistory: ModelMessage[], turnTrace: PersistedTurnTrace) => {
+          ? async (
+              fullHistory: ModelMessage[],
+              turnTrace: PersistedTurnTrace
+            ) => {
               const isDirectChat = !isChatboxSession;
               await persistChatSessionToConvex({
                 chatSessionId: hostedChatSessionId,
@@ -308,6 +308,7 @@ chatV2.post("/", async (c) => {
                 sessionMessages: stampSenderUserIdsOnSessionMessages(
                   fullHistory,
                   messages,
+                  { authenticatedUserId }
                 ),
                 startedAt: sessionStartedAt,
                 lastActivityAt: Date.now(),
@@ -320,7 +321,8 @@ chatV2.post("/", async (c) => {
                         requireToolApproval,
                         selectedServers:
                           Array.isArray(selectedServerNames) &&
-                          selectedServerNames.length === selectedServerIds.length
+                          selectedServerNames.length ===
+                            selectedServerIds.length
                             ? selectedServerNames
                             : selectedServerIds,
                       },
@@ -352,7 +354,6 @@ chatV2.post("/", async (c) => {
           return handleLocalOrgChatModel({
             provider: runtime.provider,
             projectId: hostedBody.projectId,
-            workspaceId: legacyWorkspaceId,
             modelId,
             chatSessionId: hostedChatSessionId,
             sourceType,
@@ -364,6 +365,7 @@ chatV2.post("/", async (c) => {
             chatboxId,
             accessVersion,
             selectedServers: selectedServerIds,
+            serverIds: selectedServerIds,
             requireToolApproval,
             onConversationComplete,
             onStreamComplete: cleanupStream,
@@ -375,7 +377,6 @@ chatV2.post("/", async (c) => {
 
         return handleHostedOrgChatModel({
           projectId: hostedBody.projectId,
-          workspaceId: legacyWorkspaceId,
           providerKey: runtime.providerKey,
           modelId,
           chatSessionId: hostedChatSessionId,
@@ -390,6 +391,7 @@ chatV2.post("/", async (c) => {
           accessVersion,
           mcpClientManager: manager,
           selectedServers: selectedServerIds,
+          serverIds: selectedServerIds,
           requireToolApproval,
           onConversationComplete,
           onStreamComplete: cleanupStream,
@@ -405,7 +407,7 @@ chatV2.post("/", async (c) => {
         throw new WebRouteError(
           500,
           ErrorCode.INTERNAL_ERROR,
-          "Server missing CONVEX_HTTP_URL configuration",
+          "Server missing CONVEX_HTTP_URL configuration"
         );
       }
 
@@ -447,6 +449,7 @@ chatV2.post("/", async (c) => {
                 sessionMessages: stampSenderUserIdsOnSessionMessages(
                   fullHistory,
                   messages,
+                  { authenticatedUserId }
                 ),
                 startedAt: sessionStartedAt,
                 lastActivityAt: Date.now(),
@@ -508,7 +511,7 @@ chatV2.post("/", async (c) => {
           oauthRequired: true,
           serverUrl: firstUrl,
         },
-        rpcCollector?.buildEnvelope()
+        rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
       );
     }
     const routeError = mapRuntimeError(error);
@@ -518,7 +521,7 @@ chatV2.post("/", async (c) => {
       routeError.code,
       routeError.message,
       routeError.details,
-      rpcCollector?.buildEnvelope()
+      rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined
     );
   }
 });

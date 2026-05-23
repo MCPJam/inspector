@@ -523,6 +523,62 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     );
   });
 
+  it("runs org BYOK cloud eval models through Convex without raw provider keys", async () => {
+    fetchMock.mockResolvedValue(createBackendSuccessResponse());
+
+    await runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: null,
+      config: {
+        tests: [
+          {
+            title: "Org BYOK Case",
+            query: "Hello",
+            runs: 1,
+            model: "gpt-4-turbo",
+            provider: "openai",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-1",
+          },
+        ],
+        environment: { servers: ["srv-1"] },
+      },
+      modelApiKeys: {},
+      orgModelConfigTarget: { projectId: "project-1" },
+      convexClient: convexClient as any,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: mcpClientManager as any,
+      testCaseId: "case-1",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://example.convex.site/stream/org",
+      expect.objectContaining({
+        method: "POST",
+      }),
+    );
+    const request = fetchMock.mock.calls[0]?.[1] as {
+      body?: string;
+      headers?: ConstructorParameters<typeof Headers>[0];
+    };
+    const body = JSON.parse(request.body ?? "{}");
+    expect(body).toMatchObject({
+      mode: "step",
+      model: "gpt-4-turbo",
+      providerKey: "openai",
+      projectId: "project-1",
+    });
+    expect(body).not.toHaveProperty("apiKey");
+    expect(new Headers(request.headers).get("authorization")).toBe(
+      "Bearer token",
+    );
+    expect(createLlmModelMock).not.toHaveBeenCalled();
+  });
+
   it("uses full org config for custom eval models", async () => {
     await runEvalSuiteWithAiSdk({
       suiteId: "suite-1",

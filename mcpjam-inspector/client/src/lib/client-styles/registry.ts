@@ -3,16 +3,22 @@ import type {
   McpUiHostCapabilities,
   McpUiStyles,
 } from "@modelcontextprotocol/ext-apps/app-bridge";
-import { BUILT_IN_HOST_STYLES, MCPJAM_HOST_STYLE } from "./built-ins";
+import {
+  BUILT_IN_HOST_STYLES,
+  MCPJAM_HOST_STYLE,
+  OPENAI_APPS_FULL_SURFACE,
+} from "./built-ins";
 import { HostIndicatorDispatch } from "./indicators/client-indicator-dispatch";
 import type {
   ChatUiOverride,
+  EffectiveCompatRuntime,
   HostChatUi,
   HostMcpProfile,
   HostStyleDefinition,
   HostStyleId,
   HostThemeMode,
   IndicatorDef,
+  ResolvedMcpAppsCapabilities,
 } from "./types";
 
 /**
@@ -76,7 +82,66 @@ export function getHostStyleOrDefault(
 }
 
 /**
- * Resolve the `hostCapabilities` blob this host style advertises.
+ * Build the `HostCapabilities` blob advertised in `ui/initialize` from a
+ * resolved per-dimension matrix + optional preset-only augment. This is
+ * the single derivation point for advertisement — the matrix is the
+ * source of truth (per the foundation PR's D1 decision).
+ *
+ * Every advertised field is matrix-controlled:
+ *   - `openLinks` / `serverTools` / `serverResources` / `logging` /
+ *     `updateModelContext` / `message` — advertised when the matrix
+ *     sets `true`. (`openLinks` and `serverTools` are conventionally on
+ *     for every built-in preset, but staying matrix-controlled lets
+ *     legacy `hostCapabilitiesOverride: {}` migrate to a truly empty
+ *     advertised blob without the resolver silently re-adding them.)
+ *   - `downloadFile` — not represented yet (no preset advertises it,
+ *     and the renderer doesn't honor the spec's `ui/download-file`
+ *     request). TODO: add a matrix row when a host wants to advertise.
+ *   - `sandbox` — NOT added here; the renderer composes it separately
+ *     via `resolveSandboxCsp` / `resolveSandboxPermissions` and adds it
+ *     onto the advertised blob before passing to AppBridge.
+ *
+ * The `augment` argument carries preset-specific sub-field detail the
+ * M365-grain matrix can't express (currently only Cursor's
+ * `listChanged: false` markers). Augment keys are merged onto the
+ * advertised value of the matching matrix-derived key — augment is NEVER
+ * additive (if the matrix dropped a key, the augment doesn't bring it
+ * back).
+ */
+export function buildHostCapabilities(
+  matrix: ResolvedMcpAppsCapabilities,
+  augment?: Partial<Omit<McpUiHostCapabilities, "sandbox">>,
+): Omit<McpUiHostCapabilities, "sandbox"> {
+  const caps: Omit<McpUiHostCapabilities, "sandbox"> = {};
+  if (matrix.openLinks) caps.openLinks = {};
+  if (matrix.serverTools) caps.serverTools = {};
+  if (matrix.serverResources) caps.serverResources = {};
+  if (matrix.logging) caps.logging = {};
+  if (matrix.updateModelContext) caps.updateModelContext = { text: {} };
+  if (matrix.message) caps.message = { text: {} };
+  if (!augment) return caps;
+  for (const [key, value] of Object.entries(augment) as Array<
+    [
+      keyof Omit<McpUiHostCapabilities, "sandbox">,
+      Omit<McpUiHostCapabilities, "sandbox">[keyof Omit<
+        McpUiHostCapabilities,
+        "sandbox"
+      >],
+    ]
+  >) {
+    if (caps[key] === undefined) continue;
+    (caps as Record<string, unknown>)[key] = {
+      ...(caps[key] as object),
+      ...(value as object),
+    };
+  }
+  return caps;
+}
+
+/**
+ * Resolve the `HostCapabilities` blob this host style advertises before
+ * any user override is applied. User overrides flow through
+ * `resolveEffectiveHostCapabilities` in `lib/client-config-v2.ts`.
  *
  * Unlike {@link getHostStyleOrDefault} this does NOT silently fall back to
  * Claude's preset — an unknown/absent id returns
@@ -86,24 +151,36 @@ export function getHostStyleOrDefault(
 export function getHostCapabilitiesForStyle(
   id: HostStyleId | null | undefined,
 ): Omit<McpUiHostCapabilities, "sandbox"> {
-  return findHostStyle(id)?.mcp.hostCapabilities ?? SPEC_DEFAULT_HOST_CAPABILITIES;
+  const def = findHostStyle(id);
+  if (!def) return SPEC_DEFAULT_HOST_CAPABILITIES;
+  return buildHostCapabilities(
+    def.mcp.mcpAppsCapabilities,
+    def.mcp.hostCapabilitiesAugment,
+  );
 }
 
 /**
  * Resolve the vendor compat-runtime shim preset for a host style.
- * Unknown/absent id → `{ openaiApps: false }` so the inspector defaults
- * to honest SEP-1865 behavior; explicit preset values (Apps SDK hosts)
- * flip the relevant shim on.
  *
- * The booleans here are presets; the end user can override per host via
- * `mcpProfile.apps.compatRuntime`. See `resolveEffectiveCompatRuntime`
- * in `lib/client-config-v2.ts` for the merge.
+ * - Unknown/absent id → `{ injected: false }` (honest SEP-1865 default).
+ * - Host with `compatRuntime.openaiApps: false` (or unset) → `{ injected: false }`.
+ * - Host that injects but specifies no per-method preset → injected + the
+ *   full ChatGPT surface (`OPENAI_APPS_FULL_SURFACE`).
+ * - Host with a per-method preset → injected + that preset.
+ *
+ * The preset is the BASELINE; the end user can override per host via
+ * `mcpProfile.apps.compatRuntime` (master toggle + sparse per-method
+ * overrides). See `resolveEffectiveCompatRuntime` in
+ * `lib/client-config-v2.ts` for the merge.
  */
 export function getCompatRuntimeForStyle(
   id: HostStyleId | null | undefined,
-): { openaiApps: boolean } {
+): EffectiveCompatRuntime {
+  const profile = findHostStyle(id)?.mcp.compatRuntime;
+  if (!profile?.openaiApps) return { injected: false };
   return {
-    openaiApps: findHostStyle(id)?.mcp.compatRuntime?.openaiApps ?? false,
+    injected: true,
+    capabilities: profile.openaiAppsCapabilities ?? OPENAI_APPS_FULL_SURFACE,
   };
 }
 

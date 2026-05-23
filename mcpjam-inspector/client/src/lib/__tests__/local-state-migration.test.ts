@@ -113,7 +113,7 @@ describe("local-state-migration", () => {
       expect(payload!.projects).toHaveLength(1);
     });
 
-    it("falls back to mcp-inspector-state when no projects/workspaces present", () => {
+    it("falls back to mcp-inspector-state when no projects present", () => {
       // Pre-projects format: servers live at the top level of `mcp-inspector-state`.
       // Without this fallback, users on this format would have the migration
       // mark itself complete with nothing pushed to Convex, then later have

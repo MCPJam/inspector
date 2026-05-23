@@ -65,6 +65,33 @@ export type EvalTraceWidgetSnapshot = {
    * the bytes — see `MCPAppsRenderer.injectedOpenAiCompat`.
    */
   injectedOpenAiCompat?: boolean;
+  /**
+   * Per-method `window.openai.*` capability surface the runtime was
+   * configured with at capture time. Stored as the full resolved
+   * record (not a hash) so debug/replay summaries can render the diff
+   * vs. preset and answer "which surface was injected", not just
+   * "shim was injected: yes/no". See plan §6.5 +
+   * feedback_capability_in_render_recipe memory.
+   *
+   * Optional / absent for snapshots captured before the matrix
+   * shipped — replay treats those as the full ChatGPT surface (the
+   * runtime's pre-matrix default).
+   */
+  injectedOpenAiCompatCapabilities?: {
+    callTool?: boolean;
+    sendFollowUpMessage?: boolean;
+    setWidgetState?: boolean;
+    requestDisplayMode?: "all" | "fullscreen-only" | "none";
+    notifyIntrinsicHeight?: boolean;
+    openExternal?: boolean;
+    setOpenInAppUrl?: boolean;
+    requestModal?: boolean;
+    uploadFile?: boolean;
+    selectFiles?: boolean;
+    getFileDownloadUrl?: boolean;
+    requestCheckout?: boolean;
+    requestClose?: boolean;
+  };
 };
 
 /** Versioned blob written by `testSuites:updateTestIteration` when messages are stored. */
@@ -135,6 +162,27 @@ const evalTraceWidgetSnapshotZ = z.object({
   widgetHtmlBlobId: z.string().optional(),
   widgetHtmlUrl: z.string().nullable().optional(),
   injectedOpenAiCompat: z.boolean().optional(),
+  // Mirror of `EvalTraceWidgetSnapshot.injectedOpenAiCompatCapabilities`.
+  // Sparse object — every field optional — matching what the SDK
+  // runtime actually consumed. Strict per-field validation keeps
+  // hand-edited eval blobs from injecting unknown method flags.
+  injectedOpenAiCompatCapabilities: z
+    .object({
+      callTool: z.boolean().optional(),
+      sendFollowUpMessage: z.boolean().optional(),
+      setWidgetState: z.boolean().optional(),
+      requestDisplayMode: z.enum(["all", "fullscreen-only", "none"]).optional(),
+      notifyIntrinsicHeight: z.boolean().optional(),
+      openExternal: z.boolean().optional(),
+      setOpenInAppUrl: z.boolean().optional(),
+      requestModal: z.boolean().optional(),
+      uploadFile: z.boolean().optional(),
+      selectFiles: z.boolean().optional(),
+      getFileDownloadUrl: z.boolean().optional(),
+      requestCheckout: z.boolean().optional(),
+      requestClose: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 export const evalTraceBlobV1Z = z.object({

@@ -24,6 +24,32 @@ export function serializeForInlineScript(value: unknown): string {
 // ── MCP Apps OpenAI compat injection ─────────────────────────────────
 
 /**
+ * Per-method `window.openai.*` capability surface for the compat
+ * runtime. Mirror of `ResolvedOpenAiAppsCapabilities` in the inspector
+ * client (`client/src/lib/client-styles/types.ts`). Defined inline here
+ * because the SDK can't import client types.
+ *
+ * Optional fields here mean "use the runtime's default" — the runtime's
+ * default is the full ChatGPT surface, preserving the pre-capability
+ * behavior for legacy callers that don't pass `capabilities`.
+ */
+export type OpenAiCompatCapabilities = {
+  callTool?: boolean;
+  sendFollowUpMessage?: boolean;
+  setWidgetState?: boolean;
+  requestDisplayMode?: "all" | "fullscreen-only" | "none";
+  notifyIntrinsicHeight?: boolean;
+  openExternal?: boolean;
+  setOpenInAppUrl?: boolean;
+  requestModal?: boolean;
+  uploadFile?: boolean;
+  selectFiles?: boolean;
+  getFileDownloadUrl?: boolean;
+  requestCheckout?: boolean;
+  requestClose?: boolean;
+};
+
+/**
  * Inject the OpenAI compatibility runtime into MCP App HTML.
  * Adds a JSON config element + the bundled IIFE script into <head>.
  * If no <head> tag exists, wraps the content in a full HTML document.
@@ -53,6 +79,15 @@ export function injectOpenAICompat(
     theme?: string;
     viewMode?: string;
     viewParams?: Record<string, unknown>;
+    /**
+     * Per-method capability surface the runtime should expose on
+     * `window.openai`. Disabled methods are LITERALLY ABSENT from the
+     * runtime (typeof === "undefined") so widgets that feature-detect
+     * fall back correctly. When omitted, the runtime defaults to the
+     * full ChatGPT surface — preserves behavior for callers that
+     * pre-date the capability matrix.
+     */
+    capabilities?: OpenAiCompatCapabilities;
   }
 ): string {
   if (html.includes('id="openai-compat-config"')) {
@@ -69,6 +104,12 @@ export function injectOpenAICompat(
     theme: widgetData.theme ?? "dark",
     viewMode: widgetData.viewMode ?? "inline",
     viewParams: widgetData.viewParams ?? {},
+    // Omit the field entirely when undefined so the runtime takes its
+    // legacy full-surface default — keeps the serialized config
+    // byte-identical to the pre-capability shape for old callers.
+    ...(widgetData.capabilities !== undefined
+      ? { capabilities: widgetData.capabilities }
+      : {}),
   });
 
   const configScript = `<script type="application/json" id="openai-compat-config">${configJson}</script>`;

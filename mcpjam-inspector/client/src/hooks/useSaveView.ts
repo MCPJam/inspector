@@ -39,6 +39,23 @@ export interface ToolDataForSave {
   serverInfo?: ServerInfo;
   // Cached widget HTML for offline rendering
   widgetHtml?: string;
+  /**
+   * Whether the cached `widgetHtml` was captured with the OpenAI Apps
+   * SDK `window.openai` shim injected. Persisted alongside the blob so
+   * replay agrees with the bytes on disk under a different host
+   * config. Sourced from `widgetDebugStore.widgets[toolCallId].
+   * injectedOpenAiCompat`, which is stamped by the renderer at fetch
+   * time.
+   */
+  injectedOpenAiCompat?: boolean;
+  /**
+   * Per-method `window.openai.*` surface the runtime exposed when
+   * `widgetHtml` was captured. Sibling of `injectedOpenAiCompat`; the
+   * boolean alone only answers "was a shim injected?", whereas the
+   * matrix tells replay/debug WHICH surface was injected. Sourced
+   * from the same widget-debug-store entry.
+   */
+  injectedOpenAiCompatCapabilities?: import("@/lib/client-styles").OpenAiAppsCapabilities;
   // Tool metadata (contains openai/outputTemplate and other metadata)
   toolMetadata?: Record<string, unknown>;
 }
@@ -248,8 +265,6 @@ export function useSaveView({
           toolName: toolData.toolName,
         });
         const liveOutputTemplate = toolData.outputTemplate?.trim();
-        const liveOutputTemplateIsUi =
-          !!liveOutputTemplate && liveOutputTemplate.startsWith("ui://");
         // `toolData.resourceUri` comes from `getUIResourceUri()` in
         // part-switch.tsx, which for OpenAI-origin tools returns the
         // raw `openai/outputTemplate` value verbatim — any scheme. We
@@ -272,17 +287,19 @@ export function useSaveView({
           widgetPermissions: toolData.widgetPermissions,
           widgetPermissive: toolData.widgetPermissive,
           widgetHtmlBlobId,
-          // Legacy aliases (input-only on the backend normalizer). The
-          // backend validates `outputTemplate` whenever it is supplied,
-          // even when `resourceUri` wins precedence, so we only
-          // forward it when it is itself spec-compliant. A non-ui://
-          // OpenAI template (e.g. `https://...`) is dropped on the
-          // floor here — the canonical `resourceUri` is what matters.
-          outputTemplate:
-            isOpenAIOrigin && liveOutputTemplateIsUi
-              ? liveOutputTemplate
-              : undefined,
-          serverInfo: isOpenAIOrigin ? toolData.serverInfo : undefined,
+          // Persist the shim flag + per-method capability surface
+          // alongside the cached HTML so replay can reproduce the
+          // original `window.openai` API surface even after the
+          // active host config has changed. Only meaningful when
+          // `widgetHtmlBlobId` is present; the backend tolerates
+          // either field being absent (pre-feature rows hash
+          // identically).
+          injectedOpenAiCompat: widgetHtmlBlobId
+            ? toolData.injectedOpenAiCompat
+            : undefined,
+          injectedOpenAiCompatCapabilities: widgetHtmlBlobId
+            ? toolData.injectedOpenAiCompatCapabilities
+            : undefined,
           // Documentation-only provenance:
           viewOriginProtocol: isOpenAIOrigin ? "openai-apps" : "mcp-apps",
         });

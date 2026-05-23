@@ -13,6 +13,7 @@ import { extractMethod } from "@/stores/traffic-log-store";
 import {
   AppBridge,
   PostMessageTransport,
+  type McpUiHostCapabilities,
   type McpUiHostContext,
   type McpUiResourceCsp,
   type McpUiResourcePermissions,
@@ -54,6 +55,20 @@ export interface McpAppsModalProps {
    * shimmed while the inline view isn't (or vice versa).
    */
   injectOpenAiCompat: boolean;
+  /**
+   * Resolved MCP Apps `HostCapabilities` blob the inline renderer
+   * already computed via `resolveEffectiveHostCapabilities`. Pass-down
+   * mirrors {@link injectOpenAiCompat}: the modal mounts its own
+   * AppBridge and we want inline + modal to advertise an identical
+   * surface to the widget. Previously the modal hardcoded `{ openLinks,
+   * serverTools, serverResources, logging, updateModelContext, message }`
+   * — that masked Copilot's M365-published subset (which strips
+   * `serverResources` / `logging`) and any user override in
+   * `mcpProfile.apps.mcpAppsOverrides`. The `sandbox` slice is composed
+   * separately at AppBridge construction from the widget-level CSP /
+   * permissions props.
+   */
+  effectiveHostCapabilities: Omit<McpUiHostCapabilities, "sandbox">;
   toolInputRef: React.RefObject<Record<string, unknown> | undefined>;
   toolOutputRef: React.RefObject<unknown>;
   themeModeRef: React.RefObject<string>;
@@ -88,6 +103,7 @@ export function McpAppsModal({
   toolName,
   cspMode,
   injectOpenAiCompat,
+  effectiveHostCapabilities,
   toolInputRef,
   toolOutputRef,
   themeModeRef,
@@ -169,16 +185,16 @@ export function McpAppsModal({
       name: "mcpjam-inspector",
       version: __APP_VERSION__,
     }) as { name: string; version: string };
+    // Vendor-trait HostCapabilities come from the inline renderer's
+    // resolver (matrix-derived + user override). Sandbox is composed
+    // here from the widget-level resource CSP / permissions per
+    // SEP-1865 (sandbox is per-resource, not a vendor trait — see
+    // HostMcpProfile.mcpAppsCapabilities doc).
     const bridge = new AppBridge(
       null,
       resolvedHostInfo,
       {
-        openLinks: {},
-        serverTools: {},
-        serverResources: {},
-        logging: {},
-        updateModelContext: {},
-        message: {},
+        ...effectiveHostCapabilities,
         sandbox: {
           csp: widgetPermissive ? undefined : widgetCsp,
           permissions: widgetPermissions,
@@ -277,6 +293,7 @@ export function McpAppsModal({
     toolInputRef,
     toolOutputRef,
     activeMcpProfile,
+    effectiveHostCapabilities,
   ]);
 
   const handleModalMessage = (event: MessageEvent) => {

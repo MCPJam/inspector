@@ -27,9 +27,7 @@ import {
   readJsonBody,
   parseWithSchema,
 } from "./errors.js";
-import {
-  buildHostedOAuthUnauthorizedHandler,
-} from "../../utils/hosted-oauth-refresh.js";
+import { buildHostedOAuthUnauthorizedHandler } from "../../utils/hosted-oauth-refresh.js";
 
 // ── Zod Schemas ──────────────────────────────────────────────────────
 
@@ -37,10 +35,6 @@ const clientCapabilitiesSchema = z.record(z.string(), z.unknown());
 
 export const projectServerSchema = z.object({
   projectId: z.string().min(1),
-  // Optional but declared so zod doesn't strip it. Downstream callers in
-  // servers.ts and conformance.ts read this when present to scope authorize
-  // calls to a workspace mirror instead of a project.
-  workspaceId: z.string().min(1).optional(),
   serverId: z.string().min(1),
   serverName: z.string().min(1).optional(),
   clientCapabilities: clientCapabilitiesSchema.optional(),
@@ -226,7 +220,7 @@ export type ConvexBatchAuthorizeResponse = {
 // path (`local-server-resolver.ts`).
 const STDIO_ONLY_FIELDS = ["command", "args", "env"] as const;
 function stripStdioFieldsFromHostedConfig<
-  T extends { serverConfig?: Record<string, unknown> },
+  T extends { serverConfig?: Record<string, unknown> }
 >(holder: T): T {
   const cfg = holder.serverConfig;
   if (!cfg || typeof cfg !== "object") return holder;
@@ -248,7 +242,6 @@ export async function authorizeServer(
   serverId: string,
   options?: {
     accessScope?: "project_member" | "chat_v2";
-    workspaceId?: string;
     chatboxId?: string;
     accessVersion?: number;
   }
@@ -271,9 +264,7 @@ export async function authorizeServer(
         Authorization: `Bearer ${bearerToken}`,
       },
       body: JSON.stringify({
-        ...(options?.workspaceId
-          ? { workspaceId: options.workspaceId }
-          : { projectId }),
+        projectId,
         serverId,
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
         ...(options?.chatboxId ? { chatboxId: options.chatboxId } : {}),
@@ -319,7 +310,9 @@ export async function authorizeServer(
   if (internalLogContext) {
     setRequestLogContext(c, mapInternalToRequestContext(internalLogContext));
   }
-  return stripStdioFieldsFromHostedConfig(clientSafe) as ClientSafeAuthorizeResponse;
+  return stripStdioFieldsFromHostedConfig(
+    clientSafe
+  ) as ClientSafeAuthorizeResponse;
 }
 
 export async function authorizeBatch(
@@ -329,7 +322,6 @@ export async function authorizeBatch(
   serverIds: string[],
   options?: {
     accessScope?: "project_member" | "chat_v2";
-    workspaceId?: string;
     chatboxId?: string;
     accessVersion?: number;
   }
@@ -352,9 +344,7 @@ export async function authorizeBatch(
         Authorization: `Bearer ${bearerToken}`,
       },
       body: JSON.stringify({
-        ...(options?.workspaceId
-          ? { workspaceId: options.workspaceId }
-          : { projectId }),
+        projectId,
         serverIds,
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
         ...(options?.chatboxId ? { chatboxId: options.chatboxId } : {}),
@@ -431,7 +421,7 @@ export async function authorizeBatch(
     if (result.ok) {
       const { internalLogContext: _omit, ...clientSafeResult } = result;
       strippedResults[serverId] = stripStdioFieldsFromHostedConfig(
-        clientSafeResult,
+        clientSafeResult
       ) as ConvexBatchAuthorizeSuccess;
     } else {
       strippedResults[serverId] = result;
@@ -515,6 +505,8 @@ export interface AuthorizedManagerResult {
   manager: MCPClientManager;
   /** Maps serverId → serverUrl for servers that have useOAuth enabled */
   oauthServerUrls: Record<string, string>;
+  /** Server-authenticated Convex user/guest id for this request, when known. */
+  authenticatedUserId?: string | null;
 }
 
 export async function createAuthorizedManager(
@@ -527,7 +519,6 @@ export async function createAuthorizedManager(
   clientCapabilities?: Record<string, unknown>,
   options?: {
     accessScope?: "project_member" | "chat_v2";
-    workspaceId?: string;
     chatboxId?: string;
     accessVersion?: number;
     rpcLogger?: RpcLogger;
@@ -561,6 +552,7 @@ export async function createAuthorizedManager(
         }
       ),
       oauthServerUrls: {},
+      authenticatedUserId: null,
     };
   }
 
@@ -572,7 +564,6 @@ export async function createAuthorizedManager(
     uniqueServerIds,
     {
       accessScope: options?.accessScope,
-      workspaceId: options?.workspaceId,
       chatboxId: options?.chatboxId,
       accessVersion: options?.accessVersion,
     }
@@ -606,7 +597,6 @@ export async function createAuthorizedManager(
             serverId,
             serverName: displayServerName,
             accessScope: options?.accessScope,
-            workspaceId: options?.workspaceId,
             shareToken: (options as { shareToken?: string })?.shareToken,
             chatboxId: options?.chatboxId,
             accessVersion: options?.accessVersion,
@@ -650,7 +640,11 @@ export async function createAuthorizedManager(
     rpcLogger: options?.rpcLogger,
     retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
   });
-  return { manager, oauthServerUrls };
+  return {
+    manager,
+    oauthServerUrls,
+    authenticatedUserId: c.var.requestLogContext?.userId ?? null,
+  };
 }
 
 export async function withManager<T>(
@@ -798,7 +792,8 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
         ? raw.chatboxId
         : undefined;
     const accessVersion =
-      typeof raw.accessVersion === "number" && Number.isFinite(raw.accessVersion)
+      typeof raw.accessVersion === "number" &&
+      Number.isFinite(raw.accessVersion)
         ? raw.accessVersion
         : undefined;
 
@@ -852,8 +847,6 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
           undefined,
         {
           accessScope,
-          workspaceId:
-            typeof raw.workspaceId === "string" ? raw.workspaceId : undefined,
           chatboxId,
           accessVersion,
           rpcLogger: rpcCollector?.rpcLogger,

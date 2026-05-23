@@ -1,11 +1,11 @@
 /**
  * One-time migration shim from legacy localStorage state to Convex.
  *
- * Reads, in priority order: `mcp-inspector-projects`, the older
- * `mcp-inspector-workspaces`, and the still-older `mcp-inspector-state`
- * (pre-projects format whose servers live at the top level). For each, pushes
- * the resulting project(s) + servers to Convex via `projects:createProject`
- * (which materializes the flat `servers` rows via `syncProjectServers`).
+ * Reads, in priority order: `mcp-inspector-projects` and the older
+ * `mcp-inspector-state` (pre-projects format whose servers live at the top
+ * level). For each, pushes the resulting project(s) + servers to Convex via
+ * `projects:createProject` (which materializes the flat `servers` rows via
+ * `syncProjectServers`).
  *
  * **OAuth tokens are imported.** After each `createProject`, the migration
  * resolves the new server IDs by name (`projects:getProjectServers`) and
@@ -39,7 +39,6 @@ export const MIGRATION_FLAG_KEY = "mcp-inspector-migrated-to-convex";
 export const MIGRATION_PROGRESS_KEY = "mcp-inspector-migration-progress";
 
 const LEGACY_PROJECTS_KEY = "mcp-inspector-projects";
-const LEGACY_WORKSPACES_KEY = "mcp-inspector-workspaces";
 const LEGACY_STATE_KEY = "mcp-inspector-state";
 
 // Per-server OAuth keys are name-scoped. Migration scans the full localStorage
@@ -123,9 +122,7 @@ function reviveServer(name: string, raw: any): ServerWithName | null {
 function readProjectsFromLegacyStorage(): Project[] | null {
   let raw: string | null;
   try {
-    raw =
-      localStorage.getItem(LEGACY_PROJECTS_KEY) ??
-      localStorage.getItem(LEGACY_WORKSPACES_KEY);
+    raw = localStorage.getItem(LEGACY_PROJECTS_KEY);
   } catch {
     return null;
   }
@@ -138,7 +135,7 @@ function readProjectsFromLegacyStorage(): Project[] | null {
     return null;
   }
 
-  const rawProjects = parsed?.projects ?? parsed?.workspaces;
+  const rawProjects = parsed?.projects;
   if (!rawProjects || typeof rawProjects !== "object") return null;
 
   const projects: Project[] = [];
@@ -225,8 +222,8 @@ export function readLegacyMigrationPayloadResult(): LegacyReadResult {
 
   const projectsRead = readProjectsFromLegacyStorage();
 
-  // If the newer projects/workspaces store is present but unparseable, stop
-  // here. Falling back to `mcp-inspector-state` and migrating that successfully
+  // If the newer projects store is present but unparseable, stop here.
+  // Falling back to `mcp-inspector-state` and migrating that successfully
   // would let `clearLegacyKeys()` delete the unreadable newer store along
   // with the rest, losing data that a future parser fix or manual recovery
   // could have salvaged. Surface as `unreadable` so the runner records the
@@ -234,7 +231,7 @@ export function readLegacyMigrationPayloadResult(): LegacyReadResult {
   if (projectsRead === null) {
     return {
       kind: "unreadable",
-      reason: "legacy projects/workspaces store is unreadable",
+      reason: "legacy projects store is unreadable",
     };
   }
 
@@ -300,7 +297,6 @@ export function clearLegacyKeys(): void {
   if (typeof window === "undefined") return;
   try {
     localStorage.removeItem(LEGACY_PROJECTS_KEY);
-    localStorage.removeItem(LEGACY_WORKSPACES_KEY);
     localStorage.removeItem(LEGACY_STATE_KEY);
     for (const key of LEGACY_OAUTH_SINGLETONS) {
       localStorage.removeItem(key);
@@ -695,7 +691,7 @@ export async function runLocalStateMigration(
 
       // Default-project branch: the actor already has an auto-provisioned
       // Convex default (created by `users:ensureUser`). Calling
-      // `createProject` here would trip `maxWorkspaces` on free-plan orgs
+      // `createProject` here would trip the project limit on free-plan orgs
       // (cap=1, slot already filled). Resolve the existing default and
       // merge servers into it instead. Idempotent on retry.
       const useDefaultMergePath =

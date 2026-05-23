@@ -6,7 +6,7 @@
  * (local runtime, API key returned by /stream/org/resolve for this request only).
  *
  * handleHostedOrgChatModel → cloud: wraps handleMCPJamFreeChatModel and
- *   points it at /stream/org with the inspector service token + providerKey.
+ *   points it at /stream/org with the user auth header + providerKey.
  *
  * handleLocalOrgChatModel → local: builds the AI SDK model directly in the
  *   inspector using buildOrgModelFromResolvedConfig, runs streamText with the
@@ -75,7 +75,6 @@ const DEFAULT_MAX_STEPS_LOCAL_ORG = 30;
 
 export interface OrgModelHandlerOptions {
   projectId: string;
-  workspaceId?: string;
   providerKey: string;
   modelId: string;
   chatSessionId?: string;
@@ -86,6 +85,7 @@ export interface OrgModelHandlerOptions {
   tools: ToolSet;
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
+  serverIds?: string[];
   requireToolApproval?: boolean;
   onConversationComplete?: (
     fullHistory: ModelMessage[],
@@ -99,8 +99,7 @@ export interface OrgModelHandlerOptions {
   /**
    * The end user's Authorization header from the inbound request. Forwarded
    * to /stream/org so Convex can re-authorize the user against the project.
-   * Without this, /stream/org can only authenticate the inspector backend
-   * (via the service token) and will reject the request as unauthenticated.
+   * This is the auth boundary for org BYOK runtime requests.
    */
   authHeader?: string;
   /**
@@ -229,7 +228,6 @@ export interface OrgLocalModelHandlerOptions {
   /** The resolved local provider config (from /stream/org/resolve). */
   provider: OrgProviderResolvedConfig;
   projectId: string;
-  workspaceId?: string;
   modelId: string;
   chatSessionId?: string;
   sourceType?: string;
@@ -238,6 +236,7 @@ export interface OrgLocalModelHandlerOptions {
   temperature?: number;
   tools: ToolSet;
   selectedServers?: string[];
+  serverIds?: string[];
   requireToolApproval?: boolean;
   /** Forwarded to /stream/org/local-usage for identity resolution. */
   authHeader?: string;
@@ -271,7 +270,6 @@ export function handleLocalOrgChatModel(
   const {
     provider,
     projectId,
-    workspaceId,
     modelId,
     chatSessionId,
     sourceType,
@@ -576,7 +574,6 @@ export function handleLocalOrgChatModel(
           // Post usage to Convex (best-effort, non-blocking on failure).
           postLocalUsage({
             projectId,
-            workspaceId,
             providerKey: provider.providerKey,
             model: modelId,
             usage: traceTurn.turnUsage,
@@ -589,6 +586,7 @@ export function handleLocalOrgChatModel(
             chatboxId,
             accessVersion,
             selectedServers: options.selectedServers,
+            serverIds: options.serverIds,
           }).catch((err) => {
             logger.warn("[org/local] Failed to post local usage", {
               error: err instanceof Error ? err.message : String(err),
@@ -638,7 +636,6 @@ export function handleLocalOrgChatModel(
 
 async function postLocalUsage(params: {
   projectId: string;
-  workspaceId?: string;
   providerKey: string;
   model: string;
   usage?: LiveChatTraceUsage;
@@ -651,10 +648,10 @@ async function postLocalUsage(params: {
   chatboxId?: string;
   accessVersion?: number;
   selectedServers?: string[];
+  serverIds?: string[];
 }): Promise<void> {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
-  const inspectorServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
-  if (!convexHttpUrl || !inspectorServiceToken) return;
+  if (!convexHttpUrl) return;
 
   const url = `${convexHttpUrl.replace(/\/$/, "")}/stream/org/local-usage`;
   const controller = new AbortController();
@@ -664,12 +661,10 @@ async function postLocalUsage(params: {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Inspector-Service-Token": inspectorServiceToken,
         ...(params.authHeader ? { Authorization: params.authHeader } : {}),
       },
       body: JSON.stringify({
         projectId: params.projectId,
-        ...(params.workspaceId ? { workspaceId: params.workspaceId } : {}),
         providerKey: params.providerKey,
         model: params.model,
         ...(params.usage ? { usage: params.usage } : {}),
@@ -686,8 +681,8 @@ async function postLocalUsage(params: {
         ...(params.chatboxId && Number.isFinite(params.accessVersion)
           ? { accessVersion: params.accessVersion }
           : {}),
-        ...(params.selectedServers && params.selectedServers.length > 0
-          ? { serverIds: params.selectedServers }
+        ...((params.serverIds ?? params.selectedServers)?.length
+          ? { serverIds: params.serverIds ?? params.selectedServers }
           : {}),
       }),
       signal: controller.signal,
@@ -714,10 +709,6 @@ export async function handleHostedOrgChatModel(
   if (!process.env.CONVEX_HTTP_URL) {
     throw new Error("CONVEX_HTTP_URL is not set");
   }
-  const inspectorServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
-  if (!inspectorServiceToken) {
-    throw new Error("INSPECTOR_SERVICE_TOKEN is not set");
-  }
 
   return handleMCPJamFreeChatModel({
     messages: options.messages,
@@ -727,7 +718,7 @@ export async function handleHostedOrgChatModel(
     systemPrompt: options.systemPrompt,
     temperature: options.temperature,
     tools: options.tools,
-    projectId: options.workspaceId ? undefined : options.projectId,
+    projectId: options.projectId,
     authHeader: options.authHeader,
     chatboxId: options.chatboxId,
     accessVersion: options.accessVersion,
@@ -743,16 +734,12 @@ export async function handleHostedOrgChatModel(
     heartbeatIntervalMs: options.heartbeatIntervalMs,
     maxSteps: options.maxSteps,
     endpointPath: "/stream/org",
-    extraHeaders: {
-      "X-Inspector-Service-Token": inspectorServiceToken,
-    },
     extraBodyFields: {
       providerKey: options.providerKey,
-      ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
       // chatboxId / accessVersion are set on the body by
       // handleMCPJamFreeChatModel itself.
-      ...(options.selectedServers && options.selectedServers.length > 0
-        ? { serverIds: options.selectedServers }
+      ...((options.serverIds ?? options.selectedServers)?.length
+        ? { serverIds: options.serverIds ?? options.selectedServers }
         : {}),
     },
   });

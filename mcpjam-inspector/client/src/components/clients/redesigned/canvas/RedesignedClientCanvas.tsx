@@ -109,6 +109,7 @@ const HostMatrixNodeRenderer = memo(
           hostInfo={data.hostInfo}
           appsExtensionAdvertised={data.appsExtensionAdvertised}
           compatRuntime={data.compatRuntime}
+          mcpAppsBridge={data.mcpAppsBridge}
           selectedNodeId={ctx?.selectedNodeId ?? null}
           onSelectNode={ctx?.onSelectNode ?? (() => {})}
         />

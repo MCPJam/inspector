@@ -26,9 +26,8 @@ VITE_MCPJAM_SANDBOX_ORIGIN=https://sandbox.example.com
   cookies and storage separately.
 - Reachable by browsers. The same MCPJam backend can serve both DNS names —
   no separate deploy is required. The sandbox host only needs to answer the
-  two `GET` routes:
+  `GET` route:
   - `/api/web/apps/mcp-apps/sandbox-proxy`
-  - `/api/web/apps/chatgpt-apps/sandbox-proxy`
 
 ### DNS / routing
 

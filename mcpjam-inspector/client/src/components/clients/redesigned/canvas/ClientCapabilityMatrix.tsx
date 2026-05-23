@@ -63,12 +63,25 @@ export interface HostMatrixCardProps {
   /**
    * Resolved vendor compat-runtime shim state. `openaiApps: true` →
    * inspector injects `window.openai` into widget HTML; `false` → no
-   * shim. `fromOverride: false` means the value comes from the host
-   * style preset (drives the "(from preset)" chip qualifier).
+   * shim. `fromOverride: true` means injection differs from the host
+   * style preset (drives the chip's optional subtitle). `hasMethodOverrides`
+   * / `methodCount` / `methodTotal` summarize the per-method matrix for
+   * the chip's optional "N/M methods" subtitle.
    */
   compatRuntime: {
     openaiApps: boolean;
     fromOverride: boolean;
+    hasMethodOverrides: boolean;
+    methodCount: number;
+    methodTotal: number;
+  };
+  /**
+   * SEP-1865 `app.*` spec-bridge override state. Independent from
+   * `compatRuntime` — see HostRedesignFlowNode types for the contract.
+   */
+  mcpAppsBridge: {
+    hasOverrides: boolean;
+    overrideCount: number;
   };
   selectedNodeId: string | null;
   onSelectNode: (nodeId: string) => void;
@@ -84,6 +97,7 @@ export const HostMatrixCard = memo(function HostMatrixCard({
   hostInfo,
   appsExtensionAdvertised,
   compatRuntime,
+  mcpAppsBridge,
   selectedNodeId,
   onSelectNode,
 }: HostMatrixCardProps) {
@@ -301,6 +315,7 @@ export const HostMatrixCard = memo(function HostMatrixCard({
             viewIframeInjectedGlobals={
               <ViewIframeInjectedGlobals
                 compatRuntime={compatRuntime}
+                mcpAppsBridge={mcpAppsBridge}
                 onClick={() => onSelectNode(APPS_HUB_NODE_ID)}
               />
             }
@@ -314,22 +329,55 @@ export const HostMatrixCard = memo(function HostMatrixCard({
 
 /* Injected globals strip inside the View iframe frame.
  *
- * `window.openai` is not in SEP-1865 — it's a ChatGPT-only compatibility
- * layer the inspector injects into widget HTML before sandboxing, so widgets
- * written against the OpenAI Apps SDK keep working. Rendering this inside
- * the View iframe block makes the spatial claim true: this is what the
- * widget's JS actually sees on `window` at runtime.
+ * Two chips rendered side by side, representing the two distinct surfaces
+ * the widget JS sees on `window` at runtime:
  *
- * Clicking routes to the Apps Extension tab, where the per-host toggle
- * (`mcpProfile.apps.compatRuntime.openaiApps`) lives.
+ *   - `window.openai` — ChatGPT-only compatibility shim (NOT in SEP-1865).
+ *     Inspector injects into widget HTML before sandboxing so widgets
+ *     written against the OpenAI Apps SDK keep working. Toggled by
+ *     `mcpProfile.apps.compatRuntime.openaiApps` + per-method overrides.
+ *
+ *   - `app.*` — SEP-1865 MCP Apps spec bridge. Always present (it's the
+ *     primary protocol). Sparse per-dimension overrides via
+ *     `mcpProfile.apps.mcpAppsOverrides` let users simulate a published
+ *     host's subset (e.g. Microsoft 365 Copilot's M365 table).
+ *
+ * The two surfaces are INDEPENDENT — toggling one never affects the
+ * other. They share this chip strip purely because spatially, both are
+ * "things the widget's JS sees on window at runtime."
+ *
+ * Clicking either chip routes to the Apps Extension tab.
  */
 function ViewIframeInjectedGlobals({
   compatRuntime,
+  mcpAppsBridge,
   onClick,
 }: {
-  compatRuntime: { openaiApps: boolean; fromOverride: boolean };
+  compatRuntime: {
+    openaiApps: boolean;
+    fromOverride: boolean;
+    hasMethodOverrides: boolean;
+    methodCount: number;
+    methodTotal: number;
+  };
+  mcpAppsBridge: {
+    hasOverrides: boolean;
+    overrideCount: number;
+  };
   onClick: () => void;
 }) {
+  // Tag subtitles only when state differs from the host style preset.
+  // Default preset values need no qualifier — the green dot is enough.
+  const openaiSubtitle = compatRuntime.hasMethodOverrides
+    ? `${compatRuntime.methodCount}/${compatRuntime.methodTotal} methods`
+    : compatRuntime.fromOverride
+      ? "overridden"
+      : null;
+  const mcpAppsSubtitle = mcpAppsBridge.hasOverrides
+    ? `${mcpAppsBridge.overrideCount} ${
+        mcpAppsBridge.overrideCount === 1 ? "override" : "overrides"
+      }`
+    : null;
   return (
     <div className="hp-view-injected">
       <button
@@ -341,14 +389,37 @@ function ViewIframeInjectedGlobals({
         }}
         title={
           compatRuntime.openaiApps
-            ? "Inspector injects window.openai into widget HTML before sandboxing, so OpenAI Apps SDK widgets keep working on this host."
+            ? compatRuntime.hasMethodOverrides
+              ? `Inspector injects window.openai with a custom per-method surface (${compatRuntime.methodCount}/${compatRuntime.methodTotal} methods active). Click to view the matrix.`
+              : "Inspector injects window.openai into widget HTML before sandboxing, so OpenAI Apps SDK widgets keep working on this host."
             : "Inspector does NOT inject window.openai for this host. SEP-1865-only — widgets that rely on the OpenAI Apps SDK compatibility layer will not run."
         }
       >
         <span className="hp-cap-dot" aria-hidden />
         <span className="hp-cap-name">window.openai</span>
-        {!compatRuntime.fromOverride ? (
-          <span className="hp-cap-tag">from preset</span>
+        {openaiSubtitle ? (
+          <span className="hp-cap-tag">{openaiSubtitle}</span>
+        ) : null}
+      </button>
+      <button
+        type="button"
+        className="hp-cap"
+        onClick={(e) => {
+          e.stopPropagation();
+          onClick();
+        }}
+        title={
+          mcpAppsBridge.hasOverrides
+            ? `SEP-1865 app.* spec bridge with ${mcpAppsBridge.overrideCount} sparse ${
+                mcpAppsBridge.overrideCount === 1 ? "override" : "overrides"
+              } on top of the host preset (e.g. Copilot's M365-published subset). Click to view the matrix.`
+            : "SEP-1865 app.* spec bridge — primary MCP Apps protocol surface, always present. Click to view the per-dimension matrix."
+        }
+      >
+        <span className="hp-cap-dot" aria-hidden />
+        <span className="hp-cap-name">MCP Apps</span>
+        {mcpAppsSubtitle ? (
+          <span className="hp-cap-tag">{mcpAppsSubtitle}</span>
         ) : null}
       </button>
     </div>
