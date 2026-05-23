@@ -3273,7 +3273,7 @@ export function MCPAppsRenderer({
           </div>
           <button
             onClick={() => {
-              lastUserDisplayModeChangeAtRef.current = Date.now();
+              userPreferInlineRef.current = true;
               setDisplayMode("inline");
               if (pipWidgetId === toolCallId) {
                 onExitPip?.(toolCallId);
