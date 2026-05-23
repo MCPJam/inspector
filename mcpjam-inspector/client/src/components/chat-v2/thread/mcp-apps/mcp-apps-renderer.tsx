@@ -586,13 +586,27 @@ export function MCPAppsRenderer({
   // never auto-coerced.
   const effectiveAvailableDisplayModes = useMemo(() => {
     const matrixModes = earlyEffectiveMcpAppsCapabilities.availableDisplayModes;
-    const intersection = matrixModes.filter((m) =>
+    const hostIntersection = matrixModes.filter((m) =>
       configuredAvailableDisplayModes.includes(m as DisplayMode),
     );
-    return intersection.length > 0 ? intersection : matrixModes;
+    const baseHostModes =
+      hostIntersection.length > 0 ? hostIntersection : matrixModes;
+    if (!appSupportedDisplayModes || appSupportedDisplayModes.length === 0) {
+      return baseHostModes;
+    }
+    const appIntersection = baseHostModes.filter((m) =>
+      appSupportedDisplayModes.includes(m as DisplayMode),
+    );
+    // SEP-1865: when the intersection is empty (the app advertises modes
+    // the host doesn't support at all) we fall back to host-supported
+    // rather than advertising nothing — the renderer will still clamp
+    // the actual mode to the host's set, and the empty case is a
+    // misconfigured app the host can't render anyway.
+    return appIntersection.length > 0 ? appIntersection : baseHostModes;
   }, [
     earlyEffectiveMcpAppsCapabilities.availableDisplayModes,
     configuredAvailableDisplayModes,
+    appSupportedDisplayModes,
   ]);
 
   // Advertised intersection — published in `HostContext.availableDisplayModes`
