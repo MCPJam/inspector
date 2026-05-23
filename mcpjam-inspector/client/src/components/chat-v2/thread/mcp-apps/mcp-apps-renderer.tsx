@@ -702,6 +702,19 @@ export function MCPAppsRenderer({
       ),
     [requestedDisplayMode, effectiveAvailableDisplayModes],
   );
+
+  // Clear the sticky inline-preference flag the moment the effective
+  // mode moves off "inline" — that transition can only come from the
+  // user (close-button paths set the flag true and switch to inline;
+  // the widget's `request-display-mode` is gated by the flag). So a
+  // non-inline mode means the user has re-opted into fullscreen / PIP
+  // via the host's display-mode picker, and the widget should be free
+  // to keep its preferred mode again.
+  useEffect(() => {
+    if (effectiveDisplayMode !== "inline") {
+      userPreferInlineRef.current = false;
+    }
+  }, [effectiveDisplayMode]);
   const setDisplayMode = useCallback(
     (mode: DisplayMode) => {
       if (isControlled) {
@@ -924,6 +937,14 @@ export function MCPAppsRenderer({
   const hostContextRef = useRef<McpUiHostContext | null>(null);
   const isReadyRef = useRef(false);
   const lastInlineHeightRef = useRef<string>("400px");
+  // Sticky flag set when the user explicitly returned to inline (X
+  // click in fullscreen / PIP). While set, widget-driven
+  // `ui/request-display-mode` requests for non-inline modes are
+  // declined. Cleared whenever the user explicitly picks a non-inline
+  // mode again (display-mode picker). Without this, widgets that
+  // re-request their preferred mode on every `host-context-changed`
+  // can trap the user in a mode they just dismissed.
+  const userPreferInlineRef = useRef(false);
   // SEP-1865: width is honored only when the host's outer container is
   // unbounded (no `width` from `containerDimensions`). The chatbox bubble
   // is the bounding box today, so this stays null until the host context
@@ -2517,6 +2538,22 @@ export function MCPAppsRenderer({
 
       bridge.onrequestdisplaymode = async ({ mode }) => {
         const requestedMode = mode ?? "inline";
+        // Sticky inline-preference override: if the user explicitly
+        // returned to inline (X click) and the widget is now
+        // re-requesting a non-inline mode, decline by returning inline.
+        // Spec allows the host to return a different mode than
+        // requested — this stops widgets that re-request their
+        // preferred mode on every `host-context-changed` from trapping
+        // the user. Cleared when the user explicitly re-enters
+        // fullscreen / PIP from the host display-mode picker.
+        if (requestedMode !== "inline" && userPreferInlineRef.current) {
+          logWidgetDebug("ui-to-host", "ui/request-display-mode", {
+            requested: requestedMode,
+            granted: "inline",
+            reason: "user-prefers-inline",
+          });
+          return { mode: "inline" };
+        }
         const hostAvailableModes = extractHostDisplayModes(
           hostContextRef.current as Record<string, unknown> | undefined,
         );
@@ -3214,6 +3251,7 @@ export function MCPAppsRenderer({
         (isPip && isMobilePlaygroundMode)) && (
         <button
           onClick={() => {
+            userPreferInlineRef.current = true;
             setDisplayMode("inline");
             if (isPip) {
               onExitPip?.(toolCallId);
@@ -3235,6 +3273,7 @@ export function MCPAppsRenderer({
           </div>
           <button
             onClick={() => {
+              lastUserDisplayModeChangeAtRef.current = Date.now();
               setDisplayMode("inline");
               if (pipWidgetId === toolCallId) {
                 onExitPip?.(toolCallId);
@@ -3251,6 +3290,7 @@ export function MCPAppsRenderer({
       {isPip && !isMobilePlaygroundMode && (
         <button
           onClick={() => {
+            userPreferInlineRef.current = true;
             setDisplayMode("inline");
             onExitPip?.(toolCallId);
           }}
