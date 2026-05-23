@@ -1327,7 +1327,9 @@ export function useChatSession(
     () => isOrgManagedModel(hostedOrgModelConfig, selectedModel),
     [hostedOrgModelConfig, selectedModel]
   );
-  const traceViewsSupported = HOSTED_MODE ? isMcpJamModel : true;
+  const traceViewsSupported = HOSTED_MODE
+    ? isMcpJamModel || selectedModelUsesOrgRuntime
+    : true;
 
   const chatFetch = useCallback(
     async (input: RequestInfo | URL, init?: RequestInit) => {
