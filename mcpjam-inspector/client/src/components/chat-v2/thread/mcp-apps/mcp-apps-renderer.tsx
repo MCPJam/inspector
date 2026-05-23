@@ -567,37 +567,50 @@ export function MCPAppsRenderer({
   // for modes the simulated host doesn't advertise.
   // SEP-1865: after `ui/initialize` the view declares
   // `appCapabilities.availableDisplayModes` — the modes it can render in.
-  // The host MUST clamp the advertised + runtime mode set to the
-  // intersection (host-supported) ∩ (app-supported), otherwise the host
-  // would advertise modes the app can't actually render. Stored as state
-  // because `oninitialized` is a bridge callback fired after mount.
+  // The host uses this to narrow what it ADVERTISES to the view in
+  // `HostContext.availableDisplayModes`, NOT to coerce the current
+  // display mode. A widget that only renders in fullscreen (e.g. a
+  // canvas-heavy app) is expected to call `ui/request-display-mode`
+  // itself after init — the host won't auto-switch the user out of the
+  // mode they (or the parent) picked. Coercing here was a real
+  // regression: every tool call snapped to fullscreen the moment the
+  // widget initialized.
   const [appSupportedDisplayModes, setAppSupportedDisplayModes] = useState<
     DisplayMode[] | undefined
   >(undefined);
+
+  // Host-supported modes only. Drives the current-mode clamp and the
+  // `ui/request-display-mode` handler — both of which must stay
+  // independent of the app's declaration so the user-visible mode is
+  // never auto-coerced.
   const effectiveAvailableDisplayModes = useMemo(() => {
     const matrixModes = earlyEffectiveMcpAppsCapabilities.availableDisplayModes;
-    const hostIntersection = matrixModes.filter((m) =>
+    const intersection = matrixModes.filter((m) =>
       configuredAvailableDisplayModes.includes(m as DisplayMode),
     );
-    const baseHostModes =
-      hostIntersection.length > 0 ? hostIntersection : matrixModes;
-    if (!appSupportedDisplayModes || appSupportedDisplayModes.length === 0) {
-      return baseHostModes;
-    }
-    const appIntersection = baseHostModes.filter((m) =>
-      appSupportedDisplayModes.includes(m as DisplayMode),
-    );
-    // SEP-1865: when the intersection is empty (the app advertises modes
-    // the host doesn't support at all) we fall back to host-supported
-    // rather than advertising nothing — the renderer will still clamp
-    // the actual mode to the host's set, and the empty case is a
-    // misconfigured app the host can't render anyway.
-    return appIntersection.length > 0 ? appIntersection : baseHostModes;
+    return intersection.length > 0 ? intersection : matrixModes;
   }, [
     earlyEffectiveMcpAppsCapabilities.availableDisplayModes,
     configuredAvailableDisplayModes,
-    appSupportedDisplayModes,
   ]);
+
+  // Advertised intersection — published in `HostContext.availableDisplayModes`
+  // so the view knows which modes the host will honor on
+  // `requestDisplayMode`. Falls back to host modes when the app
+  // declaration is absent or the intersection would be empty
+  // (a misconfigured app that doesn't overlap the host shouldn't
+  // make the host advertise nothing).
+  const advertisedAvailableDisplayModes = useMemo(() => {
+    if (!appSupportedDisplayModes || appSupportedDisplayModes.length === 0) {
+      return effectiveAvailableDisplayModes;
+    }
+    const intersection = effectiveAvailableDisplayModes.filter((m) =>
+      appSupportedDisplayModes.includes(m as DisplayMode),
+    );
+    return intersection.length > 0
+      ? intersection
+      : effectiveAvailableDisplayModes;
+  }, [effectiveAvailableDisplayModes, appSupportedDisplayModes]);
 
   // Get device capabilities from playground store (SEP-1865)
   const playgroundCapabilities = useUIPlaygroundStore((s) => s.capabilities);
@@ -1695,7 +1708,10 @@ export function MCPAppsRenderer({
       ...baseWithoutToolInfo,
       theme: resolvedTheme,
       displayMode: effectiveDisplayMode,
-      availableDisplayModes: effectiveAvailableDisplayModes,
+      // Publish the (host ∩ app) intersection here so the view sees the
+      // narrowed set it can `requestDisplayMode` against. The current
+      // `displayMode` above stays clamped to host-supported only.
+      availableDisplayModes: advertisedAvailableDisplayModes,
       locale,
       timeZone,
       platform:
@@ -1729,7 +1745,7 @@ export function MCPAppsRenderer({
     baseHostContext,
     resolvedTheme,
     effectiveDisplayMode,
-    effectiveAvailableDisplayModes,
+    advertisedAvailableDisplayModes,
     locale,
     timeZone,
     deviceCapabilities,
