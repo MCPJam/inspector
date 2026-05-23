@@ -7,7 +7,6 @@ import {
 
 export type HostedOAuthRefreshOptions = {
   accessScope?: "project_member" | "chat_v2";
-  workspaceId?: string;
   shareToken?: string;
   /**
    * Resolved chatbox identity (post-redeem). The backend scopes OAuth
@@ -53,9 +52,7 @@ export async function forceRefreshHostedOAuthAccessToken(
         Authorization: `Bearer ${bearerToken}`,
       },
       body: JSON.stringify({
-        ...(options?.workspaceId
-          ? { workspaceId: options.workspaceId }
-          : { projectId }),
+        projectId,
         serverId,
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
         ...(options?.shareToken ? { shareToken: options.shareToken } : {}),
@@ -122,7 +119,6 @@ export type HostedOAuthUnauthorizedHandlerArgs = {
   serverId: string;
   serverName: string;
   accessScope?: "project_member" | "chat_v2";
-  workspaceId?: string;
   shareToken?: string;
   chatboxId?: string;
   accessVersion?: number;
@@ -144,7 +140,6 @@ export function buildHostedOAuthUnauthorizedHandler(
       args.serverId,
       {
         accessScope: args.accessScope,
-        workspaceId: args.workspaceId,
         shareToken: args.shareToken,
         chatboxId: args.chatboxId,
         accessVersion: args.accessVersion,
