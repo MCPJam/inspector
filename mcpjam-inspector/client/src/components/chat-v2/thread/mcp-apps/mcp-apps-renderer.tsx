@@ -348,6 +348,7 @@ const FETCH_SOURCE_KEY_SEGMENTS = [
   // feedback_capability_in_render_recipe memory.
   "injectOpenAiCompat",
   "compatCapabilitiesHash",
+  "mcpAppsCapabilitiesHash",
 ] as const;
 
 function describeFetchSourceKeyDiff(prev: string, next: string): string {
@@ -799,6 +800,19 @@ export function MCPAppsRenderer({
     : effectiveInjectOpenAiCompat
       ? stableStringifyJson(liveOpenAiCompatCapabilities ?? null)
       : null;
+  // Sibling reload key for the MCP Apps spec-bridge matrix. The OpenAI
+  // shim caps above bake into the iframe HTML at fetch time; MCP Apps
+  // caps don't, but they drive the `HostCapabilities` blob in
+  // `ui/initialize` and gate runtime bridge behavior (e.g. the
+  // `widgetDisplayModeRequests` policy and the `userPreferInlineRef`
+  // seed). Hashing the resolved record into the reload key forces a
+  // remount when the user toggles a row in the matrix, so the new
+  // policy takes effect on the live widget without a manual reload.
+  // Cached replays use `null` for the same reason the OpenAI sibling
+  // does — byte-frozen snapshots shouldn't churn on live host edits.
+  const widgetMcpAppsCapabilitiesReloadKey = isCachedReplay
+    ? null
+    : stableStringifyJson(earlyEffectiveMcpAppsCapabilities);
   // The OpenAI Apps SDK compatibility runtime bakes toolInput/toolOutput into
   // `window.openai` during HTML injection. Pure SEP-1865 views can boot while
   // input is still streaming and receive the final result via
@@ -896,6 +910,14 @@ export function MCPAppsRenderer({
     loadedCompatCapabilitiesHash,
     setLoadedCompatCapabilitiesHash,
   ] = useState<string | null>(null);
+  // Sibling of `loadedCompatCapabilitiesHash` for the MCP Apps
+  // spec-bridge matrix. Tracks the resolved-caps hash the iframe was
+  // last initialized against so a matrix toggle (e.g.
+  // `widgetDisplayModeRequests`) forces a remount on the next render.
+  const [
+    loadedMcpAppsCapabilitiesHash,
+    setLoadedMcpAppsCapabilitiesHash,
+  ] = useState<string | null>(null);
   // Modal state
   const [modalOpen, setModalOpen] = useState(false);
   const [modalParams, setModalParams] = useState<Record<string, unknown>>({});
@@ -944,7 +966,15 @@ export function MCPAppsRenderer({
   // mode again (display-mode picker). Without this, widgets that
   // re-request their preferred mode on every `host-context-changed`
   // can trap the user in a mode they just dismissed.
-  const userPreferInlineRef = useRef(false);
+  //
+  // Seeded from the `widgetDisplayModeRequests` host policy so the
+  // `"user-initiated-only"` mode kicks in from the first mount: a widget
+  // that requests fullscreen on init is treated the same as one
+  // re-requesting it after the user dismissed once.
+  const userPreferInlineRef = useRef(
+    earlyEffectiveMcpAppsCapabilities.widgetDisplayModeRequests ===
+      "user-initiated-only",
+  );
   // SEP-1865: width is honored only when the host's outer container is
   // unbounded (no `width` from `containerDimensions`). The chatbox bubble
   // is the bounding box today, so this stays null until the host context
@@ -1044,7 +1074,8 @@ export function MCPAppsRenderer({
       widgetHtml &&
       loadedCspMode === cspMode &&
       loadedInjectOpenAiCompat === widgetInjectOpenAiCompatReloadKey &&
-      loadedCompatCapabilitiesHash === widgetCompatCapabilitiesReloadKey
+      loadedCompatCapabilitiesHash === widgetCompatCapabilitiesReloadKey &&
+      loadedMcpAppsCapabilitiesHash === widgetMcpAppsCapabilitiesReloadKey
     )
       return;
 
@@ -1061,6 +1092,7 @@ export function MCPAppsRenderer({
       // `false` all serialize distinctly into the pipe-joined key.
       String(widgetInjectOpenAiCompatReloadKey),
       widgetCompatCapabilitiesReloadKey ?? "",
+      widgetMcpAppsCapabilitiesReloadKey ?? "",
     ].join("|");
     latestFetchSourceKeyRef.current = fetchSourceKey;
     // Mount log for the Sandbox debug panel. Record one entry per real
@@ -1117,6 +1149,10 @@ export function MCPAppsRenderer({
       // fetch that called `setBridgeTransportReady(false)` after the
       // bridge had already connected.
       setLoadedCompatCapabilitiesHash(widgetCompatCapabilitiesReloadKey);
+      // MCP Apps caps don't bake into byte-frozen HTML; cached replays
+      // stamp `null` (matching the reload key's cached-replay sentinel)
+      // so live host edits don't churn the snapshot.
+      setLoadedMcpAppsCapabilitiesHash(widgetMcpAppsCapabilitiesReloadKey);
       setWidgetHtmlStore(
         toolCallId,
         html,
@@ -1231,6 +1267,8 @@ export function MCPAppsRenderer({
       // so future per-method changes detect this snapshot as stale and
       // force a refetch.
       setLoadedCompatCapabilitiesHash(widgetCompatCapabilitiesReloadKey);
+      // Sibling stamp for the MCP Apps spec-bridge matrix.
+      setLoadedMcpAppsCapabilitiesHash(widgetMcpAppsCapabilitiesReloadKey);
 
       // Store widget HTML in debug store for save view feature. Stamp the
       // resolved flag + per-method capability surface alongside it so
@@ -1354,6 +1392,8 @@ export function MCPAppsRenderer({
     widgetInjectOpenAiCompatReloadKey,
     loadedCompatCapabilitiesHash,
     widgetCompatCapabilitiesReloadKey,
+    loadedMcpAppsCapabilitiesHash,
+    widgetMcpAppsCapabilitiesReloadKey,
     effectiveInjectOpenAiCompat,
     liveOpenAiCompatCapabilities,
     serverId,
@@ -1446,8 +1486,10 @@ export function MCPAppsRenderer({
       loadedInjectOpenAiCompat !== null &&
       loadedInjectOpenAiCompat !== widgetInjectOpenAiCompatReloadKey;
     const capabilitiesChanged =
-      loadedCompatCapabilitiesHash !== null &&
-      loadedCompatCapabilitiesHash !== widgetCompatCapabilitiesReloadKey;
+      (loadedCompatCapabilitiesHash !== null &&
+        loadedCompatCapabilitiesHash !== widgetCompatCapabilitiesReloadKey) ||
+      (loadedMcpAppsCapabilitiesHash !== null &&
+        loadedMcpAppsCapabilitiesHash !== widgetMcpAppsCapabilitiesReloadKey);
     if (injectionChanged || capabilitiesChanged) {
       clearCspViolations(toolCallId);
     }
@@ -1456,6 +1498,8 @@ export function MCPAppsRenderer({
     loadedInjectOpenAiCompat,
     widgetCompatCapabilitiesReloadKey,
     loadedCompatCapabilitiesHash,
+    widgetMcpAppsCapabilitiesReloadKey,
+    loadedMcpAppsCapabilitiesHash,
     toolCallId,
     clearCspViolations,
   ]);
@@ -1474,8 +1518,10 @@ export function MCPAppsRenderer({
       loadedInjectOpenAiCompat !== null &&
       loadedInjectOpenAiCompat !== widgetInjectOpenAiCompatReloadKey;
     const capabilitiesChanged =
-      loadedCompatCapabilitiesHash !== null &&
-      loadedCompatCapabilitiesHash !== widgetCompatCapabilitiesReloadKey;
+      (loadedCompatCapabilitiesHash !== null &&
+        loadedCompatCapabilitiesHash !== widgetCompatCapabilitiesReloadKey) ||
+      (loadedMcpAppsCapabilitiesHash !== null &&
+        loadedMcpAppsCapabilitiesHash !== widgetMcpAppsCapabilitiesReloadKey);
     if (injectionChanged || capabilitiesChanged) {
       setIsReady(false);
       isReadyRef.current = false;
@@ -1486,6 +1532,8 @@ export function MCPAppsRenderer({
     loadedInjectOpenAiCompat,
     widgetCompatCapabilitiesReloadKey,
     loadedCompatCapabilitiesHash,
+    widgetMcpAppsCapabilitiesReloadKey,
+    loadedMcpAppsCapabilitiesHash,
     resetStreamingState,
   ]);
 
@@ -2538,13 +2586,31 @@ export function MCPAppsRenderer({
 
       bridge.onrequestdisplaymode = async ({ mode }) => {
         const requestedMode = mode ?? "inline";
+        // Host policy gate: SEP-1865 allows the host to decline
+        // widget-initiated `ui/request-display-mode`. The
+        // `widgetDisplayModeRequests` matrix row (Apps tab) decides:
+        //   - "accept": pass through to the existing sticky / clamp path
+        //   - "decline": always return the current mode
+        //   - "user-initiated-only": handled via the sticky-inline
+        //     ref check below — the ref is seeded `true` at mount so
+        //     the first widget request is gated until the user picks
+        //     a non-inline mode via the host display-mode picker.
+        const policy =
+          mcpAppsCapabilitiesRef.current?.widgetDisplayModeRequests ?? "accept";
+        if (requestedMode !== "inline" && policy === "decline") {
+          const granted = effectiveDisplayModeRef.current;
+          logWidgetDebug("ui-to-host", "ui/request-display-mode", {
+            requested: requestedMode,
+            granted,
+            reason: "policy-decline",
+          });
+          return { mode: granted };
+        }
         // Sticky inline-preference override: if the user explicitly
-        // returned to inline (X click) and the widget is now
-        // re-requesting a non-inline mode, decline by returning inline.
-        // Spec allows the host to return a different mode than
-        // requested — this stops widgets that re-request their
-        // preferred mode on every `host-context-changed` from trapping
-        // the user. Cleared when the user explicitly re-enters
+        // returned to inline (X click), or the policy seeded the flag
+        // at mount, decline widget non-inline requests by returning
+        // inline. Spec allows the host to return a different mode than
+        // requested. Cleared when the user explicitly re-enters
         // fullscreen / PIP from the host display-mode picker.
         if (requestedMode !== "inline" && userPreferInlineRef.current) {
           logWidgetDebug("ui-to-host", "ui/request-display-mode", {

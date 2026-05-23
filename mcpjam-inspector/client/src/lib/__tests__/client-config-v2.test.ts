@@ -457,6 +457,22 @@ describe("mergeMcpAppsCapabilities", () => {
     expect(merged.logging).toBe(false);
     expect(merged.openLinks).toBe(true);
   });
+
+  it("replaces widgetDisplayModeRequests tri-state when override is set", () => {
+    const merged = mergeMcpAppsCapabilities(
+      { ...MCP_APPS_FULL_SURFACE_FOR_TEST },
+      { widgetDisplayModeRequests: "decline" },
+    );
+    expect(merged.widgetDisplayModeRequests).toBe("decline");
+  });
+
+  it("falls through to base widgetDisplayModeRequests when override absent", () => {
+    const merged = mergeMcpAppsCapabilities(
+      { ...MCP_APPS_FULL_SURFACE_FOR_TEST },
+      { serverResources: false },
+    );
+    expect(merged.widgetDisplayModeRequests).toBe("accept");
+  });
 });
 
 describe("hostCapabilitiesOverrideToMatrix", () => {
@@ -522,4 +538,5 @@ const MCP_APPS_FULL_SURFACE_FOR_TEST = {
   resourcePrefersBorder: true,
   downloadFile: true,
   requestTeardown: true,
+  widgetDisplayModeRequests: "accept" as const,
 };

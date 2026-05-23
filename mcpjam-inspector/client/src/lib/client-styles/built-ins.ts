@@ -125,6 +125,11 @@ export const MCP_APPS_FULL_SURFACE: ResolvedMcpAppsCapabilities = {
   resourcePrefersBorder: true,
   downloadFile: true,
   requestTeardown: true,
+  // Default to today's behavior — host accepts widget-initiated
+  // `ui/request-display-mode` calls. Set to "user-initiated-only" or
+  // "decline" per-preset (or via user override) to harden against
+  // widgets that re-request fullscreen on every host-context-changed.
+  widgetDisplayModeRequests: "accept",
 };
 
 /**
@@ -155,6 +160,7 @@ export const MCP_APPS_NO_CLAIMS_SURFACE: ResolvedMcpAppsCapabilities = {
   resourcePrefersBorder: false,
   downloadFile: false,
   requestTeardown: false,
+  widgetDisplayModeRequests: "accept",
 };
 
 /**
@@ -202,6 +208,7 @@ export const MCP_APPS_COPILOT_SURFACE: ResolvedMcpAppsCapabilities = {
   // otherwise.
   downloadFile: false,
   requestTeardown: false,
+  widgetDisplayModeRequests: "accept",
 };
 
 // NOTE: capability presets are best-effort mocks of what each vendor publicly

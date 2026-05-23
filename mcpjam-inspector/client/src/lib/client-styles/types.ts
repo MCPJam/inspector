@@ -270,6 +270,16 @@ export type McpAppsCapabilities = {
   cspFrameDomains?: boolean;
   cspBaseUriDomains?: boolean;
   resourcePrefersBorder?: boolean;
+  /**
+   * Host policy for `ui/request-display-mode` originating from the widget.
+   * SEP-1865 permits the host to decline these requests; this row exposes
+   * that decision as a knob.
+   *   - "accept": grant the requested mode (clamped to `availableDisplayModes`)
+   *   - "user-initiated-only": grant only after the user has explicitly
+   *     moved off `inline` via the host picker; otherwise return `inline`
+   *   - "decline": always return the current mode, ignoring the request
+   */
+  widgetDisplayModeRequests?: "accept" | "user-initiated-only" | "decline";
 };
 
 /**
@@ -316,6 +326,7 @@ export type ResolvedMcpAppsCapabilities = {
   resourcePrefersBorder: boolean;
   downloadFile: boolean;
   requestTeardown: boolean;
+  widgetDisplayModeRequests: "accept" | "user-initiated-only" | "decline";
 };
 
 /**

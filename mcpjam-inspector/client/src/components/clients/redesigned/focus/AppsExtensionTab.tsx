@@ -495,6 +495,14 @@ export function applyJsonToDraft(
       // empty allowlist the resolver would have to coerce to ["inline"].
       if (filtered.length > 0) out.availableDisplayModes = filtered;
     }
+    const widgetDisplayModeRequests = incoming.widgetDisplayModeRequests;
+    if (
+      widgetDisplayModeRequests === "accept" ||
+      widgetDisplayModeRequests === "user-initiated-only" ||
+      widgetDisplayModeRequests === "decline"
+    ) {
+      out.widgetDisplayModeRequests = widgetDisplayModeRequests;
+    }
     if (Object.keys(out).length > 0) nextMcpAppsOverrides = out;
   }
 
@@ -1082,6 +1090,47 @@ function RequestDisplayModeControl({
 }
 
 /**
+ * Tri-state segmented control for the MCP Apps spec-bridge
+ * `widgetDisplayModeRequests` policy. Sibling to {@link RequestDisplayModeControl}
+ * — the two surfaces are independent (two-matrix architecture); keeping
+ * the controls separate matches that isolation.
+ */
+function WidgetDisplayModeRequestsControl({
+  value,
+  onChange,
+}: {
+  value: "accept" | "user-initiated-only" | "decline";
+  onChange: (next: "accept" | "user-initiated-only" | "decline") => void;
+}) {
+  const options: Array<{
+    value: "accept" | "user-initiated-only" | "decline";
+    label: string;
+  }> = [
+    { value: "accept", label: "Accept" },
+    { value: "user-initiated-only", label: "User-initiated" },
+    { value: "decline", label: "Decline" },
+  ];
+  return (
+    <div className="inline-flex overflow-hidden rounded-md border border-border text-[11px]">
+      {options.map((opt) => (
+        <button
+          key={opt.value}
+          type="button"
+          className={
+            opt.value === value
+              ? "bg-foreground/10 px-2 py-0.5 font-medium"
+              : "px-2 py-0.5 text-muted-foreground hover:bg-muted"
+          }
+          onClick={() => onChange(opt.value)}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
  * Update `mcpProfile.apps.mcpAppsOverrides` while preserving sibling
  * fields (`sandbox`, `uiInitialize`, `compatRuntime`) and collapsing
  * empties on the way out:
@@ -1157,7 +1206,7 @@ function setMcpAppsOverridesOnDraft(
 
 type McpAppsDimensionKey = Exclude<
   keyof McpAppsCapabilities,
-  "availableDisplayModes"
+  "availableDisplayModes" | "widgetDisplayModeRequests"
 >;
 
 /** Per-dimension matrix metadata. Description is shown on row hover. */
@@ -1467,6 +1516,31 @@ function McpAppsCapabilityMatrix({
     });
   };
 
+  /**
+   * Set or clear the `widgetDisplayModeRequests` tri-state override.
+   * Mirrors {@link setBooleanOverride} — drop the override if the chosen
+   * value matches the preset so the matrix reverts cleanly.
+   */
+  const setWidgetDisplayModeRequestsOverride = (
+    next: "accept" | "user-initiated-only" | "decline",
+  ) => {
+    onDraftChange((prev) => {
+      const { overrides: prevOverrides, prevWithLegacyCleared } =
+        migrateLegacyIfNeeded(prev);
+      const prevPreset = resolveEffectiveMcpAppsCapabilities({
+        profile: undefined,
+        hostStyle: prev.hostStyle,
+      });
+      const nextOverrides: McpAppsCapabilities = { ...prevOverrides };
+      if (next === prevPreset.widgetDisplayModeRequests) {
+        delete nextOverrides.widgetDisplayModeRequests;
+      } else {
+        nextOverrides.widgetDisplayModeRequests = next;
+      }
+      return setMcpAppsOverridesOnDraft(prevWithLegacyCleared, nextOverrides);
+    });
+  };
+
   return (
     <div className="rounded-[10px] border border-border bg-background">
       {/* Single header row: left half is the disclosure (label +
@@ -1546,6 +1620,29 @@ function McpAppsCapabilityMatrix({
           })}
         </div>
       </div>
+
+          {/* widgetDisplayModeRequests — tri-state host policy for
+              widget-initiated `ui/request-display-mode`. Sibling to
+              availableDisplayModes above (which is what the host
+              advertises); this row is what the host *does* when the
+              widget asks for a mode change. */}
+          <div
+            data-testid="mcp-apps-dimension-widgetDisplayModeRequests"
+            className="flex items-center justify-between gap-3 border-b border-border/50 px-3.5 py-2"
+          >
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <span className="font-mono text-[12px]">
+                widgetDisplayModeRequests
+              </span>
+              <span className="text-[10.5px] text-muted-foreground">
+                Host policy for widget-initiated ui/request-display-mode
+              </span>
+            </div>
+            <WidgetDisplayModeRequestsControl
+              value={effectiveCapabilities.widgetDisplayModeRequests}
+              onChange={setWidgetDisplayModeRequestsOverride}
+            />
+          </div>
 
           <div className="flex flex-col">
             {MCP_APPS_DIMENSIONS.map(({ key, description }) => (

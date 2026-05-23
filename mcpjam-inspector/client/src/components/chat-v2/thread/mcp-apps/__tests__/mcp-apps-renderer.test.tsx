@@ -2437,3 +2437,78 @@ describe("MCPAppsRenderer host capability enforcement", () => {
     expect(mockBridge.onlistresourcetemplates).toBeNull();
   });
 });
+
+// SEP-1865 host policy for widget-initiated `ui/request-display-mode`.
+// Spec permits the host to decline these requests; the matrix exposes
+// the policy as a tri-state knob. These tests assert the bridge handler
+// gates correctly for each value.
+describe("MCPAppsRenderer widgetDisplayModeRequests policy", () => {
+  beforeEach(() => {
+    mockBridge.onrequestdisplaymode = null;
+  });
+
+  const profileWith = (
+    policy: "accept" | "user-initiated-only" | "decline",
+  ): HostConfigMcpProfileV1 => ({
+    profileVersion: 1,
+    apps: { mcpAppsOverrides: { widgetDisplayModeRequests: policy } },
+  });
+
+  it("accept: grants the widget's fullscreen request", async () => {
+    render(
+      <ActiveMcpProfileProvider value={profileWith("accept")}>
+        <ChatboxHostStyleProvider value="claude">
+          <MCPAppsRenderer {...baseProps} />
+        </ChatboxHostStyleProvider>
+      </ActiveMcpProfileProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(mockBridge.onrequestdisplaymode).not.toBeNull();
+    });
+    const handler = mockBridge.onrequestdisplaymode as unknown as (args: {
+      mode: "inline" | "fullscreen" | "pip";
+    }) => Promise<{ mode: string }>;
+    const result = await handler({ mode: "fullscreen" });
+    expect(result.mode).toBe("fullscreen");
+  });
+
+  it("decline: returns the current mode instead of the requested fullscreen", async () => {
+    render(
+      <ActiveMcpProfileProvider value={profileWith("decline")}>
+        <ChatboxHostStyleProvider value="claude">
+          <MCPAppsRenderer {...baseProps} />
+        </ChatboxHostStyleProvider>
+      </ActiveMcpProfileProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(mockBridge.onrequestdisplaymode).not.toBeNull();
+    });
+    const handler = mockBridge.onrequestdisplaymode as unknown as (args: {
+      mode: "inline" | "fullscreen" | "pip";
+    }) => Promise<{ mode: string }>;
+    const result = await handler({ mode: "fullscreen" });
+    expect(result.mode).toBe("inline");
+  });
+
+  it("user-initiated-only: declines a widget fullscreen request on first mount", async () => {
+    // Sticky-inline ref is seeded `true` at mount under this policy, so
+    // a widget that requests fullscreen on init (e.g. Excalidraw) is
+    // gated until the user explicitly switches modes via the host
+    // picker. This is the behavior Claude exhibits.
+    render(
+      <ActiveMcpProfileProvider value={profileWith("user-initiated-only")}>
+        <ChatboxHostStyleProvider value="claude">
+          <MCPAppsRenderer {...baseProps} />
+        </ChatboxHostStyleProvider>
+      </ActiveMcpProfileProvider>,
+    );
+    await vi.waitFor(() => {
+      expect(mockBridge.onrequestdisplaymode).not.toBeNull();
+    });
+    const handler = mockBridge.onrequestdisplaymode as unknown as (args: {
+      mode: "inline" | "fullscreen" | "pip";
+    }) => Promise<{ mode: string }>;
+    const result = await handler({ mode: "fullscreen" });
+    expect(result.mode).toBe("inline");
+  });
+});
