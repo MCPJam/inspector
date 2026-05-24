@@ -1,5 +1,11 @@
+import { Info } from "lucide-react";
 import { Progress } from "@mcpjam/design-system/progress";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
 import { useCreditBalance } from "@/hooks/useCreditBalance";
 import { formatCreditResetText } from "@/lib/credit-usage";
 import { cn } from "@/lib/utils";
@@ -73,6 +79,7 @@ export function SidebarCreditUsage({
             fillPercent={paidPercentUsed}
             isLoading={false}
             testId="sidebar-usage-paid"
+            tooltip="Paid credits are used only after your daily free quota runs out each day. Your free quota resets every 24 hours."
           />
         ) : null}
       </div>
@@ -80,10 +87,20 @@ export function SidebarCreditUsage({
   );
 
   if (onClick) {
+    // Use div+role=button instead of a real <button> so the tooltip
+    // trigger (which is itself a <button>) on the paid-credits row
+    // doesn't nest buttons — invalid HTML, plus breaks tooltip focus.
     return (
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={0}
         onClick={onClick}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onClick();
+          }
+        }}
         data-testid="sidebar-credit-usage"
         aria-label="Credit usage"
         className={cn(
@@ -92,7 +109,7 @@ export function SidebarCreditUsage({
         )}
       >
         {innerContent}
-      </button>
+      </div>
     );
   }
 
@@ -115,6 +132,8 @@ interface SidebarUsageRowProps {
   fillPercent: number;
   isLoading: boolean;
   testId: string;
+  /** Optional explainer surfaced via an info icon next to the label. */
+  tooltip?: string;
 }
 
 function SidebarUsageRow({
@@ -125,6 +144,7 @@ function SidebarUsageRow({
   fillPercent,
   isLoading,
   testId,
+  tooltip,
 }: SidebarUsageRowProps) {
   return (
     <div className="flex flex-col gap-1.5" data-testid={testId}>
@@ -134,8 +154,29 @@ function SidebarUsageRow({
         </span>
       ) : null}
       <div className="flex items-center justify-between gap-2 text-[11px] leading-none">
-        <span className="min-w-0 truncate font-medium text-foreground">
+        <span className="flex min-w-0 items-center gap-1 truncate font-medium text-foreground">
           {label}
+          {tooltip ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={`About ${label}`}
+                  // Stop bubbling so the surrounding clickable wrapper (the
+                  // sidebar row that navigates to billing on click) doesn't
+                  // fire when the user is just trying to see the tooltip.
+                  onClick={(event) => event.stopPropagation()}
+                  onKeyDown={(event) => event.stopPropagation()}
+                  className="inline-flex items-center text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:text-foreground"
+                >
+                  <Info aria-hidden="true" className="size-2.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs text-xs">
+                {tooltip}
+              </TooltipContent>
+            </Tooltip>
+          ) : null}
         </span>
         <span className="shrink-0 text-muted-foreground">
           {isLoading ? <Skeleton className="h-3 w-12" /> : percentText}
