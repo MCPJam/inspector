@@ -131,6 +131,18 @@ export function ServerDetailModal({
   // editor — once that lands, surface its value here.
   const hostDefaultMcpWireMode: McpWireMode | undefined = undefined;
 
+  // Whether the server is in the project's auto-connect `serverIds`
+  // set. The backend `ensureProjectServerConfig` rejects overrides for
+  // servers not in this set ("override key X is not a member of
+  // serverIds") — overrides ONLY make sense for servers the project
+  // auto-connects, otherwise the override row would dangle. Surface
+  // this gate to the toggle so it disables cleanly with a hint
+  // instead of producing a Convex error toast.
+  const isInProjectAutoConnect = useMemo(() => {
+    if (!serverId) return false;
+    return Boolean(projectServerConfigDto?.serverIds.includes(serverId));
+  }, [projectServerConfigDto, serverId]);
+
   const handleMcpWireModeOverrideChange = async (
     next: McpWireMode | undefined,
   ): Promise<void> => {
@@ -141,6 +153,15 @@ export function ServerDetailModal({
       return;
     }
     if (!serverId) return;
+    if (!isInProjectAutoConnect) {
+      // Backend invariant: overrides only for servers in serverIds.
+      // Surface a clear path forward rather than letting the mutation
+      // reject with the raw Convex error.
+      toast.error(
+        "Add this server to the project's auto-connect set first (Servers tab → Auto-connect), or use the host-level mcpWireMode in the Client → MCP Protocol JSON.",
+      );
+      return;
+    }
     // setConfig replaces the entire (serverIds, overrides) pair — read
     // current, splice in the new override, write back. Preserve every
     // other server's overrides verbatim.
@@ -472,7 +493,9 @@ export function ServerDetailModal({
                     hostedServerId={hostedServerId}
                     mcpWireModeOverride={currentMcpWireModeOverride}
                     onMcpWireModeOverrideChange={
-                      projectId ? handleMcpWireModeOverrideChange : undefined
+                      projectId && isInProjectAutoConnect
+                        ? handleMcpWireModeOverrideChange
+                        : undefined
                     }
                   />
                 </div>

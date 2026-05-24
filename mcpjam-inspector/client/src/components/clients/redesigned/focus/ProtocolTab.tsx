@@ -75,9 +75,13 @@ function protocolToJson(draft: HostConfigInputV2): ProtocolDoc {
     doc.supportedProtocolVersions = [...versions];
   }
 
-  if (draft.mcpProfile?.mcpWireMode !== undefined) {
-    doc.mcpWireMode = draft.mcpProfile.mcpWireMode;
-  }
+  // Always surface mcpWireMode so the editor advertises the option
+  // (otherwise users have to know to type the key). Default-render
+  // "legacy" when the persisted record is absent. The applier collapses
+  // explicit "legacy" back to undefined on save, preserving the
+  // "absent = SDK default" semantics on the canonical hash for rows
+  // that haven't opted into stateless.
+  doc.mcpWireMode = draft.mcpProfile?.mcpWireMode ?? "legacy";
 
   if (
     draft.clientCapabilities &&
@@ -138,14 +142,14 @@ function applyJsonToDraft(
   }
 
   // mcpWireMode — only accept the two known literals. Unknown / wrong
-  // type / absent → undefined (= "use SDK legacy default"). The backend
-  // canonicalizer rejects unknown values; we filter early here so a
-  // typo in the JSON editor doesn't reach the wire.
+  // type / absent → undefined (= "use SDK legacy default"). Collapse
+  // explicit "legacy" to undefined too: it's the implicit default, and
+  // letting it persist would proliferate "legacy" entries on every
+  // round-trip through the editor (we default-render "legacy" in
+  // protocolToJson so the field is discoverable). The user explicitly
+  // opting into stateless persists the literal.
   let mcpWireMode: McpWireMode | undefined;
-  if (
-    parsed.mcpWireMode === "legacy" ||
-    parsed.mcpWireMode === "stateless-draft-2026-v1"
-  ) {
+  if (parsed.mcpWireMode === "stateless-draft-2026-v1") {
     mcpWireMode = parsed.mcpWireMode;
   }
 
