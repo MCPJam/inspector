@@ -246,10 +246,13 @@ export function EditServerFormContent({
         clientCapabilitiesOverrideError={
           formState.clientCapabilitiesOverrideError
         }
-        showMcpWireModeOverride={
-          Boolean(statelessMcpEnabled) &&
-          onMcpWireModeOverrideChange !== undefined
-        }
+        /* Render the row whenever the flag is on, regardless of whether
+           a setter is wired. When `onMcpWireModeOverrideChange` is
+           absent (no project, or server isn't in the project's
+           auto-connect set), the Switch disables with the existing
+           "edit mcpWireMode in the JSON" hint — the affordance has to
+           be visible to be discoverable. */
+        showMcpWireModeOverride={Boolean(statelessMcpEnabled)}
         mcpWireModeOverride={mcpWireModeOverride}
         onMcpWireModeOverrideChange={onMcpWireModeOverrideChange}
         transportKind={formState.type}
