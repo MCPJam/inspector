@@ -1808,6 +1808,13 @@ export function ServersTab({
           projectClientConfig={selectedProject?.clientConfig}
           projectId={hostedProjectId}
           hostedServerId={detailModalHostedServerId}
+          // Servers tab doesn't mount under ActiveMcpProfileProvider,
+          // so surface the host default explicitly from the
+          // previewedHost's `mcpProfile.mcpWireMode` for the chip's
+          // source attribution.
+          hostDefaultMcpWireMode={
+            previewedHost?.config?.mcpProfile?.mcpWireMode
+          }
         />
       )}
 

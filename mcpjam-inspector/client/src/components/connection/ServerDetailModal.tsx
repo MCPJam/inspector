@@ -66,6 +66,17 @@ interface ServerDetailModalProps {
   projectClientConfig?: Project["clientConfig"];
   projectId?: string | null;
   hostedServerId?: string | null;
+  /**
+   * Host-default outbound MCP wire mode resolved from the surrounding
+   * client's hostConfig.mcpProfile. Surfaced as a prop because the
+   * Servers tab doesn't render this modal inside an
+   * `ActiveMcpProfileProvider` scope (that provider only wraps chat /
+   * playground), so `useActiveMcpProfile()` would return undefined and
+   * the chip would always read "Legacy · default" regardless of what
+   * the user toggled on the client. Undefined = no host-level pin =
+   * "Legacy · default" attribution on the chip.
+   */
+  hostDefaultMcpWireMode?: McpWireMode;
 }
 
 export function ServerDetailModal({
@@ -81,6 +92,7 @@ export function ServerDetailModal({
   projectClientConfig,
   projectId = null,
   hostedServerId = null,
+  hostDefaultMcpWireMode,
 }: ServerDetailModalProps) {
   const posthog = usePostHog();
   const [activeTab, setActiveTab] = useState<ServerDetailTab>(defaultTab);
@@ -126,15 +138,16 @@ export function ServerDetailModal({
         : undefined,
     [projectServerConfigDto, serverId],
   );
-  // Host default from the surrounding client's mcpProfile. The modal
-  // renders inside an `ActiveMcpProfileProvider` scope (set by the
-  // client editor / chat tab / playground), so the hook returns the
-  // hostConfig.mcpProfile that's currently driving server connects
-  // for this client. The chip's "host default" source attribution
-  // reflects whatever the user toggled in the Client → MCP Protocol
-  // panel.
+  // Host default — prefer the explicit prop passed by the Servers tab
+  // (which has direct access to `previewedHost.config.mcpProfile`),
+  // falling back to `useActiveMcpProfile()` for renderers that mount
+  // this modal inside an `ActiveMcpProfileProvider` scope (chat,
+  // playground). Mixing the two sources lets the chip work everywhere
+  // without forcing the Servers tab to also wire up the provider just
+  // for the chip's source attribution.
   const activeMcpProfile = useActiveMcpProfile();
-  const hostDefaultMcpWireMode = activeMcpProfile?.mcpWireMode;
+  const resolvedHostDefaultMcpWireMode: McpWireMode | undefined =
+    hostDefaultMcpWireMode ?? activeMcpProfile?.mcpWireMode;
 
   // Whether the server is in the project's auto-connect `serverIds`
   // set. The backend `ensureProjectServerConfig` rejects overrides for
@@ -424,7 +437,7 @@ export function ServerDetailModal({
             </div>
             <div className="flex items-center gap-1.5 flex-shrink-0 mr-6">
               <EffectiveModeChip
-                hostDefault={hostDefaultMcpWireMode}
+                hostDefault={resolvedHostDefaultMcpWireMode}
                 serverOverride={currentMcpWireModeOverride}
                 flagEnabled={Boolean(statelessMcpEnabled)}
               />
