@@ -87,10 +87,20 @@ export function SidebarCreditUsage({
   );
 
   if (onClick) {
+    // Use div+role=button instead of a real <button> so the tooltip
+    // trigger (which is itself a <button>) on the paid-credits row
+    // doesn't nest buttons — invalid HTML, plus breaks tooltip focus.
     return (
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={0}
         onClick={onClick}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onClick();
+          }
+        }}
         data-testid="sidebar-credit-usage"
         aria-label="Credit usage"
         className={cn(
@@ -99,7 +109,7 @@ export function SidebarCreditUsage({
         )}
       >
         {innerContent}
-      </button>
+      </div>
     );
   }
 
