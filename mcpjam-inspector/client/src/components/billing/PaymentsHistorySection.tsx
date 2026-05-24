@@ -117,10 +117,12 @@ export function PaymentsHistorySection() {
 function PaymentsTable({ entries }: { entries: PaymentHistoryEntry[] }) {
   return (
     <div data-testid="payments-history-table">
-      {/* Desktop: real table at sm+ */}
-      <div className="hidden sm:block">
+      {/* Desktop: real table at sm+. Cap visible height at ~5 rows; older
+       * rows scroll inside the card so the section never balloons even at
+       * the 50-row server cap. */}
+      <div className="hidden sm:block max-h-[280px] overflow-y-auto rounded-md border border-border/40">
         <Table>
-          <TableHeader>
+          <TableHeader className="sticky top-0 bg-background">
             <TableRow>
               <TableHead>Date</TableHead>
               <TableHead>Amount</TableHead>
@@ -148,8 +150,8 @@ function PaymentsTable({ entries }: { entries: PaymentHistoryEntry[] }) {
           </TableBody>
         </Table>
       </div>
-      {/* Mobile: stacked rows */}
-      <div className="flex flex-col gap-3 sm:hidden">
+      {/* Mobile: stacked rows. Same height cap as desktop. */}
+      <div className="flex flex-col gap-3 sm:hidden max-h-[400px] overflow-y-auto">
         {entries.map((entry) => (
           <MobileRow key={entry.sessionId} entry={entry} />
         ))}
