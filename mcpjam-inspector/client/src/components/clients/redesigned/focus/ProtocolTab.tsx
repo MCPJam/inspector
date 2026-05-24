@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { JsonEditor, type JsonEditorMode } from "@/components/ui/json-editor";
+import { Switch } from "@mcpjam/design-system/switch";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import {
   type HostConfigInputV2,
   type HostConfigMcpProfileV1,
@@ -234,20 +236,77 @@ export function ProtocolTab({ draft, onDraftChange }: ProtocolTabProps) {
     applyParsedToDraft: applyJsonToDraft,
     onDraftChange,
   });
+  const statelessMcpEnabled = useFeatureFlagEnabled("stateless-mcp-enabled");
+  const statelessOn =
+    draft.mcpProfile?.mcpWireMode === "stateless-draft-2026-v1";
+
+  // Toggle handler for the stateless wire-mode row. Writes through to
+  // `draft.mcpProfile.mcpWireMode` directly (parallel to the JSON
+  // editor's applyJsonToDraft path) so the JSON view round-trips
+  // immediately. Collapses to undefined when off so the canonical hash
+  // stays at the absent state for clients that haven't opted in.
+  const setStatelessOn = (next: boolean) => {
+    onDraftChange((prev) => {
+      const base: HostConfigMcpProfileV1 =
+        prev.mcpProfile ?? { profileVersion: 1 };
+      const updated: HostConfigMcpProfileV1 = {
+        ...base,
+        mcpWireMode: next ? "stateless-draft-2026-v1" : undefined,
+      };
+      const allEmpty =
+        updated.initialize === undefined &&
+        updated.mcpWireMode === undefined &&
+        !updated.apps &&
+        !updated.extensions;
+      return {
+        ...prev,
+        mcpProfile: allEmpty ? undefined : updated,
+      };
+    });
+  };
 
   return (
-    <div className="flex h-full min-h-[480px] flex-col">
-      <JsonEditor
-        rawContent={content}
-        onRawChange={onRawChange}
-        mode={jsonMode}
-        onModeChange={setJsonMode}
-        showModeToggle
-        showToolbar
-        showLineNumbers
-        autoFormatOnEdit={false}
-        height="100%"
-      />
+    <div className="flex h-full min-h-[480px] flex-col gap-3">
+      {statelessMcpEnabled ? (
+        <div className="rounded-[10px] border border-border bg-background">
+          <div className="flex items-stretch">
+            <div className="flex flex-1 flex-col gap-0.5 px-3.5 py-2.5">
+              <span className="text-[12px] font-medium">
+                Stateless wire mode{" "}
+                <span className="font-mono text-muted-foreground">
+                  (DRAFT-2026-v1)
+                </span>
+              </span>
+              <span className="text-[11px] text-muted-foreground">
+                {statelessOn
+                  ? "Experimental preview. No initialize handshake; per-request _meta + headers. Partial draft coverage — sampling, elicitation, and subscriptions unimplemented."
+                  : "Default legacy transport (initialize handshake + upstream Client). Enable to opt this client's servers into the DRAFT-2026-v1 stateless preview."}
+              </span>
+            </div>
+            <div className="flex items-center border-l border-border pl-3 pr-3.5">
+              <Switch
+                id="protocol-tab-stateless-toggle"
+                checked={statelessOn}
+                onCheckedChange={setStatelessOn}
+                aria-label="Stateless wire mode"
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
+      <div className="flex min-h-0 flex-1 flex-col">
+        <JsonEditor
+          rawContent={content}
+          onRawChange={onRawChange}
+          mode={jsonMode}
+          onModeChange={setJsonMode}
+          showModeToggle
+          showToolbar
+          showLineNumbers
+          autoFormatOnEdit={false}
+          height="100%"
+        />
+      </div>
     </div>
   );
 }
