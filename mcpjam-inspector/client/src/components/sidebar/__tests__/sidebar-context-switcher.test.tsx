@@ -11,9 +11,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mockUseConvexAuth = vi.fn();
 const mockUseProjectMembers = vi.fn();
 const mockUseOrganizationQueries = vi.fn();
+const mockUseAuth = vi.fn();
 
 vi.mock("convex/react", () => ({
   useConvexAuth: (...args: unknown[]) => mockUseConvexAuth(...args),
+}));
+
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: (...args: unknown[]) => mockUseAuth(...args),
 }));
 
 vi.mock("@/hooks/useProjects", () => ({
@@ -189,6 +194,10 @@ describe("SidebarContextSwitcher", () => {
     mockUseConvexAuth.mockReturnValue({
       isAuthenticated: true,
       isLoading: false,
+    });
+    mockUseAuth.mockReturnValue({
+      user: { id: "user_1", email: "user@example.com" },
+      signIn: vi.fn(),
     });
     mockUseProjectMembers.mockReturnValue({
       activeMembers: [],

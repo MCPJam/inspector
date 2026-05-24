@@ -3,10 +3,12 @@ import {
   Building2,
   ChevronDown,
   ChevronsUpDown,
+  LogIn,
   Plus,
   Settings,
   Trash2,
 } from "lucide-react";
+import { useAuth } from "@workos-inc/authkit-react";
 import {
   Avatar,
   AvatarFallback,
@@ -127,8 +129,10 @@ export function SidebarContextSwitcher({
 }: SidebarContextSwitcherProps) {
   const { isMobile } = useSidebar();
   const { isAuthenticated } = useConvexAuth();
+  const { user, signIn } = useAuth();
   const { sortedOrganizations, canCreateOrganization } =
     useOrganizationQueries({ isAuthenticated });
+  const showSignInChip = !user;
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [chipPopoverOpen, setChipPopoverOpen] = useState(false);
@@ -301,17 +305,36 @@ export function SidebarContextSwitcher({
                   // synthetic mouseleave right after tap, which would schedule the
                   // popover to close ~120ms after it opens. Tap-to-toggle (the
                   // chip-button onClick) is the mobile interaction.
-                  onMouseEnter={isMobile ? undefined : openOrgPopover}
-                  onMouseLeave={isMobile ? undefined : scheduleCloseOrgPopover}
+                  onMouseEnter={
+                    isMobile || showSignInChip ? undefined : openOrgPopover
+                  }
+                  onMouseLeave={
+                    isMobile || showSignInChip
+                      ? undefined
+                      : scheduleCloseOrgPopover
+                  }
                 >
                   <button
                     type="button"
                     data-testid="org-chip-button"
-                    onClick={() => setChipPopoverOpen((o) => !o)}
-                    onFocus={isMobile ? undefined : openOrgPopover}
+                    onClick={() => {
+                      if (showSignInChip) {
+                        signIn();
+                        setMenuOpen(false);
+                        return;
+                      }
+                      setChipPopoverOpen((o) => !o);
+                    }}
+                    onFocus={
+                      isMobile || showSignInChip ? undefined : openOrgPopover
+                    }
                     className="flex-1 flex items-center gap-2.5 pl-2 py-1.5 text-left min-w-0 rounded-l-lg"
                   >
-                    {activeOrg ? (
+                    {showSignInChip ? (
+                      <div className="flex items-center justify-center size-6 rounded-md bg-primary/10 text-primary shrink-0">
+                        <LogIn className="size-3.5" />
+                      </div>
+                    ) : activeOrg ? (
                       <div
                         className={cn(
                           "flex items-center justify-center size-6 rounded-md text-[11px] font-semibold shrink-0",
@@ -327,10 +350,12 @@ export function SidebarContextSwitcher({
                       </div>
                     )}
                     <span className="flex-1 min-w-0 text-[13px] font-semibold truncate">
-                      {activeOrg?.name ?? "No organization"}
+                      {showSignInChip
+                        ? "Sign in"
+                        : (activeOrg?.name ?? "No organization")}
                     </span>
                     {/* Tap affordance — mobile only. Desktop relies on hover. */}
-                    {isMobile ? (
+                    {isMobile && !showSignInChip ? (
                       <ChevronDown
                         aria-hidden="true"
                         className={cn(
@@ -341,7 +366,7 @@ export function SidebarContextSwitcher({
                     ) : null}
                   </button>
                 </div>
-                {chipPopoverOpen ? (
+                {chipPopoverOpen && !showSignInChip ? (
                   <div
                     data-testid="org-popover"
                     onMouseEnter={isMobile ? undefined : openOrgPopover}
