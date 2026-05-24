@@ -124,15 +124,6 @@ Select a timezone from the toolbar to test time-aware widgets. The selector incl
 
 ## Widget Controls
 
-### Protocol Selector
-
-When an MCP App includes ChatGPT compatibility metadata (`openai/outputTemplate` alongside `ui.resourceUri`), a protocol toggle appears in the left panel header. This lets you switch which host bridge the emulator uses to render the widget:
-
-- **ChatGPT Apps** - Renders using the `window.openai` host bridge
-- **MCP Apps** - Renders using the `ui/*` JSON-RPC host bridge
-
-The toggle only appears for tools with both metadata keys. Tools that use a single protocol are rendered using that protocol automatically.
-
 ### Display Modes
 
 The App Builder supports all three display modes for both ChatGPT Apps and MCP Apps:
