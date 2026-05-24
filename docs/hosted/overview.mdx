@@ -67,3 +67,20 @@ Skills live on your filesystem and can only be discovered and run from the local
 ### No tasks
 
 Tasks are not yet available in the hosted app.
+
+## Billing
+
+### Payment history
+
+The **Payment history** card on the org billing page lists your recent credit top-ups. Each row shows:
+
+| Column | Details |
+|--------|---------|
+| Date | When the top-up was processed |
+| Amount | Amount charged in USD |
+| Status | `Succeeded`, `Pending`, or `Failed` |
+| Receipt | Link to the Stripe-hosted receipt (opens in a new tab) |
+
+If a receipt isn't available yet the cell shows **Processing** (for pending charges) or **Not available** (for succeeded charges without a receipt link).
+
+To add credits, click **Top up** — either from the empty state when you have no history, or from the credit balance card above.
