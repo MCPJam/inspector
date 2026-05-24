@@ -122,7 +122,7 @@ export function CreditBalanceCard({
             fillPercent={paidPercentUsed}
             isLoading={false}
             testId="usage-paid"
-            tooltip="Paid credits are used only after your daily free quota runs out each day. Your free quota resets every 24 hours."
+            tooltip="Used only after your daily free quota runs out."
           />
         )}
       </CardContent>
@@ -177,9 +177,7 @@ function UsageRow({
                   <Info aria-hidden="true" className="size-3" />
                 </button>
               </TooltipTrigger>
-              <TooltipContent className="max-w-xs text-xs">
-                {tooltip}
-              </TooltipContent>
+              <TooltipContent sideOffset={6}>{tooltip}</TooltipContent>
             </Tooltip>
           ) : null}
         </span>
