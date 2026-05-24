@@ -62,6 +62,14 @@ export const projectServerSchema = z.object({
     .passthrough()
     .optional(),
   supportedProtocolVersions: z.array(z.string().min(1)).optional(),
+  // Outbound MCP wire mode pin (DRAFT-2026-v1 stateless preview).
+  // Resolved client-side from `hostConfig.mcpProfile.mcpWireMode`;
+  // only the two known literals are accepted. Forwarded into the SDK
+  // factory via the per-server config; absent means "use SDK default
+  // (legacy upstream Client + initialize handshake)".
+  mcpWireMode: z
+    .enum(["legacy", "stateless-draft-2026-v1"])
+    .optional(),
 });
 
 export const toolsListSchema = projectServerSchema.extend({
@@ -451,6 +459,15 @@ export function toHttpConfig(
   initializePins?: {
     clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
     supportedProtocolVersions?: string[];
+    /**
+     * Outbound wire mode (DRAFT-2026-v1 stateless preview). Forwarded
+     * onto `HttpServerConfig.mcpWireMode` so the SDK factory branches
+     * to `StatelessDraft2026V1PreviewClient` when set. Without this,
+     * the hosted handler dropped the pin at the route boundary and
+     * hosted connects always ran the legacy `initialize` handshake
+     * regardless of the client-level toggle.
+     */
+    mcpWireMode?: "legacy" | "stateless-draft-2026-v1";
   }
 ): HttpServerConfig {
   if (authResponse.serverConfig.transportType !== "http") {
@@ -498,6 +515,9 @@ export function toHttpConfig(
           supportedProtocolVersions: initializePins.supportedProtocolVersions,
         }
       : {}),
+    ...(initializePins?.mcpWireMode
+      ? { mcpWireMode: initializePins.mcpWireMode }
+      : {}),
   };
 }
 
@@ -536,6 +556,7 @@ export async function createAuthorizedManager(
         unknown
       >;
       supportedProtocolVersions?: string[];
+      mcpWireMode?: "legacy" | "stateless-draft-2026-v1";
     };
   }
 ): Promise<AuthorizedManagerResult> {
@@ -823,14 +844,28 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
       rawSupportedVersions.every((v) => typeof v === "string" && v.length > 0)
         ? (rawSupportedVersions as string[])
         : undefined;
+    // mcpWireMode — only the two known literals; anything else falls
+    // back to SDK default (legacy) so a malformed payload never breaks
+    // the route. Same defensive gating as the other initializePins
+    // fields above.
+    const rawWireMode = raw.mcpWireMode;
+    const initializeWireMode: "legacy" | "stateless-draft-2026-v1" | undefined =
+      rawWireMode === "legacy" || rawWireMode === "stateless-draft-2026-v1"
+        ? rawWireMode
+        : undefined;
     const initializePins =
-      initializeClientInfo || initializeSupportedVersions
+      initializeClientInfo ||
+      initializeSupportedVersions ||
+      initializeWireMode
         ? {
             ...(initializeClientInfo
               ? { clientInfo: initializeClientInfo }
               : {}),
             ...(initializeSupportedVersions
               ? { supportedProtocolVersions: initializeSupportedVersions }
+              : {}),
+            ...(initializeWireMode
+              ? { mcpWireMode: initializeWireMode }
               : {}),
           }
         : undefined;

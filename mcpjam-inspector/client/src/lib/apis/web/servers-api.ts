@@ -30,6 +30,15 @@ export type HostedServerValidateContext = {
    * semantic.
    */
   supportedProtocolVersions?: string[];
+  /**
+   * Outbound MCP wire-mode pin resolved client-side from
+   * `hostConfig.mcpProfile.mcpWireMode`. Sent verbatim to the hosted
+   * route, which forwards it onto `HttpServerConfig.mcpWireMode` so
+   * the SDK factory selects the DRAFT-2026-v1 stateless preview.
+   * Without this, hosted connects always ran the legacy `initialize`
+   * handshake regardless of the client toggle (codex P2 redux).
+   */
+  mcpWireMode?: "legacy" | "stateless-draft-2026-v1";
 };
 
 export interface HostedServerValidateResponse {
@@ -88,6 +97,9 @@ export async function validateHostedServer(
               supportedProtocolVersions:
                 hostedContext.supportedProtocolVersions,
             }
+          : {}),
+        ...(hostedContext.mcpWireMode
+          ? { mcpWireMode: hostedContext.mcpWireMode }
           : {}),
       }
     : buildServerRequest(serverNameOrId);

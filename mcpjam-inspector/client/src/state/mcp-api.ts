@@ -88,6 +88,13 @@ function buildHostedValidationContext(
             options.connectionDefaults.supportedProtocolVersions,
         }
       : {}),
+    // mcpWireMode — same drop-on-the-floor bug as clientInfo /
+    // supportedProtocolVersions had before being plumbed here. Without
+    // this, hosted connects ignored the client-level Stateless toggle
+    // and always initialized via the legacy upstream Client.
+    ...(options.connectionDefaults?.mcpWireMode
+      ? { mcpWireMode: options.connectionDefaults.mcpWireMode }
+      : {}),
   };
 }
 
