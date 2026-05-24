@@ -663,10 +663,7 @@ export function MCPSidebar({
       isAuthenticated,
     ]
   );
-  const hubNavHash =
-    isPostHogBooleanFlagOn(hostsEnabled) && isAuthenticated
-      ? "#connect"
-      : "#servers";
+  const hubNavHash = "#servers";
   const visibleNavigationSections = filterByFeatureFlags(
     HOSTED_MODE ? hostedNavigationSections : navigationSections,
     featureFlags
