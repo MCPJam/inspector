@@ -2571,6 +2571,80 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
   });
 
+  it("hides the global client bar on the Playground evals tab", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    window.history.replaceState({}, "", "/evals");
+    mockHandleOAuthCallback.mockReset();
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      isCloudSyncActive: true,
+      projects: {
+        ws_local: {
+          id: "ws_local",
+          name: "Project One",
+          sharedProjectId: "shared-ws-1",
+          organizationId: "org-1",
+          servers: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      },
+    }));
+    mockUseFeatureFlagEnabled.mockImplementation(
+      (flag: string) =>
+        flag === "hosts-enabled" || flag === "playground-enabled"
+    );
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("evals-tab")).toBeInTheDocument();
+    });
+
+    const latestProps = mockHeader.mock.calls.at(-1)?.[0] as {
+      globalHostBarProps?: { projectId?: string };
+    };
+    expect(latestProps.globalHostBarProps).toBeUndefined();
+  });
+
+  it("shows the global client bar outside the Playground evals tab", async () => {
+    clearHostedOAuthPendingState();
+    clearChatboxSession();
+    window.history.replaceState({}, "", "/tools");
+    mockHandleOAuthCallback.mockReset();
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      isCloudSyncActive: true,
+      projects: {
+        ws_local: {
+          id: "ws_local",
+          name: "Project One",
+          sharedProjectId: "shared-ws-1",
+          organizationId: "org-1",
+          servers: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      },
+    }));
+    mockUseFeatureFlagEnabled.mockImplementation(
+      (flag: string) => flag === "hosts-enabled"
+    );
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockHeader).toHaveBeenCalledWith(
+        expect.objectContaining({
+          globalHostBarProps: expect.objectContaining({
+            projectId: "shared-ws-1",
+          }),
+        })
+      );
+    });
+  });
+
   it("waits on ci-evals while the evaluate-runs flag is still loading", async () => {
     clearHostedOAuthPendingState();
     clearChatboxSession();

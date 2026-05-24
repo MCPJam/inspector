@@ -2816,8 +2816,13 @@ export default function App() {
         }
       : undefined;
 
+  const shouldShowGlobalHostBar = activeTab !== "evals";
+
   const globalHostBarProps =
-    hostsHubFlagEnabled && isAuthenticated && convexProjectId
+    shouldShowGlobalHostBar &&
+    hostsHubFlagEnabled &&
+    isAuthenticated &&
+    convexProjectId
       ? {
           projectId: convexProjectId,
           onEditHost: (hostId: string) => {
