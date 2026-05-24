@@ -105,10 +105,9 @@ export function WidgetReplay({
   const hasCachedHtmlForOffline = !!renderOverride?.cachedWidgetHtmlUrl;
 
   // Single-path routing: every UI-bearing tool (Apps SDK, MCP Apps, or
-  // dual-metadata) renders through MCPAppsRenderer. The server-side
-  // window.openai compat shim is always injected, so widgets calling
-  // window.openai.* and widgets using ui/* JSON-RPC both work without a
-  // protocol switch. See plan: phase 3a.
+  // dual-metadata) renders through MCPAppsRenderer. Whether the OpenAI
+  // compatibility runtime is injected is controlled by the selected
+  // client/host profile so host simulation stays honest.
   //
   // Defense-in-depth host gate: the primary check lives in PartSwitch
   // (which decides between ToolPart and WidgetReplay). Re-checking here
