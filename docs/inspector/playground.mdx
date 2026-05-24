@@ -177,15 +177,6 @@ All three display modes are supported for both ChatGPT Apps and MCP Apps:
 
 Widgets can request mode changes from their own code; users can exit PiP or Fullscreen via the close button.
 
-### Protocol Selector
-
-When a tool declares both `openai/outputTemplate` and `ui.resourceUri`, a protocol toggle appears in the tool row so you can flip between the two host bridges:
-
-- **ChatGPT Apps** — Renders using the `window.openai` host bridge.
-- **MCP Apps** — Renders using the `ui/*` JSON-RPC host bridge.
-
-Tools that use a single protocol render under that protocol automatically.
-
 ## Per-Widget Debugging
 
 Every tool result in the chat thread has a row of icons in its header. Click an icon to open the matching debug panel below the widget.
