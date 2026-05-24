@@ -399,6 +399,7 @@ export function MCPAppsRenderer({
   initialWidgetState,
   minimalMode = false,
 }: MCPAppsRendererProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const sandboxRef = useRef<SandboxedIframeHandle>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const sharedHostStyle = usePreferencesStore((s) => s.hostStyle);
@@ -991,9 +992,9 @@ export function MCPAppsRenderer({
   );
   // SEP-1865: width is honored only when the host's outer container is
   // unbounded (no `width` from `containerDimensions`). The chatbox bubble
-  // is the bounding box today, so this stays null until the host context
-  // explicitly publishes a flexible width. The renderer reads this ref
-  // when applying `ui/notifications/size-changed` width.
+  // is the bounding box today, so this stays null until the app sends a
+  // width request. The renderer applies the value to the visible inline
+  // container and caps it with max-width: 100%.
   const lastInlineWidthRef = useRef<string | null>(null);
 
   // Reset widget-identity-scoped state when the renderer is reused for a
@@ -2553,15 +2554,16 @@ export function MCPAppsRenderer({
       // SEP-1865: apply both height AND width when the host outer
       // container is flexible (no fixed `width` published via
       // `containerDimensions`). The renderer caps the requested width
-      // to 100% of the parent via `min(${width}px, 100%)` so a
-      // misbehaving widget can't overflow the chatbox bubble. Fixed-
+      // to 100% of the parent via `max-width: 100%` so a misbehaving
+      // widget can't overflow the chatbox bubble. Fixed-
       // width contexts (PIP/fullscreen, or future hosts that publish
       // `containerDimensions.width`) ignore the width request — the
       // height-only path remains.
       bridge.onsizechange = ({ height, width }) => {
         if (effectiveDisplayModeRef.current !== "inline") return;
         const iframe = sandboxRef.current?.getIframeElement();
-        if (!iframe) return;
+        const container = containerRef.current;
+        if (!iframe || !container) return;
         if (height === undefined && width === undefined) return;
         const hostCtx = hostContextRef.current as
           | (McpUiHostContext & {
@@ -2603,16 +2605,23 @@ export function MCPAppsRenderer({
               parseFloat(style.borderRightWidth);
           }
           // Cap to parent so an over-eager widget can't escape the
-          // bounding bubble; the iframe's outer `maxWidth: 100%` would
-          // also catch this, but the `min()` keeps the inline style
-          // self-describing for debugging.
-          const widthCss = `min(${adjustedWidth}px, 100%)`;
-          from.width = `${iframe.offsetWidth}px`;
-          iframe.style.width = to.width = widthCss;
+          // bounding bubble. Keep `width` as a plain px value and rely on
+          // `max-width: 100%` for the cap; this is equivalent to
+          // `min(width, 100%)` in browsers and easier for tests/DevTools.
+          const widthCss = `${adjustedWidth}px`;
+          from.width = `${container.offsetWidth}px`;
+          container.style.width = to.width = widthCss;
+          iframe.style.width = "100%";
           lastInlineWidthRef.current = widthCss;
         }
 
         iframe.animate([from, to], { duration: 300, easing: "ease-out" });
+        if (to.width !== undefined) {
+          container.animate?.([{ width: from.width }, { width: to.width }], {
+            duration: 300,
+            easing: "ease-out",
+          });
+        }
         // size-changed fires on every resize/animation tick — chatty widgets
         // can flood the traffic log. The corresponding ui/notifications/
         // size-changed transport message is already suppressed above; rely on
@@ -3280,6 +3289,10 @@ export function MCPAppsRenderer({
 
     return "mt-3 space-y-2 relative group";
   })();
+  const containerStyle: CSSProperties | undefined =
+    !isFullscreen && !isPip && lastInlineWidthRef.current
+      ? { width: lastInlineWidthRef.current, maxWidth: "100%" }
+      : undefined;
 
   const canTransitionHeight =
     !isFullscreen &&
@@ -3290,12 +3303,7 @@ export function MCPAppsRenderer({
       : isPip
         ? PIP_MAX_HEIGHT
         : lastInlineHeightRef.current,
-    // SEP-1865: when the widget has requested a width via
-    // `ui/notifications/size-changed`, the handler stashed it as a
-    // `min(...px, 100%)` CSS expression in `lastInlineWidthRef` so
-    // re-renders preserve the chosen width without overflowing the
-    // bubble. Default to 100% when the widget hasn't requested a width.
-    width: isFullscreen || isPip ? "100%" : (lastInlineWidthRef.current ?? "100%"),
+    width: "100%",
     maxWidth: "100%",
     backgroundColor:
       !isFullscreen && matrixGatedPrefersBorder
@@ -3357,7 +3365,7 @@ export function MCPAppsRenderer({
   );
 
   return (
-    <div className={containerClassName}>
+    <div ref={containerRef} className={containerClassName} style={containerStyle}>
 
       {((isFullscreen && isContainedFullscreenMode) ||
         (isPip && isMobilePlaygroundMode)) && (

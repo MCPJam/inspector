@@ -775,6 +775,7 @@ export function hostCapabilitiesOverrideToMatrix(
     logging: legacy.logging !== undefined,
     updateModelContext: legacy.updateModelContext !== undefined,
     message: legacy.message !== undefined,
+    downloadFile: legacy.downloadFile !== undefined,
   };
 }
 

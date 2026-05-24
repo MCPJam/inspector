@@ -55,6 +55,8 @@ type MessageViewPassthroughProps = Omit<
   | "onExitPip"
   | "onRequestFullscreen"
   | "onExitFullscreen"
+  | "onRequestTeardown"
+  | "tornDownWidgetIds"
   | "senderAvatar"
   | "showSenderAvatar"
 >;
@@ -93,6 +95,8 @@ export interface TranscriptThreadProps extends MessageViewPassthroughProps {
   onExitPip?: (toolCallId: string) => void;
   onRequestFullscreen?: (toolCallId: string) => void;
   onExitFullscreen?: (toolCallId: string) => void;
+  onRequestTeardown?: (toolCallId: string) => void;
+  tornDownWidgetIds?: ReadonlySet<string>;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
   selectedProtocolOverrideIfBothExists?: UIType;
@@ -105,7 +109,7 @@ export interface TranscriptThreadProps extends MessageViewPassthroughProps {
   isLoading?: boolean;
   lastRenderableMessageId?: string | null;
   getMessageWrapperProps?: (
-    args: MessageWrapperArgs,
+    args: MessageWrapperArgs
   ) => MessageWrapperProps | undefined;
   /**
    * When true, attribute each user message to its sender via a small avatar
@@ -126,7 +130,7 @@ function assignRef<T>(ref: Ref<T> | undefined, value: T) {
 }
 
 function findNearestScrollableAncestor(
-  element: HTMLElement,
+  element: HTMLElement
 ): HTMLElement | null {
   let container: HTMLElement | null = element.parentElement;
 
@@ -146,7 +150,7 @@ function findNearestScrollableAncestor(
 
 function resolveScrollViewport(
   element: HTMLElement,
-  viewportRef?: RefObject<HTMLElement | null>,
+  viewportRef?: RefObject<HTMLElement | null>
 ): HTMLElement | null {
   return viewportRef?.current ?? findNearestScrollableAncestor(element);
 }
@@ -171,14 +175,14 @@ function scrollMessageToViewportPosition(params: {
     TRANSCRIPT_TOP_INSET_MAX_PX,
     Math.max(
       TRANSCRIPT_TOP_INSET_MIN_PX,
-      Math.round(viewport.clientHeight * 0.08),
-    ),
+      Math.round(viewport.clientHeight * 0.08)
+    )
   );
   const centeredOffset = Math.max(
     0,
     (viewport.clientHeight -
       Math.min(targetRect.height, viewport.clientHeight)) /
-      2,
+      2
   );
   const shouldTopAnchor =
     targetRect.height >= viewport.clientHeight * TRANSCRIPT_TALL_MESSAGE_RATIO;
@@ -187,11 +191,11 @@ function scrollMessageToViewportPosition(params: {
   const correction = targetRect.top - desiredTop;
   const maxScrollTop = Math.max(
     0,
-    viewport.scrollHeight - viewport.clientHeight,
+    viewport.scrollHeight - viewport.clientHeight
   );
   const nextScrollTop = Math.min(
     maxScrollTop,
-    Math.max(0, viewport.scrollTop + correction),
+    Math.max(0, viewport.scrollTop + correction)
   );
 
   viewport.scrollTo({
@@ -214,6 +218,8 @@ export function TranscriptThread({
   onExitPip = NOOP,
   onRequestFullscreen = NOOP,
   onExitFullscreen = NOOP,
+  onRequestTeardown,
+  tornDownWidgetIds,
   displayMode,
   onDisplayModeChange,
   selectedProtocolOverrideIfBothExists,
@@ -249,7 +255,7 @@ export function TranscriptThread({
     "claude";
   const highlightedMessageIdSet = useMemo(
     () => new Set(highlightedMessageIds),
-    [highlightedMessageIds],
+    [highlightedMessageIds]
   );
   const shouldUseContentVisibility =
     focusMessageId === null &&
@@ -453,7 +459,7 @@ export function TranscriptThread({
             className={cn(
               (isFocused || isHighlighted) &&
                 "relative rounded-xl border border-primary/30 bg-primary/5 p-2",
-              className,
+              className
             )}
             style={
               shouldUseContentVisibility && !isFocused && !isHighlighted
@@ -503,6 +509,8 @@ export function TranscriptThread({
               onExitPip={onExitPip}
               onRequestFullscreen={onRequestFullscreen}
               onExitFullscreen={onExitFullscreen}
+              onRequestTeardown={onRequestTeardown}
+              tornDownWidgetIds={tornDownWidgetIds}
               displayMode={displayMode}
               onDisplayModeChange={onDisplayModeChange}
               selectedProtocolOverrideIfBothExists={

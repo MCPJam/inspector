@@ -14,7 +14,7 @@ import { classifyWidgetError } from "../../../utils/error-classify";
 import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type {
   McpUiResourceCsp,
-  McpUiResourcePermissions,
+  McpUiResourceMeta,
 } from "@modelcontextprotocol/ext-apps";
 import { MCP_APPS_SANDBOX_PROXY_HTML } from "../SandboxProxyHtml.bundled";
 import { injectOpenAICompat } from "../../../utils/widget-helpers";
@@ -59,6 +59,7 @@ const ACCEPTED_WIDGET_MIMETYPES = new Set<string>([
  * CSP mode types - matches client-side CspMode type
  */
 type CspMode = "permissive" | "widget-declared";
+type MetadataSource = "content" | "listing" | "legacy" | "mixed" | "none";
 
 interface WidgetContentRequest {
   serverId: string;
@@ -107,14 +108,6 @@ interface WidgetContentRequest {
   viewParams?: Record<string, unknown>;
 }
 
-// UI Resource metadata per SEP-1865 (using SDK types)
-interface UIResourceMeta {
-  csp?: McpUiResourceCsp;
-  permissions?: McpUiResourcePermissions;
-  domain?: string;
-  prefersBorder?: boolean;
-}
-
 /**
  * Fallback CSP extraction for legacy Apps SDK widgets that declare CSP
  * via `_meta["openai/widgetCSP"]` (snake_case fields:
@@ -124,7 +117,7 @@ interface UIResourceMeta {
  * or only contains non-array values.
  */
 function extractLegacyOpenAICsp(
-  resourceMeta: Record<string, unknown> | undefined,
+  resourceMeta: Record<string, unknown> | undefined
 ): McpUiResourceCsp | undefined {
   if (!resourceMeta) return undefined;
   const legacy = resourceMeta["openai/widgetCSP"];
@@ -185,7 +178,7 @@ apps.post("/widget-content", async (c) => {
           error:
             "cspMode is required and must be 'permissive' or 'widget-declared'",
         },
-        400,
+        400
       );
     }
 
@@ -204,12 +197,15 @@ apps.post("/widget-content", async (c) => {
     const content = contents[0];
 
     if (!content) {
-      getRequestLogger(c, "routes.apps.mcp-apps").event("widget.resource.failed", {
-        widgetType: "mcp_apps",
-        resourceUri: resolvedResourceUri,
-        cspMode: effectiveCspMode,
-        errorCode: classifyWidgetError(null, "resource_missing"),
-      });
+      getRequestLogger(c, "routes.apps.mcp-apps").event(
+        "widget.resource.failed",
+        {
+          widgetType: "mcp_apps",
+          resourceUri: resolvedResourceUri,
+          cspMode: effectiveCspMode,
+          errorCode: classifyWidgetError(null, "resource_missing"),
+        }
+      );
       return c.json({ error: "No content in resource" }, 404);
     }
 
@@ -223,11 +219,15 @@ apps.post("/widget-content", async (c) => {
       ACCEPTED_WIDGET_MIMETYPES.has(contentMimeType);
     const mimeTypeWarning = !mimeTypeValid
       ? contentMimeType
-        ? `Invalid mimetype "${contentMimeType}" - expected one of: ${[...ACCEPTED_WIDGET_MIMETYPES].join(", ")}`
-        : `Missing mimetype - expected one of: ${[...ACCEPTED_WIDGET_MIMETYPES].join(", ")}`
+        ? `Invalid mimetype "${contentMimeType}" - expected one of: ${[
+            ...ACCEPTED_WIDGET_MIMETYPES,
+          ].join(", ")}`
+        : `Missing mimetype - expected one of: ${[
+            ...ACCEPTED_WIDGET_MIMETYPES,
+          ].join(", ")}`
       : contentMimeType !== MCP_APPS_MIMETYPE
-        ? `Legacy Apps SDK mimetype "${contentMimeType}" — SEP-1865 prefers "${MCP_APPS_MIMETYPE}"`
-        : null;
+      ? `Legacy Apps SDK mimetype "${contentMimeType}" — SEP-1865 prefers "${MCP_APPS_MIMETYPE}"`
+      : null;
 
     if (mimeTypeWarning) {
       logger.warn("[MCP Apps] Mimetype validation: " + mimeTypeWarning, {
@@ -241,12 +241,15 @@ apps.post("/widget-content", async (c) => {
     } else if ("blob" in content && typeof content.blob === "string") {
       html = Buffer.from(content.blob, "base64").toString("utf-8");
     } else {
-      getRequestLogger(c, "routes.apps.mcp-apps").event("widget.resource.failed", {
-        widgetType: "mcp_apps",
-        resourceUri: resolvedResourceUri,
-        cspMode: effectiveCspMode,
-        errorCode: classifyWidgetError(null, "html_missing"),
-      });
+      getRequestLogger(c, "routes.apps.mcp-apps").event(
+        "widget.resource.failed",
+        {
+          widgetType: "mcp_apps",
+          resourceUri: resolvedResourceUri,
+          cspMode: effectiveCspMode,
+          errorCode: classifyWidgetError(null, "html_missing"),
+        }
+      );
       return c.json({ error: "No HTML content in resource" }, 404);
     }
 
@@ -262,20 +265,29 @@ apps.post("/widget-content", async (c) => {
     // implement `resources/list` (or that fail to return the URI) just
     // leave the listing source undefined and the content source wins.
     const resourceMeta = content._meta as Record<string, unknown> | undefined;
-    const contentUiMeta = (resourceMeta as { ui?: UIResourceMeta } | undefined)
-      ?.ui;
+    const contentUiMeta = (
+      resourceMeta as { ui?: McpUiResourceMeta } | undefined
+    )?.ui;
 
     let listingMeta: Record<string, unknown> | undefined;
-    let listingUiMeta: UIResourceMeta | undefined;
-    let metadataSource: "content" | "listing" | "legacy" | "none" = "none";
+    let listingUiMeta: McpUiResourceMeta | undefined;
+    const metadataSources: {
+      csp: Exclude<MetadataSource, "mixed">;
+      permissions: Exclude<MetadataSource, "mixed">;
+      prefersBorder: Exclude<MetadataSource, "mixed">;
+    } = {
+      csp: "none",
+      permissions: "none",
+      prefersBorder: "none",
+    };
     try {
       const listing = await mcpClientManager.listResources(serverId);
       const match = listing?.resources?.find(
-        (r: { uri?: unknown }) => r?.uri === resolvedResourceUri,
+        (r: { uri?: unknown }) => r?.uri === resolvedResourceUri
       ) as { _meta?: Record<string, unknown> } | undefined;
       if (match?._meta) {
         listingMeta = match._meta;
-        listingUiMeta = (match._meta as { ui?: UIResourceMeta }).ui;
+        listingUiMeta = (match._meta as { ui?: McpUiResourceMeta }).ui;
       }
     } catch (err) {
       logger.debug("[MCP Apps] resources/list fallback skipped", {
@@ -284,32 +296,66 @@ apps.post("/widget-content", async (c) => {
       });
     }
 
-    const csp: McpUiResourceCsp | undefined =
-      contentUiMeta?.csp ??
-      listingUiMeta?.csp ??
-      extractLegacyOpenAICsp(resourceMeta) ??
-      extractLegacyOpenAICsp(listingMeta);
+    const contentLegacyCsp = extractLegacyOpenAICsp(resourceMeta);
+    const listingLegacyCsp = extractLegacyOpenAICsp(listingMeta);
+    let csp: McpUiResourceCsp | undefined;
+    if (contentUiMeta?.csp) {
+      csp = contentUiMeta.csp;
+      metadataSources.csp = "content";
+    } else if (listingUiMeta?.csp) {
+      csp = listingUiMeta.csp;
+      metadataSources.csp = "listing";
+    } else if (contentLegacyCsp) {
+      csp = contentLegacyCsp;
+      metadataSources.csp = "legacy";
+    } else if (listingLegacyCsp) {
+      csp = listingLegacyCsp;
+      metadataSources.csp = "legacy";
+    }
     const permissions =
       contentUiMeta?.permissions ?? listingUiMeta?.permissions;
+    if (contentUiMeta?.permissions) {
+      metadataSources.permissions = "content";
+    } else if (listingUiMeta?.permissions) {
+      metadataSources.permissions = "listing";
+    }
     const prefersBorderLegacy = (m: Record<string, unknown> | undefined) =>
       typeof m?.["openai/widgetPrefersBorder"] === "boolean"
         ? (m["openai/widgetPrefersBorder"] as boolean)
         : undefined;
-    const prefersBorder: boolean | undefined =
-      contentUiMeta?.prefersBorder ??
-      listingUiMeta?.prefersBorder ??
-      prefersBorderLegacy(resourceMeta) ??
-      prefersBorderLegacy(listingMeta);
+    const contentLegacyPrefersBorder = prefersBorderLegacy(resourceMeta);
+    const listingLegacyPrefersBorder = prefersBorderLegacy(listingMeta);
+    let prefersBorder: boolean | undefined;
+    if (contentUiMeta?.prefersBorder !== undefined) {
+      prefersBorder = contentUiMeta.prefersBorder;
+      metadataSources.prefersBorder = "content";
+    } else if (listingUiMeta?.prefersBorder !== undefined) {
+      prefersBorder = listingUiMeta.prefersBorder;
+      metadataSources.prefersBorder = "listing";
+    } else if (contentLegacyPrefersBorder !== undefined) {
+      prefersBorder = contentLegacyPrefersBorder;
+      metadataSources.prefersBorder = "legacy";
+    } else if (listingLegacyPrefersBorder !== undefined) {
+      prefersBorder = listingLegacyPrefersBorder;
+      metadataSources.prefersBorder = "legacy";
+    }
 
-    if (contentUiMeta) metadataSource = "content";
-    else if (listingUiMeta) metadataSource = "listing";
-    else if (csp || prefersBorder !== undefined) metadataSource = "legacy";
+    const usedMetadataSources = new Set(
+      Object.values(metadataSources).filter((source) => source !== "none")
+    );
+    const metadataSource: MetadataSource =
+      usedMetadataSources.size === 0
+        ? "none"
+        : usedMetadataSources.size === 1
+        ? Array.from(usedMetadataSources)[0]
+        : "mixed";
 
     // Log CSP and permissions configuration for security review (SEP-1865)
     logger.debug("[MCP Apps] Security configuration", {
       resourceUri: resolvedResourceUri,
       effectiveCspMode,
       metadataSource,
+      metadataSources,
       widgetDeclaredCsp: csp
         ? {
             connectDomains: csp.connectDomains || [],
@@ -361,13 +407,16 @@ apps.post("/widget-content", async (c) => {
     }
 
     // Return JSON with HTML and metadata for CSP enforcement
-    getRequestLogger(c, "routes.apps.mcp-apps").event("widget.resource.served", {
-      widgetType: "mcp_apps",
-      resourceUri: resolvedResourceUri,
-      cspMode: effectiveCspMode,
-      injectedOpenAiCompat: shouldInjectOpenAiCompat,
-      mimeTypeValid,
-    });
+    getRequestLogger(c, "routes.apps.mcp-apps").event(
+      "widget.resource.served",
+      {
+        widgetType: "mcp_apps",
+        resourceUri: resolvedResourceUri,
+        cspMode: effectiveCspMode,
+        injectedOpenAiCompat: shouldInjectOpenAiCompat,
+        mimeTypeValid,
+      }
+    );
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");
     return c.json({
       html,
@@ -394,23 +443,24 @@ apps.post("/widget-content", async (c) => {
       mimeType: contentMimeType,
       mimeTypeValid,
       mimeTypeWarning,
-      // SEP-1865 metadata precedence — "content" means the read
-      // content-item _meta.ui won; "listing" means the read content
-      // had no _meta.ui and the fallback from resources/list supplied
-      // CSP/permissions/prefersBorder; "legacy" means neither source
-      // had _meta.ui and the legacy openai/widget* keys were used;
-      // "none" means no UI metadata was found anywhere.
+      // SEP-1865 metadata precedence. `metadataSource` is a summary
+      // ("mixed" when per-field fallbacks used different sources);
+      // `metadataSources` reports the actual source for each field.
       metadataSource,
+      metadataSources,
     });
   } catch (error) {
-    getRequestLogger(c, "routes.apps.mcp-apps").event("widget.resource.failed", {
-      widgetType: "mcp_apps",
-      errorCode: classifyWidgetError(error),
-    });
+    getRequestLogger(c, "routes.apps.mcp-apps").event(
+      "widget.resource.failed",
+      {
+        widgetType: "mcp_apps",
+        errorCode: classifyWidgetError(error),
+      }
+    );
     logger.error("[MCP Apps] Error fetching resource", error);
     return c.json(
       { error: error instanceof Error ? error.message : "Unknown error" },
-      500,
+      500
     );
   }
 });
@@ -420,7 +470,7 @@ apps.get("/sandbox-proxy", (c) => {
   c.header("Cache-Control", "no-cache, no-store, must-revalidate");
   c.header(
     "Content-Security-Policy",
-    "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*",
+    "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*"
   );
   c.res.headers.delete("X-Frame-Options");
   return c.body(MCP_APPS_SANDBOX_PROXY_HTML);

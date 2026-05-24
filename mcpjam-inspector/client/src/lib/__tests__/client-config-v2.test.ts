@@ -510,6 +510,7 @@ describe("hostCapabilitiesOverrideToMatrix", () => {
       logging: false,
       updateModelContext: false,
       message: false,
+      downloadFile: false,
     });
   });
 
@@ -518,6 +519,7 @@ describe("hostCapabilitiesOverrideToMatrix", () => {
       openLinks: {},
       serverTools: { listChanged: false },
       message: { text: {} },
+      downloadFile: {},
     });
     expect(matrix).toEqual({
       openLinks: true,
@@ -526,6 +528,7 @@ describe("hostCapabilitiesOverrideToMatrix", () => {
       logging: false,
       updateModelContext: false,
       message: true,
+      downloadFile: true,
     });
   });
 });

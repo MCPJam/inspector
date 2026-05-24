@@ -249,6 +249,42 @@ describe("ToolList", () => {
     expect(screen.queryByAltText("MCP Apps")).not.toBeInTheDocument();
   });
 
+  it("shows SEP-1865 visibility from tool metadata", () => {
+    render(
+      <ToolList
+        {...defaultProps}
+        tools={{
+          hidden_from_model: makeTool("hidden_from_model", {
+            ui: { visibility: ["app"] },
+          }),
+        }}
+        toolNames={["hidden_from_model"]}
+        filteredToolNames={["hidden_from_model"]}
+      />,
+    );
+
+    expect(screen.getByText('visibility: ["app"]')).toBeInTheDocument();
+  });
+
+  it("falls back to default visibility for malformed metadata", () => {
+    render(
+      <ToolList
+        {...defaultProps}
+        tools={{
+          malformed_visibility: makeTool("malformed_visibility", {
+            ui: { visibility: "app" },
+          }),
+        }}
+        toolNames={["malformed_visibility"]}
+        filteredToolNames={["malformed_visibility"]}
+      />,
+    );
+
+    expect(
+      screen.getByText('visibility: ["model", "app"]'),
+    ).toBeInTheDocument();
+  });
+
   // ── Description rendering ──
 
   it("renders tool description when provided", () => {

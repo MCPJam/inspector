@@ -33,7 +33,11 @@ import { SelectedToolHeader } from "@/components/ui-playground/SelectedToolHeade
 import { TabHeader } from "@/components/ui-playground/TabHeader";
 import { SchemaViewer } from "@/components/ui/schema-viewer";
 import { SearchInput } from "@/components/ui/search-input";
-import { detectUIType, UIType } from "@/lib/mcp-ui/mcp-apps-utils";
+import {
+  detectUIType,
+  getToolVisibility,
+  UIType,
+} from "@/lib/mcp-ui/mcp-apps-utils";
 import {
   generateFormFieldsFromSchema,
   type FormField,
@@ -317,47 +321,63 @@ function FlatToolList({
                       {entry.tool.description}
                     </p>
                   )}
-                  {uiType ? (
-                    <div className="flex items-center gap-1.5 mt-2">
-                      {(uiType === UIType.OPENAI_SDK ||
-                        uiType === UIType.OPENAI_SDK_AND_MCP_APPS) && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <div className="flex items-center">
-                              <img
-                                src="/openai_logo.png"
-                                alt="ChatGPT Apps"
-                                className="h-3.5 w-3.5 object-contain opacity-60"
-                              />
-                            </div>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p className="text-xs">ChatGPT Apps</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
-                      {(uiType === UIType.MCP_APPS ||
-                        uiType === UIType.OPENAI_SDK_AND_MCP_APPS ||
-                        uiType === UIType.MCP_UI) && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <div className="flex items-center">
-                              <img
-                                src="/mcp.svg"
-                                alt="MCP Apps"
-                                className="h-3.5 w-3.5 object-contain opacity-60"
-                              />
-                            </div>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p className="text-xs">
-                              {uiType === UIType.MCP_UI ? "MCP UI" : "MCP Apps"}
-                            </p>
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
-                    </div>
-                  ) : null}
+                  {(() => {
+                    const visibility = getToolVisibility(
+                      entry.tool._meta as Record<string, unknown> | undefined,
+                    );
+                    const visibilityLabel = `[${visibility
+                      .map((v) => `"${v}"`)
+                      .join(", ")}]`;
+                    return (
+                      <div className="flex items-center gap-1.5 mt-2">
+                        {(uiType === UIType.OPENAI_SDK ||
+                          uiType === UIType.OPENAI_SDK_AND_MCP_APPS) && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <div className="flex items-center">
+                                <img
+                                  src="/openai_logo.png"
+                                  alt="ChatGPT Apps"
+                                  className="h-3.5 w-3.5 object-contain opacity-60"
+                                />
+                              </div>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p className="text-xs">ChatGPT Apps</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
+                        {(uiType === UIType.MCP_APPS ||
+                          uiType === UIType.OPENAI_SDK_AND_MCP_APPS ||
+                          uiType === UIType.MCP_UI) && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <div className="flex items-center">
+                                <img
+                                  src="/mcp.svg"
+                                  alt="MCP Apps"
+                                  className="h-3.5 w-3.5 object-contain opacity-60"
+                                />
+                              </div>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p className="text-xs">
+                                {uiType === UIType.MCP_UI
+                                  ? "MCP UI"
+                                  : "MCP Apps"}
+                              </p>
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
+                        <span
+                          className="font-mono text-[10px] text-muted-foreground"
+                          title={`SEP-1865 visibility: ${visibilityLabel}`}
+                        >
+                          visibility: {visibilityLabel}
+                        </span>
+                      </div>
+                    );
+                  })()}
                 </button>
               );
             })}

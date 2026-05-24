@@ -63,6 +63,8 @@ export function PartSwitch({
   onExitPip,
   onRequestFullscreen,
   onExitFullscreen,
+  onRequestTeardown,
+  tornDownWidgetIds,
   displayMode,
   onDisplayModeChange,
   selectedProtocolOverrideIfBothExists = UIType.OPENAI_SDK,
@@ -93,6 +95,8 @@ export function PartSwitch({
   onExitPip: (toolCallId: string) => void;
   onRequestFullscreen: (toolCallId: string) => void;
   onExitFullscreen: (toolCallId: string) => void;
+  onRequestTeardown?: (toolCallId: string) => void;
+  tornDownWidgetIds?: ReadonlySet<string>;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
   selectedProtocolOverrideIfBothExists?: UIType;
@@ -320,7 +324,11 @@ export function PartSwitch({
     // this gate today. A future explicit "window.openai" flag on
     // HostConfigInputV2 will be OR-ed here to cover Apps-SDK hosts that
     // choose to strip the MCP UI extension.
+    const isWidgetTornDown =
+      typeof toolInfo.toolCallId === "string" &&
+      tornDownWidgetIds?.has(toolInfo.toolCallId);
     const shouldRenderWidget =
+      !isWidgetTornDown &&
       hostSupportsWidgetRendering(resolveHostCaps(serverId ?? undefined)) &&
       (uiType === UIType.OPENAI_SDK ||
         uiType === UIType.MCP_APPS ||
@@ -379,6 +387,7 @@ export function PartSwitch({
             onExitPip={interactive ? onExitPip : undefined}
             onRequestFullscreen={interactive ? onRequestFullscreen : undefined}
             onExitFullscreen={interactive ? onExitFullscreen : undefined}
+            onRequestTeardown={interactive ? onRequestTeardown : undefined}
             displayMode={interactive ? displayMode : undefined}
             onDisplayModeChange={interactive ? onDisplayModeChange : undefined}
             onAppSupportedDisplayModesChange={

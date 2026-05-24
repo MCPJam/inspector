@@ -18,6 +18,7 @@
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ToolSet } from "ai";
 import { MCPClientManager } from "@mcpjam/sdk";
+import { isToolVisibilityAppOnly } from "@modelcontextprotocol/ext-apps/app-bridge";
 import {
   isAnthropicCompatibleModel,
   getInvalidAnthropicToolNames,
@@ -58,13 +59,10 @@ function filterAppOnlyTools(
     const serverId = (tool as { _serverId?: unknown })._serverId;
     if (typeof serverId !== "string") continue;
     const meta = getMeta(serverId)[name];
-    const ui = (meta as { ui?: { visibility?: unknown } } | undefined)?.ui;
-    const visibility = ui?.visibility;
-    if (
-      Array.isArray(visibility) &&
-      visibility.length === 1 &&
-      visibility[0] === "app"
-    ) {
+    // SDK helper takes a tool-shaped object with `_meta`; wrap the per-tool
+    // metadata to match its expected shape. Returns true iff `_meta.ui.visibility`
+    // is exactly `["app"]`.
+    if (isToolVisibilityAppOnly({ _meta: meta })) {
       delete tools[name];
     }
   }

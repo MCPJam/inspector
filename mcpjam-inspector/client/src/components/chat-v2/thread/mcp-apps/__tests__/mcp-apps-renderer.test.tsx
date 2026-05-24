@@ -49,6 +49,7 @@ const {
     onsizechange: null as any,
     onrequestdisplaymode: null as any,
     onupdatemodelcontext: null as any,
+    onrequestteardown: null as any,
   };
   const appBridgeArgsRef = { current: null as any };
   const mockAppBridgeCtor = vi
@@ -182,8 +183,7 @@ vi.mock("@/stores/preferences/preferences-provider", () => ({
 }));
 
 vi.mock("@/stores/ui-playground-store", () => ({
-  useUIPlaygroundStore: (selector: any) =>
-    selector(mockPlaygroundStoreState),
+  useUIPlaygroundStore: (selector: any) => selector(mockPlaygroundStoreState),
 }));
 
 vi.mock("@/stores/client-context-store", () => ({
@@ -310,6 +310,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     mockBridge.onsizechange = null;
     mockBridge.onrequestdisplaymode = null;
     mockBridge.onupdatemodelcontext = null;
+    mockBridge.onrequestteardown = null;
     mockSandboxPostMessage.mockClear();
     sandboxedIframePropsRef.current = null;
     sandboxedIframeElementRef.current = null;
@@ -359,12 +360,12 @@ describe("MCPAppsRenderer tool input streaming", () => {
           baseUriDomains: [],
         }}
         widgetPermissions={{ microphone: true } as any}
-      />,
+      />
     );
 
     await vi.waitFor(() => {
       expect(sandboxedIframePropsRef.current?.html).toBe(
-        "<html><body>widget</body></html>",
+        "<html><body>widget</body></html>"
       );
     });
 
@@ -377,7 +378,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     render(
       <ChatboxHostStyleProvider value="claude">
         <MCPAppsRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>
     );
 
     await vi.waitFor(() => {
@@ -386,7 +387,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
     // Should advertise Claude's preset, not the old empty literal.
     expect(appBridgeArgsRef.current?.hostCapabilities).toEqual(
-      expect.objectContaining(getHostCapabilitiesForStyle("claude")),
+      expect.objectContaining(getHostCapabilitiesForStyle("claude"))
     );
   });
 
@@ -411,7 +412,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         <ChatboxHostThemeProvider value="dark">
           <MCPAppsRenderer {...baseProps} />
         </ChatboxHostThemeProvider>
-      </ChatboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>
     );
 
     await vi.waitFor(() => {
@@ -419,7 +420,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
 
     expect(appBridgeArgsRef.current?.hostCapabilities).toEqual(
-      expect.objectContaining(getHostCapabilitiesForStyle("chatgpt")),
+      expect.objectContaining(getHostCapabilitiesForStyle("chatgpt"))
     );
     // Sanity: profiles differ — switching is observable. Use a
     // distinguishing key (Claude advertises serverResources / logging;
@@ -441,7 +442,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     render(
       <ChatboxHostStyleProvider value="copilot">
         <MCPAppsRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>
     );
 
     await vi.waitFor(() => {
@@ -453,11 +454,8 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
     const modalCaps = mcpAppsModalPropsRef.current
       ?.effectiveHostCapabilities as Record<string, unknown>;
-    const { sandbox: _sandbox, ...inlineVendorOnly } =
-      (appBridgeArgsRef.current?.hostCapabilities ?? {}) as Record<
-        string,
-        unknown
-      >;
+    const { sandbox: _sandbox, ...inlineVendorOnly } = (appBridgeArgsRef.current
+      ?.hostCapabilities ?? {}) as Record<string, unknown>;
     expect(modalCaps).toEqual(inlineVendorOnly);
     // Sentinel: Copilot's preset matrix strips both keys in inline AND
     // modal post-fix. (Pre-fix the modal would have included them.)
@@ -469,7 +467,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     render(
       <ChatboxHostStyleProvider value="claude">
         <MCPAppsRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>
     );
     await vi.waitFor(() => {
       expect(mockBridge.connect).toHaveBeenCalled();
@@ -478,9 +476,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
       | Record<string, unknown>
       | undefined;
     expect(hostContext).toHaveProperty("toolInfo");
-    expect((hostContext?.toolInfo as { tool: { name: string } }).tool.name).toBe(
-      "test-tool",
-    );
+    expect(
+      (hostContext?.toolInfo as { tool: { name: string } }).tool.name
+    ).toBe("test-tool");
   });
 
   it("omits HostContext.toolInfo entirely when the matrix has toolInfo: false (Copilot)", async () => {
@@ -490,7 +488,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     render(
       <ChatboxHostStyleProvider value="copilot">
         <MCPAppsRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>
     );
     await vi.waitFor(() => {
       expect(mockBridge.connect).toHaveBeenCalled();
@@ -512,7 +510,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     render(
       <ChatboxHostStyleProvider value="copilot">
         <MCPAppsRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>
     );
     await vi.waitFor(() => {
       expect(mockBridge.connect).toHaveBeenCalled();
@@ -532,7 +530,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     render(
       <ChatboxHostStyleProvider value="copilot">
         <MCPAppsRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>
     );
     await vi.waitFor(() => {
       expect(mockBridge.connect).toHaveBeenCalled();
@@ -547,7 +545,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     render(
       <ChatboxHostStyleProvider value="claude">
         <MCPAppsRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>
     );
     await vi.waitFor(() => {
       expect(mockBridge.connect).toHaveBeenCalled();
@@ -579,7 +577,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
           displayMode="pip"
           pipWidgetId="call-1"
         />
-      </ChatboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>
     );
     await vi.waitFor(() => {
       expect(mockBridge.connect).toHaveBeenCalled();
@@ -614,7 +612,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
             fullscreenWidgetId="call-1"
           />
         </ChatboxHostStyleProvider>
-      </ActiveMcpProfileProvider>,
+      </ActiveMcpProfileProvider>
     );
     await vi.waitFor(() => {
       expect(mockBridge.connect).toHaveBeenCalled();
@@ -657,7 +655,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     render(
       <ChatboxHostStyleProvider value="copilot">
         <MCPAppsRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>
     );
     await vi.waitFor(() => {
       expect(sandboxedIframePropsRef.current?.csp).toBeDefined();
@@ -701,7 +699,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     render(
       <ChatboxHostStyleProvider value="claude">
         <MCPAppsRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>
     );
     await vi.waitFor(() => {
       expect(sandboxedIframePropsRef.current?.csp).toBeDefined();
@@ -740,17 +738,17 @@ describe("MCPAppsRenderer tool input streaming", () => {
     render(
       <ChatboxHostStyleProvider value="copilot">
         <MCPAppsRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>
     );
     await vi.waitFor(() => {
       expect(sandboxedIframePropsRef.current?.html).toBe(
-        "<html><body>widget</body></html>",
+        "<html><body>widget</body></html>"
       );
     });
     // Permissions cleared on Copilot — matches what real Copilot does
     // (it doesn't honor the widget's permission declarations at all).
     expect(
-      sandboxedIframePropsRef.current?.permissions ?? undefined,
+      sandboxedIframePropsRef.current?.permissions ?? undefined
     ).toBeUndefined();
   });
 
@@ -815,15 +813,15 @@ describe("MCPAppsRenderer tool input streaming", () => {
     render(
       <ActiveMcpProfileProvider value={copilotPermissionsOff}>
         <MCPAppsRenderer {...baseProps} />
-      </ActiveMcpProfileProvider>,
+      </ActiveMcpProfileProvider>
     );
     await vi.waitFor(() => {
       expect(sandboxedIframePropsRef.current?.html).toBe(
-        "<html><body>widget</body></html>",
+        "<html><body>widget</body></html>"
       );
     });
     expect(
-      sandboxedIframePropsRef.current?.permissions ?? undefined,
+      sandboxedIframePropsRef.current?.permissions ?? undefined
     ).toBeUndefined();
   });
 
@@ -850,11 +848,11 @@ describe("MCPAppsRenderer tool input streaming", () => {
     render(
       <ChatboxHostStyleProvider value="claude">
         <MCPAppsRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>
     );
     await vi.waitFor(() => {
       expect(sandboxedIframePropsRef.current?.html).toBe(
-        "<html><body>widget</body></html>",
+        "<html><body>widget</body></html>"
       );
     });
     // Claude's matrix honors permissions → widget declaration
@@ -875,7 +873,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
           toolInput={{ query: "yellow" }}
           toolOutput={undefined}
         />
-      </ChatboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>
     );
 
     await vi.waitFor(() => {
@@ -896,7 +894,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
           toolOutput={undefined}
           toolMetadata={{ "openai/outputTemplate": "ui://widget/test.html" }}
         />
-      </ChatboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>
     );
 
     await act(async () => {
@@ -918,7 +916,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
           }}
           toolMetadata={{ "openai/outputTemplate": "ui://widget/test.html" }}
         />
-      </ChatboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>
     );
 
     await vi.waitFor(() => {
@@ -950,7 +948,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
           cachedWidgetHtmlUrl="blob:cached"
           liveFetchPreferred
         />
-      </ChatboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>
     );
 
     await act(async () => {
@@ -975,7 +973,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
           cachedWidgetHtmlUrl="blob:cached"
           liveFetchPreferred
         />
-      </ChatboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>
     );
 
     await vi.waitFor(() => {
@@ -1006,7 +1004,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     render(
       <ChatboxHostCapabilitiesOverrideProvider value={override}>
         <MCPAppsRenderer {...baseProps} />
-      </ChatboxHostCapabilitiesOverrideProvider>,
+      </ChatboxHostCapabilitiesOverrideProvider>
     );
 
     await vi.waitFor(() => {
@@ -1024,7 +1022,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         <ChatboxHostThemeProvider value="dark">
           <MCPAppsRenderer {...baseProps} />
         </ChatboxHostThemeProvider>
-      </ChatboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>
     );
 
     await vi.waitFor(() => {
@@ -1034,11 +1032,11 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(
       appBridgeArgsRef.current?.options?.hostContext?.styles?.variables?.[
         "--color-background-primary"
-      ],
+      ]
     ).toBe(
       CHATGPT_HOST_STYLE.mcp.resolveStyleVariables("dark")[
         "--color-background-primary"
-      ],
+      ]
     );
 
     await act(async () => {
@@ -1061,7 +1059,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
               fonts: "",
             }),
           }),
-        }),
+        })
       );
     });
   });
@@ -1077,7 +1075,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         <ChatboxHostThemeProvider value="dark">
           <MCPAppsRenderer {...baseProps} />
         </ChatboxHostThemeProvider>
-      </ChatboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>
     );
 
     await vi.waitFor(() => {
@@ -1088,11 +1086,11 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(
       appBridgeArgsRef.current?.options?.hostContext?.styles?.variables?.[
         "--color-background-primary"
-      ],
+      ]
     ).toBe(
       CLAUDE_HOST_STYLE.mcp.resolveStyleVariables("dark")[
         "--color-background-primary"
-      ],
+      ]
     );
 
     await act(async () => {
@@ -1112,7 +1110,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
                 ],
             }),
           }),
-        }),
+        })
       );
     });
   });
@@ -1143,7 +1141,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
       expect(mockBridge.setHostContext).toHaveBeenLastCalledWith(
         expect.objectContaining({
           theme: "light",
-        }),
+        })
       );
     });
   });
@@ -1174,7 +1172,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
           availableDisplayModes: ["inline"],
           locale: "fr-FR",
           timeZone: "Europe/Paris",
-        }),
+        })
       );
     });
   });
@@ -1193,7 +1191,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     render(
       <ChatboxHostStyleProvider value="claude">
         <MCPAppsRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>
     );
 
     await vi.waitFor(() => {
@@ -1201,7 +1199,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
 
     expect(
-      appBridgeArgsRef.current?.options?.hostContext?.styles?.variables,
+      appBridgeArgsRef.current?.options?.hostContext?.styles?.variables
     ).toEqual(
       expect.objectContaining({
         "--color-background-primary":
@@ -1209,13 +1207,13 @@ describe("MCPAppsRenderer tool input streaming", () => {
             "--color-background-primary"
           ],
         "--font-sans": "Custom Sans",
-      }),
+      })
     );
     expect(
-      appBridgeArgsRef.current?.options?.hostContext?.styles?.variables,
+      appBridgeArgsRef.current?.options?.hostContext?.styles?.variables
     ).not.toHaveProperty("--mcpjam-theme-preset");
     expect(
-      appBridgeArgsRef.current?.options?.hostContext?.styles?.variables,
+      appBridgeArgsRef.current?.options?.hostContext?.styles?.variables
     ).not.toHaveProperty("--totally-unknown");
 
     await act(async () => {
@@ -1235,7 +1233,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
               "--font-sans": "Custom Sans",
             }),
           }),
-        }),
+        })
       );
     });
   });
@@ -1244,7 +1242,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     render(
       <ChatboxHostStyleProvider value="claude">
         <MCPAppsRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>
     );
 
     const iframe = await screen.findByTestId("sandboxed-iframe");
@@ -1254,7 +1252,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(sandboxedIframePropsRef.current?.style?.backgroundColor).toBe(
       CLAUDE_HOST_STYLE.mcp.resolveStyleVariables("light")[
         "--color-background-primary"
-      ],
+      ]
     );
     expect(sandboxedIframePropsRef.current?.colorScheme).toBe("light");
     expect(hostChrome).toHaveStyle({
@@ -1284,7 +1282,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     render(
       <ChatboxHostStyleProvider value="claude">
         <MCPAppsRenderer {...baseProps} prefersBorder={false} />
-      </ChatboxHostStyleProvider>,
+      </ChatboxHostStyleProvider>
     );
 
     const iframe = await screen.findByTestId("sandboxed-iframe");
@@ -1293,7 +1291,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(iframe.className).toContain("bg-transparent");
     expect(iframe.className).not.toContain("border border-border/40");
     expect(sandboxedIframePropsRef.current?.style?.backgroundColor).toBe(
-      CLAUDE_HOST_STYLE.chatUi.resolveChatBackground("light"),
+      CLAUDE_HOST_STYLE.chatUi.resolveChatBackground("light")
     );
     expect(sandboxedIframePropsRef.current?.colorScheme).toBe("light");
   });
@@ -1311,7 +1309,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         cachedWidgetHtmlUrl="blob:cached"
         displayMode="pip"
         pipWidgetId="call-1"
-      />,
+      />
     );
 
     const iframe = await screen.findByTestId("sandboxed-iframe");
@@ -1337,7 +1335,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         cachedWidgetHtmlUrl="blob:cached"
         displayMode="fullscreen"
         fullscreenWidgetId="call-1"
-      />,
+      />
     );
 
     const iframe = await screen.findByTestId("sandboxed-iframe");
@@ -1372,7 +1370,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         cachedWidgetHtmlUrl="blob:cached"
         displayMode="fullscreen"
         fullscreenWidgetId="call-1"
-      />,
+      />
     );
 
     expect(sandboxedIframeElementRef.current).toBe(initialIframeElement);
@@ -1412,7 +1410,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         cachedWidgetHtmlUrl="blob:cached"
         displayMode="fullscreen"
         fullscreenWidgetId="call-1"
-      />,
+      />
     );
     expect(sandboxedIframePropsRef.current?.style?.height).toBe("100%");
 
@@ -1422,6 +1420,37 @@ describe("MCPAppsRenderer tool input streaming", () => {
     rerender(renderInline());
 
     expect(sandboxedIframePropsRef.current?.style?.height).toBe("300px");
+  });
+
+  it("applies size-changed width to the inline renderer container", async () => {
+    const renderInline = () => (
+      <MCPAppsRenderer
+        {...baseProps}
+        cachedWidgetHtmlUrl="blob:cached"
+        displayMode="inline"
+      />
+    );
+    const { rerender } = render(renderInline());
+
+    await screen.findByTestId("sandboxed-iframe");
+    await vi.waitFor(() => {
+      expect(mockBridge.onsizechange).toBeTypeOf("function");
+    });
+
+    act(() => {
+      mockBridge.onsizechange?.({ width: 300, height: 300 });
+    });
+
+    const hostChrome = screen.getByTestId("mcp-app-host-chrome");
+    const container = hostChrome.parentElement as HTMLElement;
+    expect(container.style.width).toBe("300px");
+
+    rerender(renderInline());
+    expect(hostChrome.parentElement).toHaveStyle({
+      width: "300px",
+      maxWidth: "100%",
+    });
+    expect(sandboxedIframePropsRef.current?.style?.width).toBe("100%");
   });
 
   it("pushes updated host context when the project client profile changes", async () => {
@@ -1441,7 +1470,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         expect.objectContaining({
           locale: "en-US",
           timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        }),
+        })
       );
     });
 
@@ -1465,7 +1494,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
             hover: false,
             touch: true,
           },
-        }),
+        })
       );
     });
   });
@@ -1483,12 +1512,12 @@ describe("MCPAppsRenderer tool input streaming", () => {
         }}
         widgetPermissions={{ clipboardWrite: true } as any}
         widgetPermissive={false}
-      />,
+      />
     );
 
     await vi.waitFor(() => {
       expect(sandboxedIframePropsRef.current?.html).toBe(
-        "<html><body>widget</body></html>",
+        "<html><body>widget</body></html>"
       );
     });
 
@@ -1510,12 +1539,12 @@ describe("MCPAppsRenderer tool input streaming", () => {
         }}
         widgetPermissions={{ geolocation: true } as any}
         widgetPermissive={true}
-      />,
+      />
     );
 
     await vi.waitFor(() => {
       expect(sandboxedIframePropsRef.current?.html).toBe(
-        "<html><body>widget</body></html>",
+        "<html><body>widget</body></html>"
       );
     });
 
@@ -1529,7 +1558,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
     await vi.waitFor(() => {
       expect(sandboxedIframePropsRef.current?.html).toBe(
-        "<html><body>live-widget</body></html>",
+        "<html><body>live-widget</body></html>"
       );
     });
 
@@ -1551,12 +1580,12 @@ describe("MCPAppsRenderer tool input streaming", () => {
         {...baseProps}
         cachedWidgetHtmlUrl="blob:cached"
         liveFetchPreferred
-      />,
+      />
     );
 
     await vi.waitFor(() => {
       expect(sandboxedIframePropsRef.current?.html).toBe(
-        "<html><body>live-widget</body></html>",
+        "<html><body>live-widget</body></html>"
       );
     });
 
@@ -1569,7 +1598,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("falls back to cached HTML when the live fetch throws (e.g. server disconnected)", async () => {
     vi.mocked(authFetch).mockRejectedValueOnce(
-      new Error('Hosted server not found for "server-1"'),
+      new Error('Hosted server not found for "server-1"')
     );
 
     render(
@@ -1577,12 +1606,12 @@ describe("MCPAppsRenderer tool input streaming", () => {
         {...baseProps}
         cachedWidgetHtmlUrl="blob:cached"
         liveFetchPreferred
-      />,
+      />
     );
 
     await vi.waitFor(() => {
       expect(sandboxedIframePropsRef.current?.html).toBe(
-        "<html><body>widget</body></html>",
+        "<html><body>widget</body></html>"
       );
     });
 
@@ -1613,7 +1642,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     render(
       <WidgetSurfaceProvider value="playground">
         <MCPAppsRenderer {...baseProps} />
-      </WidgetSurfaceProvider>,
+      </WidgetSurfaceProvider>
     );
 
     await vi.waitFor(() => {
@@ -1665,7 +1694,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         toolCallId="call-stale"
         cachedWidgetHtmlUrl="blob:cached"
         liveFetchPreferred
-      />,
+      />
     );
 
     // Wait for the stale fetch to start.
@@ -1682,13 +1711,13 @@ describe("MCPAppsRenderer tool input streaming", () => {
         toolCallId="call-fresh"
         cachedWidgetHtmlUrl="blob:cached"
         liveFetchPreferred
-      />,
+      />
     );
 
     // Wait for the fresh fetch to complete and paint the sandbox.
     await vi.waitFor(() => {
       expect(sandboxedIframePropsRef.current?.html).toBe(
-        "<html><body>live-widget</body></html>",
+        "<html><body>live-widget</body></html>"
       );
     });
 
@@ -1715,10 +1744,10 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
 
     expect(sandboxedIframePropsRef.current?.html).toBe(
-      "<html><body>live-widget</body></html>",
+      "<html><body>live-widget</body></html>"
     );
     expect(sandboxedIframePropsRef.current?.html).not.toContain(
-      "STALE-CONTENT",
+      "STALE-CONTENT"
     );
   });
 
@@ -1748,13 +1777,11 @@ describe("MCPAppsRenderer tool input streaming", () => {
         {...baseProps}
         cachedWidgetHtmlUrl="blob:cached"
         liveFetchPreferred
-      />,
+      />
     );
 
     await vi.waitFor(() => {
-      expect(
-        screen.getByText(/SEP-1865 requires/i),
-      ).toBeInTheDocument();
+      expect(screen.getByText(/SEP-1865 requires/i)).toBeInTheDocument();
     });
 
     // Cached blob must NOT be fetched on invalid mimetype.
@@ -1771,11 +1798,11 @@ describe("MCPAppsRenderer tool input streaming", () => {
       () =>
         new Promise<void>((resolve) => {
           resolveConnect = resolve;
-        }),
+        })
     );
 
     render(
-      <MCPAppsRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />,
+      <MCPAppsRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
     );
 
     await vi.waitFor(() => {
@@ -1791,7 +1818,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
     await vi.waitFor(() => {
       expect(sandboxedIframePropsRef.current?.html).toBe(
-        "<html><body>widget</body></html>",
+        "<html><body>widget</body></html>"
       );
     });
   });
@@ -1800,7 +1827,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     sandboxProxyBehaviorRef.current.autoReady = false;
 
     render(
-      <MCPAppsRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />,
+      <MCPAppsRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
     );
 
     await vi.waitFor(() => {
@@ -1814,7 +1841,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         "call-1",
         "<html><body>widget</body></html>",
         undefined,
-        undefined,
+        undefined
       );
     });
 
@@ -1832,7 +1859,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
     await vi.waitFor(() => {
       expect(sandboxedIframePropsRef.current?.html).toBe(
-        "<html><body>widget</body></html>",
+        "<html><body>widget</body></html>"
       );
     });
   });
@@ -1844,7 +1871,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     // store's lifecycle array. This is the runtime feed the Sandbox debug
     // panel reads — if it stops happening the panel silently goes blank.
     render(
-      <MCPAppsRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />,
+      <MCPAppsRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
     );
 
     await vi.waitFor(() => {
@@ -1861,7 +1888,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         // hostInfo derived from activeMcpProfile.apps.uiInitialize.hostInfo;
         // null in the test environment because the default context value is
         // `undefined` (no ActiveMcpProfileProvider wrapping the renderer).
-        null,
+        null
       );
     });
 
@@ -1880,7 +1907,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         toolState="input-streaming"
         toolInput={partialInput}
         cachedWidgetHtmlUrl="blob:cached"
-      />,
+      />
     );
 
     await vi.waitFor(() => {
@@ -1904,7 +1931,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         toolState="input-streaming"
         toolInput={undefined}
         cachedWidgetHtmlUrl="blob:cached"
-      />,
+      />
     );
 
     await vi.waitFor(() => {
@@ -1927,7 +1954,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         toolState="input-streaming"
         toolInput={partialInput}
         cachedWidgetHtmlUrl="blob:cached"
-      />,
+      />
     );
 
     await vi.waitFor(() => {
@@ -1953,7 +1980,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         toolState="input-streaming"
         toolInput={firstPartial}
         cachedWidgetHtmlUrl="blob:cached"
-      />,
+      />
     );
 
     await vi.waitFor(() => {
@@ -1970,7 +1997,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         toolState="input-streaming"
         toolInput={secondPartial}
         cachedWidgetHtmlUrl="blob:cached"
-      />,
+      />
     );
     await vi.waitFor(() => {
       expect(mockBridge.sendToolInputPartial).toHaveBeenCalledTimes(2);
@@ -1985,7 +2012,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         toolState="input-streaming"
         toolInput={{ ...secondPartial }}
         cachedWidgetHtmlUrl="blob:cached"
-      />,
+      />
     );
     expect(mockBridge.sendToolInputPartial).toHaveBeenCalledTimes(2);
   });
@@ -1999,7 +2026,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         toolState="input-streaming"
         toolInput={firstPartial}
         cachedWidgetHtmlUrl="blob:cached"
-      />,
+      />
     );
 
     await vi.waitFor(() => {
@@ -2019,7 +2046,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         toolState="input-streaming"
         toolInput={secondPartial}
         cachedWidgetHtmlUrl="blob:cached"
-      />,
+      />
     );
 
     await vi.waitFor(() => {
@@ -2039,7 +2066,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         toolState="input-streaming"
         toolInput={firstPartial}
         cachedWidgetHtmlUrl="blob:cached"
-      />,
+      />
     );
 
     await vi.waitFor(() => {
@@ -2059,7 +2086,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         toolState="input-streaming"
         toolInput={secondPartial}
         cachedWidgetHtmlUrl="blob:cached"
-      />,
+      />
     );
 
     await vi.waitFor(() => {
@@ -2077,7 +2104,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         toolState="input-streaming"
         toolInput={{ elements: '[{"type":"rectangle"' }}
         cachedWidgetHtmlUrl="blob:cached"
-      />,
+      />
     );
 
     await vi.waitFor(() => {
@@ -2095,7 +2122,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         toolState="input-available"
         toolInput={completeInput}
         cachedWidgetHtmlUrl="blob:cached"
-      />,
+      />
     );
     await vi.waitFor(() => {
       expect(mockBridge.sendToolInput).toHaveBeenCalledTimes(1);
@@ -2110,7 +2137,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         toolState="input-streaming"
         toolInput={{ elements: '[{"type":"triangle"' }}
         cachedWidgetHtmlUrl="blob:cached"
-      />,
+      />
     );
     await vi.waitFor(() => {
       expect(mockBridge.sendToolInput).toHaveBeenCalledTimes(1);
@@ -2123,7 +2150,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         toolState="output-available"
         toolInput={{ elements: '[{"type":"ellipse"}]' }}
         cachedWidgetHtmlUrl="blob:cached"
-      />,
+      />
     );
     await vi.waitFor(() => {
       expect(mockBridge.sendToolInput).toHaveBeenCalledTimes(2);
@@ -2132,7 +2159,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("sends tool output when widget becomes ready", async () => {
     render(
-      <MCPAppsRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />,
+      <MCPAppsRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
     );
 
     await vi.waitFor(() => {
@@ -2143,14 +2170,14 @@ describe("MCPAppsRenderer tool input streaming", () => {
     await vi.waitFor(() => {
       expect(mockBridge.sendToolResult).toHaveBeenCalledTimes(1);
       expect(mockBridge.sendToolResult).toHaveBeenCalledWith(
-        baseProps.toolOutput,
+        baseProps.toolOutput
       );
     });
   });
 
   it("re-sends tool output when prop changes", async () => {
     const { rerender } = render(
-      <MCPAppsRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />,
+      <MCPAppsRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
     );
 
     await vi.waitFor(() => {
@@ -2167,7 +2194,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         {...baseProps}
         toolOutput={newOutput}
         cachedWidgetHtmlUrl="blob:cached"
-      />,
+      />
     );
 
     await vi.waitFor(() => {
@@ -2183,7 +2210,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         toolState="output-available"
         toolInput={{ elements: '[{"type":"rectangle"}]' }}
         cachedWidgetHtmlUrl="blob:cached"
-      />,
+      />
     );
 
     await vi.waitFor(() => {
@@ -2204,7 +2231,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         toolState="output-available"
         toolInput={{ elements: '[{"type":"ellipse"}]' }}
         cachedWidgetHtmlUrl="blob:cached"
-      />,
+      />
     );
 
     await vi.waitFor(() => {
@@ -2217,7 +2244,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("rejects invalid fileId in getFileDownloadUrl widget messages", async () => {
     render(
-      <MCPAppsRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />,
+      <MCPAppsRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
     );
 
     await vi.waitFor(() => {
@@ -2248,7 +2275,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         {...baseProps}
         minimalMode={true}
         cachedWidgetHtmlUrl="blob:cached"
-      />,
+      />
     );
 
     await vi.waitFor(() => {
@@ -2269,7 +2296,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
         {...baseProps}
         minimalMode={true}
         cachedWidgetHtmlUrl="blob:cached"
-      />,
+      />
     );
 
     await vi.waitFor(() => {
@@ -2334,7 +2361,7 @@ describe("MCPAppsRenderer host capability enforcement", () => {
     render(
       <ChatboxHostCapabilitiesOverrideProvider value={{}}>
         <MCPAppsRenderer {...baseProps} />
-      </ChatboxHostCapabilitiesOverrideProvider>,
+      </ChatboxHostCapabilitiesOverrideProvider>
     );
 
     await vi.waitFor(() => {
@@ -2355,7 +2382,7 @@ describe("MCPAppsRenderer host capability enforcement", () => {
     render(
       <ChatboxHostCapabilitiesOverrideProvider value={{}}>
         <MCPAppsRenderer {...baseProps} />
-      </ChatboxHostCapabilitiesOverrideProvider>,
+      </ChatboxHostCapabilitiesOverrideProvider>
     );
 
     await vi.waitFor(() => {
@@ -2387,7 +2414,7 @@ describe("MCPAppsRenderer host capability enforcement", () => {
       render(
         <ChatboxHostCapabilitiesOverrideProvider value={{ [cap]: {} }}>
           <MCPAppsRenderer {...baseProps} />
-        </ChatboxHostCapabilitiesOverrideProvider>,
+        </ChatboxHostCapabilitiesOverrideProvider>
       );
 
       await vi.waitFor(() => {
@@ -2395,16 +2422,14 @@ describe("MCPAppsRenderer host capability enforcement", () => {
       });
 
       expect(mockBridge[handlerKey]).not.toBeNull();
-    },
+    }
   );
 
   it("registers all three serverResources handlers under a single cap", async () => {
     render(
-      <ChatboxHostCapabilitiesOverrideProvider
-        value={{ serverResources: {} }}
-      >
+      <ChatboxHostCapabilitiesOverrideProvider value={{ serverResources: {} }}>
         <MCPAppsRenderer {...baseProps} />
-      </ChatboxHostCapabilitiesOverrideProvider>,
+      </ChatboxHostCapabilitiesOverrideProvider>
     );
 
     await vi.waitFor(() => {
@@ -2418,11 +2443,9 @@ describe("MCPAppsRenderer host capability enforcement", () => {
 
   it("leaves serverResources handlers unregistered without the cap", async () => {
     render(
-      <ChatboxHostCapabilitiesOverrideProvider
-        value={{ openLinks: {} }}
-      >
+      <ChatboxHostCapabilitiesOverrideProvider value={{ openLinks: {} }}>
         <MCPAppsRenderer {...baseProps} />
-      </ChatboxHostCapabilitiesOverrideProvider>,
+      </ChatboxHostCapabilitiesOverrideProvider>
     );
 
     await vi.waitFor(() => {
@@ -2448,7 +2471,7 @@ describe("MCPAppsRenderer widgetDisplayModeRequests policy", () => {
   });
 
   const profileWith = (
-    policy: "accept" | "user-initiated-only" | "decline",
+    policy: "accept" | "user-initiated-only" | "decline"
   ): HostConfigMcpProfileV1 => ({
     profileVersion: 1,
     apps: { mcpAppsOverrides: { widgetDisplayModeRequests: policy } },
@@ -2460,7 +2483,7 @@ describe("MCPAppsRenderer widgetDisplayModeRequests policy", () => {
         <ChatboxHostStyleProvider value="claude">
           <MCPAppsRenderer {...baseProps} />
         </ChatboxHostStyleProvider>
-      </ActiveMcpProfileProvider>,
+      </ActiveMcpProfileProvider>
     );
     await vi.waitFor(() => {
       expect(mockBridge.onrequestdisplaymode).not.toBeNull();
@@ -2478,7 +2501,7 @@ describe("MCPAppsRenderer widgetDisplayModeRequests policy", () => {
         <ChatboxHostStyleProvider value="claude">
           <MCPAppsRenderer {...baseProps} />
         </ChatboxHostStyleProvider>
-      </ActiveMcpProfileProvider>,
+      </ActiveMcpProfileProvider>
     );
     await vi.waitFor(() => {
       expect(mockBridge.onrequestdisplaymode).not.toBeNull();
@@ -2500,7 +2523,7 @@ describe("MCPAppsRenderer widgetDisplayModeRequests policy", () => {
         <ChatboxHostStyleProvider value="claude">
           <MCPAppsRenderer {...baseProps} />
         </ChatboxHostStyleProvider>
-      </ActiveMcpProfileProvider>,
+      </ActiveMcpProfileProvider>
     );
     await vi.waitFor(() => {
       expect(mockBridge.onrequestdisplaymode).not.toBeNull();
@@ -2510,5 +2533,112 @@ describe("MCPAppsRenderer widgetDisplayModeRequests policy", () => {
     }) => Promise<{ mode: string }>;
     const result = await handler({ mode: "fullscreen" });
     expect(result.mode).toBe("inline");
+  });
+});
+
+describe("MCPAppsRenderer requestTeardown policy", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockHostContextStoreState.draftHostContext = {};
+    Object.assign(mockPreferencesState, {
+      themeMode: "light",
+      hostStyle: "claude",
+    });
+    Object.assign(mockPlaygroundStoreState, {
+      isPlaygroundActive: false,
+      mcpAppsCspMode: "permissive",
+      globals: { locale: "en-US", timeZone: "UTC" },
+      displayMode: "inline",
+      capabilities: { hover: true, touch: false },
+      safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
+      deviceType: "desktop",
+    });
+    mockBridge.oninitialized = null;
+    mockBridge.onmessage = null;
+    mockBridge.onopenlink = null;
+    mockBridge.oncalltool = null;
+    mockBridge.onreadresource = null;
+    mockBridge.onlistresources = null;
+    mockBridge.onlistresourcetemplates = null;
+    mockBridge.onlistprompts = null;
+    mockBridge.onloggingmessage = null;
+    mockBridge.onsizechange = null;
+    mockBridge.onrequestdisplaymode = null;
+    mockBridge.onupdatemodelcontext = null;
+    mockBridge.onrequestteardown = null;
+    sandboxedIframePropsRef.current = null;
+    sandboxedIframeElementRef.current = null;
+    sandboxedIframeMountsRef.current = 0;
+    sandboxedIframeUnmountsRef.current = 0;
+    sandboxProxyBehaviorRef.current.autoReady = true;
+    appBridgeArgsRef.current = null;
+
+    vi.mocked(authFetch).mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          html: "<html><body>live-widget</body></html>",
+          csp: {
+            connectDomains: ["https://api.example.com"],
+            resourceDomains: ["https://cdn.example.com"],
+            frameDomains: [],
+            baseUriDomains: [],
+          },
+          permissions: { camera: true },
+          permissive: false,
+          mimeTypeValid: true,
+          prefersBorder: true,
+        }),
+      status: 200,
+      headers: new Headers(),
+    } as Response);
+  });
+
+  const profileWithRequestTeardown = (
+    requestTeardown: boolean
+  ): HostConfigMcpProfileV1 => ({
+    profileVersion: 1,
+    apps: { mcpAppsOverrides: { requestTeardown } },
+  });
+
+  it("runs resource teardown and notifies the parent when enabled", async () => {
+    const onRequestTeardown = vi.fn();
+    render(
+      <ActiveMcpProfileProvider value={profileWithRequestTeardown(true)}>
+        <ChatboxHostStyleProvider value="claude">
+          <MCPAppsRenderer
+            {...baseProps}
+            onRequestTeardown={onRequestTeardown}
+          />
+        </ChatboxHostStyleProvider>
+      </ActiveMcpProfileProvider>
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.onrequestteardown).not.toBeNull();
+    });
+
+    await act(async () => {
+      await mockBridge.onrequestteardown();
+    });
+
+    expect(mockBridge.teardownResource).toHaveBeenCalledWith({});
+    expect(onRequestTeardown).toHaveBeenCalledWith("call-1");
+  });
+
+  it("leaves request teardown unhandled when disabled", async () => {
+    render(
+      <ActiveMcpProfileProvider value={profileWithRequestTeardown(false)}>
+        <ChatboxHostStyleProvider value="claude">
+          <MCPAppsRenderer {...baseProps} />
+        </ChatboxHostStyleProvider>
+      </ActiveMcpProfileProvider>
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+
+    expect(mockBridge.onrequestteardown).toBeNull();
   });
 });
