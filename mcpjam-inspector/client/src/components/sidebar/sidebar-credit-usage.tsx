@@ -162,6 +162,11 @@ function SidebarUsageRow({
                 <button
                   type="button"
                   aria-label={`About ${label}`}
+                  // Stop bubbling so the surrounding clickable wrapper (the
+                  // sidebar row that navigates to billing on click) doesn't
+                  // fire when the user is just trying to see the tooltip.
+                  onClick={(event) => event.stopPropagation()}
+                  onKeyDown={(event) => event.stopPropagation()}
                   className="inline-flex items-center text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:text-foreground"
                 >
                   <Info aria-hidden="true" className="size-2.5" />

@@ -168,6 +168,10 @@ function UsageRow({
                 <button
                   type="button"
                   aria-label={`About ${label}`}
+                  // Defensive: stop bubbling so a future clickable parent
+                  // wrapper doesn't fire when the user clicks the info icon.
+                  onClick={(event) => event.stopPropagation()}
+                  onKeyDown={(event) => event.stopPropagation()}
                   className="inline-flex items-center text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:text-foreground"
                 >
                   <Info aria-hidden="true" className="size-3" />
