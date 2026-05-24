@@ -1327,7 +1327,9 @@ export function useChatSession(
     () => isOrgManagedModel(hostedOrgModelConfig, selectedModel),
     [hostedOrgModelConfig, selectedModel]
   );
-  const traceViewsSupported = HOSTED_MODE ? isMcpJamModel : true;
+  const traceViewsSupported = HOSTED_MODE
+    ? isMcpJamModel || selectedModelUsesOrgRuntime
+    : true;
 
   const chatFetch = useCallback(
     async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1674,12 +1676,24 @@ export function useChatSession(
     if (!liveTraceEnvelopeBase) {
       return null;
     }
-    return mergePreviewSpansIntoLiveEnvelope(
+    const merged = mergePreviewSpansIntoLiveEnvelope(
       liveTraceEnvelopeBase,
       liveTraceState,
       previewWallElapsedMs,
       traceTranscriptFromUi
     );
+    // Rehydrated sessions arrive with `state.messages = []` (see
+    // buildLiveTraceStateFromTurnTraces), so the envelope's messages stay
+    // empty and the trace timeline can't resolve tool input/output. Fill
+    // them in from the converted UI transcript whenever it has more
+    // entries — same picker the preview path uses for live sessions.
+    const transcript = pickTranscriptForLiveTracePreview({
+      snapshotMessages: merged.messages,
+      transcriptFromUi: traceTranscriptFromUi,
+    });
+    return transcript === merged.messages
+      ? merged
+      : { ...merged, messages: transcript };
   }, [
     liveTraceEnvelopeBase,
     liveTraceState,

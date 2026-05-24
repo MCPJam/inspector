@@ -387,6 +387,7 @@ describe("useChatSession hosted mode", () => {
     });
     expect(result.current.selectedModel.id).toBe("gpt-4o-mini");
     expect(result.current.isMcpJamModel).toBe(false);
+    expect(result.current.traceViewsSupported).toBe(true);
     unmount();
   });
 

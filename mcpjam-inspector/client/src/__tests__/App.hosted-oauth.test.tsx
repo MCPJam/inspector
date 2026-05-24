@@ -435,9 +435,6 @@ vi.mock("../state/app-state-context", () => ({
   useSharedAppState: () => ({ servers: {} }),
   useOptionalSharedAppState: () => ({ servers: {} }),
 }));
-vi.mock("../components/CompletingSignInLoading", () => ({
-  default: () => <div />,
-}));
 vi.mock("../components/LoadingScreen", () => ({
   default: () => <div data-testid="hosted-oauth-loading" />,
 }));

@@ -517,7 +517,7 @@ describe("ServersTab shared detail modal", () => {
     render(<ServersTab {...defaultProps} isBillingContextPending={true} />);
 
     expect(
-      screen.getByTestId("servers-billing-context-pending")
+      screen.getByTestId("servers-loading-skeleton")
     ).toBeInTheDocument();
     expect(screen.queryByText("Add Server")).not.toBeInTheDocument();
     expect(mockUseProjectBillingGate).toHaveBeenCalledWith(
