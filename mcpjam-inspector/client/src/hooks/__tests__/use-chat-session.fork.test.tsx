@@ -568,6 +568,108 @@ describe("useChatSession fork preservation", () => {
     expect(result.current.messages).toEqual([message]);
   });
 
+  it("populates liveTraceEnvelope.messages from the restored transcript so trace timeline can resolve tool input/output", async () => {
+    // Transcript with one tool call so the trace timeline can resolve its
+    // input/output. The same shape we read from a real session blob via
+    // transcriptToUIMessages → dynamic-tool part.
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify([
+            { role: "user", content: "show me barca" },
+            {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool-call",
+                  toolCallId: "call-1",
+                  toolName: "show-squad",
+                  input: { team: "Barcelona" },
+                },
+              ],
+            },
+            {
+              role: "tool",
+              content: [
+                {
+                  type: "tool-result",
+                  toolCallId: "call-1",
+                  toolName: "show-squad",
+                  output: { type: "json", value: { players: [] } },
+                  result: { players: [] },
+                },
+              ],
+            },
+          ]),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    // Override the module-level stub so traceTranscriptFromUi reflects the
+    // loaded messages. The default mock returns [], which would mask the fix
+    // because pickTranscriptForLiveTracePreview would have nothing to pick.
+    const { convertToModelMessages } = await import("ai");
+    vi.mocked(convertToModelMessages).mockImplementation(async (messages) =>
+      // Pass-through: the rehydrated UIMessages already carry tool-call /
+      // tool-result parts in the shape extractToolData expects.
+      (messages ?? []) as any,
+    );
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: [],
+        },
+      }),
+    );
+
+    act(() => {
+      void result.current.loadChatSession({
+        chatSessionId: "restored-with-tools",
+        messagesBlobUrl: "https://storage.test/restored-with-tools.json",
+        version: 1,
+        turnTraces: [
+          {
+            turnId: "turn-1",
+            promptIndex: 0,
+            startedAt: 1000,
+            endedAt: 2000,
+          },
+        ],
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.chatSessionId).toBe("restored-with-tools");
+      expect(result.current.messages.length).toBeGreaterThan(0);
+    });
+
+    // Trace envelope picks up the rehydrated UI transcript, so timeline lookups
+    // by toolCallId hit the tool-call/tool-result parts instead of an empty
+    // messages array.
+    await waitFor(() => {
+      const envelopeMessages = result.current.liveTraceEnvelope?.messages ?? [];
+      expect(envelopeMessages.length).toBeGreaterThan(0);
+      const assistant = envelopeMessages.find(
+        (m: any) => m.role === "assistant",
+      );
+      const parts = Array.isArray(assistant?.parts) ? assistant.parts : [];
+      expect(
+        parts.some(
+          (p: any) =>
+            (p.type === "dynamic-tool" || p.type === "tool-call") &&
+            p.toolCallId === "call-1",
+        ),
+      ).toBe(true);
+    });
+  });
+
   it("restores empty sessions even when the transcript blob URL is missing", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
