@@ -9,7 +9,7 @@ interface ServersLoadingSkeletonProps extends React.ComponentProps<"div"> {
 
 function ServersLoadingSkeleton({
   cardClassName,
-  cardCount = 2,
+  cardCount = 16,
   className,
   gridClassName,
   ...props
@@ -17,16 +17,20 @@ function ServersLoadingSkeleton({
   return (
     <div
       data-slot="servers-loading-skeleton"
-      className={cn("flex-1 p-6", className)}
+      data-testid="servers-loading-skeleton"
+      className={cn("flex-1 overflow-hidden p-6", className)}
       {...props}
     >
       <div
-        className={cn("grid grid-cols-1 gap-6 xl:grid-cols-2", gridClassName)}
+        className={cn(
+          "grid grid-cols-1 gap-6 lg:grid-cols-1 xl:grid-cols-2",
+          gridClassName,
+        )}
       >
         {Array.from({ length: cardCount }).map((_, index) => (
           <Skeleton
             key={index}
-            className={cn("h-48 w-full rounded-lg", cardClassName)}
+            className={cn("h-24 w-full rounded-xl", cardClassName)}
           />
         ))}
       </div>
