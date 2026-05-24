@@ -172,7 +172,6 @@ function Harness() {
         hostStyle="chatgpt"
         effectiveThreadTheme="light"
         deviceType="mobile"
-        selectedProtocol={null}
         onSummaryChange={(summary) =>
           setSummaries((previous) => ({
             ...previous,
@@ -223,7 +222,6 @@ describe("MultiModelPlaygroundCard", () => {
         hostStyle="chatgpt"
         effectiveThreadTheme="light"
         deviceType="mobile"
-        selectedProtocol={null}
         onSummaryChange={vi.fn()}
         showComparisonChrome={false}
       />,
@@ -250,7 +248,6 @@ describe("MultiModelPlaygroundCard", () => {
         hostStyle="chatgpt"
         effectiveThreadTheme="light"
         deviceType="mobile"
-        selectedProtocol={null}
         onSummaryChange={vi.fn()}
         suppressThreadEmptyHint
       />,
@@ -279,7 +276,6 @@ describe("MultiModelPlaygroundCard", () => {
         hostStyle="chatgpt"
         effectiveThreadTheme="light"
         deviceType="mobile"
-        selectedProtocol={null}
         onSummaryChange={vi.fn()}
       />,
     );
@@ -301,7 +297,6 @@ describe("MultiModelPlaygroundCard", () => {
         hostStyle="chatgpt"
         effectiveThreadTheme="light"
         deviceType="mobile"
-        selectedProtocol={null}
         onSummaryChange={vi.fn()}
       />,
     );
@@ -335,7 +330,6 @@ describe("MultiModelPlaygroundCard", () => {
           hostStyle="chatgpt"
           effectiveThreadTheme="light"
           deviceType="desktop"
-          selectedProtocol={null}
           onSummaryChange={vi.fn()}
         />,
       );
@@ -372,7 +366,6 @@ describe("MultiModelPlaygroundCard", () => {
           hostStyle="chatgpt"
           effectiveThreadTheme="light"
           deviceType="desktop"
-          selectedProtocol={null}
           onSummaryChange={vi.fn()}
         />,
       );
@@ -409,7 +402,6 @@ describe("MultiModelPlaygroundCard", () => {
           hostStyle="chatgpt"
           effectiveThreadTheme="light"
           deviceType="mobile"
-          selectedProtocol={null}
           onSummaryChange={vi.fn()}
         />,
       );

@@ -32,7 +32,6 @@ import { TabHeader } from "./TabHeader";
 import { ToolList } from "./ToolList";
 import { SelectedToolHeader } from "./SelectedToolHeader";
 import { ParametersForm } from "./ParametersForm";
-import { detectUiTypeFromTool, UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 
 interface PlaygroundLeftProps {
   tools: Record<string, Tool>;
@@ -148,15 +147,6 @@ export function PlaygroundLeft({
     onExecute();
   };
 
-  const shouldRenderUiTypeOverrideSelector = useMemo(() => {
-    if (!selectedToolName) return false;
-    const tool = tools[selectedToolName];
-    if (!tool) return false;
-    return (
-      detectUiTypeFromTool(tool) === UIType.OPENAI_SDK_AND_MCP_APPS
-    );
-  }, [selectedToolName, tools]);
-
   const mainContent = (
     <div className="h-full min-h-0">
       {activeTab === "saved" && !selectedToolName ? (
@@ -193,9 +183,6 @@ export function PlaygroundLeft({
           onSelectTool={onSelectTool}
           onFieldChange={onFieldChange}
           onToggleField={onToggleField}
-          shouldRenderUiTypeOverrideSelector={
-            shouldRenderUiTypeOverrideSelector
-          }
         />
       )}
     </div>
@@ -319,7 +306,6 @@ interface ToolParametersViewProps {
   onSelectTool: (name: string | null) => void;
   onFieldChange: (name: string, value: unknown) => void;
   onToggleField: (name: string, isSet: boolean) => void;
-  shouldRenderUiTypeOverrideSelector: boolean;
 }
 
 function ToolParametersView({
@@ -331,7 +317,6 @@ function ToolParametersView({
   onSelectTool,
   onFieldChange,
   onToggleField,
-  shouldRenderUiTypeOverrideSelector,
 }: ToolParametersViewProps) {
   const hasParameters = formFields && formFields.length > 0;
   const [openSections, setOpenSections] = useState<string[]>(["description"]);
@@ -349,7 +334,6 @@ function ToolParametersView({
           names: toolNames,
           onSelect: (name) => onSelectTool(name),
         }}
-        showProtocolSelector={shouldRenderUiTypeOverrideSelector}
       />
       <ScrollArea className="flex-1 min-h-0">
         <Accordion

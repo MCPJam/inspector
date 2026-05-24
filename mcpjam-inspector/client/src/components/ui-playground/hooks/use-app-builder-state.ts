@@ -58,7 +58,6 @@ import type {
   SnapshotAppInspectorCommand,
 } from "@/shared/inspector-command.js";
 import { useSavedRequests, useServerKey, useToolExecution } from "./index";
-import { UIType, detectUiTypeFromTool } from "@/lib/mcp-ui/mcp-apps-utils";
 import { PANEL_SIZES } from "../constants";
 
 const SERVER_SYNC_TIMEOUT_MS = 10000;
@@ -200,7 +199,6 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
     isExecuting,
     deviceType,
     isSidebarVisible,
-    selectedProtocol,
     setTools,
     setSelectedTool,
     setFormFields,
@@ -215,7 +213,6 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
     setDisplayMode,
     updateGlobal,
     toggleSidebar,
-    setSelectedProtocol,
     reset,
     setSidebarVisible,
   } = useUIPlaygroundStore();
@@ -489,7 +486,6 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
     return {
       serverName: serverName ?? null,
       selectedTool: playgroundState.selectedTool,
-      selectedProtocol: playgroundState.selectedProtocol,
       deviceType: playgroundState.deviceType,
       displayMode: playgroundState.displayMode,
       globals: playgroundState.globals,
@@ -547,23 +543,6 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
       setFormFields([]);
     }
   }, [selectedTool, tools, setFormFields]);
-
-  useEffect(() => {
-    if (selectedTool) {
-      const tool = tools[selectedTool];
-      if (!tool) return;
-      const uiType = detectUiTypeFromTool(tool);
-      if (uiType === UIType.OPENAI_SDK_AND_MCP_APPS) {
-        const validProtocols = [UIType.MCP_APPS, UIType.OPENAI_SDK];
-        if (!selectedProtocol || !validProtocols.includes(selectedProtocol)) {
-          setSelectedProtocol(UIType.OPENAI_SDK);
-        }
-      } else {
-        setSelectedProtocol(uiType);
-      }
-      return;
-    }
-  }, [selectedTool, tools, setSelectedProtocol, selectedProtocol]);
 
   const selectToolForCommand = useCallback(
     async (
@@ -655,19 +634,6 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
     ],
   );
 
-  const resolveCommandProtocol = useCallback(
-    (protocol?: SetAppContextInspectorCommand["payload"]["protocol"]) => {
-      if (!protocol) return undefined;
-      if (protocol === UIType.MCP_APPS) return UIType.MCP_APPS;
-      if (protocol === UIType.OPENAI_SDK) return UIType.OPENAI_SDK;
-      throw createInspectorCommandClientError(
-        "invalid_request",
-        `Unsupported protocol "${protocol}".`,
-      );
-    },
-    [],
-  );
-
   // useLayoutEffect so handlers update synchronously during commit — before
   // setTimeout(0)-based waitForUiCommit() resolves. Prevents stale-closure
   // races when sequential commands arrive faster than useEffect re-registers.
@@ -752,7 +718,6 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
       "setAppContext",
       async (rawCommand) => {
         const command = rawCommand as SetAppContextInspectorCommand;
-        const protocol = resolveCommandProtocol(command.payload.protocol);
 
         if (command.payload.deviceType) {
           setDeviceType(command.payload.deviceType);
@@ -768,9 +733,6 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
         }
         if (command.payload.theme) {
           updateGlobal("theme", command.payload.theme);
-        }
-        if (protocol) {
-          setSelectedProtocol(protocol);
         }
 
         await waitForUiCommit();
@@ -808,11 +770,9 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
     buildAppBuilderSnapshot,
     executeTool,
     injectToolResult,
-    resolveCommandProtocol,
     selectToolForCommand,
     setDeviceType,
     setDisplayMode,
-    setSelectedProtocol,
     updateGlobal,
     waitForExecutionInjection,
   ]);

@@ -55,7 +55,6 @@ import {
 import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 import type { HostSnapshot } from "@/lib/host-snapshot";
-import type { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
   getChatboxChatBackground,
   type ChatboxHostStyle,
@@ -137,7 +136,6 @@ interface MultiModelPlaygroundCardProps {
   hostStyle: ChatboxHostStyle;
   effectiveThreadTheme: ThreadThemeMode;
   deviceType: DeviceType;
-  selectedProtocol: UIType | null;
   hideSaveViewButton?: boolean;
   onWidgetStateChange?: (toolCallId: string, state: unknown) => void;
   toolRenderOverrides?: Record<string, ToolRenderOverride>;
@@ -210,7 +208,6 @@ export function MultiModelPlaygroundCard({
   hostStyle,
   effectiveThreadTheme,
   deviceType,
-  selectedProtocol,
   hideSaveViewButton = false,
   onWidgetStateChange,
   toolRenderOverrides = {},
@@ -729,9 +726,6 @@ export function MultiModelPlaygroundCard({
                   sendFollowUpMessage={handleSendFollowUp}
                   displayMode={displayMode}
                   onDisplayModeChange={onDisplayModeChange}
-                  selectedProtocolOverrideIfBothExists={
-                    selectedProtocol ?? undefined
-                  }
                   onWidgetStateChange={onWidgetStateChange}
                   onModelContextUpdate={handleModelContextUpdate}
                   enableFullscreenChatOverlay
@@ -817,9 +811,6 @@ export function MultiModelPlaygroundCard({
                       displayMode={displayMode}
                       onDisplayModeChange={onDisplayModeChange}
                       onFullscreenChange={setIsWidgetFullscreen}
-                      selectedProtocolOverrideIfBothExists={
-                        selectedProtocol ?? undefined
-                      }
                       onToolApprovalResponse={addToolApprovalResponse}
                       toolRenderOverrides={mergedToolRenderOverrides}
                       showSaveViewButton={!hideSaveViewButton}

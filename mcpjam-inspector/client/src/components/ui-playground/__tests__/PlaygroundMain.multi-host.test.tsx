@@ -323,7 +323,6 @@ const mockUIPlaygroundStore = {
   setCspMode: vi.fn(),
   mcpAppsCspMode: "widget-declared",
   setMcpAppsCspMode: vi.fn(),
-  selectedProtocol: null,
   capabilities: { hover: true, touch: true },
   setCapabilities: vi.fn(),
 };

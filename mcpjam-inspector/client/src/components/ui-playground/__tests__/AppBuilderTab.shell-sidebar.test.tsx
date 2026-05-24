@@ -18,7 +18,6 @@ const mockUIPlaygroundStore = {
   isExecuting: false,
   deviceType: "mobile",
   isSidebarVisible: true,
-  selectedProtocol: null,
   setTools: vi.fn(),
   setSelectedTool: vi.fn(),
   setFormFields: vi.fn(),
@@ -31,7 +30,6 @@ const mockUIPlaygroundStore = {
   setWidgetState: vi.fn(),
   setDeviceType: vi.fn(),
   toggleSidebar: vi.fn(),
-  setSelectedProtocol: vi.fn(),
   reset: vi.fn(),
   setSidebarVisible: vi.fn(),
 };
@@ -212,7 +210,6 @@ describe("AppBuilderTab shell sidebar", () => {
       isExecuting: false,
       deviceType: "mobile",
       isSidebarVisible: true,
-      selectedProtocol: null,
     });
 
     Object.assign(mockOnboarding, {
