@@ -40,6 +40,7 @@ import type {
 } from "@/lib/project-server-config";
 import { EffectiveModeChip } from "./shared/EffectiveModeChip";
 import { useFeatureFlagEnabled } from "posthog-js/react";
+import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
 
 export type ServerDetailTab = "overview" | "configuration" | "tools-metadata";
 
@@ -125,11 +126,15 @@ export function ServerDetailModal({
         : undefined,
     [projectServerConfigDto, serverId],
   );
-  // Host default lives on the host config; the inspector doesn't expose
-  // it via this modal yet, so fall back to undefined for the chip's
-  // "host default" source attribution. PR3 wires the host-default JSON
-  // editor — once that lands, surface its value here.
-  const hostDefaultMcpWireMode: McpWireMode | undefined = undefined;
+  // Host default from the surrounding client's mcpProfile. The modal
+  // renders inside an `ActiveMcpProfileProvider` scope (set by the
+  // client editor / chat tab / playground), so the hook returns the
+  // hostConfig.mcpProfile that's currently driving server connects
+  // for this client. The chip's "host default" source attribution
+  // reflects whatever the user toggled in the Client → MCP Protocol
+  // panel.
+  const activeMcpProfile = useActiveMcpProfile();
+  const hostDefaultMcpWireMode = activeMcpProfile?.mcpWireMode;
 
   // Whether the server is in the project's auto-connect `serverIds`
   // set. The backend `ensureProjectServerConfig` rejects overrides for

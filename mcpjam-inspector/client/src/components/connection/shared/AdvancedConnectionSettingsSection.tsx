@@ -268,14 +268,6 @@ export function AdvancedConnectionSettingsSection({
                   className="scale-90"
                 />
               </div>
-              {!showWireModeControl && (
-                <p className="text-xs text-muted-foreground">
-                  Per-server override requires a project context. Edit{" "}
-                  <code className="rounded bg-muted px-1">mcpWireMode</code>{" "}
-                  in the Client → MCP Protocol JSON to change the host
-                  default instead.
-                </p>
-              )}
               {wireModeLocked && (
                 <p className="text-xs text-muted-foreground">
                   Stateless preview requires Streamable HTTP POST.
