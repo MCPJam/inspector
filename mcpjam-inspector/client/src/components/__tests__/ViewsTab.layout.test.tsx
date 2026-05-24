@@ -23,7 +23,6 @@ const {
     safeAreaInsets: { top: 0, bottom: 0, left: 0, right: 0 },
   })),
   mockPlaygroundStoreState: {
-    setSelectedProtocol: vi.fn(),
     setDeviceType: vi.fn(),
     setCustomViewport: vi.fn(),
     updateGlobal: vi.fn(),

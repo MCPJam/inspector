@@ -50,13 +50,6 @@ export interface WidgetReplayProps {
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
   onAppSupportedDisplayModesChange?: (modes: DisplayMode[] | undefined) => void;
-  /**
-   * @deprecated The renderer is now protocol-agnostic: both `openai/outputTemplate`
-   * and `_meta.ui.resourceUri` route through MCPAppsRenderer, which always
-   * injects the window.openai compat shim. Kept on the props bag to avoid
-   * a wide call-site refactor; ignored.
-   */
-  selectedProtocolOverrideIfBothExists?: UIType;
   minimalMode?: boolean;
 }
 
@@ -85,10 +78,8 @@ export function WidgetReplay({
   displayMode,
   onDisplayModeChange,
   onAppSupportedDisplayModesChange,
-  selectedProtocolOverrideIfBothExists: _ignored,
   minimalMode = false,
 }: WidgetReplayProps) {
-  void _ignored;
   const resolveHostCaps = useActiveHostCapsResolver();
   const effectiveToolMeta =
     renderOverride?.toolMetadata ??
