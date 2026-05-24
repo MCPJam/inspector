@@ -45,6 +45,7 @@ When your server exposes [MCP Apps](https://modelcontextprotocol.io/docs/extensi
 - **Permission Policy** — Per-feature toggles for `camera`, `microphone`, `geolocation`, and `clipboard-write`. Choose `resource-declared` (grant what the app's resource metadata asks for), `deny-all`, or `custom` (your own allow map).
 - **Display modes** — Which of `inline`, `fullscreen`, and `pip` the inspector advertises in `HostContext.availableDisplayModes`. Test how your app responds when a requested mode isn't available.
 - **Theme and styles** — The CSS variables and font block the inspector injects into `HostContext.styles` so you can verify your app picks up host theming.
+- **Inject window.openai** — Whether the OpenAI Apps SDK compatibility runtime (`window.openai`) is injected into the widget iframe. Enable this when simulating a ChatGPT host; disable it when simulating a host (such as Claude) that does not provide the bridge. Widgets that call `window.openai.*` will fail gracefully when the bridge is absent, letting you verify your app's fallback behavior.
 
 <Note>
   All MCP App settings only take effect when the connected server actually
