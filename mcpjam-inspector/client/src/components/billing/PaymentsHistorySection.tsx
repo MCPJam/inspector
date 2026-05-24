@@ -1,12 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   CheckCircle2,
   Clock,
   CircleAlert,
   ExternalLink,
 } from "lucide-react";
-import { usePostHog } from "posthog-js/react";
-import { useFeatureFlagEnabled } from "posthog-js/react";
+import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
 import { Card, CardContent } from "@mcpjam/design-system/card";
@@ -19,7 +18,6 @@ import {
   TableHeader,
   TableRow,
 } from "@mcpjam/design-system/table";
-import { cn } from "@/lib/utils";
 import { CreditTopupDialog } from "@/components/billing/CreditTopupDialog";
 import {
   usePaymentsHistory,
@@ -65,8 +63,10 @@ export function PaymentsHistorySection() {
 
   // Fire the view event once per mount when entries first load and aren't
   // empty. Ref guard defeats StrictMode double-mount and the auth-resolve
-  // re-render that flips isLoading false.
+  // re-render that flips isLoading false. Gated on flagEnabled so we never
+  // pollute telemetry for users who can't see the surface.
   useEffect(() => {
+    if (flagEnabled !== true) return;
     if (viewedRef.current) return;
     if (isLoading) return;
     if (safeEntries.length === 0) return;
@@ -76,7 +76,7 @@ export function PaymentsHistorySection() {
       has_failed: safeEntries.some((e) => e.status === "failed"),
       has_pending: safeEntries.some((e) => e.status === "pending"),
     });
-  }, [isLoading, posthog, safeEntries]);
+  }, [flagEnabled, isLoading, posthog, safeEntries]);
 
   if (flagEnabled !== true) return null;
 

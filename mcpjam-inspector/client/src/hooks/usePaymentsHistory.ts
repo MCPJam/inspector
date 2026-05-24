@@ -91,10 +91,14 @@ export function usePaymentsHistory(): UsePaymentsHistoryResult {
   const entries = useMemo(() => normalize(raw), [raw]);
 
   const isLoading = isAuthLoading || (shouldFetch && raw === undefined);
+  // Reflect the same gate the fetch uses (convex identity AND workos user)
+  // so consumers don't see `isAuthenticated=true` while the query is
+  // skipped because the workos side hasn't resolved.
+  const isAuthenticated = hasConvexIdentity && hasWorkOsUser;
 
   return {
     entries,
     isLoading,
-    isAuthenticated: hasConvexIdentity,
+    isAuthenticated,
   };
 }
