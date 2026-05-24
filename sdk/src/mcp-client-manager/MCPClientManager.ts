@@ -1365,7 +1365,11 @@ export class MCPClientManager {
 
       if (this.liveClientStates.get(serverId) !== state) {
         await client.close().catch(() => undefined);
-        await this.safeCloseTransport(transport);
+        // Transport is undefined for the stateless preview path (the
+        // preview owns its own fetch; no separate Transport instance).
+        if (transport !== undefined) {
+          await this.safeCloseTransport(transport);
+        }
         throw new Error(`MCP server "${serverId}" connection was cancelled.`);
       }
 
@@ -1544,13 +1548,57 @@ export class MCPClientManager {
         }
       }
       // Resolve the access token at send-time so OAuth refresh stays
-      // single-source. RefreshTokenOAuthProvider exposes `tokens()` for
-      // the current access token; the static-bearer path returns the
-      // resolved string verbatim.
+      // single-source. Upstream HTTP transport adapts both shapes
+      // automatically; we have to duplicate that logic here because the
+      // preview owns its own fetch.
+      //
+      // - `AuthProvider` (lower-case `token()`): returns the current
+      //   token, may refresh internally. `onUnauthorized` is the refresh
+      //   hook on 401.
+      // - `OAuthClientProvider` (`tokens()` + `saveTokens()`): returns
+      //   cached only; running `auth(provider, { serverUrl })` from
+      //   upstream performs the actual refresh exchange and writes the
+      //   new tokens back via `saveTokens()`. Calling `tokens()` alone
+      //   (the original implementation here) would have shipped the
+      //   first request unauthenticated for refresh-token providers
+      //   because nothing populates the cache up-front.
+      const isAuthProvider = (
+        p: unknown,
+      ): p is { token: () => Promise<string | undefined>; onUnauthorized?: (ctx: unknown) => Promise<void> } =>
+        !!p && typeof (p as { token?: unknown }).token === "function";
+      const isOAuthClientProvider = (
+        p: unknown,
+      ): p is {
+        tokens: () =>
+          | { access_token?: string }
+          | undefined
+          | Promise<{ access_token?: string } | undefined>;
+      } => !!p && typeof (p as { tokens?: unknown }).tokens === "function";
+      const refreshOAuthTokens = async (): Promise<string | undefined> => {
+        if (!isOAuthClientProvider(effectiveAuthProvider)) return undefined;
+        // Lazy import to avoid pulling the auth helper into bundles that
+        // never construct a stateless OAuth client.
+        const { auth } = await import("@modelcontextprotocol/client");
+        try {
+          await auth(effectiveAuthProvider as never, { serverUrl: url });
+        } catch {
+          // `auth()` failures (refresh denied, network) surface as the
+          // original 401 at the call site; we don't want to throw here
+          // because the manager handles 401 explicitly.
+          return undefined;
+        }
+        return (await effectiveAuthProvider.tokens())?.access_token;
+      };
       const getAccessToken = async (): Promise<string | undefined> => {
-        if (effectiveAuthProvider) {
-          const t = await effectiveAuthProvider.tokens?.();
-          return t?.access_token;
+        if (isAuthProvider(effectiveAuthProvider)) {
+          return await effectiveAuthProvider.token();
+        }
+        if (isOAuthClientProvider(effectiveAuthProvider)) {
+          const cached = (await effectiveAuthProvider.tokens())?.access_token;
+          if (cached) return cached;
+          // First call with a refresh-token provider: cache is empty,
+          // run the OAuth flow to populate it before the first request.
+          return await refreshOAuthTokens();
         }
         return effectiveAccessToken;
       };
@@ -1562,9 +1610,12 @@ export class MCPClientManager {
           });
           return refreshed.accessToken;
         }
-        if (effectiveAuthProvider) {
-          const t = await effectiveAuthProvider.tokens?.();
-          return t?.access_token;
+        if (isAuthProvider(effectiveAuthProvider)) {
+          await effectiveAuthProvider.onUnauthorized?.({});
+          return await effectiveAuthProvider.token();
+        }
+        if (isOAuthClientProvider(effectiveAuthProvider)) {
+          return await refreshOAuthTokens();
         }
         return undefined;
       };

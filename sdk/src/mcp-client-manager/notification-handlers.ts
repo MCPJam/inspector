@@ -135,7 +135,21 @@ export function applyProgressHandler(
   progressHandler: ProgressHandler
 ): void {
   client.setNotificationHandler(ProgressNotificationMethod, (notification) => {
-    const params = notification.params ?? { progressToken: 0, progress: 0 };
+    // The `ManagedMcpClient` interface widens setNotificationHandler to
+    // accept any NotificationMethod, so the per-method param narrowing
+    // is lost at this call site. The runtime payload is always a
+    // ProgressNotificationParams here because the method literal is
+    // pinned at registration; cast to recover the shape rather than
+    // ramify the interface with generic narrowing.
+    const params =
+      ((notification as { params?: unknown }).params as
+        | {
+            progressToken: string | number;
+            progress: number;
+            total?: number;
+            message?: string;
+          }
+        | undefined) ?? { progressToken: 0, progress: 0 };
     progressHandler({
       serverId,
       progressToken: params.progressToken,

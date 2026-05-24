@@ -1,5 +1,6 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { toast } from "sonner";
+import { useMutation, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
@@ -31,6 +32,14 @@ import { useServerForm } from "./hooks/use-server-form";
 import { ServerInfoContent } from "./ServerInfoContent";
 import { ServerInfoToolsMetadataContent } from "./ServerInfoToolsMetadataContent";
 import { EditServerFormContent } from "./EditServerFormContent";
+import type { McpWireMode } from "@/lib/client-config-v2";
+import type {
+  ProjectServerConfigDto,
+  ProjectServerConfigInput,
+  ProjectServerOverrideEntry,
+} from "@/lib/project-server-config";
+import { EffectiveModeChip } from "./shared/EffectiveModeChip";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 
 export type ServerDetailTab = "overview" | "configuration" | "tools-metadata";
 
@@ -83,6 +92,95 @@ export function ServerDetailModal({
 
   const initializationInfo = server.initializationInfo;
   const version = initializationInfo?.serverVersion?.version;
+
+  // Per-server MCP wire-mode override lives on the project layer
+  // (`projectServerRefs.mcpWireModeOverride`), not the server's own
+  // config blob — flipping it requires a `projectServerConfig:setConfig`
+  // round-trip rather than a server-update. Read/write here so the
+  // form control inside `EditServerFormContent` can stay a pure prop
+  // consumer.
+  const statelessMcpEnabled = useFeatureFlagEnabled("stateless-mcp-enabled");
+  const projectServerConfigDto = useQuery(
+    "projectServerConfig:getConfig" as never,
+    projectId ? ({ projectId } as never) : "skip",
+  ) as ProjectServerConfigDto | null | undefined;
+  const setProjectServerConfigMutation = useMutation(
+    "projectServerConfig:setConfig" as never,
+  ) as unknown as (args: {
+    projectId: string;
+    input: ProjectServerConfigInput;
+  }) => Promise<ProjectServerConfigDto>;
+  // Resolve the inspector-side `serverId` — the project-server-refs DTO
+  // is keyed by the canonical server document `_id`, not by name.
+  const serverId = (server as { _id?: string })._id;
+  const currentMcpWireModeOverride = useMemo<McpWireMode | undefined>(
+    () =>
+      serverId
+        ? (projectServerConfigDto?.overrides?.[serverId]
+            ?.mcpWireModeOverride as McpWireMode | undefined)
+        : undefined,
+    [projectServerConfigDto, serverId],
+  );
+  // Host default lives on the host config; the inspector doesn't expose
+  // it via this modal yet, so fall back to undefined for the chip's
+  // "host default" source attribution. PR3 wires the host-default JSON
+  // editor — once that lands, surface its value here.
+  const hostDefaultMcpWireMode: McpWireMode | undefined = undefined;
+
+  const handleMcpWireModeOverrideChange = async (
+    next: McpWireMode | undefined,
+  ): Promise<void> => {
+    if (!projectId) {
+      toast.error(
+        "Wire mode override requires a project context; cannot save without projectId.",
+      );
+      return;
+    }
+    if (!serverId) return;
+    // setConfig replaces the entire (serverIds, overrides) pair — read
+    // current, splice in the new override, write back. Preserve every
+    // other server's overrides verbatim.
+    const currentServerIds = projectServerConfigDto?.serverIds ?? [];
+    const currentOverrides = projectServerConfigDto?.overrides ?? {};
+    const existingEntry = currentOverrides[serverId] ?? {};
+    const updatedEntry: ProjectServerOverrideEntry = {
+      ...existingEntry,
+      mcpWireModeOverride: next,
+    };
+    // Drop entry when it collapses to nothing (no headers, no timeout,
+    // no wire-mode). Mirrors `normalizeOverrideEntry` on the backend so
+    // the canonicalizer doesn't see an empty entry.
+    const hasContent =
+      (updatedEntry.headersOverride &&
+        Object.keys(updatedEntry.headersOverride).length > 0) ||
+      updatedEntry.requestTimeoutOverride !== undefined ||
+      updatedEntry.mcpWireModeOverride !== undefined;
+    const nextOverrides: Record<string, ProjectServerOverrideEntry> = {
+      ...currentOverrides,
+    };
+    if (hasContent) nextOverrides[serverId] = updatedEntry;
+    else delete nextOverrides[serverId];
+    try {
+      await setProjectServerConfigMutation({
+        projectId,
+        input: { serverIds: currentServerIds, overrides: nextOverrides },
+      });
+      // Server's `hostConfigId` re-resolves; force a reconnect so the
+      // new wire mode actually takes effect.
+      try {
+        await onReconnect(server.name);
+      } catch {
+        // Reconnect failures surface their own toast inside the
+        // handler; swallow here so the toggle UI stays responsive.
+      }
+    } catch (err) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : "Failed to update wire mode override",
+      );
+    }
+  };
   const isMCPAppServer = isMCPApp(toolsData);
   const isOpenAIAppServer = isOpenAIApp(toolsData);
   const isOpenAIAppAndMCPAppServer = isOpenAIAppAndMCPApp(toolsData);
@@ -295,6 +393,11 @@ export function ServerDetailModal({
               )}
             </div>
             <div className="flex items-center gap-1.5 flex-shrink-0 mr-6">
+              <EffectiveModeChip
+                hostDefault={hostDefaultMcpWireMode}
+                serverOverride={currentMcpWireModeOverride}
+                flagEnabled={Boolean(statelessMcpEnabled)}
+              />
               <span className="inline-flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground">
                 {isReconnecting ? (
                   <Loader2 className="h-2.5 w-2.5 animate-spin" />
@@ -363,6 +466,10 @@ export function ServerDetailModal({
                     isDuplicateServerName={isDuplicateServerName}
                     projectId={projectId}
                     hostedServerId={hostedServerId}
+                    mcpWireModeOverride={currentMcpWireModeOverride}
+                    onMcpWireModeOverrideChange={
+                      projectId ? handleMcpWireModeOverrideChange : undefined
+                    }
                   />
                 </div>
               </TabsContent>

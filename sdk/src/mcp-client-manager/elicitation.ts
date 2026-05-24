@@ -2,7 +2,7 @@
  * Elicitation handler management for MCPClientManager
  */
 
-import type { Client, ElicitResult } from "@modelcontextprotocol/client";
+import type { ElicitResult } from "@modelcontextprotocol/client";
 import type { ElicitationHandler, ElicitationCallback } from "./types.js";
 import type { ManagedMcpClient } from "./managed-mcp-client.js";
 
@@ -131,9 +131,19 @@ export class ElicitationManager {
     const serverSpecific = this.handlers.get(serverId);
 
     if (serverSpecific) {
-      client.setRequestHandler(ElicitRequestMethod, async (request) =>
-        serverSpecific(request.params)
-      );
+      client.setRequestHandler(ElicitRequestMethod, async (request) => {
+        // The widened `ManagedMcpClient.setRequestHandler` signature
+        // collapses RequestTypeMap to a union, so `request.params` here
+        // is the wide `params?: ... | undefined`. The runtime payload
+        // is always elicit-shaped because we register only for
+        // `elicitation/create`; cast to the narrowed shape.
+        const params = (request as { params?: unknown }).params as
+          | Parameters<ElicitationHandler>[0]
+          | undefined;
+        return serverSpecific(
+          params ?? ({} as Parameters<ElicitationHandler>[0]),
+        );
+      });
       return;
     }
 

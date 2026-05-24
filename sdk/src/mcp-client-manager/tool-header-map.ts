@@ -204,16 +204,24 @@ export class ToolHeaderMap {
   /**
    * Header derivation for a single `tools/call`. Returns:
    *   - `headers`: `{ "Mcp-Param-<Name>": <encoded value>, ... }`
-   *   - `bodyArguments`: a NEW object identical to `args` minus the
-   *     param keys that were lifted to headers. The caller MUST send
-   *     this in the JSON-RPC body instead of the original `args` — the
-   *     wire spec REQUIRES that the lifted value not appear in the
-   *     body, otherwise the server gets both the header and the param.
+   *   - `bodyArguments`: the original `args` unchanged.
+   *
+   * The DRAFT-2026-v1 wire contract is **mirror, not lift**: the
+   * annotated value is sent BOTH in `params.arguments[<name>]` (the
+   * normal JSON-RPC body) AND in `Mcp-Param-<HeaderName>`. The server
+   * validates that the two arrived consistently and rejects with
+   * `-32001 HeaderMismatch` if they diverge.
+   *
+   * Earlier revisions of this preview stripped the lifted value from
+   * the body; that fails against conforming servers because the
+   * header validator finds the body slot missing. Mirroring is also
+   * defense-in-depth: a proxy that strips the header silently doesn't
+   * change runtime behavior.
    *
    * Primitives only (string / number / boolean). Objects / arrays /
-   * functions / undefined skip header emission entirely — the body
-   * keeps them as-is (we don't strip them) so the server-side validator
-   * can complain rather than us silently dropping a value.
+   * null / undefined skip header emission — they stay in the body
+   * as-is so the server-side schema validator can act on them rather
+   * than us silently dropping the value.
    */
   deriveHeaders(
     toolName: string,
@@ -228,30 +236,25 @@ export class ToolHeaderMap {
     }
 
     const headers: Record<string, string> = {};
-    const remaining: Record<string, unknown> = { ...args };
     for (const [paramName, headerName] of entry.paramToHeader) {
-      if (!(paramName in remaining)) continue;
-      const value = remaining[paramName];
-      if (value === null || value === undefined) {
-        // Null / undefined param → omit the header entirely. We still
-        // drop the body key so the body is consistent with "this param
-        // is being conveyed out-of-body."
-        delete remaining[paramName];
-        continue;
-      }
+      if (!(paramName in args)) continue;
+      const value = args[paramName];
+      if (value === null || value === undefined) continue;
       if (
         typeof value !== "string" &&
         typeof value !== "number" &&
         typeof value !== "boolean"
       ) {
-        // Non-primitive: leave it in the body and skip the header.
-        // SEP-2243 only mandates header conveyance for primitives.
+        // Non-primitive: skip the header. SEP-2243 only mandates
+        // header conveyance for primitives. The body still carries
+        // the value; the server is responsible for deciding what to
+        // do with a non-primitive annotated param.
         continue;
       }
       headers[`Mcp-Param-${headerName}`] = encodeHeaderValue(String(value));
-      delete remaining[paramName];
     }
-    return { headers, bodyArguments: remaining };
+    // Mirror semantics: body is the caller's args verbatim.
+    return { headers, bodyArguments: args };
   }
 
   clear(): void {

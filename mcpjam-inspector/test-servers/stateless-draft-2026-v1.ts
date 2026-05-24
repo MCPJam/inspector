@@ -161,6 +161,17 @@ export function startStatelessDraft2026V1Fixture(
       const result = await dispatch(body, req, ttlMs);
       respondJsonRpcResult(res, body.id, result, opts);
     } catch (err) {
+      if (err instanceof HeaderMismatchError) {
+        respondJsonRpcError(
+          res,
+          body.id,
+          -32001,
+          "HeaderMismatch",
+          { detail: err.message },
+          opts,
+        );
+        return;
+      }
       const message = err instanceof Error ? err.message : String(err);
       respondJsonRpcError(res, body.id, -32603, message, undefined, opts);
     }
@@ -231,14 +242,43 @@ async function dispatch(
         };
       }
       if (name === "regional-echo") {
-        const region = headerLookup(httpReq, "mcp-param-region") ?? null;
+        // SEP-2243 mirror contract: when a param is annotated with
+        // `x-mcp-header`, the client MUST send the value both in the
+        // body AND in the header. The fixture asserts mirroring so a
+        // client that strips the body slot (the original preview bug)
+        // fails loudly here rather than silently producing a "looks
+        // ok" echo response.
+        const region = headerLookup(httpReq, "mcp-param-region");
+        const bodyRegion = args.region;
+        if (region === undefined && bodyRegion === undefined) {
+          // Both absent: param wasn't supplied at all. Allowed —
+          // schema's `required` field controls strictness.
+          return {
+            content: [{ type: "text", text: JSON.stringify({ value: args.value ?? null, region: null }) }],
+          };
+        }
+        // Mirror semantics: decoded header value must equal the body
+        // value when both are present. We only test ASCII primitives
+        // in the fixture, so a string-equality check is exact.
+        const decoded = decodeHeaderValue(region);
+        if (decoded === undefined || bodyRegion === undefined ||
+            String(bodyRegion) !== decoded) {
+          // Surface as a JSON-RPC error so tests see the contract
+          // violation directly. Mirrors how a draft-conforming server
+          // would respond with -32001 when headers don't match body.
+          throw new HeaderMismatchError(
+            `Mcp-Param-Region (${region ?? "<absent>"}) must mirror params.arguments.region (${
+              bodyRegion === undefined ? "<absent>" : JSON.stringify(bodyRegion)
+            })`,
+          );
+        }
         return {
           content: [
             {
               type: "text",
               text: JSON.stringify({
                 value: args.value ?? null,
-                region,
+                region: decoded,
               }),
             },
           ],
@@ -360,6 +400,35 @@ function headerLookup(
   const v = req.headers[nameLower];
   if (Array.isArray(v)) return v[0];
   return v;
+}
+
+/**
+ * Sentinel for the dispatcher to surface header/body mismatches as
+ * `-32001 HeaderMismatch` (SEP-2243). Plain string error → -32603;
+ * this class keeps the boundary explicit.
+ */
+class HeaderMismatchError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "HeaderMismatchError";
+  }
+}
+
+/**
+ * Decode a SEP-2243 `Mcp-Param-*` header value. Plain ASCII passes
+ * through verbatim; the `=?base64?<payload>?=` envelope is unwrapped
+ * and UTF-8-decoded. Returns `undefined` for missing / malformed
+ * envelopes — the caller treats that as a mirror failure.
+ */
+function decodeHeaderValue(raw: string | undefined): string | undefined {
+  if (raw === undefined) return undefined;
+  const m = raw.match(/^=\?base64\?([^?]*)\?=$/);
+  if (!m) return raw;
+  try {
+    return Buffer.from(m[1], "base64").toString("utf-8");
+  } catch {
+    return undefined;
+  }
 }
 
 // Stand-alone runner: `npx tsx test-servers/stateless-draft-2026-v1.ts`
