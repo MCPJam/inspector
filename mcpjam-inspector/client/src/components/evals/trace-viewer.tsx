@@ -17,7 +17,6 @@ import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { Thread } from "@/components/chat-v2/thread";
 import type { DisplayMode } from "@/stores/ui-playground-store";
-import type { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
   adaptTraceToUiMessages,
   type TraceEnvelope,
@@ -109,7 +108,6 @@ interface TraceViewerProps {
   ) => void;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
-  selectedProtocolOverrideIfBothExists?: UIType;
   onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
   interactive?: boolean;
   enableFullscreenChatOverlay?: boolean;
@@ -218,7 +216,6 @@ export function TraceViewer({
   onModelContextUpdate,
   displayMode,
   onDisplayModeChange,
-  selectedProtocolOverrideIfBothExists,
   onToolApprovalResponse,
   interactive = false,
   enableFullscreenChatOverlay = false,
@@ -681,9 +678,6 @@ export function TraceViewer({
                           fullscreenChatSendBlocked={fullscreenChatSendBlocked}
                           onFullscreenChatStop={onFullscreenChatStop}
                           onFullscreenChange={onFullscreenChange}
-                          selectedProtocolOverrideIfBothExists={
-                            selectedProtocolOverrideIfBothExists
-                          }
                           onToolApprovalResponse={onToolApprovalResponse}
                           toolRenderOverrides={adaptedTrace.toolRenderOverrides}
                           showSaveViewButton={false}

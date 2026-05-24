@@ -1,6 +1,5 @@
 export type InspectorAppDeviceType = "mobile" | "tablet" | "desktop" | "custom";
 export type InspectorAppDisplayMode = "inline" | "pip" | "fullscreen";
-export type InspectorAppProtocol = "mcp-apps" | "openai-sdk";
 
 export const INSPECTOR_COMMAND_DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -72,7 +71,6 @@ export interface SetAppContextInspectorCommand {
     locale?: string;
     timeZone?: string;
     theme?: "light" | "dark";
-    protocol?: InspectorAppProtocol;
   };
   timeoutMs?: number;
 }
