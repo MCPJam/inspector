@@ -43,4 +43,21 @@ export type ConnectionDefaults = {
    * the user listed multiple versions. Forward the full array.
    */
   supportedProtocolVersions?: string[];
+  /**
+   * Outbound MCP wire mode resolved from
+   * `resolveEffectiveMcpWireMode(serverOverride, hostDefault)`:
+   *   - `serverConnectionOverrides[serverId]?.mcpWireModeOverride`
+   *   - falling back to `hostConfig.mcpProfile.mcpWireMode`
+   *   - falling back to `"legacy"`
+   *
+   * Absent here means the client didn't compute one — the SDK falls
+   * back to the legacy upstream `Client` + initialize handshake, byte-
+   * identical to pre-feature behavior. `"stateless-draft-2026-v1"`
+   * routes through the experimental DRAFT-2026-v1 stateless preview
+   * (no initialize, per-request `_meta` + headers, HTTP POST only).
+   * The SDK factory throws `StatelessPreviewRequiresHttpTransport` if
+   * applied to stdio / SSE, so the resolver never has to gate on
+   * transport here.
+   */
+  mcpWireMode?: "legacy" | "stateless-draft-2026-v1";
 };

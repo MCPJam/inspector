@@ -297,6 +297,16 @@ export function parseConnectionDefaults(
     }
   }
 
+  // Outbound wire-mode (DRAFT-2026-v1 stateless preview). Only accept the
+  // two known literals; unknown values are dropped to undefined so a
+  // malformed client doesn't sneak past the SDK's narrower literal union.
+  if (
+    input.mcpWireMode === "legacy" ||
+    input.mcpWireMode === "stateless-draft-2026-v1"
+  ) {
+    out.mcpWireMode = input.mcpWireMode;
+  }
+
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
@@ -344,6 +354,15 @@ export function toMCPServerConfig(
      * unlisted version fails fast.
      */
     supportedProtocolVersions?: string[];
+    /**
+     * Resolved outbound wire mode — `resolveEffectiveMcpWireMode` already
+     * applied (server override > host default > "legacy"). Forwarded only
+     * for HTTP configs; the SDK factory throws
+     * `StatelessPreviewRequiresHttpTransport` for stdio anyway, so we
+     * silently skip on stdio rather than crash a non-HTTP server config
+     * a user toggled the host default on for.
+     */
+    mcpWireMode?: "legacy" | "stateless-draft-2026-v1";
   }
 ): MCPServerConfig {
   const { serverConfig } = authResult;
@@ -424,6 +443,10 @@ export function toMCPServerConfig(
   ) {
     http.supportedProtocolVersions = options.supportedProtocolVersions;
   }
+  // Outbound wire mode — only forwarded for HTTP configs (the SDK
+  // factory rejects stateless on stdio at construction time). Undefined
+  // = SDK default (legacy upstream Client + initialize).
+  if (options?.mcpWireMode) http.mcpWireMode = options.mcpWireMode;
 
   // Attach the SDK's 401-recovery hook only when this is a hosted-OAuth
   // server (we have a token from `authorize-batch-local`) AND the caller
@@ -537,6 +560,10 @@ export async function resolveLocalServerForConnect(
     // historical wire behavior — no opt-in, no change.
     clientInfo: options?.defaults?.clientInfo,
     supportedProtocolVersions: options?.defaults?.supportedProtocolVersions,
+    // Same opt-in path for the wire mode — `resolveEffectiveMcpWireMode`
+    // runs client-side, the literal is wire-serialized via
+    // ConnectionDefaults, and lands on the SDK config here.
+    mcpWireMode: options?.defaults?.mcpWireMode,
     oauthAccessToken: resolvedOauthAccessToken,
     refreshContext: {
       bearerToken,

@@ -277,11 +277,6 @@ export function ProtocolTab({ draft, onDraftChange }: ProtocolTabProps) {
                   (DRAFT-2026-v1)
                 </span>
               </span>
-              <span className="text-[11px] text-muted-foreground">
-                {statelessOn
-                  ? "Experimental preview. No initialize handshake; per-request _meta + headers. Partial draft coverage — sampling, elicitation, and subscriptions unimplemented."
-                  : "Default legacy transport (initialize handshake + upstream Client). Enable to opt this client's servers into the DRAFT-2026-v1 stateless preview."}
-              </span>
             </div>
             <div className="flex items-center border-l border-border pl-3 pr-3.5">
               <Switch

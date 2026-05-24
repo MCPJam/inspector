@@ -24,6 +24,8 @@ export type {
   MCPServerSummary,
   RegisteredServerState,
   LiveClientState,
+  UnauthorizedRefreshHandler,
+  UnauthorizedRefreshResult,
 } from "./mcp-client-manager/index.js";
 
 // Handler and callback types

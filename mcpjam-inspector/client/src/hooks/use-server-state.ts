@@ -921,6 +921,7 @@ export function useServerState({
           unknown
         >;
         supportedProtocolVersions?: string[];
+        mcpWireMode?: "legacy" | "stateless-draft-2026-v1";
       } = {};
       if ("url" in serverConfig) {
         const headers = omitAuthorizationHeader(
@@ -952,6 +953,20 @@ export function useServerState({
         defaults.supportedProtocolVersions = versions.filter(
           (v): v is string => typeof v === "string" && v.trim() !== "",
         );
+      }
+      // Outbound wire mode — host default only at this seam.
+      // `resolveEffectiveMcpWireMode` would also factor in the
+      // per-server `serverConnectionOverrides[serverId]
+      // .mcpWireModeOverride`, but `buildResolverConnectionDefaults`
+      // is invoked once per connect with the project-wide profile
+      // and doesn't see per-server data here. Per-server overrides
+      // can be plumbed in a follow-up by extending the function with
+      // a `(serverId, overrides)` arg.
+      if (
+        mcpProfile?.mcpWireMode === "legacy" ||
+        mcpProfile?.mcpWireMode === "stateless-draft-2026-v1"
+      ) {
+        defaults.mcpWireMode = mcpProfile.mcpWireMode;
       }
       return Object.keys(defaults).length > 0 ? defaults : undefined;
     },
