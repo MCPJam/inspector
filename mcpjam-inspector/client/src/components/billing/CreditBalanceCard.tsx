@@ -177,7 +177,11 @@ function UsageRow({
                   <Info aria-hidden="true" className="size-3" />
                 </button>
               </TooltipTrigger>
-              <TooltipContent className="max-w-xs text-xs">
+              <TooltipContent
+                variant="muted"
+                sideOffset={6}
+                className="max-w-[240px] text-xs leading-snug"
+              >
                 {tooltip}
               </TooltipContent>
             </Tooltip>
