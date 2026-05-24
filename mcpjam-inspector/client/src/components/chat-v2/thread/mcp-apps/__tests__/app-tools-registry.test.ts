@@ -121,6 +121,23 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
     ).toBe(false);
   });
 
+  it("re-registering the same bridge replaces old aliases instead of appending", async () => {
+    await useAppToolsRegistry.getState().registerInstance(
+      makeInstance("b-1", [readonlyTool("ping")]),
+    );
+    const firstAlias = [...useAppToolsRegistry.getState().aliases.keys()][0];
+
+    await useAppToolsRegistry.getState().registerInstance(
+      makeInstance("b-1", [readonlyTool("pong")]),
+    );
+
+    const state = useAppToolsRegistry.getState();
+    expect(state.aliases.size).toBe(1);
+    expect(state.aliases.has(firstAlias)).toBe(false);
+    const onlyAlias = [...state.aliases.values()][0];
+    expect(onlyAlias.rawName).toBe("pong");
+  });
+
   it("resolve() returns null after unregister (closed app)", async () => {
     await useAppToolsRegistry.getState().registerInstance(
       makeInstance("b-1", [readonlyTool("ping")]),

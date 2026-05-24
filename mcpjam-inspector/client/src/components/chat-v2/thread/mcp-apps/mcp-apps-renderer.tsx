@@ -2424,6 +2424,8 @@ export function MCPAppsRenderer({
         // do NOT install rejecting stubs (matches the
         // feature_detection_over_rejection memory).
         if (appCaps?.tools) {
+          const bridgeId = appToolsBridgeIdRef.current ?? crypto.randomUUID();
+          appToolsBridgeIdRef.current = bridgeId;
           void (async () => {
             try {
               const { tools } = await bridge.listTools({});
@@ -2437,9 +2439,10 @@ export function MCPAppsRenderer({
                   annotations: t.annotations,
                 }));
               if (advertisable.length === 0) return;
-              const bridgeId =
-                appToolsBridgeIdRef.current ?? crypto.randomUUID();
-              appToolsBridgeIdRef.current = bridgeId;
+              // `listTools()` crosses the iframe boundary. If the renderer
+              // unmounted or rebuilt while it was pending, cleanup has cleared
+              // this ref and any late registration would leak stale aliases.
+              if (appToolsBridgeIdRef.current !== bridgeId) return;
               const appVersion = bridge.getAppVersion();
               await useAppToolsRegistry.getState().registerInstance({
                 bridgeId,
@@ -2452,6 +2455,9 @@ export function MCPAppsRenderer({
                 tools: advertisable,
                 registeredAtMs: Date.now(),
               });
+              if (appToolsBridgeIdRef.current !== bridgeId) {
+                useAppToolsRegistry.getState().unregisterInstance(bridgeId);
+              }
             } catch (err) {
               logWidgetDebug("ui-to-host", "debug/app-tools-list-failed", {
                 error: err instanceof Error ? err.message : String(err),
@@ -2819,7 +2825,7 @@ export function MCPAppsRenderer({
                 // need host-side resolution that this path doesn't do yet —
                 // fail loud rather than silently opening an unusable tab.
                 const parsed = new URL(link.uri, window.location.href);
-                if (!["http:", "https:", "blob:"].includes(parsed.protocol)) {
+                if (!["http:", "https:"].includes(parsed.protocol)) {
                   throw new Error(
                     `Unsupported download URI protocol: ${parsed.protocol}`,
                   );

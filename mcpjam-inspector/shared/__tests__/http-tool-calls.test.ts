@@ -854,9 +854,13 @@ describe("executeToolCallsFromMessages", () => {
   // crashing the agent loop with "Tool not found" or
   // "tool.execute is not a function".
   describe("skipNonExecutableTools (SEP-1865)", () => {
-    it("silently skips tool calls whose name isn't in the index", async () => {
+    it("silently skips registered app aliases whose tool has no execute function", async () => {
       const tools = {
         srv_real: { execute: vi.fn().mockResolvedValue({ ok: true }) },
+        app_abcd1234: {
+          description: "[Demo] ping",
+          // no execute
+        },
       };
       const messages = [
         {
@@ -900,7 +904,33 @@ describe("executeToolCallsFromMessages", () => {
       expect(appResult).toBeUndefined();
     });
 
-    it("silently skips tools registered without an execute function", async () => {
+    it("does not skip unknown app aliases", async () => {
+      const messages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-app",
+              toolName: "app_abcd1234",
+              input: {},
+            },
+          ],
+        },
+      ] as unknown as ModelMessage[];
+
+      await executeToolCallsFromMessages(messages, {
+        tools: {},
+        skipNonExecutableTools: true,
+      });
+
+      expect(messages).toHaveLength(2);
+      expect((messages[1] as any).content[0].output.value).toMatch(
+        /not found/i,
+      );
+    });
+
+    it("silently skips registered app tools without an execute function", async () => {
       // App tools are registered server-side via `tool({...})` with no
       // execute. Without the flag, the helper would TypeError mid-iteration.
       const tools = {

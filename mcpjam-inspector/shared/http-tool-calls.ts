@@ -45,6 +45,22 @@ function buildIndexWithAliases(tools: ToolsMap): ToolsMap {
   return index;
 }
 
+const APP_TOOL_ALIAS_REGEX = /^app_[a-z0-9]{8}$/i;
+
+function isSkippableClientFulfilledToolCall(
+  toolName: string,
+  tool: unknown,
+  skipNonExecutableTools: boolean | undefined,
+): boolean {
+  return (
+    skipNonExecutableTools === true &&
+    APP_TOOL_ALIAS_REGEX.test(toolName) &&
+    !!tool &&
+    typeof tool === "object" &&
+    typeof (tool as { execute?: unknown }).execute !== "function"
+  );
+}
+
 export const hasUnresolvedToolCalls = (messages: ModelMessage[]): boolean => {
   const toolCallIds = new Set<string>();
   const toolResultIds = new Set<string>();
@@ -172,12 +188,29 @@ export async function executeToolCallsFromMessages(
         try {
           const toolName: string = content.toolName;
           const tool = index[toolName];
+          const directTool = tools[toolName];
           if (!tool) {
-            if (options.skipNonExecutableTools) continue;
+            if (
+              isSkippableClientFulfilledToolCall(
+                toolName,
+                directTool,
+                options.skipNonExecutableTools,
+              )
+            ) {
+              continue;
+            }
             throw new Error(`Tool '${toolName}' not found`);
           }
           if (typeof tool.execute !== "function") {
-            if (options.skipNonExecutableTools) continue;
+            if (
+              isSkippableClientFulfilledToolCall(
+                toolName,
+                tool,
+                options.skipNonExecutableTools,
+              )
+            ) {
+              continue;
+            }
             throw new Error(`Tool '${toolName}' has no execute function`);
           }
           const toolCall = content as {

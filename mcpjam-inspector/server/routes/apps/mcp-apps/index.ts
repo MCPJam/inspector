@@ -234,6 +234,9 @@ apps.post("/widget-content", async (c) => {
         resourceUri: resolvedResourceUri,
       });
     }
+    if (!mimeTypeValid) {
+      return c.json({ error: mimeTypeWarning }, 415);
+    }
 
     let html: string;
     if ("text" in content && typeof content.text === "string") {
