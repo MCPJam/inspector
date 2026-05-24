@@ -13,7 +13,12 @@ vi.mock("@/shared/types", async () => {
   };
 });
 
-import { prepareChatV2 } from "../chat-v2-orchestration";
+import {
+  prepareChatV2,
+  validateAppToolEntries,
+  AppToolValidationError,
+  type AppToolEntry,
+} from "../chat-v2-orchestration";
 import { getSkillToolsAndPrompt } from "../skill-tools";
 import {
   commitNewlyLoaded,
@@ -128,6 +133,66 @@ describe("prepareChatV2", () => {
         ],
       },
     ]);
+  });
+
+  it("registers SEP-1865 readonly app tools as no-execute AI SDK entries", async () => {
+    // PR 1 hard rule: only readOnlyHint=true tools reach the model.
+    // Non-readonly entries are dropped at advertise time (defense in
+    // depth — the client snapshotter is the primary filter).
+    const manager = mockManager({});
+    const appTools: AppToolEntry[] = [
+      {
+        alias: "app_aaaaaaaa",
+        appName: "TicTacToe",
+        serverId: "srv",
+        parentToolCallId: "call-1",
+        rawName: "get_board_state",
+        description: "Get current game state",
+        inputSchema: { type: "object", properties: {} },
+        readOnly: true,
+      },
+      {
+        alias: "app_bbbbbbbb",
+        appName: "TicTacToe",
+        serverId: "srv",
+        parentToolCallId: "call-1",
+        rawName: "make_move",
+        description: "Place a piece",
+        inputSchema: {
+          type: "object",
+          properties: { position: { type: "number" } },
+        },
+        readOnly: false,
+      },
+    ];
+
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      appTools,
+    });
+
+    expect(Object.keys(result.allTools).sort()).toEqual(["app_aaaaaaaa"]);
+    const readonlyEntry = result.allTools["app_aaaaaaaa"] as {
+      execute?: unknown;
+      description?: string;
+    };
+    // No-execute is load-bearing: streamText must stream this to the
+    // client for in-iframe dispatch rather than execute server-side.
+    expect(readonlyEntry.execute).toBeUndefined();
+    expect(readonlyEntry.description).toContain("TicTacToe");
+    expect(readonlyEntry.description).toContain("Get current game state");
+  });
+
+  it("buildAppTools is a no-op when appTools is empty / missing", async () => {
+    const manager = mockManager({});
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+    });
+    expect(Object.keys(result.allTools)).toEqual([]);
   });
 
   it("hides SEP-1865 app-only tools from the model tool set", async () => {
@@ -372,5 +437,91 @@ describe("prepareChatV2", () => {
         }),
       ).rejects.toThrow(/search_mcp_tools/);
     });
+  });
+});
+
+describe("validateAppToolEntries (SEP-1865 boundary)", () => {
+  const validEntry: Record<string, unknown> = {
+    alias: "app_abcd1234",
+    appName: "Demo",
+    serverId: "srv",
+    parentToolCallId: "call-1",
+    rawName: "ping",
+    description: "Pings",
+    inputSchema: { type: "object", properties: {} },
+    readOnly: true,
+  };
+
+  it("returns [] for undefined / null", () => {
+    expect(validateAppToolEntries(undefined)).toEqual([]);
+    expect(validateAppToolEntries(null)).toEqual([]);
+  });
+
+  it("accepts a well-formed entry", () => {
+    expect(validateAppToolEntries([validEntry])).toHaveLength(1);
+  });
+
+  it("rejects non-array input", () => {
+    expect(() => validateAppToolEntries({} as unknown)).toThrow(
+      AppToolValidationError,
+    );
+  });
+
+  it("rejects >64 entries (cap)", () => {
+    const many = Array.from({ length: 65 }, (_, i) => ({
+      ...validEntry,
+      // alias must be unique to avoid the duplicate check firing first.
+      alias: `app_${i.toString(16).padStart(8, "0").slice(0, 8)}`,
+    }));
+    expect(() => validateAppToolEntries(many)).toThrow(/at most 64/);
+  });
+
+  it("rejects an alias that doesn't match the regex", () => {
+    expect(() =>
+      validateAppToolEntries([{ ...validEntry, alias: "evil__name" }]),
+    ).toThrow(/alias must match/);
+  });
+
+  it("rejects duplicate aliases", () => {
+    expect(() =>
+      validateAppToolEntries([validEntry, { ...validEntry }]),
+    ).toThrow(/duplicated/);
+  });
+
+  it("rejects description over 512 chars", () => {
+    expect(() =>
+      validateAppToolEntries([
+        { ...validEntry, description: "x".repeat(513) },
+      ]),
+    ).toThrow(/description exceeds 512/);
+  });
+
+  it("rejects inputSchema over 8 KiB", () => {
+    const big = { type: "object", properties: { x: { description: "y".repeat(9000) } } };
+    expect(() =>
+      validateAppToolEntries([{ ...validEntry, inputSchema: big }]),
+    ).toThrow(/inputSchema exceeds/);
+  });
+
+  it("rejects non-object inputSchema", () => {
+    expect(() =>
+      validateAppToolEntries([
+        { ...validEntry, inputSchema: [1, 2, 3] as unknown },
+      ]),
+    ).toThrow(/inputSchema must be a JSON object/);
+  });
+
+  it("rejects missing readOnly", () => {
+    const { readOnly: _omit, ...rest } = validEntry;
+    expect(() => validateAppToolEntries([rest])).toThrow(/readOnly must be/);
+  });
+
+  it("rejects empty / over-length rawName", () => {
+    expect(() =>
+      validateAppToolEntries([{ ...validEntry, rawName: "" }]),
+    ).toThrow(/rawName must be/);
+    expect(() =>
+      validateAppToolEntries([{ ...validEntry, rawName: "x".repeat(129) }]),
+    ).toThrow(/rawName must be/);
   });
 });

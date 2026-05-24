@@ -41,7 +41,11 @@ import {
   type PersistedTurnTrace,
 } from "../../utils/chat-ingestion.js";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
-import { prepareChatV2 } from "../../utils/chat-v2-orchestration";
+import {
+  prepareChatV2,
+  validateAppToolEntries,
+  AppToolValidationError,
+} from "../../utils/chat-v2-orchestration";
 import { appendDedupedModelMessages } from "@/shared/eval-trace";
 import {
   createAiSdkEvalTraceContext,
@@ -730,6 +734,19 @@ chatV2.post("/", async (c) => {
     // independent — this conversion is solely for hydration.
     const priorModelMessages = await convertToModelMessages(messages);
 
+    // SEP-1865 App-Provided Tools: validate the client snapshot at the
+    // boundary. The chat request body is not trusted; oversize / malformed
+    // entries 400 with a clean message instead of crashing prepareChatV2.
+    let validatedAppTools;
+    try {
+      validatedAppTools = validateAppToolEntries(body.appTools);
+    } catch (error) {
+      if (error instanceof AppToolValidationError) {
+        return c.json({ error: error.message }, 400);
+      }
+      throw error;
+    }
+
     let prepared;
     try {
       prepared = await prepareChatV2({
@@ -748,8 +765,9 @@ chatV2.post("/", async (c) => {
               progressiveToolDiscovery: {
                 enabled: resolvedProgressiveToolDiscovery,
               },
-            }
-          : {}),
+              }
+            : {}),
+        appTools: validatedAppTools,
       });
     } catch (error) {
       // prepareChatV2 throws on Anthropic validation errors — return 400.

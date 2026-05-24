@@ -72,6 +72,10 @@ import {
 } from "./widget-file-messages";
 import { CheckoutDialogV2 } from "./checkout-dialog-v2";
 import { fetchMcpAppsWidgetContent } from "./fetch-widget-content";
+import {
+  useAppToolsRegistry,
+  type AppToolDescriptor,
+} from "./app-tools-registry";
 import { readToolResultMeta } from "@/lib/tool-result-utils";
 import type { CheckoutSession } from "@/shared/acp-types";
 import { listResources, readResource } from "@/lib/apis/mcp-resources-api";
@@ -996,6 +1000,12 @@ export function MCPAppsRenderer({
   // width request. The renderer applies the value to the visible inline
   // container and caps it with max-width: 100%.
   const lastInlineWidthRef = useRef<string | null>(null);
+
+  // SEP-1865 App-Provided Tools: per-bridge identity used to register and
+  // unregister this iframe's tools in `useAppToolsRegistry`. PR 1 inline
+  // only — modal mounts (`mcp-apps-modal.tsx`) do NOT register; that lands
+  // in PR 2 along with the active-bridge stack.
+  const appToolsBridgeIdRef = useRef<string | null>(null);
 
   // Reset widget-identity-scoped state when the renderer is reused for a
   // different tool call / resource / widget bundle. Without this the next
@@ -2404,6 +2414,51 @@ export function MCPAppsRenderer({
         if (wasReady) {
           setReinitCount((c) => c + 1);
         }
+
+        // SEP-1865 App-Provided Tools (PR 1, inline only): when the app
+        // advertises `tools` capability, fetch its tool list and register
+        // the readonly subset in the cross-cutting registry so the next
+        // chat POST can advertise them as no-execute AI SDK tools. Non-
+        // readonly tools are filtered out at advertise time — PR 2 adds
+        // the approval flow to surface them. Feature-detect the capability;
+        // do NOT install rejecting stubs (matches the
+        // feature_detection_over_rejection memory).
+        if (appCaps?.tools) {
+          void (async () => {
+            try {
+              const { tools } = await bridge.listTools({});
+              const advertisable: AppToolDescriptor[] = (tools ?? [])
+                .filter((t: any) => t?.annotations?.readOnlyHint === true)
+                .map((t: any) => ({
+                  rawName: t.name,
+                  description: t.description,
+                  inputSchema: t.inputSchema,
+                  outputSchema: t.outputSchema,
+                  annotations: t.annotations,
+                }));
+              if (advertisable.length === 0) return;
+              const bridgeId =
+                appToolsBridgeIdRef.current ?? crypto.randomUUID();
+              appToolsBridgeIdRef.current = bridgeId;
+              const appVersion = bridge.getAppVersion();
+              await useAppToolsRegistry.getState().registerInstance({
+                bridgeId,
+                parentToolCallId: toolCallId,
+                serverId,
+                appName: appVersion?.name ?? serverId,
+                appVersion: appVersion?.version,
+                surface: "inline",
+                bridge,
+                tools: advertisable,
+                registeredAtMs: Date.now(),
+              });
+            } catch (err) {
+              logWidgetDebug("ui-to-host", "debug/app-tools-list-failed", {
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
+          })();
+        }
       };
 
       // SEP-1865 bridge handlers are gated by `effectiveHostCapabilities`
@@ -2937,6 +2992,17 @@ export function MCPAppsRenderer({
         wasReady: isReadyRef.current,
       });
       bridgeRef.current = null;
+      // SEP-1865 App-Provided Tools: drop this bridge's registration so
+      // the next chat POST snapshot omits its aliases. Per spec: "Calling
+      // a tool from a closed app MUST return an error" — once the bridge
+      // is closed, any in-flight `useChat.onToolCall` dispatch resolves
+      // to null in `useAppToolsRegistry.resolve()`.
+      if (appToolsBridgeIdRef.current) {
+        useAppToolsRegistry
+          .getState()
+          .unregisterInstance(appToolsBridgeIdRef.current);
+        appToolsBridgeIdRef.current = null;
+      }
       if (isReadyRef.current) {
         bridge.teardownResource({}).catch(() => {});
       }

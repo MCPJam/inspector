@@ -596,6 +596,10 @@ export function gateToolsToActiveSubset<T extends Record<string, unknown>>(
     const execute = original.execute as
       | ((input: unknown, ctx: unknown) => unknown)
       | undefined;
+    if (!execute) {
+      result[name] = original;
+      continue;
+    }
     result[name] = {
       ...original,
       execute: async (input: unknown, ctx: unknown) => {
@@ -611,9 +615,6 @@ export function gateToolsToActiveSubset<T extends Record<string, unknown>>(
               `Tool '${name}' is not loaded in this step. ${hint}`,
             );
           }
-        }
-        if (!execute) {
-          throw new Error(`Tool '${name}' has no execute handler.`);
         }
         return execute(input, ctx);
       },

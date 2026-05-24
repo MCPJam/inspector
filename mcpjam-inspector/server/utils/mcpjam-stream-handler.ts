@@ -1539,6 +1539,9 @@ async function processOneStep(
       // Execute tools locally
       const newMessages = await executeToolCallsFromMessages(messageHistory, {
         tools: executableTools as Record<string, any>,
+        // SEP-1865 App-Provided Tools: no-execute app entries must be left
+        // unresolved for the client iframe to fulfill via `useChat.onToolCall`.
+        skipNonExecutableTools: true,
         ...(abortSignal ? { abortSignal } : {}),
       });
       const toolsEndAbs = Date.now();
@@ -1621,6 +1624,19 @@ async function processOneStep(
       // them.
       if (progressivePlan?.enabled && discoveryState) {
         commitNewlyLoaded(discoveryState);
+      }
+
+      // SEP-1865 App-Provided Tools: if any tool calls remain unresolved
+      // after server-side execution, they must be app-aliased (or
+      // otherwise no-execute). Pause exactly like the requireToolApproval
+      // branch — the client's `useChat.onToolCall` will dispatch them
+      // into the iframe via `AppBridge.callTool` and resubmit with the
+      // results in messageHistory, at which point this handler resumes.
+      if (hasUnresolvedToolCalls(messageHistory)) {
+        if (finishChunk) {
+          writer.write(createClientFinishChunk(finishChunk, traceTurn, "stop"));
+        }
+        return { shouldContinue: false, didEmitFinish: !!finishChunk };
       }
     } catch (error) {
       // Aborts surface here when the signal fires mid-tool. Bubble up so

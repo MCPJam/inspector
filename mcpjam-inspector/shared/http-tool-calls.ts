@@ -82,6 +82,19 @@ type ExecuteToolCallOptionsBase = {
    * calls before pausing the turn for approval on real MCP tools.
    */
   filterToolName?: (toolName: string) => boolean;
+  /**
+   * SEP-1865 App-Provided Tools: when true, tool calls whose name isn't in
+   * the tool index OR whose tool entry has no `execute` function are SKIPPED
+   * (no result written, no throw). Used by the MCPJam free-model handler so
+   * that mixed steps containing both server tools and app-aliased tools
+   * execute the server tools server-side and leave the app tool calls
+   * unresolved — the caller then pauses and lets the client fulfill them
+   * in-iframe via `useChat.onToolCall`.
+   *
+   * Without this flag, app aliases would either trigger "Tool not found" or
+   * `tool.execute is not a function`, corrupting the conversation history.
+   */
+  skipNonExecutableTools?: boolean;
 };
 
 type ExecuteToolCallOptions = ExecuteToolCallOptionsBase &
@@ -159,7 +172,14 @@ export async function executeToolCallsFromMessages(
         try {
           const toolName: string = content.toolName;
           const tool = index[toolName];
-          if (!tool) throw new Error(`Tool '${toolName}' not found`);
+          if (!tool) {
+            if (options.skipNonExecutableTools) continue;
+            throw new Error(`Tool '${toolName}' not found`);
+          }
+          if (typeof tool.execute !== "function") {
+            if (options.skipNonExecutableTools) continue;
+            throw new Error(`Tool '${toolName}' has no execute function`);
+          }
           const toolCall = content as {
             input?: unknown;
             args?: unknown;

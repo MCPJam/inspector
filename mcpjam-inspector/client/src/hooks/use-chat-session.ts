@@ -27,8 +27,14 @@ import {
   DefaultChatTransport,
   generateId,
   lastAssistantMessageIsCompleteWithApprovalResponses,
+  lastAssistantMessageIsCompleteWithToolCalls,
   type ModelMessage,
 } from "ai";
+import {
+  useAppToolsRegistry,
+  recordAppToolInvocation,
+} from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
+import { scrubAppToolResultForModel } from "@/components/chat-v2/thread/mcp-apps/app-tools-sanitizer";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import {
@@ -1535,6 +1541,12 @@ export function useChatSession(
         ...(resumedVersionRef.current !== null
           ? { expectedVersion: resumedVersionRef.current }
           : {}),
+        // SEP-1865 App-Provided Tools snapshot. Drained fresh at POST time
+        // (no memoization) so any iframe that mounted between the previous
+        // turn and this send contributes its tools. The registry already
+        // filters to readonly entries and caps size; server defends the
+        // boundary again in `validateAppToolEntries`.
+        appTools: useAppToolsRegistry.getState().snapshotForChatBody(),
       }),
       headers: transportHeaders,
     });
@@ -1586,14 +1598,99 @@ export function useChatSession(
     error,
     setMessages: baseSetMessages,
     addToolApprovalResponse,
+    addToolOutput,
   } = useChat({
     id: chatSessionId,
     transport: proxyTransport,
     onData: handleStreamDataPart,
     onError: handleChatError,
-    sendAutomaticallyWhen: requireToolApproval
-      ? lastAssistantMessageIsCompleteWithApprovalResponses
-      : undefined,
+    // SEP-1865 App-Provided Tools: AI SDK v6 IGNORES the return value of
+    // `onToolCall`. Tool results must be supplied imperatively via
+    // `addToolOutput(...)`. Server-tool calls bypass this handler (they
+    // resolve via the server's `execute` function); only client-fulfilled
+    // app aliases land here.
+    onToolCall: async ({ toolCall }) => {
+      const entry = useAppToolsRegistry
+        .getState()
+        .resolve((toolCall as { toolName: string }).toolName);
+      if (!entry) return; // not an app tool — server handles
+      // PR 1 invariant: only readonly entries are advertised, so reaching
+      // dispatch with !readOnly is a leak in the advertise filter. Refuse
+      // defensively (do NOT execute) and warn. PR 2 lands approval UX.
+      if (!entry.readOnly) {
+        addToolOutput({
+          tool: (toolCall as { toolName: string }).toolName,
+          toolCallId: (toolCall as { toolCallId: string }).toolCallId,
+          output: {
+            content: [{ type: "text", text: "Tool unavailable." }],
+            isError: true,
+          },
+        } as Parameters<typeof addToolOutput>[0]);
+        console.warn(
+          "[app-tools] non-readonly tool reached dispatch; advertise filter is leaky",
+          { alias: (toolCall as { toolName: string }).toolName },
+        );
+        return;
+      }
+      const tc = toolCall as {
+        toolName: string;
+        toolCallId: string;
+        input: unknown;
+      };
+      try {
+        const raw = await entry.bridge.callTool({
+          name: entry.rawName,
+          arguments:
+            tc.input && typeof tc.input === "object"
+              ? (tc.input as Record<string, unknown>)
+              : {},
+        });
+        const sanitized = scrubAppToolResultForModel(raw);
+        recordAppToolInvocation({
+          alias: tc.toolName,
+          rawName: entry.rawName,
+          appName: entry.instance.appName,
+          parentToolCallId: entry.instance.parentToolCallId,
+          bridgeId: entry.instance.bridgeId,
+          input: tc.input,
+          raw,
+        });
+        addToolOutput({
+          tool: tc.toolName,
+          toolCallId: tc.toolCallId,
+          output: sanitized,
+        } as Parameters<typeof addToolOutput>[0]);
+      } catch (err) {
+        addToolOutput({
+          tool: tc.toolName,
+          toolCallId: tc.toolCallId,
+          output: {
+            content: [
+              {
+                type: "text",
+                text: `App tool failed: ${err instanceof Error ? err.message : String(err)}`,
+              },
+            ],
+            isError: true,
+          },
+        } as Parameters<typeof addToolOutput>[0]);
+      }
+    },
+    // Combine the approval predicate (existing) with the no-execute
+    // tool-call predicate (new). App-aliased tool calls are completed by
+    // our `onToolCall` above; that triggers an auto-send which carries
+    // the new tool results back to the server so the agent loop resumes.
+    // Both AI SDK helpers take the options object: `({ messages }) => …`.
+    sendAutomaticallyWhen: (options) => {
+      if (lastAssistantMessageIsCompleteWithToolCalls(options)) return true;
+      if (
+        requireToolApproval &&
+        lastAssistantMessageIsCompleteWithApprovalResponses(options)
+      ) {
+        return true;
+      }
+      return false;
+    },
   });
 
   const queueSessionHydration = useCallback(

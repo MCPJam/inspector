@@ -22,6 +22,7 @@ import { type DisplayMode } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
+import { useAppToolsRegistry } from "../mcp-apps/app-tools-registry";
 import {
   getToolNameFromType,
   getToolStateMeta,
@@ -100,6 +101,22 @@ export function ToolPart({
   const label = isDynamicTool(part)
     ? part.toolName
     : getToolNameFromType((part as any).type);
+
+  // SEP-1865 App-Provided Tools: tool names matching `/^app_[a-z0-9]{8}$/i`
+  // are opaque aliases for tools registered inside iframes. Subscribe to the
+  // registry so the UI shows the human-readable raw name + an attribution
+  // chip ("from <App Name>") instead of the alias. Falls back to the raw
+  // alias when the registry has no entry — happens during the brief window
+  // before `oninitialized` fires, or after the iframe has been torn down.
+  const appToolAttribution = useAppToolsRegistry((s) => {
+    if (!/^app_[a-z0-9]{8}$/i.test(label)) return null;
+    const entry = s.aliases.get(label);
+    if (!entry) return null;
+    const inst = s.instancesByBridgeId.get(entry.bridgeId);
+    if (!inst) return null;
+    return { rawName: entry.rawName, appName: inst.appName };
+  });
+  const displayLabel = appToolAttribution?.rawName ?? label;
 
   const toolCallId = (part as any).toolCallId as string | undefined;
   const state = part.state as ToolState | undefined;
@@ -524,8 +541,13 @@ export function ToolPart({
               <span>Run</span>
             </span>
             <span className="font-mono text-[13px] text-foreground truncate min-w-0">
-              {label}
+              {displayLabel}
             </span>
+            {appToolAttribution && (
+              <span className="inline-flex items-center rounded-full bg-foreground/5 px-1.5 py-0.5 text-[10.5px] text-muted-foreground shrink-0">
+                from {appToolAttribution.appName}
+              </span>
+            )}
 
             {approvalVisualState === "pending" && (
               <>
@@ -638,8 +660,13 @@ export function ToolPart({
               className={`${mcpIconClassName} shrink-0`}
             />
             <span className="font-mono text-xs tracking-tight text-muted-foreground/80 truncate">
-              {label}
+              {displayLabel}
             </span>
+            {appToolAttribution && (
+              <span className="inline-flex items-center rounded-full bg-foreground/5 px-1.5 py-0.5 text-[10px] text-muted-foreground/80 shrink-0">
+                from {appToolAttribution.appName}
+              </span>
+            )}
           </span>
         </span>
         <span className="inline-flex items-center gap-1.5 text-muted-foreground">

@@ -20,7 +20,11 @@ import {
 import { getModelById, isMCPJamProvidedModel } from "@/shared/types";
 import type { ModelDefinition } from "@/shared/types";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
-import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
+import {
+  prepareChatV2,
+  validateAppToolEntries,
+  AppToolValidationError,
+} from "../../utils/chat-v2-orchestration.js";
 import {
   buildDirectHostConfig,
   persistChatSessionToConvex,
@@ -250,6 +254,23 @@ chatV2.post("/", async (c) => {
     );
     oauthServerUrls = urls;
 
+    // SEP-1865 App-Provided Tools: validate the client snapshot at the
+    // boundary. Oversize / malformed entries 400 with a clean message
+    // before prepareChatV2 ever sees them.
+    let validatedAppTools;
+    try {
+      validatedAppTools = validateAppToolEntries(body.appTools);
+    } catch (error) {
+      if (error instanceof AppToolValidationError) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          error.message,
+        );
+      }
+      throw error;
+    }
+
     try {
       const sessionStartedAt = Date.now();
       // Convert UI messages to ModelMessage[] up front so prepareChatV2
@@ -280,6 +301,7 @@ chatV2.post("/", async (c) => {
                 },
               }
             : {}),
+          appTools: validatedAppTools,
         });
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
