@@ -163,16 +163,20 @@ describe("PaymentsHistorySection", () => {
 
     it("renders one row per entry with status-appropriate receipt copy", () => {
       render(<PaymentsHistorySection />);
-      // Succeeded + URL → "View receipt"
+      // Each entry is rendered TWICE: once in the desktop table (sm+) and
+      // once in the mobile stacked layout (<sm). Tailwind hides one via CSS
+      // but jsdom doesn't apply CSS visibility, so getAllBy* returns both
+      // copies. We assert the doubled count to lock in the dual-render.
+      // Succeeded + URL → "View receipt" (1 entry × 2 layouts = 2 links)
       expect(
         screen.getAllByRole("link", { name: /View receipt/ }),
-      ).toHaveLength(1);
+      ).toHaveLength(2);
       // Succeeded + no URL → "Not available"
-      expect(screen.getAllByText(/Not available/)[0]).toBeInTheDocument();
+      expect(screen.getAllByText(/Not available/)).toHaveLength(2);
       // Pending → "Processing"
-      expect(screen.getAllByText(/Processing/)[0]).toBeInTheDocument();
+      expect(screen.getAllByText(/Processing/)).toHaveLength(2);
       // Failed → em-dash
-      expect(screen.getAllByText("—")[0]).toBeInTheDocument();
+      expect(screen.getAllByText("—")).toHaveLength(2);
     });
 
     it("renders the receipt link with full safety attributes", () => {
