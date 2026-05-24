@@ -2,6 +2,7 @@ import { ChevronDown, ChevronRight, Plus, X } from "lucide-react";
 import { Input } from "@mcpjam/design-system/input";
 import { Switch } from "@mcpjam/design-system/switch";
 import { JsonEditor } from "@/components/ui/json-editor";
+import type { McpWireMode } from "@/lib/client-config-v2";
 
 interface HeaderEntry {
   id?: string;
@@ -29,6 +30,30 @@ interface AdvancedConnectionSettingsSectionProps {
   onClientCapabilitiesOverrideTextChange?: (value: string) => void;
   clientCapabilitiesOverrideError?: string | null;
   headersWarning?: string;
+  /**
+   * Visibility flag for the experimental DRAFT-2026-v1 stateless wire-mode
+   * override row. Wired from `useFeatureFlagEnabled("stateless-mcp-enabled")`
+   * at the caller so the section file stays free of feature-flag plumbing.
+   * Defaults to false; absent or false hides the entire row regardless of
+   * the value of `mcpWireModeOverride` (host-default JSON keeps working,
+   * just no per-server affordance).
+   */
+  showMcpWireModeOverride?: boolean;
+  /**
+   * Current per-server wire-mode override. `undefined` = inherit host
+   * default. Bound on the project server config row at save time, NOT on
+   * the server's own config blob — host-default vs per-server override
+   * is a control-plane edit that gets fanned out to host configs.
+   */
+  mcpWireModeOverride?: McpWireMode;
+  onMcpWireModeOverrideChange?: (mode: McpWireMode | undefined) => void;
+  /**
+   * Transport kind of this server. The stateless preview is HTTP-POST
+   * only, so we lock the toggle for stdio / SSE servers (factory rejects
+   * them anyway — UI lock is the user-friendly safety net per the
+   * "requires Streamable HTTP POST" hint).
+   */
+  transportKind?: "http" | "stdio" | "sse";
 }
 
 export function AdvancedConnectionSettingsSection({
@@ -47,6 +72,10 @@ export function AdvancedConnectionSettingsSection({
   onClientCapabilitiesOverrideTextChange,
   clientCapabilitiesOverrideError,
   headersWarning,
+  showMcpWireModeOverride = false,
+  mcpWireModeOverride,
+  onMcpWireModeOverrideChange,
+  transportKind = "http",
 }: AdvancedConnectionSettingsSectionProps) {
   const showHeaderControls =
     customHeaders !== undefined &&
@@ -56,6 +85,13 @@ export function AdvancedConnectionSettingsSection({
   const showClientCapabilitiesControls =
     onClientCapabilitiesOverrideEnabledChange !== undefined &&
     onClientCapabilitiesOverrideTextChange !== undefined;
+  const showWireModeControl =
+    showMcpWireModeOverride && onMcpWireModeOverrideChange !== undefined;
+  const wireModeOverrideEnabled = mcpWireModeOverride !== undefined;
+  // Stateless preview is Streamable HTTP POST only. Lock the toggle for
+  // stdio / SSE rather than letting the user pick a mode that will fail
+  // at construction with StatelessPreviewRequiresHttpTransport.
+  const wireModeLocked = transportKind !== "http";
 
   return (
     <div className="space-y-0">
@@ -187,6 +223,89 @@ export function AdvancedConnectionSettingsSection({
                     />
                   </div>
                 </>
+              )}
+            </div>
+          )}
+
+          {/* MCP wire-mode override (DRAFT-2026-v1 preview).
+              Gated by the `stateless-mcp-enabled` feature flag at the
+              caller so the row stays hidden until the wire client lands.
+              Off (default) → server inherits the host default; on →
+              segmented selector picks the per-server mode and writes
+              projectServerRefs.mcpWireModeOverride. */}
+          {showWireModeControl && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label
+                  className="text-xs font-medium text-foreground"
+                  title="Use stateless MCP for this server. Partial DRAFT-2026-v1 support — server-initiated requests (sampling, elicitation) and subscriptions are not yet implemented."
+                >
+                  Wire mode override
+                </label>
+                <Switch
+                  checked={wireModeOverrideEnabled}
+                  disabled={wireModeLocked && !wireModeOverrideEnabled}
+                  onCheckedChange={(checked) => {
+                    if (!onMcpWireModeOverrideChange) return;
+                    // Switching on defaults to the stateless preview —
+                    // there's no point in flipping the toggle just to
+                    // re-pin "legacy" since that's already the host
+                    // default for most users. The segmented selector
+                    // below lets you change to "legacy" explicitly.
+                    onMcpWireModeOverrideChange(
+                      checked ? "stateless-draft-2026-v1" : undefined,
+                    );
+                  }}
+                  aria-label="Toggle MCP wire-mode override"
+                  className="scale-90"
+                />
+              </div>
+              {wireModeLocked && (
+                <p className="text-xs text-muted-foreground">
+                  Stateless preview requires Streamable HTTP POST.
+                </p>
+              )}
+              {wireModeOverrideEnabled && !wireModeLocked && (
+                <div
+                  role="radiogroup"
+                  aria-label="Wire mode"
+                  className="flex w-fit overflow-hidden rounded border border-border bg-background text-xs"
+                >
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={mcpWireModeOverride === "legacy"}
+                    onClick={() =>
+                      onMcpWireModeOverrideChange?.("legacy")
+                    }
+                    className={
+                      mcpWireModeOverride === "legacy"
+                        ? "px-2.5 py-1 bg-muted text-foreground"
+                        : "px-2.5 py-1 text-muted-foreground hover:text-foreground"
+                    }
+                  >
+                    Legacy
+                  </button>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={
+                      mcpWireModeOverride === "stateless-draft-2026-v1"
+                    }
+                    onClick={() =>
+                      onMcpWireModeOverrideChange?.(
+                        "stateless-draft-2026-v1",
+                      )
+                    }
+                    className={
+                      mcpWireModeOverride === "stateless-draft-2026-v1"
+                        ? "px-2.5 py-1 bg-muted text-foreground"
+                        : "px-2.5 py-1 text-muted-foreground hover:text-foreground"
+                    }
+                  >
+                    Stateless (DRAFT-2026-v1)
+                  </button>
+                </div>
               )}
             </div>
           )}

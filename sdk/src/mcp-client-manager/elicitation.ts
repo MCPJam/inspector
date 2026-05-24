@@ -4,6 +4,7 @@
 
 import type { Client, ElicitResult } from "@modelcontextprotocol/client";
 import type { ElicitationHandler, ElicitationCallback } from "./types.js";
+import type { ManagedMcpClient } from "./managed-mcp-client.js";
 
 export const ElicitRequestMethod = "elicitation/create" as const;
 
@@ -126,7 +127,7 @@ export class ElicitationManager {
    * @param serverId - The server ID
    * @param client - The MCP client
    */
-  applyToClient(serverId: string, client: Client): void {
+  applyToClient(serverId: string, client: ManagedMcpClient): void {
     const serverSpecific = this.handlers.get(serverId);
 
     if (serverSpecific) {
@@ -164,7 +165,7 @@ export class ElicitationManager {
    *
    * @param client - The MCP client
    */
-  removeFromClient(client: Client): void {
+  removeFromClient(client: ManagedMcpClient): void {
     client.removeRequestHandler(ElicitRequestMethod);
   }
 

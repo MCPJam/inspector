@@ -104,6 +104,83 @@ import {
   assertCallToolResult,
   isCreateTaskResult,
 } from "./result-guards.js";
+import {
+  createManagedMcpClient,
+  wrapLegacyClient,
+} from "./managed-mcp-client-factory.js";
+import {
+  StatelessPreviewRequiresHttpTransport,
+  type ManagedMcpClient,
+  type ManagedMcpClientConnectOptions,
+  type ManagedMcpClientNotificationHandler,
+  type ManagedMcpClientNotificationMethod,
+  type ManagedMcpClientRequestHandler,
+  type ManagedMcpClientRequestMethod,
+} from "./managed-mcp-client.js";
+
+/**
+ * Temporary `ManagedMcpClient` slotted into `state.client` between the
+ * early "construct + apply handlers" site and the
+ * `connectViaHttp(wireMode: stateless)` branch that builds the real
+ * preview client. Notification + elicitation handlers registered on
+ * this stub are re-applied to the real client after construction; if
+ * any RPC method is called against the stub we throw loudly to surface
+ * the wiring bug.
+ */
+function createPendingStatelessClientStub(): ManagedMcpClient {
+  const handlers = {
+    notifications: new Map<
+      ManagedMcpClientNotificationMethod,
+      ManagedMcpClientNotificationHandler
+    >(),
+    requests: new Map<
+      ManagedMcpClientRequestMethod,
+      ManagedMcpClientRequestHandler
+    >(),
+  };
+  const fail = (method: string) => {
+    throw new Error(
+      `MCPClientManager: ${method}() called on pending stateless client stub. This indicates a wiring bug — the real StatelessDraft2026V1PreviewClient should have replaced the stub inside connectViaHttp before any RPC.`,
+    );
+  };
+  return {
+    async connect(_t, _o?: ManagedMcpClientConnectOptions) {
+      // Accepted but no-op; the real preview client's connect() runs
+      // inside connectViaHttp before any RPC fires.
+    },
+    async close() {},
+    getServerCapabilities: () => undefined,
+    getServerVersion: () => undefined,
+    getInstructions: () => undefined,
+    listTools: () => fail("listTools"),
+    callTool: () => fail("callTool"),
+    request: () => fail("request"),
+    listResources: () => fail("listResources"),
+    readResource: () => fail("readResource"),
+    listResourceTemplates: () => fail("listResourceTemplates"),
+    listPrompts: () => fail("listPrompts"),
+    getPrompt: () => fail("getPrompt"),
+    ping: () => fail("ping"),
+    subscribeResource: () => fail("subscribeResource"),
+    unsubscribeResource: () => fail("unsubscribeResource"),
+    setLoggingLevel: async () => {
+      // Tolerate the manager's eager setLoggingLevel("debug") fire-and-
+      // forget at the end of connectClient — by the time it lands the
+      // stub may still be the active client. No-op until the real
+      // preview client replaces it; the post-connect guard at
+      // setLoggingLevel inside this manager prevents repeat calls.
+    },
+    setNotificationHandler: (method, handler) => {
+      handlers.notifications.set(method, handler);
+    },
+    setRequestHandler: (method, handler) => {
+      handlers.requests.set(method, handler);
+    },
+    removeRequestHandler: (method) => {
+      handlers.requests.delete(method);
+    },
+  };
+}
 
 /**
  * Manages multiple MCP server connections with support for tools, resources,
@@ -278,9 +355,32 @@ export class MCPClientManager {
   }
 
   /**
-   * Gets the underlying MCP Client for a server.
+   * Gets the underlying upstream MCP `Client` for a server. Returns the
+   * legacy adapter's wrapped `Client` instance, or `undefined` for
+   * stateless-preview connections (which have no upstream `Client`).
+   *
+   * **Deprecated for new code** — prefer `getManagedClient()`. Kept
+   * because external SDK consumers reference this API; retyping it
+   * would be a breaking change.
    */
   getClient(serverId: string): Client | undefined {
+    const managed = this.liveClientStates.get(serverId)?.client;
+    if (!managed) return undefined;
+    // `OfficialSdkClientAdapter` exposes the wrapped Client via `.inner`;
+    // structural check keeps this independent of an instanceof tree-
+    // shaken across the SDK boundary.
+    const inner = (managed as { inner?: Client }).inner;
+    return inner;
+  }
+
+  /**
+   * Gets the `ManagedMcpClient` for a server — works for both the legacy
+   * adapter and the DRAFT-2026-v1 stateless preview. Use this in new
+   * code instead of `getClient()`.
+   */
+  getManagedClient(
+    serverId: string,
+  ): import("./managed-mcp-client.js").ManagedMcpClient | undefined {
     return this.liveClientStates.get(serverId)?.client;
   }
 
@@ -337,7 +437,7 @@ export class MCPClientManager {
   async connectToServer(
     serverId: string,
     config: MCPServerConfig
-  ): Promise<Client> {
+  ): Promise<ManagedMcpClient> {
     const liveState = this.liveClientStates.get(serverId);
     if (liveState?.client) {
       throw new Error(`MCP server "${serverId}" is already connected.`);
@@ -1086,7 +1186,7 @@ export class MCPClientManager {
   private async connectToServerOnce(
     serverId: string,
     signal?: AbortSignal
-  ): Promise<Client> {
+  ): Promise<ManagedMcpClient> {
     this.throwIfAborted(signal);
 
     const registeredState = this.registeredServers.get(serverId);
@@ -1124,8 +1224,8 @@ export class MCPClientManager {
     config: MCPServerConfig,
     timeout: number,
     state: LiveClientState
-  ): Promise<Client> {
-    let client: Client | undefined;
+  ): Promise<ManagedMcpClient> {
+    let client: ManagedMcpClient | undefined;
     let transport: Transport | undefined;
     const clientCapabilities = this.buildCapabilities(serverId, config);
     try {
@@ -1167,12 +1267,49 @@ export class MCPClientManager {
           ? { supportedProtocolVersions }
           : {}),
       };
-      client = new Client(
-        resolvedClientInfo as { name: string; version: string },
-        clientOptions
-      );
+      // Resolve the outbound wire mode. Per
+      // `peppy-popping-flask.md` §"Effective mode resolution" the
+      // upstream caller (inspector backend) has already done host-
+      // default + per-server override resolution and stamped the
+      // effective value on the config. We accept that value here
+      // without re-resolving.
+      const httpWireMode =
+        !this.isStdioConfig(config) && config.mcpWireMode
+          ? config.mcpWireMode
+          : "legacy";
 
-      // Apply handlers
+      // Legacy path: construct upstream `Client` early at this site so
+      // the existing notification/elicitation/error wiring keeps
+      // working. Wrap in the adapter immediately so `state.client` is
+      // always `ManagedMcpClient`. Stateless preview defers
+      // construction until HTTP auth is resolved (see
+      // `connectViaHttp`), so the upstream Client is never created on
+      // that path.
+      let managedClient: ManagedMcpClient;
+      let upstreamClient: Client | undefined;
+      if (httpWireMode === "legacy") {
+        upstreamClient = new Client(
+          resolvedClientInfo as { name: string; version: string },
+          clientOptions
+        );
+        managedClient = wrapLegacyClient(upstreamClient);
+      } else {
+        // Stateless preview gate: must be HTTP. The connectViaHttp path
+        // builds + assigns the preview client when this branch is taken.
+        if (this.isStdioConfig(config)) {
+          throw new StatelessPreviewRequiresHttpTransport("stdio");
+        }
+        // Temporary placeholder — overwritten inside `connectViaHttp`
+        // once we have the resolved URL / headers / auth. Keep
+        // `managedClient` unassigned until then by using a tagged stub
+        // that fails loudly if any caller tries to use it before
+        // construction.
+        managedClient = createPendingStatelessClientStub();
+      }
+      client = managedClient;
+
+      // Apply handlers (no-ops for the stateless stub; rewired after
+      // the real client is constructed inside connectViaHttp).
       this.notificationManager.applyToClient(serverId, client);
       if (this.defaultProgressHandler) {
         applyProgressHandler(serverId, client, this.defaultProgressHandler);
@@ -1205,7 +1342,24 @@ export class MCPClientManager {
           client,
           config,
           timeout,
-          state
+          state,
+          {
+            wireMode: httpWireMode,
+            // Pass the resolved clientInfo so the stateless preview can
+            // emit it in `_meta.io.modelcontextprotocol/clientInfo`
+            // without re-resolving from manager defaults.
+            clientInfo: resolvedClientInfo as {
+              name: string;
+              version: string;
+            },
+            // When the wire mode is stateless, the caller below
+            // replaces `client` and the upstream Client (if any) is
+            // discarded. Pass the slot so `connectViaHttp` can reassign.
+            assignClient: (next: ManagedMcpClient) => {
+              client = next;
+              state.client = next;
+            },
+          }
         );
       }
 
@@ -1221,8 +1375,16 @@ export class MCPClientManager {
       state.connectPromise = undefined;
       this.liveClientStates.set(serverId, state);
 
-      // Set logging level (ignore errors)
-      this.setLoggingLevel(serverId, "debug").catch(() => {});
+      // Auto-`setLoggingLevel("debug")` — gated on the server actually
+      // advertising the logging capability. The DRAFT-2026-v1 stateless
+      // preview synthesizes capabilities that omit `logging` (it can't
+      // honor the call without an `initialize` round-trip), so firing
+      // blindly would either no-op + warn or RPC-error. The adapter
+      // itself is also tolerant (no-op + warning) — this guard avoids
+      // the warning noise on every connect.
+      if (client.getServerCapabilities?.()?.logging) {
+        this.setLoggingLevel(serverId, "debug").catch(() => {});
+      }
 
       return client;
     } catch (error) {
@@ -1243,7 +1405,7 @@ export class MCPClientManager {
 
   private async connectViaStdio(
     serverId: string,
-    client: Client,
+    client: ManagedMcpClient,
     config: StdioServerConfig,
     timeout: number,
     state: LiveClientState
@@ -1281,11 +1443,16 @@ export class MCPClientManager {
 
   private async connectViaHttp(
     serverId: string,
-    client: Client,
+    client: ManagedMcpClient,
     config: HttpServerConfig,
     timeout: number,
-    state: LiveClientState
-  ): Promise<Transport> {
+    state: LiveClientState,
+    wireOpts?: {
+      wireMode: "legacy" | "stateless-draft-2026-v1";
+      clientInfo: { name: string; version: string };
+      assignClient: (next: ManagedMcpClient) => void;
+    }
+  ): Promise<Transport | undefined> {
     const url = new URL(config.url);
 
     let effectiveAuthProvider = config.authProvider;
@@ -1344,6 +1511,106 @@ export class MCPClientManager {
       config.requestInit
     );
     const preferSSE = config.preferSSE ?? url.pathname.endsWith("/sse");
+
+    // DRAFT-2026-v1 stateless preview branch. The preview owns fetch
+    // end-to-end and cannot be re-shaped after construction (per
+    // `upstream_v2alpha_extension_points`), so it must be built HERE —
+    // after auth / requestInit / 401 wiring is resolved. Streamable
+    // HTTP POST only; legacy SSE / preferSSE is rejected up-front.
+    if (
+      wireOpts?.wireMode === "stateless-draft-2026-v1" &&
+      wireOpts.assignClient
+    ) {
+      if (preferSSE) {
+        throw new StatelessPreviewRequiresHttpTransport("sse");
+      }
+      // Build a header bag from the resolved `requestInit.headers` so
+      // the preview's own-fetch sees the same statics legacy would.
+      // `Authorization` is set by `getAccessToken`, so strip it from
+      // the static set to avoid double-set (and to keep the OAuth
+      // refresh path single-source).
+      const staticHeaders: Record<string, string> = {};
+      const ri = requestInit as
+        | { headers?: Record<string, string> | Headers | undefined }
+        | undefined;
+      if (ri?.headers) {
+        const headers =
+          ri.headers instanceof Headers
+            ? Object.fromEntries(ri.headers.entries())
+            : ri.headers;
+        for (const [k, v] of Object.entries(headers)) {
+          if (k.toLowerCase() === "authorization") continue;
+          staticHeaders[k] = v;
+        }
+      }
+      // Resolve the access token at send-time so OAuth refresh stays
+      // single-source. RefreshTokenOAuthProvider exposes `tokens()` for
+      // the current access token; the static-bearer path returns the
+      // resolved string verbatim.
+      const getAccessToken = async (): Promise<string | undefined> => {
+        if (effectiveAuthProvider) {
+          const t = await effectiveAuthProvider.tokens?.();
+          return t?.access_token;
+        }
+        return effectiveAccessToken;
+      };
+      const on401 = async (): Promise<string | undefined> => {
+        if (config.onUnauthorized) {
+          const refreshed = await config.onUnauthorized({
+            serverId,
+            error: new MCPAuthError("HTTP 401 on stateless preview", 401),
+          });
+          return refreshed.accessToken;
+        }
+        if (effectiveAuthProvider) {
+          const t = await effectiveAuthProvider.tokens?.();
+          return t?.access_token;
+        }
+        return undefined;
+      };
+      const rpcLogger = this.resolveRpcLogger(config);
+      const previewClient = createManagedMcpClient({
+        mcpWireMode: "stateless-draft-2026-v1",
+        transportKind: "http",
+        preview: {
+          url,
+          clientInfo: wireOpts.clientInfo,
+          staticHeaders,
+          getAccessToken,
+          on401,
+          rpcLogger,
+          serverId,
+        },
+      });
+      await previewClient.connect(undefined as never, { timeout });
+      // Swap the active client in the manager's state. Notification /
+      // elicitation handlers re-applied on the new client so they
+      // route to the preview adapter.
+      wireOpts.assignClient(previewClient);
+      this.notificationManager.applyToClient(serverId, previewClient);
+      if (this.defaultProgressHandler) {
+        applyProgressHandler(serverId, previewClient, this.defaultProgressHandler);
+      }
+      const elicitationCaps = (
+        this.buildCapabilities(serverId, config) as Record<string, unknown>
+      ).elicitation;
+      if (elicitationCaps != null) {
+        this.elicitationManager.applyToClient(serverId, previewClient);
+      }
+      if (config.onError) {
+        previewClient.onerror = (error) => config.onError?.(error);
+      }
+      previewClient.onclose = () => {
+        if (this.liveClientStates.get(serverId) === state) {
+          this.clearClosedPendingConnectionState(serverId, state);
+        }
+      };
+      // Stateless has no Transport object; return undefined to signal
+      // that. Caller already widened the return type to
+      // `Transport | undefined`.
+      return undefined;
+    }
+
     let streamableError: unknown;
 
     if (!preferSSE) {
@@ -1507,7 +1774,7 @@ export class MCPClientManager {
     await this.connectToServerOnce(serverId, signal);
   }
 
-  private getClientOrThrow(serverId: string): Client {
+  private getClientOrThrow(serverId: string): ManagedMcpClient {
     const state = this.liveClientStates.get(serverId);
     if (!state?.client) {
       throw new Error(`MCP server "${serverId}" is not connected.`);
@@ -1865,7 +2132,7 @@ export class MCPClientManager {
   private async runRetryableReadOperation<T>(
     serverId: string,
     options: RequestOptions | undefined,
-    operation: (client: Client) => Promise<T>
+    operation: (client: ManagedMcpClient) => Promise<T>
   ): Promise<T> {
     return this.runRetriedOperation(
       serverId,

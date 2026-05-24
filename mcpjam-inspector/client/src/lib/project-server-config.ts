@@ -21,6 +21,8 @@
  * iterative-vs-fork split.
  */
 
+import type { McpWireMode } from "./client-config-v2";
+
 /** Per-server connection override entry. Same shape as
  * `HostConfigInputV2.serverConnectionOverrides[serverId]` so a chatbox
  * fork can snapshot the project's overrides into its hostConfig without
@@ -28,6 +30,14 @@
 export type ProjectServerOverrideEntry = {
   headersOverride?: Record<string, string>;
   requestTimeoutOverride?: number;
+  /**
+   * Per-server outbound MCP wire mode override (control plane). Mirror
+   * of `projectServerRefs.mcpWireModeOverride` on the backend. Fanned
+   * out to the execution-plane `hostConfigsV2.serverConnectionOverrides`
+   * at write time so the wire-client factory never reads the project
+   * layer.
+   */
+  mcpWireModeOverride?: McpWireMode;
 };
 
 /** Write payload for `ensureProjectServerConfig`. `overrides` is keyed

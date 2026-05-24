@@ -7,6 +7,7 @@ import {
   type NotificationMethod,
 } from "@modelcontextprotocol/client";
 import type { ProgressHandler } from "./types.js";
+import type { ManagedMcpClient } from "./managed-mcp-client.js";
 
 export const ResourceListChangedNotificationMethod =
   "notifications/resources/list_changed" as const;
@@ -86,7 +87,7 @@ export class NotificationManager {
    * @param serverId - The server ID
    * @param client - The MCP client to configure
    */
-  applyToClient(serverId: string, client: Client): void {
+  applyToClient(serverId: string, client: ManagedMcpClient): void {
     const serverHandlers = this.handlers.get(serverId);
     if (!serverHandlers) {
       return;
@@ -130,7 +131,7 @@ export class NotificationManager {
  */
 export function applyProgressHandler(
   serverId: string,
-  client: Client,
+  client: ManagedMcpClient,
   progressHandler: ProgressHandler
 ): void {
   client.setNotificationHandler(ProgressNotificationMethod, (notification) => {

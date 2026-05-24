@@ -130,3 +130,37 @@ export {
   ResourceUpdatedNotificationMethod,
   PromptListChangedNotificationMethod,
 } from "./notification-handlers.js";
+
+// ManagedMcpClient: interface + adapters + factory for DRAFT-2026-v1
+// stateless preview. The manager types its client state as
+// `ManagedMcpClient` (PR3); SDK consumers that need the underlying
+// upstream `Client` keep using `getClient()`, while new consumers can
+// use `getManagedClient()` for either adapter.
+export type {
+  ManagedMcpClient,
+  ManagedMcpClientConnectOptions,
+  ManagedMcpClientNotificationHandler,
+  ManagedMcpClientNotificationMethod,
+  ManagedMcpClientRequestHandler,
+  ManagedMcpClientRequestMethod,
+} from "./managed-mcp-client.js";
+export {
+  NotSupportedInStatelessPreview,
+  StatelessPreviewRequiresHttpTransport,
+  PaginatedToolHeaderDiscoveryUnsupported,
+} from "./managed-mcp-client.js";
+export { OfficialSdkClientAdapter } from "./official-sdk-client-adapter.js";
+export {
+  StatelessDraft2026V1PreviewClient,
+  STATELESS_DRAFT_2026_V1,
+  type StatelessDraft2026V1PreviewClientOptions,
+} from "./stateless-draft-2026-v1-preview-client.js";
+export {
+  createManagedMcpClient,
+  wrapLegacyClient,
+  type CreateManagedMcpClientArgs,
+  type CreateLegacyClientArgs,
+  type CreateStatelessPreviewClientArgs,
+  type McpWireMode,
+  type TransportKind,
+} from "./managed-mcp-client-factory.js";

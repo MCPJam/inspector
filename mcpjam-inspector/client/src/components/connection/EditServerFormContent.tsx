@@ -6,18 +6,29 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { AdvancedConnectionSettingsSection } from "./shared/AdvancedConnectionSettingsSection";
 import { AuthenticationSection } from "./shared/AuthenticationSection";
 import { EnvVarsSection } from "./shared/EnvVarsSection";
 import { HostedConnectionTypeControl } from "./shared/HostedConnectionTypeControl";
 import type { useServerForm } from "./hooks/use-server-form";
 import { HOSTED_MODE } from "@/lib/config";
+import type { McpWireMode } from "@/lib/client-config-v2";
 
 interface EditServerFormContentProps {
   formState: ReturnType<typeof useServerForm>;
   isDuplicateServerName: boolean;
   projectId?: string | null;
   hostedServerId?: string | null;
+  /**
+   * Per-server wire-mode override from the project server config.
+   * Sourced from `projectServerConfig:getConfig().overrides[serverId]
+   * .mcpWireModeOverride`. Undefined = inherit host default. Persistence
+   * goes back through `projectServerConfig:setConfig`, NOT through the
+   * server's own config blob — wire mode is a project-server-refs field.
+   */
+  mcpWireModeOverride?: McpWireMode;
+  onMcpWireModeOverrideChange?: (mode: McpWireMode | undefined) => void;
 }
 
 export function EditServerFormContent({
@@ -25,8 +36,11 @@ export function EditServerFormContent({
   isDuplicateServerName,
   projectId = null,
   hostedServerId = null,
+  mcpWireModeOverride,
+  onMcpWireModeOverrideChange,
 }: EditServerFormContentProps) {
   const hostedUrlPlaceholder = "https://example.com/mcp";
+  const statelessMcpEnabled = useFeatureFlagEnabled("stateless-mcp-enabled");
 
   return (
     <div className="space-y-6">
@@ -232,6 +246,13 @@ export function EditServerFormContent({
         clientCapabilitiesOverrideError={
           formState.clientCapabilitiesOverrideError
         }
+        showMcpWireModeOverride={
+          Boolean(statelessMcpEnabled) &&
+          onMcpWireModeOverrideChange !== undefined
+        }
+        mcpWireModeOverride={mcpWireModeOverride}
+        onMcpWireModeOverrideChange={onMcpWireModeOverrideChange}
+        transportKind={formState.type}
         {...(formState.type === "http"
           ? {
               customHeaders: formState.customHeaders,
