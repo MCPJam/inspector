@@ -130,4 +130,60 @@ describe("SidebarCreditUsage", () => {
       "Daily limit"
     );
   });
+
+  it("does NOT nest buttons when onClick is set AND the paid-credits tooltip renders (variant=full + paying user)", () => {
+    // The outer clickable wrapper used to be a <button>. Combined with the
+    // paid-credits row's tooltip trigger (also a <button>), this produced an
+    // invalid <button><button/></button> tree. Regression guard: outer
+    // wrapper is now a div with role=button, leaving the tooltip trigger as
+    // the only real <button> in the row.
+    balanceState = {
+      paidPercentRemaining: 40,
+      hasPurchaseHistory: true,
+      freeDailyPercentUsed: 10,
+      freeDailyResetAt: Date.now() + 60 * 60 * 1000,
+    };
+    render(
+      <SidebarCreditUsage variant="full" onClick={() => undefined} />,
+    );
+    const wrapper = screen.getByTestId("sidebar-credit-usage");
+    // Wrapper is NOT a real <button>
+    expect(wrapper.tagName).toBe("DIV");
+    expect(wrapper).toHaveAttribute("role", "button");
+    // Tooltip trigger inside it is still a real focusable button
+    const tooltipTrigger = screen.getByRole("button", {
+      name: /About Paid credits/i,
+    });
+    expect(tooltipTrigger.tagName).toBe("BUTTON");
+  });
+
+  it("clicking the tooltip trigger does NOT fire the wrapper's onClick", async () => {
+    // Regression guard: clicking the info icon should show the tooltip
+    // only. It must not bubble up to the wrapper and navigate the user
+    // away from where they are.
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const onWrapperClick = vi.fn();
+    balanceState = {
+      paidPercentRemaining: 40,
+      hasPurchaseHistory: true,
+      freeDailyPercentUsed: 10,
+      freeDailyResetAt: Date.now() + 60 * 60 * 1000,
+    };
+    render(<SidebarCreditUsage variant="full" onClick={onWrapperClick} />);
+
+    const tooltipTrigger = screen.getByRole("button", {
+      name: /About Paid credits/i,
+    });
+
+    vi.useRealTimers();
+    const user = userEvent.setup();
+    await user.click(tooltipTrigger);
+
+    expect(onWrapperClick).not.toHaveBeenCalled();
+
+    // Sanity check the other direction: clicking the row body still fires.
+    const wrapper = screen.getByTestId("sidebar-credit-usage");
+    await user.click(wrapper);
+    expect(onWrapperClick).toHaveBeenCalled();
+  });
 });
