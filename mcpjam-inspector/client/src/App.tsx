@@ -99,7 +99,6 @@ import {
   getInitialThemePreset,
   updateThemePreset,
 } from "./lib/theme-utils";
-import CompletingSignInLoading from "./components/CompletingSignInLoading";
 import LoadingScreen from "./components/LoadingScreen";
 import { OccupationGate } from "./components/signup/OccupationGate";
 import { Header } from "./components/Header";
@@ -535,6 +534,7 @@ function ServersTabBody() {
     isBillingContextPending,
     isAuthLoading,
     isLoadingRemoteProjects,
+    areServersHydrated,
     isWorkOsLoading,
     handleProjectShared,
     handleLeaveProject,
@@ -555,9 +555,9 @@ function ServersTabBody() {
       organizationId={activeProjectBillingOrganizationId}
       pendingDashboardOAuth={pendingDashboardOAuth}
       isBillingContextPending={isBillingContextPending}
-      isLoadingProjects={
-        isLoadingRemoteProjects || isAuthLoading || isWorkOsLoading
-      }
+      isAuthHydrating={isWorkOsLoading || isAuthLoading}
+      isLoadingProjects={isLoadingRemoteProjects}
+      areServersHydrated={areServersHydrated}
       onProjectShared={handleProjectShared}
       onLeaveProject={() => handleLeaveProject(activeProjectId)}
       isRegistryEnabled={registryEnabled === true}
@@ -1552,6 +1552,7 @@ export default function App() {
     appState,
     isLoading,
     isLoadingRemoteProjects,
+    areServersHydrated,
     projectServers,
     connectedOrConnectingServerConfigs,
     selectedMCPConfig,
@@ -2731,7 +2732,7 @@ export default function App() {
       );
     }
 
-    return <CompletingSignInLoading />;
+    return <LoadingScreen />;
   }
 
   if (isBillingEntryHandoff) {
@@ -2883,6 +2884,7 @@ export default function App() {
     isAuthenticated,
     isBillingContextPending,
     isLoadingRemoteProjects,
+    areServersHydrated,
     isSelectedServerSyncing,
     isWorkOsLoading,
     navigateToTarget,
