@@ -79,7 +79,7 @@ export function SidebarCreditUsage({
             fillPercent={paidPercentUsed}
             isLoading={false}
             testId="sidebar-usage-paid"
-            tooltip="Used only after your daily free quota runs out each day."
+            tooltip="Used only after your daily free quota runs out."
           />
         ) : null}
       </div>
