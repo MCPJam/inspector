@@ -233,7 +233,7 @@ export function AdvancedConnectionSettingsSection({
               Off (default) → server inherits the host default; on →
               segmented selector picks the per-server mode and writes
               projectServerRefs.mcpWireModeOverride. */}
-          {showWireModeControl && (
+          {showMcpWireModeOverride && (
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label
@@ -244,7 +244,15 @@ export function AdvancedConnectionSettingsSection({
                 </label>
                 <Switch
                   checked={wireModeOverrideEnabled}
-                  disabled={wireModeLocked && !wireModeOverrideEnabled}
+                  // Locked off for non-HTTP transports OR when the
+                  // caller didn't supply a setter (no project context,
+                  // local-mode server with no Convex `_id`). Without
+                  // the setter the toggle would otherwise look enabled
+                  // but silently no-op.
+                  disabled={
+                    !showWireModeControl ||
+                    (wireModeLocked && !wireModeOverrideEnabled)
+                  }
                   onCheckedChange={(checked) => {
                     if (!onMcpWireModeOverrideChange) return;
                     // Switching on defaults to the stateless preview —
@@ -260,6 +268,14 @@ export function AdvancedConnectionSettingsSection({
                   className="scale-90"
                 />
               </div>
+              {!showWireModeControl && (
+                <p className="text-xs text-muted-foreground">
+                  Per-server override requires a project context. Edit{" "}
+                  <code className="rounded bg-muted px-1">mcpWireMode</code>{" "}
+                  in the Client → MCP Protocol JSON to change the host
+                  default instead.
+                </p>
+              )}
               {wireModeLocked && (
                 <p className="text-xs text-muted-foreground">
                   Stateless preview requires Streamable HTTP POST.

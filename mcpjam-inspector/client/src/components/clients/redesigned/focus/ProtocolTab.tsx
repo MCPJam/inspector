@@ -3,6 +3,7 @@ import { JsonEditor, type JsonEditorMode } from "@/components/ui/json-editor";
 import {
   type HostConfigInputV2,
   type HostConfigMcpProfileV1,
+  type McpWireMode,
 } from "@/lib/client-config-v2";
 import type { HostAttentionIssue } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
@@ -23,6 +24,17 @@ interface ProtocolTabProps {
 type ProtocolDoc = {
   clientInfo?: { name: string; version: string };
   supportedProtocolVersions?: string[];
+  /**
+   * Host-level default outbound MCP wire mode. Absent → "legacy"
+   * (upstream Client + initialize handshake). `"stateless-draft-2026-v1"`
+   * selects the experimental DRAFT-2026-v1 stateless preview. Sibling of
+   * `clientInfo` and `supportedProtocolVersions` because stateless
+   * explicitly skips initialize — nesting it under `clientInfo` /
+   * `supportedProtocolVersions` would be misleading. Maps onto
+   * `mcpProfile.mcpWireMode` on persistence; per-server overrides live
+   * on the server card's Connection overrides section.
+   */
+  mcpWireMode?: McpWireMode;
   capabilities?: Record<string, unknown>;
   connectionDefaults: {
     requestTimeout: number;
@@ -61,6 +73,10 @@ function protocolToJson(draft: HostConfigInputV2): ProtocolDoc {
   const versions = draft.mcpProfile?.initialize?.supportedProtocolVersions;
   if (versions && versions.length > 0) {
     doc.supportedProtocolVersions = [...versions];
+  }
+
+  if (draft.mcpProfile?.mcpWireMode !== undefined) {
+    doc.mcpWireMode = draft.mcpProfile.mcpWireMode;
   }
 
   if (
@@ -121,6 +137,18 @@ function applyJsonToDraft(
     if (cleaned.length > 0) supportedProtocolVersions = cleaned;
   }
 
+  // mcpWireMode — only accept the two known literals. Unknown / wrong
+  // type / absent → undefined (= "use SDK legacy default"). The backend
+  // canonicalizer rejects unknown values; we filter early here so a
+  // typo in the JSON editor doesn't reach the wire.
+  let mcpWireMode: McpWireMode | undefined;
+  if (
+    parsed.mcpWireMode === "legacy" ||
+    parsed.mcpWireMode === "stateless-draft-2026-v1"
+  ) {
+    mcpWireMode = parsed.mcpWireMode;
+  }
+
   // capabilities — pass through verbatim as Record<string, unknown> only if
   // the user supplied an object. Absence vs `{}` is preserved: missing key
   // clears clientCapabilities; explicit `{}` advertises nothing but keeps
@@ -172,10 +200,14 @@ function applyJsonToDraft(
     const next: HostConfigMcpProfileV1 = {
       ...base,
       initialize: initHasFields ? initialize : undefined,
+      mcpWireMode,
     };
 
     const allEmpty =
-      next.initialize === undefined && !next.apps && !next.extensions;
+      next.initialize === undefined &&
+      next.mcpWireMode === undefined &&
+      !next.apps &&
+      !next.extensions;
     return allEmpty ? undefined : next;
   });
 

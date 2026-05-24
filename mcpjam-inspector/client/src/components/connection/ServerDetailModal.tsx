@@ -111,8 +111,12 @@ export function ServerDetailModal({
     input: ProjectServerConfigInput;
   }) => Promise<ProjectServerConfigDto>;
   // Resolve the inspector-side `serverId` — the project-server-refs DTO
-  // is keyed by the canonical server document `_id`, not by name.
-  const serverId = (server as { _id?: string })._id;
+  // is keyed by the canonical server document `_id`. `ServerWithName`
+  // doesn't carry that (it's a local React-state shape keyed by name);
+  // the modal's caller resolves the mapping via
+  // `sharedProjectServersRecord[name]?._id` and passes it down as
+  // `hostedServerId`.
+  const serverId = hostedServerId ?? undefined;
   const currentMcpWireModeOverride = useMemo<McpWireMode | undefined>(
     () =>
       serverId
