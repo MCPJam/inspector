@@ -1503,8 +1503,25 @@ export function MCPAppsRenderer({
     async (
       bridge: AppBridge,
       bridgeId: string,
-      options: { force?: boolean } = {}
+      options: {
+        force?: boolean;
+        // SEP-1865 App-Provided Tools: the modal mounts a second
+        // AppBridge against its own iframe, so callers (mcp-apps-modal)
+        // pass `surface: "modal"`, their own `getIframeElement`, and an
+        // `isLive` predicate tied to their own bridge-id ref. Inline
+        // callers omit them and get the historical inline behavior.
+        surface?: "inline" | "modal";
+        getIframeElement?: () => HTMLIFrameElement | null;
+        isLive?: () => boolean;
+      } = {}
     ) => {
+      const surface = options.surface ?? "inline";
+      const getIframeElement =
+        options.getIframeElement ??
+        (() => sandboxRef.current?.getIframeElement() ?? null);
+      const isLive =
+        options.isLive ?? (() => appToolsBridgeIdRef.current === bridgeId);
+
       const alreadyListed = appToolsListedBridgeIdsRef.current.has(bridgeId);
       const inFlight = appToolsListInFlightBridgeIdsRef.current.has(bridgeId);
       if (inFlight) {
@@ -1539,10 +1556,11 @@ export function MCPAppsRenderer({
           }
 
           appToolsListedBridgeIdsRef.current.add(bridgeId);
-          // `listTools()` crosses the iframe boundary. If the renderer
-          // unmounted or rebuilt while it was pending, cleanup has cleared
-          // this ref and any late registration would leak stale aliases.
-          if (appToolsBridgeIdRef.current !== bridgeId) return;
+          // `listTools()` crosses the iframe boundary. If the caller
+          // unmounted or rebuilt while it was pending, the live ref has
+          // been cleared and any late registration would leak stale
+          // aliases.
+          if (!isLive()) return;
 
           const appVersion = bridge.getAppVersion();
           await useAppToolsRegistry.getState().registerInstance({
@@ -1551,19 +1569,17 @@ export function MCPAppsRenderer({
             serverId: serverIdRef.current,
             appName: appVersion?.name ?? serverIdRef.current,
             appVersion: appVersion?.version,
-            surface: "inline",
+            surface,
             bridge,
             tools,
             registeredAtMs: Date.now(),
-            // Stable closure: `sandboxRef.current` is React-managed and
-            // tracks the live SandboxedIframe across re-renders. Capturing
-            // the ref object (not `.current` at registration time) means
-            // an iframe-into-view scroll from `onToolCall` always targets
-            // the currently-mounted node, even if React swapped it.
-            getIframeElement: () =>
-              sandboxRef.current?.getIframeElement() ?? null,
+            // Stable closure: the inline default reads `sandboxRef.current`
+            // which is React-managed and tracks the live SandboxedIframe
+            // across re-renders. The modal passes its own accessor against
+            // `modalSandboxRef`.
+            getIframeElement,
           });
-          if (appToolsBridgeIdRef.current !== bridgeId) {
+          if (!isLive()) {
             useAppToolsRegistry.getState().unregisterInstance(bridgeId);
             return;
           }
@@ -3600,6 +3616,13 @@ export function MCPAppsRenderer({
         template={modalTemplate}
         params={modalParams}
         registerBridgeHandlers={registerBridgeHandlers}
+        // SEP-1865 App-Provided Tools: the modal bridge replaces
+        // `oninitialized` to suppress inline-state side effects, which
+        // also drops the inline registration call. The modal owns its
+        // own bridge-id and `surface: "modal"` registration; pass the
+        // shared refresh helper down so the modal can advertise/refresh
+        // its iframe's tools without re-implementing the listTools loop.
+        refreshAppProvidedTools={refreshAppProvidedTools}
         // The modal mounts its own SandboxedIframe via `fetchMcpAppsWidgetContent`.
         // Pass the resolved values so the modal's CSP enforcement matches the
         // inline iframe — otherwise a host restrictTo intersection applies to
