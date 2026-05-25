@@ -277,9 +277,16 @@ export interface MCPAppsRendererProps {
   minimalMode?: boolean;
   /**
    * Stable identity assigned by WidgetSurfaceHost. Present only when the
-   * renderer is mounted as a persistent, tool-call-scoped surface.
+   * renderer is mounted as a persistent, resource-scoped surface.
    */
   persistentSurfaceId?: string;
+  /**
+   * The first tool call registered for a resource-scoped persistent surface.
+   * Kept for host/debug attribution; complete tool-input is still gated by
+   * the surface's one-shot delivery latch so restored transcripts cannot skip
+   * input when multiple rows register before the host mounts.
+   */
+  persistentSurfaceInitialToolCallId?: string;
 }
 
 /**
@@ -385,7 +392,6 @@ function getPersistentSurfaceId(props: MCPAppsRendererProps): string {
     chatSessionId: props.chatSessionId ?? null,
     serverId: props.serverId,
     resourceUri: props.resourceUri,
-    toolCallId: props.toolCallId,
     surface: "inline",
   });
   return `mcp-app:${hashSurfaceIdentity(identity)}`;
@@ -439,7 +445,7 @@ function scheduleSurfaceRelease(surfaceId: string, toolCallId: string) {
 function PersistentMCPAppsRendererRegistration(props: MCPAppsRendererProps) {
   const surfaceId = useMemo(
     () => getPersistentSurfaceId(props),
-    [props.chatSessionId, props.resourceUri, props.serverId, props.toolCallId]
+    [props.chatSessionId, props.resourceUri, props.serverId]
   );
   const anchorRef = useRef<HTMLDivElement | null>(null);
 
@@ -536,6 +542,7 @@ export function MCPAppsRendererSurface({
   initialWidgetState,
   minimalMode = false,
   persistentSurfaceId,
+  persistentSurfaceInitialToolCallId,
 }: MCPAppsRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sandboxRef = useRef<SandboxedIframeHandle>(null);
@@ -1265,6 +1272,13 @@ export function MCPAppsRendererSurface({
   const mcpAppsCapabilitiesRef = useRef<ResolvedMcpAppsCapabilities | null>(
     null
   );
+  const persistentToolInputSentRef = useRef(false);
+  const shouldSendToolInput =
+    persistentSurfaceId === undefined || !persistentToolInputSentRef.current;
+  const markPersistentToolInputSent = useCallback(() => {
+    if (persistentSurfaceId === undefined) return;
+    persistentToolInputSentRef.current = true;
+  }, [persistentSurfaceId]);
 
   const {
     canRenderStreamingInput,
@@ -1279,6 +1293,8 @@ export function MCPAppsRendererSurface({
     toolOutput,
     toolErrorText,
     toolCallId,
+    sendToolInput: shouldSendToolInput,
+    onToolInputSent: markPersistentToolInputSent,
     reinitCount,
     mcpAppsCapabilitiesRef,
   });
@@ -3753,6 +3769,10 @@ export function MCPAppsRendererSurface({
     <div
       ref={containerRef}
       className={containerClassName}
+      data-mcp-app-persistent-initial-tool-call-id={
+        persistentSurfaceInitialToolCallId
+      }
+      data-mcp-app-persistent-surface-id={persistentSurfaceId}
       style={containerStyle}
     >
       {((isFullscreen && isContainedFullscreenMode) ||

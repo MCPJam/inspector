@@ -20,11 +20,13 @@ function createSurfaceContainer(surfaceId: WidgetSurfaceId) {
 
 function WidgetSurfacePortal({
   anchorElement,
+  initialToolCallId,
   parkingElement,
   props,
   surfaceId,
 }: {
   anchorElement: HTMLDivElement | null;
+  initialToolCallId: string;
   parkingElement: HTMLDivElement | null;
   props: MCPAppsRendererProps;
   surfaceId: WidgetSurfaceId;
@@ -48,6 +50,7 @@ function WidgetSurfacePortal({
   return createPortal(
     <MCPAppsRendererSurface
       {...props}
+      persistentSurfaceInitialToolCallId={initialToolCallId}
       persistentSurfaceId={surfaceId}
     />,
     container,
@@ -88,10 +91,11 @@ export function WidgetSurfaceHost({
           width: 0,
         }}
       />
-      {entries.map(({ surfaceId, anchorElement, props }) => (
+      {entries.map(({ surfaceId, anchorElement, initialToolCallId, props }) => (
         <WidgetSurfacePortal
           key={surfaceId}
           anchorElement={anchorElement}
+          initialToolCallId={initialToolCallId}
           parkingElement={parkingElement}
           props={props}
           surfaceId={surfaceId}

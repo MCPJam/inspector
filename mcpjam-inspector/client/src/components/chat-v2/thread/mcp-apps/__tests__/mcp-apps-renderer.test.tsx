@@ -352,6 +352,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     appBridgeArgsRef.current = null;
     useWidgetSurfaceStore.setState({
       surfaces: new Map(),
+      nextOrder: 0,
     });
 
     vi.mocked(global.fetch).mockResolvedValue({
@@ -517,30 +518,63 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(sandboxedIframeUnmountsRef.current).toBe(0);
   });
 
-  it("creates a fresh persistent surface for a new tool call to the same widget", async () => {
-    render(
+  it("shares one persistent surface across tool calls to the same widget", async () => {
+    const firstOutput = { content: [{ type: "text" as const, text: "first" }] };
+    const secondOutput = {
+      content: [{ type: "text" as const, text: "second" }],
+    };
+    const renderTree = (includeSecondCall: boolean) => (
       <WidgetSurfaceHostProvider>
-        <MCPAppsRenderer {...baseProps} toolCallId="call-1" />
         <MCPAppsRenderer
           {...baseProps}
-          toolCallId="call-2"
-          toolOutput={{ content: [{ type: "text" as const, text: "next" }] }}
+          toolCallId="call-1"
+          toolInput={{ move: "e4" }}
+          toolOutput={firstOutput}
         />
+        {includeSecondCall ? (
+          <MCPAppsRenderer
+            {...baseProps}
+            toolCallId="call-2"
+            toolInput={{ move: "c5" }}
+            toolOutput={secondOutput}
+          />
+        ) : null}
         <WidgetSurfaceHost />
       </WidgetSurfaceHostProvider>
     );
 
+    const { rerender } = render(renderTree(false));
+
     await vi.waitFor(() => {
-      expect(mockAppBridgeCtor).toHaveBeenCalledTimes(2);
-      expect(screen.getAllByTestId("sandboxed-iframe")).toHaveLength(2);
+      expect(mockAppBridgeCtor).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("sandboxed-iframe")).toBeInTheDocument();
     });
 
+    act(() => triggerReady());
+
+    await vi.waitFor(() => {
+      expect(mockBridge.sendToolInput).toHaveBeenCalledTimes(1);
+      expect(mockBridge.sendToolInput).toHaveBeenCalledWith({
+        arguments: { move: "e4" },
+      });
+      expect(mockBridge.sendToolResult).toHaveBeenCalledTimes(1);
+    });
+
+    rerender(renderTree(true));
+
+    await vi.waitFor(() => {
+      expect(mockBridge.sendToolResult).toHaveBeenCalledTimes(2);
+      expect(mockBridge.sendToolResult).toHaveBeenLastCalledWith(secondOutput);
+    });
+
+    expect(mockBridge.sendToolInput).toHaveBeenCalledTimes(1);
     expect(mockBridge.close).not.toHaveBeenCalled();
     expect(mockBridge.teardownResource).not.toHaveBeenCalled();
-    expect(sandboxedIframeMountsRef.current).toBe(2);
+    expect(sandboxedIframeMountsRef.current).toBe(1);
+    expect(sandboxedIframeUnmountsRef.current).toBe(0);
   });
 
-  it("keeps live-preferred cached tool calls isolated per tool call", async () => {
+  it("keeps live-preferred cached tool calls on one persistent resource surface", async () => {
     render(
       <WidgetSurfaceHostProvider>
         <MCPAppsRenderer
@@ -561,15 +595,52 @@ describe("MCPAppsRenderer tool input streaming", () => {
     );
 
     await vi.waitFor(() => {
-      expect(mockAppBridgeCtor).toHaveBeenCalledTimes(2);
-      expect(screen.getAllByTestId("sandboxed-iframe")).toHaveLength(2);
+      expect(mockAppBridgeCtor).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("sandboxed-iframe")).toBeInTheDocument();
     });
 
-    expect(vi.mocked(authFetch)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(authFetch)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(global.fetch)).not.toHaveBeenCalledWith("blob:cached");
     expect(mockBridge.close).not.toHaveBeenCalled();
     expect(mockBridge.teardownResource).not.toHaveBeenCalled();
-    expect(sandboxedIframeMountsRef.current).toBe(2);
+    expect(sandboxedIframeMountsRef.current).toBe(1);
+    expect(sandboxedIframeUnmountsRef.current).toBe(0);
+  });
+
+  it("sends identical persistent surface results for different tool calls", async () => {
+    const sameOutput = { content: [{ type: "text" as const, text: "same" }] };
+    const renderTree = (toolCallId: string) => (
+      <WidgetSurfaceHostProvider>
+        <MCPAppsRenderer
+          {...baseProps}
+          toolCallId={toolCallId}
+          toolOutput={sameOutput}
+        />
+        <WidgetSurfaceHost />
+      </WidgetSurfaceHostProvider>
+    );
+
+    const { rerender } = render(renderTree("call-1"));
+
+    await vi.waitFor(() => {
+      expect(mockAppBridgeCtor).toHaveBeenCalledTimes(1);
+    });
+
+    act(() => triggerReady());
+
+    await vi.waitFor(() => {
+      expect(mockBridge.sendToolResult).toHaveBeenCalledTimes(1);
+    });
+
+    rerender(renderTree("call-2"));
+
+    await vi.waitFor(() => {
+      expect(mockBridge.sendToolResult).toHaveBeenCalledTimes(2);
+    });
+
+    expect(mockBridge.sendToolResult).toHaveBeenLastCalledWith(sameOutput);
+    expect(mockAppBridgeCtor).toHaveBeenCalledTimes(1);
+    expect(sandboxedIframeMountsRef.current).toBe(1);
     expect(sandboxedIframeUnmountsRef.current).toBe(0);
   });
 
@@ -607,7 +678,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(sandboxedIframeUnmountsRef.current).toBe(0);
   });
 
-  it("keeps fullscreen ownership for a persistent tool-call surface", async () => {
+  it("keeps fullscreen ownership for a persistent resource surface", async () => {
     render(
       <WidgetSurfaceHostProvider>
         <MCPAppsRenderer

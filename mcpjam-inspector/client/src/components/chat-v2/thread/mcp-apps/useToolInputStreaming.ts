@@ -147,6 +147,14 @@ export interface UseToolInputStreamingParams {
   toolOutput: unknown;
   toolErrorText: string | undefined;
   toolCallId: string;
+  /**
+   * Whether this View should receive the one-shot complete tool-input
+   * notification for the current render. Resource-scoped persistent Views
+   * keep the iframe alive across tool calls, so later calls suppress input
+   * while still delivering results.
+   */
+  sendToolInput: boolean;
+  onToolInputSent?: () => void;
   /** Incremented when the guest re-initializes (e.g. SDK app after openai-compat shim) */
   reinitCount: number;
   /**
@@ -189,6 +197,8 @@ export function useToolInputStreaming({
   toolOutput,
   toolErrorText,
   toolCallId,
+  sendToolInput,
+  onToolInputSent,
   reinitCount,
   mcpAppsCapabilitiesRef,
 }: UseToolInputStreamingParams): UseToolInputStreamingReturn {
@@ -223,10 +233,16 @@ export function useToolInputStreaming({
 
   const canRenderStreamingInput = useMemo(() => {
     if (toolState !== "input-streaming") return true;
+    if (!sendToolInput) return true;
     // Avoid revealing a blank app shell on the fallback timer alone. The view
     // becomes visible after we have both a render signal and delivered input.
     return streamingRenderSignaled && hasDeliveredStreamingInput;
-  }, [hasDeliveredStreamingInput, streamingRenderSignaled, toolState]);
+  }, [
+    hasDeliveredStreamingInput,
+    sendToolInput,
+    streamingRenderSignaled,
+    toolState,
+  ]);
 
   // ── Callbacks ────────────────────────────────────────────────────────────
 
@@ -279,6 +295,7 @@ export function useToolInputStreaming({
 
   // 2. Fallback reveal timer
   useEffect(() => {
+    if (!sendToolInput) return;
     if (!isReady || toolState !== "input-streaming" || streamingRenderSignaled)
       return;
     if (streamingRevealTimerRef.current !== null) return;
@@ -287,7 +304,7 @@ export function useToolInputStreaming({
       streamingRevealTimerRef.current = null;
       setStreamingRenderSignaled(true);
     }, STREAMING_REVEAL_FALLBACK_MS);
-  }, [isReady, streamingRenderSignaled, toolState]);
+  }, [isReady, sendToolInput, streamingRenderSignaled, toolState]);
 
   // 3. Re-entry detection
   useEffect(() => {
@@ -308,7 +325,12 @@ export function useToolInputStreaming({
 
   // 4. Partial input throttled delivery
   useEffect(() => {
-    if (!isReady || toolState !== "input-streaming" || toolInputSentRef.current)
+    if (
+      !sendToolInput ||
+      !isReady ||
+      toolState !== "input-streaming" ||
+      toolInputSentRef.current
+    )
       return;
     if (!hasToolInputData) return;
     const resolvedToolInput = toolInput ?? {};
@@ -367,6 +389,7 @@ export function useToolInputStreaming({
   }, [
     hasToolInputData,
     isReady,
+    sendToolInput,
     toolCallId,
     toolInput,
     toolState,
@@ -388,6 +411,7 @@ export function useToolInputStreaming({
       streamingRevealTimerRef.current = null;
     }
     pendingToolInputPartialRef.current = null;
+    if (!sendToolInput) return;
     const bridge = bridgeRef.current;
     if (!bridge) return;
 
@@ -401,13 +425,23 @@ export function useToolInputStreaming({
     }
     lastToolInputRef.current = serialized;
     toolInputSentRef.current = true;
+    onToolInputSent?.();
     Promise.resolve(
       bridge.sendToolInput({ arguments: resolvedToolInput }),
     ).catch(() => {
       toolInputSentRef.current = false;
       lastToolInputRef.current = null;
     });
-  }, [isReady, toolCallId, toolInput, toolState, bridgeRef, reinitCount]);
+  }, [
+    isReady,
+    toolCallId,
+    toolInput,
+    toolState,
+    bridgeRef,
+    reinitCount,
+    sendToolInput,
+    onToolInputSent,
+  ]);
 
   // 6. Tool result delivery
   useEffect(() => {
@@ -416,8 +450,9 @@ export function useToolInputStreaming({
     if (!bridge || !toolOutput) return;
 
     const serialized = JSON.stringify(toolOutput);
-    if (lastToolOutputRef.current === serialized) return;
-    lastToolOutputRef.current = serialized;
+    const outputKey = `${toolCallId}:${serialized}`;
+    if (lastToolOutputRef.current === outputKey) return;
+    lastToolOutputRef.current = outputKey;
     bridge.sendToolResult(toolOutput as CallToolResult);
   }, [isReady, toolCallId, toolOutput, toolState, bridgeRef, reinitCount]);
 
@@ -435,8 +470,9 @@ export function useToolInputStreaming({
           ? toolOutput
           : "Tool execution failed");
 
-    if (lastToolErrorRef.current === errorMessage) return;
-    lastToolErrorRef.current = errorMessage;
+    const errorKey = `${toolCallId}:${errorMessage}`;
+    if (lastToolErrorRef.current === errorKey) return;
+    lastToolErrorRef.current = errorKey;
 
     // SEP-1865: Send tool-cancelled for errors instead of tool-result
     // with isError. Matrix gate: Microsoft 365 Copilot does not

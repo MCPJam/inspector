@@ -130,6 +130,8 @@ interface HookProps {
   toolOutput: unknown;
   toolErrorText: string | undefined;
   toolCallId: string;
+  sendToolInput: boolean;
+  onToolInputSent?: () => void;
   reinitCount: number;
   mcpAppsCapabilitiesRef: React.RefObject<any>;
 }
@@ -152,6 +154,7 @@ function createDefaultProps(
     toolOutput: undefined,
     toolErrorText: undefined,
     toolCallId: "call-1",
+    sendToolInput: true,
     reinitCount: 0,
     mcpAppsCapabilitiesRef,
   };
@@ -403,6 +406,21 @@ describe("useToolInputStreaming", () => {
     expect(bridge.sendToolInputPartial).not.toHaveBeenCalled();
   });
 
+  it("suppresses tool input while still rendering and delivering results", () => {
+    const props = createDefaultProps(bridge);
+    props.sendToolInput = false;
+    props.toolState = "output-available";
+    props.toolInput = { code: "final" };
+    props.toolOutput = { content: [{ type: "text", text: "result" }] };
+
+    const { result } = renderHook(() => useToolInputStreaming(props));
+
+    expect(result.current.canRenderStreamingInput).toBe(true);
+    expect(bridge.sendToolInput).not.toHaveBeenCalled();
+    expect(bridge.sendToolInputPartial).not.toHaveBeenCalled();
+    expect(bridge.sendToolResult).toHaveBeenCalledTimes(1);
+  });
+
   it("does not send complete input for duplicate payload", () => {
     const props = createDefaultProps(bridge);
     props.toolState = "input-available";
@@ -432,6 +450,21 @@ describe("useToolInputStreaming", () => {
     rerender();
 
     expect(bridge.sendToolResult).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends identical tool results for different tool calls", () => {
+    const props = createDefaultProps(bridge);
+    props.toolState = "output-available";
+    props.toolOutput = { content: [{ type: "text", text: "same" }] };
+
+    const { rerender } = renderHook(() => useToolInputStreaming(props));
+
+    expect(bridge.sendToolResult).toHaveBeenCalledTimes(1);
+
+    props.toolCallId = "call-2";
+    rerender();
+
+    expect(bridge.sendToolResult).toHaveBeenCalledTimes(2);
   });
 
   it("does not send tool error for duplicate error message", () => {
