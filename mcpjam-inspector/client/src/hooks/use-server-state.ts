@@ -1683,10 +1683,23 @@ export function useServerState({
         typeof rawOverride === "string" && isKnownProtocolVersion(rawOverride)
           ? rawOverride
           : undefined;
-      const effective = resolveEffectiveMcpProtocolVersion(
+      const resolvedPin = resolveEffectiveMcpProtocolVersion(
         serverOverride,
         hostPin
       );
+      // Track the EFFECTIVELY-STAMPED pin (after the rollout-flag gate),
+      // not the raw resolved pin. `buildResolverConnectionDefaults`
+      // drops stateless pins when `stateless-mcp-enabled` is off, so a
+      // raw resolved `DRAFT-2026-v1` against a flag-off state actually
+      // stamps `undefined` on the wire. Tracking the raw pin would
+      // miss flag-flip transitions — toggling the flag changes the wire
+      // mode without changing the stored pin, and `previous === resolved`
+      // would skip the re-test even though the transport just changed.
+      const effective: McpProtocolVersion | undefined =
+        resolvedPin !== undefined &&
+        (statelessMcpEnabled || !isStatelessProtocolVersion(resolvedPin))
+          ? resolvedPin
+          : undefined;
 
       const seenBefore = lastAppliedProtocolVersionRef.current.has(name);
       const previous = lastAppliedProtocolVersionRef.current.get(name);
@@ -1758,6 +1771,7 @@ export function useServerState({
     appState.servers,
     activeMcpProfile?.mcpProtocolVersion,
     activeHostConfig,
+    statelessMcpEnabled,
     dispatch,
     guardedReconnectServer,
     storeInitInfo,
