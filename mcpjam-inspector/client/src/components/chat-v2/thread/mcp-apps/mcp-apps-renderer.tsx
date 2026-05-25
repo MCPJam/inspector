@@ -908,11 +908,15 @@ export function MCPAppsRendererSurface({
         setInternalDisplayMode(mode);
       }
 
-      // Notify parent about fullscreen state changes regardless of controlled mode
+      // Notify parent about fullscreen state changes regardless of controlled
+      // mode. Always forward this widget's own id (`displayWidgetId`); the
+      // parent runs an ownership check, which safely no-ops if our local
+      // `displayMode` was stale at "fullscreen" because another widget took
+      // over the global slot.
       if (mode === "fullscreen") {
         onRequestFullscreen?.(displayWidgetId);
       } else if (displayMode === "fullscreen") {
-        onExitFullscreen?.(fullscreenWidgetId ?? displayWidgetId);
+        onExitFullscreen?.(displayWidgetId);
       }
     },
     [
@@ -922,7 +926,6 @@ export function MCPAppsRendererSurface({
       onRequestFullscreen,
       onExitFullscreen,
       displayMode,
-      fullscreenWidgetId,
     ]
   );
   const lastForcedDisplayModeRef = useRef<DisplayMode | null>(null);

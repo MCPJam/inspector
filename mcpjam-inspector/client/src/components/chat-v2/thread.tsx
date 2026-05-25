@@ -168,12 +168,16 @@ export function Thread({
         current !== null &&
         (current === toolCallId || current === displayWidgetId);
       setPipWidgetId((current) => (matchesOwnership(current) ? null : current));
-      setFullscreenWidgetId((current) => {
-        if (!matchesOwnership(current)) return current;
+      // Keep the updater pure (StrictMode double-invokes); fire the
+      // fullscreen callback once, outside, based on the same ownership check.
+      const clearedFullscreen = matchesOwnership(fullscreenWidgetId);
+      setFullscreenWidgetId((current) =>
+        matchesOwnership(current) ? null : current
+      );
+      if (clearedFullscreen) {
         onFullscreenChange?.(false);
-        return null;
-      });
-      if (matchesOwnership(pipWidgetId) || matchesOwnership(fullscreenWidgetId)) {
+      }
+      if (matchesOwnership(pipWidgetId) || clearedFullscreen) {
         onDisplayModeChange?.("inline");
       }
     },
