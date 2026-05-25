@@ -186,8 +186,14 @@ tools.post("/execute", async (c) => {
   if (!toolName) return c.json({ error: "toolName is required" }, 400);
 
   const manager = c.mcpClientManager;
-  const client = manager.getClient(serverId);
-  if (!client) {
+  // `getClient()` is legacy-only — it returns the unwrapped upstream
+  // `Client` (or `undefined` for stateless preview connections, which
+  // wrap their own fetch instead of an upstream Client). Use
+  // `getManagedClient()` here so the guard works for both adapters; the
+  // actual execution at `manager.executeTool` already goes through
+  // `getClientOrThrow` which reads from the same managed-client map.
+  const managedClient = manager.getManagedClient(serverId);
+  if (!managedClient) {
     return c.json({ error: `Server '${serverId}' is not connected` }, 400);
   }
 
