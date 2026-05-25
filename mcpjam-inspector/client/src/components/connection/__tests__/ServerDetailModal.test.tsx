@@ -10,6 +10,22 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: mockCapture,
   }),
+  // ServerDetailModal calls `useFeatureFlagEnabled("stateless-mcp-enabled")`
+  // to gate the per-server protocol-version dropdown. Default `false` here
+  // so the existing test setup exercises the pre-flag UI shape; tests that
+  // need the dropdown enabled should override per-test via
+  // `vi.mocked(useFeatureFlagEnabled).mockReturnValue(true)`.
+  useFeatureFlagEnabled: () => false,
+}));
+
+// ServerDetailModal reads + writes the project-server config via Convex
+// (`useQuery("projectServerConfig:getConfig")` + `useMutation` for save).
+// The tests don't exercise that round-trip; stub both to no-ops so the
+// component mounts. `useQuery` returns `undefined` (matches the
+// pre-loaded Convex state); `useMutation` returns a no-op function.
+vi.mock("convex/react", () => ({
+  useQuery: () => undefined,
+  useMutation: () => vi.fn(),
 }));
 
 vi.mock("sonner", () => ({

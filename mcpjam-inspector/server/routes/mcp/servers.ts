@@ -111,8 +111,12 @@ servers.delete("/:serverId", async (c) => {
     const mcpClientManager = c.mcpClientManager;
 
     try {
-      const client = mcpClientManager.getClient(serverId);
-      if (client) {
+      // `getClient()` returns undefined for stateless connections (no
+      // wrapped upstream Client). Use `getManagedClient()` so this guard
+      // recognizes both adapters and we actually call `disconnectServer`
+      // for stateless preview connections instead of leaking them.
+      const managedClient = mcpClientManager.getManagedClient(serverId);
+      if (managedClient) {
         await mcpClientManager.disconnectServer(serverId);
       }
     } catch (error) {

@@ -2,6 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, type Dispatch } from "react";
 import { useConvex } from "convex/react";
 import { toast } from "sonner";
 import type { HttpServerConfig, MCPServerConfig } from "@mcpjam/sdk/browser";
+import {
+  isKnownProtocolVersion,
+  isStatelessProtocolVersion,
+} from "@mcpjam/sdk/browser";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import type {
   AppAction,
   AppState,
@@ -62,7 +67,11 @@ import {
 import { resolveEffectiveClientCapabilities } from "@/lib/effective-client";
 import { EXCALIDRAW_SERVER_NAME } from "@/lib/excalidraw-quick-connect";
 import { readOnboardingState } from "@/lib/onboarding-state";
-import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
+import {
+  resolveEffectiveMcpProtocolVersion,
+  type HostConfigDtoV2,
+  type McpProtocolVersion,
+} from "@/lib/client-config-v2";
 import { resolveServerConnectionSettings } from "@/lib/client-connection-resolve";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 
@@ -567,6 +576,10 @@ export function useServerState({
 }: UseServerStateParams) {
   const isUserReady = useDbUserReady();
   const convex = useConvex();
+  // Rollout kill-switch for stateless wire mode. Mirrors the App.tsx gate
+  // on the hosted path so local-mode connects can't bypass it either via
+  // a persisted `mcpProtocolVersion: "DRAFT-2026-v1"` override.
+  const statelessMcpEnabled = useFeatureFlagEnabled("stateless-mcp-enabled");
   const {
     createServerIfMissing: convexCreateServerIfMissing,
     updateServer: convexUpdateServer,
@@ -910,7 +923,15 @@ export function useServerState({
       // ConnectionDefaults wire shape. Undefined preserves historical
       // behavior — connect runs without an mcpProfile pin and the SDK
       // falls back to its hardcoded defaults.
-      mcpProfile?: import("@/lib/client-config-v2").HostConfigMcpProfileV1
+      mcpProfile?: import("@/lib/client-config-v2").HostConfigMcpProfileV1,
+      // Server identifier used to look up per-server protocol-version
+      // pins on `activeHostConfig.serverConnectionOverrides`. When
+      // supplied, `resolveEffectiveMcpProtocolVersion(serverOverride,
+      // hostDefault)` runs so a per-server dropdown choice actually
+      // reaches the connect payload — without this argument, the host
+      // default wins and per-server overrides are silently dropped (the
+      // bug PR #2257 review flagged).
+      serverId?: string
     ) => {
       const defaults: {
         headers?: Record<string, string>;
@@ -921,6 +942,7 @@ export function useServerState({
           unknown
         >;
         supportedProtocolVersions?: string[];
+        mcpProtocolVersion?: import("@mcpjam/sdk/browser").McpProtocolVersion;
       } = {};
       if ("url" in serverConfig) {
         const headers = omitAuthorizationHeader(
@@ -953,9 +975,45 @@ export function useServerState({
           (v): v is string => typeof v === "string" && v.trim() !== "",
         );
       }
+      // Effective pinned MCP protocol version: per-server override
+      // (from `activeHostConfig.serverConnectionOverrides[serverId]
+      // .mcpProtocolVersionOverride`) wins, otherwise the host default
+      // from `mcpProfile.mcpProtocolVersion`, otherwise undefined
+      // (preserves "SDK chooses" semantics). Membership-gate each
+      // candidate via `isKnownProtocolVersion` so a typo on either
+      // layer doesn't slip past to the SDK's open-routing predicate.
+      const rawServerOverride =
+        serverId && activeHostConfig
+          ? activeHostConfig.serverConnectionOverrides?.[serverId]
+              ?.mcpProtocolVersionOverride
+          : undefined;
+      const serverOverride: McpProtocolVersion | undefined =
+        typeof rawServerOverride === "string" &&
+        isKnownProtocolVersion(rawServerOverride)
+          ? rawServerOverride
+          : undefined;
+      const rawHostPin = mcpProfile?.mcpProtocolVersion;
+      const hostPin: McpProtocolVersion | undefined =
+        typeof rawHostPin === "string" && isKnownProtocolVersion(rawHostPin)
+          ? rawHostPin
+          : undefined;
+      const effective = resolveEffectiveMcpProtocolVersion(
+        serverOverride,
+        hostPin,
+      );
+      // Stateless versions are gated behind the rollout flag. A persisted
+      // override from a prior flag-on session must NOT bypass the gate
+      // (the UI controls only gate authoring). Stateful pins like
+      // "2025-11-25" still flow through.
+      if (
+        effective !== undefined &&
+        (statelessMcpEnabled || !isStatelessProtocolVersion(effective))
+      ) {
+        defaults.mcpProtocolVersion = effective;
+      }
       return Object.keys(defaults).length > 0 ? defaults : undefined;
     },
-    []
+    [activeHostConfig, statelessMcpEnabled]
   );
 
   const guardedTestConnection = useCallback(
@@ -978,6 +1036,7 @@ export function useServerState({
           connectionDefaults: buildResolverConnectionDefaults(
             serverConfig,
             activeMcpProfile,
+            resolved.serverId,
           ),
         });
       }
@@ -1005,6 +1064,7 @@ export function useServerState({
           connectionDefaults: buildResolverConnectionDefaults(
             configWithDefaults,
             activeMcpProfile,
+            resolved.serverId,
           ),
         });
       }
@@ -1573,6 +1633,149 @@ export function useServerState({
     },
     [dispatch, fetchAndStoreInitInfo]
   );
+
+  // Re-validate already-connected servers when the resolved effective
+  // `mcpProtocolVersion` for them changes — either because the host-level
+  // default flipped or a per-server override moved. The pinned wire mode
+  // is part of every subsequent request payload (via
+  // `buildResolverConnectionDefaults`), so a server that no longer speaks
+  // the pinned version will fail every call after the switch; without this
+  // re-test the durable "Connected" pill keeps lying until the user manually
+  // toggles the server.
+  //
+  // Behavior:
+  // - On the first observation of a connected server, seed the last-applied
+  //   map without re-testing (so steady-state mounts don't trigger probes).
+  // - On a subsequent observation where the resolved version differs, kick
+  //   off `guardedReconnectServer` (which threads the new pin through
+  //   `buildResolverConnectionDefaults` / `withProjectConnectionDefaults`).
+  //   Dispatch `CONNECT_SUCCESS` or `CONNECT_FAILURE` based on the result so
+  //   the toggle reflects reality.
+  // - Race protection via the existing `nextOpToken` / `isStaleOp` pattern,
+  //   so a user-initiated disconnect or another pin change supersedes an
+  //   in-flight re-test.
+  // - Drop entries for servers no longer in "connected" status so a manual
+  //   reconnect re-seeds against the live pin rather than against whatever
+  //   was last seen.
+  const lastAppliedProtocolVersionRef = useRef<
+    Map<string, McpProtocolVersion | undefined>
+  >(new Map());
+  useEffect(() => {
+    const rawHostPin = activeMcpProfile?.mcpProtocolVersion;
+    const hostPin: McpProtocolVersion | undefined =
+      typeof rawHostPin === "string" && isKnownProtocolVersion(rawHostPin)
+        ? rawHostPin
+        : undefined;
+
+    const observed = new Set<string>();
+    for (const [name, server] of Object.entries(appState.servers)) {
+      if (server.connectionStatus !== "connected") continue;
+      observed.add(name);
+
+      const resolved = tryResolveProjectServer(name);
+      const serverId = resolved?.serverId;
+      const rawOverride =
+        serverId && activeHostConfig
+          ? activeHostConfig.serverConnectionOverrides?.[serverId]
+              ?.mcpProtocolVersionOverride
+          : undefined;
+      const serverOverride: McpProtocolVersion | undefined =
+        typeof rawOverride === "string" && isKnownProtocolVersion(rawOverride)
+          ? rawOverride
+          : undefined;
+      const resolvedPin = resolveEffectiveMcpProtocolVersion(
+        serverOverride,
+        hostPin
+      );
+      // Track the EFFECTIVELY-STAMPED pin (after the rollout-flag gate),
+      // not the raw resolved pin. `buildResolverConnectionDefaults`
+      // drops stateless pins when `stateless-mcp-enabled` is off, so a
+      // raw resolved `DRAFT-2026-v1` against a flag-off state actually
+      // stamps `undefined` on the wire. Tracking the raw pin would
+      // miss flag-flip transitions — toggling the flag changes the wire
+      // mode without changing the stored pin, and `previous === resolved`
+      // would skip the re-test even though the transport just changed.
+      const effective: McpProtocolVersion | undefined =
+        resolvedPin !== undefined &&
+        (statelessMcpEnabled || !isStatelessProtocolVersion(resolvedPin))
+          ? resolvedPin
+          : undefined;
+
+      const seenBefore = lastAppliedProtocolVersionRef.current.has(name);
+      const previous = lastAppliedProtocolVersionRef.current.get(name);
+      lastAppliedProtocolVersionRef.current.set(name, effective);
+
+      // Initial observation seeds without probing.
+      if (!seenBefore) continue;
+      if (previous === effective) continue;
+
+      // Resolved pin changed for a connected server. Re-test asynchronously;
+      // dispatch CONNECT_FAILURE if the server can't speak the new wire mode
+      // (e.g. legacy 2025 server with the host now pinned to a draft).
+      const serverConfig = server.config;
+      const useOAuth = server.useOAuth ?? false;
+      const token = nextOpToken(name);
+      void (async () => {
+        try {
+          const result = await guardedReconnectServer(name, serverConfig);
+          if (isStaleOp(name, token)) return;
+          if (result?.success) {
+            dispatch({
+              type: "CONNECT_SUCCESS",
+              name,
+              config: serverConfig,
+              tokens: getStoredTokens(name),
+              useOAuth,
+            });
+            if (result.initInfo) {
+              await storeInitInfo(name, result.initInfo).catch(() => {});
+            }
+            return;
+          }
+          const errorMessage =
+            (typeof result?.error === "string" && result.error.length > 0
+              ? result.error
+              : undefined) ??
+            `Server does not speak the pinned MCP protocol version (${
+              effective ?? "default"
+            })`;
+          dispatch({
+            type: "CONNECT_FAILURE",
+            name,
+            error: errorMessage,
+          });
+        } catch (error) {
+          if (isStaleOp(name, token)) return;
+          dispatch({
+            type: "CONNECT_FAILURE",
+            name,
+            error:
+              error instanceof Error
+                ? error.message
+                : "Connection re-test failed after protocol version change",
+          });
+        }
+      })();
+    }
+
+    // Drop entries for servers no longer in "connected" status so the next
+    // manual connect re-seeds against the current pin.
+    for (const name of Array.from(
+      lastAppliedProtocolVersionRef.current.keys()
+    )) {
+      if (!observed.has(name)) {
+        lastAppliedProtocolVersionRef.current.delete(name);
+      }
+    }
+  }, [
+    appState.servers,
+    activeMcpProfile?.mcpProtocolVersion,
+    activeHostConfig,
+    statelessMcpEnabled,
+    dispatch,
+    guardedReconnectServer,
+    storeInitInfo,
+  ]);
 
   const testConnectionAfterOAuth = useCallback(
     async (serverConfig: MCPServerConfig, serverName: string) => {

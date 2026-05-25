@@ -91,8 +91,60 @@ export type CspDomainSet = {
  * (empty envelope) hash distinctly on the backend, so the inspector MUST NOT
  * synthesize an empty envelope when the user hasn't opted in.
  */
+/**
+ * Pinned MCP protocol version for a server connection. Values are wire
+ * literals (mirror of `MCP_PROTOCOL_VERSIONS` in `@mcpjam/sdk`'s
+ * `mcp-protocol-version.ts`, and `McpProtocolVersion` in
+ * `convex/lib/hostConfigV2.ts`).
+ *
+ * `undefined` = "no opinion — SDK chooses at request time." Do NOT
+ * materialize a default value at storage time; canonical hashes would
+ * churn whenever the SDK default moves and future SDK default upgrades
+ * would silently no-op against existing rows.
+ */
+export type McpProtocolVersion =
+  | "2025-03-26"
+  | "2025-06-18"
+  | "2025-11-25"
+  | "DRAFT-2026-v1";
+
+/**
+ * Resolve the effective pinned protocol version for a server connection.
+ * Mirror of the rule the backend stamps into `serverConnectionOverrides`
+ * at fan-out time, applied at the bridge / wire-client factory site to
+ * pick between `OfficialSdkClientAdapter` and
+ * `StatelessMcpHttpPreviewClient` (the SDK routes via
+ * `isStatelessProtocolVersion`).
+ *
+ *   server override wins; otherwise host default; otherwise undefined
+ *
+ * Returns `undefined` when neither layer has an opinion — preserves the
+ * SDK-default semantics. Both inputs are optional so callers can read
+ * straight off the hydrated host config row without normalizing first.
+ */
+export function resolveEffectiveMcpProtocolVersion(
+  serverOverride: McpProtocolVersion | undefined,
+  hostDefault: McpProtocolVersion | undefined,
+): McpProtocolVersion | undefined {
+  return serverOverride ?? hostDefault;
+}
+
 export type HostConfigMcpProfileV1 = {
   profileVersion: 1;
+  /**
+   * Host-level default pinned MCP protocol version. Absent → SDK chooses
+   * at request time (do NOT materialize a default at write time —
+   * preserves undefined-as-default semantics so canonical hashes don't
+   * churn when the SDK default moves). Sibling of `initialize` and
+   * `apps` because stateless versions explicitly skip the initialize
+   * handshake — keeping this out of `mcpProfile.initialize` keeps the
+   * source-of-truth obvious.
+   *
+   * Per-server overrides live on `serverConnectionOverrides[serverId]
+   * .mcpProtocolVersionOverride`. Resolution rule: server override wins;
+   * otherwise this default; otherwise `undefined` (SDK default).
+   */
+  mcpProtocolVersion?: McpProtocolVersion;
   initialize?: {
     /**
      * Ordered accept-list. First entry is sent in
@@ -292,6 +344,13 @@ export type HostConfigInputV2 = {
   serverConnectionOverrides?: Record<string, {
     headersOverride?: Record<string, string>;
     requestTimeoutOverride?: number;
+    /**
+     * Per-server override of the outbound MCP wire mode. Wins over
+     * `mcpProfile.mcpProtocolVersion`. Mirror of the execution-plane field
+     * fanned out from `projectServerRefs.mcpProtocolVersionOverride` by
+     * `fanOutProjectServerConfigToHosts`.
+     */
+    mcpProtocolVersionOverride?: McpProtocolVersion;
   }>;
 };
 
@@ -328,6 +387,7 @@ export type HostConfigDtoV2 = {
   serverConnectionOverrides?: Record<string, {
     headersOverride?: Record<string, string>;
     requestTimeoutOverride?: number;
+    mcpProtocolVersionOverride?: McpProtocolVersion;
   }>;
 };
 
@@ -409,6 +469,9 @@ export function emptyHostConfigInputV2(
               ...(v.requestTimeoutOverride !== undefined
                 ? { requestTimeoutOverride: v.requestTimeoutOverride }
                 : {}),
+              ...(v.mcpProtocolVersionOverride !== undefined
+                ? { mcpProtocolVersionOverride: v.mcpProtocolVersionOverride }
+                : {}),
             },
           ]),
         )
@@ -457,6 +520,9 @@ export function hostConfigDtoToInput(
                 : {}),
               ...(v.requestTimeoutOverride !== undefined
                 ? { requestTimeoutOverride: v.requestTimeoutOverride }
+                : {}),
+              ...(v.mcpProtocolVersionOverride !== undefined
+                ? { mcpProtocolVersionOverride: v.mcpProtocolVersionOverride }
                 : {}),
             },
           ])
@@ -901,19 +967,21 @@ export function serverConnectionOverridesEqual(
 ): boolean {
   const normalize = (
     overrides: HostConfigInputV2["serverConnectionOverrides"],
-  ): Record<string, { headersOverride?: Record<string, string>; requestTimeoutOverride?: number }> => {
+  ): Record<string, { headersOverride?: Record<string, string>; requestTimeoutOverride?: number; mcpProtocolVersionOverride?: McpProtocolVersion }> => {
     if (!overrides) return {};
-    const result: Record<string, { headersOverride?: Record<string, string>; requestTimeoutOverride?: number }> = {};
+    const result: Record<string, { headersOverride?: Record<string, string>; requestTimeoutOverride?: number; mcpProtocolVersionOverride?: McpProtocolVersion }> = {};
     for (const [key, entry] of Object.entries(overrides)) {
       if (!entry) continue;
       const hasHeaders =
         entry.headersOverride !== undefined &&
         Object.keys(entry.headersOverride).length > 0;
       const hasTimeout = entry.requestTimeoutOverride !== undefined;
-      if (hasHeaders || hasTimeout) {
+      const hasWireMode = entry.mcpProtocolVersionOverride !== undefined;
+      if (hasHeaders || hasTimeout || hasWireMode) {
         result[key] = {
           ...(hasHeaders ? { headersOverride: entry.headersOverride } : {}),
           ...(hasTimeout ? { requestTimeoutOverride: entry.requestTimeoutOverride } : {}),
+          ...(hasWireMode ? { mcpProtocolVersionOverride: entry.mcpProtocolVersionOverride } : {}),
         };
       }
     }

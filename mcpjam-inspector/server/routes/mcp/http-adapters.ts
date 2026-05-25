@@ -135,7 +135,9 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
     let normalizedServerId = serverId;
     const availableServers = clientManager
       .listServers()
-      .filter((id: string) => Boolean(clientManager.getClient(id)));
+      // `getClient()` is legacy-only. Use `getManagedClient()` so stateless
+      // preview connections show up in the available-servers list.
+      .filter((id: string) => Boolean(clientManager.getManagedClient(id)));
 
     if (!availableServers.includes(serverId)) {
       const match = availableServers.find(
@@ -194,7 +196,9 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
     let normalizedServerId = serverId;
     const availableServers = c.mcpClientManager
       .listServers()
-      .filter((id: string) => Boolean(c.mcpClientManager.getClient(id)));
+      // `getClient()` is legacy-only. Use `getManagedClient()` so stateless
+      // preview connections show up in the available-servers list.
+      .filter((id: string) => Boolean(c.mcpClientManager.getManagedClient(id)));
 
     if (!availableServers.includes(serverId)) {
       const match = availableServers.find(

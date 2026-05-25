@@ -2,15 +2,13 @@
  * MCP Tasks support (experimental feature - spec 2025-11-25)
  */
 
-import type {
-  Client,
-  ServerCapabilities,
-} from "@modelcontextprotocol/client";
+import type { ServerCapabilities } from "@modelcontextprotocol/client";
 import type {
   MCPTask,
   MCPListTasksResult,
   ClientRequestOptions,
 } from "./types.js";
+import type { ManagedMcpClient } from "./managed-mcp-client.js";
 
 export const TaskStatusNotificationMethod =
   "notifications/tasks/status" as const;
@@ -28,7 +26,7 @@ export const TaskStatusNotificationMethod =
  * @returns List of tasks
  */
 export async function listTasks(
-  client: Client,
+  client: ManagedMcpClient,
   cursor?: string,
   options?: ClientRequestOptions
 ): Promise<MCPListTasksResult> {
@@ -50,7 +48,7 @@ export async function listTasks(
  * @returns The task object
  */
 export async function getTask(
-  client: Client,
+  client: ManagedMcpClient,
   taskId: string,
   options?: ClientRequestOptions
 ): Promise<MCPTask> {
@@ -73,7 +71,7 @@ export async function getTask(
  * @returns The task result (type depends on original request)
  */
 export async function getTaskResult(
-  client: Client,
+  client: ManagedMcpClient,
   taskId: string,
   options?: ClientRequestOptions
 ): Promise<unknown> {
@@ -95,7 +93,7 @@ export async function getTaskResult(
  * @returns The updated task object
  */
 export async function cancelTask(
-  client: Client,
+  client: ManagedMcpClient,
   taskId: string,
   options?: ClientRequestOptions
 ): Promise<MCPTask> {

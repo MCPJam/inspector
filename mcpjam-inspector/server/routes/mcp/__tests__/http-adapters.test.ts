@@ -40,6 +40,11 @@ describe("HTTP Adapters Security", () => {
       getClient: vi
         .fn()
         .mockImplementation((id: string) => (id === "test-server" ? {} : null)),
+      getManagedClient: vi
+        .fn()
+        .mockImplementation((id: string) =>
+          id === "test-server" ? {} : undefined,
+        ),
       hasServer: vi
         .fn()
         .mockImplementation((id: string) => id === "test-server"),

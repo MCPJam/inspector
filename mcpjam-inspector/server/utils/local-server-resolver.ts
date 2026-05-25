@@ -1,6 +1,10 @@
 import type { Context } from "hono";
 import type { MCPClientManager, MCPServerConfig } from "@mcpjam/sdk";
 import {
+  isKnownProtocolVersion,
+  type McpProtocolVersion,
+} from "@mcpjam/sdk";
+import {
   ErrorCode,
   WebRouteError,
   parseErrorMessage,
@@ -297,6 +301,18 @@ export function parseConnectionDefaults(
     }
   }
 
+  // Pinned MCP protocol version. Membership-gate against
+  // MCP_PROTOCOL_VERSIONS at this trust boundary (per the
+  // validate-then-route discipline) so typo strings drop to undefined
+  // instead of slipping through to the factory's open-routing
+  // predicate.
+  if (
+    typeof input.mcpProtocolVersion === "string" &&
+    isKnownProtocolVersion(input.mcpProtocolVersion)
+  ) {
+    out.mcpProtocolVersion = input.mcpProtocolVersion;
+  }
+
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
@@ -344,6 +360,16 @@ export function toMCPServerConfig(
      * unlisted version fails fast.
      */
     supportedProtocolVersions?: string[];
+    /**
+     * Resolved per-server pinned MCP protocol version —
+     * `resolveEffectiveMcpProtocolVersion` already applied (server
+     * override > host default > undefined). Forwarded only for HTTP
+     * configs; the SDK factory throws `StatelessRequiresHttpTransport`
+     * for stdio when the pin is stateless, so we silently skip on stdio
+     * rather than crash a non-HTTP server config a user toggled the
+     * host default on for.
+     */
+    mcpProtocolVersion?: McpProtocolVersion;
   }
 ): MCPServerConfig {
   const { serverConfig } = authResult;
@@ -424,6 +450,10 @@ export function toMCPServerConfig(
   ) {
     http.supportedProtocolVersions = options.supportedProtocolVersions;
   }
+  // Outbound wire mode — only forwarded for HTTP configs (the SDK
+  // factory rejects stateless on stdio at construction time). Undefined
+  // = SDK default (legacy upstream Client + initialize).
+  if (options?.mcpProtocolVersion) http.mcpProtocolVersion = options.mcpProtocolVersion;
 
   // Attach the SDK's 401-recovery hook only when this is a hosted-OAuth
   // server (we have a token from `authorize-batch-local`) AND the caller
@@ -537,6 +567,10 @@ export async function resolveLocalServerForConnect(
     // historical wire behavior — no opt-in, no change.
     clientInfo: options?.defaults?.clientInfo,
     supportedProtocolVersions: options?.defaults?.supportedProtocolVersions,
+    // Same opt-in path for the wire mode — `resolveEffectiveMcpProtocolVersion`
+    // runs client-side, the literal is wire-serialized via
+    // ConnectionDefaults, and lands on the SDK config here.
+    mcpProtocolVersion: options?.defaults?.mcpProtocolVersion,
     oauthAccessToken: resolvedOauthAccessToken,
     refreshContext: {
       bearerToken,

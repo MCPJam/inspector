@@ -1,11 +1,31 @@
 import { useState } from "react";
 import { JsonEditor, type JsonEditorMode } from "@/components/ui/json-editor";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@mcpjam/design-system/select";
+import { useFeatureFlagEnabled } from "posthog-js/react";
+import { isKnownProtocolVersion } from "@mcpjam/sdk/browser";
+import {
   type HostConfigInputV2,
   type HostConfigMcpProfileV1,
+  type McpProtocolVersion,
 } from "@/lib/client-config-v2";
 import type { HostAttentionIssue } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
+
+type HostProtocolDropdownValue = "latest" | "draft";
+
+const HOST_PROTOCOL_OPTIONS: Array<{
+  value: HostProtocolDropdownValue;
+  label: string;
+}> = [
+  { value: "latest", label: "Latest" },
+  { value: "draft", label: "Draft" },
+];
 
 interface ProtocolTabProps {
   draft: HostConfigInputV2;
@@ -23,6 +43,19 @@ interface ProtocolTabProps {
 type ProtocolDoc = {
   clientInfo?: { name: string; version: string };
   supportedProtocolVersions?: string[];
+  /**
+   * Host-level default pinned MCP protocol version. Absent → SDK
+   * chooses at request time. Stateful values (per
+   * `isStatelessProtocolVersion`) use the legacy `Client` + initialize
+   * handshake; stateless values route through
+   * `StatelessMcpHttpPreviewClient`. Sibling of `clientInfo` and
+   * `supportedProtocolVersions` because stateless versions explicitly
+   * skip initialize — nesting it under either of those would be
+   * misleading. Maps onto `mcpProfile.mcpProtocolVersion` on
+   * persistence; per-server pins live on the server card's Connection
+   * overrides section.
+   */
+  mcpProtocolVersion?: McpProtocolVersion;
   capabilities?: Record<string, unknown>;
   connectionDefaults: {
     requestTimeout: number;
@@ -61,6 +94,16 @@ function protocolToJson(draft: HostConfigInputV2): ProtocolDoc {
   const versions = draft.mcpProfile?.initialize?.supportedProtocolVersions;
   if (versions && versions.length > 0) {
     doc.supportedProtocolVersions = [...versions];
+  }
+
+  // Surface mcpProtocolVersion only when explicitly set. Absence is
+  // semantic ("SDK default") and must round-trip through the editor
+  // verbatim — materializing a placeholder here would churn canonical
+  // hashes for legacy rows that haven't opted into a pin. The dropdown
+  // in the surrounding tab is how users discover the field; the JSON
+  // view doesn't need to advertise it.
+  if (draft.mcpProfile?.mcpProtocolVersion !== undefined) {
+    doc.mcpProtocolVersion = draft.mcpProfile.mcpProtocolVersion;
   }
 
   if (
@@ -121,6 +164,20 @@ function applyJsonToDraft(
     if (cleaned.length > 0) supportedProtocolVersions = cleaned;
   }
 
+  // mcpProtocolVersion — membership-gate via `isKnownProtocolVersion`
+  // so typo strings fall back to `undefined` (= "SDK default") rather
+  // than slipping through to the SDK's open-routing predicate. Absent
+  // / wrong type also collapses to undefined for the same canonical-
+  // hash-stability reason documented in the type.
+  let mcpProtocolVersion: McpProtocolVersion | undefined;
+  const rawProtocolVersion = parsed.mcpProtocolVersion;
+  if (
+    typeof rawProtocolVersion === "string" &&
+    isKnownProtocolVersion(rawProtocolVersion)
+  ) {
+    mcpProtocolVersion = rawProtocolVersion;
+  }
+
   // capabilities — pass through verbatim as Record<string, unknown> only if
   // the user supplied an object. Absence vs `{}` is preserved: missing key
   // clears clientCapabilities; explicit `{}` advertises nothing but keeps
@@ -172,10 +229,14 @@ function applyJsonToDraft(
     const next: HostConfigMcpProfileV1 = {
       ...base,
       initialize: initHasFields ? initialize : undefined,
+      mcpProtocolVersion,
     };
 
     const allEmpty =
-      next.initialize === undefined && !next.apps && !next.extensions;
+      next.initialize === undefined &&
+      next.mcpProtocolVersion === undefined &&
+      !next.apps &&
+      !next.extensions;
     return allEmpty ? undefined : next;
   });
 
@@ -198,20 +259,86 @@ export function ProtocolTab({ draft, onDraftChange }: ProtocolTabProps) {
     applyParsedToDraft: applyJsonToDraft,
     onDraftChange,
   });
+  const statelessMcpEnabled = useFeatureFlagEnabled("stateless-mcp-enabled");
+  // Stored stateful literals (legacy carry-over) collapse to "Latest"
+  // since they route to the same code path; saving normalizes back to
+  // undefined.
+  const selectedDropdownValue: HostProtocolDropdownValue =
+    draft.mcpProfile?.mcpProtocolVersion === "DRAFT-2026-v1"
+      ? "draft"
+      : "latest";
+
+  // Dropdown handler. Writes through to `draft.mcpProfile.mcpProtocolVersion`
+  // directly (parallel to the JSON editor's applyJsonToDraft path) so the
+  // JSON view round-trips immediately. Maps the UI-only "default" sentinel
+  // to `undefined` — preserves canonical-hash stability so the SDK can
+  // upgrade its default version without churning every stored host config.
+  const setProtocolVersion = (next: McpProtocolVersion | undefined) => {
+    onDraftChange((prev) => {
+      const base: HostConfigMcpProfileV1 =
+        prev.mcpProfile ?? { profileVersion: 1 };
+      const updated: HostConfigMcpProfileV1 = {
+        ...base,
+        mcpProtocolVersion: next,
+      };
+      const allEmpty =
+        updated.initialize === undefined &&
+        updated.mcpProtocolVersion === undefined &&
+        !updated.apps &&
+        !updated.extensions;
+      return {
+        ...prev,
+        mcpProfile: allEmpty ? undefined : updated,
+      };
+    });
+  };
 
   return (
-    <div className="flex h-full min-h-[480px] flex-col">
-      <JsonEditor
-        rawContent={content}
-        onRawChange={onRawChange}
-        mode={jsonMode}
-        onModeChange={setJsonMode}
-        showModeToggle
-        showToolbar
-        showLineNumbers
-        autoFormatOnEdit={false}
-        height="100%"
-      />
+    <div className="flex h-full min-h-[480px] flex-col gap-3">
+      {statelessMcpEnabled ? (
+        <div className="rounded-[10px] border border-border bg-background px-3.5 py-2.5">
+          <div className="flex items-center gap-3">
+            <span
+              className="text-[12px] font-medium"
+              title="Latest: current stable MCP wire version (whatever the SDK ships). Draft: experimental DRAFT-2026-v1 stateless transport."
+            >
+              Protocol version
+            </span>
+            <Select
+              value={selectedDropdownValue}
+              onValueChange={(next) => {
+                setProtocolVersion(
+                  next === "draft" ? "DRAFT-2026-v1" : undefined,
+                );
+              }}
+            >
+              <SelectTrigger className="h-9 text-xs">
+                <SelectValue placeholder="Latest" />
+              </SelectTrigger>
+              <SelectContent>
+                {HOST_PROTOCOL_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      ) : null}
+      <div className="flex min-h-0 flex-1 flex-col">
+        <JsonEditor
+          rawContent={content}
+          onRawChange={onRawChange}
+          mode={jsonMode}
+          onModeChange={setJsonMode}
+          showModeToggle
+          showToolbar
+          showLineNumbers
+          autoFormatOnEdit={false}
+          height="100%"
+        />
+      </div>
     </div>
   );
 }

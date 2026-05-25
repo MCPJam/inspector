@@ -179,7 +179,13 @@ import {
 import { buildElectronMcpCallbackUrl } from "./hooks/use-server-state";
 import { disconnectAllRuntimeServers } from "./state/mcp-api";
 import { getEffectiveProjectClientCapabilities } from "./lib/client-config";
-import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
+import {
+  getDefaultClientCapabilities,
+  isKnownProtocolVersion,
+  isStatelessProtocolVersion,
+  type McpProtocolVersion,
+} from "@mcpjam/sdk/browser";
+import { resolveEffectiveMcpProtocolVersion } from "./lib/client-config-v2";
 import {
   buildClientsPath,
   buildOrganizationPath,
@@ -1203,6 +1209,13 @@ export default function App() {
   const playgroundTabEnabled = useFeatureFlagEnabled("playground-tab-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
+  // Rollout kill-switch for the DRAFT-2026-v1 stateless transport. Gates
+  // both UI controls (ProtocolTab, ServerDetailModal, EditServerFormContent,
+  // AdvancedConnectionSettingsSection) AND request stamping — a persisted
+  // override from a prior flag-on session must NOT bypass the switch
+  // (otherwise hosted validate/tools/resources/prompts flows still
+  // activate the stateless transport).
+  const statelessMcpEnabled = useFeatureFlagEnabled("stateless-mcp-enabled");
   const {
     getAccessToken,
     signIn,
@@ -1999,10 +2012,82 @@ export default function App() {
       ),
     [hostedServerIdsByName, appState.servers]
   );
+  const hostedMcpProfilePins = useMemo(() => {
+    const rawClientInfo = activeMcpProfile?.initialize?.clientInfo;
+    const clientInfo =
+      rawClientInfo &&
+      typeof rawClientInfo === "object" &&
+      !Array.isArray(rawClientInfo)
+        ? rawClientInfo
+        : undefined;
+
+    const rawSupportedVersions =
+      activeMcpProfile?.initialize?.supportedProtocolVersions;
+    const supportedProtocolVersions =
+      Array.isArray(rawSupportedVersions) && rawSupportedVersions.length > 0
+        ? rawSupportedVersions.filter(
+            (v): v is string => typeof v === "string" && v.trim() !== ""
+          )
+        : undefined;
+
+    const rawHostPin = activeMcpProfile?.mcpProtocolVersion;
+    const hostPin: McpProtocolVersion | undefined =
+      typeof rawHostPin === "string" && isKnownProtocolVersion(rawHostPin)
+        ? rawHostPin
+        : undefined;
+
+    const mcpProtocolVersionsByServerId: Record<
+      string,
+      McpProtocolVersion
+    > = {};
+    for (const serverId of new Set(Object.values(hostedServerIdsByName))) {
+      const rawServerOverride =
+        activeHost?.serverConnectionOverrides?.[serverId]
+          ?.mcpProtocolVersionOverride;
+      const serverOverride: McpProtocolVersion | undefined =
+        typeof rawServerOverride === "string" &&
+        isKnownProtocolVersion(rawServerOverride)
+          ? rawServerOverride
+          : undefined;
+      const effective = resolveEffectiveMcpProtocolVersion(
+        serverOverride,
+        hostPin
+      );
+      if (!effective) continue;
+      // Persisted stateless pins (DRAFT-2026-v1) MUST NOT bypass the
+      // rollout flag. The UI gates only control authoring; without this
+      // gate, a server config saved while the flag was on (or set by an
+      // admin) would still route every hosted call through the stateless
+      // preview after the flag is flipped off. Stateful pins like
+      // "2025-11-25" are unaffected.
+      if (!statelessMcpEnabled && isStatelessProtocolVersion(effective)) {
+        continue;
+      }
+      mcpProtocolVersionsByServerId[serverId] = effective;
+    }
+
+    return {
+      clientInfo,
+      supportedProtocolVersions,
+      mcpProtocolVersionsByServerId:
+        Object.keys(mcpProtocolVersionsByServerId).length > 0
+          ? mcpProtocolVersionsByServerId
+          : undefined,
+    };
+  }, [
+    activeHost?.serverConnectionOverrides,
+    activeMcpProfile,
+    hostedServerIdsByName,
+    statelessMcpEnabled,
+  ]);
   useApiContext({
     projectId: convexProjectId,
     serverIdsByName: hostedServerIdsByName,
     clientCapabilities: hostedClientCapabilities,
+    clientInfo: hostedMcpProfilePins.clientInfo,
+    supportedProtocolVersions: hostedMcpProfilePins.supportedProtocolVersions,
+    mcpProtocolVersionsByServerId:
+      hostedMcpProfilePins.mcpProtocolVersionsByServerId,
     clientConfigSyncPending: isClientConfigSyncPending,
     getAccessToken,
     oauthTokensByServerId,

@@ -158,6 +158,20 @@ export type HttpServerConfig = BaseServerConfig & {
   sessionId?: StreamableHTTPClientTransportOptions["sessionId"];
   /** Prefer SSE transport over Streamable HTTP */
   preferSSE?: boolean;
+  /**
+   * Pinned MCP protocol version (wire literal that lands in `_meta` +
+   * `MCP-Protocol-Version` header). Absent → SDK default at request
+   * time. Stateful values (per `isStatelessProtocolVersion`) use the
+   * legacy upstream Client + initialize handshake; stateless values
+   * select the preview Streamable HTTP POST transport
+   * (`StatelessMcpHttpPreviewClient`) and are incompatible with
+   * `preferSSE`. Already validated by `isKnownProtocolVersion` at the
+   * trust boundary (`local-server-resolver.ts` + Convex validator);
+   * the manager does not re-validate. Resolved upstream (per-server
+   * override > host default > undefined) and stamped onto the config
+   * passed to `MCPClientManager`.
+   */
+  mcpProtocolVersion?: import("./mcp-protocol-version.js").McpProtocolVersion;
 
   // Discriminator fields - these should never be set for HTTP
   command?: never;
@@ -197,9 +211,16 @@ export type ServerSummary = {
 
 /**
  * Shared state for managed client connections.
+ *
+ * `client` is typed as the `ManagedMcpClient` interface so the manager
+ * can swap between the legacy upstream `Client` (via
+ * `OfficialSdkClientAdapter`) and the stateless preview
+ * (`StatelessMcpHttpPreviewClient`) without per-call branching.
+ * `transport` is `undefined` for the stateless preview path — the
+ * preview owns its own fetch and has no separate Transport object.
  */
 export interface BaseClientState {
-  client?: Client;
+  client?: import("./managed-mcp-client.js").ManagedMcpClient;
   transport?: Transport;
   authProvider?: RefreshTokenOAuthProvider;
 }
@@ -209,7 +230,9 @@ export interface BaseClientState {
  * Retained for compatibility with external type consumers.
  */
 export interface ManagedClientState extends BaseClientState {
-  promise?: Promise<Client>;
+  promise?: Promise<
+    import("./managed-mcp-client.js").ManagedMcpClient
+  >;
 }
 
 /**
@@ -225,8 +248,12 @@ export interface RegisteredServerState {
  */
 export interface LiveClientState extends BaseClientState {
   stdioStderrCleanup?: () => void;
-  connectPromise?: Promise<Client>;
-  retryPromise?: Promise<Client>;
+  connectPromise?: Promise<
+    import("./managed-mcp-client.js").ManagedMcpClient
+  >;
+  retryPromise?: Promise<
+    import("./managed-mcp-client.js").ManagedMcpClient
+  >;
   initializedClientCapabilities?: ClientCapabilityOptions;
 }
 
