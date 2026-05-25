@@ -4,22 +4,22 @@
       "releases": [
         {
           "name": "@mcpjam/inspector",
-          "type": "minor"
+          "type": "patch"
         }
       ],
-      "summary": "### `@mcpjam/inspector`\n- **Persist MCP App surfaces across tool calls and into fullscreen chat** (#2274): MCP App iframes now survive re-renders, message replays, and the inline ↔ fullscreen transition. A new `widget-surface-store` + `widget-surface-host` pair hoists the iframe lifecycle (bridge, registry, teardown, streaming) above the thread so each surface keeps a stable identity tied to its tool call instead of remounting whenever the parent component changes. One surface is rendered per tool call, scoped by resource URI so distinct resources don't share an iframe.\n- **App-provided tools registry**: `app-tools-registry.ts` tracks tools advertised by an MCP App's widget so they remain dispatchable for the lifetime of the surface, not just while the originating tool call is the active part. Carries through inline thread, fullscreen overlay, and transcript replay.\n- **Fullscreen-chat parity**: `fullscreen-chat-overlay.tsx` adopts the hoisted surface host so opening/closing fullscreen keeps the same iframe instance — no more re-init, no more lost widget state. Forwards the display/own widget id on teardown and on exit-fullscreen, and stamps the current tool id on cached HTML so registrations stay stable.\n- **Sandbox/CSP hardening carried over**: `sandboxed-iframe.tsx` updates included for the persistent-surface lifecycle.\n- Test coverage: new `widget-surface-*` suites plus extended `FullscreenChatOverlay`, `Thread`, `mcp-apps-renderer`, `useToolInputStreaming`, and `sandboxed-iframe` tests.",
-      "id": "persist-mcp-app-surfaces"
+      "summary": "### `@mcpjam/inspector`\n- **Host-controlled width for MCP App surfaces** (#2275): the inline renderer no longer applies `size-changed` width to the outer container — the host owns width, the iframe reports height. Prevents apps from resizing their own wrapper.\n- **Streaming reveal fallback actually reveals**: `useToolInputStreaming` now flips `canRenderStreamingInput` to `true` when the fallback timer fires without parseable partial args, instead of leaving streaming apps hidden indefinitely.",
+      "id": "outer-wrapper-tool-streamer"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/inspector",
-      "type": "minor",
-      "oldVersion": "2.5.0",
+      "type": "patch",
+      "oldVersion": "2.6.0",
       "changesets": [
-        "persist-mcp-app-surfaces"
+        "outer-wrapper-tool-streamer"
       ],
-      "newVersion": "2.6.0"
+      "newVersion": "2.6.1"
     }
   ]
 }

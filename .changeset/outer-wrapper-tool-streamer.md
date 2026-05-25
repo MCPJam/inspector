@@ -1,7 +1,0 @@
----
-"@mcpjam/inspector": patch
----
-
-### `@mcpjam/inspector`
-- **Host-controlled width for MCP App surfaces** (#2275): the inline renderer no longer applies `size-changed` width to the outer container — the host owns width, the iframe reports height. Prevents apps from resizing their own wrapper.
-- **Streaming reveal fallback actually reveals**: `useToolInputStreaming` now flips `canRenderStreamingInput` to `true` when the fallback timer fires without parseable partial args, instead of leaving streaming apps hidden indefinitely.
