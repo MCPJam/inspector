@@ -50,7 +50,29 @@ import {
   type ToolDiscoveryState,
 } from "@/shared/progressive-tool-discovery";
 
-function isMetaToolName(name: string): boolean {
+/**
+ * Approval-free check for a tool-call name.
+ *
+ * The progressive-discovery meta-tools (`search_mcp_tools`,
+ * `load_mcp_tools`) are exempt from approval because gating discovery
+ * itself behind N approvals defeats the point — see the module docstring.
+ * But the exemption is name-only, and we cannot trust the name in
+ * isolation: when progressive mode is **off** there are no meta-tools in
+ * the toolset, but a real MCP server is free to expose a tool literally
+ * named `search_mcp_tools`. Honoring the exemption in that case would
+ * silently let a real, approval-required tool execute without the user's
+ * confirmation.
+ *
+ * Require `progressivePlan?.enabled` as a precondition — that's the only
+ * mode in which the orchestrator actually mints the meta-tools (and it
+ * also fails fast on real-tool name collisions in `prepareChatV2`, so a
+ * matching name truly is one of our meta-tools).
+ */
+function isApprovalFreeMetaToolName(
+  name: string,
+  progressivePlan: ProgressiveToolPlan | undefined,
+): boolean {
+  if (!progressivePlan?.enabled) return false;
   return META_TOOL_NAMES.includes(name);
 }
 import { logger } from "./logger";
@@ -599,7 +621,8 @@ async function processStream(
   tools: ToolSet,
   requireToolApproval?: boolean,
   onLiveTextDelta?: (delta: string) => void,
-  abortSignal?: AbortSignal
+  abortSignal?: AbortSignal,
+  progressivePlan?: ProgressiveToolPlan
 ): Promise<StreamResult> {
   const contentParts: PersistedAssistantPart[] = [];
   let pendingText = "";
@@ -768,7 +791,10 @@ async function processStream(
             serverId: readToolServerId(tools, chunk.toolName),
           });
 
-          if (requireToolApproval && !isMetaToolName(chunk.toolName)) {
+          if (
+            requireToolApproval &&
+            !isApprovalFreeMetaToolName(chunk.toolName, progressivePlan)
+          ) {
             writer.write({
               type: "tool-approval-request",
               approvalId: generateToolCallId(),
@@ -1357,7 +1383,8 @@ async function processOneStep(
     tools,
     requireToolApproval,
     onLiveTextDelta,
-    abortSignal
+    abortSignal,
+    progressivePlan
   );
   const llmEndAbs = Date.now();
   traceTurn.turnUsage = mergeLiveChatTraceUsage(
@@ -1404,7 +1431,7 @@ async function processOneStep(
           if (
             part.type === "tool-call" &&
             !resultIds.has(part.toolCallId) &&
-            !isMetaToolName(part.toolName)
+            !isApprovalFreeMetaToolName(part.toolName, progressivePlan)
           ) {
             return true;
           }
@@ -1432,7 +1459,8 @@ async function processOneStep(
       );
       const metaMessages = await executeToolCallsFromMessages(messageHistory, {
         tools: metaTracedTools as Record<string, any>,
-        filterToolName: (name) => isMetaToolName(name),
+        filterToolName: (name) =>
+          isApprovalFreeMetaToolName(name, progressivePlan),
         ...(abortSignal ? { abortSignal } : {}),
       });
       if (metaMessages.length > 0) {
