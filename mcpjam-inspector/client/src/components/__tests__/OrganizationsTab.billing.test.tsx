@@ -254,6 +254,7 @@ vi.mock("convex/react", () => ({
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: (...args: unknown[]) =>
     mockUseFeatureFlagEnabled(...args),
+  usePostHog: () => undefined,
 }));
 
 vi.mock("sonner", () => ({
