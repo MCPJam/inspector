@@ -15,7 +15,7 @@
  * stricter real host.
  */
 import { describe, it, expect, vi } from "vitest";
-import { render } from "@testing-library/react";
+import { act, render } from "@testing-library/react";
 import { SandboxedIframe } from "@/components/ui/sandboxed-iframe";
 
 function getOuterIframeSandbox(container: HTMLElement): string[] {
@@ -267,6 +267,69 @@ describe("SandboxedIframe — outer allow attribute (allowFeatures injection gua
     const allow = getOuterIframeAllow(container);
     expect(allow).toContain("camera *");
     expect(allow).not.toContain("local-network-access");
+  });
+});
+
+describe("SandboxedIframe — resource-ready delivery", () => {
+  function dispatchFromIframe(
+    iframe: HTMLIFrameElement,
+    data: unknown,
+  ): void {
+    const proxyOrigin = new URL(iframe.src).origin;
+    const event = new MessageEvent("message", {
+      data,
+      source: iframe.contentWindow!,
+      origin: proxyOrigin,
+    });
+    window.dispatchEvent(event);
+  }
+
+  it("does not resend sandbox-resource-ready for semantically unchanged payloads", async () => {
+    const renderIframe = (csp: { connectDomains: string[] }) => (
+      <SandboxedIframe
+        html="<html><body>widget</body></html>"
+        csp={{
+          connectDomains: csp.connectDomains,
+          resourceDomains: [],
+          frameDomains: [],
+          baseUriDomains: [],
+        }}
+        permissions={{ clipboardWrite: {} }}
+        sandboxAttrs={["allow-forms"]}
+        cspDirectives={{ "script-src": ["'unsafe-inline'"] }}
+        onMessage={() => {}}
+      />
+    );
+    const { container, rerender } = render(
+      renderIframe({ connectDomains: ["https://api.example.com"] }),
+    );
+    const iframe = container.querySelector("iframe") as HTMLIFrameElement;
+    const postMessageSpy = vi.spyOn(iframe.contentWindow!, "postMessage");
+
+    act(() => {
+      dispatchFromIframe(iframe, {
+        jsonrpc: "2.0",
+        method: "ui/notifications/sandbox-proxy-ready",
+      });
+    });
+
+    await vi.waitFor(() => {
+      expect(postMessageSpy).toHaveBeenCalledTimes(1);
+    });
+
+    rerender(renderIframe({ connectDomains: ["https://api.example.com"] }));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(postMessageSpy).toHaveBeenCalledTimes(1);
+
+    rerender(renderIframe({ connectDomains: ["https://next.example.com"] }));
+
+    await vi.waitFor(() => {
+      expect(postMessageSpy).toHaveBeenCalledTimes(2);
+    });
   });
 });
 

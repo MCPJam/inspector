@@ -14,6 +14,7 @@
  */
 
 import { HOSTED_MODE, SANDBOX_ORIGIN } from "@/lib/config";
+import { stableStringifyJson } from "@/lib/client-config";
 import {
   useRef,
   useState,
@@ -113,6 +114,7 @@ export const SandboxedIframe = forwardRef<
 ) {
   const outerRef = useRef<HTMLIFrameElement>(null);
   const [proxyReady, setProxyReady] = useState(false);
+  const lastResourceReadyKeyRef = useRef<string | null>(null);
 
   // SEP-1865: Host and Sandbox MUST have different origins.
   //
@@ -338,9 +340,38 @@ export const SandboxedIframe = forwardRef<
     return Array.from(tokens).sort().join(" ");
   }, [sandbox, sandboxAttrs]);
 
+  const resourceReadyKey = useMemo(
+    () =>
+      stableStringifyJson({
+        csp: csp ?? null,
+        cspDirectives: cspDirectives ?? null,
+        html: html ?? null,
+        permissive: permissive ?? null,
+        permissions: permissions ?? null,
+        sandbox,
+        sandboxAttrs: sandboxAttrs ?? null,
+      }),
+    [
+      csp,
+      cspDirectives,
+      html,
+      permissive,
+      permissions,
+      sandbox,
+      sandboxAttrs,
+    ],
+  );
+
+  useEffect(() => {
+    if (!proxyReady) lastResourceReadyKeyRef.current = null;
+  }, [proxyReady]);
+
   // Send HTML, CSP, and permissions to sandbox when ready (SEP-1865)
   useEffect(() => {
     if (!proxyReady || !html) return;
+    const resourceTargetKey = `${sandboxProxyOrigin}\0${resourceReadyKey}`;
+    if (lastResourceReadyKeyRef.current === resourceTargetKey) return;
+    lastResourceReadyKeyRef.current = resourceTargetKey;
 
     outerRef.current?.contentWindow?.postMessage(
       {
@@ -366,6 +397,10 @@ export const SandboxedIframe = forwardRef<
       },
       sandboxProxyOrigin,
     );
+    // This effect intentionally depends on the semantic payload key instead
+    // of raw object props. Re-sending `sandbox-resource-ready` makes the
+    // proxy assign inner `srcdoc` again, which restarts the app even when the
+    // HTML/CSP/permission payload is unchanged.
     // `colorScheme` and `allowFeatures` are intentionally OMITTED from
     // this dep list. The proxy handles `sandbox-resource-ready` by
     // rebuilding the CSP and assigning `inner.srcdoc`, which reloads the
@@ -385,12 +420,7 @@ export const SandboxedIframe = forwardRef<
   }, [
     proxyReady,
     html,
-    sandbox,
-    csp,
-    permissions,
-    sandboxAttrs,
-    cspDirectives,
-    permissive,
+    resourceReadyKey,
     sandboxProxyOrigin,
   ]);
 
