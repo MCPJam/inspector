@@ -199,7 +199,7 @@ export function ChatTabV2({
   const [widgetStateQueue, setWidgetStateQueue] = useState<
     { toolCallId: string; state: unknown }[]
   >([]);
-  const [modelContextQueue, setModelContextQueue] = useState<
+  const [, setModelContextQueue] = useState<
     {
       toolCallId: string;
       context: {
@@ -1560,12 +1560,8 @@ export function ChatTabV2({
         structuredContent?: Record<string, unknown>;
       }
     ) => {
-      // Queue model context to be included in next message
-      setModelContextQueue((prev) => {
-        // Remove any existing context from same widget (overwrite pattern per SEP-1865)
-        const filtered = prev.filter((item) => item.toolCallId !== toolCallId);
-        return [...filtered, { toolCallId, context }];
-      });
+      void toolCallId;
+      void context;
     },
     []
   );
@@ -1924,29 +1920,6 @@ export function ChatTabV2({
 
         if (skillMessages.length > 0) {
           setMessages((prev) => [...prev, ...skillMessages]);
-        }
-
-        const contextMessages = modelContextQueue.map(
-          ({ toolCallId, context }) => ({
-            id: `model-context-${toolCallId}-${Date.now()}`,
-            role: "user" as const,
-            parts: [
-              {
-                type: "text" as const,
-                text: `Widget ${toolCallId} context: ${JSON.stringify(
-                  context
-                )}`,
-              },
-            ],
-            metadata: {
-              source: "widget-model-context",
-              toolCallId,
-            },
-          })
-        );
-
-        if (contextMessages.length > 0) {
-          setMessages((prev) => [...prev, ...(contextMessages as UIMessage[])]);
         }
 
         posthog.capture("send_message", {

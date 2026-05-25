@@ -2,6 +2,7 @@ import { convertToModelMessages } from "ai";
 import { describe, expect, it } from "vitest";
 import {
   mergeTranscriptToolResults,
+  preserveHydratedMessageIds,
   transcriptToUIMessages,
 } from "../transcript-to-ui-messages";
 
@@ -71,7 +72,7 @@ describe("transcriptToUIMessages", () => {
     expect((merged[1] as { role?: string }).role).toBe("assistant");
     const assistantContent = (merged[1] as { content: unknown[] }).content;
     const toolCallPart = assistantContent.find(
-      (p) => (p as { type?: string }).type === "tool-call",
+      (p) => (p as { type?: string }).type === "tool-call"
     ) as { result?: unknown };
     expect(toolCallPart.result).toEqual({ results: [] });
 
@@ -84,7 +85,7 @@ describe("transcriptToUIMessages", () => {
     ]);
 
     const toolPart = messages[1].parts.find(
-      (p) => p.type === "dynamic-tool",
+      (p) => p.type === "dynamic-tool"
     ) as
       | { type: "dynamic-tool"; toolCallId: string; output: unknown }
       | undefined;
@@ -124,7 +125,7 @@ describe("transcriptToUIMessages", () => {
 
     const messages = transcriptToUIMessages(transcript);
     const invocations = messages[1].parts.filter(
-      (p) => p.type === "dynamic-tool",
+      (p) => p.type === "dynamic-tool"
     ) as Array<{
       toolCallId: string;
       output: unknown;
@@ -285,7 +286,7 @@ describe("transcriptToUIMessages", () => {
     const second = transcriptToUIMessages(transcript);
 
     expect(first.map((message) => message.id)).toEqual(
-      second.map((message) => message.id),
+      second.map((message) => message.id)
     );
     expect(first[1].parts[0]).toMatchObject(second[1].parts[0]);
   });
@@ -294,6 +295,61 @@ describe("transcriptToUIMessages", () => {
     const transcript = [{ id: "msg-123", role: "user", content: "Hi" }];
     const messages = transcriptToUIMessages(transcript);
     expect(messages[0].id).toBe("msg-123");
+  });
+
+  it("preserves live widget message IDs when same-session hydration returns the same tool call", () => {
+    const currentMessages = [
+      {
+        id: "live-user-start-game",
+        role: "user",
+        parts: [{ type: "text", text: "Execute `start_game`" }],
+      },
+      {
+        id: "live-assistant-start-game",
+        role: "assistant",
+        parts: [
+          { type: "text", text: "Invoked `start_game`" },
+          {
+            type: "dynamic-tool",
+            toolCallId: "playground-widget-1",
+            toolName: "start_game",
+            state: "output-available",
+            input: {},
+            output: { board: Array(9).fill("_") },
+          },
+        ],
+      },
+    ] as any;
+    const hydratedMessages = transcriptToUIMessages([
+      {
+        role: "user",
+        content: [{ type: "text", text: "Execute `start_game`" }],
+      },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Invoked `start_game`" },
+          {
+            type: "tool-call",
+            toolCallId: "playground-widget-1",
+            toolName: "start_game",
+            args: {},
+            output: { board: ["_", "X", "_", "_", "_", "_", "_", "_", "_"] },
+          },
+        ],
+      },
+    ]);
+
+    const stabilized = preserveHydratedMessageIds(
+      currentMessages,
+      hydratedMessages
+    );
+
+    expect(stabilized[0].id).toBe("live-user-start-game");
+    expect(stabilized[1].id).toBe("live-assistant-start-game");
+    expect((stabilized[1].parts[1] as any).output).toEqual({
+      board: ["_", "X", "_", "_", "_", "_", "_", "_", "_"],
+    });
   });
 
   it("returns empty array for non-array input", () => {

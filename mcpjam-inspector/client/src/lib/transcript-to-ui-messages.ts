@@ -50,19 +50,58 @@ function stableHash(value: unknown): string {
   return (hash >>> 0).toString(36);
 }
 
+function readUiPartToolCallId(part: unknown): string | undefined {
+  if (!part || typeof part !== "object") return undefined;
+  const candidate = part as { toolCallId?: unknown };
+  if (
+    typeof candidate.toolCallId === "string" &&
+    candidate.toolCallId.length > 0
+  ) {
+    return candidate.toolCallId;
+  }
+  return undefined;
+}
+
+function normalizeUiPartForContinuity(part: unknown): unknown {
+  if (!part || typeof part !== "object" || Array.isArray(part)) {
+    return part;
+  }
+
+  const {
+    id: _id,
+    toolCallId: _toolCallId,
+    ...rest
+  } = part as Record<string, unknown>;
+  return rest;
+}
+
+function getUiMessageContinuityKey(message: UIMessage): string {
+  const toolCallIds = (message.parts ?? [])
+    .map(readUiPartToolCallId)
+    .filter((id): id is string => !!id);
+
+  if (toolCallIds.length > 0) {
+    return `${message.role}:tools:${toolCallIds.join("|")}`;
+  }
+
+  return `${message.role}:parts:${stableHash(
+    (message.parts ?? []).map(normalizeUiPartForContinuity)
+  )}`;
+}
+
 function getStableMessageId(msg: TranscriptMessage, index: number): string {
   if (typeof msg.id === "string" && msg.id.length > 0) {
     return msg.id;
   }
   return `transcript-${index}-${msg.role ?? "unknown"}-${stableHash(
-    msg.content,
+    msg.content
   )}`;
 }
 
 function getStableToolCallId(
   part: TranscriptPart,
   messageIndex: number,
-  partIndex: number,
+  partIndex: number
 ): string {
   const explicitId = readToolCallId(part);
   if (explicitId) return explicitId;
@@ -183,7 +222,7 @@ function extractTextContent(content: unknown): string {
 
 function convertParts(
   content: unknown,
-  messageIndex: number,
+  messageIndex: number
 ): UIMessage["parts"] {
   if (typeof content === "string") {
     return [{ type: "text", text: content }];
@@ -252,8 +291,8 @@ export function transcriptToUIMessages(transcript: unknown[]): UIMessage[] {
       role === "system"
         ? ("system" as const)
         : role === "user"
-          ? ("user" as const)
-          : ("assistant" as const);
+        ? ("user" as const)
+        : ("assistant" as const);
 
     const senderUserId =
       typeof msg.senderUserId === "string" && msg.senderUserId.length > 0
@@ -271,4 +310,31 @@ export function transcriptToUIMessages(transcript: unknown[]): UIMessage[] {
   }
 
   return messages;
+}
+
+export function preserveHydratedMessageIds(
+  currentMessages: UIMessage[],
+  hydratedMessages: UIMessage[]
+): UIMessage[] {
+  if (currentMessages.length === 0 || hydratedMessages.length === 0) {
+    return hydratedMessages;
+  }
+
+  const currentIdsByContinuityKey = new Map<string, string[]>();
+  for (const message of currentMessages) {
+    const key = getUiMessageContinuityKey(message);
+    const ids = currentIdsByContinuityKey.get(key);
+    if (ids) {
+      ids.push(message.id);
+    } else {
+      currentIdsByContinuityKey.set(key, [message.id]);
+    }
+  }
+
+  return hydratedMessages.map((message) => {
+    const key = getUiMessageContinuityKey(message);
+    const existingId = currentIdsByContinuityKey.get(key)?.shift();
+    if (!existingId || existingId === message.id) return message;
+    return { ...message, id: existingId };
+  });
 }

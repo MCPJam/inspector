@@ -37,10 +37,7 @@ import {
 import { scrubAppToolResultForModel } from "@/components/chat-v2/thread/mcp-apps/app-tools-sanitizer";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import {
-  ModelDefinition,
-  type ModelProvider,
-} from "@/shared/types";
+import { ModelDefinition, type ModelProvider } from "@/shared/types";
 import {
   ProviderTokens,
   useAiProviderKeys,
@@ -75,7 +72,10 @@ import {
 } from "@/lib/mcpjam-limit";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
-import { transcriptToUIMessages } from "@/lib/transcript-to-ui-messages";
+import {
+  preserveHydratedMessageIds,
+  transcriptToUIMessages,
+} from "@/lib/transcript-to-ui-messages";
 import {
   getCachedBlobJson,
   invalidateChatHistoryPrefetch,
@@ -109,6 +109,12 @@ import type { ExecutionConfig } from "@/lib/chat-execution-config";
 import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
 
 const GUEST_LOCKED_MODEL_REASON = "Sign in to use MCPJam provided models";
+
+// SEP-1865 App-Provided Tools: opaque alias shape minted by
+// `useAppToolsRegistry`. Mirrors the regex in `app-tools-registry.ts`,
+// `shared/http-tool-calls.ts`, and the server-side validators — kept
+// local to avoid coupling the hook to the registry's `__internal` export.
+const APP_TOOL_ALIAS_REGEX = /^app_[a-z0-9]{8}$/i;
 
 function resolveSystemPrompt(value: string | null | undefined): string {
   return typeof value === "string" && value.trim().length > 0
@@ -182,10 +188,7 @@ function isOrgManagedModel(
     const modelId = String(model.id).startsWith(prefix)
       ? String(model.id).slice(prefix.length)
       : String(model.id);
-    return Boolean(
-      provider.baseUrl &&
-        provider.modelIds?.includes(modelId)
-    );
+    return Boolean(provider.baseUrl && provider.modelIds?.includes(modelId));
   }
 
   if (
@@ -193,7 +196,9 @@ function isOrgManagedModel(
     provider.selectedModels &&
     provider.selectedModels.length > 0
   ) {
-    return provider.hasSecret && provider.selectedModels.includes(String(model.id));
+    return (
+      provider.hasSecret && provider.selectedModels.includes(String(model.id))
+    );
   }
 
   return provider.hasSecret;
@@ -1079,9 +1084,12 @@ export function useChatSession(
   const hostedChatboxId = hostedContext?.chatboxId;
   const hostedAccessVersion = hostedContext?.accessVersion;
   const hostedChatboxSurface = hostedContext?.chatboxSurface;
-  const requestRefreshAccessVersion = hostedContext?.requestRefreshAccessVersion;
+  const requestRefreshAccessVersion =
+    hostedContext?.requestRefreshAccessVersion;
   const initialModelId = executionConfig?.modelId;
-  const initialSystemPrompt = resolveSystemPrompt(executionConfig?.systemPrompt);
+  const initialSystemPrompt = resolveSystemPrompt(
+    executionConfig?.systemPrompt
+  );
   const initialTemperature = executionConfig?.temperature ?? 0.7;
   const initialRequireToolApproval =
     executionConfig?.requireToolApproval ?? false;
@@ -1176,10 +1184,7 @@ export function useChatSession(
     options.executionConfig?.progressiveToolDiscovery;
   const isHostedGuest = HOSTED_MODE && !workOsUser && !isWorkOsLoading;
   const sharedGuestMode =
-    isHostedGuest &&
-    !isAuthLoading &&
-    !!hostedProjectId &&
-    !!hostedChatboxId;
+    isHostedGuest && !isAuthLoading && !!hostedProjectId && !!hostedChatboxId;
   const guestMode = sharedGuestMode;
   const skipNextForkDetectionRef = useRef(false);
   const hasResolvedAuthHeadersRef = useRef(false);
@@ -1405,8 +1410,7 @@ export function useChatSession(
 
   // Create transport
   const transport = useMemo(() => {
-    const shouldUseOrgAwareChatApi =
-      HOSTED_MODE || selectedModelUsesOrgRuntime;
+    const shouldUseOrgAwareChatApi = HOSTED_MODE || selectedModelUsesOrgRuntime;
     let apiKey: string;
     if (
       selectedModel.provider === "custom" &&
@@ -1439,9 +1443,7 @@ export function useChatSession(
     // Submit is blocked until hostedProjectId and selected server ids resolve.
     const buildHostedBody = () => {
       if (!hostedProjectId) {
-        throw new Error(
-          "Hosted chat context is not ready: missing projectId."
-        );
+        throw new Error("Hosted chat context is not ready: missing projectId.");
       }
       const isHostedDirectChat = !hostedChatboxId;
       return {
@@ -1543,9 +1545,8 @@ export function useChatSession(
           : {}),
         // SEP-1865 App-Provided Tools snapshot. Drained fresh at POST time
         // (no memoization) so any iframe that mounted between the previous
-        // turn and this send contributes its tools. The registry already
-        // filters to readonly entries and caps size; server defends the
-        // boundary again in `validateAppToolEntries`.
+        // turn and this send contributes its tools. The registry caps size;
+        // the server defends the boundary again in `validateAppToolEntries`.
         appTools: useAppToolsRegistry.getState().snapshotForChatBody(),
       }),
       headers: transportHeaders,
@@ -1610,26 +1611,32 @@ export function useChatSession(
     // resolve via the server's `execute` function); only client-fulfilled
     // app aliases land here.
     onToolCall: async ({ toolCall }) => {
-      const entry = useAppToolsRegistry
-        .getState()
-        .resolve((toolCall as { toolName: string }).toolName);
-      if (!entry) return; // not an app tool — server handles
-      // PR 1 invariant: only readonly entries are advertised, so reaching
-      // dispatch with !readOnly is a leak in the advertise filter. Refuse
-      // defensively (do NOT execute) and warn. PR 2 lands approval UX.
-      if (!entry.readOnly) {
+      const toolName = (toolCall as { toolName: string }).toolName;
+      const entry = useAppToolsRegistry.getState().resolve(toolName);
+      if (!entry) {
+        // Two cases:
+        //   - server tool name: not an app alias, let the server's
+        //     execute path handle it (return without touching state).
+        //   - app alias with no live bridge: snapshot shipped this
+        //     alias, then the iframe was torn down before the model's
+        //     tool-call landed. Per SEP-1865 "Calling a tool from a
+        //     closed app MUST return an error" — we must resolve the
+        //     call here or the server loop pauses forever waiting for a
+        //     client-fulfilled result that never comes.
+        if (!APP_TOOL_ALIAS_REGEX.test(toolName)) return;
         addToolOutput({
-          tool: (toolCall as { toolName: string }).toolName,
+          tool: toolName,
           toolCallId: (toolCall as { toolCallId: string }).toolCallId,
           output: {
-            content: [{ type: "text", text: "Tool unavailable." }],
+            content: [
+              {
+                type: "text",
+                text: "App is no longer available — the widget was closed before the tool call landed.",
+              },
+            ],
             isError: true,
           },
         } as Parameters<typeof addToolOutput>[0]);
-        console.warn(
-          "[app-tools] non-readonly tool reached dispatch; advertise filter is leaky",
-          { alias: (toolCall as { toolName: string }).toolName },
-        );
         return;
       }
       const tc = toolCall as {
@@ -1668,7 +1675,9 @@ export function useChatSession(
             content: [
               {
                 type: "text",
-                text: `App tool failed: ${err instanceof Error ? err.message : String(err)}`,
+                text: `App tool failed: ${
+                  err instanceof Error ? err.message : String(err)
+                }`,
               },
             ],
             isError: true,
@@ -1692,6 +1701,8 @@ export function useChatSession(
       return false;
     },
   });
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
 
   const queueSessionHydration = useCallback(
     (hydration: PendingSessionHydration) => {
@@ -1713,7 +1724,12 @@ export function useChatSession(
       // would be a no-op and the useLayoutEffect that processes the pending
       // hydration would never fire.  Apply the hydration directly instead.
       if (hydration.sessionId === chatSessionIdRef.current) {
-        baseSetMessages(hydration.messages);
+        // Same-session history hydration may return equivalent messages with
+        // persisted IDs. Preserve matching live IDs so React updates widgets
+        // in place instead of remounting iframes keyed by the parent message.
+        baseSetMessages(
+          preserveHydratedMessageIds(messagesRef.current, hydration.messages)
+        );
         syncResumedVersion(hydration.resumedVersion);
         syncRestoredToolRenderOverrides(hydration.toolRenderOverrides ?? {});
         setPersistedSnapshotToolCallIds(
@@ -2058,7 +2074,7 @@ export function useChatSession(
         // Goes through the dedup cache so a hover-prefetched blob is reused
         // by the click path. Throws on non-OK responses internally.
         const transcript = (await getCachedBlobJson(
-          session.messagesBlobUrl,
+          session.messagesBlobUrl
         )) as unknown[];
         uiMessages = transcriptToUIMessages(transcript);
       }
@@ -2181,12 +2197,7 @@ export function useChatSession(
           resolvedAuthHeaders = undefined;
           setAuthHeaders(undefined);
         }
-      } else if (
-        !resolved &&
-        active &&
-        HOSTED_MODE &&
-        isHostedGuest
-      ) {
+      } else if (!resolved && active && HOSTED_MODE && isHostedGuest) {
         const guestToken = await getGuestBearerToken();
         if (!active) return;
         if (guestToken) {
@@ -2349,9 +2360,7 @@ export function useChatSession(
             : null
         );
       } catch (error) {
-        if (
-          !(hostedChatboxId && isAuthDeniedError(error))
-        ) {
+        if (!(hostedChatboxId && isAuthDeniedError(error))) {
           console.warn(
             "[useChatSession] Failed to fetch tools metadata:",
             error
@@ -2386,9 +2395,7 @@ export function useChatSession(
         const count = await countTextTokens(systemPrompt, modelId);
         setSystemPromptTokenCount(count > 0 ? count : null);
       } catch (error) {
-        if (
-          !(hostedChatboxId && isAuthDeniedError(error))
-        ) {
+        if (!(hostedChatboxId && isAuthDeniedError(error))) {
           console.warn(
             "[useChatSession] Failed to count system prompt tokens:",
             error

@@ -254,7 +254,7 @@ export function MultiModelPlaygroundCard({
   const effectiveMcpProfile = hostSnapshot
     ? hostSnapshot.mcpProfile
     : tabRootMcpProfile;
-  const [modelContextQueue, setModelContextQueue] = useState<
+  const [, setModelContextQueue] = useState<
     {
       toolCallId: string;
       context: {
@@ -466,31 +466,8 @@ export function MultiModelPlaygroundCard({
   }, [chatSessionId]);
 
   const queueContextMessages = useCallback(() => {
-    const contextMessages = modelContextQueue.map(
-      ({ toolCallId, context }) => ({
-        id: `model-context-${toolCallId}-${Date.now()}`,
-        role: "user" as const,
-        parts: [
-          {
-            type: "text" as const,
-            text: `Widget ${toolCallId} context: ${JSON.stringify(context)}`,
-          },
-        ],
-        metadata: {
-          source: "widget-model-context",
-          toolCallId,
-        },
-      }),
-    );
-
-    if (contextMessages.length > 0) {
-      setMessages((previous) => [
-        ...previous,
-        ...(contextMessages as UIMessage[]),
-      ]);
-      setModelContextQueue([]);
-    }
-  }, [modelContextQueue, setMessages]);
+    setModelContextQueue([]);
+  }, []);
 
   useEffect(() => {
     if (!broadcastRequest) {
@@ -518,7 +495,6 @@ export function MultiModelPlaygroundCard({
     });
   }, [
     broadcastRequest,
-    queueContextMessages,
     sendMessage,
     setMessages,
     outgoingSenderMetadata,
@@ -658,12 +634,8 @@ export function MultiModelPlaygroundCard({
         structuredContent?: Record<string, unknown>;
       },
     ) => {
-      setModelContextQueue((previous) => {
-        const filtered = previous.filter(
-          (item) => item.toolCallId !== toolCallId,
-        );
-        return [...filtered, { toolCallId, context }];
-      });
+      void toolCallId;
+      void context;
     },
     [],
   );

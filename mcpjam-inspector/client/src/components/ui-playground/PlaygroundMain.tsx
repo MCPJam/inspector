@@ -420,7 +420,7 @@ export function PlaygroundMain({
   );
   const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
   const [skillResults, setSkillResults] = useState<SkillResult[]>([]);
-  const [modelContextQueue, setModelContextQueue] = useState<
+  const [, setModelContextQueue] = useState<
     {
       toolCallId: string;
       context: {
@@ -1318,8 +1318,7 @@ export function PlaygroundMain({
     composer.input.trim().length > 0 ||
     mcpPromptResults.length > 0 ||
     skillResults.length > 0 ||
-    fileAttachments.length > 0 ||
-    modelContextQueue.length > 0;
+    fileAttachments.length > 0;
 
   const hasUnsavedDraftRef = useRef(hasUnsavedDraft);
   useEffect(() => {
@@ -2322,12 +2321,8 @@ export function PlaygroundMain({
         structuredContent?: Record<string, unknown>;
       }
     ) => {
-      // Queue model context to be included in next message
-      setModelContextQueue((prev) => {
-        // Remove any existing context from same widget (overwrite pattern per SEP-1865)
-        const filtered = prev.filter((item) => item.toolCallId !== toolCallId);
-        return [...filtered, { toolCallId, context }];
-      });
+      void toolCallId;
+      void context;
     },
     []
   );
@@ -2579,25 +2574,6 @@ export function PlaygroundMain({
         setIsFullscreenChatOpen(true);
       }
 
-      // Include any pending model context from widgets (SEP-1865 ui/update-model-context)
-      // Sent as "user" messages for compatibility with model provider APIs
-      const contextMessages = modelContextQueue.map(
-        ({ toolCallId, context }) => ({
-          id: `model-context-${toolCallId}-${Date.now()}`,
-          role: "user" as const,
-          parts: [
-            {
-              type: "text" as const,
-              text: `Widget ${toolCallId} context: ${JSON.stringify(context)}`,
-            },
-          ],
-          metadata: {
-            source: "widget-model-context",
-            toolCallId,
-          },
-        })
-      );
-
       // Convert file attachments to FileUIPart[] format for the AI SDK
       const files =
         fileAttachments.length > 0
@@ -2618,9 +2594,6 @@ export function PlaygroundMain({
         });
         setModelContextQueue([]);
       } else {
-        if (contextMessages.length > 0) {
-          setMessages((prev) => [...prev, ...contextMessages]);
-        }
         queueBroadcastRequest(
           {
             text: composer.input,

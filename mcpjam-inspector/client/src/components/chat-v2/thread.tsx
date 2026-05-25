@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useState, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type RefObject,
+} from "react";
 import { cn } from "@/lib/utils";
 import {
   useChatboxHostStyle,
@@ -140,19 +146,30 @@ export function Thread({
     }
   };
 
-  const handleRequestTeardown = (toolCallId: string) => {
-    setTornDownWidgetIds((prev) => {
-      if (prev.has(toolCallId)) return prev;
-      return new Set(prev).add(toolCallId);
-    });
-    if (pipWidgetId === toolCallId) {
-      setPipWidgetId(null);
-    }
-    if (fullscreenWidgetId === toolCallId) {
-      setFullscreenWidgetId(null);
-      onFullscreenChange?.(false);
-    }
-  };
+  const handleRequestTeardown = useCallback(
+    (toolCallId: string) => {
+      setTornDownWidgetIds((prev) => {
+        if (prev.has(toolCallId)) return prev;
+        return new Set(prev).add(toolCallId);
+      });
+      // Mirror `handleExitPip` / `handleExitFullscreen`: if the
+      // widget that asked for teardown was the one currently in PIP
+      // or fullscreen, clear that state too. Without this the iframe
+      // is gone but the parent still reserves the PIP spacer / keeps
+      // the fullscreen overlay open / reports fullscreen=true to
+      // `onFullscreenChange`.
+      setPipWidgetId((current) => (current === toolCallId ? null : current));
+      setFullscreenWidgetId((current) => {
+        if (current !== toolCallId) return current;
+        onFullscreenChange?.(false);
+        return null;
+      });
+      if (pipWidgetId === toolCallId || fullscreenWidgetId === toolCallId) {
+        onDisplayModeChange?.("inline");
+      }
+    },
+    [fullscreenWidgetId, onDisplayModeChange, onFullscreenChange, pipWidgetId]
+  );
 
   const showFullscreenChatOverlay =
     enableFullscreenChatOverlay && fullscreenWidgetId !== null;

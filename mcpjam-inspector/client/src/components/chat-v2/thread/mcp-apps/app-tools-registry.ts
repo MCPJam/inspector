@@ -13,14 +13,9 @@
  *   - `resolve(alias)` — looked up by `useChat.onToolCall` to find the right
  *     bridge to dispatch into.
  *
- * PR 1 scope: inline iframes only. Modal registration and the
- * `activeBridgeByParent` stack are defined here for forward compat (PR 2
- * wires the modal); in PR 1 the resolve path simply returns the (only)
- * instance per parentToolCallId.
- *
- * PR 1 product rule: only `annotations.readOnlyHint === true` tools are
- * advertised. Non-readonly tools are filtered out at registration time so
- * the model never sees them — approval UX lands in PR 2.
+ * App-provided tools are exposed exactly as the app lists them. MCPJam keeps
+ * the readonly bit for attribution and future policy, but does not force its
+ * server-tool approval flow onto app-provided tools.
  */
 
 import { create } from "zustand";
@@ -30,18 +25,9 @@ import type { CallToolResult } from "@modelcontextprotocol/client";
 /** Per-AppBridge instance identifier (independent of parentToolCallId). */
 export type BridgeId = string;
 
-/** Subset of an MCP `Tool` we need on the client side. */
-export interface AppToolDescriptor {
-  rawName: string;
-  description?: string;
-  inputSchema?: Record<string, unknown>;
-  outputSchema?: Record<string, unknown>;
-  annotations?: {
-    readOnlyHint?: boolean;
-    title?: string;
-    [k: string]: unknown;
-  };
-}
+export type AppToolDescriptor = NonNullable<
+  Awaited<ReturnType<AppBridge["listTools"]>>["tools"]
+>[number];
 
 export interface AppInstance {
   bridgeId: BridgeId;
@@ -77,7 +63,7 @@ export interface AppToolSnapshotEntry {
   readOnly: boolean;
 }
 
-// Server-mirrored limits — see plan §1.4 / §1.6.
+// Server-mirrored limits for the chat POST snapshot.
 const MAX_SNAPSHOT_ENTRIES = 64;
 const MAX_DESCRIPTION_CHARS = 512;
 const MAX_INPUT_SCHEMA_BYTES = 8 * 1024;
@@ -86,15 +72,11 @@ const ALIAS_REGEX = /^app_[a-z0-9]{8}$/i;
 interface AppToolsRegistryState {
   instancesByBridgeId: Map<BridgeId, AppInstance>;
   aliases: Map<string, AppToolAlias>;
-  /**
-   * Forward-compat for PR 2's modal handling. In PR 1, modal mounts do not
-   * register, so this map has one entry per parentToolCallId (the inline).
-   */
+  /** Active app-tool provider per host tool call. */
   activeBridgeByParent: Map<string, BridgeId>;
 
   registerInstance: (inst: AppInstance) => Promise<void>;
   unregisterInstance: (bridgeId: BridgeId) => void;
-  /** PR 2 only — push/pop semantics. Defined now so the API is stable. */
   pushActive: (parentToolCallId: string, bridgeId: BridgeId) => void;
   popActive: (parentToolCallId: string, bridgeId: BridgeId) => void;
 
@@ -108,10 +90,15 @@ interface AppToolsRegistryState {
 }
 
 /**
- * Produce an opaque alias for an (instance, rawName) pair. SHA-256 hashed
- * over identity-bearing inputs and truncated to 8 hex chars so the wire
+ * Produce an opaque alias for a rendered app tool. SHA-256 hashed over stable
+ * identity-bearing inputs and truncated to 8 hex chars so the wire
  * name is always 12 chars: well under Anthropic's 64-char tool-name limit
  * and never collides with the `getInvalidAnthropicToolNames` charset.
+ *
+ * Deliberately exclude `bridgeId`: a live app can reconnect/re-register its
+ * bridge without changing the rendered host tool call or raw app-tool name.
+ * The alias must stay stable across that churn so the model does not see the
+ * same app tool under a fresh name.
  *
  * Collision retry: if a generated alias is already in use, the caller
  * (`registerInstance`) re-rolls with a numeric salt appended to the
@@ -121,11 +108,10 @@ interface AppToolsRegistryState {
 async function generateAlias(
   serverId: string,
   parentToolCallId: string,
-  bridgeId: string,
   rawName: string,
-  salt = 0,
+  salt = 0
 ): Promise<string> {
-  const preimage = `${serverId}\0${parentToolCallId}\0${bridgeId}\0${rawName}\0${salt}`;
+  const preimage = `${serverId}\0${parentToolCallId}\0${rawName}\0${salt}`;
   const bytes = new TextEncoder().encode(preimage);
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   const hex = Array.from(new Uint8Array(digest))
@@ -138,191 +124,207 @@ function isReadOnly(tool: AppToolDescriptor): boolean {
   return tool.annotations?.readOnlyHint === true;
 }
 
-export const useAppToolsRegistry = create<AppToolsRegistryState>((set, get) => ({
-  instancesByBridgeId: new Map(),
-  aliases: new Map(),
-  activeBridgeByParent: new Map(),
+export const useAppToolsRegistry = create<AppToolsRegistryState>(
+  (set, get) => ({
+    instancesByBridgeId: new Map(),
+    aliases: new Map(),
+    activeBridgeByParent: new Map(),
 
-  // Returns a Promise so callers (and tests) can await the alias-hash
-  // round-trip. The renderer uses `void registerInstance(...)` because
-  // there's nothing to do until the next chat POST. Tests await so
-  // resolved microtasks don't bleed into the next test's reset store.
-  registerInstance: async (inst) => {
-    // Generate aliases for every tool the caller passes. Caller is
-    // expected to have already filtered to readonly per PR 1 rule;
-    // the registry still stamps `readOnly` defensively from annotations.
-    const aliasesForInst: AppToolAlias[] = [];
-    const existing = new Set(
-      [...get().aliases.entries()]
-        .filter(([, alias]) => alias.bridgeId !== inst.bridgeId)
-        .map(([alias]) => alias),
-    );
-    for (const tool of inst.tools) {
-      let salt = 0;
-      let alias = await generateAlias(
-        inst.serverId,
-        inst.parentToolCallId,
-        inst.bridgeId,
-        tool.rawName,
-        salt,
+    // Returns a Promise so callers (and tests) can await the alias-hash
+    // round-trip. The renderer uses `void registerInstance(...)` because
+    // there's nothing to do until the next chat POST. Tests await so
+    // resolved microtasks don't bleed into the next test's reset store.
+    registerInstance: async (inst) => {
+      // Generate aliases for every tool the app listed. `readOnly` is cached
+      // from annotations, but it is not an inclusion gate.
+      const aliasesForInst: AppToolAlias[] = [];
+      const existing = new Set(
+        [...get().aliases.entries()]
+          .filter(([, alias]) => {
+            if (alias.bridgeId === inst.bridgeId) return false;
+            const oldInst = get().instancesByBridgeId.get(alias.bridgeId);
+            return oldInst?.parentToolCallId !== inst.parentToolCallId;
+          })
+          .map(([alias]) => alias)
       );
-      while (existing.has(alias)) {
-        salt += 1;
-        alias = await generateAlias(
+      for (const tool of inst.tools) {
+        let salt = 0;
+        let alias = await generateAlias(
           inst.serverId,
           inst.parentToolCallId,
-          inst.bridgeId,
-          tool.rawName,
-          salt,
+          tool.name,
+          salt
+        );
+        while (existing.has(alias)) {
+          salt += 1;
+          alias = await generateAlias(
+            inst.serverId,
+            inst.parentToolCallId,
+            tool.name,
+            salt
+          );
+        }
+        existing.add(alias);
+        aliasesForInst.push({
+          alias,
+          bridgeId: inst.bridgeId,
+          rawName: tool.name,
+          readOnly: isReadOnly(tool),
+        });
+      }
+      set((s) => {
+        const instancesByBridgeId = new Map(s.instancesByBridgeId);
+        for (const [bridgeId, oldInst] of s.instancesByBridgeId) {
+          if (
+            bridgeId !== inst.bridgeId &&
+            oldInst.parentToolCallId === inst.parentToolCallId &&
+            oldInst.surface === inst.surface
+          ) {
+            instancesByBridgeId.delete(bridgeId);
+          }
+        }
+        instancesByBridgeId.set(inst.bridgeId, inst);
+        const aliases = new Map(s.aliases);
+        for (const [alias, a] of s.aliases) {
+          const oldInst = s.instancesByBridgeId.get(a.bridgeId);
+          if (
+            a.bridgeId === inst.bridgeId ||
+            oldInst?.parentToolCallId === inst.parentToolCallId
+          ) {
+            aliases.delete(alias);
+          }
+        }
+        for (const a of aliasesForInst) aliases.set(a.alias, a);
+        const activeBridgeByParent = new Map(s.activeBridgeByParent);
+        activeBridgeByParent.set(inst.parentToolCallId, inst.bridgeId);
+        return { instancesByBridgeId, aliases, activeBridgeByParent };
+      });
+    },
+
+    unregisterInstance: (bridgeId) => {
+      set((s) => {
+        const inst = s.instancesByBridgeId.get(bridgeId);
+        if (!inst) return {};
+        const instancesByBridgeId = new Map(s.instancesByBridgeId);
+        instancesByBridgeId.delete(bridgeId);
+        const aliases = new Map(s.aliases);
+        for (const [alias, a] of s.aliases) {
+          if (a.bridgeId === bridgeId) aliases.delete(alias);
+        }
+        const activeBridgeByParent = new Map(s.activeBridgeByParent);
+        if (activeBridgeByParent.get(inst.parentToolCallId) === bridgeId) {
+          activeBridgeByParent.delete(inst.parentToolCallId);
+        }
+        return { instancesByBridgeId, aliases, activeBridgeByParent };
+      });
+    },
+
+    pushActive: (parentToolCallId, bridgeId) => {
+      set((s) => {
+        const next = new Map(s.activeBridgeByParent);
+        next.set(parentToolCallId, bridgeId);
+        return { activeBridgeByParent: next };
+      });
+    },
+
+    popActive: (parentToolCallId, bridgeId) => {
+      set((s) => {
+        const current = s.activeBridgeByParent.get(parentToolCallId);
+        if (current !== bridgeId) return {};
+        const next = new Map(s.activeBridgeByParent);
+        // Fall back to any other registered instance under this parent.
+        let fallback: BridgeId | undefined;
+        for (const inst of s.instancesByBridgeId.values()) {
+          if (
+            inst.parentToolCallId === parentToolCallId &&
+            inst.bridgeId !== bridgeId
+          ) {
+            fallback = inst.bridgeId;
+            break;
+          }
+        }
+        if (fallback) next.set(parentToolCallId, fallback);
+        else next.delete(parentToolCallId);
+        return { activeBridgeByParent: next };
+      });
+    },
+
+    snapshotForChatBody: () => {
+      const { instancesByBridgeId, aliases, activeBridgeByParent } = get();
+      const out: AppToolSnapshotEntry[] = [];
+      let dropped = 0;
+      for (const [alias, a] of aliases) {
+        if (out.length >= MAX_SNAPSHOT_ENTRIES) {
+          dropped += 1;
+          continue;
+        }
+        if (!ALIAS_REGEX.test(alias)) continue;
+        const inst = instancesByBridgeId.get(a.bridgeId);
+        if (!inst) continue;
+        // Only the active instance per parent contributes. This prevents stale
+        // iframe instances from advertising tools after a modal or replay wins.
+        if (activeBridgeByParent.get(inst.parentToolCallId) !== inst.bridgeId) {
+          continue;
+        }
+        const tool = inst.tools.find((t) => t.name === a.rawName);
+        if (!tool) continue;
+        let inputSchema = tool.inputSchema;
+        if (inputSchema) {
+          let size = 0;
+          try {
+            size = new TextEncoder().encode(JSON.stringify(inputSchema)).length;
+          } catch {
+            continue; // unserializable
+          }
+          if (size > MAX_INPUT_SCHEMA_BYTES) continue;
+        }
+        const description = tool.description
+          ? tool.description.slice(0, MAX_DESCRIPTION_CHARS)
+          : undefined;
+        out.push({
+          alias,
+          appName: inst.appName,
+          appVersion: inst.appVersion,
+          serverId: inst.serverId,
+          parentToolCallId: inst.parentToolCallId,
+          rawName: a.rawName,
+          description,
+          inputSchema,
+          readOnly: a.readOnly,
+        });
+      }
+      if (dropped > 0) {
+        console.warn(
+          `[app-tools] snapshot capped at ${MAX_SNAPSHOT_ENTRIES} entries; dropped ${dropped}.`
         );
       }
-      existing.add(alias);
-      aliasesForInst.push({
-        alias,
-        bridgeId: inst.bridgeId,
-        rawName: tool.rawName,
-        readOnly: isReadOnly(tool),
-      });
-    }
-    set((s) => {
-      const instancesByBridgeId = new Map(s.instancesByBridgeId);
-      instancesByBridgeId.set(inst.bridgeId, inst);
-      const aliases = new Map(s.aliases);
-      for (const [alias, a] of s.aliases) {
-        if (a.bridgeId === inst.bridgeId) aliases.delete(alias);
-      }
-      for (const a of aliasesForInst) aliases.set(a.alias, a);
-      const activeBridgeByParent = new Map(s.activeBridgeByParent);
-      // PR 1: register-and-set-active in one step for the inline mount.
-      // PR 2 will replace this with explicit pushActive from the modal.
-      activeBridgeByParent.set(inst.parentToolCallId, inst.bridgeId);
-      return { instancesByBridgeId, aliases, activeBridgeByParent };
-    });
-  },
+      return out;
+    },
 
-  unregisterInstance: (bridgeId) => {
-    set((s) => {
-      const inst = s.instancesByBridgeId.get(bridgeId);
-      if (!inst) return {};
-      const instancesByBridgeId = new Map(s.instancesByBridgeId);
-      instancesByBridgeId.delete(bridgeId);
-      const aliases = new Map(s.aliases);
-      for (const [alias, a] of s.aliases) {
-        if (a.bridgeId === bridgeId) aliases.delete(alias);
+    resolve: (alias) => {
+      const a = get().aliases.get(alias);
+      if (!a) return null;
+      const inst = get().instancesByBridgeId.get(a.bridgeId);
+      if (!inst) return null;
+      if (get().activeBridgeByParent.get(inst.parentToolCallId) !== inst.bridgeId) {
+        return null;
       }
-      const activeBridgeByParent = new Map(s.activeBridgeByParent);
-      if (activeBridgeByParent.get(inst.parentToolCallId) === bridgeId) {
-        activeBridgeByParent.delete(inst.parentToolCallId);
-      }
-      return { instancesByBridgeId, aliases, activeBridgeByParent };
-    });
-  },
-
-  pushActive: (parentToolCallId, bridgeId) => {
-    set((s) => {
-      const next = new Map(s.activeBridgeByParent);
-      next.set(parentToolCallId, bridgeId);
-      return { activeBridgeByParent: next };
-    });
-  },
-
-  popActive: (parentToolCallId, bridgeId) => {
-    set((s) => {
-      const current = s.activeBridgeByParent.get(parentToolCallId);
-      if (current !== bridgeId) return {};
-      const next = new Map(s.activeBridgeByParent);
-      // Fall back to any other registered instance under this parent.
-      let fallback: BridgeId | undefined;
-      for (const inst of s.instancesByBridgeId.values()) {
-        if (
-          inst.parentToolCallId === parentToolCallId &&
-          inst.bridgeId !== bridgeId
-        ) {
-          fallback = inst.bridgeId;
-          break;
-        }
-      }
-      if (fallback) next.set(parentToolCallId, fallback);
-      else next.delete(parentToolCallId);
-      return { activeBridgeByParent: next };
-    });
-  },
-
-  snapshotForChatBody: () => {
-    const { instancesByBridgeId, aliases, activeBridgeByParent } = get();
-    const out: AppToolSnapshotEntry[] = [];
-    let dropped = 0;
-    for (const [alias, a] of aliases) {
-      if (out.length >= MAX_SNAPSHOT_ENTRIES) {
-        dropped += 1;
-        continue;
-      }
-      // Defense in depth: filter non-readonly here too.
-      if (!a.readOnly) continue;
-      if (!ALIAS_REGEX.test(alias)) continue;
-      const inst = instancesByBridgeId.get(a.bridgeId);
-      if (!inst) continue;
-      // PR 1 / PR 2 active-bridge gate: only the active instance per parent
-      // contributes. In PR 1 there's always at most one inline mount, so
-      // this is a no-op; in PR 2 the modal overrides.
-      if (activeBridgeByParent.get(inst.parentToolCallId) !== inst.bridgeId) {
-        continue;
-      }
-      const tool = inst.tools.find((t) => t.rawName === a.rawName);
-      if (!tool) continue;
-      let inputSchema = tool.inputSchema;
-      if (inputSchema) {
-        let size = 0;
-        try {
-          size = new TextEncoder().encode(JSON.stringify(inputSchema)).length;
-        } catch {
-          continue; // unserializable
-        }
-        if (size > MAX_INPUT_SCHEMA_BYTES) continue;
-      }
-      const description = tool.description
-        ? tool.description.slice(0, MAX_DESCRIPTION_CHARS)
-        : undefined;
-      out.push({
-        alias,
-        appName: inst.appName,
-        appVersion: inst.appVersion,
-        serverId: inst.serverId,
-        parentToolCallId: inst.parentToolCallId,
+      return {
+        bridge: inst.bridge,
         rawName: a.rawName,
-        description,
-        inputSchema,
         readOnly: a.readOnly,
-      });
-    }
-    if (dropped > 0) {
-      console.warn(
-        `[app-tools] snapshot capped at ${MAX_SNAPSHOT_ENTRIES} entries; dropped ${dropped}.`,
-      );
-    }
-    return out;
-  },
-
-  resolve: (alias) => {
-    const a = get().aliases.get(alias);
-    if (!a) return null;
-    const inst = get().instancesByBridgeId.get(a.bridgeId);
-    if (!inst) return null;
-    return {
-      bridge: inst.bridge,
-      rawName: a.rawName,
-      readOnly: a.readOnly,
-      instance: inst,
-    };
-  },
-}));
+        instance: inst,
+      };
+    },
+  })
+);
 
 /**
- * Side-channel log of every app-tool invocation, for the future audit
- * panel (PR 2) and immediate debugging. Mirrors the widget-html debug
- * store pattern. The full untouched `CallToolResult` is stored here so
- * the UI can later display `structuredContent` / `_meta` that were
- * intentionally stripped from model context.
+ * Side-channel log of every app-tool invocation for debugging and future UI.
+ * Mirrors the widget-html debug store pattern. The full untouched
+ * `CallToolResult` is stored here so the UI can later display
+ * `structuredContent` / `_meta` that were intentionally stripped from model
+ * context.
  */
 export interface AppToolInvocationRecord {
   alias: string;
@@ -355,11 +357,11 @@ export const useAppToolInvocationLog = create<AppToolInvocationLogState>(
         return { records: next };
       }),
     clear: () => set({ records: [] }),
-  }),
+  })
 );
 
 export function recordAppToolInvocation(
-  args: Omit<AppToolInvocationRecord, "invokedAtMs">,
+  args: Omit<AppToolInvocationRecord, "invokedAtMs">
 ): void {
   useAppToolInvocationLog.getState().append({
     ...args,

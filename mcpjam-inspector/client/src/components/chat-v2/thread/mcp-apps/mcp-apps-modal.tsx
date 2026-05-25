@@ -241,11 +241,19 @@ export function McpAppsModal({
     };
 
     modalBridgeRef.current = bridge;
+    const pendingRpcMethods = new Map<string | number, string>();
 
     const transport = new LoggingTransport(
       new PostMessageTransport(iframe.contentWindow, iframe.contentWindow),
       {
         onSend: (message) => {
+          const request = message as { id?: string | number; method?: string };
+          if (
+            typeof request.method === "string" &&
+            (typeof request.id === "string" || typeof request.id === "number")
+          ) {
+            pendingRpcMethods.set(request.id, request.method);
+          }
           addUiLog({
             widgetId: `${toolCallId}-modal`,
             serverId,
@@ -256,12 +264,25 @@ export function McpAppsModal({
           });
         },
         onReceive: (message) => {
+          const response = message as {
+            id?: string | number;
+            result?: unknown;
+            error?: unknown;
+          };
+          const correlatedMethod =
+            (response.result !== undefined || response.error !== undefined) &&
+            (typeof response.id === "string" || typeof response.id === "number")
+              ? pendingRpcMethods.get(response.id)
+              : undefined;
+          if (correlatedMethod && response.id !== undefined) {
+            pendingRpcMethods.delete(response.id);
+          }
           addUiLog({
             widgetId: `${toolCallId}-modal`,
             serverId,
             direction: "ui-to-host",
             protocol: "mcp-apps",
-            method: extractMethod(message, "mcp-apps"),
+            method: correlatedMethod ?? extractMethod(message, "mcp-apps"),
             message,
           });
         },

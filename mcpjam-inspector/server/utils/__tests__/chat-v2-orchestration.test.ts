@@ -5,8 +5,9 @@ vi.mock("../skill-tools.js", () => ({
 }));
 
 vi.mock("@/shared/types", async () => {
-  const actual =
-    await vi.importActual<typeof import("@/shared/types")>("@/shared/types");
+  const actual = await vi.importActual<typeof import("@/shared/types")>(
+    "@/shared/types"
+  );
   return {
     ...actual,
     isGPT5Model: vi.fn().mockReturnValue(false),
@@ -135,10 +136,7 @@ describe("prepareChatV2", () => {
     ]);
   });
 
-  it("registers SEP-1865 readonly app tools as no-execute AI SDK entries", async () => {
-    // PR 1 hard rule: only readOnlyHint=true tools reach the model.
-    // Non-readonly entries are dropped at advertise time (defense in
-    // depth — the client snapshotter is the primary filter).
+  it("registers SEP-1865 app tools as no-execute AI SDK entries", async () => {
     const manager = mockManager({});
     const appTools: AppToolEntry[] = [
       {
@@ -173,16 +171,25 @@ describe("prepareChatV2", () => {
       appTools,
     });
 
-    expect(Object.keys(result.allTools).sort()).toEqual(["app_aaaaaaaa"]);
+    expect(Object.keys(result.allTools).sort()).toEqual([
+      "app_aaaaaaaa",
+      "app_bbbbbbbb",
+    ]);
     const readonlyEntry = result.allTools["app_aaaaaaaa"] as {
+      execute?: unknown;
+      description?: string;
+    };
+    const mutatingEntry = result.allTools["app_bbbbbbbb"] as {
       execute?: unknown;
       description?: string;
     };
     // No-execute is load-bearing: streamText must stream this to the
     // client for in-iframe dispatch rather than execute server-side.
     expect(readonlyEntry.execute).toBeUndefined();
+    expect(mutatingEntry.execute).toBeUndefined();
     expect(readonlyEntry.description).toContain("TicTacToe");
     expect(readonlyEntry.description).toContain("Get current game state");
+    expect(mutatingEntry.description).toContain("Place a piece");
   });
 
   it("buildAppTools is a no-op when appTools is empty / missing", async () => {
@@ -211,7 +218,7 @@ describe("prepareChatV2", () => {
             app_tool: { ui: { visibility: ["app"] } },
             both_tool: { ui: { visibility: ["model", "app"] } },
           }
-        : {},
+        : {}
     );
 
     const result = await prepareChatV2({
@@ -240,7 +247,7 @@ describe("prepareChatV2", () => {
 
     expect(manager.getToolsForAiSdk).toHaveBeenCalledWith(
       ["live-server"],
-      undefined,
+      undefined
     );
   });
 
@@ -463,7 +470,7 @@ describe("validateAppToolEntries (SEP-1865 boundary)", () => {
 
   it("rejects non-array input", () => {
     expect(() => validateAppToolEntries({} as unknown)).toThrow(
-      AppToolValidationError,
+      AppToolValidationError
     );
   });
 
@@ -478,28 +485,29 @@ describe("validateAppToolEntries (SEP-1865 boundary)", () => {
 
   it("rejects an alias that doesn't match the regex", () => {
     expect(() =>
-      validateAppToolEntries([{ ...validEntry, alias: "evil__name" }]),
+      validateAppToolEntries([{ ...validEntry, alias: "evil__name" }])
     ).toThrow(/alias must match/);
   });
 
   it("rejects duplicate aliases", () => {
     expect(() =>
-      validateAppToolEntries([validEntry, { ...validEntry }]),
+      validateAppToolEntries([validEntry, { ...validEntry }])
     ).toThrow(/duplicated/);
   });
 
   it("rejects description over 512 chars", () => {
     expect(() =>
-      validateAppToolEntries([
-        { ...validEntry, description: "x".repeat(513) },
-      ]),
+      validateAppToolEntries([{ ...validEntry, description: "x".repeat(513) }])
     ).toThrow(/description exceeds 512/);
   });
 
   it("rejects inputSchema over 8 KiB", () => {
-    const big = { type: "object", properties: { x: { description: "y".repeat(9000) } } };
+    const big = {
+      type: "object",
+      properties: { x: { description: "y".repeat(9000) } },
+    };
     expect(() =>
-      validateAppToolEntries([{ ...validEntry, inputSchema: big }]),
+      validateAppToolEntries([{ ...validEntry, inputSchema: big }])
     ).toThrow(/inputSchema exceeds/);
   });
 
@@ -507,7 +515,7 @@ describe("validateAppToolEntries (SEP-1865 boundary)", () => {
     expect(() =>
       validateAppToolEntries([
         { ...validEntry, inputSchema: [1, 2, 3] as unknown },
-      ]),
+      ])
     ).toThrow(/inputSchema must be a JSON object/);
   });
 
@@ -518,10 +526,10 @@ describe("validateAppToolEntries (SEP-1865 boundary)", () => {
 
   it("rejects empty / over-length rawName", () => {
     expect(() =>
-      validateAppToolEntries([{ ...validEntry, rawName: "" }]),
+      validateAppToolEntries([{ ...validEntry, rawName: "" }])
     ).toThrow(/rawName must be/);
     expect(() =>
-      validateAppToolEntries([{ ...validEntry, rawName: "x".repeat(129) }]),
+      validateAppToolEntries([{ ...validEntry, rawName: "x".repeat(129) }])
     ).toThrow(/rawName must be/);
   });
 });

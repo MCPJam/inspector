@@ -54,7 +54,7 @@ const DEFAULT_TEMPERATURE = 0.7;
  */
 function filterAppOnlyTools(
   tools: ToolSet,
-  manager: InstanceType<typeof MCPClientManager>,
+  manager: InstanceType<typeof MCPClientManager>
 ): void {
   // Cache per-server metadata maps so we don't repeatedly clone them.
   const metaByServer = new Map<string, Record<string, Record<string, any>>>();
@@ -128,7 +128,7 @@ export function validateAppToolEntries(input: unknown): AppToolEntry[] {
   }
   if (input.length > APP_TOOL_MAX_ENTRIES) {
     throw new AppToolValidationError(
-      `appTools accepts at most ${APP_TOOL_MAX_ENTRIES} entries, got ${input.length}`,
+      `appTools accepts at most ${APP_TOOL_MAX_ENTRIES} entries, got ${input.length}`
     );
   }
   const out: AppToolEntry[] = [];
@@ -141,17 +141,17 @@ export function validateAppToolEntries(input: unknown): AppToolEntry[] {
     const alias = raw.alias;
     if (typeof alias !== "string" || !APP_TOOL_ALIAS_REGEX.test(alias)) {
       throw new AppToolValidationError(
-        `appTools[${i}].alias must match ${APP_TOOL_ALIAS_REGEX}`,
+        `appTools[${i}].alias must match ${APP_TOOL_ALIAS_REGEX}`
       );
     }
     if (seenAliases.has(alias)) {
       throw new AppToolValidationError(
-        `appTools[${i}].alias '${alias}' is duplicated`,
+        `appTools[${i}].alias '${alias}' is duplicated`
       );
     }
     seenAliases.add(alias);
     const checkName = (
-      key: "appName" | "rawName" | "serverId" | "parentToolCallId",
+      key: "appName" | "rawName" | "serverId" | "parentToolCallId"
     ) => {
       const v = raw[key];
       if (
@@ -160,7 +160,7 @@ export function validateAppToolEntries(input: unknown): AppToolEntry[] {
         v.length > APP_TOOL_MAX_NAME_CHARS
       ) {
         throw new AppToolValidationError(
-          `appTools[${i}].${key} must be a non-empty string ≤${APP_TOOL_MAX_NAME_CHARS} chars`,
+          `appTools[${i}].${key} must be a non-empty string ≤${APP_TOOL_MAX_NAME_CHARS} chars`
         );
       }
       return v;
@@ -171,7 +171,7 @@ export function validateAppToolEntries(input: unknown): AppToolEntry[] {
     const parentToolCallId = checkName("parentToolCallId");
     if (raw.appVersion !== undefined && typeof raw.appVersion !== "string") {
       throw new AppToolValidationError(
-        `appTools[${i}].appVersion must be a string`,
+        `appTools[${i}].appVersion must be a string`
       );
     }
     const appVersion = raw.appVersion as string | undefined;
@@ -179,12 +179,12 @@ export function validateAppToolEntries(input: unknown): AppToolEntry[] {
     if (raw.description !== undefined) {
       if (typeof raw.description !== "string") {
         throw new AppToolValidationError(
-          `appTools[${i}].description must be a string`,
+          `appTools[${i}].description must be a string`
         );
       }
       if (raw.description.length > APP_TOOL_MAX_DESCRIPTION_CHARS) {
         throw new AppToolValidationError(
-          `appTools[${i}].description exceeds ${APP_TOOL_MAX_DESCRIPTION_CHARS} chars`,
+          `appTools[${i}].description exceeds ${APP_TOOL_MAX_DESCRIPTION_CHARS} chars`
         );
       }
       description = raw.description;
@@ -197,29 +197,27 @@ export function validateAppToolEntries(input: unknown): AppToolEntry[] {
         Array.isArray(raw.inputSchema)
       ) {
         throw new AppToolValidationError(
-          `appTools[${i}].inputSchema must be a JSON object`,
+          `appTools[${i}].inputSchema must be a JSON object`
         );
       }
       let size = 0;
       try {
-        size = new TextEncoder().encode(
-          JSON.stringify(raw.inputSchema),
-        ).length;
+        size = new TextEncoder().encode(JSON.stringify(raw.inputSchema)).length;
       } catch {
         throw new AppToolValidationError(
-          `appTools[${i}].inputSchema is not JSON-serializable`,
+          `appTools[${i}].inputSchema is not JSON-serializable`
         );
       }
       if (size > APP_TOOL_MAX_INPUT_SCHEMA_BYTES) {
         throw new AppToolValidationError(
-          `appTools[${i}].inputSchema exceeds ${APP_TOOL_MAX_INPUT_SCHEMA_BYTES} bytes`,
+          `appTools[${i}].inputSchema exceeds ${APP_TOOL_MAX_INPUT_SCHEMA_BYTES} bytes`
         );
       }
       inputSchema = raw.inputSchema as Record<string, unknown>;
     }
     if (typeof raw.readOnly !== "boolean") {
       throw new AppToolValidationError(
-        `appTools[${i}].readOnly must be a boolean`,
+        `appTools[${i}].readOnly must be a boolean`
       );
     }
     out.push({
@@ -279,7 +277,7 @@ export function buildAppTools(appTools: AppToolEntry[] | undefined): ToolSet {
           type: "object",
           properties: {},
           additionalProperties: false,
-        },
+        }
       ),
       // No execute — client fulfills via onToolCall.
     });
@@ -308,7 +306,7 @@ export interface PrepareChatV2Result {
  * Throws if Anthropic tool name validation fails.
  */
 export async function prepareChatV2(
-  options: PrepareChatV2Options,
+  options: PrepareChatV2Options
 ): Promise<PrepareChatV2Result> {
   const {
     mcpClientManager,
@@ -325,13 +323,13 @@ export async function prepareChatV2(
   // a stale id baked into a chatbox config). Passing them through reaches
   // ensureConnected and throws "Unknown MCP server", 500-ing the whole chat.
   const knownSelectedServers = selectedServers?.filter((id) =>
-    mcpClientManager.hasServer(id),
+    mcpClientManager.hasServer(id)
   );
 
   // 1. Get MCP + skill tools
   const mcpTools = await mcpClientManager.getToolsForAiSdk(
     knownSelectedServers,
-    requireToolApproval ? { needsApproval: requireToolApproval } : undefined,
+    requireToolApproval ? { needsApproval: requireToolApproval } : undefined
   );
 
   // SEP-1865: tools whose `_meta.ui.visibility` is exactly `["app"]` are
@@ -353,7 +351,7 @@ export async function prepareChatV2(
             ...(tool && typeof tool === "object" ? tool : {}),
             needsApproval: true,
           },
-        ]),
+        ])
       )
     : (skillTools as Record<string, unknown>);
 
@@ -417,7 +415,7 @@ export async function prepareChatV2(
     if (invalidNames.length > 0) {
       const nameList = invalidNames.map((name) => `'${name}'`).join(", ");
       throw new Error(
-        `Invalid tool name(s) for Anthropic: ${nameList}. Tool names must only contain letters, numbers, underscores, and hyphens (max 64 characters).`,
+        `Invalid tool name(s) for Anthropic: ${nameList}. Tool names must only contain letters, numbers, underscores, and hyphens (max 64 characters).`
       );
     }
   }
@@ -446,7 +444,7 @@ export async function prepareChatV2(
   // 4. Temperature resolution
   const resolvedTemperature = isGPT5Model(modelDefinition.id)
     ? undefined
-    : (temperature ?? DEFAULT_TEMPERATURE);
+    : temperature ?? DEFAULT_TEMPERATURE;
 
   // 5. Message scrubber
   const scrubMessages = (msgs: ModelMessage[]) =>
@@ -454,10 +452,10 @@ export async function prepareChatV2(
       scrubMcpAppsToolResultsForBackend(
         scrubUnavailableToolHistoryForBackend(msgs, availableToolNames),
         mcpClientManager,
-        knownSelectedServers,
+        knownSelectedServers
       ),
       mcpClientManager,
-      knownSelectedServers,
+      knownSelectedServers
     );
 
   return {

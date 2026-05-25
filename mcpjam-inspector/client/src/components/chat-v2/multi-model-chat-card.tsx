@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { StickToBottom } from "use-stick-to-bottom";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
-import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { UIMessage } from "ai";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import { Thread } from "@/components/chat-v2/thread";
@@ -92,15 +91,6 @@ export function MultiModelChatCard({
   const [widgetStateQueue, setWidgetStateQueue] = useState<
     { toolCallId: string; state: unknown }[]
   >([]);
-  const [modelContextQueue, setModelContextQueue] = useState<
-    {
-      toolCallId: string;
-      context: {
-        content?: ContentBlock[];
-        structuredContent?: Record<string, unknown>;
-      };
-    }[]
-  >([]);
   const [, setIsWidgetFullscreen] = useState(false);
   const [traceViewMode, setTraceViewMode] = useState<ChatTraceViewMode>("chat");
   const [revealedInChat, setRevealedInChat] = useState(false);
@@ -136,7 +126,6 @@ export function MultiModelChatCard({
     },
     onReset: () => {
       setWidgetStateQueue([]);
-      setModelContextQueue([]);
     },
   });
 
@@ -360,51 +349,6 @@ export function MultiModelChatCard({
     setWidgetStateQueue([]);
   }, [applyWidgetStateUpdates, setMessages, status, widgetStateQueue]);
 
-  const handleModelContextUpdate = useCallback(
-    (
-      toolCallId: string,
-      context: {
-        content?: ContentBlock[];
-        structuredContent?: Record<string, unknown>;
-      },
-    ) => {
-      setModelContextQueue((previous) => {
-        const filtered = previous.filter(
-          (item) => item.toolCallId !== toolCallId,
-        );
-        return [...filtered, { toolCallId, context }];
-      });
-    },
-    [],
-  );
-
-  const queueContextMessages = useCallback(() => {
-    const contextMessages = modelContextQueue.map(
-      ({ toolCallId, context }) => ({
-        id: `model-context-${toolCallId}-${Date.now()}`,
-        role: "user" as const,
-        parts: [
-          {
-            type: "text" as const,
-            text: `Widget ${toolCallId} context: ${JSON.stringify(context)}`,
-          },
-        ],
-        metadata: {
-          source: "widget-model-context",
-          toolCallId,
-        },
-      }),
-    );
-
-    if (contextMessages.length > 0) {
-      setMessages((previous) => [
-        ...previous,
-        ...(contextMessages as UIMessage[]),
-      ]);
-      setModelContextQueue([]);
-    }
-  }, [modelContextQueue, setMessages]);
-
   useEffect(() => {
     if (!broadcastRequest) {
       return;
@@ -423,7 +367,6 @@ export function MultiModelChatCard({
       ]);
     }
 
-    queueContextMessages();
     sendMessage({
       text: broadcastRequest.text,
       files: broadcastRequest.files,
@@ -431,7 +374,6 @@ export function MultiModelChatCard({
     });
   }, [
     broadcastRequest,
-    queueContextMessages,
     sendMessage,
     setMessages,
     outgoingSenderMetadata,
@@ -447,10 +389,9 @@ export function MultiModelChatCard({
 
   const handleSendFollowUp = useCallback(
     (text: string) => {
-      queueContextMessages();
       sendMessage({ text, metadata: outgoingSenderMetadata });
     },
-    [queueContextMessages, sendMessage, outgoingSenderMetadata],
+    [sendMessage, outgoingSenderMetadata],
   );
 
   useEffect(() => {
@@ -635,7 +576,6 @@ export function MultiModelChatCard({
                   toolsMetadata={toolsMetadata}
                   toolServerMap={toolServerMap}
                   onWidgetStateChange={handleWidgetStateChange}
-                  onModelContextUpdate={handleModelContextUpdate}
                   onFullscreenChange={setIsWidgetFullscreen}
                   enableFullscreenChatOverlay
                   fullscreenChatPlaceholder={placeholder}

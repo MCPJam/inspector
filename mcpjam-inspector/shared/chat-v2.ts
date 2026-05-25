@@ -64,11 +64,11 @@ export interface ChatV2Request {
   /**
    * SEP-1865 App-Provided Tools snapshot — per chat POST.
    *
-   * Aliased + readonly-filtered upstream by the client registry
+   * Aliased upstream by the client registry
    * (`client/src/components/chat-v2/thread/mcp-apps/app-tools-registry.ts`).
    * The server defends the boundary again in `validateAppToolEntries`
-   * (caps, alias regex, schema size). Non-readonly entries that slip
-   * past the client are dropped in `buildAppTools`.
+   * (caps, alias regex, schema size). `readOnly` is metadata, not an
+   * inclusion gate.
    */
   appTools?: AppToolSnapshotEntry[];
 }

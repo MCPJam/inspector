@@ -58,10 +58,7 @@ import type {
   CallToolResult,
   ContentBlock,
 } from "@modelcontextprotocol/client";
-import {
-  DEFAULT_HOST_STYLE,
-  getHostStyleOrDefault,
-} from "@/lib/client-styles";
+import { DEFAULT_HOST_STYLE, getHostStyleOrDefault } from "@/lib/client-styles";
 import type { OpenAiAppsCapabilities } from "@/lib/client-styles";
 import { isVisibleToModelOnly } from "@/lib/mcp-ui/mcp-apps-utils";
 import { LoggingTransport } from "./mcp-apps-logging-transport";
@@ -144,7 +141,7 @@ const SEP_HOST_STYLE_VARIABLE_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 function sanitizeHostStyleVariables(
-  variables: unknown,
+  variables: unknown
 ): HostStyleVariables | undefined {
   if (!variables || typeof variables !== "object" || Array.isArray(variables)) {
     return undefined;
@@ -192,7 +189,7 @@ interface MCPAppsRendererProps {
   onSendFollowUp?: (text: string) => void;
   onCallTool?: (
     toolName: string,
-    params: Record<string, unknown>,
+    params: Record<string, unknown>
   ) => Promise<unknown>;
   onWidgetStateChange?: (toolCallId: string, state: unknown) => void;
   pipWidgetId?: string | null;
@@ -211,7 +208,7 @@ interface MCPAppsRendererProps {
     context: {
       content?: ContentBlock[];
       structuredContent?: Record<string, unknown>;
-    },
+    }
   ) => void;
   /** Callback when app declares its supported display modes during ui/initialize */
   onAppSupportedDisplayModesChange?: (modes: DisplayMode[] | undefined) => void;
@@ -291,7 +288,7 @@ interface MCPAppsRendererProps {
  */
 function mapLogToLifecycle(
   method: string,
-  details: Record<string, unknown>,
+  details: Record<string, unknown>
 ): WidgetLifecycleEvent | null {
   const kindByMethod: Record<string, WidgetLifecycleEvent["kind"]> = {
     "debug/sandbox-proxy-ready": "sandbox-proxy-ready",
@@ -326,8 +323,8 @@ function mapLogToLifecycle(
     typeof details.error === "string"
       ? details.error
       : typeof details.reason === "string"
-        ? details.reason
-        : undefined;
+      ? details.reason
+      : undefined;
   return { kind, status, message, timestamp: Date.now() };
 }
 
@@ -448,7 +445,7 @@ export function MCPAppsRenderer({
       !Array.isArray(draftHostContext)
         ? draftHostContext
         : {},
-    [draftHostContext],
+    [draftHostContext]
   );
 
   // Get CSP mode and host style from playground store when in playground
@@ -492,8 +489,8 @@ export function MCPAppsRenderer({
     isChatboxSurface || minimalMode
       ? "permissive"
       : widgetSurface === "playground"
-        ? playgroundCspMode
-        : "widget-declared";
+      ? playgroundCspMode
+      : "widget-declared";
 
   // Get locale and timeZone from playground store when active, fallback to browser defaults
   const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);
@@ -517,11 +514,11 @@ export function MCPAppsRenderer({
   const playgroundDisplayMode = useUIPlaygroundStore((s) => s.displayMode);
   const configuredDisplayMode = useMemo(
     () => extractHostDisplayMode(draftHostContext),
-    [draftHostContext],
+    [draftHostContext]
   );
   const configuredAvailableDisplayModes = useMemo(
     () => extractHostDisplayModes(draftHostContext),
-    [draftHostContext],
+    [draftHostContext]
   );
   // Resolve `effectiveHostStyle` early (it's a 3-way ternary on values
   // already available above) so the SEP-1865 matrix can be computed
@@ -548,7 +545,7 @@ export function MCPAppsRenderer({
         profile: activeMcpProfile,
         hostStyle: earlyEffectiveHostStyle,
       }),
-    [activeMcpProfile, earlyEffectiveHostStyle],
+    [activeMcpProfile, earlyEffectiveHostStyle]
   );
 
   // Intersection of the matrix's allowed modes with the playground /
@@ -592,7 +589,7 @@ export function MCPAppsRenderer({
   const effectiveAvailableDisplayModes = useMemo(() => {
     const matrixModes = earlyEffectiveMcpAppsCapabilities.availableDisplayModes;
     const hostIntersection = matrixModes.filter((m) =>
-      configuredAvailableDisplayModes.includes(m as DisplayMode),
+      configuredAvailableDisplayModes.includes(m as DisplayMode)
     );
     const baseHostModes =
       hostIntersection.length > 0 ? hostIntersection : matrixModes;
@@ -600,7 +597,7 @@ export function MCPAppsRenderer({
       return baseHostModes;
     }
     const appIntersection = baseHostModes.filter((m) =>
-      appSupportedDisplayModes.includes(m as DisplayMode),
+      appSupportedDisplayModes.includes(m as DisplayMode)
     );
     // SEP-1865: when the intersection is empty (the app advertises modes
     // the host doesn't support at all) we fall back to host-supported
@@ -625,7 +622,7 @@ export function MCPAppsRenderer({
       return effectiveAvailableDisplayModes;
     }
     const intersection = effectiveAvailableDisplayModes.filter((m) =>
-      appSupportedDisplayModes.includes(m as DisplayMode),
+      appSupportedDisplayModes.includes(m as DisplayMode)
     );
     return intersection.length > 0
       ? intersection
@@ -659,7 +656,7 @@ export function MCPAppsRenderer({
 
   // Get safe area insets from playground store (SEP-1865)
   const playgroundSafeAreaInsets = useUIPlaygroundStore(
-    (s) => s.safeAreaInsets,
+    (s) => s.safeAreaInsets
   );
   const safeAreaInsets = useMemo(() => {
     const configuredSafeAreaInsets =
@@ -697,8 +694,8 @@ export function MCPAppsRenderer({
     clampDisplayModeToAvailableModes(
       configuredDisplayMode ??
         (isPlaygroundActive ? playgroundDisplayMode : "inline"),
-      configuredAvailableDisplayModes,
-    ),
+      configuredAvailableDisplayModes
+    )
   );
   const displayMode = isControlled ? displayModeProp : internalDisplayMode;
   const requestedDisplayMode = useMemo<DisplayMode>(() => {
@@ -718,9 +715,9 @@ export function MCPAppsRenderer({
     () =>
       clampDisplayModeToAvailableModes(
         requestedDisplayMode,
-        effectiveAvailableDisplayModes,
+        effectiveAvailableDisplayModes
       ),
-    [requestedDisplayMode, effectiveAvailableDisplayModes],
+    [requestedDisplayMode, effectiveAvailableDisplayModes]
   );
 
   // Clear the sticky inline-preference flag the moment the effective
@@ -757,7 +754,7 @@ export function MCPAppsRenderer({
       onRequestFullscreen,
       onExitFullscreen,
       displayMode,
-    ],
+    ]
   );
   const lastForcedDisplayModeRef = useRef<DisplayMode | null>(null);
 
@@ -817,8 +814,8 @@ export function MCPAppsRenderer({
       ? stableStringifyJson(initialInjectedOpenAiCompatCapabilities)
       : null
     : effectiveInjectOpenAiCompat
-      ? stableStringifyJson(liveOpenAiCompatCapabilities ?? null)
-      : null;
+    ? stableStringifyJson(liveOpenAiCompatCapabilities ?? null)
+    : null;
   // Sibling reload key for the MCP Apps spec-bridge matrix. The OpenAI
   // shim caps above bake into the iframe HTML at fetch time; MCP Apps
   // caps don't, but they drive the `HostCapabilities` blob in
@@ -846,16 +843,16 @@ export function MCPAppsRenderer({
     requiresCompatOutputAtBoot &&
     toolState !== "output-available";
   const [widgetCsp, setWidgetCsp] = useState<McpUiResourceCsp | undefined>(
-    isCachedReplay ? undefined : (initialWidgetCsp ?? undefined),
+    isCachedReplay ? undefined : initialWidgetCsp ?? undefined
   );
   const [widgetPermissions, setWidgetPermissions] = useState<
     McpUiResourcePermissions | undefined
-  >(isCachedReplay ? undefined : (initialWidgetPermissions ?? undefined));
+  >(isCachedReplay ? undefined : initialWidgetPermissions ?? undefined);
   const [widgetPermissive, setWidgetPermissive] = useState<boolean>(
-    isCachedReplay ? true : (initialWidgetPermissive ?? false),
+    isCachedReplay ? true : initialWidgetPermissive ?? false
   );
   const [prefersBorder, setPrefersBorder] = useState<boolean>(
-    initialPrefersBorder ?? true,
+    initialPrefersBorder ?? true
   );
   // PR D matrix-gated resource-meta interpretation. The matrix
   // dimensions `cspFrameDomains`, `cspBaseUriDomains`,
@@ -901,10 +898,7 @@ export function MCPAppsRenderer({
     // every widget on that host.
     if (!earlyEffectiveMcpAppsCapabilities.resourcePrefersBorder) return false;
     return prefersBorder;
-  }, [
-    prefersBorder,
-    earlyEffectiveMcpAppsCapabilities.resourcePrefersBorder,
-  ]);
+  }, [prefersBorder, earlyEffectiveMcpAppsCapabilities.resourcePrefersBorder]);
   const [loadedCspMode, setLoadedCspMode] = useState<CspMode | null>(null);
   // Reload-key sibling to `loadedCspMode`: tracks the compat-runtime
   // flag the currently-loaded HTML was fetched with. Toggling the live
@@ -925,18 +919,14 @@ export function MCPAppsRenderer({
   // on byte-frozen snapshots. Compared against
   // `widgetCompatCapabilitiesReloadKey` to detect per-method surface
   // changes that the boolean key would miss.
-  const [
-    loadedCompatCapabilitiesHash,
-    setLoadedCompatCapabilitiesHash,
-  ] = useState<string | null>(null);
+  const [loadedCompatCapabilitiesHash, setLoadedCompatCapabilitiesHash] =
+    useState<string | null>(null);
   // Sibling of `loadedCompatCapabilitiesHash` for the MCP Apps
   // spec-bridge matrix. Tracks the resolved-caps hash the iframe was
   // last initialized against so a matrix toggle (e.g.
   // `widgetDisplayModeRequests`) forces a remount on the next render.
-  const [
-    loadedMcpAppsCapabilitiesHash,
-    setLoadedMcpAppsCapabilitiesHash,
-  ] = useState<string | null>(null);
+  const [loadedMcpAppsCapabilitiesHash, setLoadedMcpAppsCapabilitiesHash] =
+    useState<string | null>(null);
   // Modal state
   const [modalOpen, setModalOpen] = useState(false);
   const [modalParams, setModalParams] = useState<Record<string, unknown>>({});
@@ -957,12 +947,12 @@ export function MCPAppsRenderer({
     setLoadedInjectOpenAiCompat(null);
     setLoadedCompatCapabilitiesHash(null);
     setLoadError(null);
-    setWidgetCsp(isCachedReplay ? undefined : (initialWidgetCsp ?? undefined));
+    setWidgetCsp(isCachedReplay ? undefined : initialWidgetCsp ?? undefined);
     setWidgetPermissions(
-      isCachedReplay ? undefined : (initialWidgetPermissions ?? undefined),
+      isCachedReplay ? undefined : initialWidgetPermissions ?? undefined
     );
     setWidgetPermissive(
-      isCachedReplay ? true : (initialWidgetPermissive ?? false),
+      isCachedReplay ? true : initialWidgetPermissive ?? false
     );
     setPrefersBorder(initialPrefersBorder ?? true);
   }, [
@@ -992,7 +982,7 @@ export function MCPAppsRenderer({
   // re-requesting it after the user dismissed once.
   const userPreferInlineRef = useRef(
     earlyEffectiveMcpAppsCapabilities.widgetDisplayModeRequests ===
-      "user-initiated-only",
+      "user-initiated-only"
   );
   // SEP-1865: width is honored only when the host's outer container is
   // unbounded (no `width` from `containerDimensions`). The chatbox bubble
@@ -1002,10 +992,13 @@ export function MCPAppsRenderer({
   const lastInlineWidthRef = useRef<string | null>(null);
 
   // SEP-1865 App-Provided Tools: per-bridge identity used to register and
-  // unregister this iframe's tools in `useAppToolsRegistry`. PR 1 inline
-  // only — modal mounts (`mcp-apps-modal.tsx`) do NOT register; that lands
-  // in PR 2 along with the active-bridge stack.
+  // unregister this iframe's tools in `useAppToolsRegistry`.
   const appToolsBridgeIdRef = useRef<string | null>(null);
+  const appToolsListedBridgeIdsRef = useRef<Set<string>>(new Set());
+  const appToolsListInFlightBridgeIdsRef = useRef<Set<string>>(new Set());
+  const appToolsListRefreshPendingBridgeIdsRef = useRef<Set<string>>(
+    new Set()
+  );
 
   // Reset widget-identity-scoped state when the renderer is reused for a
   // different tool call / resource / widget bundle. Without this the next
@@ -1043,7 +1036,7 @@ export function MCPAppsRenderer({
   const toolsMetadataRef = useRef(toolsMetadata);
   const onModelContextUpdateRef = useRef(onModelContextUpdate);
   const onAppSupportedDisplayModesChangeRef = useRef(
-    onAppSupportedDisplayModesChange,
+    onAppSupportedDisplayModesChange
   );
 
   // Refs for values consumed inside the async fetchWidgetHtml function.
@@ -1081,8 +1074,9 @@ export function MCPAppsRenderer({
   // read it without forward-reference issues. Null reads as "default
   // on" — matches pre-matrix behavior during the brief initial-mount
   // window before the matrix resolver runs.
-  const mcpAppsCapabilitiesRef =
-    useRef<ResolvedMcpAppsCapabilities | null>(null);
+  const mcpAppsCapabilitiesRef = useRef<ResolvedMcpAppsCapabilities | null>(
+    null
+  );
 
   const {
     canRenderStreamingInput,
@@ -1149,7 +1143,9 @@ export function MCPAppsRenderer({
     if (prevLoggedFetchSourceKeyRef.current !== fetchSourceKey) {
       const prev = prevLoggedFetchSourceKeyRef.current;
       const reason =
-        prev === null ? "initial" : describeFetchSourceKeyDiff(prev, fetchSourceKey);
+        prev === null
+          ? "initial"
+          : describeFetchSourceKeyDiff(prev, fetchSourceKey);
       prevLoggedFetchSourceKeyRef.current = fetchSourceKey;
       recordMountStore(toolCallId, reason);
     }
@@ -1161,7 +1157,7 @@ export function MCPAppsRenderer({
       const cachedResponse = await fetch(cachedUrl);
       if (!cachedResponse.ok) {
         throw new Error(
-          `Failed to fetch cached widget HTML: ${cachedResponse.statusText}`,
+          `Failed to fetch cached widget HTML: ${cachedResponse.statusText}`
         );
       }
       const html = await cachedResponse.text();
@@ -1209,7 +1205,7 @@ export function MCPAppsRenderer({
         // forward instead of stamping the current live matrix.
         isCachedReplay
           ? initialInjectedOpenAiCompatCapabilities
-          : (liveOpenAiCompatCapabilities ?? undefined),
+          : liveOpenAiCompatCapabilities ?? undefined
       );
       logWidgetDebug("host-to-ui", "debug/widget-content-ready", {
         cached: true,
@@ -1233,7 +1229,8 @@ export function MCPAppsRenderer({
         mimeTypeValid: valid,
         prefersBorder,
         injectedOpenAiCompat: serverInjectedOpenAiCompat,
-        injectedOpenAiCompatCapabilities: serverInjectedOpenAiCompatCapabilities,
+        injectedOpenAiCompatCapabilities:
+          serverInjectedOpenAiCompatCapabilities,
       } = await fetchMcpAppsWidgetContent({
         serverId,
         resourceUri,
@@ -1278,7 +1275,7 @@ export function MCPAppsRenderer({
       const resolvedInjectedOpenAiCompatCapabilities =
         serverInjectedOpenAiCompatCapabilities ??
         (resolvedInjectedOpenAiCompat
-          ? (liveOpenAiCompatCapabilities ?? undefined)
+          ? liveOpenAiCompatCapabilities ?? undefined
           : undefined);
 
       // Stale fetch: source key moved on (e.g. session swap, CSP toggle,
@@ -1291,11 +1288,10 @@ export function MCPAppsRenderer({
           warning ||
           `Invalid mimetype - SEP-1865 requires "text/html;profile=mcp-app"`;
         setLoadError(errorMessage);
-        logWidgetDebug(
-          "host-to-ui",
-          "debug/widget-content-invalid-mimetype",
-          { cspMode, error: errorMessage },
-        );
+        logWidgetDebug("host-to-ui", "debug/widget-content-invalid-mimetype", {
+          cspMode,
+          error: errorMessage,
+        });
         return false;
       }
 
@@ -1325,7 +1321,7 @@ export function MCPAppsRenderer({
         toolCallId,
         html,
         resolvedInjectedOpenAiCompat,
-        resolvedInjectedOpenAiCompatCapabilities,
+        resolvedInjectedOpenAiCompatCapabilities
       );
 
       // Update the widget debug store with CSP and permissions info
@@ -1380,16 +1376,10 @@ export function MCPAppsRenderer({
             await loadFromLiveFetch();
             return;
           } catch (liveErr) {
-            logWidgetDebug(
-              "host-to-ui",
-              "debug/widget-content-live-fallback",
-              {
-                error:
-                  liveErr instanceof Error
-                    ? liveErr.message
-                    : String(liveErr),
-              },
-            );
+            logWidgetDebug("host-to-ui", "debug/widget-content-live-fallback", {
+              error:
+                liveErr instanceof Error ? liveErr.message : String(liveErr),
+            });
             await loadFromCachedUrl(cachedWidgetHtmlUrl);
             return;
           }
@@ -1463,7 +1453,7 @@ export function MCPAppsRenderer({
       if (minimalMode) return;
       addUiLog(payload);
     },
-    [addUiLog, minimalMode],
+    [addUiLog, minimalMode]
   );
   const logUiEventRef = useRef(logUiEvent);
   logUiEventRef.current = logUiEvent;
@@ -1474,7 +1464,7 @@ export function MCPAppsRenderer({
     (
       direction: "host-to-ui" | "ui-to-host",
       method: string,
-      details: Record<string, unknown>,
+      details: Record<string, unknown>
     ) => {
       logUiEventRef.current({
         widgetId: toolCallIdRef.current,
@@ -1495,7 +1485,83 @@ export function MCPAppsRenderer({
         if (toolCallId) appendLifecycleRef.current(toolCallId, mapped);
       }
     },
-    [],
+    []
+  );
+
+  const refreshAppProvidedTools = useCallback(
+    async (
+      bridge: AppBridge,
+      bridgeId: string,
+      options: { force?: boolean } = {}
+    ) => {
+      const alreadyListed = appToolsListedBridgeIdsRef.current.has(bridgeId);
+      const inFlight = appToolsListInFlightBridgeIdsRef.current.has(bridgeId);
+      if (inFlight) {
+        if (options.force) {
+          appToolsListRefreshPendingBridgeIdsRef.current.add(bridgeId);
+        }
+        return;
+      }
+      if (!options.force && alreadyListed) return;
+
+      appToolsListInFlightBridgeIdsRef.current.add(bridgeId);
+      try {
+        let needsRefresh = true;
+        while (needsRefresh) {
+          appToolsListRefreshPendingBridgeIdsRef.current.delete(bridgeId);
+          const tools: AppToolDescriptor[] = [];
+          let cursor: string | undefined;
+          for (let page = 0; page < 8; page += 1) {
+            const result = await bridge.listTools(
+              cursor === undefined ? {} : { cursor }
+            );
+            tools.push(
+              ...(result.tools ?? []).filter(
+                (t): t is AppToolDescriptor =>
+                  Boolean(
+                    t && typeof t.name === "string" && t.name.length > 0
+                  )
+              )
+            );
+            cursor = result.nextCursor;
+            if (!cursor) break;
+          }
+
+          appToolsListedBridgeIdsRef.current.add(bridgeId);
+          // `listTools()` crosses the iframe boundary. If the renderer
+          // unmounted or rebuilt while it was pending, cleanup has cleared
+          // this ref and any late registration would leak stale aliases.
+          if (appToolsBridgeIdRef.current !== bridgeId) return;
+
+          const appVersion = bridge.getAppVersion();
+          await useAppToolsRegistry.getState().registerInstance({
+            bridgeId,
+            parentToolCallId: toolCallIdRef.current,
+            serverId: serverIdRef.current,
+            appName: appVersion?.name ?? serverIdRef.current,
+            appVersion: appVersion?.version,
+            surface: "inline",
+            bridge,
+            tools,
+            registeredAtMs: Date.now(),
+          });
+          if (appToolsBridgeIdRef.current !== bridgeId) {
+            useAppToolsRegistry.getState().unregisterInstance(bridgeId);
+            return;
+          }
+          needsRefresh =
+            appToolsListRefreshPendingBridgeIdsRef.current.has(bridgeId);
+        }
+      } catch (err) {
+        appToolsListedBridgeIdsRef.current.delete(bridgeId);
+        logWidgetDebug("ui-to-host", "debug/app-tools-list-failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      } finally {
+        appToolsListInFlightBridgeIdsRef.current.delete(bridgeId);
+      }
+    },
+    [logWidgetDebug]
   );
 
   // Widget debug store
@@ -1506,11 +1572,11 @@ export function MCPAppsRenderer({
   const addCspViolation = useWidgetDebugStore((s) => s.addCspViolation);
   const clearCspViolations = useWidgetDebugStore((s) => s.clearCspViolations);
   const setWidgetModelContext = useWidgetDebugStore(
-    (s) => s.setWidgetModelContext,
+    (s) => s.setWidgetModelContext
   );
   const setWidgetHtmlStore = useWidgetDebugStore((s) => s.setWidgetHtml);
   const setSandboxAppliedStore = useWidgetDebugStore(
-    (s) => s.setSandboxApplied,
+    (s) => s.setSandboxApplied
   );
   const appendLifecycleStore = useWidgetDebugStore((s) => s.appendLifecycle);
   // Ref-route the lifecycle setter so logWidgetDebug stays stable-identity
@@ -1590,8 +1656,8 @@ export function MCPAppsRenderer({
       setInternalDisplayMode(
         clampDisplayModeToAvailableModes(
           configuredDisplayMode ?? playgroundDisplayMode,
-          configuredAvailableDisplayModes,
-        ),
+          configuredAvailableDisplayModes
+        )
       );
     }
   }, [
@@ -1705,13 +1771,12 @@ export function MCPAppsRenderer({
   // `caps[key] !== true`, so missing → treated as "default on", which
   // matches the SDK runtime's FULL_SURFACE_DEFAULT fallback baked
   // into the original capture.
-  const activeShimCapabilities: OpenAiAppsCapabilities | null =
-    isCachedReplay
-      ? (initialInjectedOpenAiCompatCapabilities ?? null)
-      : liveOpenAiCompatCapabilities;
-  const liveOpenAiCompatCapabilitiesRef = useRef<
-    OpenAiAppsCapabilities | null
-  >(activeShimCapabilities);
+  const activeShimCapabilities: OpenAiAppsCapabilities | null = isCachedReplay
+    ? initialInjectedOpenAiCompatCapabilities ?? null
+    : liveOpenAiCompatCapabilities;
+  const liveOpenAiCompatCapabilitiesRef = useRef<OpenAiAppsCapabilities | null>(
+    activeShimCapabilities
+  );
   liveOpenAiCompatCapabilitiesRef.current = activeShimCapabilities;
 
   const effectiveHostCapabilities = useMemo(
@@ -1721,7 +1786,7 @@ export function MCPAppsRenderer({
         profile: activeMcpProfile,
         hostCapabilitiesOverride,
       }),
-    [effectiveHostStyle, activeMcpProfile, hostCapabilitiesOverride],
+    [effectiveHostStyle, activeMcpProfile, hostCapabilitiesOverride]
   );
   // SEP-1865 spec-bridge matrix resolved from the live profile +
   // host style. Gates notification emissions (`tool-input-partial`,
@@ -1753,11 +1818,11 @@ export function MCPAppsRenderer({
   themeModeRef.current = resolvedTheme;
   const styleVariables = useMemo(
     () => hostStyleDefinition.mcp.resolveStyleVariables(resolvedTheme),
-    [resolvedTheme, hostStyleDefinition],
+    [resolvedTheme, hostStyleDefinition]
   );
   const hostChatBackground = useMemo(
     () => hostStyleDefinition.chatUi.resolveChatBackground(resolvedTheme),
-    [hostStyleDefinition, resolvedTheme],
+    [hostStyleDefinition, resolvedTheme]
   );
   const defaultFontCss = hostStyleDefinition.mcp.fontCss;
   const configuredStyles =
@@ -1772,7 +1837,7 @@ export function MCPAppsRenderer({
   // so this memo only depends on the inbound configured variables.
   const configuredStyleVariables = useMemo(
     () => sanitizeHostStyleVariables(configuredStyles?.variables),
-    [configuredStyles?.variables],
+    [configuredStyles?.variables]
   );
   const mergedStyleVariables = useMemo(() => {
     return {
@@ -1792,7 +1857,7 @@ export function MCPAppsRenderer({
         fonts: configuredStyles?.css?.fonts ?? defaultFontCss,
       },
     }),
-    [configuredStyles, defaultFontCss, mergedStyleVariables],
+    [configuredStyles, defaultFontCss, mergedStyleVariables]
   );
 
   // containerDimensions (maxWidth/maxHeight) was previously sent here but
@@ -1894,16 +1959,13 @@ export function MCPAppsRenderer({
   // — SandboxedIframe treats `permissive: true` as "skip CSP injection
   // entirely", which would silently neuter the resolver output.
   const sandboxCspPolicy = activeMcpProfile?.apps?.sandbox?.csp;
-  const sandboxPermissionsPolicy =
-    activeMcpProfile?.apps?.sandbox?.permissions;
+  const sandboxPermissionsPolicy = activeMcpProfile?.apps?.sandbox?.permissions;
   // Inspector-only emission knobs sourced directly from the profile. They
   // bypass the SEP-1865 resolver because they model browser-emission state
   // that has no spec slot (raw `sandbox=`/`allow=` tokens, CSP source
   // expressions). Passed through unchanged to <SandboxedIframe>.
-  const sandboxAttrsPolicy =
-    activeMcpProfile?.apps?.sandbox?.sandboxAttrs;
-  const allowFeaturesPolicy =
-    activeMcpProfile?.apps?.sandbox?.allowFeatures;
+  const sandboxAttrsPolicy = activeMcpProfile?.apps?.sandbox?.sandboxAttrs;
+  const allowFeaturesPolicy = activeMcpProfile?.apps?.sandbox?.allowFeatures;
   const cspDirectivesPolicy =
     activeMcpProfile?.apps?.sandbox?.csp?.cspDirectives;
   // Hosted-mode clamp for cspDirectives. The resolver's
@@ -1987,7 +2049,7 @@ export function MCPAppsRenderer({
     const restrictToConfigured =
       sandboxCspPolicy?.restrictTo !== undefined &&
       Object.values(sandboxCspPolicy.restrictTo).some(
-        (list) => Array.isArray(list) && list.length > 0,
+        (list) => Array.isArray(list) && list.length > 0
       );
     // cspDirectives is an inspector-only emission knob, but a populated
     // value is still an explicit "I want this CSP shape" signal. The
@@ -2016,7 +2078,7 @@ export function MCPAppsRenderer({
             if (trimmed.length === 0) return false;
             if (/[;,\n\r"<>]/.test(trimmed)) return false;
             return true;
-          }),
+          })
       );
     // Permissive means permissive — when the user explicitly toggles it in
     // the playground toolbar — ignore the saved profile's CSP hardening
@@ -2064,7 +2126,7 @@ export function MCPAppsRenderer({
           typeof matrixGatedWidgetPermissions === "object"
         ) {
           for (const [k, v] of Object.entries(
-            matrixGatedWidgetPermissions as Record<string, unknown>,
+            matrixGatedWidgetPermissions as Record<string, unknown>
           )) {
             if (v) resourcePermsMap[k] = true;
           }
@@ -2180,7 +2242,7 @@ export function MCPAppsRenderer({
         typeof matrixGatedWidgetPermissions === "object"
       ) {
         for (const [k, v] of Object.entries(
-          matrixGatedWidgetPermissions as Record<string, unknown>,
+          matrixGatedWidgetPermissions as Record<string, unknown>
         )) {
           // SEP-1865 declares each permission as an empty object (`{}`)
           // when requested — i.e. a truthy value. Older shape gated on
@@ -2216,7 +2278,7 @@ export function MCPAppsRenderer({
       // `?? widgetCsp` branch.
       csp: isPureRelaxedCsp
         ? undefined
-        : (resolvedCsp ?? (widgetPermissive ? undefined : matrixGatedWidgetCsp)),
+        : resolvedCsp ?? (widgetPermissive ? undefined : matrixGatedWidgetCsp),
       permissions: resolvedPermissions ?? matrixGatedWidgetPermissions,
       // A host-applied CSP MUST be honored at the browser layer. When
       // a restrictive host policy is in force, force `permissive: false`
@@ -2237,8 +2299,8 @@ export function MCPAppsRenderer({
       permissive: isPureRelaxedCsp
         ? true
         : resolvedCsp
-          ? false
-          : widgetPermissive,
+        ? false
+        : widgetPermissive,
       hostPolicyApplied,
       sandboxAttrs: sandboxAttrsPolicy,
       allowFeatures: allowFeaturesPolicy,
@@ -2276,9 +2338,10 @@ export function MCPAppsRenderer({
   // panel's "View iframe" sub-card shows what a view actually receives.
   // Null when the host hasn't customized it — same fallback contract as
   // the matrix (canvasBuilder.ts:708).
-  const sandboxHostInfo = useMemo<
-    { name: string; version: string } | null
-  >(() => {
+  const sandboxHostInfo = useMemo<{
+    name: string;
+    version: string;
+  } | null>(() => {
     const raw = activeMcpProfile?.apps?.uiInitialize?.hostInfo;
     if (!raw || typeof raw !== "object") return null;
     const name = (raw as { name?: unknown }).name;
@@ -2303,7 +2366,7 @@ export function MCPAppsRenderer({
         permissions: effectiveSandbox.permissions,
       },
       undefined,
-      sandboxHostInfo,
+      sandboxHostInfo
     );
   }, [
     toolCallId,
@@ -2415,55 +2478,14 @@ export function MCPAppsRenderer({
           setReinitCount((c) => c + 1);
         }
 
-        // SEP-1865 App-Provided Tools (PR 1, inline only): when the app
-        // advertises `tools` capability, fetch its tool list and register
-        // the readonly subset in the cross-cutting registry so the next
-        // chat POST can advertise them as no-execute AI SDK tools. Non-
-        // readonly tools are filtered out at advertise time — PR 2 adds
-        // the approval flow to surface them. Feature-detect the capability;
-        // do NOT install rejecting stubs (matches the
-        // feature_detection_over_rejection memory).
+        // SEP-1865 App-Provided Tools: when the app advertises `tools`
+        // capability, fetch its tool list with the SDK bridge and register
+        // it so the next chat POST can advertise no-execute AI SDK tools.
+        // Feature-detect the capability; do not install rejecting stubs.
         if (appCaps?.tools) {
           const bridgeId = appToolsBridgeIdRef.current ?? crypto.randomUUID();
           appToolsBridgeIdRef.current = bridgeId;
-          void (async () => {
-            try {
-              const { tools } = await bridge.listTools({});
-              const advertisable: AppToolDescriptor[] = (tools ?? [])
-                .filter((t: any) => t?.annotations?.readOnlyHint === true)
-                .map((t: any) => ({
-                  rawName: t.name,
-                  description: t.description,
-                  inputSchema: t.inputSchema,
-                  outputSchema: t.outputSchema,
-                  annotations: t.annotations,
-                }));
-              if (advertisable.length === 0) return;
-              // `listTools()` crosses the iframe boundary. If the renderer
-              // unmounted or rebuilt while it was pending, cleanup has cleared
-              // this ref and any late registration would leak stale aliases.
-              if (appToolsBridgeIdRef.current !== bridgeId) return;
-              const appVersion = bridge.getAppVersion();
-              await useAppToolsRegistry.getState().registerInstance({
-                bridgeId,
-                parentToolCallId: toolCallId,
-                serverId,
-                appName: appVersion?.name ?? serverId,
-                appVersion: appVersion?.version,
-                surface: "inline",
-                bridge,
-                tools: advertisable,
-                registeredAtMs: Date.now(),
-              });
-              if (appToolsBridgeIdRef.current !== bridgeId) {
-                useAppToolsRegistry.getState().unregisterInstance(bridgeId);
-              }
-            } catch (err) {
-              logWidgetDebug("ui-to-host", "debug/app-tools-list-failed", {
-                error: err instanceof Error ? err.message : String(err),
-              });
-            }
-          })();
+          void refreshAppProvidedTools(bridge, bridgeId);
         }
       };
 
@@ -2482,7 +2504,7 @@ export function MCPAppsRenderer({
       if (effectiveHostCapabilities.message) {
         bridge.onmessage = async ({ content }) => {
           const textContent = content.find(
-            (item) => item.type === "text",
+            (item) => item.type === "text"
           )?.text;
           if (textContent) {
             onSendFollowUpRef.current?.(textContent);
@@ -2520,7 +2542,7 @@ export function MCPAppsRenderer({
           const calledToolMeta = toolsMetadataRef.current?.[name];
           if (isVisibleToModelOnly(calledToolMeta)) {
             const error = new Error(
-              `Tool "${name}" is not callable by apps (visibility: model-only)`,
+              `Tool "${name}" is not callable by apps (visibility: model-only)`
             );
             sendToolCancelledIfAllowed(error.message);
             throw error;
@@ -2535,13 +2557,13 @@ export function MCPAppsRenderer({
           try {
             const result = await onCallToolRef.current(
               name,
-              (args ?? {}) as Record<string, unknown>,
+              (args ?? {}) as Record<string, unknown>
             );
             return result as CallToolResult;
           } catch (error) {
             // SEP-1865: Send tool-cancelled for failed app-initiated tool calls
             sendToolCancelledIfAllowed(
-              error instanceof Error ? error.message : String(error),
+              error instanceof Error ? error.message : String(error)
             );
             throw error;
           }
@@ -2557,30 +2579,27 @@ export function MCPAppsRenderer({
         bridge.onlistresources = async (params) => {
           return listResources(
             serverIdRef.current,
-            (params as { cursor?: string } | undefined)?.cursor,
+            (params as { cursor?: string } | undefined)?.cursor
           );
         };
 
         bridge.onlistresourcetemplates = async (_params) => {
           if (HOSTED_MODE) {
             throw new Error(
-              "Resource templates are not supported in hosted mode",
+              "Resource templates are not supported in hosted mode"
             );
           }
 
-          const response = await authFetch(
-            `/api/mcp/resource-templates/list`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                serverId: serverIdRef.current,
-              }),
-            },
-          );
+          const response = await authFetch(`/api/mcp/resource-templates/list`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              serverId: serverIdRef.current,
+            }),
+          });
           if (!response.ok) {
             throw new Error(
-              `Resource template list failed: ${response.statusText}`,
+              `Resource template list failed: ${response.statusText}`
             );
           }
           return response.json();
@@ -2726,7 +2745,7 @@ export function MCPAppsRenderer({
           return { mode: "inline" };
         }
         const hostAvailableModes = extractHostDisplayModes(
-          hostContextRef.current as Record<string, unknown> | undefined,
+          hostContextRef.current as Record<string, unknown> | undefined
         );
         // Use device type for mobile detection (defaults to mobile-like behavior when not in playground)
         const isMobile = isPlaygroundActiveRef.current
@@ -2737,7 +2756,7 @@ export function MCPAppsRenderer({
           isMobile && requestedMode === "pip" ? "fullscreen" : requestedMode;
         const actualMode = clampDisplayModeToAvailableModes(
           mobileAdjustedMode,
-          hostAvailableModes,
+          hostAvailableModes
         );
 
         setDisplayModeRef.current(actualMode);
@@ -2827,7 +2846,7 @@ export function MCPAppsRenderer({
                 const parsed = new URL(link.uri, window.location.href);
                 if (!["http:", "https:"].includes(parsed.protocol)) {
                   throw new Error(
-                    `Unsupported download URI protocol: ${parsed.protocol}`,
+                    `Unsupported download URI protocol: ${parsed.protocol}`
                   );
                 }
                 window.open(parsed.href, "_blank", "noopener,noreferrer");
@@ -2874,8 +2893,9 @@ export function MCPAppsRenderer({
       toolCallId,
       setWidgetModelContext,
       logWidgetDebug,
+      refreshAppProvidedTools,
       effectiveHostCapabilities,
-    ],
+    ]
   );
 
   useEffect(() => {
@@ -2933,17 +2953,25 @@ export function MCPAppsRenderer({
           permissions: effectiveSandbox.permissions,
         },
       },
-      { hostContext: hostContextRef.current ?? {} },
+      { hostContext: hostContextRef.current ?? {} }
     );
 
     registerBridgeHandlers(bridge);
     bridgeRef.current = bridge;
+    const pendingRpcMethods = new Map<string | number, string>();
 
     const transport = new LoggingTransport(
       new PostMessageTransport(iframe.contentWindow, iframe.contentWindow),
       {
         onSend: (message) => {
           const method = extractMethod(message, "mcp-apps");
+          const request = message as { id?: string | number; method?: string };
+          if (
+            typeof request.method === "string" &&
+            (typeof request.id === "string" || typeof request.id === "number")
+          ) {
+            pendingRpcMethods.set(request.id, request.method);
+          }
           if (SUPPRESSED_UI_LOG_METHODS.has(method)) return;
           logUiEvent({
             widgetId: toolCallId,
@@ -2955,9 +2983,28 @@ export function MCPAppsRenderer({
           });
         },
         onReceive: (message) => {
-          const method = extractMethod(message, "mcp-apps");
+          const response = message as {
+            id?: string | number;
+            result?: unknown;
+            error?: unknown;
+          };
+          const correlatedMethod =
+            (response.result !== undefined || response.error !== undefined) &&
+            (typeof response.id === "string" || typeof response.id === "number")
+              ? pendingRpcMethods.get(response.id)
+              : undefined;
+          if (correlatedMethod && response.id !== undefined) {
+            pendingRpcMethods.delete(response.id);
+          }
+          const method = correlatedMethod ?? extractMethod(message, "mcp-apps");
           if (method === "ui/notifications/size-changed") {
             signalStreamingRender();
+          }
+          if (method === "notifications/tools/list_changed") {
+            const bridgeId = appToolsBridgeIdRef.current;
+            if (bridgeId) {
+              void refreshAppProvidedTools(bridge, bridgeId, { force: true });
+            }
           }
           if (SUPPRESSED_UI_LOG_METHODS.has(method)) return;
           logUiEvent({
@@ -2969,7 +3016,7 @@ export function MCPAppsRenderer({
             message,
           });
         },
-      },
+      }
     );
 
     let isActive = true;
@@ -3007,6 +3054,13 @@ export function MCPAppsRenderer({
         useAppToolsRegistry
           .getState()
           .unregisterInstance(appToolsBridgeIdRef.current);
+        appToolsListedBridgeIdsRef.current.delete(appToolsBridgeIdRef.current);
+        appToolsListInFlightBridgeIdsRef.current.delete(
+          appToolsBridgeIdRef.current
+        );
+        appToolsListRefreshPendingBridgeIdsRef.current.delete(
+          appToolsBridgeIdRef.current
+        );
         appToolsBridgeIdRef.current = null;
       }
       if (isReadyRef.current) {
@@ -3024,6 +3078,7 @@ export function MCPAppsRenderer({
     widgetHtml,
     sandboxProxyReady,
     registerBridgeHandlers,
+    refreshAppProvidedTools,
     setWidgetModelContext,
     cspMode,
     // Bridge must rebuild when the resolved sandbox policy changes — a host
@@ -3101,11 +3156,11 @@ export function MCPAppsRenderer({
       if (!minimalMode) {
         console.warn(
           `[MCP Apps CSP Violation] ${directive}: Blocked ${blockedUri}`,
-          sourceFile ? `at ${sourceFile}:${lineNumber}:${columnNumber}` : "",
+          sourceFile ? `at ${sourceFile}:${lineNumber}:${columnNumber}` : ""
         );
       }
     },
-    [addCspViolation, logUiEvent, minimalMode, serverId, toolCallId],
+    [addCspViolation, logUiEvent, minimalMode, serverId, toolCallId]
   );
 
   const handleSandboxMessage = (event: MessageEvent) => {
@@ -3137,7 +3192,7 @@ export function MCPAppsRenderer({
     const liveCaps = liveOpenAiCompatCapabilitiesRef.current;
     const policyError = (
       callId: number,
-      method: "openai:uploadFile" | "openai:getFileDownloadUrl",
+      method: "openai:uploadFile" | "openai:getFileDownloadUrl"
     ) => {
       sandboxRef.current?.postMessage({
         type: `${method}:response`,
@@ -3276,12 +3331,7 @@ export function MCPAppsRenderer({
       permissive: effectiveSandbox.permissive,
       hostPolicyApplied: effectiveSandbox.hostPolicyApplied,
     });
-  }, [
-    bridgeTransportReady,
-    widgetHtml,
-    effectiveSandbox,
-    logWidgetDebug,
-  ]);
+  }, [bridgeTransportReady, widgetHtml, effectiveSandbox, logWidgetDebug]);
 
   const respondToCheckout = useCallback(
     (result: unknown, error?: string) => {
@@ -3301,7 +3351,7 @@ export function MCPAppsRenderer({
       setCheckoutSession(null);
       setCheckoutCallId(null);
     },
-    [checkoutCallId],
+    [checkoutCallId]
   );
 
   // Denied state
@@ -3367,20 +3417,19 @@ export function MCPAppsRenderer({
       : undefined;
 
   const canTransitionHeight =
-    !isFullscreen &&
-    effectiveDisplayModeRef.current === effectiveDisplayMode;
+    !isFullscreen && effectiveDisplayModeRef.current === effectiveDisplayMode;
   const iframeStyle: CSSProperties = {
     height: isFullscreen
       ? "100%"
       : isPip
-        ? PIP_MAX_HEIGHT
-        : lastInlineHeightRef.current,
+      ? PIP_MAX_HEIGHT
+      : lastInlineHeightRef.current,
     width: "100%",
     maxWidth: "100%",
     backgroundColor:
       !isFullscreen && matrixGatedPrefersBorder
         ? mergedStyleVariables["--color-background-primary"]
-        : (hostChatBackground ?? "transparent"),
+        : hostChatBackground ?? "transparent",
     opacity: showWidget ? 1 : 0,
     transition: [
       "opacity 150ms ease-in",
@@ -3430,15 +3479,20 @@ export function MCPAppsRenderer({
       className={`bg-transparent overflow-hidden ${
         isFullscreen
           ? "flex-1 border-0 rounded-none"
-          : `rounded-md ${matrixGatedPrefersBorder ? "border border-border/40" : ""}`
+          : `rounded-md ${
+              matrixGatedPrefersBorder ? "border border-border/40" : ""
+            }`
       }`}
       style={iframeStyle}
     />
   );
 
   return (
-    <div ref={containerRef} className={containerClassName} style={containerStyle}>
-
+    <div
+      ref={containerRef}
+      className={containerClassName}
+      style={containerStyle}
+    >
       {((isFullscreen && isContainedFullscreenMode) ||
         (isPip && isMobilePlaygroundMode)) && (
         <button
