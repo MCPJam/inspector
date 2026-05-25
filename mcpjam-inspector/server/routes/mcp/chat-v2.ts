@@ -585,6 +585,12 @@ chatV2.post("/", async (c) => {
     let resolvedTemperatureOverride = bodyTemperature;
     let resolvedRequireToolApproval = bodyRequireToolApproval;
     let resolvedModelOverride: typeof model | null = null;
+    // See web/chat-v2 for rationale: body is authoritative for direct
+    // chat (sourced from the project default), host overrides for
+    // chatbox-bound sessions to keep guest / share-link clients from
+    // flipping the host-level setting.
+    let resolvedProgressiveToolDiscovery: boolean | undefined =
+      body.progressiveToolDiscovery;
     if (isChatboxSession && bodyChatboxId) {
       const bearer = c.req.header("authorization") ?? "";
       if (bearer) {
@@ -597,6 +603,24 @@ chatV2.post("/", async (c) => {
           resolvedSystemPrompt = cfg.systemPrompt;
           resolvedTemperatureOverride = cfg.temperature;
           resolvedRequireToolApproval = cfg.requireToolApproval;
+          // Host wins on chatbox-bound turns. Backends without PR #334
+          // omit the field (undefined) → fall back to body and the
+          // orchestrator's auto policy.
+          if (
+            body.progressiveToolDiscovery !== undefined &&
+            cfg.progressiveToolDiscovery !== undefined &&
+            cfg.progressiveToolDiscovery !== body.progressiveToolDiscovery
+          ) {
+            logger.warn(
+              "[mcp/chat-v2] client progressiveToolDiscovery differs from host; using host value",
+              {
+                chatboxId: bodyChatboxId,
+                body: body.progressiveToolDiscovery,
+                host: cfg.progressiveToolDiscovery,
+              }
+            );
+          }
+          resolvedProgressiveToolDiscovery = cfg.progressiveToolDiscovery;
           // See web/chat-v2 for rationale: host's modelId wins on
           // chatbox-bound turns. Built-in catalog hit → full
           // ModelDefinition; miss → swap id only, keep body provider.
@@ -693,12 +717,12 @@ chatV2.post("/", async (c) => {
         temperature,
         requireToolApproval,
         customProviders: body.customProviders,
-        // Host-level toggle from the project's default HostConfigV2.
-        // undefined → use the orchestrator's auto policy.
-        ...(body.progressiveToolDiscovery !== undefined
+        // Body for direct chat (project default), host-re-resolved for
+        // chatbox-bound sessions. undefined → auto policy.
+        ...(resolvedProgressiveToolDiscovery !== undefined
           ? {
               progressiveToolDiscovery: {
-                enabled: body.progressiveToolDiscovery,
+                enabled: resolvedProgressiveToolDiscovery,
               },
             }
           : {}),

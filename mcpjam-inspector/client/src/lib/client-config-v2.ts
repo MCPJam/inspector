@@ -851,6 +851,10 @@ export function hostConfigInputsEqual(
   if (a.systemPrompt !== b.systemPrompt) return false;
   if (a.temperature !== b.temperature) return false;
   if (a.requireToolApproval !== b.requireToolApproval) return false;
+  // Optional boolean: undefined / true / false are three distinct states
+  // (backend hashes them distinctly). A strict !== covers all three since
+  // we never coerce undefined to false elsewhere in the input pipeline.
+  if (a.progressiveToolDiscovery !== b.progressiveToolDiscovery) return false;
   if (!stringArrayEq(a.serverIds, b.serverIds)) return false;
   if (!stringArrayEq(a.optionalServerIds, b.optionalServerIds)) return false;
   if (

@@ -107,6 +107,43 @@ describe("createProgressiveMetaTools", () => {
     expect(res.matches.map((m) => m.name)).toEqual(["linear_create_issue"]);
   });
 
+  it("search_mcp_tools clamps caller-supplied limit to bounded ceiling", async () => {
+    // policy.searchLimit defaults to 8; the meta-tool caps the effective
+    // limit at max(searchLimit * 4, 32) = 32. A bogus high value (or a
+    // prompt-injected one) must not produce an oversized tool-result
+    // payload. We can't observe the clamp directly via the public
+    // surface, but we can prove the limit was capped by passing a large
+    // value and verifying matches never exceed the ceiling regardless
+    // of catalog size.
+    const state = createDiscoveryState();
+    // Build a 50-entry catalog (every entry matches the query "create"
+    // because makeMcpTool puts that token nowhere — so we use a token
+    // that's actually present in tool names). Use serverId variation
+    // so each entry hashes to a distinct toolId.
+    const tools: ToolSet = {};
+    for (let i = 0; i < 50; i += 1) {
+      tools[`asana_create_task_${i}`] = makeMcpTool({
+        description: `Create a task in Asana (#${i})`,
+        serverId: `asana_${i}`,
+        fields: { name: { type: "string", required: true } },
+      });
+    }
+    const catalog = buildToolCatalog(tools as unknown as ToolSet);
+    const metaTools = createProgressiveMetaTools({
+      getCatalog: () => catalog,
+      state,
+      policy: DEFAULT_TOOL_DISCOVERY_POLICY,
+    });
+    const res = (await execTool(metaTools, META_TOOL_SEARCH, {
+      query: "create",
+      limit: 10_000,
+    })) as { matches: unknown[]; truncated: boolean };
+    // Effective ceiling = max(searchLimit * 4, 32) = 32. The catalog has
+    // 50 matches, so the response should hit the ceiling exactly.
+    expect(res.matches.length).toBe(32);
+    expect(res.truncated).toBe(true);
+  });
+
   it("load_mcp_tools marks ids as newlyLoaded in state", async () => {
     const state = createDiscoveryState();
     const catalog = makeCatalog();

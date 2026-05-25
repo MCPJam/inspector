@@ -127,6 +127,14 @@ chatV2.post("/", async (c) => {
     let resolvedSystemPrompt = bodySystemPrompt;
     let resolvedTemperatureOverride = bodyTemperature;
     let resolvedRequireToolApproval = bodyRequireToolApproval;
+    // Host-level toggle. For non-chatbox direct chat the body is the
+    // source (the inspector reads the project's default HostConfigV2 and
+    // threads the value through); for chatbox sessions we re-resolve from
+    // the chatbox's pinned host below so guest / share-link clients can't
+    // omit or flip the field to silently degrade the host's tool
+    // exposure.
+    let resolvedProgressiveToolDiscovery: boolean | undefined =
+      body.progressiveToolDiscovery;
     if (isChatboxSession && chatboxId) {
       const runtime = await fetchChatboxRuntimeConfig({
         chatboxId,
@@ -173,6 +181,26 @@ chatV2.post("/", async (c) => {
         resolvedSystemPrompt = cfg.systemPrompt;
         resolvedTemperatureOverride = cfg.temperature;
         resolvedRequireToolApproval = cfg.requireToolApproval;
+        // Same trust model as requireToolApproval: warn when the body
+        // differs from the host, then always prefer the host value.
+        // Backends older than mcpjam-backend PR #334 omit this field
+        // entirely (undefined), in which case we just fall back to the
+        // body and the orchestrator's auto policy.
+        if (
+          body.progressiveToolDiscovery !== undefined &&
+          cfg.progressiveToolDiscovery !== undefined &&
+          cfg.progressiveToolDiscovery !== body.progressiveToolDiscovery
+        ) {
+          logger.warn(
+            "[chat-v2] client progressiveToolDiscovery differs from host; using host value",
+            {
+              chatboxId,
+              body: body.progressiveToolDiscovery,
+              host: cfg.progressiveToolDiscovery,
+            }
+          );
+        }
+        resolvedProgressiveToolDiscovery = cfg.progressiveToolDiscovery;
       } else {
         // Don't fail the chat send on a transient Convex blip — fall
         // through to client-supplied values and warn. The chat will run
@@ -231,15 +259,15 @@ chatV2.post("/", async (c) => {
           temperature,
           requireToolApproval,
           customProviders: body.customProviders,
-          // Host-level toggle from the project's default HostConfigV2.
-          // Body field is undefined when the user hasn't opted in; we
-          // pass undefined through so prepareChatV2 falls back to its
-          // auto policy (env override + threshold heuristics). When set,
-          // it forces on/off for this request.
-          ...(body.progressiveToolDiscovery !== undefined
+          // Host-level toggle. Sourced from the project's default
+          // HostConfigV2 for direct chat (body), or re-resolved from the
+          // chatbox's pinned host for chatbox-bound sessions (the
+          // server-side override above). undefined → orchestrator uses
+          // its auto policy.
+          ...(resolvedProgressiveToolDiscovery !== undefined
             ? {
                 progressiveToolDiscovery: {
-                  enabled: body.progressiveToolDiscovery,
+                  enabled: resolvedProgressiveToolDiscovery,
                 },
               }
             : {}),

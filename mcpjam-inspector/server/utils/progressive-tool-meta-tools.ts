@@ -98,7 +98,17 @@ export function createProgressiveMetaTools(
     description: SEARCH_DESCRIPTION,
     inputSchema: searchSchema,
     execute: async ({ query, serverIds, limit }): Promise<SearchMcpToolsResult> => {
-      const effectiveLimit = limit ?? policy.searchLimit;
+      // Clamp caller-supplied limit. Zod only checks positive-int; a model
+      // (or a tampered/injected one) can ask for `limit: 10_000` and force
+      // serialization of an oversized tool-result payload. We allow up to
+      // 4× the policy default so power users can still widen the window
+      // when needed, but never beyond a fixed ceiling — bounded payloads
+      // are part of progressive discovery's whole point.
+      const MAX_SEARCH_LIMIT = Math.max(policy.searchLimit * 4, 32);
+      const effectiveLimit = Math.min(
+        limit ?? policy.searchLimit,
+        MAX_SEARCH_LIMIT,
+      );
       const catalog = getCatalog();
       const matches = searchToolCatalog(catalog, query, {
         serverIds,

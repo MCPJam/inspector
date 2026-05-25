@@ -115,6 +115,11 @@ vi.mock("convex/react", () => ({
     isAuthenticated: true,
     isLoading: false,
   }),
+  // useChatSession queries the project's default HostConfigV2 for the
+  // host-level progressiveToolDiscovery toggle. Tests don't exercise that
+  // surface; a null stub keeps the field undefined so behavior collapses
+  // to the orchestrator's auto policy.
+  useQuery: () => null,
 }));
 
 vi.mock("@ai-sdk/react", async () => {

@@ -23,6 +23,11 @@ export type ChatboxRuntimeConfig = {
   temperature: number;
   requireToolApproval: boolean;
   hostStyle: string;
+  // Host-level opt-in for progressive MCP tool discovery, mirrored from
+  // the chatbox's pinned HostConfigV2. Optional so a backend older than
+  // mcpjam-backend PR #334 (which adds the field) returns omitted →
+  // undefined and the inspector falls back to its auto policy.
+  progressiveToolDiscovery?: boolean;
 };
 
 export type ChatboxRuntimeConfigResult =
