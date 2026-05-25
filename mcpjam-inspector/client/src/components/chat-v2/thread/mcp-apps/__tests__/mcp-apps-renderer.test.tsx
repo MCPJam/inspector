@@ -549,6 +549,12 @@ describe("MCPAppsRenderer tool input streaming", () => {
       expect(mockAppBridgeCtor).toHaveBeenCalledTimes(1);
       expect(screen.getByTestId("sandboxed-iframe")).toBeInTheDocument();
     });
+    const getSurfaceContainer = () =>
+      document.querySelector("[data-mcp-app-surface-container]") as HTMLElement;
+    expect(getSurfaceContainer().parentElement).toHaveAttribute(
+      "data-mcp-app-surface-anchor",
+      "call-1"
+    );
 
     act(() => triggerReady());
 
@@ -567,6 +573,10 @@ describe("MCPAppsRenderer tool input streaming", () => {
       expect(mockBridge.sendToolResult).toHaveBeenLastCalledWith(secondOutput);
     });
 
+    expect(getSurfaceContainer().parentElement).toHaveAttribute(
+      "data-mcp-app-surface-anchor",
+      "call-1"
+    );
     expect(mockBridge.sendToolInput).toHaveBeenCalledTimes(1);
     expect(mockBridge.close).not.toHaveBeenCalled();
     expect(mockBridge.teardownResource).not.toHaveBeenCalled();

@@ -168,6 +168,12 @@ export function getRenderableSurfaceEntries(
       surface.latestToolCallId
     );
     if (!latestRegistration) continue;
+    // Keep the mounted iframe under its original row. Reparenting a live
+    // iframe can reload its browsing context in real browsers, which wipes
+    // in-memory app state for stateful widgets like games.
+    const initialRegistration = surface.registrations.get(
+      surface.initialToolCallId
+    );
     const fallbackAnchor =
       Array.from(surface.registrations.values()).find(
         (registration) => registration.anchorElement !== null
@@ -175,7 +181,7 @@ export function getRenderableSurfaceEntries(
 
     entries.push({
       surfaceId: surface.surfaceId,
-      anchorElement: latestRegistration.anchorElement ?? fallbackAnchor,
+      anchorElement: initialRegistration?.anchorElement ?? fallbackAnchor,
       initialToolCallId: surface.initialToolCallId,
       props: latestRegistration.props,
     });
