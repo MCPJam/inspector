@@ -91,3 +91,37 @@ export function useCreditTopupReturnFlow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 }
+
+/**
+ * Surface-agnostic variant for non-chat pages (e.g. the org billing tab):
+ * strip the topup query params, emit a PostHog return event, and surface a
+ * confirmation toast. Does NOT touch the pending message stash — that
+ * belongs to the chat surface and a billing-initiated round trip has no
+ * queued message to resend.
+ */
+export function useCreditTopupReturnFlowBilling(): void {
+  const posthog = usePostHog();
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const topupParam = params.get("topup");
+    if (topupParam !== "success" && topupParam !== "cancelled") return;
+
+    params.delete("topup");
+    params.delete("session_id");
+    const search = params.toString();
+    const cleanedUrl =
+      window.location.pathname + (search ? `?${search}` : "");
+    window.history.replaceState(null, "", cleanedUrl);
+
+    if (topupParam === "cancelled") {
+      posthog?.capture("credit_topup_return_cancelled");
+      return;
+    }
+
+    toast.success("Credits added.");
+    posthog?.capture("credit_topup_return_success");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+}

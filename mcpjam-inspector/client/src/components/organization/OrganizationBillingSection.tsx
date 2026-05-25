@@ -43,6 +43,7 @@ import { type ComparePlanCell } from "@/components/organization/compare-plan-mar
 import { CreditBalanceCard } from "@/components/billing/CreditBalanceCard";
 import { PaymentsHistorySection } from "@/components/billing/PaymentsHistorySection";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { useCreditTopupReturnFlowBilling } from "@/hooks/useCreditTopupReturnFlow";
 
 const PLAN_ORDER: OrganizationPlan[] = ["free", "team", "enterprise"];
 
@@ -499,6 +500,8 @@ export function OrganizationBillingSection({
   checkoutIntent = null,
   onCheckoutIntentConsumed,
 }: OrganizationBillingSectionProps) {
+  useCreditTopupReturnFlowBilling();
+
   const autoCheckoutStartedForKeyRef = useRef<string | null>(null);
   const [billingInterval, setBillingInterval] =
     useState<BillingInterval>("monthly");
