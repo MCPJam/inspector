@@ -34,6 +34,10 @@ import { Switch } from "@mcpjam/design-system/switch";
 import { Slider } from "@mcpjam/design-system/slider";
 import { Separator } from "@mcpjam/design-system/separator";
 import {
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@mcpjam/design-system/toggle-group";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -215,20 +219,49 @@ export function ClientConfigEditor({
                 <p className="text-xs text-muted-foreground">
                   Expose <code>search_mcp_tools</code> and{" "}
                   <code>load_mcp_tools</code> meta-tools instead of sending
-                  every MCP tool definition every turn. Recommended only for
-                  hosts connected to large tool catalogs.
+                  every MCP tool definition every turn.{" "}
+                  <strong>Auto</strong> lets the orchestrator decide based on
+                  catalog size and context budget; <strong>On</strong> forces
+                  it for this host; <strong>Off</strong> opts out even on
+                  large catalogs.
                 </p>
               </div>
-              <Switch
+              <ToggleGroup
                 id={`${reactId}-progressiveTools`}
-                // Persisted as undefined by default. Treat undefined as off
-                // in the UI; flipping on writes `true`, flipping off after an
-                // explicit on writes `false` (distinct hash from undefined).
-                checked={value.progressiveToolDiscovery === true}
-                onCheckedChange={(checked) =>
-                  update({ progressiveToolDiscovery: checked })
+                type="single"
+                size="sm"
+                variant="outline"
+                // Tri-state mirroring backend semantics: undefined ⇒ Auto
+                // (orchestrator may still enable above thresholds), true
+                // ⇒ forced On, false ⇒ forced Off. A 2-state Switch would
+                // hide Auto and let progressive discovery fire while the
+                // UI showed "off".
+                value={
+                  value.progressiveToolDiscovery === true
+                    ? "on"
+                    : value.progressiveToolDiscovery === false
+                      ? "off"
+                      : "auto"
                 }
-              />
+                onValueChange={(next) => {
+                  if (!next) return;
+                  update({
+                    progressiveToolDiscovery:
+                      next === "on" ? true : next === "off" ? false : undefined,
+                  });
+                }}
+                aria-label="Progressive tool discovery mode"
+              >
+                <ToggleGroupItem value="auto" aria-label="Auto (default)">
+                  Auto
+                </ToggleGroupItem>
+                <ToggleGroupItem value="on" aria-label="On">
+                  On
+                </ToggleGroupItem>
+                <ToggleGroupItem value="off" aria-label="Off">
+                  Off
+                </ToggleGroupItem>
+              </ToggleGroup>
             </div>
 
             <div className="grid gap-2">

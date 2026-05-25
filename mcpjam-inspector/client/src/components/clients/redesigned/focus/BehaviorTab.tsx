@@ -3,6 +3,10 @@ import { Slider } from "@mcpjam/design-system/slider";
 import { Switch } from "@mcpjam/design-system/switch";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import {
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@mcpjam/design-system/toggle-group";
+import {
   DEFAULT_TEMPERATURE_V2,
   type HostConfigInputV2,
 } from "@/lib/client-config-v2";
@@ -10,6 +14,29 @@ import { SUPPORTED_MODELS } from "@/shared/types";
 import { FieldRow, FocusBlock } from "./primitives";
 import { fieldsWithIssues } from "./useClientDraftValidation";
 import type { HostAttentionIssue } from "../types";
+
+// Tri-state UI ↔ persisted value. The backend treats `undefined` as
+// "auto" (orchestrator may still enable progressive mode above the
+// catalog/context thresholds), so collapsing it to a two-state Switch
+// would let the user see the toggle "off" while progressive discovery
+// actually fires. The three buttons map 1:1 to the three persisted
+// states; "Auto" preserves `undefined` so the backend dedupe hash
+// stays distinct from an explicit on/off override.
+type ProgressiveTriState = "auto" | "on" | "off";
+function progressiveValueToTri(
+  value: boolean | undefined,
+): ProgressiveTriState {
+  if (value === true) return "on";
+  if (value === false) return "off";
+  return "auto";
+}
+function triToProgressiveValue(
+  value: ProgressiveTriState,
+): boolean | undefined {
+  if (value === "on") return true;
+  if (value === "off") return false;
+  return undefined;
+}
 
 interface BehaviorTabProps {
   draft: HostConfigInputV2;
@@ -107,18 +134,39 @@ export function BehaviorTab({
 
         <FieldRow
           label="Progressive tools"
-          // Persisted as undefined / true / false on HostConfigV2.
-          // Treat undefined as off in the UI; flipping on writes `true`,
-          // flipping back writes `false` so the explicit opt-out hashes
-          // distinctly from the never-set state (backend dedupe honesty).
+          // 3-state, not 2-state: the backend reads `undefined` as
+          // "auto" and may enable progressive discovery above catalog/
+          // context thresholds even with no user opt-in. A Switch would
+          // hide that — "Auto" makes the auto-policy state explicit.
           control={
-            <Switch
-              checked={draft.progressiveToolDiscovery === true}
-              onCheckedChange={(checked) =>
-                update({ progressiveToolDiscovery: checked })
-              }
-              aria-label="Enable progressive MCP tool discovery"
-            />
+            <ToggleGroup
+              type="single"
+              size="sm"
+              variant="outline"
+              value={progressiveValueToTri(draft.progressiveToolDiscovery)}
+              onValueChange={(value) => {
+                // Radix calls onValueChange("") when the user
+                // re-clicks the active item. Treat that as no-op so
+                // there's always exactly one selected state.
+                if (!value) return;
+                update({
+                  progressiveToolDiscovery: triToProgressiveValue(
+                    value as ProgressiveTriState,
+                  ),
+                });
+              }}
+              aria-label="Progressive MCP tool discovery"
+            >
+              <ToggleGroupItem value="auto" aria-label="Auto (default)">
+                Auto
+              </ToggleGroupItem>
+              <ToggleGroupItem value="on" aria-label="On">
+                On
+              </ToggleGroupItem>
+              <ToggleGroupItem value="off" aria-label="Off">
+                Off
+              </ToggleGroupItem>
+            </ToggleGroup>
           }
         />
       </FocusBlock>
