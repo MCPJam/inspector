@@ -58,17 +58,15 @@ export function EffectiveProtocolVersionChip({
     ? "border-amber-500/40 bg-amber-500/10 text-amber-700"
     : "border-border bg-muted text-muted-foreground";
 
-  const label = effective ?? "SDK default";
+  const label = isStateless ? "Draft" : "Latest";
 
   return (
     <span
       className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium ${tone}`}
       title={
         isStateless
-          ? `Stateless MCP transport pinned to ${effective}`
-          : effective !== undefined
-            ? `Stateful MCP transport pinned to ${effective}`
-            : "MCP protocol version negotiated by the SDK at request time"
+          ? `Experimental DRAFT-2026-v1 stateless transport (${effective})`
+          : "Current stable MCP wire version (negotiated by the SDK)"
       }
     >
       {label}

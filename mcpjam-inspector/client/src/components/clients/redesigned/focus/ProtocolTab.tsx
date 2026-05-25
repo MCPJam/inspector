@@ -17,22 +17,14 @@ import {
 import type { HostAttentionIssue } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 
-type HostProtocolDropdownValue = McpProtocolVersion | "default";
+type HostProtocolDropdownValue = "latest" | "draft";
 
 const HOST_PROTOCOL_OPTIONS: Array<{
   value: HostProtocolDropdownValue;
   label: string;
-  flagGated?: boolean;
 }> = [
-  { value: "default", label: "Default (SDK chooses)" },
-  {
-    value: "DRAFT-2026-v1",
-    label: "DRAFT-2026-v1 (RC, stateless)",
-    flagGated: true,
-  },
-  { value: "2025-11-25", label: "2025-11-25 (Latest stable)" },
-  { value: "2025-06-18", label: "2025-06-18" },
-  { value: "2025-03-26", label: "2025-03-26 (Legacy)" },
+  { value: "latest", label: "Latest" },
+  { value: "draft", label: "Draft" },
 ];
 
 interface ProtocolTabProps {
@@ -268,11 +260,13 @@ export function ProtocolTab({ draft, onDraftChange }: ProtocolTabProps) {
     onDraftChange,
   });
   const statelessMcpEnabled = useFeatureFlagEnabled("stateless-mcp-enabled");
+  // Stored stateful literals (legacy carry-over) collapse to "Latest"
+  // since they route to the same code path; saving normalizes back to
+  // undefined.
   const selectedDropdownValue: HostProtocolDropdownValue =
-    draft.mcpProfile?.mcpProtocolVersion ?? "default";
-  const visibleOptions = HOST_PROTOCOL_OPTIONS.filter(
-    (opt) => !opt.flagGated || statelessMcpEnabled,
-  );
+    draft.mcpProfile?.mcpProtocolVersion === "DRAFT-2026-v1"
+      ? "draft"
+      : "latest";
 
   // Dropdown handler. Writes through to `draft.mcpProfile.mcpProtocolVersion`
   // directly (parallel to the JSON editor's applyJsonToDraft path) so the
@@ -306,33 +300,29 @@ export function ProtocolTab({ draft, onDraftChange }: ProtocolTabProps) {
           <div className="flex items-center gap-3">
             <span
               className="text-[12px] font-medium"
-              title="Pin the MCP protocol version this host's connections speak by default. 'Default' lets the SDK choose at request time. Stateless options use the experimental DRAFT-2026-v1 transport."
+              title="Latest: current stable MCP wire version (whatever the SDK ships). Draft: experimental DRAFT-2026-v1 stateless transport."
             >
               Protocol version
             </span>
-            <div className="ml-auto w-[260px]">
-              <Select
-                value={selectedDropdownValue}
-                onValueChange={(next) => {
-                  if (next === "default") {
-                    setProtocolVersion(undefined);
-                  } else {
-                    setProtocolVersion(next as McpProtocolVersion);
-                  }
-                }}
-              >
-                <SelectTrigger className="h-9 text-xs">
-                  <SelectValue placeholder="Default (SDK chooses)" />
-                </SelectTrigger>
-                <SelectContent>
-                  {visibleOptions.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            <Select
+              value={selectedDropdownValue}
+              onValueChange={(next) => {
+                setProtocolVersion(
+                  next === "draft" ? "DRAFT-2026-v1" : undefined,
+                );
+              }}
+            >
+              <SelectTrigger className="h-9 text-xs">
+                <SelectValue placeholder="Latest" />
+              </SelectTrigger>
+              <SelectContent>
+                {HOST_PROTOCOL_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
       ) : null}

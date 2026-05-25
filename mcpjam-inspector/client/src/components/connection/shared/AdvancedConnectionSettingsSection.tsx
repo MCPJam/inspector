@@ -12,17 +12,19 @@ import { JsonEditor } from "@/components/ui/json-editor";
 import type { McpProtocolVersion } from "@/lib/client-config-v2";
 
 /**
- * Dropdown options for the per-server protocol-version pin. Mirrors the
- * OAuth debugger's "Protocol" dropdown pattern from
- * `AuthenticationSection.tsx` so users see consistent affordances across
- * the inspector. Wire literals as values; era hints in labels.
+ * Per-server protocol-version pin. The picker is a binary "Latest" vs
+ * "Draft" toggle — the only two code paths the SDK factory actually
+ * routes to today:
+ *   - "latest" → `undefined`, legacy `OfficialSdkClientAdapter` +
+ *     upstream `Client` (negotiates whatever `LATEST_PROTOCOL_VERSION`
+ *     the SDK is shipping at runtime).
+ *   - "draft"  → `"DRAFT-2026-v1"`, the stateless preview client.
  *
- * `"default"` is a UI-only sentinel that the change handler maps to
- * `undefined` before reaching state — preserves the SDK-default
- * semantics so canonical hashes don't churn (see
- * `feedback_preserve_undefined_default` memory).
+ * "latest" serializes to `undefined` (not the literal `"2025-11-25"`) so
+ * canonical hashes stay stable when the SDK bumps its default; see
+ * `feedback_preserve_undefined_default`.
  */
-type DropdownValue = McpProtocolVersion | "default";
+type DropdownValue = "latest" | "draft";
 
 const MCP_PROTOCOL_OPTIONS: Array<{
   value: DropdownValue;
@@ -30,15 +32,8 @@ const MCP_PROTOCOL_OPTIONS: Array<{
   /** When true, the option appears only with `stateless-mcp-enabled` flag. */
   flagGated?: boolean;
 }> = [
-  { value: "default", label: "Default (SDK chooses)" },
-  {
-    value: "DRAFT-2026-v1",
-    label: "DRAFT-2026-v1 (RC, stateless)",
-    flagGated: true,
-  },
-  { value: "2025-11-25", label: "2025-11-25 (Latest stable)" },
-  { value: "2025-06-18", label: "2025-06-18" },
-  { value: "2025-03-26", label: "2025-03-26 (Legacy)" },
+  { value: "latest", label: "Latest" },
+  { value: "draft", label: "Draft", flagGated: true },
 ];
 
 interface HeaderEntry {
@@ -129,26 +124,19 @@ export function AdvancedConnectionSettingsSection({
   const showProtocolVersionControl =
     showMcpProtocolVersionOverride &&
     onMcpProtocolVersionOverrideChange !== undefined;
-  // Stateless options are Streamable HTTP POST only. For non-HTTP
-  // transports, filter the dropdown to stateful versions only — picking
-  // a stateless version would fail at construction with
-  // `StatelessRequiresHttpTransport`. Filtering here is the user-friendly
-  // safety net (factory rejection is the hard floor).
+  // "Draft" is Streamable HTTP POST only — picking it on stdio / sse
+  // would fail at construction with `StatelessRequiresHttpTransport`.
+  // Hide it on non-HTTP transports as the user-friendly safety net.
   const isHttp = transportKind === "http";
   const visibleOptions = MCP_PROTOCOL_OPTIONS.filter((opt) => {
-    if (opt.flagGated && !showMcpProtocolVersionOverride) return false;
-    if (
-      !isHttp &&
-      opt.value !== "default" &&
-      // For non-HTTP, drop the stateless option(s).
-      (opt.value === "DRAFT-2026-v1")
-    ) {
-      return false;
-    }
+    if (opt.value === "draft" && !isHttp) return false;
     return true;
   });
+  // Any stored stateful literal (legacy carry-over from a previous
+  // schema) reads as "Latest" — same code path, and saving normalizes
+  // it back to `undefined`.
   const selectedDropdownValue: DropdownValue =
-    mcpProtocolVersionOverride ?? "default";
+    mcpProtocolVersionOverride === "DRAFT-2026-v1" ? "draft" : "latest";
 
   return (
     <div className="space-y-0">
@@ -284,21 +272,17 @@ export function AdvancedConnectionSettingsSection({
             </div>
           )}
 
-          {/* Per-server MCP protocol-version pin.
-
-              Mirrors the OAuth debugger's "Protocol" dropdown
-              (`AuthenticationSection.tsx`) so users see the same
-              affordance pattern across the inspector. Gated by
-              `stateless-mcp-enabled` at the caller. The dropdown's
-              "Default (SDK chooses)" option serializes to `undefined`,
-              preserving canonical-hash stability across SDK default
-              upgrades. Stateless options are filtered out for
-              non-HTTP transports (factory rejects them otherwise). */}
+          {/* Per-server MCP protocol-version pin. Binary picker:
+              "Latest" → `undefined` (legacy adapter + SDK-chosen wire
+              version); "Draft" → `"DRAFT-2026-v1"` (stateless preview
+              client). Gated by `stateless-mcp-enabled` at the caller.
+              "Draft" is hidden on non-HTTP transports because the
+              stateless client requires Streamable HTTP. */}
           {showProtocolVersionControl && (
             <div className="space-y-1.5">
               <label
                 className="text-xs font-medium text-foreground"
-                title="Pin the MCP protocol version this server speaks. 'Default' lets the SDK choose at request time. Stateless options use the experimental DRAFT-2026-v1 transport and require Streamable HTTP."
+                title="Latest: the current stable MCP wire version (whatever the SDK ships). Draft: the experimental DRAFT-2026-v1 stateless transport (HTTP only)."
               >
                 Protocol version
               </label>
@@ -306,17 +290,13 @@ export function AdvancedConnectionSettingsSection({
                 value={selectedDropdownValue}
                 onValueChange={(next) => {
                   if (!onMcpProtocolVersionOverrideChange) return;
-                  if (next === "default") {
-                    onMcpProtocolVersionOverrideChange(undefined);
-                  } else {
-                    onMcpProtocolVersionOverrideChange(
-                      next as McpProtocolVersion,
-                    );
-                  }
+                  onMcpProtocolVersionOverrideChange(
+                    next === "draft" ? "DRAFT-2026-v1" : undefined,
+                  );
                 }}
               >
                 <SelectTrigger className="h-9 w-full text-xs">
-                  <SelectValue placeholder="Default (SDK chooses)" />
+                  <SelectValue placeholder="Latest" />
                 </SelectTrigger>
                 <SelectContent>
                   {visibleOptions.map((opt) => (
@@ -328,9 +308,8 @@ export function AdvancedConnectionSettingsSection({
               </Select>
               {!isHttp && (
                 <p className="text-xs text-muted-foreground">
-                  Stateless options require Streamable HTTP — only
-                  stateful protocol versions are selectable for this
-                  transport.
+                  Draft requires Streamable HTTP — only Latest is
+                  selectable for this transport.
                 </p>
               )}
             </div>
