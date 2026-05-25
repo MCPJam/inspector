@@ -364,7 +364,7 @@ describe("useToolInputStreaming", () => {
     expect(result.current.canRenderStreamingInput).toBe(true);
   });
 
-  it("fallback reveal timer does not render before parseable partial args arrive", () => {
+  it("fallback reveal timer renders when parseable partial args never arrive", () => {
     const props = createDefaultProps(bridge);
     props.toolState = "input-streaming";
     // No toolInput — so no partial will be sent, relying on fallback timer
@@ -374,13 +374,32 @@ describe("useToolInputStreaming", () => {
     // Before fallback timer: not signaled, no delivery
     expect(result.current.canRenderStreamingInput).toBe(false);
 
-    // Advance past fallback timer. This is only a render signal; without
-    // delivered input, revealing the iframe produces a blank-shell flicker.
+    // Advance past fallback timer. The host should reveal instead of leaving
+    // streaming apps hidden indefinitely when no parseable partial input arrives.
     act(() => {
       vi.advanceTimersByTime(STREAMING_REVEAL_FALLBACK_MS + 10);
     });
 
+    expect(result.current.canRenderStreamingInput).toBe(true);
+  });
+
+  it("keeps fallback reveal alive after a render signal without partial args", () => {
+    const props = createDefaultProps(bridge);
+    props.toolState = "input-streaming";
+
+    const { result } = renderHook(() => useToolInputStreaming(props));
+
+    act(() => {
+      result.current.signalStreamingRender();
+    });
+
     expect(result.current.canRenderStreamingInput).toBe(false);
+
+    act(() => {
+      vi.advanceTimersByTime(STREAMING_REVEAL_FALLBACK_MS + 10);
+    });
+
+    expect(result.current.canRenderStreamingInput).toBe(true);
   });
 
   it("does not send partial when bridge is null", () => {

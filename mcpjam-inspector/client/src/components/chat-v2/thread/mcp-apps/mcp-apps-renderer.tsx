@@ -553,7 +553,6 @@ export function MCPAppsRendererSurface({
   persistentSurfaceId,
   persistentSurfaceInitialToolCallId,
 }: MCPAppsRendererProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
   const sandboxRef = useRef<SandboxedIframeHandle>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const sharedHostStyle = usePreferencesStore((s) => s.hostStyle);
@@ -1178,13 +1177,6 @@ export function MCPAppsRendererSurface({
   // tool-call mount re-arms the promote — a fresh chat with the same
   // app gets the same affordance.
   const hasAutoPromotedForAppToolsRef = useRef(false);
-  // SEP-1865: width is honored only when the host's outer container is
-  // unbounded (no `width` from `containerDimensions`). The chatbox bubble
-  // is the bounding box today, so this stays null until the app sends a
-  // width request. The renderer applies the value to the visible inline
-  // container and caps it with max-width: 100%.
-  const lastInlineWidthRef = useRef<string | null>(null);
-
   // SEP-1865 App-Provided Tools: per-bridge identity used to register and
   // unregister this iframe's tools in `useAppToolsRegistry`.
   const appToolsBridgeIdRef = useRef<string | null>(null);
@@ -1205,15 +1197,14 @@ export function MCPAppsRendererSurface({
 
   // Reset widget-identity-scoped state when the renderer is reused for a
   // different resource / widget bundle. Without this the next widget
-  // inherits the previous widget's intersected display modes, its
-  // narrowed inline width, and (if the user had dismissed to inline) its
-  // sticky inline preference. Also re-seeds the sticky flag from the
+  // inherits the previous widget's intersected display modes and (if the user
+  // had dismissed to inline) its sticky inline preference. Also re-seeds the
+  // sticky flag from the
   // current `widgetDisplayModeRequests` policy so flipping the Apps tab
   // tri-state on an already-mounted renderer takes effect on the next
   // identity change instead of waiting for an unmount.
   useEffect(() => {
     setAppSupportedDisplayModes(undefined);
-    lastInlineWidthRef.current = null;
     userPreferInlineRef.current =
       earlyEffectiveMcpAppsCapabilities.widgetDisplayModeRequests ===
       "user-initiated-only";
@@ -2908,27 +2899,16 @@ export function MCPAppsRendererSurface({
         };
       }
 
-      // SEP-1865: apply both height AND width when the host outer
-      // container is flexible (no fixed `width` published via
-      // `containerDimensions`). The renderer caps the requested width
-      // to 100% of the parent via `max-width: 100%` so a misbehaving
-      // widget can't overflow the chatbox bubble. Fixed-
-      // width contexts (PIP/fullscreen, or future hosts that publish
-      // `containerDimensions.width`) ignore the width request — the
-      // height-only path remains.
-      bridge.onsizechange = ({ height, width }) => {
+      // Inline width is owned by the host shell. Some widgets report their
+      // preferred content width in `ui/notifications/size-changed`; applying it
+      // to the chat container shrinks wide hosted transcripts and leaves the
+      // app pinned to the left. Height remains app-driven for natural inline
+      // layout, while PIP/fullscreen keep their fixed shell sizing.
+      bridge.onsizechange = ({ height }) => {
         if (effectiveDisplayModeRef.current !== "inline") return;
         const iframe = sandboxRef.current?.getIframeElement();
-        const container = containerRef.current;
-        if (!iframe || !container) return;
-        if (height === undefined && width === undefined) return;
-        const hostCtx = hostContextRef.current as
-          | (McpUiHostContext & {
-              containerDimensions?: { width?: number };
-            })
-          | null;
-        const hostHasFixedWidth =
-          typeof hostCtx?.containerDimensions?.width === "number";
+        if (!iframe) return;
+        if (height === undefined) return;
 
         // The MCP App has requested a `height`, but if
         // `box-sizing: border-box` is applied to the outer iframe element, then we
@@ -2954,31 +2934,7 @@ export function MCPAppsRendererSurface({
           lastInlineHeightRef.current = `${adjustedHeight}px`;
         }
 
-        if (width !== undefined && !hostHasFixedWidth) {
-          let adjustedWidth = width;
-          if (isBorderBox) {
-            adjustedWidth +=
-              parseFloat(style.borderLeftWidth) +
-              parseFloat(style.borderRightWidth);
-          }
-          // Cap to parent so an over-eager widget can't escape the
-          // bounding bubble. Keep `width` as a plain px value and rely on
-          // `max-width: 100%` for the cap; this is equivalent to
-          // `min(width, 100%)` in browsers and easier for tests/DevTools.
-          const widthCss = `${adjustedWidth}px`;
-          from.width = `${container.offsetWidth}px`;
-          container.style.width = to.width = widthCss;
-          iframe.style.width = "100%";
-          lastInlineWidthRef.current = widthCss;
-        }
-
         iframe.animate([from, to], { duration: 300, easing: "ease-out" });
-        if (to.width !== undefined) {
-          container.animate?.([{ width: from.width }, { width: to.width }], {
-            duration: 300,
-            easing: "ease-out",
-          });
-        }
         // size-changed fires on every resize/animation tick — chatty widgets
         // can flood the traffic log. The corresponding ui/notifications/
         // size-changed transport message is already suppressed above; rely on
@@ -3689,11 +3645,6 @@ export function MCPAppsRendererSurface({
 
     return "mt-3 space-y-2 relative group";
   })();
-  const containerStyle: CSSProperties | undefined =
-    !isFullscreen && !isPip && lastInlineWidthRef.current
-      ? { width: lastInlineWidthRef.current, maxWidth: "100%" }
-      : undefined;
-
   const canTransitionHeight =
     !isFullscreen && effectiveDisplayModeRef.current === effectiveDisplayMode;
   const iframeStyle: CSSProperties = {
@@ -3767,13 +3718,11 @@ export function MCPAppsRendererSurface({
 
   return (
     <div
-      ref={containerRef}
       className={containerClassName}
       data-mcp-app-persistent-initial-tool-call-id={
         persistentSurfaceInitialToolCallId
       }
       data-mcp-app-persistent-surface-id={persistentSurfaceId}
-      style={containerStyle}
     >
       {((isFullscreen && isContainedFullscreenMode) ||
         (isPip && isMobilePlaygroundMode)) && (
