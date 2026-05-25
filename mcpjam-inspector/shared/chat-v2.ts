@@ -71,6 +71,14 @@ export interface ChatV2Request {
    * inclusion gate.
    */
   appTools?: AppToolSnapshotEntry[];
+  /**
+   * SEP-1865 `ui/update-model-context` snapshots for the next model turn.
+   *
+   * These are per-request, ephemeral model context: the server appends them
+   * to the outbound prompt for this turn, but they are not inserted into the
+   * user-visible chat transcript.
+   */
+  widgetModelContext?: WidgetModelContextEntry[];
 }
 
 /**
@@ -93,4 +101,12 @@ export interface AppToolSnapshotEntry {
   description?: string;
   inputSchema?: Record<string, unknown>;
   readOnly: boolean;
+}
+
+export interface WidgetModelContextEntry {
+  toolCallId: string;
+  context: {
+    content?: Record<string, unknown>[];
+    structuredContent?: Record<string, unknown>;
+  };
 }

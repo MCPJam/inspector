@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { StickToBottom } from "use-stick-to-bottom";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
+import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { UIMessage } from "ai";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import { Thread } from "@/components/chat-v2/thread";
@@ -23,6 +24,8 @@ import type { ModelDefinition } from "@/shared/types";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
 import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
 import type { TraceViewMode } from "@/components/evals/trace-view-mode-tabs";
+import type { WidgetModelContextEntry } from "@/shared/chat-v2";
+import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
 
 type ChatTraceViewMode = "chat" | "timeline" | "raw";
 
@@ -36,6 +39,7 @@ export interface BroadcastChatTurnRequest {
     url: string;
   }>;
   prependMessages: UIMessage[];
+  widgetModelContext?: WidgetModelContextEntry[];
 }
 
 interface MultiModelChatCardProps {
@@ -91,6 +95,9 @@ export function MultiModelChatCard({
   const [widgetStateQueue, setWidgetStateQueue] = useState<
     { toolCallId: string; state: unknown }[]
   >([]);
+  const [modelContextQueue, setModelContextQueue] = useState<
+    WidgetModelContextEntry[]
+  >([]);
   const [, setIsWidgetFullscreen] = useState(false);
   const [traceViewMode, setTraceViewMode] = useState<ChatTraceViewMode>("chat");
   const [revealedInChat, setRevealedInChat] = useState(false);
@@ -126,6 +133,7 @@ export function MultiModelChatCard({
     },
     onReset: () => {
       setWidgetStateQueue([]);
+      setModelContextQueue([]);
     },
   });
 
@@ -371,9 +379,15 @@ export function MultiModelChatCard({
       text: broadcastRequest.text,
       files: broadcastRequest.files,
       metadata: outgoingSenderMetadata,
+      widgetModelContext: [
+        ...(broadcastRequest.widgetModelContext ?? []),
+        ...modelContextQueue,
+      ],
     });
+    setModelContextQueue([]);
   }, [
     broadcastRequest,
+    modelContextQueue,
     sendMessage,
     setMessages,
     outgoingSenderMetadata,
@@ -389,9 +403,29 @@ export function MultiModelChatCard({
 
   const handleSendFollowUp = useCallback(
     (text: string) => {
-      sendMessage({ text, metadata: outgoingSenderMetadata });
+      sendMessage({
+        text,
+        metadata: outgoingSenderMetadata,
+        widgetModelContext: modelContextQueue,
+      });
+      setModelContextQueue([]);
     },
-    [sendMessage, outgoingSenderMetadata],
+    [modelContextQueue, sendMessage, outgoingSenderMetadata],
+  );
+
+  const handleModelContextUpdate = useCallback(
+    (
+      toolCallId: string,
+      context: {
+        content?: ContentBlock[];
+        structuredContent?: Record<string, unknown>;
+      },
+    ) => {
+      setModelContextQueue((previous) =>
+        upsertWidgetModelContextEntry(previous, toolCallId, context),
+      );
+    },
+    [],
   );
 
   useEffect(() => {
@@ -516,6 +550,7 @@ export function MultiModelChatCard({
                   fullscreenChatSendBlocked={fullscreenChatSendBlocked}
                   onFullscreenChatStop={stop}
                   onFullscreenChange={setIsWidgetFullscreen}
+                  onModelContextUpdate={handleModelContextUpdate}
                   onToolApprovalResponse={addToolApprovalResponse}
                   rawRequestPayloadHistory={{
                     entries: requestPayloadHistory,
@@ -576,6 +611,7 @@ export function MultiModelChatCard({
                   toolsMetadata={toolsMetadata}
                   toolServerMap={toolServerMap}
                   onWidgetStateChange={handleWidgetStateChange}
+                  onModelContextUpdate={handleModelContextUpdate}
                   onFullscreenChange={setIsWidgetFullscreen}
                   enableFullscreenChatOverlay
                   fullscreenChatPlaceholder={placeholder}

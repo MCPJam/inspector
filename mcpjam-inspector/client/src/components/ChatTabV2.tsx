@@ -114,6 +114,8 @@ import {
   useChatStopControls,
 } from "@/hooks/use-chat-stop-controls";
 import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
+import type { WidgetModelContextEntry } from "@/shared/chat-v2";
+import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
 
 interface ChatTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
@@ -199,14 +201,8 @@ export function ChatTabV2({
   const [widgetStateQueue, setWidgetStateQueue] = useState<
     { toolCallId: string; state: unknown }[]
   >([]);
-  const [, setModelContextQueue] = useState<
-    {
-      toolCallId: string;
-      context: {
-        content?: ContentBlock[];
-        structuredContent?: Record<string, unknown>;
-      };
-    }[]
+  const [modelContextQueue, setModelContextQueue] = useState<
+    WidgetModelContextEntry[]
   >([]);
   const [elicitationQueue, setElicitationQueue] = useState<DialogElicitation[]>(
     []
@@ -1560,8 +1556,9 @@ export function ChatTabV2({
         structuredContent?: Record<string, unknown>;
       }
     ) => {
-      void toolCallId;
-      void context;
+      setModelContextQueue((previous) =>
+        upsertWidgetModelContextEntry(previous, toolCallId, context)
+      );
     },
     []
   );
@@ -1912,7 +1909,9 @@ export function ChatTabV2({
           text: input,
           files,
           prependMessages,
+          widgetModelContext: modelContextQueue,
         });
+        setModelContextQueue([]);
       } else {
         if (promptMessages.length > 0) {
           setMessages((prev) => [...prev, ...promptMessages]);
@@ -1934,7 +1933,12 @@ export function ChatTabV2({
           single_model_send: true,
         });
         lastSentUserMessageRef.current = input;
-        sendMessage({ text: input, files, metadata: outgoingSenderMetadata });
+        sendMessage({
+          text: input,
+          files,
+          metadata: outgoingSenderMetadata,
+          widgetModelContext: modelContextQueue,
+        });
         setModelContextQueue([]);
       }
 
@@ -1963,7 +1967,9 @@ export function ChatTabV2({
       queueBroadcastRequest({
         text: prompt,
         prependMessages: [],
+        widgetModelContext: modelContextQueue,
       });
+      setModelContextQueue([]);
     } else {
       posthog.capture("send_message", {
         location: "chat_tab",
@@ -1977,7 +1983,12 @@ export function ChatTabV2({
         single_model_send: true,
       });
       lastSentUserMessageRef.current = prompt;
-      sendMessage({ text: prompt, metadata: outgoingSenderMetadata });
+      sendMessage({
+        text: prompt,
+        metadata: outgoingSenderMetadata,
+        widgetModelContext: modelContextQueue,
+      });
+      setModelContextQueue([]);
     }
     setInput("");
     revokeFileAttachmentUrls(fileAttachments);
@@ -2394,7 +2405,9 @@ export function ChatTabV2({
                                 sendMessage({
                                   text,
                                   metadata: outgoingSenderMetadata,
+                                  widgetModelContext: modelContextQueue,
                                 });
+                                setModelContextQueue([]);
                               }
                             : undefined
                         }
@@ -2463,7 +2476,9 @@ export function ChatTabV2({
                             sendMessage({
                               text,
                               metadata: outgoingSenderMetadata,
+                              widgetModelContext: modelContextQueue,
                             });
+                            setModelContextQueue([]);
                           }}
                           model={selectedModel}
                           isLoading={isStreaming}

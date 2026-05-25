@@ -88,6 +88,7 @@ import {
 import { useSharedChatWidgetCapture } from "@/hooks/useSharedChatWidgetCapture";
 import { ingestHostedRpcLogs } from "@/stores/traffic-log-store";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
+import type { WidgetModelContextEntry } from "@/shared/chat-v2";
 import {
   getTraceSpansDurationMs,
   mergeLiveChatTraceUsage,
@@ -268,6 +269,8 @@ export interface UseChatSessionReturn {
     /** Stamped onto the outgoing UIMessage so transcript renderers can
      *  attribute it before persistence round-trips (shared sessions). */
     metadata?: Record<string, unknown>;
+    /** Ephemeral SEP-1865 widget context for the next model turn. */
+    widgetModelContext?: WidgetModelContextEntry[];
   }) => void;
   stop: () => void;
   status: "submitted" | "streaming" | "ready" | "error";
@@ -1409,6 +1412,10 @@ export function useChatSession(
   }, []);
 
   // Create transport
+  const pendingWidgetModelContextRef = useRef<
+    WidgetModelContextEntry[] | undefined
+  >(undefined);
+
   const transport = useMemo(() => {
     const shouldUseOrgAwareChatApi = HOSTED_MODE || selectedModelUsesOrgRuntime;
     let apiKey: string;
@@ -1471,84 +1478,91 @@ export function useChatSession(
     return new DefaultChatTransport({
       api: chatApi,
       fetch: chatFetch,
-      body: () => ({
-        model: selectedModel,
-        ...(shouldUseOrgAwareChatApi ? {} : { apiKey }),
-        // Always send the user's slider value. The server's `prepareChatV2`
-        // already drops temperature for GPT-5 before the LLM call (its API
-        // rejects the field), so what lands here is purely the user's
-        // intended config — and ingestion's hostConfig dedupes on it. If we
-        // stripped for GPT-5, every GPT-5 direct chat would dedupe to the
-        // helper's 0.7 fallback regardless of the slider.
-        temperature,
-        systemPrompt,
-        ...(shouldUseOrgAwareChatApi
-          ? buildHostedBody()
-          : {
-              selectedServers,
-              chatSessionId,
-              // `directVisibility` only applies to direct chat. The
-              // /mcp/chat-v2 route gates it off when chatboxId is present
-              // (owner-preview persists as `sourceType: "chatbox"`), but
-              // omitting it client-side keeps the body honest about the
-              // session kind.
-              ...(hostedChatboxId ? {} : { directVisibility }),
-              // Pass projectId for BYOK direct-chat history persistence
-              ...(hostedProjectId ? { projectId: hostedProjectId } : {}),
-              // Convex server Ids parallel to `selectedServers`. Only sent
-              // when every name resolved to an Id — a partial mapping would
-              // hash to a different hostConfig than intended. Without this,
-              // the MCP route can't safely emit `hostConfig` because local
-              // server *names* aren't valid Convex Ids and the backend
-              // validator would reject the whole ingest call.
-              ...(hostedSelectedServerIds.length === selectedServers.length
-                ? { selectedServerIds: hostedSelectedServerIds }
-                : {}),
-              // Phase F: owner-preview / local chatbox sessions persist as
-              // `sourceType: "chatbox"`. Without forwarding the resolved
-              // chatbox identity here, /mcp/chat-v2 derives sourceType
-              // from absent fields and the chat is filed as a direct chat
-              // instead of a chatbox session.
-              ...(hostedChatboxId ? { chatboxId: hostedChatboxId } : {}),
-              ...(hostedChatboxId && Number.isFinite(hostedAccessVersion)
-                ? { accessVersion: hostedAccessVersion }
-                : {}),
-              ...(hostedChatboxId && hostedChatboxSurface
-                ? { surface: hostedChatboxSurface }
-                : {}),
-              ...(selectedModel.provider === "ollama"
-                ? { ollamaBaseUrl: getOllamaBaseUrl() }
-                : {}),
-              ...(selectedModel.provider === "azure"
-                ? { azureBaseUrl: getAzureBaseUrl() }
-                : {}),
-            }),
-        requireToolApproval: requireToolApprovalRef.current,
-        // Only send when the user explicitly set the host-level toggle.
-        // Omitting the field tells the backend orchestrator to use its
-        // auto policy (currently: off for hosted unless the env override
-        // is set). Backend hashes undefined / true / false distinctly so
-        // round-trips preserve the user's choice.
-        ...(progressiveToolDiscoveryRef.current !== undefined
-          ? { progressiveToolDiscovery: progressiveToolDiscoveryRef.current }
-          : {}),
-        // Phase 3: forward the chat tab's resolved host style so
-        // direct chat traces persist with a real `claude`/`chatgpt`
-        // hostStyle (no more legacy `'direct'`). Omitted body falls
-        // back to the backend default of `'claude'`.
-        ...(hostStyle ? { hostStyle } : {}),
-        ...(!shouldUseOrgAwareChatApi && customProviders.length > 0
-          ? { customProviders }
-          : {}),
-        ...(resumedVersionRef.current !== null
-          ? { expectedVersion: resumedVersionRef.current }
-          : {}),
-        // SEP-1865 App-Provided Tools snapshot. Drained fresh at POST time
-        // (no memoization) so any iframe that mounted between the previous
-        // turn and this send contributes its tools. The registry caps size;
-        // the server defends the boundary again in `validateAppToolEntries`.
-        appTools: useAppToolsRegistry.getState().snapshotForChatBody(),
-      }),
+      body: () => {
+        const widgetModelContext = pendingWidgetModelContextRef.current;
+        pendingWidgetModelContextRef.current = undefined;
+        return {
+          model: selectedModel,
+          ...(shouldUseOrgAwareChatApi ? {} : { apiKey }),
+          // Always send the user's slider value. The server's `prepareChatV2`
+          // already drops temperature for GPT-5 before the LLM call (its API
+          // rejects the field), so what lands here is purely the user's
+          // intended config — and ingestion's hostConfig dedupes on it. If we
+          // stripped for GPT-5, every GPT-5 direct chat would dedupe to the
+          // helper's 0.7 fallback regardless of the slider.
+          temperature,
+          systemPrompt,
+          ...(shouldUseOrgAwareChatApi
+            ? buildHostedBody()
+            : {
+                selectedServers,
+                chatSessionId,
+                // `directVisibility` only applies to direct chat. The
+                // /mcp/chat-v2 route gates it off when chatboxId is present
+                // (owner-preview persists as `sourceType: "chatbox"`), but
+                // omitting it client-side keeps the body honest about the
+                // session kind.
+                ...(hostedChatboxId ? {} : { directVisibility }),
+                // Pass projectId for BYOK direct-chat history persistence
+                ...(hostedProjectId ? { projectId: hostedProjectId } : {}),
+                // Convex server Ids parallel to `selectedServers`. Only sent
+                // when every name resolved to an Id — a partial mapping would
+                // hash to a different hostConfig than intended. Without this,
+                // the MCP route can't safely emit `hostConfig` because local
+                // server *names* aren't valid Convex Ids and the backend
+                // validator would reject the whole ingest call.
+                ...(hostedSelectedServerIds.length === selectedServers.length
+                  ? { selectedServerIds: hostedSelectedServerIds }
+                  : {}),
+                // Phase F: owner-preview / local chatbox sessions persist as
+                // `sourceType: "chatbox"`. Without forwarding the resolved
+                // chatbox identity here, /mcp/chat-v2 derives sourceType
+                // from absent fields and the chat is filed as a direct chat
+                // instead of a chatbox session.
+                ...(hostedChatboxId ? { chatboxId: hostedChatboxId } : {}),
+                ...(hostedChatboxId && Number.isFinite(hostedAccessVersion)
+                  ? { accessVersion: hostedAccessVersion }
+                  : {}),
+                ...(hostedChatboxId && hostedChatboxSurface
+                  ? { surface: hostedChatboxSurface }
+                  : {}),
+                ...(selectedModel.provider === "ollama"
+                  ? { ollamaBaseUrl: getOllamaBaseUrl() }
+                  : {}),
+                ...(selectedModel.provider === "azure"
+                  ? { azureBaseUrl: getAzureBaseUrl() }
+                  : {}),
+              }),
+          requireToolApproval: requireToolApprovalRef.current,
+          // Only send when the user explicitly set the host-level toggle.
+          // Omitting the field tells the backend orchestrator to use its
+          // auto policy (currently: off for hosted unless the env override
+          // is set). Backend hashes undefined / true / false distinctly so
+          // round-trips preserve the user's choice.
+          ...(progressiveToolDiscoveryRef.current !== undefined
+            ? { progressiveToolDiscovery: progressiveToolDiscoveryRef.current }
+            : {}),
+          // Phase 3: forward the chat tab's resolved host style so
+          // direct chat traces persist with a real `claude`/`chatgpt`
+          // hostStyle (no more legacy `'direct'`). Omitted body falls
+          // back to the backend default of `'claude'`.
+          ...(hostStyle ? { hostStyle } : {}),
+          ...(!shouldUseOrgAwareChatApi && customProviders.length > 0
+            ? { customProviders }
+            : {}),
+          ...(resumedVersionRef.current !== null
+            ? { expectedVersion: resumedVersionRef.current }
+            : {}),
+          // SEP-1865 App-Provided Tools snapshot. Drained fresh at POST time
+          // (no memoization) so any iframe that mounted between the previous
+          // turn and this send contributes its tools. The registry caps size;
+          // the server defends the boundary again in `validateAppToolEntries`.
+          appTools: useAppToolsRegistry.getState().snapshotForChatBody(),
+          ...(widgetModelContext && widgetModelContext.length > 0
+            ? { widgetModelContext }
+            : {}),
+        };
+      },
       headers: transportHeaders,
     });
   }, [
@@ -2054,14 +2068,24 @@ export function useChatSession(
         url: string;
       }>;
       metadata?: Record<string, unknown>;
+      widgetModelContext?: WidgetModelContextEntry[];
     }) => {
-      const { text, files, metadata } = options;
+      const { text, files, metadata, widgetModelContext } = options;
       const extra = metadata ? ({ metadata } as { metadata: unknown }) : {};
-      if (files && files.length > 0) {
-        // AI SDK accepts FileUIPart[] with data URLs
-        baseSendMessage({ text, files, ...extra });
-      } else {
-        baseSendMessage({ text, ...extra });
+      pendingWidgetModelContextRef.current =
+        widgetModelContext && widgetModelContext.length > 0
+          ? widgetModelContext
+          : undefined;
+      try {
+        if (files && files.length > 0) {
+          // AI SDK accepts FileUIPart[] with data URLs
+          baseSendMessage({ text, files, ...extra });
+        } else {
+          baseSendMessage({ text, ...extra });
+        }
+      } catch (error) {
+        pendingWidgetModelContextRef.current = undefined;
+        throw error;
       }
     },
     [baseSendMessage]

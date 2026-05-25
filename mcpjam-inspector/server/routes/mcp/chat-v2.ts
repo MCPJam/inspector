@@ -42,9 +42,12 @@ import {
 } from "../../utils/chat-ingestion.js";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import {
+  buildWidgetModelContextSystemPrompt,
   prepareChatV2,
   validateAppToolEntries,
   AppToolValidationError,
+  validateWidgetModelContextEntries,
+  WidgetModelContextValidationError,
 } from "../../utils/chat-v2-orchestration";
 import { appendDedupedModelMessages } from "@/shared/eval-trace";
 import {
@@ -747,6 +750,18 @@ chatV2.post("/", async (c) => {
       throw error;
     }
 
+    let validatedWidgetModelContext;
+    try {
+      validatedWidgetModelContext = validateWidgetModelContextEntries(
+        body.widgetModelContext
+      );
+    } catch (error) {
+      if (error instanceof WidgetModelContextValidationError) {
+        return c.json({ error: error.message }, 400);
+      }
+      throw error;
+    }
+
     let prepared;
     try {
       prepared = await prepareChatV2({
@@ -765,8 +780,8 @@ chatV2.post("/", async (c) => {
               progressiveToolDiscovery: {
                 enabled: resolvedProgressiveToolDiscovery,
               },
-              }
-            : {}),
+            }
+          : {}),
         appTools: validatedAppTools,
       });
     } catch (error) {
@@ -788,6 +803,15 @@ chatV2.post("/", async (c) => {
       progressivePlan,
       discoveryState,
     } = prepared;
+    const widgetModelContextSystemPrompt = buildWidgetModelContextSystemPrompt(
+      validatedWidgetModelContext
+    );
+    const effectiveEnhancedSystemPrompt = [
+      enhancedSystemPrompt,
+      widgetModelContextSystemPrompt,
+    ]
+      .filter((section) => section.trim().length > 0)
+      .join("\n\n");
 
     // Shared across all three persist call sites below. All three paths are
     // hardcoded `sourceType: "direct"` and pass the same model/temperature/
@@ -850,7 +874,7 @@ chatV2.post("/", async (c) => {
       return handleMCPJamFreeChatModel({
         messages: modelMessages as ModelMessage[],
         modelId: String(modelDefinition.id),
-        systemPrompt: enhancedSystemPrompt,
+        systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
         progressivePlan,
@@ -995,7 +1019,7 @@ chatV2.post("/", async (c) => {
           chatSessionId,
           sourceType: chatSessionSourceType,
           messages: modelMessages,
-          systemPrompt: enhancedSystemPrompt,
+          systemPrompt: effectiveEnhancedSystemPrompt,
           temperature: resolvedTemperature,
           tools: allTools as ToolSet,
           progressivePlan,
@@ -1016,7 +1040,7 @@ chatV2.post("/", async (c) => {
         providerKey,
         modelId,
         messages: modelMessages,
-        systemPrompt: enhancedSystemPrompt,
+        systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
         progressivePlan,
@@ -1062,7 +1086,7 @@ chatV2.post("/", async (c) => {
       modelId: String(modelDefinition.id),
       provider: modelDefinition.provider,
       messageHistory: [...scrubbedModelMessages],
-      systemPrompt: enhancedSystemPrompt,
+      systemPrompt: effectiveEnhancedSystemPrompt,
       temperature: resolvedTemperature,
       tools: allTools as ToolSet,
       progressivePlan,

@@ -163,6 +163,8 @@ import { useFeatureFlagEnabled } from "posthog-js/react";
 import { WebApiError } from "@/lib/apis/web/base";
 import { useDirectChatSessionSubscription } from "@/hooks/use-direct-chat-session-subscription";
 import { WidgetSurfaceProvider } from "@/contexts/widget-surface-context";
+import type { WidgetModelContextEntry } from "@/shared/chat-v2";
+import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
 
 // On post-stream reconcile, the Convex-side detail row may not yet reflect the
 // version bump from the turn that just finished. Retry a couple of times.
@@ -420,14 +422,8 @@ export function PlaygroundMain({
   );
   const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
   const [skillResults, setSkillResults] = useState<SkillResult[]>([]);
-  const [, setModelContextQueue] = useState<
-    {
-      toolCallId: string;
-      context: {
-        content?: ContentBlock[];
-        structuredContent?: Record<string, unknown>;
-      };
-    }[]
+  const [modelContextQueue, setModelContextQueue] = useState<
+    WidgetModelContextEntry[]
   >([]);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [traceViewMode, setTraceViewMode] =
@@ -2306,10 +2302,20 @@ export function PlaygroundMain({
         if (!(await ensureSelectedServerReadyForChat())) {
           return;
         }
-        sendMessage({ text, metadata: outgoingSenderMetadata });
+        sendMessage({
+          text,
+          metadata: outgoingSenderMetadata,
+          widgetModelContext: modelContextQueue,
+        });
+        setModelContextQueue([]);
       })();
     },
-    [ensureSelectedServerReadyForChat, sendMessage, outgoingSenderMetadata]
+    [
+      ensureSelectedServerReadyForChat,
+      modelContextQueue,
+      sendMessage,
+      outgoingSenderMetadata,
+    ]
   );
 
   // Handle model context updates from widgets (SEP-1865 ui/update-model-context)
@@ -2321,8 +2327,9 @@ export function PlaygroundMain({
         structuredContent?: Record<string, unknown>;
       }
     ) => {
-      void toolCallId;
-      void context;
+      setModelContextQueue((previous) =>
+        upsertWidgetModelContextEntry(previous, toolCallId, context)
+      );
     },
     []
   );
@@ -2591,6 +2598,7 @@ export function PlaygroundMain({
           text: composer.input,
           files,
           prependMessages: [],
+          widgetModelContext: modelContextQueue,
         });
         setModelContextQueue([]);
       } else {
@@ -2606,6 +2614,7 @@ export function PlaygroundMain({
           text: composer.input,
           files,
           metadata: outgoingSenderMetadata,
+          widgetModelContext: modelContextQueue,
         });
         setModelContextQueue([]); // Clear after sending
       }
@@ -2637,7 +2646,9 @@ export function PlaygroundMain({
         queueBroadcastRequest({
           text: prompt,
           prependMessages: [],
+          widgetModelContext: modelContextQueue,
         });
+        setModelContextQueue([]);
         composer.setInput("");
         revokeFileAttachmentUrls(fileAttachments);
         setFileAttachments([]);
@@ -2980,7 +2991,9 @@ export function PlaygroundMain({
               sendMessage({
                 text: composer.input,
                 metadata: outgoingSenderMetadata,
+                widgetModelContext: modelContextQueue,
               });
+              setModelContextQueue([]);
               composer.setInput("");
               setMcpPromptResults([]);
             })();

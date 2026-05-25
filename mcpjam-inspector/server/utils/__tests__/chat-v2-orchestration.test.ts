@@ -15,9 +15,12 @@ vi.mock("@/shared/types", async () => {
 });
 
 import {
+  buildWidgetModelContextSystemPrompt,
   prepareChatV2,
   validateAppToolEntries,
   AppToolValidationError,
+  validateWidgetModelContextEntries,
+  WidgetModelContextValidationError,
   type AppToolEntry,
 } from "../chat-v2-orchestration";
 import { getSkillToolsAndPrompt } from "../skill-tools";
@@ -531,5 +534,46 @@ describe("validateAppToolEntries (SEP-1865 boundary)", () => {
     expect(() =>
       validateAppToolEntries([{ ...validEntry, rawName: "x".repeat(129) }])
     ).toThrow(/rawName must be/);
+  });
+});
+
+describe("widget model context helpers (SEP-1865 boundary)", () => {
+  const validEntry = {
+    toolCallId: "tool-call-1",
+    context: {
+      content: [{ type: "text", text: "board: X________" }],
+      structuredContent: { board: ["X", "", "", "", "", "", "", "", ""] },
+    },
+  };
+
+  it("returns [] for undefined / null", () => {
+    expect(validateWidgetModelContextEntries(undefined)).toEqual([]);
+    expect(validateWidgetModelContextEntries(null)).toEqual([]);
+  });
+
+  it("accepts content and structuredContent", () => {
+    expect(validateWidgetModelContextEntries([validEntry])).toEqual([
+      validEntry,
+    ]);
+  });
+
+  it("rejects malformed input with the widget-context error type", () => {
+    expect(() => validateWidgetModelContextEntries({})).toThrow(
+      WidgetModelContextValidationError,
+    );
+    expect(() =>
+      validateWidgetModelContextEntries([
+        { ...validEntry, context: { content: "not-array" } },
+      ]),
+    ).toThrow(/context.content must be an array/);
+  });
+
+  it("renders widget context into an ephemeral system-prompt section", () => {
+    const prompt = buildWidgetModelContextSystemPrompt([validEntry]);
+
+    expect(prompt).toContain("current app state for this turn");
+    expect(prompt).toContain("Widget context from tool call `tool-call-1`");
+    expect(prompt).toContain("board: X________");
+    expect(prompt).toContain('"board"');
   });
 });

@@ -455,6 +455,55 @@ describe("useChatSession minimal mode parity", () => {
     expect(mockAuthFetch).not.toHaveBeenCalled();
   });
 
+  it("attaches widget model context to the next request only", async () => {
+    const selectedServers = ["server-1"];
+    const widgetModelContext = [
+      {
+        toolCallId: "call-1",
+        context: {
+          content: [{ type: "text", text: "board: X________" }],
+          structuredContent: { board: ["X", "", "", "", "", "", "", "", ""] },
+        },
+      },
+    ];
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers,
+        minimalMode: true,
+        executionConfig: {
+          systemPrompt: "Prompt",
+        },
+      }),
+    );
+
+    act(() => {
+      result.current.sendMessage({
+        text: "hello",
+        widgetModelContext,
+      });
+    });
+
+    await waitFor(() => {
+      expect(getTransportRequests()).toHaveLength(1);
+    });
+
+    expect(getTransportRequests().at(-1)).toMatchObject({
+      widgetModelContext,
+    });
+
+    act(() => {
+      result.current.sendMessage({ text: "hello again" });
+    });
+
+    await waitFor(() => {
+      expect(getTransportRequests()).toHaveLength(2);
+    });
+
+    expect(getTransportRequests().at(-1)).not.toHaveProperty(
+      "widgetModelContext",
+    );
+  });
+
   it("opens the mcpjam-limit dialog for non-hosted chat-v2 limit responses", async () => {
     mockWindowFetch.mockResolvedValueOnce(
       new Response(

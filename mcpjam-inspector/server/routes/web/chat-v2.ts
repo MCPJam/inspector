@@ -21,9 +21,12 @@ import { getModelById, isMCPJamProvidedModel } from "@/shared/types";
 import type { ModelDefinition } from "@/shared/types";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import {
+  buildWidgetModelContextSystemPrompt,
   prepareChatV2,
   validateAppToolEntries,
   AppToolValidationError,
+  validateWidgetModelContextEntries,
+  WidgetModelContextValidationError,
 } from "../../utils/chat-v2-orchestration.js";
 import {
   buildDirectHostConfig,
@@ -271,6 +274,18 @@ chatV2.post("/", async (c) => {
       throw error;
     }
 
+    let validatedWidgetModelContext;
+    try {
+      validatedWidgetModelContext = validateWidgetModelContextEntries(
+        body.widgetModelContext
+      );
+    } catch (error) {
+      if (error instanceof WidgetModelContextValidationError) {
+        throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, error.message);
+      }
+      throw error;
+    }
+
     try {
       const sessionStartedAt = Date.now();
       // Convert UI messages to ModelMessage[] up front so prepareChatV2
@@ -319,6 +334,14 @@ chatV2.post("/", async (c) => {
         progressivePlan,
         discoveryState,
       } = prepared;
+      const widgetModelContextSystemPrompt =
+        buildWidgetModelContextSystemPrompt(validatedWidgetModelContext);
+      const effectiveEnhancedSystemPrompt = [
+        enhancedSystemPrompt,
+        widgetModelContextSystemPrompt,
+      ]
+        .filter((section) => section.trim().length > 0)
+        .join("\n\n");
       const hostedChatSessionId = body.chatSessionId;
       const cleanupStream = async () => {
         await manager.disconnectAllServers();
@@ -433,7 +456,7 @@ chatV2.post("/", async (c) => {
             chatSessionId: hostedChatSessionId,
             sourceType,
             messages: scrubbedMessages,
-            systemPrompt: enhancedSystemPrompt,
+            systemPrompt: effectiveEnhancedSystemPrompt,
             temperature: resolvedTemperature,
             tools: allTools as ToolSet,
             progressivePlan,
@@ -459,7 +482,7 @@ chatV2.post("/", async (c) => {
           chatSessionId: hostedChatSessionId,
           sourceType,
           messages: scrubbedMessages,
-          systemPrompt: enhancedSystemPrompt,
+          systemPrompt: effectiveEnhancedSystemPrompt,
           temperature: resolvedTemperature,
           tools: allTools as ToolSet,
           progressivePlan,
@@ -500,7 +523,7 @@ chatV2.post("/", async (c) => {
         modelId: String(modelDefinition.id),
         chatSessionId: hostedChatSessionId,
         sourceType: isChatboxSession ? "chatbox" : "direct",
-        systemPrompt: enhancedSystemPrompt,
+        systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
         progressivePlan,

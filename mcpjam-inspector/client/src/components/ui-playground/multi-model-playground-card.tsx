@@ -62,6 +62,8 @@ import {
 import type { DeviceType, DisplayMode } from "@/stores/ui-playground-store";
 import type { BroadcastChatTurnRequest } from "@/components/chat-v2/multi-model-chat-card";
 import type { TraceViewMode } from "@/components/evals/trace-view-mode-tabs";
+import type { WidgetModelContextEntry } from "@/shared/chat-v2";
+import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
 
 type PlaygroundTraceViewMode = "chat" | "timeline" | "raw";
 type ThreadThemeMode = "light" | "dark";
@@ -254,14 +256,8 @@ export function MultiModelPlaygroundCard({
   const effectiveMcpProfile = hostSnapshot
     ? hostSnapshot.mcpProfile
     : tabRootMcpProfile;
-  const [, setModelContextQueue] = useState<
-    {
-      toolCallId: string;
-      context: {
-        content?: ContentBlock[];
-        structuredContent?: Record<string, unknown>;
-      };
-    }[]
+  const [modelContextQueue, setModelContextQueue] = useState<
+    WidgetModelContextEntry[]
   >([]);
   const [traceViewMode, setTraceViewMode] =
     useState<PlaygroundTraceViewMode>("chat");
@@ -465,9 +461,11 @@ export function MultiModelPlaygroundCard({
     setInjectedToolRenderOverrides({});
   }, [chatSessionId]);
 
-  const queueContextMessages = useCallback(() => {
+  const drainModelContextQueue = useCallback(() => {
+    const queued = modelContextQueue;
     setModelContextQueue([]);
-  }, []);
+    return queued;
+  }, [modelContextQueue]);
 
   useEffect(() => {
     if (!broadcastRequest) {
@@ -487,14 +485,19 @@ export function MultiModelPlaygroundCard({
       ]);
     }
 
-    queueContextMessages();
+    const widgetModelContext = drainModelContextQueue();
     sendMessage({
       text: broadcastRequest.text,
       files: broadcastRequest.files,
       metadata: outgoingSenderMetadata,
+      widgetModelContext: [
+        ...(broadcastRequest.widgetModelContext ?? []),
+        ...widgetModelContext,
+      ],
     });
   }, [
     broadcastRequest,
+    drainModelContextQueue,
     sendMessage,
     setMessages,
     outgoingSenderMetadata,
@@ -620,10 +623,13 @@ export function MultiModelPlaygroundCard({
 
   const handleSendFollowUp = useCallback(
     (text: string) => {
-      queueContextMessages();
-      sendMessage({ text, metadata: outgoingSenderMetadata });
+      sendMessage({
+        text,
+        metadata: outgoingSenderMetadata,
+        widgetModelContext: drainModelContextQueue(),
+      });
     },
-    [queueContextMessages, sendMessage, outgoingSenderMetadata],
+    [drainModelContextQueue, sendMessage, outgoingSenderMetadata],
   );
 
   const handleModelContextUpdate = useCallback(
@@ -634,8 +640,9 @@ export function MultiModelPlaygroundCard({
         structuredContent?: Record<string, unknown>;
       },
     ) => {
-      void toolCallId;
-      void context;
+      setModelContextQueue((previous) =>
+        upsertWidgetModelContextEntry(previous, toolCallId, context),
+      );
     },
     [],
   );
