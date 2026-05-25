@@ -62,6 +62,9 @@ export function CreditTopupDialog({
         chatSessionId,
         lastUserMessage,
         source,
+        ...(typeof window !== "undefined"
+          ? { returnUrl: window.location.href }
+          : {}),
       });
     } catch (err) {
       const message =
