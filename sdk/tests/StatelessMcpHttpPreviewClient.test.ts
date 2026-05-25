@@ -733,4 +733,83 @@ describe("StatelessMcpHttpPreviewClient", () => {
       await silentFixture.close();
     }
   });
+
+  test("non-2xx JSON without a JSON-RPC envelope surfaces as transport error with status", async () => {
+    // Simulates the CDN/proxy 503 case: response claims
+    // `application/json` (so the early non-2xx-with-non-JSON-body branch
+    // doesn't fire) but the body is a plain JSON object, NOT a
+    // JSON-RPC error envelope. Without the parsed-shape check the
+    // client would unwrap an envelope-shaped object missing `result`/
+    // `error` and throw a generic parse failure with no `.status`,
+    // dropping retry classification (5xx is retryable per
+    // `isRetryableTransientError`).
+    const proxyServer: Server = createServer((_req, res) => {
+      res.writeHead(503, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "upstream unavailable" }));
+    });
+    await new Promise<void>((resolve, reject) => {
+      proxyServer.once("error", reject);
+      proxyServer.listen(0, "127.0.0.1", () => resolve());
+    });
+    const port = (proxyServer.address() as AddressInfo).port;
+    const proxyClient = new StatelessMcpHttpPreviewClient({
+      url: new URL(`http://127.0.0.1:${port}/`),
+      clientInfo: { name: "test-client", version: "0.0.1" },
+      serverId: "proxy-fixture",
+      discoverOnConnect: false,
+    });
+    try {
+      await proxyClient.connect(undefined as never);
+      let captured: unknown;
+      try {
+        await proxyClient.listTools();
+      } catch (err) {
+        captured = err;
+      }
+      expect(captured).toBeInstanceOf(Error);
+      expect((captured as Error & { status?: number }).status).toBe(503);
+      expect((captured as Error).message).toMatch(/HTTP 503/);
+    } finally {
+      await proxyClient.close();
+      await new Promise<void>((r) => proxyServer.close(() => r()));
+    }
+  });
+
+  test("non-2xx with malformed JSON body surfaces as transport error with status", async () => {
+    // Same retry-classification path, but the body isn't even valid
+    // JSON (proxy HTML error page mis-tagged as application/json).
+    // The parse failure inside `parseSingleMessage` must be re-thrown
+    // as a transport error with `.status` set, not propagated as a
+    // generic SyntaxError.
+    const proxyServer: Server = createServer((_req, res) => {
+      res.writeHead(502, { "Content-Type": "application/json" });
+      res.end("<html><body>Bad Gateway</body></html>");
+    });
+    await new Promise<void>((resolve, reject) => {
+      proxyServer.once("error", reject);
+      proxyServer.listen(0, "127.0.0.1", () => resolve());
+    });
+    const port = (proxyServer.address() as AddressInfo).port;
+    const proxyClient = new StatelessMcpHttpPreviewClient({
+      url: new URL(`http://127.0.0.1:${port}/`),
+      clientInfo: { name: "test-client", version: "0.0.1" },
+      serverId: "proxy-fixture-bad-json",
+      discoverOnConnect: false,
+    });
+    try {
+      await proxyClient.connect(undefined as never);
+      let captured: unknown;
+      try {
+        await proxyClient.listTools();
+      } catch (err) {
+        captured = err;
+      }
+      expect(captured).toBeInstanceOf(Error);
+      expect((captured as Error & { status?: number }).status).toBe(502);
+      expect((captured as Error).message).toMatch(/HTTP 502/);
+    } finally {
+      await proxyClient.close();
+      await new Promise<void>((r) => proxyServer.close(() => r()));
+    }
+  });
 });

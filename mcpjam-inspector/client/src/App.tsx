@@ -182,6 +182,7 @@ import { getEffectiveProjectClientCapabilities } from "./lib/client-config";
 import {
   getDefaultClientCapabilities,
   isKnownProtocolVersion,
+  isStatelessProtocolVersion,
   type McpProtocolVersion,
 } from "@mcpjam/sdk/browser";
 import { resolveEffectiveMcpProtocolVersion } from "./lib/client-config-v2";
@@ -1207,6 +1208,13 @@ export default function App() {
   const playgroundTabEnabled = useFeatureFlagEnabled("playground-tab-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
+  // Rollout kill-switch for the DRAFT-2026-v1 stateless transport. Gates
+  // both UI controls (ProtocolTab, ServerDetailModal, EditServerFormContent,
+  // AdvancedConnectionSettingsSection) AND request stamping — a persisted
+  // override from a prior flag-on session must NOT bypass the switch
+  // (otherwise hosted validate/tools/resources/prompts flows still
+  // activate the stateless transport).
+  const statelessMcpEnabled = useFeatureFlagEnabled("stateless-mcp-enabled");
   const {
     getAccessToken,
     signIn,
@@ -2044,9 +2052,17 @@ export default function App() {
         serverOverride,
         hostPin
       );
-      if (effective) {
-        mcpProtocolVersionsByServerId[serverId] = effective;
+      if (!effective) continue;
+      // Persisted stateless pins (DRAFT-2026-v1) MUST NOT bypass the
+      // rollout flag. The UI gates only control authoring; without this
+      // gate, a server config saved while the flag was on (or set by an
+      // admin) would still route every hosted call through the stateless
+      // preview after the flag is flipped off. Stateful pins like
+      // "2025-11-25" are unaffected.
+      if (!statelessMcpEnabled && isStatelessProtocolVersion(effective)) {
+        continue;
       }
+      mcpProtocolVersionsByServerId[serverId] = effective;
     }
 
     return {
@@ -2061,6 +2077,7 @@ export default function App() {
     activeHost?.serverConnectionOverrides,
     activeMcpProfile,
     hostedServerIdsByName,
+    statelessMcpEnabled,
   ]);
   useApiContext({
     projectId: convexProjectId,

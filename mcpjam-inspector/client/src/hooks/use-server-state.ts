@@ -2,7 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, type Dispatch } from "react";
 import { useConvex } from "convex/react";
 import { toast } from "sonner";
 import type { HttpServerConfig, MCPServerConfig } from "@mcpjam/sdk/browser";
-import { isKnownProtocolVersion } from "@mcpjam/sdk/browser";
+import {
+  isKnownProtocolVersion,
+  isStatelessProtocolVersion,
+} from "@mcpjam/sdk/browser";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import type {
   AppAction,
   AppState,
@@ -572,6 +576,10 @@ export function useServerState({
 }: UseServerStateParams) {
   const isUserReady = useDbUserReady();
   const convex = useConvex();
+  // Rollout kill-switch for stateless wire mode. Mirrors the App.tsx gate
+  // on the hosted path so local-mode connects can't bypass it either via
+  // a persisted `mcpProtocolVersion: "DRAFT-2026-v1"` override.
+  const statelessMcpEnabled = useFeatureFlagEnabled("stateless-mcp-enabled");
   const {
     createServerIfMissing: convexCreateServerIfMissing,
     updateServer: convexUpdateServer,
@@ -993,12 +1001,19 @@ export function useServerState({
         serverOverride,
         hostPin,
       );
-      if (effective !== undefined) {
+      // Stateless versions are gated behind the rollout flag. A persisted
+      // override from a prior flag-on session must NOT bypass the gate
+      // (the UI controls only gate authoring). Stateful pins like
+      // "2025-11-25" still flow through.
+      if (
+        effective !== undefined &&
+        (statelessMcpEnabled || !isStatelessProtocolVersion(effective))
+      ) {
         defaults.mcpProtocolVersion = effective;
       }
       return Object.keys(defaults).length > 0 ? defaults : undefined;
     },
-    [activeHostConfig]
+    [activeHostConfig, statelessMcpEnabled]
   );
 
   const guardedTestConnection = useCallback(

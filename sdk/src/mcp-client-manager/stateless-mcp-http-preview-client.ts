@@ -790,27 +790,43 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
         contentType.includes("application/json") ||
         contentType.includes("text/event-stream");
       if (!response.ok && !isJsonLike) {
-        // Read at most a small preview of the body for diagnostics
-        // without holding the connection indefinitely on a hung error
-        // response (the timeout AbortController still bounds this).
-        let bodyPreview = "";
-        try {
-          bodyPreview = (await response.text()).slice(0, 512);
-        } catch {
-          // ignore — body read failure shouldn't mask the HTTP error
-        }
-        const err = new Error(
-          `StatelessMcpHttpPreviewClient: HTTP ${response.status} ${response.statusText} from ${this.url.toString()}${bodyPreview ? ` — ${bodyPreview}` : ""}`,
-        ) as Error & { status?: number };
-        err.status = response.status;
-        throw err;
+        throw await this.buildHttpTransportError(response);
       }
 
       if (contentType.includes("text/event-stream")) {
         envelope = await this.consumeSseResponse(response, id, opts);
       } else {
         const text = await response.text();
-        envelope = parseSingleMessage(text);
+        try {
+          envelope = parseSingleMessage(text);
+        } catch (parseErr) {
+          // Non-2xx body claimed `application/json` but didn't actually
+          // contain valid JSON (CDN/proxy error page with the wrong
+          // content-type header, malformed JSON, etc). Surface as a
+          // transport error with `status` preserved so the retry
+          // classifier sees the HTTP code instead of a generic parse
+          // failure with no status. 2xx with invalid JSON is a server
+          // bug — propagate the original parse error in that case.
+          if (!response.ok) {
+            throw this.buildHttpTransportErrorFromBody(response, text);
+          }
+          throw parseErr;
+        }
+      }
+
+      // Non-2xx JSON that parsed successfully but isn't a JSON-RPC
+      // envelope (e.g. a proxy returning `{ "error": "Service
+      // Unavailable" }` with `application/json`). Spec-conformant
+      // JSON-RPC error envelopes (`jsonrpc: "2.0"` + `id` + `error`)
+      // pass through to `unwrapJsonRpcResult` so callers see typed
+      // protocol errors like -32004 / -32001; everything else is
+      // re-classified as transport so `isRetryableTransientError` can
+      // see the status.
+      if (!response.ok && !isJsonRpcResponseEnvelope(envelope, id)) {
+        throw this.buildHttpTransportErrorFromBody(
+          response,
+          JSON.stringify(envelope).slice(0, 512),
+        );
       }
     } finally {
       // Tear down the timeout AFTER the response body is fully read
@@ -957,6 +973,47 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
         );
       }
     }
+  }
+
+  /**
+   * Build a transport error from an HTTP response we haven't read yet.
+   * Used for the early-exit branch where the content-type indicates the
+   * body isn't JSON-RPC at all (e.g. proxy 5xx with `text/html`). Reads
+   * at most 512 bytes for diagnostics; the outer `timeoutHandle` still
+   * bounds the read so a hung body can't leak the connection.
+   */
+  private async buildHttpTransportError(
+    response: Response,
+  ): Promise<Error & { status?: number }> {
+    let bodyPreview = "";
+    try {
+      bodyPreview = (await response.text()).slice(0, 512);
+    } catch {
+      // ignore — body read failure shouldn't mask the HTTP error
+    }
+    return this.buildHttpTransportErrorFromBody(response, bodyPreview);
+  }
+
+  /**
+   * Build a transport error from an HTTP response whose body we already
+   * have in hand (because we tried to parse it as JSON-RPC and either
+   * the parse failed or the parsed shape wasn't a JSON-RPC envelope).
+   * Preserves the HTTP status on the error so `isRetryableTransientError`
+   * can classify 5xx / 429 / 408 correctly instead of treating it as a
+   * generic parse failure.
+   */
+  private buildHttpTransportErrorFromBody(
+    response: Response,
+    bodyPreview: string,
+  ): Error & { status?: number } {
+    const trimmed = bodyPreview.length > 512
+      ? bodyPreview.slice(0, 512)
+      : bodyPreview;
+    const err = new Error(
+      `StatelessMcpHttpPreviewClient: HTTP ${response.status} ${response.statusText} from ${this.url.toString()}${trimmed ? ` — ${trimmed}` : ""}`,
+    ) as Error & { status?: number };
+    err.status = response.status;
+    return err;
   }
 
   private unwrapJsonRpcResult<T>(
@@ -1160,6 +1217,33 @@ function parseSingleMessage(text: string): JsonRpcMessage {
   throw new Error(
     `StatelessMcpHttpPreviewClient: expected JSON-RPC object, got ${typeof parsed}`,
   );
+}
+
+/**
+ * True when `msg` looks like a JSON-RPC 2.0 *response* envelope matching
+ * the request `id` we sent — `jsonrpc: "2.0"`, matching `id`, and either
+ * a `result` field (success) or a well-formed `error` object (protocol
+ * error like -32004 / -32001). Used to decide whether a non-2xx body
+ * should still be unwrapped as a JSON-RPC error (spec-conformant case)
+ * or surfaced as a transport error with HTTP status preserved (proxy /
+ * CDN error pages that happen to claim `application/json`).
+ */
+function isJsonRpcResponseEnvelope(
+  msg: unknown,
+  expectedId: number | string,
+): boolean {
+  if (!msg || typeof msg !== "object") return false;
+  const m = msg as Record<string, unknown>;
+  if (m.jsonrpc !== "2.0") return false;
+  if (m.id !== expectedId) return false;
+  if ("result" in m) return true;
+  if ("error" in m) {
+    const e = m.error;
+    if (e && typeof e === "object" && typeof (e as { code?: unknown }).code === "number") {
+      return true;
+    }
+  }
+  return false;
 }
 
 function extractSseDataPayload(frame: string): string | undefined {
