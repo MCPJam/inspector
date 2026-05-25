@@ -322,15 +322,20 @@ function ToolParametersView({
   // Fall back to the app-tools registry when the selection is an
   // `app_<hash>` alias — the server-tool dict won't have it. Same shape:
   // we only read `description`, `inputSchema`, and `outputSchema` below,
-  // and `AppToolDescriptor` carries all three.
+  // and `AppToolDescriptor` carries all three. Routing through the
+  // registry's `resolve()` inherits its `activeBridgeByParent` gate so a
+  // superseded sibling instance won't render here.
   const appToolDescriptor = useAppToolsRegistry((s) => {
     if (selectedTool) return undefined;
-    const aliasEntry = s.aliases.get(selectedToolName);
-    if (!aliasEntry) return undefined;
-    const inst = s.instancesByBridgeId.get(aliasEntry.bridgeId);
-    return inst?.tools.find((t) => t.name === aliasEntry.rawName);
+    const resolved = s.resolve(selectedToolName);
+    if (!resolved) return undefined;
+    return resolved.instance.tools.find((t) => t.name === resolved.rawName);
   });
   const effectiveTool = selectedTool ?? appToolDescriptor;
+  // For app-tool aliases (`app_<hash>`), show the raw advertised tool name in
+  // the header instead of the opaque alias. Server tools fall back to the
+  // selection key, which is already the raw name.
+  const headerToolName = appToolDescriptor?.name ?? selectedToolName;
   const hasParameters = formFields && formFields.length > 0;
   const [openSections, setOpenSections] = useState<string[]>(["description"]);
 
@@ -341,7 +346,7 @@ function ToolParametersView({
   return (
     <div className="h-full flex flex-col">
       <SelectedToolHeader
-        toolName={selectedToolName}
+        toolName={headerToolName}
         onExpand={onExpand}
         toolSwitchList={{
           names: toolNames,

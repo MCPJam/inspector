@@ -538,13 +538,14 @@ export function useAppBuilderState(options: UseAppBuilderStateOptions) {
   // Subscribe to the app-tools registry so form fields regenerate when an
   // app re-lists its tools (e.g. inputSchema changes mid-session). Returning
   // the resolved descriptor keeps the schema reference stable across renders
-  // that didn't actually change the registry entry.
+  // that didn't actually change the registry entry. Routes through the
+  // registry's `resolve()` so we inherit its `activeBridgeByParent` gate
+  // (a superseded sibling instance won't be treated as live).
   const selectedAppToolDescriptor = useAppToolsRegistry((s) => {
     if (!selectedTool) return undefined;
-    const aliasEntry = s.aliases.get(selectedTool);
-    if (!aliasEntry) return undefined;
-    const inst = s.instancesByBridgeId.get(aliasEntry.bridgeId);
-    return inst?.tools.find((t) => t.name === aliasEntry.rawName);
+    const resolved = s.resolve(selectedTool);
+    if (!resolved) return undefined;
+    return resolved.instance.tools.find((t) => t.name === resolved.rawName);
   });
 
   useEffect(() => {
