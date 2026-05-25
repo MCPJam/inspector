@@ -62,6 +62,11 @@ export function CreditTopupDialog({
         chatSessionId,
         lastUserMessage,
         source,
+        // Round-trip Stripe back to the exact page the user initiated
+        // from. Backend validates same-origin before honoring it.
+        ...(typeof window !== "undefined"
+          ? { returnUrl: window.location.href }
+          : {}),
       });
     } catch (err) {
       const message =
