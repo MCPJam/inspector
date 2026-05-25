@@ -49,6 +49,7 @@ beforeEach(() => {
     instancesByBridgeId: new Map(),
     aliases: new Map(),
     activeBridgeByParent: new Map(),
+    pendingControllers: new Map(),
   });
 });
 
@@ -294,5 +295,107 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
     const snap = useAppToolsRegistry.getState().snapshotForChatBody();
     expect(snap).toHaveLength(1);
     expect(snap[0].description).toBe("Solo");
+  });
+
+  // ── SEP-1865 inline ↔ modal coexistence ─────────────────────────────────
+  // The renderer mounts a second AppBridge when a modal opens over a still-
+  // mounted inline app under the same parent tool call. Registry state for
+  // the inline bridge must survive across that mount/unmount cycle.
+  it("modal registration under the same parent preserves the inline bridge's instance and aliases", async () => {
+    await useAppToolsRegistry.getState().registerInstance(
+      makeInstance("b-inline", [readonlyTool("inline_tool")], {
+        surface: "inline",
+      })
+    );
+    const inlineAlias = [...useAppToolsRegistry.getState().aliases.keys()][0];
+
+    await useAppToolsRegistry.getState().registerInstance(
+      makeInstance("b-modal", [readonlyTool("modal_tool")], {
+        surface: "modal",
+      })
+    );
+
+    const state = useAppToolsRegistry.getState();
+    // Both bridges coexist under call-1.
+    expect(state.instancesByBridgeId.has("b-inline")).toBe(true);
+    expect(state.instancesByBridgeId.has("b-modal")).toBe(true);
+    // Inline alias is NOT clobbered by modal registration.
+    expect(state.aliases.has(inlineAlias)).toBe(true);
+    expect(state.aliases.get(inlineAlias)?.bridgeId).toBe("b-inline");
+    // Modal wins as the active provider while open — snapshot/resolve
+    // route to modal tools.
+    expect(state.activeBridgeByParent.get("call-1")).toBe("b-modal");
+    expect(state.resolve(inlineAlias)).toBeNull();
+  });
+
+  it("inline → modal → inline: closing the modal restores the inline bridge as active and resolvable", async () => {
+    await useAppToolsRegistry.getState().registerInstance(
+      makeInstance("b-inline", [readonlyTool("inline_tool")], {
+        surface: "inline",
+      })
+    );
+    const inlineAlias = [...useAppToolsRegistry.getState().aliases.keys()][0];
+
+    await useAppToolsRegistry.getState().registerInstance(
+      makeInstance("b-modal", [readonlyTool("modal_tool")], {
+        surface: "modal",
+      })
+    );
+
+    useAppToolsRegistry.getState().unregisterInstance("b-modal");
+
+    const state = useAppToolsRegistry.getState();
+    expect(state.instancesByBridgeId.has("b-modal")).toBe(false);
+    expect(state.instancesByBridgeId.has("b-inline")).toBe(true);
+    // Active fallback promoted inline back to the provider slot.
+    expect(state.activeBridgeByParent.get("call-1")).toBe("b-inline");
+    // Inline tools are once again resolvable and snapshottable.
+    const resolved = state.resolve(inlineAlias);
+    expect(resolved?.rawName).toBe("inline_tool");
+    expect(state.snapshotForChatBody().map((e) => e.alias)).toEqual([
+      inlineAlias,
+    ]);
+  });
+
+  it("same-surface re-register aborts in-flight controllers from the superseded bridge", async () => {
+    await useAppToolsRegistry.getState().registerInstance(
+      makeInstance("b-1", [readonlyTool("ping")], { surface: "inline" })
+    );
+    const inFlight = new AbortController();
+    useAppToolsRegistry.getState().registerPendingCall("b-1", inFlight);
+
+    // Same parent + same surface => b-1 is superseded.
+    await useAppToolsRegistry.getState().registerInstance(
+      makeInstance("b-2", [readonlyTool("ping")], { surface: "inline" })
+    );
+
+    expect(inFlight.signal.aborted).toBe(true);
+    expect(useAppToolsRegistry.getState().pendingControllers.has("b-1")).toBe(
+      false
+    );
+  });
+
+  it("modal registration does NOT abort the inline bridge's pending callTool", async () => {
+    await useAppToolsRegistry.getState().registerInstance(
+      makeInstance("b-inline", [readonlyTool("inline_tool")], {
+        surface: "inline",
+      })
+    );
+    const inFlight = new AbortController();
+    useAppToolsRegistry.getState().registerPendingCall("b-inline", inFlight);
+
+    await useAppToolsRegistry.getState().registerInstance(
+      makeInstance("b-modal", [readonlyTool("modal_tool")], {
+        surface: "modal",
+      })
+    );
+
+    // Different surface => inline bridge survives, in-flight call stays live.
+    expect(inFlight.signal.aborted).toBe(false);
+    expect(
+      useAppToolsRegistry.getState().pendingControllers.get("b-inline")?.has(
+        inFlight
+      )
+    ).toBe(true);
   });
 });

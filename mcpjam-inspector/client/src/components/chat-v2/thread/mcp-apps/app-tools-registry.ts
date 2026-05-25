@@ -197,32 +197,72 @@ export const useAppToolsRegistry = create<AppToolsRegistryState>(
           readOnly: isReadOnly(tool),
         });
       }
+      // Identify bridges this registration supersedes: same parent + same
+      // surface, different bridgeId. We mirror this set across instance
+      // purge, alias purge, and pendingControllers cleanup so the three
+      // stay in lockstep. A modal opening over a still-mounted inline
+      // app (different surfaces) does NOT supersede the inline bridge —
+      // its instance, aliases, and pending controllers all survive.
+      const supersededBridgeIds = new Set<BridgeId>();
+      for (const [bridgeId, oldInst] of get().instancesByBridgeId) {
+        if (
+          bridgeId !== inst.bridgeId &&
+          oldInst.parentToolCallId === inst.parentToolCallId &&
+          oldInst.surface === inst.surface
+        ) {
+          supersededBridgeIds.add(bridgeId);
+        }
+      }
+      // Abort in-flight bridge.callTool dispatches against any superseded
+      // bridge BEFORE we drop its instance entry. Same reasoning as
+      // `unregisterInstance`: a fresh bridgeId taking over the same
+      // (parent, surface) slot is an implicit teardown of the prior one,
+      // and the chat stream will hang on the dead iframe if we skip this.
+      for (const bridgeId of supersededBridgeIds) {
+        const pending = get().pendingControllers.get(bridgeId);
+        if (!pending) continue;
+        for (const controller of pending) {
+          try {
+            controller.abort();
+          } catch {
+            // Ignore — abort() should never throw, but defensively continue.
+          }
+        }
+      }
       set((s) => {
         const instancesByBridgeId = new Map(s.instancesByBridgeId);
-        for (const [bridgeId, oldInst] of s.instancesByBridgeId) {
-          if (
-            bridgeId !== inst.bridgeId &&
-            oldInst.parentToolCallId === inst.parentToolCallId &&
-            oldInst.surface === inst.surface
-          ) {
-            instancesByBridgeId.delete(bridgeId);
-          }
+        for (const bridgeId of supersededBridgeIds) {
+          instancesByBridgeId.delete(bridgeId);
         }
         instancesByBridgeId.set(inst.bridgeId, inst);
         const aliases = new Map(s.aliases);
         for (const [alias, a] of s.aliases) {
-          const oldInst = s.instancesByBridgeId.get(a.bridgeId);
-          if (
-            a.bridgeId === inst.bridgeId ||
-            oldInst?.parentToolCallId === inst.parentToolCallId
-          ) {
+          // Only drop aliases for the new bridge itself (replacement) or
+          // for bridges actually being instance-removed. Crucially, we do
+          // NOT drop aliases owned by a sibling instance under the same
+          // parent but on a different surface (e.g. inline aliases when a
+          // modal opens) — that bug left inline tools unresolvable until
+          // re-initialization even after the modal closed.
+          if (a.bridgeId === inst.bridgeId || supersededBridgeIds.has(a.bridgeId)) {
             aliases.delete(alias);
           }
         }
         for (const a of aliasesForInst) aliases.set(a.alias, a);
         const activeBridgeByParent = new Map(s.activeBridgeByParent);
         activeBridgeByParent.set(inst.parentToolCallId, inst.bridgeId);
-        return { instancesByBridgeId, aliases, activeBridgeByParent };
+        let pendingControllers = s.pendingControllers;
+        if (supersededBridgeIds.size > 0) {
+          pendingControllers = new Map(s.pendingControllers);
+          for (const bridgeId of supersededBridgeIds) {
+            pendingControllers.delete(bridgeId);
+          }
+        }
+        return {
+          instancesByBridgeId,
+          aliases,
+          activeBridgeByParent,
+          pendingControllers,
+        };
       });
     },
 
@@ -254,7 +294,25 @@ export const useAppToolsRegistry = create<AppToolsRegistryState>(
         }
         const activeBridgeByParent = new Map(s.activeBridgeByParent);
         if (activeBridgeByParent.get(inst.parentToolCallId) === bridgeId) {
-          activeBridgeByParent.delete(inst.parentToolCallId);
+          // Promote any other still-mounted instance under this parent so
+          // its aliases stay resolvable and visible to the model. Without
+          // this fallback, closing a modal that opened over a still-
+          // mounted inline app leaves the inline app's tools unreachable
+          // (both `resolve()` and `snapshotForChatBody()` gate on the
+          // active bridge match). Mirrors the fallback search in
+          // `popActive`.
+          let fallback: BridgeId | undefined;
+          for (const other of instancesByBridgeId.values()) {
+            if (other.parentToolCallId === inst.parentToolCallId) {
+              fallback = other.bridgeId;
+              break;
+            }
+          }
+          if (fallback) {
+            activeBridgeByParent.set(inst.parentToolCallId, fallback);
+          } else {
+            activeBridgeByParent.delete(inst.parentToolCallId);
+          }
         }
         const pendingControllers = new Map(s.pendingControllers);
         pendingControllers.delete(bridgeId);
