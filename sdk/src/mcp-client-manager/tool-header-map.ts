@@ -179,6 +179,11 @@ export class ToolHeaderMap {
    * comes from the page envelope per SEP-2549. Stale-on-arrival
    * (missing / zero / negative) is allowed — `isFresh()` returns false
    * and the next access lazily refreshes.
+   *
+   * Also resets the excluded-tools set so a server that fixed a tool's
+   * `x-mcp-header` annotation in a later refresh stops being hidden.
+   * Callers `recordExcluded()` after `update()` for the new page, so the
+   * exclusion set reflects the current page only.
    */
   update(
     entries: Map<string, ToolHeaderMapEntry>,
@@ -186,6 +191,7 @@ export class ToolHeaderMap {
     now: number = Date.now(),
   ): void {
     this.entries = entries;
+    this.excludedTools = new Set();
     if (typeof ttlMs === "number" && Number.isFinite(ttlMs) && ttlMs > 0) {
       this.expiresAt = now + ttlMs;
     } else {

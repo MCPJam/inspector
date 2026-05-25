@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import { useMutation, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
@@ -161,6 +161,32 @@ export function ServerDetailModal({
     return Boolean(projectServerConfigDto?.serverIds.includes(serverId));
   }, [projectServerConfigDto, serverId]);
 
+  // Pending reconnect bookkeeping for the override-save → reconnect
+  // race (see `handleMcpProtocolVersionOverrideChange` below). Holds the
+  // target override value the user just wrote; the watcher effect
+  // fires reconnect once the Convex query reflects the new value. The
+  // tick counter forces the effect to re-run when the timeout fallback
+  // fires, even if the Convex value hasn't changed (e.g. a hung
+  // refetch).
+  const pendingReconnectRef = useRef<{
+    target: McpProtocolVersion | undefined;
+  } | null>(null);
+  const [pendingReconnectTick, setPendingReconnectTick] = useState(0);
+  useEffect(() => {
+    const pending = pendingReconnectRef.current;
+    if (!pending) return;
+    if (currentMcpProtocolVersionOverride !== pending.target) return;
+    pendingReconnectRef.current = null;
+    void onReconnect(server.name).catch(() => {
+      // Reconnect failures surface their own toast inside the handler.
+    });
+  }, [
+    currentMcpProtocolVersionOverride,
+    onReconnect,
+    server.name,
+    pendingReconnectTick,
+  ]);
+
   const handleMcpProtocolVersionOverrideChange = async (
     next: McpProtocolVersion | undefined,
   ): Promise<void> => {
@@ -171,6 +197,20 @@ export function ServerDetailModal({
       return;
     }
     if (!serverId) return;
+    // `setConfig` replaces the entire `(serverIds, overrides)` pair on
+    // the server. If the underlying Convex query is still loading
+    // (`projectServerConfigDto === undefined`), defaulting to
+    // `serverIds: []` / `overrides: {}` would wipe the project's
+    // membership list and every other server's overrides — a
+    // data-loss bug that fires if the user is fast enough to toggle
+    // before hydration finishes. Bail out and surface a clear retry
+    // hint instead.
+    if (projectServerConfigDto === undefined) {
+      toast.error(
+        "Project configuration is still loading. Try again in a moment.",
+      );
+      return;
+    }
     if (!isInProjectAutoConnect) {
       // Backend invariant: overrides only for servers in serverIds.
       // Surface a clear path forward rather than letting the mutation
@@ -181,8 +221,11 @@ export function ServerDetailModal({
       return;
     }
     // setConfig replaces the entire (serverIds, overrides) pair — read
-    // current, splice in the new override, write back. Preserve every
-    // other server's overrides verbatim.
+    // current (now guaranteed non-undefined), splice in the new
+    // override, write back. Preserve every other server's overrides
+    // verbatim. `projectServerConfigDto` may still be `null` (no row
+    // yet for this project) — that case is genuinely the empty
+    // baseline.
     const currentServerIds = projectServerConfigDto?.serverIds ?? [];
     const currentOverrides = projectServerConfigDto?.overrides ?? {};
     const existingEntry = currentOverrides[serverId] ?? {};
@@ -208,14 +251,33 @@ export function ServerDetailModal({
         projectId,
         input: { serverIds: currentServerIds, overrides: nextOverrides },
       });
-      // Server's `hostConfigId` re-resolves; force a reconnect so the
-      // new wire mode actually takes effect.
-      try {
-        await onReconnect(server.name);
-      } catch {
-        // Reconnect failures surface their own toast inside the
-        // handler; swallow here so the toggle UI stays responsive.
-      }
+      // Reconnect-after-save race: `onReconnect` ultimately reads from
+      // `activeHostConfig.serverConnectionOverrides` to compute the new
+      // wire mode. That value is a derivation of the same Convex row we
+      // just wrote, but `useQuery` doesn't repopulate synchronously —
+      // there's a brief window where the reactive subscription hasn't
+      // pushed the new snapshot yet. We can't read `activeHostConfig`
+      // from here (it lives in `use-server-state`), but we CAN observe
+      // the override on `projectServerConfigDto`, which is fed by the
+      // same mutation. Schedule reconnect inside an effect that waits
+      // until the read-back matches the value we just wrote — same
+      // "wait for reactive refetch" gate, but expressible at this
+      // boundary. Falls back to a 1.5s deadline so a stuck refetch
+      // (network blip) doesn't strand the toggle in a half-applied
+      // state — the reconnect runs anyway and the user can retry.
+      pendingReconnectRef.current = { target: next };
+      // Fallback: if the reactive refetch is delayed (network blip,
+      // backend slow), trigger reconnect after 1.5s anyway. The watcher
+      // effect short-circuits if it already fired.
+      window.setTimeout(() => {
+        if (pendingReconnectRef.current?.target === next) {
+          pendingReconnectRef.current = null;
+          void onReconnect(server.name).catch(() => {});
+        }
+      }, 1500);
+      // Tick the watcher so it re-evaluates immediately in case the
+      // query already returned the new value before this handler ran.
+      setPendingReconnectTick((t) => t + 1);
     } catch (err) {
       toast.error(
         err instanceof Error

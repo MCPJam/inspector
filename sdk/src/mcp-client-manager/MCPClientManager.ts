@@ -1262,15 +1262,6 @@ export class MCPClientManager {
       // array (rather than collapsing to a single entry) lets users pin a
       // multi-version accept-list — e.g. `["2025-11-25", "2025-06-18"]`
       // proposes the newer version but still accepts the older one.
-      const supportedProtocolVersions =
-        config.supportedProtocolVersions ??
-        this.defaultSupportedProtocolVersions;
-      const clientOptions: ClientOptions = {
-        capabilities: clientCapabilities,
-        ...(supportedProtocolVersions && supportedProtocolVersions.length > 0
-          ? { supportedProtocolVersions }
-          : {}),
-      };
       // Resolve the outbound protocol-version pin. The upstream caller
       // (inspector backend) has already done host-default + per-server
       // override resolution AND `isKnownProtocolVersion` membership
@@ -1283,6 +1274,25 @@ export class MCPClientManager {
       const wantsStateless =
         resolvedProtocolVersion !== undefined &&
         isStatelessProtocolVersion(resolvedProtocolVersion);
+      // Stateful `mcpProtocolVersion` pin (e.g. `"2025-11-25"`) propagates
+      // into the legacy `Client`'s `supportedProtocolVersions` accept-list
+      // so `initialize.params.protocolVersion` actually goes out as the
+      // pinned value rather than the SDK's built-in newest default. An
+      // explicit `supportedProtocolVersions` (per-server or default) still
+      // wins — pinning at one layer while overriding the other would be
+      // ambiguous and the override is the more specific signal.
+      const supportedProtocolVersions =
+        config.supportedProtocolVersions ??
+        this.defaultSupportedProtocolVersions ??
+        (!wantsStateless && resolvedProtocolVersion !== undefined
+          ? [resolvedProtocolVersion]
+          : undefined);
+      const clientOptions: ClientOptions = {
+        capabilities: clientCapabilities,
+        ...(supportedProtocolVersions && supportedProtocolVersions.length > 0
+          ? { supportedProtocolVersions }
+          : {}),
+      };
 
       // Legacy path: construct upstream `Client` early at this site so
       // the existing notification/elicitation/error wiring keeps
@@ -1543,9 +1553,17 @@ export class MCPClientManager {
       }
       // Build a header bag from the resolved `requestInit.headers` so
       // the preview's own-fetch sees the same statics legacy would.
-      // `Authorization` is set by `getAccessToken`, so strip it from
-      // the static set to avoid double-set (and to keep the OAuth
-      // refresh path single-source).
+      // `Authorization` is set by `getAccessToken` when a token source
+      // (`accessToken` / `authProvider` / `refreshToken`) is configured,
+      // so strip it from the static set in that case to avoid double-set
+      // and to keep the OAuth refresh path single-source. But when no
+      // token source is configured, callers can carry custom auth
+      // (non-Bearer schemes, API keys, etc.) on `requestInit.headers
+      // .Authorization`; the legacy `buildRequestInit` path preserves
+      // that header verbatim, and the stateless preview MUST behave the
+      // same way or static-auth setups break entirely in stateless mode.
+      const hasTokenSource =
+        effectiveAccessToken !== undefined || effectiveAuthProvider != null;
       const staticHeaders: Record<string, string> = {};
       const ri = requestInit as
         | { headers?: Record<string, string> | Headers | undefined }
@@ -1553,11 +1571,12 @@ export class MCPClientManager {
       if (ri?.headers) {
         if (ri.headers instanceof Headers) {
           ri.headers.forEach((v, k) => {
-            if (k.toLowerCase() !== "authorization") staticHeaders[k] = v;
+            if (hasTokenSource && k.toLowerCase() === "authorization") return;
+            staticHeaders[k] = v;
           });
         } else {
           for (const [k, v] of Object.entries(ri.headers)) {
-            if (k.toLowerCase() === "authorization") continue;
+            if (hasTokenSource && k.toLowerCase() === "authorization") continue;
             staticHeaders[k] = v;
           }
         }
@@ -1604,6 +1623,18 @@ export class MCPClientManager {
         }
         return (await effectiveAuthProvider.tokens())?.access_token;
       };
+      // Mutable holder so a successful `on401` refresh persists across
+      // requests. Without this, `getAccessToken` would keep returning
+      // the original `effectiveAccessToken` (captured at connect time)
+      // and every request after a refresh would ship the stale token,
+      // 401 again, refresh again — an infinite refresh loop that
+      // hammers the auth server and burns the user's token quota.
+      // For `AuthProvider` / `OAuthClientProvider` the provider itself
+      // owns the cache, so this holder is only consulted for the
+      // static-`accessToken` + `onUnauthorized` configuration.
+      const tokenHolder: { current: string | undefined } = {
+        current: effectiveAccessToken,
+      };
       const getAccessToken = async (): Promise<string | undefined> => {
         if (isAuthProvider(effectiveAuthProvider)) {
           return await effectiveAuthProvider.token();
@@ -1615,7 +1646,7 @@ export class MCPClientManager {
           // run the OAuth flow to populate it before the first request.
           return await refreshOAuthTokens();
         }
-        return effectiveAccessToken;
+        return tokenHolder.current;
       };
       const on401 = async (): Promise<string | undefined> => {
         if (config.onUnauthorized) {
@@ -1623,6 +1654,11 @@ export class MCPClientManager {
             serverId,
             error: new MCPAuthError("HTTP 401 on stateless preview", 401),
           });
+          // Persist the refreshed token so subsequent requests use it
+          // instead of re-triggering the 401 / refresh cycle.
+          if (refreshed.accessToken) {
+            tokenHolder.current = refreshed.accessToken;
+          }
           return refreshed.accessToken;
         }
         if (isAuthProvider(effectiveAuthProvider)) {

@@ -427,13 +427,27 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
       (result.tools as ParsedTool[]) ?? [],
     );
     for (const w of parsed.warnings) this.warn(w);
-    for (const toolName of (result.tools as { name: string }[]) ?? []) {
-      if (!parsed.entries.has(toolName.name)) {
-        this.toolHeaderMap.recordExcluded(toolName.name);
+    // Pagination + caching: only treat a non-paginated full page as the
+    // canonical cache. A partial page (cursor in / out) would clobber
+    // header metadata for tools on other pages, then `callTool` against
+    // those tools would skip lazy discovery (`isFresh()` true) and ship
+    // without their required Mcp-Param-* headers — earning -32001
+    // HeaderMismatch from spec-compliant servers. We still surface the
+    // raw page to the caller so external pagination workflows work; we
+    // just don't trust it as our discovery cache.
+    const isFirstPage = params?.cursor === undefined;
+    const nextCursor = (result as { nextCursor?: unknown }).nextCursor;
+    const isCompletePage =
+      isFirstPage && (nextCursor === undefined || nextCursor === null);
+    if (isCompletePage) {
+      const ttlMs = extractTtlMs(result);
+      this.toolHeaderMap.update(parsed.entries, ttlMs);
+      for (const toolName of (result.tools as { name: string }[]) ?? []) {
+        if (!parsed.entries.has(toolName.name)) {
+          this.toolHeaderMap.recordExcluded(toolName.name);
+        }
       }
     }
-    const ttlMs = extractTtlMs(result);
-    this.toolHeaderMap.update(parsed.entries, ttlMs);
 
     // Filter out excluded tools from the surface we expose. The model
     // must NOT pick a tool whose Mcp-Param-* requirements we can't
@@ -679,6 +693,7 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
 
     this.rpcLogger?.({ direction: "send", message: body, serverId: this.serverId });
     let response: Response;
+    let envelope: JsonRpcMessage;
     try {
       response = await fetch(this.url, {
         method: "POST",
@@ -716,30 +731,65 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
           });
         }
       }
+
+      // Session-id detection — discard, warn, mark non-conforming. Per
+      // plan §"What stateless means" the preview never echoes a session
+      // id back, so there's nothing else to do here.
+      const seenSessionId = response.headers.get(SESSION_ID_HEADER_LOWER);
+      if (seenSessionId) {
+        this.nonConformingSessionIdSeen = true;
+        this.warn(
+          `Server returned mcp-session-id: "${seenSessionId}" on a stateless request. Discarded. Server is non-conforming under DRAFT-2026-v1.`,
+        );
+        this.onSessionIdResponse?.(seenSessionId);
+      }
+
+      const contentType = response.headers.get("content-type") ?? "";
+      // Non-2xx with a non-JSON body (e.g. upstream proxy 502/503 HTML) is
+      // a transport-level failure, NOT a JSON-RPC error envelope. Bubble
+      // it up with the HTTP status preserved so the manager's retry /
+      // circuit-breaker logic can classify it correctly instead of
+      // failing fast with a generic `JSON.parse` error. A non-2xx that
+      // DOES carry a valid JSON-RPC `error` envelope (the spec's
+      // 400 + UnsupportedProtocolVersionError / HeaderMismatch pattern)
+      // is still surfaced through the normal parse-and-throw path — the
+      // wire log captures the envelope and `unwrapJsonRpcResult` raises
+      // a JSON-RPC error with `code` populated, preserving the existing
+      // diagnostic shape callers depend on.
+      const isJsonLike =
+        contentType.includes("application/json") ||
+        contentType.includes("text/event-stream");
+      if (!response.ok && !isJsonLike) {
+        // Read at most a small preview of the body for diagnostics
+        // without holding the connection indefinitely on a hung error
+        // response (the timeout AbortController still bounds this).
+        let bodyPreview = "";
+        try {
+          bodyPreview = (await response.text()).slice(0, 512);
+        } catch {
+          // ignore — body read failure shouldn't mask the HTTP error
+        }
+        const err = new Error(
+          `StatelessMcpHttpPreviewClient: HTTP ${response.status} ${response.statusText} from ${this.url.toString()}${bodyPreview ? ` — ${bodyPreview}` : ""}`,
+        ) as Error & { status?: number };
+        err.status = response.status;
+        throw err;
+      }
+
+      if (contentType.includes("text/event-stream")) {
+        envelope = await this.consumeSseResponse(response, id, opts);
+      } else {
+        const text = await response.text();
+        envelope = parseSingleMessage(text);
+      }
     } finally {
+      // Tear down the timeout AFTER the response body is fully read
+      // (either parsed-single-message or SSE-drain). Clearing it inside
+      // the fetch-only try would leave a slow / hung response stream
+      // un-bounded by `RequestOptions.timeout` — the user sets that
+      // budget expecting it to cover the whole round trip.
       if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
       this.inFlightAborts.delete(abortController);
-    }
-
-    // Session-id detection — discard, warn, mark non-conforming. Per
-    // plan §"What stateless means" the preview never echoes a session
-    // id back, so there's nothing else to do here.
-    const seenSessionId = response.headers.get(SESSION_ID_HEADER_LOWER);
-    if (seenSessionId) {
-      this.nonConformingSessionIdSeen = true;
-      this.warn(
-        `Server returned mcp-session-id: "${seenSessionId}" on a stateless request. Discarded. Server is non-conforming under DRAFT-2026-v1.`,
-      );
-      this.onSessionIdResponse?.(seenSessionId);
-    }
-
-    const contentType = response.headers.get("content-type") ?? "";
-    let envelope: JsonRpcMessage;
-    if (contentType.includes("text/event-stream")) {
-      envelope = await this.consumeSseResponse(response, id, opts);
-    } else {
-      const text = await response.text();
-      envelope = parseSingleMessage(text);
     }
 
     // Log the raw envelope BEFORE unwrap-and-maybe-throw. Without this,
@@ -838,9 +888,20 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
     msg: JsonRpcNotification,
     opts: SendOptions,
   ): void {
-    if (msg.method === "notifications/progress" && opts.onProgress) {
+    // Accept both shapes: SendOptions uses `onProgress` (camelCase), but
+    // upstream `RequestOptions` from `@modelcontextprotocol/client` uses
+    // `onprogress` (lowercase). Callers funnel through `send()` with
+    // RequestOptions, so the lowercase form is the one that's typically
+    // populated; tolerating both means typed `callTool`/`request` paths
+    // and direct `send` callers all get progress events.
+    const progressHandler =
+      (opts.onProgress as ((p: unknown) => void) | undefined) ??
+      ((opts as RequestOptions).onprogress as
+        | ((p: unknown) => void)
+        | undefined);
+    if (msg.method === "notifications/progress" && progressHandler) {
       try {
-        opts.onProgress(msg.params);
+        progressHandler(msg.params);
       } catch (err) {
         this.warn(`onProgress handler threw: ${formatErr(err)}`);
       }
@@ -894,13 +955,30 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
     opts: SendOptions,
     overrideAccessToken?: string,
   ): Promise<Record<string, string>> {
-    const out: Record<string, string> = {
-      ...this.staticHeaders,
-      "Content-Type": "application/json",
-      Accept: "application/json, text/event-stream",
-      [MCP_PROTOCOL_VERSION_HEADER]: this.protocolVersion,
-      [MCP_METHOD_HEADER]: method,
-    };
+    // Header names are case-insensitive per RFC 9110, but Fetch's
+    // headers init treats `content-type` and `Content-Type` as distinct
+    // keys when both appear in a plain object, then concatenates them
+    // into a single comma-joined value at serialization
+    // (`application/json, application/json` is not a valid Content-Type).
+    // Normalize by stripping any case-variant of the headers we set
+    // canonically below from the static spread before adding ours.
+    const CANONICAL_NAMES = new Set([
+      "content-type",
+      "accept",
+      MCP_PROTOCOL_VERSION_HEADER.toLowerCase(),
+      MCP_METHOD_HEADER.toLowerCase(),
+      MCP_NAME_HEADER.toLowerCase(),
+      "authorization",
+    ]);
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(this.staticHeaders)) {
+      if (CANONICAL_NAMES.has(k.toLowerCase())) continue;
+      out[k] = v;
+    }
+    out["Content-Type"] = "application/json";
+    out["Accept"] = "application/json, text/event-stream";
+    out[MCP_PROTOCOL_VERSION_HEADER] = this.protocolVersion;
+    out[MCP_METHOD_HEADER] = method;
     if (
       opts.nameHeader !== undefined &&
       METHODS_REQUIRING_NAME_HEADER.has(method)
@@ -909,6 +987,8 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
     }
     if (opts.extraHeaders) {
       for (const [k, v] of Object.entries(opts.extraHeaders)) {
+        // Per-request `Mcp-Param-*` keys won't collide with our
+        // canonical set; copy through as-is.
         out[k] = v;
       }
     }
@@ -970,12 +1050,15 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
         (discovery.tools as ParsedTool[]) ?? [],
       );
       for (const w of parsed.warnings) this.warn(w);
+      // `update()` clears the excluded-tools set so a server that fixed
+      // a previously-invalid annotation in this refresh stops being
+      // hidden. Re-record exclusions for the current page AFTER update.
+      this.toolHeaderMap.update(parsed.entries, extractTtlMs(discovery));
       for (const toolName of (discovery.tools as { name: string }[]) ?? []) {
         if (!parsed.entries.has(toolName.name)) {
           this.toolHeaderMap.recordExcluded(toolName.name);
         }
       }
-      this.toolHeaderMap.update(parsed.entries, extractTtlMs(discovery));
     }
     const derived = this.toolHeaderMap.deriveHeaders(
       params.name as string,
