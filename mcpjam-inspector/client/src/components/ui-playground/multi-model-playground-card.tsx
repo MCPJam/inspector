@@ -307,6 +307,14 @@ export function MultiModelPlaygroundCard({
       ...executionConfig,
       modelId: String(model.id),
     },
+    // Source the host-level toggle from the active host's resolved DTO
+    // so flipping it in the host's Agent → Behavior tab takes effect on
+    // the next send without remounting. `hostCapsResolver` carries the
+    // full HostConfigDtoV2 for this column (per-host multi-host mode)
+    // or null when the column inherits from the tab-root scope; we let
+    // `undefined` pass through to fall back to the orchestrator's auto
+    // policy in that case.
+    progressiveToolDiscovery: hostCapsResolver?.progressiveToolDiscovery,
     onReset: () => {
       setModelContextQueue([]);
       setPreludeTraceExecutions([]);

@@ -30,7 +30,7 @@ import {
   type ModelMessage,
 } from "ai";
 import { useAuth } from "@workos-inc/authkit-react";
-import { useConvexAuth, useQuery } from "convex/react";
+import { useConvexAuth } from "convex/react";
 import {
   ModelDefinition,
   type ModelProvider,
@@ -214,6 +214,17 @@ export interface UseChatSessionOptions {
    * backend resolves chatbox host style from the chatbox row.
    */
   hostStyle?: "claude" | "chatgpt";
+  /**
+   * Host-level opt-in for progressive MCP tool discovery
+   * (`search_mcp_tools` / `load_mcp_tools` meta-tools). Sourced from the
+   * caller's resolved host config DTO (per-chatbox, per-host playground
+   * column, or project default — caller knows). `undefined` ⇒ backend
+   * orchestrator uses its auto policy; `true`/`false` ⇒ explicit
+   * host-level override that the orchestrator forwards into
+   * `prepareChatV2.progressiveToolDiscovery.enabled`. Held in a ref so a
+   * mid-session toggle flip is reflected on the next send.
+   */
+  progressiveToolDiscovery?: boolean;
   /** Callback when chat is reset */
   onReset?: (reason?: ChatSessionResetReason) => void;
 }
@@ -1141,32 +1152,14 @@ export function useChatSession(
   const requireToolApprovalRef = useRef(requireToolApproval);
   requireToolApprovalRef.current = requireToolApproval;
 
-  // Progressive MCP tool discovery is a host-level setting persisted on
-  // HostConfigV2. The source row depends on the chat surface:
-  //   - chatbox sessions (playground, share-link): the chatbox's PINNED
-  //     hostConfig — `chatboxes:getChatbox` projects it as a top-level
-  //     field for us (parallel to requireToolApproval).
-  //   - direct chat: the project's default hostConfig.
-  // The body field then carries whichever the user just edited; the
-  // backend chat-v2 route still re-resolves server-side for chatbox
-  // sessions as a trust backstop (guests / share-link viewers must not
-  // be able to flip the host's toggle via a tampered body).
-  const chatboxRuntimeDoc = useQuery(
-    "chatboxes:getChatbox" as any,
-    hostedChatboxId && isAuthenticated
-      ? ({ chatboxId: hostedChatboxId } as any)
-      : "skip",
-  ) as { progressiveToolDiscovery?: boolean } | null | undefined;
-  const projectDefaultHostConfig = useQuery(
-    "hostConfigsV2:getProjectDefault" as any,
-    !hostedChatboxId && hostedProjectId && isAuthenticated
-      ? ({ projectId: hostedProjectId } as any)
-      : "skip",
-  ) as { progressiveToolDiscovery?: boolean } | null | undefined;
+  // Host-level progressive tool discovery toggle. The value comes from the
+  // caller — each useChatSession site knows which host config row applies
+  // to its chat surface (per-host playground column, per-chatbox session,
+  // project default for direct chat, etc.) — and the hook just threads it
+  // into the request body. Held in a ref so a mid-session flip is
+  // reflected on the very next send without remounting.
   const progressiveToolDiscoveryRef = useRef<boolean | undefined>(undefined);
-  progressiveToolDiscoveryRef.current = hostedChatboxId
-    ? chatboxRuntimeDoc?.progressiveToolDiscovery
-    : projectDefaultHostConfig?.progressiveToolDiscovery;
+  progressiveToolDiscoveryRef.current = options.progressiveToolDiscovery;
   const isHostedGuest = HOSTED_MODE && !workOsUser && !isWorkOsLoading;
   const sharedGuestMode =
     isHostedGuest &&
