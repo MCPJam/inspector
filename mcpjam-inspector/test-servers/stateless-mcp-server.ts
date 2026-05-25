@@ -229,17 +229,17 @@ async function dispatch(
 ): Promise<unknown> {
   switch (req.method) {
     case "server/discover":
-      // SEP-2575: stateless replacement for `initialize`. Same shape
-      // minus session pieces — `protocolVersion`, `serverInfo`,
-      // `serverCapabilities`, optional `supportedVersions` +
-      // `instructions`. The error path (option
+      // SEP-2575: stateless replacement for `initialize`. Field name is
+      // `capabilities` (matches the rest of the draft's result shapes,
+      // distinct from the pre-2026 `serverCapabilities` from
+      // initialize). The error path (option
       // `discoverThrowsUnsupportedVersion`) is handled before dispatch
       // by the outer version-validation block, so the success body here
       // is what a conforming server returns.
       return {
         protocolVersion: DRAFT_2026_V1,
         serverInfo: { name: "stateless-mcp-fixture", version: "0.1.0" },
-        serverCapabilities: {
+        capabilities: {
           tools: {},
           resources: {},
           prompts: {},

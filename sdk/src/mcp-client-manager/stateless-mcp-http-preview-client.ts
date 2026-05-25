@@ -180,16 +180,19 @@ export interface StatelessMcpHttpPreviewClientOptions {
 }
 
 /**
- * Result of `server/discover` per SEP-2575. Same shape as the legacy
- * `InitializeResult` minus the session-bound pieces — the negotiated
- * `protocolVersion`, the server's `serverInfo` / `serverCapabilities` /
- * `instructions`, and an optional `supportedVersions` list that lets a
- * client retry against a mutually supported version on its own.
+ * Result of `server/discover` per SEP-2575 / draft `DiscoverResult` schema.
+ * Carries the negotiated `protocolVersion`, the server's `serverInfo` +
+ * `capabilities` + optional `instructions`, and the full
+ * `supportedVersions` list so a client can retry against a mutually
+ * supported version on its own. The field name is `capabilities` (NOT
+ * `serverCapabilities` — that's the pre-2026 negotiation-flow naming;
+ * SEP-2575 deliberately uses `capabilities` to match the rest of the
+ * draft's result shapes).
  */
 export interface DiscoverResult {
   protocolVersion: string;
   serverInfo: Implementation;
-  serverCapabilities: ServerCapabilities;
+  capabilities: ServerCapabilities;
   supportedVersions?: string[];
   instructions?: string;
 }
@@ -255,8 +258,12 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
   // `discoverOnConnect` is true). Stay undefined for raw-client callers
   // that opted out; capability getters return that undefined verbatim so
   // the manager + inspector UI distinguish "unknown" from a real synthetic.
+  // Field name `discoveredCapabilities` matches the spec's
+  // `DiscoverResult.capabilities` (SEP-2575); the legacy `serverCapabilities`
+  // name belongs to the pre-2026 initialize result and is intentionally NOT
+  // reused here.
   private discoveredServerInfo: Implementation | undefined;
-  private discoveredServerCapabilities: ServerCapabilities | undefined;
+  private discoveredCapabilities: ServerCapabilities | undefined;
   private discoveredInstructions: string | undefined;
 
   // Per-method handlers — preview is client-only (no server-initiated
@@ -333,7 +340,7 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
         {},
       );
       this.discoveredServerInfo = result.serverInfo;
-      this.discoveredServerCapabilities = result.serverCapabilities;
+      this.discoveredCapabilities = result.capabilities;
       this.discoveredInstructions = result.instructions;
     } catch (err) {
       // Roll back the connected flag so a retried connect() runs
@@ -370,9 +377,16 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
   // discover hasn't run yet, return undefined — same shape the legacy
   // adapter uses pre-connect, and what `MCPClientManager.getInitializationInfo`
   // already handles.
+  //
+  // Note: `ManagedMcpClient` keeps the method name `getServerCapabilities()`
+  // for interface parity with the legacy upstream `Client`, but the
+  // returned value comes from `DiscoverResult.capabilities` (the spec
+  // field name in SEP-2575). The method-name / field-name asymmetry is
+  // load-bearing — don't rename the method or the manager's
+  // `getInitializationInfo` reader breaks.
   getServerCapabilities(): ServerCapabilities | undefined {
     if (!this.connected) return undefined;
-    return this.discoveredServerCapabilities;
+    return this.discoveredCapabilities;
   }
   getServerVersion(): Implementation | undefined {
     return this.discoveredServerInfo;

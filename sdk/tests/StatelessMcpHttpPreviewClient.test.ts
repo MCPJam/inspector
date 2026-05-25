@@ -118,7 +118,7 @@ async function startFixture(opts: FixtureOptions = {}): Promise<{
           result: {
             protocolVersion: STATELESS_DRAFT_2026_V1,
             serverInfo: { name: "fixture-server", version: "0.1.0" },
-            serverCapabilities: {
+            capabilities: {
               tools: {},
               resources: {},
               prompts: {},
