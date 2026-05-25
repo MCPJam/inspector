@@ -41,6 +41,7 @@ import { cn } from "@/lib/utils";
 import { buildComparePlanSectionsFromCatalog } from "@/components/organization/billing-compare-view-model";
 import { type ComparePlanCell } from "@/components/organization/compare-plan-marketing";
 import { CreditBalanceCard } from "@/components/billing/CreditBalanceCard";
+import { PaymentsHistorySection } from "@/components/billing/PaymentsHistorySection";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 
 const PLAN_ORDER: OrganizationPlan[] = ["free", "team", "enterprise"];
@@ -708,6 +709,10 @@ export function OrganizationBillingSection({
 
       <ErrorBoundary fallback={null}>
         <CreditBalanceCard />
+      </ErrorBoundary>
+
+      <ErrorBoundary fallback={null}>
+        <PaymentsHistorySection />
       </ErrorBoundary>
 
       {checkoutIntent ? (

@@ -27,7 +27,6 @@ import {
 } from "@/lib/display-context-utils";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { PlaygroundMain } from "./ui-playground/PlaygroundMain";
-import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { buildPersistedExecutionReplay } from "@/components/chat-v2/thread/persisted-execution-replay";
@@ -122,9 +121,6 @@ export function ViewsTab({
   const lastInjectedViewSignature = useRef<string | null>(null);
   const lastUploadedWidgetHtmlRef = useRef<string | null>(null);
 
-  const setSelectedProtocol = useUIPlaygroundStore(
-    (s) => s.setSelectedProtocol,
-  );
   const setDeviceType = useUIPlaygroundStore((s) => s.setDeviceType);
   const setCustomViewport = useUIPlaygroundStore((s) => s.setCustomViewport);
   const updateGlobal = useUIPlaygroundStore((s) => s.updateGlobal);
@@ -230,14 +226,11 @@ export function ViewsTab({
     lastUploadedWidgetHtmlRef.current = null;
   }, [selectedView?._id]);
 
-  // Keep playground protocol and display context aligned to selected view
+  // Keep playground display context aligned to selected view. The active
+  // protocol is now derived from the selected tool's metadata downstream,
+  // so we no longer push a `selectedProtocol` value here.
   useEffect(() => {
     if (!selectedView) return;
-    setSelectedProtocol(
-      selectedView.protocol === "mcp-apps"
-        ? UIType.MCP_APPS
-        : UIType.OPENAI_SDK,
-    );
     if (!selectedView.defaultContext) return;
     const ctx = selectedView.defaultContext;
     if (ctx.deviceType) setDeviceType(ctx.deviceType);
@@ -248,7 +241,6 @@ export function ViewsTab({
     if (ctx.safeAreaInsets) setSafeAreaInsets(ctx.safeAreaInsets);
   }, [
     selectedView,
-    setSelectedProtocol,
     setDeviceType,
     setCustomViewport,
     updateGlobal,

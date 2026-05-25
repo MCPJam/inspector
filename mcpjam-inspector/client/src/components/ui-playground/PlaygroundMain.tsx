@@ -82,6 +82,7 @@ import {
   getChatboxHostFamily,
 } from "@/lib/chatbox-client-style";
 import { DEFAULT_HOST_STYLE } from "@/lib/client-styles";
+import { detectUiTypeFromTool } from "@/lib/mcp-ui/mcp-apps-utils";
 import { PRESET_DEVICE_CONFIGS } from "@/components/shared/ClientContextHeader";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
@@ -769,8 +770,17 @@ export function PlaygroundMain({
     setSelectedModel,
   ]);
 
-  // Currently selected protocol (detected from tool metadata)
-  const selectedProtocol = useUIPlaygroundStore((s) => s.selectedProtocol);
+  // Currently selected protocol — derived from the selected tool's metadata
+  // so the CSP-mode chip in ClientContextHeader matches the active widget
+  // family without a redundant store field.
+  const selectedToolName = useUIPlaygroundStore((s) => s.selectedTool);
+  const playgroundTools = useUIPlaygroundStore((s) => s.tools);
+  const selectedProtocol = useMemo(() => {
+    if (!selectedToolName) return null;
+    const tool = playgroundTools[selectedToolName];
+    if (!tool) return null;
+    return detectUiTypeFromTool(tool);
+  }, [selectedToolName, playgroundTools]);
 
   // Host chat background: actual chat area colors from each host's UI
   // (separate from the 76 MCP spec widget design tokens)

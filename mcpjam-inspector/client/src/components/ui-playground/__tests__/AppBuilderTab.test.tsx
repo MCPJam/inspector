@@ -90,7 +90,6 @@ const mockUIPlaygroundStore = {
   setDisplayMode: vi.fn(),
   updateGlobal: vi.fn(),
   toggleSidebar: vi.fn(),
-  setSelectedProtocol: vi.fn(),
   reset: vi.fn(),
   setSidebarVisible: vi.fn(),
 };

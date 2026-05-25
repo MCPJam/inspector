@@ -1,7 +1,13 @@
 import { useEffect, useState } from "react";
+import { Info } from "lucide-react";
 import { Card, CardContent } from "@mcpjam/design-system/card";
 import { Progress } from "@mcpjam/design-system/progress";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
 import { CreditTopupDialog } from "@/components/billing/CreditTopupDialog";
 import { PendingCreditTopupsBanner } from "@/components/billing/PendingCreditTopupsBanner";
 import { TopupActionButton } from "@/components/billing/TopupActionButton";
@@ -116,6 +122,7 @@ export function CreditBalanceCard({
             fillPercent={paidPercentUsed}
             isLoading={false}
             testId="usage-paid"
+            tooltip="Used only after your daily free quota runs out."
           />
         )}
       </CardContent>
@@ -138,6 +145,8 @@ interface UsageRowProps {
   fillPercent: number;
   isLoading: boolean;
   testId?: string;
+  /** Optional explainer surfaced via an info icon next to the label. */
+  tooltip?: string;
 }
 
 function UsageRow({
@@ -146,11 +155,32 @@ function UsageRow({
   fillPercent,
   isLoading,
   testId,
+  tooltip,
 }: UsageRowProps) {
   return (
     <div className="flex flex-col gap-2" data-testid={testId}>
       <div className="flex items-center justify-between text-xs">
-        <span className="font-medium">{label}</span>
+        <span className="flex items-center gap-1 font-medium">
+          {label}
+          {tooltip ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={`About ${label}`}
+                  // Defensive: stop bubbling so a future clickable parent
+                  // wrapper doesn't fire when the user clicks the info icon.
+                  onClick={(event) => event.stopPropagation()}
+                  onKeyDown={(event) => event.stopPropagation()}
+                  className="inline-flex items-center text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:text-foreground"
+                >
+                  <Info aria-hidden="true" className="size-3" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent sideOffset={6}>{tooltip}</TooltipContent>
+            </Tooltip>
+          ) : null}
+        </span>
         <span className="text-muted-foreground">
           {isLoading || rightText == null ? (
             <Skeleton className="h-3 w-24" />

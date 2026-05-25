@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { CreditBalanceCard } from "../CreditBalanceCard";
@@ -104,6 +104,31 @@ describe("CreditBalanceCard", () => {
     // wrong remaining-dollars value, and any credited-domain dollar
     // exposes the take rate when the user knows what they paid.
     expect(paidRow.textContent ?? "").not.toMatch(/\$/);
+  });
+
+  it("exposes a tooltip trigger on the paid-credits row explaining consumption order", () => {
+    balanceState = {
+      paidPercentRemaining: 50,
+      hasPurchaseHistory: true,
+      freeDailyPercentUsed: 0,
+      freeDailyResetAt: Date.now() + 60 * 60 * 1000,
+    };
+    render(<CreditBalanceCard />);
+
+    const paidRow = screen.getByTestId("usage-paid");
+    // Keyboard- and screen-reader-accessible info button.
+    const infoButton = within(paidRow).getByRole("button", {
+      name: /About Paid credits/i,
+    });
+    expect(infoButton).toBeInTheDocument();
+  });
+
+  it("does NOT expose a tooltip trigger on the daily-limit row (no ambiguity to explain there)", () => {
+    render(<CreditBalanceCard />);
+    const dailyRow = screen.getByTestId("usage-daily");
+    expect(
+      within(dailyRow).queryByRole("button", { name: /About/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("opens the top-up dialog when the Top up button is clicked", async () => {

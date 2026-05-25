@@ -164,7 +164,6 @@ const baseProps = {
   hostStyle: "chatgpt" as const,
   effectiveThreadTheme: "light" as const,
   deviceType: "desktop" as const,
-  selectedProtocol: null,
   onSummaryChange: vi.fn(),
 };
 

@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import posthog from "posthog-js";
 import { Button } from "@mcpjam/design-system/button";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { useProjectServers } from "@/hooks/useViews";
 import { useEvalsRouteFromUrl } from "@/lib/eval-route-url";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
@@ -55,6 +56,72 @@ interface EvalsTabProps {
 }
 
 export function EvalsTab({
+  projectId,
+  onContinueInChat,
+  ensureServersReady,
+}: EvalsTabProps) {
+  const { isAuthenticated } = useConvexAuth();
+
+  return (
+    <ErrorBoundary
+      key={`${projectId ?? "none"}:${isAuthenticated ? "authed" : "guest"}`}
+      fallback={({ error, reset }) => (
+        <EvalTabErrorFallback error={error} onRetry={reset} />
+      )}
+    >
+      <EvalsTabContent
+        projectId={projectId}
+        onContinueInChat={onContinueInChat}
+        ensureServersReady={ensureServersReady}
+      />
+    </ErrorBoundary>
+  );
+}
+
+function isGuestUnavailableError(error: Error | null): boolean {
+  return (
+    error?.message.includes("Not available for guests yet. Sign in to use this.") ??
+    false
+  );
+}
+
+function EvalTabErrorFallback({
+  error,
+  onRetry,
+}: {
+  error: Error | null;
+  onRetry: () => void;
+}) {
+  if (isGuestUnavailableError(error)) {
+    return (
+      <div className="p-6">
+        <EmptyState
+          icon={FlaskConical}
+          title="Sign in to use Testing"
+          description="Testing suites are not available for guests yet. Sign in to create suites, view runs, and investigate cases."
+          className="h-[calc(100vh-200px)]"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6">
+      <EmptyState
+        icon={FlaskConical}
+        title="Could not load Testing"
+        description="Something went wrong while loading suites. Try again in a moment."
+        className="h-[calc(100vh-200px)]"
+      >
+        <Button type="button" variant="outline" onClick={onRetry}>
+          Try again
+        </Button>
+      </EmptyState>
+    </div>
+  );
+}
+
+function EvalsTabContent({
   projectId,
   onContinueInChat,
   ensureServersReady,
