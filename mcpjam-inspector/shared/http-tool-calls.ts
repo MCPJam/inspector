@@ -74,6 +74,14 @@ type ExecuteToolCallOptionsBase = {
    * model-visible failure).
    */
   abortSignal?: AbortSignal;
+  /**
+   * Optional predicate that limits which tool calls get executed in this
+   * pass. Unresolved tool calls whose `toolName` returns `false` are
+   * skipped (left unresolved) — they will neither execute nor get an
+   * error tool-result. Used by progressive discovery to run meta-tool
+   * calls before pausing the turn for approval on real MCP tools.
+   */
+  filterToolName?: (toolName: string) => boolean;
 };
 
 type ExecuteToolCallOptions = ExecuteToolCallOptionsBase &
@@ -139,7 +147,9 @@ export async function executeToolCallsFromMessages(
     for (const content of (msg as any).content) {
       if (
         content?.type === "tool-call" &&
-        !existingToolResultIds.has(content.toolCallId)
+        !existingToolResultIds.has(content.toolCallId) &&
+        (!options.filterToolName ||
+          options.filterToolName(content.toolName as string))
       ) {
         if (signal?.aborted) {
           throw signal.reason instanceof Error

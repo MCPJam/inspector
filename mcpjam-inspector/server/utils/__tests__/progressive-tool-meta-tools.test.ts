@@ -120,7 +120,7 @@ describe("createProgressiveMetaTools", () => {
     // because makeMcpTool puts that token nowhere — so we use a token
     // that's actually present in tool names). Use serverId variation
     // so each entry hashes to a distinct toolId.
-    const tools: ToolSet = {};
+    const tools: Record<string, unknown> = {};
     for (let i = 0; i < 50; i += 1) {
       tools[`asana_create_task_${i}`] = makeMcpTool({
         description: `Create a task in Asana (#${i})`,
@@ -142,6 +142,58 @@ describe("createProgressiveMetaTools", () => {
     // 50 matches, so the response should hit the ceiling exactly.
     expect(res.matches.length).toBe(32);
     expect(res.truncated).toBe(true);
+  });
+
+  it("search_mcp_tools reports unsliced totalMatches and truncation flag", async () => {
+    // policy.searchLimit defaults to 8 — build a 20-match catalog and
+    // assert totalMatches reflects the full population, not the page
+    // size. Prior bug: totalMatches always equalled matches.length.
+    const tools: Record<string, unknown> = {};
+    for (let i = 0; i < 20; i += 1) {
+      tools[`asana_create_task_${i}`] = makeMcpTool({
+        description: `Create a task in Asana (#${i})`,
+        serverId: `asana_${i}`,
+        fields: { name: { type: "string", required: true } },
+      });
+    }
+    const catalog = buildToolCatalog(tools as unknown as ToolSet);
+    const metaTools = createProgressiveMetaTools({
+      getCatalog: () => catalog,
+      state: createDiscoveryState(),
+      policy: DEFAULT_TOOL_DISCOVERY_POLICY,
+    });
+    const res = (await execTool(metaTools, META_TOOL_SEARCH, {
+      query: "create",
+    })) as { matches: unknown[]; totalMatches: number; truncated: boolean };
+    expect(res.matches.length).toBe(DEFAULT_TOOL_DISCOVERY_POLICY.searchLimit);
+    expect(res.totalMatches).toBe(20);
+    expect(res.truncated).toBe(true);
+  });
+
+  it("search_mcp_tools does not mark truncated when exactly limit matches exist", async () => {
+    // Edge case: with N matches == limit, truncated should be false.
+    // Prior bug: matches.length === effectiveLimit always set truncated=true.
+    const tools: Record<string, unknown> = {};
+    const limit = DEFAULT_TOOL_DISCOVERY_POLICY.searchLimit;
+    for (let i = 0; i < limit; i += 1) {
+      tools[`asana_create_task_${i}`] = makeMcpTool({
+        description: `Create a task in Asana (#${i})`,
+        serverId: `asana_${i}`,
+        fields: { name: { type: "string", required: true } },
+      });
+    }
+    const catalog = buildToolCatalog(tools as unknown as ToolSet);
+    const metaTools = createProgressiveMetaTools({
+      getCatalog: () => catalog,
+      state: createDiscoveryState(),
+      policy: DEFAULT_TOOL_DISCOVERY_POLICY,
+    });
+    const res = (await execTool(metaTools, META_TOOL_SEARCH, {
+      query: "create",
+    })) as { matches: unknown[]; totalMatches: number; truncated: boolean };
+    expect(res.matches.length).toBe(limit);
+    expect(res.totalMatches).toBe(limit);
+    expect(res.truncated).toBe(false);
   });
 
   it("load_mcp_tools marks ids as newlyLoaded in state", async () => {

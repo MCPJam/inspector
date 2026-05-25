@@ -77,6 +77,7 @@ import {
 import { isAbortError } from "@/shared/abort-errors";
 import {
   commitNewlyLoaded,
+  gateToolsToActiveSubset,
   resolveActiveToolNames,
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
@@ -294,12 +295,24 @@ function streamDirectChatWithLiveTrace(options: {
       ) as ToolSet;
 
       const { progressivePlan, discoveryState } = options;
+      // Progressive mode: gate execution to the active subset.
+      // `activeTools` (set in `prepareStep` below) narrows what the model
+      // sees, but a hallucinated/remembered call to a non-active tool
+      // would still execute against the full map. Gating wraps each
+      // tool's `execute` to throw a structured "not loaded" error,
+      // which the AI SDK surfaces as an error tool-result the model can
+      // recover from via `load_mcp_tools`.
+      const executableTools = gateToolsToActiveSubset(
+        tracedTools as Record<string, unknown>,
+        progressivePlan,
+        () => discoveryState,
+      ) as ToolSet;
       const streamTextOptions: Parameters<typeof streamText>[0] = {
         model: llmModel,
         messages: messageHistory,
         ...(temperature !== undefined ? { temperature } : {}),
         system: providerSystemPrompt,
-        tools: tracedTools,
+        tools: executableTools,
         stopWhen: stepCountIs(20),
         ...(abortSignal ? { abortSignal } : {}),
         prepareStep: ({ stepNumber }) => {
@@ -711,6 +724,12 @@ chatV2.post("/", async (c) => {
       );
     }
 
+    // Convert the inbound UI messages once so prepareChatV2 can replay
+    // prior `load_mcp_tools` calls into discovery state. The downstream
+    // paths call convertToModelMessages again; that's intentional and
+    // independent — this conversion is solely for hydration.
+    const priorModelMessages = await convertToModelMessages(messages);
+
     let prepared;
     try {
       prepared = await prepareChatV2({
@@ -721,6 +740,7 @@ chatV2.post("/", async (c) => {
         temperature,
         requireToolApproval,
         customProviders: body.customProviders,
+        priorMessages: priorModelMessages,
         // Body for direct chat (project default), host-re-resolved for
         // chatbox-bound sessions. undefined → auto policy.
         ...(resolvedProgressiveToolDiscovery !== undefined

@@ -42,6 +42,7 @@ import {
 } from "./mcpjam-tool-helpers";
 import {
   commitNewlyLoaded,
+  gateToolsToActiveSubset,
   lookupToolIdByModelName,
   resolveActiveToolNames,
   META_TOOL_NAMES,
@@ -1413,6 +1414,42 @@ async function processOneStep(
     })();
 
     if (requireToolApproval && hasUnresolvedRealToolCall) {
+      // Drain any unresolved meta-tool calls (search/load) before pausing
+      // for approval on real tools. Otherwise mixed-step turns (model
+      // emits a load_mcp_tools + a real tool in one assistant message)
+      // leave the meta-tool unresolved through the approval pause, and
+      // the resumed turn loses the discovery side effect — the loaded
+      // tools never get promoted into `discoveryState.loadedToolIds`,
+      // so the next step still only shows meta-tools.
+      const metaTracedTools = wrapBackendToolsForTrace(
+        tools as Record<string, any>,
+        {
+          runStartedAt: traceTurn.turnStartedAt,
+          promptIndex: traceTurn.promptIndex,
+          stepIndex,
+          spans: traceTurn.turnSpans,
+        }
+      );
+      const metaMessages = await executeToolCallsFromMessages(messageHistory, {
+        tools: metaTracedTools as Record<string, any>,
+        filterToolName: (name) => isMetaToolName(name),
+        ...(abortSignal ? { abortSignal } : {}),
+      });
+      if (metaMessages.length > 0) {
+        emitToolResults(
+          writer,
+          mcpClientManager,
+          metaMessages,
+          traceTurn,
+          stepIndex
+        );
+        // Promote any ids the model just loaded so a subsequent
+        // resumed-after-approval step sees them as loaded.
+        if (progressivePlan?.enabled && discoveryState) {
+          commitNewlyLoaded(discoveryState);
+        }
+      }
+
       pushBackendStepSuccessSpans(
         traceTurn.turnSpans,
         traceTurn.turnStartedAt,
@@ -1460,9 +1497,20 @@ async function processOneStep(
         }
       );
 
+      // Progressive mode: gate execution to the active subset. Visibility
+      // is already narrowed by `activeToolDefs`, but a model can still
+      // emit a remembered/hallucinated call to a non-active name; gating
+      // turns that into a structured error the model can recover from
+      // via `load_mcp_tools` instead of executing an ungated tool.
+      const executableTools = gateToolsToActiveSubset(
+        tracedTools as Record<string, unknown>,
+        progressivePlan,
+        () => discoveryState,
+      );
+
       // Execute tools locally
       const newMessages = await executeToolCallsFromMessages(messageHistory, {
-        tools: tracedTools as Record<string, any>,
+        tools: executableTools as Record<string, any>,
         ...(abortSignal ? { abortSignal } : {}),
       });
       const toolsEndAbs = Date.now();

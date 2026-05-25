@@ -33,6 +33,7 @@ import {
   buildToolCatalog,
   createDiscoveryState,
   decideProgressivePlan,
+  hydrateDiscoveryStateFromHistory,
   META_TOOL_NAMES,
   parseProgressiveToolsEnv,
   type ProgressiveDiscoveryOptions,
@@ -53,6 +54,13 @@ export interface PrepareChatV2Options {
   customProviders?: CustomProviderConfig[];
   /** Progressive discovery overrides (e.g. tighter thresholds for tests). */
   progressiveToolDiscovery?: ProgressiveDiscoveryOptions;
+  /**
+   * Prior conversation messages, used to hydrate progressive discovery
+   * state across turns. Without these, `discoveryState.loadedToolIds`
+   * resets every request and any tools the model loaded earlier in the
+   * session disappear — multi-turn flows regress to meta-tools only.
+   */
+  priorMessages?: ReadonlyArray<ModelMessage>;
 }
 
 export interface PrepareChatV2Result {
@@ -125,6 +133,19 @@ export async function prepareChatV2(
   // both streamText and the Convex loop see them.
   const catalog = buildToolCatalog(realTools);
   const discoveryState = createDiscoveryState();
+  // Replay prior `load_mcp_tools` calls into the discovery state before
+  // we mint the plan / meta-tools. Without hydration, a multi-turn
+  // session would forget every tool it loaded — even though the
+  // conversation history still references those tools — and the next
+  // step would only show meta-tools. See
+  // `hydrateDiscoveryStateFromHistory` for replay semantics.
+  if (options.priorMessages && options.priorMessages.length > 0) {
+    hydrateDiscoveryStateFromHistory(
+      discoveryState,
+      options.priorMessages,
+      catalog,
+    );
+  }
   const envOverride = parseProgressiveToolsEnv(
     process.env.MCPJAM_PROGRESSIVE_TOOLS,
   );

@@ -541,10 +541,10 @@ export function resolveActiveToolNames(
   metaToolNames: readonly string[] = META_TOOL_NAMES,
 ): string[] {
   if (!plan.enabled) {
-    return [
-      ...plan.catalog.map((e) => e.modelName),
-      ...metaToolNames,
-    ];
+    // Non-progressive mode never advertises meta-tools — the orchestrator
+    // omits them from the toolset entirely. Returning their names here
+    // would only produce dead noise downstream (lookups that miss).
+    return plan.catalog.map((e) => e.modelName);
   }
   const byId = new Map<string, ToolCatalogEntry>();
   for (const entry of plan.catalog) byId.set(entry.toolId, entry);
@@ -562,6 +562,113 @@ export function resolveActiveToolNames(
     if (entry) names.add(entry.modelName);
   }
   return [...names];
+}
+
+/**
+ * Wrap a tools map so that out-of-subset tools throw a structured "not
+ * loaded" error when invoked, while in-subset tools (meta-tools, loaded,
+ * pending, newly-loaded) execute normally. In non-progressive mode this
+ * returns the input map unchanged.
+ *
+ * The `resolveActiveToolNames` step already narrows what the model SEES
+ * (either via `activeTools` in streamText, or by sending only the subset
+ * to a server-side LLM). This is a defense-in-depth gate at the
+ * execution layer: it catches remembered/hallucinated calls to tools the
+ * model used in a prior turn but that are no longer in the active
+ * subset. Throwing here funnels through the AI SDK's / executor's
+ * per-tool catch and produces an error tool-result that points the model
+ * back at `load_mcp_tools`, keeping the turn alive instead of running an
+ * ungated tool.
+ *
+ * The state is read at execute-time via the supplied accessor so the gate
+ * sees the latest loaded/newly-loaded set across multi-step turns (the
+ * AI SDK's `tools` option is set once but state mutates between steps).
+ */
+export function gateToolsToActiveSubset<T extends Record<string, unknown>>(
+  tools: T,
+  plan: ProgressiveToolPlan | undefined,
+  getState: () => ToolDiscoveryState | undefined,
+): T {
+  if (!plan?.enabled) return tools;
+  const result: Record<string, unknown> = {};
+  for (const [name, def] of Object.entries(tools)) {
+    const original = def as Record<string, unknown>;
+    const execute = original.execute as
+      | ((input: unknown, ctx: unknown) => unknown)
+      | undefined;
+    result[name] = {
+      ...original,
+      execute: async (input: unknown, ctx: unknown) => {
+        const state = getState();
+        if (state) {
+          const activeNames = new Set(resolveActiveToolNames(plan, state));
+          if (!activeNames.has(name)) {
+            const toolId = lookupToolIdByModelName(plan.catalog, name);
+            const hint = toolId
+              ? `Call load_mcp_tools with toolIds=[${JSON.stringify(toolId)}] first, then retry.`
+              : `Call search_mcp_tools to find the matching tool id, then load_mcp_tools to activate it.`;
+            throw new Error(
+              `Tool '${name}' is not loaded in this step. ${hint}`,
+            );
+          }
+        }
+        if (!execute) {
+          throw new Error(`Tool '${name}' has no execute handler.`);
+        }
+        return execute(input, ctx);
+      },
+    };
+  }
+  return result as T;
+}
+
+/**
+ * Hydrate `state.loadedToolIds` from `load_mcp_tools` calls in a prior
+ * message history. Without this, every new request starts from an empty
+ * loaded set and a multi-turn flow that depended on a previously loaded
+ * tool would regress to meta-tools only — the model's history references
+ * a tool the orchestrator no longer considers "loaded".
+ *
+ * We read directly from the tool-call inputs (toolIds) rather than the
+ * tool-result payloads. The input is the model's intent; using it means
+ * tools the model attempted to load are restored even if a prior result
+ * was an error or got scrubbed. Ids absent from the current catalog are
+ * dropped silently (the server may have disconnected since).
+ */
+export function hydrateDiscoveryStateFromHistory(
+  state: ToolDiscoveryState,
+  messages: ReadonlyArray<unknown>,
+  catalog: ReadonlyArray<ToolCatalogEntry>,
+): number {
+  const knownIds = new Set(catalog.map((entry) => entry.toolId));
+  let added = 0;
+  for (const msg of messages) {
+    if (!msg || typeof msg !== "object") continue;
+    const role = (msg as { role?: unknown }).role;
+    if (role !== "assistant") continue;
+    const content = (msg as { content?: unknown }).content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      if (!part || typeof part !== "object") continue;
+      const partType = (part as { type?: unknown }).type;
+      if (partType !== "tool-call") continue;
+      const toolName = (part as { toolName?: unknown }).toolName;
+      if (toolName !== META_TOOL_LOAD) continue;
+      const input = (part as { input?: unknown; args?: unknown }).input
+        ?? (part as { args?: unknown }).args;
+      if (!input || typeof input !== "object") continue;
+      const ids = (input as { toolIds?: unknown }).toolIds;
+      if (!Array.isArray(ids)) continue;
+      for (const id of ids) {
+        if (typeof id !== "string") continue;
+        if (!knownIds.has(id)) continue;
+        if (state.loadedToolIds.has(id)) continue;
+        state.loadedToolIds.add(id);
+        added += 1;
+      }
+    }
+  }
+  return added;
 }
 
 /**

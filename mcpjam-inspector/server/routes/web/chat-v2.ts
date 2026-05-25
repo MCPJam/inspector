@@ -256,6 +256,11 @@ chatV2.post("/", async (c) => {
 
     try {
       const sessionStartedAt = Date.now();
+      // Convert UI messages to ModelMessage[] up front so prepareChatV2
+      // can replay prior `load_mcp_tools` calls into discovery state.
+      // Without this, the loaded set resets every turn and a multi-turn
+      // progressive flow regresses to meta-tools only on each request.
+      const modelMessages = await convertToModelMessages(messages);
       let prepared;
       try {
         prepared = await prepareChatV2({
@@ -266,6 +271,7 @@ chatV2.post("/", async (c) => {
           temperature,
           requireToolApproval,
           customProviders: body.customProviders,
+          priorMessages: modelMessages,
           // Host-level toggle. Sourced from the project's default
           // HostConfigV2 for direct chat (body), or re-resolved from the
           // chatbox's pinned host for chatbox-bound sessions (the
@@ -296,8 +302,6 @@ chatV2.post("/", async (c) => {
         discoveryState,
       } = prepared;
       const hostedChatSessionId = body.chatSessionId;
-
-      const modelMessages = await convertToModelMessages(messages);
       const cleanupStream = async () => {
         await manager.disconnectAllServers();
       };

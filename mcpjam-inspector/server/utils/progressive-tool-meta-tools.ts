@@ -110,14 +110,19 @@ export function createProgressiveMetaTools(
         MAX_SEARCH_LIMIT,
       );
       const catalog = getCatalog();
-      const matches = searchToolCatalog(catalog, query, {
+      // Rank the full match list first so `totalMatches` reflects the true
+      // count and `truncated` only fires when we actually dropped results.
+      // Otherwise the model sees `totalMatches === matches.length` and can't
+      // tell whether to refine the query.
+      const allMatches = searchToolCatalog(catalog, query, {
         serverIds,
-        limit: effectiveLimit,
+        limit: Number.MAX_SAFE_INTEGER,
       });
+      const matches = allMatches.slice(0, effectiveLimit);
       return {
         matches: matches.map(formatToolSearchMatch),
-        totalMatches: matches.length,
-        truncated: matches.length === effectiveLimit,
+        totalMatches: allMatches.length,
+        truncated: allMatches.length > effectiveLimit,
       };
     },
   });

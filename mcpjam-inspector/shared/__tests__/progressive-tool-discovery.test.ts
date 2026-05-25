@@ -314,7 +314,10 @@ describe("resolveActiveToolNames", () => {
   } as unknown as ToolSet;
   const catalog = buildToolCatalog(tools);
 
-  it("returns the full set + meta-tools when progressive is disabled", () => {
+  it("returns only the catalog (no meta-tools) when progressive is disabled", () => {
+    // The orchestrator omits meta-tools from the toolset entirely when
+    // progressive mode is off, so including their names here would only
+    // produce dead names that miss every downstream lookup.
     const plan = decideProgressivePlan({
       catalog,
       modelContextLength: 200_000,
@@ -323,7 +326,7 @@ describe("resolveActiveToolNames", () => {
     const state = createDiscoveryState();
     const active = resolveActiveToolNames(plan, state);
     expect(active.sort()).toEqual(
-      [...META_TOOL_NAMES, "asana_create_task", "asana_get_task"].sort(),
+      ["asana_create_task", "asana_get_task"].sort(),
     );
   });
 

@@ -68,6 +68,7 @@ import {
 import { isAbortError } from "@/shared/abort-errors";
 import {
   commitNewlyLoaded,
+  gateToolsToActiveSubset,
   resolveActiveToolNames,
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
@@ -429,12 +430,21 @@ export function handleLocalOrgChatModel(
       ) as ToolSet;
 
       const { progressivePlan, discoveryState } = options;
+      // Progressive mode: gate execution to the active subset. See
+      // `gateToolsToActiveSubset` doc + the same wrap in
+      // `routes/mcp/chat-v2.ts` for rationale (defense-in-depth against
+      // hallucinated/remembered out-of-subset tool calls).
+      const executableTools = gateToolsToActiveSubset(
+        tracedTools as Record<string, unknown>,
+        progressivePlan,
+        () => discoveryState,
+      ) as ToolSet;
       const result = streamText({
         model: llmModel,
         messages,
         ...(temperature !== undefined ? { temperature } : {}),
         system: providerSystemPrompt,
-        tools: tracedTools,
+        tools: executableTools,
         stopWhen: stepCountIs(resolvedMaxSteps),
         ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
         prepareStep: ({ stepNumber }) => {
