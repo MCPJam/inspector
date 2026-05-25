@@ -1601,10 +1601,22 @@ export class MCPClientManager {
       //   (the original implementation here) would have shipped the
       //   first request unauthenticated for refresh-token providers
       //   because nothing populates the cache up-front.
+      // `UnauthorizedContext` shape mirrors `@modelcontextprotocol/client`'s
+      // exported interface. Typed here as a structural alias rather than
+      // imported because the import would be unused on non-stateless
+      // code paths and would pull the auth module into bundles that
+      // don't need it.
+      type UnauthorizedContextShape = {
+        response: Response;
+        serverUrl: URL;
+        fetchFn: typeof fetch;
+      };
       const isAuthProvider = (
         p: unknown,
-      ): p is { token: () => Promise<string | undefined>; onUnauthorized?: (ctx: unknown) => Promise<void> } =>
-        !!p && typeof (p as { token?: unknown }).token === "function";
+      ): p is {
+        token: () => Promise<string | undefined>;
+        onUnauthorized?: (ctx: UnauthorizedContextShape) => Promise<void>;
+      } => !!p && typeof (p as { token?: unknown }).token === "function";
       const isOAuthClientProvider = (
         p: unknown,
       ): p is {
@@ -1653,7 +1665,9 @@ export class MCPClientManager {
         }
         return tokenHolder.current;
       };
-      const on401 = async (): Promise<string | undefined> => {
+      const on401 = async (
+        response: Response,
+      ): Promise<string | undefined> => {
         if (config.onUnauthorized) {
           const refreshed = await config.onUnauthorized({
             serverId,
@@ -1667,7 +1681,17 @@ export class MCPClientManager {
           return refreshed.accessToken;
         }
         if (isAuthProvider(effectiveAuthProvider)) {
-          await effectiveAuthProvider.onUnauthorized?.({});
+          // Build the full `UnauthorizedContext` upstream consumers
+          // expect — providers read `WWW-Authenticate` off `response`
+          // for resource metadata and use `fetchFn` to honor the
+          // transport's configured fetch. Passing `{}` here (the prior
+          // behavior) made any provider that touched these fields
+          // crash with a TypeError on every 401.
+          await effectiveAuthProvider.onUnauthorized?.({
+            response,
+            serverUrl: new URL(url),
+            fetchFn: fetch.bind(globalThis),
+          });
           return await effectiveAuthProvider.token();
         }
         if (isOAuthClientProvider(effectiveAuthProvider)) {

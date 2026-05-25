@@ -151,8 +151,14 @@ export interface StatelessMcpHttpPreviewClientOptions {
    * provider flow. Implementations should refresh credentials and return
    * a fresh access token, OR return `undefined` to give up (preview
    * surfaces the underlying 401 verbatim).
+   *
+   * The 401 `Response` is passed so handlers backed by upstream
+   * `AuthProvider.onUnauthorized` can build the real `UnauthorizedContext`
+   * (`response` carries `WWW-Authenticate` / resource metadata that
+   * refresh logic depends on). Optional argument — static-bearer
+   * callers can ignore it.
    */
-  on401?: () => Promise<string | undefined>;
+  on401?: (response: Response) => Promise<string | undefined>;
   /**
    * RPC logger for parity with `wrapTransportForLogging` on the legacy
    * path. The preview owns fetch, so we have to call the logger by hand
@@ -244,7 +250,7 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
   private readonly protocolVersion: McpProtocolVersion;
   private readonly staticHeaders: Record<string, string>;
   private readonly getAccessToken?: () => string | undefined | Promise<string | undefined>;
-  private readonly on401?: () => Promise<string | undefined>;
+  private readonly on401?: (response: Response) => Promise<string | undefined>;
   private readonly rpcLogger?: RpcLogger;
   private readonly serverId: string;
   private readonly onSessionIdResponse?: (sessionId: string) => void;
@@ -329,15 +335,18 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
     this.connected = true;
     if (!this.discoverOnConnect) return;
     try {
+      // Honor the caller's connect timeout for the discover probe.
+      // Without this, a hung `server/discover` would leave `connect()`
+      // unbounded even though `MCPClientManager` passes a `timeout` here
+      // expecting it to cover the whole connect path.
+      const discoverOpts: SendOptions = {};
+      if (typeof _options?.timeout === "number") {
+        discoverOpts.timeout = _options.timeout;
+      }
       const result = await this.send<DiscoverResult>(
         "server/discover",
         undefined,
-        // No caller-provided RequestOptions for the auto-probe — use the
-        // SendOptions defaults. `_options?.timeout` exists on the
-        // connect-time options too but it's the upstream Transport
-        // timeout, not a per-RPC one; let the default request timeout
-        // apply so connect doesn't hang on a slow `server/discover`.
-        {},
+        discoverOpts,
       );
       this.discoveredServerInfo = result.serverInfo;
       this.discoveredCapabilities = result.capabilities;
@@ -606,6 +615,27 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
       );
     }
 
+    // MRTR / task-augmented requests are intentionally out of scope for
+    // the preview (see file header — `InputRequiredResult` and friends
+    // need request reissue + state plumbing the preview doesn't own).
+    // Silently dropping `opts.task` / `opts.relatedTask` would let the
+    // request go out looking normal but miss the task association the
+    // caller intended; throwing here keeps the contract honest.
+    const taskOpt = (opts as RequestOptions).task;
+    if (taskOpt !== undefined) {
+      throw new NotYetSupportedInStateless(
+        `${method} (RequestOptions.task)`,
+        "task-augmented requests require MRTR / InputRequiredResult, which is out of scope for the DRAFT-2026-v1 preview",
+      );
+    }
+    const relatedTaskOpt = (opts as RequestOptions).relatedTask;
+    if (relatedTaskOpt !== undefined) {
+      throw new NotYetSupportedInStateless(
+        `${method} (RequestOptions.relatedTask)`,
+        "related-task requests require MRTR / InputRequiredResult, which is out of scope for the DRAFT-2026-v1 preview",
+      );
+    }
+
     const id = this.nextRequestId++;
 
     // Merge `_meta` — caller wins for non-namespaced keys, we win for
@@ -707,7 +737,7 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
       // static-bearer setups surface the 401 raw because there's
       // nothing to refresh.
       if (response.status === 401 && this.on401) {
-        const refreshed = await this.on401();
+        const refreshed = await this.on401(response);
         if (refreshed) {
           // Rebuild from `effectiveOpts`, NOT `opts` — the derived
           // `nameHeader` / `extraHeaders` from
@@ -835,12 +865,17 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
         const { value, done } = await reader.read();
         if (done) break;
         buffer += value;
-        // SSE frames are separated by a blank line. Parse complete
-        // frames; leave the trailing partial in `buffer`.
-        let sepIndex: number;
-        while ((sepIndex = buffer.indexOf("\n\n")) !== -1) {
-          const frame = buffer.slice(0, sepIndex);
-          buffer = buffer.slice(sepIndex + 2);
+        // SSE frames are separated by a blank line. Per the WHATWG SSE
+        // spec line endings are CR, LF, or CRLF, so frame boundaries
+        // are `\r\n\r\n`, `\n\n`, or `\r\r` — splitting only on `\n\n`
+        // hangs against valid CRLF servers (common behind nginx /
+        // Cloudflare / Go `net/http`). Parse complete frames; leave the
+        // trailing partial in `buffer`.
+        while (true) {
+          const split = nextFrameBoundary(buffer);
+          if (split === undefined) break;
+          const frame = buffer.slice(0, split.start);
+          buffer = buffer.slice(split.end);
           const dataPayload = extractSseDataPayload(frame);
           if (dataPayload === undefined) continue;
           const message = parseSingleMessage(dataPayload);
@@ -1129,10 +1164,13 @@ function parseSingleMessage(text: string): JsonRpcMessage {
 
 function extractSseDataPayload(frame: string): string | undefined {
   // Concatenate all `data:` lines; skip `event:` / `id:` / `retry:` /
-  // comment lines. Per the SSE spec, a single `data:` payload is the
-  // concatenation of every `data:` line in the frame joined with `\n`.
+  // comment lines. Per the WHATWG SSE spec a single `data:` payload is
+  // the concatenation of every `data:` line in the frame joined with
+  // `\n`. Lines within a frame are themselves delimited by CR, LF, or
+  // CRLF — `\n`-only split would leave `\r` suffixes on every line for
+  // CRLF servers, so `data:` matching would skip them all.
   const dataLines: string[] = [];
-  for (const rawLine of frame.split("\n")) {
+  for (const rawLine of frame.split(/\r\n|\r|\n/)) {
     if (rawLine.startsWith(":")) continue;
     if (!rawLine.startsWith("data:")) continue;
     let line = rawLine.slice(5);
@@ -1141,6 +1179,27 @@ function extractSseDataPayload(frame: string): string | undefined {
   }
   if (dataLines.length === 0) return undefined;
   return dataLines.join("\n");
+}
+
+/**
+ * Finds the next SSE frame boundary in `buffer` and returns its byte
+ * range. SSE frame boundaries are a blank line: `\r\n\r\n`, `\n\n`, or
+ * `\r\r` (WHATWG SSE allows CR, LF, or CRLF line endings, so the blank
+ * line takes whichever form the producer chose). Returns `undefined` if
+ * no complete frame is yet buffered.
+ */
+function nextFrameBoundary(
+  buffer: string,
+): { start: number; end: number } | undefined {
+  let best: { start: number; end: number } | undefined;
+  for (const delim of ["\r\n\r\n", "\n\n", "\r\r"] as const) {
+    const idx = buffer.indexOf(delim);
+    if (idx === -1) continue;
+    if (best === undefined || idx < best.start) {
+      best = { start: idx, end: idx + delim.length };
+    }
+  }
+  return best;
 }
 
 function extractTtlMs(result: unknown): number | undefined {
