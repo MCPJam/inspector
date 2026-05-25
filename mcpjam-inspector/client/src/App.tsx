@@ -973,6 +973,7 @@ export function ChatV2Route() {
                 systemPrompt: activeHost.systemPrompt,
                 temperature: activeHost.temperature,
                 requireToolApproval: activeHost.requireToolApproval,
+                progressiveToolDiscovery: activeHost.progressiveToolDiscovery,
               }
             : undefined
         }

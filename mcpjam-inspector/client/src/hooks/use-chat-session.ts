@@ -1159,7 +1159,15 @@ export function useChatSession(
   // into the request body. Held in a ref so a mid-session flip is
   // reflected on the very next send without remounting.
   const progressiveToolDiscoveryRef = useRef<boolean | undefined>(undefined);
-  progressiveToolDiscoveryRef.current = options.progressiveToolDiscovery;
+  // Prefer the top-level option when set (used by paths that don't go
+  // through ExecutionConfig — e.g. the playground per-host column), but
+  // fall back to executionConfig so direct chat / multi-model surfaces
+  // can forward the host's HostConfigV2.progressiveToolDiscovery field
+  // through their existing config plumbing without adding a parallel
+  // option at every call site.
+  progressiveToolDiscoveryRef.current =
+    options.progressiveToolDiscovery ??
+    options.executionConfig?.progressiveToolDiscovery;
   const isHostedGuest = HOSTED_MODE && !workOsUser && !isWorkOsLoading;
   const sharedGuestMode =
     isHostedGuest &&
