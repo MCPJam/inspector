@@ -1566,20 +1566,25 @@ export class MCPClientManager {
         effectiveAccessToken !== undefined || effectiveAuthProvider != null;
       const staticHeaders: Record<string, string> = {};
       const ri = requestInit as
-        | { headers?: Record<string, string> | Headers | undefined }
+        | { headers?: HeadersInit | undefined }
         | undefined;
       if (ri?.headers) {
-        if (ri.headers instanceof Headers) {
-          ri.headers.forEach((v, k) => {
-            if (hasTokenSource && k.toLowerCase() === "authorization") return;
-            staticHeaders[k] = v;
-          });
-        } else {
-          for (const [k, v] of Object.entries(ri.headers)) {
-            if (hasTokenSource && k.toLowerCase() === "authorization") continue;
-            staticHeaders[k] = v;
-          }
-        }
+        // `RequestInit.headers` accepts three shapes per the Fetch
+        // standard: `Headers`, `Record<string, string>`, AND
+        // `[string, string][]` (tuple-array form). Iterating with
+        // `Object.entries` on the tuple-array form would walk numeric
+        // indices and store arrays as header values, producing
+        // malformed outbound headers and silently dropping the
+        // intended auth/custom headers — a stateless-only regression
+        // because `StreamableHTTPClientTransport` normalizes via
+        // `new Headers(init)` on the legacy path. Funnel all three
+        // shapes through the `Headers` constructor here for the same
+        // normalization.
+        const normalized = new Headers(ri.headers);
+        normalized.forEach((v, k) => {
+          if (hasTokenSource && k.toLowerCase() === "authorization") return;
+          staticHeaders[k] = v;
+        });
       }
       // Resolve the access token at send-time so OAuth refresh stays
       // single-source. Upstream HTTP transport adapts both shapes
