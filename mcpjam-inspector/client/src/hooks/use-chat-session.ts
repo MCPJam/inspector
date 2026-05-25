@@ -1557,7 +1557,9 @@ export function useChatSession(
           // (no memoization) so any iframe that mounted between the previous
           // turn and this send contributes its tools. The registry caps size;
           // the server defends the boundary again in `validateAppToolEntries`.
-          appTools: useAppToolsRegistry.getState().snapshotForChatBody(),
+          appTools: useAppToolsRegistry
+            .getState()
+            .snapshotForChatBody(chatSessionIdRef.current),
           ...(widgetModelContext && widgetModelContext.length > 0
             ? { widgetModelContext }
             : {}),
@@ -1626,7 +1628,9 @@ export function useChatSession(
     // app aliases land here.
     onToolCall: async ({ toolCall }) => {
       const toolName = (toolCall as { toolName: string }).toolName;
-      const entry = useAppToolsRegistry.getState().resolve(toolName);
+      const entry = useAppToolsRegistry
+        .getState()
+        .resolve(toolName, chatSessionIdRef.current);
       if (!entry) {
         // Two cases:
         //   - server tool name: not an app alias, let the server's

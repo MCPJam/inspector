@@ -2378,6 +2378,7 @@ export function ChatTabV2({
                   !minimalMode && (
                     <div className="flex flex-1 min-h-0 flex-col">
                       <SingleModelTraceDiagnosticsBody
+                        chatSessionId={chatSessionId}
                         activeTraceViewMode={activeTraceViewMode}
                         isThreadEmpty={isThreadEmpty}
                         showLiveTracePending={
@@ -2470,6 +2471,7 @@ export function ChatTabV2({
                     <div className="relative flex-1 min-h-0">
                       <StickToBottom.Content className="flex flex-col min-h-0">
                         <Thread
+                          chatSessionId={chatSessionId}
                           messages={messages}
                           sendFollowUpMessage={(text: string) => {
                             lastSentUserMessageRef.current = text;

@@ -696,6 +696,7 @@ export function MultiModelPlaygroundCard({
             <div className="flex min-h-64 flex-1 flex-col overflow-hidden p-3">
               {activeTraceViewMode === "chat" && revealedInChat ? (
                 <TraceViewer
+                  chatSessionId={chatSessionId}
                   trace={traceViewerTrace}
                   model={model}
                   toolsMetadata={toolsMetadata}
@@ -732,6 +733,7 @@ export function MultiModelPlaygroundCard({
                 />
               ) : (
                 <TraceViewer
+                  chatSessionId={chatSessionId}
                   trace={traceViewerTrace}
                   model={model}
                   toolsMetadata={toolsMetadata}
@@ -787,6 +789,7 @@ export function MultiModelPlaygroundCard({
                 <div className="relative flex-1 min-h-0">
                   <StickToBottom.Content className="flex flex-col min-h-0">
                     <Thread
+                      chatSessionId={chatSessionId}
                       messages={messages}
                       sendFollowUpMessage={handleSendFollowUp}
                       model={model}

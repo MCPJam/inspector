@@ -29,6 +29,7 @@ type ClaudeFooterMode = "none" | "animated" | "static";
 type MessagePart = UIMessage["parts"][number];
 
 interface MessageViewProps {
+  chatSessionId?: string;
   message: UIMessage;
   model: ModelDefinition;
   onSendFollowUp: (text: string) => void;
@@ -129,6 +130,7 @@ function areMessageViewPropsEqual(
     prev.model === next.model &&
     prev.onSendFollowUp === next.onSendFollowUp &&
     prev.toolsMetadata === next.toolsMetadata &&
+    prev.chatSessionId === next.chatSessionId &&
     prev.toolServerMap === next.toolServerMap &&
     prev.onWidgetStateChange === next.onWidgetStateChange &&
     prev.onModelContextUpdate === next.onModelContextUpdate &&
@@ -156,6 +158,7 @@ function areMessageViewPropsEqual(
 }
 
 function MessageViewImpl({
+  chatSessionId,
   message,
   model,
   onSendFollowUp,
@@ -223,6 +226,7 @@ function MessageViewImpl({
                 key={`file-${i}`}
                 part={part}
                 role={role}
+                chatSessionId={chatSessionId}
                 onSendFollowUp={onSendFollowUp}
                 toolsMetadata={toolsMetadata}
                 toolServerMap={toolServerMap}
@@ -255,6 +259,7 @@ function MessageViewImpl({
                 key={i}
                 part={part}
                 role={role}
+                chatSessionId={chatSessionId}
                 onSendFollowUp={onSendFollowUp}
                 toolsMetadata={toolsMetadata}
                 toolServerMap={toolServerMap}
@@ -332,6 +337,7 @@ function MessageViewImpl({
                   key={getPartKey(part, sIdx, pIdx)}
                   part={part}
                   role={role}
+                  chatSessionId={chatSessionId}
                   onSendFollowUp={onSendFollowUp}
                   toolsMetadata={toolsMetadata}
                   toolServerMap={toolServerMap}

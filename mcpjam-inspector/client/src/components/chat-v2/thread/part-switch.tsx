@@ -52,6 +52,7 @@ import {
 export function PartSwitch({
   part,
   role,
+  chatSessionId,
   onSendFollowUp,
   toolsMetadata,
   toolServerMap,
@@ -77,6 +78,7 @@ export function PartSwitch({
 }: {
   part: AnyPart;
   role: UIMessage["role"];
+  chatSessionId?: string;
   onSendFollowUp: (text: string) => void;
   toolsMetadata: Record<string, Record<string, any>>;
   toolServerMap: ToolServerMap;
@@ -357,6 +359,7 @@ export function PartSwitch({
             {...approvalProps}
           />
           <WidgetReplay
+            chatSessionId={chatSessionId}
             toolName={toolInfo.toolName}
             toolCallId={toolInfo.toolCallId}
             toolState={toolInfo.toolState}

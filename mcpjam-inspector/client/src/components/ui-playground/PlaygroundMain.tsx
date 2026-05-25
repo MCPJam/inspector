@@ -2893,6 +2893,7 @@ export function PlaygroundMain({
           <div className="relative flex-1 min-h-0">
             <StickToBottom.Content className="flex flex-col min-h-0">
               <Thread
+                chatSessionId={chatSessionId}
                 messages={messages}
                 sendFollowUpMessage={handleSendFollowUp}
                 model={selectedModel}
@@ -3373,6 +3374,7 @@ export function PlaygroundMain({
                     data-testid="playground-trace-diagnostics"
                   >
                     <SingleModelTraceDiagnosticsBody
+                      chatSessionId={chatSessionId}
                       activeTraceViewMode={activeTraceViewMode}
                       isThreadEmpty={isThreadEmpty}
                       showLiveTracePending={showLiveTracePending}

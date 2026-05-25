@@ -33,6 +33,7 @@ import {
 } from "./thread/thread-helpers";
 
 interface ThreadProps {
+  chatSessionId?: string;
   messages: UIMessage[];
   sendFollowUpMessage: (text: string) => void;
   model: ModelDefinition;
@@ -82,6 +83,7 @@ interface ThreadProps {
 }
 
 export function Thread({
+  chatSessionId,
   messages,
   sendFollowUpMessage,
   model,
@@ -233,6 +235,7 @@ export function Thread({
         <div className="h-[480px] flex-shrink-0 pointer-events-none" />
       )}
       <TranscriptThread
+        chatSessionId={chatSessionId}
         messages={messages}
         model={model}
         sendFollowUpMessage={sendFollowUpMessage}

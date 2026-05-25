@@ -203,6 +203,7 @@ function scrollMessageToViewportPosition(params: {
 }
 
 export function TranscriptThread({
+  chatSessionId,
   messages,
   model,
   sendFollowUpMessage = NOOP,
@@ -493,6 +494,7 @@ export function TranscriptThread({
               />
             ) : null}
             <MessageView
+              chatSessionId={chatSessionId}
               message={message}
               model={model}
               onSendFollowUp={sendFollowUpMessage}

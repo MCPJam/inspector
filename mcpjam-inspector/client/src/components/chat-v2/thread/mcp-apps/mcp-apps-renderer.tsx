@@ -165,6 +165,7 @@ function sanitizeHostStyleVariables(
 // CSP and permissions metadata types are now imported from SDK
 
 interface MCPAppsRendererProps {
+  chatSessionId?: string;
   serverId: string;
   toolCallId: string;
   toolName: string;
@@ -363,6 +364,7 @@ function describeFetchSourceKeyDiff(prev: string, next: string): string {
 }
 
 export function MCPAppsRenderer({
+  chatSessionId,
   serverId,
   toolCallId,
   toolName,
@@ -984,6 +986,20 @@ export function MCPAppsRenderer({
     earlyEffectiveMcpAppsCapabilities.widgetDisplayModeRequests ===
       "user-initiated-only"
   );
+  // SEP-1865 host UX: one-shot guard for the app-tools auto-promote to
+  // `displayMode = "fullscreen"`. When the inline bridge reports
+  // `appCapabilities.tools` in `ui/initialize`, the renderer flips the
+  // widget to fullscreen so the existing fullscreen overlay (composer
+  // pinned + chevron-toggle chat history) mounts — the dev gets a
+  // chat-with-app surface without manual mode switching. Gated by
+  // `userPreferInlineRef` (auto-promote is treated as host-initiated
+  // and respects the same dismissal + `user-initiated-only` policy
+  // that blocks widget-initiated `ui/request-display-mode`). One-shot
+  // so a shim re-init or a widget's own re-handshake doesn't fire
+  // again. Refs reset across renderer instances, so teardown + a new
+  // tool-call mount re-arms the promote — a fresh chat with the same
+  // app gets the same affordance.
+  const hasAutoPromotedForAppToolsRef = useRef(false);
   // SEP-1865: width is honored only when the host's outer container is
   // unbounded (no `width` from `containerDimensions`). The chatbox bubble
   // is the bounding box today, so this stays null until the app sends a
@@ -1565,6 +1581,7 @@ export function MCPAppsRenderer({
           const appVersion = bridge.getAppVersion();
           await useAppToolsRegistry.getState().registerInstance({
             bridgeId,
+            chatSessionId,
             parentToolCallId: toolCallIdRef.current,
             serverId: serverIdRef.current,
             appName: appVersion?.name ?? serverIdRef.current,
@@ -1595,7 +1612,7 @@ export function MCPAppsRenderer({
         appToolsListInFlightBridgeIdsRef.current.delete(bridgeId);
       }
     },
-    [logWidgetDebug]
+    [chatSessionId, logWidgetDebug]
   );
 
   // Widget debug store
@@ -2521,6 +2538,31 @@ export function MCPAppsRenderer({
           appToolsBridgeIdRef.current = bridgeId;
           setAppToolsBridgeIdState(bridgeId);
           void refreshAppProvidedTools(bridge, bridgeId);
+
+          // SEP-1865 host UX: app-tools widgets are interactive — the
+          // dev will want to chat with them. Auto-promote to fullscreen
+          // so the existing fullscreen overlay (composer + chevron-
+          // toggle chat history) becomes the chat surface, with the
+          // widget filling the space behind it. Gates:
+          //  • `declaredAppModes` includes "fullscreen" — the app
+          //    actually renders in that mode (advertise=enforce)
+          //  • `!userPreferInlineRef.current` — user hasn't dismissed
+          //    fullscreen, and the host's `user-initiated-only` policy
+          //    isn't blocking host-initiated mode switches
+          //  • `!hasAutoPromotedForAppToolsRef.current` — one-shot so
+          //    shim re-init or a widget's own re-handshake doesn't
+          //    re-fire and overwrite a user-chosen mode
+          // `setDisplayModeRef.current` is used (not the closure-
+          // captured `setDisplayMode`) so this handler stays out of the
+          // useCallback dep array and doesn't churn the bridge wiring.
+          if (
+            !hasAutoPromotedForAppToolsRef.current &&
+            !userPreferInlineRef.current &&
+            declaredAppModes?.includes("fullscreen")
+          ) {
+            hasAutoPromotedForAppToolsRef.current = true;
+            setDisplayModeRef.current?.("fullscreen");
+          }
         }
       };
 

@@ -97,6 +97,7 @@ interface TraceViewerProps {
    * "Reveal in Chat" is ignored — call this so the shell can switch to its chat tab.
    */
   onRevealNavigateToChat?: () => void;
+  chatSessionId?: string;
   sendFollowUpMessage?: (text: string) => void;
   onWidgetStateChange?: (toolCallId: string, state: any) => void;
   onModelContextUpdate?: (
@@ -211,6 +212,7 @@ export function TraceViewer({
   fillContent = false,
   hideTranscriptRevealControls = false,
   onRevealNavigateToChat,
+  chatSessionId,
   sendFollowUpMessage = NOOP,
   onWidgetStateChange,
   onModelContextUpdate,
@@ -660,6 +662,7 @@ export function TraceViewer({
                       // outer one with template-seed caps.
                       const threadEl = (
                         <Thread
+                          chatSessionId={chatSessionId}
                           messages={adaptedTrace.messages}
                           sendFollowUpMessage={sendFollowUpMessage}
                           model={resolvedModel}

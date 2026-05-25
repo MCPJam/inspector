@@ -7,7 +7,7 @@ import {
 
 function readonlyTool(
   name: string,
-  extra?: Partial<AppToolDescriptor>
+  extra?: Partial<AppToolDescriptor>,
 ): AppToolDescriptor {
   return {
     name,
@@ -28,7 +28,7 @@ function nonReadonlyTool(name: string): AppToolDescriptor {
 function makeInstance(
   bridgeId: string,
   tools: AppToolDescriptor[],
-  overrides?: Partial<AppInstance>
+  overrides?: Partial<AppInstance>,
 ): AppInstance {
   return {
     bridgeId,
@@ -71,7 +71,7 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
     await useAppToolsRegistry
       .getState()
       .registerInstance(
-        makeInstance("b-1", [readonlyTool("ping"), nonReadonlyTool("mutate")])
+        makeInstance("b-1", [readonlyTool("ping"), nonReadonlyTool("mutate")]),
       );
     const snap = useAppToolsRegistry.getState().snapshotForChatBody();
     expect(snap.map((e) => [e.rawName, e.readOnly]).sort()).toEqual([
@@ -101,7 +101,7 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
         makeInstance("b-1", [
           readonlyTool("ok"),
           readonlyTool("toobig", { inputSchema: big }),
-        ])
+        ]),
       );
     const snap = useAppToolsRegistry.getState().snapshotForChatBody();
     expect(snap.map((e) => e.rawName).sort()).toEqual(["ok"]);
@@ -113,7 +113,7 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
       .registerInstance(
         makeInstance("b-1", [
           readonlyTool("long", { description: "x".repeat(1000) }),
-        ])
+        ]),
       );
     const snap = useAppToolsRegistry.getState().snapshotForChatBody();
     expect(snap[0].description?.length).toBe(512);
@@ -125,13 +125,13 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
       .registerInstance(makeInstance("b-1", [readonlyTool("ping")]));
     expect(useAppToolsRegistry.getState().aliases.size).toBe(1);
     expect(
-      useAppToolsRegistry.getState().activeBridgeByParent.get("call-1")
+      useAppToolsRegistry.getState().activeBridgeByParent.get("call-1"),
     ).toBe("b-1");
 
     useAppToolsRegistry.getState().unregisterInstance("b-1");
     expect(useAppToolsRegistry.getState().aliases.size).toBe(0);
     expect(
-      useAppToolsRegistry.getState().activeBridgeByParent.has("call-1")
+      useAppToolsRegistry.getState().activeBridgeByParent.has("call-1"),
     ).toBe(false);
   });
 
@@ -229,7 +229,7 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
     await useAppToolsRegistry.getState().registerInstance(
       makeInstance("b-2", [readonlyTool("ping")], {
         parentToolCallId: "call-2",
-      })
+      }),
     );
     const c1 = new AbortController();
     const c2 = new AbortController();
@@ -253,16 +253,16 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
     useAppToolsRegistry.getState().registerPendingCall("b-1", c1);
     useAppToolsRegistry.getState().registerPendingCall("b-1", c2);
     expect(
-      useAppToolsRegistry.getState().pendingControllers.get("b-1")?.size
+      useAppToolsRegistry.getState().pendingControllers.get("b-1")?.size,
     ).toBe(2);
     useAppToolsRegistry.getState().unregisterPendingCall("b-1", c1);
     expect(
-      useAppToolsRegistry.getState().pendingControllers.get("b-1")?.size
+      useAppToolsRegistry.getState().pendingControllers.get("b-1")?.size,
     ).toBe(1);
     useAppToolsRegistry.getState().unregisterPendingCall("b-1", c2);
-    expect(
-      useAppToolsRegistry.getState().pendingControllers.has("b-1")
-    ).toBe(false);
+    expect(useAppToolsRegistry.getState().pendingControllers.has("b-1")).toBe(
+      false,
+    );
   });
 
   // ── SEP-1865 multi-instance disambiguation ──────────────────────────────
@@ -271,13 +271,13 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
       makeInstance("b-1", [readonlyTool("move", { description: "Move" })], {
         parentToolCallId: "call-A",
         appName: "TicTacToe",
-      })
+      }),
     );
     await useAppToolsRegistry.getState().registerInstance(
       makeInstance("b-2", [readonlyTool("move", { description: "Move" })], {
         parentToolCallId: "call-B",
         appName: "TicTacToe",
-      })
+      }),
     );
     const snap = useAppToolsRegistry.getState().snapshotForChatBody();
     expect(snap.map((e) => e.description).sort()).toEqual([
@@ -290,11 +290,47 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
     await useAppToolsRegistry.getState().registerInstance(
       makeInstance("b-1", [readonlyTool("solo", { description: "Solo" })], {
         appName: "OnlyOne",
-      })
+      }),
     );
     const snap = useAppToolsRegistry.getState().snapshotForChatBody();
     expect(snap).toHaveLength(1);
     expect(snap[0].description).toBe("Solo");
+  });
+
+  it("snapshotForChatBody and resolve are scoped to the active chat session", async () => {
+    await useAppToolsRegistry.getState().registerInstance(
+      makeInstance("b-chat-1", [readonlyTool("move")], {
+        chatSessionId: "chat-1",
+      }),
+    );
+    await useAppToolsRegistry.getState().registerInstance(
+      makeInstance("b-chat-2", [readonlyTool("move")], {
+        chatSessionId: "chat-2",
+      }),
+    );
+
+    const state = useAppToolsRegistry.getState();
+    const aliasByBridge = new Map(
+      [...state.aliases.values()].map((alias) => [alias.bridgeId, alias.alias]),
+    );
+    const chat1Alias = aliasByBridge.get("b-chat-1");
+    const chat2Alias = aliasByBridge.get("b-chat-2");
+
+    expect(chat1Alias).toBeDefined();
+    expect(chat2Alias).toBeDefined();
+    expect(chat1Alias).not.toBe(chat2Alias);
+    expect(state.instancesByBridgeId.has("b-chat-1")).toBe(true);
+    expect(state.instancesByBridgeId.has("b-chat-2")).toBe(true);
+    expect(state.snapshotForChatBody("chat-1").map((e) => e.alias)).toEqual([
+      chat1Alias,
+    ]);
+    expect(state.snapshotForChatBody("chat-2").map((e) => e.alias)).toEqual([
+      chat2Alias,
+    ]);
+    expect(state.resolve(chat1Alias!, "chat-1")?.instance.bridgeId).toBe(
+      "b-chat-1",
+    );
+    expect(state.resolve(chat1Alias!, "chat-2")).toBeNull();
   });
 
   // ── SEP-1865 inline ↔ modal coexistence ─────────────────────────────────
@@ -305,14 +341,14 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
     await useAppToolsRegistry.getState().registerInstance(
       makeInstance("b-inline", [readonlyTool("inline_tool")], {
         surface: "inline",
-      })
+      }),
     );
     const inlineAlias = [...useAppToolsRegistry.getState().aliases.keys()][0];
 
     await useAppToolsRegistry.getState().registerInstance(
       makeInstance("b-modal", [readonlyTool("modal_tool")], {
         surface: "modal",
-      })
+      }),
     );
 
     const state = useAppToolsRegistry.getState();
@@ -328,18 +364,54 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
     expect(state.resolve(inlineAlias)).toBeNull();
   });
 
+  it("modal registration with the same raw tool name does not clobber the inline alias", async () => {
+    await useAppToolsRegistry.getState().registerInstance(
+      makeInstance("b-inline", [readonlyTool("move")], {
+        surface: "inline",
+      }),
+    );
+    const inlineAlias = [...useAppToolsRegistry.getState().aliases.keys()][0];
+
+    await useAppToolsRegistry.getState().registerInstance(
+      makeInstance("b-modal", [readonlyTool("move")], {
+        surface: "modal",
+      }),
+    );
+
+    const modalState = useAppToolsRegistry.getState();
+    const modalAlias = [...modalState.aliases.values()].find(
+      (alias) => alias.bridgeId === "b-modal",
+    )?.alias;
+    expect(modalState.aliases.has(inlineAlias)).toBe(true);
+    expect(modalAlias).toBeDefined();
+    expect(modalAlias).not.toBe(inlineAlias);
+    expect(modalState.resolve(inlineAlias)).toBeNull();
+    expect(modalState.resolve(modalAlias!)?.instance.bridgeId).toBe("b-modal");
+
+    useAppToolsRegistry.getState().unregisterInstance("b-modal");
+
+    const restoredState = useAppToolsRegistry.getState();
+    expect(restoredState.aliases.has(inlineAlias)).toBe(true);
+    expect(restoredState.resolve(inlineAlias)?.instance.bridgeId).toBe(
+      "b-inline",
+    );
+    expect(restoredState.snapshotForChatBody().map((e) => e.alias)).toEqual([
+      inlineAlias,
+    ]);
+  });
+
   it("inline → modal → inline: closing the modal restores the inline bridge as active and resolvable", async () => {
     await useAppToolsRegistry.getState().registerInstance(
       makeInstance("b-inline", [readonlyTool("inline_tool")], {
         surface: "inline",
-      })
+      }),
     );
     const inlineAlias = [...useAppToolsRegistry.getState().aliases.keys()][0];
 
     await useAppToolsRegistry.getState().registerInstance(
       makeInstance("b-modal", [readonlyTool("modal_tool")], {
         surface: "modal",
-      })
+      }),
     );
 
     useAppToolsRegistry.getState().unregisterInstance("b-modal");
@@ -358,20 +430,24 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
   });
 
   it("same-surface re-register aborts in-flight controllers from the superseded bridge", async () => {
-    await useAppToolsRegistry.getState().registerInstance(
-      makeInstance("b-1", [readonlyTool("ping")], { surface: "inline" })
-    );
+    await useAppToolsRegistry
+      .getState()
+      .registerInstance(
+        makeInstance("b-1", [readonlyTool("ping")], { surface: "inline" }),
+      );
     const inFlight = new AbortController();
     useAppToolsRegistry.getState().registerPendingCall("b-1", inFlight);
 
     // Same parent + same surface => b-1 is superseded.
-    await useAppToolsRegistry.getState().registerInstance(
-      makeInstance("b-2", [readonlyTool("ping")], { surface: "inline" })
-    );
+    await useAppToolsRegistry
+      .getState()
+      .registerInstance(
+        makeInstance("b-2", [readonlyTool("ping")], { surface: "inline" }),
+      );
 
     expect(inFlight.signal.aborted).toBe(true);
     expect(useAppToolsRegistry.getState().pendingControllers.has("b-1")).toBe(
-      false
+      false,
     );
   });
 
@@ -379,7 +455,7 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
     await useAppToolsRegistry.getState().registerInstance(
       makeInstance("b-inline", [readonlyTool("inline_tool")], {
         surface: "inline",
-      })
+      }),
     );
     const inFlight = new AbortController();
     useAppToolsRegistry.getState().registerPendingCall("b-inline", inFlight);
@@ -387,15 +463,16 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
     await useAppToolsRegistry.getState().registerInstance(
       makeInstance("b-modal", [readonlyTool("modal_tool")], {
         surface: "modal",
-      })
+      }),
     );
 
     // Different surface => inline bridge survives, in-flight call stays live.
     expect(inFlight.signal.aborted).toBe(false);
     expect(
-      useAppToolsRegistry.getState().pendingControllers.get("b-inline")?.has(
-        inFlight
-      )
+      useAppToolsRegistry
+        .getState()
+        .pendingControllers.get("b-inline")
+        ?.has(inFlight),
     ).toBe(true);
   });
 });

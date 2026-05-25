@@ -507,6 +507,7 @@ export function MultiModelChatCard({
               <div className="relative flex min-h-64 flex-1 flex-col overflow-hidden p-3">
                 <StickToBottom.Content className="flex min-h-0 flex-1 flex-col overflow-y-auto">
                   <TraceViewer
+                    chatSessionId={chatSessionId}
                     trace={traceViewerTrace}
                     model={model}
                     toolsMetadata={toolsMetadata}
@@ -534,6 +535,7 @@ export function MultiModelChatCard({
             <div className="flex flex-1 min-h-0 flex-col">
               <div className="flex min-h-64 flex-1 flex-col overflow-hidden p-3">
                 <TraceViewer
+                  chatSessionId={chatSessionId}
                   trace={traceViewerTrace}
                   model={model}
                   toolsMetadata={toolsMetadata}
@@ -569,6 +571,7 @@ export function MultiModelChatCard({
                   />
                 ) : (
                   <TraceViewer
+                    chatSessionId={chatSessionId}
                     trace={traceViewerTrace}
                     model={model}
                     toolsMetadata={toolsMetadata}
@@ -604,6 +607,7 @@ export function MultiModelChatCard({
             <div className="relative flex-1 min-h-0">
               <StickToBottom.Content className="flex flex-col min-h-0">
                 <Thread
+                  chatSessionId={chatSessionId}
                   messages={messages}
                   sendFollowUpMessage={handleSendFollowUp}
                   model={model}
