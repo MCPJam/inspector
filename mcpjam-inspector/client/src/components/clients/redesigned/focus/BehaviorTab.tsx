@@ -104,6 +104,23 @@ export function BehaviorTab({
             />
           }
         />
+
+        <FieldRow
+          label="Progressive tools"
+          // Persisted as undefined / true / false on HostConfigV2.
+          // Treat undefined as off in the UI; flipping on writes `true`,
+          // flipping back writes `false` so the explicit opt-out hashes
+          // distinctly from the never-set state (backend dedupe honesty).
+          control={
+            <Switch
+              checked={draft.progressiveToolDiscovery === true}
+              onCheckedChange={(checked) =>
+                update({ progressiveToolDiscovery: checked })
+              }
+              aria-label="Enable progressive MCP tool discovery"
+            />
+          }
+        />
       </FocusBlock>
 
       <FocusBlock title="System prompt">
