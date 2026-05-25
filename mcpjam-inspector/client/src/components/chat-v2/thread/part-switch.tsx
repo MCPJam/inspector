@@ -339,6 +339,7 @@ export function PartSwitch({
         <>
           <ToolPart
             part={toolPart}
+            chatSessionId={chatSessionId}
             uiType={uiType}
             displayMode={interactive ? displayMode : undefined}
             pipWidgetId={pipWidgetId}
@@ -403,6 +404,7 @@ export function PartSwitch({
     return (
       <ToolPart
         part={toolPart}
+        chatSessionId={chatSessionId}
         uiType={uiType}
         onSaveView={allowSaveView ? handleSaveView : undefined}
         canSaveView={allowSaveView ? canSaveView : undefined}

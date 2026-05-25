@@ -18,7 +18,9 @@
  * server-tool approval flow onto app-provided tools.
  */
 
+import { useCallback } from "react";
 import { create } from "zustand";
+import { useShallow } from "zustand/react/shallow";
 import type { AppBridge } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { CallToolResult } from "@modelcontextprotocol/client";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
@@ -78,6 +80,11 @@ const MAX_SNAPSHOT_ENTRIES = 64;
 const MAX_DESCRIPTION_CHARS = 512;
 const MAX_INPUT_SCHEMA_BYTES = 8 * 1024;
 const ALIAS_REGEX = /^app_[a-z0-9]{8}$/i;
+
+export interface AppToolAttribution {
+  rawName: string;
+  appName: string;
+}
 
 interface AppToolsRegistryState {
   instancesByBridgeId: Map<BridgeId, AppInstance>;
@@ -621,6 +628,51 @@ export function recordAppToolInvocation(
     // Defensive: the traffic-log store is best-effort observability;
     // never let a logger failure bubble into the dispatch path.
   }
+}
+
+export function useAppToolAttributionResolver(chatSessionId?: string) {
+  const registrySnapshot = useAppToolsRegistry(
+    useShallow((s) => ({
+      activeBridgeByParent: s.activeBridgeByParent,
+      aliases: s.aliases,
+      instancesByBridgeId: s.instancesByBridgeId,
+    })),
+  );
+  const resolve = useAppToolsRegistry((s) => s.resolve);
+  const invocationRecords = useAppToolInvocationLog((s) => s.records);
+
+  return useCallback(
+    (label: string): AppToolAttribution | null => {
+      if (!ALIAS_REGEX.test(label)) return null;
+
+      const resolved = resolve(label, chatSessionId);
+      if (resolved) {
+        return {
+          rawName: resolved.rawName,
+          appName: resolved.instance.appName,
+        };
+      }
+
+      for (let i = invocationRecords.length - 1; i >= 0; i -= 1) {
+        const record = invocationRecords[i];
+        if (record.alias === label) {
+          return { rawName: record.rawName, appName: record.appName };
+        }
+      }
+
+      return null;
+    },
+    [chatSessionId, invocationRecords, registrySnapshot, resolve],
+  );
+}
+
+export function useAppToolAttribution(
+  label: string,
+  chatSessionId?: string,
+): AppToolAttribution | null {
+  const resolveAppToolAttribution =
+    useAppToolAttributionResolver(chatSessionId);
+  return resolveAppToolAttribution(label);
 }
 
 // Exports for tests.

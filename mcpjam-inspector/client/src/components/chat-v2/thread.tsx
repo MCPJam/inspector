@@ -296,6 +296,7 @@ export function Thread({
 
         {showFullscreenChatOverlay && (
           <FullscreenChatOverlay
+            chatSessionId={chatSessionId}
             messages={messages}
             modelProvider={model.provider}
             open={isFullscreenChatOpen}

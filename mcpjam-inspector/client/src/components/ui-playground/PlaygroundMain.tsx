@@ -2971,6 +2971,7 @@ export function PlaygroundMain({
       {/* Fullscreen overlay chat (input pinned + collapsible thread) */}
       {showFullscreenChatOverlay && (
         <FullscreenChatOverlay
+          chatSessionId={chatSessionId}
           messages={messages}
           open={isFullscreenChatOpen}
           onOpenChange={setIsFullscreenChatOpen}
