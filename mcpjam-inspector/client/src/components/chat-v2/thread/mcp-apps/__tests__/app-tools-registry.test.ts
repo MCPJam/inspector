@@ -219,4 +219,80 @@ describe("useAppToolsRegistry (SEP-1865)", () => {
     expect(state.instancesByBridgeId.has("b-1")).toBe(false);
     expect(state.activeBridgeByParent.get("call-1")).toBe("b-2");
   });
+
+  // ── SEP-1865 in-flight teardown cancellation ────────────────────────────
+  it("unregisterInstance aborts pending controllers only for the matching bridgeId", async () => {
+    await useAppToolsRegistry
+      .getState()
+      .registerInstance(makeInstance("b-1", [readonlyTool("ping")]));
+    await useAppToolsRegistry.getState().registerInstance(
+      makeInstance("b-2", [readonlyTool("ping")], {
+        parentToolCallId: "call-2",
+      })
+    );
+    const c1 = new AbortController();
+    const c2 = new AbortController();
+    useAppToolsRegistry.getState().registerPendingCall("b-1", c1);
+    useAppToolsRegistry.getState().registerPendingCall("b-2", c2);
+    useAppToolsRegistry.getState().unregisterInstance("b-1");
+    expect(c1.signal.aborted).toBe(true);
+    expect(c2.signal.aborted).toBe(false);
+    // The aborted bridge's pending set is cleared; the survivor stays.
+    const state = useAppToolsRegistry.getState();
+    expect(state.pendingControllers.has("b-1")).toBe(false);
+    expect(state.pendingControllers.get("b-2")?.has(c2)).toBe(true);
+  });
+
+  it("pendingControllers selector reflects register/unregister of in-flight calls", async () => {
+    await useAppToolsRegistry
+      .getState()
+      .registerInstance(makeInstance("b-1", [readonlyTool("ping")]));
+    const c1 = new AbortController();
+    const c2 = new AbortController();
+    useAppToolsRegistry.getState().registerPendingCall("b-1", c1);
+    useAppToolsRegistry.getState().registerPendingCall("b-1", c2);
+    expect(
+      useAppToolsRegistry.getState().pendingControllers.get("b-1")?.size
+    ).toBe(2);
+    useAppToolsRegistry.getState().unregisterPendingCall("b-1", c1);
+    expect(
+      useAppToolsRegistry.getState().pendingControllers.get("b-1")?.size
+    ).toBe(1);
+    useAppToolsRegistry.getState().unregisterPendingCall("b-1", c2);
+    expect(
+      useAppToolsRegistry.getState().pendingControllers.has("b-1")
+    ).toBe(false);
+  });
+
+  // ── SEP-1865 multi-instance disambiguation ──────────────────────────────
+  it("snapshotForChatBody decorates colliding (appName, rawName) entries with instance hints", async () => {
+    await useAppToolsRegistry.getState().registerInstance(
+      makeInstance("b-1", [readonlyTool("move", { description: "Move" })], {
+        parentToolCallId: "call-A",
+        appName: "TicTacToe",
+      })
+    );
+    await useAppToolsRegistry.getState().registerInstance(
+      makeInstance("b-2", [readonlyTool("move", { description: "Move" })], {
+        parentToolCallId: "call-B",
+        appName: "TicTacToe",
+      })
+    );
+    const snap = useAppToolsRegistry.getState().snapshotForChatBody();
+    expect(snap.map((e) => e.description).sort()).toEqual([
+      "Move (from tool call call-A; instance 1 of 2)",
+      "Move (from tool call call-B; instance 2 of 2)",
+    ]);
+  });
+
+  it("snapshotForChatBody leaves singleton (appName, rawName) groups untouched", async () => {
+    await useAppToolsRegistry.getState().registerInstance(
+      makeInstance("b-1", [readonlyTool("solo", { description: "Solo" })], {
+        appName: "OnlyOne",
+      })
+    );
+    const snap = useAppToolsRegistry.getState().snapshotForChatBody();
+    expect(snap).toHaveLength(1);
+    expect(snap[0].description).toBe("Solo");
+  });
 });

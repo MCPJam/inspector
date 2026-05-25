@@ -24,7 +24,7 @@ import {
   useUIPlaygroundStore,
   type CspMode,
 } from "@/stores/ui-playground-store";
-import { X } from "lucide-react";
+import { Loader2, X } from "lucide-react";
 import {
   SandboxedIframe,
   SandboxedIframeHandle,
@@ -999,6 +999,17 @@ export function MCPAppsRenderer({
   const appToolsListRefreshPendingBridgeIdsRef = useRef<Set<string>>(
     new Set()
   );
+  // Reactive mirror of `appToolsBridgeIdRef` so the in-flight busy
+  // indicator can subscribe to `useAppToolsRegistry.pendingControllers`
+  // by bridge id. Refs alone don't trigger re-renders.
+  const [appToolsBridgeIdState, setAppToolsBridgeIdState] = useState<
+    string | null
+  >(null);
+  const pendingAppToolCalls = useAppToolsRegistry((s) =>
+    appToolsBridgeIdState
+      ? (s.pendingControllers.get(appToolsBridgeIdState)?.size ?? 0)
+      : 0
+  );
 
   // Reset widget-identity-scoped state when the renderer is reused for a
   // different tool call / resource / widget bundle. Without this the next
@@ -1544,6 +1555,13 @@ export function MCPAppsRenderer({
             bridge,
             tools,
             registeredAtMs: Date.now(),
+            // Stable closure: `sandboxRef.current` is React-managed and
+            // tracks the live SandboxedIframe across re-renders. Capturing
+            // the ref object (not `.current` at registration time) means
+            // an iframe-into-view scroll from `onToolCall` always targets
+            // the currently-mounted node, even if React swapped it.
+            getIframeElement: () =>
+              sandboxRef.current?.getIframeElement() ?? null,
           });
           if (appToolsBridgeIdRef.current !== bridgeId) {
             useAppToolsRegistry.getState().unregisterInstance(bridgeId);
@@ -2485,6 +2503,7 @@ export function MCPAppsRenderer({
         if (appCaps?.tools) {
           const bridgeId = appToolsBridgeIdRef.current ?? crypto.randomUUID();
           appToolsBridgeIdRef.current = bridgeId;
+          setAppToolsBridgeIdState(bridgeId);
           void refreshAppProvidedTools(bridge, bridgeId);
         }
       };
@@ -3062,6 +3081,7 @@ export function MCPAppsRenderer({
           appToolsBridgeIdRef.current
         );
         appToolsBridgeIdRef.current = null;
+        setAppToolsBridgeIdState(null);
       }
       if (isReadyRef.current) {
         bridge.teardownResource({}).catch(() => {});
@@ -3556,6 +3576,22 @@ export function MCPAppsRenderer({
       >
         {iframe}
       </div>
+      {/* SEP-1865 App-Provided Tools: per-iframe busy indicator. Surfaces
+       * when the host is dispatching `tools/call` into this iframe (the
+       * count comes from `useAppToolsRegistry.pendingControllers`). Sits
+       * in the top-right of the inline container; suppressed in
+       * fullscreen because the fullscreen header already names the tool
+       * and would crowd this overlay. */}
+      {pendingAppToolCalls > 0 && !isFullscreen && (
+        <div
+          className="pointer-events-none absolute right-2 top-2 z-20 flex h-6 w-6 items-center justify-center rounded-md bg-background/80 border border-border/50 text-muted-foreground shadow-sm"
+          aria-label="App tool call in progress"
+          title="App tool call in progress"
+          data-testid="mcp-app-busy-indicator"
+        >
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+        </div>
+      )}
 
       <McpAppsModal
         open={modalOpen}

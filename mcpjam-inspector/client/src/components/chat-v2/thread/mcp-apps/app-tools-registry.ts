@@ -21,6 +21,7 @@
 import { create } from "zustand";
 import type { AppBridge } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { CallToolResult } from "@modelcontextprotocol/client";
+import { useTrafficLogStore } from "@/stores/traffic-log-store";
 
 /** Per-AppBridge instance identifier (independent of parentToolCallId). */
 export type BridgeId = string;
@@ -40,6 +41,13 @@ export interface AppInstance {
   bridge: AppBridge;
   tools: AppToolDescriptor[];
   registeredAtMs: number;
+  /**
+   * Accessor for the iframe DOM node that hosts this app instance. Lets
+   * callers (e.g. `onToolCall`) scroll the iframe into view before
+   * dispatching `tools/call`. Optional because legacy callers and tests
+   * may not set it.
+   */
+  getIframeElement?: () => HTMLIFrameElement | null;
 }
 
 export interface AppToolAlias {
@@ -74,11 +82,27 @@ interface AppToolsRegistryState {
   aliases: Map<string, AppToolAlias>;
   /** Active app-tool provider per host tool call. */
   activeBridgeByParent: Map<string, BridgeId>;
+  /**
+   * AbortControllers for in-flight `bridge.callTool(...)` dispatches, keyed
+   * by the dispatching bridge's id. `unregisterInstance` aborts every
+   * controller in the matching set so a torn-down iframe never leaves a
+   * paused server stream waiting forever. Each set is also the source of
+   * truth for the per-iframe busy indicator.
+   */
+  pendingControllers: Map<BridgeId, Set<AbortController>>;
 
   registerInstance: (inst: AppInstance) => Promise<void>;
   unregisterInstance: (bridgeId: BridgeId) => void;
   pushActive: (parentToolCallId: string, bridgeId: BridgeId) => void;
   popActive: (parentToolCallId: string, bridgeId: BridgeId) => void;
+
+  /** Adds `controller` to the bridge's pending set and bumps the busy count. */
+  registerPendingCall: (bridgeId: BridgeId, controller: AbortController) => void;
+  /** Removes `controller` from the bridge's pending set (no-op if absent). */
+  unregisterPendingCall: (
+    bridgeId: BridgeId,
+    controller: AbortController
+  ) => void;
 
   snapshotForChatBody: () => AppToolSnapshotEntry[];
   resolve: (alias: string) => {
@@ -129,6 +153,7 @@ export const useAppToolsRegistry = create<AppToolsRegistryState>(
     instancesByBridgeId: new Map(),
     aliases: new Map(),
     activeBridgeByParent: new Map(),
+    pendingControllers: new Map(),
 
     // Returns a Promise so callers (and tests) can await the alias-hash
     // round-trip. The renderer uses `void registerInstance(...)` because
@@ -202,6 +227,22 @@ export const useAppToolsRegistry = create<AppToolsRegistryState>(
     },
 
     unregisterInstance: (bridgeId) => {
+      // Abort any in-flight `bridge.callTool` dispatches against this bridge
+      // BEFORE we drop the instance entry. The catch branch in
+      // `useChat.onToolCall` picks up the abort and resolves the tool call
+      // with `isError: true`, which is what lets the paused server stream
+      // continue. Skipping this leaves the chat hanging when an iframe is
+      // torn down mid-dispatch.
+      const pending = get().pendingControllers.get(bridgeId);
+      if (pending) {
+        for (const controller of pending) {
+          try {
+            controller.abort();
+          } catch {
+            // Ignore — abort() should never throw, but defensively continue.
+          }
+        }
+      }
       set((s) => {
         const inst = s.instancesByBridgeId.get(bridgeId);
         if (!inst) return {};
@@ -215,7 +256,40 @@ export const useAppToolsRegistry = create<AppToolsRegistryState>(
         if (activeBridgeByParent.get(inst.parentToolCallId) === bridgeId) {
           activeBridgeByParent.delete(inst.parentToolCallId);
         }
-        return { instancesByBridgeId, aliases, activeBridgeByParent };
+        const pendingControllers = new Map(s.pendingControllers);
+        pendingControllers.delete(bridgeId);
+        return {
+          instancesByBridgeId,
+          aliases,
+          activeBridgeByParent,
+          pendingControllers,
+        };
+      });
+    },
+
+    registerPendingCall: (bridgeId, controller) => {
+      set((s) => {
+        const pendingControllers = new Map(s.pendingControllers);
+        const next = new Set(pendingControllers.get(bridgeId));
+        next.add(controller);
+        pendingControllers.set(bridgeId, next);
+        return { pendingControllers };
+      });
+    },
+
+    unregisterPendingCall: (bridgeId, controller) => {
+      set((s) => {
+        const existing = s.pendingControllers.get(bridgeId);
+        if (!existing || !existing.has(controller)) return {};
+        const pendingControllers = new Map(s.pendingControllers);
+        if (existing.size === 1) {
+          pendingControllers.delete(bridgeId);
+        } else {
+          const next = new Set(existing);
+          next.delete(controller);
+          pendingControllers.set(bridgeId, next);
+        }
+        return { pendingControllers };
       });
     },
 
@@ -298,6 +372,32 @@ export const useAppToolsRegistry = create<AppToolsRegistryState>(
           `[app-tools] snapshot capped at ${MAX_SNAPSHOT_ENTRIES} entries; dropped ${dropped}.`
         );
       }
+      // Multi-instance disambiguation: when the same app is mounted more
+      // than once concurrently (e.g. two tic-tac-toe boards from two
+      // separate `tools/call` results), `tools/list` returns identical
+      // `rawName`s and the model sees N tools with the same description.
+      // Wire-level routing is already correct (aliases differ per
+      // parentToolCallId), but the model can't tell which instance to
+      // pick. Append `(from tool call <id>; instance N of M)` to the
+      // description for any group with size > 1 so the model can
+      // distinguish them via the visible tool-call history in the
+      // transcript. Singletons stay untouched.
+      const groupCounts = new Map<string, number>();
+      for (const entry of out) {
+        const key = `${entry.appName}\0${entry.rawName}`;
+        groupCounts.set(key, (groupCounts.get(key) ?? 0) + 1);
+      }
+      const groupIndex = new Map<string, number>();
+      for (const entry of out) {
+        const key = `${entry.appName}\0${entry.rawName}`;
+        const total = groupCounts.get(key) ?? 1;
+        if (total <= 1) continue;
+        const n = (groupIndex.get(key) ?? 0) + 1;
+        groupIndex.set(key, n);
+        const hint = ` (from tool call ${entry.parentToolCallId}; instance ${n} of ${total})`;
+        const base = entry.description ?? "";
+        entry.description = (base + hint).slice(0, MAX_DESCRIPTION_CHARS);
+      }
       return out;
     },
 
@@ -330,6 +430,7 @@ export interface AppToolInvocationRecord {
   alias: string;
   rawName: string;
   appName: string;
+  serverId: string;
   parentToolCallId: string;
   bridgeId: BridgeId;
   input: unknown;
@@ -367,6 +468,36 @@ export function recordAppToolInvocation(
     ...args,
     invokedAtMs: Date.now(),
   });
+  // Mirror the invocation into the shared traffic-log store so it
+  // surfaces in `LoggerView` alongside the rest of the iframe ↔ host
+  // traffic. `direction: "host-to-ui"` because the host dispatched the
+  // call into the iframe via `bridge.callTool`. `widgetId` matches the
+  // parent host tool call so existing logger filters scope correctly.
+  // Only the model-safe scrubbed payload is shipped here — the full
+  // `CallToolResult` (including `structuredContent` and `_meta`) lives
+  // in `useAppToolInvocationLog` for richer debug UIs.
+  try {
+    useTrafficLogStore.getState().addLog({
+      widgetId: args.parentToolCallId,
+      serverId: args.serverId,
+      direction: "host-to-ui",
+      protocol: "mcp-apps",
+      method: "tools/call",
+      message: {
+        alias: args.alias,
+        toolName: args.rawName,
+        appName: args.appName,
+        arguments: args.input,
+        result: {
+          content: args.raw.content,
+          ...(args.raw.isError ? { isError: true } : {}),
+        },
+      },
+    });
+  } catch {
+    // Defensive: the traffic-log store is best-effort observability;
+    // never let a logger failure bubble into the dispatch path.
+  }
 }
 
 // Exports for tests.

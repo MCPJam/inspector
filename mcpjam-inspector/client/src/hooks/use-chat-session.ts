@@ -1644,19 +1644,67 @@ export function useChatSession(
         toolCallId: string;
         input: unknown;
       };
+      // Scroll the target iframe into view BEFORE dispatching so the user
+      // can see the visual mutation the app makes in response. Skip when
+      // the tab is backgrounded (scrollIntoView is wasted) or when the
+      // iframe is already comfortably in viewport (avoid jitter on every
+      // tool call in an already-focused chat). Best-effort: any failure
+      // here must not block dispatch.
       try {
-        const raw = await entry.bridge.callTool({
+        if (!document.hidden) {
+          const iframe = entry.instance.getIframeElement?.();
+          if (iframe) {
+            const rect = iframe.getBoundingClientRect();
+            const viewportHeight =
+              window.innerHeight || document.documentElement.clientHeight;
+            const fullyInView =
+              rect.top >= 0 &&
+              rect.bottom <= viewportHeight &&
+              rect.height > 0;
+            if (!fullyInView) {
+              iframe.scrollIntoView({ behavior: "smooth", block: "nearest" });
+            }
+          }
+        }
+      } catch {
+        // Non-fatal; proceed to dispatch.
+      }
+      // SEP-1865 in-flight teardown cancellation: register an
+      // AbortController against this bridge's pending set BEFORE awaiting
+      // `bridge.callTool`. If the iframe is torn down mid-await,
+      // `unregisterInstance` aborts the controller and the race rejects,
+      // letting the catch branch resolve the tool call with `isError`.
+      // Without this, a server stream paused on this tool call would hang
+      // forever waiting for a client-fulfilled result.
+      const controller = new AbortController();
+      const registry = useAppToolsRegistry.getState();
+      registry.registerPendingCall(entry.instance.bridgeId, controller);
+      try {
+        const call = entry.bridge.callTool({
           name: entry.rawName,
           arguments:
             tc.input && typeof tc.input === "object"
               ? (tc.input as Record<string, unknown>)
               : {},
         });
+        const raw = await new Promise<
+          Awaited<ReturnType<typeof entry.bridge.callTool>>
+        >((resolve, reject) => {
+          const onAbort = () =>
+            reject(new Error("App iframe was torn down mid-dispatch"));
+          if (controller.signal.aborted) {
+            onAbort();
+            return;
+          }
+          controller.signal.addEventListener("abort", onAbort, { once: true });
+          call.then(resolve, reject);
+        });
         const sanitized = scrubAppToolResultForModel(raw);
         recordAppToolInvocation({
           alias: tc.toolName,
           rawName: entry.rawName,
           appName: entry.instance.appName,
+          serverId: entry.instance.serverId,
           parentToolCallId: entry.instance.parentToolCallId,
           bridgeId: entry.instance.bridgeId,
           input: tc.input,
@@ -1683,6 +1731,8 @@ export function useChatSession(
             isError: true,
           },
         } as Parameters<typeof addToolOutput>[0]);
+      } finally {
+        registry.unregisterPendingCall(entry.instance.bridgeId, controller);
       }
     },
     // Combine the approval predicate (existing) with the no-execute
