@@ -52,18 +52,6 @@ import {
 function isMetaToolName(name: string): boolean {
   return META_TOOL_NAMES.includes(name);
 }
-
-/**
- * Opt-in server-side debug logger for the MCP Apps enrichment path. Enable
- * with `MCPJAM_DEBUG_MCP_APPS=1` in the process env. Mirrors the client-side
- * `debugMcpApps` flag — together they bisect "MCP Apps stopped rendering"
- * reports across the server enrichment and the client render gate.
- */
-function debugMcpAppsServer(label: string, data: Record<string, unknown>): void {
-  if (process.env.MCPJAM_DEBUG_MCP_APPS !== "1") return;
-  // eslint-disable-next-line no-console -- intentional opt-in instrumentation
-  console.log(`[mcp-apps-debug] ${label}`, data);
-}
 import { logger } from "./logger";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import {
@@ -874,24 +862,6 @@ function emitToolResults(
                 ...(serverId ? { _serverId: serverId } : {}),
               },
             };
-            debugMcpAppsServer("emitToolResults enrichment", {
-              toolName,
-              serverId,
-              hasServerId: !!serverId,
-              hasToolName: !!toolName,
-              toolMetaKeys: Object.keys(toolMeta),
-              existingMetaKeys: Object.keys(existingMeta),
-              toolMetaHasUi: Object.prototype.hasOwnProperty.call(toolMeta, "ui"),
-              rawOutputKeys: Object.keys(rawOutputObj),
-            });
-          } else {
-            debugMcpAppsServer("emitToolResults enrichment SKIPPED", {
-              toolName,
-              serverId,
-              reason: rawOutput === undefined || rawOutput === null
-                ? "rawOutput is null/undefined"
-                : `typeof rawOutput is ${typeof rawOutput}`,
-            });
           }
 
           writer.write({

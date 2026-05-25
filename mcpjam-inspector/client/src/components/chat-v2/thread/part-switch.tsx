@@ -48,7 +48,6 @@ import {
   readToolResultMeta,
   readToolResultServerId,
 } from "@/lib/tool-result-utils";
-import { debugMcpApps } from "@/lib/debug-mcp-apps";
 
 export function PartSwitch({
   part,
@@ -321,38 +320,11 @@ export function PartSwitch({
     // this gate today. A future explicit "window.openai" flag on
     // HostConfigInputV2 will be OR-ed here to cover Apps-SDK hosts that
     // choose to strip the MCP UI extension.
-    const hostCapsForLog = resolveHostCaps(serverId ?? undefined);
     const shouldRenderWidget =
-      hostSupportsWidgetRendering(hostCapsForLog) &&
+      hostSupportsWidgetRendering(resolveHostCaps(serverId ?? undefined)) &&
       (uiType === UIType.OPENAI_SDK ||
         uiType === UIType.MCP_APPS ||
         uiType === UIType.OPENAI_SDK_AND_MCP_APPS);
-
-    // Opt-in render-gate trace — flip on with
-    // `localStorage.setItem("mcpjam:debug-mcp-apps", "1")` to bisect
-    // "MCP Apps stopped rendering" reports. No-op when the flag is off.
-    debugMcpApps("part-switch render gate", {
-      toolName: toolInfo.toolName,
-      toolCallId: toolInfo.toolCallId,
-      serverId,
-      hasRenderOverride: !!renderOverride,
-      hasPartToolMeta: !!partToolMeta,
-      partToolMetaHasUi: !!(partToolMeta as Record<string, unknown> | undefined)
-        ?.["ui"],
-      hasStreamedToolMeta: !!streamedToolMeta,
-      streamedToolMetaHasUi: !!(streamedToolMeta as
-        | Record<string, unknown>
-        | undefined)?.["ui"],
-      uiType,
-      uiResourceUri,
-      hostSupportsWidgets: hostSupportsWidgetRendering(hostCapsForLog),
-      hostCapsHasUiExtension: !!(
-        (hostCapsForLog as Record<string, unknown> | undefined)?.[
-          "extensions"
-        ] as Record<string, unknown> | undefined
-      )?.["io.modelcontextprotocol/ui"],
-      shouldRenderWidget,
-    });
 
     if (shouldRenderWidget) {
       return (

@@ -24,6 +24,7 @@ jobs:
       RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
       RAILWAY_INSPECTOR_SERVICE: ${{ vars.RAILWAY_INSPECTOR_SERVICE }}
       RAILWAY_STAGING_ENVIRONMENT: ${{ vars.RAILWAY_STAGING_ENVIRONMENT }}
+      STAGING_APP_URL: ${{ vars.STAGING_APP_URL || 'https://staging.mcpjam.com' }}
     steps:
       - name: Enforce main branch
         run: |
@@ -48,6 +49,30 @@ jobs:
 
       - name: Install Railway CLI
         run: npm install -g @railway/cli@4.57.1
+
+      # Lock in the cross-origin allowlists that the staging sandbox needs.
+      # `sandbox-staging.mcpjam.com` is served by this same Railway service
+      # via a host subdomain; its frame-ancestors CSP is built from
+      # `WEB_ALLOWED_ORIGINS` (see `buildFrameAncestors()` in
+      # `server/routes/web/apps.ts`). Without the `mcp-inspector-pr-*`
+      # wildcard, PR previews hosted on Railway can't iframe the staging
+      # sandbox proxy and MCP Apps render blank inside the preview.
+      #
+      # `*` literal in `WEB_ALLOWED_ORIGINS` is safe for CORS — Hono's CORS
+      # middleware does a literal `Array.includes(origin)` against the
+      # request Origin header, so a wildcard entry never matches a real
+      # origin and CORS stays unchanged. The wildcard reaches the
+      # browser-parsed frame-ancestors directive, which DOES support `*`.
+      # `ALLOWED_ORIGINS` (origin-validation middleware) supports the
+      # wildcard via `matchesAllowedOrigin`, gated on
+      # `MCPJAM_NONPROD_LOCKDOWN=true` — staging satisfies that.
+      - name: Refresh staging origin allowlists
+        run: |
+          .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
+            -e "$RAILWAY_STAGING_ENVIRONMENT" \
+            -s "$RAILWAY_INSPECTOR_SERVICE" \
+            ALLOWED_ORIGINS="$STAGING_APP_URL,https://mcp-inspector-pr-*.up.railway.app" \
+            WEB_ALLOWED_ORIGINS="$STAGING_APP_URL,https://mcp-inspector-pr-*.up.railway.app"
 
       # Capture the most recent deployment id before we trigger a new one so
       # the wait step below can detect when *our* deploy appears (instead of

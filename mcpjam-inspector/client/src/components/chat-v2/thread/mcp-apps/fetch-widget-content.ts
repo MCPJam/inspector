@@ -1,7 +1,6 @@
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
 import { buildServerRequest } from "@/lib/apis/web/context";
-import { debugMcpApps } from "@/lib/debug-mcp-apps";
 import type { CspMode } from "@/stores/ui-playground-store";
 import type { ResolvedOpenAiAppsCapabilities } from "@/lib/client-styles";
 import type {
@@ -118,15 +117,6 @@ export async function fetchMcpAppsWidgetContent(
       message?: string;
       error?: string;
     };
-    debugMcpApps("widget-content fetch FAILED", {
-      endpoint,
-      serverId: request.serverId,
-      resourceUri: request.resourceUri,
-      toolName: request.toolName,
-      status: response.status,
-      statusText: response.statusText,
-      errorMessage: errorData.message ?? errorData.error,
-    });
     throw new Error(
       errorData.message ||
         errorData.error ||
@@ -134,19 +124,5 @@ export async function fetchMcpAppsWidgetContent(
     );
   }
 
-  const responseBody =
-    (await response.json()) as FetchMcpAppsWidgetContentResponse;
-  debugMcpApps("widget-content fetch OK", {
-    endpoint,
-    serverId: request.serverId,
-    resourceUri: request.resourceUri,
-    toolName: request.toolName,
-    status: response.status,
-    htmlLength: responseBody.html?.length ?? 0,
-    htmlPreview: responseBody.html?.slice(0, 200),
-    mimeTypeValid: responseBody.mimeTypeValid,
-    mimeTypeWarning: responseBody.mimeTypeWarning,
-    injectedOpenAiCompat: responseBody.injectedOpenAiCompat,
-  });
-  return responseBody;
+  return (await response.json()) as FetchMcpAppsWidgetContentResponse;
 }
