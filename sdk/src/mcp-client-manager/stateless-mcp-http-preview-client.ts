@@ -454,46 +454,20 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
     params: { name: string; arguments?: Record<string, unknown> },
     options?: RequestOptions,
   ): Promise<CallToolResult> {
-    // Lazy header-map refresh. The wire-spec consequence is that the
-    // FIRST callTool after construction (or after TTL expiry) implicitly
-    // triggers a tools/list — without that, we'd miss Mcp-Param-*
-    // headers the server requires.
-    if (!this.toolHeaderMap.isFresh()) {
-      // Single-page only during header discovery — see
-      // `PaginatedToolHeaderDiscoveryUnsupported`.
-      const discovery = await this.send<ListToolsResult>(
-        "tools/list",
-        undefined,
-        options ?? {},
-      );
-      assertNotPaginated(discovery as { nextCursor?: string | null });
-      const parsed = parseToolsForHeaderMap(
-        (discovery.tools as ParsedTool[]) ?? [],
-      );
-      for (const w of parsed.warnings) this.warn(w);
-      for (const toolName of (discovery.tools as { name: string }[]) ?? []) {
-        if (!parsed.entries.has(toolName.name)) {
-          this.toolHeaderMap.recordExcluded(toolName.name);
-        }
-      }
-      this.toolHeaderMap.update(parsed.entries, extractTtlMs(discovery));
-    }
-
-    const { headers, bodyArguments } = this.toolHeaderMap.deriveHeaders(
-      params.name,
-      params.arguments,
-    );
-
+    // Header derivation (Mcp-Name + Mcp-Param-* + tool-header-map lazy
+    // refresh) lives in `send()` so the typed callTool AND the generic
+    // `request({method: "tools/call"})` path both emit spec-required
+    // headers. Task-augmented tool calls reach the preview client via
+    // `client.request(...)` (`MCPClientManager.ts:731`), not `callTool`;
+    // keeping derivation here-only would silently drop Mcp-Name from
+    // every task-flow call and earn `-32001 HeaderMismatch` from
+    // spec-compliant servers.
     return await this.send<CallToolResult>(
       "tools/call",
-      bodyArguments !== undefined
-        ? { name: params.name, arguments: bodyArguments }
+      params.arguments !== undefined
+        ? { name: params.name, arguments: params.arguments }
         : { name: params.name },
-      {
-        ...(options ?? {}),
-        extraHeaders: headers,
-        nameHeader: params.name,
-      },
+      options ?? {},
     );
   }
 
@@ -654,7 +628,31 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
         : {}),
     };
 
-    const headers = await this.buildHeaders(method, opts);
+    // Derive Mcp-Name and Mcp-Param-* from the body when the caller
+    // didn't supply them via opts. This is the load-bearing piece that
+    // makes the generic `request()` entry path spec-compliant — without
+    // it, only the typed `callTool` / `readResource` / `getPrompt`
+    // methods that explicitly set `opts.nameHeader` would emit Mcp-Name.
+    const derivedNameHeader = this.resolveNameHeaderFromBody(
+      method,
+      params,
+      opts.nameHeader,
+    );
+    const derivedExtraHeaders = await this.resolveExtraHeadersForToolsCall(
+      method,
+      params,
+      opts,
+    );
+    const effectiveOpts: SendOptions & RequestOptions = {
+      ...opts,
+      ...(derivedNameHeader !== undefined
+        ? { nameHeader: derivedNameHeader }
+        : {}),
+      ...(derivedExtraHeaders !== undefined
+        ? { extraHeaders: derivedExtraHeaders }
+        : {}),
+    };
+    const headers = await this.buildHeaders(method, effectiveOpts);
     const abortController = new AbortController();
     this.inFlightAborts.add(abortController);
     const callerSignal = (opts as RequestOptions).signal;
@@ -905,6 +903,73 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
     const token = overrideAccessToken ?? (await this.getAccessToken?.());
     if (token) out["Authorization"] = `Bearer ${token}`;
     return out;
+  }
+
+  /**
+   * Derive the `Mcp-Name` header value from a request body when the
+   * caller didn't explicitly supply one via `opts.nameHeader`. SEP-2243
+   * requires `Mcp-Name` for `tools/call`, `prompts/get`, and
+   * `resources/read` — sourcing it from `params.name` / `params.uri`
+   * here means the generic `request()` path (used by task-augmented
+   * tool calls from `MCPClientManager`) emits the header without each
+   * caller needing to thread `nameHeader` through opts.
+   */
+  private resolveNameHeaderFromBody(
+    method: string,
+    params: Record<string, unknown> | undefined,
+    fromOpts: string | undefined,
+  ): string | undefined {
+    if (fromOpts !== undefined) return fromOpts;
+    if (!METHODS_REQUIRING_NAME_HEADER.has(method)) return undefined;
+    if (!params) return undefined;
+    if (method === "resources/read") {
+      return typeof params.uri === "string" ? params.uri : undefined;
+    }
+    return typeof params.name === "string" ? params.name : undefined;
+  }
+
+  /**
+   * Derive `Mcp-Param-*` headers for `tools/call` from the body when
+   * the caller didn't supply `opts.extraHeaders`. Lazy-refreshes the
+   * tool header map (one `tools/list` round trip if stale) so a
+   * fresh client can dispatch `tools/call` immediately without the
+   * caller running `listTools` first.
+   *
+   * Recursion safety: the inner `send("tools/list", ...)` call enters
+   * this helper with `method === "tools/list"` which short-circuits
+   * before touching the map, so no unbounded loop.
+   */
+  private async resolveExtraHeadersForToolsCall(
+    method: string,
+    params: Record<string, unknown> | undefined,
+    opts: SendOptions & RequestOptions,
+  ): Promise<Record<string, string> | undefined> {
+    if (opts.extraHeaders !== undefined) return opts.extraHeaders;
+    if (method !== "tools/call") return undefined;
+    if (!params || typeof params.name !== "string") return undefined;
+    if (!this.toolHeaderMap.isFresh()) {
+      const discovery = await this.send<ListToolsResult>(
+        "tools/list",
+        undefined,
+        {},
+      );
+      assertNotPaginated(discovery as { nextCursor?: string | null });
+      const parsed = parseToolsForHeaderMap(
+        (discovery.tools as ParsedTool[]) ?? [],
+      );
+      for (const w of parsed.warnings) this.warn(w);
+      for (const toolName of (discovery.tools as { name: string }[]) ?? []) {
+        if (!parsed.entries.has(toolName.name)) {
+          this.toolHeaderMap.recordExcluded(toolName.name);
+        }
+      }
+      this.toolHeaderMap.update(parsed.entries, extractTtlMs(discovery));
+    }
+    const derived = this.toolHeaderMap.deriveHeaders(
+      params.name as string,
+      params.arguments as Record<string, unknown> | undefined,
+    );
+    return derived.headers;
   }
 
   private warn(message: string): void {

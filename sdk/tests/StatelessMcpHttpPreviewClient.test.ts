@@ -303,6 +303,64 @@ describe("StatelessMcpHttpPreviewClient", () => {
     expect(callRequest.headers["mcp-name"]).toBe("regional-echo");
   });
 
+  test("generic request({method: 'tools/call'}) emits Mcp-Name + Mcp-Param-* like callTool does", async () => {
+    // Regression test for the bug where `client.request(...)` — used by
+    // the task-augmented tools/call path at `MCPClientManager.ts:731` —
+    // bypassed the typed `callTool` header derivation and silently
+    // dropped Mcp-Name + Mcp-Param-*. Spec-compliant servers reject
+    // those with -32001 HeaderMismatch. Fix moved derivation into
+    // `send()` so BOTH entry points emit the headers from the request
+    // body without each caller threading nameHeader / extraHeaders
+    // through opts.
+    const result = await client.request<{ content: unknown[] }>(
+      {
+        method: "tools/call",
+        params: {
+          name: "regional-echo",
+          arguments: { value: "hi", region: "us-west1" },
+        },
+      } as never,
+    );
+    expect(result.content).toEqual([
+      { type: "text", text: JSON.stringify({ region: "us-west1" }) },
+    ]);
+
+    // Same two-request shape as callTool: lazy tools/list + tools/call.
+    expect(fixture.captured).toHaveLength(2);
+    const callRequest = fixture.captured[1];
+    expect(callRequest.body.method).toBe("tools/call");
+    expect(callRequest.headers["mcp-name"]).toBe("regional-echo");
+    expect(callRequest.headers["mcp-param-region"]).toBe("us-west1");
+    expect(
+      (callRequest.body as { params: { arguments: Record<string, unknown> } })
+        .params.arguments,
+    ).toEqual({ value: "hi", region: "us-west1" });
+  });
+
+  test("generic request({method: 'resources/read'}) emits Mcp-Name from params.uri", async () => {
+    // Same fix-class as the request-tools/call case: resources/read
+    // derives Mcp-Name from params.uri, not params.name. The inline
+    // fixture doesn't handle resources/read (returns -32601) but the
+    // wire-level header derivation runs regardless of the server's
+    // method support — that's what we're asserting.
+    try {
+      await client.request({
+        method: "resources/read",
+        params: { uri: "test://hello" },
+      } as never);
+    } catch {
+      // Expected: fixture returns Method not found. We only care about
+      // the wire-level headers below.
+    }
+    // Default beforeEach client has discoverOnConnect:false, so this
+    // is the only captured request.
+    expect(fixture.captured).toHaveLength(1);
+    const req = fixture.captured[0];
+    expect(req.body.method).toBe("resources/read");
+    expect(req.headers["mcp-method"]).toBe("resources/read");
+    expect(req.headers["mcp-name"]).toBe("test://hello");
+  });
+
   test("callTool with body/header mismatch is rejected by server (-32001)", async () => {
     // Direct send bypassing deriveHeaders to assert the fixture catches
     // a mismatch — protects against the preview accidentally regressing
