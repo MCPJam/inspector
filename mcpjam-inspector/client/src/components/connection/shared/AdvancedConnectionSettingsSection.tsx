@@ -1,8 +1,45 @@
 import { ChevronDown, ChevronRight, Plus, X } from "lucide-react";
 import { Input } from "@mcpjam/design-system/input";
 import { Switch } from "@mcpjam/design-system/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@mcpjam/design-system/select";
 import { JsonEditor } from "@/components/ui/json-editor";
-import type { McpWireMode } from "@/lib/client-config-v2";
+import type { McpProtocolVersion } from "@/lib/client-config-v2";
+
+/**
+ * Dropdown options for the per-server protocol-version pin. Mirrors the
+ * OAuth debugger's "Protocol" dropdown pattern from
+ * `AuthenticationSection.tsx` so users see consistent affordances across
+ * the inspector. Wire literals as values; era hints in labels.
+ *
+ * `"default"` is a UI-only sentinel that the change handler maps to
+ * `undefined` before reaching state — preserves the SDK-default
+ * semantics so canonical hashes don't churn (see
+ * `feedback_preserve_undefined_default` memory).
+ */
+type DropdownValue = McpProtocolVersion | "default";
+
+const MCP_PROTOCOL_OPTIONS: Array<{
+  value: DropdownValue;
+  label: string;
+  /** When true, the option appears only with `stateless-mcp-enabled` flag. */
+  flagGated?: boolean;
+}> = [
+  { value: "default", label: "Default (SDK chooses)" },
+  {
+    value: "DRAFT-2026-v1",
+    label: "DRAFT-2026-v1 (RC, stateless)",
+    flagGated: true,
+  },
+  { value: "2025-11-25", label: "2025-11-25 (Latest stable)" },
+  { value: "2025-06-18", label: "2025-06-18" },
+  { value: "2025-03-26", label: "2025-03-26 (Legacy)" },
+];
 
 interface HeaderEntry {
   id?: string;
@@ -31,27 +68,31 @@ interface AdvancedConnectionSettingsSectionProps {
   clientCapabilitiesOverrideError?: string | null;
   headersWarning?: string;
   /**
-   * Visibility flag for the experimental DRAFT-2026-v1 stateless wire-mode
-   * override row. Wired from `useFeatureFlagEnabled("stateless-mcp-enabled")`
-   * at the caller so the section file stays free of feature-flag plumbing.
-   * Defaults to false; absent or false hides the entire row regardless of
-   * the value of `mcpWireModeOverride` (host-default JSON keeps working,
-   * just no per-server affordance).
+   * Visibility flag for the protocol-version override row. Wired from
+   * `useFeatureFlagEnabled("stateless-mcp-enabled")` at the caller. When
+   * false, the entire dropdown is hidden AND the `DRAFT-2026-v1` option
+   * is omitted from the option list (the RC option is the flag-gated
+   * piece; stateful options are always available behind the same flag).
+   * Defaults to false. Host-default JSON keeps working regardless —
+   * just no per-server affordance.
    */
-  showMcpWireModeOverride?: boolean;
+  showMcpProtocolVersionOverride?: boolean;
   /**
-   * Current per-server wire-mode override. `undefined` = inherit host
-   * default. Bound on the project server config row at save time, NOT on
-   * the server's own config blob — host-default vs per-server override
-   * is a control-plane edit that gets fanned out to host configs.
+   * Current per-server pinned MCP protocol version. `undefined` = inherit
+   * host default (which itself may be `undefined` = SDK default). Bound on
+   * the project server config row at save time, NOT on the server's own
+   * config blob — host-default vs per-server override is a control-plane
+   * edit fanned out to host configs.
    */
-  mcpWireModeOverride?: McpWireMode;
-  onMcpWireModeOverrideChange?: (mode: McpWireMode | undefined) => void;
+  mcpProtocolVersionOverride?: McpProtocolVersion;
+  onMcpProtocolVersionOverrideChange?: (
+    version: McpProtocolVersion | undefined,
+  ) => void;
   /**
-   * Transport kind of this server. The stateless preview is HTTP-POST
-   * only, so we lock the toggle for stdio / SSE servers (factory rejects
-   * them anyway — UI lock is the user-friendly safety net per the
-   * "requires Streamable HTTP POST" hint).
+   * Transport kind of this server. Stateless options are HTTP-POST only,
+   * so for stdio / SSE we filter the dropdown to stateful versions
+   * (factory rejects stateless on those transports — UI filter is the
+   * user-friendly safety net).
    */
   transportKind?: "http" | "stdio" | "sse";
 }
@@ -72,9 +113,9 @@ export function AdvancedConnectionSettingsSection({
   onClientCapabilitiesOverrideTextChange,
   clientCapabilitiesOverrideError,
   headersWarning,
-  showMcpWireModeOverride = false,
-  mcpWireModeOverride,
-  onMcpWireModeOverrideChange,
+  showMcpProtocolVersionOverride = false,
+  mcpProtocolVersionOverride,
+  onMcpProtocolVersionOverrideChange,
   transportKind = "http",
 }: AdvancedConnectionSettingsSectionProps) {
   const showHeaderControls =
@@ -85,13 +126,29 @@ export function AdvancedConnectionSettingsSection({
   const showClientCapabilitiesControls =
     onClientCapabilitiesOverrideEnabledChange !== undefined &&
     onClientCapabilitiesOverrideTextChange !== undefined;
-  const showWireModeControl =
-    showMcpWireModeOverride && onMcpWireModeOverrideChange !== undefined;
-  const wireModeOverrideEnabled = mcpWireModeOverride !== undefined;
-  // Stateless preview is Streamable HTTP POST only. Lock the toggle for
-  // stdio / SSE rather than letting the user pick a mode that will fail
-  // at construction with StatelessPreviewRequiresHttpTransport.
-  const wireModeLocked = transportKind !== "http";
+  const showProtocolVersionControl =
+    showMcpProtocolVersionOverride &&
+    onMcpProtocolVersionOverrideChange !== undefined;
+  // Stateless options are Streamable HTTP POST only. For non-HTTP
+  // transports, filter the dropdown to stateful versions only — picking
+  // a stateless version would fail at construction with
+  // `StatelessRequiresHttpTransport`. Filtering here is the user-friendly
+  // safety net (factory rejection is the hard floor).
+  const isHttp = transportKind === "http";
+  const visibleOptions = MCP_PROTOCOL_OPTIONS.filter((opt) => {
+    if (opt.flagGated && !showMcpProtocolVersionOverride) return false;
+    if (
+      !isHttp &&
+      opt.value !== "default" &&
+      // For non-HTTP, drop the stateless option(s).
+      (opt.value === "DRAFT-2026-v1")
+    ) {
+      return false;
+    }
+    return true;
+  });
+  const selectedDropdownValue: DropdownValue =
+    mcpProtocolVersionOverride ?? "default";
 
   return (
     <div className="space-y-0">
@@ -227,93 +284,54 @@ export function AdvancedConnectionSettingsSection({
             </div>
           )}
 
-          {/* MCP wire-mode override (DRAFT-2026-v1 preview).
-              Gated by the `stateless-mcp-enabled` feature flag at the
-              caller so the row stays hidden until the wire client lands.
-              Off (default) → server inherits the host default; on →
-              segmented selector picks the per-server mode and writes
-              projectServerRefs.mcpWireModeOverride. */}
-          {showMcpWireModeOverride && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <label
-                  className="text-xs font-medium text-foreground"
-                  title="Use stateless MCP for this server. Partial DRAFT-2026-v1 support — server-initiated requests (sampling, elicitation) and subscriptions are not yet implemented."
-                >
-                  Wire mode override
-                </label>
-                <Switch
-                  checked={wireModeOverrideEnabled}
-                  // Locked off for non-HTTP transports OR when the
-                  // caller didn't supply a setter (no project context,
-                  // local-mode server with no Convex `_id`). Without
-                  // the setter the toggle would otherwise look enabled
-                  // but silently no-op.
-                  disabled={
-                    !showWireModeControl ||
-                    (wireModeLocked && !wireModeOverrideEnabled)
-                  }
-                  onCheckedChange={(checked) => {
-                    if (!onMcpWireModeOverrideChange) return;
-                    // Switching on defaults to the stateless preview —
-                    // there's no point in flipping the toggle just to
-                    // re-pin "legacy" since that's already the host
-                    // default for most users. The segmented selector
-                    // below lets you change to "legacy" explicitly.
-                    onMcpWireModeOverrideChange(
-                      checked ? "stateless-draft-2026-v1" : undefined,
+          {/* Per-server MCP protocol-version pin.
+
+              Mirrors the OAuth debugger's "Protocol" dropdown
+              (`AuthenticationSection.tsx`) so users see the same
+              affordance pattern across the inspector. Gated by
+              `stateless-mcp-enabled` at the caller. The dropdown's
+              "Default (SDK chooses)" option serializes to `undefined`,
+              preserving canonical-hash stability across SDK default
+              upgrades. Stateless options are filtered out for
+              non-HTTP transports (factory rejects them otherwise). */}
+          {showProtocolVersionControl && (
+            <div className="space-y-1.5">
+              <label
+                className="text-xs font-medium text-foreground"
+                title="Pin the MCP protocol version this server speaks. 'Default' lets the SDK choose at request time. Stateless options use the experimental DRAFT-2026-v1 transport and require Streamable HTTP."
+              >
+                Protocol version
+              </label>
+              <Select
+                value={selectedDropdownValue}
+                onValueChange={(next) => {
+                  if (!onMcpProtocolVersionOverrideChange) return;
+                  if (next === "default") {
+                    onMcpProtocolVersionOverrideChange(undefined);
+                  } else {
+                    onMcpProtocolVersionOverrideChange(
+                      next as McpProtocolVersion,
                     );
-                  }}
-                  aria-label="Toggle MCP wire-mode override"
-                  className="scale-90"
-                />
-              </div>
-              {wireModeLocked && (
+                  }
+                }}
+              >
+                <SelectTrigger className="h-9 w-full text-xs">
+                  <SelectValue placeholder="Default (SDK chooses)" />
+                </SelectTrigger>
+                <SelectContent>
+                  {visibleOptions.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {!isHttp && (
                 <p className="text-xs text-muted-foreground">
-                  Stateless preview requires Streamable HTTP POST.
+                  Stateless options require Streamable HTTP — only
+                  stateful protocol versions are selectable for this
+                  transport.
                 </p>
-              )}
-              {wireModeOverrideEnabled && !wireModeLocked && (
-                <div
-                  role="radiogroup"
-                  aria-label="Wire mode"
-                  className="flex w-fit overflow-hidden rounded border border-border bg-background text-xs"
-                >
-                  <button
-                    type="button"
-                    role="radio"
-                    aria-checked={mcpWireModeOverride === "legacy"}
-                    onClick={() =>
-                      onMcpWireModeOverrideChange?.("legacy")
-                    }
-                    className={
-                      mcpWireModeOverride === "legacy"
-                        ? "px-2.5 py-1 bg-muted text-foreground"
-                        : "px-2.5 py-1 text-muted-foreground hover:text-foreground"
-                    }
-                  >
-                    Legacy
-                  </button>
-                  <button
-                    type="button"
-                    role="radio"
-                    aria-checked={
-                      mcpWireModeOverride === "stateless-draft-2026-v1"
-                    }
-                    onClick={() =>
-                      onMcpWireModeOverrideChange?.(
-                        "stateless-draft-2026-v1",
-                      )
-                    }
-                    className={
-                      mcpWireModeOverride === "stateless-draft-2026-v1"
-                        ? "px-2.5 py-1 bg-muted text-foreground"
-                        : "px-2.5 py-1 text-muted-foreground hover:text-foreground"
-                    }
-                  >
-                    Stateless (DRAFT-2026-v1)
-                  </button>
-                </div>
               )}
             </div>
           )}

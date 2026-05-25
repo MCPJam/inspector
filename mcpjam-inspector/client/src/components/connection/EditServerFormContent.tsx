@@ -13,7 +13,7 @@ import { EnvVarsSection } from "./shared/EnvVarsSection";
 import { HostedConnectionTypeControl } from "./shared/HostedConnectionTypeControl";
 import type { useServerForm } from "./hooks/use-server-form";
 import { HOSTED_MODE } from "@/lib/config";
-import type { McpWireMode } from "@/lib/client-config-v2";
+import type { McpProtocolVersion } from "@/lib/client-config-v2";
 
 interface EditServerFormContentProps {
   formState: ReturnType<typeof useServerForm>;
@@ -23,12 +23,12 @@ interface EditServerFormContentProps {
   /**
    * Per-server wire-mode override from the project server config.
    * Sourced from `projectServerConfig:getConfig().overrides[serverId]
-   * .mcpWireModeOverride`. Undefined = inherit host default. Persistence
+   * .mcpProtocolVersionOverride`. Undefined = inherit host default. Persistence
    * goes back through `projectServerConfig:setConfig`, NOT through the
    * server's own config blob — wire mode is a project-server-refs field.
    */
-  mcpWireModeOverride?: McpWireMode;
-  onMcpWireModeOverrideChange?: (mode: McpWireMode | undefined) => void;
+  mcpProtocolVersionOverride?: McpProtocolVersion;
+  onMcpProtocolVersionOverrideChange?: (mode: McpProtocolVersion | undefined) => void;
 }
 
 export function EditServerFormContent({
@@ -36,8 +36,8 @@ export function EditServerFormContent({
   isDuplicateServerName,
   projectId = null,
   hostedServerId = null,
-  mcpWireModeOverride,
-  onMcpWireModeOverrideChange,
+  mcpProtocolVersionOverride,
+  onMcpProtocolVersionOverrideChange,
 }: EditServerFormContentProps) {
   const hostedUrlPlaceholder = "https://example.com/mcp";
   const statelessMcpEnabled = useFeatureFlagEnabled("stateless-mcp-enabled");
@@ -247,14 +247,14 @@ export function EditServerFormContent({
           formState.clientCapabilitiesOverrideError
         }
         /* Render the row whenever the flag is on, regardless of whether
-           a setter is wired. When `onMcpWireModeOverrideChange` is
+           a setter is wired. When `onMcpProtocolVersionOverrideChange` is
            absent (no project, or server isn't in the project's
            auto-connect set), the Switch disables with the existing
-           "edit mcpWireMode in the JSON" hint — the affordance has to
+           "edit mcpProtocolVersion in the JSON" hint — the affordance has to
            be visible to be discoverable. */
-        showMcpWireModeOverride={Boolean(statelessMcpEnabled)}
-        mcpWireModeOverride={mcpWireModeOverride}
-        onMcpWireModeOverrideChange={onMcpWireModeOverrideChange}
+        showMcpProtocolVersionOverride={Boolean(statelessMcpEnabled)}
+        mcpProtocolVersionOverride={mcpProtocolVersionOverride}
+        onMcpProtocolVersionOverrideChange={onMcpProtocolVersionOverrideChange}
         transportKind={formState.type}
         {...(formState.type === "http"
           ? {

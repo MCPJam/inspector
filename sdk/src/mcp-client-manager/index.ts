@@ -145,22 +145,25 @@ export type {
   ManagedMcpClientRequestMethod,
 } from "./managed-mcp-client.js";
 export {
-  NotSupportedInStatelessPreview,
-  StatelessPreviewRequiresHttpTransport,
+  NotYetSupportedInStateless,
+  StatelessRequiresHttpTransport,
   PaginatedToolHeaderDiscoveryUnsupported,
 } from "./managed-mcp-client.js";
 export { OfficialSdkClientAdapter } from "./official-sdk-client-adapter.js";
 export {
-  StatelessDraft2026V1PreviewClient,
+  StatelessMcpHttpPreviewClient,
   STATELESS_DRAFT_2026_V1,
-  type StatelessDraft2026V1PreviewClientOptions,
-} from "./stateless-draft-2026-v1-preview-client.js";
+  type StatelessMcpHttpPreviewClientOptions,
+} from "./stateless-mcp-http-preview-client.js";
 export {
   createManagedMcpClient,
   wrapLegacyClient,
   type CreateManagedMcpClientArgs,
-  type CreateLegacyClientArgs,
-  type CreateStatelessPreviewClientArgs,
-  type McpWireMode,
+  type McpProtocolVersion,
   type TransportKind,
 } from "./managed-mcp-client-factory.js";
+export {
+  MCP_PROTOCOL_VERSIONS,
+  isKnownProtocolVersion,
+  isStatelessProtocolVersion,
+} from "./mcp-protocol-version.js";

@@ -2,8 +2,11 @@
  * `ManagedMcpClient` is the surface area `MCPClientManager` calls into for
  * every server connection. It exists so the manager can swap between the
  * legacy upstream `Client` (via `OfficialSdkClientAdapter`) and the
- * experimental DRAFT-2026-v1 stateless preview transport
- * (`StatelessDraft2026V1PreviewClient`) without per-call branching.
+ * stateless DRAFT-2026-v1 preview transport
+ * (`StatelessMcpHttpPreviewClient`) without per-call branching. Selection
+ * is driven by the per-server `mcpProtocolVersion` pin (`McpProtocolVersion`
+ * in `./mcp-protocol-version.ts`) — the factory uses
+ * `isStatelessProtocolVersion` to route.
  *
  * **Coverage rationale.** The shape below was derived by grepping
  * `MCPClientManager.ts` for every `client.*` call site, plus
@@ -13,11 +16,9 @@
  * `client?.foo()` fallback for unknown surface.
  *
  * **Disposable-by-design.** When upstream `@modelcontextprotocol/client`
- * adds `DRAFT-2026-v1` support, replacement is a one-line factory swap
- * to a new `OfficialSdkClientAdapter` configured for the new wire mode.
+ * adds stateless support, replacement is a one-line factory swap to a
+ * new `OfficialSdkClientAdapter` configured for the new wire literal.
  * No manager-side churn, no product / UI / config unwind.
- *
- * See `peppy-popping-flask.md` (PR2) for the full plan.
  */
 
 import type {
@@ -91,7 +92,7 @@ export type ManagedMcpClientRequestHandler = Parameters<
  *     wiring + `applyToClient` paths.
  *   - `removeRequestHandler` — `elicitation.ts:168` close cleanup.
  *
- * Stateless preview behaviors (`StatelessDraft2026V1PreviewClient`) are
+ * Stateless preview behaviors (`StatelessMcpHttpPreviewClient`) are
  * documented per-method in that file. The interface itself stays
  * behavior-agnostic so it never has to know which adapter is wired.
  */
@@ -183,38 +184,43 @@ export interface ManagedMcpClient {
 }
 
 /**
- * Sentinel error thrown by `StatelessDraft2026V1PreviewClient` for surface
- * the preview cannot honor without spec extensions that are out of scope
- * for this workstream (resource subscriptions need `subscriptions/listen`,
- * server-initiated requests need MRTR). Thrown as a labeled subclass so
- * manager call sites can catch + surface as user errors rather than
- * letting a silent no-op masquerade as a working subscription.
+ * Sentinel error thrown by `StatelessMcpHttpPreviewClient` for surface
+ * the preview cannot honor yet (resource subscriptions need
+ * `subscriptions/listen`, server-initiated requests need MRTR,
+ * `server/discover` auto-probe is deferred, 403 `insufficient_scope`
+ * upscoping is deferred). "Not yet" — these are deferred-work gaps, not
+ * permanent limits; the bare class is `NotYetSupportedInStateless`
+ * rather than `NotSupportedInStateless` to signal that explicitly.
+ * Thrown as a labeled subclass so manager call sites can catch + surface
+ * as user errors rather than letting a silent no-op masquerade as a
+ * working subscription.
  */
-export class NotSupportedInStatelessPreview extends Error {
+export class NotYetSupportedInStateless extends Error {
   constructor(method: string, reason?: string) {
     super(
       reason
-        ? `Method "${method}" is not supported in the DRAFT-2026-v1 stateless preview: ${reason}`
-        : `Method "${method}" is not supported in the DRAFT-2026-v1 stateless preview.`,
+        ? `Method "${method}" is not yet supported in the stateless MCP preview: ${reason}`
+        : `Method "${method}" is not yet supported in the stateless MCP preview.`,
     );
-    this.name = "NotSupportedInStatelessPreview";
+    this.name = "NotYetSupportedInStateless";
   }
 }
 
 /**
- * Sentinel thrown by `createManagedMcpClient` when the resolved wire mode
- * is `stateless-draft-2026-v1` but the server config selects stdio or
- * legacy SSE. The preview is Streamable HTTP POST only; failing fast at
- * construction prevents a half-baked client from failing mysteriously on
- * the first call.
+ * Sentinel thrown by `createManagedMcpClient` when the resolved
+ * `mcpProtocolVersion` is stateless but the server config selects stdio
+ * or legacy SSE. Stateless MCP is Streamable HTTP POST only by design;
+ * failing fast at construction prevents a half-baked client from failing
+ * mysteriously on the first call. Drops `Preview` from the name because
+ * the HTTP requirement is permanent, not preview-specific.
  */
-export class StatelessPreviewRequiresHttpTransport extends Error {
+export class StatelessRequiresHttpTransport extends Error {
   readonly transportKind: string;
   constructor(transportKind: string) {
     super(
-      `Stateless DRAFT-2026-v1 preview requires Streamable HTTP POST; got transport kind "${transportKind}".`,
+      `Stateless MCP requires Streamable HTTP POST; got transport kind "${transportKind}".`,
     );
-    this.name = "StatelessPreviewRequiresHttpTransport";
+    this.name = "StatelessRequiresHttpTransport";
     this.transportKind = transportKind;
   }
 }
@@ -223,12 +229,13 @@ export class StatelessPreviewRequiresHttpTransport extends Error {
  * Sentinel thrown when `tools/list` returns paginated results during
  * header-discovery. Building a partial header map from only the first
  * page would silently omit `Mcp-Param-*` headers for tools that haven't
- * been listed yet — better to fail loud than fail silently.
+ * been listed yet — better to fail loud than fail silently. Real spec
+ * limitation (not a preview gap), so no maturity tag.
  */
 export class PaginatedToolHeaderDiscoveryUnsupported extends Error {
   constructor() {
     super(
-      "Paginated tools/list is not supported during DRAFT-2026-v1 stateless header discovery (Mcp-Param-*). Returning a partial header map would silently drop headers for unlisted tools.",
+      "Paginated tools/list is not supported during stateless MCP header discovery (Mcp-Param-*). Returning a partial header map would silently drop headers for unlisted tools.",
     );
     this.name = "PaginatedToolHeaderDiscoveryUnsupported";
   }

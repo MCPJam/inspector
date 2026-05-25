@@ -44,20 +44,21 @@ export type ConnectionDefaults = {
    */
   supportedProtocolVersions?: string[];
   /**
-   * Outbound MCP wire mode resolved from
-   * `resolveEffectiveMcpWireMode(serverOverride, hostDefault)`:
-   *   - `serverConnectionOverrides[serverId]?.mcpWireModeOverride`
-   *   - falling back to `hostConfig.mcpProfile.mcpWireMode`
-   *   - falling back to `"legacy"`
+   * Pinned MCP protocol version resolved from
+   * `resolveEffectiveMcpProtocolVersion(serverOverride, hostDefault)`:
+   *   - `serverConnectionOverrides[serverId]?.mcpProtocolVersionOverride`
+   *   - falling back to `hostConfig.mcpProfile.mcpProtocolVersion`
+   *   - falling back to `undefined` (SDK default)
    *
-   * Absent here means the client didn't compute one — the SDK falls
-   * back to the legacy upstream `Client` + initialize handshake, byte-
-   * identical to pre-feature behavior. `"stateless-draft-2026-v1"`
-   * routes through the experimental DRAFT-2026-v1 stateless preview
-   * (no initialize, per-request `_meta` + headers, HTTP POST only).
-   * The SDK factory throws `StatelessPreviewRequiresHttpTransport` if
-   * applied to stdio / SSE, so the resolver never has to gate on
-   * transport here.
+   * Absent here means the client didn't compute a pin — the SDK
+   * negotiates at request time. When set to a stateful version (per
+   * `isStatelessProtocolVersion`), the legacy upstream `Client` +
+   * initialize handshake runs with the pin in
+   * `supportedProtocolVersions`. When set to a stateless version
+   * (today: `"DRAFT-2026-v1"`), the SDK routes through
+   * `StatelessMcpHttpPreviewClient` — HTTP POST only; factory throws
+   * `StatelessRequiresHttpTransport` for stdio / SSE, so the resolver
+   * never has to gate on transport here.
    */
-  mcpWireMode?: "legacy" | "stateless-draft-2026-v1";
+  mcpProtocolVersion?: import("@mcpjam/sdk/browser").McpProtocolVersion;
 };

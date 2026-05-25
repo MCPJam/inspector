@@ -92,47 +92,59 @@ export type CspDomainSet = {
  * synthesize an empty envelope when the user hasn't opted in.
  */
 /**
- * Outbound MCP wire mode for a server connection. "legacy" (the implicit
- * default when absent) uses the upstream `Client` + initialize handshake;
- * "stateless-draft-2026-v1" selects the experimental DRAFT-2026-v1
- * stateless preview transport implemented in `@mcpjam/sdk`. Mirror of
- * `McpWireMode` in `convex/lib/hostConfigV2.ts`.
+ * Pinned MCP protocol version for a server connection. Values are wire
+ * literals (mirror of `MCP_PROTOCOL_VERSIONS` in `@mcpjam/sdk`'s
+ * `mcp-protocol-version.ts`, and `McpProtocolVersion` in
+ * `convex/lib/hostConfigV2.ts`).
+ *
+ * `undefined` = "no opinion — SDK chooses at request time." Do NOT
+ * materialize a default value at storage time; canonical hashes would
+ * churn whenever the SDK default moves and future SDK default upgrades
+ * would silently no-op against existing rows.
  */
-export type McpWireMode = "legacy" | "stateless-draft-2026-v1";
+export type McpProtocolVersion =
+  | "2025-03-26"
+  | "2025-06-18"
+  | "2025-11-25"
+  | "DRAFT-2026-v1";
 
 /**
- * Resolve the effective outbound wire mode for a server connection.
+ * Resolve the effective pinned protocol version for a server connection.
  * Mirror of the rule the backend stamps into `serverConnectionOverrides`
  * at fan-out time, applied at the bridge / wire-client factory site to
  * pick between `OfficialSdkClientAdapter` and
- * `StatelessDraft2026V1PreviewClient`.
+ * `StatelessMcpHttpPreviewClient` (the SDK routes via
+ * `isStatelessProtocolVersion`).
  *
- *   server override wins; otherwise host default; otherwise "legacy"
+ *   server override wins; otherwise host default; otherwise undefined
  *
- * Both inputs are optional so callers can read straight off the hydrated
- * host config row without normalizing first. `undefined` arms of the
- * union mean "no opinion at this layer."
+ * Returns `undefined` when neither layer has an opinion — preserves the
+ * SDK-default semantics. Both inputs are optional so callers can read
+ * straight off the hydrated host config row without normalizing first.
  */
-export function resolveEffectiveMcpWireMode(
-  serverOverride: McpWireMode | undefined,
-  hostDefault: McpWireMode | undefined,
-): McpWireMode {
-  return serverOverride ?? hostDefault ?? "legacy";
+export function resolveEffectiveMcpProtocolVersion(
+  serverOverride: McpProtocolVersion | undefined,
+  hostDefault: McpProtocolVersion | undefined,
+): McpProtocolVersion | undefined {
+  return serverOverride ?? hostDefault;
 }
 
 export type HostConfigMcpProfileV1 = {
   profileVersion: 1;
   /**
-   * Host-level default outbound MCP wire mode. Absent → resolves to
-   * `"legacy"` at the wire-client factory. Sibling of `initialize` and
-   * `apps` because stateless explicitly skips initialize — keeping it
-   * out of `mcpProfile.initialize` keeps the source-of-truth obvious.
+   * Host-level default pinned MCP protocol version. Absent → SDK chooses
+   * at request time (do NOT materialize a default at write time —
+   * preserves undefined-as-default semantics so canonical hashes don't
+   * churn when the SDK default moves). Sibling of `initialize` and
+   * `apps` because stateless versions explicitly skip the initialize
+   * handshake — keeping this out of `mcpProfile.initialize` keeps the
+   * source-of-truth obvious.
    *
    * Per-server overrides live on `serverConnectionOverrides[serverId]
-   * .mcpWireModeOverride`. Resolution rule: server override wins;
-   * otherwise this default; otherwise `"legacy"`.
+   * .mcpProtocolVersionOverride`. Resolution rule: server override wins;
+   * otherwise this default; otherwise `undefined` (SDK default).
    */
-  mcpWireMode?: McpWireMode;
+  mcpProtocolVersion?: McpProtocolVersion;
   initialize?: {
     /**
      * Ordered accept-list. First entry is sent in
@@ -323,11 +335,11 @@ export type HostConfigInputV2 = {
     requestTimeoutOverride?: number;
     /**
      * Per-server override of the outbound MCP wire mode. Wins over
-     * `mcpProfile.mcpWireMode`. Mirror of the execution-plane field
-     * fanned out from `projectServerRefs.mcpWireModeOverride` by
+     * `mcpProfile.mcpProtocolVersion`. Mirror of the execution-plane field
+     * fanned out from `projectServerRefs.mcpProtocolVersionOverride` by
      * `fanOutProjectServerConfigToHosts`.
      */
-    mcpWireModeOverride?: McpWireMode;
+    mcpProtocolVersionOverride?: McpProtocolVersion;
   }>;
 };
 
@@ -362,7 +374,7 @@ export type HostConfigDtoV2 = {
   serverConnectionOverrides?: Record<string, {
     headersOverride?: Record<string, string>;
     requestTimeoutOverride?: number;
-    mcpWireModeOverride?: McpWireMode;
+    mcpProtocolVersionOverride?: McpProtocolVersion;
   }>;
 };
 
@@ -436,8 +448,8 @@ export function emptyHostConfigInputV2(
               ...(v.requestTimeoutOverride !== undefined
                 ? { requestTimeoutOverride: v.requestTimeoutOverride }
                 : {}),
-              ...(v.mcpWireModeOverride !== undefined
-                ? { mcpWireModeOverride: v.mcpWireModeOverride }
+              ...(v.mcpProtocolVersionOverride !== undefined
+                ? { mcpProtocolVersionOverride: v.mcpProtocolVersionOverride }
                 : {}),
             },
           ]),
@@ -487,8 +499,8 @@ export function hostConfigDtoToInput(
               ...(v.requestTimeoutOverride !== undefined
                 ? { requestTimeoutOverride: v.requestTimeoutOverride }
                 : {}),
-              ...(v.mcpWireModeOverride !== undefined
-                ? { mcpWireModeOverride: v.mcpWireModeOverride }
+              ...(v.mcpProtocolVersionOverride !== undefined
+                ? { mcpProtocolVersionOverride: v.mcpProtocolVersionOverride }
                 : {}),
             },
           ])
@@ -924,21 +936,21 @@ export function serverConnectionOverridesEqual(
 ): boolean {
   const normalize = (
     overrides: HostConfigInputV2["serverConnectionOverrides"],
-  ): Record<string, { headersOverride?: Record<string, string>; requestTimeoutOverride?: number; mcpWireModeOverride?: McpWireMode }> => {
+  ): Record<string, { headersOverride?: Record<string, string>; requestTimeoutOverride?: number; mcpProtocolVersionOverride?: McpProtocolVersion }> => {
     if (!overrides) return {};
-    const result: Record<string, { headersOverride?: Record<string, string>; requestTimeoutOverride?: number; mcpWireModeOverride?: McpWireMode }> = {};
+    const result: Record<string, { headersOverride?: Record<string, string>; requestTimeoutOverride?: number; mcpProtocolVersionOverride?: McpProtocolVersion }> = {};
     for (const [key, entry] of Object.entries(overrides)) {
       if (!entry) continue;
       const hasHeaders =
         entry.headersOverride !== undefined &&
         Object.keys(entry.headersOverride).length > 0;
       const hasTimeout = entry.requestTimeoutOverride !== undefined;
-      const hasWireMode = entry.mcpWireModeOverride !== undefined;
+      const hasWireMode = entry.mcpProtocolVersionOverride !== undefined;
       if (hasHeaders || hasTimeout || hasWireMode) {
         result[key] = {
           ...(hasHeaders ? { headersOverride: entry.headersOverride } : {}),
           ...(hasTimeout ? { requestTimeoutOverride: entry.requestTimeoutOverride } : {}),
-          ...(hasWireMode ? { mcpWireModeOverride: entry.mcpWireModeOverride } : {}),
+          ...(hasWireMode ? { mcpProtocolVersionOverride: entry.mcpProtocolVersionOverride } : {}),
         };
       }
     }

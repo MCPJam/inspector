@@ -1,11 +1,11 @@
 /**
  * `OfficialSdkClientAdapter` — passthrough wrapper around upstream
  * `@modelcontextprotocol/client@2.0.0-alpha.2` `Client`. Used when the
- * effective wire mode is `"legacy"`. Behavior is byte-identical to direct
+ * resolved `mcpProtocolVersion` is absent or stateful (per
+ * `isStatelessProtocolVersion`). Behavior is byte-identical to direct
  * upstream usage; this wrapper exists only so `MCPClientManager` can
  * type its client state as `ManagedMcpClient` and the
- * `StatelessDraft2026V1PreviewClient` can slot in via the same factory
- * (see `peppy-popping-flask.md` PR2).
+ * `StatelessMcpHttpPreviewClient` can slot in via the same factory.
  *
  * **No translation, no defaults.** Every method forwards arguments
  * verbatim — translating would silently change behavior on edge cases

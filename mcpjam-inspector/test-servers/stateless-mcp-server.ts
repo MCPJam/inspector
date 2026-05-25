@@ -1,7 +1,7 @@
 /**
  * Fixture HTTP server for the DRAFT-2026-v1 stateless transport preview.
  * Stands up a minimal "spec-conforming enough" target so unit + integration
- * tests can exercise `StatelessDraft2026V1PreviewClient` without an
+ * tests can exercise `StatelessMcpHttpPreviewClient` without an
  * external dependency.
  *
  * What it implements (per `peppy-popping-flask.md` PR2 prerequisite):
@@ -25,7 +25,7 @@
  *     fails loud on pagination during header discovery.
  *
  * Run as a standalone process for ad-hoc testing:
- *   npx tsx test-servers/stateless-draft-2026-v1.ts
+ *   npx tsx test-servers/stateless-mcp-server.ts
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -33,7 +33,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 const DRAFT_2026_V1 = "DRAFT-2026-v1";
 const PROTOCOL_VERSION_META_KEY = "io.modelcontextprotocol/protocolVersion";
 
-export interface StatelessDraft2026V1FixtureOptions {
+export interface StatelessMcpFixtureOptions {
   /** Emit `mcp-session-id` on every response — asserts preview warn/discard. */
   emitSessionId?: boolean;
   /** Override `ttlMs` returned in `tools/list`. Default 60_000. */
@@ -67,9 +67,9 @@ interface JsonRpcResult {
   result: unknown;
 }
 
-export function startStatelessDraft2026V1Fixture(
+export function startStatelessMcpFixture(
   port = 0,
-  opts: StatelessDraft2026V1FixtureOptions = {},
+  opts: StatelessMcpFixtureOptions = {},
 ): Promise<{ port: number; close: () => Promise<void> }> {
   const ttlMs = opts.toolsListTtlMs ?? 60_000;
   const host = opts.host ?? "127.0.0.1";
@@ -326,7 +326,7 @@ function respondJsonRpcResult(
   res: ServerResponse,
   id: number | string,
   result: unknown,
-  opts: StatelessDraft2026V1FixtureOptions,
+  opts: StatelessMcpFixtureOptions,
 ): void {
   const payload: JsonRpcResult = { jsonrpc: "2.0", id, result };
   const headers: Record<string, string> = {
@@ -343,7 +343,7 @@ function respondJsonRpcError(
   code: number,
   message: string,
   data: unknown,
-  opts: StatelessDraft2026V1FixtureOptions,
+  opts: StatelessMcpFixtureOptions,
 ): void {
   const payload: JsonRpcError = {
     jsonrpc: "2.0",
@@ -431,16 +431,16 @@ function decodeHeaderValue(raw: string | undefined): string | undefined {
   }
 }
 
-// Stand-alone runner: `npx tsx test-servers/stateless-draft-2026-v1.ts`
+// Stand-alone runner: `npx tsx test-servers/stateless-mcp-server.ts`
 // Picks port 4040 by default; override with PORT env.
 if (
   typeof process !== "undefined" &&
   Array.isArray(process.argv) &&
-  process.argv[1]?.endsWith("stateless-draft-2026-v1.ts")
+  process.argv[1]?.endsWith("stateless-mcp-server.ts")
 ) {
   const port = Number(process.env.PORT ?? 4040);
-  startStatelessDraft2026V1Fixture(port).then(({ port: bound }) => {
+  startStatelessMcpFixture(port).then(({ port: bound }) => {
     // eslint-disable-next-line no-console
-    console.log(`stateless-draft-2026-v1 fixture listening on ${bound}`);
+    console.log(`stateless-mcp fixture (DRAFT-2026-v1) listening on ${bound}`);
   });
 }

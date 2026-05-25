@@ -32,13 +32,13 @@ import { useServerForm } from "./hooks/use-server-form";
 import { ServerInfoContent } from "./ServerInfoContent";
 import { ServerInfoToolsMetadataContent } from "./ServerInfoToolsMetadataContent";
 import { EditServerFormContent } from "./EditServerFormContent";
-import type { McpWireMode } from "@/lib/client-config-v2";
+import type { McpProtocolVersion } from "@/lib/client-config-v2";
 import type {
   ProjectServerConfigDto,
   ProjectServerConfigInput,
   ProjectServerOverrideEntry,
 } from "@/lib/project-server-config";
-import { EffectiveModeChip } from "./shared/EffectiveModeChip";
+import { EffectiveProtocolVersionChip } from "./shared/EffectiveProtocolVersionChip";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
 
@@ -76,7 +76,7 @@ interface ServerDetailModalProps {
    * the user toggled on the client. Undefined = no host-level pin =
    * "Legacy · default" attribution on the chip.
    */
-  hostDefaultMcpWireMode?: McpWireMode;
+  hostDefaultMcpProtocolVersion?: McpProtocolVersion;
 }
 
 export function ServerDetailModal({
@@ -92,7 +92,7 @@ export function ServerDetailModal({
   projectClientConfig,
   projectId = null,
   hostedServerId = null,
-  hostDefaultMcpWireMode,
+  hostDefaultMcpProtocolVersion,
 }: ServerDetailModalProps) {
   const posthog = usePostHog();
   const [activeTab, setActiveTab] = useState<ServerDetailTab>(defaultTab);
@@ -107,7 +107,7 @@ export function ServerDetailModal({
   const version = initializationInfo?.serverVersion?.version;
 
   // Per-server MCP wire-mode override lives on the project layer
-  // (`projectServerRefs.mcpWireModeOverride`), not the server's own
+  // (`projectServerRefs.mcpProtocolVersionOverride`), not the server's own
   // config blob — flipping it requires a `projectServerConfig:setConfig`
   // round-trip rather than a server-update. Read/write here so the
   // form control inside `EditServerFormContent` can stay a pure prop
@@ -130,11 +130,11 @@ export function ServerDetailModal({
   // `sharedProjectServersRecord[name]?._id` and passes it down as
   // `hostedServerId`.
   const serverId = hostedServerId ?? undefined;
-  const currentMcpWireModeOverride = useMemo<McpWireMode | undefined>(
+  const currentMcpProtocolVersionOverride = useMemo<McpProtocolVersion | undefined>(
     () =>
       serverId
         ? (projectServerConfigDto?.overrides?.[serverId]
-            ?.mcpWireModeOverride as McpWireMode | undefined)
+            ?.mcpProtocolVersionOverride as McpProtocolVersion | undefined)
         : undefined,
     [projectServerConfigDto, serverId],
   );
@@ -146,8 +146,8 @@ export function ServerDetailModal({
   // without forcing the Servers tab to also wire up the provider just
   // for the chip's source attribution.
   const activeMcpProfile = useActiveMcpProfile();
-  const resolvedHostDefaultMcpWireMode: McpWireMode | undefined =
-    hostDefaultMcpWireMode ?? activeMcpProfile?.mcpWireMode;
+  const resolvedHostDefaultMcpProtocolVersion: McpProtocolVersion | undefined =
+    hostDefaultMcpProtocolVersion ?? activeMcpProfile?.mcpProtocolVersion;
 
   // Whether the server is in the project's auto-connect `serverIds`
   // set. The backend `ensureProjectServerConfig` rejects overrides for
@@ -161,8 +161,8 @@ export function ServerDetailModal({
     return Boolean(projectServerConfigDto?.serverIds.includes(serverId));
   }, [projectServerConfigDto, serverId]);
 
-  const handleMcpWireModeOverrideChange = async (
-    next: McpWireMode | undefined,
+  const handleMcpProtocolVersionOverrideChange = async (
+    next: McpProtocolVersion | undefined,
   ): Promise<void> => {
     if (!projectId) {
       toast.error(
@@ -176,7 +176,7 @@ export function ServerDetailModal({
       // Surface a clear path forward rather than letting the mutation
       // reject with the raw Convex error.
       toast.error(
-        "Add this server to the project's auto-connect set first (Servers tab → Auto-connect), or use the host-level mcpWireMode in the Client → MCP Protocol JSON.",
+        "Add this server to the project's auto-connect set first (Servers tab → Auto-connect), or use the host-level mcpProtocolVersion in the Client → MCP Protocol JSON.",
       );
       return;
     }
@@ -188,7 +188,7 @@ export function ServerDetailModal({
     const existingEntry = currentOverrides[serverId] ?? {};
     const updatedEntry: ProjectServerOverrideEntry = {
       ...existingEntry,
-      mcpWireModeOverride: next,
+      mcpProtocolVersionOverride: next,
     };
     // Drop entry when it collapses to nothing (no headers, no timeout,
     // no wire-mode). Mirrors `normalizeOverrideEntry` on the backend so
@@ -197,7 +197,7 @@ export function ServerDetailModal({
       (updatedEntry.headersOverride &&
         Object.keys(updatedEntry.headersOverride).length > 0) ||
       updatedEntry.requestTimeoutOverride !== undefined ||
-      updatedEntry.mcpWireModeOverride !== undefined;
+      updatedEntry.mcpProtocolVersionOverride !== undefined;
     const nextOverrides: Record<string, ProjectServerOverrideEntry> = {
       ...currentOverrides,
     };
@@ -436,9 +436,9 @@ export function ServerDetailModal({
               )}
             </div>
             <div className="flex items-center gap-1.5 flex-shrink-0 mr-6">
-              <EffectiveModeChip
-                hostDefault={resolvedHostDefaultMcpWireMode}
-                serverOverride={currentMcpWireModeOverride}
+              <EffectiveProtocolVersionChip
+                hostDefault={resolvedHostDefaultMcpProtocolVersion}
+                serverOverride={currentMcpProtocolVersionOverride}
                 flagEnabled={Boolean(statelessMcpEnabled)}
               />
               <span className="inline-flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground">
@@ -509,10 +509,10 @@ export function ServerDetailModal({
                     isDuplicateServerName={isDuplicateServerName}
                     projectId={projectId}
                     hostedServerId={hostedServerId}
-                    mcpWireModeOverride={currentMcpWireModeOverride}
-                    onMcpWireModeOverrideChange={
+                    mcpProtocolVersionOverride={currentMcpProtocolVersionOverride}
+                    onMcpProtocolVersionOverrideChange={
                       projectId && isInProjectAutoConnect
-                        ? handleMcpWireModeOverrideChange
+                        ? handleMcpProtocolVersionOverrideChange
                         : undefined
                     }
                   />

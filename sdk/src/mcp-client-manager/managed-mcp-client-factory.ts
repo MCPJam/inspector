@@ -1,73 +1,119 @@
 /**
- * Factory that picks between `OfficialSdkClientAdapter` (legacy) and
- * `StatelessDraft2026V1PreviewClient` based on the resolved outbound
- * `mcpWireMode`. Called from `MCPClientManager.ts` once at construction
- * and once at HTTP transport normalization (per plan §"Construction
- * timing" — the preview's own-fetch needs the resolved URL + auth +
- * 401 behavior to exist at construction).
+ * Factory that picks between `OfficialSdkClientAdapter` (legacy upstream
+ * Client + initialize handshake) and `StatelessMcpHttpPreviewClient`
+ * (own-fetch stateless preview) based on the resolved per-server
+ * `mcpProtocolVersion` pin.
+ *
+ * **Validate-then-route discipline.** Callers pass `mcpProtocolVersion`
+ * already validated by `isKnownProtocolVersion` at the trust boundary
+ * (Convex validator, `local-server-resolver.ts`, etc.). The factory uses
+ * `isStatelessProtocolVersion` ONLY for routing — typo strings should
+ * never reach here.
  *
  * **Transport gate.** The stateless preview supports Streamable HTTP
  * POST only. Stdio and legacy SSE / `preferSSE` configs throw
- * `StatelessPreviewRequiresHttpTransport` at the factory rather than
- * letting a half-baked client fail mysteriously on the first call.
+ * `StatelessRequiresHttpTransport` at the factory rather than letting a
+ * half-baked client fail mysteriously on the first call.
+ *
+ * **Construction timing.** Called from `MCPClientManager.ts` once at
+ * construction and once at HTTP transport normalization — the preview's
+ * own-fetch needs the resolved URL + auth + 401 behavior to exist at
+ * construction (see `upstream_v2alpha_extension_points`).
  */
 
 import { Client, type ClientOptions, type Implementation } from "@modelcontextprotocol/client";
 import {
-  StatelessPreviewRequiresHttpTransport,
+  StatelessRequiresHttpTransport,
   type ManagedMcpClient,
 } from "./managed-mcp-client.js";
 import { OfficialSdkClientAdapter } from "./official-sdk-client-adapter.js";
 import {
-  StatelessDraft2026V1PreviewClient,
-  type StatelessDraft2026V1PreviewClientOptions,
-} from "./stateless-draft-2026-v1-preview-client.js";
+  StatelessMcpHttpPreviewClient,
+  type StatelessMcpHttpPreviewClientOptions,
+} from "./stateless-mcp-http-preview-client.js";
+import {
+  isStatelessProtocolVersion,
+  type McpProtocolVersion,
+} from "./mcp-protocol-version.js";
 import type { RpcLogger } from "./types.js";
 
-export type McpWireMode = "legacy" | "stateless-draft-2026-v1";
+// Re-export so consumers can `import { McpProtocolVersion } from "@mcpjam/sdk"`
+// rather than reaching into the protocol-version module.
+export type { McpProtocolVersion };
 
 /** Discriminator hint for the factory's transport-kind validation. */
 export type TransportKind = "http" | "stdio" | "sse";
 
-export interface CreateLegacyClientArgs {
-  mcpWireMode?: "legacy";
+/**
+ * Factory input. `mcpProtocolVersion` drives the legacy-vs-stateless
+ * branch; the legacy and stateless payloads are both optional and
+ * checked at runtime. The caller is responsible for supplying the
+ * payload that matches the version family.
+ */
+export interface CreateManagedMcpClientArgs {
+  /**
+   * Resolved per-server protocol-version pin (already validated by
+   * `isKnownProtocolVersion` at the trust boundary). Absent →
+   * legacy path with SDK default version negotiation. When present
+   * AND `isStatelessProtocolVersion` returns true → stateless path.
+   */
+  mcpProtocolVersion?: McpProtocolVersion;
+  /** Required for both paths. */
   clientInfo: Implementation;
-  clientOptions: ClientOptions;
+  /** Required for the legacy path. */
+  clientOptions?: ClientOptions;
+  /** Required for the stateless path. */
+  transportKind?: TransportKind;
+  /**
+   * Required for the stateless path. `clientInfo` and `protocolVersion`
+   * are injected by the factory from the top-level args, so the caller
+   * does not duplicate them here.
+   */
+  preview?: Omit<
+    StatelessMcpHttpPreviewClientOptions,
+    "clientInfo" | "protocolVersion"
+  >;
 }
-
-export interface CreateStatelessPreviewClientArgs {
-  mcpWireMode: "stateless-draft-2026-v1";
-  transportKind: TransportKind;
-  preview: Omit<StatelessDraft2026V1PreviewClientOptions, "clientInfo"> & {
-    clientInfo: Implementation;
-  };
-}
-
-export type CreateManagedMcpClientArgs =
-  | CreateLegacyClientArgs
-  | CreateStatelessPreviewClientArgs;
 
 /**
  * Build a managed client. Pure function — no manager state.
  *
- *   - `legacy` → wraps a fresh upstream `Client(clientInfo, clientOptions)`
- *     in `OfficialSdkClientAdapter`. Behavior byte-identical to direct
+ *   - `mcpProtocolVersion` absent OR stateful (per `isStatelessProtocolVersion`)
+ *     → wraps a fresh upstream `Client(clientInfo, clientOptions)` in
+ *     `OfficialSdkClientAdapter`. Behavior byte-identical to direct
  *     upstream usage.
- *   - `stateless-draft-2026-v1` → asserts `transportKind === "http"`,
- *     constructs a `StatelessDraft2026V1PreviewClient` with the
- *     resolved HTTP config. Throws `StatelessPreviewRequiresHttpTransport`
- *     for stdio / sse.
+ *   - `mcpProtocolVersion` stateless → asserts `transportKind === "http"`,
+ *     constructs a `StatelessMcpHttpPreviewClient` with the resolved HTTP
+ *     config. Throws `StatelessRequiresHttpTransport` for stdio / sse.
  */
 export function createManagedMcpClient(
   args: CreateManagedMcpClientArgs,
 ): ManagedMcpClient {
-  if (args.mcpWireMode === "stateless-draft-2026-v1") {
+  const wantsStateless =
+    args.mcpProtocolVersion !== undefined &&
+    isStatelessProtocolVersion(args.mcpProtocolVersion);
+
+  if (wantsStateless) {
     if (args.transportKind !== "http") {
-      throw new StatelessPreviewRequiresHttpTransport(args.transportKind);
+      throw new StatelessRequiresHttpTransport(args.transportKind ?? "<unset>");
     }
-    return new StatelessDraft2026V1PreviewClient(args.preview);
+    if (!args.preview) {
+      throw new Error(
+        "createManagedMcpClient: stateless protocol version requires `preview` options",
+      );
+    }
+    return new StatelessMcpHttpPreviewClient({
+      ...args.preview,
+      clientInfo: args.clientInfo,
+      protocolVersion: args.mcpProtocolVersion!,
+    });
   }
-  // Default to legacy when undefined; matches the resolveEffective rule.
+
+  if (!args.clientOptions) {
+    throw new Error(
+      "createManagedMcpClient: legacy path requires `clientOptions`",
+    );
+  }
   const inner = new Client(args.clientInfo, args.clientOptions);
   return new OfficialSdkClientAdapter(inner);
 }
@@ -81,6 +127,4 @@ export function wrapLegacyClient(client: Client): ManagedMcpClient {
   return new OfficialSdkClientAdapter(client);
 }
 
-// Re-export so consumers can `import { McpWireMode } from "@mcpjam/sdk"`
-// rather than reaching into a sub-module.
 export type { RpcLogger };

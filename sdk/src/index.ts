@@ -82,6 +82,12 @@ export {
   normalizeClientCapabilities,
   mergeClientCapabilities,
 } from "./mcp-client-manager/index.js";
+export {
+  MCP_PROTOCOL_VERSIONS,
+  isKnownProtocolVersion,
+  isStatelessProtocolVersion,
+  type McpProtocolVersion,
+} from "./mcp-client-manager/index.js";
 
 // Error classes
 export {

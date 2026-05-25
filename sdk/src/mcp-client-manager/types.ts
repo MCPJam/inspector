@@ -159,14 +159,19 @@ export type HttpServerConfig = BaseServerConfig & {
   /** Prefer SSE transport over Streamable HTTP */
   preferSSE?: boolean;
   /**
-   * Outbound MCP wire mode. Absent → "legacy" (upstream Client +
-   * initialize handshake). `"stateless-draft-2026-v1"` selects the
-   * experimental preview transport — Streamable HTTP POST only,
-   * incompatible with `preferSSE`. Resolved upstream (per-server
-   * override > host default > "legacy") and stamped onto the config
-   * passed to `MCPClientManager`. See `peppy-popping-flask.md`.
+   * Pinned MCP protocol version (wire literal that lands in `_meta` +
+   * `MCP-Protocol-Version` header). Absent → SDK default at request
+   * time. Stateful values (per `isStatelessProtocolVersion`) use the
+   * legacy upstream Client + initialize handshake; stateless values
+   * select the preview Streamable HTTP POST transport
+   * (`StatelessMcpHttpPreviewClient`) and are incompatible with
+   * `preferSSE`. Already validated by `isKnownProtocolVersion` at the
+   * trust boundary (`local-server-resolver.ts` + Convex validator);
+   * the manager does not re-validate. Resolved upstream (per-server
+   * override > host default > undefined) and stamped onto the config
+   * passed to `MCPClientManager`.
    */
-  mcpWireMode?: "legacy" | "stateless-draft-2026-v1";
+  mcpProtocolVersion?: import("./mcp-protocol-version.js").McpProtocolVersion;
 
   // Discriminator fields - these should never be set for HTTP
   command?: never;
@@ -209,8 +214,8 @@ export type ServerSummary = {
  *
  * `client` is typed as the `ManagedMcpClient` interface so the manager
  * can swap between the legacy upstream `Client` (via
- * `OfficialSdkClientAdapter`) and the DRAFT-2026-v1 stateless preview
- * (`StatelessDraft2026V1PreviewClient`) without per-call branching.
+ * `OfficialSdkClientAdapter`) and the stateless preview
+ * (`StatelessMcpHttpPreviewClient`) without per-call branching.
  * `transport` is `undefined` for the stateless preview path — the
  * preview owns its own fetch and has no separate Transport object.
  */

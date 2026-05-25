@@ -1,14 +1,39 @@
 import { useState } from "react";
 import { JsonEditor, type JsonEditorMode } from "@/components/ui/json-editor";
-import { Switch } from "@mcpjam/design-system/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@mcpjam/design-system/select";
 import { useFeatureFlagEnabled } from "posthog-js/react";
+import { isKnownProtocolVersion } from "@mcpjam/sdk/browser";
 import {
   type HostConfigInputV2,
   type HostConfigMcpProfileV1,
-  type McpWireMode,
+  type McpProtocolVersion,
 } from "@/lib/client-config-v2";
 import type { HostAttentionIssue } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
+
+type HostProtocolDropdownValue = McpProtocolVersion | "default";
+
+const HOST_PROTOCOL_OPTIONS: Array<{
+  value: HostProtocolDropdownValue;
+  label: string;
+  flagGated?: boolean;
+}> = [
+  { value: "default", label: "Default (SDK chooses)" },
+  {
+    value: "DRAFT-2026-v1",
+    label: "DRAFT-2026-v1 (RC, stateless)",
+    flagGated: true,
+  },
+  { value: "2025-11-25", label: "2025-11-25 (Latest stable)" },
+  { value: "2025-06-18", label: "2025-06-18" },
+  { value: "2025-03-26", label: "2025-03-26 (Legacy)" },
+];
 
 interface ProtocolTabProps {
   draft: HostConfigInputV2;
@@ -27,16 +52,18 @@ type ProtocolDoc = {
   clientInfo?: { name: string; version: string };
   supportedProtocolVersions?: string[];
   /**
-   * Host-level default outbound MCP wire mode. Absent → "legacy"
-   * (upstream Client + initialize handshake). `"stateless-draft-2026-v1"`
-   * selects the experimental DRAFT-2026-v1 stateless preview. Sibling of
-   * `clientInfo` and `supportedProtocolVersions` because stateless
-   * explicitly skips initialize — nesting it under `clientInfo` /
-   * `supportedProtocolVersions` would be misleading. Maps onto
-   * `mcpProfile.mcpWireMode` on persistence; per-server overrides live
-   * on the server card's Connection overrides section.
+   * Host-level default pinned MCP protocol version. Absent → SDK
+   * chooses at request time. Stateful values (per
+   * `isStatelessProtocolVersion`) use the legacy `Client` + initialize
+   * handshake; stateless values route through
+   * `StatelessMcpHttpPreviewClient`. Sibling of `clientInfo` and
+   * `supportedProtocolVersions` because stateless versions explicitly
+   * skip initialize — nesting it under either of those would be
+   * misleading. Maps onto `mcpProfile.mcpProtocolVersion` on
+   * persistence; per-server pins live on the server card's Connection
+   * overrides section.
    */
-  mcpWireMode?: McpWireMode;
+  mcpProtocolVersion?: McpProtocolVersion;
   capabilities?: Record<string, unknown>;
   connectionDefaults: {
     requestTimeout: number;
@@ -77,13 +104,15 @@ function protocolToJson(draft: HostConfigInputV2): ProtocolDoc {
     doc.supportedProtocolVersions = [...versions];
   }
 
-  // Always surface mcpWireMode so the editor advertises the option
-  // (otherwise users have to know to type the key). Default-render
-  // "legacy" when the persisted record is absent. The applier collapses
-  // explicit "legacy" back to undefined on save, preserving the
-  // "absent = SDK default" semantics on the canonical hash for rows
-  // that haven't opted into stateless.
-  doc.mcpWireMode = draft.mcpProfile?.mcpWireMode ?? "legacy";
+  // Surface mcpProtocolVersion only when explicitly set. Absence is
+  // semantic ("SDK default") and must round-trip through the editor
+  // verbatim — materializing a placeholder here would churn canonical
+  // hashes for legacy rows that haven't opted into a pin. The dropdown
+  // in the surrounding tab is how users discover the field; the JSON
+  // view doesn't need to advertise it.
+  if (draft.mcpProfile?.mcpProtocolVersion !== undefined) {
+    doc.mcpProtocolVersion = draft.mcpProfile.mcpProtocolVersion;
+  }
 
   if (
     draft.clientCapabilities &&
@@ -143,16 +172,18 @@ function applyJsonToDraft(
     if (cleaned.length > 0) supportedProtocolVersions = cleaned;
   }
 
-  // mcpWireMode — only accept the two known literals. Unknown / wrong
-  // type / absent → undefined (= "use SDK legacy default"). Collapse
-  // explicit "legacy" to undefined too: it's the implicit default, and
-  // letting it persist would proliferate "legacy" entries on every
-  // round-trip through the editor (we default-render "legacy" in
-  // protocolToJson so the field is discoverable). The user explicitly
-  // opting into stateless persists the literal.
-  let mcpWireMode: McpWireMode | undefined;
-  if (parsed.mcpWireMode === "stateless-draft-2026-v1") {
-    mcpWireMode = parsed.mcpWireMode;
+  // mcpProtocolVersion — membership-gate via `isKnownProtocolVersion`
+  // so typo strings fall back to `undefined` (= "SDK default") rather
+  // than slipping through to the SDK's open-routing predicate. Absent
+  // / wrong type also collapses to undefined for the same canonical-
+  // hash-stability reason documented in the type.
+  let mcpProtocolVersion: McpProtocolVersion | undefined;
+  const rawProtocolVersion = parsed.mcpProtocolVersion;
+  if (
+    typeof rawProtocolVersion === "string" &&
+    isKnownProtocolVersion(rawProtocolVersion)
+  ) {
+    mcpProtocolVersion = rawProtocolVersion;
   }
 
   // capabilities — pass through verbatim as Record<string, unknown> only if
@@ -206,12 +237,12 @@ function applyJsonToDraft(
     const next: HostConfigMcpProfileV1 = {
       ...base,
       initialize: initHasFields ? initialize : undefined,
-      mcpWireMode,
+      mcpProtocolVersion,
     };
 
     const allEmpty =
       next.initialize === undefined &&
-      next.mcpWireMode === undefined &&
+      next.mcpProtocolVersion === undefined &&
       !next.apps &&
       !next.extensions;
     return allEmpty ? undefined : next;
@@ -237,25 +268,28 @@ export function ProtocolTab({ draft, onDraftChange }: ProtocolTabProps) {
     onDraftChange,
   });
   const statelessMcpEnabled = useFeatureFlagEnabled("stateless-mcp-enabled");
-  const statelessOn =
-    draft.mcpProfile?.mcpWireMode === "stateless-draft-2026-v1";
+  const selectedDropdownValue: HostProtocolDropdownValue =
+    draft.mcpProfile?.mcpProtocolVersion ?? "default";
+  const visibleOptions = HOST_PROTOCOL_OPTIONS.filter(
+    (opt) => !opt.flagGated || statelessMcpEnabled,
+  );
 
-  // Toggle handler for the stateless wire-mode row. Writes through to
-  // `draft.mcpProfile.mcpWireMode` directly (parallel to the JSON
-  // editor's applyJsonToDraft path) so the JSON view round-trips
-  // immediately. Collapses to undefined when off so the canonical hash
-  // stays at the absent state for clients that haven't opted in.
-  const setStatelessOn = (next: boolean) => {
+  // Dropdown handler. Writes through to `draft.mcpProfile.mcpProtocolVersion`
+  // directly (parallel to the JSON editor's applyJsonToDraft path) so the
+  // JSON view round-trips immediately. Maps the UI-only "default" sentinel
+  // to `undefined` — preserves canonical-hash stability so the SDK can
+  // upgrade its default version without churning every stored host config.
+  const setProtocolVersion = (next: McpProtocolVersion | undefined) => {
     onDraftChange((prev) => {
       const base: HostConfigMcpProfileV1 =
         prev.mcpProfile ?? { profileVersion: 1 };
       const updated: HostConfigMcpProfileV1 = {
         ...base,
-        mcpWireMode: next ? "stateless-draft-2026-v1" : undefined,
+        mcpProtocolVersion: next,
       };
       const allEmpty =
         updated.initialize === undefined &&
-        updated.mcpWireMode === undefined &&
+        updated.mcpProtocolVersion === undefined &&
         !updated.apps &&
         !updated.extensions;
       return {
@@ -268,23 +302,36 @@ export function ProtocolTab({ draft, onDraftChange }: ProtocolTabProps) {
   return (
     <div className="flex h-full min-h-[480px] flex-col gap-3">
       {statelessMcpEnabled ? (
-        <div className="rounded-[10px] border border-border bg-background">
-          <div className="flex items-stretch">
-            <div className="flex flex-1 flex-col gap-0.5 px-3.5 py-2.5">
-              <span className="text-[12px] font-medium">
-                Stateless wire mode{" "}
-                <span className="font-mono text-muted-foreground">
-                  (DRAFT-2026-v1)
-                </span>
-              </span>
-            </div>
-            <div className="flex items-center border-l border-border pl-3 pr-3.5">
-              <Switch
-                id="protocol-tab-stateless-toggle"
-                checked={statelessOn}
-                onCheckedChange={setStatelessOn}
-                aria-label="Stateless wire mode"
-              />
+        <div className="rounded-[10px] border border-border bg-background px-3.5 py-2.5">
+          <div className="flex items-center gap-3">
+            <span
+              className="text-[12px] font-medium"
+              title="Pin the MCP protocol version this host's connections speak by default. 'Default' lets the SDK choose at request time. Stateless options use the experimental DRAFT-2026-v1 transport."
+            >
+              Protocol version
+            </span>
+            <div className="ml-auto w-[260px]">
+              <Select
+                value={selectedDropdownValue}
+                onValueChange={(next) => {
+                  if (next === "default") {
+                    setProtocolVersion(undefined);
+                  } else {
+                    setProtocolVersion(next as McpProtocolVersion);
+                  }
+                }}
+              >
+                <SelectTrigger className="h-9 text-xs">
+                  <SelectValue placeholder="Default (SDK chooses)" />
+                </SelectTrigger>
+                <SelectContent>
+                  {visibleOptions.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
         </div>

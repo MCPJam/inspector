@@ -1,6 +1,10 @@
 import { z } from "zod";
 import type { Context } from "hono";
-import { MCPClientManager } from "@mcpjam/sdk";
+import {
+  MCPClientManager,
+  isKnownProtocolVersion,
+  type McpProtocolVersion,
+} from "@mcpjam/sdk";
 import type {
   HttpServerConfig,
   RpcLogger,
@@ -62,13 +66,19 @@ export const projectServerSchema = z.object({
     .passthrough()
     .optional(),
   supportedProtocolVersions: z.array(z.string().min(1)).optional(),
-  // Outbound MCP wire mode pin (DRAFT-2026-v1 stateless preview).
-  // Resolved client-side from `hostConfig.mcpProfile.mcpWireMode`;
-  // only the two known literals are accepted. Forwarded into the SDK
-  // factory via the per-server config; absent means "use SDK default
-  // (legacy upstream Client + initialize handshake)".
-  mcpWireMode: z
-    .enum(["legacy", "stateless-draft-2026-v1"])
+  // Per-server pinned MCP protocol version. Resolved client-side from
+  // `hostConfig.mcpProfile.mcpProtocolVersion` + per-server override.
+  // Membership-gated via `MCP_PROTOCOL_VERSIONS` (mirror of the SDK +
+  // backend constant); typo values are rejected at this trust boundary
+  // and never reach the SDK's open-routing predicate. Absent means
+  // "use SDK default (negotiates at request time)".
+  mcpProtocolVersion: z
+    .enum([
+      "2025-03-26",
+      "2025-06-18",
+      "2025-11-25",
+      "DRAFT-2026-v1",
+    ])
     .optional(),
 });
 
@@ -461,13 +471,13 @@ export function toHttpConfig(
     supportedProtocolVersions?: string[];
     /**
      * Outbound wire mode (DRAFT-2026-v1 stateless preview). Forwarded
-     * onto `HttpServerConfig.mcpWireMode` so the SDK factory branches
-     * to `StatelessDraft2026V1PreviewClient` when set. Without this,
+     * onto `HttpServerConfig.mcpProtocolVersion` so the SDK factory branches
+     * to `StatelessMcpHttpPreviewClient` when set. Without this,
      * the hosted handler dropped the pin at the route boundary and
      * hosted connects always ran the legacy `initialize` handshake
      * regardless of the client-level toggle.
      */
-    mcpWireMode?: "legacy" | "stateless-draft-2026-v1";
+    mcpProtocolVersion?: McpProtocolVersion;
   }
 ): HttpServerConfig {
   if (authResponse.serverConfig.transportType !== "http") {
@@ -515,8 +525,8 @@ export function toHttpConfig(
           supportedProtocolVersions: initializePins.supportedProtocolVersions,
         }
       : {}),
-    ...(initializePins?.mcpWireMode
-      ? { mcpWireMode: initializePins.mcpWireMode }
+    ...(initializePins?.mcpProtocolVersion
+      ? { mcpProtocolVersion: initializePins.mcpProtocolVersion }
       : {}),
   };
 }
@@ -556,7 +566,7 @@ export async function createAuthorizedManager(
         unknown
       >;
       supportedProtocolVersions?: string[];
-      mcpWireMode?: "legacy" | "stateless-draft-2026-v1";
+      mcpProtocolVersion?: McpProtocolVersion;
     };
   }
 ): Promise<AuthorizedManagerResult> {
@@ -844,14 +854,15 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
       rawSupportedVersions.every((v) => typeof v === "string" && v.length > 0)
         ? (rawSupportedVersions as string[])
         : undefined;
-    // mcpWireMode — only the two known literals; anything else falls
-    // back to SDK default (legacy) so a malformed payload never breaks
-    // the route. Same defensive gating as the other initializePins
-    // fields above.
-    const rawWireMode = raw.mcpWireMode;
-    const initializeWireMode: "legacy" | "stateless-draft-2026-v1" | undefined =
-      rawWireMode === "legacy" || rawWireMode === "stateless-draft-2026-v1"
-        ? rawWireMode
+    // mcpProtocolVersion — membership-gate via `isKnownProtocolVersion`
+    // so typo values fall back to SDK default rather than reach the
+    // SDK's open-routing predicate. Same defensive pattern as the
+    // other initializePins fields above.
+    const rawProtocolVersion = raw.mcpProtocolVersion;
+    const initializeWireMode: McpProtocolVersion | undefined =
+      typeof rawProtocolVersion === "string" &&
+      isKnownProtocolVersion(rawProtocolVersion)
+        ? rawProtocolVersion
         : undefined;
     const initializePins =
       initializeClientInfo ||
@@ -865,7 +876,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
               ? { supportedProtocolVersions: initializeSupportedVersions }
               : {}),
             ...(initializeWireMode
-              ? { mcpWireMode: initializeWireMode }
+              ? { mcpProtocolVersion: initializeWireMode }
               : {}),
           }
         : undefined;

@@ -109,7 +109,11 @@ import {
   wrapLegacyClient,
 } from "./managed-mcp-client-factory.js";
 import {
-  StatelessPreviewRequiresHttpTransport,
+  isStatelessProtocolVersion,
+  type McpProtocolVersion,
+} from "./mcp-protocol-version.js";
+import {
+  StatelessRequiresHttpTransport,
   type ManagedMcpClient,
   type ManagedMcpClientConnectOptions,
   type ManagedMcpClientNotificationHandler,
@@ -121,7 +125,7 @@ import {
 /**
  * Temporary `ManagedMcpClient` slotted into `state.client` between the
  * early "construct + apply handlers" site and the
- * `connectViaHttp(wireMode: stateless)` branch that builds the real
+ * `connectViaHttp(protocolVersion: stateless)` branch that builds the real
  * preview client. Notification + elicitation handlers registered on
  * this stub are re-applied to the real client after construction; if
  * any RPC method is called against the stub we throw loudly to surface
@@ -140,7 +144,7 @@ function createPendingStatelessClientStub(): ManagedMcpClient {
   };
   const fail = (method: string) => {
     throw new Error(
-      `MCPClientManager: ${method}() called on pending stateless client stub. This indicates a wiring bug — the real StatelessDraft2026V1PreviewClient should have replaced the stub inside connectViaHttp before any RPC.`,
+      `MCPClientManager: ${method}() called on pending stateless client stub. This indicates a wiring bug — the real StatelessMcpHttpPreviewClient should have replaced the stub inside connectViaHttp before any RPC.`,
     );
   };
   return {
@@ -1267,16 +1271,18 @@ export class MCPClientManager {
           ? { supportedProtocolVersions }
           : {}),
       };
-      // Resolve the outbound wire mode. Per
-      // `peppy-popping-flask.md` §"Effective mode resolution" the
-      // upstream caller (inspector backend) has already done host-
-      // default + per-server override resolution and stamped the
-      // effective value on the config. We accept that value here
-      // without re-resolving.
-      const httpWireMode =
-        !this.isStdioConfig(config) && config.mcpWireMode
-          ? config.mcpWireMode
-          : "legacy";
+      // Resolve the outbound protocol-version pin. The upstream caller
+      // (inspector backend) has already done host-default + per-server
+      // override resolution AND `isKnownProtocolVersion` membership
+      // validation; we accept the stamped value here without
+      // re-validating. Predicate-based routing — stateful pins (or no
+      // pin) route through the legacy upstream Client path; stateless
+      // pins route through the preview client.
+      const resolvedProtocolVersion =
+        !this.isStdioConfig(config) ? config.mcpProtocolVersion : undefined;
+      const wantsStateless =
+        resolvedProtocolVersion !== undefined &&
+        isStatelessProtocolVersion(resolvedProtocolVersion);
 
       // Legacy path: construct upstream `Client` early at this site so
       // the existing notification/elicitation/error wiring keeps
@@ -1287,7 +1293,7 @@ export class MCPClientManager {
       // that path.
       let managedClient: ManagedMcpClient;
       let upstreamClient: Client | undefined;
-      if (httpWireMode === "legacy") {
+      if (!wantsStateless) {
         upstreamClient = new Client(
           resolvedClientInfo as { name: string; version: string },
           clientOptions
@@ -1297,7 +1303,7 @@ export class MCPClientManager {
         // Stateless preview gate: must be HTTP. The connectViaHttp path
         // builds + assigns the preview client when this branch is taken.
         if (this.isStdioConfig(config)) {
-          throw new StatelessPreviewRequiresHttpTransport("stdio");
+          throw new StatelessRequiresHttpTransport("stdio");
         }
         // Temporary placeholder — overwritten inside `connectViaHttp`
         // once we have the resolved URL / headers / auth. Keep
@@ -1344,7 +1350,7 @@ export class MCPClientManager {
           timeout,
           state,
           {
-            wireMode: httpWireMode,
+            protocolVersion: resolvedProtocolVersion,
             // Pass the resolved clientInfo so the stateless preview can
             // emit it in `_meta.io.modelcontextprotocol/clientInfo`
             // without re-resolving from manager defaults.
@@ -1452,7 +1458,13 @@ export class MCPClientManager {
     timeout: number,
     state: LiveClientState,
     wireOpts?: {
-      wireMode: "legacy" | "stateless-draft-2026-v1";
+      /**
+       * Resolved per-server `mcpProtocolVersion` pin (already validated
+       * by `isKnownProtocolVersion` at the trust boundary). Absent OR
+       * stateful → legacy path; stateless (per
+       * `isStatelessProtocolVersion`) → preview path.
+       */
+      protocolVersion?: McpProtocolVersion;
       clientInfo: { name: string; version: string };
       assignClient: (next: ManagedMcpClient) => void;
     }
@@ -1516,17 +1528,18 @@ export class MCPClientManager {
     );
     const preferSSE = config.preferSSE ?? url.pathname.endsWith("/sse");
 
-    // DRAFT-2026-v1 stateless preview branch. The preview owns fetch
-    // end-to-end and cannot be re-shaped after construction (per
+    // Stateless preview branch. The preview owns fetch end-to-end and
+    // cannot be re-shaped after construction (per
     // `upstream_v2alpha_extension_points`), so it must be built HERE —
     // after auth / requestInit / 401 wiring is resolved. Streamable
     // HTTP POST only; legacy SSE / preferSSE is rejected up-front.
     if (
-      wireOpts?.wireMode === "stateless-draft-2026-v1" &&
+      wireOpts?.protocolVersion !== undefined &&
+      isStatelessProtocolVersion(wireOpts.protocolVersion) &&
       wireOpts.assignClient
     ) {
       if (preferSSE) {
-        throw new StatelessPreviewRequiresHttpTransport("sse");
+        throw new StatelessRequiresHttpTransport("sse");
       }
       // Build a header bag from the resolved `requestInit.headers` so
       // the preview's own-fetch sees the same statics legacy would.
@@ -1538,13 +1551,15 @@ export class MCPClientManager {
         | { headers?: Record<string, string> | Headers | undefined }
         | undefined;
       if (ri?.headers) {
-        const headers =
-          ri.headers instanceof Headers
-            ? Object.fromEntries(ri.headers.entries())
-            : ri.headers;
-        for (const [k, v] of Object.entries(headers)) {
-          if (k.toLowerCase() === "authorization") continue;
-          staticHeaders[k] = v;
+        if (ri.headers instanceof Headers) {
+          ri.headers.forEach((v, k) => {
+            if (k.toLowerCase() !== "authorization") staticHeaders[k] = v;
+          });
+        } else {
+          for (const [k, v] of Object.entries(ri.headers)) {
+            if (k.toLowerCase() === "authorization") continue;
+            staticHeaders[k] = v;
+          }
         }
       }
       // Resolve the access token at send-time so OAuth refresh stays
@@ -1621,11 +1636,11 @@ export class MCPClientManager {
       };
       const rpcLogger = this.resolveRpcLogger(config);
       const previewClient = createManagedMcpClient({
-        mcpWireMode: "stateless-draft-2026-v1",
+        mcpProtocolVersion: wireOpts.protocolVersion,
+        clientInfo: wireOpts.clientInfo,
         transportKind: "http",
         preview: {
           url,
-          clientInfo: wireOpts.clientInfo,
           staticHeaders,
           getAccessToken,
           on401,

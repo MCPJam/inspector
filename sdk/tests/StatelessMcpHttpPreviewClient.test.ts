@@ -1,5 +1,5 @@
 /**
- * Integration tests for `StatelessDraft2026V1PreviewClient` against an
+ * Integration tests for `StatelessMcpHttpPreviewClient` against an
  * in-process HTTP server that enforces the DRAFT-2026-v1 wire contract:
  *   - body `_meta.io.modelcontextprotocol/protocolVersion === "DRAFT-2026-v1"`
  *   - `MCP-Protocol-Version` / `Mcp-Method` / `Mcp-Name` headers match
@@ -14,10 +14,10 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { AddressInfo } from "node:net";
 import {
-  StatelessDraft2026V1PreviewClient,
+  StatelessMcpHttpPreviewClient,
   STATELESS_DRAFT_2026_V1,
-  NotSupportedInStatelessPreview,
-} from "../src/mcp-client-manager/stateless-draft-2026-v1-preview-client.js";
+  NotYetSupportedInStateless,
+} from "../src/mcp-client-manager/stateless-mcp-http-preview-client.js";
 
 interface CapturedRequest {
   headers: Record<string, string>;
@@ -199,13 +199,13 @@ function respond(
   res.end(JSON.stringify(payload));
 }
 
-describe("StatelessDraft2026V1PreviewClient", () => {
+describe("StatelessMcpHttpPreviewClient", () => {
   let fixture: Awaited<ReturnType<typeof startFixture>>;
-  let client: StatelessDraft2026V1PreviewClient;
+  let client: StatelessMcpHttpPreviewClient;
 
   beforeEach(async () => {
     fixture = await startFixture();
-    client = new StatelessDraft2026V1PreviewClient({
+    client = new StatelessMcpHttpPreviewClient({
       url: fixture.url,
       clientInfo: { name: "test-client", version: "0.0.1" },
       serverId: "fixture",
@@ -341,7 +341,7 @@ describe("StatelessDraft2026V1PreviewClient", () => {
   test("warns and marks non-conforming when server returns mcp-session-id (never echoed)", async () => {
     await fixture.close();
     fixture = await startFixture({ emitSessionId: true });
-    client = new StatelessDraft2026V1PreviewClient({
+    client = new StatelessMcpHttpPreviewClient({
       url: fixture.url,
       clientInfo: { name: "test-client", version: "0.0.1" },
       serverId: "fixture-with-session",
@@ -356,12 +356,12 @@ describe("StatelessDraft2026V1PreviewClient", () => {
     }
   });
 
-  test("subscribeResource throws NotSupportedInStatelessPreview", async () => {
+  test("subscribeResource throws NotYetSupportedInStateless", async () => {
     await expect(client.subscribeResource({ uri: "x://" })).rejects.toThrow(
-      NotSupportedInStatelessPreview,
+      NotYetSupportedInStateless,
     );
     await expect(client.unsubscribeResource({ uri: "x://" })).rejects.toThrow(
-      NotSupportedInStatelessPreview,
+      NotYetSupportedInStateless,
     );
   });
 
@@ -400,7 +400,7 @@ describe("StatelessDraft2026V1PreviewClient", () => {
     });
     await new Promise<void>((r) => bad.listen(0, "127.0.0.1", () => r()));
     const port = (bad.address() as AddressInfo).port;
-    const badClient = new StatelessDraft2026V1PreviewClient({
+    const badClient = new StatelessMcpHttpPreviewClient({
       url: new URL(`http://127.0.0.1:${port}/`),
       clientInfo: { name: "test", version: "0" },
       serverId: "bad",

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, type Dispatch } from "react";
 import { useConvex } from "convex/react";
 import { toast } from "sonner";
 import type { HttpServerConfig, MCPServerConfig } from "@mcpjam/sdk/browser";
+import { isKnownProtocolVersion } from "@mcpjam/sdk/browser";
 import type {
   AppAction,
   AppState,
@@ -921,7 +922,7 @@ export function useServerState({
           unknown
         >;
         supportedProtocolVersions?: string[];
-        mcpWireMode?: "legacy" | "stateless-draft-2026-v1";
+        mcpProtocolVersion?: import("@mcpjam/sdk/browser").McpProtocolVersion;
       } = {};
       if ("url" in serverConfig) {
         const headers = omitAuthorizationHeader(
@@ -954,19 +955,20 @@ export function useServerState({
           (v): v is string => typeof v === "string" && v.trim() !== "",
         );
       }
-      // Outbound wire mode — host default only at this seam.
-      // `resolveEffectiveMcpWireMode` would also factor in the
-      // per-server `serverConnectionOverrides[serverId]
-      // .mcpWireModeOverride`, but `buildResolverConnectionDefaults`
-      // is invoked once per connect with the project-wide profile
-      // and doesn't see per-server data here. Per-server overrides
-      // can be plumbed in a follow-up by extending the function with
-      // a `(serverId, overrides)` arg.
-      if (
-        mcpProfile?.mcpWireMode === "legacy" ||
-        mcpProfile?.mcpWireMode === "stateless-draft-2026-v1"
-      ) {
-        defaults.mcpWireMode = mcpProfile.mcpWireMode;
+      // Host-default pinned MCP protocol version — host scope only at
+      // this seam. `resolveEffectiveMcpProtocolVersion` would also
+      // factor in the per-server
+      // `serverConnectionOverrides[serverId].mcpProtocolVersionOverride`,
+      // but `buildResolverConnectionDefaults` is invoked once per
+      // connect with the project-wide profile and doesn't see
+      // per-server data here. Per-server overrides can be plumbed in a
+      // follow-up by extending the function with a
+      // `(serverId, overrides)` arg. Membership-gate via
+      // `isKnownProtocolVersion` so a typo on the host config doesn't
+      // slip past to the SDK's open-routing predicate.
+      const hostPin = mcpProfile?.mcpProtocolVersion;
+      if (typeof hostPin === "string" && isKnownProtocolVersion(hostPin)) {
+        defaults.mcpProtocolVersion = hostPin;
       }
       return Object.keys(defaults).length > 0 ? defaults : undefined;
     },
