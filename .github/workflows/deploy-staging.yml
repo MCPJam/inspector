@@ -66,13 +66,22 @@ jobs:
       # `ALLOWED_ORIGINS` (origin-validation middleware) supports the
       # wildcard via `matchesAllowedOrigin`, gated on
       # `MCPJAM_NONPROD_LOCKDOWN=true` — staging satisfies that.
+      #
+      # The two vars use different wildcard shapes intentionally:
+      #   - ALLOWED_ORIGINS uses the tight mid-host pattern so only PR
+      #     previews of this service can hit staging APIs. `matchesAllowedOrigin`
+      #     compiles `*` to `[A-Za-z0-9-]+`, which never crosses `.`.
+      #   - WEB_ALLOWED_ORIGINS uses the leading-`*.` shape because CSP3
+      #     `frame-ancestors` host-source syntax only accepts `*` as a
+      #     leading wildcard before a dot; mid-host wildcards are ignored
+      #     by browsers and would silently 404 every preview iframe.
       - name: Refresh staging origin allowlists
         run: |
           .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
             -e "$RAILWAY_STAGING_ENVIRONMENT" \
             -s "$RAILWAY_INSPECTOR_SERVICE" \
             ALLOWED_ORIGINS="$STAGING_APP_URL,https://mcp-inspector-pr-*.up.railway.app" \
-            WEB_ALLOWED_ORIGINS="$STAGING_APP_URL,https://mcp-inspector-pr-*.up.railway.app"
+            WEB_ALLOWED_ORIGINS="$STAGING_APP_URL,https://*.up.railway.app"
 
       # Capture the most recent deployment id before we trigger a new one so
       # the wait step below can detect when *our* deploy appears (instead of

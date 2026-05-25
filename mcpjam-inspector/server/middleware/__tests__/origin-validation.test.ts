@@ -250,6 +250,39 @@ describe("originValidationMiddleware", () => {
       expect(res.status).toBe(200);
     });
 
+    it("supports mid-host wildcards like https://mcp-inspector-pr-*.up.railway.app", async () => {
+      // The deploy-staging workflow programs this exact pattern into
+      // ALLOWED_ORIGINS so PR-preview frontends can hit staging APIs.
+      // The previous matcher only handled leading `*.` patterns and
+      // silently dropped this one — leaving PR previews 403'd by
+      // origin validation.
+      process.env.ALLOWED_ORIGINS =
+        "https://staging.mcpjam.com,https://mcp-inspector-pr-*.up.railway.app";
+      process.env.MCPJAM_NONPROD_LOCKDOWN = "true";
+
+      app = createTestApp();
+
+      const ok = await app.request("/api/test", {
+        headers: { Origin: "https://mcp-inspector-pr-2246.up.railway.app" },
+      });
+      expect(ok.status).toBe(200);
+
+      // Same domain but different prefix → still rejected.
+      const blocked = await app.request("/api/test", {
+        headers: { Origin: "https://other-pr-2246.up.railway.app" },
+      });
+      expect(blocked.status).toBe(403);
+
+      // Wildcard must not cross dots — `pr-2246.evil` does not match
+      // `mcp-inspector-pr-*.up.railway.app`.
+      const crossDot = await app.request("/api/test", {
+        headers: {
+          Origin: "https://mcp-inspector-pr-2246.evil.up.railway.app",
+        },
+      });
+      expect(crossDot.status).toBe(403);
+    });
+
     it("blocks origins that don't match wildcard pattern", async () => {
       process.env.ALLOWED_ORIGINS = "https://*.up.railway.app";
       process.env.MCPJAM_NONPROD_LOCKDOWN = "true";
