@@ -207,6 +207,30 @@ export function ClientConfigEditor({
               />
             </div>
 
+            <div className="flex items-start justify-between gap-4">
+              <div className="grid gap-1">
+                <Label htmlFor={`${reactId}-progressiveTools`}>
+                  Progressive tool discovery
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Expose <code>search_mcp_tools</code> and{" "}
+                  <code>load_mcp_tools</code> meta-tools instead of sending
+                  every MCP tool definition every turn. Recommended only for
+                  hosts connected to large tool catalogs.
+                </p>
+              </div>
+              <Switch
+                id={`${reactId}-progressiveTools`}
+                // Persisted as undefined by default. Treat undefined as off
+                // in the UI; flipping on writes `true`, flipping off after an
+                // explicit on writes `false` (distinct hash from undefined).
+                checked={value.progressiveToolDiscovery === true}
+                onCheckedChange={(checked) =>
+                  update({ progressiveToolDiscovery: checked })
+                }
+              />
+            </div>
+
             <div className="grid gap-2">
               <Label htmlFor={`${reactId}-hostStyle`}>Host style</Label>
               <Select

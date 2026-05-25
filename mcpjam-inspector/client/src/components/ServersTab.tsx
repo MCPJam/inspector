@@ -73,6 +73,11 @@ import type {
   ProjectServerConfigInput,
 } from "@/lib/project-server-config";
 import {
+  type HostConfigDtoV2,
+  type HostConfigInputV2,
+  hostConfigDtoToInput,
+} from "@/lib/client-config-v2";
+import {
   resetAutoConnectAttempts,
   useAutoConnectProjectServers,
 } from "@/hooks/useAutoConnectProjectServers";
@@ -645,6 +650,61 @@ export function ServersTab({
     input: ProjectServerConfigInput;
   }) => Promise<ProjectServerConfigDto>;
   const [isTogglingAutoConnect, setIsTogglingAutoConnect] = useState(false);
+  // Host-level toggle for progressive MCP tool discovery. Persisted on the
+  // project's default HostConfigV2 (not the per-project server config) so
+  // chatboxes/eval suites that snapshot the project default inherit it.
+  // The toggle is rendered in the same row as Auto-connect because that's
+  // where users discover host-level project settings; it doesn't share any
+  // state with Auto-connect.
+  const activeProjectDefaultHostConfig = useQuery(
+    "hostConfigsV2:getProjectDefault" as any,
+    sharedProjectIdForHostScope && isAuthenticated
+      ? ({ projectId: sharedProjectIdForHostScope } as any)
+      : "skip",
+  ) as HostConfigDtoV2 | null | undefined;
+  const setProjectDefaultHostConfigMutation = useMutation(
+    "hostConfigsV2:setProjectDefault" as any,
+  ) as unknown as (args: {
+    projectId: string;
+    input: HostConfigInputV2;
+  }) => Promise<string>;
+  const [isTogglingProgressiveTools, setIsTogglingProgressiveTools] =
+    useState(false);
+  const progressiveToolsEnabled =
+    activeProjectDefaultHostConfig?.progressiveToolDiscovery === true;
+  const handleToggleProgressiveTools = useCallback(
+    async (next: boolean) => {
+      if (!sharedProjectIdForHostScope) return;
+      if (!activeProjectDefaultHostConfig) return;
+      setIsTogglingProgressiveTools(true);
+      try {
+        // Wholesale write: setProjectDefault replaces the row's input.
+        // Start from the hydrated DTO so we preserve every other field
+        // verbatim — backend will mint a fresh hostConfig row only when
+        // the canonical hash actually changes (true/false/undefined hash
+        // distinctly per the backend spec).
+        const input = hostConfigDtoToInput(activeProjectDefaultHostConfig);
+        input.progressiveToolDiscovery = next;
+        await setProjectDefaultHostConfigMutation({
+          projectId: sharedProjectIdForHostScope,
+          input,
+        });
+      } catch (err) {
+        const message =
+          err instanceof Error
+            ? err.message
+            : "Failed to update progressive tool discovery";
+        toast.error(message);
+      } finally {
+        setIsTogglingProgressiveTools(false);
+      }
+    },
+    [
+      sharedProjectIdForHostScope,
+      activeProjectDefaultHostConfig,
+      setProjectDefaultHostConfigMutation,
+    ],
+  );
   const catalogServerIds = useMemo(
     () => (viewProjectServersList ?? []).map((s) => s._id),
     [viewProjectServersList],
@@ -736,6 +796,41 @@ export function ServersTab({
       </label>
     );
   };
+
+  const renderProgressiveToolsToggle = () => {
+    // Mirror the visibility rules of Auto-connect: hide when there's no
+    // project to scope against, when the user isn't authenticated, and
+    // while the host config query is still resolving. Once resolved, a
+    // null DTO means the project has no default config yet — don't
+    // render the toggle in that case either (there's nothing to patch).
+    if (!sharedProjectIdForHostScope || !isAuthenticated) return null;
+    if (activeProjectDefaultHostConfig === undefined) return null;
+    if (activeProjectDefaultHostConfig === null) return null;
+    const disabled =
+      isTogglingProgressiveTools || !canManageProjectServers;
+    return (
+      <label
+        className={cn(
+          "flex items-center gap-2 text-xs text-muted-foreground select-none",
+          disabled ? "cursor-not-allowed" : "cursor-pointer",
+        )}
+        title={
+          canManageProjectServers
+            ? "Expose search_mcp_tools / load_mcp_tools instead of every MCP tool every turn. Recommended only for hosts with very large tool catalogs."
+            : "Only project admins can change progressive tool discovery"
+        }
+      >
+        <Switch
+          checked={progressiveToolsEnabled}
+          disabled={disabled}
+          onCheckedChange={handleToggleProgressiveTools}
+          aria-label="Enable progressive MCP tool discovery"
+        />
+        <span>Progressive tools</span>
+      </label>
+    );
+  };
+
   const previewedHostRequiredNames = useMemo(() => {
     const requiredIds = previewedHost?.config?.serverIds ?? [];
     if (requiredIds.length === 0 || !viewProjectServersList) return [];
@@ -1801,6 +1896,7 @@ export function ServersTab({
       {showServerActionsInHostsHeader && hostsConnectAddServerSlot
         ? createPortal(
             <>
+              {renderProgressiveToolsToggle()}
               {renderAutoConnectToggle()}
               {renderServerActionsMenu()}
             </>,

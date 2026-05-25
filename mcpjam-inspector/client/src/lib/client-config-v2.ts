@@ -242,6 +242,17 @@ export type HostConfigInputV2 = {
   systemPrompt: string;
   temperature: number;
   requireToolApproval: boolean;
+  /**
+   * Host-level opt-in for progressive MCP tool discovery
+   * (`search_mcp_tools` / `load_mcp_tools` meta-tools instead of sending
+   * every tool definition every turn). Optional and undefined-by-default:
+   * the chat orchestrator interprets `undefined` as "use the auto policy"
+   * (currently: off for hosted unless the env override is set), explicit
+   * `true` as "force on", explicit `false` as "force off". Backend hashes
+   * the three states distinctly so flipping the toggle mints a fresh
+   * hostConfig row.
+   */
+  progressiveToolDiscovery?: boolean;
   serverIds: string[];
   optionalServerIds: string[];
   connectionDefaults: HostConfigConnectionDefaults;
@@ -296,6 +307,8 @@ export type HostConfigDtoV2 = {
   systemPrompt: string;
   temperature: number;
   requireToolApproval: boolean;
+  /** Surfaced verbatim — see HostConfigInputV2.progressiveToolDiscovery. */
+  progressiveToolDiscovery?: boolean;
   serverIds: string[];
   optionalServerIds: string[];
   connectionDefaults: HostConfigConnectionDefaults;
@@ -333,6 +346,10 @@ export function emptyHostConfigInputV2(
     systemPrompt: partial.systemPrompt ?? "",
     temperature: partial.temperature ?? DEFAULT_TEMPERATURE_V2,
     requireToolApproval: partial.requireToolApproval ?? false,
+    // Undefined-preservation: a brand-new input MUST stay undefined until
+    // the user opts in via the toggle. Backend hashes
+    // `undefined`/`true`/`false` distinctly.
+    progressiveToolDiscovery: partial.progressiveToolDiscovery,
     serverIds: partial.serverIds ? [...partial.serverIds] : [],
     optionalServerIds: partial.optionalServerIds
       ? [...partial.optionalServerIds]
@@ -410,6 +427,7 @@ export function hostConfigDtoToInput(
     systemPrompt: dto.systemPrompt,
     temperature: dto.temperature,
     requireToolApproval: dto.requireToolApproval,
+    progressiveToolDiscovery: dto.progressiveToolDiscovery,
     serverIds: [...dto.serverIds],
     optionalServerIds: [...dto.optionalServerIds],
     connectionDefaults: {

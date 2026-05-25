@@ -231,6 +231,18 @@ chatV2.post("/", async (c) => {
           temperature,
           requireToolApproval,
           customProviders: body.customProviders,
+          // Host-level toggle from the project's default HostConfigV2.
+          // Body field is undefined when the user hasn't opted in; we
+          // pass undefined through so prepareChatV2 falls back to its
+          // auto policy (env override + threshold heuristics). When set,
+          // it forces on/off for this request.
+          ...(body.progressiveToolDiscovery !== undefined
+            ? {
+                progressiveToolDiscovery: {
+                  enabled: body.progressiveToolDiscovery,
+                },
+              }
+            : {}),
         });
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);

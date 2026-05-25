@@ -30,7 +30,7 @@ import {
   type ModelMessage,
 } from "ai";
 import { useAuth } from "@workos-inc/authkit-react";
-import { useConvexAuth } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import {
   ModelDefinition,
   type ModelProvider,
@@ -1140,6 +1140,23 @@ export function useChatSession(
   );
   const requireToolApprovalRef = useRef(requireToolApproval);
   requireToolApprovalRef.current = requireToolApproval;
+
+  // Progressive MCP tool discovery is a project-level setting persisted on
+  // the project's default HostConfigV2 (edited in ServersTab / client
+  // config editor). It's NOT chat-tab-controlled like temperature or
+  // approval, so we resolve it from the live host config every send. When
+  // the user flips the toggle, the next send reflects the new value
+  // without a tab reload. `undefined` → backend orchestrator falls back
+  // to its auto policy; `true`/`false` → explicit host-level override.
+  const projectDefaultHostConfig = useQuery(
+    "hostConfigsV2:getProjectDefault" as any,
+    hostedProjectId && isAuthenticated
+      ? ({ projectId: hostedProjectId } as any)
+      : "skip",
+  ) as { progressiveToolDiscovery?: boolean } | null | undefined;
+  const progressiveToolDiscoveryRef = useRef<boolean | undefined>(undefined);
+  progressiveToolDiscoveryRef.current =
+    projectDefaultHostConfig?.progressiveToolDiscovery;
   const isHostedGuest = HOSTED_MODE && !workOsUser && !isWorkOsLoading;
   const sharedGuestMode =
     isHostedGuest &&
@@ -1486,6 +1503,14 @@ export function useChatSession(
                 : {}),
             }),
         requireToolApproval: requireToolApprovalRef.current,
+        // Only send when the user explicitly set the host-level toggle.
+        // Omitting the field tells the backend orchestrator to use its
+        // auto policy (currently: off for hosted unless the env override
+        // is set). Backend hashes undefined / true / false distinctly so
+        // round-trips preserve the user's choice.
+        ...(progressiveToolDiscoveryRef.current !== undefined
+          ? { progressiveToolDiscovery: progressiveToolDiscoveryRef.current }
+          : {}),
         // Phase 3: forward the chat tab's resolved host style so
         // direct chat traces persist with a real `claude`/`chatgpt`
         // hostStyle (no more legacy `'direct'`). Omitted body falls

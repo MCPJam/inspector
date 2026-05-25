@@ -693,6 +693,15 @@ chatV2.post("/", async (c) => {
         temperature,
         requireToolApproval,
         customProviders: body.customProviders,
+        // Host-level toggle from the project's default HostConfigV2.
+        // undefined → use the orchestrator's auto policy.
+        ...(body.progressiveToolDiscovery !== undefined
+          ? {
+              progressiveToolDiscovery: {
+                enabled: body.progressiveToolDiscovery,
+              },
+            }
+          : {}),
       });
     } catch (error) {
       // prepareChatV2 throws on Anthropic validation errors — return 400.
