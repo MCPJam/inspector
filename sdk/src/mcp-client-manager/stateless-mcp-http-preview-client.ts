@@ -955,6 +955,13 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
     opts: SendOptions,
     overrideAccessToken?: string,
   ): Promise<Record<string, string>> {
+    // Resolve our outbound token first so the canonical-strip set knows
+    // whether we'll actually be writing `Authorization` ourselves. When
+    // no token resolver is configured the manager carries any caller-
+    // supplied static `Authorization` (e.g. `Api-Key foo`,
+    // non-Bearer schemes) on `staticHeaders` and we must preserve it
+    // verbatim — matching the legacy `buildRequestInit` path.
+    const token = overrideAccessToken ?? (await this.getAccessToken?.());
     // Header names are case-insensitive per RFC 9110, but Fetch's
     // headers init treats `content-type` and `Content-Type` as distinct
     // keys when both appear in a plain object, then concatenates them
@@ -962,14 +969,17 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
     // (`application/json, application/json` is not a valid Content-Type).
     // Normalize by stripping any case-variant of the headers we set
     // canonically below from the static spread before adding ours.
+    // `authorization` is only added to the strip set when we have a
+    // token to write — otherwise the static value is the caller's only
+    // auth and must pass through.
     const CANONICAL_NAMES = new Set([
       "content-type",
       "accept",
       MCP_PROTOCOL_VERSION_HEADER.toLowerCase(),
       MCP_METHOD_HEADER.toLowerCase(),
       MCP_NAME_HEADER.toLowerCase(),
-      "authorization",
     ]);
+    if (token) CANONICAL_NAMES.add("authorization");
     const out: Record<string, string> = {};
     for (const [k, v] of Object.entries(this.staticHeaders)) {
       if (CANONICAL_NAMES.has(k.toLowerCase())) continue;
@@ -992,7 +1002,6 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
         out[k] = v;
       }
     }
-    const token = overrideAccessToken ?? (await this.getAccessToken?.());
     if (token) out["Authorization"] = `Bearer ${token}`;
     return out;
   }
@@ -1040,10 +1049,26 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
     if (method !== "tools/call") return undefined;
     if (!params || typeof params.name !== "string") return undefined;
     if (!this.toolHeaderMap.isFresh()) {
+      // Forward the caller's timeout + signal so a cancelled or
+      // timeout-bounded `tools/call` doesn't hang indefinitely on this
+      // implicit preflight `tools/list`. Without this, a user-bound 1s
+      // timeout on a tool call could still block for the full
+      // discovery round-trip. Other RequestOptions (onprogress, etc.)
+      // are intentionally NOT forwarded — they belong to the
+      // tools/call response stream, not the discovery probe.
+      const discoveryOpts: SendOptions & RequestOptions = {};
+      const callerTimeout = (opts as RequestOptions).timeout;
+      const callerSignal = (opts as RequestOptions).signal;
+      if (callerTimeout !== undefined) {
+        (discoveryOpts as RequestOptions).timeout = callerTimeout;
+      }
+      if (callerSignal !== undefined) {
+        (discoveryOpts as RequestOptions).signal = callerSignal;
+      }
       const discovery = await this.send<ListToolsResult>(
         "tools/list",
         undefined,
-        {},
+        discoveryOpts,
       );
       assertNotPaginated(discovery as { nextCursor?: string | null });
       const parsed = parseToolsForHeaderMap(
