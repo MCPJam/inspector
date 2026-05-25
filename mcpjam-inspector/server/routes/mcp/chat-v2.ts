@@ -603,24 +603,28 @@ chatV2.post("/", async (c) => {
           resolvedSystemPrompt = cfg.systemPrompt;
           resolvedTemperatureOverride = cfg.temperature;
           resolvedRequireToolApproval = cfg.requireToolApproval;
-          // Host wins on chatbox-bound turns. Backends without PR #334
-          // omit the field (undefined) → fall back to body and the
-          // orchestrator's auto policy.
-          if (
-            body.progressiveToolDiscovery !== undefined &&
-            cfg.progressiveToolDiscovery !== undefined &&
-            cfg.progressiveToolDiscovery !== body.progressiveToolDiscovery
-          ) {
-            logger.warn(
-              "[mcp/chat-v2] client progressiveToolDiscovery differs from host; using host value",
-              {
-                chatboxId: bodyChatboxId,
-                body: body.progressiveToolDiscovery,
-                host: cfg.progressiveToolDiscovery,
-              }
-            );
+          // Host wins on chatbox-bound turns — but only when the
+          // runtime config actually carries the field. Older backends
+          // omit it; without this gate the override would replace the
+          // body's value (sourced from the chatbox doc client-side)
+          // with `undefined` and the orchestrator's auto policy would
+          // re-enable progressive mode on large catalogs.
+          if (cfg.progressiveToolDiscovery !== undefined) {
+            if (
+              body.progressiveToolDiscovery !== undefined &&
+              cfg.progressiveToolDiscovery !== body.progressiveToolDiscovery
+            ) {
+              logger.warn(
+                "[mcp/chat-v2] client progressiveToolDiscovery differs from host; using host value",
+                {
+                  chatboxId: bodyChatboxId,
+                  body: body.progressiveToolDiscovery,
+                  host: cfg.progressiveToolDiscovery,
+                }
+              );
+            }
+            resolvedProgressiveToolDiscovery = cfg.progressiveToolDiscovery;
           }
-          resolvedProgressiveToolDiscovery = cfg.progressiveToolDiscovery;
           // See web/chat-v2 for rationale: host's modelId wins on
           // chatbox-bound turns. Built-in catalog hit → full
           // ModelDefinition; miss → swap id only, keep body provider.

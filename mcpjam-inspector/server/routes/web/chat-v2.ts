@@ -186,21 +186,28 @@ chatV2.post("/", async (c) => {
         // Backends older than mcpjam-backend PR #334 omit this field
         // entirely (undefined), in which case we just fall back to the
         // body and the orchestrator's auto policy.
-        if (
-          body.progressiveToolDiscovery !== undefined &&
-          cfg.progressiveToolDiscovery !== undefined &&
-          cfg.progressiveToolDiscovery !== body.progressiveToolDiscovery
-        ) {
-          logger.warn(
-            "[chat-v2] client progressiveToolDiscovery differs from host; using host value",
-            {
-              chatboxId,
-              body: body.progressiveToolDiscovery,
-              host: cfg.progressiveToolDiscovery,
-            }
-          );
+        // Only override when the runtime config actually carries the
+        // field. Older backends omit it; without this gate we'd clobber
+        // the body's value (sourced from the chatbox doc client-side)
+        // with `undefined` and the orchestrator's auto policy would
+        // re-enable progressive mode on large catalogs even when the
+        // host explicitly turned it off.
+        if (cfg.progressiveToolDiscovery !== undefined) {
+          if (
+            body.progressiveToolDiscovery !== undefined &&
+            cfg.progressiveToolDiscovery !== body.progressiveToolDiscovery
+          ) {
+            logger.warn(
+              "[chat-v2] client progressiveToolDiscovery differs from host; using host value",
+              {
+                chatboxId,
+                body: body.progressiveToolDiscovery,
+                host: cfg.progressiveToolDiscovery,
+              }
+            );
+          }
+          resolvedProgressiveToolDiscovery = cfg.progressiveToolDiscovery;
         }
-        resolvedProgressiveToolDiscovery = cfg.progressiveToolDiscovery;
       } else {
         // Don't fail the chat send on a transient Convex blip — fall
         // through to client-supplied values and warn. The chat will run

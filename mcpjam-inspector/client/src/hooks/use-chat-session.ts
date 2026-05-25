@@ -1141,22 +1141,32 @@ export function useChatSession(
   const requireToolApprovalRef = useRef(requireToolApproval);
   requireToolApprovalRef.current = requireToolApproval;
 
-  // Progressive MCP tool discovery is a project-level setting persisted on
-  // the project's default HostConfigV2 (edited in ServersTab / client
-  // config editor). It's NOT chat-tab-controlled like temperature or
-  // approval, so we resolve it from the live host config every send. When
-  // the user flips the toggle, the next send reflects the new value
-  // without a tab reload. `undefined` → backend orchestrator falls back
-  // to its auto policy; `true`/`false` → explicit host-level override.
+  // Progressive MCP tool discovery is a host-level setting persisted on
+  // HostConfigV2. The source row depends on the chat surface:
+  //   - chatbox sessions (playground, share-link): the chatbox's PINNED
+  //     hostConfig — `chatboxes:getChatbox` projects it as a top-level
+  //     field for us (parallel to requireToolApproval).
+  //   - direct chat: the project's default hostConfig.
+  // The body field then carries whichever the user just edited; the
+  // backend chat-v2 route still re-resolves server-side for chatbox
+  // sessions as a trust backstop (guests / share-link viewers must not
+  // be able to flip the host's toggle via a tampered body).
+  const chatboxRuntimeDoc = useQuery(
+    "chatboxes:getChatbox" as any,
+    hostedChatboxId && isAuthenticated
+      ? ({ chatboxId: hostedChatboxId } as any)
+      : "skip",
+  ) as { progressiveToolDiscovery?: boolean } | null | undefined;
   const projectDefaultHostConfig = useQuery(
     "hostConfigsV2:getProjectDefault" as any,
-    hostedProjectId && isAuthenticated
+    !hostedChatboxId && hostedProjectId && isAuthenticated
       ? ({ projectId: hostedProjectId } as any)
       : "skip",
   ) as { progressiveToolDiscovery?: boolean } | null | undefined;
   const progressiveToolDiscoveryRef = useRef<boolean | undefined>(undefined);
-  progressiveToolDiscoveryRef.current =
-    projectDefaultHostConfig?.progressiveToolDiscovery;
+  progressiveToolDiscoveryRef.current = hostedChatboxId
+    ? chatboxRuntimeDoc?.progressiveToolDiscovery
+    : projectDefaultHostConfig?.progressiveToolDiscovery;
   const isHostedGuest = HOSTED_MODE && !workOsUser && !isWorkOsLoading;
   const sharedGuestMode =
     isHostedGuest &&
