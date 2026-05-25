@@ -15,6 +15,7 @@ import {
   AccordionContent,
 } from "@mcpjam/design-system/accordion";
 import type { Tool } from "@modelcontextprotocol/client";
+import { useAppToolsRegistry } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import { SearchInput } from "../ui/search-input";
 import { SavedRequestItem } from "../tools/SavedRequestItem";
@@ -318,6 +319,18 @@ function ToolParametersView({
   onFieldChange,
   onToggleField,
 }: ToolParametersViewProps) {
+  // Fall back to the app-tools registry when the selection is an
+  // `app_<hash>` alias — the server-tool dict won't have it. Same shape:
+  // we only read `description`, `inputSchema`, and `outputSchema` below,
+  // and `AppToolDescriptor` carries all three.
+  const appToolDescriptor = useAppToolsRegistry((s) => {
+    if (selectedTool) return undefined;
+    const aliasEntry = s.aliases.get(selectedToolName);
+    if (!aliasEntry) return undefined;
+    const inst = s.instancesByBridgeId.get(aliasEntry.bridgeId);
+    return inst?.tools.find((t) => t.name === aliasEntry.rawName);
+  });
+  const effectiveTool = selectedTool ?? appToolDescriptor;
   const hasParameters = formFields && formFields.length > 0;
   const [openSections, setOpenSections] = useState<string[]>(["description"]);
 
@@ -342,35 +355,35 @@ function ToolParametersView({
           onValueChange={setOpenSections}
           className="px-3"
         >
-          {selectedTool?.description && (
+          {effectiveTool?.description && (
             <AccordionItem value="description">
               <AccordionTrigger className="text-xs">
                 Description
               </AccordionTrigger>
               <AccordionContent>
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  {selectedTool.description}
+                  {effectiveTool.description}
                 </p>
               </AccordionContent>
             </AccordionItem>
           )}
-          {selectedTool?.inputSchema && (
+          {effectiveTool?.inputSchema && (
             <AccordionItem value="input-schema">
               <AccordionTrigger className="text-xs">
                 Input Schema
               </AccordionTrigger>
               <AccordionContent>
-                <SchemaViewer schema={selectedTool.inputSchema} />
+                <SchemaViewer schema={effectiveTool.inputSchema} />
               </AccordionContent>
             </AccordionItem>
           )}
-          {selectedTool?.outputSchema && (
+          {effectiveTool?.outputSchema && (
             <AccordionItem value="output-schema">
               <AccordionTrigger className="text-xs">
                 Output Schema
               </AccordionTrigger>
               <AccordionContent>
-                <SchemaViewer schema={selectedTool.outputSchema} />
+                <SchemaViewer schema={effectiveTool.outputSchema} />
               </AccordionContent>
             </AccordionItem>
           )}
