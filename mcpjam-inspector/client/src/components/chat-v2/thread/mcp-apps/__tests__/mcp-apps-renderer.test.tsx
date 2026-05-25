@@ -1734,7 +1734,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(sandboxedIframePropsRef.current?.style?.height).toBe("300px");
   });
 
-  it("applies size-changed width to the inline renderer container", async () => {
+  it("keeps inline renderer width host-controlled when the app reports size", async () => {
     const renderInline = () => (
       <MCPAppsRenderer
         {...baseProps}
@@ -1752,16 +1752,16 @@ describe("MCPAppsRenderer tool input streaming", () => {
     act(() => {
       mockBridge.onsizechange?.({ width: 300, height: 300 });
     });
+    rerender(renderInline());
 
     const hostChrome = screen.getByTestId("mcp-app-host-chrome");
     const container = hostChrome.parentElement as HTMLElement;
-    expect(container.style.width).toBe("300px");
+    expect(container.style.width).toBe("");
+    expect(sandboxedIframePropsRef.current?.style?.height).toBe("300px");
+    expect(sandboxedIframePropsRef.current?.style?.width).toBe("100%");
 
     rerender(renderInline());
-    expect(hostChrome.parentElement).toHaveStyle({
-      width: "300px",
-      maxWidth: "100%",
-    });
+    expect((hostChrome.parentElement as HTMLElement).style.width).toBe("");
     expect(sandboxedIframePropsRef.current?.style?.width).toBe("100%");
   });
 

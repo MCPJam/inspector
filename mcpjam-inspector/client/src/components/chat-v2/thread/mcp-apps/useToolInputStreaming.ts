@@ -221,6 +221,8 @@ export function useToolInputStreaming({
   // ── Internal state ───────────────────────────────────────────────────────
 
   const [streamingRenderSignaled, setStreamingRenderSignaled] = useState(false);
+  const [streamingRevealFallbackElapsed, setStreamingRevealFallbackElapsed] =
+    useState(false);
   const [hasDeliveredStreamingInput, setHasDeliveredStreamingInput] =
     useState(false);
 
@@ -234,12 +236,16 @@ export function useToolInputStreaming({
   const canRenderStreamingInput = useMemo(() => {
     if (toolState !== "input-streaming") return true;
     if (!sendToolInput) return true;
-    // Avoid revealing a blank app shell on the fallback timer alone. The view
-    // becomes visible after we have both a render signal and delivered input.
-    return streamingRenderSignaled && hasDeliveredStreamingInput;
+    // Prefer revealing after the first delivered partial, but do not keep the
+    // iframe hidden forever when a provider streams no parseable partial args.
+    return (
+      streamingRevealFallbackElapsed ||
+      (streamingRenderSignaled && hasDeliveredStreamingInput)
+    );
   }, [
     hasDeliveredStreamingInput,
     sendToolInput,
+    streamingRevealFallbackElapsed,
     streamingRenderSignaled,
     toolState,
   ]);
@@ -263,6 +269,7 @@ export function useToolInputStreaming({
     lastToolErrorRef.current = null;
     toolInputSentRef.current = false;
     setStreamingRenderSignaled(false);
+    setStreamingRevealFallbackElapsed(false);
     setHasDeliveredStreamingInput(false);
   }, []);
 
@@ -284,27 +291,41 @@ export function useToolInputStreaming({
     toolInputSentRef.current = false;
   }, [reinitCount]);
 
-  // 1. Clear reveal timer when signaled
+  // 1. Clear reveal timer once the iframe is allowed to become visible. A
+  // render signal alone can come from size-changed before any parseable streamed
+  // args arrive, so keep the fallback alive for that case.
   useEffect(() => {
-    if (!streamingRenderSignaled) return;
+    if (!hasDeliveredStreamingInput && !streamingRevealFallbackElapsed) return;
     if (streamingRevealTimerRef.current !== null) {
       window.clearTimeout(streamingRevealTimerRef.current);
       streamingRevealTimerRef.current = null;
     }
-  }, [streamingRenderSignaled]);
+  }, [hasDeliveredStreamingInput, streamingRevealFallbackElapsed]);
 
   // 2. Fallback reveal timer
   useEffect(() => {
     if (!sendToolInput) return;
-    if (!isReady || toolState !== "input-streaming" || streamingRenderSignaled)
+    if (
+      !isReady ||
+      toolState !== "input-streaming" ||
+      hasDeliveredStreamingInput ||
+      streamingRevealFallbackElapsed
+    )
       return;
     if (streamingRevealTimerRef.current !== null) return;
 
     streamingRevealTimerRef.current = window.setTimeout(() => {
       streamingRevealTimerRef.current = null;
       setStreamingRenderSignaled(true);
+      setStreamingRevealFallbackElapsed(true);
     }, STREAMING_REVEAL_FALLBACK_MS);
-  }, [isReady, sendToolInput, streamingRenderSignaled, toolState]);
+  }, [
+    hasDeliveredStreamingInput,
+    isReady,
+    sendToolInput,
+    streamingRevealFallbackElapsed,
+    toolState,
+  ]);
 
   // 3. Re-entry detection
   useEffect(() => {
