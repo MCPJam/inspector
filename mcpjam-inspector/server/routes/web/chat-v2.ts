@@ -20,7 +20,14 @@ import {
 import { getModelById, isMCPJamProvidedModel } from "@/shared/types";
 import type { ModelDefinition } from "@/shared/types";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
-import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
+import {
+  buildWidgetModelContextSystemPrompt,
+  prepareChatV2,
+  validateAppToolEntries,
+  AppToolValidationError,
+  validateWidgetModelContextEntries,
+  WidgetModelContextValidationError,
+} from "../../utils/chat-v2-orchestration.js";
 import {
   buildDirectHostConfig,
   persistChatSessionToConvex,
@@ -250,6 +257,35 @@ chatV2.post("/", async (c) => {
     );
     oauthServerUrls = urls;
 
+    // SEP-1865 App-Provided Tools: validate the client snapshot at the
+    // boundary. Oversize / malformed entries 400 with a clean message
+    // before prepareChatV2 ever sees them.
+    let validatedAppTools;
+    try {
+      validatedAppTools = validateAppToolEntries(body.appTools);
+    } catch (error) {
+      if (error instanceof AppToolValidationError) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          error.message,
+        );
+      }
+      throw error;
+    }
+
+    let validatedWidgetModelContext;
+    try {
+      validatedWidgetModelContext = validateWidgetModelContextEntries(
+        body.widgetModelContext
+      );
+    } catch (error) {
+      if (error instanceof WidgetModelContextValidationError) {
+        throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, error.message);
+      }
+      throw error;
+    }
+
     try {
       const sessionStartedAt = Date.now();
       // Convert UI messages to ModelMessage[] up front so prepareChatV2
@@ -280,6 +316,7 @@ chatV2.post("/", async (c) => {
                 },
               }
             : {}),
+          appTools: validatedAppTools,
         });
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
@@ -297,6 +334,14 @@ chatV2.post("/", async (c) => {
         progressivePlan,
         discoveryState,
       } = prepared;
+      const widgetModelContextSystemPrompt =
+        buildWidgetModelContextSystemPrompt(validatedWidgetModelContext);
+      const effectiveEnhancedSystemPrompt = [
+        enhancedSystemPrompt,
+        widgetModelContextSystemPrompt,
+      ]
+        .filter((section) => section.trim().length > 0)
+        .join("\n\n");
       const hostedChatSessionId = body.chatSessionId;
       const cleanupStream = async () => {
         await manager.disconnectAllServers();
@@ -411,7 +456,7 @@ chatV2.post("/", async (c) => {
             chatSessionId: hostedChatSessionId,
             sourceType,
             messages: scrubbedMessages,
-            systemPrompt: enhancedSystemPrompt,
+            systemPrompt: effectiveEnhancedSystemPrompt,
             temperature: resolvedTemperature,
             tools: allTools as ToolSet,
             progressivePlan,
@@ -437,7 +482,7 @@ chatV2.post("/", async (c) => {
           chatSessionId: hostedChatSessionId,
           sourceType,
           messages: scrubbedMessages,
-          systemPrompt: enhancedSystemPrompt,
+          systemPrompt: effectiveEnhancedSystemPrompt,
           temperature: resolvedTemperature,
           tools: allTools as ToolSet,
           progressivePlan,
@@ -478,7 +523,7 @@ chatV2.post("/", async (c) => {
         modelId: String(modelDefinition.id),
         chatSessionId: hostedChatSessionId,
         sourceType: isChatboxSession ? "chatbox" : "direct",
-        systemPrompt: enhancedSystemPrompt,
+        systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
         progressivePlan,

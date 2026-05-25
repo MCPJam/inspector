@@ -524,5 +524,70 @@ describe("PartSwitch", () => {
         })
       );
     });
+
+    // SEP-1865 `ui/notifications/request-teardown`: once the host has
+    // honored the widget's teardown request, its toolCallId lands in
+    // `tornDownWidgetIds` on the Thread. PartSwitch must
+    // short-circuit to the plain ToolPart so the iframe unmounts and
+    // MCPAppsRenderer's cleanup runs the graceful
+    // `bridge.teardownResource` round-trip.
+    describe("SEP-1865 teardown dismissal", () => {
+      const dismissedPart = {
+        type: "tool-invocation",
+        toolName: "create_view",
+        toolCallId: "call-1",
+        state: "output-available",
+        input: { title: "Flow" },
+        output: { content: "saved" },
+      };
+      const widgetMetadata = {
+        create_view: {
+          ui: { resourceUri: "ui://widget/create-view.html" },
+        },
+      };
+
+      it("renders ToolPart (not WidgetReplay) when toolCallId is dismissed", () => {
+        mockDetectUIType.mockReturnValue("mcp-apps");
+        render(
+          <PartSwitch
+            {...defaultProps}
+            part={dismissedPart as any}
+            toolsMetadata={widgetMetadata}
+            tornDownWidgetIds={new Set(["call-1"])}
+          />
+        );
+        expect(screen.queryByTestId("widget-replay")).not.toBeInTheDocument();
+        expect(screen.getByTestId("tool-part")).toBeInTheDocument();
+      });
+
+      it("still renders WidgetReplay when the dismissed set does not match", () => {
+        mockDetectUIType.mockReturnValue("mcp-apps");
+        render(
+          <PartSwitch
+            {...defaultProps}
+            part={dismissedPart as any}
+            toolsMetadata={widgetMetadata}
+            tornDownWidgetIds={new Set(["other-call"])}
+          />
+        );
+        expect(screen.getByTestId("widget-replay")).toBeInTheDocument();
+      });
+
+      it("forwards onRequestTeardown to WidgetReplay", () => {
+        mockDetectUIType.mockReturnValue("mcp-apps");
+        const handleTeardown = vi.fn();
+        render(
+          <PartSwitch
+            {...defaultProps}
+            part={dismissedPart as any}
+            toolsMetadata={widgetMetadata}
+            onRequestTeardown={handleTeardown}
+          />
+        );
+        expect(mockWidgetReplay).toHaveBeenCalledWith(
+          expect.objectContaining({ onRequestTeardown: handleTeardown })
+        );
+      });
+    });
   });
 });

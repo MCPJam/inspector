@@ -163,6 +163,8 @@ import { useFeatureFlagEnabled } from "posthog-js/react";
 import { WebApiError } from "@/lib/apis/web/base";
 import { useDirectChatSessionSubscription } from "@/hooks/use-direct-chat-session-subscription";
 import { WidgetSurfaceProvider } from "@/contexts/widget-surface-context";
+import type { WidgetModelContextEntry } from "@/shared/chat-v2";
+import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
 
 // On post-stream reconcile, the Convex-side detail row may not yet reflect the
 // version bump from the turn that just finished. Retry a couple of times.
@@ -421,13 +423,7 @@ export function PlaygroundMain({
   const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
   const [skillResults, setSkillResults] = useState<SkillResult[]>([]);
   const [modelContextQueue, setModelContextQueue] = useState<
-    {
-      toolCallId: string;
-      context: {
-        content?: ContentBlock[];
-        structuredContent?: Record<string, unknown>;
-      };
-    }[]
+    WidgetModelContextEntry[]
   >([]);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [traceViewMode, setTraceViewMode] =
@@ -1318,8 +1314,7 @@ export function PlaygroundMain({
     composer.input.trim().length > 0 ||
     mcpPromptResults.length > 0 ||
     skillResults.length > 0 ||
-    fileAttachments.length > 0 ||
-    modelContextQueue.length > 0;
+    fileAttachments.length > 0;
 
   const hasUnsavedDraftRef = useRef(hasUnsavedDraft);
   useEffect(() => {
@@ -2307,10 +2302,20 @@ export function PlaygroundMain({
         if (!(await ensureSelectedServerReadyForChat())) {
           return;
         }
-        sendMessage({ text, metadata: outgoingSenderMetadata });
+        sendMessage({
+          text,
+          metadata: outgoingSenderMetadata,
+          widgetModelContext: modelContextQueue,
+        });
+        setModelContextQueue([]);
       })();
     },
-    [ensureSelectedServerReadyForChat, sendMessage, outgoingSenderMetadata]
+    [
+      ensureSelectedServerReadyForChat,
+      modelContextQueue,
+      sendMessage,
+      outgoingSenderMetadata,
+    ]
   );
 
   // Handle model context updates from widgets (SEP-1865 ui/update-model-context)
@@ -2322,12 +2327,9 @@ export function PlaygroundMain({
         structuredContent?: Record<string, unknown>;
       }
     ) => {
-      // Queue model context to be included in next message
-      setModelContextQueue((prev) => {
-        // Remove any existing context from same widget (overwrite pattern per SEP-1865)
-        const filtered = prev.filter((item) => item.toolCallId !== toolCallId);
-        return [...filtered, { toolCallId, context }];
-      });
+      setModelContextQueue((previous) =>
+        upsertWidgetModelContextEntry(previous, toolCallId, context)
+      );
     },
     []
   );
@@ -2579,25 +2581,6 @@ export function PlaygroundMain({
         setIsFullscreenChatOpen(true);
       }
 
-      // Include any pending model context from widgets (SEP-1865 ui/update-model-context)
-      // Sent as "user" messages for compatibility with model provider APIs
-      const contextMessages = modelContextQueue.map(
-        ({ toolCallId, context }) => ({
-          id: `model-context-${toolCallId}-${Date.now()}`,
-          role: "user" as const,
-          parts: [
-            {
-              type: "text" as const,
-              text: `Widget ${toolCallId} context: ${JSON.stringify(context)}`,
-            },
-          ],
-          metadata: {
-            source: "widget-model-context",
-            toolCallId,
-          },
-        })
-      );
-
       // Convert file attachments to FileUIPart[] format for the AI SDK
       const files =
         fileAttachments.length > 0
@@ -2615,12 +2598,10 @@ export function PlaygroundMain({
           text: composer.input,
           files,
           prependMessages: [],
+          widgetModelContext: modelContextQueue,
         });
         setModelContextQueue([]);
       } else {
-        if (contextMessages.length > 0) {
-          setMessages((prev) => [...prev, ...contextMessages]);
-        }
         queueBroadcastRequest(
           {
             text: composer.input,
@@ -2633,6 +2614,7 @@ export function PlaygroundMain({
           text: composer.input,
           files,
           metadata: outgoingSenderMetadata,
+          widgetModelContext: modelContextQueue,
         });
         setModelContextQueue([]); // Clear after sending
       }
@@ -2664,7 +2646,9 @@ export function PlaygroundMain({
         queueBroadcastRequest({
           text: prompt,
           prependMessages: [],
+          widgetModelContext: modelContextQueue,
         });
+        setModelContextQueue([]);
         composer.setInput("");
         revokeFileAttachmentUrls(fileAttachments);
         setFileAttachments([]);
@@ -2909,6 +2893,7 @@ export function PlaygroundMain({
           <div className="relative flex-1 min-h-0">
             <StickToBottom.Content className="flex flex-col min-h-0">
               <Thread
+                chatSessionId={chatSessionId}
                 messages={messages}
                 sendFollowUpMessage={handleSendFollowUp}
                 model={selectedModel}
@@ -3007,7 +2992,9 @@ export function PlaygroundMain({
               sendMessage({
                 text: composer.input,
                 metadata: outgoingSenderMetadata,
+                widgetModelContext: modelContextQueue,
               });
+              setModelContextQueue([]);
               composer.setInput("");
               setMcpPromptResults([]);
             })();
@@ -3387,6 +3374,7 @@ export function PlaygroundMain({
                     data-testid="playground-trace-diagnostics"
                   >
                     <SingleModelTraceDiagnosticsBody
+                      chatSessionId={chatSessionId}
                       activeTraceViewMode={activeTraceViewMode}
                       isThreadEmpty={isThreadEmpty}
                       showLiveTracePending={showLiveTracePending}

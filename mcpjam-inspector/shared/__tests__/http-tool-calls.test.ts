@@ -847,4 +847,145 @@ describe("executeToolCallsFromMessages", () => {
       expect(messages[0].role).toBe("assistant");
     });
   });
+
+  // SEP-1865 App-Provided Tools: the MCPJam free-model handler relies on
+  // this flag to leave app-aliased tool calls unresolved (so the client's
+  // `useChat.onToolCall` can dispatch them into the iframe) instead of
+  // crashing the agent loop with "Tool not found" or
+  // "tool.execute is not a function".
+  describe("skipNonExecutableTools (SEP-1865)", () => {
+    it("silently skips registered app aliases whose tool has no execute function", async () => {
+      const tools = {
+        srv_real: { execute: vi.fn().mockResolvedValue({ ok: true }) },
+        app_abcd1234: {
+          description: "[Demo] ping",
+          // no execute
+        },
+      };
+      const messages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-srv",
+              toolName: "srv_real",
+              input: {},
+            },
+            {
+              type: "tool-call",
+              toolCallId: "call-app",
+              toolName: "app_abcd1234",
+              input: {},
+            },
+          ],
+        },
+      ] as unknown as ModelMessage[];
+
+      const newMessages = await executeToolCallsFromMessages(messages, {
+        tools,
+        skipNonExecutableTools: true,
+      });
+
+      expect(tools.srv_real.execute).toHaveBeenCalledTimes(1);
+      // One result inserted for the server tool; the app alias remains
+      // unresolved in messageHistory so the caller can detect it via
+      // hasUnresolvedToolCalls and pause for the client.
+      expect(newMessages).toHaveLength(1);
+      expect((newMessages[0] as any).content[0].toolCallId).toBe("call-srv");
+      // The unresolved app tool call must NOT have produced a synthetic
+      // error result (that would corrupt model context).
+      const allResults = messages.flatMap((m) =>
+        m.role === "tool" ? (m as any).content : [],
+      );
+      const appResult = allResults.find(
+        (c: any) => c.toolCallId === "call-app",
+      );
+      expect(appResult).toBeUndefined();
+    });
+
+    it("does not skip unknown app aliases", async () => {
+      const messages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-app",
+              toolName: "app_abcd1234",
+              input: {},
+            },
+          ],
+        },
+      ] as unknown as ModelMessage[];
+
+      await executeToolCallsFromMessages(messages, {
+        tools: {},
+        skipNonExecutableTools: true,
+      });
+
+      expect(messages).toHaveLength(2);
+      expect((messages[1] as any).content[0].output.value).toMatch(
+        /not found/i,
+      );
+    });
+
+    it("silently skips registered app tools without an execute function", async () => {
+      // App tools are registered server-side via `tool({...})` with no
+      // execute. Without the flag, the helper would TypeError mid-iteration.
+      const tools = {
+        app_abcd1234: {
+          description: "[Demo] ping",
+          // no execute
+        },
+      };
+      const messages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-app",
+              toolName: "app_abcd1234",
+              input: {},
+            },
+          ],
+        },
+      ] as unknown as ModelMessage[];
+
+      const newMessages = await executeToolCallsFromMessages(messages, {
+        tools,
+        skipNonExecutableTools: true,
+      });
+
+      expect(newMessages).toHaveLength(0);
+      expect(messages).toHaveLength(1); // no synthesized tool-result
+    });
+
+    it("still throws Tool not found when the flag is OFF (default)", async () => {
+      const messages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-app",
+              toolName: "app_abcd1234",
+              input: {},
+            },
+          ],
+        },
+      ] as unknown as ModelMessage[];
+
+      await executeToolCallsFromMessages(messages, { tools: {} });
+
+      // Helper catches its own throws and writes them as tool-result with
+      // output.type === "error-text" — verify the error string mentions
+      // the unknown tool so this regression is loud.
+      expect(messages).toHaveLength(2);
+      expect((messages[1] as any).content[0].output.value).toMatch(
+        /not found/i,
+      );
+    });
+  });
 });

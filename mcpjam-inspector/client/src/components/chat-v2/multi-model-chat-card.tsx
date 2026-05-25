@@ -24,6 +24,8 @@ import type { ModelDefinition } from "@/shared/types";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
 import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
 import type { TraceViewMode } from "@/components/evals/trace-view-mode-tabs";
+import type { WidgetModelContextEntry } from "@/shared/chat-v2";
+import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
 
 type ChatTraceViewMode = "chat" | "timeline" | "raw";
 
@@ -37,6 +39,7 @@ export interface BroadcastChatTurnRequest {
     url: string;
   }>;
   prependMessages: UIMessage[];
+  widgetModelContext?: WidgetModelContextEntry[];
 }
 
 interface MultiModelChatCardProps {
@@ -93,13 +96,7 @@ export function MultiModelChatCard({
     { toolCallId: string; state: unknown }[]
   >([]);
   const [modelContextQueue, setModelContextQueue] = useState<
-    {
-      toolCallId: string;
-      context: {
-        content?: ContentBlock[];
-        structuredContent?: Record<string, unknown>;
-      };
-    }[]
+    WidgetModelContextEntry[]
   >([]);
   const [, setIsWidgetFullscreen] = useState(false);
   const [traceViewMode, setTraceViewMode] = useState<ChatTraceViewMode>("chat");
@@ -360,51 +357,6 @@ export function MultiModelChatCard({
     setWidgetStateQueue([]);
   }, [applyWidgetStateUpdates, setMessages, status, widgetStateQueue]);
 
-  const handleModelContextUpdate = useCallback(
-    (
-      toolCallId: string,
-      context: {
-        content?: ContentBlock[];
-        structuredContent?: Record<string, unknown>;
-      },
-    ) => {
-      setModelContextQueue((previous) => {
-        const filtered = previous.filter(
-          (item) => item.toolCallId !== toolCallId,
-        );
-        return [...filtered, { toolCallId, context }];
-      });
-    },
-    [],
-  );
-
-  const queueContextMessages = useCallback(() => {
-    const contextMessages = modelContextQueue.map(
-      ({ toolCallId, context }) => ({
-        id: `model-context-${toolCallId}-${Date.now()}`,
-        role: "user" as const,
-        parts: [
-          {
-            type: "text" as const,
-            text: `Widget ${toolCallId} context: ${JSON.stringify(context)}`,
-          },
-        ],
-        metadata: {
-          source: "widget-model-context",
-          toolCallId,
-        },
-      }),
-    );
-
-    if (contextMessages.length > 0) {
-      setMessages((previous) => [
-        ...previous,
-        ...(contextMessages as UIMessage[]),
-      ]);
-      setModelContextQueue([]);
-    }
-  }, [modelContextQueue, setMessages]);
-
   useEffect(() => {
     if (!broadcastRequest) {
       return;
@@ -423,15 +375,19 @@ export function MultiModelChatCard({
       ]);
     }
 
-    queueContextMessages();
     sendMessage({
       text: broadcastRequest.text,
       files: broadcastRequest.files,
       metadata: outgoingSenderMetadata,
+      widgetModelContext: [
+        ...(broadcastRequest.widgetModelContext ?? []),
+        ...modelContextQueue,
+      ],
     });
+    setModelContextQueue([]);
   }, [
     broadcastRequest,
-    queueContextMessages,
+    modelContextQueue,
     sendMessage,
     setMessages,
     outgoingSenderMetadata,
@@ -447,10 +403,29 @@ export function MultiModelChatCard({
 
   const handleSendFollowUp = useCallback(
     (text: string) => {
-      queueContextMessages();
-      sendMessage({ text, metadata: outgoingSenderMetadata });
+      sendMessage({
+        text,
+        metadata: outgoingSenderMetadata,
+        widgetModelContext: modelContextQueue,
+      });
+      setModelContextQueue([]);
     },
-    [queueContextMessages, sendMessage, outgoingSenderMetadata],
+    [modelContextQueue, sendMessage, outgoingSenderMetadata],
+  );
+
+  const handleModelContextUpdate = useCallback(
+    (
+      toolCallId: string,
+      context: {
+        content?: ContentBlock[];
+        structuredContent?: Record<string, unknown>;
+      },
+    ) => {
+      setModelContextQueue((previous) =>
+        upsertWidgetModelContextEntry(previous, toolCallId, context),
+      );
+    },
+    [],
   );
 
   useEffect(() => {
@@ -532,6 +507,7 @@ export function MultiModelChatCard({
               <div className="relative flex min-h-64 flex-1 flex-col overflow-hidden p-3">
                 <StickToBottom.Content className="flex min-h-0 flex-1 flex-col overflow-y-auto">
                   <TraceViewer
+                    chatSessionId={chatSessionId}
                     trace={traceViewerTrace}
                     model={model}
                     toolsMetadata={toolsMetadata}
@@ -559,6 +535,7 @@ export function MultiModelChatCard({
             <div className="flex flex-1 min-h-0 flex-col">
               <div className="flex min-h-64 flex-1 flex-col overflow-hidden p-3">
                 <TraceViewer
+                  chatSessionId={chatSessionId}
                   trace={traceViewerTrace}
                   model={model}
                   toolsMetadata={toolsMetadata}
@@ -575,6 +552,7 @@ export function MultiModelChatCard({
                   fullscreenChatSendBlocked={fullscreenChatSendBlocked}
                   onFullscreenChatStop={stop}
                   onFullscreenChange={setIsWidgetFullscreen}
+                  onModelContextUpdate={handleModelContextUpdate}
                   onToolApprovalResponse={addToolApprovalResponse}
                   rawRequestPayloadHistory={{
                     entries: requestPayloadHistory,
@@ -593,6 +571,7 @@ export function MultiModelChatCard({
                   />
                 ) : (
                   <TraceViewer
+                    chatSessionId={chatSessionId}
                     trace={traceViewerTrace}
                     model={model}
                     toolsMetadata={toolsMetadata}
@@ -628,6 +607,7 @@ export function MultiModelChatCard({
             <div className="relative flex-1 min-h-0">
               <StickToBottom.Content className="flex flex-col min-h-0">
                 <Thread
+                  chatSessionId={chatSessionId}
                   messages={messages}
                   sendFollowUpMessage={handleSendFollowUp}
                   model={model}

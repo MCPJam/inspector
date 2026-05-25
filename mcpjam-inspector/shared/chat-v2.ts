@@ -61,4 +61,52 @@ export interface ChatV2Request {
   projectId?: string;
   /** Version for optimistic concurrency on resumed threads */
   expectedVersion?: number;
+  /**
+   * SEP-1865 App-Provided Tools snapshot — per chat POST.
+   *
+   * Aliased upstream by the client registry
+   * (`client/src/components/chat-v2/thread/mcp-apps/app-tools-registry.ts`).
+   * The server defends the boundary again in `validateAppToolEntries`
+   * (caps, alias regex, schema size). `readOnly` is metadata, not an
+   * inclusion gate.
+   */
+  appTools?: AppToolSnapshotEntry[];
+  /**
+   * SEP-1865 `ui/update-model-context` snapshots for the next model turn.
+   *
+   * These are per-request, ephemeral model context: the server appends them
+   * to the outbound prompt for this turn, but they are not inserted into the
+   * user-visible chat transcript.
+   */
+  widgetModelContext?: WidgetModelContextEntry[];
+}
+
+/**
+ * SEP-1865 App-Provided Tool snapshot entry. Mirrors
+ * `AppToolEntry` in `server/utils/chat-v2-orchestration.ts` so the
+ * client snapshotter and the server validator share a single shape.
+ *
+ * `alias` is opaque (`app_<8hex>`), validated at the boundary, and used
+ * as the AI SDK tool name. `rawName` is preserved only for logging
+ * and dispatch (`useChat.onToolCall` resolves alias → rawName via the
+ * registry).
+ */
+export interface AppToolSnapshotEntry {
+  alias: string;
+  appName: string;
+  appVersion?: string;
+  serverId: string;
+  parentToolCallId: string;
+  rawName: string;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
+  readOnly: boolean;
+}
+
+export interface WidgetModelContextEntry {
+  toolCallId: string;
+  context: {
+    content?: Record<string, unknown>[];
+    structuredContent?: Record<string, unknown>;
+  };
 }

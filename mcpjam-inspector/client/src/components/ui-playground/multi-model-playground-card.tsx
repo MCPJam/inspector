@@ -62,6 +62,8 @@ import {
 import type { DeviceType, DisplayMode } from "@/stores/ui-playground-store";
 import type { BroadcastChatTurnRequest } from "@/components/chat-v2/multi-model-chat-card";
 import type { TraceViewMode } from "@/components/evals/trace-view-mode-tabs";
+import type { WidgetModelContextEntry } from "@/shared/chat-v2";
+import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
 
 type PlaygroundTraceViewMode = "chat" | "timeline" | "raw";
 type ThreadThemeMode = "light" | "dark";
@@ -255,13 +257,7 @@ export function MultiModelPlaygroundCard({
     ? hostSnapshot.mcpProfile
     : tabRootMcpProfile;
   const [modelContextQueue, setModelContextQueue] = useState<
-    {
-      toolCallId: string;
-      context: {
-        content?: ContentBlock[];
-        structuredContent?: Record<string, unknown>;
-      };
-    }[]
+    WidgetModelContextEntry[]
   >([]);
   const [traceViewMode, setTraceViewMode] =
     useState<PlaygroundTraceViewMode>("chat");
@@ -465,32 +461,11 @@ export function MultiModelPlaygroundCard({
     setInjectedToolRenderOverrides({});
   }, [chatSessionId]);
 
-  const queueContextMessages = useCallback(() => {
-    const contextMessages = modelContextQueue.map(
-      ({ toolCallId, context }) => ({
-        id: `model-context-${toolCallId}-${Date.now()}`,
-        role: "user" as const,
-        parts: [
-          {
-            type: "text" as const,
-            text: `Widget ${toolCallId} context: ${JSON.stringify(context)}`,
-          },
-        ],
-        metadata: {
-          source: "widget-model-context",
-          toolCallId,
-        },
-      }),
-    );
-
-    if (contextMessages.length > 0) {
-      setMessages((previous) => [
-        ...previous,
-        ...(contextMessages as UIMessage[]),
-      ]);
-      setModelContextQueue([]);
-    }
-  }, [modelContextQueue, setMessages]);
+  const drainModelContextQueue = useCallback(() => {
+    const queued = modelContextQueue;
+    setModelContextQueue([]);
+    return queued;
+  }, [modelContextQueue]);
 
   useEffect(() => {
     if (!broadcastRequest) {
@@ -510,15 +485,19 @@ export function MultiModelPlaygroundCard({
       ]);
     }
 
-    queueContextMessages();
+    const widgetModelContext = drainModelContextQueue();
     sendMessage({
       text: broadcastRequest.text,
       files: broadcastRequest.files,
       metadata: outgoingSenderMetadata,
+      widgetModelContext: [
+        ...(broadcastRequest.widgetModelContext ?? []),
+        ...widgetModelContext,
+      ],
     });
   }, [
     broadcastRequest,
-    queueContextMessages,
+    drainModelContextQueue,
     sendMessage,
     setMessages,
     outgoingSenderMetadata,
@@ -644,10 +623,13 @@ export function MultiModelPlaygroundCard({
 
   const handleSendFollowUp = useCallback(
     (text: string) => {
-      queueContextMessages();
-      sendMessage({ text, metadata: outgoingSenderMetadata });
+      sendMessage({
+        text,
+        metadata: outgoingSenderMetadata,
+        widgetModelContext: drainModelContextQueue(),
+      });
     },
-    [queueContextMessages, sendMessage, outgoingSenderMetadata],
+    [drainModelContextQueue, sendMessage, outgoingSenderMetadata],
   );
 
   const handleModelContextUpdate = useCallback(
@@ -658,12 +640,9 @@ export function MultiModelPlaygroundCard({
         structuredContent?: Record<string, unknown>;
       },
     ) => {
-      setModelContextQueue((previous) => {
-        const filtered = previous.filter(
-          (item) => item.toolCallId !== toolCallId,
-        );
-        return [...filtered, { toolCallId, context }];
-      });
+      setModelContextQueue((previous) =>
+        upsertWidgetModelContextEntry(previous, toolCallId, context),
+      );
     },
     [],
   );
@@ -717,6 +696,7 @@ export function MultiModelPlaygroundCard({
             <div className="flex min-h-64 flex-1 flex-col overflow-hidden p-3">
               {activeTraceViewMode === "chat" && revealedInChat ? (
                 <TraceViewer
+                  chatSessionId={chatSessionId}
                   trace={traceViewerTrace}
                   model={model}
                   toolsMetadata={toolsMetadata}
@@ -753,6 +733,7 @@ export function MultiModelPlaygroundCard({
                 />
               ) : (
                 <TraceViewer
+                  chatSessionId={chatSessionId}
                   trace={traceViewerTrace}
                   model={model}
                   toolsMetadata={toolsMetadata}
@@ -808,6 +789,7 @@ export function MultiModelPlaygroundCard({
                 <div className="relative flex-1 min-h-0">
                   <StickToBottom.Content className="flex flex-col min-h-0">
                     <Thread
+                      chatSessionId={chatSessionId}
                       messages={messages}
                       sendFollowUpMessage={handleSendFollowUp}
                       model={model}

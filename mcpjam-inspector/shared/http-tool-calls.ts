@@ -45,6 +45,22 @@ function buildIndexWithAliases(tools: ToolsMap): ToolsMap {
   return index;
 }
 
+const APP_TOOL_ALIAS_REGEX = /^app_[a-z0-9]{8}$/i;
+
+function isSkippableClientFulfilledToolCall(
+  toolName: string,
+  tool: unknown,
+  skipNonExecutableTools: boolean | undefined,
+): boolean {
+  return (
+    skipNonExecutableTools === true &&
+    APP_TOOL_ALIAS_REGEX.test(toolName) &&
+    !!tool &&
+    typeof tool === "object" &&
+    typeof (tool as { execute?: unknown }).execute !== "function"
+  );
+}
+
 export const hasUnresolvedToolCalls = (messages: ModelMessage[]): boolean => {
   const toolCallIds = new Set<string>();
   const toolResultIds = new Set<string>();
@@ -82,6 +98,19 @@ type ExecuteToolCallOptionsBase = {
    * calls before pausing the turn for approval on real MCP tools.
    */
   filterToolName?: (toolName: string) => boolean;
+  /**
+   * SEP-1865 App-Provided Tools: when true, tool calls whose name isn't in
+   * the tool index OR whose tool entry has no `execute` function are SKIPPED
+   * (no result written, no throw). Used by the MCPJam free-model handler so
+   * that mixed steps containing both server tools and app-aliased tools
+   * execute the server tools server-side and leave the app tool calls
+   * unresolved — the caller then pauses and lets the client fulfill them
+   * in-iframe via `useChat.onToolCall`.
+   *
+   * Without this flag, app aliases would either trigger "Tool not found" or
+   * `tool.execute is not a function`, corrupting the conversation history.
+   */
+  skipNonExecutableTools?: boolean;
 };
 
 type ExecuteToolCallOptions = ExecuteToolCallOptionsBase &
@@ -159,7 +188,31 @@ export async function executeToolCallsFromMessages(
         try {
           const toolName: string = content.toolName;
           const tool = index[toolName];
-          if (!tool) throw new Error(`Tool '${toolName}' not found`);
+          const directTool = tools[toolName];
+          if (!tool) {
+            if (
+              isSkippableClientFulfilledToolCall(
+                toolName,
+                directTool,
+                options.skipNonExecutableTools,
+              )
+            ) {
+              continue;
+            }
+            throw new Error(`Tool '${toolName}' not found`);
+          }
+          if (typeof tool.execute !== "function") {
+            if (
+              isSkippableClientFulfilledToolCall(
+                toolName,
+                tool,
+                options.skipNonExecutableTools,
+              )
+            ) {
+              continue;
+            }
+            throw new Error(`Tool '${toolName}' has no execute function`);
+          }
           const toolCall = content as {
             input?: unknown;
             args?: unknown;

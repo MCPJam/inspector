@@ -313,6 +313,46 @@ function collectUsedToolCallIds(messages: ModelMessage[]): Set<string> {
   return usedToolCallIds;
 }
 
+const APP_TOOL_ALIAS_REGEX = /^app_[a-z0-9]{8}$/i;
+
+function hasUnresolvedClientFulfilledToolCalls(
+  messages: ModelMessage[],
+  tools: ToolSet,
+): boolean {
+  const resultIds = new Set<string>();
+  for (const msg of messages) {
+    if (msg?.role !== "tool") continue;
+    const toolMsg = msg as ToolModelMessage;
+    if (!Array.isArray(toolMsg.content)) continue;
+    for (const part of toolMsg.content) {
+      if (part.type === "tool-result") resultIds.add(part.toolCallId);
+    }
+  }
+
+  for (const msg of messages) {
+    if (msg?.role !== "assistant") continue;
+    const assistantMsg = msg as AssistantModelMessage;
+    if (!Array.isArray(assistantMsg.content)) continue;
+    for (const part of assistantMsg.content) {
+      if (part.type !== "tool-call" || resultIds.has(part.toolCallId)) {
+        continue;
+      }
+      const toolName = part.toolName;
+      const toolEntry = (tools as Record<string, { execute?: unknown } | undefined>)[
+        toolName
+      ];
+      if (
+        APP_TOOL_ALIAS_REGEX.test(toolName) &&
+        toolEntry &&
+        typeof toolEntry.execute !== "function"
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function generateUniqueToolCallId(
   usedToolCallIds: Set<string>,
   prefix = "tc"
@@ -1536,9 +1576,15 @@ async function processOneStep(
         () => discoveryState,
       );
 
-      // Execute tools locally
+      // SEP-1865 App-Provided Tools: registered app aliases have no
+      // `execute` function because they run inside the iframe via
+      // `useChat.onToolCall`. With `skipNonExecutableTools`, the helper
+      // executes server tools in-place and leaves only registered app
+      // aliases unresolved. Unknown non-app tools still become normal
+      // tool-result errors so the agent can recover instead of hanging.
       const newMessages = await executeToolCallsFromMessages(messageHistory, {
         tools: executableTools as Record<string, any>,
+        skipNonExecutableTools: true,
         ...(abortSignal ? { abortSignal } : {}),
       });
       const toolsEndAbs = Date.now();
@@ -1621,6 +1667,17 @@ async function processOneStep(
       // them.
       if (progressivePlan?.enabled && discoveryState) {
         commitNewlyLoaded(discoveryState);
+      }
+
+      // SEP-1865 App-Provided Tools: pause only for unresolved registered
+      // app aliases. Other unresolved calls should keep the legacy loop
+      // behavior; in normal execution they have already been converted to
+      // error tool-results above.
+      if (hasUnresolvedClientFulfilledToolCalls(messageHistory, tools)) {
+        if (finishChunk) {
+          writer.write(createClientFinishChunk(finishChunk, traceTurn, "stop"));
+        }
+        return { shouldContinue: false, didEmitFinish: !!finishChunk };
       }
     } catch (error) {
       // Aborts surface here when the signal fires mid-tool. Bubble up so

@@ -17,6 +17,7 @@ import {
 import type { DisplayMode } from "@/stores/ui-playground-store";
 
 export interface WidgetReplayProps {
+  chatSessionId?: string;
   toolName: string;
   toolCallId?: string;
   toolState?: ToolState;
@@ -55,6 +56,7 @@ export interface WidgetReplayProps {
 }
 
 export function WidgetReplay({
+  chatSessionId,
   toolName,
   toolCallId,
   toolState,
@@ -147,6 +149,7 @@ export function WidgetReplay({
 
   return (
     <MCPAppsRenderer
+      chatSessionId={chatSessionId}
       serverId={serverId ?? "offline-view"}
       toolCallId={toolCallId}
       toolName={toolName}

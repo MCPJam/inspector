@@ -7,12 +7,32 @@ const {
   persistChatSessionToConvexMock,
   disconnectAllServersMock,
   emitConstructorRpcLogMock,
+  validateAppToolEntriesMock,
+  AppToolValidationErrorMock,
+  validateWidgetModelContextEntriesMock,
+  buildWidgetModelContextSystemPromptMock,
+  WidgetModelContextValidationErrorMock,
 } = vi.hoisted(() => ({
   prepareChatV2Mock: vi.fn(),
   handleMCPJamFreeChatModelMock: vi.fn(),
   persistChatSessionToConvexMock: vi.fn(),
   disconnectAllServersMock: vi.fn(),
   emitConstructorRpcLogMock: vi.fn(),
+  validateAppToolEntriesMock: vi.fn(() => []),
+  AppToolValidationErrorMock: class AppToolValidationError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = "AppToolValidationError";
+    }
+  },
+  validateWidgetModelContextEntriesMock: vi.fn(() => []),
+  buildWidgetModelContextSystemPromptMock: vi.fn(() => ""),
+  WidgetModelContextValidationErrorMock: class WidgetModelContextValidationError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = "WidgetModelContextValidationError";
+    }
+  },
 }));
 
 vi.mock("ai", async () => {
@@ -41,6 +61,11 @@ vi.mock("@mcpjam/sdk", async () => {
 
 vi.mock("../../../utils/chat-v2-orchestration.js", () => ({
   prepareChatV2: prepareChatV2Mock,
+  validateAppToolEntries: validateAppToolEntriesMock,
+  AppToolValidationError: AppToolValidationErrorMock,
+  validateWidgetModelContextEntries: validateWidgetModelContextEntriesMock,
+  buildWidgetModelContextSystemPrompt: buildWidgetModelContextSystemPromptMock,
+  WidgetModelContextValidationError: WidgetModelContextValidationErrorMock,
 }));
 
 vi.mock("../../../utils/mcpjam-stream-handler.js", () => ({

@@ -41,7 +41,14 @@ import {
   type PersistedTurnTrace,
 } from "../../utils/chat-ingestion.js";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
-import { prepareChatV2 } from "../../utils/chat-v2-orchestration";
+import {
+  buildWidgetModelContextSystemPrompt,
+  prepareChatV2,
+  validateAppToolEntries,
+  AppToolValidationError,
+  validateWidgetModelContextEntries,
+  WidgetModelContextValidationError,
+} from "../../utils/chat-v2-orchestration";
 import { appendDedupedModelMessages } from "@/shared/eval-trace";
 import {
   createAiSdkEvalTraceContext,
@@ -730,6 +737,31 @@ chatV2.post("/", async (c) => {
     // independent — this conversion is solely for hydration.
     const priorModelMessages = await convertToModelMessages(messages);
 
+    // SEP-1865 App-Provided Tools: validate the client snapshot at the
+    // boundary. The chat request body is not trusted; oversize / malformed
+    // entries 400 with a clean message instead of crashing prepareChatV2.
+    let validatedAppTools;
+    try {
+      validatedAppTools = validateAppToolEntries(body.appTools);
+    } catch (error) {
+      if (error instanceof AppToolValidationError) {
+        return c.json({ error: error.message }, 400);
+      }
+      throw error;
+    }
+
+    let validatedWidgetModelContext;
+    try {
+      validatedWidgetModelContext = validateWidgetModelContextEntries(
+        body.widgetModelContext
+      );
+    } catch (error) {
+      if (error instanceof WidgetModelContextValidationError) {
+        return c.json({ error: error.message }, 400);
+      }
+      throw error;
+    }
+
     let prepared;
     try {
       prepared = await prepareChatV2({
@@ -750,6 +782,7 @@ chatV2.post("/", async (c) => {
               },
             }
           : {}),
+        appTools: validatedAppTools,
       });
     } catch (error) {
       // prepareChatV2 throws on Anthropic validation errors — return 400.
@@ -770,6 +803,15 @@ chatV2.post("/", async (c) => {
       progressivePlan,
       discoveryState,
     } = prepared;
+    const widgetModelContextSystemPrompt = buildWidgetModelContextSystemPrompt(
+      validatedWidgetModelContext
+    );
+    const effectiveEnhancedSystemPrompt = [
+      enhancedSystemPrompt,
+      widgetModelContextSystemPrompt,
+    ]
+      .filter((section) => section.trim().length > 0)
+      .join("\n\n");
 
     // Shared across all three persist call sites below. All three paths are
     // hardcoded `sourceType: "direct"` and pass the same model/temperature/
@@ -832,7 +874,7 @@ chatV2.post("/", async (c) => {
       return handleMCPJamFreeChatModel({
         messages: modelMessages as ModelMessage[],
         modelId: String(modelDefinition.id),
-        systemPrompt: enhancedSystemPrompt,
+        systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
         progressivePlan,
@@ -977,7 +1019,7 @@ chatV2.post("/", async (c) => {
           chatSessionId,
           sourceType: chatSessionSourceType,
           messages: modelMessages,
-          systemPrompt: enhancedSystemPrompt,
+          systemPrompt: effectiveEnhancedSystemPrompt,
           temperature: resolvedTemperature,
           tools: allTools as ToolSet,
           progressivePlan,
@@ -998,7 +1040,7 @@ chatV2.post("/", async (c) => {
         providerKey,
         modelId,
         messages: modelMessages,
-        systemPrompt: enhancedSystemPrompt,
+        systemPrompt: effectiveEnhancedSystemPrompt,
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
         progressivePlan,
@@ -1044,7 +1086,7 @@ chatV2.post("/", async (c) => {
       modelId: String(modelDefinition.id),
       provider: modelDefinition.provider,
       messageHistory: [...scrubbedModelMessages],
-      systemPrompt: enhancedSystemPrompt,
+      systemPrompt: effectiveEnhancedSystemPrompt,
       temperature: resolvedTemperature,
       tools: allTools as ToolSet,
       progressivePlan,

@@ -375,7 +375,7 @@ describe("AppsExtensionTab — mcpAppsOverrides JSON round-trip", () => {
           serverResources: false,
           logging: false,
           downloadFile: false,
-          requestTeardown: false,
+          requestTeardown: true,
           availableDisplayModes: ["fullscreen"],
         },
       },
@@ -385,7 +385,7 @@ describe("AppsExtensionTab — mcpAppsOverrides JSON round-trip", () => {
       serverResources: false,
       logging: false,
       downloadFile: false,
-      requestTeardown: false,
+      requestTeardown: true,
       availableDisplayModes: ["fullscreen"],
     });
   });
