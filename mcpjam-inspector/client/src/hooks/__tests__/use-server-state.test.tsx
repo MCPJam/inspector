@@ -195,6 +195,8 @@ function renderUseServerState(
     effectiveProjects?: AppState["projects"];
     effectiveActiveProjectId?: string;
     activeProjectServersFlat?: any;
+    activeMcpProfile?: any;
+    activeHostConfig?: any;
   }
 ) {
   mockUseDbUserReady.mockReturnValue(
@@ -215,6 +217,8 @@ function renderUseServerState(
       effectiveActiveProjectId:
         options?.effectiveActiveProjectId ?? appState.activeProjectId,
       activeProjectServersFlat: options?.activeProjectServersFlat,
+      activeMcpProfile: options?.activeMcpProfile,
+      activeHostConfig: options?.activeHostConfig,
       logger: {
         info: vi.fn(),
         warn: vi.fn(),
@@ -2508,3 +2512,4 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
     expect(mockCreateServerIfMissing).toHaveBeenCalledTimes(1);
   });
 });
+
