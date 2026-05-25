@@ -115,22 +115,13 @@ export function useCreditTopupReturnFlowBilling(): void {
       window.location.pathname + (search ? `?${search}` : "");
     window.history.replaceState(null, "", cleanedUrl);
 
-    const pending = peekPendingTopup();
-    const hadPendingStash = pending !== null;
-
     if (topupParam === "cancelled") {
-      posthog?.capture("credit_topup_return_cancelled", {
-        had_pending_stash: hadPendingStash,
-      });
+      posthog?.capture("credit_topup_return_cancelled");
       return;
     }
 
     toast.success("Credits added.");
-    posthog?.capture("credit_topup_return_success", {
-      had_pending_stash: hadPendingStash,
-      chat_session_matched: false,
-      resend_executed: false,
-    });
+    posthog?.capture("credit_topup_return_success");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 }
