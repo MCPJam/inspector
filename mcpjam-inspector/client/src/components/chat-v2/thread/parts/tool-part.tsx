@@ -29,11 +29,7 @@ import { type DisplayMode } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
-import {
-  useAppToolInvocationLog,
-  useAppToolsRegistry,
-} from "../mcp-apps/app-tools-registry";
-import { useShallow } from "zustand/react/shallow";
+import { useAppToolAttribution } from "../mcp-apps/app-tools-registry";
 import {
   getToolNameFromType,
   getToolStateMeta,
@@ -62,6 +58,7 @@ const SAVE_VIEW_REDIRECTED_KEY = "mcpjam-save-view-redirected";
 
 export function ToolPart({
   part,
+  chatSessionId,
   uiType,
   displayMode,
   pipWidgetId,
@@ -82,6 +79,7 @@ export function ToolPart({
   minimalMode = false,
 }: {
   part: ToolUIPart<UITools> | DynamicToolUIPart;
+  chatSessionId?: string;
   uiType?: UIType | null;
   displayMode?: DisplayMode;
   pipWidgetId?: string | null;
@@ -113,41 +111,10 @@ export function ToolPart({
     ? part.toolName
     : getToolNameFromType((part as any).type);
 
-  // SEP-1865 App-Provided Tools: tool names matching `/^app_[a-z0-9]{8}$/i`
-  // are opaque aliases for tools registered inside iframes. Subscribe to the
-  // registry so the UI shows the human-readable raw name + an attribution
-  // chip ("from <App Name>") instead of the alias. Falls back to the raw
-  // alias when the registry has no entry — happens during the brief window
-  // before `oninitialized` fires, or after the iframe has been torn down.
-  //
-  // `useShallow` is load-bearing: the selector returns a fresh object on
-  // every call, so without shallow equality Zustand sees "changed" on
-  // every render and triggers infinite re-renders while the model
-  // streams tool-call parts.
-  const registryAppToolAttribution = useAppToolsRegistry(
-    useShallow((s) => {
-      if (!/^app_[a-z0-9]{8}$/i.test(label)) return null;
-      const entry = s.aliases.get(label);
-      if (!entry) return null;
-      const inst = s.instancesByBridgeId.get(entry.bridgeId);
-      if (!inst) return null;
-      return { rawName: entry.rawName, appName: inst.appName };
-    })
-  );
-  const invocationAppToolAttribution = useAppToolInvocationLog(
-    useShallow((s) => {
-      if (!/^app_[a-z0-9]{8}$/i.test(label)) return null;
-      for (let i = s.records.length - 1; i >= 0; i -= 1) {
-        const record = s.records[i];
-        if (record.alias === label) {
-          return { rawName: record.rawName, appName: record.appName };
-        }
-      }
-      return null;
-    })
-  );
-  const appToolAttribution =
-    registryAppToolAttribution ?? invocationAppToolAttribution;
+  // SEP-1865 App-Provided Tools: opaque `app_<hash>` aliases are resolved
+  // through the shared app-tool registry/log helper so UI never leaks the
+  // model-facing alias when a human-readable tool name is available.
+  const appToolAttribution = useAppToolAttribution(label, chatSessionId);
   const displayLabel = appToolAttribution?.rawName ?? label;
 
   const toolCallId = (part as any).toolCallId as string | undefined;

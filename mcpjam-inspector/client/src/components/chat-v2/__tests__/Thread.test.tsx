@@ -5,6 +5,7 @@ import { Thread } from "../thread";
 import type { UIMessage } from "@ai-sdk/react";
 import type { ModelDefinition } from "@/shared/types";
 import { ChatboxHostStyleProvider } from "@/contexts/chatbox-client-style-context";
+import { useWidgetSurfaceStore } from "../thread/mcp-apps/widget-surface-store";
 
 const mockMessageView = vi.fn();
 const mockThinkingIndicator = vi.fn();
@@ -86,6 +87,10 @@ describe("Thread", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    useWidgetSurfaceStore.setState({
+      surfaces: new Map(),
+      nextOrder: 0,
+    });
   });
 
   describe("message rendering", () => {
@@ -533,6 +538,122 @@ describe("Thread", () => {
           onStop: onFullscreenChatStop,
         }),
       );
+    });
+
+    it("exits fullscreen when a persistent surface id owns the raw tool call", () => {
+      useWidgetSurfaceStore.setState({
+        surfaces: new Map([
+          [
+            "surface-1",
+            {
+              surfaceId: "surface-1",
+              chatSessionId: "other-chat",
+              initialToolCallId: "call-1",
+              latestToolCallId: "call-2",
+              registrations: new Map([
+                [
+                  "call-1",
+                  {
+                    toolCallId: "call-1",
+                    order: 0,
+                    props: {} as any,
+                    anchorElement: null,
+                  },
+                ],
+                [
+                  "call-2",
+                  {
+                    toolCallId: "call-2",
+                    order: 1,
+                    props: {} as any,
+                    anchorElement: null,
+                  },
+                ],
+              ]),
+            },
+          ],
+        ]),
+      });
+      const messages = [createMessage({ id: "msg-1", role: "assistant" })];
+
+      render(
+        <Thread
+          {...defaultProps}
+          chatSessionId="chat-1"
+          messages={messages}
+          enableFullscreenChatOverlay={true}
+        />,
+      );
+
+      act(() => {
+        mockMessageView.mock.calls.at(-1)?.[0]?.onRequestFullscreen("call-1");
+      });
+
+      expect(screen.getByTestId("fullscreen-chat-overlay")).toBeInTheDocument();
+
+      act(() => {
+        mockMessageView.mock.calls.at(-1)?.[0]?.onExitFullscreen("surface-1");
+      });
+
+      expect(
+        screen.queryByTestId("fullscreen-chat-overlay"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("tears down every registered tool call for a persistent surface", () => {
+      useWidgetSurfaceStore.setState({
+        surfaces: new Map([
+          [
+            "surface-1",
+            {
+              surfaceId: "surface-1",
+              chatSessionId: "other-chat",
+              initialToolCallId: "call-1",
+              latestToolCallId: "call-2",
+              registrations: new Map([
+                [
+                  "call-1",
+                  {
+                    toolCallId: "call-1",
+                    order: 0,
+                    props: {} as any,
+                    anchorElement: null,
+                  },
+                ],
+                [
+                  "call-2",
+                  {
+                    toolCallId: "call-2",
+                    order: 1,
+                    props: {} as any,
+                    anchorElement: null,
+                  },
+                ],
+              ]),
+            },
+          ],
+        ]),
+      });
+      const messages = [createMessage({ id: "msg-1", role: "assistant" })];
+
+      render(
+        <Thread
+          {...defaultProps}
+          chatSessionId="chat-1"
+          messages={messages}
+        />,
+      );
+
+      act(() => {
+        mockMessageView.mock.calls
+          .at(-1)?.[0]
+          ?.onRequestTeardown("call-2", "surface-1");
+      });
+
+      const tornDownWidgetIds = mockMessageView.mock.calls.at(-1)?.[0]
+        ?.tornDownWidgetIds as ReadonlySet<string>;
+      expect(tornDownWidgetIds.has("call-1")).toBe(true);
+      expect(tornDownWidgetIds.has("call-2")).toBe(true);
     });
   });
 

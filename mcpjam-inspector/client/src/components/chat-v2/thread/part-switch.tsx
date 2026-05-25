@@ -96,7 +96,7 @@ export function PartSwitch({
   onExitPip: (toolCallId: string) => void;
   onRequestFullscreen: (toolCallId: string) => void;
   onExitFullscreen: (toolCallId: string) => void;
-  onRequestTeardown?: (toolCallId: string) => void;
+  onRequestTeardown?: (toolCallId: string, displayWidgetId?: string) => void;
   tornDownWidgetIds?: ReadonlySet<string>;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
@@ -339,6 +339,7 @@ export function PartSwitch({
         <>
           <ToolPart
             part={toolPart}
+            chatSessionId={chatSessionId}
             uiType={uiType}
             displayMode={interactive ? displayMode : undefined}
             pipWidgetId={pipWidgetId}
@@ -403,6 +404,7 @@ export function PartSwitch({
     return (
       <ToolPart
         part={toolPart}
+        chatSessionId={chatSessionId}
         uiType={uiType}
         onSaveView={allowSaveView ? handleSaveView : undefined}
         canSaveView={allowSaveView ? canSaveView : undefined}

@@ -97,6 +97,10 @@ import {
   resolveHostInfo,
 } from "@/lib/client-config-v2";
 import type { ResolvedMcpAppsCapabilities } from "@/lib/client-styles";
+import { usePersistentWidgetSurfaceHost } from "./widget-surface-context";
+import {
+  useWidgetSurfaceStore,
+} from "./widget-surface-store";
 
 // Injected by Vite at build time from package.json
 declare const __APP_VERSION__: string;
@@ -164,7 +168,7 @@ function sanitizeHostStyleVariables(
 
 // CSP and permissions metadata types are now imported from SDK
 
-interface MCPAppsRendererProps {
+export interface MCPAppsRendererProps {
   chatSessionId?: string;
   serverId: string;
   toolCallId: string;
@@ -221,7 +225,7 @@ interface MCPAppsRendererProps {
    * unmount this tool call's MCP app surface (e.g. dismiss the modal,
    * collapse the inline view).
    */
-  onRequestTeardown?: (toolCallId: string) => void;
+  onRequestTeardown?: (toolCallId: string, displayWidgetId?: string) => void;
   /** Whether the server is offline (for using cached content) */
   isOffline?: boolean;
   /** URL to cached widget HTML for offline rendering */
@@ -271,6 +275,18 @@ interface MCPAppsRendererProps {
   initialWidgetState?: unknown;
   /** Minimal mode hides diagnostics and metadata surfaces */
   minimalMode?: boolean;
+  /**
+   * Stable identity assigned by WidgetSurfaceHost. Present only when the
+   * renderer is mounted as a persistent, resource-scoped surface.
+   */
+  persistentSurfaceId?: string;
+  /**
+   * The first tool call registered for a resource-scoped persistent surface.
+   * Kept for host/debug attribution; complete tool-input is still gated by
+   * the surface's one-shot delivery latch so restored transcripts cannot skip
+   * input when multiple rows register before the host mounts.
+   */
+  persistentSurfaceInitialToolCallId?: string;
 }
 
 /**
@@ -332,15 +348,14 @@ function mapLogToLifecycle(
 /**
  * Segments of the fetch-source key, in the same order as the renderer
  * builds it below. Used to describe re-mount reasons for the Sandbox
- * debug panel — e.g. "cachedWidgetHtmlUrl, liveFetchPreferred" when a
- * Convex history snapshot lands.
+ * debug panel — e.g. "cachedReplayWidgetHtmlUrl, fetchMode" when a saved
+ * view swaps in a byte-frozen snapshot.
  */
 const FETCH_SOURCE_KEY_SEGMENTS = [
-  "toolCallId",
   "resourceUri",
-  "cachedWidgetHtmlUrl",
+  "cachedReplayWidgetHtmlUrl",
   "cspMode",
-  "liveFetchPreferred",
+  "fetchMode",
   // `injectOpenAiCompat` boolean and the per-method capability hash
   // are part of the rendering recipe: a host swap from ChatGPT-full
   // to Copilot-subset (or a master-toggle flip) changes the bytes
@@ -363,7 +378,141 @@ function describeFetchSourceKeyDiff(prev: string, next: string): string {
   return changes.length === 0 ? "remount" : changes.join(", ");
 }
 
-export function MCPAppsRenderer({
+function hashSurfaceIdentity(value: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function getPersistentSurfaceId(props: MCPAppsRendererProps): string {
+  // Identity is per-tool-call, not per-resource. The persistent surface's
+  // job is to keep one iframe alive across re-renders of the same row
+  // (e.g. fullscreen toggle, transcript reshuffles) — the `toolCallId`
+  // is stable across all of those. Two distinct `tools/call` invocations
+  // on the same resource are semantically two separate Views per
+  // SEP-1865's lifecycle, so they must get their own surface; otherwise
+  // the second tool-call row renders empty because the lone iframe is
+  // anchored under the first row.
+  const identity = stableStringifyJson({
+    chatSessionId: props.chatSessionId ?? null,
+    serverId: props.serverId,
+    resourceUri: props.resourceUri,
+    toolCallId: props.toolCallId,
+    surface: "inline",
+  });
+  return `mcp-app:${hashSurfaceIdentity(identity)}`;
+}
+
+const pendingSurfaceReleaseTimers = new Map<string, number>();
+const pendingAnchorClearTimers = new Map<string, number>();
+
+function getSurfaceRegistrationKey(surfaceId: string, toolCallId: string) {
+  return `${surfaceId}\0${toolCallId}`;
+}
+
+function cancelPendingAnchorClear(surfaceId: string, toolCallId: string) {
+  const key = getSurfaceRegistrationKey(surfaceId, toolCallId);
+  const timer = pendingAnchorClearTimers.get(key);
+  if (timer === undefined) return;
+  window.clearTimeout(timer);
+  pendingAnchorClearTimers.delete(key);
+}
+
+function scheduleAnchorClear(surfaceId: string, toolCallId: string) {
+  const key = getSurfaceRegistrationKey(surfaceId, toolCallId);
+  const existing = pendingAnchorClearTimers.get(key);
+  if (existing !== undefined) window.clearTimeout(existing);
+  const timer = window.setTimeout(() => {
+    pendingAnchorClearTimers.delete(key);
+    useWidgetSurfaceStore.getState().setAnchor(surfaceId, toolCallId, null);
+  }, 0);
+  pendingAnchorClearTimers.set(key, timer);
+}
+
+function cancelPendingSurfaceRelease(surfaceId: string, toolCallId: string) {
+  const key = getSurfaceRegistrationKey(surfaceId, toolCallId);
+  const timer = pendingSurfaceReleaseTimers.get(key);
+  if (timer === undefined) return;
+  window.clearTimeout(timer);
+  pendingSurfaceReleaseTimers.delete(key);
+}
+
+function scheduleSurfaceRelease(surfaceId: string, toolCallId: string) {
+  const key = getSurfaceRegistrationKey(surfaceId, toolCallId);
+  const existing = pendingSurfaceReleaseTimers.get(key);
+  if (existing !== undefined) window.clearTimeout(existing);
+  const timer = window.setTimeout(() => {
+    pendingSurfaceReleaseTimers.delete(key);
+    useWidgetSurfaceStore.getState().releaseRegistration(surfaceId, toolCallId);
+  }, 0);
+  pendingSurfaceReleaseTimers.set(key, timer);
+}
+
+function PersistentMCPAppsRendererRegistration(props: MCPAppsRendererProps) {
+  const surfaceId = useMemo(
+    () => getPersistentSurfaceId(props),
+    [props.chatSessionId, props.resourceUri, props.serverId, props.toolCallId]
+  );
+  const anchorRef = useRef<HTMLDivElement | null>(null);
+
+  useLayoutEffect(() => {
+    cancelPendingAnchorClear(surfaceId, props.toolCallId);
+    cancelPendingSurfaceRelease(surfaceId, props.toolCallId);
+    return () => {
+      scheduleSurfaceRelease(surfaceId, props.toolCallId);
+    };
+  }, [surfaceId, props.toolCallId]);
+
+  useLayoutEffect(() => {
+    cancelPendingAnchorClear(surfaceId, props.toolCallId);
+    cancelPendingSurfaceRelease(surfaceId, props.toolCallId);
+    const store = useWidgetSurfaceStore.getState();
+    store.upsertRegistration(surfaceId, props.toolCallId, props);
+    store.setAnchor(surfaceId, props.toolCallId, anchorRef.current);
+  });
+
+  const setAnchor = useCallback(
+    (node: HTMLDivElement | null) => {
+      anchorRef.current = node;
+      if (node === null) {
+        scheduleAnchorClear(surfaceId, props.toolCallId);
+        return;
+      }
+      cancelPendingAnchorClear(surfaceId, props.toolCallId);
+      useWidgetSurfaceStore
+        .getState()
+        .setAnchor(surfaceId, props.toolCallId, node);
+    },
+    [surfaceId, props.toolCallId]
+  );
+
+  return (
+    <div
+      ref={setAnchor}
+      data-mcp-app-surface-id={surfaceId}
+      data-mcp-app-surface-anchor={props.toolCallId}
+    />
+  );
+}
+
+export function MCPAppsRenderer(props: MCPAppsRendererProps) {
+  const persistentHostEnabled = usePersistentWidgetSurfaceHost();
+  const isCachedReplay =
+    !!props.cachedWidgetHtmlUrl && !props.liveFetchPreferred;
+  const shouldUsePersistentSurface =
+    persistentHostEnabled && !props.isOffline && !isCachedReplay;
+
+  if (!shouldUsePersistentSurface) {
+    return <MCPAppsRendererSurface {...props} />;
+  }
+
+  return <PersistentMCPAppsRendererRegistration {...props} />;
+}
+
+export function MCPAppsRendererSurface({
   chatSessionId,
   serverId,
   toolCallId,
@@ -401,6 +550,8 @@ export function MCPAppsRenderer({
   injectedOpenAiCompatCapabilities: initialInjectedOpenAiCompatCapabilities,
   initialWidgetState,
   minimalMode = false,
+  persistentSurfaceId,
+  persistentSurfaceInitialToolCallId,
 }: MCPAppsRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sandboxRef = useRef<SandboxedIframeHandle>(null);
@@ -413,16 +564,28 @@ export function MCPAppsRenderer({
   // session, project default, eval suite). Drives the resolver below
   // when set; undefined preserves widget-derived sandbox behavior.
   const activeMcpProfile = useActiveMcpProfile();
+  const activeMcpProfileKey = useMemo(
+    () => stableStringifyJson(activeMcpProfile ?? null),
+    [activeMcpProfile]
+  );
+  const hostCapabilitiesOverrideKey = useMemo(
+    () => stableStringifyJson(hostCapabilitiesOverride ?? null),
+    [hostCapabilitiesOverride]
+  );
   // Resolved compat-runtime flag for the active host. Claude/Cursor/
   // Codex-style hosts leave it off; ChatGPT/Copilot and MCPJam's dev
   // surface enable it. User override on the profile wins. The resolved
   // boolean travels into the widget-content request body and into the
   // renderer's reload-key so toggling the flag forces a refetch instead
   // of silently reusing the old HTML.
-  const liveEffectiveCompatRuntime = resolveEffectiveCompatRuntime({
-    profile: activeMcpProfile,
-    hostStyle: chatboxHostStyle ?? sharedHostStyle,
-  });
+  const liveEffectiveCompatRuntime = useMemo(
+    () =>
+      resolveEffectiveCompatRuntime({
+        profile: activeMcpProfile,
+        hostStyle: chatboxHostStyle ?? sharedHostStyle,
+      }),
+    [activeMcpProfileKey, chatboxHostStyle, sharedHostStyle]
+  );
   const liveInjectOpenAiCompat = liveEffectiveCompatRuntime.injected;
   // Capability surface accompanying `liveInjectOpenAiCompat`. Travels
   // into the widget-content request alongside the boolean so the SDK
@@ -432,11 +595,23 @@ export function MCPAppsRenderer({
   const liveOpenAiCompatCapabilities = liveEffectiveCompatRuntime.injected
     ? liveEffectiveCompatRuntime.capabilities
     : null;
-  // Cached replay: when a saved view / eval snapshot persisted the
-  // flag, trust it (HTML is byte-frozen at capture time). Fall back
-  // to the live flag for fresh fetches.
+  // A cached URL can exist during an in-flow revisit while the renderer still
+  // prefers live HTML. Treat only cached-only renders as replay; live compat
+  // fetches still need completed tool output baked into window.openai at boot.
+  const isCachedReplay = !!cachedWidgetHtmlUrl && !liveFetchPreferred;
+  const cachedReplayWidgetHtmlUrl = isCachedReplay
+    ? cachedWidgetHtmlUrl
+    : undefined;
+  const widgetFetchModeKey = isCachedReplay ? "cached" : "live";
+  const cachedReplayPrefersBorder = isCachedReplay
+    ? initialPrefersBorder
+    : undefined;
+  // Cached replay: when a saved view / eval snapshot persisted the flag, trust
+  // it because the HTML is byte-frozen at capture time. Live-preferred revisits
+  // must use the current host config so a cached fallback does not create a
+  // distinct render recipe from the next live tool call.
   const effectiveInjectOpenAiCompat =
-    typeof initialInjectedOpenAiCompat === "boolean"
+    isCachedReplay && typeof initialInjectedOpenAiCompat === "boolean"
       ? initialInjectedOpenAiCompat
       : liveInjectOpenAiCompat;
   const draftHostContext = useHostContextStore((s) => s.draftHostContext);
@@ -547,7 +722,7 @@ export function MCPAppsRenderer({
         profile: activeMcpProfile,
         hostStyle: earlyEffectiveHostStyle,
       }),
-    [activeMcpProfile, earlyEffectiveHostStyle]
+    [activeMcpProfileKey, earlyEffectiveHostStyle]
   );
 
   // Intersection of the matrix's allowed modes with the playground /
@@ -700,13 +875,20 @@ export function MCPAppsRenderer({
     )
   );
   const displayMode = isControlled ? displayModeProp : internalDisplayMode;
+  const displayWidgetId = persistentSurfaceId ?? toolCallId;
+  const ownsFullscreenDisplayMode =
+    fullscreenWidgetId === displayWidgetId ||
+    fullscreenWidgetId === toolCallId;
+  const ownsPipDisplayMode =
+    pipWidgetId === displayWidgetId || pipWidgetId === toolCallId;
   const requestedDisplayMode = useMemo<DisplayMode>(() => {
     if (!isControlled) return displayMode;
-    if (displayMode === "fullscreen" && fullscreenWidgetId === toolCallId)
+    if (displayMode === "fullscreen" && ownsFullscreenDisplayMode) {
       return "fullscreen";
-    if (displayMode === "pip" && pipWidgetId === toolCallId) return "pip";
+    }
+    if (displayMode === "pip" && ownsPipDisplayMode) return "pip";
     return "inline";
-  }, [displayMode, fullscreenWidgetId, isControlled, pipWidgetId, toolCallId]);
+  }, [displayMode, isControlled, ownsFullscreenDisplayMode, ownsPipDisplayMode]);
   // Clamp the requested display mode against the same intersection
   // that gets advertised in `HostContext.availableDisplayModes` so
   // the runtime mode is always a member of the advertised set. A
@@ -742,17 +924,21 @@ export function MCPAppsRenderer({
         setInternalDisplayMode(mode);
       }
 
-      // Notify parent about fullscreen state changes regardless of controlled mode
+      // Notify parent about fullscreen state changes regardless of controlled
+      // mode. Always forward this widget's own id (`displayWidgetId`); the
+      // parent runs an ownership check, which safely no-ops if our local
+      // `displayMode` was stale at "fullscreen" because another widget took
+      // over the global slot.
       if (mode === "fullscreen") {
-        onRequestFullscreen?.(toolCallId);
+        onRequestFullscreen?.(displayWidgetId);
       } else if (displayMode === "fullscreen") {
-        onExitFullscreen?.(toolCallId);
+        onExitFullscreen?.(displayWidgetId);
       }
     },
     [
       isControlled,
       onDisplayModeChange,
-      toolCallId,
+      displayWidgetId,
       onRequestFullscreen,
       onExitFullscreen,
       displayMode,
@@ -780,10 +966,6 @@ export function MCPAppsRenderer({
   const [widgetHtml, setWidgetHtml] = useState<string | null>(null);
   const [sandboxProxyReady, setSandboxProxyReady] = useState(false);
   const [bridgeTransportReady, setBridgeTransportReady] = useState(false);
-  // A cached URL can exist during an in-flow revisit while the renderer still
-  // prefers live HTML. Treat only cached-only renders as replay; live compat
-  // fetches still need completed tool output baked into window.openai at boot.
-  const isCachedReplay = !!cachedWidgetHtmlUrl && !liveFetchPreferred;
   const cachedReplayInjectOpenAiCompat =
     typeof initialInjectedOpenAiCompat === "boolean"
       ? initialInjectedOpenAiCompat
@@ -941,7 +1123,10 @@ export function MCPAppsRenderer({
     useState<CheckoutSession | null>(null);
   const [checkoutCallId, setCheckoutCallId] = useState<number | null>(null);
 
-  // Reset widget HTML when cachedWidgetHtmlUrl changes (e.g., different view selected)
+  // Reset widget HTML when the actual replay source changes (e.g., different
+  // saved view selected). A live-preferred cached URL is only a fallback; it
+  // must not churn a persistent live surface when the next tool call has no
+  // cached fallback.
   useEffect(() => {
     setWidgetHtml(null);
     setBridgeTransportReady(false);
@@ -949,21 +1134,14 @@ export function MCPAppsRenderer({
     setLoadedInjectOpenAiCompat(null);
     setLoadedCompatCapabilitiesHash(null);
     setLoadError(null);
-    setWidgetCsp(isCachedReplay ? undefined : initialWidgetCsp ?? undefined);
-    setWidgetPermissions(
-      isCachedReplay ? undefined : initialWidgetPermissions ?? undefined
-    );
-    setWidgetPermissive(
-      isCachedReplay ? true : initialWidgetPermissive ?? false
-    );
-    setPrefersBorder(initialPrefersBorder ?? true);
+    setWidgetCsp(undefined);
+    setWidgetPermissions(undefined);
+    setWidgetPermissive(isCachedReplay ? true : false);
+    setPrefersBorder(cachedReplayPrefersBorder ?? true);
   }, [
-    cachedWidgetHtmlUrl,
+    cachedReplayWidgetHtmlUrl,
+    cachedReplayPrefersBorder,
     isCachedReplay,
-    initialWidgetCsp,
-    initialWidgetPermissions,
-    initialWidgetPermissive,
-    initialPrefersBorder,
   ]);
 
   const bridgeRef = useRef<AppBridge | null>(null);
@@ -1012,9 +1190,7 @@ export function MCPAppsRenderer({
   const appToolsBridgeIdRef = useRef<string | null>(null);
   const appToolsListedBridgeIdsRef = useRef<Set<string>>(new Set());
   const appToolsListInFlightBridgeIdsRef = useRef<Set<string>>(new Set());
-  const appToolsListRefreshPendingBridgeIdsRef = useRef<Set<string>>(
-    new Set()
-  );
+  const appToolsListRefreshPendingBridgeIdsRef = useRef<Set<string>>(new Set());
   // Reactive mirror of `appToolsBridgeIdRef` so the in-flight busy
   // indicator can subscribe to `useAppToolsRegistry.pendingControllers`
   // by bridge id. Refs alone don't trigger re-renders.
@@ -1023,13 +1199,13 @@ export function MCPAppsRenderer({
   >(null);
   const pendingAppToolCalls = useAppToolsRegistry((s) =>
     appToolsBridgeIdState
-      ? (s.pendingControllers.get(appToolsBridgeIdState)?.size ?? 0)
+      ? s.pendingControllers.get(appToolsBridgeIdState)?.size ?? 0
       : 0
   );
 
   // Reset widget-identity-scoped state when the renderer is reused for a
-  // different tool call / resource / widget bundle. Without this the next
-  // widget inherits the previous widget's intersected display modes, its
+  // different resource / widget bundle. Without this the next widget
+  // inherits the previous widget's intersected display modes, its
   // narrowed inline width, and (if the user had dismissed to inline) its
   // sticky inline preference. Also re-seeds the sticky flag from the
   // current `widgetDisplayModeRequests` policy so flipping the Apps tab
@@ -1042,7 +1218,6 @@ export function MCPAppsRenderer({
       earlyEffectiveMcpAppsCapabilities.widgetDisplayModeRequests ===
       "user-initiated-only";
   }, [
-    toolCallId,
     resourceUri,
     cachedWidgetHtmlUrl,
     earlyEffectiveMcpAppsCapabilities.widgetDisplayModeRequests,
@@ -1059,7 +1234,9 @@ export function MCPAppsRenderer({
   const effectiveDisplayModeRef = useRef(effectiveDisplayMode);
   const serverIdRef = useRef(serverId);
   const toolCallIdRef = useRef(toolCallId);
+  const displayWidgetIdRef = useRef(displayWidgetId);
   const pipWidgetIdRef = useRef(pipWidgetId);
+  const ownsPipDisplayModeRef = useRef(ownsPipDisplayMode);
   const toolsMetadataRef = useRef(toolsMetadata);
   const onModelContextUpdateRef = useRef(onModelContextUpdate);
   const onAppSupportedDisplayModesChangeRef = useRef(
@@ -1077,10 +1254,10 @@ export function MCPAppsRenderer({
 
   // Source-identity guard for the async fetch effect. The renderer can be
   // reused across session swaps and prop changes, so an older fetch can
-  // resolve after `{ toolCallId, resourceUri, cachedWidgetHtmlUrl, cspMode,
-  // liveFetchPreferred }` has moved on. Each effect run sets this ref to
-  // its own key; the helpers below drop any state writes that don't still
-  // match the latest key.
+  // resolve after `{ resourceUri, cachedReplayWidgetHtmlUrl, cspMode,
+  // widgetFetchModeKey }` has moved on. Each effect run sets this ref to its
+  // own key; the helpers below drop any state writes that don't still match
+  // the latest key.
   const latestFetchSourceKeyRef = useRef<string>("");
   /**
    * Previous fetch-source key, kept for the debug-panel mount log. We
@@ -1104,7 +1281,6 @@ export function MCPAppsRenderer({
   const mcpAppsCapabilitiesRef = useRef<ResolvedMcpAppsCapabilities | null>(
     null
   );
-
   const {
     canRenderStreamingInput,
     signalStreamingRender,
@@ -1118,6 +1294,7 @@ export function MCPAppsRenderer({
     toolOutput,
     toolErrorText,
     toolCallId,
+    sendToolInput: true,
     reinitCount,
     mcpAppsCapabilitiesRef,
   });
@@ -1150,11 +1327,10 @@ export function MCPAppsRenderer({
     // longer matches `latestFetchSourceKeyRef.current` when it resolves is
     // stale and MUST NOT mutate state.
     const fetchSourceKey = [
-      toolCallId,
       resourceUri ?? "",
-      cachedWidgetHtmlUrl ?? "",
+      cachedReplayWidgetHtmlUrl ?? "",
       cspMode,
-      liveFetchPreferred ? "live-pref" : "",
+      widgetFetchModeKey,
       // String() so `null` (cached-replay sentinel), `true`, and
       // `false` all serialize distinctly into the pipe-joined key.
       String(widgetInjectOpenAiCompatReloadKey),
@@ -1164,9 +1340,9 @@ export function MCPAppsRenderer({
     latestFetchSourceKeyRef.current = fetchSourceKey;
     // Mount log for the Sandbox debug panel. Record one entry per real
     // key change (not per effect re-run) so devs can spot self-induced
-    // reloads — e.g. a Convex history snapshot landing and flipping
-    // `cachedWidgetHtmlUrl`/`liveFetchPreferred` mid-session, which
-    // remounts the iframe and visually wipes the previous render.
+    // reloads — e.g. a saved view replay swapping in a different cached
+    // snapshot, which remounts the iframe and visually wipes the previous
+    // render.
     if (prevLoggedFetchSourceKeyRef.current !== fetchSourceKey) {
       const prev = prevLoggedFetchSourceKeyRef.current;
       const reason =
@@ -1174,7 +1350,7 @@ export function MCPAppsRenderer({
           ? "initial"
           : describeFetchSourceKeyDiff(prev, fetchSourceKey);
       prevLoggedFetchSourceKeyRef.current = fetchSourceKey;
-      recordMountStore(toolCallId, reason);
+      recordMountStore(toolCallIdRef.current, reason);
     }
     const isStillCurrent = () =>
       latestFetchSourceKeyRef.current === fetchSourceKey;
@@ -1223,7 +1399,7 @@ export function MCPAppsRenderer({
       // so live host edits don't churn the snapshot.
       setLoadedMcpAppsCapabilitiesHash(widgetMcpAppsCapabilitiesReloadKey);
       setWidgetHtmlStore(
-        toolCallId,
+        toolCallIdRef.current,
         html,
         loadedCachedCompatKey ?? undefined,
         // Persisted capabilities flow into the debug store so a
@@ -1274,7 +1450,7 @@ export function MCPAppsRenderer({
           readToolResultMeta(toolOutputRef.current) ??
           null,
         initialWidgetState,
-        toolId: toolCallId,
+        toolId: toolCallIdRef.current,
         toolName,
         theme: themeModeRef.current,
         cspMode,
@@ -1306,7 +1482,7 @@ export function MCPAppsRenderer({
           : undefined);
 
       // Stale fetch: source key moved on (e.g. session swap, CSP toggle,
-      // tool call change) while this request was in flight. Drop the
+      // or resource change) while this request was in flight. Drop the
       // result so it can't overwrite the newer commit's state.
       if (!isStillCurrent()) return true;
 
@@ -1345,7 +1521,7 @@ export function MCPAppsRenderer({
       // injected at fetch time. Replay reads both back when reproducing
       // the original render.
       setWidgetHtmlStore(
-        toolCallId,
+        toolCallIdRef.current,
         html,
         resolvedInjectedOpenAiCompat,
         resolvedInjectedOpenAiCompatCapabilities
@@ -1353,7 +1529,7 @@ export function MCPAppsRenderer({
 
       // Update the widget debug store with CSP and permissions info
       if (csp || permissions || !permissive) {
-        setWidgetCspStore(toolCallId, {
+        setWidgetCspStore(toolCallIdRef.current, {
           mode: permissive ? "permissive" : "widget-declared",
           connectDomains: csp?.connectDomains || [],
           resourceDomains: csp?.resourceDomains || [],
@@ -1448,7 +1624,6 @@ export function MCPAppsRenderer({
     // serverId/toolCallId via refs) and is declared after this effect.
   }, [
     toolState,
-    toolCallId,
     widgetHtml,
     loadedCspMode,
     loadedInjectOpenAiCompat,
@@ -1465,7 +1640,9 @@ export function MCPAppsRenderer({
     cspMode,
     isOffline,
     cachedWidgetHtmlUrl,
+    cachedReplayWidgetHtmlUrl,
     liveFetchPreferred,
+    widgetFetchModeKey,
     initialPrefersBorder,
     cachedReplayInjectOpenAiCompat,
     initialInjectedOpenAiCompatCapabilities,
@@ -1560,11 +1737,8 @@ export function MCPAppsRenderer({
               cursor === undefined ? {} : { cursor }
             );
             tools.push(
-              ...(result.tools ?? []).filter(
-                (t): t is AppToolDescriptor =>
-                  Boolean(
-                    t && typeof t.name === "string" && t.name.length > 0
-                  )
+              ...(result.tools ?? []).filter((t): t is AppToolDescriptor =>
+                Boolean(t && typeof t.name === "string" && t.name.length > 0)
               )
             );
             cursor = result.nextCursor;
@@ -1837,7 +2011,7 @@ export function MCPAppsRenderer({
         profile: activeMcpProfile,
         hostCapabilitiesOverride,
       }),
-    [effectiveHostStyle, activeMcpProfile, hostCapabilitiesOverride]
+    [effectiveHostStyle, activeMcpProfileKey, hostCapabilitiesOverrideKey]
   );
   // SEP-1865 spec-bridge matrix resolved from the live profile +
   // host style. Gates notification emissions (`tool-input-partial`,
@@ -2009,16 +2183,30 @@ export function MCPAppsRenderer({
   // `effectivePermissive` collapses to `false` whenever a host policy applies
   // — SandboxedIframe treats `permissive: true` as "skip CSP injection
   // entirely", which would silently neuter the resolver output.
-  const sandboxCspPolicy = activeMcpProfile?.apps?.sandbox?.csp;
-  const sandboxPermissionsPolicy = activeMcpProfile?.apps?.sandbox?.permissions;
+  const sandboxCspPolicy = useMemo(
+    () => activeMcpProfile?.apps?.sandbox?.csp,
+    [activeMcpProfileKey]
+  );
+  const sandboxPermissionsPolicy = useMemo(
+    () => activeMcpProfile?.apps?.sandbox?.permissions,
+    [activeMcpProfileKey]
+  );
   // Inspector-only emission knobs sourced directly from the profile. They
   // bypass the SEP-1865 resolver because they model browser-emission state
   // that has no spec slot (raw `sandbox=`/`allow=` tokens, CSP source
   // expressions). Passed through unchanged to <SandboxedIframe>.
-  const sandboxAttrsPolicy = activeMcpProfile?.apps?.sandbox?.sandboxAttrs;
-  const allowFeaturesPolicy = activeMcpProfile?.apps?.sandbox?.allowFeatures;
-  const cspDirectivesPolicy =
-    activeMcpProfile?.apps?.sandbox?.csp?.cspDirectives;
+  const sandboxAttrsPolicy = useMemo(
+    () => activeMcpProfile?.apps?.sandbox?.sandboxAttrs,
+    [activeMcpProfileKey]
+  );
+  const allowFeaturesPolicy = useMemo(
+    () => activeMcpProfile?.apps?.sandbox?.allowFeatures,
+    [activeMcpProfileKey]
+  );
+  const cspDirectivesPolicy = useMemo(
+    () => activeMcpProfile?.apps?.sandbox?.csp?.cspDirectives,
+    [activeMcpProfileKey]
+  );
   // Hosted-mode clamp for cspDirectives. The resolver's
   // `hostedClampExtraDeny` strips MCPJam app/API origins from the
   // widget-declared CSP (`restrictTo` + resource declaration), but
@@ -2400,7 +2588,15 @@ export function MCPAppsRenderer({
     if (typeof name !== "string" || typeof version !== "string") return null;
     if (name.trim() === "" || version.trim() === "") return null;
     return { name, version };
-  }, [activeMcpProfile]);
+  }, [activeMcpProfileKey]);
+  const resolvedBridgeHostInfo = useMemo(
+    () =>
+      (resolveHostInfo(activeMcpProfile) ?? {
+        name: "mcpjam-inspector",
+        version: __APP_VERSION__,
+      }) as { name: string; version: string },
+    [activeMcpProfileKey]
+  );
 
   useEffect(() => {
     if (!toolCallId) return;
@@ -2440,7 +2636,9 @@ export function MCPAppsRenderer({
     effectiveDisplayModeRef.current = effectiveDisplayMode;
     serverIdRef.current = serverId;
     toolCallIdRef.current = toolCallId;
+    displayWidgetIdRef.current = displayWidgetId;
     pipWidgetIdRef.current = pipWidgetId;
+    ownsPipDisplayModeRef.current = ownsPipDisplayMode;
     toolsMetadataRef.current = toolsMetadata;
     onModelContextUpdateRef.current = onModelContextUpdate;
     onAppSupportedDisplayModesChangeRef.current =
@@ -2457,7 +2655,9 @@ export function MCPAppsRenderer({
     effectiveDisplayMode,
     serverId,
     toolCallId,
+    displayWidgetId,
     pipWidgetId,
+    ownsPipDisplayMode,
     toolsMetadata,
     onModelContextUpdate,
     onAppSupportedDisplayModesChange,
@@ -2839,12 +3039,14 @@ export function MCPAppsRenderer({
         setDisplayModeRef.current(actualMode);
 
         if (actualMode === "pip") {
-          onRequestPipRef.current?.(toolCallIdRef.current);
+          onRequestPipRef.current?.(displayWidgetIdRef.current);
         } else if (
           (actualMode === "inline" || actualMode === "fullscreen") &&
-          pipWidgetIdRef.current === toolCallIdRef.current
+          ownsPipDisplayModeRef.current
         ) {
-          onExitPipRef.current?.(toolCallIdRef.current);
+          onExitPipRef.current?.(
+            pipWidgetIdRef.current ?? displayWidgetIdRef.current
+          );
         }
 
         return { mode: actualMode };
@@ -2855,14 +3057,15 @@ export function MCPAppsRenderer({
           content,
           structuredContent,
         }) => {
+          const currentToolCallId = toolCallIdRef.current;
           // Store in debug store for UI display
-          setWidgetModelContext(toolCallId, {
+          setWidgetModelContext(currentToolCallId, {
             content,
             structuredContent,
           });
 
           // Notify parent component to queue for next model turn
-          onModelContextUpdateRef.current?.(toolCallId, {
+          onModelContextUpdateRef.current?.(currentToolCallId, {
             content,
             structuredContent,
           });
@@ -2961,13 +3164,15 @@ export function MCPAppsRenderer({
               error: err instanceof Error ? err.message : String(err),
             });
           }
-          onRequestTeardownRef.current?.(toolCallIdRef.current);
+          onRequestTeardownRef.current?.(
+            toolCallIdRef.current,
+            displayWidgetIdRef.current
+          );
         };
       }
     },
     [
       setIsReady,
-      toolCallId,
       setWidgetModelContext,
       logWidgetDebug,
       refreshAppProvidedTools,
@@ -3016,13 +3221,9 @@ export function MCPAppsRenderer({
     // another host (e.g. ChatGPT) override this via
     // `mcpProfile.apps.uiInitialize.hostInfo`; backend soft-validates
     // name+version when set so the cast below is safe.
-    const resolvedHostInfo = (resolveHostInfo(activeMcpProfile) ?? {
-      name: "mcpjam-inspector",
-      version: __APP_VERSION__,
-    }) as { name: string; version: string };
     const bridge = new AppBridge(
       null,
-      resolvedHostInfo,
+      resolvedBridgeHostInfo,
       {
         ...effectiveHostCapabilities,
         sandbox: {
@@ -3051,8 +3252,8 @@ export function MCPAppsRenderer({
           }
           if (SUPPRESSED_UI_LOG_METHODS.has(method)) return;
           logUiEvent({
-            widgetId: toolCallId,
-            serverId,
+            widgetId: toolCallIdRef.current,
+            serverId: serverIdRef.current,
             direction: "host-to-ui",
             protocol: "mcp-apps",
             method,
@@ -3085,8 +3286,8 @@ export function MCPAppsRenderer({
           }
           if (SUPPRESSED_UI_LOG_METHODS.has(method)) return;
           logUiEvent({
-            widgetId: toolCallId,
-            serverId,
+            widgetId: toolCallIdRef.current,
+            serverId: serverIdRef.current,
             direction: "ui-to-host",
             protocol: "mcp-apps",
             method,
@@ -3146,13 +3347,12 @@ export function MCPAppsRenderer({
       }
       bridge.close().catch(() => {});
       // Clear model context on widget teardown
-      setWidgetModelContext(toolCallId, null);
+      setWidgetModelContext(toolCallIdRef.current, null);
     };
   }, [
     logUiEvent,
     minimalMode,
     serverId,
-    toolCallId,
     widgetHtml,
     sandboxProxyReady,
     registerBridgeHandlers,
@@ -3172,7 +3372,7 @@ export function MCPAppsRenderer({
     // Bridge must rebuild when the host identity advertised in
     // ui/initialize changes — switching to a template that overrides
     // hostInfo (e.g. ChatGPT) is observable to the View.
-    activeMcpProfile,
+    resolvedBridgeHostInfo,
   ]);
 
   useEffect(() => {
@@ -3569,6 +3769,10 @@ export function MCPAppsRenderer({
     <div
       ref={containerRef}
       className={containerClassName}
+      data-mcp-app-persistent-initial-tool-call-id={
+        persistentSurfaceInitialToolCallId
+      }
+      data-mcp-app-persistent-surface-id={persistentSurfaceId}
       style={containerStyle}
     >
       {((isFullscreen && isContainedFullscreenMode) ||
@@ -3578,7 +3782,7 @@ export function MCPAppsRenderer({
             userPreferInlineRef.current = true;
             setDisplayMode("inline");
             if (isPip) {
-              onExitPip?.(toolCallId);
+              onExitPip?.(pipWidgetId ?? displayWidgetId);
             }
             // onExitFullscreen is called within setDisplayMode when leaving fullscreen
           }}
@@ -3599,8 +3803,8 @@ export function MCPAppsRenderer({
             onClick={() => {
               userPreferInlineRef.current = true;
               setDisplayMode("inline");
-              if (pipWidgetId === toolCallId) {
-                onExitPip?.(toolCallId);
+              if (ownsPipDisplayMode) {
+                onExitPip?.(pipWidgetId ?? displayWidgetId);
               }
             }}
             className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
@@ -3616,7 +3820,7 @@ export function MCPAppsRenderer({
           onClick={() => {
             userPreferInlineRef.current = true;
             setDisplayMode("inline");
-            onExitPip?.(toolCallId);
+            onExitPip?.(pipWidgetId ?? displayWidgetId);
           }}
           className="absolute left-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-md bg-background/80 hover:bg-background border border-border/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
           aria-label="Close PiP mode"

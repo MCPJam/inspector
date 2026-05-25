@@ -49,7 +49,7 @@ interface MessageViewProps {
   onExitPip: (toolCallId: string) => void;
   onRequestFullscreen: (toolCallId: string) => void;
   onExitFullscreen: (toolCallId: string) => void;
-  onRequestTeardown?: (toolCallId: string) => void;
+  onRequestTeardown?: (toolCallId: string, displayWidgetId?: string) => void;
   tornDownWidgetIds?: ReadonlySet<string>;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;

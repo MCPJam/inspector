@@ -249,6 +249,11 @@ vi.mock("../mcp-apps-modal", () => ({
 
 // ── Import component under test (after mocks) ─────────────────────────────
 import { MCPAppsRenderer } from "../mcp-apps-renderer";
+import {
+  WidgetSurfaceHost,
+  WidgetSurfaceHostProvider,
+} from "../widget-surface-host";
+import { useWidgetSurfaceStore } from "../widget-surface-store";
 import { authFetch } from "@/lib/session-token";
 import {
   ChatboxHostStyleProvider,
@@ -270,6 +275,33 @@ const baseProps = {
   toolOutput: { content: [{ type: "text" as const, text: "ok" }] },
   resourceUri: "mcp-app://test",
 };
+
+const createEquivalentMcpProfile = (): HostConfigMcpProfileV1 => ({
+  profileVersion: 1,
+  apps: {
+    sandbox: {
+      csp: {
+        mode: "declared",
+        restrictTo: {
+          connectDomains: ["https://api.example.com"],
+          resourceDomains: ["https://cdn.example.com"],
+        },
+      },
+      permissions: {
+        mode: "custom",
+        allow: { camera: true },
+      },
+      sandboxAttrs: ["allow-popups"],
+      allowFeatures: { fullscreen: "*" },
+    },
+    uiInitialize: {
+      hostInfo: {
+        name: "test-host",
+        version: "1.0.0",
+      },
+    },
+  },
+});
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 describe("MCPAppsRenderer tool input streaming", () => {
@@ -318,6 +350,10 @@ describe("MCPAppsRenderer tool input streaming", () => {
     sandboxedIframeUnmountsRef.current = 0;
     sandboxProxyBehaviorRef.current.autoReady = true;
     appBridgeArgsRef.current = null;
+    useWidgetSurfaceStore.setState({
+      surfaces: new Map(),
+      nextOrder: 0,
+    });
 
     vi.mocked(global.fetch).mockResolvedValue({
       ok: true,
@@ -389,6 +425,282 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(appBridgeArgsRef.current?.hostCapabilities).toEqual(
       expect.objectContaining(getHostCapabilitiesForStyle("claude"))
     );
+  });
+
+  it("keeps the iframe and bridge alive when only the tool call id changes", async () => {
+    const { rerender } = render(<MCPAppsRenderer {...baseProps} />);
+
+    await vi.waitFor(() => {
+      expect(mockAppBridgeCtor).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("sandboxed-iframe")).toBeInTheDocument();
+    });
+
+    expect(sandboxedIframeMountsRef.current).toBe(1);
+
+    act(() => triggerReady());
+
+    rerender(
+      <MCPAppsRenderer
+        {...baseProps}
+        toolCallId="call-2"
+        toolOutput={{ content: [{ type: "text" as const, text: "next" }] }}
+      />
+    );
+
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("sandboxed-iframe")).toBeInTheDocument();
+    });
+
+    expect(mockAppBridgeCtor).toHaveBeenCalledTimes(1);
+    expect(mockBridge.close).not.toHaveBeenCalled();
+    expect(mockBridge.teardownResource).not.toHaveBeenCalled();
+    expect(sandboxedIframeMountsRef.current).toBe(1);
+    expect(sandboxedIframeUnmountsRef.current).toBe(0);
+  });
+
+  it("does not rebuild when the active MCP profile is recreated without semantic changes", async () => {
+    const renderTree = () => (
+      <ActiveMcpProfileProvider value={createEquivalentMcpProfile()}>
+        <MCPAppsRenderer {...baseProps} />
+      </ActiveMcpProfileProvider>
+    );
+
+    const { rerender } = render(renderTree());
+
+    await vi.waitFor(() => {
+      expect(mockAppBridgeCtor).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("sandboxed-iframe")).toBeInTheDocument();
+    });
+
+    act(() => triggerReady());
+
+    rerender(renderTree());
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockAppBridgeCtor).toHaveBeenCalledTimes(1);
+    expect(mockBridge.close).not.toHaveBeenCalled();
+    expect(mockBridge.teardownResource).not.toHaveBeenCalled();
+    expect(sandboxedIframeMountsRef.current).toBe(1);
+    expect(sandboxedIframeUnmountsRef.current).toBe(0);
+  });
+
+  it("does not rebuild when the host capabilities override is recreated without semantic changes", async () => {
+    const renderTree = () => (
+      <ChatboxHostCapabilitiesOverrideProvider
+        value={{ openLinks: {}, logging: {}, serverTools: {} }}
+      >
+        <MCPAppsRenderer {...baseProps} />
+      </ChatboxHostCapabilitiesOverrideProvider>
+    );
+
+    const { rerender } = render(renderTree());
+
+    await vi.waitFor(() => {
+      expect(mockAppBridgeCtor).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("sandboxed-iframe")).toBeInTheDocument();
+    });
+
+    act(() => triggerReady());
+
+    rerender(renderTree());
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockAppBridgeCtor).toHaveBeenCalledTimes(1);
+    expect(mockBridge.close).not.toHaveBeenCalled();
+    expect(mockBridge.teardownResource).not.toHaveBeenCalled();
+    expect(sandboxedIframeMountsRef.current).toBe(1);
+    expect(sandboxedIframeUnmountsRef.current).toBe(0);
+  });
+
+  it("renders separate iframes for distinct tool calls on the same widget", async () => {
+    const firstOutput = { content: [{ type: "text" as const, text: "first" }] };
+    const secondOutput = {
+      content: [{ type: "text" as const, text: "second" }],
+    };
+    const renderTree = (includeSecondCall: boolean) => (
+      <WidgetSurfaceHostProvider>
+        <MCPAppsRenderer
+          {...baseProps}
+          toolCallId="call-1"
+          toolInput={{ move: "e4" }}
+          toolOutput={firstOutput}
+        />
+        {includeSecondCall ? (
+          <MCPAppsRenderer
+            {...baseProps}
+            toolCallId="call-2"
+            toolInput={{ move: "c5" }}
+            toolOutput={secondOutput}
+          />
+        ) : null}
+        <WidgetSurfaceHost />
+      </WidgetSurfaceHostProvider>
+    );
+
+    const { rerender } = render(renderTree(false));
+
+    await vi.waitFor(() => {
+      expect(mockAppBridgeCtor).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("sandboxed-iframe")).toBeInTheDocument();
+    });
+
+    act(() => triggerReady());
+
+    await vi.waitFor(() => {
+      expect(mockBridge.sendToolInput).toHaveBeenCalledTimes(1);
+      expect(mockBridge.sendToolInput).toHaveBeenCalledWith({
+        arguments: { move: "e4" },
+      });
+      expect(mockBridge.sendToolResult).toHaveBeenCalledTimes(1);
+    });
+
+    rerender(renderTree(true));
+
+    // Each tool call is a semantically distinct View (SEP-1865 lifecycle):
+    // call-2 must mount its own iframe under its own row instead of
+    // collapsing into call-1's surface and leaving call-2's row empty.
+    await vi.waitFor(() => {
+      expect(mockAppBridgeCtor).toHaveBeenCalledTimes(2);
+      expect(sandboxedIframeMountsRef.current).toBe(2);
+      const anchors = Array.from(
+        document.querySelectorAll("[data-mcp-app-surface-container]")
+      ).map((node) =>
+        node.parentElement?.getAttribute("data-mcp-app-surface-anchor")
+      );
+      expect(anchors).toContain("call-1");
+      expect(anchors).toContain("call-2");
+    });
+  });
+
+  it("mounts a separate live-preferred surface per cached tool call", async () => {
+    render(
+      <WidgetSurfaceHostProvider>
+        <MCPAppsRenderer
+          {...baseProps}
+          toolCallId="call-1"
+          cachedWidgetHtmlUrl="blob:cached"
+          liveFetchPreferred
+        />
+        <MCPAppsRenderer
+          {...baseProps}
+          toolCallId="call-2"
+          cachedWidgetHtmlUrl="blob:cached"
+          liveFetchPreferred
+          toolOutput={{ content: [{ type: "text" as const, text: "next" }] }}
+        />
+        <WidgetSurfaceHost />
+      </WidgetSurfaceHostProvider>
+    );
+
+    // Live-preferred path bypasses cached blob — both tool calls trigger a
+    // live fetch and each mounts its own iframe in its own row.
+    await vi.waitFor(() => {
+      expect(mockAppBridgeCtor).toHaveBeenCalledTimes(2);
+      expect(sandboxedIframeMountsRef.current).toBe(2);
+    });
+
+    expect(vi.mocked(authFetch)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(global.fetch)).not.toHaveBeenCalledWith("blob:cached");
+  });
+
+  it("mounts a fresh surface when the same row is re-keyed with a new tool call id", async () => {
+    const sameOutput = { content: [{ type: "text" as const, text: "same" }] };
+    const renderTree = (toolCallId: string) => (
+      <WidgetSurfaceHostProvider>
+        <MCPAppsRenderer
+          {...baseProps}
+          toolCallId={toolCallId}
+          toolOutput={sameOutput}
+        />
+        <WidgetSurfaceHost />
+      </WidgetSurfaceHostProvider>
+    );
+
+    const { rerender } = render(renderTree("call-1"));
+
+    await vi.waitFor(() => {
+      expect(mockAppBridgeCtor).toHaveBeenCalledTimes(1);
+    });
+
+    act(() => triggerReady());
+
+    await vi.waitFor(() => {
+      expect(mockBridge.sendToolResult).toHaveBeenCalledTimes(1);
+    });
+
+    rerender(renderTree("call-2"));
+
+    // Distinct tool call ⇒ distinct View. The previous surface tears
+    // down and a fresh one mounts for call-2.
+    await vi.waitFor(() => {
+      expect(mockAppBridgeCtor).toHaveBeenCalledTimes(2);
+      expect(sandboxedIframeMountsRef.current).toBe(2);
+    });
+  });
+
+  it("keeps the iframe alive when the same tool call anchor is re-keyed", async () => {
+    const renderTree = (showCall: boolean) => (
+      <WidgetSurfaceHostProvider>
+        {showCall ? (
+          <MCPAppsRenderer {...baseProps} toolCallId="call-1" />
+        ) : null}
+        <WidgetSurfaceHost />
+      </WidgetSurfaceHostProvider>
+    );
+
+    const { rerender } = render(renderTree(true));
+
+    await vi.waitFor(() => {
+      expect(mockAppBridgeCtor).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("sandboxed-iframe")).toBeInTheDocument();
+    });
+
+    act(() => triggerReady());
+
+    rerender(renderTree(false));
+    rerender(renderTree(true));
+
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+
+    expect(screen.getByTestId("sandboxed-iframe")).toBeInTheDocument();
+    expect(mockAppBridgeCtor).toHaveBeenCalledTimes(1);
+    expect(mockBridge.close).not.toHaveBeenCalled();
+    expect(mockBridge.teardownResource).not.toHaveBeenCalled();
+    expect(sandboxedIframeMountsRef.current).toBe(1);
+    expect(sandboxedIframeUnmountsRef.current).toBe(0);
+  });
+
+  it("keeps fullscreen ownership for a persistent resource surface", async () => {
+    render(
+      <WidgetSurfaceHostProvider>
+        <MCPAppsRenderer
+          {...baseProps}
+          toolCallId="call-1"
+          displayMode="fullscreen"
+          fullscreenWidgetId="call-1"
+        />
+        <WidgetSurfaceHost />
+      </WidgetSurfaceHostProvider>
+    );
+
+    await vi.waitFor(() => {
+      expect(mockAppBridgeCtor).toHaveBeenCalledTimes(1);
+    });
+
+    expect(appBridgeArgsRef.current?.options?.hostContext?.displayMode).toBe(
+      "fullscreen"
+    );
+    expect(mockBridge.close).not.toHaveBeenCalled();
+    expect(mockBridge.teardownResource).not.toHaveBeenCalled();
+    expect(sandboxedIframeMountsRef.current).toBe(1);
   });
 
   it("falls back to the spec-default 'no claims' blob when no style is resolvable", async () => {
@@ -1596,6 +1908,34 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(sandboxedIframePropsRef.current?.permissive).toBe(false);
   });
 
+  it("uses the current live compat recipe for live-preferred cached revisits", async () => {
+    render(
+      <ChatboxHostStyleProvider value="chatgpt">
+        <MCPAppsRenderer
+          {...baseProps}
+          cachedWidgetHtmlUrl="blob:cached"
+          liveFetchPreferred
+          injectedOpenAiCompat={false}
+          injectedOpenAiCompatCapabilities={{ callTool: false }}
+        />
+      </ChatboxHostStyleProvider>
+    );
+
+    await vi.waitFor(() => {
+      expect(authFetch).toHaveBeenCalled();
+    });
+
+    const requestInit = vi.mocked(authFetch).mock.calls[0]?.[1] as
+      | RequestInit
+      | undefined;
+    const body = JSON.parse(String(requestInit?.body ?? "{}")) as Record<
+      string,
+      any
+    >;
+    expect(body.injectOpenAiCompat).toBe(true);
+    expect(body.openAiCompatCapabilities?.callTool).toBe(true);
+  });
+
   it("falls back to cached HTML when the live fetch throws (e.g. server disconnected)", async () => {
     vi.mocked(authFetch).mockRejectedValueOnce(
       new Error('Hosted server not found for "server-1"')
@@ -1681,7 +2021,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
   it("drops stale live-fetch results when the source key has moved on (renderer reuse)", async () => {
     // Hold the first live fetch open with a controllable promise so we can
     // simulate the source key changing (e.g. session swap, cspMode toggle,
-    // different toolCallId) before it resolves.
+    // or different resource URI) before it resolves.
     let resolveStale!: (response: Response) => void;
     const staleResponse = new Promise<Response>((r) => {
       resolveStale = r;
@@ -1691,7 +2031,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     const { rerender } = render(
       <MCPAppsRenderer
         {...baseProps}
-        toolCallId="call-stale"
+        resourceUri="mcp-app://stale"
         cachedWidgetHtmlUrl="blob:cached"
         liveFetchPreferred
       />
@@ -1702,13 +2042,13 @@ describe("MCPAppsRenderer tool input streaming", () => {
       expect(vi.mocked(authFetch)).toHaveBeenCalledTimes(1);
     });
 
-    // Re-render with a new toolCallId. This rotates the source-identity key.
+    // Re-render with a new resource URI. This rotates the source-identity key.
     // A second live fetch is queued for the new key; we let it resolve
     // normally with the default authFetch mock.
     rerender(
       <MCPAppsRenderer
         {...baseProps}
-        toolCallId="call-fresh"
+        resourceUri="mcp-app://fresh"
         cachedWidgetHtmlUrl="blob:cached"
         liveFetchPreferred
       />
@@ -2623,7 +2963,42 @@ describe("MCPAppsRenderer requestTeardown policy", () => {
     });
 
     expect(mockBridge.teardownResource).toHaveBeenCalledWith({});
-    expect(onRequestTeardown).toHaveBeenCalledWith("call-1");
+    // Non-persistent path: displayWidgetId falls back to toolCallId.
+    expect(onRequestTeardown).toHaveBeenCalledWith("call-1", "call-1");
+  });
+
+  it("forwards the persistent surface id alongside the tool call id on teardown", async () => {
+    const onRequestTeardown = vi.fn();
+    render(
+      <WidgetSurfaceHostProvider>
+        <ActiveMcpProfileProvider value={profileWithRequestTeardown(true)}>
+          <ChatboxHostStyleProvider value="claude">
+            <MCPAppsRenderer
+              {...baseProps}
+              onRequestTeardown={onRequestTeardown}
+            />
+            <WidgetSurfaceHost />
+          </ChatboxHostStyleProvider>
+        </ActiveMcpProfileProvider>
+      </WidgetSurfaceHostProvider>
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.onrequestteardown).not.toBeNull();
+    });
+
+    await act(async () => {
+      await mockBridge.onrequestteardown();
+    });
+
+    expect(onRequestTeardown).toHaveBeenCalledTimes(1);
+    const [calledToolCallId, calledDisplayWidgetId] =
+      onRequestTeardown.mock.calls[0]!;
+    expect(calledToolCallId).toBe("call-1");
+    // Persistent path mints a surface id distinct from the tool call id;
+    // Thread.handleRequestTeardown needs it to clear stuck fullscreen/PiP.
+    expect(typeof calledDisplayWidgetId).toBe("string");
+    expect(calledDisplayWidgetId).not.toBe("call-1");
   });
 
   it("leaves request teardown unhandled when disabled", async () => {
