@@ -18,7 +18,6 @@
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ToolSet } from "ai";
 import { MCPClientManager } from "@mcpjam/sdk";
-import { isToolVisibilityAppOnly } from "@modelcontextprotocol/ext-apps/app-bridge";
 import {
   isAnthropicCompatibleModel,
   getInvalidAnthropicToolNames,
@@ -34,11 +33,29 @@ import { HOSTED_MODE } from "../config.js";
 const DEFAULT_TEMPERATURE = 0.7;
 
 /**
- * Mutates `tools` in place, removing entries whose source MCP tool
- * declares SEP-1865 `_meta.ui.visibility` as exactly `["app"]`.
+ * SEP-1865: "Host MUST NOT include tools in the agent's tool list when
+ * their visibility does not include 'model'." Hide when `visibility` is
+ * an array that doesn't contain "model" — covers `["app"]`, `[]`, and
+ * any future scope literal that isn't "model".
  *
- * The visibility array defaults to `["model", "app"]` per SEP-1865, so a
- * tool with no visibility metadata is treated as visible to both.
+ * Missing `visibility` (or non-array) defaults to both per the spec, so
+ * the tool stays visible. We can't use the upstream
+ * `isToolVisibilityAppOnly` helper for this — it only matches exactly
+ * `["app"]` and would leak the `[]` and future-scope cases through.
+ */
+function shouldHideFromModel(
+  meta: Record<string, unknown> | undefined,
+): boolean {
+  const ui = meta?.ui as { visibility?: unknown } | undefined;
+  const visibility = ui?.visibility;
+  if (!Array.isArray(visibility)) return false;
+  return !visibility.includes("model");
+}
+
+/**
+ * Mutates `tools` in place, removing entries whose source MCP tool
+ * declares a SEP-1865 `_meta.ui.visibility` that does not include
+ * `"model"`. Tools remain callable from the iframe bridge.
  */
 function filterAppOnlyTools(
   tools: ToolSet,
@@ -59,10 +76,7 @@ function filterAppOnlyTools(
     const serverId = (tool as { _serverId?: unknown })._serverId;
     if (typeof serverId !== "string") continue;
     const meta = getMeta(serverId)[name];
-    // SDK helper takes a tool-shaped object with `_meta`; wrap the per-tool
-    // metadata to match its expected shape. Returns true iff `_meta.ui.visibility`
-    // is exactly `["app"]`.
-    if (isToolVisibilityAppOnly({ _meta: meta })) {
+    if (shouldHideFromModel(meta)) {
       delete tools[name];
     }
   }

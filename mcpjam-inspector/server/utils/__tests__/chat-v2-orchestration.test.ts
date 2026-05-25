@@ -157,6 +157,42 @@ describe("prepareChatV2", () => {
     ]);
   });
 
+  it("hides tools whose visibility array is set but omits 'model'", async () => {
+    // SEP-1865: "Host MUST NOT include tools in the agent's tool list
+    // when their visibility does not include 'model'." Covers `[]` and
+    // any future scope literal that isn't "model" — the upstream
+    // `isToolVisibilityAppOnly` helper only matches exactly `["app"]`
+    // and would leak these through.
+    const manager = mockManager({
+      empty_visibility_tool: { description: "empty", _serverId: "srv" },
+      future_scope_tool: { description: "future scope", _serverId: "srv" },
+      omitted_visibility_tool: { description: "omitted", _serverId: "srv" },
+    });
+    manager.getAllToolsMetadata = vi.fn((id: string) =>
+      id === "srv"
+        ? {
+            empty_visibility_tool: { ui: { visibility: [] } },
+            // Cast through `any` — the typed schema only allows
+            // "model"|"app", but the wire shape can carry anything.
+            future_scope_tool: {
+              ui: { visibility: ["future-scope"] as any },
+            },
+            // No `_meta.ui.visibility` at all → default `["model","app"]`.
+            omitted_visibility_tool: {},
+          }
+        : {},
+    );
+
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["srv"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+    });
+
+    expect(Object.keys(result.allTools)).toEqual(["omitted_visibility_tool"]);
+  });
+
   it("filters selectedServers down to ids the manager has registered", async () => {
     const manager = mockManager({});
     manager.hasServer = vi.fn((id: string) => id === "live-server");
