@@ -518,24 +518,18 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(sandboxedIframeUnmountsRef.current).toBe(0);
   });
 
-  it("shares one persistent surface across tool calls to the same widget", async () => {
+  it("renders separate iframes for distinct tool calls on the same widget", async () => {
     const firstOutput = { content: [{ type: "text" as const, text: "first" }] };
-    const updatedFirstOutput = {
-      content: [{ type: "text" as const, text: "first-rerendered" }],
-    };
     const secondOutput = {
       content: [{ type: "text" as const, text: "second" }],
     };
-    const renderTree = (
-      includeSecondCall: boolean,
-      currentFirstOutput = firstOutput
-    ) => (
+    const renderTree = (includeSecondCall: boolean) => (
       <WidgetSurfaceHostProvider>
         <MCPAppsRenderer
           {...baseProps}
           toolCallId="call-1"
           toolInput={{ move: "e4" }}
-          toolOutput={currentFirstOutput}
+          toolOutput={firstOutput}
         />
         {includeSecondCall ? (
           <MCPAppsRenderer
@@ -555,12 +549,6 @@ describe("MCPAppsRenderer tool input streaming", () => {
       expect(mockAppBridgeCtor).toHaveBeenCalledTimes(1);
       expect(screen.getByTestId("sandboxed-iframe")).toBeInTheDocument();
     });
-    const getSurfaceContainer = () =>
-      document.querySelector("[data-mcp-app-surface-container]") as HTMLElement;
-    expect(getSurfaceContainer().parentElement).toHaveAttribute(
-      "data-mcp-app-surface-anchor",
-      "call-1"
-    );
 
     act(() => triggerReady());
 
@@ -574,34 +562,23 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
     rerender(renderTree(true));
 
+    // Each tool call is a semantically distinct View (SEP-1865 lifecycle):
+    // call-2 must mount its own iframe under its own row instead of
+    // collapsing into call-1's surface and leaving call-2's row empty.
     await vi.waitFor(() => {
-      expect(mockBridge.sendToolInput).toHaveBeenCalledTimes(2);
-      expect(mockBridge.sendToolInput).toHaveBeenLastCalledWith({
-        arguments: { move: "c5" },
-      });
-      expect(mockBridge.sendToolResult).toHaveBeenCalledTimes(2);
-      expect(mockBridge.sendToolResult).toHaveBeenLastCalledWith(secondOutput);
+      expect(mockAppBridgeCtor).toHaveBeenCalledTimes(2);
+      expect(sandboxedIframeMountsRef.current).toBe(2);
+      const anchors = Array.from(
+        document.querySelectorAll("[data-mcp-app-surface-container]")
+      ).map((node) =>
+        node.parentElement?.getAttribute("data-mcp-app-surface-anchor")
+      );
+      expect(anchors).toContain("call-1");
+      expect(anchors).toContain("call-2");
     });
-
-    rerender(renderTree(true, updatedFirstOutput));
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    expect(mockBridge.sendToolResult).toHaveBeenCalledTimes(2);
-    expect(mockBridge.sendToolResult).toHaveBeenLastCalledWith(secondOutput);
-    expect(getSurfaceContainer().parentElement).toHaveAttribute(
-      "data-mcp-app-surface-anchor",
-      "call-1"
-    );
-    expect(mockBridge.sendToolInput).toHaveBeenCalledTimes(2);
-    expect(mockBridge.close).not.toHaveBeenCalled();
-    expect(mockBridge.teardownResource).not.toHaveBeenCalled();
-    expect(sandboxedIframeMountsRef.current).toBe(1);
-    expect(sandboxedIframeUnmountsRef.current).toBe(0);
   });
 
-  it("keeps live-preferred cached tool calls on one persistent resource surface", async () => {
+  it("mounts a separate live-preferred surface per cached tool call", async () => {
     render(
       <WidgetSurfaceHostProvider>
         <MCPAppsRenderer
@@ -621,20 +598,18 @@ describe("MCPAppsRenderer tool input streaming", () => {
       </WidgetSurfaceHostProvider>
     );
 
+    // Live-preferred path bypasses cached blob — both tool calls trigger a
+    // live fetch and each mounts its own iframe in its own row.
     await vi.waitFor(() => {
-      expect(mockAppBridgeCtor).toHaveBeenCalledTimes(1);
-      expect(screen.getByTestId("sandboxed-iframe")).toBeInTheDocument();
+      expect(mockAppBridgeCtor).toHaveBeenCalledTimes(2);
+      expect(sandboxedIframeMountsRef.current).toBe(2);
     });
 
-    expect(vi.mocked(authFetch)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(authFetch)).toHaveBeenCalledTimes(2);
     expect(vi.mocked(global.fetch)).not.toHaveBeenCalledWith("blob:cached");
-    expect(mockBridge.close).not.toHaveBeenCalled();
-    expect(mockBridge.teardownResource).not.toHaveBeenCalled();
-    expect(sandboxedIframeMountsRef.current).toBe(1);
-    expect(sandboxedIframeUnmountsRef.current).toBe(0);
   });
 
-  it("sends identical persistent surface results for different tool calls", async () => {
+  it("mounts a fresh surface when the same row is re-keyed with a new tool call id", async () => {
     const sameOutput = { content: [{ type: "text" as const, text: "same" }] };
     const renderTree = (toolCallId: string) => (
       <WidgetSurfaceHostProvider>
@@ -661,14 +636,12 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
     rerender(renderTree("call-2"));
 
+    // Distinct tool call ⇒ distinct View. The previous surface tears
+    // down and a fresh one mounts for call-2.
     await vi.waitFor(() => {
-      expect(mockBridge.sendToolResult).toHaveBeenCalledTimes(2);
+      expect(mockAppBridgeCtor).toHaveBeenCalledTimes(2);
+      expect(sandboxedIframeMountsRef.current).toBe(2);
     });
-
-    expect(mockBridge.sendToolResult).toHaveBeenLastCalledWith(sameOutput);
-    expect(mockAppBridgeCtor).toHaveBeenCalledTimes(1);
-    expect(sandboxedIframeMountsRef.current).toBe(1);
-    expect(sandboxedIframeUnmountsRef.current).toBe(0);
   });
 
   it("keeps the iframe alive when the same tool call anchor is re-keyed", async () => {

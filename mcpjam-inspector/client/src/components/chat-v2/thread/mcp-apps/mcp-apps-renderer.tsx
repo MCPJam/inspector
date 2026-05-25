@@ -388,10 +388,19 @@ function hashSurfaceIdentity(value: string): string {
 }
 
 function getPersistentSurfaceId(props: MCPAppsRendererProps): string {
+  // Identity is per-tool-call, not per-resource. The persistent surface's
+  // job is to keep one iframe alive across re-renders of the same row
+  // (e.g. fullscreen toggle, transcript reshuffles) — the `toolCallId`
+  // is stable across all of those. Two distinct `tools/call` invocations
+  // on the same resource are semantically two separate Views per
+  // SEP-1865's lifecycle, so they must get their own surface; otherwise
+  // the second tool-call row renders empty because the lone iframe is
+  // anchored under the first row.
   const identity = stableStringifyJson({
     chatSessionId: props.chatSessionId ?? null,
     serverId: props.serverId,
     resourceUri: props.resourceUri,
+    toolCallId: props.toolCallId,
     surface: "inline",
   });
   return `mcp-app:${hashSurfaceIdentity(identity)}`;
@@ -445,7 +454,7 @@ function scheduleSurfaceRelease(surfaceId: string, toolCallId: string) {
 function PersistentMCPAppsRendererRegistration(props: MCPAppsRendererProps) {
   const surfaceId = useMemo(
     () => getPersistentSurfaceId(props),
-    [props.chatSessionId, props.resourceUri, props.serverId]
+    [props.chatSessionId, props.resourceUri, props.serverId, props.toolCallId]
   );
   const anchorRef = useRef<HTMLDivElement | null>(null);
 
