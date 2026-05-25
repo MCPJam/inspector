@@ -40,6 +40,14 @@ export interface StatelessMcpFixtureOptions {
   toolsListTtlMs?: number;
   /** Host to bind. Defaults to 127.0.0.1. */
   host?: string;
+  /**
+   * Reject `server/discover` requests with `-32004 Unsupported protocol
+   * version` (carrying `data.supported: ["2025-11-25"]`). Simulates a
+   * 2025-only server rejecting a DRAFT-2026-v1 client. Only the discover
+   * request is affected; other methods still validate normally so tests
+   * can exercise the negative-path probe in isolation.
+   */
+  discoverThrowsUnsupportedVersion?: boolean;
 }
 
 interface JsonRpcRequest {
@@ -95,6 +103,26 @@ export function startStatelessMcpFixture(
         -32004,
         "Unsupported protocol version",
         { supported: [DRAFT_2026_V1] },
+        opts,
+      );
+      return;
+    }
+
+    // Targeted negative-path option for the preview client's
+    // discover-on-connect probe: reject discover specifically with a
+    // -32004 that lists a different supported version, simulating a
+    // 2025-only server. Other methods still validate normally so we can
+    // exercise this rejection path in isolation.
+    if (
+      opts.discoverThrowsUnsupportedVersion &&
+      body.method === "server/discover"
+    ) {
+      respondJsonRpcError(
+        res,
+        body.id,
+        -32004,
+        "Unsupported protocol version",
+        { supported: ["2025-11-25"], requested: DRAFT_2026_V1 },
         opts,
       );
       return;
@@ -200,6 +228,24 @@ async function dispatch(
   ttlMs: number,
 ): Promise<unknown> {
   switch (req.method) {
+    case "server/discover":
+      // SEP-2575: stateless replacement for `initialize`. Same shape
+      // minus session pieces — `protocolVersion`, `serverInfo`,
+      // `serverCapabilities`, optional `supportedVersions` +
+      // `instructions`. The error path (option
+      // `discoverThrowsUnsupportedVersion`) is handled before dispatch
+      // by the outer version-validation block, so the success body here
+      // is what a conforming server returns.
+      return {
+        protocolVersion: DRAFT_2026_V1,
+        serverInfo: { name: "stateless-mcp-fixture", version: "0.1.0" },
+        serverCapabilities: {
+          tools: {},
+          resources: {},
+          prompts: {},
+        },
+        supportedVersions: [DRAFT_2026_V1],
+      };
     case "ping":
       return {};
     case "tools/list":

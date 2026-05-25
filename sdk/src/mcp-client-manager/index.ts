@@ -154,6 +154,7 @@ export {
   StatelessMcpHttpPreviewClient,
   STATELESS_DRAFT_2026_V1,
   type StatelessMcpHttpPreviewClientOptions,
+  type DiscoverResult,
 } from "./stateless-mcp-http-preview-client.js";
 export {
   createManagedMcpClient,

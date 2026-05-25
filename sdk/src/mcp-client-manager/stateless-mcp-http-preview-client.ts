@@ -19,17 +19,24 @@
  *     echoed)
  *   - Tool-header-map cache (`tool-header-map.ts`)
  *
+ * Also owns:
+ *   - `server/discover` (SEP-2575) — fired during `connect()` to validate
+ *     the server speaks our `protocolVersion` and to populate
+ *     `serverInfo` / `serverCapabilities` / `instructions` for the manager's
+ *     `getInitializationInfo` (which is what the inspector UI reads to show
+ *     the server's name + capability flags). A `-32004` from this probe
+ *     means the server doesn't speak our version; the throw propagates as a
+ *     connect failure with the error envelope intact for the wire log.
+ *     Opt out with `discoverOnConnect: false` for unit-test / raw-client
+ *     callers that want no auto-probe.
+ *
  * Does NOT own (intentionally deferred — see plan "Known limitations"):
  *   - `initialize` / `initialized` (no handshake in stateless)
- *   - `server/discover` (SEP-2575 deferred)
  *   - MRTR / `InputRequiredResult` (server-initiated requests)
  *   - `subscriptions/listen` (throws `NotYetSupportedInStateless`)
  *   - Resumption tokens (`resumptionToken` / `onresumptiontoken` throw
  *     a labeled error)
  *   - Backward-compat probes against pre-DRAFT-2026-v1 servers
- *
- * See `peppy-popping-flask.md` PR2 for the full method-by-method
- * behavior table.
  */
 
 import type {
@@ -160,6 +167,31 @@ export interface StatelessMcpHttpPreviewClientOptions {
    * surfacing the warning in conformance output.
    */
   onSessionIdResponse?: (sessionId: string) => void;
+  /**
+   * Whether `connect()` should fire `server/discover` (SEP-2575) to
+   * validate the server speaks `protocolVersion` and populate
+   * `serverInfo` / `serverCapabilities` / `instructions`. Default `true` —
+   * this is what produces visible wire activity on the inspector UI's
+   * connect path and what surfaces `-32004 UnsupportedProtocolVersionError`
+   * as a real connection failure. Set `false` for unit tests or callers
+   * that want a raw wire client with no auto-probe.
+   */
+  discoverOnConnect?: boolean;
+}
+
+/**
+ * Result of `server/discover` per SEP-2575. Same shape as the legacy
+ * `InitializeResult` minus the session-bound pieces — the negotiated
+ * `protocolVersion`, the server's `serverInfo` / `serverCapabilities` /
+ * `instructions`, and an optional `supportedVersions` list that lets a
+ * client retry against a mutually supported version on its own.
+ */
+export interface DiscoverResult {
+  protocolVersion: string;
+  serverInfo: Implementation;
+  serverCapabilities: ServerCapabilities;
+  supportedVersions?: string[];
+  instructions?: string;
 }
 
 /** JSON-RPC envelope shapes (subset of upstream types). */
@@ -213,11 +245,19 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
   private readonly rpcLogger?: RpcLogger;
   private readonly serverId: string;
   private readonly onSessionIdResponse?: (sessionId: string) => void;
+  private readonly discoverOnConnect: boolean;
   private readonly toolHeaderMap = new ToolHeaderMap();
   private readonly inFlightAborts = new Set<AbortController>();
   private closed = false;
   private connected = false;
   private nonConformingSessionIdSeen = false;
+  // Populated by `server/discover` during `connect()` (when
+  // `discoverOnConnect` is true). Stay undefined for raw-client callers
+  // that opted out; capability getters return that undefined verbatim so
+  // the manager + inspector UI distinguish "unknown" from a real synthetic.
+  private discoveredServerInfo: Implementation | undefined;
+  private discoveredServerCapabilities: ServerCapabilities | undefined;
+  private discoveredInstructions: string | undefined;
 
   // Per-method handlers — preview is client-only (no server-initiated
   // requests in scope), so these are accepted-but-never-invoked. The
@@ -244,6 +284,7 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
     this.rpcLogger = opts.rpcLogger;
     this.serverId = opts.serverId;
     this.onSessionIdResponse = opts.onSessionIdResponse;
+    this.discoverOnConnect = opts.discoverOnConnect ?? true;
   }
 
   // ---- Lifecycle ----
@@ -253,8 +294,13 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
   ): Promise<void> {
     // Stateless: no initialize round-trip, no transport.start(). The
     // upstream `Transport` argument is accepted for interface parity
-    // with `OfficialSdkClientAdapter`. We validate basic invariants and
-    // mark ready; the first RPC call exercises the network.
+    // with `OfficialSdkClientAdapter`. We validate basic invariants,
+    // mark ready, then fire `server/discover` (SEP-2575) to populate
+    // server identity + capabilities AND to validate the server speaks
+    // our `protocolVersion`. A `-32004 UnsupportedProtocolVersionError`
+    // from discover propagates as a connect failure with the error
+    // envelope intact — that's how the inspector surfaces "this server
+    // doesn't speak DRAFT-2026-v1" instead of a misleading "Connected".
     if (this.closed) {
       throw new Error("StatelessMcpHttpPreviewClient: connect() after close()");
     }
@@ -267,7 +313,35 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
         "TransportSendOptions resumption is not implemented in the preview",
       );
     }
+    // Mark `connected` BEFORE the discover send so the send() guard
+    // (which the preview doesn't currently enforce, but might in
+    // future) doesn't reject. `connected` is also what
+    // `getServerCapabilities()` checks before returning the synthetic
+    // fallback; flipping it now means a successful discover
+    // immediately overwrites the synthetic.
     this.connected = true;
+    if (!this.discoverOnConnect) return;
+    try {
+      const result = await this.send<DiscoverResult>(
+        "server/discover",
+        undefined,
+        // No caller-provided RequestOptions for the auto-probe — use the
+        // SendOptions defaults. `_options?.timeout` exists on the
+        // connect-time options too but it's the upstream Transport
+        // timeout, not a per-RPC one; let the default request timeout
+        // apply so connect doesn't hang on a slow `server/discover`.
+        {},
+      );
+      this.discoveredServerInfo = result.serverInfo;
+      this.discoveredServerCapabilities = result.serverCapabilities;
+      this.discoveredInstructions = result.instructions;
+    } catch (err) {
+      // Roll back the connected flag so a retried connect() runs
+      // discover again instead of treating us as already-up. The error
+      // envelope (and the matching wire log event) is what callers see.
+      this.connected = false;
+      throw err;
+    }
   }
 
   async close(): Promise<void> {
@@ -291,24 +365,36 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
   }
 
   // ---- Capability / identity getters ----
+  // All three return the discover-populated value when `connect()` ran
+  // discover (the default). When `discoverOnConnect: false` was set OR
+  // discover hasn't run yet, return undefined — same shape the legacy
+  // adapter uses pre-connect, and what `MCPClientManager.getInitializationInfo`
+  // already handles.
   getServerCapabilities(): ServerCapabilities | undefined {
-    // Permissive synthetic. No init, no negotiation, but manager-side
-    // capability gates (listPrompts at MCPClientManager.ts:755) won't
-    // trip. Trade-off: the server can still respond with
-    // METHOD_NOT_FOUND if it doesn't implement something; manager
-    // handles that path via `isMethodUnavailableError`.
     if (!this.connected) return undefined;
-    return {
-      tools: {},
-      resources: {},
-      prompts: {},
-    } as ServerCapabilities;
+    return this.discoveredServerCapabilities;
   }
   getServerVersion(): Implementation | undefined {
-    return undefined;
+    return this.discoveredServerInfo;
   }
   getInstructions(): string | undefined {
-    return undefined;
+    return this.discoveredInstructions;
+  }
+
+  // ---- Discovery (SEP-2575) ----
+  /**
+   * Sends `server/discover`. Used internally by `connect()` (when
+   * `discoverOnConnect` is true) and exposed for callers that want to
+   * re-probe after construction (e.g., after a transport-level retry).
+   * Side-effect-free at the SDK layer beyond the wire log; does NOT
+   * update the cached `serverInfo` / `serverCapabilities` / `instructions`
+   * fields — that's only what `connect()` does. Callers that want the
+   * fresh result reflected in `getServerCapabilities()` should reconnect.
+   */
+  async discover(options?: RequestOptions): Promise<DiscoverResult> {
+    return await this.send<DiscoverResult>("server/discover", undefined, {
+      ...(options ?? {}),
+    });
   }
 
   // ---- Tool calls ----
@@ -624,28 +710,43 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
     }
 
     const contentType = response.headers.get("content-type") ?? "";
-    let result: T;
+    let envelope: JsonRpcMessage;
     if (contentType.includes("text/event-stream")) {
-      result = await this.consumeSseResponse<T>(response, id, opts);
+      envelope = await this.consumeSseResponse(response, id, opts);
     } else {
       const text = await response.text();
-      const parsed = parseSingleMessage(text);
-      result = this.unwrapJsonRpcResult<T>(parsed, id);
+      envelope = parseSingleMessage(text);
     }
 
+    // Log the raw envelope BEFORE unwrap-and-maybe-throw. Without this,
+    // every error response (`-32004 UnsupportedProtocolVersion` from a
+    // stateful server, `-32001 HeaderMismatch`, etc.) skips the receive
+    // logger because `unwrapJsonRpcResult` throws on the `error` shape,
+    // and the wire-log panel — the user's only diagnostic surface for
+    // protocol-level failures — stays empty. Spec doesn't distinguish
+    // success from error envelopes for logging purposes; both are
+    // valid JSON-RPC responses the server sent us.
     this.rpcLogger?.({
       direction: "receive",
-      message: result as unknown,
+      message: envelope as unknown,
       serverId: this.serverId,
     });
-    return result;
+
+    return this.unwrapJsonRpcResult<T>(envelope, id);
   }
 
-  private async consumeSseResponse<T>(
+  /**
+   * Drains a per-request SSE response stream and returns the terminal
+   * JSON-RPC envelope (success OR error — `unwrap` happens at the
+   * caller so the receive logger sees the raw envelope first). Throws
+   * only on transport-level violations (missing body, server-initiated
+   * request mid-stream, id mismatch, stream-without-response).
+   */
+  private async consumeSseResponse(
     response: Response,
     requestId: number | string,
     opts: SendOptions,
-  ): Promise<T> {
+  ): Promise<JsonRpcMessage> {
     if (!response.body) {
       throw new Error(
         "StatelessMcpHttpPreviewClient: SSE response has no body",
@@ -685,9 +786,10 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
             continue;
           }
           // It's a response. Either success or error. If id matches,
-          // that's the terminal frame.
+          // that's the terminal frame — hand it back raw so the caller
+          // can log it before unwrap.
           if ((message as { id?: unknown }).id === requestId) {
-            return this.unwrapJsonRpcResult<T>(message as JsonRpcMessage, requestId);
+            return message as JsonRpcMessage;
           }
           // Other-id response on a per-request stream is a protocol
           // error; surface it.

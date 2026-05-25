@@ -17,6 +17,7 @@ import {
   StatelessMcpHttpPreviewClient,
   STATELESS_DRAFT_2026_V1,
   NotYetSupportedInStateless,
+  type DiscoverResult,
 } from "../src/mcp-client-manager/stateless-mcp-http-preview-client.js";
 
 interface CapturedRequest {
@@ -27,6 +28,12 @@ interface CapturedRequest {
 interface FixtureOptions {
   emitSessionId?: boolean;
   ttlMs?: number;
+  /**
+   * Reject `server/discover` requests with -32004 (data.supported lists
+   * 2025-11-25). Lets the connect-on-discover negative-path test simulate
+   * a 2025-only server.
+   */
+  discoverThrowsUnsupportedVersion?: boolean;
 }
 
 async function startFixture(opts: FixtureOptions = {}): Promise<{
@@ -88,7 +95,37 @@ async function startFixture(opts: FixtureOptions = {}): Promise<{
       });
     }
 
+    if (opts.discoverThrowsUnsupportedVersion && body.method === "server/discover") {
+      return respond(res, opts, {
+        jsonrpc: "2.0",
+        id: body.id,
+        error: {
+          code: -32004,
+          message: "Unsupported protocol version",
+          data: {
+            supported: ["2025-11-25"],
+            requested: STATELESS_DRAFT_2026_V1,
+          },
+        },
+      });
+    }
+
     switch (body.method) {
+      case "server/discover":
+        return respond(res, opts, {
+          jsonrpc: "2.0",
+          id: body.id,
+          result: {
+            protocolVersion: STATELESS_DRAFT_2026_V1,
+            serverInfo: { name: "fixture-server", version: "0.1.0" },
+            serverCapabilities: {
+              tools: {},
+              resources: {},
+              prompts: {},
+            },
+            supportedVersions: [STATELESS_DRAFT_2026_V1],
+          } satisfies DiscoverResult,
+        });
       case "tools/list":
         return respond(res, opts, {
           jsonrpc: "2.0",
@@ -209,6 +246,11 @@ describe("StatelessMcpHttpPreviewClient", () => {
       url: fixture.url,
       clientInfo: { name: "test-client", version: "0.0.1" },
       serverId: "fixture",
+      // The default-on `server/discover` probe pollutes the
+      // `captured` indices the existing tests assert on (they expect
+      // captured[0] to be their first triggered RPC). Disable for the
+      // generic suite; dedicated discover tests opt in explicitly.
+      discoverOnConnect: false,
     });
     await client.connect(undefined as never);
   });
@@ -404,11 +446,109 @@ describe("StatelessMcpHttpPreviewClient", () => {
       url: new URL(`http://127.0.0.1:${port}/`),
       clientInfo: { name: "test", version: "0" },
       serverId: "bad",
+      // Bad fixture only serves tools/list; auto-discover would 404.
+      discoverOnConnect: false,
     });
     await badClient.connect(undefined as never);
     const result = await badClient.listTools();
     expect((result.tools as Array<{ name: string }>).map((t) => t.name)).toEqual(["ok"]);
     await badClient.close();
     await new Promise<void>((r) => bad.close(() => r()));
+  });
+
+  // ---- server/discover (SEP-2575) ----
+  // Default-on discover probe runs from `connect()`. These three tests
+  // use their own fixture+client because the suite-wide beforeEach
+  // disables discover so other tests' captured indices stay clean.
+
+  test("connect() fires server/discover and populates serverCapabilities", async () => {
+    // Standalone client (no shared beforeEach) so we can leave
+    // discoverOnConnect at its default `true`.
+    const localFixture = await startFixture();
+    const localClient = new StatelessMcpHttpPreviewClient({
+      url: localFixture.url,
+      clientInfo: { name: "test-client", version: "0.0.1" },
+      serverId: "discover-fixture",
+    });
+    try {
+      await localClient.connect(undefined as never);
+
+      // Exactly one outbound request — the discover probe.
+      expect(localFixture.captured).toHaveLength(1);
+      const sent = localFixture.captured[0];
+      expect(sent.body.method).toBe("server/discover");
+      expect(sent.headers["mcp-method"]).toBe("server/discover");
+      expect(sent.headers["mcp-protocol-version"]).toBe(STATELESS_DRAFT_2026_V1);
+
+      // Capability getters now return the discover-populated values
+      // instead of the permissive synthetic / undefined defaults.
+      expect(localClient.getServerVersion()).toEqual({
+        name: "fixture-server",
+        version: "0.1.0",
+      });
+      expect(localClient.getServerCapabilities()).toEqual({
+        tools: {},
+        resources: {},
+        prompts: {},
+      });
+    } finally {
+      await localClient.close();
+      await localFixture.close();
+    }
+  });
+
+  test("connect() throws and surfaces -32004 when server rejects version", async () => {
+    const rejectFixture = await startFixture({
+      discoverThrowsUnsupportedVersion: true,
+    });
+    const rejectClient = new StatelessMcpHttpPreviewClient({
+      url: rejectFixture.url,
+      clientInfo: { name: "test-client", version: "0.0.1" },
+      serverId: "reject-fixture",
+    });
+    try {
+      // Connect must reject with a labeled error carrying the JSON-RPC
+      // code + message; the wire log captures the full envelope via the
+      // receive logger (fix from the prior commit).
+      await expect(
+        rejectClient.connect(undefined as never),
+      ).rejects.toMatchObject({
+        code: -32004,
+        message: expect.stringContaining("Unsupported protocol version"),
+      });
+
+      // Capability getters return undefined when discover failed —
+      // distinguishes "no info" from a fake synthetic.
+      expect(rejectClient.getServerCapabilities()).toBeUndefined();
+      expect(rejectClient.getServerVersion()).toBeUndefined();
+    } finally {
+      await rejectClient.close();
+      await rejectFixture.close();
+    }
+  });
+
+  test("discoverOnConnect: false skips the probe entirely", async () => {
+    const silentFixture = await startFixture();
+    const silentClient = new StatelessMcpHttpPreviewClient({
+      url: silentFixture.url,
+      clientInfo: { name: "test-client", version: "0.0.1" },
+      serverId: "silent-fixture",
+      discoverOnConnect: false,
+    });
+    try {
+      await silentClient.connect(undefined as never);
+
+      // Zero outbound requests — the opt-out is real.
+      expect(silentFixture.captured).toHaveLength(0);
+
+      // Capability getters return undefined (no discover ran). Manager
+      // callers handle undefined the same way they handle the legacy
+      // pre-connect state.
+      expect(silentClient.getServerCapabilities()).toBeUndefined();
+      expect(silentClient.getServerVersion()).toBeUndefined();
+    } finally {
+      await silentClient.close();
+      await silentFixture.close();
+    }
   });
 });
