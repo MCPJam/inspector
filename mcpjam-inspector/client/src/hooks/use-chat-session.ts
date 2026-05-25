@@ -1650,6 +1650,17 @@ export function useChatSession(
       // iframe is already comfortably in viewport (avoid jitter on every
       // tool call in an already-focused chat). Best-effort: any failure
       // here must not block dispatch.
+      //
+      // Two non-obvious bits:
+      // - `block: "start"` (not "nearest"). For iframes taller than the
+      //   viewport, "nearest" treats a sliver of the bottom edge as "near
+      //   enough" and refuses to scroll. "start" anchors the iframe top
+      //   to the viewport top so the just-mutated content actually
+      //   becomes prominent.
+      // - `requestAnimationFrame` defers the scroll one paint so it
+      //   runs AFTER the chat thread's auto-scroll-to-latest effect
+      //   commits on the new tool-call row. Without the rAF, chat's
+      //   auto-scroll fires last and silently overrides ours.
       try {
         if (!document.hidden) {
           const iframe = entry.instance.getIframeElement?.();
@@ -1662,7 +1673,12 @@ export function useChatSession(
               rect.bottom <= viewportHeight &&
               rect.height > 0;
             if (!fullyInView) {
-              iframe.scrollIntoView({ behavior: "smooth", block: "nearest" });
+              requestAnimationFrame(() => {
+                iframe.scrollIntoView({
+                  behavior: "smooth",
+                  block: "start",
+                });
+              });
             }
           }
         }
