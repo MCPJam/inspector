@@ -337,6 +337,130 @@ describe("StatelessMcpHttpPreviewClient", () => {
     ).toEqual({ value: "hi", region: "us-west1" });
   });
 
+  test("401 retry preserves derived Mcp-Name + Mcp-Param-* on annotated tool call", async () => {
+    // Regression test for the OAuth 401 retry path dropping headers
+    // derived from the body. The first request goes through
+    // `send()` with `effectiveOpts` carrying derived nameHeader +
+    // extraHeaders; on a 401 the retry rebuilds via `buildHeaders`.
+    // If that rebuild uses the original `opts` instead of
+    // `effectiveOpts`, Mcp-Name + Mcp-Param-* disappear and a
+    // spec-compliant server returns -32001 HeaderMismatch.
+    //
+    // Standalone inline server that returns 401 once, then validates
+    // headers on the retry. Captures every request so we can assert
+    // header presence on both attempts.
+    const requests: Array<{
+      headers: Record<string, string>;
+      body: { method?: string };
+    }> = [];
+    let firstRequest = true;
+    const authServer = createServer(async (req, res) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(chunk as Buffer);
+      const body = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
+      requests.push({
+        headers: Object.fromEntries(
+          Object.entries(req.headers).map(([k, v]) => [
+            k,
+            Array.isArray(v) ? v.join(",") : (v ?? ""),
+          ]),
+        ),
+        body,
+      });
+      if (body.method === "tools/list") {
+        // Serve a header-bearing tool definition so the lazy refresh
+        // populates the header map.
+        return respond(res, {}, {
+          jsonrpc: "2.0",
+          id: body.id,
+          result: {
+            tools: [
+              {
+                name: "regional-echo",
+                inputSchema: {
+                  type: "object",
+                  properties: {
+                    value: { type: "string" },
+                    region: { type: "string", "x-mcp-header": "Region" },
+                  },
+                },
+              },
+            ],
+            ttlMs: 60_000,
+          },
+        });
+      }
+      if (body.method === "tools/call" && firstRequest) {
+        firstRequest = false;
+        res.writeHead(401, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Unauthorized" }));
+        return;
+      }
+      // Retry: validate the headers survived the rebuild.
+      const mcpName = req.headers["mcp-name"];
+      const mcpParamRegion = req.headers["mcp-param-region"];
+      if (!mcpName || !mcpParamRegion) {
+        return respond(res, {}, {
+          jsonrpc: "2.0",
+          id: body.id,
+          error: {
+            code: -32001,
+            message: "HeaderMismatch — 401 retry dropped required headers",
+            data: { mcpName, mcpParamRegion },
+          },
+        });
+      }
+      return respond(res, {}, {
+        jsonrpc: "2.0",
+        id: body.id,
+        result: { content: [{ type: "text", text: "ok" }] },
+      });
+    });
+    await new Promise<void>((r) =>
+      authServer.listen(0, "127.0.0.1", () => r()),
+    );
+    const port = (authServer.address() as AddressInfo).port;
+
+    let tokenCount = 0;
+    const authClient = new StatelessMcpHttpPreviewClient({
+      url: new URL(`http://127.0.0.1:${port}/`),
+      clientInfo: { name: "test", version: "0" },
+      serverId: "auth-retry",
+      discoverOnConnect: false,
+      // Token callback rotates on 401 so the retry uses a fresh value.
+      getAccessToken: () => {
+        tokenCount += 1;
+        return `t${tokenCount}`;
+      },
+      on401: async () => `t-refresh`,
+    });
+    try {
+      await authClient.connect(undefined as never);
+      const result = await authClient.callTool({
+        name: "regional-echo",
+        arguments: { value: "hi", region: "us-west1" },
+      });
+      expect(result.content).toEqual([{ type: "text", text: "ok" }]);
+
+      // Three requests captured: tools/list (lazy refresh) + first
+      // tools/call (401) + retry tools/call (200).
+      expect(requests).toHaveLength(3);
+      const firstCall = requests[1];
+      const retryCall = requests[2];
+      expect(firstCall.body.method).toBe("tools/call");
+      expect(retryCall.body.method).toBe("tools/call");
+      // Both attempts MUST carry the derived headers — the retry is
+      // where the bug previously manifested.
+      expect(firstCall.headers["mcp-name"]).toBe("regional-echo");
+      expect(firstCall.headers["mcp-param-region"]).toBe("us-west1");
+      expect(retryCall.headers["mcp-name"]).toBe("regional-echo");
+      expect(retryCall.headers["mcp-param-region"]).toBe("us-west1");
+    } finally {
+      await authClient.close();
+      await new Promise<void>((r) => authServer.close(() => r()));
+    }
+  });
+
   test("generic request({method: 'resources/read'}) emits Mcp-Name from params.uri", async () => {
     // Same fix-class as the request-tools/call case: resources/read
     // derives Mcp-Name from params.uri, not params.name. The inline

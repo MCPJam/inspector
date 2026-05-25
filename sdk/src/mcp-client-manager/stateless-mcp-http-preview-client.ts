@@ -694,7 +694,19 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
       if (response.status === 401 && this.on401) {
         const refreshed = await this.on401();
         if (refreshed) {
-          const retryHeaders = await this.buildHeaders(method, opts, refreshed);
+          // Rebuild from `effectiveOpts`, NOT `opts` — the derived
+          // `nameHeader` / `extraHeaders` from
+          // `resolveNameHeaderFromBody` / `resolveExtraHeadersForToolsCall`
+          // only live on `effectiveOpts`. Rebuilding from raw `opts`
+          // drops Mcp-Name + Mcp-Param-* on the retry, so an OAuth-
+          // protected stateless `tools/call` would succeed-then-401 →
+          // retry without the spec-required headers → `-32001
+          // HeaderMismatch` from a spec-compliant server.
+          const retryHeaders = await this.buildHeaders(
+            method,
+            effectiveOpts,
+            refreshed,
+          );
           this.rpcLogger?.({ direction: "send", message: body, serverId: this.serverId });
           response = await fetch(this.url, {
             method: "POST",
