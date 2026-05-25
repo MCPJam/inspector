@@ -123,6 +123,14 @@ chatV2.post("/", async (c) => {
     let resolvedSystemPrompt = bodySystemPrompt;
     let resolvedTemperatureOverride = bodyTemperature;
     let resolvedRequireToolApproval = bodyRequireToolApproval;
+    // Host-level toggle. For non-chatbox direct chat the body is the
+    // source (the inspector reads the project's default HostConfigV2 and
+    // threads the value through); for chatbox sessions we re-resolve from
+    // the chatbox's pinned host below so guest / share-link clients can't
+    // omit or flip the field to silently degrade the host's tool
+    // exposure.
+    let resolvedProgressiveToolDiscovery: boolean | undefined =
+      body.progressiveToolDiscovery;
     if (isChatboxSession && chatboxId) {
       const runtime = await fetchChatboxRuntimeConfig({
         chatboxId,
@@ -169,6 +177,33 @@ chatV2.post("/", async (c) => {
         resolvedSystemPrompt = cfg.systemPrompt;
         resolvedTemperatureOverride = cfg.temperature;
         resolvedRequireToolApproval = cfg.requireToolApproval;
+        // Same trust model as requireToolApproval: warn when the body
+        // differs from the host, then always prefer the host value.
+        // Backends older than mcpjam-backend PR #334 omit this field
+        // entirely (undefined), in which case we just fall back to the
+        // body and the orchestrator's auto policy.
+        // Only override when the runtime config actually carries the
+        // field. Older backends omit it; without this gate we'd clobber
+        // the body's value (sourced from the chatbox doc client-side)
+        // with `undefined` and the orchestrator's auto policy would
+        // re-enable progressive mode on large catalogs even when the
+        // host explicitly turned it off.
+        if (cfg.progressiveToolDiscovery !== undefined) {
+          if (
+            body.progressiveToolDiscovery !== undefined &&
+            cfg.progressiveToolDiscovery !== body.progressiveToolDiscovery
+          ) {
+            logger.warn(
+              "[chat-v2] client progressiveToolDiscovery differs from host; using host value",
+              {
+                chatboxId,
+                body: body.progressiveToolDiscovery,
+                host: cfg.progressiveToolDiscovery,
+              }
+            );
+          }
+          resolvedProgressiveToolDiscovery = cfg.progressiveToolDiscovery;
+        }
       } else {
         // Don't fail the chat send on a transient Convex blip — fall
         // through to client-supplied values and warn. The chat will run
@@ -217,6 +252,11 @@ chatV2.post("/", async (c) => {
 
     try {
       const sessionStartedAt = Date.now();
+      // Convert UI messages to ModelMessage[] up front so prepareChatV2
+      // can replay prior `load_mcp_tools` calls into discovery state.
+      // Without this, the loaded set resets every turn and a multi-turn
+      // progressive flow regresses to meta-tools only on each request.
+      const modelMessages = await convertToModelMessages(messages);
       let prepared;
       try {
         prepared = await prepareChatV2({
@@ -227,6 +267,19 @@ chatV2.post("/", async (c) => {
           temperature,
           requireToolApproval,
           customProviders: body.customProviders,
+          priorMessages: modelMessages,
+          // Host-level toggle. Sourced from the project's default
+          // HostConfigV2 for direct chat (body), or re-resolved from the
+          // chatbox's pinned host for chatbox-bound sessions (the
+          // server-side override above). undefined → orchestrator uses
+          // its auto policy.
+          ...(resolvedProgressiveToolDiscovery !== undefined
+            ? {
+                progressiveToolDiscovery: {
+                  enabled: resolvedProgressiveToolDiscovery,
+                },
+              }
+            : {}),
         });
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
@@ -241,10 +294,10 @@ chatV2.post("/", async (c) => {
         enhancedSystemPrompt,
         resolvedTemperature,
         scrubMessages,
+        progressivePlan,
+        discoveryState,
       } = prepared;
       const hostedChatSessionId = body.chatSessionId;
-
-      const modelMessages = await convertToModelMessages(messages);
       const cleanupStream = async () => {
         await manager.disconnectAllServers();
       };
@@ -361,6 +414,8 @@ chatV2.post("/", async (c) => {
             systemPrompt: enhancedSystemPrompt,
             temperature: resolvedTemperature,
             tools: allTools as ToolSet,
+            progressivePlan,
+            discoveryState,
             authHeader: c.req.header("authorization"),
             chatboxId,
             accessVersion,
@@ -385,6 +440,8 @@ chatV2.post("/", async (c) => {
           systemPrompt: enhancedSystemPrompt,
           temperature: resolvedTemperature,
           tools: allTools as ToolSet,
+          progressivePlan,
+          discoveryState,
           authHeader: c.req.header("authorization"),
           clientIp: getClientIp(c),
           chatboxId,
@@ -424,6 +481,8 @@ chatV2.post("/", async (c) => {
         systemPrompt: enhancedSystemPrompt,
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
+        progressivePlan,
+        discoveryState,
         authHeader: c.req.header("authorization"),
         clientIp: getClientIp(c),
         chatboxId,

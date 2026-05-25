@@ -214,6 +214,17 @@ export interface UseChatSessionOptions {
    * backend resolves chatbox host style from the chatbox row.
    */
   hostStyle?: "claude" | "chatgpt";
+  /**
+   * Host-level opt-in for progressive MCP tool discovery
+   * (`search_mcp_tools` / `load_mcp_tools` meta-tools). Sourced from the
+   * caller's resolved host config DTO (per-chatbox, per-host playground
+   * column, or project default — caller knows). `undefined` ⇒ backend
+   * orchestrator uses its auto policy; `true`/`false` ⇒ explicit
+   * host-level override that the orchestrator forwards into
+   * `prepareChatV2.progressiveToolDiscovery.enabled`. Held in a ref so a
+   * mid-session toggle flip is reflected on the next send.
+   */
+  progressiveToolDiscovery?: boolean;
   /** Callback when chat is reset */
   onReset?: (reason?: ChatSessionResetReason) => void;
 }
@@ -1140,6 +1151,23 @@ export function useChatSession(
   );
   const requireToolApprovalRef = useRef(requireToolApproval);
   requireToolApprovalRef.current = requireToolApproval;
+
+  // Host-level progressive tool discovery toggle. The value comes from the
+  // caller — each useChatSession site knows which host config row applies
+  // to its chat surface (per-host playground column, per-chatbox session,
+  // project default for direct chat, etc.) — and the hook just threads it
+  // into the request body. Held in a ref so a mid-session flip is
+  // reflected on the very next send without remounting.
+  const progressiveToolDiscoveryRef = useRef<boolean | undefined>(undefined);
+  // Prefer the top-level option when set (used by paths that don't go
+  // through ExecutionConfig — e.g. the playground per-host column), but
+  // fall back to executionConfig so direct chat / multi-model surfaces
+  // can forward the host's HostConfigV2.progressiveToolDiscovery field
+  // through their existing config plumbing without adding a parallel
+  // option at every call site.
+  progressiveToolDiscoveryRef.current =
+    options.progressiveToolDiscovery ??
+    options.executionConfig?.progressiveToolDiscovery;
   const isHostedGuest = HOSTED_MODE && !workOsUser && !isWorkOsLoading;
   const sharedGuestMode =
     isHostedGuest &&
@@ -1488,6 +1516,14 @@ export function useChatSession(
                 : {}),
             }),
         requireToolApproval: requireToolApprovalRef.current,
+        // Only send when the user explicitly set the host-level toggle.
+        // Omitting the field tells the backend orchestrator to use its
+        // auto policy (currently: off for hosted unless the env override
+        // is set). Backend hashes undefined / true / false distinctly so
+        // round-trips preserve the user's choice.
+        ...(progressiveToolDiscoveryRef.current !== undefined
+          ? { progressiveToolDiscovery: progressiveToolDiscoveryRef.current }
+          : {}),
         // Phase 3: forward the chat tab's resolved host style so
         // direct chat traces persist with a real `claude`/`chatgpt`
         // hostStyle (no more legacy `'direct'`). Omitted body falls

@@ -30,6 +30,18 @@ import {
 import { getSkillToolsAndPrompt } from "./skill-tools.js";
 import { isGPT5Model, type ModelDefinition } from "@/shared/types";
 import { HOSTED_MODE } from "../config.js";
+import {
+  buildToolCatalog,
+  createDiscoveryState,
+  decideProgressivePlan,
+  hydrateDiscoveryStateFromHistory,
+  META_TOOL_NAMES,
+  parseProgressiveToolsEnv,
+  type ProgressiveDiscoveryOptions,
+  type ProgressiveToolPlan,
+  type ToolDiscoveryState,
+} from "@/shared/progressive-tool-discovery";
+import { createProgressiveMetaTools } from "./progressive-tool-meta-tools.js";
 
 const DEFAULT_TEMPERATURE = 0.7;
 
@@ -76,6 +88,15 @@ export interface PrepareChatV2Options {
   temperature?: number;
   requireToolApproval?: boolean;
   customProviders?: CustomProviderConfig[];
+  /** Progressive discovery overrides (e.g. tighter thresholds for tests). */
+  progressiveToolDiscovery?: ProgressiveDiscoveryOptions;
+  /**
+   * Prior conversation messages, used to hydrate progressive discovery
+   * state across turns. Without these, `discoveryState.loadedToolIds`
+   * resets every request and any tools the model loaded earlier in the
+   * session disappear — multi-turn flows regress to meta-tools only.
+   */
+  priorMessages?: ReadonlyArray<ModelMessage>;
 }
 
 export interface PrepareChatV2Result {
@@ -83,6 +104,14 @@ export interface PrepareChatV2Result {
   enhancedSystemPrompt: string;
   resolvedTemperature: number | undefined;
   scrubMessages: (msgs: ModelMessage[]) => ModelMessage[];
+  /**
+   * Per-turn progressive discovery context. `plan.enabled === false` means
+   * downstream code should behave exactly as before. When enabled, the
+   * orchestrator uses `discoveryState` to compute active tool subsets per
+   * step and the meta-tools (already merged into `allTools`) bridge the gap.
+   */
+  progressivePlan: ProgressiveToolPlan;
+  discoveryState: ToolDiscoveryState;
 }
 
 /**
@@ -139,10 +168,50 @@ export async function prepareChatV2(
       )
     : (skillTools as Record<string, unknown>);
 
-  const allTools = { ...mcpTools, ...finalSkillTools } as ToolSet;
+  const realTools = { ...mcpTools, ...finalSkillTools } as ToolSet;
+
+  // 2. Decide whether progressive discovery applies, then mint meta-tools if
+  // it does. The catalog is built from real tools only (meta-tools aren't
+  // searchable) but the meta-tools are then merged into the final ToolSet so
+  // both streamText and the Convex loop see them.
+  const catalog = buildToolCatalog(realTools);
+  const discoveryState = createDiscoveryState();
+  // Replay prior `load_mcp_tools` calls into the discovery state before
+  // we mint the plan / meta-tools. Without hydration, a multi-turn
+  // session would forget every tool it loaded — even though the
+  // conversation history still references those tools — and the next
+  // step would only show meta-tools. See
+  // `hydrateDiscoveryStateFromHistory` for replay semantics.
+  if (options.priorMessages && options.priorMessages.length > 0) {
+    hydrateDiscoveryStateFromHistory(
+      discoveryState,
+      options.priorMessages,
+      catalog,
+    );
+  }
+  const envOverride = parseProgressiveToolsEnv(
+    process.env.MCPJAM_PROGRESSIVE_TOOLS,
+  );
+  const progressivePlan = decideProgressivePlan({
+    catalog,
+    modelContextLength: modelDefinition.contextLength,
+    options: options.progressiveToolDiscovery,
+    envOverride,
+  });
+
+  const metaTools: ToolSet = progressivePlan.enabled
+    ? createProgressiveMetaTools({
+        getCatalog: () => catalog,
+        state: discoveryState,
+        policy: progressivePlan.policy,
+      })
+    : {};
+
+  const allTools = { ...realTools, ...metaTools } as ToolSet;
   const availableToolNames = Object.keys(allTools);
 
-  // 2. Anthropic tool name validation
+  // 3. Anthropic tool name validation — meta-tool names are conforming and
+  // checked alongside real tools.
   if (isAnthropicCompatibleModel(modelDefinition, customProviders)) {
     const invalidNames = getInvalidAnthropicToolNames(Object.keys(allTools));
     if (invalidNames.length > 0) {
@@ -150,6 +219,21 @@ export async function prepareChatV2(
       throw new Error(
         `Invalid tool name(s) for Anthropic: ${nameList}. Tool names must only contain letters, numbers, underscores, and hyphens (max 64 characters).`,
       );
+    }
+  }
+  // Guard: meta-tool name must never collide with a real tool. If it does,
+  // fail fast — the catalog filter excludes them but a real MCP server
+  // exposing a tool literally named "search_mcp_tools" would silently
+  // shadow the meta-tool and break discovery.
+  if (progressivePlan.enabled) {
+    for (const name of META_TOOL_NAMES) {
+      // realTools is the pre-meta-merge map; collision means an MCP/skill
+      // tool already claimed the name.
+      if (Object.prototype.hasOwnProperty.call(realTools, name)) {
+        throw new Error(
+          `MCP tool '${name}' collides with the progressive-discovery meta-tool of the same name. Rename the MCP tool or set MCPJAM_PROGRESSIVE_TOOLS=off.`,
+        );
+      }
     }
   }
 
@@ -181,5 +265,7 @@ export async function prepareChatV2(
     enhancedSystemPrompt,
     resolvedTemperature,
     scrubMessages,
+    progressivePlan,
+    discoveryState,
   };
 }

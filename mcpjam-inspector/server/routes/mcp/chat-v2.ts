@@ -75,6 +75,13 @@ import {
   type LiveChatTraceUsage,
 } from "@/shared/live-chat-trace";
 import { isAbortError } from "@/shared/abort-errors";
+import {
+  commitNewlyLoaded,
+  gateToolsToActiveSubset,
+  resolveActiveToolNames,
+  type ProgressiveToolPlan,
+  type ToolDiscoveryState,
+} from "@/shared/progressive-tool-discovery";
 
 function formatStreamError(error: unknown, provider?: ModelProvider): string {
   if (!(error instanceof Error)) {
@@ -203,6 +210,8 @@ function streamDirectChatWithLiveTrace(options: {
   systemPrompt: string;
   temperature?: number;
   tools: ToolSet;
+  progressivePlan?: ProgressiveToolPlan;
+  discoveryState?: ToolDiscoveryState;
   abortSignal?: AbortSignal;
   onPersist?: (event: {
     responseMessages: ModelMessage[];
@@ -285,12 +294,25 @@ function streamDirectChatWithLiveTrace(options: {
         traceTurn.promptIndex
       ) as ToolSet;
 
+      const { progressivePlan, discoveryState } = options;
+      // Progressive mode: gate execution to the active subset.
+      // `activeTools` (set in `prepareStep` below) narrows what the model
+      // sees, but a hallucinated/remembered call to a non-active tool
+      // would still execute against the full map. Gating wraps each
+      // tool's `execute` to throw a structured "not loaded" error,
+      // which the AI SDK surfaces as an error tool-result the model can
+      // recover from via `load_mcp_tools`.
+      const executableTools = gateToolsToActiveSubset(
+        tracedTools as Record<string, unknown>,
+        progressivePlan,
+        () => discoveryState,
+      ) as ToolSet;
       const streamTextOptions: Parameters<typeof streamText>[0] = {
         model: llmModel,
         messages: messageHistory,
         ...(temperature !== undefined ? { temperature } : {}),
         system: providerSystemPrompt,
-        tools: tracedTools,
+        tools: executableTools,
         stopWhen: stepCountIs(20),
         ...(abortSignal ? { abortSignal } : {}),
         prepareStep: ({ stepNumber }) => {
@@ -299,6 +321,14 @@ function streamDirectChatWithLiveTrace(options: {
             modelId,
             promptIndex: traceTurn.promptIndex,
           });
+          if (progressivePlan?.enabled && discoveryState) {
+            commitNewlyLoaded(discoveryState);
+            const active = resolveActiveToolNames(
+              progressivePlan,
+              discoveryState,
+            );
+            return { activeTools: active };
+          }
           return {};
         },
         onChunk: async ({ chunk }) => {
@@ -568,6 +598,12 @@ chatV2.post("/", async (c) => {
     let resolvedTemperatureOverride = bodyTemperature;
     let resolvedRequireToolApproval = bodyRequireToolApproval;
     let resolvedModelOverride: typeof model | null = null;
+    // See web/chat-v2 for rationale: body is authoritative for direct
+    // chat (sourced from the project default), host overrides for
+    // chatbox-bound sessions to keep guest / share-link clients from
+    // flipping the host-level setting.
+    let resolvedProgressiveToolDiscovery: boolean | undefined =
+      body.progressiveToolDiscovery;
     if (isChatboxSession && bodyChatboxId) {
       const bearer = c.req.header("authorization") ?? "";
       if (bearer) {
@@ -580,6 +616,28 @@ chatV2.post("/", async (c) => {
           resolvedSystemPrompt = cfg.systemPrompt;
           resolvedTemperatureOverride = cfg.temperature;
           resolvedRequireToolApproval = cfg.requireToolApproval;
+          // Host wins on chatbox-bound turns — but only when the
+          // runtime config actually carries the field. Older backends
+          // omit it; without this gate the override would replace the
+          // body's value (sourced from the chatbox doc client-side)
+          // with `undefined` and the orchestrator's auto policy would
+          // re-enable progressive mode on large catalogs.
+          if (cfg.progressiveToolDiscovery !== undefined) {
+            if (
+              body.progressiveToolDiscovery !== undefined &&
+              cfg.progressiveToolDiscovery !== body.progressiveToolDiscovery
+            ) {
+              logger.warn(
+                "[mcp/chat-v2] client progressiveToolDiscovery differs from host; using host value",
+                {
+                  chatboxId: bodyChatboxId,
+                  body: body.progressiveToolDiscovery,
+                  host: cfg.progressiveToolDiscovery,
+                }
+              );
+            }
+            resolvedProgressiveToolDiscovery = cfg.progressiveToolDiscovery;
+          }
           // See web/chat-v2 for rationale: host's modelId wins on
           // chatbox-bound turns. Built-in catalog hit → full
           // ModelDefinition; miss → swap id only, keep body provider.
@@ -666,6 +724,12 @@ chatV2.post("/", async (c) => {
       );
     }
 
+    // Convert the inbound UI messages once so prepareChatV2 can replay
+    // prior `load_mcp_tools` calls into discovery state. The downstream
+    // paths call convertToModelMessages again; that's intentional and
+    // independent — this conversion is solely for hydration.
+    const priorModelMessages = await convertToModelMessages(messages);
+
     let prepared;
     try {
       prepared = await prepareChatV2({
@@ -676,6 +740,16 @@ chatV2.post("/", async (c) => {
         temperature,
         requireToolApproval,
         customProviders: body.customProviders,
+        priorMessages: priorModelMessages,
+        // Body for direct chat (project default), host-re-resolved for
+        // chatbox-bound sessions. undefined → auto policy.
+        ...(resolvedProgressiveToolDiscovery !== undefined
+          ? {
+              progressiveToolDiscovery: {
+                enabled: resolvedProgressiveToolDiscovery,
+              },
+            }
+          : {}),
       });
     } catch (error) {
       // prepareChatV2 throws on Anthropic validation errors — return 400.
@@ -693,6 +767,8 @@ chatV2.post("/", async (c) => {
       enhancedSystemPrompt,
       resolvedTemperature,
       scrubMessages,
+      progressivePlan,
+      discoveryState,
     } = prepared;
 
     // Shared across all three persist call sites below. All three paths are
@@ -759,6 +835,8 @@ chatV2.post("/", async (c) => {
         systemPrompt: enhancedSystemPrompt,
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
+        progressivePlan,
+        discoveryState,
         authHeader,
         clientIp: getClientIp(c),
         mcpClientManager,
@@ -902,6 +980,8 @@ chatV2.post("/", async (c) => {
           systemPrompt: enhancedSystemPrompt,
           temperature: resolvedTemperature,
           tools: allTools as ToolSet,
+          progressivePlan,
+          discoveryState,
           authHeader: requestAuthHeader,
           chatboxId: bodyChatboxId,
           accessVersion: bodyAccessVersion,
@@ -921,6 +1001,8 @@ chatV2.post("/", async (c) => {
         systemPrompt: enhancedSystemPrompt,
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
+        progressivePlan,
+        discoveryState,
         authHeader: requestAuthHeader,
         clientIp: getClientIp(c),
         mcpClientManager,
@@ -965,6 +1047,8 @@ chatV2.post("/", async (c) => {
       systemPrompt: enhancedSystemPrompt,
       temperature: resolvedTemperature,
       tools: allTools as ToolSet,
+      progressivePlan,
+      discoveryState,
       abortSignal: inboundAbortSignalDirect,
       onPersist: chatSessionId
         ? async ({

@@ -2325,6 +2325,15 @@ export function ChatTabV2({
                             systemPrompt,
                             temperature,
                             requireToolApproval,
+                            // Forward the host's progressive-discovery
+                            // toggle into each per-model card so the
+                            // backend respects the host setting (auto
+                            // policy is only used when this is
+                            // `undefined`). Without this, multi-model
+                            // chat falls back to auto regardless of
+                            // what BehaviorTab saved.
+                            progressiveToolDiscovery:
+                              executionConfig?.progressiveToolDiscovery,
                           }}
                           hostedContext={{
                             ...hostedContext,

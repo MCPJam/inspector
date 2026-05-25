@@ -242,6 +242,17 @@ export type HostConfigInputV2 = {
   systemPrompt: string;
   temperature: number;
   requireToolApproval: boolean;
+  /**
+   * Host-level opt-in for progressive MCP tool discovery
+   * (`search_mcp_tools` / `load_mcp_tools` meta-tools instead of sending
+   * every tool definition every turn). Optional and undefined-by-default:
+   * the chat orchestrator interprets `undefined` as "use the auto policy"
+   * (currently: off for hosted unless the env override is set), explicit
+   * `true` as "force on", explicit `false` as "force off". Backend hashes
+   * the three states distinctly so flipping the toggle mints a fresh
+   * hostConfig row.
+   */
+  progressiveToolDiscovery?: boolean;
   serverIds: string[];
   optionalServerIds: string[];
   connectionDefaults: HostConfigConnectionDefaults;
@@ -296,6 +307,8 @@ export type HostConfigDtoV2 = {
   systemPrompt: string;
   temperature: number;
   requireToolApproval: boolean;
+  /** Surfaced verbatim — see HostConfigInputV2.progressiveToolDiscovery. */
+  progressiveToolDiscovery?: boolean;
   serverIds: string[];
   optionalServerIds: string[];
   connectionDefaults: HostConfigConnectionDefaults;
@@ -333,6 +346,14 @@ export function emptyHostConfigInputV2(
     systemPrompt: partial.systemPrompt ?? "",
     temperature: partial.temperature ?? DEFAULT_TEMPERATURE_V2,
     requireToolApproval: partial.requireToolApproval ?? false,
+    // Brand-new inputs default to explicit Off. The orchestrator still
+    // reads `undefined` as "auto policy" (existing rows surfaced by
+    // `hostConfigDtoToInput` round-trip verbatim), but creating a fresh
+    // host shouldn't silently opt into auto: a user who hasn't touched
+    // the toggle should not see progressive mode trip on a large
+    // catalog without an explicit choice. They can pick Auto if they
+    // want the auto policy.
+    progressiveToolDiscovery: partial.progressiveToolDiscovery ?? false,
     serverIds: partial.serverIds ? [...partial.serverIds] : [],
     optionalServerIds: partial.optionalServerIds
       ? [...partial.optionalServerIds]
@@ -410,6 +431,7 @@ export function hostConfigDtoToInput(
     systemPrompt: dto.systemPrompt,
     temperature: dto.temperature,
     requireToolApproval: dto.requireToolApproval,
+    progressiveToolDiscovery: dto.progressiveToolDiscovery,
     serverIds: [...dto.serverIds],
     optionalServerIds: [...dto.optionalServerIds],
     connectionDefaults: {
@@ -838,6 +860,10 @@ export function hostConfigInputsEqual(
   if (a.systemPrompt !== b.systemPrompt) return false;
   if (a.temperature !== b.temperature) return false;
   if (a.requireToolApproval !== b.requireToolApproval) return false;
+  // Optional boolean: undefined / true / false are three distinct states
+  // (backend hashes them distinctly). A strict !== covers all three since
+  // we never coerce undefined to false elsewhere in the input pipeline.
+  if (a.progressiveToolDiscovery !== b.progressiveToolDiscovery) return false;
   if (!stringArrayEq(a.serverIds, b.serverIds)) return false;
   if (!stringArrayEq(a.optionalServerIds, b.optionalServerIds)) return false;
   if (

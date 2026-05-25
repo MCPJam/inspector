@@ -66,6 +66,13 @@ import {
   type LiveChatTraceUsage,
 } from "@/shared/live-chat-trace";
 import { isAbortError } from "@/shared/abort-errors";
+import {
+  commitNewlyLoaded,
+  gateToolsToActiveSubset,
+  resolveActiveToolNames,
+  type ProgressiveToolPlan,
+  type ToolDiscoveryState,
+} from "@/shared/progressive-tool-discovery";
 
 // Mirror DEFAULT_MAX_STEPS in mcpjam-stream-handler. Local org BYOK uses
 // the AI SDK's `stepCountIs` instead of a hand-rolled loop, but the
@@ -76,6 +83,9 @@ const DEFAULT_MAX_STEPS_LOCAL_ORG = 30;
 export interface OrgModelHandlerOptions {
   projectId: string;
   providerKey: string;
+  /** Progressive discovery — forwarded into handleMCPJamFreeChatModel. */
+  progressivePlan?: ProgressiveToolPlan;
+  discoveryState?: ToolDiscoveryState;
   modelId: string;
   chatSessionId?: string;
   sourceType?: string;
@@ -262,6 +272,13 @@ export interface OrgLocalModelHandlerOptions {
    * fewer agentic steps when routed through a local provider.
    */
   maxSteps?: number;
+  /**
+   * Progressive tool discovery plan. When `plan.enabled === true`, each
+   * step's `activeTools` is recomputed from `discoveryState` via the AI SDK
+   * `prepareStep` hook.
+   */
+  progressivePlan?: ProgressiveToolPlan;
+  discoveryState?: ToolDiscoveryState;
 }
 
 export function handleLocalOrgChatModel(
@@ -409,12 +426,22 @@ export function handleLocalOrgChatModel(
         traceTurn.promptIndex
       ) as ToolSet;
 
+      const { progressivePlan, discoveryState } = options;
+      // Progressive mode: gate execution to the active subset. See
+      // `gateToolsToActiveSubset` doc + the same wrap in
+      // `routes/mcp/chat-v2.ts` for rationale (defense-in-depth against
+      // hallucinated/remembered out-of-subset tool calls).
+      const executableTools = gateToolsToActiveSubset(
+        tracedTools as Record<string, unknown>,
+        progressivePlan,
+        () => discoveryState,
+      ) as ToolSet;
       const result = streamText({
         model: llmModel,
         messages,
         ...(temperature !== undefined ? { temperature } : {}),
         system: providerSystemPrompt,
-        tools: tracedTools,
+        tools: executableTools,
         stopWhen: stepCountIs(resolvedMaxSteps),
         ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
         prepareStep: ({ stepNumber }) => {
@@ -423,6 +450,18 @@ export function handleLocalOrgChatModel(
             modelId,
             promptIndex: traceTurn.promptIndex,
           });
+          // Progressive discovery: promote tool ids loaded on the prior
+          // step, then narrow `activeTools` to meta + loaded + pending.
+          // Without this, the full ToolSet is exposed every step, defeating
+          // the point of progressive discovery on the local AI SDK path.
+          if (progressivePlan?.enabled && discoveryState) {
+            commitNewlyLoaded(discoveryState);
+            const active = resolveActiveToolNames(
+              progressivePlan,
+              discoveryState,
+            );
+            return { activeTools: active };
+          }
           return {};
         },
         onChunk: async ({ chunk }) => {
@@ -733,6 +772,8 @@ export async function handleHostedOrgChatModel(
     abortSignal: options.abortSignal,
     heartbeatIntervalMs: options.heartbeatIntervalMs,
     maxSteps: options.maxSteps,
+    progressivePlan: options.progressivePlan,
+    discoveryState: options.discoveryState,
     endpointPath: "/stream/org",
     extraBodyFields: {
       providerKey: options.providerKey,

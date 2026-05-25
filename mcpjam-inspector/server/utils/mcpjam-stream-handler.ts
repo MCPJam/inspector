@@ -40,6 +40,41 @@ import {
   serializeToolsForConvex,
   type ToolDefinition,
 } from "./mcpjam-tool-helpers";
+import {
+  commitNewlyLoaded,
+  gateToolsToActiveSubset,
+  lookupToolIdByModelName,
+  resolveActiveToolNames,
+  META_TOOL_NAMES,
+  type ProgressiveToolPlan,
+  type ToolDiscoveryState,
+} from "@/shared/progressive-tool-discovery";
+
+/**
+ * Approval-free check for a tool-call name.
+ *
+ * The progressive-discovery meta-tools (`search_mcp_tools`,
+ * `load_mcp_tools`) are exempt from approval because gating discovery
+ * itself behind N approvals defeats the point — see the module docstring.
+ * But the exemption is name-only, and we cannot trust the name in
+ * isolation: when progressive mode is **off** there are no meta-tools in
+ * the toolset, but a real MCP server is free to expose a tool literally
+ * named `search_mcp_tools`. Honoring the exemption in that case would
+ * silently let a real, approval-required tool execute without the user's
+ * confirmation.
+ *
+ * Require `progressivePlan?.enabled` as a precondition — that's the only
+ * mode in which the orchestrator actually mints the meta-tools (and it
+ * also fails fast on real-tool name collisions in `prepareChatV2`, so a
+ * matching name truly is one of our meta-tools).
+ */
+function isApprovalFreeMetaToolName(
+  name: string,
+  progressivePlan: ProgressiveToolPlan | undefined,
+): boolean {
+  if (!progressivePlan?.enabled) return false;
+  return META_TOOL_NAMES.includes(name);
+}
 import { logger } from "./logger";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import {
@@ -169,6 +204,15 @@ export interface MCPJamHandlerOptions {
    * cannot keep extending the budget. Defaults to 30.
    */
   maxSteps?: number;
+  /**
+   * Optional progressive discovery context. When `plan.enabled === true` the
+   * handler computes the per-step active tool definitions instead of sending
+   * the full tool list on every Convex request. When omitted or
+   * `plan.enabled === false`, behavior is unchanged.
+   */
+  progressivePlan?: ProgressiveToolPlan;
+  /** Mutated by load_mcp_tools execute() — read between steps to rebuild defs. */
+  discoveryState?: ToolDiscoveryState;
 }
 
 interface StepContext {
@@ -176,8 +220,17 @@ interface StepContext {
     write: (chunk: UIMessageChunk) => void;
   };
   messageHistory: ModelMessage[];
+  /**
+   * Full serialized tool list. In non-progressive mode this is what's sent
+   * to Convex. In progressive mode the handler filters to active tools per
+   * step using `progressivePlan` + `discoveryState`.
+   */
   toolDefs: ToolDefinition[];
+  /** Map from model-facing tool name → serialized def, for progressive mode. */
+  toolDefsByName: Map<string, ToolDefinition>;
   tools: ToolSet;
+  progressivePlan?: ProgressiveToolPlan;
+  discoveryState?: ToolDiscoveryState;
   authHeader?: string;
   chatboxId?: string;
   accessVersion?: number;
@@ -568,7 +621,8 @@ async function processStream(
   tools: ToolSet,
   requireToolApproval?: boolean,
   onLiveTextDelta?: (delta: string) => void,
-  abortSignal?: AbortSignal
+  abortSignal?: AbortSignal,
+  progressivePlan?: ProgressiveToolPlan
 ): Promise<StreamResult> {
   const contentParts: PersistedAssistantPart[] = [];
   let pendingText = "";
@@ -737,7 +791,10 @@ async function processStream(
             serverId: readToolServerId(tools, chunk.toolName),
           });
 
-          if (requireToolApproval) {
+          if (
+            requireToolApproval &&
+            !isApprovalFreeMetaToolName(chunk.toolName, progressivePlan)
+          ) {
             writer.write({
               type: "tool-approval-request",
               approvalId: generateToolCallId(),
@@ -1118,6 +1175,7 @@ async function processOneStep(
     writer,
     messageHistory,
     toolDefs,
+    toolDefsByName,
     tools,
     authHeader,
     chatboxId,
@@ -1132,7 +1190,20 @@ async function processOneStep(
     stepIndex,
     usedToolCallIds,
     traceTurn,
+    progressivePlan,
+    discoveryState,
   } = ctx;
+
+  // Pick the active tool subset for this step. In non-progressive mode
+  // (`progressivePlan` undefined or plan.enabled === false) this collapses
+  // to the full list and matches prior behavior. In progressive mode the
+  // model only sees meta-tools + loaded + pending-approval + newly-loaded.
+  const activeToolDefs: ToolDefinition[] =
+    progressivePlan && progressivePlan.enabled && discoveryState
+      ? resolveActiveToolNames(progressivePlan, discoveryState)
+          .map((name) => toolDefsByName.get(name))
+          .filter((def): def is ToolDefinition => def !== undefined)
+      : toolDefs;
 
   const { abortSignal } = ctx;
   if (abortSignal?.aborted) {
@@ -1162,13 +1233,27 @@ async function processOneStep(
     stepIndex
   );
 
+  // For progressive discovery, the trace payload should reflect the *active*
+  // subset so request_payload snapshots show what the model actually saw.
+  const toolsForPayload: ToolSet =
+    progressivePlan && progressivePlan.enabled && discoveryState
+      ? Object.fromEntries(
+          activeToolDefs
+            .map((def): [string, unknown] | null => {
+              const t = (tools as Record<string, unknown>)[def.name];
+              return t === undefined ? null : [def.name, t];
+            })
+            .filter((pair): pair is [string, unknown] => pair !== null),
+        ) as ToolSet
+      : tools;
+
   emitRequestPayload(writer, {
     turnId: traceTurn.turnId,
     promptIndex: traceTurn.promptIndex,
     stepIndex,
     payload: buildResolvedModelRequestPayload({
       systemPrompt,
-      tools,
+      tools: toolsForPayload,
       messages: scrubbedMessages,
     }),
   });
@@ -1217,7 +1302,7 @@ async function processOneStep(
         model: modelId,
         systemPrompt: providerSystemPrompt,
         ...(temperature !== undefined ? { temperature } : {}),
-        tools: toolDefs,
+        tools: activeToolDefs,
         ...(chatboxId ? { chatboxId } : {}),
         ...(chatboxId && Number.isFinite(accessVersion)
           ? { accessVersion }
@@ -1298,7 +1383,8 @@ async function processOneStep(
     tools,
     requireToolApproval,
     onLiveTextDelta,
-    abortSignal
+    abortSignal,
+    progressivePlan
   );
   const llmEndAbs = Date.now();
   traceTurn.turnUsage = mergeLiveChatTraceUsage(
@@ -1324,9 +1410,74 @@ async function processOneStep(
 
   // Check for unresolved tool calls and execute them
   if (hasUnresolvedToolCalls(messageHistory)) {
-    // When approval is required, don't execute tools — pause and let the client
-    // show the approval UI. The next request will carry approval responses.
-    if (requireToolApproval) {
+    // Meta-tools (search_mcp_tools / load_mcp_tools) are approval-free even
+    // when the user enabled `requireToolApproval` — gating progressive
+    // discovery itself behind N approvals defeats the point. We only pause
+    // when at least one unresolved tool call is a real MCP tool. Pure-meta
+    // turns fall through to execute and continue the loop.
+    const hasUnresolvedRealToolCall = (() => {
+      const resultIds = new Set<string>();
+      for (const msg of messageHistory) {
+        if (msg?.role !== "tool") continue;
+        for (const part of (msg as ToolModelMessage).content) {
+          if (part.type === "tool-result") resultIds.add(part.toolCallId);
+        }
+      }
+      for (const msg of messageHistory) {
+        if (msg?.role !== "assistant") continue;
+        const content = (msg as AssistantModelMessage).content;
+        if (!Array.isArray(content)) continue;
+        for (const part of content) {
+          if (
+            part.type === "tool-call" &&
+            !resultIds.has(part.toolCallId) &&
+            !isApprovalFreeMetaToolName(part.toolName, progressivePlan)
+          ) {
+            return true;
+          }
+        }
+      }
+      return false;
+    })();
+
+    if (requireToolApproval && hasUnresolvedRealToolCall) {
+      // Drain any unresolved meta-tool calls (search/load) before pausing
+      // for approval on real tools. Otherwise mixed-step turns (model
+      // emits a load_mcp_tools + a real tool in one assistant message)
+      // leave the meta-tool unresolved through the approval pause, and
+      // the resumed turn loses the discovery side effect — the loaded
+      // tools never get promoted into `discoveryState.loadedToolIds`,
+      // so the next step still only shows meta-tools.
+      const metaTracedTools = wrapBackendToolsForTrace(
+        tools as Record<string, any>,
+        {
+          runStartedAt: traceTurn.turnStartedAt,
+          promptIndex: traceTurn.promptIndex,
+          stepIndex,
+          spans: traceTurn.turnSpans,
+        }
+      );
+      const metaMessages = await executeToolCallsFromMessages(messageHistory, {
+        tools: metaTracedTools as Record<string, any>,
+        filterToolName: (name) =>
+          isApprovalFreeMetaToolName(name, progressivePlan),
+        ...(abortSignal ? { abortSignal } : {}),
+      });
+      if (metaMessages.length > 0) {
+        emitToolResults(
+          writer,
+          mcpClientManager,
+          metaMessages,
+          traceTurn,
+          stepIndex
+        );
+        // Promote any ids the model just loaded so a subsequent
+        // resumed-after-approval step sees them as loaded.
+        if (progressivePlan?.enabled && discoveryState) {
+          commitNewlyLoaded(discoveryState);
+        }
+      }
+
       pushBackendStepSuccessSpans(
         traceTurn.turnSpans,
         traceTurn.turnStartedAt,
@@ -1374,9 +1525,20 @@ async function processOneStep(
         }
       );
 
+      // Progressive mode: gate execution to the active subset. Visibility
+      // is already narrowed by `activeToolDefs`, but a model can still
+      // emit a remembered/hallucinated call to a non-active name; gating
+      // turns that into a structured error the model can recover from
+      // via `load_mcp_tools` instead of executing an ungated tool.
+      const executableTools = gateToolsToActiveSubset(
+        tracedTools as Record<string, unknown>,
+        progressivePlan,
+        () => discoveryState,
+      );
+
       // Execute tools locally
       const newMessages = await executeToolCallsFromMessages(messageHistory, {
-        tools: tracedTools as Record<string, any>,
+        tools: executableTools as Record<string, any>,
         ...(abortSignal ? { abortSignal } : {}),
       });
       const toolsEndAbs = Date.now();
@@ -1451,6 +1613,15 @@ async function processOneStep(
         stepIndex
       );
       emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
+
+      // Progressive discovery bookkeeping: any tool ids the model just
+      // loaded via load_mcp_tools are now staged in
+      // `discoveryState.newlyLoadedToolIds`. Promote them into the
+      // persistent loaded set so the next step's active subset includes
+      // them.
+      if (progressivePlan?.enabled && discoveryState) {
+        commitNewlyLoaded(discoveryState);
+      }
     } catch (error) {
       // Aborts surface here when the signal fires mid-tool. Bubble up so
       // the outer handler can take the silent-cancellation path; don't
@@ -1572,6 +1743,8 @@ export async function handleMCPJamFreeChatModel(
     abortSignal,
     heartbeatIntervalMs,
     maxSteps,
+    progressivePlan,
+    discoveryState,
   } = options;
   const resolvedEndpointPath = endpointPath ?? "/stream";
   const resolvedMaxSteps =
@@ -1586,7 +1759,42 @@ export async function handleMCPJamFreeChatModel(
       : DEFAULT_HEARTBEAT_INTERVAL_MS;
 
   const toolDefs = serializeToolsForConvex(tools);
+  const toolDefsByName = new Map<string, ToolDefinition>();
+  for (const def of toolDefs) {
+    toolDefsByName.set(def.name, def);
+  }
   const messageHistory = [...messages];
+
+  // Seed the pending-approval set from history so resumed turns keep
+  // exposing the tool whose approval the user is about to answer. This is
+  // a no-op in non-progressive mode.
+  if (progressivePlan?.enabled && discoveryState) {
+    const resultIds = new Set<string>();
+    for (const msg of messageHistory) {
+      if (msg?.role !== "tool") continue;
+      for (const part of (msg as ToolModelMessage).content) {
+        if (part.type === "tool-result") resultIds.add(part.toolCallId);
+      }
+    }
+    for (const msg of messageHistory) {
+      if (msg?.role !== "assistant") continue;
+      const content = (msg as AssistantModelMessage).content;
+      if (!Array.isArray(content)) continue;
+      for (const part of content) {
+        if (
+          part.type === "tool-call" &&
+          !resultIds.has(part.toolCallId) &&
+          !META_TOOL_NAMES.includes(part.toolName)
+        ) {
+          const id = lookupToolIdByModelName(
+            progressivePlan.catalog,
+            part.toolName,
+          );
+          if (id) discoveryState.pendingApprovalToolIds.add(id);
+        }
+      }
+    }
+  }
   const usedToolCallIds = collectUsedToolCallIds(messageHistory);
   const traceTurn: LiveTraceTurnContext = {
     turnId: generateLiveTraceTurnId(),
@@ -1733,7 +1941,10 @@ export async function handleMCPJamFreeChatModel(
             writer: safeWriter,
             messageHistory,
             toolDefs,
+            toolDefsByName,
             tools,
+            progressivePlan,
+            discoveryState,
             authHeader,
             chatboxId,
             accessVersion,

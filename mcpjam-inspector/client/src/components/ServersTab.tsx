@@ -721,6 +721,7 @@ export function ServersTab({
       </label>
     );
   };
+
   const previewedHostRequiredNames = useMemo(() => {
     const requiredIds = previewedHost?.config?.serverIds ?? [];
     if (requiredIds.length === 0 || !viewProjectServersList) return [];

@@ -37,6 +37,14 @@ export interface ChatV2Request {
   selectedServerIds?: string[];
   requireToolApproval?: boolean;
   /**
+   * Host-level opt-in for progressive MCP tool discovery
+   * (`search_mcp_tools` / `load_mcp_tools` meta-tools instead of sending
+   * every tool definition every turn). Sourced from the project's default
+   * HostConfigV2 toggle. `undefined` → use the backend's auto policy;
+   * explicit `true`/`false` → force on/off for this request.
+   */
+  progressiveToolDiscovery?: boolean;
+  /**
    * Phase 3 read switch: real host style for direct chat traces. When
    * unset, the backend's chatIngestion path defaults to `'claude'` —
    * so existing call sites that don't yet thread this through still

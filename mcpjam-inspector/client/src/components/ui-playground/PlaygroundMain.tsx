@@ -656,6 +656,10 @@ export function PlaygroundMain({
       selectedServerIds: hostedSelectedServerIds,
       oauthTokens: hostedOAuthTokens,
     },
+    // Source the host-level toggle from the previewed host's resolved
+    // DTO so flipping it in the host's Agent → Behavior tab takes
+    // effect on the very next send without remounting the playground.
+    progressiveToolDiscovery: previewedHost?.config?.progressiveToolDiscovery,
     onReset: (reason?: ChatSessionResetReason) => {
       setModelContextQueue([]);
       setPreludeTraceExecutions([]);

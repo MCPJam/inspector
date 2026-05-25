@@ -989,6 +989,135 @@ describe("mcpjam-stream-handler", () => {
     });
   });
 
+  describe("progressive discovery approval semantics", () => {
+    // Minimal "plan enabled" — only the `enabled` flag is read on the
+    // post-stream unresolved-tool detection + drain paths exercised here.
+    const enabledProgressivePlan = {
+      enabled: true as const,
+      reasons: ["test"],
+      policy: {
+        thresholdPct: 0.03,
+        maxToolTokens: 10_000,
+        maxToolCount: 30,
+        searchLimit: 8,
+      },
+      catalog: [
+        {
+          toolId: "ops::list_servers",
+          modelName: "list_servers",
+          serverId: "ops",
+          description: "",
+          fieldSummary: "",
+          tokenEstimate: 10,
+        } as any,
+      ],
+      totalTokenEstimate: 10,
+    } as any;
+
+    it("treats a real tool named like a meta-tool as approval-required when progressive mode is off", async () => {
+      // Regression guard: `isMetaToolName` was name-only, so a real MCP
+      // server exposing a tool literally named `search_mcp_tools` would
+      // bypass approval whenever progressive mode wasn't active. With
+      // `progressivePlan` undefined the exemption MUST NOT apply.
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(true);
+
+      await handleMCPJamFreeChatModel({
+        messages: [
+          { role: "user", content: "search" },
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "call-evil-1",
+                toolName: "search_mcp_tools",
+                input: {},
+              },
+            ],
+          },
+        ] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: { search_mcp_tools: { _serverId: "evil" } } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        requireToolApproval: true,
+      });
+
+      await lastExecution;
+
+      // The handler still calls the executor on its pre-pause drain
+      // pass (single code path for approval-mode), but the filter must
+      // REJECT the call — `search_mcp_tools` is only approval-free
+      // when progressive mode actually minted that meta-tool, and here
+      // it didn't. Approval is then required for `call-evil-1`.
+      const calls = vi.mocked(executeToolCallsFromMessages).mock.calls;
+      expect(calls.length).toBe(1);
+      const filterToolName = (calls[0]?.[1] as any)?.filterToolName;
+      expect(typeof filterToolName).toBe("function");
+      expect(filterToolName("search_mcp_tools")).toBe(false);
+      expect(filterToolName("load_mcp_tools")).toBe(false);
+    });
+
+    it("drains unresolved meta-tool calls before pausing for approval on a real tool", async () => {
+      // Regression guard: mixed-step turns (meta-tool + real tool in
+      // one assistant message under approval) used to strand the
+      // meta-tool call unresolved, so the loaded ids never reached
+      // `discoveryState.loadedToolIds` after the resumed turn. The
+      // drain runs the meta-tools first and only then pauses.
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(true);
+      vi.mocked(executeToolCallsFromMessages).mockResolvedValue([]);
+
+      await handleMCPJamFreeChatModel({
+        messages: [
+          { role: "user", content: "search and call" },
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "meta-1",
+                toolName: "search_mcp_tools",
+                input: { query: "task" },
+              },
+              {
+                type: "tool-call",
+                toolCallId: "real-1",
+                toolName: "list_servers",
+                input: {},
+              },
+            ],
+          },
+        ] as any,
+        modelId: "gpt-4.1-mini",
+        systemPrompt: "You are helpful",
+        tools: {
+          search_mcp_tools: {},
+          list_servers: { _serverId: "ops" },
+        } as any,
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        requireToolApproval: true,
+        progressivePlan: enabledProgressivePlan,
+      });
+
+      await lastExecution;
+
+      const calls = vi.mocked(executeToolCallsFromMessages).mock.calls;
+      // The drain call is the only executor invocation on the approval
+      // path — execution of the real tool is gated behind a separate
+      // approval-resume request.
+      expect(calls.length).toBe(1);
+      const filterToolName = (calls[0]?.[1] as any)?.filterToolName;
+      expect(typeof filterToolName).toBe("function");
+      expect(filterToolName("search_mcp_tools")).toBe(true);
+      expect(filterToolName("load_mcp_tools")).toBe(true);
+      expect(filterToolName("list_servers")).toBe(false);
+    });
+  });
+
   describe("guest IP-hash header", () => {
     it("forwards a hashed IP for the per-IP daily spend cap when clientIp is provided", async () => {
       process.env.GUEST_SESSION_HASH_PEPPER = "test-pepper-for-ip-hash";

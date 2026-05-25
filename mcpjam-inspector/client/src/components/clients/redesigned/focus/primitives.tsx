@@ -60,7 +60,9 @@ export function FieldRow({
   description,
   control,
 }: {
-  label: string;
+  // ReactNode (not just string) so callers can inject inline affordances
+  // — e.g. an info-icon tooltip — without forking the primitive.
+  label: ReactNode;
   description?: ReactNode;
   control: ReactNode;
 }) {
