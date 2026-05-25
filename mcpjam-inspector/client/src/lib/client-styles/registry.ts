@@ -94,9 +94,9 @@ export function getHostStyleOrDefault(
  *     for every built-in preset, but staying matrix-controlled lets
  *     legacy `hostCapabilitiesOverride: {}` migrate to a truly empty
  *     advertised blob without the resolver silently re-adding them.)
- *   - `downloadFile` — not represented yet (no preset advertises it,
- *     and the renderer doesn't honor the spec's `ui/download-file`
- *     request). TODO: add a matrix row when a host wants to advertise.
+ *   - `downloadFile` — matrix-controlled. When the row is true the wire
+ *     blob carries `downloadFile: {}` and the renderer wires
+ *     `bridge.ondownloadfile`. Off for honest-no-claims presets.
  *   - `sandbox` — NOT added here; the renderer composes it separately
  *     via `resolveSandboxCsp` / `resolveSandboxPermissions` and adds it
  *     onto the advertised blob before passing to AppBridge.
@@ -119,6 +119,7 @@ export function buildHostCapabilities(
   if (matrix.logging) caps.logging = {};
   if (matrix.updateModelContext) caps.updateModelContext = { text: {} };
   if (matrix.message) caps.message = { text: {} };
+  if (matrix.downloadFile) caps.downloadFile = {};
   if (!augment) return caps;
   for (const [key, value] of Object.entries(augment) as Array<
     [

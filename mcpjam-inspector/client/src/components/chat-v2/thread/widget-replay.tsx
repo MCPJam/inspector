@@ -47,6 +47,7 @@ export interface WidgetReplayProps {
   onExitPip?: (toolCallId: string) => void;
   onRequestFullscreen?: (toolCallId: string) => void;
   onExitFullscreen?: (toolCallId: string) => void;
+  onRequestTeardown?: (toolCallId: string) => void;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
   onAppSupportedDisplayModesChange?: (modes: DisplayMode[] | undefined) => void;
@@ -75,6 +76,7 @@ export function WidgetReplay({
   onExitPip,
   onRequestFullscreen,
   onExitFullscreen,
+  onRequestTeardown,
   displayMode,
   onDisplayModeChange,
   onAppSupportedDisplayModesChange,
@@ -169,6 +171,7 @@ export function WidgetReplay({
       onRequestFullscreen={onRequestFullscreen}
       onExitFullscreen={onExitFullscreen}
       onAppSupportedDisplayModesChange={onAppSupportedDisplayModesChange}
+      onRequestTeardown={onRequestTeardown}
       isOffline={renderOverride?.isOffline}
       cachedWidgetHtmlUrl={renderOverride?.cachedWidgetHtmlUrl}
       liveFetchPreferred={renderOverride?.liveFetchPreferred}

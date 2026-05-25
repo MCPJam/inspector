@@ -18,6 +18,7 @@
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ToolSet } from "ai";
 import { MCPClientManager } from "@mcpjam/sdk";
+import { isToolVisibilityAppOnly } from "@modelcontextprotocol/ext-apps/app-bridge";
 import {
   isAnthropicCompatibleModel,
   getInvalidAnthropicToolNames,
@@ -31,6 +32,41 @@ import { isGPT5Model, type ModelDefinition } from "@/shared/types";
 import { HOSTED_MODE } from "../config.js";
 
 const DEFAULT_TEMPERATURE = 0.7;
+
+/**
+ * Mutates `tools` in place, removing entries whose source MCP tool
+ * declares SEP-1865 `_meta.ui.visibility` as exactly `["app"]`.
+ *
+ * The visibility array defaults to `["model", "app"]` per SEP-1865, so a
+ * tool with no visibility metadata is treated as visible to both.
+ */
+function filterAppOnlyTools(
+  tools: ToolSet,
+  manager: InstanceType<typeof MCPClientManager>,
+): void {
+  // Cache per-server metadata maps so we don't repeatedly clone them.
+  const metaByServer = new Map<string, Record<string, Record<string, any>>>();
+  const getMeta = (serverId: string) => {
+    let cached = metaByServer.get(serverId);
+    if (!cached) {
+      cached = manager.getAllToolsMetadata(serverId);
+      metaByServer.set(serverId, cached);
+    }
+    return cached;
+  };
+
+  for (const [name, tool] of Object.entries(tools)) {
+    const serverId = (tool as { _serverId?: unknown })._serverId;
+    if (typeof serverId !== "string") continue;
+    const meta = getMeta(serverId)[name];
+    // SDK helper takes a tool-shaped object with `_meta`; wrap the per-tool
+    // metadata to match its expected shape. Returns true iff `_meta.ui.visibility`
+    // is exactly `["app"]`.
+    if (isToolVisibilityAppOnly({ _meta: meta })) {
+      delete tools[name];
+    }
+  }
+}
 
 export interface PrepareChatV2Options {
   mcpClientManager: InstanceType<typeof MCPClientManager>;
@@ -79,6 +115,13 @@ export async function prepareChatV2(
     knownSelectedServers,
     requireToolApproval ? { needsApproval: requireToolApproval } : undefined,
   );
+
+  // SEP-1865: tools whose `_meta.ui.visibility` is exactly `["app"]` are
+  // hidden from the model — they remain callable from the iframe via the
+  // bridge but must not appear in the AI SDK tool set. The conversion
+  // helper doesn't lift `_meta` onto the AiSdkTool, so we look the
+  // metadata back up per (serverId, toolName) from the manager's cache.
+  filterAppOnlyTools(mcpTools, mcpClientManager);
   const { tools: skillTools, systemPromptSection: skillsPromptSection } =
     HOSTED_MODE
       ? { tools: {}, systemPromptSection: "" }

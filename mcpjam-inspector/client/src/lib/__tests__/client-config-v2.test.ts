@@ -457,6 +457,40 @@ describe("mergeMcpAppsCapabilities", () => {
     expect(merged.logging).toBe(false);
     expect(merged.openLinks).toBe(true);
   });
+
+  it("replaces widgetDisplayModeRequests tri-state when override is set", () => {
+    const merged = mergeMcpAppsCapabilities(
+      { ...MCP_APPS_FULL_SURFACE_FOR_TEST },
+      { widgetDisplayModeRequests: "decline" },
+    );
+    expect(merged.widgetDisplayModeRequests).toBe("decline");
+  });
+
+  it("falls through to base widgetDisplayModeRequests when override absent", () => {
+    const merged = mergeMcpAppsCapabilities(
+      { ...MCP_APPS_FULL_SURFACE_FOR_TEST },
+      { serverResources: false },
+    );
+    expect(merged.widgetDisplayModeRequests).toBe("accept");
+  });
+
+  it("applies downloadFile and requestTeardown overrides when set", () => {
+    const merged = mergeMcpAppsCapabilities(
+      { ...MCP_APPS_FULL_SURFACE_FOR_TEST },
+      { downloadFile: false, requestTeardown: false },
+    );
+    expect(merged.downloadFile).toBe(false);
+    expect(merged.requestTeardown).toBe(false);
+  });
+
+  it("falls through to base downloadFile and requestTeardown when override absent", () => {
+    const merged = mergeMcpAppsCapabilities(
+      { ...MCP_APPS_FULL_SURFACE_FOR_TEST },
+      { serverResources: false },
+    );
+    expect(merged.downloadFile).toBe(true);
+    expect(merged.requestTeardown).toBe(true);
+  });
 });
 
 describe("hostCapabilitiesOverrideToMatrix", () => {
@@ -476,6 +510,7 @@ describe("hostCapabilitiesOverrideToMatrix", () => {
       logging: false,
       updateModelContext: false,
       message: false,
+      downloadFile: false,
     });
   });
 
@@ -484,6 +519,7 @@ describe("hostCapabilitiesOverrideToMatrix", () => {
       openLinks: {},
       serverTools: { listChanged: false },
       message: { text: {} },
+      downloadFile: {},
     });
     expect(matrix).toEqual({
       openLinks: true,
@@ -492,6 +528,7 @@ describe("hostCapabilitiesOverrideToMatrix", () => {
       logging: false,
       updateModelContext: false,
       message: true,
+      downloadFile: true,
     });
   });
 });
@@ -520,4 +557,7 @@ const MCP_APPS_FULL_SURFACE_FOR_TEST = {
   cspFrameDomains: true,
   cspBaseUriDomains: true,
   resourcePrefersBorder: true,
+  downloadFile: true,
+  requestTeardown: true,
+  widgetDisplayModeRequests: "accept" as const,
 };

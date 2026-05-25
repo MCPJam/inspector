@@ -22,6 +22,43 @@ export type { TaskOptions };
 // Re-export SDK type for task data
 export type TaskData = MCPTask;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function attachToolMetadata(
+  result: ListToolsResultWithMetadata,
+): ListToolsResultWithMetadata {
+  const toolsMetadata = result.toolsMetadata;
+  if (!toolsMetadata || !Array.isArray(result.tools)) return result;
+
+  return {
+    ...result,
+    tools: result.tools.map((tool) => {
+      const metadata = toolsMetadata[tool.name];
+      if (!metadata) return tool;
+      const toolMeta = tool._meta as Record<string, unknown> | undefined;
+      const toolUi = toolMeta?.ui;
+      const metadataUi = metadata.ui;
+      return {
+        ...tool,
+        _meta: {
+          ...toolMeta,
+          ...metadata,
+          ...(isRecord(toolUi) || isRecord(metadataUi)
+            ? {
+                ui: {
+                  ...(isRecord(toolUi) ? toolUi : {}),
+                  ...(isRecord(metadataUi) ? metadataUi : {}),
+                },
+              }
+            : {}),
+        },
+      };
+    }),
+  };
+}
+
 export type ToolExecutionResponse =
   | {
       status: "completed";
@@ -62,11 +99,11 @@ export async function listTools({
       if (!serverId) {
         throw new Error("serverId is required in hosted mode");
       }
-      return (await listHostedTools({
+      return attachToolMetadata(await listHostedTools({
         serverNameOrId: serverId,
         modelId,
         cursor,
-      })) as ListToolsResultWithMetadata;
+      }));
     },
     local: async () => {
       const res = await authFetch("/api/mcp/tools/list", {
@@ -82,7 +119,7 @@ export async function listTools({
         const message = body?.error || `List tools failed (${res.status})`;
         throw new Error(message);
       }
-      return body as ListToolsResultWithMetadata;
+      return attachToolMetadata(body as ListToolsResultWithMetadata);
     },
   });
 }
