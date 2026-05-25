@@ -67,6 +67,66 @@ describe("parseToolsForHeaderMap — annotation validation", () => {
     ]);
     expect(result.entries.has("bad")).toBe(false);
   });
+
+  // SEP-2243: x-mcp-header is only valid on primitive types
+  // (string / number / boolean). Per spec, clients MUST exclude
+  // tools that violate this from `tools/list`.
+  test("excludes tool with x-mcp-header on object schema", () => {
+    const result = parseToolsForHeaderMap([
+      tool("bad", {
+        meta: { type: "object", "x-mcp-header": "Meta" },
+      }),
+    ]);
+    expect(result.entries.has("bad")).toBe(false);
+    expect(result.warnings.join("\n")).toMatch(/non-primitive/);
+    expect(result.warnings.join("\n")).toMatch(/type: object/);
+  });
+
+  test("excludes tool with x-mcp-header on array schema", () => {
+    const result = parseToolsForHeaderMap([
+      tool("bad", {
+        tags: { type: "array", "x-mcp-header": "Tags" },
+      }),
+    ]);
+    expect(result.entries.has("bad")).toBe(false);
+    expect(result.warnings.join("\n")).toMatch(/non-primitive/);
+  });
+
+  test("excludes tool with x-mcp-header on null schema", () => {
+    const result = parseToolsForHeaderMap([
+      tool("bad", {
+        nothing: { type: "null", "x-mcp-header": "Nothing" },
+      }),
+    ]);
+    expect(result.entries.has("bad")).toBe(false);
+  });
+
+  test("accepts x-mcp-header on number + boolean primitives", () => {
+    const result = parseToolsForHeaderMap([
+      tool("nums", {
+        count: { type: "number", "x-mcp-header": "Count" },
+        enabled: { type: "boolean", "x-mcp-header": "Enabled" },
+      }),
+    ]);
+    expect(result.entries.has("nums")).toBe(true);
+    expect(result.entries.get("nums")?.paramToHeader.get("count")).toBe("Count");
+    expect(result.entries.get("nums")?.paramToHeader.get("enabled")).toBe(
+      "Enabled",
+    );
+  });
+
+  // Untyped schemas keep the runtime-check fallback — declaration-time
+  // exclusion is only mandated when the schema explicitly declares a
+  // non-primitive. Untyped sees the existing primitive-check at
+  // `deriveHeaders` runtime instead.
+  test("accepts x-mcp-header on schema without explicit type", () => {
+    const result = parseToolsForHeaderMap([
+      tool("untyped", {
+        region: { "x-mcp-header": "Region" } as Record<string, unknown>,
+      }),
+    ]);
+    expect(result.entries.has("untyped")).toBe(true);
+  });
 });
 
 describe("ToolHeaderMap.deriveHeaders — mirror semantics (not lift)", () => {

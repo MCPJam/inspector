@@ -127,11 +127,31 @@ export function parseToolsForHeaderMap(
       }
       seenHeaderNames.add(lower);
 
-      // SEP-2243: header conveyance is for primitives only — objects /
-      // arrays cannot round-trip through HTTP header syntax safely. We
-      // can't enforce primitive-ness from the schema alone (untyped
-      // properties exist), so the actual primitive check lives at
-      // header-derivation time; the annotation is accepted here.
+      // SEP-2243: `x-mcp-header` is only valid on primitive parameter
+      // types (`string`, `number`, `boolean`). Spec text: "Clients
+      // MUST reject tool definitions where any x-mcp-header value
+      // violates these constraints. Rejection means the client MUST
+      // exclude the invalid tool from the result of tools/list."
+      //
+      // When the schema explicitly declares a non-primitive type
+      // (`object` / `array` / `null`), exclude the entire tool with a
+      // warning. Schemas without an explicit `type` (untyped /
+      // implicit-any) get the benefit of the doubt here — runtime
+      // dispatch still rejects non-primitive values at the body
+      // mirroring step, but failing loud at definition time is the
+      // spec-mandated path for declared non-primitives.
+      const schemaType = (schema as { type?: unknown }).type;
+      if (
+        schemaType === "object" ||
+        schemaType === "array" ||
+        schemaType === "null"
+      ) {
+        warnings.push(
+          `tool "${tool.name}" param "${paramName}": x-mcp-header "${headerName}" is declared on a non-primitive schema (type: ${String(schemaType)}). SEP-2243 requires primitive types (string / number / boolean). Tool excluded.`,
+        );
+        invalid = true;
+        break;
+      }
       paramToHeader.set(paramName, headerName);
     }
 
