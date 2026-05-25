@@ -63,7 +63,11 @@ import {
 import { resolveEffectiveClientCapabilities } from "@/lib/effective-client";
 import { EXCALIDRAW_SERVER_NAME } from "@/lib/excalidraw-quick-connect";
 import { readOnboardingState } from "@/lib/onboarding-state";
-import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
+import {
+  resolveEffectiveMcpProtocolVersion,
+  type HostConfigDtoV2,
+  type McpProtocolVersion,
+} from "@/lib/client-config-v2";
 import { resolveServerConnectionSettings } from "@/lib/client-connection-resolve";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 
@@ -911,7 +915,15 @@ export function useServerState({
       // ConnectionDefaults wire shape. Undefined preserves historical
       // behavior — connect runs without an mcpProfile pin and the SDK
       // falls back to its hardcoded defaults.
-      mcpProfile?: import("@/lib/client-config-v2").HostConfigMcpProfileV1
+      mcpProfile?: import("@/lib/client-config-v2").HostConfigMcpProfileV1,
+      // Server identifier used to look up per-server protocol-version
+      // pins on `activeHostConfig.serverConnectionOverrides`. When
+      // supplied, `resolveEffectiveMcpProtocolVersion(serverOverride,
+      // hostDefault)` runs so a per-server dropdown choice actually
+      // reaches the connect payload — without this argument, the host
+      // default wins and per-server overrides are silently dropped (the
+      // bug PR #2257 review flagged).
+      serverId?: string
     ) => {
       const defaults: {
         headers?: Record<string, string>;
@@ -955,24 +967,38 @@ export function useServerState({
           (v): v is string => typeof v === "string" && v.trim() !== "",
         );
       }
-      // Host-default pinned MCP protocol version — host scope only at
-      // this seam. `resolveEffectiveMcpProtocolVersion` would also
-      // factor in the per-server
-      // `serverConnectionOverrides[serverId].mcpProtocolVersionOverride`,
-      // but `buildResolverConnectionDefaults` is invoked once per
-      // connect with the project-wide profile and doesn't see
-      // per-server data here. Per-server overrides can be plumbed in a
-      // follow-up by extending the function with a
-      // `(serverId, overrides)` arg. Membership-gate via
-      // `isKnownProtocolVersion` so a typo on the host config doesn't
-      // slip past to the SDK's open-routing predicate.
-      const hostPin = mcpProfile?.mcpProtocolVersion;
-      if (typeof hostPin === "string" && isKnownProtocolVersion(hostPin)) {
-        defaults.mcpProtocolVersion = hostPin;
+      // Effective pinned MCP protocol version: per-server override
+      // (from `activeHostConfig.serverConnectionOverrides[serverId]
+      // .mcpProtocolVersionOverride`) wins, otherwise the host default
+      // from `mcpProfile.mcpProtocolVersion`, otherwise undefined
+      // (preserves "SDK chooses" semantics). Membership-gate each
+      // candidate via `isKnownProtocolVersion` so a typo on either
+      // layer doesn't slip past to the SDK's open-routing predicate.
+      const rawServerOverride =
+        serverId && activeHostConfig
+          ? activeHostConfig.serverConnectionOverrides?.[serverId]
+              ?.mcpProtocolVersionOverride
+          : undefined;
+      const serverOverride: McpProtocolVersion | undefined =
+        typeof rawServerOverride === "string" &&
+        isKnownProtocolVersion(rawServerOverride)
+          ? rawServerOverride
+          : undefined;
+      const rawHostPin = mcpProfile?.mcpProtocolVersion;
+      const hostPin: McpProtocolVersion | undefined =
+        typeof rawHostPin === "string" && isKnownProtocolVersion(rawHostPin)
+          ? rawHostPin
+          : undefined;
+      const effective = resolveEffectiveMcpProtocolVersion(
+        serverOverride,
+        hostPin,
+      );
+      if (effective !== undefined) {
+        defaults.mcpProtocolVersion = effective;
       }
       return Object.keys(defaults).length > 0 ? defaults : undefined;
     },
-    []
+    [activeHostConfig]
   );
 
   const guardedTestConnection = useCallback(
@@ -995,6 +1021,7 @@ export function useServerState({
           connectionDefaults: buildResolverConnectionDefaults(
             serverConfig,
             activeMcpProfile,
+            resolved.serverId,
           ),
         });
       }
@@ -1022,6 +1049,7 @@ export function useServerState({
           connectionDefaults: buildResolverConnectionDefaults(
             configWithDefaults,
             activeMcpProfile,
+            resolved.serverId,
           ),
         });
       }

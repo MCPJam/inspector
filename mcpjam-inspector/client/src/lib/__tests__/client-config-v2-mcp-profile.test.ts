@@ -27,6 +27,7 @@ import {
   mergeOpenAiAppsCapabilities,
   resolveClientInfo,
   resolveEffectiveCompatRuntime,
+  resolveEffectiveMcpProtocolVersion,
   resolveSupportedProtocolVersions,
 } from "../client-config-v2";
 import {
@@ -378,5 +379,41 @@ describe("resolveEffectiveCompatRuntime — per-method capability matrix", () =>
     const baseline = OPENAI_APPS_FULL_SURFACE;
     const merged = mergeOpenAiAppsCapabilities(baseline, undefined);
     expect(merged).toEqual(baseline);
+  });
+});
+
+// Regression tests for the per-server protocol-version override flow.
+// `resolveEffectiveMcpProtocolVersion` is the actual resolution helper
+// `buildResolverConnectionDefaults` calls in `use-server-state.ts`. If
+// these break, per-server pins silently revert to the host default —
+// the bug reported on PR #2257 review (override looks saved in the UI
+// but the runtime always uses the host default).
+describe("resolveEffectiveMcpProtocolVersion — per-server override precedence", () => {
+  test("server override wins over host default", () => {
+    expect(
+      resolveEffectiveMcpProtocolVersion("DRAFT-2026-v1", "2025-11-25"),
+    ).toBe("DRAFT-2026-v1");
+  });
+
+  test("host default applies when no server override", () => {
+    expect(resolveEffectiveMcpProtocolVersion(undefined, "2025-11-25")).toBe(
+      "2025-11-25",
+    );
+  });
+
+  test("returns undefined when neither layer has an opinion (SDK default semantics)", () => {
+    expect(resolveEffectiveMcpProtocolVersion(undefined, undefined)).toBe(
+      undefined,
+    );
+  });
+
+  test("stateful server override wins over stateless host default", () => {
+    // Symmetric scenario: host pinned to DRAFT-2026-v1 globally for a
+    // migration test, one legacy server overridden back to 2025-11-25.
+    // The override must reach the connect path or the legacy server
+    // will fail with -32004.
+    expect(
+      resolveEffectiveMcpProtocolVersion("2025-11-25", "DRAFT-2026-v1"),
+    ).toBe("2025-11-25");
   });
 });
