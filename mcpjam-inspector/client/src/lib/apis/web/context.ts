@@ -2,7 +2,10 @@ import { HOSTED_MODE } from "@/lib/config";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE } from "@/lib/client-config";
 import { BootstrapNotReadyError } from "@/lib/app-ready";
-import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
+import {
+  getDefaultClientCapabilities,
+  type McpProtocolVersion,
+} from "@mcpjam/sdk/browser";
 
 type GetAccessTokenFn = () => Promise<string | undefined | null>;
 
@@ -10,6 +13,13 @@ export interface ApiContext {
   projectId: string | null;
   serverIdsByName: Record<string, string>;
   clientCapabilities?: Record<string, unknown>;
+  /**
+   * Resolved MCP profile pins. Single-server hosted routes forward these
+   * fields so ephemeral managers use the same wire mode as connect/validate.
+   */
+  clientInfo?: { name?: string; version?: string } & Record<string, unknown>;
+  supportedProtocolVersions?: string[];
+  mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
   clientConfigSyncPending?: boolean;
   getAccessToken?: GetAccessTokenFn;
   oauthTokensByServerId?: Record<string, string>;
@@ -349,6 +359,16 @@ export function buildServerRequest(
     ...(oauthToken ? { oauthAccessToken: oauthToken } : {}),
     ...(apiContext.clientCapabilities
       ? { clientCapabilities: apiContext.clientCapabilities }
+      : {}),
+    ...(apiContext.clientInfo ? { clientInfo: apiContext.clientInfo } : {}),
+    ...(apiContext.supportedProtocolVersions?.length
+      ? { supportedProtocolVersions: apiContext.supportedProtocolVersions }
+      : {}),
+    ...(apiContext.mcpProtocolVersionsByServerId?.[serverId]
+      ? {
+          mcpProtocolVersion:
+            apiContext.mcpProtocolVersionsByServerId[serverId],
+        }
       : {}),
     ...(accessScope ? { accessScope } : {}),
     ...(chatboxId ? { chatboxId } : {}),

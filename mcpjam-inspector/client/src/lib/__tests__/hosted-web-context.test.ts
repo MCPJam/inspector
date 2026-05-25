@@ -174,6 +174,29 @@ describe("hosted web context", () => {
     });
   });
 
+  it("forwards MCP profile pins on single-server hosted requests", () => {
+    setApiContext({
+      projectId: "ws_stateless",
+      serverIdsByName: { stateless: "srv_stateless" },
+      clientInfo: { name: "mcpjam-inspector", version: "1.0.0" },
+      supportedProtocolVersions: ["DRAFT-2026-v1", "2025-11-25"],
+      mcpProtocolVersionsByServerId: {
+        srv_stateless: "DRAFT-2026-v1",
+      },
+      getAccessToken: async () => null,
+    });
+
+    expect(buildServerRequest("stateless")).toEqual({
+      projectId: "ws_stateless",
+      serverId: "srv_stateless",
+      serverName: "stateless",
+      clientCapabilities: defaultClientCapabilities,
+      clientInfo: { name: "mcpjam-inspector", version: "1.0.0" },
+      supportedProtocolVersions: ["DRAFT-2026-v1", "2025-11-25"],
+      mcpProtocolVersion: "DRAFT-2026-v1",
+    });
+  });
+
   it("blocks hosted project requests while client config sync is pending", () => {
     setApiContext({
       projectId: "ws_pending",

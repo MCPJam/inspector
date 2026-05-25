@@ -111,7 +111,7 @@
     "@hono/node-server": "^1.13.7",
     "@hookform/resolvers": "^3.10.0",
     "@mcp-ui/client": "^5.9.0",
-    "@mcpjam/sdk": "^1.9.0",
+    "@mcpjam/sdk": "^1.8.0",
     "@modelcontextprotocol/client": "^2.0.0-alpha.2",
     "@modelcontextprotocol/ext-apps": "^1.7.2",
     "@ngrok/ngrok": "^1.6.0",

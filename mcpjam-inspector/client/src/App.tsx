@@ -179,7 +179,12 @@ import {
 import { buildElectronMcpCallbackUrl } from "./hooks/use-server-state";
 import { disconnectAllRuntimeServers } from "./state/mcp-api";
 import { getEffectiveProjectClientCapabilities } from "./lib/client-config";
-import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
+import {
+  getDefaultClientCapabilities,
+  isKnownProtocolVersion,
+  type McpProtocolVersion,
+} from "@mcpjam/sdk/browser";
+import { resolveEffectiveMcpProtocolVersion } from "./lib/client-config-v2";
 import {
   buildClientsPath,
   buildOrganizationPath,
@@ -1998,10 +2003,73 @@ export default function App() {
       ),
     [hostedServerIdsByName, appState.servers]
   );
+  const hostedMcpProfilePins = useMemo(() => {
+    const rawClientInfo = activeMcpProfile?.initialize?.clientInfo;
+    const clientInfo =
+      rawClientInfo &&
+      typeof rawClientInfo === "object" &&
+      !Array.isArray(rawClientInfo)
+        ? rawClientInfo
+        : undefined;
+
+    const rawSupportedVersions =
+      activeMcpProfile?.initialize?.supportedProtocolVersions;
+    const supportedProtocolVersions =
+      Array.isArray(rawSupportedVersions) && rawSupportedVersions.length > 0
+        ? rawSupportedVersions.filter(
+            (v): v is string => typeof v === "string" && v.trim() !== ""
+          )
+        : undefined;
+
+    const rawHostPin = activeMcpProfile?.mcpProtocolVersion;
+    const hostPin: McpProtocolVersion | undefined =
+      typeof rawHostPin === "string" && isKnownProtocolVersion(rawHostPin)
+        ? rawHostPin
+        : undefined;
+
+    const mcpProtocolVersionsByServerId: Record<
+      string,
+      McpProtocolVersion
+    > = {};
+    for (const serverId of new Set(Object.values(hostedServerIdsByName))) {
+      const rawServerOverride =
+        activeHost?.serverConnectionOverrides?.[serverId]
+          ?.mcpProtocolVersionOverride;
+      const serverOverride: McpProtocolVersion | undefined =
+        typeof rawServerOverride === "string" &&
+        isKnownProtocolVersion(rawServerOverride)
+          ? rawServerOverride
+          : undefined;
+      const effective = resolveEffectiveMcpProtocolVersion(
+        serverOverride,
+        hostPin
+      );
+      if (effective) {
+        mcpProtocolVersionsByServerId[serverId] = effective;
+      }
+    }
+
+    return {
+      clientInfo,
+      supportedProtocolVersions,
+      mcpProtocolVersionsByServerId:
+        Object.keys(mcpProtocolVersionsByServerId).length > 0
+          ? mcpProtocolVersionsByServerId
+          : undefined,
+    };
+  }, [
+    activeHost?.serverConnectionOverrides,
+    activeMcpProfile,
+    hostedServerIdsByName,
+  ]);
   useApiContext({
     projectId: convexProjectId,
     serverIdsByName: hostedServerIdsByName,
     clientCapabilities: hostedClientCapabilities,
+    clientInfo: hostedMcpProfilePins.clientInfo,
+    supportedProtocolVersions: hostedMcpProfilePins.supportedProtocolVersions,
+    mcpProtocolVersionsByServerId:
+      hostedMcpProfilePins.mcpProtocolVersionsByServerId,
     clientConfigSyncPending: isClientConfigSyncPending,
     getAccessToken,
     oauthTokensByServerId,
