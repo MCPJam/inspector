@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import {
   CheckCircle2,
   Clock,
@@ -7,7 +7,6 @@ import {
 } from "lucide-react";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { Badge } from "@mcpjam/design-system/badge";
-import { Button } from "@mcpjam/design-system/button";
 import { Card, CardContent } from "@mcpjam/design-system/card";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 import {
@@ -18,7 +17,6 @@ import {
   TableHeader,
   TableRow,
 } from "@mcpjam/design-system/table";
-import { CreditTopupDialog } from "@/components/billing/CreditTopupDialog";
 import {
   usePaymentsHistory,
   type PaymentHistoryEntry,
@@ -57,7 +55,6 @@ export function PaymentsHistorySection() {
   const { entries, isLoading } = usePaymentsHistory();
   const posthog = usePostHog();
   const viewedRef = useRef(false);
-  const [isTopupOpen, setIsTopupOpen] = useState(false);
 
   const safeEntries = entries ?? [];
 
@@ -81,36 +78,20 @@ export function PaymentsHistorySection() {
   if (flagEnabled !== true) return null;
 
   return (
-    <>
-      <Card className="border-border/60 py-6 shadow-sm">
-        <CardContent className="flex flex-col gap-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">Payment history</h2>
-          </div>
-          {isLoading ? (
-            <LoadingRows />
-          ) : safeEntries.length === 0 ? (
-            <EmptyState
-              onTopUp={() => {
-                posthog?.capture("credit_topup_cta_clicked", {
-                  source: "history_empty_state",
-                });
-                setIsTopupOpen(true);
-              }}
-            />
-          ) : (
-            <PaymentsTable entries={safeEntries} />
-          )}
-        </CardContent>
-      </Card>
-      <CreditTopupDialog
-        open={isTopupOpen}
-        onOpenChange={setIsTopupOpen}
-        chatSessionId=""
-        lastUserMessage=""
-        source="billing_page"
-      />
-    </>
+    <Card className="border-border/60 py-6 shadow-sm">
+      <CardContent className="flex flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Payment history</h2>
+        </div>
+        {isLoading ? (
+          <LoadingRows />
+        ) : safeEntries.length === 0 ? (
+          <EmptyState />
+        ) : (
+          <PaymentsTable entries={safeEntries} />
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -251,18 +232,13 @@ function ReceiptCell({ entry }: { entry: PaymentHistoryEntry }) {
   return <span className={muted}>—</span>;
 }
 
-function EmptyState({ onTopUp }: { onTopUp: () => void }) {
+function EmptyState() {
   return (
     <div
-      className="flex flex-col items-center gap-3 rounded-md border border-dashed border-border/60 py-8 text-center"
+      className="flex flex-col items-center rounded-md border border-dashed border-border/60 py-8 text-center"
       data-testid="payments-history-empty"
     >
-      <p className="text-sm text-muted-foreground">
-        No payments yet. Top up to add credits.
-      </p>
-      <Button type="button" onClick={onTopUp}>
-        Top up
-      </Button>
+      <p className="text-sm text-muted-foreground">No payments yet.</p>
     </div>
   );
 }

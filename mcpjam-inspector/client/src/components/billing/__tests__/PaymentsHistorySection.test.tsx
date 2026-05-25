@@ -27,13 +27,6 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({ capture: captureMock }),
 }));
 
-// The empty-state CTA opens CreditTopupDialog; stub it so we don't drag
-// Convex + the topup hook stack into this test.
-vi.mock("@/components/billing/CreditTopupDialog", () => ({
-  CreditTopupDialog: ({ open }: { open: boolean }) =>
-    open ? <div data-testid="stub-topup-dialog" /> : null,
-}));
-
 function makeEntry(
   overrides: Partial<PaymentHistoryEntry> & { id: string },
 ): PaymentHistoryEntry {
@@ -101,7 +94,10 @@ describe("PaymentsHistorySection", () => {
       expect(screen.getByTestId("payments-history-loading")).toBeInTheDocument();
     });
 
-    it("renders the empty state with a Top up CTA when there are no entries", async () => {
+    it("renders the empty state with no CTA when there are no entries", () => {
+      // The empty state intentionally has no Top up button — the
+      // CreditBalanceCard renders one directly above this section, so
+      // duplicating it here would be visual noise.
       hookState = {
         entries: [],
         isLoading: false,
@@ -110,13 +106,7 @@ describe("PaymentsHistorySection", () => {
       render(<PaymentsHistorySection />);
       const empty = screen.getByTestId("payments-history-empty");
       expect(empty).toHaveTextContent(/No payments yet/);
-      const cta = within(empty).getByRole("button", { name: /Top up/ });
-      await userEvent.click(cta);
-      expect(captureMock).toHaveBeenCalledWith("credit_topup_cta_clicked", {
-        source: "history_empty_state",
-      });
-      // CTA opens the stubbed dialog
-      expect(screen.getByTestId("stub-topup-dialog")).toBeInTheDocument();
+      expect(within(empty).queryByRole("button")).not.toBeInTheDocument();
     });
   });
 
