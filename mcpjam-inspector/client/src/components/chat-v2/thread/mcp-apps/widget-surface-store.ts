@@ -47,6 +47,13 @@ export const useWidgetSurfaceStore = create<WidgetSurfaceStoreState>((set) => ({
       const currentRegistration = registrations.get(toolCallId);
       const isNewRegistration = !currentRegistration;
       const order = currentRegistration?.order ?? state.nextOrder;
+      const latestRegistration = existing?.registrations.get(
+        existing.latestToolCallId
+      );
+      const shouldBecomeLatest =
+        !existing ||
+        !latestRegistration ||
+        (isNewRegistration && order > latestRegistration.order);
 
       registrations.set(toolCallId, {
         toolCallId,
@@ -59,7 +66,9 @@ export const useWidgetSurfaceStore = create<WidgetSurfaceStoreState>((set) => ({
         surfaceId,
         chatSessionId: props.chatSessionId,
         initialToolCallId: existing?.initialToolCallId ?? toolCallId,
-        latestToolCallId: toolCallId,
+        latestToolCallId: shouldBecomeLatest
+          ? toolCallId
+          : existing.latestToolCallId,
         registrations,
       });
 

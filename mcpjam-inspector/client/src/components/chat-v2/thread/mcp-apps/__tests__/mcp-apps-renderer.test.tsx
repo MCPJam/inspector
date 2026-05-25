@@ -520,16 +520,22 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("shares one persistent surface across tool calls to the same widget", async () => {
     const firstOutput = { content: [{ type: "text" as const, text: "first" }] };
+    const updatedFirstOutput = {
+      content: [{ type: "text" as const, text: "first-rerendered" }],
+    };
     const secondOutput = {
       content: [{ type: "text" as const, text: "second" }],
     };
-    const renderTree = (includeSecondCall: boolean) => (
+    const renderTree = (
+      includeSecondCall: boolean,
+      currentFirstOutput = firstOutput
+    ) => (
       <WidgetSurfaceHostProvider>
         <MCPAppsRenderer
           {...baseProps}
           toolCallId="call-1"
           toolInput={{ move: "e4" }}
-          toolOutput={firstOutput}
+          toolOutput={currentFirstOutput}
         />
         {includeSecondCall ? (
           <MCPAppsRenderer
@@ -573,6 +579,13 @@ describe("MCPAppsRenderer tool input streaming", () => {
       expect(mockBridge.sendToolResult).toHaveBeenLastCalledWith(secondOutput);
     });
 
+    rerender(renderTree(true, updatedFirstOutput));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockBridge.sendToolResult).toHaveBeenCalledTimes(2);
+    expect(mockBridge.sendToolResult).toHaveBeenLastCalledWith(secondOutput);
     expect(getSurfaceContainer().parentElement).toHaveAttribute(
       "data-mcp-app-surface-anchor",
       "call-1"
