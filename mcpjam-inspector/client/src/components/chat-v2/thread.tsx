@@ -13,7 +13,6 @@ import { type DisplayMode } from "@/stores/ui-playground-store";
 import { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { ThinkingIndicator } from "@/components/chat-v2/shared/thinking-indicator";
 import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-overlay";
-import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { useResolvedHostStyleForIndicator } from "@/components/chat-v2/shared/loading-indicator-content";
 import {
@@ -50,7 +49,6 @@ interface ThreadProps {
   fullscreenChatDisabled?: boolean;
   fullscreenChatSendBlocked?: boolean;
   onFullscreenChatStop?: () => void;
-  selectedProtocolOverrideIfBothExists?: UIType;
   onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
   toolRenderOverrides?: Record<string, ToolRenderOverride>;
   showSaveViewButton?: boolean;
@@ -94,7 +92,6 @@ export function Thread({
   fullscreenChatDisabled = false,
   fullscreenChatSendBlocked = isLoading,
   onFullscreenChatStop,
-  selectedProtocolOverrideIfBothExists,
   onToolApprovalResponse,
   toolRenderOverrides,
   showSaveViewButton = true,
@@ -236,9 +233,6 @@ export function Thread({
         tornDownWidgetIds={tornDownWidgetIds}
         displayMode={displayMode}
         onDisplayModeChange={onDisplayModeChange}
-        selectedProtocolOverrideIfBothExists={
-          selectedProtocolOverrideIfBothExists
-        }
         onToolApprovalResponse={onToolApprovalResponse}
         toolRenderOverrides={toolRenderOverrides}
         showSaveViewButton={showSaveViewButton}

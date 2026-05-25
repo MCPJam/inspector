@@ -17,7 +17,6 @@ import type { ProjectThreadOwnerAvatar } from "@/components/chat-v2/history/proj
 import type { ModelDefinition } from "@/shared/types";
 import type { DisplayMode } from "@/stores/ui-playground-store";
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
-import type { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { cn } from "@/lib/utils";
 import { useResolvedHostStyleForIndicator } from "@/components/chat-v2/shared/loading-indicator-content";
 import { getChatboxHostFamily } from "@/lib/chatbox-client-style";
@@ -99,7 +98,6 @@ export interface TranscriptThreadProps extends MessageViewPassthroughProps {
   tornDownWidgetIds?: ReadonlySet<string>;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
-  selectedProtocolOverrideIfBothExists?: UIType;
   focusMessageId?: string | null;
   highlightedMessageIds?: string[];
   navigationKey?: string | number | null;
@@ -222,7 +220,6 @@ export function TranscriptThread({
   tornDownWidgetIds,
   displayMode,
   onDisplayModeChange,
-  selectedProtocolOverrideIfBothExists,
   onToolApprovalResponse,
   toolRenderOverrides,
   showSaveViewButton = true,
@@ -513,9 +510,6 @@ export function TranscriptThread({
               tornDownWidgetIds={tornDownWidgetIds}
               displayMode={displayMode}
               onDisplayModeChange={onDisplayModeChange}
-              selectedProtocolOverrideIfBothExists={
-                selectedProtocolOverrideIfBothExists
-              }
               onToolApprovalResponse={onToolApprovalResponse}
               toolRenderOverrides={toolRenderOverrides}
               showSaveViewButton={showSaveViewButton}

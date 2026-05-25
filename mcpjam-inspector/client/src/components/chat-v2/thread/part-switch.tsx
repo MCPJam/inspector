@@ -67,7 +67,6 @@ export function PartSwitch({
   tornDownWidgetIds,
   displayMode,
   onDisplayModeChange,
-  selectedProtocolOverrideIfBothExists = UIType.OPENAI_SDK,
   onToolApprovalResponse,
   messageParts,
   toolRenderOverrides,
@@ -99,7 +98,6 @@ export function PartSwitch({
   tornDownWidgetIds?: ReadonlySet<string>;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
-  selectedProtocolOverrideIfBothExists?: UIType;
   onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
   messageParts?: AnyPart[];
   toolRenderOverrides?: Record<string, ToolRenderOverride>;
@@ -392,9 +390,6 @@ export function PartSwitch({
             onDisplayModeChange={interactive ? onDisplayModeChange : undefined}
             onAppSupportedDisplayModesChange={
               interactive ? setAppSupportedDisplayModes : undefined
-            }
-            selectedProtocolOverrideIfBothExists={
-              selectedProtocolOverrideIfBothExists
             }
             minimalMode={minimalMode}
           />

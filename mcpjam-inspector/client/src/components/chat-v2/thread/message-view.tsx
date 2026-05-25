@@ -17,7 +17,6 @@ import {
   isHiddenInternalMessage,
 } from "./thread-helpers";
 import { ToolServerMap } from "@/lib/apis/mcp-tools-api";
-import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { type ReasoningDisplayMode } from "./parts/reasoning-part";
 import { ClaudeLoadingIndicator } from "@/lib/client-styles/indicators/claude-mark";
@@ -53,7 +52,6 @@ interface MessageViewProps {
   tornDownWidgetIds?: ReadonlySet<string>;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
-  selectedProtocolOverrideIfBothExists?: UIType;
   onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
   toolRenderOverrides?: Record<string, ToolRenderOverride>;
   showSaveViewButton?: boolean;
@@ -144,8 +142,6 @@ function areMessageViewPropsEqual(
     prev.tornDownWidgetIds === next.tornDownWidgetIds &&
     prev.displayMode === next.displayMode &&
     prev.onDisplayModeChange === next.onDisplayModeChange &&
-    prev.selectedProtocolOverrideIfBothExists ===
-      next.selectedProtocolOverrideIfBothExists &&
     prev.onToolApprovalResponse === next.onToolApprovalResponse &&
     prev.toolRenderOverrides === next.toolRenderOverrides &&
     prev.showSaveViewButton === next.showSaveViewButton &&
@@ -177,7 +173,6 @@ function MessageViewImpl({
   tornDownWidgetIds,
   displayMode,
   onDisplayModeChange,
-  selectedProtocolOverrideIfBothExists,
   onToolApprovalResponse,
   toolRenderOverrides,
   showSaveViewButton = true,
@@ -243,9 +238,6 @@ function MessageViewImpl({
                 tornDownWidgetIds={tornDownWidgetIds}
                 displayMode={displayMode}
                 onDisplayModeChange={onDisplayModeChange}
-                selectedProtocolOverrideIfBothExists={
-                  selectedProtocolOverrideIfBothExists
-                }
                 toolRenderOverrides={toolRenderOverrides}
                 showSaveViewButton={showSaveViewButton}
                 minimalMode={minimalMode}
@@ -278,9 +270,6 @@ function MessageViewImpl({
                 tornDownWidgetIds={tornDownWidgetIds}
                 displayMode={displayMode}
                 onDisplayModeChange={onDisplayModeChange}
-                selectedProtocolOverrideIfBothExists={
-                  selectedProtocolOverrideIfBothExists
-                }
                 toolRenderOverrides={toolRenderOverrides}
                 showSaveViewButton={showSaveViewButton}
                 minimalMode={minimalMode}
@@ -358,9 +347,6 @@ function MessageViewImpl({
                   tornDownWidgetIds={tornDownWidgetIds}
                   displayMode={displayMode}
                   onDisplayModeChange={onDisplayModeChange}
-                  selectedProtocolOverrideIfBothExists={
-                    selectedProtocolOverrideIfBothExists
-                  }
                   onToolApprovalResponse={onToolApprovalResponse}
                   messageParts={message.parts}
                   toolRenderOverrides={toolRenderOverrides}

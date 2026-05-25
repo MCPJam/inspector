@@ -2906,9 +2906,6 @@ export function PlaygroundMain({
                 displayMode={displayMode}
                 onDisplayModeChange={handleDisplayModeChange}
                 onFullscreenChange={setIsWidgetFullscreen}
-                selectedProtocolOverrideIfBothExists={
-                  selectedProtocol ?? undefined
-                }
                 onToolApprovalResponse={addToolApprovalResponse}
                 toolRenderOverrides={mergedToolRenderOverrides}
                 showSaveViewButton={!hideSaveViewButton}
@@ -3242,7 +3239,6 @@ export function PlaygroundMain({
                         hostStyle={column.hostSnapshot.hostStyle}
                         effectiveThreadTheme={effectiveThreadTheme}
                         deviceType={storeDeviceType}
-                        selectedProtocol={selectedProtocol}
                         hideSaveViewButton={hideSaveViewButton}
                         onWidgetStateChange={onWidgetStateChange}
                         toolRenderOverrides={externalToolRenderOverrides}
@@ -3318,7 +3314,6 @@ export function PlaygroundMain({
                           hostStyle={hostStyle}
                           effectiveThreadTheme={effectiveThreadTheme}
                           deviceType={storeDeviceType}
-                          selectedProtocol={selectedProtocol}
                           hideSaveViewButton={hideSaveViewButton}
                           onWidgetStateChange={onWidgetStateChange}
                           toolRenderOverrides={externalToolRenderOverrides}

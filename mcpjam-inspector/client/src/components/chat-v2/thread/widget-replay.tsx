@@ -47,17 +47,10 @@ export interface WidgetReplayProps {
   onExitPip?: (toolCallId: string) => void;
   onRequestFullscreen?: (toolCallId: string) => void;
   onExitFullscreen?: (toolCallId: string) => void;
+  onRequestTeardown?: (toolCallId: string) => void;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
   onAppSupportedDisplayModesChange?: (modes: DisplayMode[] | undefined) => void;
-  onRequestTeardown?: (toolCallId: string) => void;
-  /**
-   * @deprecated The renderer is now protocol-agnostic: both `openai/outputTemplate`
-   * and `_meta.ui.resourceUri` route through MCPAppsRenderer, which always
-   * injects the window.openai compat shim. Kept on the props bag to avoid
-   * a wide call-site refactor; ignored.
-   */
-  selectedProtocolOverrideIfBothExists?: UIType;
   minimalMode?: boolean;
 }
 
@@ -83,14 +76,12 @@ export function WidgetReplay({
   onExitPip,
   onRequestFullscreen,
   onExitFullscreen,
+  onRequestTeardown,
   displayMode,
   onDisplayModeChange,
   onAppSupportedDisplayModesChange,
-  onRequestTeardown,
-  selectedProtocolOverrideIfBothExists: _ignored,
   minimalMode = false,
 }: WidgetReplayProps) {
-  void _ignored;
   const resolveHostCaps = useActiveHostCapsResolver();
   const effectiveToolMeta =
     renderOverride?.toolMetadata ??
@@ -107,13 +98,9 @@ export function WidgetReplay({
   const hasCachedHtmlForOffline = !!renderOverride?.cachedWidgetHtmlUrl;
 
   // Single-path routing: every UI-bearing tool (Apps SDK, MCP Apps, or
-  // dual-metadata) renders through MCPAppsRenderer. The window.openai
-  // compat shim is now matrix-controlled (per host style + per-chatbox
-  // override) and the server only injects it when the resolved
-  // `compatRuntime.openaiApps` flag is true — so widgets calling
-  // window.openai.* keep working on hosts that opt in (ChatGPT, Copilot,
-  // MCPJam dev surface) while spec-honest hosts (Claude, Cursor) get a
-  // clean SEP-1865 wire surface.
+  // dual-metadata) renders through MCPAppsRenderer. Whether the OpenAI
+  // compatibility runtime is injected is controlled by the selected
+  // client/host profile so host simulation stays honest.
   //
   // Defense-in-depth host gate: the primary check lives in PartSwitch
   // (which decides between ToolPart and WidgetReplay). Re-checking here
