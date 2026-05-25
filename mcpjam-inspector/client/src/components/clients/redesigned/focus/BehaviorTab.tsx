@@ -1,4 +1,5 @@
 import { useId, useMemo } from "react";
+import { Info } from "lucide-react";
 import { Slider } from "@mcpjam/design-system/slider";
 import { Switch } from "@mcpjam/design-system/switch";
 import { Textarea } from "@mcpjam/design-system/textarea";
@@ -6,6 +7,11 @@ import {
   ToggleGroup,
   ToggleGroupItem,
 } from "@mcpjam/design-system/toggle-group";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
 import {
   DEFAULT_TEMPERATURE_V2,
   type HostConfigInputV2,
@@ -133,7 +139,33 @@ export function BehaviorTab({
         />
 
         <FieldRow
-          label="Progressive tools"
+          label={
+            <span className="inline-flex items-center gap-1.5">
+              Progressive tools
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label="About progressive tool discovery"
+                    className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  >
+                    <Info className="h-3 w-3" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent
+                  variant="muted"
+                  side="top"
+                  sideOffset={4}
+                  className="max-w-[260px] leading-snug"
+                >
+                  Auto lets the chat orchestrator hide the catalog behind{" "}
+                  <code>search_mcp_tools</code> / <code>load_mcp_tools</code>{" "}
+                  once the host crosses ~30 tools, 10k tool tokens, or 3% of
+                  the model's context window. On forces it always, Off never.
+                </TooltipContent>
+              </Tooltip>
+            </span>
+          }
           // 3-state, not 2-state: the backend reads `undefined` as
           // "auto" and may enable progressive discovery above catalog/
           // context thresholds even with no user opt-in. A Switch would

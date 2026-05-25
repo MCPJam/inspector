@@ -346,10 +346,14 @@ export function emptyHostConfigInputV2(
     systemPrompt: partial.systemPrompt ?? "",
     temperature: partial.temperature ?? DEFAULT_TEMPERATURE_V2,
     requireToolApproval: partial.requireToolApproval ?? false,
-    // Undefined-preservation: a brand-new input MUST stay undefined until
-    // the user opts in via the toggle. Backend hashes
-    // `undefined`/`true`/`false` distinctly.
-    progressiveToolDiscovery: partial.progressiveToolDiscovery,
+    // Brand-new inputs default to explicit Off. The orchestrator still
+    // reads `undefined` as "auto policy" (existing rows surfaced by
+    // `hostConfigDtoToInput` round-trip verbatim), but creating a fresh
+    // host shouldn't silently opt into auto: a user who hasn't touched
+    // the toggle should not see progressive mode trip on a large
+    // catalog without an explicit choice. They can pick Auto if they
+    // want the auto policy.
+    progressiveToolDiscovery: partial.progressiveToolDiscovery ?? false,
     serverIds: partial.serverIds ? [...partial.serverIds] : [],
     optionalServerIds: partial.optionalServerIds
       ? [...partial.optionalServerIds]
