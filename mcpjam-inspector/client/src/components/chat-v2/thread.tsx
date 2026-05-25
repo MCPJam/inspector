@@ -153,24 +153,27 @@ export function Thread({
   };
 
   const handleRequestTeardown = useCallback(
-    (toolCallId: string) => {
+    (toolCallId: string, displayWidgetId?: string) => {
       setTornDownWidgetIds((prev) => {
         if (prev.has(toolCallId)) return prev;
         return new Set(prev).add(toolCallId);
       });
-      // Mirror `handleExitPip` / `handleExitFullscreen`: if the
-      // widget that asked for teardown was the one currently in PIP
-      // or fullscreen, clear that state too. Without this the iframe
-      // is gone but the parent still reserves the PIP spacer / keeps
-      // the fullscreen overlay open / reports fullscreen=true to
-      // `onFullscreenChange`.
-      setPipWidgetId((current) => (current === toolCallId ? null : current));
+      // Mirror `handleExitPip` / `handleExitFullscreen`: if the widget that
+      // asked for teardown was the one currently in PIP or fullscreen, clear
+      // that state too. Persistent surfaces claim fullscreen/PiP under
+      // `displayWidgetId` (the surface id), but `tornDownWidgetIds` is keyed
+      // by `toolCallId` — accept either so the overlay/spacer doesn't get
+      // stuck after a persistent surface tears itself down.
+      const matchesOwnership = (current: string | null) =>
+        current !== null &&
+        (current === toolCallId || current === displayWidgetId);
+      setPipWidgetId((current) => (matchesOwnership(current) ? null : current));
       setFullscreenWidgetId((current) => {
-        if (current !== toolCallId) return current;
+        if (!matchesOwnership(current)) return current;
         onFullscreenChange?.(false);
         return null;
       });
-      if (pipWidgetId === toolCallId || fullscreenWidgetId === toolCallId) {
+      if (matchesOwnership(pipWidgetId) || matchesOwnership(fullscreenWidgetId)) {
         onDisplayModeChange?.("inline");
       }
     },

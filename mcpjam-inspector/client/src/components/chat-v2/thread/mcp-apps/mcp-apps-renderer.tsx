@@ -225,7 +225,7 @@ export interface MCPAppsRendererProps {
    * unmount this tool call's MCP app surface (e.g. dismiss the modal,
    * collapse the inline view).
    */
-  onRequestTeardown?: (toolCallId: string) => void;
+  onRequestTeardown?: (toolCallId: string, displayWidgetId?: string) => void;
   /** Whether the server is offline (for using cached content) */
   isOffline?: boolean;
   /** URL to cached widget HTML for offline rendering */
@@ -1380,7 +1380,7 @@ export function MCPAppsRendererSurface({
       // so live host edits don't churn the snapshot.
       setLoadedMcpAppsCapabilitiesHash(widgetMcpAppsCapabilitiesReloadKey);
       setWidgetHtmlStore(
-        toolCallId,
+        toolCallIdRef.current,
         html,
         loadedCachedCompatKey ?? undefined,
         // Persisted capabilities flow into the debug store so a
@@ -3145,7 +3145,10 @@ export function MCPAppsRendererSurface({
               error: err instanceof Error ? err.message : String(err),
             });
           }
-          onRequestTeardownRef.current?.(toolCallIdRef.current);
+          onRequestTeardownRef.current?.(
+            toolCallIdRef.current,
+            displayWidgetIdRef.current
+          );
         };
       }
     },

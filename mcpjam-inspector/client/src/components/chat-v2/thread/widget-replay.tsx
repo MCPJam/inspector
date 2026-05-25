@@ -48,7 +48,7 @@ export interface WidgetReplayProps {
   onExitPip?: (toolCallId: string) => void;
   onRequestFullscreen?: (toolCallId: string) => void;
   onExitFullscreen?: (toolCallId: string) => void;
-  onRequestTeardown?: (toolCallId: string) => void;
+  onRequestTeardown?: (toolCallId: string, displayWidgetId?: string) => void;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
   onAppSupportedDisplayModesChange?: (modes: DisplayMode[] | undefined) => void;

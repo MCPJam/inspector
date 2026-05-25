@@ -2892,7 +2892,42 @@ describe("MCPAppsRenderer requestTeardown policy", () => {
     });
 
     expect(mockBridge.teardownResource).toHaveBeenCalledWith({});
-    expect(onRequestTeardown).toHaveBeenCalledWith("call-1");
+    // Non-persistent path: displayWidgetId falls back to toolCallId.
+    expect(onRequestTeardown).toHaveBeenCalledWith("call-1", "call-1");
+  });
+
+  it("forwards the persistent surface id alongside the tool call id on teardown", async () => {
+    const onRequestTeardown = vi.fn();
+    render(
+      <WidgetSurfaceHostProvider>
+        <ActiveMcpProfileProvider value={profileWithRequestTeardown(true)}>
+          <ChatboxHostStyleProvider value="claude">
+            <MCPAppsRenderer
+              {...baseProps}
+              onRequestTeardown={onRequestTeardown}
+            />
+            <WidgetSurfaceHost />
+          </ChatboxHostStyleProvider>
+        </ActiveMcpProfileProvider>
+      </WidgetSurfaceHostProvider>
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.onrequestteardown).not.toBeNull();
+    });
+
+    await act(async () => {
+      await mockBridge.onrequestteardown();
+    });
+
+    expect(onRequestTeardown).toHaveBeenCalledTimes(1);
+    const [calledToolCallId, calledDisplayWidgetId] =
+      onRequestTeardown.mock.calls[0]!;
+    expect(calledToolCallId).toBe("call-1");
+    // Persistent path mints a surface id distinct from the tool call id;
+    // Thread.handleRequestTeardown needs it to clear stuck fullscreen/PiP.
+    expect(typeof calledDisplayWidgetId).toBe("string");
+    expect(calledDisplayWidgetId).not.toBe("call-1");
   });
 
   it("leaves request teardown unhandled when disabled", async () => {
