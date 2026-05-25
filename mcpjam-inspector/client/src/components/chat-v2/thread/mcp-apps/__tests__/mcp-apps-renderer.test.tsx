@@ -575,6 +575,10 @@ describe("MCPAppsRenderer tool input streaming", () => {
     rerender(renderTree(true));
 
     await vi.waitFor(() => {
+      expect(mockBridge.sendToolInput).toHaveBeenCalledTimes(2);
+      expect(mockBridge.sendToolInput).toHaveBeenLastCalledWith({
+        arguments: { move: "c5" },
+      });
       expect(mockBridge.sendToolResult).toHaveBeenCalledTimes(2);
       expect(mockBridge.sendToolResult).toHaveBeenLastCalledWith(secondOutput);
     });
@@ -590,7 +594,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
       "data-mcp-app-surface-anchor",
       "call-1"
     );
-    expect(mockBridge.sendToolInput).toHaveBeenCalledTimes(1);
+    expect(mockBridge.sendToolInput).toHaveBeenCalledTimes(2);
     expect(mockBridge.close).not.toHaveBeenCalled();
     expect(mockBridge.teardownResource).not.toHaveBeenCalled();
     expect(sandboxedIframeMountsRef.current).toBe(1);

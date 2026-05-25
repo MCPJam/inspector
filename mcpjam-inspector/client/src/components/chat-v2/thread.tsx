@@ -35,6 +35,7 @@ import {
   WidgetSurfaceHost,
   WidgetSurfaceHostProvider,
 } from "./thread/mcp-apps/widget-surface-host";
+import { useWidgetSurfaceStore } from "./thread/mcp-apps/widget-surface-store";
 
 interface ThreadProps {
   chatSessionId?: string;
@@ -86,6 +87,22 @@ interface ThreadProps {
   resolveSenderAvatar?: TranscriptThreadProps["resolveSenderAvatar"];
 }
 
+function getWidgetOwnershipIds(toolCallId: string, displayWidgetId?: string) {
+  const ids = new Set<string>([toolCallId]);
+  if (displayWidgetId) ids.add(displayWidgetId);
+
+  const surfaces = useWidgetSurfaceStore.getState().surfaces;
+  const surface =
+    surfaces.get(displayWidgetId ?? "") ?? surfaces.get(toolCallId);
+  if (surface) {
+    for (const registeredToolCallId of surface.registrations.keys()) {
+      ids.add(registeredToolCallId);
+    }
+  }
+
+  return ids;
+}
+
 export function Thread({
   chatSessionId,
   messages,
@@ -135,7 +152,8 @@ export function Thread({
   };
 
   const handleExitPip = (toolCallId: string) => {
-    if (pipWidgetId === toolCallId) {
+    const ownershipIds = getWidgetOwnershipIds(toolCallId);
+    if (pipWidgetId !== null && ownershipIds.has(pipWidgetId)) {
       setPipWidgetId(null);
     }
   };
@@ -146,7 +164,8 @@ export function Thread({
   };
 
   const handleExitFullscreen = (toolCallId: string) => {
-    if (fullscreenWidgetId === toolCallId) {
+    const ownershipIds = getWidgetOwnershipIds(toolCallId);
+    if (fullscreenWidgetId !== null && ownershipIds.has(fullscreenWidgetId)) {
       setFullscreenWidgetId(null);
       onFullscreenChange?.(false);
     }
@@ -154,19 +173,25 @@ export function Thread({
 
   const handleRequestTeardown = useCallback(
     (toolCallId: string, displayWidgetId?: string) => {
+      const ownershipIds = getWidgetOwnershipIds(toolCallId, displayWidgetId);
       setTornDownWidgetIds((prev) => {
-        if (prev.has(toolCallId)) return prev;
-        return new Set(prev).add(toolCallId);
+        let changed = false;
+        const next = new Set(prev);
+        for (const id of ownershipIds) {
+          if (next.has(id)) continue;
+          next.add(id);
+          changed = true;
+        }
+        return changed ? next : prev;
       });
       // Mirror `handleExitPip` / `handleExitFullscreen`: if the widget that
       // asked for teardown was the one currently in PIP or fullscreen, clear
       // that state too. Persistent surfaces claim fullscreen/PiP under
       // `displayWidgetId` (the surface id), but `tornDownWidgetIds` is keyed
-      // by `toolCallId` — accept either so the overlay/spacer doesn't get
-      // stuck after a persistent surface tears itself down.
+      // by tool-call ids — expand the surface to all active registrations so
+      // the old row cannot keep the shared iframe alive after teardown.
       const matchesOwnership = (current: string | null) =>
-        current !== null &&
-        (current === toolCallId || current === displayWidgetId);
+        current !== null && ownershipIds.has(current);
       setPipWidgetId((current) => (matchesOwnership(current) ? null : current));
       // Keep the updater pure (StrictMode double-invokes); fire the
       // fullscreen callback once, outside, based on the same ownership check.

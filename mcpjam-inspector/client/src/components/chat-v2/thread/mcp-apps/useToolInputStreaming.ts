@@ -150,8 +150,8 @@ export interface UseToolInputStreamingParams {
   /**
    * Whether this View should receive the one-shot complete tool-input
    * notification for the current render. Resource-scoped persistent Views
-   * keep the iframe alive across tool calls, so later calls suppress input
-   * while still delivering results.
+   * keep the iframe alive across tool calls, but each new tool call still
+   * gets a complete input notification before its result.
    */
   sendToolInput: boolean;
   onToolInputSent?: () => void;
