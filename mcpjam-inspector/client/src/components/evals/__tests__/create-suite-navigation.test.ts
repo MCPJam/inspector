@@ -57,6 +57,15 @@ describe("createPlaygroundSuiteNavigation", () => {
     });
   });
 
+  it("toSuiteOverview can navigate to the user-facing Runs section", () => {
+    const nav = createPlaygroundSuiteNavigation();
+    nav.toSuiteOverview("suite-1", "executions");
+    expect(navigateSpy).toHaveBeenCalledWith(
+      "/evals/suite/suite-1?view=executions",
+      { replace: undefined },
+    );
+  });
+
   it("toTestEdit emits compare links for results routes", () => {
     const nav = createPlaygroundSuiteNavigation();
     nav.toTestEdit("suite-1", "case-1", {

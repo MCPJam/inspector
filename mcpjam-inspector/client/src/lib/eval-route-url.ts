@@ -1,6 +1,7 @@
 import { useContext, useMemo } from "react";
 import { UNSAFE_LocationContext } from "react-router";
 import type { EvalRoute, SuiteOverviewView } from "./eval-route-types";
+import { SUITE_DASHBOARD_ROUTE_VIEW } from "./eval-suite-ia";
 
 export type EvalRoutePrefix = "/evals" | "/ci-evals";
 
@@ -129,7 +130,9 @@ export function useCiEvalsRouteFromUrl(): EvalRoute {
 }
 
 function parseSuiteOverviewView(value: string | null): SuiteOverviewView {
-  return value === "test-cases" || value === "executions" ? value : "runs";
+  return value === "test-cases" || value === "executions"
+    ? value
+    : SUITE_DASHBOARD_ROUTE_VIEW;
 }
 
 function parseTruthyParam(value: string | null): boolean {

@@ -14,6 +14,7 @@ import {
 } from "react-router";
 import { getAppRouter } from "../router-ref";
 import type { EvalRoute } from "./eval-route-types";
+import { SUITE_DASHBOARD_ROUTE_VIEW } from "./eval-suite-ia";
 import {
   HOSTED_HASH_ALLOWED_TABS,
   HOSTED_HASH_BLOCKED_TABS,
@@ -92,7 +93,9 @@ function buildEvalRoutePath(prefix: "/evals" | "/ci-evals", route: EvalRoute): s
       return `${prefix}/create`;
     case "suite-overview": {
       const params = new URLSearchParams();
-      if (route.view && route.view !== "runs") params.set("view", route.view);
+      if (route.view && route.view !== SUITE_DASHBOARD_ROUTE_VIEW) {
+        params.set("view", route.view);
+      }
       if (route.fromCommit) params.set("fromCommit", route.fromCommit);
       const query = params.toString();
       return `${prefix}/suite/${encodeURIComponent(route.suiteId)}${query ? `?${query}` : ""}`;

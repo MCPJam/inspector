@@ -22,6 +22,7 @@ import { SuiteDashboard } from "./suite-dashboard";
 import { EvalExportModal } from "./eval-export-modal";
 import { SuiteExecutionConfigEditor } from "./suite-execution-config-editor";
 import { useSuiteData, useRunDetailData } from "./use-suite-data";
+import { SuiteWorkspaceNav } from "./suite-workspace-nav";
 import type {
   EvalCase,
   EvalIteration,
@@ -29,7 +30,12 @@ import type {
   EvalSuiteRun,
   SuiteAggregate,
 } from "./types";
-import type { EvalRoute } from "@/lib/eval-route-types";
+import type { EvalRoute, SuiteOverviewView } from "@/lib/eval-route-types";
+import {
+  getSuiteWorkspaceSection,
+  workspaceSectionToSuiteOverviewView,
+  type SuiteWorkspaceSection,
+} from "@/lib/eval-suite-ia";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { useSharedAppState } from "@/state/app-state-context";
 import { isMCPJamProvidedModel } from "@/shared/types";
@@ -51,7 +57,7 @@ import {
 } from "@/lib/evals/eval-export";
 
 export interface SuiteNavigation {
-  toSuiteOverview: (suiteId: string, view?: "runs" | "test-cases") => void;
+  toSuiteOverview: (suiteId: string, view?: SuiteOverviewView) => void;
   toRunDetail: (
     suiteId: string,
     runId: string,
@@ -211,6 +217,23 @@ export function SuiteIterationsView({
     route.type === "suite-overview" && route.view === "test-cases"
       ? "test-cases"
       : "runs";
+  const suiteWorkspaceSection =
+    getSuiteWorkspaceSection(route) ?? "dashboard";
+  const isPlaygroundSuiteWorkspace = hideRunActions && !caseListInSidebar;
+  const showSuiteWorkspaceNav =
+    isPlaygroundSuiteWorkspace &&
+    (viewMode === "overview" || suiteWorkspaceSection === "settings");
+  const showPlaygroundDashboard =
+    isPlaygroundSuiteWorkspace &&
+    viewMode === "overview" &&
+    suiteWorkspaceSection === "dashboard";
+  const showPlaygroundRuns =
+    isPlaygroundSuiteWorkspace &&
+    viewMode === "overview" &&
+    suiteWorkspaceSection === "runs";
+  const showSuiteHeaderCaseActions =
+    isPlaygroundSuiteWorkspace &&
+    (suiteWorkspaceSection === "dashboard" || suiteWorkspaceSection === "cases");
 
   // Local state that's not in the URL
   const [runDetailSortBy, setRunDetailSortBy] = useState<
@@ -445,6 +468,20 @@ export function SuiteIterationsView({
     navigation.toSuiteOverview(suite._id);
   };
 
+  const handleSuiteWorkspaceSectionChange = (
+    section: SuiteWorkspaceSection,
+  ) => {
+    if (section === "settings") {
+      navigation.toSuiteEdit(suite._id);
+      return;
+    }
+
+    navigation.toSuiteOverview(
+      suite._id,
+      workspaceSectionToSuiteOverviewView(section),
+    );
+  };
+
   const handleOpenSuiteExport = useCallback(() => {
     setExportState({
       scope: "suite",
@@ -543,7 +580,7 @@ export function SuiteIterationsView({
             onOpenExportSuite={handleOpenSuiteExport}
             readOnlyConfig={readOnlyConfig}
             hideRunActions={hideRunActions}
-            unifiedSuiteDashboard={hideRunActions && !caseListInSidebar}
+            unifiedSuiteDashboard={showSuiteHeaderCaseActions}
             casesSidebarHidden={casesSidebarHidden}
             onShowCasesSidebar={onShowCasesSidebar}
             onCreateTestCase={onCreateTestCase}
@@ -574,6 +611,12 @@ export function SuiteIterationsView({
             }
           />
         </div>
+      ) : null}
+      {showSuiteWorkspaceNav ? (
+        <SuiteWorkspaceNav
+          activeSection={suiteWorkspaceSection}
+          onSectionChange={handleSuiteWorkspaceSectionChange}
+        />
       ) : null}
 
       {/* Content */}
@@ -670,7 +713,7 @@ export function SuiteIterationsView({
                 );
               })()
             ) : viewMode === "overview" ? (
-              hideRunActions && !caseListInSidebar ? (
+              showPlaygroundDashboard ? (
                 <motion.div
                   key={contentKey}
                   initial={shouldReduceMotion ? false : { opacity: 0 }}
@@ -710,7 +753,7 @@ export function SuiteIterationsView({
                     userMap={userMap}
                   />
                 </motion.div>
-              ) : runsViewMode === "runs" ? (
+              ) : showPlaygroundRuns || runsViewMode === "runs" ? (
                 <motion.div
                   key={contentKey}
                   initial={shouldReduceMotion ? false : { opacity: 0 }}

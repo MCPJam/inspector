@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   useQuery: vi.fn(),
   suiteHeader: vi.fn(),
   runOverview: vi.fn(),
+  suiteDashboard: vi.fn(),
 }));
 
 vi.mock("convex/react", () => ({
@@ -49,6 +50,13 @@ vi.mock("../run-overview", () => ({
   RunOverview: (props: unknown) => {
     mocks.runOverview(props);
     return <div data-testid="run-overview" />;
+  },
+}));
+
+vi.mock("../suite-dashboard", () => ({
+  SuiteDashboard: (props: unknown) => {
+    mocks.suiteDashboard(props);
+    return <div data-testid="suite-dashboard" />;
   },
 }));
 
@@ -113,6 +121,92 @@ describe("SuiteIterationsView caseListInSidebar", () => {
       }
       return undefined;
     });
+  });
+
+  it("treats the default playground suite route as Dashboard", () => {
+    render(
+      <SuiteIterationsView
+        suite={baseSuite}
+        cases={[]}
+        iterations={[]}
+        allIterations={[]}
+        runs={[]}
+        runsLoading={false}
+        aggregate={null}
+        onRerun={vi.fn()}
+        onCancelRun={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteRun={vi.fn()}
+        onDirectDeleteRun={vi.fn().mockResolvedValue(undefined)}
+        connectedServerNames={new Set()}
+        canDeleteSuite={false}
+        rerunningSuiteId={null}
+        cancellingRunId={null}
+        deletingSuiteId={null}
+        deletingRunId={null}
+        availableModels={[]}
+        route={{
+          type: "suite-overview",
+          suiteId: "suite-1",
+          view: "runs",
+        }}
+        navigation={noopNav}
+        hideRunActions
+      />,
+    );
+
+    expect(screen.getByRole("tab", { name: "Dashboard" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByTestId("suite-dashboard")).toBeInTheDocument();
+    expect(screen.queryByTestId("run-overview")).toBeNull();
+  });
+
+  it("maps the Runs workspace tab to the executions route", async () => {
+    const user = userEvent.setup();
+    const navigation = {
+      ...noopNav,
+      toSuiteOverview: vi.fn(),
+    };
+
+    render(
+      <SuiteIterationsView
+        suite={baseSuite}
+        cases={[]}
+        iterations={[]}
+        allIterations={[]}
+        runs={[]}
+        runsLoading={false}
+        aggregate={null}
+        onRerun={vi.fn()}
+        onCancelRun={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteRun={vi.fn()}
+        onDirectDeleteRun={vi.fn().mockResolvedValue(undefined)}
+        connectedServerNames={new Set()}
+        canDeleteSuite={false}
+        rerunningSuiteId={null}
+        cancellingRunId={null}
+        deletingSuiteId={null}
+        deletingRunId={null}
+        availableModels={[]}
+        route={{
+          type: "suite-overview",
+          suiteId: "suite-1",
+          view: "runs",
+        }}
+        navigation={navigation}
+        hideRunActions
+      />,
+    );
+
+    await user.click(screen.getByRole("tab", { name: "Runs" }));
+
+    expect(navigation.toSuiteOverview).toHaveBeenCalledWith(
+      "suite-1",
+      "executions",
+    );
   });
 
   it("does not mount TestCasesOverview when case index is in the parent sidebar", () => {
