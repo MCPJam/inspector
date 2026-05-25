@@ -374,6 +374,8 @@ describe("AppsExtensionTab — mcpAppsOverrides JSON round-trip", () => {
         mcpAppsOverrides: {
           serverResources: false,
           logging: false,
+          downloadFile: false,
+          requestTeardown: false,
           availableDisplayModes: ["fullscreen"],
         },
       },
@@ -382,6 +384,8 @@ describe("AppsExtensionTab — mcpAppsOverrides JSON round-trip", () => {
     expect(next?.mcpProfile?.apps?.mcpAppsOverrides).toEqual({
       serverResources: false,
       logging: false,
+      downloadFile: false,
+      requestTeardown: false,
       availableDisplayModes: ["fullscreen"],
     });
   });

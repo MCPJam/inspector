@@ -7,7 +7,11 @@
 import { RefreshCw } from "lucide-react";
 import type { Tool } from "@modelcontextprotocol/client";
 import { SearchInput } from "../ui/search-input";
-import { detectUIType, UIType } from "@/lib/mcp-ui/mcp-apps-utils";
+import {
+  detectUIType,
+  getToolVisibility,
+  UIType,
+} from "@/lib/mcp-ui/mcp-apps-utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@mcpjam/design-system/tooltip";
 
 interface ToolListProps {
@@ -65,6 +69,12 @@ export function ToolList({
               const tool = tools[name];
               const isSelected = selectedToolName === name;
               const uiType = detectUIType(tool._meta, undefined);
+              const visibility = getToolVisibility(
+                tool._meta as Record<string, unknown> | undefined,
+              );
+              const visibilityLabel = `[${visibility
+                .map((v) => `"${v}"`)
+                .join(", ")}]`;
 
               return (
                 <button
@@ -82,55 +92,61 @@ export function ToolList({
                       : "cursor-pointer hover:bg-muted/50"
                   }`}
                 >
-                  <code className="text-xs font-mono font-medium truncate block">
-                    {name}
-                  </code>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <code className="text-xs font-mono font-medium truncate flex-1">
+                      {name}
+                    </code>
+                  </div>
                   {tool.description && (
                     <p className="text-[10px] text-muted-foreground mt-1 line-clamp-2">
                       {tool.description}
                     </p>
                   )}
-                  {uiType && (
-                    <div className="flex items-center gap-1.5 mt-2">
-                      {(uiType === UIType.OPENAI_SDK ||
-                        uiType === UIType.OPENAI_SDK_AND_MCP_APPS) && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <div className="flex items-center">
-                              <img
-                                src="/openai_logo.png"
-                                alt="ChatGPT Apps"
-                                className="h-3.5 w-3.5 object-contain opacity-60"
-                              />
-                            </div>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p className="text-xs">ChatGPT Apps</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
-                      {(uiType === UIType.MCP_APPS ||
-                        uiType === UIType.OPENAI_SDK_AND_MCP_APPS ||
-                        uiType === UIType.MCP_UI) && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <div className="flex items-center">
-                              <img
-                                src="/mcp.svg"
-                                alt="MCP Apps"
-                                className="h-3.5 w-3.5 object-contain opacity-60"
-                              />
-                            </div>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p className="text-xs">
-                              {uiType === UIType.MCP_UI ? "MCP UI" : "MCP Apps"}
-                            </p>
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
-                    </div>
-                  )}
+                  <div className="flex items-center gap-1.5 mt-2">
+                    {(uiType === UIType.OPENAI_SDK ||
+                      uiType === UIType.OPENAI_SDK_AND_MCP_APPS) && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <div className="flex items-center">
+                            <img
+                              src="/openai_logo.png"
+                              alt="ChatGPT Apps"
+                              className="h-3.5 w-3.5 object-contain opacity-60"
+                            />
+                          </div>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p className="text-xs">ChatGPT Apps</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
+                    {(uiType === UIType.MCP_APPS ||
+                      uiType === UIType.OPENAI_SDK_AND_MCP_APPS ||
+                      uiType === UIType.MCP_UI) && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <div className="flex items-center">
+                            <img
+                              src="/mcp.svg"
+                              alt="MCP Apps"
+                              className="h-3.5 w-3.5 object-contain opacity-60"
+                            />
+                          </div>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p className="text-xs">
+                            {uiType === UIType.MCP_UI ? "MCP UI" : "MCP Apps"}
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
+                    <span
+                      className="font-mono text-[10px] text-muted-foreground"
+                      title={`SEP-1865 visibility: ${visibilityLabel}`}
+                    >
+                      visibility: {visibilityLabel}
+                    </span>
+                  </div>
                 </button>
               );
             })}

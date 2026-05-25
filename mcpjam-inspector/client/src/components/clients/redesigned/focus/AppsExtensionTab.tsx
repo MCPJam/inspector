@@ -25,17 +25,14 @@ import {
   MCP_UI_RESOURCE_MIME_TYPE,
 } from "@mcpjam/sdk/browser";
 import { Switch } from "@mcpjam/design-system/switch";
-import {
-  clientAdvertisesMcpApps,
-  isRecord,
-} from "@/lib/host-capabilities";
+import { clientAdvertisesMcpApps, isRecord } from "@/lib/host-capabilities";
 import type { HostAttentionIssue, SandboxConfigSubKey } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 
 interface AppsExtensionTabProps {
   draft: HostConfigInputV2;
   onDraftChange: (
-    updater: (prev: HostConfigInputV2) => HostConfigInputV2,
+    updater: (prev: HostConfigInputV2) => HostConfigInputV2
   ) => void;
   attention: ReadonlyArray<HostAttentionIssue>;
   /**
@@ -191,7 +188,7 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
  * that telegraph their non-spec status.
  */
 function sandboxFromPolicy(
-  policy: NonNullable<HostConfigMcpProfileV1["apps"]>["sandbox"] | undefined,
+  policy: NonNullable<HostConfigMcpProfileV1["apps"]>["sandbox"] | undefined
 ): SandboxDoc | undefined {
   if (!policy) return undefined;
   const out: SandboxDoc = {};
@@ -285,22 +282,35 @@ function liftSandboxIntoPolicy(args: {
   // `csp` block is absent, all clear. Preserve internal mode / extensions
   // from prev — those aren't in the JSON.
   const newRestrict: SpecSandboxCsp = {};
-  if (incomingCspBlock?.connectDomains && incomingCspBlock.connectDomains.length > 0) {
+  if (
+    incomingCspBlock?.connectDomains &&
+    incomingCspBlock.connectDomains.length > 0
+  ) {
     newRestrict.connectDomains = [...incomingCspBlock.connectDomains];
   }
-  if (incomingCspBlock?.resourceDomains && incomingCspBlock.resourceDomains.length > 0) {
+  if (
+    incomingCspBlock?.resourceDomains &&
+    incomingCspBlock.resourceDomains.length > 0
+  ) {
     newRestrict.resourceDomains = [...incomingCspBlock.resourceDomains];
   }
-  if (incomingCspBlock?.frameDomains && incomingCspBlock.frameDomains.length > 0) {
+  if (
+    incomingCspBlock?.frameDomains &&
+    incomingCspBlock.frameDomains.length > 0
+  ) {
     newRestrict.frameDomains = [...incomingCspBlock.frameDomains];
   }
-  if (incomingCspBlock?.baseUriDomains && incomingCspBlock.baseUriDomains.length > 0) {
+  if (
+    incomingCspBlock?.baseUriDomains &&
+    incomingCspBlock.baseUriDomains.length > 0
+  ) {
     newRestrict.baseUriDomains = [...incomingCspBlock.baseUriDomains];
   }
 
   const nextCsp: SandboxPolicyCsp = {};
   if (prevCsp?.mode !== undefined) nextCsp.mode = prevCsp.mode;
-  if (prevCsp?.extensions !== undefined) nextCsp.extensions = prevCsp.extensions;
+  if (prevCsp?.extensions !== undefined)
+    nextCsp.extensions = prevCsp.extensions;
   if (incomingCspBlock?.directiveOverrides !== undefined) {
     nextCsp.cspDirectives = incomingCspBlock.directiveOverrides;
   }
@@ -435,7 +445,7 @@ function appsToJson(draft: HostConfigInputV2): AppsDoc {
 
 export function applyJsonToDraft(
   parsed: unknown,
-  prev: HostConfigInputV2,
+  prev: HostConfigInputV2
 ): HostConfigInputV2 | null {
   if (!isPlainObject(parsed)) return null;
 
@@ -476,6 +486,8 @@ export function applyJsonToDraft(
       "cspFrameDomains",
       "cspBaseUriDomains",
       "resourcePrefersBorder",
+      "downloadFile",
+      "requestTeardown",
     ];
     for (const key of booleanKeys) {
       const value = incoming[key];
@@ -487,13 +499,21 @@ export function applyJsonToDraft(
     if (Array.isArray(modes)) {
       const filtered = modes.filter(
         (m): m is "inline" | "fullscreen" | "pip" =>
-          m === "inline" || m === "fullscreen" || m === "pip",
+          m === "inline" || m === "fullscreen" || m === "pip"
       );
       // Soft-validate: only emit the array when at least one valid
       // member survived. An empty filter result reads as "user typed
       // garbage" — fall through to the preset rather than persisting an
       // empty allowlist the resolver would have to coerce to ["inline"].
       if (filtered.length > 0) out.availableDisplayModes = filtered;
+    }
+    const widgetDisplayModeRequests = incoming.widgetDisplayModeRequests;
+    if (
+      widgetDisplayModeRequests === "accept" ||
+      widgetDisplayModeRequests === "user-initiated-only" ||
+      widgetDisplayModeRequests === "decline"
+    ) {
+      out.widgetDisplayModeRequests = widgetDisplayModeRequests;
     }
     if (Object.keys(out).length > 0) nextMcpAppsOverrides = out;
   }
@@ -604,19 +624,19 @@ export function applyJsonToDraft(
         const cspOut: SandboxDocCsp = {};
         if (Array.isArray(c.connectDomains))
           cspOut.connectDomains = c.connectDomains.filter(
-            (t): t is string => typeof t === "string",
+            (t): t is string => typeof t === "string"
           );
         if (Array.isArray(c.resourceDomains))
           cspOut.resourceDomains = c.resourceDomains.filter(
-            (t): t is string => typeof t === "string",
+            (t): t is string => typeof t === "string"
           );
         if (Array.isArray(c.frameDomains))
           cspOut.frameDomains = c.frameDomains.filter(
-            (t): t is string => typeof t === "string",
+            (t): t is string => typeof t === "string"
           );
         if (Array.isArray(c.baseUriDomains))
           cspOut.baseUriDomains = c.baseUriDomains.filter(
-            (t): t is string => typeof t === "string",
+            (t): t is string => typeof t === "string"
           );
         if (isPlainObject(c.directiveOverrides)) {
           const cd: Record<string, string[]> = {};
@@ -634,12 +654,14 @@ export function applyJsonToDraft(
         parsedSandbox.csp = cspOut;
       }
       if (isPlainObject(sandboxBlock.permissions)) {
-        parsedSandbox.permissions = sandboxBlock.permissions as SpecSandboxPermissions;
+        parsedSandbox.permissions =
+          sandboxBlock.permissions as SpecSandboxPermissions;
       }
       if (Array.isArray(sandboxBlock.iframeSandboxAttrs)) {
-        parsedSandbox.iframeSandboxAttrs = sandboxBlock.iframeSandboxAttrs.filter(
-          (t): t is string => typeof t === "string",
-        );
+        parsedSandbox.iframeSandboxAttrs =
+          sandboxBlock.iframeSandboxAttrs.filter(
+            (t): t is string => typeof t === "string"
+          );
       }
       if (isPlainObject(sandboxBlock.permissionsPolicy)) {
         const pp: Record<string, string> = {};
@@ -683,11 +705,12 @@ export function applyJsonToDraft(
   // editor accepts hand-typed JSON that may be one rev behind. Drop
   // the whole block when no valid entries remain so editing back to
   // the preset cleanly clears the override.
-  if (incomingCompatRuntime && isPlainObject(incomingCompatRuntime.openaiAppsOverrides)) {
-    const incomingOverrides = incomingCompatRuntime.openaiAppsOverrides as Record<
-      string,
-      unknown
-    >;
+  if (
+    incomingCompatRuntime &&
+    isPlainObject(incomingCompatRuntime.openaiAppsOverrides)
+  ) {
+    const incomingOverrides =
+      incomingCompatRuntime.openaiAppsOverrides as Record<string, unknown>;
     const parsedOverrides: OpenAiAppsCapabilities = {};
     const booleanKeys: Array<keyof OpenAiAppsCapabilities> = [
       "callTool",
@@ -735,8 +758,9 @@ export function applyJsonToDraft(
   }
   const hasApps = Object.keys(appsBlock).length > 0;
 
-  const baseProfile: HostConfigMcpProfileV1 =
-    prevProfile ?? { profileVersion: 1 };
+  const baseProfile: HostConfigMcpProfileV1 = prevProfile ?? {
+    profileVersion: 1,
+  };
   const nextProfile: HostConfigMcpProfileV1 = {
     ...baseProfile,
     apps: hasApps ? appsBlock : undefined,
@@ -769,10 +793,11 @@ function setCompatRuntimeOnDraft(
   next: {
     openaiApps?: boolean;
     openaiAppsOverrides?: OpenAiAppsCapabilities;
-  },
+  }
 ): HostConfigInputV2 {
-  const prevProfile: HostConfigMcpProfileV1 =
-    prev.mcpProfile ?? { profileVersion: 1 };
+  const prevProfile: HostConfigMcpProfileV1 = prev.mcpProfile ?? {
+    profileVersion: 1,
+  };
   const prevApps = prevProfile.apps ?? {};
   const compatBlock: NonNullable<
     NonNullable<HostConfigMcpProfileV1["apps"]>["compatRuntime"]
@@ -842,7 +867,7 @@ function OpenaiAppsCapabilityMatrix({
 }: {
   draft: HostConfigInputV2;
   onDraftChange: (
-    updater: (prev: HostConfigInputV2) => HostConfigInputV2,
+    updater: (prev: HostConfigInputV2) => HostConfigInputV2
   ) => void;
 }) {
   const [methodsOpen, setMethodsOpen] = useState(false);
@@ -851,9 +876,10 @@ function OpenaiAppsCapabilityMatrix({
     draft.mcpProfile?.apps?.compatRuntime?.openaiAppsOverrides;
   const presetEffective = getCompatRuntimeForStyle(draft.hostStyle);
   const presetInjected = presetEffective.injected;
-  const presetCapabilities: ResolvedOpenAiAppsCapabilities = presetEffective.injected
-    ? presetEffective.capabilities
-    : OPENAI_APPS_FULL_SURFACE;
+  const presetCapabilities: ResolvedOpenAiAppsCapabilities =
+    presetEffective.injected
+      ? presetEffective.capabilities
+      : OPENAI_APPS_FULL_SURFACE;
   const injected = typeof override === "boolean" ? override : presetInjected;
 
   // Effective per-method capabilities — preset merged with sparse overrides.
@@ -872,13 +898,13 @@ function OpenaiAppsCapabilityMatrix({
         // Clear per-method overrides on master toggle off — they're
         // meaningless without injection.
         openaiAppsOverrides: next ? overridesRecord : undefined,
-      }),
+      })
     );
   };
 
   const setMethodOverride = (
     key: keyof OpenAiAppsCapabilities,
-    value: boolean | "all" | "fullscreen-only" | "none" | undefined,
+    value: boolean | "all" | "fullscreen-only" | "none" | undefined
   ) => {
     onDraftChange((prev) => {
       const prevOverrides =
@@ -920,7 +946,7 @@ function OpenaiAppsCapabilityMatrix({
   const sublineParts: string[] = [];
   if (injected) {
     sublineParts.push(
-      `${enabledCount} of ${OPENAI_APPS_METHOD_LABELS.length} methods`,
+      `${enabledCount} of ${OPENAI_APPS_METHOD_LABELS.length} methods`
     );
     if (overrideCount > 0) {
       sublineParts.push(`${overrideCount} overridden`);
@@ -989,10 +1015,7 @@ function OpenaiAppsCapabilityMatrix({
         <>
           {methodsOpen ? (
             <>
-              <div
-                id="apps-extension-openai-methods"
-                className="flex flex-col"
-              >
+              <div id="apps-extension-openai-methods" className="flex flex-col">
                 {OPENAI_APPS_METHOD_LABELS.map(({ key, label }) => {
                   const effective = effectiveCapabilities[key];
                   const presetValue = presetCapabilities[key];
@@ -1013,11 +1036,13 @@ function OpenaiAppsCapabilityMatrix({
                       </div>
                       {key === "requestDisplayMode" ? (
                         <RequestDisplayModeControl
-                          value={effective as "all" | "fullscreen-only" | "none"}
+                          value={
+                            effective as "all" | "fullscreen-only" | "none"
+                          }
                           onChange={(next) =>
                             setMethodOverride(
                               key,
-                              next === presetValue ? undefined : next,
+                              next === presetValue ? undefined : next
                             )
                           }
                         />
@@ -1027,7 +1052,7 @@ function OpenaiAppsCapabilityMatrix({
                           onCheckedChange={(checked) =>
                             setMethodOverride(
                               key,
-                              checked === presetValue ? undefined : checked,
+                              checked === presetValue ? undefined : checked
                             )
                           }
                           aria-label={label}
@@ -1082,6 +1107,47 @@ function RequestDisplayModeControl({
 }
 
 /**
+ * Tri-state segmented control for the MCP Apps spec-bridge
+ * `widgetDisplayModeRequests` policy. Sibling to {@link RequestDisplayModeControl}
+ * — the two surfaces are independent (two-matrix architecture); keeping
+ * the controls separate matches that isolation.
+ */
+function WidgetDisplayModeRequestsControl({
+  value,
+  onChange,
+}: {
+  value: "accept" | "user-initiated-only" | "decline";
+  onChange: (next: "accept" | "user-initiated-only" | "decline") => void;
+}) {
+  const options: Array<{
+    value: "accept" | "user-initiated-only" | "decline";
+    label: string;
+  }> = [
+    { value: "accept", label: "Accept" },
+    { value: "user-initiated-only", label: "User-initiated" },
+    { value: "decline", label: "Decline" },
+  ];
+  return (
+    <div className="inline-flex overflow-hidden rounded-md border border-border text-[11px]">
+      {options.map((opt) => (
+        <button
+          key={opt.value}
+          type="button"
+          className={
+            opt.value === value
+              ? "bg-foreground/10 px-2 py-0.5 font-medium"
+              : "px-2 py-0.5 text-muted-foreground hover:bg-muted"
+          }
+          onClick={() => onChange(opt.value)}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
  * Update `mcpProfile.apps.mcpAppsOverrides` while preserving sibling
  * fields (`sandbox`, `uiInitialize`, `compatRuntime`) and collapsing
  * empties on the way out:
@@ -1111,7 +1177,7 @@ function RequestDisplayModeControl({
  */
 function setMcpAppsOverridesOnDraft(
   prev: HostConfigInputV2,
-  next: McpAppsCapabilities | undefined,
+  next: McpAppsCapabilities | undefined
 ): HostConfigInputV2 {
   const hasKeys = next !== undefined && Object.keys(next).length > 0;
   const prevProfile = prev.mcpProfile;
@@ -1137,8 +1203,9 @@ function setMcpAppsOverridesOnDraft(
     return prev;
   }
 
-  const baseProfile: HostConfigMcpProfileV1 =
-    prevProfile ?? { profileVersion: 1 };
+  const baseProfile: HostConfigMcpProfileV1 = prevProfile ?? {
+    profileVersion: 1,
+  };
   const hasInitialize =
     baseProfile.initialize !== undefined &&
     (baseProfile.initialize.clientInfo !== undefined ||
@@ -1157,7 +1224,7 @@ function setMcpAppsOverridesOnDraft(
 
 type McpAppsDimensionKey = Exclude<
   keyof McpAppsCapabilities,
-  "availableDisplayModes"
+  "availableDisplayModes" | "widgetDisplayModeRequests"
 >;
 
 /** Per-dimension matrix metadata. Description is shown on row hover. */
@@ -1185,8 +1252,7 @@ const MCP_APPS_DIMENSIONS: McpAppsDimensionMeta[] = [
   },
   {
     key: "resourceTeardown",
-    description:
-      "Send ui/resource-teardown before destroying the app view",
+    description: "Send ui/resource-teardown before destroying the app view",
   },
   {
     key: "serverResources",
@@ -1214,7 +1280,17 @@ const MCP_APPS_DIMENSIONS: McpAppsDimensionMeta[] = [
   },
   {
     key: "message",
-    description: "Accept ui/message requests that add content to the conversation",
+    description:
+      "Accept ui/message requests that add content to the conversation",
+  },
+  {
+    key: "downloadFile",
+    description: "Accept ui/download-file requests from the app",
+  },
+  {
+    key: "requestTeardown",
+    description:
+      "Honor ui/notifications/request-teardown by unmounting the app",
   },
   {
     key: "sandboxPermissions",
@@ -1267,7 +1343,7 @@ function McpAppsCapabilityMatrix({
 }: {
   draft: HostConfigInputV2;
   onDraftChange: (
-    updater: (prev: HostConfigInputV2) => HostConfigInputV2,
+    updater: (prev: HostConfigInputV2) => HostConfigInputV2
   ) => void;
 }) {
   const [dimensionsOpen, setDimensionsOpen] = useState(false);
@@ -1294,8 +1370,8 @@ function McpAppsCapabilityMatrix({
     rawOverridesRecord !== undefined
       ? rawOverridesRecord
       : legacyOverride !== undefined
-        ? (hostCapabilitiesOverrideToMatrix(legacyOverride) ?? undefined)
-        : undefined;
+      ? hostCapabilitiesOverrideToMatrix(legacyOverride) ?? undefined
+      : undefined;
   // Effective values shown in the matrix UI. Uses the virtually-
   // migrated legacy when the matrix is absent so the UI shows what
   // the resolver advertises today (legacy path) — not what it would
@@ -1327,7 +1403,7 @@ function McpAppsCapabilityMatrix({
    * `setMcpAppsOverridesOnDraft(prevWithLegacyCleared, edited)`.
    */
   const migrateLegacyIfNeeded = (
-    prev: HostConfigInputV2,
+    prev: HostConfigInputV2
   ): {
     overrides: McpAppsCapabilities;
     prevWithLegacyCleared: HostConfigInputV2;
@@ -1397,7 +1473,7 @@ function McpAppsCapabilityMatrix({
   /** Set or clear a boolean dimension override. Pass `undefined` to revert to preset. */
   const setBooleanOverride = (
     key: Exclude<keyof McpAppsCapabilities, "availableDisplayModes">,
-    nextEffective: boolean,
+    nextEffective: boolean
   ) => {
     onDraftChange((prev) => {
       const { overrides: prevOverrides, prevWithLegacyCleared } =
@@ -1440,8 +1516,7 @@ function McpAppsCapabilityMatrix({
       // user's click toggles relative to what they saw (legacy-
       // migrated when applicable), not relative to the bare preset.
       const currentModes =
-        prevOverrides.availableDisplayModes ??
-        prevPreset.availableDisplayModes;
+        prevOverrides.availableDisplayModes ?? prevPreset.availableDisplayModes;
       let nextModesList = currentModes.includes(mode)
         ? currentModes.filter((m) => m !== mode)
         : [...currentModes, mode];
@@ -1452,7 +1527,7 @@ function McpAppsCapabilityMatrix({
       // Preserve the canonical inline→fullscreen→pip order so equality
       // checks against the preset don't false-negative on permutation.
       nextModesList = ALL_DISPLAY_MODES.filter((m) =>
-        nextModesList.includes(m),
+        nextModesList.includes(m)
       );
       const nextOverrides: McpAppsCapabilities = { ...prevOverrides };
       if (
@@ -1462,6 +1537,31 @@ function McpAppsCapabilityMatrix({
         delete nextOverrides.availableDisplayModes;
       } else {
         nextOverrides.availableDisplayModes = nextModesList as DisplayMode[];
+      }
+      return setMcpAppsOverridesOnDraft(prevWithLegacyCleared, nextOverrides);
+    });
+  };
+
+  /**
+   * Set or clear the `widgetDisplayModeRequests` tri-state override.
+   * Mirrors {@link setBooleanOverride} — drop the override if the chosen
+   * value matches the preset so the matrix reverts cleanly.
+   */
+  const setWidgetDisplayModeRequestsOverride = (
+    next: "accept" | "user-initiated-only" | "decline"
+  ) => {
+    onDraftChange((prev) => {
+      const { overrides: prevOverrides, prevWithLegacyCleared } =
+        migrateLegacyIfNeeded(prev);
+      const prevPreset = resolveEffectiveMcpAppsCapabilities({
+        profile: undefined,
+        hostStyle: prev.hostStyle,
+      });
+      const nextOverrides: McpAppsCapabilities = { ...prevOverrides };
+      if (next === prevPreset.widgetDisplayModeRequests) {
+        delete nextOverrides.widgetDisplayModeRequests;
+      } else {
+        nextOverrides.widgetDisplayModeRequests = next;
       }
       return setMcpAppsOverridesOnDraft(prevWithLegacyCleared, nextOverrides);
     });
@@ -1520,32 +1620,57 @@ function McpAppsCapabilityMatrix({
             data-testid="mcp-apps-dimension-availableDisplayModes"
             className="flex items-center justify-between gap-3 border-b border-border/50 px-3.5 py-2"
           >
-        <div className="flex min-w-0 flex-col gap-0.5">
-          <span className="font-mono text-[12px]">availableDisplayModes</span>
-        </div>
-        <div className="inline-flex shrink-0 overflow-hidden rounded-md border border-border text-[11px]">
-          {ALL_DISPLAY_MODES.map((mode) => {
-            const enabled =
-              effectiveCapabilities.availableDisplayModes.includes(mode);
-            return (
-              <button
-                key={mode}
-                type="button"
-                aria-label={mode}
-                title={mode}
-                className={
-                  enabled
-                    ? "bg-foreground/10 px-2.5 py-0.5 font-medium"
-                    : "px-2.5 py-0.5 text-muted-foreground hover:bg-muted"
-                }
-                onClick={() => toggleDisplayMode(mode)}
-              >
-                {DISPLAY_MODE_LABELS[mode]}
-              </button>
-            );
-          })}
-        </div>
-      </div>
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <span className="font-mono text-[12px]">
+                availableDisplayModes
+              </span>
+            </div>
+            <div className="inline-flex shrink-0 overflow-hidden rounded-md border border-border text-[11px]">
+              {ALL_DISPLAY_MODES.map((mode) => {
+                const enabled =
+                  effectiveCapabilities.availableDisplayModes.includes(mode);
+                return (
+                  <button
+                    key={mode}
+                    type="button"
+                    aria-label={mode}
+                    title={mode}
+                    className={
+                      enabled
+                        ? "bg-foreground/10 px-2.5 py-0.5 font-medium"
+                        : "px-2.5 py-0.5 text-muted-foreground hover:bg-muted"
+                    }
+                    onClick={() => toggleDisplayMode(mode)}
+                  >
+                    {DISPLAY_MODE_LABELS[mode]}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* widgetDisplayModeRequests — tri-state host policy for
+              widget-initiated `ui/request-display-mode`. Sibling to
+              availableDisplayModes above (which is what the host
+              advertises); this row is what the host *does* when the
+              widget asks for a mode change. */}
+          <div
+            data-testid="mcp-apps-dimension-widgetDisplayModeRequests"
+            className="flex items-center justify-between gap-3 border-b border-border/50 px-3.5 py-2"
+          >
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <span className="font-mono text-[12px]">
+                widgetDisplayModeRequests
+              </span>
+              <span className="text-[10.5px] text-muted-foreground">
+                Host policy for widget-initiated ui/request-display-mode
+              </span>
+            </div>
+            <WidgetDisplayModeRequestsControl
+              value={effectiveCapabilities.widgetDisplayModeRequests}
+              onChange={setWidgetDisplayModeRequestsOverride}
+            />
+          </div>
 
           <div className="flex flex-col">
             {MCP_APPS_DIMENSIONS.map(({ key, description }) => (
@@ -1611,18 +1736,12 @@ export function AppsExtensionTab({
 
   return (
     <div className="flex h-full min-h-[480px] flex-col gap-3">
-      <OpenaiAppsCapabilityMatrix
-        draft={draft}
-        onDraftChange={onDraftChange}
-      />
+      <OpenaiAppsCapabilityMatrix draft={draft} onDraftChange={onDraftChange} />
       {/* Two-matrix architecture: window.openai (shim) and app.* (spec
           bridge) are independent surfaces and never cross-gate. The
           subtitle on each section makes this explicit so users don't
           confuse them. */}
-      <McpAppsCapabilityMatrix
-        draft={draft}
-        onDraftChange={onDraftChange}
-      />
+      <McpAppsCapabilityMatrix draft={draft} onDraftChange={onDraftChange} />
       <div className="min-h-0 flex-1">
         <JsonEditor
           rawContent={content}

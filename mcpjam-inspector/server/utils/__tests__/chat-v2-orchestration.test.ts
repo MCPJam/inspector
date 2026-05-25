@@ -125,6 +125,38 @@ describe("prepareChatV2", () => {
     ]);
   });
 
+  it("hides SEP-1865 app-only tools from the model tool set", async () => {
+    // Three tools: one model-only, one app-only (must be hidden), one
+    // with the default both-visibility. The manager exposes _serverId
+    // on each tool and getAllToolsMetadata() supplies the _meta.ui.
+    const manager = mockManager({
+      model_tool: { description: "model only", _serverId: "srv" },
+      app_tool: { description: "app only", _serverId: "srv" },
+      both_tool: { description: "default both", _serverId: "srv" },
+    });
+    manager.getAllToolsMetadata = vi.fn((id: string) =>
+      id === "srv"
+        ? {
+            model_tool: { ui: { visibility: ["model"] } },
+            app_tool: { ui: { visibility: ["app"] } },
+            both_tool: { ui: { visibility: ["model", "app"] } },
+          }
+        : {},
+    );
+
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["srv"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+    });
+
+    expect(Object.keys(result.allTools).sort()).toEqual([
+      "both_tool",
+      "model_tool",
+    ]);
+  });
+
   it("filters selectedServers down to ids the manager has registered", async () => {
     const manager = mockManager({});
     manager.hasServer = vi.fn((id: string) => id === "live-server");

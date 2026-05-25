@@ -40,7 +40,7 @@ interface MessageViewProps {
     context: {
       content?: ContentBlock[];
       structuredContent?: Record<string, unknown>;
-    },
+    }
   ) => void;
   pipWidgetId: string | null;
   fullscreenWidgetId: string | null;
@@ -48,6 +48,8 @@ interface MessageViewProps {
   onExitPip: (toolCallId: string) => void;
   onRequestFullscreen: (toolCallId: string) => void;
   onExitFullscreen: (toolCallId: string) => void;
+  onRequestTeardown?: (toolCallId: string) => void;
+  tornDownWidgetIds?: ReadonlySet<string>;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
   onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
@@ -105,7 +107,7 @@ function getPartKey(part: MessagePart, stepIndex: number, partIndex: number) {
 
 function isSameSenderAvatar(
   prev: ProjectThreadOwnerAvatar | undefined,
-  next: ProjectThreadOwnerAvatar | undefined,
+  next: ProjectThreadOwnerAvatar | undefined
 ) {
   if (prev === next) return true;
   if (!prev || !next) return false;
@@ -120,7 +122,7 @@ function isSameSenderAvatar(
 
 function areMessageViewPropsEqual(
   prev: Readonly<MessageViewProps>,
-  next: Readonly<MessageViewProps>,
+  next: Readonly<MessageViewProps>
 ) {
   return (
     !shouldRerenderMessage(prev.message, next.message) &&
@@ -136,6 +138,8 @@ function areMessageViewPropsEqual(
     prev.onExitPip === next.onExitPip &&
     prev.onRequestFullscreen === next.onRequestFullscreen &&
     prev.onExitFullscreen === next.onExitFullscreen &&
+    prev.onRequestTeardown === next.onRequestTeardown &&
+    prev.tornDownWidgetIds === next.tornDownWidgetIds &&
     prev.displayMode === next.displayMode &&
     prev.onDisplayModeChange === next.onDisplayModeChange &&
     prev.onToolApprovalResponse === next.onToolApprovalResponse &&
@@ -165,6 +169,8 @@ function MessageViewImpl({
   onExitPip,
   onRequestFullscreen,
   onExitFullscreen,
+  onRequestTeardown,
+  tornDownWidgetIds,
   displayMode,
   onDisplayModeChange,
   onToolApprovalResponse,
@@ -228,6 +234,8 @@ function MessageViewImpl({
                 onExitPip={onExitPip}
                 onRequestFullscreen={onRequestFullscreen}
                 onExitFullscreen={onExitFullscreen}
+                onRequestTeardown={onRequestTeardown}
+                tornDownWidgetIds={tornDownWidgetIds}
                 displayMode={displayMode}
                 onDisplayModeChange={onDisplayModeChange}
                 toolRenderOverrides={toolRenderOverrides}
@@ -258,6 +266,8 @@ function MessageViewImpl({
                 onExitPip={onExitPip}
                 onRequestFullscreen={onRequestFullscreen}
                 onExitFullscreen={onExitFullscreen}
+                onRequestTeardown={onRequestTeardown}
+                tornDownWidgetIds={tornDownWidgetIds}
                 displayMode={displayMode}
                 onDisplayModeChange={onDisplayModeChange}
                 toolRenderOverrides={toolRenderOverrides}
@@ -333,6 +343,8 @@ function MessageViewImpl({
                   onExitPip={onExitPip}
                   onRequestFullscreen={onRequestFullscreen}
                   onExitFullscreen={onExitFullscreen}
+                  onRequestTeardown={onRequestTeardown}
+                  tornDownWidgetIds={tornDownWidgetIds}
                   displayMode={displayMode}
                   onDisplayModeChange={onDisplayModeChange}
                   onToolApprovalResponse={onToolApprovalResponse}

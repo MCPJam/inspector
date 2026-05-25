@@ -693,6 +693,10 @@ export function mergeMcpAppsCapabilities(
       override.cspBaseUriDomains ?? base.cspBaseUriDomains,
     resourcePrefersBorder:
       override.resourcePrefersBorder ?? base.resourcePrefersBorder,
+    downloadFile: override.downloadFile ?? base.downloadFile,
+    requestTeardown: override.requestTeardown ?? base.requestTeardown,
+    widgetDisplayModeRequests:
+      override.widgetDisplayModeRequests ?? base.widgetDisplayModeRequests,
   };
 }
 
@@ -771,6 +775,7 @@ export function hostCapabilitiesOverrideToMatrix(
     logging: legacy.logging !== undefined,
     updateModelContext: legacy.updateModelContext !== undefined,
     message: legacy.message !== undefined,
+    downloadFile: legacy.downloadFile !== undefined,
   };
 }
 

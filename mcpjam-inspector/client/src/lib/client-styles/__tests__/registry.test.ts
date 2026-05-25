@@ -104,13 +104,17 @@ describe("host-styles registry", () => {
       logging: {},
       updateModelContext: { text: {} },
       message: { text: {} },
+      downloadFile: {},
     });
-    // ChatGPT drops serverResources / logging per its matrix.
+    // ChatGPT drops serverResources / logging per its matrix; downloadFile
+    // is on for every FULL-surface preset (ChatGPT inherits MCP_APPS_FULL_SURFACE
+    // with serverResources / logging overridden off).
     expect(getHostCapabilitiesForStyle("chatgpt")).toEqual({
       openLinks: {},
       serverTools: {},
       updateModelContext: { text: {} },
       message: { text: {} },
+      downloadFile: {},
     });
   });
 

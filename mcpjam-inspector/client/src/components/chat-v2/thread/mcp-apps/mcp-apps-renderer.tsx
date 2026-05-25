@@ -211,6 +211,15 @@ interface MCPAppsRendererProps {
   ) => void;
   /** Callback when app declares its supported display modes during ui/initialize */
   onAppSupportedDisplayModesChange?: (modes: DisplayMode[] | undefined) => void;
+  /**
+   * Called when the widget sends `ui/notifications/request-teardown`
+   * and the host has agreed to honor it (matrix `requestTeardown !==
+   * false`). The renderer has already attempted a graceful
+   * `ui/resource-teardown` round-trip; the parent is now expected to
+   * unmount this tool call's MCP app surface (e.g. dismiss the modal,
+   * collapse the inline view).
+   */
+  onRequestTeardown?: (toolCallId: string) => void;
   /** Whether the server is offline (for using cached content) */
   isOffline?: boolean;
   /** URL to cached widget HTML for offline rendering */
@@ -339,6 +348,7 @@ const FETCH_SOURCE_KEY_SEGMENTS = [
   // feedback_capability_in_render_recipe memory.
   "injectOpenAiCompat",
   "compatCapabilitiesHash",
+  "mcpAppsCapabilitiesHash",
 ] as const;
 
 function describeFetchSourceKeyDiff(prev: string, next: string): string {
@@ -376,6 +386,7 @@ export function MCPAppsRenderer({
   onExitFullscreen,
   onModelContextUpdate,
   onAppSupportedDisplayModesChange,
+  onRequestTeardown,
   isOffline,
   cachedWidgetHtmlUrl,
   liveFetchPreferred,
@@ -388,6 +399,7 @@ export function MCPAppsRenderer({
   initialWidgetState,
   minimalMode = false,
 }: MCPAppsRendererProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const sandboxRef = useRef<SandboxedIframeHandle>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const sharedHostStyle = usePreferencesStore((s) => s.hostStyle);
@@ -555,16 +567,66 @@ export function MCPAppsRenderer({
   // always a non-empty array (see `extractHostDisplayModes` fallbacks)
   // so the only way intersection is empty is when the playground asks
   // for modes the simulated host doesn't advertise.
+  // SEP-1865: after `ui/initialize` the view declares
+  // `appCapabilities.availableDisplayModes` — the modes it can render in.
+  // The host uses this to narrow what it ADVERTISES to the view in
+  // `HostContext.availableDisplayModes`, NOT to coerce the current
+  // display mode. A widget that only renders in fullscreen (e.g. a
+  // canvas-heavy app) is expected to call `ui/request-display-mode`
+  // itself after init — the host won't auto-switch the user out of the
+  // mode they (or the parent) picked. Coercing here was a real
+  // regression: every tool call snapped to fullscreen the moment the
+  // widget initialized.
+  const [appSupportedDisplayModes, setAppSupportedDisplayModes] = useState<
+    DisplayMode[] | undefined
+  >(undefined);
+
+  // Host-supported modes only. Drives the current-mode clamp and the
+  // `ui/request-display-mode` handler — both of which must stay
+  // independent of the app's declaration so the user-visible mode is
+  // never auto-coerced.
   const effectiveAvailableDisplayModes = useMemo(() => {
     const matrixModes = earlyEffectiveMcpAppsCapabilities.availableDisplayModes;
-    const intersection = matrixModes.filter((m) =>
+    const hostIntersection = matrixModes.filter((m) =>
       configuredAvailableDisplayModes.includes(m as DisplayMode),
     );
-    return intersection.length > 0 ? intersection : matrixModes;
+    const baseHostModes =
+      hostIntersection.length > 0 ? hostIntersection : matrixModes;
+    if (!appSupportedDisplayModes || appSupportedDisplayModes.length === 0) {
+      return baseHostModes;
+    }
+    const appIntersection = baseHostModes.filter((m) =>
+      appSupportedDisplayModes.includes(m as DisplayMode),
+    );
+    // SEP-1865: when the intersection is empty (the app advertises modes
+    // the host doesn't support at all) we fall back to host-supported
+    // rather than advertising nothing — the renderer will still clamp
+    // the actual mode to the host's set, and the empty case is a
+    // misconfigured app the host can't render anyway.
+    return appIntersection.length > 0 ? appIntersection : baseHostModes;
   }, [
     earlyEffectiveMcpAppsCapabilities.availableDisplayModes,
     configuredAvailableDisplayModes,
+    appSupportedDisplayModes,
   ]);
+
+  // Advertised intersection — published in `HostContext.availableDisplayModes`
+  // so the view knows which modes the host will honor on
+  // `requestDisplayMode`. Falls back to host modes when the app
+  // declaration is absent or the intersection would be empty
+  // (a misconfigured app that doesn't overlap the host shouldn't
+  // make the host advertise nothing).
+  const advertisedAvailableDisplayModes = useMemo(() => {
+    if (!appSupportedDisplayModes || appSupportedDisplayModes.length === 0) {
+      return effectiveAvailableDisplayModes;
+    }
+    const intersection = effectiveAvailableDisplayModes.filter((m) =>
+      appSupportedDisplayModes.includes(m as DisplayMode),
+    );
+    return intersection.length > 0
+      ? intersection
+      : effectiveAvailableDisplayModes;
+  }, [effectiveAvailableDisplayModes, appSupportedDisplayModes]);
 
   // Get device capabilities from playground store (SEP-1865)
   const playgroundCapabilities = useUIPlaygroundStore((s) => s.capabilities);
@@ -656,6 +718,19 @@ export function MCPAppsRenderer({
       ),
     [requestedDisplayMode, effectiveAvailableDisplayModes],
   );
+
+  // Clear the sticky inline-preference flag the moment the effective
+  // mode moves off "inline" — that transition can only come from the
+  // user (close-button paths set the flag true and switch to inline;
+  // the widget's `request-display-mode` is gated by the flag). So a
+  // non-inline mode means the user has re-opted into fullscreen / PIP
+  // via the host's display-mode picker, and the widget should be free
+  // to keep its preferred mode again.
+  useEffect(() => {
+    if (effectiveDisplayMode !== "inline") {
+      userPreferInlineRef.current = false;
+    }
+  }, [effectiveDisplayMode]);
   const setDisplayMode = useCallback(
     (mode: DisplayMode) => {
       if (isControlled) {
@@ -740,6 +815,19 @@ export function MCPAppsRenderer({
     : effectiveInjectOpenAiCompat
       ? stableStringifyJson(liveOpenAiCompatCapabilities ?? null)
       : null;
+  // Sibling reload key for the MCP Apps spec-bridge matrix. The OpenAI
+  // shim caps above bake into the iframe HTML at fetch time; MCP Apps
+  // caps don't, but they drive the `HostCapabilities` blob in
+  // `ui/initialize` and gate runtime bridge behavior (e.g. the
+  // `widgetDisplayModeRequests` policy and the `userPreferInlineRef`
+  // seed). Hashing the resolved record into the reload key forces a
+  // remount when the user toggles a row in the matrix, so the new
+  // policy takes effect on the live widget without a manual reload.
+  // Cached replays use `null` for the same reason the OpenAI sibling
+  // does — byte-frozen snapshots shouldn't churn on live host edits.
+  const widgetMcpAppsCapabilitiesReloadKey = isCachedReplay
+    ? null
+    : stableStringifyJson(earlyEffectiveMcpAppsCapabilities);
   // The OpenAI Apps SDK compatibility runtime bakes toolInput/toolOutput into
   // `window.openai` during HTML injection. Pure SEP-1865 views can boot while
   // input is still streaming and receive the final result via
@@ -837,6 +925,14 @@ export function MCPAppsRenderer({
     loadedCompatCapabilitiesHash,
     setLoadedCompatCapabilitiesHash,
   ] = useState<string | null>(null);
+  // Sibling of `loadedCompatCapabilitiesHash` for the MCP Apps
+  // spec-bridge matrix. Tracks the resolved-caps hash the iframe was
+  // last initialized against so a matrix toggle (e.g.
+  // `widgetDisplayModeRequests`) forces a remount on the next render.
+  const [
+    loadedMcpAppsCapabilitiesHash,
+    setLoadedMcpAppsCapabilitiesHash,
+  ] = useState<string | null>(null);
   // Modal state
   const [modalOpen, setModalOpen] = useState(false);
   const [modalParams, setModalParams] = useState<Record<string, unknown>>({});
@@ -878,11 +974,55 @@ export function MCPAppsRenderer({
   const hostContextRef = useRef<McpUiHostContext | null>(null);
   const isReadyRef = useRef(false);
   const lastInlineHeightRef = useRef<string>("400px");
+  // Sticky flag set when the user explicitly returned to inline (X
+  // click in fullscreen / PIP). While set, widget-driven
+  // `ui/request-display-mode` requests for non-inline modes are
+  // declined. Cleared whenever the user explicitly picks a non-inline
+  // mode again (display-mode picker). Without this, widgets that
+  // re-request their preferred mode on every `host-context-changed`
+  // can trap the user in a mode they just dismissed.
+  //
+  // Seeded from the `widgetDisplayModeRequests` host policy so the
+  // `"user-initiated-only"` mode kicks in from the first mount: a widget
+  // that requests fullscreen on init is treated the same as one
+  // re-requesting it after the user dismissed once.
+  const userPreferInlineRef = useRef(
+    earlyEffectiveMcpAppsCapabilities.widgetDisplayModeRequests ===
+      "user-initiated-only",
+  );
+  // SEP-1865: width is honored only when the host's outer container is
+  // unbounded (no `width` from `containerDimensions`). The chatbox bubble
+  // is the bounding box today, so this stays null until the app sends a
+  // width request. The renderer applies the value to the visible inline
+  // container and caps it with max-width: 100%.
+  const lastInlineWidthRef = useRef<string | null>(null);
+
+  // Reset widget-identity-scoped state when the renderer is reused for a
+  // different tool call / resource / widget bundle. Without this the next
+  // widget inherits the previous widget's intersected display modes, its
+  // narrowed inline width, and (if the user had dismissed to inline) its
+  // sticky inline preference. Also re-seeds the sticky flag from the
+  // current `widgetDisplayModeRequests` policy so flipping the Apps tab
+  // tri-state on an already-mounted renderer takes effect on the next
+  // identity change instead of waiting for an unmount.
+  useEffect(() => {
+    setAppSupportedDisplayModes(undefined);
+    lastInlineWidthRef.current = null;
+    userPreferInlineRef.current =
+      earlyEffectiveMcpAppsCapabilities.widgetDisplayModeRequests ===
+      "user-initiated-only";
+  }, [
+    toolCallId,
+    resourceUri,
+    cachedWidgetHtmlUrl,
+    earlyEffectiveMcpAppsCapabilities.widgetDisplayModeRequests,
+  ]);
 
   const onSendFollowUpRef = useRef(onSendFollowUp);
   const onCallToolRef = useRef(onCallTool);
   const onRequestPipRef = useRef(onRequestPip);
   const onExitPipRef = useRef(onExitPip);
+  const onRequestTeardownRef = useRef(onRequestTeardown);
   const setDisplayModeRef = useRef(setDisplayMode);
   const isPlaygroundActiveRef = useRef(isPlaygroundActive);
   const playgroundDeviceTypeRef = useRef(playgroundDeviceType);
@@ -970,7 +1110,8 @@ export function MCPAppsRenderer({
       widgetHtml &&
       loadedCspMode === cspMode &&
       loadedInjectOpenAiCompat === widgetInjectOpenAiCompatReloadKey &&
-      loadedCompatCapabilitiesHash === widgetCompatCapabilitiesReloadKey
+      loadedCompatCapabilitiesHash === widgetCompatCapabilitiesReloadKey &&
+      loadedMcpAppsCapabilitiesHash === widgetMcpAppsCapabilitiesReloadKey
     )
       return;
 
@@ -987,6 +1128,7 @@ export function MCPAppsRenderer({
       // `false` all serialize distinctly into the pipe-joined key.
       String(widgetInjectOpenAiCompatReloadKey),
       widgetCompatCapabilitiesReloadKey ?? "",
+      widgetMcpAppsCapabilitiesReloadKey ?? "",
     ].join("|");
     latestFetchSourceKeyRef.current = fetchSourceKey;
     // Mount log for the Sandbox debug panel. Record one entry per real
@@ -1043,6 +1185,10 @@ export function MCPAppsRenderer({
       // fetch that called `setBridgeTransportReady(false)` after the
       // bridge had already connected.
       setLoadedCompatCapabilitiesHash(widgetCompatCapabilitiesReloadKey);
+      // MCP Apps caps don't bake into byte-frozen HTML; cached replays
+      // stamp `null` (matching the reload key's cached-replay sentinel)
+      // so live host edits don't churn the snapshot.
+      setLoadedMcpAppsCapabilitiesHash(widgetMcpAppsCapabilitiesReloadKey);
       setWidgetHtmlStore(
         toolCallId,
         html,
@@ -1157,6 +1303,8 @@ export function MCPAppsRenderer({
       // so future per-method changes detect this snapshot as stale and
       // force a refetch.
       setLoadedCompatCapabilitiesHash(widgetCompatCapabilitiesReloadKey);
+      // Sibling stamp for the MCP Apps spec-bridge matrix.
+      setLoadedMcpAppsCapabilitiesHash(widgetMcpAppsCapabilitiesReloadKey);
 
       // Store widget HTML in debug store for save view feature. Stamp the
       // resolved flag + per-method capability surface alongside it so
@@ -1280,6 +1428,8 @@ export function MCPAppsRenderer({
     widgetInjectOpenAiCompatReloadKey,
     loadedCompatCapabilitiesHash,
     widgetCompatCapabilitiesReloadKey,
+    loadedMcpAppsCapabilitiesHash,
+    widgetMcpAppsCapabilitiesReloadKey,
     effectiveInjectOpenAiCompat,
     liveOpenAiCompatCapabilities,
     serverId,
@@ -1372,8 +1522,10 @@ export function MCPAppsRenderer({
       loadedInjectOpenAiCompat !== null &&
       loadedInjectOpenAiCompat !== widgetInjectOpenAiCompatReloadKey;
     const capabilitiesChanged =
-      loadedCompatCapabilitiesHash !== null &&
-      loadedCompatCapabilitiesHash !== widgetCompatCapabilitiesReloadKey;
+      (loadedCompatCapabilitiesHash !== null &&
+        loadedCompatCapabilitiesHash !== widgetCompatCapabilitiesReloadKey) ||
+      (loadedMcpAppsCapabilitiesHash !== null &&
+        loadedMcpAppsCapabilitiesHash !== widgetMcpAppsCapabilitiesReloadKey);
     if (injectionChanged || capabilitiesChanged) {
       clearCspViolations(toolCallId);
     }
@@ -1382,6 +1534,8 @@ export function MCPAppsRenderer({
     loadedInjectOpenAiCompat,
     widgetCompatCapabilitiesReloadKey,
     loadedCompatCapabilitiesHash,
+    widgetMcpAppsCapabilitiesReloadKey,
+    loadedMcpAppsCapabilitiesHash,
     toolCallId,
     clearCspViolations,
   ]);
@@ -1400,8 +1554,10 @@ export function MCPAppsRenderer({
       loadedInjectOpenAiCompat !== null &&
       loadedInjectOpenAiCompat !== widgetInjectOpenAiCompatReloadKey;
     const capabilitiesChanged =
-      loadedCompatCapabilitiesHash !== null &&
-      loadedCompatCapabilitiesHash !== widgetCompatCapabilitiesReloadKey;
+      (loadedCompatCapabilitiesHash !== null &&
+        loadedCompatCapabilitiesHash !== widgetCompatCapabilitiesReloadKey) ||
+      (loadedMcpAppsCapabilitiesHash !== null &&
+        loadedMcpAppsCapabilitiesHash !== widgetMcpAppsCapabilitiesReloadKey);
     if (injectionChanged || capabilitiesChanged) {
       setIsReady(false);
       isReadyRef.current = false;
@@ -1412,6 +1568,8 @@ export function MCPAppsRenderer({
     loadedInjectOpenAiCompat,
     widgetCompatCapabilitiesReloadKey,
     loadedCompatCapabilitiesHash,
+    widgetMcpAppsCapabilitiesReloadKey,
+    loadedMcpAppsCapabilitiesHash,
     resetStreamingState,
   ]);
 
@@ -1655,7 +1813,10 @@ export function MCPAppsRenderer({
       ...baseWithoutToolInfo,
       theme: resolvedTheme,
       displayMode: effectiveDisplayMode,
-      availableDisplayModes: effectiveAvailableDisplayModes,
+      // Publish the (host ∩ app) intersection here so the view sees the
+      // narrowed set it can `requestDisplayMode` against. The current
+      // `displayMode` above stays clamped to host-supported only.
+      availableDisplayModes: advertisedAvailableDisplayModes,
       locale,
       timeZone,
       platform:
@@ -1689,7 +1850,7 @@ export function MCPAppsRenderer({
     baseHostContext,
     resolvedTheme,
     effectiveDisplayMode,
-    effectiveAvailableDisplayModes,
+    advertisedAvailableDisplayModes,
     locale,
     timeZone,
     deviceCapabilities,
@@ -2160,6 +2321,7 @@ export function MCPAppsRenderer({
     onModelContextUpdateRef.current = onModelContextUpdate;
     onAppSupportedDisplayModesChangeRef.current =
       onAppSupportedDisplayModesChange;
+    onRequestTeardownRef.current = onRequestTeardown;
   }, [
     onSendFollowUp,
     onCallTool,
@@ -2175,6 +2337,7 @@ export function MCPAppsRenderer({
     toolsMetadata,
     onModelContextUpdate,
     onAppSupportedDisplayModesChange,
+    onRequestTeardown,
   ]);
 
   // ENFORCEMENT (live):
@@ -2192,6 +2355,12 @@ export function MCPAppsRenderer({
   //     onlistresources /
   //     onlistresourcetemplates      ← effectiveHostCapabilities.serverResources
   //   • bridge.onloggingmessage      ← effectiveHostCapabilities.logging
+  //   • bridge.ondownloadfile        ← effectiveHostCapabilities.downloadFile
+  //   • bridge.onrequestteardown     ← matrix.requestTeardown (behavior
+  //                                    gate; not wire-advertised — the
+  //                                    notification is always delivered
+  //                                    by the SDK, but the host can
+  //                                    decline to act on it)
   //
   // Intentionally unconditional (no chip / not capability-negotiated in
   // SEP-1865):
@@ -2202,9 +2371,10 @@ export function MCPAppsRenderer({
   //                                    granted, not whether requests reply
   //   • bridge.onlistprompts         — no serverPrompts cap exists yet
   //   • handleUploadFile / GetFileDownloadUrl
-  //                                  — gated by a separate `downloadFile`
-  //                                    cap that no template advertises and
-  //                                    no chip surfaces today
+  //                                  — legacy postMessage paths kept for
+  //                                    Apps SDK widgets; SEP-1865 hosts
+  //                                    use the matrix-gated
+  //                                    bridge.ondownloadfile above
   const registerBridgeHandlers = useCallback(
     (bridge: AppBridge) => {
       bridge.oninitialized = () => {
@@ -2218,9 +2388,16 @@ export function MCPAppsRenderer({
             null,
           wasReady,
         });
-        onAppSupportedDisplayModesChangeRef.current?.(
-          appCaps?.availableDisplayModes as DisplayMode[] | undefined,
-        );
+        const declaredAppModes = appCaps?.availableDisplayModes as
+          | DisplayMode[]
+          | undefined;
+        onAppSupportedDisplayModesChangeRef.current?.(declaredAppModes);
+        // SEP-1865: clamp the advertised + runtime mode set against the
+        // app's declaration. The next render of `hostContext` will pick
+        // up the new intersection and the post-init `setHostContext`
+        // effect will publish `host-context-changed` with the updated
+        // `availableDisplayModes` (matrix-gated by hostContextChanged).
+        setAppSupportedDisplayModes(declaredAppModes);
         // If the guest re-initialized (e.g. an SDK-based app completing its
         // own handshake after the openai-compat shim already initialized),
         // bump reinitCount so the delivery effects re-send tool data.
@@ -2374,13 +2551,27 @@ export function MCPAppsRenderer({
         };
       }
 
-      // Width resize handling was removed here — previously this destructured
-      // `width` and applied it to the iframe via `min(${width}px, 100%)`.
-      // Only height-based auto-resize is applied; width is host-controlled.
-      bridge.onsizechange = ({ height }) => {
+      // SEP-1865: apply both height AND width when the host outer
+      // container is flexible (no fixed `width` published via
+      // `containerDimensions`). The renderer caps the requested width
+      // to 100% of the parent via `max-width: 100%` so a misbehaving
+      // widget can't overflow the chatbox bubble. Fixed-
+      // width contexts (PIP/fullscreen, or future hosts that publish
+      // `containerDimensions.width`) ignore the width request — the
+      // height-only path remains.
+      bridge.onsizechange = ({ height, width }) => {
         if (effectiveDisplayModeRef.current !== "inline") return;
         const iframe = sandboxRef.current?.getIframeElement();
-        if (!iframe || height === undefined) return;
+        const container = containerRef.current;
+        if (!iframe || !container) return;
+        if (height === undefined && width === undefined) return;
+        const hostCtx = hostContextRef.current as
+          | (McpUiHostContext & {
+              containerDimensions?: { width?: number };
+            })
+          | null;
+        const hostHasFixedWidth =
+          typeof hostCtx?.containerDimensions?.width === "number";
 
         // The MCP App has requested a `height`, but if
         // `box-sizing: border-box` is applied to the outer iframe element, then we
@@ -2406,7 +2597,31 @@ export function MCPAppsRenderer({
           lastInlineHeightRef.current = `${adjustedHeight}px`;
         }
 
+        if (width !== undefined && !hostHasFixedWidth) {
+          let adjustedWidth = width;
+          if (isBorderBox) {
+            adjustedWidth +=
+              parseFloat(style.borderLeftWidth) +
+              parseFloat(style.borderRightWidth);
+          }
+          // Cap to parent so an over-eager widget can't escape the
+          // bounding bubble. Keep `width` as a plain px value and rely on
+          // `max-width: 100%` for the cap; this is equivalent to
+          // `min(width, 100%)` in browsers and easier for tests/DevTools.
+          const widthCss = `${adjustedWidth}px`;
+          from.width = `${container.offsetWidth}px`;
+          container.style.width = to.width = widthCss;
+          iframe.style.width = "100%";
+          lastInlineWidthRef.current = widthCss;
+        }
+
         iframe.animate([from, to], { duration: 300, easing: "ease-out" });
+        if (to.width !== undefined) {
+          container.animate?.([{ width: from.width }, { width: to.width }], {
+            duration: 300,
+            easing: "ease-out",
+          });
+        }
         // size-changed fires on every resize/animation tick — chatty widgets
         // can flood the traffic log. The corresponding ui/notifications/
         // size-changed transport message is already suppressed above; rely on
@@ -2415,6 +2630,40 @@ export function MCPAppsRenderer({
 
       bridge.onrequestdisplaymode = async ({ mode }) => {
         const requestedMode = mode ?? "inline";
+        // Host policy gate: SEP-1865 allows the host to decline
+        // widget-initiated `ui/request-display-mode`. The
+        // `widgetDisplayModeRequests` matrix row (Apps tab) decides:
+        //   - "accept": pass through to the existing sticky / clamp path
+        //   - "decline": always return the current mode
+        //   - "user-initiated-only": handled via the sticky-inline
+        //     ref check below — the ref is seeded `true` at mount so
+        //     the first widget request is gated until the user picks
+        //     a non-inline mode via the host display-mode picker.
+        const policy =
+          mcpAppsCapabilitiesRef.current?.widgetDisplayModeRequests ?? "accept";
+        if (requestedMode !== "inline" && policy === "decline") {
+          const granted = effectiveDisplayModeRef.current;
+          logWidgetDebug("ui-to-host", "ui/request-display-mode", {
+            requested: requestedMode,
+            granted,
+            reason: "policy-decline",
+          });
+          return { mode: granted };
+        }
+        // Sticky inline-preference override: if the user explicitly
+        // returned to inline (X click), or the policy seeded the flag
+        // at mount, decline widget non-inline requests by returning
+        // inline. Spec allows the host to return a different mode than
+        // requested. Cleared when the user explicitly re-enters
+        // fullscreen / PIP from the host display-mode picker.
+        if (requestedMode !== "inline" && userPreferInlineRef.current) {
+          logWidgetDebug("ui-to-host", "ui/request-display-mode", {
+            requested: requestedMode,
+            granted: "inline",
+            reason: "user-prefers-inline",
+          });
+          return { mode: "inline" };
+        }
         const hostAvailableModes = extractHostDisplayModes(
           hostContextRef.current as Record<string, unknown> | undefined,
         );
@@ -2462,6 +2711,100 @@ export function MCPAppsRenderer({
           });
 
           return {};
+        };
+      }
+
+      // SEP-1865 `ui/download-file`: the view passes embedded resource
+      // contents (`text` or `blob`) and/or resource links. The host
+      // mediates the actual download since the iframe sandbox blocks
+      // direct anchor-clicks. We use a Blob + object-URL anchor (no
+      // confirmation prompt yet — opt-in confirmation is a follow-up).
+      if (effectiveHostCapabilities.downloadFile) {
+        bridge.ondownloadfile = async ({ contents }) => {
+          try {
+            for (const item of contents) {
+              if (item.type === "resource" && item.resource) {
+                const res = item.resource as {
+                  uri: string;
+                  text?: string;
+                  blob?: string;
+                  mimeType?: string;
+                };
+                const mimeType = res.mimeType ?? "application/octet-stream";
+                let blob: Blob;
+                if (typeof res.blob === "string") {
+                  const binary = atob(res.blob);
+                  const bytes = new Uint8Array(binary.length);
+                  for (let i = 0; i < binary.length; i++) {
+                    bytes[i] = binary.charCodeAt(i);
+                  }
+                  blob = new Blob([bytes], { type: mimeType });
+                } else {
+                  blob = new Blob([res.text ?? ""], { type: mimeType });
+                }
+                const url = URL.createObjectURL(blob);
+                try {
+                  const anchor = document.createElement("a");
+                  anchor.href = url;
+                  anchor.download = res.uri.split("/").pop() ?? "download";
+                  anchor.rel = "noopener";
+                  document.body.appendChild(anchor);
+                  anchor.click();
+                  anchor.remove();
+                } finally {
+                  // Defer revocation so the browser has a chance to
+                  // start the download before the object URL goes away.
+                  setTimeout(() => URL.revokeObjectURL(url), 1000);
+                }
+              } else if (item.type === "resource_link") {
+                const link = item as { uri: string };
+                // Refuse navigations that aren't a browser-fetchable scheme.
+                // `javascript:`/`data:` here would execute in the host origin,
+                // and MCP-style schemes (`ui://`, `file://`, server-defined)
+                // need host-side resolution that this path doesn't do yet —
+                // fail loud rather than silently opening an unusable tab.
+                const parsed = new URL(link.uri, window.location.href);
+                if (!["http:", "https:", "blob:"].includes(parsed.protocol)) {
+                  throw new Error(
+                    `Unsupported download URI protocol: ${parsed.protocol}`,
+                  );
+                }
+                window.open(parsed.href, "_blank", "noopener,noreferrer");
+              }
+            }
+            return {};
+          } catch (err) {
+            logWidgetDebug("ui-to-host", "ui/download-file", {
+              error: err instanceof Error ? err.message : String(err),
+            });
+            return { isError: true };
+          }
+        };
+      }
+
+      // SEP-1865 `ui/notifications/request-teardown`: the view asks the
+      // host to tear it down. Best-effort graceful close — fire
+      // `teardownResource` so the view can persist state, then bubble
+      // the request to the parent so it can actually unmount the
+      // iframe. `requestTeardown` is a behavior gate on the matrix
+      // (not a wire-advertised host capability); presets that set it
+      // false simulate hosts that ignore view-initiated teardown
+      // requests by leaving the handler unassigned, in which case the
+      // SDK logs the notification but does nothing.
+      if (mcpAppsCapabilitiesRef.current?.requestTeardown !== false) {
+        bridge.onrequestteardown = async () => {
+          logWidgetDebug("ui-to-host", "ui/notifications/request-teardown", {});
+          try {
+            await bridge.teardownResource({});
+          } catch (err) {
+            // Teardown best-effort; if the view never acks the
+            // resource-teardown request we still proceed to unmount so
+            // a misbehaving widget can't block its own removal.
+            logWidgetDebug("host-to-ui", "ui/resource-teardown", {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+          onRequestTeardownRef.current?.(toolCallIdRef.current);
         };
       }
     },
@@ -2946,6 +3289,10 @@ export function MCPAppsRenderer({
 
     return "mt-3 space-y-2 relative group";
   })();
+  const containerStyle: CSSProperties | undefined =
+    !isFullscreen && !isPip && lastInlineWidthRef.current
+      ? { width: lastInlineWidthRef.current, maxWidth: "100%" }
+      : undefined;
 
   const canTransitionHeight =
     !isFullscreen &&
@@ -3018,12 +3365,13 @@ export function MCPAppsRenderer({
   );
 
   return (
-    <div className={containerClassName}>
+    <div ref={containerRef} className={containerClassName} style={containerStyle}>
 
       {((isFullscreen && isContainedFullscreenMode) ||
         (isPip && isMobilePlaygroundMode)) && (
         <button
           onClick={() => {
+            userPreferInlineRef.current = true;
             setDisplayMode("inline");
             if (isPip) {
               onExitPip?.(toolCallId);
@@ -3045,6 +3393,7 @@ export function MCPAppsRenderer({
           </div>
           <button
             onClick={() => {
+              userPreferInlineRef.current = true;
               setDisplayMode("inline");
               if (pipWidgetId === toolCallId) {
                 onExitPip?.(toolCallId);
@@ -3061,6 +3410,7 @@ export function MCPAppsRenderer({
       {isPip && !isMobilePlaygroundMode && (
         <button
           onClick={() => {
+            userPreferInlineRef.current = true;
             setDisplayMode("inline");
             onExitPip?.(toolCallId);
           }}

@@ -39,7 +39,7 @@ interface ThreadProps {
     context: {
       content?: ContentBlock[];
       structuredContent?: Record<string, unknown>;
-    },
+    }
   ) => void;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
@@ -110,8 +110,11 @@ export function Thread({
 }: ThreadProps) {
   const [pipWidgetId, setPipWidgetId] = useState<string | null>(null);
   const [fullscreenWidgetId, setFullscreenWidgetId] = useState<string | null>(
-    null,
+    null
   );
+  const [tornDownWidgetIds, setTornDownWidgetIds] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
   const [isFullscreenChatOpen, setIsFullscreenChatOpen] = useState(false);
   const [fullscreenChatInput, setFullscreenChatInput] = useState("");
 
@@ -131,6 +134,20 @@ export function Thread({
   };
 
   const handleExitFullscreen = (toolCallId: string) => {
+    if (fullscreenWidgetId === toolCallId) {
+      setFullscreenWidgetId(null);
+      onFullscreenChange?.(false);
+    }
+  };
+
+  const handleRequestTeardown = (toolCallId: string) => {
+    setTornDownWidgetIds((prev) => {
+      if (prev.has(toolCallId)) return prev;
+      return new Set(prev).add(toolCallId);
+    });
+    if (pipWidgetId === toolCallId) {
+      setPipWidgetId(null);
+    }
     if (fullscreenWidgetId === toolCallId) {
       setFullscreenWidgetId(null);
       onFullscreenChange?.(false);
@@ -161,7 +178,7 @@ export function Thread({
     chatboxHostTheme === "dark";
   const lastRenderableMessage = useMemo(
     () => getLastRenderableConversationMessage(messages),
-    [messages],
+    [messages]
   );
   const hasVisibleAssistantResponse =
     lastRenderableMessage?.role === "assistant" &&
@@ -186,7 +203,7 @@ export function Thread({
     <div
       className={cn(
         "flex-1 min-h-0 min-w-0 pb-4",
-        isChatgptDark && "text-[#DFDFDF]",
+        isChatgptDark && "text-[#DFDFDF]"
       )}
       style={
         chatgptFamilyDarkBackground
@@ -212,6 +229,8 @@ export function Thread({
         onExitPip={handleExitPip}
         onRequestFullscreen={handleRequestFullscreen}
         onExitFullscreen={handleExitFullscreen}
+        onRequestTeardown={handleRequestTeardown}
+        tornDownWidgetIds={tornDownWidgetIds}
         displayMode={displayMode}
         onDisplayModeChange={onDisplayModeChange}
         onToolApprovalResponse={onToolApprovalResponse}
