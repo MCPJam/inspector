@@ -964,6 +964,29 @@ await window.openai.requestDisplayMode({
 
 The parent component handles these requests and updates the widget's display mode accordingly.
 
+#### "Open in server" button (`setOpenInAppUrl`)
+
+When a widget is in fullscreen mode, it can surface an **"Open in \<server name\>"** button in the header chrome by calling `window.openai.setOpenInAppUrl()`. This lets users open the widget's underlying web app in a new tab without leaving the conversation.
+
+```javascript
+// Point the fullscreen header button at a specific URL
+window.openai.setOpenInAppUrl({ href: "https://app.example.com/item/42" });
+```
+
+**Behavior:**
+
+- The button appears in the fullscreen header with the server name as its label (full text on desktop, icon-only on mobile/PiP/contained-fullscreen).
+- Only `http:` and `https:` URLs are accepted. Other schemes (e.g., `javascript:`) are silently ignored.
+- The URL opens in a new tab with `noopener,noreferrer` — the new tab cannot communicate back to MCPJam.
+- The override resets when the widget is reloaded or the `toolCallId` changes.
+- If the host capability matrix has `setOpenInAppUrl: false`, the button is hidden and the postMessage is ignored.
+
+**Implementation files:**
+
+- `sdk/src/McpAppsOpenAICompatibleRuntime.ts` — installs `window.openai.setOpenInAppUrl` when the capability is enabled.
+- `mcpjam-inspector/client/src/components/chat-v2/thread/mcp-apps/mcp-apps-renderer.tsx` — handles the `openai:setOpenInAppUrl` postMessage and renders the button.
+- `mcpjam-inspector/client/src/components/ui/sandboxed-iframe.tsx` — forwards `openai:setOpenInAppUrl` messages through the sandbox proxy.
+
 #### Fullscreen Navigation (PR #1033)
 
 When a widget is in fullscreen mode, a navigation header is rendered at the top with back/forward buttons, widget title, and close button. This enables users to navigate multi-page widgets without leaving fullscreen mode.
