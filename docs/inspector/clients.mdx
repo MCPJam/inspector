@@ -32,7 +32,17 @@ These map directly to fields the inspector sends during the standard MCP `initia
 
 ### Per-server connection overrides
 
-You can override the request timeout and headers **per server attached to the Client**. This lets a single Client talk to one server with a long timeout and an auth header while keeping defaults for the others.
+You can override the request timeout, headers, and MCP protocol version **per server attached to the Client**. This lets a single Client talk to one server with a long timeout and an auth header while keeping defaults for the others.
+
+#### MCP protocol version
+
+When the `stateless-mcp-enabled` feature flag is on, a **Protocol version** picker appears in the **Connection overrides** section of each server's detail modal. It has three states:
+
+- **Host default** — defers to the protocol version set on the Client (or the SDK default if none is set).
+- **Latest** — pins the server to `2025-11-25`, the current stable wire version. Use this to force a stateful connection even when the host default is set to Draft.
+- **Draft** — pins the server to `DRAFT-2026-v1`, the stateless preview transport. Only available for Streamable HTTP servers.
+
+Saving a protocol version override automatically reconnects the server using the new setting. While the server is connected and the form has no other pending changes, the footer shows a **Reconnect** button so you can force a fresh connection after changing the protocol version without toggling the server card.
 
 ### MCP App settings (SEP-1865)
 
