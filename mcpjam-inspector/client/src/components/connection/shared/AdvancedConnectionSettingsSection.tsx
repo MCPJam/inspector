@@ -12,17 +12,12 @@ import { JsonEditor } from "@/components/ui/json-editor";
 import type { McpProtocolVersion } from "@/lib/client-config-v2";
 
 /**
- * Per-server protocol-version pin. The picker is a binary "Latest" vs
- * "Draft" toggle — the only two code paths the SDK factory actually
- * routes to today:
- *   - "latest" → `undefined`, legacy `OfficialSdkClientAdapter` +
- *     upstream `Client` (negotiates whatever `LATEST_PROTOCOL_VERSION`
- *     the SDK is shipping at runtime).
- *   - "latest" → `"2025-11-25"`, explicit stable pin — overrides a host-level
- *     Draft default.
- *   - "draft"  → `"DRAFT-2026-v1"`, the stateless preview client.
+ * Per-server protocol-version pin. Three-state picker:
  *   - "inherit" → `undefined`, defers to the host default (or SDK default if
  *     no host default is set).
+ *   - "latest"  → `"2025-11-25"`, explicit stable pin — overrides a
+ *     host-level Draft default.
+ *   - "draft"   → `"DRAFT-2026-v1"`, the stateless preview client.
  */
 type DropdownValue = "inherit" | "latest" | "draft";
 

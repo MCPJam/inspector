@@ -149,9 +149,6 @@ export function ServerDetailModal({
   const resolvedHostDefaultMcpProtocolVersion: McpProtocolVersion | undefined =
     hostDefaultMcpProtocolVersion ?? activeMcpProfile?.mcpProtocolVersion;
 
-  // Whether the server is in the project's auto-connect `serverIds`
-  // set. The backend `ensureProjectServerConfig` rejects overrides for
-  // servers not in this set ("override key X is not a member of
   // Pending reconnect bookkeeping for the override-save → reconnect
   // race (see `handleMcpProtocolVersionOverrideChange` below). Holds the
   // target override value the user just wrote; the watcher effect
@@ -168,9 +165,11 @@ export function ServerDetailModal({
     if (!pending) return;
     if (currentMcpProtocolVersionOverride !== pending.target) return;
     pendingReconnectRef.current = null;
-    void onReconnect(server.name).catch(() => {
-      // Reconnect failures surface their own toast inside the handler.
-    });
+    void onReconnect(server.name, { allowInteractiveOAuthFlow: false }).catch(
+      () => {
+        // Reconnect failures surface their own toast inside the handler.
+      },
+    );
   }, [
     currentMcpProtocolVersionOverride,
     onReconnect,
@@ -260,7 +259,7 @@ export function ServerDetailModal({
       window.setTimeout(() => {
         if (pendingReconnectRef.current?.target === next) {
           pendingReconnectRef.current = null;
-          void onReconnect(server.name).catch(() => {});
+          void onReconnect(server.name, { allowInteractiveOAuthFlow: false }).catch(() => {});
         }
       }, 1500);
       // Tick the watcher so it re-evaluates immediately in case the
