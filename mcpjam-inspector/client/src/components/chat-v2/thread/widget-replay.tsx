@@ -154,6 +154,7 @@ export function WidgetReplay({
     <MCPAppsRenderer
       chatSessionId={chatSessionId}
       serverId={serverId ?? "offline-view"}
+      serverName={serverId ?? "offline-view"}
       toolCallId={toolCallId}
       toolName={toolName}
       toolState={toolState}

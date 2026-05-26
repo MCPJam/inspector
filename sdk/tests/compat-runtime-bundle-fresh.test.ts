@@ -41,6 +41,7 @@ const fingerprints: Array<[string, string]> = [
   ["upload-file message type", "openai:uploadFile"],
   ["getFileDownloadUrl message type", "openai:getFileDownloadUrl"],
   ["setWidgetState postMessage", "openai:setWidgetState"],
+  ["setOpenInAppUrl postMessage", "openai:setOpenInAppUrl"],
   ["toolResponseMetadata config field", "toolResponseMetadata"],
   ["requestCheckout notification", "openai/requestCheckout"],
   ["requestModal notification", "openai/requestModal"],

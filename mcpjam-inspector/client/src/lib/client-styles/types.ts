@@ -166,12 +166,13 @@ export interface HostMcpProfile {
  * (Component bridge table on
  * https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-mcp-apps).
  * `requestDisplayMode` is tri-state to model Copilot's "fullscreen only"
- * constraint. `selectFiles` / `setOpenInAppUrl` appear in the OpenAI
- * reference and Copilot's table; they're typed here so presets/UI can
- * express them, but the SDK runtime intentionally does NOT install them
- * as methods on `window.openai` (no-op stubs would defeat feature
- * detection — widgets that test `if (window.openai.selectFiles)` must
- * see `undefined` to take their fallback path).
+ * constraint. `selectFiles` appears in the OpenAI reference and
+ * Copilot's table; it's typed here so presets/UI can express it, but
+ * the SDK runtime intentionally does NOT install it as a method on
+ * `window.openai` yet (no-op stubs would defeat feature detection —
+ * widgets that test `if (window.openai.selectFiles)` must see
+ * `undefined` to take their fallback path). `setOpenInAppUrl` is typed
+ * and implemented by the OpenAI-compatible runtime.
  */
 export type OpenAiAppsCapabilities = {
   callTool?: boolean;

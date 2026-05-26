@@ -24,7 +24,7 @@ import {
   useUIPlaygroundStore,
   type CspMode,
 } from "@/stores/ui-playground-store";
-import { Loader2, X } from "lucide-react";
+import { ExternalLink, Loader2, X } from "lucide-react";
 import {
   SandboxedIframe,
   SandboxedIframeHandle,
@@ -109,6 +109,72 @@ const DEFAULT_INPUT_SCHEMA = { type: "object" } as const;
 
 const SUPPRESSED_UI_LOG_METHODS = new Set(["ui/notifications/size-changed"]);
 const PIP_MAX_HEIGHT = "min(40vh, 600px)";
+const SAFE_OPEN_IN_APP_PROTOCOLS = new Set(["http:", "https:"]);
+
+function toSafeOpenInAppUrl(value: string): string | null {
+  try {
+    const parsed = new URL(value);
+    return SAFE_OPEN_IN_APP_PROTOCOLS.has(parsed.protocol) ? parsed.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function readExplicitBaseHref(html: string | null): string | null {
+  if (!html) return null;
+
+  if (typeof DOMParser !== "undefined") {
+    try {
+      const parsed = new DOMParser().parseFromString(html, "text/html");
+      const href = parsed.querySelector("base[href]")?.getAttribute("href");
+      if (href?.trim()) return href.trim();
+    } catch {
+      // Fall through to the lightweight parser below.
+    }
+  }
+
+  const match = html.match(/<base\b[^>]*\bhref\s*=\s*["']([^"']+)["']/i);
+  return match?.[1]?.trim() || null;
+}
+
+function resolveExplicitBaseUrl(
+  html: string | null,
+  resourceUri: string
+): string | null {
+  const baseHref = readExplicitBaseHref(html);
+  if (!baseHref) return null;
+
+  const absolute = toSafeOpenInAppUrl(baseHref);
+  if (absolute) return absolute;
+
+  const resourceUrl = toSafeOpenInAppUrl(resourceUri);
+  if (!resourceUrl) return null;
+
+  try {
+    return toSafeOpenInAppUrl(new URL(baseHref, resourceUrl).href);
+  } catch {
+    return null;
+  }
+}
+
+function resolveOpenInAppHref(
+  href: unknown,
+  explicitBaseUrl: string | null
+): string | null {
+  if (typeof href !== "string") return null;
+  const trimmed = href.trim();
+  if (!trimmed) return null;
+
+  const absolute = toSafeOpenInAppUrl(trimmed);
+  if (absolute) return absolute;
+  if (!explicitBaseUrl) return null;
+
+  try {
+    return toSafeOpenInAppUrl(new URL(trimmed, explicitBaseUrl).href);
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Origins the hosted-mode sandbox clamp must strip from any widget-
@@ -170,6 +236,7 @@ function sanitizeHostStyleVariables(
 export interface MCPAppsRendererProps {
   chatSessionId?: string;
   serverId: string;
+  serverName?: string;
   toolCallId: string;
   toolName: string;
   toolState?: ToolState;
@@ -515,6 +582,7 @@ export function MCPAppsRenderer(props: MCPAppsRendererProps) {
 export function MCPAppsRendererSurface({
   chatSessionId,
   serverId,
+  serverName,
   toolCallId,
   toolName,
   toolState,
@@ -968,8 +1036,29 @@ export function MCPAppsRendererSurface({
   const [reinitCount, setReinitCount] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [widgetHtml, setWidgetHtml] = useState<string | null>(null);
+  const [openInAppUrlOverride, setOpenInAppUrlOverride] = useState<
+    string | null
+  >(null);
   const [sandboxProxyReady, setSandboxProxyReady] = useState(false);
   const [bridgeTransportReady, setBridgeTransportReady] = useState(false);
+  const explicitOpenInAppBaseUrl = useMemo(
+    () => resolveExplicitBaseUrl(widgetHtml, resourceUri),
+    [widgetHtml, resourceUri]
+  );
+  const defaultOpenInAppUrl = useMemo(
+    () => explicitOpenInAppBaseUrl ?? toSafeOpenInAppUrl(resourceUri),
+    [explicitOpenInAppBaseUrl, resourceUri]
+  );
+  const openInAppUrl = openInAppUrlOverride ?? defaultOpenInAppUrl;
+  const openInAppLabel = serverName?.trim() || serverId.trim() || "App";
+  const handleOpenInApp = useCallback(() => {
+    if (!openInAppUrl) return;
+    window.open(openInAppUrl, "_blank", "noopener,noreferrer");
+  }, [openInAppUrl]);
+
+  useEffect(() => {
+    setOpenInAppUrlOverride(null);
+  }, [toolCallId, resourceUri]);
   const cachedReplayInjectOpenAiCompat =
     typeof initialInjectedOpenAiCompat === "boolean"
       ? initialInjectedOpenAiCompat
@@ -3455,12 +3544,14 @@ export function MCPAppsRendererSurface({
 
     // Defense-in-depth: if the live capability matrix has the file ops
     // disabled, drop incoming `openai:uploadFile` / `getFileDownloadUrl`
-    // messages from the iframe. The SDK runtime should already be
-    // omitting these methods (so widgets that feature-detect take the
-    // fallback path), but a widget that captured a method reference
-    // before a host swap, or hand-crafted the postMessage, would still
-    // reach here. Send a clear policy error back so the widget's
-    // pending-call resolver rejects rather than hanging.
+    // messages from the iframe. Other fire-and-forget `openai:*`
+    // messages below use the same live matrix gate. The SDK runtime
+    // should already be omitting disabled methods (so widgets that
+    // feature-detect take the fallback path), but a widget that captured
+    // a method reference before a host swap, or hand-crafted the
+    // postMessage, would still reach here. Send a clear policy error
+    // back for pending-call file helpers so the widget's resolver
+    // rejects rather than hanging.
     //
     // STRICT `=== false` semantics: the persisted/sparse
     // `OpenAiAppsCapabilities` shape omits fields added after capture
@@ -3523,6 +3614,18 @@ export function MCPAppsRendererSurface({
         onWidgetStateChange(toolCallId, data.state);
       }
       setWidgetStateStore(toolCallId, data.state);
+      return;
+    }
+
+    if (data.type === "openai:setOpenInAppUrl") {
+      if (liveCaps !== null && liveCaps.setOpenInAppUrl === false) return;
+      const nextUrl = resolveOpenInAppHref(
+        data.href,
+        explicitOpenInAppBaseUrl
+      );
+      if (nextUrl) {
+        setOpenInAppUrlOverride(nextUrl);
+      }
       return;
     }
 
@@ -3662,6 +3765,8 @@ export function MCPAppsRendererSurface({
   const isContainedFullscreenMode =
     isPlaygroundActive &&
     (playgroundDeviceType === "mobile" || playgroundDeviceType === "tablet");
+  const showOpenInAppButton =
+    isFullscreen && !!openInAppUrl && !isMobilePlaygroundMode;
 
   const containerClassName = (() => {
     if (isFullscreen) {
@@ -3772,41 +3877,68 @@ export function MCPAppsRendererSurface({
     >
       {((isFullscreen && isContainedFullscreenMode) ||
         (isPip && isMobilePlaygroundMode)) && (
-        <button
-          onClick={() => {
-            userPreferInlineRef.current = true;
-            setDisplayMode("inline");
-            if (isPip) {
-              onExitPip?.(pipWidgetId ?? displayWidgetId);
-            }
-            // onExitFullscreen is called within setDisplayMode when leaving fullscreen
-          }}
-          className="absolute left-3 top-3 z-20 flex h-8 w-8 items-center justify-center rounded-full bg-black/20 hover:bg-black/40 text-white transition-colors cursor-pointer"
-          aria-label="Close"
-        >
-          <X className="w-5 h-5" />
-        </button>
-      )}
-
-      {isFullscreen && !isContainedFullscreenMode && (
-        <div className="flex items-center justify-between px-4 h-14 border-b border-border/40 bg-background/95 backdrop-blur z-40 shrink-0">
-          <div />
-          <div className="font-medium text-sm text-muted-foreground">
-            {toolName}
-          </div>
+        <>
           <button
             onClick={() => {
               userPreferInlineRef.current = true;
               setDisplayMode("inline");
-              if (ownsPipDisplayMode) {
+              if (isPip) {
                 onExitPip?.(pipWidgetId ?? displayWidgetId);
               }
+              // onExitFullscreen is called within setDisplayMode when leaving fullscreen
             }}
-            className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-            aria-label="Exit fullscreen"
+            className="absolute left-3 top-3 z-20 flex h-8 w-8 items-center justify-center rounded-full bg-black/20 hover:bg-black/40 text-white transition-colors cursor-pointer"
+            aria-label="Close"
           >
             <X className="w-5 h-5" />
           </button>
+          {showOpenInAppButton && (
+            <button
+              onClick={handleOpenInApp}
+              className="absolute right-3 top-3 z-20 flex h-8 w-8 items-center justify-center rounded-full bg-black/20 hover:bg-black/40 text-white transition-colors cursor-pointer"
+              aria-label={`Open in ${openInAppLabel}`}
+              title={`Open in ${openInAppLabel}`}
+            >
+              <ExternalLink className="w-4 h-4" />
+            </button>
+          )}
+        </>
+      )}
+
+      {isFullscreen && !isContainedFullscreenMode && (
+        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 h-14 border-b border-border/40 bg-background/95 backdrop-blur z-40 shrink-0">
+          <div />
+          <div className="font-medium text-sm text-muted-foreground min-w-0 max-w-[40vw] truncate">
+            {openInAppLabel}
+          </div>
+          <div className="flex items-center justify-end gap-2 min-w-0">
+            {showOpenInAppButton && (
+              <button
+                onClick={handleOpenInApp}
+                className="inline-flex items-center justify-center gap-1.5 h-8 max-w-[16rem] rounded-full border border-border/60 px-2 sm:px-3 text-xs font-medium text-foreground hover:bg-muted transition-colors"
+                aria-label={`Open in ${openInAppLabel}`}
+                title={`Open in ${openInAppLabel}`}
+              >
+                <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                <span className="hidden sm:inline min-w-0 truncate">
+                  Open in {openInAppLabel}
+                </span>
+              </button>
+            )}
+            <button
+              onClick={() => {
+                userPreferInlineRef.current = true;
+                setDisplayMode("inline");
+                if (ownsPipDisplayMode) {
+                  onExitPip?.(pipWidgetId ?? displayWidgetId);
+                }
+              }}
+              className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+              aria-label="Exit fullscreen"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
       )}
 
