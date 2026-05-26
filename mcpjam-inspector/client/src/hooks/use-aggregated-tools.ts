@@ -1,6 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { Tool } from "@modelcontextprotocol/client";
 import { listTools } from "@/lib/apis/mcp-tools-api";
+import {
+  getApiContextRevision,
+  subscribeApiContext,
+} from "@/lib/apis/web/context";
 
 export interface ServerScopedTool {
   serverId: string;
@@ -34,16 +45,21 @@ export interface AggregatedToolsState {
  *     last-seen-wins collision behavior baked into `ToolServerMap`.
  */
 export function useAggregatedTools(
-  serverNames: string[],
+  serverNames: string[]
 ): AggregatedToolsState {
+  const apiContextRevision = useSyncExternalStore(
+    subscribeApiContext,
+    getApiContextRevision,
+    getApiContextRevision
+  );
   const [toolsByServer, setToolsByServer] = useState<Record<string, Tool[]>>(
-    {},
+    {}
   );
   const [loadingByServer, setLoadingByServer] = useState<
     Record<string, boolean>
   >({});
   const [errorByServer, setErrorByServer] = useState<Record<string, string>>(
-    {},
+    {}
   );
 
   // Stable key so the effect doesn't re-run when the parent passes a fresh
@@ -51,7 +67,7 @@ export function useAggregatedTools(
   // can't appear inside a serverName.
   const serversKey = useMemo(
     () => [...serverNames].sort().join("\x00"),
-    [serverNames],
+    [serverNames]
   );
   const serverNamesRef = useRef<string[]>([]);
   serverNamesRef.current = serversKey ? serversKey.split("\x00") : [];
@@ -74,7 +90,7 @@ export function useAggregatedTools(
     // just-deselected servers disappear immediately rather than lingering
     // until the new fetch returns.
     const activeSet = new Set(names);
-    const pruneToActive = <V,>(prev: Record<string, V>): Record<string, V> => {
+    const pruneToActive = <V>(prev: Record<string, V>): Record<string, V> => {
       const next: Record<string, V> = {};
       for (const key of Object.keys(prev)) {
         if (activeSet.has(key)) next[key] = prev[key];
@@ -99,7 +115,7 @@ export function useAggregatedTools(
             err instanceof Error ? err.message : "Failed to fetch tools";
           return { serverId, tools: [], error: message };
         }
-      }),
+      })
     );
 
     if (token !== fetchTokenRef.current) return;
@@ -121,7 +137,7 @@ export function useAggregatedTools(
       for (const { serverId } of results) next[serverId] = false;
       return next;
     });
-  }, [serversKey]);
+  }, [serversKey, apiContextRevision]);
 
   useEffect(() => {
     void fetchAll();

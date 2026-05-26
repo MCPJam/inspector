@@ -182,10 +182,10 @@ import { getEffectiveProjectClientCapabilities } from "./lib/client-config";
 import {
   getDefaultClientCapabilities,
   isKnownProtocolVersion,
-  isStatelessProtocolVersion,
   type McpProtocolVersion,
 } from "@mcpjam/sdk/browser";
 import { resolveEffectiveMcpProtocolVersion } from "./lib/client-config-v2";
+import type { ProjectServerConfigDto } from "./lib/project-server-config";
 import {
   buildClientsPath,
   buildOrganizationPath,
@@ -1210,13 +1210,6 @@ export default function App() {
   const playgroundTabEnabled = useFeatureFlagEnabled("playground-tab-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
-  // Rollout kill-switch for the DRAFT-2026-v1 stateless transport. Gates
-  // both UI controls (ProtocolTab, ServerDetailModal, EditServerFormContent,
-  // AdvancedConnectionSettingsSection) AND request stamping — a persisted
-  // override from a prior flag-on session must NOT bypass the switch
-  // (otherwise hosted validate/tools/resources/prompts flows still
-  // activate the stateless transport).
-  const statelessMcpEnabled = useFeatureFlagEnabled("stateless-mcp-enabled");
   const {
     getAccessToken,
     signIn,
@@ -1825,6 +1818,12 @@ export default function App() {
     getEffectiveProjectClientCapabilities(activeProject?.clientConfig) ??
     getDefaultClientCapabilities()) as Record<string, unknown>;
   const convexProjectId = activeProject?.sharedProjectId ?? null;
+  const projectServerConfigDto = useQuery(
+    "projectServerConfig:getConfig" as never,
+    convexProjectId ? ({ projectId: convexProjectId } as never) : "skip"
+  ) as ProjectServerConfigDto | null | undefined;
+  const isProjectServerConfigLoading =
+    Boolean(convexProjectId) && projectServerConfigDto === undefined;
   // hostsTabSelectedHostId is a Hosts-tab-local cursor; drop it when scope
   // changes so it can't bleed across projects. `activeHostId` is owned by
   // useAppState (project-keyed in localStorage) and self-resets.
@@ -2037,12 +2036,16 @@ export default function App() {
         ? rawHostPin
         : undefined;
 
-    const mcpProtocolVersionsByServerId: Record<
-      string,
-      McpProtocolVersion
-    > = {};
+    const mcpProtocolVersionsByServerId: Record<string, McpProtocolVersion> =
+      {};
     for (const serverId of new Set(Object.values(hostedServerIdsByName))) {
+      // Project-server config is the control-plane source for per-server
+      // protocol overrides. Host config mirrors it through Convex fan-out,
+      // but hosted API calls should not fall back to the host default while
+      // that reactive host snapshot is still catching up.
       const rawServerOverride =
+        projectServerConfigDto?.overrides?.[serverId]
+          ?.mcpProtocolVersionOverride ??
         activeHost?.serverConnectionOverrides?.[serverId]
           ?.mcpProtocolVersionOverride;
       const serverOverride: McpProtocolVersion | undefined =
@@ -2055,15 +2058,6 @@ export default function App() {
         hostPin
       );
       if (!effective) continue;
-      // Persisted stateless pins (DRAFT-2026-v1) MUST NOT bypass the
-      // rollout flag. The UI gates only control authoring; without this
-      // gate, a server config saved while the flag was on (or set by an
-      // admin) would still route every hosted call through the stateless
-      // preview after the flag is flipped off. Stateful pins like
-      // "2025-11-25" are unaffected.
-      if (!statelessMcpEnabled && isStatelessProtocolVersion(effective)) {
-        continue;
-      }
       mcpProtocolVersionsByServerId[serverId] = effective;
     }
 
@@ -2079,7 +2073,7 @@ export default function App() {
     activeHost?.serverConnectionOverrides,
     activeMcpProfile,
     hostedServerIdsByName,
-    statelessMcpEnabled,
+    projectServerConfigDto?.overrides,
   ]);
   useApiContext({
     projectId: convexProjectId,
@@ -2089,7 +2083,8 @@ export default function App() {
     supportedProtocolVersions: hostedMcpProfilePins.supportedProtocolVersions,
     mcpProtocolVersionsByServerId:
       hostedMcpProfilePins.mcpProtocolVersionsByServerId,
-    clientConfigSyncPending: isClientConfigSyncPending,
+    clientConfigSyncPending:
+      isClientConfigSyncPending || isProjectServerConfigLoading,
     getAccessToken,
     oauthTokensByServerId,
     // `ApiContext.isAuthenticated` means "WorkOS user is signed in",

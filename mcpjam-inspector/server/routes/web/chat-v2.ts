@@ -45,6 +45,7 @@ import {
   WebRouteError,
   webError,
   mapRuntimeError,
+  extractMcpInitializeOptions,
 } from "./auth.js";
 import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
 import { getClientIp } from "../../utils/client-ip.js";
@@ -75,6 +76,8 @@ chatV2.post("/", async (c) => {
 
     // ── Convex authorization path: guest and signed-in actors ─────
     const hostedBody = parseWithSchema(hostedChatSchema, rawBody);
+    const { initializePins, mcpProtocolVersionsByServerId } =
+      extractMcpInitializeOptions(rawBody);
     const body = rawBody as unknown as ChatV2Request & {
       projectId: string;
       selectedServerIds: string[];
@@ -272,6 +275,8 @@ chatV2.post("/", async (c) => {
         accessVersion,
         rpcLogger: rpcCollector.rpcLogger,
         serverNames: selectedServerNames,
+        initializePins,
+        mcpProtocolVersionsByServerId,
       }
     );
     oauthServerUrls = urls;
@@ -284,11 +289,7 @@ chatV2.post("/", async (c) => {
       validatedAppTools = validateAppToolEntries(body.appTools);
     } catch (error) {
       if (error instanceof AppToolValidationError) {
-        throw new WebRouteError(
-          400,
-          ErrorCode.VALIDATION_ERROR,
-          error.message,
-        );
+        throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, error.message);
       }
       throw error;
     }
